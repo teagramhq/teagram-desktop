@@ -349,7 +349,7 @@ QString LocalDiskCache::name(const LocalSound &sound) {
 	}
 
 #ifdef Q_OS_MAC
-	if (integrationTest) {
+	if (teagram) {
 		const auto soundsDirectory
 			= Core::MacProtectedPath::NotificationSoundsDirectory();
 		const auto notificationPath
