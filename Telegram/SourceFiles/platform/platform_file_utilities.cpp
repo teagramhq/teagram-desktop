@@ -13,20 +13,28 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Platform::File {
 
 void UnsafeOpenUrl(const QString &url) {
+	const auto dispatch = [&] {
+		if (!Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
+			Unfused::UnsafeOpenUrl(url);
+		}
+	};
+#ifdef Q_OS_MAC
+	const auto fileUrlResult = Core::MacProtectedPath::DispatchFileUrlIfAllowed(
+		url, "platform.open-url", dispatch);
+	if (fileUrlResult
+		!= Core::MacProtectedPath::FileUrlDispatchResult::NotFileUrl) {
+		return;
+	}
+#else
 	const auto localPath = Core::MacProtectedPath::LocalFilePathFromUrl(url);
 	if (localPath) {
 		(void)Core::MacProtectedPath::DispatchExternalPathIfAllowed(
 			Core::MacProtectedPath::Operation::Open, *localPath,
-			"platform.open-url", [&] {
-				if (!Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
-					Unfused::UnsafeOpenUrl(url);
-				}
-			});
+			"platform.open-url", dispatch);
 		return;
 	}
-	if (!Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
-		Unfused::UnsafeOpenUrl(url);
-	}
+#endif // Q_OS_MAC
+	dispatch();
 }
 
 void UnsafeOpenEmailLink(const QString &email) {

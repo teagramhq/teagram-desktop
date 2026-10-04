@@ -67,9 +67,20 @@ class ScopedExternalPathCheckerForTesting final {
 [[nodiscard]] inline std::optional<QString>
 LocalFilePathFromUrl(const QString &url) {
 	const auto parsed = QUrl(url);
-	return parsed.isLocalFile() ? std::make_optional(parsed.toLocalFile())
-								: std::nullopt;
+	if (!parsed.isLocalFile() || !parsed.host().isEmpty()) {
+		return std::nullopt;
+	}
+	const auto path = parsed.toLocalFile();
+	return path.isEmpty() || path.startsWith(u"//"_q)
+			   ? std::nullopt
+			   : std::make_optional(path);
 }
+
+enum class FileUrlDispatchResult {
+	NotFileUrl,
+	Refused,
+	Dispatched,
+};
 
 template <typename Dispatch>
 [[nodiscard]] bool
@@ -80,6 +91,21 @@ DispatchExternalPathIfAllowed(Operation operation, const QString &path,
 	}
 	std::forward<Dispatch>(dispatch)();
 	return true;
+}
+
+template <typename Dispatch>
+[[nodiscard]] FileUrlDispatchResult
+DispatchFileUrlIfAllowed(const QString &url, const char *callsite,
+						 Dispatch &&dispatch) {
+	if (QUrl(url).scheme() != u"file"_q) {
+		return FileUrlDispatchResult::NotFileUrl;
+	}
+	const auto path = LocalFilePathFromUrl(url);
+	if (!path || !CheckExternalPathForUse(Operation::Open, *path, callsite)) {
+		return FileUrlDispatchResult::Refused;
+	}
+	std::forward<Dispatch>(dispatch)();
+	return FileUrlDispatchResult::Dispatched;
 }
 
 template <typename Checker, typename Prepare>
@@ -93,15 +119,16 @@ PrepareExternalDirectoryIfAllowed(const QString &path, const char *callsite,
 
 template <typename Checker, typename IsRegularFile, typename Completion>
 [[nodiscard]] bool CompleteWebViewFileInputSelectionIfAllowed(
-	const QStringList &paths, Checker &&checker, IsRegularFile &&isRegularFile,
-	Completion &&completion) {
+	const QStringList &paths, Checker &&checker, bool requireRegularFiles,
+	IsRegularFile &&isRegularFile, Completion &&completion) {
 	if (paths.isEmpty()) {
 		return false;
 	}
 	auto allowed = true;
 	for (const auto &path : paths) {
 		const auto pathAllowed
-			= !path.isEmpty() && checker(path) && isRegularFile(path);
+			= !path.isEmpty() && checker(path)
+			  && (!requireRegularFiles || isRegularFile(path));
 		allowed = pathAllowed && allowed;
 	}
 	if (!allowed) {

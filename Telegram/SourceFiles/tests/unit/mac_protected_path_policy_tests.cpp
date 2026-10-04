@@ -1424,7 +1424,34 @@ TEST_CASE(LocalFileUrlsExposeDecodedPathsForHandoffChecks) {
 			*local,
 			u"/Users/alice/Library/Application Support/Telegram Desktop/tdata/x"_q);
 	}
+	CHECK(!LocalFilePathFromUrl(
+		u"file://localhost/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q));
+	CHECK(!LocalFilePathFromUrl(
+		u"file://other/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q));
 	CHECK(!LocalFilePathFromUrl(u"https://example.com/file"_q));
+}
+
+TEST_CASE(HostBearingFileUrlsAreNeverDispatched) {
+	const auto urls = QStringList{
+		u"file://localhost/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q,
+		u"file://other/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q,
+	};
+	auto checked = QStringList();
+	const auto checker = [&](Operation, const QString &path, const char *) {
+		checked.push_back(path);
+		return true;
+	};
+	auto dispatches = 0;
+	{
+		ScopedExternalPathCheckerForTesting scope(checker);
+		for (const auto &url : urls) {
+			CHECK(DispatchFileUrlIfAllowed(url, "unit.file-url",
+										   [&] { ++dispatches; })
+				  == FileUrlDispatchResult::Refused);
+		}
+	}
+	CHECK(checked.isEmpty());
+	CHECK_EQ(dispatches, 0);
 }
 
 TEST_CASE(ExternalPathHandoffRefusesBeforeDispatchAndAllowsDownloads) {
@@ -1527,7 +1554,7 @@ TEST_CASE(WebViewFileInputRejectsProtectedSelectionsBeforeCompletion) {
 						 u"unit.webview.file-input"_q)
 				.allowed();
 		},
-		[](const QString &) { return true; },
+		true, [](const QString &) { return true; },
 		[&](const QStringList &selection) {
 			++completed;
 			uploaded = selection;
@@ -1560,7 +1587,7 @@ TEST_CASE(WebViewFileInputRejectsSymlinksIntoProtectedPaths) {
 	};
 	auto completed = false;
 	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
-		paths, checkPath, [](const QString &) { return true; },
+		paths, checkPath, true, [](const QString &) { return true; },
 		[&](const QStringList &) { completed = true; });
 	CHECK(!allowed);
 	CHECK(!completed);
@@ -1590,6 +1617,7 @@ TEST_CASE(WebViewFileInputRejectsLibraryDirectorySelection) {
 			readAllowed = result.allowed();
 			return readAllowed;
 		},
+		true,
 		[&](const QString &path) {
 			typeChecked.push_back(path);
 			return false;
@@ -1599,6 +1627,36 @@ TEST_CASE(WebViewFileInputRejectsLibraryDirectorySelection) {
 	CHECK(typeChecked == paths);
 	CHECK(!allowed);
 	CHECK_EQ(completed, 0);
+}
+
+TEST_CASE(WebViewFileInputAllowsDirectoriesWhenGuardInactive) {
+	auto fs = FakeFileSystem();
+	const auto library = QByteArray("/Users/alice/Library");
+	AddDirectoryHierarchy(fs, library);
+	auto policy = TestPolicy(fs);
+	const auto paths = QStringList{QString::fromUtf8(library)};
+	auto readAllowed = false;
+	auto typeChecks = 0;
+	auto completed = false;
+	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
+		paths,
+		[&](const QString &path) {
+			const auto result
+				= policy.Resolve(Operation::Read, QFile::encodeName(path), {},
+								 u"unit.webview.file-input-inactive"_q);
+			readAllowed = result.allowed();
+			return readAllowed;
+		},
+		false,
+		[&](const QString &) {
+			++typeChecks;
+			return false;
+		},
+		[&](const QStringList &) { completed = true; });
+	CHECK(readAllowed);
+	CHECK_EQ(typeChecks, 0);
+	CHECK(allowed);
+	CHECK(completed);
 }
 
 TEST_CASE(WebViewFileInputAllowsDownloadsForUpload) {
@@ -1615,7 +1673,7 @@ TEST_CASE(WebViewFileInputAllowsDownloadsForUpload) {
 	};
 	auto uploaded = QStringList();
 	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
-		paths, checkPath, [](const QString &) { return true; },
+		paths, checkPath, true, [](const QString &) { return true; },
 		[&](const QStringList &selection) { uploaded = selection; });
 	CHECK(allowed);
 	CHECK(uploaded == paths);
