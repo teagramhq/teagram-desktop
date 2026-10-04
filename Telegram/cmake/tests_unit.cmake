@@ -62,6 +62,7 @@ target_precompile_headers(test_unit PRIVATE
 
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
+    core/teagram_icon_choice.cpp
     core/local_url_conversion.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.

@@ -14,8 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QColor>
 #include <QtGui/QImage>
-#include <QtGui/QPainter>
-#include <QtSvg/QSvgRenderer>
 
 using namespace Core;
 
@@ -66,28 +64,17 @@ TEST_CASE(PreviouslySavedMugTeaLoadsAsMugSignal) {
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
 	CHECK_EQ(kTeagramIconChoiceCount, 12);
 	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
-		const auto resource = kTeagramIconSvgResources[index];
-		const auto path = QString::fromLatin1(
-			resource.data(),
-			static_cast<qsizetype>(resource.size()));
-		auto renderer = QSvgRenderer(path);
-		CHECK(renderer.isValid());
-
-		auto image = QImage(
-			QSize(1024, 1024),
-			QImage::Format_ARGB32_Premultiplied);
-		image.fill(Qt::transparent);
-		{
-			auto painter = QPainter(&image);
-			renderer.render(&painter);
-		}
+		const auto choice = static_cast<TeagramIconChoice>(index);
+		const auto image = RenderTeagramIconImage(choice);
+		CHECK(!image.isNull());
+		CHECK_EQ(image.size(), QSize(1024, 1024));
+		CHECK_EQ(image.devicePixelRatioF(), 2.);
 		CHECK_EQ(image.pixelColor(512, 512).alpha(), 255);
 		CHECK_EQ(image.pixelColor(99, 512).alpha(), 0);
 		CHECK_EQ(image.pixelColor(101, 512).alpha(), 255);
 
 		// The outer signal arc peaks at SVG (494, 202), mapping to pixel
 		// (497, 262) in the macOS icon template.
-		const auto choice = static_cast<TeagramIconChoice>(index);
 		auto expectedArcColor = QColor();
 		auto expectedTColor = QColor();
 		switch (choice) {

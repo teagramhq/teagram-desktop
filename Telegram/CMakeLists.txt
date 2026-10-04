@@ -558,6 +558,7 @@ PRIVATE
     core/core_cloud_password.h
     core/core_settings.cpp
     core/core_settings.h
+    core/teagram_icon_choice.cpp
     core/teagram_icon_choice.h
     core/core_settings_proxy.cpp
     core/core_settings_proxy.h

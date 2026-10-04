@@ -942,36 +942,14 @@ public:
 			title,
 			st::teagramAppIconChoiceTitle);
 		label->setAttribute(Qt::WA_TransparentForMouseEvents);
+		label->setElisionMiddle(true);
 		label->resizeToWidth(st::teagramAppIconChoiceWidth);
-		setFixedSize(st::teagramAppIconChoiceWidth, label->height());
+		setToolTip(title);
+		setFixedSize(
+			st::teagramAppIconChoiceWidth,
+			st::teagramAppIconChoiceTitle.maxHeight);
 		setPointerCursor(true);
 	}
-};
-
-class TeagramIconChoiceRadio final : public Ui::Radiobutton {
-public:
-	TeagramIconChoiceRadio(
-			QWidget *parent,
-			const std::shared_ptr<Ui::RadiobuttonGroup> &group,
-			int value,
-			const QString &title)
-	: Ui::Radiobutton(
-		parent,
-		group,
-		value,
-		QString(),
-		st::teagramAppIconChoiceRadio)
-	, _title(title) {
-		setCheckAlignment(Qt::AlignHCenter);
-		resizeToWidth(st::teagramAppIconChoiceWidth);
-		setFixedHeight(height());
-	}
-	QString accessibilityName() override {
-		return _title;
-	}
-
-private:
-	QString _title;
 
 };
 
@@ -1050,13 +1028,7 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 				title);
 			columnLayout->addWidget(name, 0, Qt::AlignHCenter);
 			column->setFixedWidth(st::teagramAppIconChoiceWidth);
-			auto radio = new TeagramIconChoiceRadio(
-				column,
-				group,
-				index,
-				title);
-			columnLayout->addWidget(radio, 0, Qt::AlignHCenter);
-			rowLayout->addWidget(column);
+			rowLayout->addWidget(column, 0, Qt::AlignTop);
 			preview->setClickedCallback([=] {
 				group->setValue(index);
 			});

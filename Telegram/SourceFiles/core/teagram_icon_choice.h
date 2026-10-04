@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <string_view>
 
+class QImage;
+
 namespace Core {
 
 enum class TeagramIconChoice : int {
@@ -72,6 +74,8 @@ inline constexpr auto kTeagramIconPickerChoiceCount = static_cast<int>(
 		? kTeagramIconSvgResources[index]
 		: kTeagramIconSvgResources[0];
 }
+
+[[nodiscard]] QImage RenderTeagramIconImage(TeagramIconChoice choice);
 
 template <typename Settings>
 [[nodiscard]] TeagramIconChoice ReadTeagramIconChoice(Settings &settings) {

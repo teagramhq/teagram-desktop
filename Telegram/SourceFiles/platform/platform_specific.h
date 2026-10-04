@@ -15,6 +15,10 @@ namespace Data {
 class LocationPoint;
 } // namespace Data
 
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+class QImage;
+#endif
+
 namespace Platform {
 
 void start();
@@ -36,6 +40,9 @@ enum class SystemSettingsType {
 };
 
 void SetApplicationIcon(const QIcon &icon);
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+[[nodiscard]] bool SetApplicationIcon(const QImage &image);
+#endif
 [[nodiscard]] QString SingleInstanceLocalServerName(const QString &hash);
 [[nodiscard]] PermissionStatus GetPermissionStatus(PermissionType type);
 void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback);
