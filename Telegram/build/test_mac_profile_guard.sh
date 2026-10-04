@@ -95,7 +95,8 @@ run_seatbelt_cat_probe() {
 		"$APP" "$option" "$path" 2>&1)"
 	status=$?
 	set -e
-	if [[ "$status" -ne 0 || -n "$output" ]]; then
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
 		echo "$name failed: path=$path status=$status" >&2
 		printf '%s\n' "$output" >&2
 		return 1
@@ -371,8 +372,9 @@ CANARY_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
 	"$APP" --mac-seatbelt-cat-probe "$SEATBELT_CANARY" 2>&1)"
 CANARY_STATUS=$?
 set -e
-if [[ "$CANARY_STATUS" -ne 0 || -n "$CANARY_OUTPUT" ]]; then
-	echo "spawned /bin/cat did not receive EPERM for the protected canary." >&2
+if [[ "$CANARY_STATUS" -ne 0 \
+	|| "$CANARY_OUTPUT" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+	echo "spawned /bin/cat denial probe did not return the expected EPERM result." >&2
 	printf '%s\n' "$CANARY_OUTPUT" >&2
 	exit 1
 fi

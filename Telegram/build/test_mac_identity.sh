@@ -145,6 +145,7 @@ assert 'Library/Application Support/Teagram' in profile_policy
 assert 'Teagram-lock-' in sandbox
 assert '/Teagram-' in socket
 assert 'Library/Application Support/Teagram' in profile_test
+assert '"$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY"' in profile_test
 for probe in (
     'seatbelt_application_support_traversal_denial',
     'seatbelt_application_support_realpath_denial',

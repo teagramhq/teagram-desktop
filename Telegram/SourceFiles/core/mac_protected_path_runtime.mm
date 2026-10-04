@@ -639,8 +639,8 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 		return 1;
 	}
 	if (expectDenied) {
-		return WEXITSTATUS(status) == 1
-				&& diagnostic.contains(permissionError)
+		return (WEXITSTATUS(status) == 1
+			&& diagnostic.contains(permissionError))
 			? 0
 			: 1;
 	}
