@@ -169,21 +169,13 @@ settingsSendTypeSkip: 5px;
 teagramAppIconTitle: FlatLabel(defaultFlatLabel) {
     minWidth: 100px;
 }
-teagramAppIconChoiceTitle: FlatLabel(defaultFlatLabel) {
-    margin: margins(0px, 0px, 0px, 0px);
-    minWidth: 64px;
-    maxHeight: 20px;
-    align: align(center);
-}
 teagramAppIconTitlePadding: margins(22px, 9px, 66px, 1px);
 teagramAppIconPreviewSize: size(64px, 64px);
 teagramAppIconScroll: ScrollArea(defaultScrollArea) {
     barHidden: false;
     hiding: 0;
 }
-teagramAppIconChoiceWidth: 64px;
 teagramAppIconChoiceSkip: 8px;
-teagramAppIconChoiceInnerSkip: 4px;
 teagramAppIconSelectionInset: 2px;
 teagramAppIconSelectionRadius: 15px;
 teagramAppIconSelectionBorderWidth: 2px;

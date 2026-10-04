@@ -202,6 +202,7 @@ void SetApplicationIcon(const QIcon &icon) {
 	}
 	auto *application = [NSApplication sharedApplication];
 	[application setApplicationIconImage:image];
+	[[application dockTile] display];
 	auto *applied = [application applicationIconImage];
 	const auto size = applied ? [applied size] : NSZeroSize;
 	const auto representations = applied
@@ -233,6 +234,7 @@ bool SetApplicationIcon(const QImage &image) {
 	[native setSize:NSMakeSize(512, 512)];
 	auto *application = [NSApplication sharedApplication];
 	[application setApplicationIconImage:native];
+	[[application dockTile] display];
 	auto *applied = [application applicationIconImage];
 	const auto size = applied ? [applied size] : NSZeroSize;
 	const auto representations = applied

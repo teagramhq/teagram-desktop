@@ -893,6 +893,7 @@ public:
 	, _renderer(path) {
 		setFixedSize(st::teagramAppIconPreviewSize);
 		setAccessibleName(accessibleName);
+		setToolTip(accessibleName);
 		setPointerCursor(true);
 	}
 	void setSelected(bool selected) {
@@ -927,30 +928,6 @@ protected:
 private:
 	QSvgRenderer _renderer;
 	bool _selected = false;
-
-};
-
-class TeagramIconChoiceTitle final : public Ui::AbstractButton {
-public:
-	TeagramIconChoiceTitle(
-			QWidget *parent,
-			const QString &title)
-	: Ui::AbstractButton(parent) {
-		setAccessibleName(title);
-		auto label = new Ui::FlatLabel(
-			this,
-			title,
-			st::teagramAppIconChoiceTitle);
-		label->setAttribute(Qt::WA_TransparentForMouseEvents);
-		label->setElisionMiddle(true);
-		label->resizeToWidth(st::teagramAppIconChoiceWidth);
-		setToolTip(title);
-		setFixedSize(
-			st::teagramAppIconChoiceWidth,
-			st::teagramAppIconChoiceTitle.maxHeight);
-		setPointerCursor(true);
-	}
-
 };
 
 void BuildTeagramIconSection(SectionBuilder &builder) {
@@ -1015,24 +992,11 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 			const auto path = QString::fromLatin1(
 				resource.data(),
 				static_cast<qsizetype>(resource.size()));
-			auto column = new QWidget(rowRaw);
-			auto columnLayout = new QVBoxLayout(column);
-			columnLayout->setContentsMargins(0, 0, 0, 0);
-			columnLayout->setSpacing(st::teagramAppIconChoiceInnerSkip);
-			auto preview = new TeagramIconPreview(column, path, title);
+			auto preview = new TeagramIconPreview(rowRaw, path, title);
 			preview->setSelected(index == selectedIndex);
 			previews[index] = preview;
-			columnLayout->addWidget(preview, 0, Qt::AlignLeft);
-			auto name = new TeagramIconChoiceTitle(
-				column,
-				title);
-			columnLayout->addWidget(name, 0, Qt::AlignHCenter);
-			column->setFixedWidth(st::teagramAppIconChoiceWidth);
-			rowLayout->addWidget(column, 0, Qt::AlignTop);
+			rowLayout->addWidget(preview, 0, Qt::AlignTop);
 			preview->setClickedCallback([=] {
-				group->setValue(index);
-			});
-			name->setClickedCallback([=] {
 				group->setValue(index);
 			});
 		}
