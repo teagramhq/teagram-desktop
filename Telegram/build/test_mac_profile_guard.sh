@@ -385,6 +385,24 @@ fi
 printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' \
 	"$CANARY_STATUS"
 
+CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$CONTAINER_CANARY")"
+printf '%s' 'synthetic protected container bytes' > "$CONTAINER_CANARY"
+CONTAINER_CANARY_HASH="$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$CONTAINER_CANARY" \
+	|| exit 1
+
+BUNDLE_KEYED_CANARY="$TEST_HOME/Library/Preferences/org.telegram.desktop.fixture"
+mkdir -p "$(dirname "$BUNDLE_KEYED_CANARY")"
+printf '%s' 'synthetic protected bundle-keyed bytes' > "$BUNDLE_KEYED_CANARY"
+BUNDLE_KEYED_CANARY_HASH="$(shasum -a 256 "$BUNDLE_KEYED_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_bundle_keyed_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$BUNDLE_KEYED_CANARY" \
+	|| exit 1
+
 APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
 mkdir -p "$(dirname "$APPLICATION_SUPPORT_CANARY")"
 printf '%s' 'synthetic protected application support bytes' \
@@ -425,6 +443,16 @@ run_seatbelt_cat_probe \
 if [[ "$(shasum -a 256 "$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')" \
 	!= "$APPLICATION_SUPPORT_CANARY_HASH" ]]; then
 	echo "application support canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')" \
+	!= "$CONTAINER_CANARY_HASH" ]]; then
+	echo "container canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$BUNDLE_KEYED_CANARY" | awk '{print $1}')" \
+	!= "$BUNDLE_KEYED_CANARY_HASH" ]]; then
+	echo "bundle-keyed canary changed during the denial probes." >&2
 	exit 1
 fi
 if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \

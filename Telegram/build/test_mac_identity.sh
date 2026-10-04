@@ -147,11 +147,15 @@ assert '/Teagram-' in socket
 assert 'Library/Application Support/Teagram' in profile_test
 assert '"$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY"' in profile_test
 for probe in (
+    'seatbelt_container_denial',
+    'seatbelt_bundle_keyed_denial',
     'seatbelt_application_support_traversal_denial',
     'seatbelt_application_support_realpath_denial',
     'seatbelt_application_support_firmlink_denial',
     'seatbelt_teagram_profile_allowed',
     '"$PROFILE/../Telegram Desktop/tdata/synthetic-canary"',
+    '"$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"',
+    '"$TEST_HOME/Library/Preferences/org.telegram.desktop.fixture"',
     '"/System/Volumes/Data$TEST_HOME"',
     'Teagram/../Telegram Desktop/tdata/synthetic-canary',
     '"$ACCOUNT_STATE"',
