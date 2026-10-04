@@ -26,7 +26,6 @@ IPC_SEARCH_DIRECTORY="$(cd "$IPC_DIRECTORY" 2>/dev/null && pwd -P || printf '%s'
 
 PROFILE="$TEST_HOME/Library/Application Support/Teagram"
 HOSTILE_HOME="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"
-REFUSAL_LOG="$TEST_HOME/refusal.log"
 START_LOG="$TEST_HOME/start.log"
 LOCK_SUFFIX="$(printf '%s' "$APP_BUNDLE" | md5 -q | cut -c1-16)"
 SOCKET_SUFFIX="$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
@@ -265,26 +264,20 @@ printf 'socket_path_bytes=PASS %s/%s path=%s\n' \
 	"$SOCKET_PATH_BYTES" "$MAC_SOCKET_PATH_LIMIT" "$SOCKET_PATH"
 
 set +e
-env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit >"$REFUSAL_LOG" 2>&1
+REFUSAL_OUTPUT="$(env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit 2>&1)"
 REFUSAL_STATUS=$?
 set -e
 
 if [[ "$REFUSAL_STATUS" -eq 0 ]]; then
 	echo "hostile HOME unexpectedly started Teagram." >&2
-	cat "$REFUSAL_LOG" >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
-if ! grep -F -q "class=group-container callsite=profile.home" "$REFUSAL_LOG"; then
-	echo "profile refusal did not identify the protected home source." >&2
-	cat "$REFUSAL_LOG" >&2
-	exit 1
-fi
-if grep -F -q "Working dir: $PROFILE/" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC selected:" "$REFUSAL_LOG" \
-	|| grep -F -q "Connecting local socket to $SOCKET_PATH" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC ready:" "$REFUSAL_LOG"; then
-	echo "profile refusal occurred after profile or socket startup began." >&2
-	cat "$REFUSAL_LOG" >&2
+if [[ -n "$REFUSAL_OUTPUT" ]]; then
+	echo "home discovery failure emitted output before Seatbelt activation." >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
 if [[ -n "$(find_lock_path)" ]]; then
@@ -295,11 +288,74 @@ if [[ -S "$SOCKET_PATH" ]]; then
 	echo "profile refusal created an IPC socket." >&2
 	exit 1
 fi
-if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" ]]; then
+if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" || -e "$START_LOG" ]]; then
 	echo "hostile profile initialization created a profile or protected path." >&2
 	exit 1
 fi
-printf 'protected_home_refusal=PASS status=%s class=group-container before_profile_and_ipc=1\n' "$REFUSAL_STATUS"
+printf 'protected_home_refusal=PASS status=%s silent=1 profile_and_ipc_absent=1\n' \
+	"$REFUSAL_STATUS"
+
+COMPILE_FAILURE_HOME="$TEST_HOME/compile-failure-home"
+COMPILE_FAILURE_PROFILE="$COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+mkdir -p "$COMPILE_FAILURE_HOME"
+set +e
+COMPILE_FAILURE_OUTPUT="$(env HOME="$COMPILE_FAILURE_HOME" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
+COMPILE_FAILURE_STATUS=$?
+set -e
+if [[ "$COMPILE_FAILURE_STATUS" -eq 0 ]]; then
+	echo "forced Seatbelt compilation failure unexpectedly started Teagram." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -n "$COMPILE_FAILURE_OUTPUT" ]]; then
+	echo "Seatbelt compilation failure emitted output before activation." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -e "$COMPILE_FAILURE_PROFILE" \
+	|| -e "$COMPILE_FAILURE_PROFILE/log.txt" \
+	|| -e "$COMPILE_FAILURE_HOME/refusal.log" ]]; then
+	echo "Seatbelt compilation failure created a profile or log." >&2
+	exit 1
+fi
+printf 'seatbelt_compile_failure=PASS status=%s silent=1 profile_and_logs_absent=1\n' \
+	"$COMPILE_FAILURE_STATUS"
+
+ACCOUNT_STATE="$PROFILE/tdata/teagram-activation-account-state.fixture"
+ENDPOINT_ENROLLMENT="$PROFILE/tdata/teagram-activation-endpoint-enrollment.fixture"
+TELEGRAMD_PROFILE="$TEST_HOME/Library/Application Support/Telegramd"
+mkdir -p "$PROFILE/tdata"
+printf '%s' 'synthetic account state v1' > "$ACCOUNT_STATE"
+printf '%s\n%s' 'https://telegramd.example:443' 'fingerprint=1234567890' \
+	> "$ENDPOINT_ENROLLMENT"
+ACCOUNT_STATE_HASH="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+
+SEATBELT_CANARY="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$SEATBELT_CANARY")"
+printf '%s' 'synthetic protected canary' > "$SEATBELT_CANARY"
+CANARY_HASH="$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')"
+set +e
+CANARY_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	"$APP" --mac-seatbelt-cat-probe "$SEATBELT_CANARY" 2>&1)"
+CANARY_STATUS=$?
+set -e
+if [[ "$CANARY_STATUS" -ne 0 || -n "$CANARY_OUTPUT" ]]; then
+	echo "spawned /bin/cat did not receive EPERM for the protected canary." >&2
+	printf '%s\n' "$CANARY_OUTPUT" >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH" ]]; then
+	echo "Seatbelt canary changed during the descendant denial probe." >&2
+	exit 1
+fi
+printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' \
+	"$CANARY_STATUS"
 
 mkdir -p "$IPC_DIRECTORY"
 
@@ -529,6 +585,16 @@ if (( FAILURES > 0 )); then
 	cat "$START_LOG" >&2
 	exit 1
 fi
+
+if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
+	!= "$ACCOUNT_STATE_HASH" \
+	|| "$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')" \
+		!= "$ENDPOINT_ENROLLMENT_HASH" \
+	|| -e "$TELEGRAMD_PROFILE" ]]; then
+	echo "startup changed the existing Teagram profile or created a replacement profile." >&2
+	exit 1
+fi
+printf 'existing_profile_preserved=PASS account_state=1 endpoint_enrollment=1 replacement_profile_absent=1\n'
 
 CACHE_TEXT="$PROFILE/tdata/emoji/spoiler/text"
 CACHE_TEXT_FILES="$(find "$TEST_HOME" -type f -path '*/tdata/emoji/spoiler/text' -print)"

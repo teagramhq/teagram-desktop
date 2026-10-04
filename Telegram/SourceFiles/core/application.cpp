@@ -805,7 +805,7 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 			const auto event = static_cast<QFileOpenEvent *>(e);
 			const auto url = event->url();
 			if (url.scheme() == u"file"_q && !url.isLocalFile()
-				&& MacProtectedPath::IntegrationTestActive()) {
+				&& MacProtectedPath::IsActive()) {
 				return true;
 			}
 			const auto path
@@ -1258,7 +1258,7 @@ void Application::checkStartUrls() {
 			= ranges::views::all(cRefStartUrls())
 			  | ranges::views::filter([&](const QUrl &url) {
 					if (url.scheme() == u"file"_q && !url.isLocalFile()
-						&& MacProtectedPath::IntegrationTestActive()) {
+						&& MacProtectedPath::IsActive()) {
 						return false;
 					}
 					if (url.isLocalFile()

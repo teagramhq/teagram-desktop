@@ -328,15 +328,14 @@ QString LocalDiskCache::name(const LocalSound &sound) {
 		return i->second;
 	}
 
-	const auto integrationTest
-		= Core::MacProtectedPath::IntegrationTestActive();
-	const auto prefix = integrationTest ? u"Teagram_%1"_q : u"TD_%1"_q;
+	const auto teagram = Core::MacProtectedPath::IsActive();
+	const auto prefix = teagram ? u"Teagram_%1"_q : u"TD_%1"_q;
 	auto result = prefix.arg(sound.id ? QString::number(sound.id, 16).toUpper()
 									  : u"Default"_q);
 	const auto path = _base + u"%1.wav"_q.arg(result);
 
 	auto f = QFile(path);
-	if (integrationTest) {
+	if (teagram) {
 		if (!Core::MacProtectedPath::CheckPath(
 				Core::MacProtectedPath::Operation::Write, path, Q_FUNC_INFO)
 			|| !f.open(QIODevice::WriteOnly)

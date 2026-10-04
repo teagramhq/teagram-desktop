@@ -237,6 +237,57 @@ struct WalkResult {
 	return result;
 }
 
+[[nodiscard]] QByteArray SbplQuoted(const QByteArray &value) {
+	auto result = QByteArray("\"");
+	for (const auto character : value) {
+		const auto byte = uchar(character);
+		if (byte < 0x20 || byte == 0x7F) {
+			return {};
+		}
+		if (character == '\\' || character == '"') {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	result.append('"');
+	return result;
+}
+
+[[nodiscard]] QByteArray
+ProfileComponentExpression(const QByteArray &component) {
+	const auto special = QByteArray("\\.^$|()[]{}*+?");
+	auto result = QByteArray("(string-append");
+	for (const auto value : component) {
+		const auto byte = uchar(value);
+		auto character = QByteArray();
+		if (byte >= 'a' && byte <= 'z') {
+			character.append('[');
+			character.append(char(byte - 'a' + 'A'));
+			character.append(char(byte));
+			character.append(']');
+		} else if (byte >= 'A' && byte <= 'Z') {
+			character.append('[');
+			character.append(char(byte));
+			character.append(char(byte - 'A' + 'a'));
+			character.append(']');
+		} else {
+			if (special.contains(char(byte))) {
+				character.append('\\');
+			}
+			character.append(char(byte));
+		}
+		const auto quoted = SbplQuoted(character);
+		if (quoted.isEmpty()) {
+			return {};
+		}
+		result.append(' ');
+		result.append(quoted);
+		result.append(" teagramIgnorable");
+	}
+	result.append(')');
+	return result;
+}
+
 [[nodiscard]] std::vector<QByteArray> CanonicalRawComponents(
 		const std::vector<QByteArray> &components) {
 	std::vector<QByteArray> result;
@@ -522,6 +573,20 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 				roots.push_back(std::move(root));
 			}
 		};
+	const auto addProfileHomePath
+		= [&](const std::vector<QByteArray> &components) {
+			  if (components.empty()) {
+				  return;
+			  }
+			  for (const auto &path :
+				   {Join(components), Join(FirmlinkAlias(components))}) {
+				  if (std::find(result._profileHomePaths.begin(),
+								result._profileHomePaths.end(), path)
+					  == result._profileHomePaths.end()) {
+					  result._profileHomePaths.push_back(path);
+				  }
+			  }
+		  };
 	// A home beneath Library needs the prefix before Library for classification.
 	// Seed every candidate before the first filesystem probe.
 	const auto addHomeCandidates = [&](
@@ -598,6 +663,8 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 			}
 			return result;
 		}
+		addProfileHomePath(candidate.raw);
+		addProfileHomePath(resolved.components);
 		addHomeCandidates(resolved.components, preflightHomes);
 
 		const auto physical = FoldedComponents(resolved.components);
@@ -626,6 +693,102 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 
 bool MacProtectedPathPolicy::valid() const {
 	return _valid;
+}
+
+QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
+	if (!_valid || _profileHomePaths.empty()) {
+		return {};
+	}
+	const auto ignored
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q
+			  .toUtf8();
+	const auto components = std::vector<std::pair<QByteArray, QByteArray>>{
+		{"teagramLibrary", ProfileComponentExpression("Library")},
+		{"teagramApplicationSupport",
+		 ProfileComponentExpression("Application Support")},
+		{"teagramTelegramDesktop",
+		 ProfileComponentExpression("Telegram Desktop")},
+		{"teagramContainers", ProfileComponentExpression("Containers")},
+		{"teagramOrgTelegram",
+		 ProfileComponentExpression("org.telegram.desktop")},
+		{"teagramRuTelegram",
+		 ProfileComponentExpression("ru.keepcoder.telegram")},
+		{"teagramGroupContainers",
+		 ProfileComponentExpression("Group Containers")},
+		{"teagramTelegram", ProfileComponentExpression("telegram")},
+		{"teagramPreferences", ProfileComponentExpression("Preferences")},
+		{"teagramCaches", ProfileComponentExpression("Caches")},
+		{"teagramHTTPStorages", ProfileComponentExpression("HTTPStorages")},
+		{"teagramWebKit", ProfileComponentExpression("WebKit")},
+		{"teagramSavedApplicationState",
+		 ProfileComponentExpression("Saved Application State")},
+		{"teagramComTelegram",
+		 ProfileComponentExpression("com.tdesktop.Telegram")},
+	};
+	const auto rules = std::vector<std::pair<QByteArray, QByteArray>>{
+		{"teagramApplicationSupportSuffix",
+		 "(string-append \"/\" teagramLibrary \"/\""
+		 " teagramApplicationSupport \"/\" teagramTelegramDesktop"
+		 " \"(/|$)\")"},
+		{"teagramContainerSuffix",
+		 "(string-append \"/\" teagramLibrary \"/\" teagramContainers"
+		 " \"/(\" teagramOrgTelegram \"|\" teagramRuTelegram"
+		 " \")(/|$)\")"},
+		{"teagramGroupContainerSuffix",
+		 "(string-append \"/\" teagramLibrary \"/\" teagramGroupContainers"
+		 " \"/[^/]*\" teagramTelegram \"[^/]*(/|$)\")"},
+		{"teagramBundleKeyedSuffix",
+		 "(string-append \"/\" teagramLibrary \"/(\""
+		 " teagramPreferences \"|\" teagramCaches \"|\""
+		 " teagramHTTPStorages \"|\" teagramWebKit \"|\""
+		 " teagramSavedApplicationState \")/(\""
+		 " teagramComTelegram \"|\" teagramOrgTelegram \"|\""
+		 " teagramRuTelegram \")[^/]*(/|$)\")"},
+	};
+	auto result = QByteArray("(version 1)\n(allow default)\n");
+	const auto appendDefine
+		= [&](const QByteArray &name, const QByteArray &value) {
+			  result.append("(define ");
+			  result.append(name);
+			  result.append(' ');
+			  result.append(value);
+			  result.append(")\n");
+		  };
+	const auto ignoredQuoted = SbplQuoted(ignored);
+	if (ignoredQuoted.isEmpty()) {
+		return {};
+	}
+	appendDefine("teagramIgnorable", ignoredQuoted);
+	for (const auto &entry : components) {
+		if (entry.second.isEmpty()) {
+			return {};
+		}
+		appendDefine(entry.first, entry.second);
+	}
+	for (const auto &entry : rules) {
+		appendDefine(entry.first, entry.second);
+	}
+	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
+		const auto home = SbplQuoted(_profileHomePaths[i]);
+		if (home.isEmpty()) {
+			return {};
+		}
+		const auto homeName = QByteArray("teagramHome") + QByteArray::number(i);
+		result.append("(define ");
+		result.append(homeName);
+		result.append(' ');
+		result.append(home);
+		result.append(")\n");
+		for (const auto &entry : rules) {
+			result.append("(deny file* (regex (string-append \"^\" ");
+			result.append("(regex-quote ");
+			result.append(homeName);
+			result.append(") ");
+			result.append(entry.first);
+			result.append(")))\n");
+		}
+	}
+	return result;
 }
 
 ProtectedClass MacProtectedPathPolicy::Classify(

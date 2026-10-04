@@ -16,18 +16,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMutexLocker>
 
 #include <Cocoa/Cocoa.h>
+#include <sandbox.h>
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <memory>
 #include <pwd.h>
+#include <spawn.h>
 #include <set>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+
+extern "C" char **environ;
 
 namespace Core::MacProtectedPath {
 namespace {
@@ -46,6 +52,12 @@ struct RuntimeState final {
 [[nodiscard]] RuntimeState &State() {
 	static auto result = RuntimeState();
 	return result;
+}
+
+[[nodiscard]] bool IntegrationTestRequested() {
+	const auto value
+		= std::getenv("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST");
+	return value && !std::strcmp(value, "1");
 }
 
 [[nodiscard]] QByteArray AccountDatabaseHome() {
@@ -71,12 +83,17 @@ struct RuntimeState final {
 }
 
 [[nodiscard]] HomeRoots NativeHomeRoots() {
-	auto result = HomeRoots{.accountDatabase = AccountDatabaseHome(),
-							.environment = qgetenv("HOME"),
-							.foundation = FoundationHome()};
+	auto result
+		= HomeRoots{.accountDatabase = AccountDatabaseHome(),
+					.environment =
+						[] {
+							const auto home = std::getenv("HOME");
+							return home ? QByteArray(home) : QByteArray();
+						}(),
+					.foundation = FoundationHome()};
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	const auto testHome = qgetenv("TDESKTOP_MAC_PROFILE_TEST_HOME");
-	if (!testHome.isEmpty()) {
+	const auto testHome = std::getenv("TDESKTOP_MAC_PROFILE_TEST_HOME");
+	if (testHome && *testHome) {
 		result.accountDatabase = testHome;
 		result.foundation = testHome;
 	}
@@ -216,23 +233,28 @@ void ReportInvalidInitialization(const QString &callsite) {
 bool IntegrationTestActive() {
 #if defined(TDESKTOP_TEAGRAM)                                                  \
 	&& defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	return qEnvironmentVariable("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST")
-		   == "1";
+	return IntegrationTestRequested();
 #else
 	return false;
 #endif
 }
 
+bool IsActive() {
+	auto &state = State();
+	QMutexLocker lock(&state.mutex);
+	return state.ready;
+}
+
 bool InitializeProfile() {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
-		if (qEnvironmentVariable("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST")
-			== "1") {
-			ReportInvalidInitialization(u"profile.integration-test-build"_q);
-			return false;
-		}
-		return true;
+		return !IntegrationTestRequested();
 	}
-	const auto initialWorkingDirectory = QDir::currentPath() + '/';
+#else  // TDESKTOP_TEAGRAM
+	if (IntegrationTestRequested() && !IntegrationTestActive()) {
+		return false;
+	}
+#endif // TDESKTOP_TEAGRAM
 	auto &state = State();
 	{
 		QMutexLocker lock(&state.mutex);
@@ -240,28 +262,52 @@ bool InitializeProfile() {
 			return state.ready;
 		}
 		state.initialized = true;
-		state.initialWorkingDirectory = initialWorkingDirectory;
 	}
 
 	const auto homes = NativeHomeRoots();
 	const auto filesystem = NativeFileSystem();
-	auto failure = RefusalRecord();
-	const auto policy
-		= MacProtectedPathPolicy::Build(homes, filesystem, &failure);
+	const auto policy = MacProtectedPathPolicy::Build(homes, filesystem);
 	if (!policy.valid()) {
-		ReportRefusal(failure);
 		return false;
 	}
+	auto profileText = policy.SeatbeltProfile();
+	if (profileText.isEmpty()) {
+		return false;
+	}
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	if (IntegrationTestActive()) {
+		const auto forceFailure
+			= std::getenv("TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE");
+		if (forceFailure && !std::strcmp(forceFailure, "1")) {
+			profileText.append("(\n");
+		}
+	}
+#endif
+	auto *error = static_cast<char *>(nullptr);
+	int sandboxStatus = -1;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	sandboxStatus = sandbox_init(profileText.constData(), 0, &error);
+	if (error) {
+		sandbox_free_error(error);
+	}
+#pragma clang diagnostic pop
+	if (sandboxStatus != 0) {
+		return false;
+	}
+	const auto currentWorkingDirectory = QDir::currentPath();
+	if (currentWorkingDirectory.isEmpty()) {
+		return false;
+	}
+	const auto initialWorkingDirectory = currentWorkingDirectory + '/';
 	const auto profileBytes = TeagramProfileRoot(homes, AppSandboxed());
 	if (profileBytes.isEmpty()) {
-		ReportInvalidInitialization(u"profile.home-source"_q);
 		return false;
 	}
 	const auto profile
 		= policy.Resolve(Operation::Open, profileBytes, homes.accountDatabase,
 						 u"profile.root"_q);
 	if (!profile.allowed()) {
-		ReportRefusal(profile.refusal);
 		return false;
 	}
 	const auto profilePath = QString::fromUtf8(profile.resolvedPath);
@@ -269,20 +315,16 @@ bool InitializeProfile() {
 		= policy.Resolve(Operation::Mkdir, profile.resolvedPath,
 						 homes.accountDatabase, u"profile.create"_q);
 	if (!create.allowed()) {
-		ReportRefusal(create.refusal);
 		return false;
 	}
 	const auto temporaryPath = profilePath + u"/tdata/temp"_q;
 	const auto temporaryPrepared = PrepareExternalDirectoryIfAllowed(
 		temporaryPath, "profile.helper-temp",
 		[&](Operation operation, const QString &path, const char *callsite) {
-			const auto result = policy.Resolve(
-				operation, QFile::encodeName(path), homes.accountDatabase,
-				QString::fromUtf8(callsite));
-			if (!result.allowed()) {
-				ReportRefusal(result.refusal);
-			}
-			return result.allowed();
+			return policy
+				.Resolve(operation, QFile::encodeName(path),
+						 homes.accountDatabase, QString::fromUtf8(callsite))
+				.allowed();
 		},
 		[&] {
 			if (!QDir().mkpath(profilePath) || !QDir().mkpath(temporaryPath)) {
@@ -308,6 +350,7 @@ bool InitializeProfile() {
 	cForceWorkingDir(profilePath + '/');
 	{
 		QMutexLocker lock(&state.mutex);
+		state.initialWorkingDirectory = initialWorkingDirectory;
 		state.ipcDirectory = ipcDirectory;
 		state.profile = cWorkingDir();
 		state.policy = std::make_shared<MacProtectedPathPolicy>(policy);
@@ -323,34 +366,33 @@ bool InitializeProfile() {
 }
 
 QString InitialWorkingDirectory() {
-	if (!IntegrationTestActive()) {
-		return {};
-	}
 	auto &state = State();
 	QMutexLocker lock(&state.mutex);
-	return state.initialWorkingDirectory;
+	return state.ready ? state.initialWorkingDirectory : QString();
 }
 
 QString ProfileRoot() {
-	if (!IntegrationTestActive()) {
-		return {};
-	}
 	auto &state = State();
 	QMutexLocker lock(&state.mutex);
 	return state.ready ? state.profile : QString();
 }
 
 QString NotificationSoundsDirectory() {
-	const auto home = NativeHomeRoots().foundation;
+	if (IsActive()) {
+		return ProfileRoot() + u"/tdata/sounds"_q;
+	}
+	const auto home = FoundationHome();
 	return home.isEmpty() ? QString()
 						  : QString::fromUtf8(home) + u"/Library/Sounds"_q;
 }
 
 QString IpcDirectory() {
-	if (IntegrationTestActive()) {
+	{
 		auto &state = State();
 		QMutexLocker lock(&state.mutex);
-		return state.ready ? state.ipcDirectory : QString();
+		if (state.ready) {
+			return state.ipcDirectory;
+		}
 	}
 	if (AppSandboxed()) {
 		const auto home = FoundationHome();
@@ -361,9 +403,11 @@ QString IpcDirectory() {
 
 bool CheckPathAt(Operation operation, const QString &path,
 				 const QString &anchor, const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto policy = std::shared_ptr<const MacProtectedPathPolicy>();
 	{
 		auto &state = State();
@@ -385,9 +429,11 @@ bool CheckPathAt(Operation operation, const QString &path,
 }
 
 bool CheckPath(Operation operation, const QString &path, const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto anchor = QString();
 	{
 		auto &state = State();
@@ -411,9 +457,11 @@ namespace {
 bool CheckCachePathImpl(
 	const QString &path, const char *callsite,
 	const std::function<void(const QString &)> &beforeEntryStat) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	if (!CheckPath(Operation::OpenDir, path, callsite)) {
 		return false;
 	}
@@ -507,13 +555,75 @@ bool CheckCachePathForTesting(
 	std::function<void(const QString &)> beforeEntryStat) {
 	return CheckCachePathImpl(path, callsite, beforeEntryStat);
 }
+
+int RunSeatbeltCatProbe(const char *path) {
+	if (!IntegrationTestActive() || !path || !*path) {
+		return 1;
+	}
+	int output[2] = {};
+	if (::pipe(output) != 0) {
+		return 1;
+	}
+	auto actions = posix_spawn_file_actions_t();
+	if (posix_spawn_file_actions_init(&actions) != 0) {
+		::close(output[0]);
+		::close(output[1]);
+		return 1;
+	}
+	if (posix_spawn_file_actions_adddup2(&actions, output[1], STDERR_FILENO)
+			!= 0
+		|| posix_spawn_file_actions_addclose(&actions, output[0]) != 0
+		|| posix_spawn_file_actions_addclose(&actions, output[1]) != 0
+		|| posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
+											"/dev/null", O_WRONLY, 0)
+			   != 0) {
+		::close(output[0]);
+		::close(output[1]);
+		posix_spawn_file_actions_destroy(&actions);
+		return 1;
+	}
+	auto child = pid_t(0);
+	auto executable = QByteArray("/bin/cat");
+	auto argument = QByteArray(path);
+	char *arguments[] = {executable.data(), argument.data(), nullptr};
+	const auto spawnStatus = posix_spawn(&child, executable.constData(),
+										 &actions, nullptr, arguments, environ);
+	posix_spawn_file_actions_destroy(&actions);
+	::close(output[1]);
+	if (spawnStatus != 0) {
+		::close(output[0]);
+		return 1;
+	}
+	auto diagnostic = QByteArray();
+	char buffer[1024] = {};
+	while (true) {
+		const auto count = ::read(output[0], buffer, sizeof(buffer));
+		if (count <= 0) {
+			break;
+		}
+		diagnostic.append(buffer, int(count));
+	}
+	::close(output[0]);
+	auto status = int(0);
+	auto waited = pid_t(0);
+	do {
+		waited = ::waitpid(child, &status, 0);
+	} while (waited < 0 && errno == EINTR);
+	const auto permissionError = QByteArray(std::strerror(EPERM));
+	return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 1
+				   && diagnostic.contains(permissionError)
+			   ? 0
+			   : 1;
+}
 #endif
 
 bool CheckPair(Operation operation, const QString &first, const QString &second,
 			   const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto policy = std::shared_ptr<const MacProtectedPathPolicy>();
 	auto anchor = QString();
 	{

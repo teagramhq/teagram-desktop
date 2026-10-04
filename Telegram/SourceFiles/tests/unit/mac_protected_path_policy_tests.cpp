@@ -127,6 +127,26 @@ void CheckRefusedWithoutProtectedProbe(
 	}
 }
 
+template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
+	if constexpr (requires(const Policy &candidate) {
+					  candidate.SeatbeltProfile();
+				  }) {
+		const auto profile = policy.SeatbeltProfile();
+		CHECK(profile.startsWith("(version 1)\n(allow default)\n"));
+		CHECK(profile.count("(deny file*") >= 16);
+		CHECK(profile.contains("/Users/alice"));
+		CHECK(profile.contains("/System/Volumes/Data/Users/alice"));
+		CHECK(profile.contains("/Users/bob"));
+		CHECK(profile.contains("teagramApplicationSupportSuffix"));
+		CHECK(profile.contains("teagramContainerSuffix"));
+		CHECK(profile.contains("teagramGroupContainerSuffix"));
+		CHECK(profile.contains("teagramBundleKeyedSuffix"));
+		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
+	} else {
+		CHECK(false);
+	}
+}
+
 } // namespace
 
 TEST_CASE(GroupContainerRefusesBeforeProtectedProbe) {
@@ -284,6 +304,19 @@ TEST_CASE(HomeRootsFromAllSourcesAreProtected) {
 	CHECK(policy.Classify(
 		"/Users/carol/Library/Caches/org.telegram.desktop/x")
 		== ProtectedClass::BundleKeyed);
+}
+
+TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
+	auto fs = FakeFileSystem();
+	AddDirectoryHierarchy(fs, "/Users/alice");
+	AddDirectoryHierarchy(fs, "/Users/bob");
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = "/Users/alice",
+				  .environment = "/Users/bob",
+				  .foundation = "/Users/alice"},
+		fs.operations());
+	CHECK(policy.valid());
+	CheckSeatbeltProfile(policy);
 }
 
 TEST_CASE(BuildRejectsMissingRequiredHomesWithoutProbing) {

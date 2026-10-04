@@ -30,6 +30,48 @@ all|identity|observer)
 esac
 
 if [ "$MODE" != observer ]; then
+	python3 - "$ROOT" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+main = (root / 'Telegram/SourceFiles/main.cpp').read_text(encoding='utf-8')
+runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').read_text(encoding='utf-8')
+policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
+root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
+sandbox = (root / 'Telegram/SourceFiles/core/sandbox.cpp').read_text(encoding='utf-8')
+launcher = (root / 'Telegram/SourceFiles/core/launcher.cpp').read_text(encoding='utf-8')
+specific_mac = (root / 'Telegram/SourceFiles/platform/mac/specific_mac.mm').read_text(encoding='utf-8')
+notifications = (root / 'Telegram/SourceFiles/platform/mac/notifications_manager_mac.mm').read_text(encoding='utf-8')
+notifications_un = (root / 'Telegram/SourceFiles/platform/mac/notifications_manager_mac_un.mm').read_text(encoding='utf-8')
+webview = (root / 'Telegram/SourceFiles/platform/mac/webview_file_input_bridge.mm').read_text(encoding='utf-8')
+storage = (root / 'Telegram/SourceFiles/storage/storage_account.cpp').read_text(encoding='utf-8')
+audio_cache = (root / 'Telegram/SourceFiles/media/audio/media_audio_local_cache.cpp').read_text(encoding='utf-8')
+application = (root / 'Telegram/SourceFiles/core/application.cpp').read_text(encoding='utf-8')
+assert 'if (!Core::MacProtectedPath::InitializeProfile())' in main
+assert 'sandbox_init(' in runtime
+assert '(allow default)' in policy
+assert '(deny file*' in policy
+assert 'FirmlinkAlias' in policy
+main_entry = main.split('int main(', 1)[1].split('\n}', 1)[0]
+assert main_entry.index('InitializeProfile()') < main_entry.index('Launcher::Create')
+initialize = runtime.split('bool InitializeProfile()', 1)[1]
+assert initialize.index('sandbox_init(') < initialize.index('QDir().mkpath(profilePath)')
+assert initialize.index('sandbox_init(') < initialize.index('QDir::currentPath()')
+assert 'sandbox_free_error' in runtime
+assert 'Mac App Store builds are unsupported by Teagram.' in root_cmake
+assert 'if (MacProtectedPath::IsActive())' in sandbox
+assert 'MacProtectedPath::IntegrationTestActive()' in sandbox
+assert 'MacProtectedPath::IsActive()' in specific_mac
+assert 'Core::MacProtectedPath::IsActive()' in notifications
+assert 'Core::MacProtectedPath::IsActive()' in notifications_un
+assert 'Core::MacProtectedPath::IsActive()' in webview
+assert '!Core::MacProtectedPath::IsActive()' in storage
+assert 'Core::MacProtectedPath::IsActive()' in audio_cache
+assert 'MacProtectedPath::IsActive()' in application
+assert 'return true;' in launcher.split('bool Launcher::checkPortableVersionFolder()', 1)[1]
+assert '_customWorkingDir.clear();' in launcher.split('#ifdef TDESKTOP_TEAGRAM', 1)[1]
+PY
 	test -f "$PLIST_FILE"
 	test -f "$CMAKE_FILE"
 	test -f "$VERSION_FILE"
