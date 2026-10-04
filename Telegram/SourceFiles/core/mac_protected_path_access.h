@@ -9,9 +9,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/mac_protected_path_runtime.h"
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QStringList>
+#include <QtCore/QUrl>
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace Core::MacProtectedPath {
@@ -57,6 +62,111 @@ class ScopedExternalPathCheckerForTesting final {
 	}
 #endif // TDESKTOP_UNIT_TESTS
 	return CheckExternalPath(operation, path, callsite);
+}
+
+[[nodiscard]] inline std::optional<QString>
+LocalFilePathFromUrl(const QString &url) {
+	const auto parsed = QUrl(url);
+	if (!parsed.isLocalFile() || !parsed.host().isEmpty()) {
+		return std::nullopt;
+	}
+	const auto path = parsed.toLocalFile();
+	return path.isEmpty() || path.startsWith(u"//"_q)
+			   ? std::nullopt
+			   : std::make_optional(path);
+}
+
+enum class FileUrlDispatchResult {
+	NotFileUrl,
+	Refused,
+	Dispatched,
+};
+
+template <typename Dispatch>
+[[nodiscard]] bool
+DispatchExternalPathIfAllowed(Operation operation, const QString &path,
+							  const char *callsite, Dispatch &&dispatch) {
+	if (!CheckExternalPathForUse(operation, path, callsite)) {
+		return false;
+	}
+	std::forward<Dispatch>(dispatch)();
+	return true;
+}
+
+template <typename Dispatch>
+[[nodiscard]] FileUrlDispatchResult
+DispatchFileUrlIfAllowed(const QString &url, const char *callsite,
+						 bool rejectInvalidLocalFileUrl, Dispatch &&dispatch) {
+	if (QUrl(url).scheme() != u"file"_q) {
+		return FileUrlDispatchResult::NotFileUrl;
+	}
+	const auto path = LocalFilePathFromUrl(url);
+	if (!path) {
+		if (rejectInvalidLocalFileUrl) {
+			return FileUrlDispatchResult::Refused;
+		}
+		std::forward<Dispatch>(dispatch)();
+		return FileUrlDispatchResult::Dispatched;
+	}
+	if (!CheckExternalPathForUse(Operation::Open, *path, callsite)) {
+		return FileUrlDispatchResult::Refused;
+	}
+	std::forward<Dispatch>(dispatch)();
+	return FileUrlDispatchResult::Dispatched;
+}
+
+template <typename Checker, typename Prepare>
+[[nodiscard]] bool
+PrepareExternalDirectoryIfAllowed(const QString &path, const char *callsite,
+								  Checker &&checker, Prepare &&prepare) {
+	return !path.isEmpty() && checker(Operation::Mkdir, path, callsite)
+		   && checker(Operation::OpenDir, path, callsite)
+		   && std::forward<Prepare>(prepare)();
+}
+
+template <typename Checker, typename IsRegularFile, typename Completion>
+[[nodiscard]] bool CompleteWebViewFileInputSelectionIfAllowed(
+	const QStringList &paths, Checker &&checker, bool requireRegularFiles,
+	IsRegularFile &&isRegularFile, Completion &&completion) {
+	if (paths.isEmpty()) {
+		return false;
+	}
+	auto allowed = true;
+	for (const auto &path : paths) {
+		const auto pathAllowed
+			= !path.isEmpty() && checker(path)
+			  && (!requireRegularFiles || isRegularFile(path));
+		allowed = pathAllowed && allowed;
+	}
+	if (!allowed) {
+		return false;
+	}
+	std::forward<Completion>(completion)(paths);
+	return true;
+}
+
+template <typename Dispatch>
+[[nodiscard]] bool DispatchCustomAppIconIfAllowed(const QString &source,
+												  const char *callsite,
+												  Dispatch &&dispatch) {
+	const auto check = [&](Operation operation, const QString &path) {
+		return CheckExternalPathForUse(operation, path, callsite);
+	};
+	if (!source.isEmpty() && !check(Operation::Read, source)) {
+		return false;
+	}
+	const auto bundle
+		= QDir::cleanPath(QCoreApplication::applicationDirPath() + u"/../.."_q);
+	const auto icon = bundle + u"/Icon\r"_q;
+	const auto temporary = QDir::tempPath();
+	if (!check(Operation::Read, bundle) || !check(Operation::Write, bundle)
+		|| !check(Operation::Read, icon) || !check(Operation::Write, icon)
+		|| !check(Operation::OpenDir, temporary)
+		|| !check(Operation::Write, temporary)) {
+		return false;
+	}
+	std::forward<Dispatch>(dispatch)();
+	return true;
 }
 
 class PersistedExternalPath final {

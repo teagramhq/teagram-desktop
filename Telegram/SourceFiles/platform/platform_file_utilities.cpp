@@ -7,15 +7,35 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/platform_file_utilities.h"
 
+#include "core/mac_protected_path_access.h"
 #include "test/test_launch_fuse.h"
 
 namespace Platform::File {
 
 void UnsafeOpenUrl(const QString &url) {
-	if (Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
+	const auto dispatch = [&] {
+		if (!Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
+			Unfused::UnsafeOpenUrl(url);
+		}
+	};
+#ifdef Q_OS_MAC
+	const auto fileUrlResult = Core::MacProtectedPath::DispatchFileUrlIfAllowed(
+		url, "platform.open-url",
+		Core::MacProtectedPath::IntegrationTestActive(), dispatch);
+	if (fileUrlResult
+		!= Core::MacProtectedPath::FileUrlDispatchResult::NotFileUrl) {
 		return;
 	}
-	Unfused::UnsafeOpenUrl(url);
+#else
+	const auto localPath = Core::MacProtectedPath::LocalFilePathFromUrl(url);
+	if (localPath) {
+		(void)Core::MacProtectedPath::DispatchExternalPathIfAllowed(
+			Core::MacProtectedPath::Operation::Open, *localPath,
+			"platform.open-url", dispatch);
+		return;
+	}
+#endif // Q_OS_MAC
+	dispatch();
 }
 
 void UnsafeOpenEmailLink(const QString &email) {
@@ -26,24 +46,38 @@ void UnsafeOpenEmailLink(const QString &email) {
 }
 
 bool UnsafeShowOpenWithDropdown(const QString &filepath) {
-	if (Test::BlockLaunch(u"UnsafeShowOpenWithDropdown"_q, filepath)) {
-		return true;
-	}
-	return Unfused::UnsafeShowOpenWithDropdown(filepath);
+	auto result = false;
+	const auto dispatched
+		= Core::MacProtectedPath::DispatchExternalPathIfAllowed(
+			Core::MacProtectedPath::Operation::Open, filepath,
+			"platform.open-with-dropdown", [&] {
+				result = Test::BlockLaunch(u"UnsafeShowOpenWithDropdown"_q,
+										   filepath)
+						 || Unfused::UnsafeShowOpenWithDropdown(filepath);
+			});
+	return !dispatched || result;
 }
 
 bool UnsafeShowOpenWith(const QString &filepath) {
-	if (Test::BlockLaunch(u"UnsafeShowOpenWith"_q, filepath)) {
-		return true;
-	}
-	return Unfused::UnsafeShowOpenWith(filepath);
+	auto result = false;
+	const auto dispatched
+		= Core::MacProtectedPath::DispatchExternalPathIfAllowed(
+			Core::MacProtectedPath::Operation::Open, filepath,
+			"platform.open-with", [&] {
+				result = Test::BlockLaunch(u"UnsafeShowOpenWith"_q, filepath)
+						 || Unfused::UnsafeShowOpenWith(filepath);
+			});
+	return !dispatched || result;
 }
 
 void UnsafeLaunch(const QString &filepath) {
-	if (Test::BlockLaunch(u"UnsafeLaunch"_q, filepath)) {
-		return;
-	}
-	Unfused::UnsafeLaunch(filepath);
+	(void)Core::MacProtectedPath::DispatchExternalPathIfAllowed(
+		Core::MacProtectedPath::Operation::Open, filepath, "platform.launch",
+		[&] {
+			if (!Test::BlockLaunch(u"UnsafeLaunch"_q, filepath)) {
+				Unfused::UnsafeLaunch(filepath);
+			}
+		});
 }
 
 } // namespace Platform::File
