@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/integration.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QResource>
+#include <QtCore/QString>
 
 #include <cstdio>
 #include <vector>
@@ -103,6 +105,20 @@ QString Describe(const QByteArray &value) {
 
 int main(int argc, char *argv[]) {
 	auto app = QCoreApplication(argc, argv);
+
+#ifdef Q_OS_MAC
+	const auto resources = QCoreApplication::applicationDirPath()
+		+ QStringLiteral("/test_unit.rcc");
+	const auto resourcesBytes = resources.toLocal8Bit();
+	if (!QResource::registerResource(resources)) {
+		std::fprintf(
+			stderr,
+			"Could not register unit test resources at %s\n",
+			resourcesBytes.constData());
+		return 1;
+	}
+#endif // Q_OS_MAC
+
 	auto integration = Test::Unit::Integration(argc, argv);
 	base::Integration::Set(&integration);
 

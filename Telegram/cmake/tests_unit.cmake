@@ -94,6 +94,7 @@ PRIVATE
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
+    tests/unit/teagram_icon_render_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
     tests/unit/unit_test.cpp
@@ -102,6 +103,11 @@ PRIVATE
     mtproto/connection_server_resolving.cpp
     mtproto/connection_server_resolving.h
     mtproto/proxy_check.cpp
+)
+
+nice_target_sources(test_unit ${res_loc}
+PRIVATE
+    qrc/telegram/mac_icons.qrc
 )
 
 if(APPLE)
@@ -135,3 +141,14 @@ set_target_properties(test_unit PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+target_prepare_qrc(test_unit)
+
+if(APPLE AND CMAKE_CONFIGURATION_TYPES)
+    add_custom_command(TARGET test_unit POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/test_unit.rcc"
+            "$<TARGET_FILE_DIR:test_unit>/test_unit.rcc"
+        VERBATIM
+    )
+endif()
