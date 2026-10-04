@@ -56,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 #include <set>
 #include <thread>
+#include <vector>
 
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -336,6 +337,21 @@ RegressionOtherServerKey() {
 }
 
 [[nodiscard]] bool RestartDomain(Main::Domain &domain) {
+	auto &app = Core::App();
+	auto windows = std::vector<Window::Controller *>();
+	app.enumerateWindows([&](not_null<Window::Controller*> window) {
+		windows.push_back(window.get());
+	});
+	for (const auto window : windows) {
+		app.closeWindow(window);
+	}
+	auto windowsRemain = false;
+	app.enumerateWindows([&](not_null<Window::Controller*>) {
+		windowsRemain = true;
+	});
+	if (windowsRemain) {
+		return false;
+	}
 	domain.local().writeAccounts();
 	domain.finish();
 	Storage::details::Sync();
