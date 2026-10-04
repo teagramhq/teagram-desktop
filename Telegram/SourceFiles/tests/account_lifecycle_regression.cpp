@@ -1233,36 +1233,124 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		domain.activate(stock);
 	});
-	const auto windowsMatch = [&] {
+	const auto printCapabilities = [](const char *name,
+								  const Main::Session &session) {
+		std::fprintf(stderr,
+			"%s capabilities=%d%d%d%d%d%d%d%d\n",
+			name,
+			session.callsSupported(),
+			session.botAppsSupported(),
+			session.paidFeaturesSupported(),
+			session.storiesSupported(),
+			session.exportSupported(),
+			session.passportSupported(),
+			session.aiComposeSupported(),
+			session.serverTranslationSupported());
+	};
+	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
 		const auto pinnedController = pinnedWindow->sessionController();
-		return (stockWindow != pinnedWindow)
-			&& (app.separateWindowFor(stock) == stockWindow)
-			&& (app.separateWindowFor(pinned) == pinnedWindow)
-			&& (&stockWindow->account() == stock.get())
-			&& (&pinnedWindow->account() == pinned.get())
-			&& stockController
-			&& pinnedController
-			&& (&stockController->session() == &stock->session())
-			&& (&pinnedController->session() == &pinned->session())
-			&& capabilitiesMatch(stockController->session(), true)
+		const auto stockMapped = app.separateWindowFor(stock) == stockWindow;
+		const auto pinnedMapped = app.separateWindowFor(pinned) == pinnedWindow;
+		const auto stockBound = &stockWindow->account() == stock.get();
+		const auto pinnedBound = &pinnedWindow->account() == pinned.get();
+		const auto stockSessionMatches = stockController
+			&& (&stockController->session() == &stock->session());
+		const auto pinnedSessionMatches = pinnedController
+			&& (&pinnedController->session() == &pinned->session());
+		const auto stockCapabilitiesMatch = stockController
+			&& capabilitiesMatch(stockController->session(), true);
+		const auto pinnedCapabilitiesMatch = pinnedController
 			&& capabilitiesMatch(pinnedController->session(), false);
+		const auto matches = (stockWindow != pinnedWindow)
+			&& stockMapped
+			&& pinnedMapped
+			&& stockBound
+			&& pinnedBound
+			&& stockSessionMatches
+			&& pinnedSessionMatches
+			&& stockCapabilitiesMatch
+			&& pinnedCapabilitiesMatch;
+		if (!matches) {
+			std::fprintf(
+				stderr,
+				"Window/session regression mismatch at %s: "
+				"distinct=%d mapped=%d/%d account=%d/%d "
+				"controller=%d/%d session=%d/%d gates=%d/%d active=%p\n",
+				stage,
+				stockWindow != pinnedWindow,
+				stockMapped,
+				pinnedMapped,
+				stockBound,
+				pinnedBound,
+				stockController != nullptr,
+				pinnedController != nullptr,
+				stockSessionMatches,
+				pinnedSessionMatches,
+				stockCapabilitiesMatch,
+				pinnedCapabilitiesMatch,
+				static_cast<const void *>(&domain.active()));
+			printCapabilities("stock account", stock->session());
+			printCapabilities("pinned account", pinned->session());
+			if (stockController) {
+				printCapabilities("stock window", stockController->session());
+			}
+			if (pinnedController) {
+				printCapabilities("pinned window", pinnedController->session());
+			}
+		}
+		return matches;
 	};
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
 		const auto second = customFirst ? stock : pinned;
 		domain.activate(first);
-		if ((&domain.active() != first.get())
-			|| !capabilitiesMatch(first->session(), !customFirst)
-			|| !windowsMatch()) {
+		const auto firstActive = &domain.active() == first.get();
+		const auto firstCapabilities
+			= capabilitiesMatch(first->session(), !customFirst);
+		const auto firstWindows = windowsMatch(customFirst
+			? "custom account first activation"
+			: "stock account first activation");
+		if (!firstActive || !firstCapabilities || !firstWindows) {
+			std::fprintf(stderr,
+				"First activation mismatch: customFirst=%d active=%d "
+				"capabilities=%d windows=%d\n",
+				customFirst, firstActive, firstCapabilities, firstWindows);
+			if (!firstCapabilities) {
+				printCapabilities(customFirst ? "pinned first" : "stock first",
+					first->session());
+			}
 			return false;
 		}
 		domain.activate(second);
-		return (&domain.active() == second.get())
-			&& capabilitiesMatch(second->session(), customFirst)
-			&& windowsMatch();
+		const auto secondActive = &domain.active() == second.get();
+		const auto secondCapabilities
+			= capabilitiesMatch(second->session(), customFirst);
+		const auto secondWindows = windowsMatch(customFirst
+			? "stock account second activation"
+			: "custom account second activation");
+		if (!secondActive || !secondCapabilities || !secondWindows) {
+			std::fprintf(stderr,
+				"Second activation mismatch: customFirst=%d active=%d "
+				"capabilities=%d windows=%d\n",
+				customFirst, secondActive, secondCapabilities, secondWindows);
+			if (!secondCapabilities) {
+				printCapabilities(customFirst ? "stock second" : "pinned second",
+					second->session());
+			}
+			return false;
+		}
+		return true;
 	};
-	if (!stockWindow || !pinnedWindow || !windowsMatch()
+	if (!stockWindow || !pinnedWindow) {
+		std::fprintf(stderr,
+			"Separate window construction failed: stock=%p pinned=%p\n",
+			static_cast<const void *>(stockWindow),
+			static_cast<const void *>(pinnedWindow));
+		return FailChatParticipantsRegression(
+			"session feature capabilities crossed account or window boundaries");
+	}
+	if (!windowsMatch("initial separate windows")
 		|| !activateAndCheck(false)
 		|| !activateAndCheck(true)) {
 		return FailChatParticipantsRegression(
