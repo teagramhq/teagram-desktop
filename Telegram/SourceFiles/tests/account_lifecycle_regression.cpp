@@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSemaphore>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtWidgets/QApplication>
 
 #include <algorithm>
 #include <atomic>
@@ -399,24 +400,25 @@ RegressionOtherServerKey() {
 
 [[nodiscard]] bool RestartDomain(Main::Domain &domain) {
 	auto &app = Core::App();
-	const auto sessionWindows = [&] {
+	const auto applicationWindows = [&] {
 		auto result = std::vector<Window::Controller *>();
-		for (const auto &entry : domain.accounts()) {
-			const auto &account = entry.account;
-			if (!account->sessionExists()) {
-				continue;
-			}
-			for (const auto &controller : account->session().windows()) {
-				result.push_back(&controller->window());
+		for (const auto widget : QApplication::topLevelWidgets()) {
+			if (const auto window = app.findWindow(widget)) {
+				if (std::find(
+						result.begin(),
+						result.end(),
+						window) == result.end()) {
+					result.push_back(window);
+				}
 			}
 		}
 		return result;
 	};
-	const auto windows = sessionWindows();
+	const auto windows = applicationWindows();
 	for (const auto window : windows) {
 		app.closeWindow(window);
 	}
-	if (!sessionWindows().empty()) {
+	if (!applicationWindows().empty()) {
 		return false;
 	}
 	domain.local().writeAccounts();
