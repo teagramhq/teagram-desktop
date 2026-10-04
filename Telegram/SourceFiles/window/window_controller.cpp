@@ -146,11 +146,11 @@ void Controller::showAccount(
 		MsgId singlePeerShowAtMsgId) {
 	Expects(isPrimary() || _id.account == account);
 
-	const auto prevAccount = _id.account;
 	const auto prevSession = maybeSession();
-	const auto prevSessionUniqueId = prevSession
-		? prevSession->uniqueId()
-		: 0;
+	const auto prevSessionWeak = prevSession
+		? base::make_weak(prevSession)
+		: base::weak_ptr<Main::Session>();
+	const auto prevAccount = _id.account;
 	const auto accountBeforeIntro = (prevAccount
 		&& prevAccount != account
 		&& prevAccount->sessionExists())
@@ -161,17 +161,9 @@ void Controller::showAccount(
 	Core::App().checkWindowId(this);
 	_serverIdentityDialogShown = false;
 
-	const auto updateOnlineOfPrevSesssion = crl::guard(account, [=] {
-		if (!prevSessionUniqueId) {
-			return;
-		}
-		for (auto &[index, account] : _id.account->domain().accounts()) {
-			if (const auto anotherSession = account->maybeSession()) {
-				if (anotherSession->uniqueId() == prevSessionUniqueId) {
-					anotherSession->updates().updateOnline(crl::now());
-					return;
-				}
-			}
+	crl::on_main([prevSessionWeak] {
+		if (const auto prevSession = prevSessionWeak.get()) {
+			prevSession->updates().updateOnline(crl::now());
 		}
 	});
 
@@ -229,7 +221,6 @@ void Controller::showAccount(
 			_widget.updateGlobalMenu();
 		}
 
-		crl::on_main(updateOnlineOfPrevSesssion);
 	}, _accountLifetime);
 
 	account->mtp().pinnedServerFailure(

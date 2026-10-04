@@ -1381,6 +1381,32 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"pinned migration fixture is not an active custom-server group");
 	}
 	pinned->mtp().stopForServerEnrollment();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary) {
+		return FailChatParticipantsRegression(
+			"primary window disappeared before online-update lifetime regression");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the stock session");
+	}
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the pinned session");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch back to the stock session");
+	}
+	app.closeWindow(primary);
+	QCoreApplication::processEvents();
+	if (!windowsMatch()) {
+		return FailChatParticipantsRegression(
+			"primary close changed the separate session windows");
+	}
 
 	struct MigrationResult {
 		int done = 0;
