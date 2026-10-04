@@ -430,8 +430,14 @@ RegressionOtherServerKey() {
 		return false;
 	}
 	const auto primary = app.activePrimaryWindow();
-	return primary
-		&& (&primary->account() == domain.accounts().front().account.get());
+	if (!primary) {
+		return false;
+	}
+	const auto active = &domain.active();
+	if (primary->id().account != active) {
+		primary->showAccount(active);
+	}
+	return &primary->account() == active;
 }
 
 [[nodiscard]] int FailAccountLifecycleRegression(const char *reason) {
