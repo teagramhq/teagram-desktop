@@ -635,6 +635,19 @@ void Application::processCreatedWindow(
 	) | rpl::start_to_stream(_openInMediaViewRequests, window->lifetime());
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void Application::createPrimaryWindowForLifecycleRegression() {
+	Expects(_windows.empty());
+	const auto window = _windows.emplace(
+		nullptr,
+		std::make_unique<Window::Controller>()
+	).first->second.get();
+	setLastActiveWindow(window);
+	_windowInSettings = _lastActivePrimaryWindow = window;
+	processCreatedWindow(window);
+}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+
 void Application::startMediaView() {
 #ifdef Q_OS_MAC
 	// On macOS we create some windows async, otherwise they're

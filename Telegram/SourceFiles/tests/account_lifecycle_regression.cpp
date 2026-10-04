@@ -422,10 +422,16 @@ RegressionOtherServerKey() {
 		return false;
 	}
 	domain.local().writeAccounts();
+	app.createPrimaryWindowForLifecycleRegression();
 	domain.finish();
 	Storage::details::Sync();
-	return (domain.start(QByteArray()) == Storage::StartResult::Success)
-		&& !domain.accounts().empty();
+	if (domain.start(QByteArray()) != Storage::StartResult::Success
+		|| domain.accounts().empty()) {
+		return false;
+	}
+	const auto primary = app.activePrimaryWindow();
+	return primary
+		&& (&primary->account() == domain.accounts().front().account.get());
 }
 
 [[nodiscard]] int FailAccountLifecycleRegression(const char *reason) {

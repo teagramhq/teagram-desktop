@@ -141,6 +141,9 @@ public:
 	~Application();
 
 	void run();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void createPrimaryWindowForLifecycleRegression();
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 	[[nodiscard]] Platform::Integration &platformIntegration() const {
 		return *_platformIntegration;
