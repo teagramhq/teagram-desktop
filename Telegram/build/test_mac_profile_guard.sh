@@ -77,6 +77,32 @@ fixture_unchanged() {
 	fi
 }
 
+run_seatbelt_cat_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local output
+	local status
+	if [[ ! -f "$path" ]]; then
+		echo "$name fixture is missing: $path" >&2
+		return 1
+	fi
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 || -n "$output" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+	printf '%s=PASS child=/bin/cat path=%s\n' "$name" "$path"
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -356,6 +382,54 @@ if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH"
 fi
 printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' \
 	"$CANARY_STATUS"
+
+APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
+mkdir -p "$(dirname "$APPLICATION_SUPPORT_CANARY")"
+printf '%s' 'synthetic protected application support bytes' \
+	> "$APPLICATION_SUPPORT_CANARY"
+APPLICATION_SUPPORT_CANARY_HASH="$(shasum -a 256 \
+	"$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_traversal_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$APPLICATION_SUPPORT_CANARY" \
+	|| exit 1
+
+REALPATH_HOME_ALIAS="$TEST_HOME/realpath-home"
+ln -s "$TEST_HOME" "$REALPATH_HOME_ALIAS"
+REALPATH_CANARY="$REALPATH_HOME_ALIAS/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_realpath_denial \
+	--mac-seatbelt-cat-probe "$REALPATH_HOME_ALIAS" "$REALPATH_CANARY" \
+	|| exit 1
+
+FIRMLINK_HOME="/System/Volumes/Data$TEST_HOME"
+if [[ ! -d "$FIRMLINK_HOME" ]] \
+	|| [[ "$(stat -f '%d:%i' "$FIRMLINK_HOME")" \
+		!= "$(stat -f '%d:%i' "$TEST_HOME")" ]]; then
+	echo "synthetic home has no matching /System/Volumes/Data alias." >&2
+	exit 1
+fi
+FIRMLINK_CANARY="$FIRMLINK_HOME/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_firmlink_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FIRMLINK_CANARY" \
+	|| exit 1
+
+run_seatbelt_cat_probe \
+	seatbelt_teagram_profile_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	|| exit 1
+
+if [[ "$(shasum -a 256 "$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')" \
+	!= "$APPLICATION_SUPPORT_CANARY_HASH" ]]; then
+	echo "application support canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
+	!= "$ACCOUNT_STATE_HASH" ]]; then
+	echo "allowed Teagram profile file changed during the access probe." >&2
+	exit 1
+fi
 
 mkdir -p "$IPC_DIRECTORY"
 

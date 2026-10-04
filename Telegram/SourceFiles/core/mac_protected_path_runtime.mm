@@ -581,7 +581,7 @@ bool CheckCachePathForTesting(
 	return CheckCachePathImpl(path, callsite, beforeEntryStat);
 }
 
-int RunSeatbeltCatProbe(const char *path) {
+int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	if (!IntegrationTestActive() || !path || !*path) {
 		return 1;
 	}
@@ -635,10 +635,16 @@ int RunSeatbeltCatProbe(const char *path) {
 		waited = ::waitpid(child, &status, 0);
 	} while (waited < 0 && errno == EINTR);
 	const auto permissionError = QByteArray(std::strerror(EPERM));
-	return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 1
-				   && diagnostic.contains(permissionError)
-			   ? 0
-			   : 1;
+	if (waited != child || !WIFEXITED(status)) {
+		return 1;
+	}
+	if (expectDenied) {
+		return WEXITSTATUS(status) == 1
+				&& diagnostic.contains(permissionError)
+			? 0
+			: 1;
+	}
+	return WEXITSTATUS(status) == 0 && diagnostic.isEmpty() ? 0 : 1;
 }
 #endif
 

@@ -50,6 +50,8 @@ audio_cache = (root / 'Telegram/SourceFiles/media/audio/media_audio_local_cache.
 application = (root / 'Telegram/SourceFiles/core/application.cpp').read_text(encoding='utf-8')
 assert 'if (!Core::MacProtectedPath::InitializeProfile())' in main
 assert 'sandbox_init(' in runtime
+assert 'RunSeatbeltCatProbe(argv[2], true)' in main
+assert 'RunSeatbeltCatProbe(argv[2], false)' in main
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy
@@ -143,6 +145,17 @@ assert 'Library/Application Support/Teagram' in profile_policy
 assert 'Teagram-lock-' in sandbox
 assert '/Teagram-' in socket
 assert 'Library/Application Support/Teagram' in profile_test
+for probe in (
+    'seatbelt_application_support_traversal_denial',
+    'seatbelt_application_support_realpath_denial',
+    'seatbelt_application_support_firmlink_denial',
+    'seatbelt_teagram_profile_allowed',
+    '"$PROFILE/../Telegram Desktop/tdata/synthetic-canary"',
+    '"/System/Volumes/Data$TEST_HOME"',
+    'Teagram/../Telegram Desktop/tdata/synthetic-canary',
+    '"$ACCOUNT_STATE"',
+):
+    assert probe in profile_test
 assert 'Teagram-lock-' in profile_test
 assert 'Teagram-' in profile_test
 assert 'Show Teagram' in global_menu

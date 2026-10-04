@@ -37,7 +37,7 @@ namespace Core::MacProtectedPath {
 [[nodiscard]] bool
 CheckCachePathForTesting(const QString &path, const char *callsite,
 						 std::function<void(const QString &)> beforeEntryStat);
-[[nodiscard]] int RunSeatbeltCatProbe(const char *path);
+[[nodiscard]] int RunSeatbeltCatProbe(const char *path, bool expectDenied);
 #endif
 
 [[nodiscard]] bool CheckPair(Operation operation, const QString &first,

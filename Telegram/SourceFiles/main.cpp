@@ -15,9 +15,13 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	if (Core::MacProtectedPath::IntegrationTestActive() && argc == 3
-		&& !std::strcmp(argv[1], "--mac-seatbelt-cat-probe")) {
-		return Core::MacProtectedPath::RunSeatbeltCatProbe(argv[2]);
+	if (Core::MacProtectedPath::IntegrationTestActive() && argc == 3) {
+		if (!std::strcmp(argv[1], "--mac-seatbelt-cat-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltCatProbe(argv[2], true);
+		}
+		if (!std::strcmp(argv[1], "--mac-seatbelt-cat-allow-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltCatProbe(argv[2], false);
+		}
 	}
 #endif
 	const auto launcher = Core::Launcher::Create(argc, argv);
