@@ -104,6 +104,24 @@ run_seatbelt_cat_probe() {
 	printf '%s=PASS child=/bin/cat path=%s\n' "$name" "$path"
 }
 
+run_bundle_keyed_probe() {
+	local name="$1"
+	local parent="$2"
+	local canary="$TEST_HOME/Library/$parent/org.telegram.desktop.fixture/synthetic-canary"
+	local canary_hash
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected bundle-keyed bytes' > "$canary"
+	canary_hash="$(shasum -a 256 "$canary" | awk '{print $1}')"
+	run_seatbelt_cat_probe \
+		"$name" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| return 1
+	if [[ "$(shasum -a 256 "$canary" | awk '{print $1}')" != "$canary_hash" ]]; then
+		echo "$name canary changed during the denial probe." >&2
+		return 1
+	fi
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -394,13 +412,13 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$CONTAINER_CANARY" \
 	|| exit 1
 
-BUNDLE_KEYED_CANARY="$TEST_HOME/Library/Preferences/org.telegram.desktop.fixture"
-mkdir -p "$(dirname "$BUNDLE_KEYED_CANARY")"
-printf '%s' 'synthetic protected bundle-keyed bytes' > "$BUNDLE_KEYED_CANARY"
-BUNDLE_KEYED_CANARY_HASH="$(shasum -a 256 "$BUNDLE_KEYED_CANARY" | awk '{print $1}')"
-run_seatbelt_cat_probe \
-	seatbelt_bundle_keyed_denial \
-	--mac-seatbelt-cat-probe "$TEST_HOME" "$BUNDLE_KEYED_CANARY" \
+run_bundle_keyed_probe seatbelt_bundle_keyed_denial Preferences || exit 1
+run_bundle_keyed_probe seatbelt_caches_denial Caches || exit 1
+run_bundle_keyed_probe seatbelt_httpstorages_denial HTTPStorages || exit 1
+run_bundle_keyed_probe seatbelt_webkit_denial WebKit || exit 1
+run_bundle_keyed_probe \
+	seatbelt_saved_application_state_denial \
+	"Saved Application State" \
 	|| exit 1
 
 APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
@@ -448,11 +466,6 @@ fi
 if [[ "$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')" \
 	!= "$CONTAINER_CANARY_HASH" ]]; then
 	echo "container canary changed during the denial probes." >&2
-	exit 1
-fi
-if [[ "$(shasum -a 256 "$BUNDLE_KEYED_CANARY" | awk '{print $1}')" \
-	!= "$BUNDLE_KEYED_CANARY_HASH" ]]; then
-	echo "bundle-keyed canary changed during the denial probes." >&2
 	exit 1
 fi
 if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
