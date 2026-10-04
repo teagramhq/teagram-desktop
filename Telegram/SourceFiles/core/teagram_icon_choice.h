@@ -49,6 +49,21 @@ inline constexpr auto kTeagramIconSvgResources = std::array{
 inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 	kTeagramIconSvgResources.size());
 
+inline constexpr auto kTeagramIconPickerOrder = std::array{
+	TeagramIconChoice::MugSignal,
+	TeagramIconChoice::MugTea,
+	TeagramIconChoice::MugGreen,
+	TeagramIconChoice::MugSky,
+	TeagramIconChoice::MugCrimson,
+	TeagramIconChoice::MugBrown,
+	TeagramIconChoice::TPrimary,
+	TeagramIconChoice::TNavy,
+	TeagramIconChoice::TNight,
+	TeagramIconChoice::TPaper,
+	TeagramIconChoice::TCrimson,
+	TeagramIconChoice::TBrown,
+};
+
 [[nodiscard]] constexpr std::string_view TeagramIconSvgResource(
 		TeagramIconChoice choice) {
 	const auto index = static_cast<int>(choice);

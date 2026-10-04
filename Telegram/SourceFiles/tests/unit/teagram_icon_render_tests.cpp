@@ -18,6 +18,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 using namespace Core;
 
+TEST_CASE(TeagramIconPickerOrdersMugsBeforeTs) {
+	const auto expected = std::array{
+		TeagramIconChoice::MugSignal,
+		TeagramIconChoice::MugTea,
+		TeagramIconChoice::MugGreen,
+		TeagramIconChoice::MugSky,
+		TeagramIconChoice::MugCrimson,
+		TeagramIconChoice::MugBrown,
+		TeagramIconChoice::TPrimary,
+		TeagramIconChoice::TNavy,
+		TeagramIconChoice::TNight,
+		TeagramIconChoice::TPaper,
+		TeagramIconChoice::TCrimson,
+		TeagramIconChoice::TBrown,
+	};
+	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
+		CHECK_EQ(kTeagramIconPickerOrder[index], expected[index]);
+	}
+}
+
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
 	CHECK_EQ(kTeagramIconChoiceCount, 12);
 	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
