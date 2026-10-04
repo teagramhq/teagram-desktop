@@ -10,39 +10,71 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_icon_choice.h"
 
 #include <array>
+#include <string_view>
 
 #include <QtGui/QColor>
 #include <QtGui/QImage>
-#include <QtGui/QPainter>
-#include <QtSvg/QSvgRenderer>
 
 using namespace Core;
+
+namespace {
+
+struct TeagramIconPreferences {
+	int savedChoice = -1;
+
+	template <typename Type>
+	Type readPref(std::string_view key, Type fallback = Type{}) const {
+		return (key == kTeagramIconChoicePreference)
+			? static_cast<Type>(savedChoice)
+			: fallback;
+	}
+};
+
+} // namespace
+
+TEST_CASE(TeagramIconPickerOrdersMugsBeforeTs) {
+	const auto expected = std::array{
+		TeagramIconChoice::MugSignal,
+		TeagramIconChoice::MugGreen,
+		TeagramIconChoice::MugSky,
+		TeagramIconChoice::MugCrimson,
+		TeagramIconChoice::MugBrown,
+		TeagramIconChoice::TPrimary,
+		TeagramIconChoice::TNavy,
+		TeagramIconChoice::TNight,
+		TeagramIconChoice::TPaper,
+		TeagramIconChoice::TCrimson,
+		TeagramIconChoice::TBrown,
+	};
+	CHECK_EQ(static_cast<int>(kTeagramIconPickerOrder.size()), 11);
+	for (auto index = 0; index != static_cast<int>(expected.size()); ++index) {
+		CHECK_EQ(
+			static_cast<int>(kTeagramIconPickerOrder[index]),
+			static_cast<int>(expected[index]));
+	}
+}
+
+TEST_CASE(PreviouslySavedMugTeaLoadsAsMugSignal) {
+	auto settings = TeagramIconPreferences{ .savedChoice = 1 };
+	CHECK_EQ(
+		static_cast<int>(ReadTeagramIconChoice(settings)),
+		static_cast<int>(TeagramIconChoice::MugSignal));
+}
 
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
 	CHECK_EQ(kTeagramIconChoiceCount, 12);
 	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
-		const auto resource = kTeagramIconSvgResources[index];
-		const auto path = QString::fromLatin1(
-			resource.data(),
-			static_cast<qsizetype>(resource.size()));
-		auto renderer = QSvgRenderer(path);
-		CHECK(renderer.isValid());
-
-		auto image = QImage(
-			QSize(1024, 1024),
-			QImage::Format_ARGB32_Premultiplied);
-		image.fill(Qt::transparent);
-		{
-			auto painter = QPainter(&image);
-			renderer.render(&painter);
-		}
+		const auto choice = static_cast<TeagramIconChoice>(index);
+		const auto image = RenderTeagramIconImage(choice);
+		CHECK(!image.isNull());
+		CHECK(image.size() == QSize(1024, 1024));
+		CHECK(image.devicePixelRatioF() == 2.);
 		CHECK_EQ(image.pixelColor(512, 512).alpha(), 255);
 		CHECK_EQ(image.pixelColor(99, 512).alpha(), 0);
 		CHECK_EQ(image.pixelColor(101, 512).alpha(), 255);
 
 		// The outer signal arc peaks at SVG (494, 202), mapping to pixel
 		// (497, 262) in the macOS icon template.
-		const auto choice = static_cast<TeagramIconChoice>(index);
 		auto expectedArcColor = QColor();
 		auto expectedTColor = QColor();
 		switch (choice) {

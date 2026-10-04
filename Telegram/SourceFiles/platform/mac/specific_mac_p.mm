@@ -7,25 +7,28 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/mac/specific_mac_p.h"
 
-#include "mainwindow.h"
-#include "mainwidget.h"
+#include "base/debug_log.h"
+#include "base/platform/base_platform_info.h"
+#include "base/platform/mac/base_utilities_mac.h"
+#include "base/timer.h"
 #include "calls/calls_instance.h"
-#include "core/sandbox.h"
 #include "core/application.h"
 #include "core/core_settings.h"
-#include "core/mac_protected_path_runtime.h"
-#include "core/version.h"
 #include "core/crash_reports.h"
-#include "menu/menu_dock.h"
-#include "storage/localstorage.h"
+#include "core/mac_protected_path_runtime.h"
+#include "core/sandbox.h"
+#include "core/version.h"
 #include "media/audio/media_audio.h"
-#include "window/window_controller.h"
-#include "base/platform/mac/base_utilities_mac.h"
-#include "base/platform/base_platform_info.h"
-#include "base/timer.h"
-#include "styles/style_window.h"
+#include "menu/menu_dock.h"
 #include "platform/platform_specific.h"
+#include "storage/localstorage.h"
+#include "window/window_controller.h"
+#include "mainwidget.h"
+#include "mainwindow.h"
 
+#include "styles/style_window.h"
+
+#include <QtGui/QImage>
 #include <QtGui/QWindow>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMenu>
@@ -191,12 +194,67 @@ namespace Platform {
 
 void SetApplicationIcon(const QIcon &icon) {
 	NSImage *image = nil;
+	auto pixmap = QPixmap();
 	if (!icon.isNull()) {
-		auto pixmap = icon.pixmap(1024, 1024);
+		pixmap = icon.pixmap(1024, 1024);
 		pixmap.setDevicePixelRatio(style::DevicePixelRatio());
 		image = Q2NSImage(pixmap.toImage());
 	}
-	[[NSApplication sharedApplication] setApplicationIconImage:image];
+	auto *application = [NSApplication sharedApplication];
+	[application setApplicationIconImage:image];
+	[[application dockTile] display];
+	auto *applied = [application applicationIconImage];
+	const auto size = applied ? [applied size] : NSZeroSize;
+	const auto representations = applied
+		? [[applied representations] count]
+		: 0;
+	const auto same = (applied == image);
+	LOG(("Application icon QIcon pixmap=%1x%2 dpr=%3 null=%4 "
+		"AppKit=%5x%6 representations=%7 same=%8")
+		.arg(pixmap.width())
+		.arg(pixmap.height())
+		.arg(pixmap.devicePixelRatioF())
+		.arg(pixmap.isNull() ? 1 : 0)
+		.arg(size.width)
+		.arg(size.height)
+		.arg(static_cast<qulonglong>(representations))
+		.arg(same ? 1 : 0));
+}
+
+bool SetApplicationIcon(const QImage &image) {
+	auto *native = Q2NSImage(image);
+	if (!native) {
+		LOG(("Teagram icon conversion failed: raster=%1x%2 dpr=%3 null=%4")
+			.arg(image.width())
+			.arg(image.height())
+			.arg(image.devicePixelRatioF())
+			.arg(image.isNull() ? 1 : 0));
+		return false;
+	}
+	[native setSize:NSMakeSize(512, 512)];
+	auto *application = [NSApplication sharedApplication];
+	[application setApplicationIconImage:native];
+	[[application dockTile] display];
+	auto *applied = [application applicationIconImage];
+	const auto size = applied ? [applied size] : NSZeroSize;
+	const auto representations = applied
+		? [[applied representations] count]
+		: 0;
+	const auto same = (applied == native);
+	LOG(("Teagram icon raster=%1x%2 dpr=%3 null=%4 "
+		"AppKit=%5x%6 representations=%7 same=%8")
+		.arg(image.width())
+		.arg(image.height())
+		.arg(image.devicePixelRatioF())
+		.arg(image.isNull() ? 1 : 0)
+		.arg(size.width)
+		.arg(size.height)
+		.arg(static_cast<qulonglong>(representations))
+		.arg(same ? 1 : 0));
+	return applied
+		&& (representations > 0)
+		&& (size.width == 512)
+		&& (size.height == 512);
 }
 
 } // namespace Platform

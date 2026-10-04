@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <string_view>
 
+class QImage;
+
 namespace Core {
 
 enum class TeagramIconChoice : int {
@@ -49,6 +51,22 @@ inline constexpr auto kTeagramIconSvgResources = std::array{
 inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 	kTeagramIconSvgResources.size());
 
+inline constexpr auto kTeagramIconPickerOrder = std::array{
+	TeagramIconChoice::MugSignal,
+	TeagramIconChoice::MugGreen,
+	TeagramIconChoice::MugSky,
+	TeagramIconChoice::MugCrimson,
+	TeagramIconChoice::MugBrown,
+	TeagramIconChoice::TPrimary,
+	TeagramIconChoice::TNavy,
+	TeagramIconChoice::TNight,
+	TeagramIconChoice::TPaper,
+	TeagramIconChoice::TCrimson,
+	TeagramIconChoice::TBrown,
+};
+inline constexpr auto kTeagramIconPickerChoiceCount = static_cast<int>(
+	kTeagramIconPickerOrder.size());
+
 [[nodiscard]] constexpr std::string_view TeagramIconSvgResource(
 		TeagramIconChoice choice) {
 	const auto index = static_cast<int>(choice);
@@ -57,13 +75,18 @@ inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 		: kTeagramIconSvgResources[0];
 }
 
+[[nodiscard]] QImage RenderTeagramIconImage(TeagramIconChoice choice);
+
 template <typename Settings>
 [[nodiscard]] TeagramIconChoice ReadTeagramIconChoice(Settings &settings) {
 	const auto choice = settings.template readPref<int>(
 		kTeagramIconChoicePreference,
 		-1);
 	if (choice >= 0 && choice < kTeagramIconChoiceCount) {
-		return static_cast<TeagramIconChoice>(choice);
+		const auto result = static_cast<TeagramIconChoice>(choice);
+		return (result == TeagramIconChoice::MugTea)
+			? TeagramIconChoice::MugSignal
+			: result;
 	}
 	return settings.template readPref<bool>(
 		kLegacyTeagramIconChoicePreference)
