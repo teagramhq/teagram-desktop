@@ -37,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/color_editor.h"
 #include "ui/widgets/labels.h"
+#include "ui/abstract_button.h"
 #include "ui/chat/attach/attach_extensions.h"
 #include "ui/chat/chat_style.h"
 #include "ui/chat/chat_theme.h"
@@ -882,13 +883,13 @@ void BuildThemeSettingsSection(SectionBuilder &builder) {
 }
 
 #if defined Q_OS_MAC && !defined OS_MAC_STORE
-class TeagramIconPreview final : public Ui::RpWidget {
+class TeagramIconPreview final : public Ui::AbstractButton {
 public:
 	TeagramIconPreview(
 			QWidget *parent,
 			const QString &path,
 			const QString &accessibleName)
-	: Ui::RpWidget(parent)
+	: Ui::AbstractButton(parent)
 	, _renderer(path) {
 		setFixedSize(st::teagramAppIconPreviewSize);
 		setAccessibleName(accessibleName);
@@ -926,6 +927,23 @@ private:
 	QSvgRenderer _renderer;
 	bool _selected = false;
 
+};
+
+class TeagramIconChoiceTitle final : public Ui::AbstractButton {
+public:
+	TeagramIconChoiceTitle(
+			QWidget *parent,
+			const QString &title)
+	: Ui::AbstractButton(parent) {
+		setAccessibleName(title);
+		auto label = new Ui::FlatLabel(
+			this,
+			title,
+			st::teagramAppIconChoiceTitle);
+		label->setAttribute(Qt::WA_TransparentForMouseEvents);
+		label->resizeToWidth(st::teagramAppIconChoiceWidth);
+		setFixedSize(st::teagramAppIconChoiceWidth, label->height());
+	}
 };
 
 class TeagramIconChoiceRadio final : public Ui::Radiobutton {
@@ -1025,11 +1043,9 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 			preview->setSelected(index == selectedIndex);
 			previews[index] = preview;
 			columnLayout->addWidget(preview, 0, Qt::AlignHCenter);
-			auto name = new Ui::FlatLabel(
+			auto name = new TeagramIconChoiceTitle(
 				column,
-				title,
-				st::teagramAppIconChoiceTitle);
-			name->resizeToWidth(st::teagramAppIconChoiceWidth);
+				title);
 			columnLayout->addWidget(name, 0, Qt::AlignHCenter);
 			column->setFixedWidth(st::teagramAppIconChoiceWidth);
 			auto radio = new TeagramIconChoiceRadio(
@@ -1039,6 +1055,12 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 				title);
 			columnLayout->addWidget(radio, 0, Qt::AlignHCenter);
 			rowLayout->addWidget(column);
+			preview->setClickedCallback([=] {
+				group->setValue(index);
+			});
+			name->setClickedCallback([=] {
+				group->setValue(index);
+			});
 		}
 		rowRaw->adjustSize();
 		rowRaw->setFixedSize(rowLayout->sizeHint());
