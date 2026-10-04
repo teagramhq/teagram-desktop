@@ -143,3 +143,12 @@ set_target_properties(test_unit PROPERTIES
 )
 
 target_prepare_qrc(test_unit)
+
+if(APPLE AND CMAKE_CONFIGURATION_TYPES)
+    add_custom_command(TARGET test_unit POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/test_unit.rcc"
+            "$<TARGET_FILE_DIR:test_unit>/test_unit.rcc"
+        VERBATIM
+    )
+endif()

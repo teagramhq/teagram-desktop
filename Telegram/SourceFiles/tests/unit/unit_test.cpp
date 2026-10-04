@@ -7,10 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
-#include "base/base_file_utilities.h"
 #include "base/integration.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QResource>
+#include <QtCore/QString>
 
 #include <cstdio>
 #include <vector>
@@ -106,7 +107,16 @@ int main(int argc, char *argv[]) {
 	auto app = QCoreApplication(argc, argv);
 
 #ifdef Q_OS_MAC
-	base::RegisterBundledResources(u"test_unit.rcc"_q);
+	const auto resources = QCoreApplication::applicationDirPath()
+		+ QStringLiteral("/test_unit.rcc");
+	const auto resourcesBytes = resources.toLocal8Bit();
+	if (!QResource::registerResource(resources)) {
+		std::fprintf(
+			stderr,
+			"Could not register unit test resources at %s\n",
+			resourcesBytes.constData());
+		return 1;
+	}
 #endif // Q_OS_MAC
 
 	auto integration = Test::Unit::Integration(argc, argv);
