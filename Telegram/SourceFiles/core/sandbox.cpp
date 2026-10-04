@@ -138,7 +138,7 @@ int Sandbox::start() {
 			return 1;
 		}
 		const auto lockPath = MacProtectedPath::IntegrationTestActive()
-								  ? ipcDirectory + u"/Telegramd-lock-"_q
+								  ? ipcDirectory + u"/Teagram-lock-"_q
 										+ QString::fromLatin1(h.left(16))
 								  : ipcDirectory + '/' + h + '-' + cGUIDStr();
 		if (MacProtectedPath::IntegrationTestActive()) {
@@ -625,7 +625,25 @@ void Sandbox::readClients() {
 				} else if (cmd.startsWith(u"XDG_ACTIVATION_TOKEN:"_q)) {
 					qputenv("XDG_ACTIVATION_TOKEN", QByteArray::fromBase64(cmds.mid(from + 21, to - from - 21).toLatin1()));
 				} else if (cmd.startsWith(u"OPEN:"_q)) {
-					startUrls.append(cmds.mid(from + 5, to - from - 5).mid(0, 8192));
+					const auto raw
+						= cmds.mid(from + 5, to - from - 5).mid(0, 8192);
+					const auto url = QUrl(raw);
+#ifdef Q_OS_MAC
+					if ((url.scheme() == u"file"_q && !url.isLocalFile()
+						 && MacProtectedPath::IntegrationTestActive())
+						|| (url.isLocalFile()
+							&& !MacProtectedPath::CheckExternalPath(
+								MacProtectedPath::Operation::Open,
+								url.toLocalFile(), "sandbox.open"))
+						|| (url.scheme().isEmpty()
+							&& !MacProtectedPath::CheckExternalPath(
+								MacProtectedPath::Operation::Open, raw,
+								"sandbox.open"))) {
+						from = to + 1;
+						continue;
+					}
+#endif // Q_OS_MAC
+					startUrls.append(url);
 					if (!activationRequired) {
 						activationRequired = StartUrlRequiresActivate(startUrls.back().toString());
 					}

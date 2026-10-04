@@ -47,7 +47,7 @@ jobs:
 
   linux-changes:
     name: Detect Linux changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       required: ${{ steps.filter.outputs.required }}
 
@@ -71,7 +71,7 @@ jobs:
     name: Linux build and unit tests
     needs: linux-changes
     if: needs.linux-changes.outputs.required == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     strategy:
       matrix:
@@ -330,7 +330,7 @@ jobs:
       # already produced it, so this only executes it: seconds, not a second
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
-      # Telegramd ships for macOS, so Linux CI gates the standalone unit cases
+      # Teagram ships for macOS, so Linux CI gates the standalone unit cases
       # without running the desktop GUI regression under Xvfb.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
@@ -367,7 +367,7 @@ jobs:
       - linux-changes
       - linux-build
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Report Rocky Linux 8 result.

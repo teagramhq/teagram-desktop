@@ -10,8 +10,8 @@ jobs:
   macos:
     name: MacOS
     # This manually dispatched workflow may build locally and publishes only
-    # the ad-hoc-signed Telegramd-macOS-arm64-QA artifact for manual QA.
-    # The Telegramd-macOS-arm64 artifact remains owned by mac.yml, which checks
+    # the ad-hoc-signed Teagram-macOS-arm64-QA artifact for manual QA.
+    # The Teagram-macOS-arm64 artifact remains owned by mac.yml, which checks
     # identity and artifact metadata. Runtime isolation remains a manual canary.
     # This fork cannot schedule a depot label, and a build that queues forever
     # is not a build.
@@ -77,7 +77,7 @@ jobs:
           echo "RNNOISE=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/xiph/rnnoise/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
           echo "WEBRTC=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/desktop-app/tg_owt/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
 
-      - name: Telegramd compiler cache.
+      - name: Teagram compiler cache.
         id: cache-ccache
         uses: actions/cache/restore@v6
         with:
@@ -142,7 +142,7 @@ jobs:
           cmake --build build
           cmake --install build
 
-      - name: Telegramd build.
+      - name: Teagram build.
         if: env.ONLY_CACHE == 'false'
         run: |
           set -Eeuo pipefail
@@ -171,11 +171,11 @@ jobs:
             lldb --batch -o run -k bt -- ./build/test_unit
             exit 1
           fi
-          macdeployqt build/Telegramd.app -no-strip
+          macdeployqt build/Teagram.app -no-strip
 
-          app="$PWD/build/Telegramd.app"
-          executable="$app/Contents/MacOS/Telegramd"
-          archive="$PWD/build/Telegramd-macOS-arm64-QA.zip"
+          app="$PWD/build/Teagram.app"
+          executable="$app/Contents/MacOS/Teagram"
+          archive="$PWD/build/Teagram-macOS-arm64-QA.zip"
           package_root="$PWD/build/qa-package"
           extracted_root="$PWD/build/qa-extracted"
           rm -rf "$package_root" "$extracted_root" "$archive"
@@ -281,16 +281,16 @@ jobs:
           COPYFILE_DISABLE=1 ditto -c -k --keepParent "$app" "$archive"
           COPYFILE_DISABLE=1 ditto -x -k "$archive" "$extracted_root"
 
-          extracted_app="$extracted_root/Telegramd.app"
+          extracted_app="$extracted_root/Teagram.app"
           extracted_plist="$extracted_app/Contents/Info.plist"
-          extracted_executable="$extracted_app/Contents/MacOS/Telegramd"
+          extracted_executable="$extracted_app/Contents/MacOS/Teagram"
           test -f "$archive"
           test -d "$extracted_app"
           test -f "$extracted_plist"
           test -x "$extracted_executable"
 
           archive_roots="$(unzip -Z1 "$archive" | awk -F/ 'NF { print $1 }' | LC_ALL=C sort -u)"
-          test "$archive_roots" = "Telegramd.app"
+          test "$archive_roots" = "Teagram.app"
 
           symlink_manifest() {
             local root="$1"
@@ -306,9 +306,9 @@ jobs:
           fi
           grep -F '/Versions/Current ->' "$package_root/source-symlinks.txt" >/dev/null
 
-          test "$(plutil -extract CFBundleExecutable raw -o - "$extracted_plist")" = Telegramd
-          test "$(plutil -extract CFBundleName raw -o - "$extracted_plist")" = Telegramd
-          test "$(plutil -extract CFBundleIdentifier raw -o - "$extracted_plist")" = com.adambenhassen.telegramd
+          test "$(plutil -extract CFBundleExecutable raw -o - "$extracted_plist")" = Teagram
+          test "$(plutil -extract CFBundleName raw -o - "$extracted_plist")" = Teagram
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$extracted_plist")" = io.teagram.desktop
           if plutil -extract CFBundleURLTypes xml1 -o - "$extracted_plist" >/dev/null 2>&1; then
             echo "CFBundleURLTypes must be absent from $extracted_plist"
             exit 1
@@ -361,7 +361,7 @@ jobs:
               ""|Z*)
               wait "$launch_pid" || true
               cat "$launch_root/stdout.log" "$launch_root/stderr.log"
-              echo "extracted Telegramd did not remain launchable"
+              echo "extracted Teagram did not remain launchable"
               exit 1
               ;;
             esac
@@ -373,28 +373,28 @@ jobs:
           launch_pid=""
           if [ "$launch_status" -ne 0 ] && [ "$launch_status" -ne 143 ]; then
             cat "$launch_root/stdout.log" "$launch_root/stderr.log"
-            echo "extracted Telegramd exited with status $launch_status after launch"
+            echo "extracted Teagram exited with status $launch_status after launch"
             exit 1
           fi
 
           digest="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
           {
-            echo "## Telegramd macOS QA package"
+            echo "## Teagram macOS QA package"
             echo "- Built SHA: \`$GITHUB_SHA\`"
-            echo "- Artifact: \`Telegramd-macOS-arm64-QA\`"
-            echo "- Archive: \`Telegramd-macOS-arm64-QA.zip\`"
+            echo "- Artifact: \`Teagram-macOS-arm64-QA\`"
+            echo "- Archive: \`Teagram-macOS-arm64-QA.zip\`"
             echo "- Artifact URL: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"
             echo "- SHA-256: \`$digest\`"
             echo "- Retention: 14 days"
-            echo "- Archive root: \`Telegramd.app\`"
+            echo "- Archive root: \`Teagram.app\`"
             echo "- Symlink topology: preserved, including \`Versions/Current\`"
             echo "- ABI minimum OS: \`$min_os\`"
             echo "- ABI strong-load inspection: passed"
             echo "- ABI weak-load inspection: Translation.framework weak load present"
             echo "- ABI symbol inspection: passed"
             echo "- ABI availability metadata inspection: passed"
-            echo "- Bundle identifier: \`com.adambenhassen.telegramd\`"
-            echo "- Executable: \`Telegramd\` (arm64)"
+            echo "- Bundle identifier: \`io.teagram.desktop\`"
+            echo "- Executable: \`Teagram\` (arm64)"
             echo "- Code signature: ad hoc, verified after extraction"
             echo "- URL types: absent"
             echo "- Updater: absent"
@@ -410,9 +410,9 @@ jobs:
           regression_work="$regression_root/work"
           diagnostics="$regression_root/diagnostics"
           application_logs="$diagnostics/application"
-          symbols="$regression_root/symbols/Telegramd.app.dSYM"
+          symbols="$regression_root/symbols/Teagram.app.dSYM"
           repo="$GITHUB_WORKSPACE/$REPO_NAME"
-          executable="$repo/build/Telegramd.app/Contents/MacOS/Telegramd"
+          executable="$repo/build/Teagram.app/Contents/MacOS/Teagram"
           mkdir -p "$regression_home" "$regression_work" "$diagnostics" "$application_logs/DebugLogs" "$(dirname "$symbols")"
           test -x "$executable"
 
@@ -442,7 +442,7 @@ jobs:
 
           cmake -LA -N "$repo/build" > "$diagnostics/cmake-cache.txt"
           awk -F: '/^CMAKE_(BUILD_TYPE|C_COMPILER|CXX_COMPILER|C_FLAGS_DEBUG|CXX_FLAGS_DEBUG|EXE_LINKER_FLAGS_DEBUG|SHARED_LINKER_FLAGS_DEBUG|OSX_ARCHITECTURES|EXPORT_COMPILE_COMMANDS):/ { print }' "$diagnostics/cmake-cache.txt" > "$diagnostics/build-settings.txt"
-          printf 'CCACHE_DISABLE=1 for Telegramd build\n' >> "$diagnostics/build-settings.txt"
+          printf 'CCACHE_DISABLE=1 for Teagram build\n' >> "$diagnostics/build-settings.txt"
           build_type="$(awk -F= '$1 ~ "^CMAKE_BUILD_TYPE:" { print substr($0, index($0, "=") + 1); found=1; exit } END { if (!found) exit 1 }' "$repo/build/CMakeCache.txt")" || fail_dwarf_prerequisite "CMAKE_BUILD_TYPE is missing from CMakeCache.txt"
           if [ "$build_type" != "Debug" ]; then
             fail_dwarf_prerequisite "the effective CMake build type is $build_type, not Debug"
@@ -475,7 +475,7 @@ jobs:
               if source.startswith(source_root + os.sep):
                   app_entries.append((source, entry))
 
-          print(f"Telegramd source compile commands: {len(app_entries)}")
+          print(f"Teagram source compile commands: {len(app_entries)}")
           if not app_entries:
               print("No Telegram/SourceFiles compile commands were found.")
               sys.exit(1)
@@ -509,23 +509,23 @@ jobs:
           print("Every Telegram/SourceFiles compile command retains -g.")
           PY
           then
-            fail_dwarf_prerequisite "Telegramd compile commands do not all retain full -g DWARF; see compile-command-settings.txt"
+            fail_dwarf_prerequisite "Teagram compile commands do not all retain full -g DWARF; see compile-command-settings.txt"
           fi
 
-          if ! ninja -C "$repo/build" -t commands Telegram | grep -F 'Telegramd.app/Contents/MacOS/Telegramd' | tail -n 1 > "$diagnostics/telegramd-link-command.txt"; then
-            fail_dwarf_prerequisite "the effective Telegramd link command could not be captured"
+          if ! ninja -C "$repo/build" -t commands Telegram | grep -F 'Teagram.app/Contents/MacOS/Teagram' | tail -n 1 > "$diagnostics/teagram-link-command.txt"; then
+            fail_dwarf_prerequisite "the effective Teagram link command could not be captured"
           fi
           if [ ! -s "$diagnostics/telegramd-link-command.txt" ]; then
-            fail_dwarf_prerequisite "the effective Telegramd link command is empty"
+            fail_dwarf_prerequisite "the effective Teagram link command is empty"
           fi
 
           dsym_status=0
           dsymutil "$executable" -o "$symbols" > "$diagnostics/dsymutil.log" 2>&1 || dsym_status=$?
           symbol_file=""
           printf 'dsymutil exit: %s\n' "$dsym_status" >> "$diagnostics/metadata.txt"
-          dsym_file="$symbols/Contents/Resources/DWARF/Telegramd"
+          dsym_file="$symbols/Contents/Resources/DWARF/Teagram"
           if [ "$dsym_status" -ne 0 ] || [ ! -f "$dsym_file" ]; then
-            fail_dwarf_prerequisite "dsymutil did not produce a Telegramd DWARF file; see dsymutil.log"
+            fail_dwarf_prerequisite "dsymutil did not produce a Teagram DWARF file; see dsymutil.log"
           fi
 
           binary_uuid_status=0
@@ -537,7 +537,7 @@ jobs:
               || [ "$symbol_uuid_status" -ne 0 ] \
               || [ -z "$binary_uuid" ] \
               || [ "$binary_uuid" != "$symbol_uuid" ]; then
-            fail_dwarf_prerequisite "the generated dSYM UUID does not match Telegramd"
+            fail_dwarf_prerequisite "the generated dSYM UUID does not match Teagram"
           fi
           printf 'dSYM UUID matches executable.\n' >> "$diagnostics/metadata.txt"
 
@@ -562,7 +562,7 @@ jobs:
               }
             }
           ' > "$diagnostics/dwarf-info-summary.txt"; then
-            fail_dwarf_prerequisite "the dSYM lacks Telegramd compile units, functions, or application source paths"
+            fail_dwarf_prerequisite "the dSYM lacks Teagram compile units, functions, or application source paths"
           fi
           if ! "$dwarf_tool" --debug-line --arch=arm64 "$dsym_file" 2> "$diagnostics/dwarf-line-errors.txt" | awk '
             /^debug_line\[/ { line_tables++ }
@@ -660,17 +660,17 @@ jobs:
           faulting_frame="$(awk '
             /^\* thread .*stop reason = (EXC_|signal SIG(SEGV|ABRT|BUS))/ { fault_thread = 1; next }
             /^\* thread / { fault_thread = 0 }
-            fault_thread && /frame #0:.*Telegramd.* at .*:[0-9]+/ { print; exit }
+            fault_thread && /frame #0:.*Teagram.* at .*:[0-9]+/ { print; exit }
           ' "$diagnostics/lldb.log")"
 
           if grep -Eq 'EXC_(BAD_ACCESS|BREAKPOINT|CRASH)|SIG(SEGV|ABRT|BUS)' "$diagnostics/lldb.log"; then
             if [ -z "$faulting_frame" ]; then
-              echo "Crash reproduced, but LLDB did not symbolize the faulting Telegramd frame despite passing the DWARF prerequisite." >> "$diagnostics/metadata.txt"
-              echo "Crash reproduced without a symbolized faulting Telegramd frame on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+              echo "Crash reproduced, but LLDB did not symbolize the faulting Teagram frame despite passing the DWARF prerequisite." >> "$diagnostics/metadata.txt"
+              echo "Crash reproduced without a symbolized faulting Teagram frame on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            printf 'Faulting Telegramd frame: %s\n' "$faulting_frame" >> "$diagnostics/metadata.txt"
-            printf 'Null-audio lifecycle crash: %s\n' "$faulting_frame" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Faulting Teagram frame: %s\n' "$faulting_frame" >> "$diagnostics/metadata.txt"
+            printf 'Lifecycle crash: %s\n' "$faulting_frame" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           if [ "$debugger_status" -ne 0 ] || ! grep -F 'exited with status = 0' "$diagnostics/lldb.log" >/dev/null; then
@@ -700,7 +700,7 @@ jobs:
           echo "ccache misses this run: $MISSES"
           bash "$REPO_NAME/.github/scripts/ccache_save_decision.sh" "$MISSES" >> "$GITHUB_OUTPUT"
 
-      - name: Save Telegramd compiler cache.
+      - name: Save Teagram compiler cache.
         if: >
           always()
             && !cancelled()
@@ -711,11 +711,11 @@ jobs:
           path: ${{ runner.temp }}/ccache
           key: macOS-arm64-ccache-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Upload Telegramd manual QA artifact.
+      - name: Upload Teagram manual QA artifact.
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: Telegramd-macOS-arm64-QA
-          path: ${{ env.REPO_NAME }}/build/Telegramd-macOS-arm64-QA.zip
+          name: Teagram-macOS-arm64-QA
+          path: ${{ env.REPO_NAME }}/build/Teagram-macOS-arm64-QA.zip
           if-no-files-found: error
           retention-days: 14

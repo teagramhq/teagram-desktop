@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/application.h"
+#include "core/mac_protected_path_runtime.h"
 
 #include "data/data_abstract_structure.h"
 #include "data/data_channel.h"
@@ -22,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "base/unixtime.h"
 #include "core/core_settings.h"
+#include "core/teagram_icon_choice.h"
 #include "core/update_checker.h"
 #include "core/shortcuts.h"
 #include "core/sandbox.h"
@@ -101,7 +103,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QIcon>
+#include <QtGui/QPainter>
+#include <QtGui/QPixmap>
 #include <QtGui/QScreen>
+#include <QtSvg/QSvgRenderer>
+
+#include <array>
+#include <utility>
 
 #include <ksandbox.h>
 
@@ -113,6 +122,39 @@ constexpr auto kAutoLockTimeoutLateMs = crl::time(3000);
 constexpr auto kClearEmojiImageSourceTimeout = 10 * crl::time(1000);
 
 LaunchState GlobalLaunchState/* = LaunchState::Running*/;
+
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+[[nodiscard]] QIcon CreateTeagramIcon(Core::TeagramIconChoice choice) {
+	const auto resource = Core::TeagramIconSvgResource(choice);
+	auto renderer = QSvgRenderer(QString::fromLatin1(
+		resource.data(),
+		static_cast<qsizetype>(resource.size())));
+	constexpr auto sizes = std::array{
+		std::pair{ 16, 1 },
+		std::pair{ 16, 2 },
+		std::pair{ 32, 1 },
+		std::pair{ 32, 2 },
+		std::pair{ 128, 1 },
+		std::pair{ 128, 2 },
+		std::pair{ 256, 1 },
+		std::pair{ 256, 2 },
+		std::pair{ 512, 1 },
+		std::pair{ 512, 2 },
+	};
+	auto result = QIcon();
+	for (const auto &[logicalSize, scale] : sizes) {
+		auto pixmap = QPixmap(logicalSize * scale, logicalSize * scale);
+		pixmap.setDevicePixelRatio(scale);
+		pixmap.fill(Qt::transparent);
+		{
+			auto p = QPainter(&pixmap);
+			renderer.render(&p, QRectF(0, 0, logicalSize, logicalSize));
+		}
+		result.addPixmap(pixmap);
+	}
+	return result;
+}
+#endif // Q_OS_MAC && !OS_MAC_STORE
 
 void SetCrashAnnotationsGL() {
 #ifdef DESKTOP_APP_USE_ANGLE
@@ -419,6 +461,7 @@ void Application::run() {
 	DEBUG_LOG(("Application Info: window created..."));
 
 	startDomain();
+	refreshApplicationIcon();
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 		regressionResult |= RunSignupControlsRegression();
@@ -479,13 +522,13 @@ void Application::run() {
 }
 
 void Application::autoRegisterUrlScheme() {
-#ifdef TDESKTOP_TELEGRAMD
+#ifdef TDESKTOP_TEAGRAM
 	return;
-#else // TDESKTOP_TELEGRAMD
+#else  // TDESKTOP_TEAGRAM
 	if (!OptionSkipUrlSchemeRegister.value()) {
 		InvokeQueued(this, [] { RegisterUrlScheme(); });
 	}
-#endif // TDESKTOP_TELEGRAMD
+#endif // TDESKTOP_TEAGRAM
 }
 
 void Application::showAccount(not_null<Main::Account*> account) {
@@ -763,6 +806,22 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 
 	case QEvent::FileOpen: {
 		if (object == QCoreApplication::instance()) {
+			const auto event = static_cast<QFileOpenEvent *>(e);
+			const auto url = event->url();
+			if (url.scheme() == u"file"_q && !url.isLocalFile()
+				&& MacProtectedPath::IntegrationTestActive()) {
+				return true;
+			}
+			const auto path
+				= !event->file().isEmpty()
+					  ? event->file()
+					  : (url.isLocalFile() ? url.toLocalFile() : QString());
+			if (!path.isEmpty()
+				&& !MacProtectedPath::CheckExternalPath(
+					MacProtectedPath::Operation::Open, path,
+					"application.file-open")) {
+				return true;
+			}
 			if (_urlsToOpen.isEmpty()) {
 				InvokeQueued(this, [=] {
 					const auto activateRequired = ranges::any_of(
@@ -779,10 +838,7 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 					}
 				});
 			}
-			const auto event = static_cast<QFileOpenEvent*>(e);
-			_urlsToOpen << event->url().toString(QUrl::FullyEncoded).mid(
-				0,
-				8192);
+			_urlsToOpen << url.toString(QUrl::FullyEncoded).mid(0, 8192);
 		}
 	} break;
 
@@ -1202,18 +1258,29 @@ void Application::checkStartUrls() {
 		return;
 	}
 	if (!Core::App().passcodeLocked()) {
-		cRefStartUrls() = ranges::views::all(
-			cRefStartUrls()
-		) | ranges::views::filter([&](const QUrl &url) {
-			if (url.scheme() == u"tonsite"_q) {
-				iv().showTonSite(url.toString(), {});
-				return false;
-			} else if (_lastActivePrimaryWindow) {
-				const auto local = TryConvertUrlToLocal(url.toString());
-				return !openLocalUrl(local, {});
-			}
-			return true;
-		}) | ranges::to<QList<QUrl>>;
+		cRefStartUrls()
+			= ranges::views::all(cRefStartUrls())
+			  | ranges::views::filter([&](const QUrl &url) {
+					if (url.scheme() == u"file"_q && !url.isLocalFile()
+						&& MacProtectedPath::IntegrationTestActive()) {
+						return false;
+					}
+					if (url.isLocalFile()
+						&& !MacProtectedPath::CheckExternalPath(
+							MacProtectedPath::Operation::Open,
+							url.toLocalFile(), "application.start-url")) {
+						return false;
+					}
+					if (url.scheme() == u"tonsite"_q) {
+						iv().showTonSite(url.toString(), {});
+						return false;
+					} else if (_lastActivePrimaryWindow) {
+						const auto local = TryConvertUrlToLocal(url.toString());
+						return !openLocalUrl(local, {});
+					}
+					return true;
+				})
+			  | ranges::to<QList<QUrl>>;
 	}
 	if (!cRefStartUrls().isEmpty()
 		&& _lastActivePrimaryWindow
@@ -1224,7 +1291,13 @@ void Application::checkStartUrls() {
 			cRefStartUrls()
 		) | ranges::views::filter([&](const QUrl &url) {
 			if (url.scheme() == u"interpret"_q) {
-				interprets.append(url.path());
+				const auto path = url.path();
+				if (!MacProtectedPath::CheckExternalPath(
+						MacProtectedPath::Operation::Read, path,
+						"application.interpret-url")) {
+					return false;
+				}
+				interprets.append(path);
 				return false;
 			} else if (url.isLocalFile()) {
 				paths.append(url.toLocalFile());
@@ -1943,9 +2016,16 @@ void Application::refreshApplicationIcon() {
 void Application::refreshApplicationIcon(Main::Session *session) {
 	const auto support = session && session->supportMode();
 	Shortcuts::ToggleSupportShortcuts(support);
-	Platform::SetApplicationIcon(Window::CreateIcon(
-		session,
-		Platform::IsMac()));
+	auto icon = Window::CreateIcon(session, Platform::IsMac());
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+	if constexpr (Platform::IsMac()) {
+		const auto choice = ReadTeagramIconChoice(settings());
+		if (!support && (choice != TeagramIconChoice::MugSignal)) {
+			icon = CreateTeagramIcon(choice);
+		}
+	}
+#endif // Q_OS_MAC && !OS_MAC_STORE
+	Platform::SetApplicationIcon(icon);
 }
 
 void Application::startShortcuts() {
@@ -1980,9 +2060,9 @@ void Application::startShortcuts() {
 }
 
 void Application::RegisterUrlScheme() {
-#ifdef TDESKTOP_TELEGRAMD
+#ifdef TDESKTOP_TEAGRAM
 	return;
-#else // TDESKTOP_TELEGRAMD
+#else  // TDESKTOP_TEAGRAM
 	const auto arguments = Launcher::Instance().customWorkingDir()
 		? u"-workdir \"%1\""_q.arg(cWorkingDir())
 		: QString();
@@ -2008,7 +2088,7 @@ void Application::RegisterUrlScheme() {
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),
 	});
-#endif // TDESKTOP_TELEGRAMD
+#endif // TDESKTOP_TEAGRAM
 }
 
 bool IsAppLaunched() {
