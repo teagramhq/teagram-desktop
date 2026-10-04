@@ -596,6 +596,7 @@ jobs:
               "$diagnostics/stdout.log" "$diagnostics/stderr.log" \
               "$diagnostics/lldb.log" "$symbol_file" <<'PY'
           import os
+          import re
           import shlex
           import signal
           import subprocess
@@ -628,6 +629,28 @@ jobs:
               try:
                   status = process.wait(timeout=180)
               except subprocess.TimeoutExpired:
+                  try:
+                      with open(stderr_path, encoding="utf-8") as stderr:
+                          app_pids = re.findall(r"Teagram\[(\d+):", stderr.read())
+                      if app_pids:
+                          sample_path = os.path.join(
+                              os.path.dirname(log_path), "hang-sample.txt"
+                          )
+                          sample = subprocess.run(
+                              ["sample", app_pids[-1], "1", "5", "-file", sample_path],
+                              stdout=log,
+                              stderr=subprocess.STDOUT,
+                              timeout=12,
+                              check=False,
+                          )
+                          log.write(
+                              f"Hang sample exit: {sample.returncode}; "
+                              f"sample: {sample_path}\n"
+                          )
+                      else:
+                          log.write("Hang sample skipped: Teagram PID was not found.\n")
+                  except (OSError, subprocess.TimeoutExpired) as error:
+                      log.write(f"Hang sample failed: {error}\n")
                   try:
                       os.killpg(process.pid, signal.SIGTERM)
                   except ProcessLookupError:
