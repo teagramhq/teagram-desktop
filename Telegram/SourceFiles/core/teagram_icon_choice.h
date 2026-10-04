@@ -51,7 +51,6 @@ inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 
 inline constexpr auto kTeagramIconPickerOrder = std::array{
 	TeagramIconChoice::MugSignal,
-	TeagramIconChoice::MugTea,
 	TeagramIconChoice::MugGreen,
 	TeagramIconChoice::MugSky,
 	TeagramIconChoice::MugCrimson,
@@ -63,6 +62,8 @@ inline constexpr auto kTeagramIconPickerOrder = std::array{
 	TeagramIconChoice::TCrimson,
 	TeagramIconChoice::TBrown,
 };
+inline constexpr auto kTeagramIconPickerChoiceCount = static_cast<int>(
+	kTeagramIconPickerOrder.size());
 
 [[nodiscard]] constexpr std::string_view TeagramIconSvgResource(
 		TeagramIconChoice choice) {
@@ -78,7 +79,10 @@ template <typename Settings>
 		kTeagramIconChoicePreference,
 		-1);
 	if (choice >= 0 && choice < kTeagramIconChoiceCount) {
-		return static_cast<TeagramIconChoice>(choice);
+		const auto result = static_cast<TeagramIconChoice>(choice);
+		return (result == TeagramIconChoice::MugTea)
+			? TeagramIconChoice::MugSignal
+			: result;
 	}
 	return settings.template readPref<bool>(
 		kLegacyTeagramIconChoicePreference)

@@ -2016,7 +2016,12 @@ void Application::refreshApplicationIcon(Main::Session *session) {
 #if defined Q_OS_MAC && !defined OS_MAC_STORE
 	if constexpr (Platform::IsMac()) {
 		const auto choice = ReadTeagramIconChoice(settings());
-		if (!support && (choice != TeagramIconChoice::MugSignal)) {
+		const auto applied = !support
+			&& (choice != TeagramIconChoice::MugSignal);
+		LOG(("Teagram icon: choice=%1 applied=%2")
+			.arg(static_cast<int>(choice))
+			.arg(applied ? 1 : 0));
+		if (applied) {
 			icon = CreateTeagramIcon(choice);
 		}
 	}

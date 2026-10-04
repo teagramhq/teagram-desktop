@@ -893,6 +893,7 @@ public:
 	, _renderer(path) {
 		setFixedSize(st::teagramAppIconPreviewSize);
 		setAccessibleName(accessibleName);
+		setPointerCursor(true);
 	}
 	void setSelected(bool selected) {
 		if (_selected == selected) {
@@ -943,6 +944,7 @@ public:
 		label->setAttribute(Qt::WA_TransparentForMouseEvents);
 		label->resizeToWidth(st::teagramAppIconChoiceWidth);
 		setFixedSize(st::teagramAppIconChoiceWidth, label->height());
+		setPointerCursor(true);
 	}
 };
 
@@ -993,7 +995,9 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 		const auto selected = Core::ReadTeagramIconChoice(
 			Core::App().settings());
 		auto selectedIndex = 0;
-		for (auto index = 0; index != Core::kTeagramIconChoiceCount; ++index) {
+		for (auto index = 0;
+			index != Core::kTeagramIconPickerChoiceCount;
+			++index) {
 			if (choices[index] == selected) {
 				selectedIndex = index;
 				break;
@@ -1010,16 +1014,12 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 				st::teagramAppIconTitle),
 			st::teagramAppIconTitlePadding);
 		auto holder = object_ptr<Ui::RpWidget>(inner);
-		holder->setFixedHeight(st::teagramAppIconScrollHeight);
 		const auto holderRaw = inner->add(
 			std::move(holder),
 			st::settingsSendTypePadding);
 		const auto scrollRaw = new Ui::ScrollArea(
 			holderRaw,
 			st::teagramAppIconScroll);
-		holderRaw->widthValue() | rpl::on_next([=](int width) {
-			scrollRaw->resize(width, st::teagramAppIconScrollHeight);
-		}, holderRaw->lifetime());
 		auto row = object_ptr<QWidget>(scrollRaw);
 		const auto rowRaw = row.data();
 		auto rowLayout = new QHBoxLayout(rowRaw);
@@ -1027,8 +1027,10 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 		rowLayout->setSpacing(st::teagramAppIconChoiceSkip);
 		auto previews = std::array<
 			TeagramIconPreview*,
-			Core::kTeagramIconChoiceCount>{};
-		for (auto index = 0; index != Core::kTeagramIconChoiceCount; ++index) {
+			Core::kTeagramIconPickerChoiceCount>{};
+		for (auto index = 0;
+			index != Core::kTeagramIconPickerChoiceCount;
+			++index) {
 			const auto choice = choices[index];
 			const auto &title = titles[static_cast<int>(choice)];
 			const auto resource = Core::TeagramIconSvgResource(choice);
@@ -1042,7 +1044,7 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 			auto preview = new TeagramIconPreview(column, path, title);
 			preview->setSelected(index == selectedIndex);
 			previews[index] = preview;
-			columnLayout->addWidget(preview, 0, Qt::AlignHCenter);
+			columnLayout->addWidget(preview, 0, Qt::AlignLeft);
 			auto name = new TeagramIconChoiceTitle(
 				column,
 				title);
@@ -1063,13 +1065,22 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 			});
 		}
 		rowRaw->adjustSize();
-		rowRaw->setFixedSize(rowLayout->sizeHint());
+		const auto rowSize = rowLayout->sizeHint();
+		rowRaw->setFixedSize(rowSize);
+		const auto scrollHeight = rowSize.height()
+			+ st::teagramAppIconScroll.width;
+		holderRaw->setFixedHeight(scrollHeight);
+		holderRaw->widthValue() | rpl::on_next([=](int width) {
+			scrollRaw->resize(width, scrollHeight);
+		}, holderRaw->lifetime());
 		scrollRaw->setOwnedWidget(std::move(row));
 		group->setChangedCallback([=](int value) {
-			if (value < 0 || value >= Core::kTeagramIconChoiceCount) {
+			if (value < 0 || value >= Core::kTeagramIconPickerChoiceCount) {
 				return;
 			}
-			for (auto index = 0; index != Core::kTeagramIconChoiceCount; ++index) {
+			for (auto index = 0;
+				index != Core::kTeagramIconPickerChoiceCount;
+				++index) {
 				previews[index]->setSelected(index == value);
 			}
 			Core::WriteTeagramIconChoice(

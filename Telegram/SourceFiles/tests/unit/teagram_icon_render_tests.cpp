@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_icon_choice.h"
 
 #include <array>
+#include <string_view>
 
 #include <QtGui/QColor>
 #include <QtGui/QImage>
@@ -18,10 +19,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 using namespace Core;
 
+namespace {
+
+struct TeagramIconPreferences {
+	int savedChoice = -1;
+
+	template <typename Type>
+	Type readPref(std::string_view key, Type fallback = Type{}) const {
+		return (key == kTeagramIconChoicePreference)
+			? static_cast<Type>(savedChoice)
+			: fallback;
+	}
+};
+
+} // namespace
+
 TEST_CASE(TeagramIconPickerOrdersMugsBeforeTs) {
 	const auto expected = std::array{
 		TeagramIconChoice::MugSignal,
-		TeagramIconChoice::MugTea,
 		TeagramIconChoice::MugGreen,
 		TeagramIconChoice::MugSky,
 		TeagramIconChoice::MugCrimson,
@@ -33,11 +48,19 @@ TEST_CASE(TeagramIconPickerOrdersMugsBeforeTs) {
 		TeagramIconChoice::TCrimson,
 		TeagramIconChoice::TBrown,
 	};
-	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
+	CHECK_EQ(static_cast<int>(kTeagramIconPickerOrder.size()), 11);
+	for (auto index = 0; index != static_cast<int>(expected.size()); ++index) {
 		CHECK_EQ(
 			static_cast<int>(kTeagramIconPickerOrder[index]),
 			static_cast<int>(expected[index]));
 	}
+}
+
+TEST_CASE(PreviouslySavedMugTeaLoadsAsMugSignal) {
+	auto settings = TeagramIconPreferences{ .savedChoice = 1 };
+	CHECK_EQ(
+		static_cast<int>(ReadTeagramIconChoice(settings)),
+		static_cast<int>(TeagramIconChoice::MugSignal));
 }
 
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
