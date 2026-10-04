@@ -96,12 +96,19 @@ DispatchExternalPathIfAllowed(Operation operation, const QString &path,
 template <typename Dispatch>
 [[nodiscard]] FileUrlDispatchResult
 DispatchFileUrlIfAllowed(const QString &url, const char *callsite,
-						 Dispatch &&dispatch) {
+						 bool rejectInvalidLocalFileUrl, Dispatch &&dispatch) {
 	if (QUrl(url).scheme() != u"file"_q) {
 		return FileUrlDispatchResult::NotFileUrl;
 	}
 	const auto path = LocalFilePathFromUrl(url);
-	if (!path || !CheckExternalPathForUse(Operation::Open, *path, callsite)) {
+	if (!path) {
+		if (rejectInvalidLocalFileUrl) {
+			return FileUrlDispatchResult::Refused;
+		}
+		std::forward<Dispatch>(dispatch)();
+		return FileUrlDispatchResult::Dispatched;
+	}
+	if (!CheckExternalPathForUse(Operation::Open, *path, callsite)) {
 		return FileUrlDispatchResult::Refused;
 	}
 	std::forward<Dispatch>(dispatch)();

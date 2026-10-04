@@ -1431,7 +1431,7 @@ TEST_CASE(LocalFileUrlsExposeDecodedPathsForHandoffChecks) {
 	CHECK(!LocalFilePathFromUrl(u"https://example.com/file"_q));
 }
 
-TEST_CASE(HostBearingFileUrlsAreNeverDispatched) {
+TEST_CASE(HostBearingFileUrlsAreRefusedWhenIsolationIsActive) {
 	const auto urls = QStringList{
 		u"file://localhost/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q,
 		u"file://other/Users/alice/Library/Application%20Support/Telegram%20Desktop/tdata/x"_q,
@@ -1445,13 +1445,27 @@ TEST_CASE(HostBearingFileUrlsAreNeverDispatched) {
 	{
 		ScopedExternalPathCheckerForTesting scope(checker);
 		for (const auto &url : urls) {
-			CHECK(DispatchFileUrlIfAllowed(url, "unit.file-url",
+			CHECK(DispatchFileUrlIfAllowed(url, "unit.file-url", true,
 										   [&] { ++dispatches; })
 				  == FileUrlDispatchResult::Refused);
 		}
 	}
 	CHECK(checked.isEmpty());
 	CHECK_EQ(dispatches, 0);
+}
+
+TEST_CASE(HostBearingFileUrlsKeepDispatchWhenIsolationIsInactive) {
+	const auto urls = QStringList{
+		u"file://localhost/Users/alice/Downloads/x"_q,
+		u"file://server/share/x"_q,
+	};
+	auto dispatches = 0;
+	for (const auto &url : urls) {
+		CHECK(DispatchFileUrlIfAllowed(url, "unit.file-url", false,
+									   [&] { ++dispatches; })
+			  == FileUrlDispatchResult::Dispatched);
+	}
+	CHECK_EQ(dispatches, urls.size());
 }
 
 TEST_CASE(ExternalPathHandoffRefusesBeforeDispatchAndAllowsDownloads) {
