@@ -1110,6 +1110,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_settings_theme_settings" = "Theme settings";
 "lng_settings_teagram_icon" = "Teagram app icon";
+"lng_settings_teagram_icon_restart_hint" = "Other docks update after restart.";
 "lng_settings_teagram_icon_mug_signal" = "Mug Signal";
 "lng_settings_teagram_icon_mug_tea" = "Mug Tea";
 "lng_settings_teagram_icon_mug_green" = "Mug Green";

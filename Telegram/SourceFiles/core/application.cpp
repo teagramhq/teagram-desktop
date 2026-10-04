@@ -1968,6 +1968,9 @@ void Application::quitDelayed() {
 }
 
 void Application::refreshApplicationIcon() {
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+	Platform::UpdateApplicationBundleIcon(ReadTeagramIconChoice(settings()));
+#endif // Q_OS_MAC && !OS_MAC_STORE
 	const auto session = (domain().started() && domain().active().sessionExists())
 		? &domain().active().session()
 		: nullptr;

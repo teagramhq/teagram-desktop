@@ -61,6 +61,30 @@ TEST_CASE(PreviouslySavedMugTeaLoadsAsMugSignal) {
 		static_cast<int>(TeagramIconChoice::MugSignal));
 }
 
+TEST_CASE(TeagramFileIconUsesCustomChoice) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugGreen,
+			true)),
+		static_cast<int>(TeagramIconFileAction::Set));
+}
+
+TEST_CASE(TeagramFileIconClearsForDefaultChoice) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugSignal,
+			true)),
+		static_cast<int>(TeagramIconFileAction::Clear));
+}
+
+TEST_CASE(TeagramFileIconSkipsWhenBundleIsNotWritable) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugGreen,
+			false)),
+		static_cast<int>(TeagramIconFileAction::Skip));
+}
+
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
 	CHECK_EQ(kTeagramIconChoiceCount, 12);
 	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {

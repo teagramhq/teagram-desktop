@@ -1010,6 +1010,12 @@ void BuildTeagramIconSection(SectionBuilder &builder) {
 			scrollRaw->resize(width, scrollHeight);
 		}, holderRaw->lifetime());
 		scrollRaw->setOwnedWidget(std::move(row));
+		inner->add(
+			object_ptr<Ui::FlatLabel>(
+				inner,
+				tr::lng_settings_teagram_icon_restart_hint(tr::now),
+				st::settingsExperimentalAbout),
+			st::settingsExperimentalAboutPadding);
 		group->setChangedCallback([=](int value) {
 			if (value < 0 || value >= Core::kTeagramIconPickerChoiceCount) {
 				return;

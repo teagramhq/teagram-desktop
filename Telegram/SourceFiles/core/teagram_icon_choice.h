@@ -29,6 +29,23 @@ enum class TeagramIconChoice : int {
 	TBrown = 11,
 };
 
+enum class TeagramIconFileAction : int {
+	Skip,
+	Set,
+	Clear,
+};
+
+[[nodiscard]] constexpr TeagramIconFileAction TeagramIconFileActionForChoice(
+		TeagramIconChoice choice,
+		bool bundleWritable) {
+	if (!bundleWritable) {
+		return TeagramIconFileAction::Skip;
+	}
+	return (choice == TeagramIconChoice::MugSignal)
+		? TeagramIconFileAction::Clear
+		: TeagramIconFileAction::Set;
+}
+
 inline constexpr auto kTeagramIconChoicePreference
 	= std::string_view("teagram-icon-choice");
 inline constexpr auto kLegacyTeagramIconChoicePreference

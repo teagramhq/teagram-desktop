@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 enum class QuitReason;
+enum class TeagramIconChoice : int;
 } // namespace Core
 
 namespace Data {
@@ -42,6 +43,7 @@ enum class SystemSettingsType {
 void SetApplicationIcon(const QIcon &icon);
 #if defined Q_OS_MAC && !defined OS_MAC_STORE
 [[nodiscard]] bool SetApplicationIcon(const QImage &image);
+void UpdateApplicationBundleIcon(Core::TeagramIconChoice choice);
 #endif
 [[nodiscard]] QString SingleInstanceLocalServerName(const QString &hash);
 [[nodiscard]] PermissionStatus GetPermissionStatus(PermissionType type);
