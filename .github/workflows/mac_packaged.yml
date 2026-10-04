@@ -515,7 +515,7 @@ jobs:
           if ! ninja -C "$repo/build" -t commands Telegram | grep -F 'Teagram.app/Contents/MacOS/Teagram' | tail -n 1 > "$diagnostics/teagram-link-command.txt"; then
             fail_dwarf_prerequisite "the effective Teagram link command could not be captured"
           fi
-          if [ ! -s "$diagnostics/telegramd-link-command.txt" ]; then
+          if [ ! -s "$diagnostics/teagram-link-command.txt" ]; then
             fail_dwarf_prerequisite "the effective Teagram link command is empty"
           fi
 
