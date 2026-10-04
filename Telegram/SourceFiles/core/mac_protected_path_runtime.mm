@@ -617,8 +617,8 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	::close(output[1]);
 	if (spawnStatus != 0) {
 		fprintf(stderr,
-			"Seatbelt /bin/cat probe failed: posix_spawn=%d\n",
-			spawnStatus);
+				"Seatbelt /bin/cat probe failed: posix_spawn=%d\n",
+				spawnStatus);
 		::close(output[0]);
 		return 1;
 	}
@@ -640,19 +640,29 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	const auto permissionError = QByteArray(std::strerror(EPERM));
 	if (waited != child || !WIFEXITED(status)) {
 		fprintf(stderr,
-			"Seatbelt /bin/cat probe failed: wait_status=%d diagnostic=%s\n",
-			status,
-			diagnostic.constData());
+				"Seatbelt /bin/cat probe failed: wait_status=%d "
+				"diagnostic=%s\n",
+				status,
+				diagnostic.constData());
 		return 1;
 	}
 	if (expectDenied) {
-		if (WEXITSTATUS(status) != 1
-			|| !diagnostic.contains(permissionError)) {
+		const auto catExitedWithError = WEXITSTATUS(status) == 1;
+		const auto reportedPermissionError
+			= diagnostic.contains(permissionError);
+		if (!catExitedWithError || !reportedPermissionError) {
 			fprintf(stderr,
-				"Seatbelt /bin/cat probe failed: expected=EPERM exit=%d "
-				"diagnostic=%s\n",
-				WEXITSTATUS(status),
-				diagnostic.constData());
+					"Seatbelt /bin/cat probe failed: expected=EPERM exit=%d "
+					"diagnostic=%s\n",
+					WEXITSTATUS(status),
+					diagnostic.constData());
+			const auto policy = State().policy;
+			if (policy) {
+				const auto profile = policy->SeatbeltProfile();
+				fprintf(stderr,
+						"Seatbelt profile:\n%s\n",
+						profile.constData());
+			}
 			return 1;
 		}
 		return 0;
