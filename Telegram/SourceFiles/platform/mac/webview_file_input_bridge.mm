@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/mac/base_utilities_mac.h"
 #include "core/mac_protected_path_access.h"
 
+#include <QtCore/QFileInfo>
+
 #include <WebKit/WebKit.h>
 #include <objc/runtime.h>
 
@@ -54,6 +56,7 @@ void GuardedOpenPanel(id target, SEL selector, WKWebView *webView,
 					  Core::MacProtectedPath::Operation::Read, path,
 					  "webview.html-file-input");
 			  },
+			  [](const QString &path) { return QFileInfo(path).isFile(); },
 			  [&](const QStringList &) {
 				  if (validSelection) {
 					  completionHandler(urls);

@@ -1527,6 +1527,7 @@ TEST_CASE(WebViewFileInputRejectsProtectedSelectionsBeforeCompletion) {
 						 u"unit.webview.file-input"_q)
 				.allowed();
 		},
+		[](const QString &) { return true; },
 		[&](const QStringList &selection) {
 			++completed;
 			uploaded = selection;
@@ -1559,7 +1560,8 @@ TEST_CASE(WebViewFileInputRejectsSymlinksIntoProtectedPaths) {
 	};
 	auto completed = false;
 	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
-		paths, checkPath, [&](const QStringList &) { completed = true; });
+		paths, checkPath, [](const QString &) { return true; },
+		[&](const QStringList &) { completed = true; });
 	CHECK(!allowed);
 	CHECK(!completed);
 	for (const auto &call : fs.lstatCalls) {
@@ -1568,6 +1570,35 @@ TEST_CASE(WebViewFileInputRejectsSymlinksIntoProtectedPaths) {
 	for (const auto &call : fs.readlinkCalls) {
 		CHECK(policy.Classify(call) == ProtectedClass::None);
 	}
+}
+
+TEST_CASE(WebViewFileInputRejectsLibraryDirectorySelection) {
+	auto fs = FakeFileSystem();
+	const auto library = QByteArray("/Users/alice/Library");
+	AddDirectoryHierarchy(fs, library);
+	auto policy = TestPolicy(fs);
+	const auto paths = QStringList{QString::fromUtf8(library)};
+	auto readAllowed = false;
+	auto typeChecked = QStringList();
+	auto completed = 0;
+	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
+		paths,
+		[&](const QString &path) {
+			const auto result
+				= policy.Resolve(Operation::Read, QFile::encodeName(path), {},
+								 u"unit.webview.file-input-directory"_q);
+			readAllowed = result.allowed();
+			return readAllowed;
+		},
+		[&](const QString &path) {
+			typeChecked.push_back(path);
+			return false;
+		},
+		[&](const QStringList &) { ++completed; });
+	CHECK(readAllowed);
+	CHECK(typeChecked == paths);
+	CHECK(!allowed);
+	CHECK_EQ(completed, 0);
 }
 
 TEST_CASE(WebViewFileInputAllowsDownloadsForUpload) {
@@ -1584,7 +1615,7 @@ TEST_CASE(WebViewFileInputAllowsDownloadsForUpload) {
 	};
 	auto uploaded = QStringList();
 	const auto allowed = CompleteWebViewFileInputSelectionIfAllowed(
-		paths, checkPath,
+		paths, checkPath, [](const QString &) { return true; },
 		[&](const QStringList &selection) { uploaded = selection; });
 	CHECK(allowed);
 	CHECK(uploaded == paths);

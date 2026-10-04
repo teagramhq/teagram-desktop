@@ -91,15 +91,17 @@ PrepareExternalDirectoryIfAllowed(const QString &path, const char *callsite,
 		   && std::forward<Prepare>(prepare)();
 }
 
-template <typename Checker, typename Completion>
+template <typename Checker, typename IsRegularFile, typename Completion>
 [[nodiscard]] bool CompleteWebViewFileInputSelectionIfAllowed(
-	const QStringList &paths, Checker &&checker, Completion &&completion) {
+	const QStringList &paths, Checker &&checker, IsRegularFile &&isRegularFile,
+	Completion &&completion) {
 	if (paths.isEmpty()) {
 		return false;
 	}
 	auto allowed = true;
 	for (const auto &path : paths) {
-		const auto pathAllowed = !path.isEmpty() && checker(path);
+		const auto pathAllowed
+			= !path.isEmpty() && checker(path) && isRegularFile(path);
 		allowed = pathAllowed && allowed;
 	}
 	if (!allowed) {
