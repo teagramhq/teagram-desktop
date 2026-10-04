@@ -52,6 +52,7 @@ assert 'if (!Core::MacProtectedPath::InitializeProfile())' in main
 assert 'sandbox_init(' in runtime
 assert 'RunSeatbeltCatProbe(argv[2], true)' in main
 assert 'RunSeatbeltCatProbe(argv[2], false)' in main
+assert 'Seatbelt /bin/cat probe failed:' in runtime
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy
