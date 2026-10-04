@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "base/base_file_utilities.h"
 #include "base/integration.h"
 
 #include <QtCore/QCoreApplication>
@@ -103,6 +104,11 @@ QString Describe(const QByteArray &value) {
 
 int main(int argc, char *argv[]) {
 	auto app = QCoreApplication(argc, argv);
+
+#ifdef Q_OS_MAC
+	base::RegisterBundledResources(u"test_unit.rcc"_q);
+#endif // Q_OS_MAC
+
 	auto integration = Test::Unit::Integration(argc, argv);
 	base::Integration::Set(&integration);
 

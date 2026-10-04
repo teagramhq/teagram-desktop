@@ -141,3 +141,5 @@ set_target_properties(test_unit PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+target_prepare_qrc(test_unit)
