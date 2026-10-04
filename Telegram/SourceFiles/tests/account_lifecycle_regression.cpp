@@ -399,18 +399,24 @@ RegressionOtherServerKey() {
 
 [[nodiscard]] bool RestartDomain(Main::Domain &domain) {
 	auto &app = Core::App();
-	auto windows = std::vector<Window::Controller *>();
-	app.enumerateWindows([&](not_null<Window::Controller*> window) {
-		windows.push_back(window.get());
-	});
+	const auto sessionWindows = [&] {
+		auto result = std::vector<Window::Controller *>();
+		for (const auto &entry : domain.accounts()) {
+			const auto &account = entry.account;
+			if (!account->sessionExists()) {
+				continue;
+			}
+			for (const auto &controller : account->session().windows()) {
+				result.push_back(&controller->window());
+			}
+		}
+		return result;
+	};
+	const auto windows = sessionWindows();
 	for (const auto window : windows) {
 		app.closeWindow(window);
 	}
-	auto windowsRemain = false;
-	app.enumerateWindows([&](not_null<Window::Controller*>) {
-		windowsRemain = true;
-	});
-	if (windowsRemain) {
+	if (!sessionWindows().empty()) {
 		return false;
 	}
 	domain.local().writeAccounts();
