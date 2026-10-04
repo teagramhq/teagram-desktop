@@ -67,8 +67,8 @@ TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {
 		const auto choice = static_cast<TeagramIconChoice>(index);
 		const auto image = RenderTeagramIconImage(choice);
 		CHECK(!image.isNull());
-		CHECK_EQ(image.size(), QSize(1024, 1024));
-		CHECK_EQ(image.devicePixelRatioF(), 2.);
+		CHECK(image.size() == QSize(1024, 1024));
+		CHECK(image.devicePixelRatioF() == 2.);
 		CHECK_EQ(image.pixelColor(512, 512).alpha(), 255);
 		CHECK_EQ(image.pixelColor(99, 512).alpha(), 0);
 		CHECK_EQ(image.pixelColor(101, 512).alpha(), 255);
