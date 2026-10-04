@@ -34,7 +34,9 @@ TEST_CASE(TeagramIconPickerOrdersMugsBeforeTs) {
 		TeagramIconChoice::TBrown,
 	};
 	for (auto index = 0; index != kTeagramIconChoiceCount; ++index) {
-		CHECK_EQ(kTeagramIconPickerOrder[index], expected[index]);
+		CHECK_EQ(
+			static_cast<int>(kTeagramIconPickerOrder[index]),
+			static_cast<int>(expected[index]));
 	}
 }
 
