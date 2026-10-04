@@ -94,6 +94,7 @@ PRIVATE
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
+    tests/unit/teagram_icon_render_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
     tests/unit/unit_test.cpp
@@ -102,6 +103,11 @@ PRIVATE
     mtproto/connection_server_resolving.cpp
     mtproto/connection_server_resolving.h
     mtproto/proxy_check.cpp
+)
+
+nice_target_sources(test_unit ${res_loc}
+PRIVATE
+    qrc/telegram/mac_icons.qrc
 )
 
 if(APPLE)
