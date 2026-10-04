@@ -56,8 +56,8 @@ assert 'FirmlinkAlias' in policy
 main_entry = main.split('int main(', 1)[1].split('\n}', 1)[0]
 assert main_entry.index('InitializeProfile()') < main_entry.index('Launcher::Create')
 initialize = runtime.split('bool InitializeProfile()', 1)[1]
-assert initialize.index('sandbox_init(') < initialize.index('QDir().mkpath(profilePath)')
-assert initialize.index('sandbox_init(') < initialize.index('QDir::currentPath()')
+assert initialize.index('InitializeSeatbelt(') < initialize.index('QDir().mkpath(profilePath)')
+assert initialize.index('InitializeSeatbelt(') < initialize.index('QDir::currentPath()')
 assert 'sandbox_free_error' in runtime
 assert 'Mac App Store builds are unsupported by Teagram.' in root_cmake
 assert 'if (MacProtectedPath::IsActive())' in sandbox

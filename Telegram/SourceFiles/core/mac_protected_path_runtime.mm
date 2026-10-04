@@ -228,6 +228,34 @@ void ReportInvalidInitialization(const QString &callsite) {
 #endif // !OS_MAC_STORE
 }
 
+[[nodiscard]] int InitializeSeatbelt(const char *profile, char **error) {
+	int output[2] = {};
+	if (::pipe(output) != 0) {
+		return -1;
+	}
+	const auto savedStderr = ::dup(STDERR_FILENO);
+	if (savedStderr < 0) {
+		::close(output[0]);
+		::close(output[1]);
+		return -1;
+	}
+	if (::dup2(output[1], STDERR_FILENO) < 0) {
+		::close(savedStderr);
+		::close(output[0]);
+		::close(output[1]);
+		return -1;
+	}
+	::close(output[1]);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	const auto status = sandbox_init(profile, 0, error);
+#pragma clang diagnostic pop
+	const auto restoreStatus = ::dup2(savedStderr, STDERR_FILENO);
+	::close(savedStderr);
+	::close(output[0]);
+	return (restoreStatus < 0) ? -1 : status;
+}
+
 } // namespace
 
 bool IntegrationTestActive() {
@@ -284,14 +312,11 @@ bool InitializeProfile() {
 	}
 #endif
 	auto *error = static_cast<char *>(nullptr);
-	int sandboxStatus = -1;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-	sandboxStatus = sandbox_init(profileText.constData(), 0, &error);
+	const auto sandboxStatus
+		= InitializeSeatbelt(profileText.constData(), &error);
 	if (error) {
 		sandbox_free_error(error);
 	}
-#pragma clang diagnostic pop
 	if (sandboxStatus != 0) {
 		return false;
 	}
