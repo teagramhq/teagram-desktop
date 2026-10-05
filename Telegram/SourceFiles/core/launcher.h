@@ -9,7 +9,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/base_integration.h"
 
+#include <QtCore/QByteArray>
+
+#include <optional>
+
 namespace Core {
+
+namespace details {
+
+[[nodiscard]] inline bool DebugModeEnabled(
+		std::optional<QByteArray> setting,
+		bool force) {
+	return force || !setting || (*setting != "0");
+}
+
+} // namespace details
 
 extern const char kOptionFractionalScalingEnabled[];
 extern const char kOptionHighDpiDownscale[];
