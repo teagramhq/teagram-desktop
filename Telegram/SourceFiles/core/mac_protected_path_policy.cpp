@@ -265,9 +265,8 @@ struct WalkResult {
 	return result;
 }
 
-[[nodiscard]] QByteArray ProfileComponentRegex(
-		const QByteArray &component,
-		const QByteArray &ignored) {
+[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
+											   const QByteArray &ignored) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = QByteArray();
 	for (const auto value : component) {
@@ -720,13 +719,12 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		"/" + library + "/" + component("Containers") + "/("
 			+ component("org.telegram.desktop") + "|"
 			+ component("ru.keepcoder.telegram") + ")(/|$)",
-		"/" + library + "/" + component("Group Containers")
-			+ "/[^/]*" + component("telegram") + "[^/]*(/|$)",
+		"/" + library + "/" + component("Group Containers") + "/[^/]*"
+			+ component("telegram") + "[^/]*(/|$)",
 		"/" + library + "/(" + component("Preferences") + "|"
-			+ component("Caches") + "|" + component("HTTPStorages")
-			+ "|" + component("WebKit") + "|"
-			+ component("Saved Application State") + ")/("
-			+ component("com.tdesktop.Telegram") + "|"
+			+ component("Caches") + "|" + component("HTTPStorages") + "|"
+			+ component("WebKit") + "|" + component("Saved Application State")
+			+ ")/(" + component("com.tdesktop.Telegram") + "|"
 			+ component("org.telegram.desktop") + "|"
 			+ component("ru.keepcoder.telegram") + ")[^/]*(/|$)",
 	};
