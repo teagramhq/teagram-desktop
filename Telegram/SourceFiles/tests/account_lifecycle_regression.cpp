@@ -1275,7 +1275,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	const auto stockOnlineUpdates
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
-	discarded->loggedOut();
+	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");

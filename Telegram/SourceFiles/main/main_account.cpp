@@ -957,7 +957,7 @@ bool Account::loggingOut() const {
 
 void Account::forcedLogOut() {
 	if (sessionExists()) {
-		resetAuthorizationKeys();
+		// loggedOut destroys Session while its MTP instance is still alive.
 		loggedOut();
 	}
 }
