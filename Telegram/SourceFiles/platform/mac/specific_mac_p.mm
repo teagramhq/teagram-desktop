@@ -14,7 +14,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "core/teagram_icon_choice.h"
 #include "core/crash_reports.h"
+#include "core/mac_protected_path_access.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/sandbox.h"
 #include "core/version.h"
@@ -256,6 +258,69 @@ bool SetApplicationIcon(const QImage &image) {
 		&& (size.width == 512)
 		&& (size.height == 512);
 }
+
+#ifndef OS_MAC_STORE
+std::optional<bool> UpdateApplicationBundleIcon(
+		Core::TeagramIconChoice choice,
+		bool fileIconOwned,
+		bool roundIconActive) {
+	const auto bundlePath = [[NSBundle mainBundle] bundlePath];
+	const auto writable = [[NSFileManager defaultManager]
+		isWritableFileAtPath:bundlePath];
+	const auto action = Core::TeagramIconFileActionForChoice(
+		choice,
+		writable,
+		fileIconOwned,
+		roundIconActive);
+	auto result = QString();
+	auto ownershipChange = std::optional<bool>();
+	if (roundIconActive) {
+		result = u"skipped-round-icon"_q;
+	} else if (!writable) {
+		result = u"skipped-unwritable"_q;
+	} else if (action == Core::TeagramIconFileAction::Skip) {
+		result = u"skipped-unowned"_q;
+	} else {
+		const auto dispatched
+			= Core::MacProtectedPath::DispatchCustomAppIconIfAllowed(
+				QString(), "platform.teagram-icon", [&] {
+					if (action == Core::TeagramIconFileAction::Set) {
+						const auto image = Core::RenderTeagramIconImage(choice);
+						auto *native = Q2NSImage(image);
+						if (!native) {
+							result = u"image-conversion-failed"_q;
+							return;
+						}
+						[native setSize:NSMakeSize(512, 512)];
+						const auto applied = [[NSWorkspace sharedWorkspace]
+							setIcon:native
+							forFile:bundlePath
+							options:0];
+						result = applied ? u"set"_q : u"set-failed"_q;
+						if (applied) {
+							ownershipChange = true;
+						}
+					} else {
+						const auto applied = [[NSWorkspace sharedWorkspace]
+							setIcon:nil
+							forFile:bundlePath
+							options:0];
+						result = applied ? u"cleared"_q : u"clear-failed"_q;
+						if (applied) {
+							ownershipChange = false;
+						}
+					}
+				});
+		if (!dispatched) {
+			result = u"skipped-refused"_q;
+		}
+	}
+	LOG(("Teagram icon file: choice=%1 result=%2")
+		.arg(static_cast<int>(choice))
+		.arg(result));
+	return ownershipChange;
+}
+#endif // OS_MAC_STORE
 
 } // namespace Platform
 

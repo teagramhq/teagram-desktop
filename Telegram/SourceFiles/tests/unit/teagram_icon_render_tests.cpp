@@ -21,12 +21,22 @@ namespace {
 
 struct TeagramIconPreferences {
 	int savedChoice = -1;
+	bool fileIconOwned = false;
 
 	template <typename Type>
 	Type readPref(std::string_view key, Type fallback = Type{}) const {
-		return (key == kTeagramIconChoicePreference)
-			? static_cast<Type>(savedChoice)
-			: fallback;
+		if (key == kTeagramIconChoicePreference) {
+			return static_cast<Type>(savedChoice);
+		} else if (key == kTeagramIconFileOwnedPreference) {
+			return static_cast<Type>(fileIconOwned);
+		}
+		return fallback;
+	}
+	template <typename Type>
+	void writePref(std::string_view key, Type value) {
+		if (key == kTeagramIconFileOwnedPreference) {
+			fileIconOwned = static_cast<bool>(value);
+		}
 	}
 };
 
@@ -59,6 +69,70 @@ TEST_CASE(PreviouslySavedMugTeaLoadsAsMugSignal) {
 	CHECK_EQ(
 		static_cast<int>(ReadTeagramIconChoice(settings)),
 		static_cast<int>(TeagramIconChoice::MugSignal));
+}
+
+TEST_CASE(TeagramFileIconUsesCustomChoice) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugGreen,
+			true,
+			false,
+			false)),
+		static_cast<int>(TeagramIconFileAction::Set));
+}
+
+TEST_CASE(TeagramFileIconDoesNotClearAnUnownedDefaultBundle) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugSignal,
+			true,
+			false,
+			false)),
+		static_cast<int>(TeagramIconFileAction::Skip));
+}
+
+TEST_CASE(TeagramFileIconClearsOnlyItsOwnedDefaultBundle) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugSignal,
+			true,
+			true,
+			false)),
+		static_cast<int>(TeagramIconFileAction::Clear));
+}
+
+TEST_CASE(TeagramFileIconSkipsWhenRoundIconOwnsBundle) {
+	for (const auto choice : {
+				 TeagramIconChoice::MugSignal,
+				 TeagramIconChoice::MugGreen,
+			 }) {
+		CHECK_EQ(
+			static_cast<int>(TeagramIconFileActionForChoice(
+				choice,
+				true,
+				true,
+				true)),
+			static_cast<int>(TeagramIconFileAction::Skip));
+	}
+}
+
+TEST_CASE(TeagramFileIconSkipsWhenBundleIsNotWritable) {
+	CHECK_EQ(
+		static_cast<int>(TeagramIconFileActionForChoice(
+			TeagramIconChoice::MugGreen,
+			false,
+			false,
+			false)),
+		static_cast<int>(TeagramIconFileAction::Skip));
+}
+
+TEST_CASE(TeagramFileIconOwnershipPreferencePersists) {
+	auto settings = TeagramIconPreferences();
+	CHECK(!ReadTeagramIconFileOwned(settings));
+	WriteTeagramIconFileOwned(settings, true);
+	CHECK(ReadTeagramIconFileOwned(settings));
+	WriteTeagramIconFileOwned(settings, false);
+	CHECK(!ReadTeagramIconFileOwned(settings));
 }
 
 TEST_CASE(EveryTeagramIconRendersInsideTheMacIconTemplate) {

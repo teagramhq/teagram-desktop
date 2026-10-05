@@ -29,6 +29,31 @@ enum class TeagramIconChoice : int {
 	TBrown = 11,
 };
 
+enum class TeagramIconFileAction : int {
+	Skip,
+	Set,
+	Clear,
+};
+
+inline constexpr auto kTeagramIconFileOwnedPreference
+	= std::string_view("teagram-icon-file-owned");
+
+[[nodiscard]] constexpr TeagramIconFileAction TeagramIconFileActionForChoice(
+		TeagramIconChoice choice,
+		bool bundleWritable,
+		bool fileIconOwned,
+		bool roundIconActive) {
+	if (!bundleWritable || roundIconActive) {
+		return TeagramIconFileAction::Skip;
+	}
+	if (choice == TeagramIconChoice::MugSignal) {
+		return fileIconOwned
+			? TeagramIconFileAction::Clear
+			: TeagramIconFileAction::Skip;
+	}
+	return TeagramIconFileAction::Set;
+}
+
 inline constexpr auto kTeagramIconChoicePreference
 	= std::string_view("teagram-icon-choice");
 inline constexpr auto kLegacyTeagramIconChoicePreference
@@ -104,6 +129,20 @@ void WriteTeagramIconChoice(
 	settings.template writePref<bool>(
 		kLegacyTeagramIconChoicePreference,
 		choice == TeagramIconChoice::TPrimary);
+}
+
+template <typename Settings>
+[[nodiscard]] bool ReadTeagramIconFileOwned(Settings &settings) {
+	return settings.template readPref<bool>(
+		kTeagramIconFileOwnedPreference,
+		false);
+}
+
+template <typename Settings>
+void WriteTeagramIconFileOwned(Settings &settings, bool owned) {
+	settings.template writePref<bool>(
+		kTeagramIconFileOwnedPreference,
+		owned);
 }
 
 } // namespace Core
