@@ -1267,6 +1267,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the teardown fixture");
 	}
+	QCoreApplication::processEvents();
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
 		return FailChatParticipantsRegression(
