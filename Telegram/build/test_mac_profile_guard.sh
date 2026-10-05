@@ -396,6 +396,10 @@ if [[ "$CANARY_STATUS" -ne 0 \
 	|| "$CANARY_OUTPUT" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
 	echo "spawned /bin/cat denial probe did not return the expected EPERM result." >&2
 	printf '%s\n' "$CANARY_OUTPUT" >&2
+	printf '%s\n' "$CANARY_OUTPUT" | python3 \
+		"$(dirname "$0")/diagnose_mac_seatbelt.py" \
+		"$TEST_HOME" "$SEATBELT_CANARY" "$ACCOUNT_STATE" \
+		|| echo "Seatbelt diagnostic controls failed; see matrix above." >&2
 	exit 1
 fi
 if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH" ]]; then

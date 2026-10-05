@@ -679,6 +679,13 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 					"Seatbelt /bin/cat probe failed: expected=EPERM exit=%d "
 					"diagnostic=%s\n",
 					WEXITSTATUS(status), diagnostic.constData());
+			const auto descriptor = ::open(path, O_RDONLY);
+			const auto parentError = (descriptor < 0) ? errno : 0;
+			if (descriptor >= 0) {
+				::close(descriptor);
+			}
+			fprintf(stderr, "Seatbelt parent open probe: errno=%d\n",
+					parentError);
 			const auto policy = State().policy;
 			if (policy) {
 				const auto profile = policy->SeatbeltProfile();
