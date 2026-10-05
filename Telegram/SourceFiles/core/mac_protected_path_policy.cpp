@@ -20,6 +20,8 @@ namespace {
 
 constexpr auto kSymlinkHopLimit = 32;
 constexpr auto kRefusalInterval = qint64(60);
+// Leave headroom below the SBPL parser's 1025-byte string-token limit.
+constexpr auto kMaxSbplStringBytes = qsizetype(900);
 
 struct ParsedPath {
 	bool absolute = false;
@@ -250,7 +252,7 @@ struct WalkResult {
 		result.append(character);
 	}
 	result.append('"');
-	return result;
+	return (result.size() < kMaxSbplStringBytes) ? result : QByteArray();
 }
 
 [[nodiscard]] QByteArray RegexLiteral(const QByteArray &value) {
@@ -265,8 +267,7 @@ struct WalkResult {
 	return result;
 }
 
-[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
-											   const QByteArray &ignored) {
+[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = QByteArray();
 	for (const auto value : component) {
@@ -289,7 +290,6 @@ struct WalkResult {
 			character.append(char(byte));
 		}
 		result.append(character);
-		result.append(ignored);
 	}
 	return result;
 }
@@ -705,12 +705,9 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	if (!_valid || _profileHomePaths.empty()) {
 		return {};
 	}
-	const auto ignored
-		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q
-			  .toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	const auto component = [&](const QByteArray &value) {
-		return ProfileComponentRegex(value, ignored);
+		return ProfileComponentRegex(value);
 	};
 	const auto library = component("Library");
 	const auto rules = std::vector<QByteArray>{
@@ -728,8 +725,8 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			+ component("org.telegram.desktop") + "|"
 			+ component("ru.keepcoder.telegram") + ")[^/]*(/|$)",
 	};
-	for (const auto &homePath : _profileHomePaths) {
-		const auto home = RegexLiteral(homePath);
+	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
+		const auto home = RegexLiteral(_profileHomePaths[i]);
 		if (home.isEmpty()) {
 			return {};
 		}

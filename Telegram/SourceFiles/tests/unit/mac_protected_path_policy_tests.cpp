@@ -133,6 +133,9 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 				  }) {
 		const auto profile = policy.SeatbeltProfile();
 		CHECK(profile.startsWith("(version 1)\n(allow default)\n"));
+		for (const auto &line : profile.split('\n')) {
+			CHECK(line.size() < 900);
+		}
 		CHECK(profile.count("(deny file*") >= 16);
 		CHECK(profile.count("(regex \"^") >= 16);
 		CHECK(!profile.contains("(regex (string-append"));
@@ -143,7 +146,6 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		CHECK(profile.contains("[Gg]"));
 		CHECK(profile.contains("[^/]*"));
 		CHECK(profile.contains("[Ss]"));
-		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 	} else {
 		CHECK(false);
 	}
@@ -320,6 +322,20 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	CHECK(policy.valid());
 	CheckSeatbeltProfile(policy);
 	CHECK(policy.SeatbeltProfile().contains("/Users/alice\\\\.test"));
+}
+
+TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
+	auto fs = FakeFileSystem();
+	const auto longHome = "/Users/" + QByteArray(200, 'c') + "/"
+		+ QByteArray(200, 'd') + "/" + QByteArray(200, 'e');
+	AddDirectoryHierarchy(fs, longHome);
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = longHome,
+				  .environment = longHome,
+				  .foundation = longHome},
+		fs.operations());
+	CHECK(policy.valid());
+	CHECK(policy.SeatbeltProfile().isEmpty());
 }
 
 TEST_CASE(BuildRejectsMissingRequiredHomesWithoutProbing) {
