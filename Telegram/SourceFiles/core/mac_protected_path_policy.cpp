@@ -752,11 +752,11 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			|| telegramPath.isEmpty()) {
 			return {};
 		}
-		result.append("(deny file* (require-all (regex ");
+		result.append("(deny file* (require-all (regex\n");
 		result.append(libraryPath);
-		result.append(") (regex ");
+		result.append(") (regex\n");
 		result.append(ignoredPath);
-		result.append(") (regex ");
+		result.append(") (regex\n");
 		result.append(telegramPath);
 		result.append(")))\n");
 		for (const auto &suffix : rules) {
