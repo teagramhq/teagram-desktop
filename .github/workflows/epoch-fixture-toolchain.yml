@@ -1,0 +1,53 @@
+name: Epoch fixture toolchain smoke
+
+on:
+  pull_request:
+    paths:
+      - "tests/epoch-fixtures/**"
+      - ".github/workflows/epoch-fixture-toolchain.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-smoke:
+    name: C++ / OpenSSL / Python setup
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build isolated fixture toolchain
+        run: |
+          set -euo pipefail
+          docker build \
+            --tag epoch-fixture-toolchain:smoke \
+            tests/epoch-fixtures
+
+      - name: Verify C++ / OpenSSL / Python APIs
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/epoch-fixture-setup-smoke.log"
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --read-only \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=64m,mode=1777 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace,readonly" \
+            --workdir /workspace \
+            epoch-fixture-toolchain:smoke \
+            bash tests/epoch-fixtures/setup-smoke.sh /usr/bin/python3 \
+            | tee "$log"
+          {
+            echo "## Epoch fixture toolchain smoke"
+            echo
+            echo "### Toolchain smoke"
+            echo
+            echo "~~~text"
+            cat "$log"
+            echo "~~~"
+          } >> "$GITHUB_STEP_SUMMARY"
