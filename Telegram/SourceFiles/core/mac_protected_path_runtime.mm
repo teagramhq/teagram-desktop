@@ -283,6 +283,19 @@ bool InitializeProfile() {
 		return false;
 	}
 #endif // TDESKTOP_TEAGRAM
+	const auto failForIntegrationTest = [](const char *stage) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto diagnostics
+			= std::getenv("TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS");
+		if (IntegrationTestActive() && diagnostics
+			&& !std::strcmp(diagnostics, "1")) {
+			fprintf(stderr,
+					"Mac profile integration initialization failed: stage=%s\n",
+					stage);
+		}
+#endif
+		return false;
+	};
 	auto &state = State();
 	{
 		QMutexLocker lock(&state.mutex);
@@ -296,11 +309,11 @@ bool InitializeProfile() {
 	const auto filesystem = NativeFileSystem();
 	const auto policy = MacProtectedPathPolicy::Build(homes, filesystem);
 	if (!policy.valid()) {
-		return false;
+		return failForIntegrationTest("policy");
 	}
 	auto profileText = policy.SeatbeltProfile();
 	if (profileText.isEmpty()) {
-		return false;
+		return failForIntegrationTest("profile");
 	}
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	if (IntegrationTestActive()) {
@@ -314,33 +327,46 @@ bool InitializeProfile() {
 	auto *error = static_cast<char *>(nullptr);
 	const auto sandboxStatus
 		= InitializeSeatbelt(profileText.constData(), &error);
+	if (sandboxStatus != 0) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto diagnostics
+			= std::getenv("TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS");
+		if (IntegrationTestActive() && diagnostics
+			&& !std::strcmp(diagnostics, "1")) {
+			fprintf(stderr,
+					"Mac profile integration initialization failed: "
+					"stage=seatbelt status=%d error=%s\n",
+					sandboxStatus, error ? error : "unavailable");
+		}
+#endif
+	}
 	if (error) {
 		sandbox_free_error(error);
 	}
 	if (sandboxStatus != 0) {
-		return false;
+		return failForIntegrationTest("seatbelt");
 	}
 	const auto currentWorkingDirectory = QDir::currentPath();
 	if (currentWorkingDirectory.isEmpty()) {
-		return false;
+		return failForIntegrationTest("working-directory");
 	}
 	const auto initialWorkingDirectory = currentWorkingDirectory + '/';
 	const auto profileBytes = TeagramProfileRoot(homes, AppSandboxed());
 	if (profileBytes.isEmpty()) {
-		return false;
+		return failForIntegrationTest("profile-root");
 	}
 	const auto profile
 		= policy.Resolve(Operation::Open, profileBytes, homes.accountDatabase,
 						 u"profile.root"_q);
 	if (!profile.allowed()) {
-		return false;
+		return failForIntegrationTest("profile-resolution");
 	}
 	const auto profilePath = QString::fromUtf8(profile.resolvedPath);
 	const auto create
 		= policy.Resolve(Operation::Mkdir, profile.resolvedPath,
 						 homes.accountDatabase, u"profile.create"_q);
 	if (!create.allowed()) {
-		return false;
+		return failForIntegrationTest("profile-create-resolution");
 	}
 	const auto temporaryPath = profilePath + u"/tdata/temp"_q;
 	const auto temporaryPrepared = PrepareExternalDirectoryIfAllowed(
@@ -365,7 +391,7 @@ bool InitializeProfile() {
 			return true;
 		});
 	if (!temporaryPrepared) {
-		return false;
+		return failForIntegrationTest("helper-temp");
 	}
 
 	const auto appSandboxed = AppSandboxed();
