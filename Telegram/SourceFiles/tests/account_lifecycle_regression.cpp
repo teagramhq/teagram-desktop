@@ -1222,6 +1222,32 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.serverTranslationSupported() == supported);
 	};
 	auto &app = Core::App();
+	// Rebind before per-account windows claim these ids; later account
+	// selection must activate those windows instead of rekeying another one.
+	pinned->mtp().stopForServerEnrollment();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary || !primary->isPrimary()) {
+		return FailChatParticipantsRegression(
+			"primary window disappeared before online-update lifetime regression");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the stock session");
+	}
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the pinned session");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch back to the stock session");
+	}
+	app.closeWindow(primary);
+	QCoreApplication::processEvents();
+
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
 	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	const auto closeWindows = gsl::finally([&] {
@@ -1468,29 +1494,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"pinned migration fixture is not an active custom-server group");
 	}
-	pinned->mtp().stopForServerEnrollment();
-	const auto primary = app.activePrimaryWindow();
-	if (!primary) {
-		return FailChatParticipantsRegression(
-			"primary window disappeared before online-update lifetime regression");
-	}
-	primary->showAccount(stock);
-	if (primary->maybeSession() != &stock->session()) {
-		return FailChatParticipantsRegression(
-			"primary window did not switch to the stock session");
-	}
-	primary->showAccount(pinned);
-	if (primary->maybeSession() != &pinned->session()) {
-		return FailChatParticipantsRegression(
-			"primary window did not switch to the pinned session");
-	}
-	primary->showAccount(stock);
-	if (primary->maybeSession() != &stock->session()) {
-		return FailChatParticipantsRegression(
-			"primary window did not switch back to the stock session");
-	}
-	app.closeWindow(primary);
-	QCoreApplication::processEvents();
 	if (!windowsMatch("after primary close")) {
 		return FailChatParticipantsRegression(
 			"primary close changed the separate session windows");
