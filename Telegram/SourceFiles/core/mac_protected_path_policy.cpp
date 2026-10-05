@@ -716,6 +716,9 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	const auto component = [&](const QByteArray &value) {
 		return ProfileComponentRegex(value);
 	};
+	const auto foldedTelegram = ProfileComponentRegex(
+		"telegram",
+		ignoredSequence);
 	const auto library = component("Library");
 	const auto rules = std::vector<QByteArray>{
 		"/" + library + "/" + component("Application Support") + "/"
@@ -732,34 +735,59 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			+ component("org.telegram.desktop") + "|"
 			+ component("ru.keepcoder.telegram") + ")[^/]*(/|$)",
 	};
+	auto foldedRules = std::vector<QByteArray>{
+		"/" + library + "/" + component("Application Support") + "/"
+			+ foldedTelegram + " " + ignoredSequence + component("Desktop")
+			+ "(/|$)",
+		"/" + library + "/" + component("Application Support") + "/"
+			+ component("Telegram") + " "
+			+ ProfileComponentRegex("Desktop", ignoredSequence) + "(/|$)",
+		"/" + library + "/" + component("Containers") + "/"
+			+ component("org") + "\\." + foldedTelegram + "\\."
+			+ component("desktop") + "(/|$)",
+		"/" + library + "/" + component("Containers") + "/"
+			+ component("ru") + "\\." + component("keepcoder") + "\\."
+			+ foldedTelegram + "(/|$)",
+		"/" + library + "/" + component("Group Containers")
+			+ "/[^/]*" + foldedTelegram + "[^/]*(/|$)",
+	};
+	const auto bundleParents = std::vector<QByteArray>{
+		component("Preferences"),
+		component("Caches"),
+		component("HTTPStorages"),
+		component("WebKit"),
+		component("Saved Application State"),
+	};
+	const auto bundlePrefixes = std::vector<QByteArray>{
+		component("com") + "\\." + component("tdesktop") + "\\."
+			+ foldedTelegram,
+		component("org") + "\\." + foldedTelegram + "\\."
+			+ component("desktop"),
+		component("ru") + "\\." + component("keepcoder") + "\\."
+			+ foldedTelegram,
+	};
+	for (const auto &parent : bundleParents) {
+		for (const auto &prefix : bundlePrefixes) {
+			foldedRules.push_back(
+				"/" + library + "/" + parent + "/" + prefix
+				+ "[^/]*(/|$)");
+		}
+	}
 	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
 		const auto home = RegexLiteral(_profileHomePaths[i]);
 		if (home.isEmpty()) {
 			return {};
 		}
-		const auto libraryPath = SbplQuoted(
-			"^" + home + "/"
-			+ ProfileComponentRegex("Library", ignoredSequence)
-			+ "/.*");
-		const auto ignoredPath = SbplQuoted(
-			"^" + home + "/.*" + ignoredCharacters + ".*");
-		const auto telegramPath = SbplQuoted(
-			"^" + home + "/.*"
-			+ ProfileComponentRegex("telegram", ignoredSequence)
-			+ ".*");
-		if (libraryPath.isEmpty()
-			|| ignoredPath.isEmpty()
-			|| telegramPath.isEmpty()) {
-			return {};
-		}
-		result.append("(deny file* (require-all (regex\n");
-		result.append(libraryPath);
-		result.append(") (regex\n");
-		result.append(ignoredPath);
-		result.append(") (regex\n");
-		result.append(telegramPath);
-		result.append(")))\n");
 		for (const auto &suffix : rules) {
+			const auto expression = SbplQuoted("^" + home + suffix);
+			if (expression.isEmpty()) {
+				return {};
+			}
+			result.append("(deny file* (regex ");
+			result.append(expression);
+			result.append("))\n");
+		}
+		for (const auto &suffix : foldedRules) {
 			const auto expression = SbplQuoted("^" + home + suffix);
 			if (expression.isEmpty()) {
 				return {};

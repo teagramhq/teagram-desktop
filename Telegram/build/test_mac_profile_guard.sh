@@ -417,6 +417,14 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_CANARY" \
 	|| exit 1
 
+UNRELATED_CANARY="$TEST_HOME/Library/Application Support/OtherApp/telegram/cache${DEFAULT_IGNORABLE}"
+mkdir -p "$(dirname "$UNRELATED_CANARY")"
+printf '%s' 'synthetic unrelated application bytes' > "$UNRELATED_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_unrelated_telegram_ignorable_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$UNRELATED_CANARY" \
+	|| exit 1
+
 CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
 mkdir -p "$(dirname "$CONTAINER_CANARY")"
 printf '%s' 'synthetic protected container bytes' > "$CONTAINER_CANARY"

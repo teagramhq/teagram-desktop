@@ -138,7 +138,6 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		}
 		CHECK(profile.count("(deny file*") >= 16);
 		CHECK(profile.count("(regex ") >= 16);
-		CHECK(profile.contains("(require-all (regex"));
 		CHECK(profile.contains("/Users/alice"));
 		CHECK(profile.contains("/System/Volumes/Data/Users/alice"));
 		CHECK(profile.contains("/Users/bob"));
@@ -322,7 +321,12 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		fs.operations());
 	CHECK(policy.valid());
 	CheckSeatbeltProfile(policy);
-	CHECK(policy.SeatbeltProfile().contains("/Users/alice\\\\.test"));
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(profile.contains("/Users/alice\\\\.test"));
+	CHECK(!profile.contains("\"^/Users/alice\\\\.test/.*"));
+	const auto unrelated =
+		u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
+	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
