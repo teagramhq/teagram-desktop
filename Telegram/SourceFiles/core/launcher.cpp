@@ -123,24 +123,20 @@ void WriteDebugModeSetting() {
 }
 
 void ComputeDebugMode() {
-	Logs::SetDebugEnabled(cAlphaVersion() != 0);
 	const auto debugModeSettingPath = DebugModeSettingPath();
 	auto file = QFile(debugModeSettingPath);
+	auto debugModeSetting = std::optional<QByteArray>();
 	if (CheckProfilePath(MacProtectedPath::Operation::Stat,
 						 debugModeSettingPath, Q_FUNC_INFO)
-		&& file.exists()
-		&& CheckProfilePath(MacProtectedPath::Operation::Read,
+	&& file.exists()
+	&& CheckProfilePath(MacProtectedPath::Operation::Read,
 							debugModeSettingPath, Q_FUNC_INFO)
-		&& file.open(QIODevice::ReadOnly)) {
-		Logs::SetDebugEnabled(file.read(1) != "0");
-#if defined _DEBUG && !defined Q_OS_MAC
-	} else {
-		Logs::SetDebugEnabled(true);
-#endif
+	&& file.open(QIODevice::ReadOnly)) {
+		debugModeSetting = file.read(1);
 	}
-	if (cDebugMode()) {
-		Logs::SetDebugEnabled(true);
-	}
+	Logs::SetDebugEnabled(details::DebugModeEnabled(
+		debugModeSetting,
+		cDebugMode()));
 	if (Logs::DebugEnabled()) {
 		QLoggingCategory::setFilterRules("qt.qpa.gl.debug=true");
 	}
