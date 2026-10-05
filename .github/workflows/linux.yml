@@ -341,10 +341,47 @@ jobs:
           $IMAGE_TAG \
           bash -lc '
             cd /usr/src/tdesktop
-            /usr/src/tdesktop/out/Debug/test_unit
+            test_unit=/usr/src/tdesktop/out/Debug/test_unit
+            "$test_unit"
             TEST_STATUS=$?
             if test "$TEST_STATUS" -ne 0; then
               exit "$TEST_STATUS"
+            fi
+
+            if selected_output=$("$test_unit" --case EveryUpdaterEntryPointIsDenied 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  EveryUpdaterEntryPointIsDenied"; then
+              echo "--case did not run exactly EveryUpdaterEntryPointIsDenied."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "--case did not report one passing case."
+              exit 1
+            fi
+
+            if missing_output=$("$test_unit" --case NoSuchUpdaterCase 2>&1); then
+              printf "%s\n" "$missing_output"
+              echo "An unknown --case selection unexpectedly succeeded."
+              exit 1
+            fi
+            printf "%s\n" "$missing_output"
+            if ! printf "%s\n" "$missing_output" | grep -Fqx "No test case named NoSuchUpdaterCase is registered."; then
+              echo "Unknown --case selection did not report a missing case."
+              exit 1
+            fi
+            if printf "%s\n" "$missing_output" | grep -q "^run  "; then
+              echo "Unknown --case selection ran a test case."
+              exit 1
+            fi
+            if ! printf "%s\n" "$missing_output" | grep -Fqx "0 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Unknown --case selection did not report zero cases."
+              exit 1
             fi
           '
 
