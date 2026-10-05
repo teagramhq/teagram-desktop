@@ -405,6 +405,18 @@ fi
 printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' \
 	"$CANARY_STATUS"
 
+DEFAULT_IGNORABLE="$(printf '\342\200\213')"
+IGNORABLE_DIRECTORY="$TEST_HOME/Library/Group Containers/"\
+"6N38VWS5BX.ru.keepcoder.Te${DEFAULT_IGNORABLE}legram"
+IGNORABLE_CANARY="$IGNORABLE_DIRECTORY/synthetic-canary"
+mkdir -p "$(dirname "$IGNORABLE_CANARY")"
+printf '%s' 'synthetic protected canary with a default-ignorable character' \
+	> "$IGNORABLE_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_CANARY" \
+	|| exit 1
+
 CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
 mkdir -p "$(dirname "$CONTAINER_CANARY")"
 printf '%s' 'synthetic protected container bytes' > "$CONTAINER_CANARY"

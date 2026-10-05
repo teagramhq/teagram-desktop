@@ -267,7 +267,9 @@ struct WalkResult {
 	return result;
 }
 
-[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component) {
+[[nodiscard]] QByteArray ProfileComponentRegex(
+		const QByteArray &component,
+		const QByteArray &trailingIgnored = {}) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = QByteArray();
 	for (const auto value : component) {
@@ -290,6 +292,7 @@ struct WalkResult {
 			character.append(char(byte));
 		}
 		result.append(character);
+		result.append(trailingIgnored);
 	}
 	return result;
 }
@@ -705,6 +708,10 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	if (!_valid || _profileHomePaths.empty()) {
 		return {};
 	}
+	const auto ignoredCharacters
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]"_q
+			  .toUtf8();
+	const auto ignoredSequence = ignoredCharacters + "*";
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	const auto component = [&](const QByteArray &value) {
 		return ProfileComponentRegex(value);
@@ -730,6 +737,28 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		if (home.isEmpty()) {
 			return {};
 		}
+		const auto libraryPath = SbplQuoted(
+			"^" + home + "/"
+			+ ProfileComponentRegex("Library", ignoredSequence)
+			+ "/.*");
+		const auto ignoredPath = SbplQuoted(
+			"^" + home + "/.*" + ignoredCharacters + ".*");
+		const auto telegramPath = SbplQuoted(
+			"^" + home + "/.*"
+			+ ProfileComponentRegex("telegram", ignoredSequence)
+			+ ".*");
+		if (libraryPath.isEmpty()
+			|| ignoredPath.isEmpty()
+			|| telegramPath.isEmpty()) {
+			return {};
+		}
+		result.append("(deny file* (require-all (regex ");
+		result.append(libraryPath);
+		result.append(") (regex ");
+		result.append(ignoredPath);
+		result.append(") (regex ");
+		result.append(telegramPath);
+		result.append(")))\n");
 		for (const auto &suffix : rules) {
 			const auto expression = SbplQuoted("^" + home + suffix);
 			if (expression.isEmpty()) {
