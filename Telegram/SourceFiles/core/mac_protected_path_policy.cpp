@@ -255,9 +255,8 @@ struct WalkResult {
 	return (result.size() < kMaxSbplStringBytes) ? result : QByteArray();
 }
 
-[[nodiscard]] bool AppendSbplRegex(
-		QByteArray &profile,
-		const QByteArray &expression) {
+[[nodiscard]] bool AppendSbplRegex(QByteArray &profile,
+								   const QByteArray &expression) {
 	profile.append("(regex\n");
 	const auto appendString = [&](const QByteArray &value) {
 		const auto quoted = SbplQuoted(value);
@@ -275,9 +274,8 @@ struct WalkResult {
 	profile.append("(string-append\n");
 	for (auto start = qsizetype(0); start < expression.size();) {
 		auto end = std::min(start + 512, expression.size());
-		while (end > start
-			&& end < expression.size()
-			&& IsContinuation(uchar(expression.at(end)))) {
+		while (end > start && end < expression.size()
+			   && IsContinuation(uchar(expression.at(end)))) {
 			--end;
 		}
 		auto quoted = QByteArray();
@@ -287,9 +285,8 @@ struct WalkResult {
 				break;
 			}
 			--end;
-			while (end > start
-				&& end < expression.size()
-				&& IsContinuation(uchar(expression.at(end)))) {
+			while (end > start && end < expression.size()
+				   && IsContinuation(uchar(expression.at(end)))) {
 				--end;
 			}
 		}
@@ -316,9 +313,8 @@ struct WalkResult {
 	return result;
 }
 
-[[nodiscard]] QByteArray ProfileComponentRegex(
-		const QByteArray &component,
-		const QByteArray &ignored = {}) {
+[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
+											   const QByteArray &ignored = {}) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = ignored;
 	for (const auto value : component) {
@@ -757,9 +753,10 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	if (!_valid || _profileHomePaths.empty()) {
 		return {};
 	}
-	const auto ignoredSequence = u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		"\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		"\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	const auto ignoredSequence
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	struct ProtectedPrefix final {
 		QByteArray parent;
@@ -771,16 +768,13 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	const auto foldedTelegram = component("telegram");
 	const auto foldedDesktop = component("desktop");
 	auto protectedPrefixes = std::vector<ProtectedPrefix>{
-		{ "Application Support",
-			component("Telegram ") + foldedDesktop + "(/|$)" },
-		{ "Containers",
-			component("org") + component(".") + foldedTelegram
-				+ component(".") + foldedDesktop + "(/|$)" },
-		{ "Containers",
-			component("ru") + component(".") + component("keepcoder")
-				+ component(".") + foldedTelegram + "(/|$)" },
-		{ "Group Containers",
-			"[^/]*" + foldedTelegram + "[^/]*(/|$)" },
+		{"Application Support",
+		 component("Telegram ") + foldedDesktop + "(/|$)"},
+		{"Containers", component("org") + component(".") + foldedTelegram
+						   + component(".") + foldedDesktop + "(/|$)"},
+		{"Containers", component("ru") + component(".") + component("keepcoder")
+						   + component(".") + foldedTelegram + "(/|$)"},
+		{"Group Containers", "[^/]*" + foldedTelegram + "[^/]*(/|$)"},
 	};
 	const auto bundleParents = std::vector<QByteArray>{
 		"Preferences",
@@ -799,8 +793,7 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	};
 	for (const auto &parent : bundleParents) {
 		for (const auto &prefix : bundlePrefixes) {
-			protectedPrefixes.push_back(
-				{ parent, prefix + "[^/]*(/|$)" });
+			protectedPrefixes.push_back({parent, prefix + "[^/]*(/|$)"});
 		}
 	}
 	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {

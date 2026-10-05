@@ -324,33 +324,22 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	const auto profile = policy.SeatbeltProfile();
 	CHECK(profile.contains("/Users/alice\\\\.test"));
 	CHECK(!profile.contains("\"^/Users/alice\\\\.test/.*"));
-	const auto unrelated =
-		u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
+	const auto unrelated
+		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
 	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
-	const auto foldedApplicationSupport =
-		u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
+	const auto foldedApplicationSupport
+		= u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
 	CHECK(policy.Classify(foldedApplicationSupport.toUtf8())
-		== ProtectedClass::ApplicationSupport);
+		  == ProtectedClass::ApplicationSupport);
 	CHECK(!profile.contains(u"[\u200B-\u200F"_q.toUtf8()));
 	CHECK(profile.contains("(string-append"));
 	for (const auto &character : std::vector<QByteArray>{
-			 u"\u200B"_q.toUtf8(),
-			 u"\u200C"_q.toUtf8(),
-			 u"\u200D"_q.toUtf8(),
-			 u"\u200E"_q.toUtf8(),
-			 u"\u200F"_q.toUtf8(),
-			 u"\u202A"_q.toUtf8(),
-			 u"\u202B"_q.toUtf8(),
-			 u"\u202C"_q.toUtf8(),
-			 u"\u202D"_q.toUtf8(),
-			 u"\u202E"_q.toUtf8(),
-			 u"\u206A"_q.toUtf8(),
-			 u"\u206B"_q.toUtf8(),
-			 u"\u206C"_q.toUtf8(),
-			 u"\u206D"_q.toUtf8(),
-			 u"\u206E"_q.toUtf8(),
-			 u"\u206F"_q.toUtf8(),
-			 u"\uFEFF"_q.toUtf8() }) {
+			 u"\u200B"_q.toUtf8(), u"\u200C"_q.toUtf8(), u"\u200D"_q.toUtf8(),
+			 u"\u200E"_q.toUtf8(), u"\u200F"_q.toUtf8(), u"\u202A"_q.toUtf8(),
+			 u"\u202B"_q.toUtf8(), u"\u202C"_q.toUtf8(), u"\u202D"_q.toUtf8(),
+			 u"\u202E"_q.toUtf8(), u"\u206A"_q.toUtf8(), u"\u206B"_q.toUtf8(),
+			 u"\u206C"_q.toUtf8(), u"\u206D"_q.toUtf8(), u"\u206E"_q.toUtf8(),
+			 u"\u206F"_q.toUtf8(), u"\uFEFF"_q.toUtf8()}) {
 		CHECK(profile.contains(character));
 	}
 }
@@ -358,13 +347,13 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
 	auto fs = FakeFileSystem();
 	const auto longHome = "/Users/" + QByteArray(350, 'c') + "/"
-		+ QByteArray(350, 'd') + "/" + QByteArray(350, 'e');
+						  + QByteArray(350, 'd') + "/" + QByteArray(350, 'e');
 	AddDirectoryHierarchy(fs, longHome);
-	const auto policy = MacProtectedPathPolicy::Build(
-		HomeRoots{.accountDatabase = longHome,
-				  .environment = longHome,
-				  .foundation = longHome},
-		fs.operations());
+	const auto policy
+		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
+												  .environment = longHome,
+												  .foundation = longHome},
+										fs.operations());
 	CHECK(policy.valid());
 	CHECK(policy.SeatbeltProfile().isEmpty());
 }

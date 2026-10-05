@@ -431,8 +431,7 @@ IGNORABLE_CHARACTERS=(
 )
 for index in "${!IGNORABLE_CHARACTERS[@]}"; do
 	ignored="${IGNORABLE_CHARACTERS[$index]}"
-	canary="$TEST_HOME/Library/Group Containers/"\
-		"6N38VWS5BX.ru.keepcoder.Te${ignored}legram/synthetic-canary"
+	canary="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Te${ignored}legram/synthetic-canary"
 	mkdir -p "$(dirname "$canary")"
 	printf '%s' 'synthetic protected canary with a default-ignorable character' \
 		> "$canary"
@@ -460,8 +459,7 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_GROUP_PARENT_CANARY" \
 	|| exit 1
 
-FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}"\
-	"ort/Telegram Desktop/synthetic-canary"
+FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}ort/Telegram Desktop/synthetic-canary"
 mkdir -p "$(dirname "$FOLDED_PARENT_CANARY")"
 printf '%s' 'synthetic protected canary with a folded parent component' \
 	> "$FOLDED_PARENT_CANARY"
