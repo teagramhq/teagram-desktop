@@ -1267,7 +1267,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the teardown fixture");
 	}
-	QCoreApplication::processEvents();
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
 		return FailChatParticipantsRegression(
@@ -1275,7 +1274,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	const auto stockOnlineUpdates
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
-	discarded->forcedLogOut();
+	discarded->loggedOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
