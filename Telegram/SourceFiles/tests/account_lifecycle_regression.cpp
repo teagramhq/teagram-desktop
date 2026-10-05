@@ -422,13 +422,15 @@ RegressionOtherServerKey() {
 		return false;
 	}
 	domain.local().writeAccounts();
-	app.createPrimaryWindowForLifecycleRegression();
 	domain.finish();
 	Storage::details::Sync();
 	if (domain.start(QByteArray()) != Storage::StartResult::Success
 		|| domain.accounts().empty()) {
 		return false;
 	}
+	// Keep account-bound connection-state widgets out of the interval where
+	// Domain::finish has destroyed their MTP instances.
+	app.createPrimaryWindowForLifecycleRegression();
 	const auto primary = app.activePrimaryWindow();
 	if (!primary) {
 		return false;
