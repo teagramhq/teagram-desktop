@@ -417,6 +417,18 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_CANARY" \
 	|| exit 1
 
+FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}"\
+	"ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded parent component' \
+	> "$FOLDED_PARENT_CANARY"
+FOLDED_PARENT_CANARY_HASH="$(shasum -a 256 \
+	"$FOLDED_PARENT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_support_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_PARENT_CANARY" \
+	|| exit 1
+
 UNRELATED_CANARY="$TEST_HOME/Library/Application Support/OtherApp/telegram/cache${DEFAULT_IGNORABLE}"
 mkdir -p "$(dirname "$UNRELATED_CANARY")"
 printf '%s' 'synthetic unrelated application bytes' > "$UNRELATED_CANARY"
@@ -488,6 +500,11 @@ fi
 if [[ "$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')" \
 	!= "$CONTAINER_CANARY_HASH" ]]; then
 	echo "container canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$FOLDED_PARENT_CANARY" | awk '{print $1}')" \
+	!= "$FOLDED_PARENT_CANARY_HASH" ]]; then
+	echo "folded application support parent canary changed during denial probes." >&2
 	exit 1
 fi
 if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
