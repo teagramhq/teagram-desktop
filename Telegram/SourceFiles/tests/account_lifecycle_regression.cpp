@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -1246,6 +1247,44 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session()) {
 		return FailChatParticipantsRegression(
 			"primary window did not switch back to the stock session");
+	}
+	QCoreApplication::processEvents();
+	const auto discarded = domain.add(MTP::Environment::Production);
+	discarded->mtp().stopForServerEnrollment();
+	discarded->setSessionUserId(selfId);
+	if (!discarded->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		return FailChatParticipantsRegression(
+			"could not create the previous-session teardown fixture");
+	}
+	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
+		return FailChatParticipantsRegression(
+			"previous-session teardown fixture did not share the stock user id");
+	}
+	primary->showAccount(discarded);
+	if (primary->maybeSession() != &discarded->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the teardown fixture");
+	}
+	QCoreApplication::processEvents();
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch back from the teardown fixture");
+	}
+	const auto stockOnlineUpdates
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	discarded->forcedLogOut();
+	if (discarded->sessionExists()) {
+		return FailChatParticipantsRegression(
+			"previous-session teardown fixture was not destroyed");
+	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= stockOnlineUpdates) {
+		return FailChatParticipantsRegression(
+			"destroyed previous-session update reached another matching session");
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
