@@ -253,10 +253,23 @@ struct WalkResult {
 	return result;
 }
 
-[[nodiscard]] QByteArray
-ProfileComponentExpression(const QByteArray &component) {
+[[nodiscard]] QByteArray RegexLiteral(const QByteArray &value) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
-	auto result = QByteArray("(string-append");
+	auto result = QByteArray();
+	for (const auto character : value) {
+		if (special.contains(character)) {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	return result;
+}
+
+[[nodiscard]] QByteArray ProfileComponentRegex(
+		const QByteArray &component,
+		const QByteArray &ignored) {
+	const auto special = QByteArray("\\.^$|()[]{}*+?");
+	auto result = QByteArray();
 	for (const auto value : component) {
 		const auto byte = uchar(value);
 		auto character = QByteArray();
@@ -276,15 +289,9 @@ ProfileComponentExpression(const QByteArray &component) {
 			}
 			character.append(char(byte));
 		}
-		const auto quoted = SbplQuoted(character);
-		if (quoted.isEmpty()) {
-			return {};
-		}
-		result.append(' ');
-		result.append(quoted);
-		result.append(" teagramIgnorable");
+		result.append(character);
+		result.append(ignored);
 	}
-	result.append(')');
 	return result;
 }
 
@@ -702,90 +709,40 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	const auto ignored
 		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q
 			  .toUtf8();
-	const auto components = std::vector<std::pair<QByteArray, QByteArray>>{
-		{"teagramLibrary", ProfileComponentExpression("Library")},
-		{"teagramApplicationSupport",
-		 ProfileComponentExpression("Application Support")},
-		{"teagramTelegramDesktop",
-		 ProfileComponentExpression("Telegram Desktop")},
-		{"teagramContainers", ProfileComponentExpression("Containers")},
-		{"teagramOrgTelegram",
-		 ProfileComponentExpression("org.telegram.desktop")},
-		{"teagramRuTelegram",
-		 ProfileComponentExpression("ru.keepcoder.telegram")},
-		{"teagramGroupContainers",
-		 ProfileComponentExpression("Group Containers")},
-		{"teagramTelegram", ProfileComponentExpression("telegram")},
-		{"teagramPreferences", ProfileComponentExpression("Preferences")},
-		{"teagramCaches", ProfileComponentExpression("Caches")},
-		{"teagramHTTPStorages", ProfileComponentExpression("HTTPStorages")},
-		{"teagramWebKit", ProfileComponentExpression("WebKit")},
-		{"teagramSavedApplicationState",
-		 ProfileComponentExpression("Saved Application State")},
-		{"teagramComTelegram",
-		 ProfileComponentExpression("com.tdesktop.Telegram")},
-	};
-	const auto rules = std::vector<std::pair<QByteArray, QByteArray>>{
-		{"teagramApplicationSupportSuffix",
-		 "(string-append \"/\" teagramLibrary \"/\""
-		 " teagramApplicationSupport \"/\" teagramTelegramDesktop"
-		 " \"(/|$)\")"},
-		{"teagramContainerSuffix",
-		 "(string-append \"/\" teagramLibrary \"/\" teagramContainers"
-		 " \"/(\" teagramOrgTelegram \"|\" teagramRuTelegram"
-		 " \")(/|$)\")"},
-		{"teagramGroupContainerSuffix",
-		 "(string-append \"/\" teagramLibrary \"/\" teagramGroupContainers"
-		 " \"/[^/]*\" teagramTelegram \"[^/]*(/|$)\")"},
-		{"teagramBundleKeyedSuffix",
-		 "(string-append \"/\" teagramLibrary \"/(\""
-		 " teagramPreferences \"|\" teagramCaches \"|\""
-		 " teagramHTTPStorages \"|\" teagramWebKit \"|\""
-		 " teagramSavedApplicationState \")/(\""
-		 " teagramComTelegram \"|\" teagramOrgTelegram \"|\""
-		 " teagramRuTelegram \")[^/]*(/|$)\")"},
-	};
 	auto result = QByteArray("(version 1)\n(allow default)\n");
-	const auto appendDefine
-		= [&](const QByteArray &name, const QByteArray &value) {
-			  result.append("(define ");
-			  result.append(name);
-			  result.append(' ');
-			  result.append(value);
-			  result.append(")\n");
-		  };
-	const auto ignoredQuoted = SbplQuoted(ignored);
-	if (ignoredQuoted.isEmpty()) {
-		return {};
-	}
-	appendDefine("teagramIgnorable", ignoredQuoted);
-	for (const auto &entry : components) {
-		if (entry.second.isEmpty()) {
-			return {};
-		}
-		appendDefine(entry.first, entry.second);
-	}
-	for (const auto &entry : rules) {
-		appendDefine(entry.first, entry.second);
-	}
-	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
-		const auto home = SbplQuoted(_profileHomePaths[i]);
+	const auto component = [&](const QByteArray &value) {
+		return ProfileComponentRegex(value, ignored);
+	};
+	const auto library = component("Library");
+	const auto rules = std::vector<QByteArray>{
+		"/" + library + "/" + component("Application Support") + "/"
+			+ component("Telegram Desktop") + "(/|$)",
+		"/" + library + "/" + component("Containers") + "/("
+			+ component("org.telegram.desktop") + "|"
+			+ component("ru.keepcoder.telegram") + ")(/|$)",
+		"/" + library + "/" + component("Group Containers")
+			+ "/[^/]*" + component("telegram") + "[^/]*(/|$)",
+		"/" + library + "/(" + component("Preferences") + "|"
+			+ component("Caches") + "|" + component("HTTPStorages")
+			+ "|" + component("WebKit") + "|"
+			+ component("Saved Application State") + ")/("
+			+ component("com.tdesktop.Telegram") + "|"
+			+ component("org.telegram.desktop") + "|"
+			+ component("ru.keepcoder.telegram") + ")[^/]*(/|$)",
+	};
+	for (const auto &homePath : _profileHomePaths) {
+		const auto home = RegexLiteral(homePath);
 		if (home.isEmpty()) {
 			return {};
 		}
-		const auto homeName = QByteArray("teagramHome") + QByteArray::number(i);
-		result.append("(define ");
-		result.append(homeName);
-		result.append(' ');
-		result.append(home);
-		result.append(")\n");
-		for (const auto &entry : rules) {
-			result.append("(deny file* (regex (string-append \"^\" ");
-			result.append("(regex-quote ");
-			result.append(homeName);
-			result.append(") ");
-			result.append(entry.first);
-			result.append(")))\n");
+		for (const auto &suffix : rules) {
+			const auto expression = SbplQuoted("^" + home + suffix);
+			if (expression.isEmpty()) {
+				return {};
+			}
+			result.append("(deny file* (regex ");
+			result.append(expression);
+			result.append("))\n");
 		}
 	}
 	return result;

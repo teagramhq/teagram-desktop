@@ -134,13 +134,15 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		const auto profile = policy.SeatbeltProfile();
 		CHECK(profile.startsWith("(version 1)\n(allow default)\n"));
 		CHECK(profile.count("(deny file*") >= 16);
+		CHECK(profile.count("(regex \"^") >= 16);
+		CHECK(!profile.contains("(regex (string-append"));
 		CHECK(profile.contains("/Users/alice"));
 		CHECK(profile.contains("/System/Volumes/Data/Users/alice"));
 		CHECK(profile.contains("/Users/bob"));
-		CHECK(profile.contains("teagramApplicationSupportSuffix"));
-		CHECK(profile.contains("teagramContainerSuffix"));
-		CHECK(profile.contains("teagramGroupContainerSuffix"));
-		CHECK(profile.contains("teagramBundleKeyedSuffix"));
+		CHECK(profile.contains("[Ll]"));
+		CHECK(profile.contains("[Gg]"));
+		CHECK(profile.contains("[^/]*"));
+		CHECK(profile.contains("[Ss]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 	} else {
 		CHECK(false);
@@ -308,15 +310,16 @@ TEST_CASE(HomeRootsFromAllSourcesAreProtected) {
 
 TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	auto fs = FakeFileSystem();
-	AddDirectoryHierarchy(fs, "/Users/alice");
+	AddDirectoryHierarchy(fs, "/Users/alice.test");
 	AddDirectoryHierarchy(fs, "/Users/bob");
 	const auto policy = MacProtectedPathPolicy::Build(
-		HomeRoots{.accountDatabase = "/Users/alice",
+		HomeRoots{.accountDatabase = "/Users/alice.test",
 				  .environment = "/Users/bob",
-				  .foundation = "/Users/alice"},
+				  .foundation = "/Users/alice.test"},
 		fs.operations());
 	CHECK(policy.valid());
 	CheckSeatbeltProfile(policy);
+	CHECK(policy.SeatbeltProfile().contains("/Users/alice\\\\.test"));
 }
 
 TEST_CASE(BuildRejectsMissingRequiredHomesWithoutProbing) {
