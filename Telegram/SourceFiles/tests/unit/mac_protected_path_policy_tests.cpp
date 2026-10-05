@@ -331,16 +331,28 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
 	CHECK(policy.Classify(foldedApplicationSupport.toUtf8())
 		== ProtectedClass::ApplicationSupport);
-	const auto ignored =
-		u"[\u200B-\u200F\u202A-\u202E\u206A-\u206F\uFEFF]*"_q.toUtf8();
-	const auto foldedSupport = QByteArray("[Ss]") + ignored
-		+ "[Uu]" + ignored
-		+ "[Pp]" + ignored
-		+ "[Pp]" + ignored
-		+ "[Oo]" + ignored
-		+ "[Rr]" + ignored
-		+ "[Tt]" + ignored;
-	CHECK(profile.contains(foldedSupport));
+	CHECK(!profile.contains(u"[\u200B-\u200F"_q.toUtf8()));
+	CHECK(profile.contains("(string-append"));
+	for (const auto &character : std::vector<QByteArray>{
+			 u"\u200B"_q.toUtf8(),
+			 u"\u200C"_q.toUtf8(),
+			 u"\u200D"_q.toUtf8(),
+			 u"\u200E"_q.toUtf8(),
+			 u"\u200F"_q.toUtf8(),
+			 u"\u202A"_q.toUtf8(),
+			 u"\u202B"_q.toUtf8(),
+			 u"\u202C"_q.toUtf8(),
+			 u"\u202D"_q.toUtf8(),
+			 u"\u202E"_q.toUtf8(),
+			 u"\u206A"_q.toUtf8(),
+			 u"\u206B"_q.toUtf8(),
+			 u"\u206C"_q.toUtf8(),
+			 u"\u206D"_q.toUtf8(),
+			 u"\u206E"_q.toUtf8(),
+			 u"\u206F"_q.toUtf8(),
+			 u"\uFEFF"_q.toUtf8() }) {
+		CHECK(profile.contains(character));
+	}
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {

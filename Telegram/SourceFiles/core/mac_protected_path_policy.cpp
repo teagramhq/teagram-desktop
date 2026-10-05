@@ -255,6 +255,55 @@ struct WalkResult {
 	return (result.size() < kMaxSbplStringBytes) ? result : QByteArray();
 }
 
+[[nodiscard]] bool AppendSbplRegex(
+		QByteArray &profile,
+		const QByteArray &expression) {
+	profile.append("(regex\n");
+	const auto appendString = [&](const QByteArray &value) {
+		const auto quoted = SbplQuoted(value);
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		return true;
+	};
+	if (appendString(expression)) {
+		profile.append(")\n");
+		return true;
+	}
+	profile.append("(string-append\n");
+	for (auto start = qsizetype(0); start < expression.size();) {
+		auto end = std::min(start + 512, expression.size());
+		while (end > start
+			&& end < expression.size()
+			&& IsContinuation(uchar(expression.at(end)))) {
+			--end;
+		}
+		auto quoted = QByteArray();
+		while (end > start) {
+			quoted = SbplQuoted(expression.mid(start, end - start));
+			if (!quoted.isEmpty()) {
+				break;
+			}
+			--end;
+			while (end > start
+				&& end < expression.size()
+				&& IsContinuation(uchar(expression.at(end)))) {
+				--end;
+			}
+		}
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		start = end;
+	}
+	profile.append(")\n)\n");
+	return true;
+}
+
 [[nodiscard]] QByteArray RegexLiteral(const QByteArray &value) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = QByteArray();
@@ -269,9 +318,9 @@ struct WalkResult {
 
 [[nodiscard]] QByteArray ProfileComponentRegex(
 		const QByteArray &component,
-		const QByteArray &trailingIgnored = {}) {
+		const QByteArray &ignored = {}) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
-	auto result = QByteArray();
+	auto result = ignored;
 	for (const auto value : component) {
 		const auto byte = uchar(value);
 		auto character = QByteArray();
@@ -292,7 +341,7 @@ struct WalkResult {
 			character.append(char(byte));
 		}
 		result.append(character);
-		result.append(trailingIgnored);
+		result.append(ignored);
 	}
 	return result;
 }
@@ -708,10 +757,9 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	if (!_valid || _profileHomePaths.empty()) {
 		return {};
 	}
-	const auto ignoredCharacters
-		= u"[\u200B-\u200F\u202A-\u202E\u206A-\u206F\uFEFF]"_q
-			  .toUtf8();
-	const auto ignoredSequence = ignoredCharacters + "*";
+	const auto ignoredSequence = u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		"\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		"\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	struct ProtectedPrefix final {
 		QByteArray parent;
@@ -757,7 +805,7 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	}
 	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
 		const auto home = RegexLiteral(_profileHomePaths[i]);
-		if (home.isEmpty()) {
+		if (home.isEmpty() || home.size() >= kMaxSbplStringBytes) {
 			return {};
 		}
 		const auto library = component("Library");
@@ -769,13 +817,9 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			};
 			result.append("(deny file* (require-all\n");
 			for (const auto &expression : expressions) {
-				const auto quoted = SbplQuoted(expression);
-				if (quoted.isEmpty()) {
+				if (!AppendSbplRegex(result, expression)) {
 					return {};
 				}
-				result.append("(regex\n");
-				result.append(quoted);
-				result.append(")\n");
 			}
 			result.append("))\n");
 		}

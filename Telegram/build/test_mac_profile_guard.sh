@@ -410,15 +410,54 @@ printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' 
 	"$CANARY_STATUS"
 
 DEFAULT_IGNORABLE="$(printf '\342\200\213')"
-IGNORABLE_DIRECTORY="$TEST_HOME/Library/Group Containers/"\
-"6N38VWS5BX.ru.keepcoder.Te${DEFAULT_IGNORABLE}legram"
-IGNORABLE_CANARY="$IGNORABLE_DIRECTORY/synthetic-canary"
-mkdir -p "$(dirname "$IGNORABLE_CANARY")"
-printf '%s' 'synthetic protected canary with a default-ignorable character' \
-	> "$IGNORABLE_CANARY"
+IGNORABLE_CHARACTERS=(
+	"$(printf '\342\200\213')"
+	"$(printf '\342\200\214')"
+	"$(printf '\342\200\215')"
+	"$(printf '\342\200\216')"
+	"$(printf '\342\200\217')"
+	"$(printf '\342\200\252')"
+	"$(printf '\342\200\253')"
+	"$(printf '\342\200\254')"
+	"$(printf '\342\200\255')"
+	"$(printf '\342\200\256')"
+	"$(printf '\342\201\252')"
+	"$(printf '\342\201\253')"
+	"$(printf '\342\201\254')"
+	"$(printf '\342\201\255')"
+	"$(printf '\342\201\256')"
+	"$(printf '\342\201\257')"
+	"$(printf '\357\273\277')"
+)
+for index in "${!IGNORABLE_CHARACTERS[@]}"; do
+	ignored="${IGNORABLE_CHARACTERS[$index]}"
+	canary="$TEST_HOME/Library/Group Containers/"\
+		"6N38VWS5BX.ru.keepcoder.Te${ignored}legram/synthetic-canary"
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected canary with a default-ignorable character' \
+		> "$canary"
+	run_seatbelt_cat_probe \
+		"seatbelt_default_ignorable_${index}_denial" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| exit 1
+done
+
+IGNORABLE_LIBRARY_CANARY="$TEST_HOME/Lib${DEFAULT_IGNORABLE}rary/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$IGNORABLE_LIBRARY_CANARY")"
+printf '%s' 'synthetic protected canary with an ignored Library character' \
+	> "$IGNORABLE_LIBRARY_CANARY"
 run_seatbelt_cat_probe \
-	seatbelt_default_ignorable_denial \
-	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_CANARY" \
+	seatbelt_default_ignorable_library_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_LIBRARY_CANARY" \
+	|| exit 1
+
+FOLDED_GROUP_PARENT_CANARY="$TEST_HOME/Library/Group Con${DEFAULT_IGNORABLE}tainers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_GROUP_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded group parent' \
+	> "$FOLDED_GROUP_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_group_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_GROUP_PARENT_CANARY" \
 	|| exit 1
 
 FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}"\
@@ -433,12 +472,30 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_PARENT_CANARY" \
 	|| exit 1
 
+FOLDED_APPLICATION_CANARY="$TEST_HOME/Library/Application Support/Telegram Des${DEFAULT_IGNORABLE}ktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_APPLICATION_CANARY")"
+printf '%s' 'synthetic protected canary with a folded application component' \
+	> "$FOLDED_APPLICATION_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_APPLICATION_CANARY" \
+	|| exit 1
+
 UNRELATED_CANARY="$TEST_HOME/Library/Application Support/OtherApp/telegram/cache${DEFAULT_IGNORABLE}"
 mkdir -p "$(dirname "$UNRELATED_CANARY")"
 printf '%s' 'synthetic unrelated application bytes' > "$UNRELATED_CANARY"
 run_seatbelt_cat_probe \
 	seatbelt_unrelated_telegram_ignorable_allowed \
 	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$UNRELATED_CANARY" \
+	|| exit 1
+
+NARROW_NO_BREAK_SPACE="$(printf '\342\200\257')"
+NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Supp${NARROW_NO_BREAK_SPACE}ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$NEAR_MATCH_CANARY")"
+printf '%s' 'synthetic non-ignorable near-match bytes' > "$NEAR_MATCH_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_non_ignorable_application_support_near_match_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$NEAR_MATCH_CANARY" \
 	|| exit 1
 
 CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
@@ -450,6 +507,15 @@ run_seatbelt_cat_probe \
 	--mac-seatbelt-cat-probe "$TEST_HOME" "$CONTAINER_CANARY" \
 	|| exit 1
 
+FOLDED_CONTAINER_CANARY="$TEST_HOME/Library/Containers/${DEFAULT_IGNORABLE}org.telegram.desktop${DEFAULT_IGNORABLE}/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_CONTAINER_CANARY")"
+printf '%s' 'synthetic protected canary with a folded container bundle id' \
+	> "$FOLDED_CONTAINER_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_CONTAINER_CANARY" \
+	|| exit 1
+
 run_bundle_keyed_probe seatbelt_bundle_keyed_denial Preferences || exit 1
 run_bundle_keyed_probe seatbelt_caches_denial Caches || exit 1
 run_bundle_keyed_probe seatbelt_httpstorages_denial HTTPStorages || exit 1
@@ -457,6 +523,24 @@ run_bundle_keyed_probe seatbelt_webkit_denial WebKit || exit 1
 run_bundle_keyed_probe \
 	seatbelt_saved_application_state_denial \
 	"Saved Application State" \
+	|| exit 1
+
+FOLDED_BUNDLE_CANARY="$TEST_HOME/Library/Preferences/org.telegram.des${DEFAULT_IGNORABLE}ktop.fixture/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed id' \
+	> "$FOLDED_BUNDLE_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_keyed_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_CANARY" \
+	|| exit 1
+
+FOLDED_BUNDLE_PARENT_CANARY="$TEST_HOME/Library/Preference${DEFAULT_IGNORABLE}s/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed parent' \
+	> "$FOLDED_BUNDLE_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_PARENT_CANARY" \
 	|| exit 1
 
 APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
