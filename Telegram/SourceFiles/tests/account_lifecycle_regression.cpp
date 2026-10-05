@@ -1491,7 +1491,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	app.closeWindow(primary);
 	QCoreApplication::processEvents();
-	if (!windowsMatch()) {
+	if (!windowsMatch("after primary close")) {
 		return FailChatParticipantsRegression(
 			"primary close changed the separate session windows");
 	}
