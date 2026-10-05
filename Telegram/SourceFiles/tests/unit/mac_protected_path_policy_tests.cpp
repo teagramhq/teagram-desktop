@@ -331,7 +331,16 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
 	CHECK(policy.Classify(foldedApplicationSupport.toUtf8())
 		== ProtectedClass::ApplicationSupport);
-	CHECK(profile.contains(u"[Ss][Uu][Pp][Pp][\u200B-\u200F"_q.toUtf8()));
+	const auto ignored =
+		u"[\u200B-\u200F\u202A-\u202E\u206A-\u206F\uFEFF]*"_q.toUtf8();
+	const auto foldedSupport = QByteArray("[Ss]") + ignored
+		+ "[Uu]" + ignored
+		+ "[Pp]" + ignored
+		+ "[Pp]" + ignored
+		+ "[Oo]" + ignored
+		+ "[Rr]" + ignored
+		+ "[Tt]" + ignored;
+	CHECK(profile.contains(foldedSupport));
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
