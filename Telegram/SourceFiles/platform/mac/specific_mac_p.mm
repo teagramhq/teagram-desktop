@@ -259,43 +259,65 @@ bool SetApplicationIcon(const QImage &image) {
 }
 
 #ifndef OS_MAC_STORE
-void UpdateApplicationBundleIcon(Core::TeagramIconChoice choice) {
+std::optional<bool> UpdateApplicationBundleIcon(
+		Core::TeagramIconChoice choice,
+		bool fileIconOwned,
+		bool roundIconActive) {
 	const auto bundlePath = [[NSBundle mainBundle] bundlePath];
 	const auto writable = [[NSFileManager defaultManager]
 		isWritableFileAtPath:bundlePath];
 	const auto action = Core::TeagramIconFileActionForChoice(
 		choice,
-		writable);
+		writable,
+		fileIconOwned,
+		roundIconActive);
 	auto result = QString();
-	switch (action) {
-	case Core::TeagramIconFileAction::Skip:
+	auto ownershipChange = std::optional<bool>();
+	if (roundIconActive) {
+		result = u"skipped-round-icon"_q;
+	} else if (!writable) {
 		result = u"skipped-unwritable"_q;
-		break;
-	case Core::TeagramIconFileAction::Set: {
-		const auto image = Core::RenderTeagramIconImage(choice);
-		auto *native = Q2NSImage(image);
-		if (!native) {
-			result = u"image-conversion-failed"_q;
-			break;
+	} else if (action == Core::TeagramIconFileAction::Skip) {
+		result = u"skipped-unowned"_q;
+	} else {
+		const auto dispatched
+			= Core::MacProtectedPath::DispatchCustomAppIconIfAllowed(
+				QString(), "platform.teagram-icon", [&] {
+					if (action == Core::TeagramIconFileAction::Set) {
+						const auto image = Core::RenderTeagramIconImage(choice);
+						auto *native = Q2NSImage(image);
+						if (!native) {
+							result = u"image-conversion-failed"_q;
+							return;
+						}
+						[native setSize:NSMakeSize(512, 512)];
+						const auto applied = [[NSWorkspace sharedWorkspace]
+							setIcon:native
+							forFile:bundlePath
+							options:0];
+						result = applied ? u"set"_q : u"set-failed"_q;
+						if (applied) {
+							ownershipChange = true;
+						}
+					} else {
+						const auto applied = [[NSWorkspace sharedWorkspace]
+							setIcon:nil
+							forFile:bundlePath
+							options:0];
+						result = applied ? u"cleared"_q : u"clear-failed"_q;
+						if (applied) {
+							ownershipChange = false;
+						}
+					}
+				});
+		if (!dispatched) {
+			result = u"skipped-refused"_q;
 		}
-		[native setSize:NSMakeSize(512, 512)];
-		const auto applied = [[NSWorkspace sharedWorkspace]
-			setIcon:native
-			forFile:bundlePath
-			options:0];
-		result = applied ? u"set"_q : u"set-failed"_q;
-	} break;
-	case Core::TeagramIconFileAction::Clear: {
-		const auto applied = [[NSWorkspace sharedWorkspace]
-			setIcon:nil
-			forFile:bundlePath
-			options:0];
-		result = applied ? u"cleared"_q : u"clear-failed"_q;
-	} break;
 	}
 	LOG(("Teagram icon file: choice=%1 result=%2")
 		.arg(static_cast<int>(choice))
 		.arg(result));
+	return ownershipChange;
 }
 #endif // OS_MAC_STORE
 

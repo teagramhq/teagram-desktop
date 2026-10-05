@@ -636,10 +636,10 @@ void BuildSystemIntegrationSection(SectionBuilder &builder) {
 					if (!allowed) {
 						return;
 					}
+					settings->setMacRoundIconDigest(digest);
 					Window::OverrideApplicationIcon(checked ? IconMacRound()
 															: QImage());
 					Core::App().refreshApplicationIcon();
-					settings->setMacRoundIconDigest(digest);
 					Core::App().saveSettings();
 				},
 				roundIcon->lifetime());
@@ -1836,10 +1836,10 @@ void SetupSystemIntegrationContent(
 				if (!allowed) {
 					return;
 				}
+				settings->setMacRoundIconDigest(digest);
 				Window::OverrideApplicationIcon(checked ? IconMacRound()
 														: QImage());
 				Core::App().refreshApplicationIcon();
-				settings->setMacRoundIconDigest(digest);
 				Core::App().saveSettings();
 			},
 			roundIcon->lifetime());
