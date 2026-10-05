@@ -331,7 +331,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
 	CHECK(policy.Classify(foldedApplicationSupport.toUtf8())
 		== ProtectedClass::ApplicationSupport);
-	CHECK(profile.contains(u"Supp[\u200B-\u200F"_q.toUtf8()));
+	CHECK(profile.contains(u"[Ss][Uu][Pp][Pp][\u200B-\u200F"_q.toUtf8()));
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
