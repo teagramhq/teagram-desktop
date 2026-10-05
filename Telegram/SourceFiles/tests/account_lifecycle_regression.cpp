@@ -1247,8 +1247,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch back to the stock session");
 	}
-	app.closeWindow(primary);
-	QCoreApplication::processEvents();
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
 	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
@@ -1261,6 +1259,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		domain.activate(stock);
 	});
+	app.closeWindow(primary);
+	QCoreApplication::processEvents();
 	const auto printCapabilities = [](const char *name,
 								  const Main::Session &session) {
 		std::fprintf(stderr,
