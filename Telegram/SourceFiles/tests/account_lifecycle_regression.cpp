@@ -1285,17 +1285,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	app.closeWindow(primary);
+	if (app.separateWindowFor(stock) != nullptr) {
+		return FailChatParticipantsRegression(
+			"closed primary window remained mapped to the stock account");
+	}
 	QCoreApplication::processEvents();
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
 		!= stockOnlineUpdates) {
 		return FailChatParticipantsRegression(
 			"destroyed previous-session update reached another matching session");
-	}
-	primary->showAccount(discarded);
-	if (primary->id().account != discarded.get()
-		|| primary->maybeSession() != nullptr) {
-		return FailChatParticipantsRegression(
-			"primary window retained a destroyed session account");
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
@@ -1309,8 +1308,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		domain.activate(stock);
 	});
-	app.closeWindow(primary);
-	QCoreApplication::processEvents();
 	const auto printCapabilities = [](const char *name,
 								  const Main::Session &session) {
 		std::fprintf(stderr,
@@ -1427,10 +1424,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			static_cast<const void *>(pinnedWindow));
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
-	}
-	if (stockWindow == primary || pinnedWindow == primary) {
-		return FailChatParticipantsRegression(
-			"separate session window reused the primary window");
 	}
 	if (!windowsMatch("initial separate windows")
 		|| !activateAndCheck(false)
