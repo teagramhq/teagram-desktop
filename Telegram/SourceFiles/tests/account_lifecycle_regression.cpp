@@ -1291,6 +1291,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"destroyed previous-session update reached another matching session");
 	}
+	primary->showAccount(discarded);
+	if (primary->id().account != discarded.get()
+		|| primary->maybeSession() != nullptr) {
+		return FailChatParticipantsRegression(
+			"primary window retained a destroyed session account");
+	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
 	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
@@ -1421,6 +1427,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			static_cast<const void *>(pinnedWindow));
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
+	}
+	if (stockWindow == primary || pinnedWindow == primary) {
+		return FailChatParticipantsRegression(
+			"separate session window reused the primary window");
 	}
 	if (!windowsMatch("initial separate windows")
 		|| !activateAndCheck(false)
