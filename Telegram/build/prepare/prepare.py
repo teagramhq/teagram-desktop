@@ -713,8 +713,16 @@ release:
 stage('libiconv', """
 mac:
     VERSION=1.18
+    SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
     rm -f libiconv.tar.gz
-    wget --timeout=30 --tries=2 -O libiconv.tar.gz ftp://ftp.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz || wget -O libiconv.tar.gz https://ftp.gnu.org/pub/gnu/libiconv/libiconv-$VERSION.tar.gz
+    for url in https://ftpmirror.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.osuosl.org/pub/gnu/libiconv/libiconv-$VERSION.tar.gz https://mirrors.kernel.org/gnu/libiconv/libiconv-$VERSION.tar.gz; do
+        wget --timeout=30 --tries=2 -O libiconv.tar.gz "$url" || continue
+        if [ `shasum -a 256 libiconv.tar.gz | cut -d' ' -f1` = "$SHA256" ]; then
+            break
+        fi
+        rm -f libiconv.tar.gz
+    done
+    test -s libiconv.tar.gz
     rm -rf libiconv-$VERSION
     tar -xvzf libiconv.tar.gz
     rm libiconv.tar.gz
