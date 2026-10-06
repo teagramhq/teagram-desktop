@@ -1278,6 +1278,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch back from the teardown fixture");
 	}
+	// Keep a session window last active across the primary close: closing the
+	// only window clears the application float player, and the next window
+	// constructor reaches it before its own delegate is registered. The
+	// queued previous-session callback is left undispatched here.
+	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	if (app.separateWindowFor(pinned) != pinnedWindow) {
+		return FailChatParticipantsRegression(
+			"pinned window was not mapped before the primary closed");
+	}
 	const auto stockOnlineUpdates
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	discarded->forcedLogOut();
@@ -1298,7 +1307,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
-	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	const auto closeWindows = gsl::finally([&] {
 		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
 			app.closeWindow(stockWindow);
