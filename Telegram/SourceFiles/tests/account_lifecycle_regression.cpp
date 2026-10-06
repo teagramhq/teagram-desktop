@@ -399,7 +399,9 @@ RegressionOtherServerKey() {
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
-[[nodiscard]] bool RestartDomain(Main::Domain &domain) {
+[[nodiscard]] bool RestartDomain(
+		Main::Domain &domain,
+		LifecycleWriteCountsForRegressionTest *teardownWriteCounts = nullptr) {
 	auto &app = Core::App();
 	const auto applicationWindows = [&] {
 		auto result = std::vector<Window::Controller *>();
@@ -424,6 +426,9 @@ RegressionOtherServerKey() {
 	}
 	domain.local().writeAccounts();
 	domain.finish();
+	if (teardownWriteCounts) {
+		*teardownWriteCounts = GetLifecycleWriteCountsForRegressionTest();
+	}
 	Storage::details::Sync();
 	if (domain.start(QByteArray()) != Storage::StartResult::Success
 		|| domain.accounts().empty()) {
@@ -1858,21 +1863,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"authorization failure marker observer missed an identical-value rewrite");
 	}
-	domain.local().writeAccounts();
 	ResetLifecycleWriteCountsForRegressionTest();
-	domain.finish();
-	const auto blockedTeardownAttempts = GetLifecycleWriteCountsForRegressionTest();
+	auto blockedTeardownAttempts = LifecycleWriteCountsForRegressionTest();
+	if (!RestartDomain(domain, &blockedTeardownAttempts)) {
+		return FailAccountLifecycleRegression(
+			"could not restart after blocked teardown");
+	}
 	if (blockedTeardownAttempts.authorizationSnapshot != 0
 		|| blockedTeardownAttempts.authorizationFailureMarker != 0
 		|| blockedTeardownAttempts.customServerBlockMarker != 0) {
 		return FailAccountLifecycleRegression(
 			"blocked account teardown attempted an authorization or marker write");
-	}
-	Storage::details::Sync();
-	if ((domain.start(QByteArray()) != Storage::StartResult::Success)
-		|| domain.accounts().empty()) {
-		return FailAccountLifecycleRegression(
-			"could not restart after blocked teardown");
 	}
 	failedTeardown = FindAuthorizationBlockedAccount(domain);
 	if (!failedTeardown
@@ -2038,21 +2039,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"block marker observer missed an identical-value rewrite");
 	}
-	domain.local().writeAccounts();
 	ResetLifecycleWriteCountsForRegressionTest();
-	domain.finish();
-	const auto teardownAttempts = GetLifecycleWriteCountsForRegressionTest();
+	auto teardownAttempts = LifecycleWriteCountsForRegressionTest();
+	if (!RestartDomain(domain, &teardownAttempts)) {
+		return FailAccountLifecycleRegression(
+			"blocked teardown did not complete its restart");
+	}
 	if (teardownAttempts.authorizationSnapshot != 0
 		|| teardownAttempts.authorizationFailureMarker != 0
 		|| teardownAttempts.customServerBlockMarker != 0) {
 		return FailAccountLifecycleRegression(
 			"blocked account teardown attempted an authorization or marker write");
-	}
-	Storage::details::Sync();
-	if ((domain.start(QByteArray()) != Storage::StartResult::Success)
-		|| domain.accounts().empty()) {
-		return FailAccountLifecycleRegression(
-			"blocked teardown did not complete its restart");
 	}
 	blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
 		domain.accounts().front().account.get());
