@@ -126,7 +126,7 @@ signature. Setup and reproduction commands are in `README.md`.
 On 2026-10-07, the documented isolated setup smoke exited 0 with g++ 15.2.0,
 OpenSSL headers/runtime 3.5.5 (linked runtime major 3), Python 3.14.4, and
 cryptography 46.0.5. The documented focused unittest command exited 0: 11
-tests passed in 4.896 seconds. The run verified all four RFC known answers,
+tests passed in 8.831 seconds. The run verified all four RFC known answers,
 byte-identical C++/Python results for S, M, C0 and C, all ten signed wrong-role
 cases, the signed manifest key-ID/public-key mismatch, both linked-transition
 history/revocation rejections and their valid successor, both signed

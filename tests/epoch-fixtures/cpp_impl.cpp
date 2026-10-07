@@ -732,12 +732,7 @@ Outcome verifyObject(const std::string &kind, const std::string &domain,
 	try {
 		if (encode(value) != payload) { result.stage = "canonical"; return result; }
 	} catch (...) { result.stage = "canonical"; return result; }
-	try {
-		if (schemaError(kind, value) != "ok") { result.stage = "schema"; return result; }
-	} catch (...) {
-		result.stage = "schema";
-		return result;
-	}
+	if (schemaError(kind, value) != "ok") { result.stage = "schema"; return result; }
 	const auto rightRole = kind == "S" ? signer == "R"
 		: (kind == "M" ? (signer == "K0" || signer == "K1") : signer == "L");
 	if (!rightRole) { result.stage = "authority"; return result; }

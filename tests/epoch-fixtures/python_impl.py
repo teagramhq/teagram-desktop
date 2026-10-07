@@ -403,11 +403,7 @@ def verify_object(kind, domain, raw, signature, context=None):
     if not check_tree_ascii(value):
         result["stage"] = "schema"
         return result
-    try:
-        status = schema_error(kind, value)
-    except Exception:
-        result["stage"] = "schema"
-        return result
+    status = schema_error(kind, value)
     if status != "ok":
         result["stage"] = status
         return result
