@@ -28,11 +28,14 @@ through `18446744073709551615`, with no leading zero except `"0"`.
 | C, ledger checkpoint | `current_epoch`, `event_cursor`, `high_water_build`, `sequence`: uint64 decimal strings; `epoch_statement_sha256`, `ledger_head_sha256`, `prev_sha256`, `protection_digest_sha256`: 64 lowercase hex; `kind="teagram-ledger-checkpoint"`; `product="io.teagram.desktop"`; `repo="teagramhq/teagram-desktop"`; `repo_id="1332987415"` (the GitHub numeric repository ID as a decimal string); `schema`: JSON integer `1`. |
 
 `S` is authorized only by recovery role R. It advances exactly one epoch and
-must link to the previous statement; it may revoke an old package ID while
-authorizing the next ID. `M` must be signed by the exact public key listed for
-its key ID in the accepted S for that epoch. `C` is authorized only by ledger
-role L. The fixture trust map has four distinct keys and never exceeds four
-entries.
+must link to the previous statement. Each accepted statement replaces the
+active package-key map while the verifier retains the full key-ID/public-key
+history and cumulative revoked-ID set across transitions. A historical key ID
+cannot be rebound to another public key, and a revoked ID cannot be
+reauthorized even when a later statement omits it from its own revocation list.
+`M` must be signed by the exact public key listed for its key ID in the
+accepted S for that epoch. `C` is authorized only by ledger role L. The fixture
+trust map has four distinct keys and never exceeds four entries.
 
 | Domain | Exact bytes before the NUL separator | Authorized signer |
 | --- | --- | --- |
@@ -86,6 +89,13 @@ The isolated suite checks:
   correctly K[1]-signed M naming `k1`, reaches parsing with a valid signature
   and fails authority because the verifying key differs from the accepted
   ID-to-public-key map.
+- A linked, correctly R-signed epoch 1-to-2 S cannot reauthorize cumulative
+  revoked ID `k0` or rebind historical ID `k1` to K[0]'s public key; both
+  signature-valid objects reach parsing and fail their transition checks. A
+  linked statement retaining the original `k1` public key is accepted.
+- Correctly K[1]-signed canonical M objects with numeric `asset_name` and
+  array-valued `channel` are rejected at schema validation after signature
+  verification; neither implementation aborts on the wrong JSON type.
 - Correctly signed duplicate keys fail canonical equality; an unknown field,
   leading-zero/number/overflow counters, escaped text, and a trailing newline
   fail after signature verification. Wrong-domain and v1-domain signatures
@@ -111,10 +121,12 @@ signature. Setup and reproduction commands are in `README.md`.
 
 On 2026-10-07, the documented isolated setup smoke exited 0 with g++ 15.2.0,
 OpenSSL headers/runtime 3.5.5 (linked runtime major 3), Python 3.14.4, and
-cryptography 46.0.5. The documented focused unittest command exited 0: 8
-tests passed in 4.484 seconds. The run verified all four RFC known answers,
+cryptography 46.0.5. The documented focused unittest command exited 0: 10
+tests passed in 4.693 seconds. The run verified all four RFC known answers,
 byte-identical C++/Python results for S, M, C0 and C, all ten signed wrong-role
-cases, the signed manifest key-ID/public-key mismatch, all 39 signed field
-mutations, the epoch-1/build-101 recovery outcome, and the fixture
-key-containment check. This is local protocol-conformance evidence; the
-earlier setup-only PR #98 check is not counted as conformance.
+cases, the signed manifest key-ID/public-key mismatch, both linked-transition
+history/revocation rejections and their valid successor, both signed
+wrong-type M schema rejections, all 39 signed field mutations, the
+epoch-1/build-101 recovery outcome, and the fixture key-containment check.
+This is local protocol-conformance evidence; the earlier setup-only PR #98
+check is not counted as conformance.

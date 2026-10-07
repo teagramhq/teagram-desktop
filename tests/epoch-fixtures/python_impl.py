@@ -232,6 +232,21 @@ def schema_error(kind, value):
         if revoked != sorted(set(revoked)) or set(ids).intersection(revoked):
             return "schema"
     elif kind == "M":
+        for field in (
+            "repo",
+            "product",
+            "arch",
+            "channel",
+            "asset_sha256",
+            "commit",
+            "epoch_statement_sha256",
+            "key_id",
+            "asset_name",
+            "version",
+            "min_os",
+        ):
+            if not isinstance(value[field], str):
+                return "schema"
         if value["format"] != 2:
             return "schema"
         if value["repo"] != REPO or value["product"] != PRODUCT or value["arch"] != "arm64":
@@ -303,6 +318,26 @@ def manifest_context(statement, statement_payload, installed=(0, MAX_UINT64)):
     }
 
 
+def advance_statement_context(context, statement, statement_payload):
+    next_context = dict(context)
+    known_statements = dict(context.get("known_statements", {}))
+    known_statements[statement["to_epoch"]] = digest(statement_payload)
+    key_history = dict(context.get("key_history", {}))
+    key_history.update(package_key_map(statement))
+    cumulative_revocations = set(context.get("cumulative_revocations", set()))
+    cumulative_revocations.update(statement["revoked_key_ids"])
+    next_context.update(
+        {
+            "floor": statement["to_epoch"],
+            "previous_statement_sha256": digest(statement_payload),
+            "known_statements": known_statements,
+            "key_history": key_history,
+            "cumulative_revocations": cumulative_revocations,
+        }
+    )
+    return next_context
+
+
 def verify_object(kind, domain, raw, signature, context=None):
     result = {
         "rejected": True,
@@ -364,6 +399,16 @@ def verify_object(kind, domain, raw, signature, context=None):
         if existing is not None and existing != digest(raw):
             result["stage"] = "conflict"
             return result
+        history = context.get("key_history", {})
+        revoked = context.get("cumulative_revocations", set())
+        for key_id, public_key in package_key_map(value).items():
+            if key_id in revoked:
+                result["stage"] = "revocation"
+                return result
+            previous_key = history.get(key_id)
+            if previous_key is not None and previous_key != public_key:
+                result["stage"] = "key_history"
+                return result
     if kind == "M":
         context = context or {
             "epoch": "1",
@@ -583,6 +628,12 @@ def run_cases(objects, payloads):
     bad = dict(m)
     bad["build"] = "18446744073709551616"
     cases["overflow_build_M"] = case("M", DOMAIN_M, canonical(bad), "3", context1)
+    bad = dict(m)
+    bad["asset_name"] = 101
+    cases["M_asset_name_number"] = case("M", DOMAIN_M, canonical(bad), "3", context1)
+    bad = dict(m)
+    bad["channel"] = ["dev"]
+    cases["M_channel_array"] = case("M", DOMAIN_M, canonical(bad), "3", context1)
 
     escaped = payloads["M"].replace(b'"channel":"dev"', b'"channel":"d\\u0065v"')
     cases["escaped_string_M"] = case("M", DOMAIN_M, escaped, "3", context1)
@@ -703,6 +754,56 @@ def run_cases(objects, payloads):
         "S", DOMAIN_S, conflict_payload, "1", conflict_context
     )
     cases["signed_conflicting_epoch_R"] = conflict_outcome
+
+    initial_statement_context = {
+        "floor": "0",
+        "previous_statement_sha256": ZERO,
+        "known_statements": {},
+        "key_history": {"k0": raw_hex("2", "public_key").hex()},
+        "cumulative_revocations": set(),
+    }
+    initial_statement = case(
+        "S", DOMAIN_S, payloads["S"], "1", initial_statement_context
+    )
+    if initial_statement["rejected"]:
+        raise AssertionError("fixture epoch 1 statement must advance from the baseline")
+    statement_context1 = advance_statement_context(
+        initial_statement_context, s, payloads["S"]
+    )
+    linked = copy.deepcopy(s)
+    linked.update(
+        {
+            "from_epoch": "1",
+            "to_epoch": "2",
+            "previous_statement_sha256": digest(payloads["S"]),
+            "revoked_key_ids": [],
+        }
+    )
+    revoked_key = copy.deepcopy(linked)
+    revoked_key["authorized_package_keys"] = [
+        {
+            "algorithm": "Ed25519",
+            "id": "k0",
+            "public_key": raw_hex("2", "public_key").hex(),
+        }
+    ]
+    cases["S_reauthorizes_cumulative_revocation"] = case(
+        "S", DOMAIN_S, canonical(revoked_key), "1", statement_context1
+    )
+    rebound_key = copy.deepcopy(linked)
+    rebound_key["authorized_package_keys"] = [
+        {
+            "algorithm": "Ed25519",
+            "id": "k1",
+            "public_key": raw_hex("2", "public_key").hex(),
+        }
+    ]
+    cases["S_rebinds_historical_key_id"] = case(
+        "S", DOMAIN_S, canonical(rebound_key), "1", statement_context1
+    )
+    cases["S_accepts_linked_epoch_2"] = case(
+        "S", DOMAIN_S, canonical(linked), "1", statement_context1
+    )
 
     flip_counts = {}
     flip_counts["signed_one_byte_flip_fields_S"] = signed_field_flip_cases(

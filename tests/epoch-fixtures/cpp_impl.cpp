@@ -384,6 +384,11 @@ std::string schemaError(const std::string &kind, const Value &value) {
 			if (std::binary_search(revokedIds.begin(), revokedIds.end(), id)) return "schema";
 		}
 	} else if (kind == "M") {
+		for (const auto field : {"repo", "product", "arch", "channel", "asset_sha256", "commit",
+			"epoch_statement_sha256", "key_id", "asset_name", "version", "min_os"}) {
+			const auto entry = get(value, field);
+			if (!entry || entry->type != Value::Type::String) return "schema";
+		}
 		if (!numberIs(value, "format", "2")
 			|| stringField(value, "repo") != "teagramhq/teagram-desktop"
 			|| stringField(value, "product") != "io.teagram.desktop"
@@ -652,7 +657,38 @@ std::map<std::string, std::string> packageKeyMap(const Value &statement) {
 	}
 	return result;
 }
-struct SContext { uint64_t floor = 0; std::string previousDigest = ZERO; std::map<std::string, std::string> known; };
+struct SContext {
+	uint64_t floor = 0;
+	std::string previousDigest = ZERO;
+	std::map<std::string, std::string> known;
+	std::map<std::string, std::string> keyHistory;
+	std::set<std::string> cumulativeRevocations;
+};
+SContext advanceStatementContext(const SContext &context, const Value &statement, const std::string &payload) {
+	auto result = context;
+	uint64_t toEpoch = 0;
+	if (!counter(get(statement, "to_epoch"), &toEpoch)) {
+		throw std::runtime_error("accepted epoch statement has invalid to_epoch");
+	}
+	const auto statementDigest = sha256(payload);
+	result.floor = toEpoch;
+	result.previousDigest = statementDigest;
+	result.known[std::to_string(toEpoch)] = statementDigest;
+	for (const auto &[id, publicKey] : packageKeyMap(statement)) {
+		result.keyHistory[id] = publicKey;
+	}
+	const auto revoked = get(statement, "revoked_key_ids");
+	if (!revoked || revoked->type != Value::Type::Array) {
+		throw std::runtime_error("accepted epoch statement has invalid revocations");
+	}
+	for (const auto &entry : revoked->array) {
+		if (entry.type != Value::Type::String) {
+			throw std::runtime_error("accepted epoch statement has invalid revocation ID");
+		}
+		result.cumulativeRevocations.insert(entry.text);
+	}
+	return result;
+}
 struct Outcome { bool rejected = true; bool signatureValid = false; bool parseReached = false; std::string stage = "signature"; };
 
 std::pair<std::string, std::string> findSigner(const std::string &domain,
@@ -697,6 +733,17 @@ Outcome verifyObject(const std::string &kind, const std::string &domain,
 			|| stringField(value, "previous_statement_sha256") != sContext->previousDigest) {
 			result.stage = "sequence";
 			return result;
+		}
+		for (const auto &[id, publicKey] : packageKeyMap(value)) {
+			if (sContext->cumulativeRevocations.count(id)) {
+				result.stage = "revocation";
+				return result;
+			}
+			const auto previousKey = sContext->keyHistory.find(id);
+			if (previousKey != sContext->keyHistory.end() && previousKey->second != publicKey) {
+				result.stage = "key_history";
+				return result;
+			}
 		}
 	}
 	if (kind == "M") {
@@ -810,6 +857,12 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	auto overflow = objects.m;
 	overflow.object["build"] = string("18446744073709551616");
 	addCase(cases, "overflow_build_M", runCase("M", DOMAIN_M, encode(overflow), "3", &context1));
+	auto assetNameNumber = objects.m;
+	assetNameNumber.object["asset_name"] = number(101);
+	addCase(cases, "M_asset_name_number", runCase("M", DOMAIN_M, encode(assetNameNumber), "3", &context1));
+	auto channelArray = objects.m;
+	channelArray.object["channel"] = Value::Array({string("dev")});
+	addCase(cases, "M_channel_array", runCase("M", DOMAIN_M, encode(channelArray), "3", &context1));
 	auto escaped = objects.mBytes;
 	const auto channel = std::string("\"channel\":\"dev\"");
 	const auto channelPosition = escaped.find(channel);
@@ -899,12 +952,40 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	skip.object["to_epoch"] = string("2");
 	const auto skipBytes = encode(skip);
 	addCase(cases, "online_signed_epoch_skip", runCase("S", DOMAIN_S, skipBytes, "2"));
-	const auto sequenceContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}};
+	const auto sequenceContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}, {}, {}};
 	addCase(cases, "signed_epoch_skip_R", runCase("S", DOMAIN_S, skipBytes, "1", nullptr, &sequenceContext));
 	auto conflict = objects.s;
 	conflict.object["allocation_checkpoint_sha256"] = string(sha256("different-signed-checkpoint"));
-	const auto conflictContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}};
+	const auto conflictContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}, {}, {}};
 	addCase(cases, "signed_conflicting_epoch_R", runCase("S", DOMAIN_S, encode(conflict), "1", nullptr, &conflictContext));
+	auto initialStatementContext = SContext();
+	initialStatementContext.keyHistory.emplace("k0", publicForRole("K0"));
+	const auto initialStatement = runCase("S", DOMAIN_S, objects.sBytes, "1", nullptr, &initialStatementContext);
+	if (initialStatement.rejected || !initialStatement.signatureValid || !initialStatement.parseReached) {
+		throw std::runtime_error("fixture epoch 1 statement must advance from the baseline");
+	}
+	const auto statementContext1 = advanceStatementContext(initialStatementContext, objects.s, objects.sBytes);
+	auto linked = objects.s;
+	linked.object["from_epoch"] = string("1");
+	linked.object["to_epoch"] = string("2");
+	linked.object["previous_statement_sha256"] = string(sha256(objects.sBytes));
+	linked.object["revoked_key_ids"] = Value::Array({});
+	auto revokedKey = linked;
+	const auto key0 = object({
+		{"algorithm", string("Ed25519")}, {"id", string("k0")},
+		{"public_key", string(publicForRole("K0"))}});
+	revokedKey.object["authorized_package_keys"] = Value::Array({key0});
+	addCase(cases, "S_reauthorizes_cumulative_revocation",
+		runCase("S", DOMAIN_S, encode(revokedKey), "1", nullptr, &statementContext1));
+	auto reboundKey = linked;
+	const auto rebound = object({
+		{"algorithm", string("Ed25519")}, {"id", string("k1")},
+		{"public_key", string(publicForRole("K0"))}});
+	reboundKey.object["authorized_package_keys"] = Value::Array({rebound});
+	addCase(cases, "S_rebinds_historical_key_id",
+		runCase("S", DOMAIN_S, encode(reboundKey), "1", nullptr, &statementContext1));
+	addCase(cases, "S_accepts_linked_epoch_2",
+		runCase("S", DOMAIN_S, encode(linked), "1", nullptr, &statementContext1));
 
 	const auto flipsS = signedFieldFlipCases("S", DOMAIN_S, objects.s, "1", nullptr, nullptr);
 	const auto flipsM = signedFieldFlipCases("M", DOMAIN_M, objects.m, "3", &context1, nullptr);
@@ -967,7 +1048,7 @@ std::optional<uint64_t> reserveBuild(uint64_t highWater) {
 	return highWater + 1;
 }
 Value stateValue(const Objects &objects) {
-	const auto initial = SContext{0, ZERO, {}};
+	const auto initial = SContext{0, ZERO, {}, {}, {}};
 	const auto statement = verifyObject("S", DOMAIN_S, objects.sBytes,
 		sign("1", DOMAIN_S, objects.sBytes), nullptr, &initial);
 	const auto before = uint64_t(100);

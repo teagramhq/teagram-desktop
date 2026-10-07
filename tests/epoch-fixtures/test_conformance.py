@@ -136,6 +136,43 @@ class EpochConformanceTests(unittest.TestCase):
             self.assertTrue(case["parse_reached"])
             self.assertEqual(case["stage"], "authority")
 
+    def test_linked_epoch_transitions_retain_key_history_and_revocations(self):
+        expected_stages = {
+            "S_reauthorizes_cumulative_revocation": "revocation",
+            "S_rebinds_historical_key_id": "key_history",
+        }
+        for implementation_name, implementation in (
+            ("Python", self.python_result),
+            ("C++", self.cpp_result),
+        ):
+            cases = implementation["cases"]
+            for name, stage in expected_stages.items():
+                with self.subTest(implementation=implementation_name, name=name):
+                    self.assertIn(name, cases)
+                    self.assertTrue(cases[name]["rejected"])
+                    self.assertTrue(cases[name]["signature_valid"])
+                    self.assertTrue(cases[name]["parse_reached"])
+                    self.assertEqual(cases[name]["stage"], stage)
+            valid = cases["S_accepts_linked_epoch_2"]
+            self.assertFalse(valid["rejected"])
+            self.assertTrue(valid["signature_valid"])
+            self.assertTrue(valid["parse_reached"])
+            self.assertEqual(valid["stage"], "accepted")
+
+    def test_signed_wrong_type_manifest_fields_are_schema_rejections(self):
+        for implementation_name, implementation in (
+            ("Python", self.python_result),
+            ("C++", self.cpp_result),
+        ):
+            cases = implementation["cases"]
+            for name in ("M_asset_name_number", "M_channel_array"):
+                with self.subTest(implementation=implementation_name, name=name):
+                    self.assertIn(name, cases)
+                    self.assertTrue(cases[name]["rejected"])
+                    self.assertTrue(cases[name]["signature_valid"])
+                    self.assertTrue(cases[name]["parse_reached"])
+                    self.assertEqual(cases[name]["stage"], "schema")
+
     def test_signature_domain_ordering_and_one_byte_tampering(self):
         cases = self.python_result["cases"]
         self.assertFalse(cases["wrong_domain_S"]["signature_valid"])
