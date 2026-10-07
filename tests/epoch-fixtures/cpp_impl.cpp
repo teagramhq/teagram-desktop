@@ -821,7 +821,7 @@ bool mutateField(Value &value, const std::string &kind, const std::string &field
 	auto &fields = value.object;
 	if (kind == "S") {
 		if (field == "allocation_checkpoint_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
-		if (field == "authorized_package_keys") { fields[field].array.at(0).object["algorithm"] = string("Ed25520"); return true; }
+		if (field == "authorized_package_keys") { fields[field].array.at(0).object["algorithm"] = string("Ed25518"); return true; }
 		if (field == "format") { fields[field] = number(2); return true; }
 		if (field == "from_epoch") { fields[field] = string("1"); return true; }
 		if (field == "kind") { fields[field] = string("ueagram-key-epoch"); return true; }
@@ -885,7 +885,10 @@ FlipCounts fieldFlipCases(std::map<std::string, Value> &cases,
 			? std::optional<std::vector<unsigned char>>()
 			: std::optional<std::vector<unsigned char>>(sign(signer, domain, encode(original)));
 		const auto outcome = runCase(kind, domain, payload, signer, fieldMContext, sContext, signature);
-		cases["field_flip_" + kind + "_" + entry.first] = outcomeValue(outcome);
+		auto recordedOutcome = outcomeValue(outcome);
+		recordedOutcome.object["payload_hex"] = string(hex(
+			std::vector<unsigned char>(payload.begin(), payload.end())));
+		cases["field_flip_" + kind + "_" + entry.first] = std::move(recordedOutcome);
 		++counts.total;
 		if (resign) ++counts.signedCount;
 		else ++counts.unsignedCount;

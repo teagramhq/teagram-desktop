@@ -287,6 +287,16 @@ class EpochConformanceTests(unittest.TestCase):
                             self.assertEqual(cases[name]["signature_valid"], signed, name)
                             self.assertEqual(cases[name]["parse_reached"], signed, name)
                             self.assertEqual(cases[name]["stage"], stage, name)
+                            original_payload = bytes.fromhex(
+                                implementation["vectors"][kind]["canonical_hex"]
+                            )
+                            mutated_payload = bytes.fromhex(cases[name]["payload_hex"])
+                            self.assertEqual(len(mutated_payload), len(original_payload), name)
+                            self.assertEqual(
+                                sum(left != right for left, right in zip(original_payload, mutated_payload)),
+                                1,
+                                name,
+                            )
                 self.assertEqual(cases["field_flip_cases"], expected_total)
                 self.assertEqual(cases["field_flip_cases_signed"], expected_signed)
                 self.assertEqual(cases["field_flip_cases_unsigned"], expected_unsigned)

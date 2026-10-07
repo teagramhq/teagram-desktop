@@ -578,7 +578,7 @@ def case(kind, signing_domain, payload, signer_test, context=None, signature=Non
 FIELD_FLIPS = {
     "S": {
         "allocation_checkpoint_sha256": (("allocation_checkpoint_sha256",), None, False),
-        "authorized_package_keys": (("authorized_package_keys", 0, "algorithm"), "Ed25520", True),
+        "authorized_package_keys": (("authorized_package_keys", 0, "algorithm"), "Ed25518", True),
         "format": (("format",), 2, True),
         "from_epoch": (("from_epoch",), "1", True),
         "kind": (("kind",), "ueagram-key-epoch", True),
@@ -650,9 +650,11 @@ def field_flip_cases(kind, signing_domain, value, signer_test, context, cases):
             field_context = dict(context)
             field_context["installed"] = (1, 100)
         signature = None if resign else sign(signer_test, signing_domain, canonical(value))
-        cases[f"field_flip_{kind}_{field}"] = case(
+        outcome = case(
             kind, signing_domain, payload, signer_test, field_context, signature
         )
+        outcome["payload_hex"] = payload.hex()
+        cases[f"field_flip_{kind}_{field}"] = outcome
         if resign:
             signed += 1
         else:

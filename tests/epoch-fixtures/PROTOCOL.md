@@ -112,11 +112,12 @@ The isolated suite checks:
   before the conflicting-epoch check. A linked, different same-epoch R-signed
   S fails conflict checks.
 - Each top-level S, M, and C field has a one-character mutation within its
-  field alphabet. Twenty-five mutations are re-signed and reach the field's
-  schema, sequence, authority, or eligibility check. For the remaining 14
-  fields, each mutation still satisfies field validation, so the original
-  signature is retained and rejects it at `signature`. A separate raw unsigned
-  M-byte flip also fails the signature.
+  field alphabet. The tests assert equal payload lengths and exactly one
+  differing byte for every mutation. Twenty-five mutations are re-signed and
+  reach the field's schema, sequence, authority, or eligibility check. For
+  the remaining 14 fields, each mutation still satisfies field validation, so
+  the original signature is retained and rejects it at `signature`. A
+  separate raw unsigned M-byte flip also fails the signature.
 - The epoch-0/build-`UINT64_MAX` client accepts the R-authorized sequential
   epoch-1 statement and K[1]-signed build 101. Global H remains 100 when the
   statement is accepted, advances to 101 only for the real reservation, and a
@@ -134,7 +135,7 @@ signature. Setup and reproduction commands are in `README.md`.
 On 2026-10-07, the documented isolated setup smoke exited 0 with g++ 15.2.0,
 OpenSSL headers/runtime 3.5.5 (linked runtime major 3), Python 3.14.4, and
 cryptography 46.0.5. The documented focused unittest command exited 0: 11
-tests passed in 9.594 seconds. The run verified all four RFC known answers,
+tests passed in 4.793 seconds. The run verified all four RFC known answers,
 byte-identical C++/Python results for S, M, C0 and C, all ten signed wrong-role
 cases, the six cross-domain signature failures, the signed manifest key-ID/
 public-key mismatch, both linked-transition history/revocation rejections and
