@@ -1,4 +1,4 @@
-name: Epoch fixture toolchain smoke
+name: Epoch fixture conformance
 
 on:
   pull_request:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  setup-smoke:
-    name: C++ / OpenSSL / Python setup
+  conformance:
+    name: C++ / OpenSSL / Python conformance
     runs-on: ubuntu-26.04
     timeout-minutes: 10
 
@@ -46,6 +46,30 @@ jobs:
             echo "## Epoch fixture toolchain smoke"
             echo
             echo "### Toolchain smoke"
+            echo
+            echo "~~~text"
+            cat "$log"
+            echo "~~~"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run independent protocol conformance suite
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/epoch-fixture-conformance.log"
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --read-only \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=64m,mode=1777 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace,readonly" \
+            --workdir /workspace \
+            epoch-fixture-toolchain:smoke \
+            /usr/bin/python3 -m unittest discover \
+              -s tests/epoch-fixtures -p 'test_*.py' -v \
+            | tee "$log"
+          {
+            echo "## Epoch fixture protocol conformance"
             echo
             echo "~~~text"
             cat "$log"
