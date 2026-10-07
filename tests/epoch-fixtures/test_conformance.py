@@ -93,6 +93,7 @@ class EpochConformanceTests(unittest.TestCase):
             "signed_duplicate_S",
             "signed_epoch_skip_R",
             "signed_conflicting_epoch_R",
+            "signed_unlinked_known_epoch_R",
         }
         self.assertTrue(expected.issubset(cases))
         for name in expected:
@@ -123,6 +124,7 @@ class EpochConformanceTests(unittest.TestCase):
         self.assertEqual(cases["online_signed_epoch_skip"]["stage"], "authority")
         self.assertEqual(cases["signed_epoch_skip_R"]["stage"], "sequence")
         self.assertEqual(cases["signed_conflicting_epoch_R"]["stage"], "conflict")
+        self.assertEqual(cases["signed_unlinked_known_epoch_R"]["stage"], "sequence")
         self.assertFalse(cases["M_by_K0_when_authorized"]["rejected"])
         self.assertTrue(cases["M_by_K0_when_authorized"]["signature_valid"])
         self.assertEqual(cases["M_by_K0_when_authorized"]["stage"], "accepted")
@@ -195,17 +197,100 @@ class EpochConformanceTests(unittest.TestCase):
                     self.assertEqual(cases[name]["stage"], "schema")
 
     def test_signature_domain_ordering_and_one_byte_tampering(self):
-        cases = self.python_result["cases"]
-        self.assertFalse(cases["wrong_domain_S"]["signature_valid"])
-        self.assertEqual(cases["wrong_domain_S"]["stage"], "domain")
-        self.assertFalse(cases["old_v1_domain_for_M"]["signature_valid"])
-        self.assertEqual(cases["old_v1_domain_for_M"]["stage"], "signature")
-        self.assertFalse(cases["unsigned_one_byte_flip_M"]["signature_valid"])
-        self.assertFalse(cases["unsigned_one_byte_flip_M"]["parse_reached"])
-        self.assertEqual(cases["signed_one_byte_flip_fields"], 39)
-        self.assertEqual(cases["signed_one_byte_flip_fields_S"], 11)
-        self.assertEqual(cases["signed_one_byte_flip_fields_M"], 15)
-        self.assertEqual(cases["signed_one_byte_flip_fields_C"], 13)
+        domain_cases = {
+            "S_signed_with_M_domain",
+            "S_signed_with_C_domain",
+            "M_signed_with_S_domain",
+            "M_signed_with_C_domain",
+            "C_signed_with_S_domain",
+            "C_signed_with_M_domain",
+        }
+        field_stages = {
+            "S": {
+                "allocation_checkpoint_sha256": ("signature", False),
+                "authorized_package_keys": ("schema", True),
+                "format": ("schema", True),
+                "from_epoch": ("sequence", True),
+                "kind": ("schema", True),
+                "previous_statement_sha256": ("sequence", True),
+                "product": ("schema", True),
+                "repo": ("schema", True),
+                "repo_id": ("schema", True),
+                "revoked_key_ids": ("schema", True),
+                "to_epoch": ("sequence", True),
+            },
+            "M": {
+                "arch": ("schema", True),
+                "asset_name": ("schema", True),
+                "asset_sha256": ("signature", False),
+                "asset_size": ("signature", False),
+                "build": ("eligibility", True),
+                "channel": ("schema", True),
+                "commit": ("signature", False),
+                "epoch_statement_sha256": ("authority", True),
+                "format": ("schema", True),
+                "key_epoch": ("authority", True),
+                "key_id": ("authority", True),
+                "min_os": ("signature", False),
+                "product": ("schema", True),
+                "repo": ("schema", True),
+                "version": ("signature", False),
+            },
+            "C": {
+                "current_epoch": ("signature", False),
+                "epoch_statement_sha256": ("signature", False),
+                "event_cursor": ("signature", False),
+                "high_water_build": ("signature", False),
+                "kind": ("schema", True),
+                "ledger_head_sha256": ("signature", False),
+                "prev_sha256": ("signature", False),
+                "product": ("schema", True),
+                "protection_digest_sha256": ("signature", False),
+                "repo": ("schema", True),
+                "repo_id": ("schema", True),
+                "schema": ("schema", True),
+                "sequence": ("signature", False),
+            },
+        }
+        for implementation_name, implementation in (
+            ("Python", self.python_result),
+            ("C++", self.cpp_result),
+        ):
+            cases = implementation["cases"]
+            with self.subTest(implementation=implementation_name):
+                self.assertNotIn("wrong_domain_S", cases)
+                for name in domain_cases:
+                    self.assertIn(name, cases)
+                    self.assertTrue(cases[name]["rejected"], name)
+                    self.assertFalse(cases[name]["signature_valid"], name)
+                    self.assertFalse(cases[name]["parse_reached"], name)
+                    self.assertEqual(cases[name]["stage"], "signature", name)
+                self.assertFalse(cases["old_v1_domain_for_M"]["signature_valid"])
+                self.assertFalse(cases["old_v1_domain_for_M"]["parse_reached"])
+                self.assertEqual(cases["old_v1_domain_for_M"]["stage"], "signature")
+                self.assertFalse(cases["unsigned_one_byte_flip_M"]["signature_valid"])
+                self.assertFalse(cases["unsigned_one_byte_flip_M"]["parse_reached"])
+
+                expected_total = 0
+                expected_signed = 0
+                expected_unsigned = 0
+                for kind, fields in field_stages.items():
+                    self.assertEqual(cases[f"field_flip_cases_{kind}"], len(fields))
+                    expected_total += len(fields)
+                    expected_signed += sum(1 for _, signed in fields.values() if signed)
+                    expected_unsigned += sum(1 for _, signed in fields.values() if not signed)
+                    for field, (stage, signed) in fields.items():
+                        name = f"field_flip_{kind}_{field}"
+                        with self.subTest(implementation=implementation_name, field=name):
+                            self.assertIn(name, cases)
+                            self.assertTrue(cases[name]["rejected"], name)
+                            self.assertEqual(cases[name]["signature_valid"], signed, name)
+                            self.assertEqual(cases[name]["parse_reached"], signed, name)
+                            self.assertEqual(cases[name]["stage"], stage, name)
+                self.assertEqual(cases["field_flip_cases"], expected_total)
+                self.assertEqual(cases["field_flip_cases_signed"], expected_signed)
+                self.assertEqual(cases["field_flip_cases_unsigned"], expected_unsigned)
+                self.assertEqual((expected_total, expected_signed, expected_unsigned), (39, 25, 14))
 
     def test_epoch_recovery_preserves_allocator_high_water(self):
         self.assertEqual(

@@ -716,11 +716,10 @@ std::pair<std::string, std::string> findSigner(const std::string &domain,
 	}
 	return {"", "signature"};
 }
-Outcome verifyObject(const std::string &kind, const std::string &domain,
-	const std::string &payload, const std::vector<unsigned char> &signature,
+Outcome verifyObject(const std::string &kind, const std::string &payload,
+	const std::vector<unsigned char> &signature,
 	const MContext *mContext = nullptr, const SContext *sContext = nullptr) {
 	auto result = Outcome();
-	if (domain != domainFor(kind)) { result.stage = "domain"; return result; }
 	const auto signedBy = findSigner(domainFor(kind), payload, signature);
 	if (signedBy.second != "ok") { result.stage = signedBy.second; return result; }
 	const auto &signer = signedBy.first;
@@ -740,14 +739,14 @@ Outcome verifyObject(const std::string &kind, const std::string &domain,
 		uint64_t fromEpoch = 0, toEpoch = 0;
 		counter(get(value, "from_epoch"), &fromEpoch);
 		counter(get(value, "to_epoch"), &toEpoch);
-		const auto existing = sContext->known.find(std::to_string(toEpoch));
-		if (existing != sContext->known.end() && existing->second != sha256(payload)) {
-			result.stage = "conflict";
-			return result;
-		}
 		if (fromEpoch != sContext->floor || fromEpoch == MAX_UINT64 || toEpoch != fromEpoch + 1
 			|| stringField(value, "previous_statement_sha256") != sContext->previousDigest) {
 			result.stage = "sequence";
+			return result;
+		}
+		const auto existing = sContext->known.find(std::to_string(toEpoch));
+		if (existing != sContext->known.end() && existing->second != sha256(payload)) {
+			result.stage = "conflict";
 			return result;
 		}
 		for (const auto &[id, publicKey] : packageKeyMap(value)) {
@@ -793,7 +792,7 @@ Outcome runCase(const std::string &kind, const std::string &domain,
 	const MContext *mContext = nullptr, const SContext *sContext = nullptr,
 	const std::optional<std::vector<unsigned char>> &signature = std::nullopt) {
 	const auto signedBytes = signature ? *signature : sign(signerTest, domain, payload);
-	return verifyObject(kind, domain, payload, signedBytes, mContext, sContext);
+	return verifyObject(kind, payload, signedBytes, mContext, sContext);
 }
 Value outcomeValue(const Outcome &outcome) {
 	return object({{"parse_reached", Value::Boolean(outcome.parseReached)},
@@ -811,35 +810,87 @@ std::string duplicatePayload(const std::string &payload) {
 	result.replace(position, target.size(), target + "," + target);
 	return result;
 }
-bool mutateFirstString(Value &value) {
-	if (value.type == Value::Type::String) {
-		if (value.text.empty()) return false;
-		value.text[0] = char(0x7F);
-		return true;
-	}
-	if (value.type == Value::Type::Array) {
-		for (auto &item : value.array) if (mutateFirstString(item)) return true;
-	} else if (value.type == Value::Type::Object) {
-		for (auto &item : value.object) if (mutateFirstString(item.second)) return true;
-	}
-	return false;
+struct FlipCounts { size_t total = 0; size_t signedCount = 0; size_t unsignedCount = 0; };
+std::string flipFirstCharacter(const std::string &value) {
+	if (value.empty()) throw std::runtime_error("field flip requires a nonempty string");
+	auto result = value;
+	result[0] = result[0] == '0' ? '1' : '0';
+	return result;
 }
-size_t signedFieldFlipCases(const std::string &kind, const std::string &domain,
-	const Value &original, const std::string &signer, const MContext *mContext,
-	const SContext *sContext) {
-	size_t count = 0;
+bool mutateField(Value &value, const std::string &kind, const std::string &field) {
+	auto &fields = value.object;
+	if (kind == "S") {
+		if (field == "allocation_checkpoint_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "authorized_package_keys") { fields[field].array.at(0).object["algorithm"] = string("Ed25520"); return true; }
+		if (field == "format") { fields[field] = number(2); return true; }
+		if (field == "from_epoch") { fields[field] = string("1"); return true; }
+		if (field == "kind") { fields[field] = string("ueagram-key-epoch"); return true; }
+		if (field == "previous_statement_sha256") { fields[field] = string("1" + std::string(63, '0')); return true; }
+		if (field == "product") { fields[field] = string("jo.teagram.desktop"); return true; }
+		if (field == "repo") { fields[field] = string("ueagramhq/teagram-desktop"); return true; }
+		if (field == "repo_id") { fields[field] = string("1332987416"); return true; }
+		if (field == "revoked_key_ids") { fields[field] = Value::Array({string("k1")}); return true; }
+		if (field == "to_epoch") { fields[field] = string("2"); return true; }
+	} else if (kind == "M") {
+		if (field == "arch") { fields[field] = string("arm65"); return true; }
+		if (field == "asset_name") { fields[field] = string("Teagram-macOS-arm64-101xzip"); return true; }
+		if (field == "asset_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "asset_size") { fields[field] = string("4097"); return false; }
+		if (field == "build") { fields[field] = string("100"); return true; }
+		if (field == "channel") { fields[field] = string("Dev"); return true; }
+		if (field == "commit") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "epoch_statement_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return true; }
+		if (field == "format") { fields[field] = number(1); return true; }
+		if (field == "key_epoch") { fields[field] = string("2"); return true; }
+		if (field == "key_id") { fields[field] = string("k0"); return true; }
+		if (field == "min_os") { fields[field] = string("14.0"); return false; }
+		if (field == "product") { fields[field] = string("jo.teagram.desktop"); return true; }
+		if (field == "repo") { fields[field] = string("ueagramhq/teagram-desktop"); return true; }
+		if (field == "version") { fields[field] = string("7.0.8"); return false; }
+	} else if (kind == "C") {
+		if (field == "current_epoch") { fields[field] = string("2"); return false; }
+		if (field == "epoch_statement_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "event_cursor") { fields[field] = string("2"); return false; }
+		if (field == "high_water_build") { fields[field] = string("102"); return false; }
+		if (field == "kind") { fields[field] = string("ueagram-ledger-checkpoint"); return true; }
+		if (field == "ledger_head_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "prev_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "product") { fields[field] = string("jo.teagram.desktop"); return true; }
+		if (field == "protection_digest_sha256") { fields[field].text = flipFirstCharacter(fields[field].text); return false; }
+		if (field == "repo") { fields[field] = string("ueagramhq/teagram-desktop"); return true; }
+		if (field == "repo_id") { fields[field] = string("1332987416"); return true; }
+		if (field == "schema") { fields[field] = number(2); return true; }
+		if (field == "sequence") { fields[field] = string("2"); return false; }
+	}
+	throw std::runtime_error("no field flip for " + kind + "." + field);
+}
+FlipCounts fieldFlipCases(std::map<std::string, Value> &cases,
+	const std::string &kind, const std::string &domain, const Value &original,
+	const std::string &signer, const MContext *mContext, const SContext *sContext) {
+	auto counts = FlipCounts();
 	for (const auto &entry : original.object) {
 		auto changed = original;
-		auto &value = changed.object.at(entry.first);
-		if (value.type == Value::Type::Number) value.text = value.text == "1" ? "2" : "1";
-		else if (!mutateFirstString(value)) throw std::runtime_error("no mutable string field");
-		const auto outcome = runCase(kind, domain, encode(changed), signer, mContext, sContext);
-		if (!outcome.rejected || !outcome.signatureValid || !outcome.parseReached) {
-			throw std::runtime_error("signed field flip escaped post-signature rejection");
+		const auto resign = mutateField(changed, kind, entry.first);
+		const auto payload = encode(changed);
+		const auto *fieldMContext = mContext;
+		auto buildContext = MContext();
+		if (kind == "M" && entry.first == "build") {
+			if (!mContext) throw std::runtime_error("manifest field flip requires context");
+			buildContext = *mContext;
+			buildContext.installedEpoch = 1;
+			buildContext.installedBuild = 100;
+			fieldMContext = &buildContext;
 		}
-		++count;
+		const auto signature = resign
+			? std::optional<std::vector<unsigned char>>()
+			: std::optional<std::vector<unsigned char>>(sign(signer, domain, encode(original)));
+		const auto outcome = runCase(kind, domain, payload, signer, fieldMContext, sContext, signature);
+		cases["field_flip_" + kind + "_" + entry.first] = outcomeValue(outcome);
+		++counts.total;
+		if (resign) ++counts.signedCount;
+		else ++counts.unsignedCount;
 	}
-	return count;
+	return counts;
 }
 
 std::map<std::string, Value> runCases(const Objects &objects) {
@@ -900,7 +951,12 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	escaped.replace(channelPosition, channel.size(), "\"channel\":\"d\\u0065v\"");
 	addCase(cases, "escaped_string_M", runCase("M", DOMAIN_M, escaped, "3", &context1));
 	addCase(cases, "trailing_newline_M", runCase("M", DOMAIN_M, objects.mBytes + "\n", "3", &context1));
-	addCase(cases, "wrong_domain_S", runCase("S", DOMAIN_M, objects.sBytes, "1"));
+	addCase(cases, "S_signed_with_M_domain", runCase("S", DOMAIN_M, objects.sBytes, "1"));
+	addCase(cases, "S_signed_with_C_domain", runCase("S", DOMAIN_C, objects.sBytes, "1"));
+	addCase(cases, "M_signed_with_S_domain", runCase("M", DOMAIN_S, objects.mBytes, "3", &context1));
+	addCase(cases, "M_signed_with_C_domain", runCase("M", DOMAIN_C, objects.mBytes, "3", &context1));
+	addCase(cases, "C_signed_with_S_domain", runCase("C", DOMAIN_S, objects.cBytes, "1024"));
+	addCase(cases, "C_signed_with_M_domain", runCase("C", DOMAIN_M, objects.cBytes, "1024"));
 	addCase(cases, "old_v1_domain_for_M", runCase("M", DOMAIN_M, objects.mBytes, "3", &context1,
 		nullptr, sign("3", DOMAIN_OLD, objects.mBytes)));
 	auto changedBytes = objects.mBytes;
@@ -985,6 +1041,10 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	addCase(cases, "online_signed_epoch_skip", runCase("S", DOMAIN_S, skipBytes, "2"));
 	const auto sequenceContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}, {}, {}};
 	addCase(cases, "signed_epoch_skip_R", runCase("S", DOMAIN_S, skipBytes, "1", nullptr, &sequenceContext));
+	auto unlinked = objects.s;
+	unlinked.object["previous_statement_sha256"] = string(std::string(64, '1'));
+	addCase(cases, "signed_unlinked_known_epoch_R",
+		runCase("S", DOMAIN_S, encode(unlinked), "1", nullptr, &sequenceContext));
 	auto conflict = objects.s;
 	conflict.object["allocation_checkpoint_sha256"] = string(sha256("different-signed-checkpoint"));
 	const auto conflictContext = SContext{0, ZERO, {{"1", sha256(objects.sBytes)}}, {}, {}};
@@ -1018,13 +1078,23 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	addCase(cases, "S_accepts_linked_epoch_2",
 		runCase("S", DOMAIN_S, encode(linked), "1", nullptr, &statementContext1));
 
-	const auto flipsS = signedFieldFlipCases("S", DOMAIN_S, objects.s, "1", nullptr, nullptr);
-	const auto flipsM = signedFieldFlipCases("M", DOMAIN_M, objects.m, "3", &context1, nullptr);
-	const auto flipsC = signedFieldFlipCases("C", DOMAIN_C, objects.c, "1024", nullptr, nullptr);
-	cases["signed_one_byte_flip_fields_S"] = number(int(flipsS));
-	cases["signed_one_byte_flip_fields_M"] = number(int(flipsM));
-	cases["signed_one_byte_flip_fields_C"] = number(int(flipsC));
-	cases["signed_one_byte_flip_fields"] = number(int(flipsS + flipsM + flipsC));
+	auto statementFieldContext = SContext();
+	statementFieldContext.keyHistory.emplace("k0", publicForRole("K0"));
+	const auto flipsS = fieldFlipCases(cases, "S", DOMAIN_S, objects.s, "1", nullptr, &statementFieldContext);
+	const auto flipsM = fieldFlipCases(cases, "M", DOMAIN_M, objects.m, "3", &context1, nullptr);
+	const auto flipsC = fieldFlipCases(cases, "C", DOMAIN_C, objects.c, "1024", nullptr, nullptr);
+	cases["field_flip_cases_S"] = number(int(flipsS.total));
+	cases["field_flip_cases_S_signed"] = number(int(flipsS.signedCount));
+	cases["field_flip_cases_S_unsigned"] = number(int(flipsS.unsignedCount));
+	cases["field_flip_cases_M"] = number(int(flipsM.total));
+	cases["field_flip_cases_M_signed"] = number(int(flipsM.signedCount));
+	cases["field_flip_cases_M_unsigned"] = number(int(flipsM.unsignedCount));
+	cases["field_flip_cases_C"] = number(int(flipsC.total));
+	cases["field_flip_cases_C_signed"] = number(int(flipsC.signedCount));
+	cases["field_flip_cases_C_unsigned"] = number(int(flipsC.unsignedCount));
+	cases["field_flip_cases"] = number(int(flipsS.total + flipsM.total + flipsC.total));
+	cases["field_flip_cases_signed"] = number(int(flipsS.signedCount + flipsM.signedCount + flipsC.signedCount));
+	cases["field_flip_cases_unsigned"] = number(int(flipsS.unsignedCount + flipsM.unsignedCount + flipsC.unsignedCount));
 	auto oversized = objects.mBytes;
 	oversized.append(MAX_OBJECT + 1 - oversized.size(), ' ');
 	addCase(cases, "oversized_object", runCase("M", DOMAIN_M, oversized, "3", &context1));
@@ -1062,9 +1132,9 @@ Value rfcValue(const std::vector<RfcResult> &rows) {
 bool checkpointChainValid(const Objects &objects) {
 	const auto c0 = Parser(objects.c0Bytes).parse();
 	const auto c1 = Parser(objects.cBytes).parse();
-	const auto c0Valid = !verifyObject("C", DOMAIN_C, objects.c0Bytes,
+	const auto c0Valid = !verifyObject("C", objects.c0Bytes,
 		sign("1024", DOMAIN_C, objects.c0Bytes)).rejected;
-	const auto c1Valid = !verifyObject("C", DOMAIN_C, objects.cBytes,
+	const auto c1Valid = !verifyObject("C", objects.cBytes,
 		sign("1024", DOMAIN_C, objects.cBytes)).rejected;
 	return c0Valid && c1Valid
 		&& stringField(c0, "sequence") == "0" && stringField(c1, "sequence") == "1"
@@ -1080,7 +1150,7 @@ std::optional<uint64_t> reserveBuild(uint64_t highWater) {
 }
 Value stateValue(const Objects &objects) {
 	const auto initial = SContext{0, ZERO, {}, {}, {}};
-	const auto statement = verifyObject("S", DOMAIN_S, objects.sBytes,
+	const auto statement = verifyObject("S", objects.sBytes,
 		sign("1", DOMAIN_S, objects.sBytes), nullptr, &initial);
 	const auto before = uint64_t(100);
 	const auto afterStatement = statement.rejected ? MAX_UINT64 : before;
@@ -1093,7 +1163,7 @@ Value stateValue(const Objects &objects) {
 		0,
 		MAX_UINT64,
 		false};
-	const auto manifest = !verifyObject("M", DOMAIN_M, objects.mBytes,
+	const auto manifest = !verifyObject("M", objects.mBytes,
 		sign("3", DOMAIN_M, objects.mBytes), &context).rejected;
 	return object({
 		{"checkpoint_chain_valid", Value::Boolean(checkpointChainValid(objects))},

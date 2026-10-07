@@ -368,7 +368,7 @@ def advance_statement_context(context, statement, statement_payload):
     return next_context
 
 
-def verify_object(kind, domain, raw, signature, context=None):
+def verify_object(kind, raw, signature, context=None):
     result = {
         "rejected": True,
         "signature_valid": False,
@@ -378,9 +378,6 @@ def verify_object(kind, domain, raw, signature, context=None):
     expected_domain = DOMAINS.get(kind)
     if expected_domain is None:
         raise ValueError(f"unknown object kind: {kind}")
-    if domain != expected_domain:
-        result["stage"] = "domain"
-        return result
     signer, signer_public_key, status = find_signer(expected_domain, raw, signature)
     if status != "ok":
         result["stage"] = status
@@ -566,11 +563,11 @@ def vector_rows(objects, payloads):
     return result
 
 
-def case(kind, domain, payload, signer_test, context=None, signature=None):
-    signature = signature if signature is not None else sign(signer_test, domain, payload)
-    outcome = verify_object(kind, domain, payload, signature, context)
+def case(kind, signing_domain, payload, signer_test, context=None, signature=None):
+    signature = signature if signature is not None else sign(signer_test, signing_domain, payload)
+    outcome = verify_object(kind, payload, signature, context)
     outcome["signature_valid"] = outcome["signature_valid"] and signed_by(
-        domain,
+        signing_domain,
         payload,
         signature,
         signer_test,
@@ -578,44 +575,89 @@ def case(kind, domain, payload, signer_test, context=None, signature=None):
     return outcome
 
 
-def mutate_first_string(value):
-    if isinstance(value, str):
-        return "\x7f" + value[1:], True
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            changed, did_change = mutate_first_string(item)
-            if did_change:
-                copied = list(value)
-                copied[index] = changed
-                return copied, True
-    if isinstance(value, dict):
-        for key in sorted(value):
-            changed, did_change = mutate_first_string(value[key])
-            if did_change:
-                copied = dict(value)
-                copied[key] = changed
-                return copied, True
-    return value, False
+FIELD_FLIPS = {
+    "S": {
+        "allocation_checkpoint_sha256": (("allocation_checkpoint_sha256",), None, False),
+        "authorized_package_keys": (("authorized_package_keys", 0, "algorithm"), "Ed25520", True),
+        "format": (("format",), 2, True),
+        "from_epoch": (("from_epoch",), "1", True),
+        "kind": (("kind",), "ueagram-key-epoch", True),
+        "previous_statement_sha256": (("previous_statement_sha256",), "1" + ZERO[1:], True),
+        "product": (("product",), "jo.teagram.desktop", True),
+        "repo": (("repo",), "ueagramhq/teagram-desktop", True),
+        "repo_id": (("repo_id",), "1332987416", True),
+        "revoked_key_ids": (("revoked_key_ids",), ["k1"], True),
+        "to_epoch": (("to_epoch",), "2", True),
+    },
+    "M": {
+        "arch": (("arch",), "arm65", True),
+        "asset_name": (("asset_name",), "Teagram-macOS-arm64-101xzip", True),
+        "asset_sha256": (("asset_sha256",), None, False),
+        "asset_size": (("asset_size",), "4097", False),
+        "build": (("build",), "100", True),
+        "channel": (("channel",), "Dev", True),
+        "commit": (("commit",), None, False),
+        "epoch_statement_sha256": (("epoch_statement_sha256",), None, True),
+        "format": (("format",), 1, True),
+        "key_epoch": (("key_epoch",), "2", True),
+        "key_id": (("key_id",), "k0", True),
+        "min_os": (("min_os",), "14.0", False),
+        "product": (("product",), "jo.teagram.desktop", True),
+        "repo": (("repo",), "ueagramhq/teagram-desktop", True),
+        "version": (("version",), "7.0.8", False),
+    },
+    "C": {
+        "current_epoch": (("current_epoch",), "2", False),
+        "epoch_statement_sha256": (("epoch_statement_sha256",), None, False),
+        "event_cursor": (("event_cursor",), "2", False),
+        "high_water_build": (("high_water_build",), "102", False),
+        "kind": (("kind",), "ueagram-ledger-checkpoint", True),
+        "ledger_head_sha256": (("ledger_head_sha256",), None, False),
+        "prev_sha256": (("prev_sha256",), None, False),
+        "product": (("product",), "jo.teagram.desktop", True),
+        "protection_digest_sha256": (("protection_digest_sha256",), None, False),
+        "repo": (("repo",), "ueagramhq/teagram-desktop", True),
+        "repo_id": (("repo_id",), "1332987416", True),
+        "schema": (("schema",), 2, True),
+        "sequence": (("sequence",), "2", False),
+    },
+}
 
 
-def signed_field_flip_cases(kind, domain, value, signer_test, context):
-    result = []
-    for field in sorted(value):
+def flip_first_character(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("field flip requires a nonempty string")
+    return ("0" if value[0] != "0" else "1") + value[1:]
+
+
+def set_path(value, path, replacement):
+    target = value
+    for part in path[:-1]:
+        target = target[part]
+    previous = target[path[-1]]
+    target[path[-1]] = flip_first_character(previous) if replacement is None else replacement
+
+
+def field_flip_cases(kind, signing_domain, value, signer_test, context, cases):
+    signed = 0
+    unsigned = 0
+    for field, (path, replacement, resign) in FIELD_FLIPS[kind].items():
         changed = copy.deepcopy(value)
-        item = changed[field]
-        if isinstance(item, int) and not isinstance(item, bool):
-            changed[field] = item + 1
-        else:
-            mutated, did_change = mutate_first_string(item)
-            if not did_change:
-                raise ValueError(f"no mutable string in {kind}.{field}")
-            changed[field] = mutated
+        set_path(changed, path, replacement)
         payload = canonical(changed)
-        outcome = case(kind, domain, payload, signer_test, context)
-        if not outcome["rejected"] or not outcome["signature_valid"] or not outcome["parse_reached"]:
-            raise AssertionError(f"signed field flip was not rejected after verification: {kind}.{field}")
-        result.append(outcome)
-    return len(result)
+        field_context = context
+        if kind == "M" and field == "build":
+            field_context = dict(context)
+            field_context["installed"] = (1, 100)
+        signature = None if resign else sign(signer_test, signing_domain, canonical(value))
+        cases[f"field_flip_{kind}_{field}"] = case(
+            kind, signing_domain, payload, signer_test, field_context, signature
+        )
+        if resign:
+            signed += 1
+        else:
+            unsigned += 1
+    return signed + unsigned, signed, unsigned
 
 
 def duplicate_payload(payload, key):
@@ -685,14 +727,16 @@ def run_cases(objects, payloads):
     cases["trailing_newline_M"] = case("M", DOMAIN_M, payloads["M"] + b"\n", "3", context1)
     cases["signed_duplicate_S"] = case("S", DOMAIN_S, duplicate, "1")
 
-    wrong_domain_signature = sign("1", DOMAIN_S, payloads["S"])
-    cases["wrong_domain_S"] = case(
-        "S",
-        DOMAIN_M,
-        payloads["S"],
-        "1",
-        signature=wrong_domain_signature,
+    domain_separation = (
+        ("S_signed_with_M_domain", "S", DOMAIN_M, payloads["S"], "1", None),
+        ("S_signed_with_C_domain", "S", DOMAIN_C, payloads["S"], "1", None),
+        ("M_signed_with_S_domain", "M", DOMAIN_S, payloads["M"], "3", context1),
+        ("M_signed_with_C_domain", "M", DOMAIN_C, payloads["M"], "3", context1),
+        ("C_signed_with_S_domain", "C", DOMAIN_S, payloads["C"], "1024", None),
+        ("C_signed_with_M_domain", "C", DOMAIN_M, payloads["C"], "1024", None),
     )
+    for name, kind, signing_domain, payload, signer_test, context in domain_separation:
+        cases[name] = case(kind, signing_domain, payload, signer_test, context)
     cases["old_v1_domain_for_M"] = case(
         "M",
         DOMAIN_M,
@@ -786,6 +830,11 @@ def run_cases(objects, payloads):
     cases["signed_epoch_skip_R"] = case(
         "S", DOMAIN_S, canonical(skip), "1", sequence_context
     )
+    unlinked = dict(s)
+    unlinked["previous_statement_sha256"] = "1" * 64
+    cases["signed_unlinked_known_epoch_R"] = case(
+        "S", DOMAIN_S, canonical(unlinked), "1", sequence_context
+    )
 
     conflict = dict(s)
     conflict["allocation_checkpoint_sha256"] = digest(b"different-signed-checkpoint")
@@ -850,17 +899,34 @@ def run_cases(objects, payloads):
         "S", DOMAIN_S, canonical(linked), "1", statement_context1
     )
 
+    statement_field_context = {
+        "floor": "0",
+        "previous_statement_sha256": ZERO,
+        "known_statements": {},
+        "key_history": {"k0": raw_hex("2", "public_key").hex()},
+        "cumulative_revocations": set(),
+    }
     flip_counts = {}
-    flip_counts["signed_one_byte_flip_fields_S"] = signed_field_flip_cases(
-        "S", DOMAIN_S, s, "1", None
+    for kind, domain, value, signer, context in (
+        ("S", DOMAIN_S, s, "1", statement_field_context),
+        ("M", DOMAIN_M, m, "3", context1),
+        ("C", DOMAIN_C, c, "1024", None),
+    ):
+        total, signed, unsigned = field_flip_cases(
+            kind, domain, value, signer, context, cases
+        )
+        flip_counts[f"field_flip_cases_{kind}"] = total
+        flip_counts[f"field_flip_cases_{kind}_signed"] = signed
+        flip_counts[f"field_flip_cases_{kind}_unsigned"] = unsigned
+    flip_counts["field_flip_cases"] = sum(
+        flip_counts[f"field_flip_cases_{kind}"] for kind in ("S", "M", "C")
     )
-    flip_counts["signed_one_byte_flip_fields_M"] = signed_field_flip_cases(
-        "M", DOMAIN_M, m, "3", context1
+    flip_counts["field_flip_cases_signed"] = sum(
+        flip_counts[f"field_flip_cases_{kind}_signed"] for kind in ("S", "M", "C")
     )
-    flip_counts["signed_one_byte_flip_fields_C"] = signed_field_flip_cases(
-        "C", DOMAIN_C, c, "1024", None
+    flip_counts["field_flip_cases_unsigned"] = sum(
+        flip_counts[f"field_flip_cases_{kind}_unsigned"] for kind in ("S", "M", "C")
     )
-    flip_counts["signed_one_byte_flip_fields"] = sum(flip_counts.values())
 
     oversized = payloads["M"] + (b" " * (MAX_OBJECT + 1 - len(payloads["M"])))
     cases["oversized_object"] = case("M", DOMAIN_M, oversized, "3", context1)
@@ -875,10 +941,10 @@ def run_cases(objects, payloads):
 def checkpoint_chain_valid(c0, c1, payloads):
     return (
         not verify_object(
-            "C", DOMAIN_C, payloads["C0"], sign("1024", DOMAIN_C, payloads["C0"])
+            "C", payloads["C0"], sign("1024", DOMAIN_C, payloads["C0"])
         )["rejected"]
         and not verify_object(
-            "C", DOMAIN_C, payloads["C"], sign("1024", DOMAIN_C, payloads["C"])
+            "C", payloads["C"], sign("1024", DOMAIN_C, payloads["C"])
         )["rejected"]
         and c0["sequence"] == "0"
         and c1["sequence"] == "1"
@@ -900,7 +966,6 @@ def state_result(payloads, s, m):
     before = 100
     statement = verify_object(
         "S",
-        DOMAIN_S,
         payloads["S"],
         sign("1", DOMAIN_S, payloads["S"]),
         {
@@ -915,7 +980,6 @@ def state_result(payloads, s, m):
     context = manifest_context(s, payloads["S"])
     accepted = not verify_object(
         "M",
-        DOMAIN_M,
         payloads["M"],
         sign("3", DOMAIN_M, payloads["M"]),
         context,
