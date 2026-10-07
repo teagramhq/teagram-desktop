@@ -127,6 +127,15 @@ class EpochConformanceTests(unittest.TestCase):
         self.assertTrue(cases["M_by_K0_when_authorized"]["signature_valid"])
         self.assertEqual(cases["M_by_K0_when_authorized"]["stage"], "accepted")
 
+    def test_manifest_signer_matches_public_key_authorized_by_epoch_statement(self):
+        for implementation in (self.python_result, self.cpp_result):
+            case = implementation["cases"].get("M_key_id_public_key_mismatch")
+            self.assertIsNotNone(case)
+            self.assertTrue(case["rejected"])
+            self.assertTrue(case["signature_valid"])
+            self.assertTrue(case["parse_reached"])
+            self.assertEqual(case["stage"], "authority")
+
     def test_signature_domain_ordering_and_one_byte_tampering(self):
         cases = self.python_result["cases"]
         self.assertFalse(cases["wrong_domain_S"]["signature_valid"])

@@ -635,12 +635,23 @@ std::map<std::string, VectorRow> makeVectors(const Objects &objects) {
 
 struct MContext {
 	std::string epoch = "1";
-	std::set<std::string> keyIds = {"k1"};
+	std::map<std::string, std::string> authorizedPackageKeys;
 	std::string statementDigest;
 	uint64_t installedEpoch = 0;
 	uint64_t installedBuild = MAX_UINT64;
 	bool mainChannel = false;
 };
+std::map<std::string, std::string> packageKeyMap(const Value &statement) {
+	const auto keys = get(statement, "authorized_package_keys");
+	if (!keys || keys->type != Value::Type::Array) {
+		throw std::runtime_error("epoch statement package keys are not an array");
+	}
+	auto result = std::map<std::string, std::string>();
+	for (const auto &entry : keys->array) {
+		result.emplace(stringField(entry, "id"), stringField(entry, "public_key"));
+	}
+	return result;
+}
 struct SContext { uint64_t floor = 0; std::string previousDigest = ZERO; std::map<std::string, std::string> known; };
 struct Outcome { bool rejected = true; bool signatureValid = false; bool parseReached = false; std::string stage = "signature"; };
 
@@ -694,9 +705,10 @@ Outcome verifyObject(const std::string &kind, const std::string &domain,
 		counter(get(value, "key_epoch"), &epoch);
 		counter(get(value, "build"), &build);
 		const auto key = stringField(value, "key_id");
-		const auto keyRole = key == "k0" ? "K0" : (key == "k1" ? "K1" : "");
+		const auto authorizedKey = mContext->authorizedPackageKeys.find(key);
 		if (stringField(value, "key_epoch") != mContext->epoch
-			|| mContext->keyIds.find(key) == mContext->keyIds.end() || keyRole != signer
+			|| authorizedKey == mContext->authorizedPackageKeys.end()
+			|| authorizedKey->second != publicForRole(signer)
 			|| stringField(value, "epoch_statement_sha256") != mContext->statementDigest) {
 			result.stage = "authority";
 			return result;
@@ -768,8 +780,20 @@ size_t signedFieldFlipCases(const std::string &kind, const std::string &domain,
 }
 
 std::map<std::string, Value> runCases(const Objects &objects) {
-	const auto context0 = MContext{"0", {"k0"}, ZERO, 0, MAX_UINT64, false};
-	const auto context1 = MContext{"1", {"k1"}, sha256(objects.sBytes), 0, MAX_UINT64, false};
+	const auto context0 = MContext{
+		"0",
+		{{"k0", publicForRole("K0")}},
+		ZERO,
+		0,
+		MAX_UINT64,
+		false};
+	const auto context1 = MContext{
+		"1",
+		packageKeyMap(objects.s),
+		sha256(objects.sBytes),
+		0,
+		MAX_UINT64,
+		false};
 	auto cases = std::map<std::string, Value>();
 	const auto duplicate = duplicatePayload(objects.sBytes);
 	addCase(cases, "duplicate_key_S", runCase("S", DOMAIN_S, duplicate, "1"));
@@ -816,9 +840,53 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	package0.object["epoch_statement_sha256"] = string(ZERO);
 	package0.object["key_epoch"] = string("0");
 	package0.object["key_id"] = string("k0");
-	const auto context0Authorized = MContext{"0", {"k0"}, ZERO, 0, 100, false};
+	const auto context0Authorized = MContext{
+		"0",
+		{{"k0", publicForRole("K0")}},
+		ZERO,
+		0,
+		100,
+		false};
 	addCase(cases, "M_by_K0_when_authorized", runCase("M", DOMAIN_M, encode(package0), "2", &context0Authorized));
 	wrongRole.push_back({"M_by_K0_after_revocation", runCase("M", DOMAIN_M, encode(package0), "2", &context1)});
+	auto mismatchStatement = objects.s;
+	const auto mismatchKey = object({
+		{"algorithm", string("Ed25519")},
+		{"id", string("k1")},
+		{"public_key", string(publicForRole("K0"))},
+	});
+	mismatchStatement.object["authorized_package_keys"] = Value::Array({mismatchKey});
+	mismatchStatement.object["revoked_key_ids"] = Value::Array(std::vector<Value>());
+	const auto mismatchStatementBytes = encode(mismatchStatement);
+	const auto mismatchStatementResult = runCase(
+		"S",
+		DOMAIN_S,
+		mismatchStatementBytes,
+		"1");
+	if (mismatchStatementResult.rejected || !mismatchStatementResult.signatureValid
+		|| !mismatchStatementResult.parseReached) {
+		throw std::runtime_error("fixture mismatch statement must be R-authorized");
+	}
+	const auto mismatchStatementDigest = sha256(mismatchStatementBytes);
+	const auto mismatchContext = MContext{
+		"1",
+		packageKeyMap(mismatchStatement),
+		mismatchStatementDigest,
+		0,
+		MAX_UINT64,
+		false};
+	auto mismatchManifest = objects.m;
+	mismatchManifest.object["epoch_statement_sha256"] = string(mismatchStatementDigest);
+	const auto mismatchOutcome = runCase(
+		"M",
+		DOMAIN_M,
+		encode(mismatchManifest),
+		"3",
+		&mismatchContext);
+	addCase(
+		cases,
+		"M_key_id_public_key_mismatch",
+		mismatchOutcome);
 	auto wrongNames = std::vector<std::string>();
 	for (const auto &entry : wrongRole) { addCase(cases, entry.first, entry.second); wrongNames.push_back(entry.first); }
 	std::sort(wrongNames.begin(), wrongNames.end());
@@ -906,7 +974,13 @@ Value stateValue(const Objects &objects) {
 	const auto afterStatement = statement.rejected ? MAX_UINT64 : before;
 	const auto reservation = reserveBuild(afterStatement);
 	const auto afterReservation = reservation.value_or(MAX_UINT64);
-	const auto context = MContext{"1", {"k1"}, sha256(objects.sBytes), 0, MAX_UINT64, false};
+	const auto context = MContext{
+		"1",
+		packageKeyMap(objects.s),
+		sha256(objects.sBytes),
+		0,
+		MAX_UINT64,
+		false};
 	const auto manifest = !verifyObject("M", DOMAIN_M, objects.mBytes,
 		sign("3", DOMAIN_M, objects.mBytes), &context).rejected;
 	return object({

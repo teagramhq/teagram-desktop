@@ -104,16 +104,16 @@ def signed_by(domain, payload, signature, test_id):
 
 def find_signer(domain, payload, signature):
     if len(payload) > MAX_OBJECT:
-        return None, "size"
+        return None, None, "size"
     if len(signature) != 64:
-        return None, "signature_length"
+        return None, None, "signature_length"
     for role, test_id in ROLE_IDS.items():
         try:
             public_key(test_id).verify(signature, domain_message(domain, payload))
-            return role, "ok"
+            return role, raw_hex(test_id, "public_key").hex(), "ok"
         except Exception:
             pass
-    return None, "signature"
+    return None, None, "signature"
 
 
 def is_ascii_string(value, max_bytes=128):
@@ -287,6 +287,22 @@ def valid_key_id(value):
     return isinstance(value, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", value) is not None
 
 
+def package_key_map(statement):
+    return {
+        entry["id"]: entry["public_key"]
+        for entry in statement["authorized_package_keys"]
+    }
+
+
+def manifest_context(statement, statement_payload, installed=(0, MAX_UINT64)):
+    return {
+        "epoch": statement["to_epoch"],
+        "authorized_package_keys": package_key_map(statement),
+        "statement_digest": digest(statement_payload),
+        "installed": installed,
+    }
+
+
 def verify_object(kind, domain, raw, signature, context=None):
     result = {
         "rejected": True,
@@ -300,7 +316,7 @@ def verify_object(kind, domain, raw, signature, context=None):
     if domain != expected_domain:
         result["stage"] = "domain"
         return result
-    signer, status = find_signer(expected_domain, raw, signature)
+    signer, signer_public_key, status = find_signer(expected_domain, raw, signature)
     if status != "ok":
         result["stage"] = status
         return result
@@ -349,12 +365,14 @@ def verify_object(kind, domain, raw, signature, context=None):
             result["stage"] = "conflict"
             return result
     if kind == "M":
-        context = context or {"epoch": "1", "key_ids": {"k1"}}
-        key_roles = context.get("key_roles", {"k0": "K0", "k1": "K1"})
+        context = context or {
+            "epoch": "1",
+            "authorized_package_keys": {"k1": raw_hex("3", "public_key").hex()},
+        }
+        authorized_package_keys = context.get("authorized_package_keys", {})
         if (
             value["key_epoch"] != context["epoch"]
-            or value["key_id"] not in context["key_ids"]
-            or key_roles.get(value["key_id"]) != signer
+            or authorized_package_keys.get(value["key_id"]) != signer_public_key
         ):
             result["stage"] = "authority"
             return result
@@ -538,19 +556,14 @@ def duplicate_payload(payload, key):
 def run_cases(objects, payloads):
     context0 = {
         "epoch": "0",
-        "key_ids": {"k0"},
+        "authorized_package_keys": {"k0": raw_hex("2", "public_key").hex()},
         "statement_digest": ZERO,
-        "installed": (0, MAX_UINT64),
-    }
-    context1 = {
-        "epoch": "1",
-        "key_ids": {"k1"},
-        "statement_digest": digest(payloads["S"]),
         "installed": (0, MAX_UINT64),
     }
     s = objects["S"]
     m = objects["M"]
     c = objects["C"]
+    context1 = manifest_context(s, payloads["S"])
     cases = {}
 
     duplicate = duplicate_payload(payloads["S"], "format")
@@ -625,7 +638,7 @@ def run_cases(objects, payloads):
     )
     context0_authorized = {
         "epoch": "0",
-        "key_ids": {"k0"},
+        "authorized_package_keys": {"k0": raw_hex("2", "public_key").hex()},
         "statement_digest": ZERO,
         "installed": (0, 100),
     }
@@ -647,6 +660,20 @@ def run_cases(objects, payloads):
         canonical(old_manifest),
         "2",
         context1,
+    )
+    mismatch_statement = copy.deepcopy(s)
+    mismatch_statement["authorized_package_keys"][0]["public_key"] = raw_hex(
+        "2", "public_key"
+    ).hex()
+    mismatch_statement["revoked_key_ids"] = []
+    mismatch_payload = canonical(mismatch_statement)
+    if case("S", DOMAIN_S, mismatch_payload, "1")["rejected"]:
+        raise AssertionError("fixture mismatch statement must be R-authorized")
+    mismatch_context = manifest_context(mismatch_statement, mismatch_payload)
+    mismatch_manifest = dict(m)
+    mismatch_manifest["epoch_statement_sha256"] = mismatch_context["statement_digest"]
+    cases["M_key_id_public_key_mismatch"] = case(
+        "M", DOMAIN_M, canonical(mismatch_manifest), "3", mismatch_context
     )
     for name, (kind, domain, payload, signer_test, context) in wrong_role.items():
         cases[name] = case(kind, domain, payload, signer_test, context)
@@ -739,12 +766,7 @@ def state_result(payloads, s, m):
     after_statement = before if not statement["rejected"] else MAX_UINT64
     reserved_value = reserve_build(after_statement)
     reserved = reserved_value if reserved_value is not None else MAX_UINT64
-    context = {
-        "epoch": "1",
-        "key_ids": {key["id"] for key in s["authorized_package_keys"]},
-        "statement_digest": digest(payloads["S"]),
-        "installed": (0, MAX_UINT64),
-    }
+    context = manifest_context(s, payloads["S"])
     accepted = not verify_object(
         "M",
         DOMAIN_M,

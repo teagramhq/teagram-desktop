@@ -29,9 +29,10 @@ through `18446744073709551615`, with no leading zero except `"0"`.
 
 `S` is authorized only by recovery role R. It advances exactly one epoch and
 must link to the previous statement; it may revoke an old package ID while
-authorizing the next ID. `M` must be signed by the package key whose ID and
-epoch are currently authorized. `C` is authorized only by ledger role L. The
-fixture trust map has four distinct keys and never exceeds four entries.
+authorizing the next ID. `M` must be signed by the exact public key listed for
+its key ID in the accepted S for that epoch. `C` is authorized only by ledger
+role L. The fixture trust map has four distinct keys and never exceeds four
+entries.
 
 | Domain | Exact bytes before the NUL separator | Authorized signer |
 | --- | --- | --- |
@@ -81,6 +82,10 @@ The isolated suite checks:
   K[0] after epoch 1. Each reaches parsing with a valid signature, then fails
   at the authority check. An additional K[0]-signed epoch-0 manifest is
   accepted while K[0] is authorized.
+- An accepted R-signed S that maps `k1` to the K[0] public key, paired with a
+  correctly K[1]-signed M naming `k1`, reaches parsing with a valid signature
+  and fails authority because the verifying key differs from the accepted
+  ID-to-public-key map.
 - Correctly signed duplicate keys fail canonical equality; an unknown field,
   leading-zero/number/overflow counters, escaped text, and a trailing newline
   fail after signature verification. Wrong-domain and v1-domain signatures
@@ -106,9 +111,10 @@ signature. Setup and reproduction commands are in `README.md`.
 
 On 2026-10-07, the documented isolated setup smoke exited 0 with g++ 15.2.0,
 OpenSSL headers/runtime 3.5.5 (linked runtime major 3), Python 3.14.4, and
-cryptography 46.0.5. The documented focused unittest command exited 0: 7
-tests passed in 4.680 seconds. The run verified all four RFC known answers,
+cryptography 46.0.5. The documented focused unittest command exited 0: 8
+tests passed in 4.484 seconds. The run verified all four RFC known answers,
 byte-identical C++/Python results for S, M, C0 and C, all ten signed wrong-role
-cases, all 39 signed field mutations, the epoch-1/build-101 recovery outcome,
-and the fixture key-containment check. This is local protocol-conformance
-evidence; the earlier setup-only PR #98 check is not counted as conformance.
+cases, the signed manifest key-ID/public-key mismatch, all 39 signed field
+mutations, the epoch-1/build-101 recovery outcome, and the fixture
+key-containment check. This is local protocol-conformance evidence; the
+earlier setup-only PR #98 check is not counted as conformance.
