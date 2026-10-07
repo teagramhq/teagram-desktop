@@ -173,6 +173,27 @@ class EpochConformanceTests(unittest.TestCase):
                     self.assertTrue(cases[name]["parse_reached"])
                     self.assertEqual(cases[name]["stage"], "schema")
 
+    def test_signed_wrong_type_statement_and_checkpoint_fields_are_schema_rejections(self):
+        expected = (
+            "S_repo_number",
+            "S_previous_digest_array",
+            "S_key_public_key_number",
+            "C_repo_number",
+            "C_ledger_head_digest_number",
+        )
+        for implementation_name, implementation in (
+            ("Python", self.python_result),
+            ("C++", self.cpp_result),
+        ):
+            cases = implementation["cases"]
+            for name in expected:
+                with self.subTest(implementation=implementation_name, name=name):
+                    self.assertIn(name, cases)
+                    self.assertTrue(cases[name]["rejected"])
+                    self.assertTrue(cases[name]["signature_valid"])
+                    self.assertTrue(cases[name]["parse_reached"])
+                    self.assertEqual(cases[name]["stage"], "schema")
+
     def test_signature_domain_ordering_and_one_byte_tampering(self):
         cases = self.python_result["cases"]
         self.assertFalse(cases["wrong_domain_S"]["signature_valid"])

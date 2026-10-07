@@ -198,6 +198,18 @@ def schema_error(kind, value):
         return "schema"
 
     if kind == "S":
+        for field in (
+            "kind",
+            "repo",
+            "repo_id",
+            "product",
+            "from_epoch",
+            "to_epoch",
+            "previous_statement_sha256",
+            "allocation_checkpoint_sha256",
+        ):
+            if not isinstance(value[field], str):
+                return "schema"
         if value["kind"] != "teagram-key-epoch" or value["format"] != 1:
             return "schema"
         if value["repo"] != REPO or value["repo_id"] != REPO_ID or value["product"] != PRODUCT:
@@ -219,6 +231,8 @@ def schema_error(kind, value):
         ids = []
         for key in keys:
             if not isinstance(key, dict) or set(key) != {"algorithm", "id", "public_key"}:
+                return "schema"
+            if any(not isinstance(key[field], str) for field in ("algorithm", "id", "public_key")):
                 return "schema"
             if key["algorithm"] != "Ed25519" or not valid_key_id(key["id"]):
                 return "schema"
@@ -266,6 +280,22 @@ def schema_error(kind, value):
         if not is_ascii_string(value["version"], 32) or not is_ascii_string(value["min_os"], 32):
             return "schema"
     elif kind == "C":
+        for field in (
+            "current_epoch",
+            "epoch_statement_sha256",
+            "event_cursor",
+            "high_water_build",
+            "kind",
+            "ledger_head_sha256",
+            "prev_sha256",
+            "product",
+            "protection_digest_sha256",
+            "repo",
+            "repo_id",
+            "sequence",
+        ):
+            if not isinstance(value[field], str):
+                return "schema"
         if value["kind"] != "teagram-ledger-checkpoint" or value["schema"] != 1:
             return "schema"
         if value["repo"] != REPO or value["repo_id"] != REPO_ID or value["product"] != PRODUCT:
@@ -373,7 +403,11 @@ def verify_object(kind, domain, raw, signature, context=None):
     if not check_tree_ascii(value):
         result["stage"] = "schema"
         return result
-    status = schema_error(kind, value)
+    try:
+        status = schema_error(kind, value)
+    except Exception:
+        result["stage"] = "schema"
+        return result
     if status != "ok":
         result["stage"] = status
         return result
@@ -618,6 +652,21 @@ def run_cases(objects, payloads):
     unknown = dict(s)
     unknown["unknown_field"] = "x"
     cases["unknown_key_S"] = case("S", DOMAIN_S, canonical(unknown), "1")
+    bad_statement = copy.deepcopy(s)
+    bad_statement["repo"] = 101
+    cases["S_repo_number"] = case("S", DOMAIN_S, canonical(bad_statement), "1")
+    bad_statement = copy.deepcopy(s)
+    bad_statement["previous_statement_sha256"] = ["0" * 64]
+    cases["S_previous_digest_array"] = case("S", DOMAIN_S, canonical(bad_statement), "1")
+    bad_statement = copy.deepcopy(s)
+    bad_statement["authorized_package_keys"][0]["public_key"] = 101
+    cases["S_key_public_key_number"] = case("S", DOMAIN_S, canonical(bad_statement), "1")
+    bad_checkpoint = copy.deepcopy(c)
+    bad_checkpoint["repo"] = 101
+    cases["C_repo_number"] = case("C", DOMAIN_C, canonical(bad_checkpoint), "1024")
+    bad_checkpoint = copy.deepcopy(c)
+    bad_checkpoint["ledger_head_sha256"] = 101
+    cases["C_ledger_head_digest_number"] = case("C", DOMAIN_C, canonical(bad_checkpoint), "1024")
 
     bad = dict(m)
     bad["build"] = "0101"

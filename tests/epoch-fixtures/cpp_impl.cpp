@@ -320,6 +320,10 @@ bool keyId(const std::string &value) {
 	static const auto pattern = std::regex("[a-z0-9][a-z0-9-]{0,31}");
 	return std::regex_match(value, pattern);
 }
+bool isStringField(const Value &value, const std::string &field) {
+	const auto entry = get(value, field);
+	return entry && entry->type == Value::Type::String;
+}
 bool counter(const Value *value, uint64_t *parsed = nullptr) {
 	if (!value || value->type != Value::Type::String) return false;
 	static const auto pattern = std::regex("0|[1-9][0-9]{0,19}");
@@ -334,7 +338,8 @@ bool counter(const Value *value, uint64_t *parsed = nullptr) {
 	return true;
 }
 bool digestField(const Value &value, const std::string &field) {
-	return lowerHex(stringField(value, field), 64);
+	const auto entry = get(value, field);
+	return entry && entry->type == Value::Type::String && lowerHex(entry->text, 64);
 }
 
 std::string schemaError(const std::string &kind, const Value &value) {
@@ -352,6 +357,10 @@ std::string schemaError(const std::string &kind, const Value &value) {
 		"repo_id", "schema", "sequence"};
 	if (!asciiTree(value) || !exactKeys(value, kind == "S" ? sKeys : (kind == "M" ? mKeys : cKeys))) return "schema";
 	if (kind == "S") {
+		for (const auto field : {"kind", "repo", "repo_id", "product", "from_epoch", "to_epoch",
+			"previous_statement_sha256", "allocation_checkpoint_sha256"}) {
+			if (!isStringField(value, field)) return "schema";
+		}
 		if (stringField(value, "kind") != "teagram-key-epoch" || !numberIs(value, "format", "1")
 			|| stringField(value, "repo") != "teagramhq/teagram-desktop"
 			|| stringField(value, "repo_id") != "1332987415"
@@ -367,6 +376,8 @@ std::string schemaError(const std::string &kind, const Value &value) {
 		auto ids = std::vector<std::string>();
 		for (const auto &entry : keys->array) {
 			if (!exactKeys(entry, {"algorithm", "id", "public_key"})
+				|| !isStringField(entry, "algorithm") || !isStringField(entry, "id")
+				|| !isStringField(entry, "public_key")
 				|| stringField(entry, "algorithm") != "Ed25519"
 				|| !keyId(stringField(entry, "id"))
 				|| !lowerHex(stringField(entry, "public_key"), 64)) return "schema";
@@ -404,6 +415,11 @@ std::string schemaError(const std::string &kind, const Value &value) {
 			|| !asciiString(stringField(value, "version"), 32)
 			|| !asciiString(stringField(value, "min_os"), 32)) return "schema";
 	} else {
+		for (const auto field : {"current_epoch", "epoch_statement_sha256", "event_cursor", "high_water_build",
+			"kind", "ledger_head_sha256", "prev_sha256", "product", "protection_digest_sha256",
+			"repo", "repo_id", "sequence"}) {
+			if (!isStringField(value, field)) return "schema";
+		}
 		if (stringField(value, "kind") != "teagram-ledger-checkpoint" || !numberIs(value, "schema", "1")
 			|| stringField(value, "repo") != "teagramhq/teagram-desktop"
 			|| stringField(value, "repo_id") != "1332987415"
@@ -716,7 +732,12 @@ Outcome verifyObject(const std::string &kind, const std::string &domain,
 	try {
 		if (encode(value) != payload) { result.stage = "canonical"; return result; }
 	} catch (...) { result.stage = "canonical"; return result; }
-	if (schemaError(kind, value) != "ok") { result.stage = "schema"; return result; }
+	try {
+		if (schemaError(kind, value) != "ok") { result.stage = "schema"; return result; }
+	} catch (...) {
+		result.stage = "schema";
+		return result;
+	}
 	const auto rightRole = kind == "S" ? signer == "R"
 		: (kind == "M" ? (signer == "K0" || signer == "K1") : signer == "L");
 	if (!rightRole) { result.stage = "authority"; return result; }
@@ -848,6 +869,21 @@ std::map<std::string, Value> runCases(const Objects &objects) {
 	auto unknown = objects.s;
 	unknown.object["unknown_field"] = string("x");
 	addCase(cases, "unknown_key_S", runCase("S", DOMAIN_S, encode(unknown), "1"));
+	auto badStatement = objects.s;
+	badStatement.object["repo"] = number(101);
+	addCase(cases, "S_repo_number", runCase("S", DOMAIN_S, encode(badStatement), "1"));
+	badStatement = objects.s;
+	badStatement.object["previous_statement_sha256"] = Value::Array({string(std::string(64, '0'))});
+	addCase(cases, "S_previous_digest_array", runCase("S", DOMAIN_S, encode(badStatement), "1"));
+	badStatement = objects.s;
+	badStatement.object["authorized_package_keys"].array[0].object["public_key"] = number(101);
+	addCase(cases, "S_key_public_key_number", runCase("S", DOMAIN_S, encode(badStatement), "1"));
+	auto badCheckpoint = objects.c;
+	badCheckpoint.object["repo"] = number(101);
+	addCase(cases, "C_repo_number", runCase("C", DOMAIN_C, encode(badCheckpoint), "1024"));
+	badCheckpoint = objects.c;
+	badCheckpoint.object["ledger_head_sha256"] = number(101);
+	addCase(cases, "C_ledger_head_digest_number", runCase("C", DOMAIN_C, encode(badCheckpoint), "1024"));
 	auto leading = objects.m;
 	leading.object["build"] = string("0101");
 	addCase(cases, "leading_zero_build_M", runCase("M", DOMAIN_M, encode(leading), "3", &context1));

@@ -96,6 +96,10 @@ The isolated suite checks:
 - Correctly K[1]-signed canonical M objects with numeric `asset_name` and
   array-valued `channel` are rejected at schema validation after signature
   verification; neither implementation aborts on the wrong JSON type.
+- Correctly R-signed S objects with numeric `repo`, array-valued digest, and
+  numeric nested package public key, plus correctly L-signed C objects with
+  numeric `repo` or ledger digest, reach parsing and return schema rejection
+  in both implementations.
 - Correctly signed duplicate keys fail canonical equality; an unknown field,
   leading-zero/number/overflow counters, escaped text, and a trailing newline
   fail after signature verification. Wrong-domain and v1-domain signatures
@@ -121,12 +125,13 @@ signature. Setup and reproduction commands are in `README.md`.
 
 On 2026-10-07, the documented isolated setup smoke exited 0 with g++ 15.2.0,
 OpenSSL headers/runtime 3.5.5 (linked runtime major 3), Python 3.14.4, and
-cryptography 46.0.5. The documented focused unittest command exited 0: 10
-tests passed in 4.693 seconds. The run verified all four RFC known answers,
+cryptography 46.0.5. The documented focused unittest command exited 0: 11
+tests passed in 4.896 seconds. The run verified all four RFC known answers,
 byte-identical C++/Python results for S, M, C0 and C, all ten signed wrong-role
 cases, the signed manifest key-ID/public-key mismatch, both linked-transition
 history/revocation rejections and their valid successor, both signed
-wrong-type M schema rejections, all 39 signed field mutations, the
+wrong-type M schema rejections, the wrong-type S/C schema rejections, all 39
+signed field mutations, the
 epoch-1/build-101 recovery outcome, and the fixture key-containment check.
 This is local protocol-conformance evidence; the earlier setup-only PR #98
 check is not counted as conformance.
