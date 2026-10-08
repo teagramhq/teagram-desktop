@@ -1338,19 +1338,40 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
-	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
-	if (app.separateWindowFor(pinned) != pinnedWindow) {
-		return FailChatParticipantsRegression(
-			"pinned window was not mapped before the primary closed");
-	}
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= stockBeforeQueuedSwitches + 2
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 2) {
+		return FailChatParticipantsRegression(
+			"queued live and destroyed-session updates reached the wrong sessions");
+	}
+	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	if (app.separateWindowFor(pinned) != pinnedWindow) {
+		return FailChatParticipantsRegression(
+			"pinned window was not mapped before the primary closed");
+	}
 	if (!stock->sessionExists() || !pinned->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"live previous-session fixtures disappeared before primary close");
+	}
+	const auto stockBeforeCloseSwitch
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeCloseSwitch
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeCloseSwitch
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeCloseSwitch + 1) {
+		return FailChatParticipantsRegression(
+			"stock-to-pinned close switch missed its inline session update");
 	}
 	app.closeWindow(primary);
 	if (app.separateWindowFor(stock) != nullptr) {
@@ -1365,9 +1386,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
 		!= stockAfterClose + 1
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedAfterClose + 1) {
+			!= pinnedAfterClose) {
 		return FailChatParticipantsRegression(
-			"deferred close updates missed a live session or reached a replacement");
+			"deferred primary-close update was not delivered once "
+			"to the previous session");
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
