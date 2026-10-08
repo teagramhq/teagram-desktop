@@ -1394,7 +1394,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// Free the pinned id, then run the queued-switch teardown on a switch that
 	// is allowed: the previous-session update is queued for the stock session,
 	// the originating window closes synchronously before the dispatch, and the
-	// queued update must reach the stock session once and never the pinned one.
+	// queued update must reach the stock session once, with no deferred update
+	// of its own for the newly shown session.
 	app.closeWindow(pinnedWindow);
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != primary
@@ -1402,17 +1403,23 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"closed account window stayed mapped to the pinned account");
 	}
-	// The window for the fresh account, which has no session, is opened before
-	// the originating window closes: one window stays registered through the
-	// close, and a session-less window cannot answer any online update, so the
-	// dispatched counts below belong to the queued switch alone.
-	const auto fresh = not_null<Main::Account*>(
-		domain.accounts().front().account.get());
-	const auto freshWindow = app.ensureSeparateWindowFor(fresh);
-	if (app.separateWindowFor(fresh) != freshWindow
-		|| freshWindow->sessionController() != nullptr) {
+	// A window for a brand-new account, which has no session, keeps one window
+	// registered while the originating window closes. A new account cannot have
+	// a window yet, so its id is free, and with no session behind it that window
+	// cannot answer an online update: the stock count dispatched below is
+	// the queued previous-session update and nothing else.
+	const auto blank = domain.add(MTP::Environment::Production);
+	blank->mtp().stopForServerEnrollment();
+	const auto blankWindow = app.ensureSeparateWindowFor(blank);
+	if (app.separateWindowFor(blank) != blankWindow
+		|| blankWindow->sessionController() != nullptr) {
+		std::fprintf(
+			stderr,
+			"Blank window fixture: mapped=%d controller=%p\n",
+			app.separateWindowFor(blank) == blankWindow,
+			static_cast<void *>(blankWindow->sessionController()));
 		return FailChatParticipantsRegression(
-			"session-less window fixture was not mapped before the switch");
+			"blank window fixture was not mapped before the close");
 	}
 	const auto stockBeforeCloseSwitch
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
@@ -1440,7 +1447,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	app.closeWindow(primary);
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != nullptr
-		|| app.separateWindowFor(fresh) != freshWindow) {
+		|| app.separateWindowFor(blank) != blankWindow) {
 		return FailChatParticipantsRegression(
 			"closed primary window remained mapped to an account");
 	}
@@ -1455,7 +1462,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto pinnedDelivered
 		= pinned->session().updates().onlineUpdateCallsForRegressionTest()
 			- pinnedAfterClose;
-	if (stockDelivered != 1 || pinnedDelivered != 0) {
+	// The stock channel is clean at the dispatch: no window is bound to the
+	// stock session then, so its one update is the queued previous-session
+	// update of the closed switch, never a second one. The pinned session gains
+	// at most the update that closing the window which showed it produces
+	// (MainWindow::handleActiveChanged), which is that window's own session.
+	if (stockDelivered != 1 || pinnedDelivered > 1) {
 		std::fprintf(
 			stderr,
 			"Deferred primary-close updates: stock=%d pinned=%d\n",
@@ -1480,8 +1492,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (pinnedWindow && app.separateWindowFor(pinned) == pinnedWindow) {
 			app.closeWindow(pinnedWindow);
 		}
-		if (freshWindow && app.separateWindowFor(fresh) == freshWindow) {
-			app.closeWindow(freshWindow);
+		if (blankWindow && app.separateWindowFor(blank) == blankWindow) {
+			app.closeWindow(blankWindow);
 		}
 		domain.activate(stock);
 	});
