@@ -1351,7 +1351,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"queued live and destroyed-session updates reached the wrong sessions");
 	}
-	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
 		return FailChatParticipantsRegression(
 			"pinned window was not mapped before the primary closed");
@@ -1360,6 +1360,49 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"live previous-session fixtures disappeared before primary close");
 	}
+	// The pinned account owns a window, so the pinned id is taken. Switching
+	// the primary here must not rebind it: the pinned window is shown and the
+	// primary stays on the stock account. Every account lookup must keep
+	// returning a window bound to the account it was asked for, and every
+	// window must stay registered under its own id.
+	const auto stockBeforeCollision
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeCollision
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	const auto stockLookup = app.windowFor(stock);
+	const auto pinnedLookup = app.windowFor(pinned);
+	if (primary->maybeSession() != &stock->session()
+		|| app.activePrimaryWindow() != pinnedWindow
+		|| stockLookup != primary
+		|| pinnedLookup != pinnedWindow
+		|| &stockLookup->account() != stock.get()
+		|| &pinnedLookup->account() != pinned.get()
+		|| app.separateWindowFor(stock) != primary
+		|| app.separateWindowFor(pinned) != pinnedWindow
+		|| app.separateWindowFor(primary->id()) != primary
+		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeCollision
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeCollision) {
+		return FailChatParticipantsRegression(
+			"primary switch to an account owning a window left an account "
+			"lookup on a window bound to another account");
+	}
+	QCoreApplication::processEvents();
+	// Free the pinned id, then run the queued-switch teardown on a switch that
+	// is allowed: the previous-session update is queued for the stock session,
+	// the originating window closes synchronously before the dispatch, and the
+	// queued update must reach the stock session once and never the pinned one.
+	app.closeWindow(pinnedWindow);
+	if (app.separateWindowFor(pinned) != nullptr
+		|| app.separateWindowFor(stock) != primary
+		|| app.activePrimaryWindow() != primary) {
+		return FailChatParticipantsRegression(
+			"closed account window stayed mapped to the pinned account");
+	}
+	QCoreApplication::processEvents();
 	const auto stockBeforeCloseSwitch
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	const auto pinnedBeforeCloseSwitch
@@ -1373,37 +1416,60 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock-to-pinned close switch missed its inline session update");
 	}
-	// The primary window now shares its id with the account's own window.
-	// Re-keying must keep the window registered: the switch runs inside the
-	// controller, and a key collision that drops its pointer destroys it
-	// in the middle of this call.
-	if (app.activePrimaryWindow() != primary
-		|| app.separateWindowFor(stock) != primary
-		|| app.separateWindowFor(pinned) != pinnedWindow) {
+	// The switch is registered under the pinned id, not the stock one it came
+	// from, so no lookup can answer with a window of another account.
+	if (app.separateWindowFor(pinned) != primary
+		|| app.separateWindowFor(primary->id()) != primary
+		|| &primary->account() != pinned.get()) {
 		return FailChatParticipantsRegression(
-			"primary switch to an account owning a separate window "
-			"deregistered the primary window");
+			"allowed primary switch kept the window keyed to its old account");
 	}
-	app.closeWindow(primary);
-	if (app.separateWindowFor(stock) != nullptr) {
+	// The stock account has no window after the switch, so a window for it is
+	// created before the primary closes: a live window stays registered while
+	// the originating window closes, and the later window/session checks need
+	// this window and the pinned one.
+	const auto stockWindow = app.ensureSeparateWindowFor(stock);
+	if (app.separateWindowFor(stock) != stockWindow
+		|| &stockWindow->account() != stock.get()) {
 		return FailChatParticipantsRegression(
-			"closed primary window remained mapped to the stock account");
+			"stock window was not mapped before the primary closed");
+	}
+	stockWindow->activate();
+	QCoreApplication::processEvents();
+	app.closeWindow(primary);
+	if (app.separateWindowFor(stock) != stockWindow
+		|| app.separateWindowFor(pinned) != nullptr
+		|| app.separateWindowFor(stockWindow->id()) != stockWindow) {
+		return FailChatParticipantsRegression(
+			"closed primary window remained mapped to an account");
 	}
 	const auto stockAfterClose
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	const auto pinnedAfterClose
 		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
 	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockAfterClose + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedAfterClose) {
+	const auto stockDelivered
+		= stock->session().updates().onlineUpdateCallsForRegressionTest()
+			- stockAfterClose;
+	const auto pinnedDelivered
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			- pinnedAfterClose;
+	if (stockDelivered != 1 || pinnedDelivered != 0) {
+		std::fprintf(
+			stderr,
+			"Deferred primary-close updates: stock=%d pinned=%d\n",
+			stockDelivered,
+			pinnedDelivered);
 		return FailChatParticipantsRegression(
 			"deferred primary-close update was not delivered once "
 			"to the previous session");
 	}
-
-	const auto stockWindow = app.ensureSeparateWindowFor(stock);
+	pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	if (app.separateWindowFor(pinned) != pinnedWindow
+		|| &pinnedWindow->account() != pinned.get()) {
+		return FailChatParticipantsRegression(
+			"pinned window was not remapped after the primary closed");
+	}
 	const auto closeWindows = gsl::finally([&] {
 		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
 			app.closeWindow(stockWindow);

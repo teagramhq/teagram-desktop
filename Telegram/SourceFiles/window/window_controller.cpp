@@ -146,6 +146,23 @@ void Controller::showAccount(
 		MsgId singlePeerShowAtMsgId) {
 	Expects(isPrimary() || _id.account == account);
 
+	if (isPrimary()) {
+		// Every window is registered under its own id, so a primary window
+		// that starts showing an account claims that account's id. When
+		// another window already owns that id, the registry cannot hold both:
+		// rebinding here would leave one window keyed to an account it no
+		// longer shows, and windowFor(account), showAccount(account) and
+		// ensureSeparateWindowFor(account) would then hand out a window bound
+		// to a different session. Show the account's own window, which is what
+		// an account switch does, and keep this window on its own account.
+		const auto owner = Core::App().separateWindowFor(SeparateId(account));
+		if (owner && owner != this) {
+			Core::App().setActivePrimaryWindow(owner);
+			owner->activate();
+			return;
+		}
+	}
+
 	const auto prevSession = maybeSession();
 	const auto prevSessionWeak = prevSession
 		? base::make_weak(prevSession)

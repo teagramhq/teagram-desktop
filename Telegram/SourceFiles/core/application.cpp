@@ -547,10 +547,12 @@ void Application::checkWindowId(not_null<Window::Controller*> window) {
 			continue;
 		}
 		// Every window is stored under its own id, so switching the primary
-		// window to another account moves it to a new key here. When another
-		// window already owns that id, keep this window under its current
-		// key: the map refuses a duplicate key and drops the transferred
-		// pointer, which would destroy a window inside its own call stack.
+		// window to another account moves it to a new key here. The id the
+		// window is about to claim is freed before the rebind, in
+		// Controller::showAccount, so this target key is free. The map refuses a
+		// duplicate key and drops the transferred pointer, which would destroy
+		// this window inside its own call stack: keep it under its current key
+		// should a collision ever reach this point.
 		if (_windows.contains(id)) {
 			return;
 		}
