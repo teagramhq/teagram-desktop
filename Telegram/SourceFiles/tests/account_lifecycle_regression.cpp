@@ -1402,7 +1402,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"closed account window stayed mapped to the pinned account");
 	}
-	QCoreApplication::processEvents();
+	// The window for the fresh account, which has no session, is opened before
+	// the originating window closes: one window stays registered through the
+	// close, and a session-less window cannot answer any online update, so the
+	// dispatched counts below belong to the queued switch alone.
+	const auto fresh = not_null<Main::Account*>(
+		domain.accounts().front().account.get());
+	const auto freshWindow = app.ensureSeparateWindowFor(fresh);
+	if (app.separateWindowFor(fresh) != freshWindow
+		|| freshWindow->sessionController() != nullptr) {
+		return FailChatParticipantsRegression(
+			"session-less window fixture was not mapped before the switch");
+	}
 	const auto stockBeforeCloseSwitch
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	const auto pinnedBeforeCloseSwitch
@@ -1419,27 +1430,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// The switch is registered under the pinned id, not the stock one it came
 	// from, so no lookup can answer with a window of another account.
 	if (app.separateWindowFor(pinned) != primary
+		|| app.separateWindowFor(stock) != nullptr
 		|| app.separateWindowFor(primary->id()) != primary
 		|| &primary->account() != pinned.get()) {
 		return FailChatParticipantsRegression(
 			"allowed primary switch kept the window keyed to its old account");
 	}
-	// The stock account has no window after the switch, so a window for it is
-	// created before the primary closes: a live window stays registered while
-	// the originating window closes, and the later window/session checks need
-	// this window and the pinned one.
-	const auto stockWindow = app.ensureSeparateWindowFor(stock);
-	if (app.separateWindowFor(stock) != stockWindow
-		|| &stockWindow->account() != stock.get()) {
-		return FailChatParticipantsRegression(
-			"stock window was not mapped before the primary closed");
-	}
-	stockWindow->activate();
-	QCoreApplication::processEvents();
+	// The close is synchronous, before any dispatch of the queued update.
 	app.closeWindow(primary);
-	if (app.separateWindowFor(stock) != stockWindow
-		|| app.separateWindowFor(pinned) != nullptr
-		|| app.separateWindowFor(stockWindow->id()) != stockWindow) {
+	if (app.separateWindowFor(pinned) != nullptr
+		|| app.separateWindowFor(stock) != nullptr
+		|| app.separateWindowFor(fresh) != freshWindow) {
 		return FailChatParticipantsRegression(
 			"closed primary window remained mapped to an account");
 	}
@@ -1470,12 +1471,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"pinned window was not remapped after the primary closed");
 	}
+
+	const auto stockWindow = app.ensureSeparateWindowFor(stock);
 	const auto closeWindows = gsl::finally([&] {
 		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
 			app.closeWindow(stockWindow);
 		}
 		if (pinnedWindow && app.separateWindowFor(pinned) == pinnedWindow) {
 			app.closeWindow(pinnedWindow);
+		}
+		if (freshWindow && app.separateWindowFor(fresh) == freshWindow) {
+			app.closeWindow(freshWindow);
 		}
 		domain.activate(stock);
 	});
