@@ -957,7 +957,6 @@ bool Account::loggingOut() const {
 
 void Account::forcedLogOut() {
 	if (sessionExists()) {
-		// loggedOut destroys Session while its MTP instance is still alive.
 		loggedOut();
 	}
 }

@@ -434,8 +434,6 @@ RegressionOtherServerKey() {
 		|| domain.accounts().empty()) {
 		return false;
 	}
-	// Keep account-bound connection-state widgets out of the interval where
-	// Domain::finish has destroyed their MTP instances.
 	app.createPrimaryWindowForLifecycleRegression();
 	const auto primary = app.activePrimaryWindow();
 	if (!primary) {
@@ -1234,8 +1232,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.serverTranslationSupported() == supported);
 	};
 	auto &app = Core::App();
-	// Rebind before per-account windows claim these ids; later account
-	// selection must activate those windows instead of rekeying another one.
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
 	if (!primary || !primary->isPrimary()) {
@@ -1342,10 +1338,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
-	// Keep a session window last active across the primary close: closing the
-	// only window clears the application float player, and the next window
-	// constructor reaches it before its own delegate is registered. The
-	// queued previous-session callbacks are left undispatched here.
 	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
 		return FailChatParticipantsRegression(
@@ -1360,20 +1352,20 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"live previous-session fixtures disappeared before primary close");
 	}
-	const auto stockBeforeDispatch
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
-	const auto pinnedBeforeDispatch
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
 	app.closeWindow(primary);
 	if (app.separateWindowFor(stock) != nullptr) {
 		return FailChatParticipantsRegression(
 			"closed primary window remained mapped to the stock account");
 	}
+	const auto stockAfterClose
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedAfterClose
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
 	QCoreApplication::processEvents();
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockBeforeDispatch + 1
+		!= stockAfterClose + 1
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeDispatch + 1) {
+			!= pinnedAfterClose + 1) {
 		return FailChatParticipantsRegression(
 			"deferred close updates missed a live session or reached a replacement");
 	}
