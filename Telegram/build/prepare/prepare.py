@@ -716,13 +716,20 @@ mac:
     SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
     rm -f libiconv.tar.gz
     for url in https://ftpmirror.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.osuosl.org/pub/gnu/libiconv/libiconv-$VERSION.tar.gz https://mirrors.kernel.org/gnu/libiconv/libiconv-$VERSION.tar.gz; do
-        wget --timeout=30 --tries=2 -O libiconv.tar.gz "$url" || continue
+        if ! wget --timeout=30 --tries=2 -O libiconv.tar.gz "$url"; then
+            rm -f libiconv.tar.gz
+            continue
+        fi
         if [ `shasum -a 256 libiconv.tar.gz | cut -d' ' -f1` = "$SHA256" ]; then
             break
         fi
         rm -f libiconv.tar.gz
     done
-    test -s libiconv.tar.gz
+    if [ ! -s libiconv.tar.gz ] || [ `shasum -a 256 libiconv.tar.gz | cut -d' ' -f1` != "$SHA256" ]; then
+        rm -f libiconv.tar.gz
+        echo "Failed to download verified libiconv-$VERSION archive." >&2
+        exit 1
+    fi
     rm -rf libiconv-$VERSION
     tar -xvzf libiconv.tar.gz
     rm libiconv.tar.gz

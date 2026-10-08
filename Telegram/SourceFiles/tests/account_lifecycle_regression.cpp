@@ -1218,6 +1218,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"could not create the pinned test session");
 	}
+	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
+		return FailChatParticipantsRegression(
+			"stock and pinned sessions did not share the same user id");
+	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
 								  bool supported) {
 		return (session.callsSupported() == supported)
@@ -1243,17 +1247,49 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
+	QCoreApplication::processEvents();
+	const auto stockToPinnedStockUpdates
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto stockToPinnedPinnedUpdates
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
 	primary->showAccount(pinned);
-	if (primary->maybeSession() != &pinned->session()) {
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedStockUpdates
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
-			"primary window did not switch to the pinned session");
-	}
-	primary->showAccount(stock);
-	if (primary->maybeSession() != &stock->session()) {
-		return FailChatParticipantsRegression(
-			"primary window did not switch back to the stock session");
+			"stock-to-pinned switch did not update only the shown session inline");
 	}
 	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= stockToPinnedStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedPinnedUpdates + 1) {
+		return FailChatParticipantsRegression(
+			"stock-to-pinned switch did not update each session exactly once");
+	}
+	const auto pinnedToStockStockUpdates
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedToStockPinnedUpdates
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockPinnedUpdates) {
+		return FailChatParticipantsRegression(
+			"pinned-to-stock switch did not update only the shown session inline");
+	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= pinnedToStockStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockPinnedUpdates + 1) {
+		return FailChatParticipantsRegression(
+			"pinned-to-stock switch did not update each session exactly once");
+	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
 	discarded->setSessionUserId(selfId);
@@ -1267,33 +1303,67 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture did not share the stock user id");
 	}
-	primary->showAccount(discarded);
-	if (primary->maybeSession() != &discarded->session()) {
+	const auto stockBeforeQueuedSwitches
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeQueuedSwitches
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto discardedBeforeQueuedSwitches
+		= discarded->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches) {
 		return FailChatParticipantsRegression(
-			"primary window did not switch to the teardown fixture");
+			"queued stock-to-pinned switch missed its inline session update");
 	}
-	QCoreApplication::processEvents();
-	primary->showAccount(stock);
-	if (primary->maybeSession() != &stock->session()) {
+	primary->showAccount(discarded);
+	if (primary->maybeSession() != &discarded->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches + 1) {
 		return FailChatParticipantsRegression(
-			"primary window did not switch back from the teardown fixture");
+			"queued pinned-to-teardown switch missed its inline session update");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches + 1) {
+		return FailChatParticipantsRegression(
+			"queued teardown-to-stock switch missed its inline session update");
 	}
 	// Keep a session window last active across the primary close: closing the
 	// only window clears the application float player, and the next window
 	// constructor reaches it before its own delegate is registered. The
-	// queued previous-session callback is left undispatched here.
+	// queued previous-session callbacks are left undispatched here.
 	const auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
 		return FailChatParticipantsRegression(
 			"pinned window was not mapped before the primary closed");
 	}
-	const auto stockOnlineUpdates
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	if (!stock->sessionExists() || !pinned->sessionExists()) {
+		return FailChatParticipantsRegression(
+			"live previous-session fixtures disappeared before primary close");
+	}
+	const auto stockBeforeDispatch
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeDispatch
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
 	app.closeWindow(primary);
 	if (app.separateWindowFor(stock) != nullptr) {
 		return FailChatParticipantsRegression(
@@ -1301,9 +1371,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	QCoreApplication::processEvents();
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockOnlineUpdates) {
+		!= stockBeforeDispatch + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeDispatch + 1) {
 		return FailChatParticipantsRegression(
-			"destroyed previous-session update reached another matching session");
+			"deferred close updates missed a live session or reached a replacement");
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
