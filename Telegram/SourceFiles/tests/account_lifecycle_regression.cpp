@@ -1373,6 +1373,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock-to-pinned close switch missed its inline session update");
 	}
+	// The primary window now shares its id with the account's own window.
+	// Re-keying must keep the window registered: the switch runs inside the
+	// controller, and a key collision that drops its pointer destroys it
+	// in the middle of this call.
+	if (app.activePrimaryWindow() != primary
+		|| app.separateWindowFor(stock) != primary
+		|| app.separateWindowFor(pinned) != pinnedWindow) {
+		return FailChatParticipantsRegression(
+			"primary switch to an account owning a separate window "
+			"deregistered the primary window");
+	}
 	app.closeWindow(primary);
 	if (app.separateWindowFor(stock) != nullptr) {
 		return FailChatParticipantsRegression(

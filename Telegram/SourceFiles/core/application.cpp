@@ -542,13 +542,24 @@ void Application::showAccount(not_null<Main::Account*> account) {
 
 void Application::checkWindowId(not_null<Window::Controller*> window) {
 	const auto id = window->id();
-	for (auto &[existingId, existing] : _windows) {
-		if (existing.get() == window && existingId != id) {
-			auto found = std::move(existing);
-			_windows.remove(existingId);
-			_windows.emplace(id, std::move(found));
-			break;
+	for (const auto &[existingId, existing] : _windows) {
+		if (existing.get() != window || existingId == id) {
+			continue;
 		}
+		// Every window is stored under its own id, so switching the primary
+		// window to another account moves it to a new key here. When another
+		// window already owns that id, keep this window under its current
+		// key: the map refuses a duplicate key and drops the transferred
+		// pointer, which would destroy a window inside its own call stack.
+		if (_windows.contains(id)) {
+			return;
+		}
+		auto moved = _windows.take(existingId);
+		if (!moved) {
+			return;
+		}
+		_windows.emplace(id, std::move(*moved));
+		return;
 	}
 }
 
