@@ -388,6 +388,16 @@ public:
 		const QString &botUsername,
 		const QString &startCommand,
 		bool fullscreen);
+
+	// Refusal observability for the account regression, in the shape of
+	// Api::Updates::onlineUpdateCallsForRegressionTest(): a refused open has
+	// to be visible as the unavailable-server toast, and it must leave every
+	// webview side effect untouched, so the accepted counts stay zero.
+	[[nodiscard]] int liveInstancesCountForRegressionTest() const;
+	[[nodiscard]] int appRequestCountForRegressionTest() const;
+	[[nodiscard]] int appActivateCountForRegressionTest() const;
+	[[nodiscard]] int usernameResolveCountForRegressionTest() const;
+	[[nodiscard]] int unavailableToastCountForRegressionTest() const;
 	void watchJoinChatWebView(
 		uint64 queryId,
 		std::shared_ptr<Ui::Show> show,
@@ -438,7 +448,7 @@ public:
 	[[nodiscard]] rpl::producer<> popularAppBotsLoaded() const;
 
 private:
-	void showBotAppsUnavailable(Window::SessionController *controller) const;
+	void showBotAppsUnavailable(Window::SessionController *controller);
 	void destroyDeferred(
 		std::vector<std::unique_ptr<WebViewInstance>> instances);
 
@@ -493,6 +503,11 @@ private:
 	base::flat_map<uint64, JoinChatWebView> _joinChatWebViews;
 	std::vector<std::unique_ptr<WebViewInstance>> _instances;
 	std::vector<std::unique_ptr<WebViewInstance>> _closing;
+
+	int _appRequestsCountForRegressionTest = 0;
+	int _appActivationsCountForRegressionTest = 0;
+	int _usernameResolvesCountForRegressionTest = 0;
+	int _unavailableToastsCountForRegressionTest = 0;
 
 	std::vector<not_null<UserData*>> _popularAppBots;
 	mtpRequestId _popularAppBotsRequestId = 0;

@@ -2450,13 +2450,34 @@ AttachWebView::~AttachWebView() {
 }
 
 void AttachWebView::showBotAppsUnavailable(
-		Window::SessionController *controller) const {
+		Window::SessionController *controller) {
 	if (!controller || &controller->session() != _session) {
 		controller = _session->tryResolveWindow();
 	}
 	if (controller && &controller->session() == _session) {
 		controller->showFeatureUnavailableOnServerToast();
+		++_unavailableToastsCountForRegressionTest;
 	}
+}
+
+int AttachWebView::liveInstancesCountForRegressionTest() const {
+	return static_cast<int>(_instances.size());
+}
+
+int AttachWebView::appRequestCountForRegressionTest() const {
+	return _appRequestsCountForRegressionTest;
+}
+
+int AttachWebView::appActivateCountForRegressionTest() const {
+	return _appActivationsCountForRegressionTest;
+}
+
+int AttachWebView::usernameResolveCountForRegressionTest() const {
+	return _usernameResolvesCountForRegressionTest;
+}
+
+int AttachWebView::unavailableToastCountForRegressionTest() const {
+	return _unavailableToastsCountForRegressionTest;
 }
 
 bool AttachWebView::openByUsername(
@@ -2779,6 +2800,7 @@ void AttachWebView::resolveUsername(
 			}
 		}
 	}).send();
+	++_usernameResolvesCountForRegressionTest;
 }
 
 bool AttachWebView::open(WebViewDescriptor &&descriptor) {
@@ -2794,12 +2816,17 @@ bool AttachWebView::open(WebViewDescriptor &&descriptor) {
 	for (const auto &instance : _instances) {
 		if (instance->bot() == descriptor.bot
 			&& instance->source() == descriptor.source) {
+			++_appActivationsCountForRegressionTest;
 			instance->activate();
 			return true;
 		}
 	}
+	// Constructing the instance is what starts the app request, so this count
+	// is the webview request the refusal has to stay in front of.
+	++_appRequestsCountForRegressionTest;
 	_instances.push_back(
 		std::make_unique<WebViewInstance>(std::move(descriptor)));
+	++_appActivationsCountForRegressionTest;
 	_instances.back()->activate();
 	return true;
 }

@@ -1099,6 +1099,593 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		&& HasParticipant(chat, UserId(9));
 }
 
+// Counters that make a mini-app open observable: the shared unavailable-server
+// toast, the app requests that create a webview instance, the activations of an
+// instance, the username resolves that precede an app request, and the live
+// instances. Read straight from the owning session, so a refusal that returns
+// false after sending a request or activating an instance cannot pass.
+struct WebViewOpenCounters {
+	int instances = 0;
+	int requests = 0;
+	int activations = 0;
+	int resolves = 0;
+	int toasts = 0;
+};
+
+[[nodiscard]] WebViewOpenCounters ReadWebViewOpenCounters(
+		not_null<Main::Session*> session) {
+	const auto &webView = session->attachWebView();
+	return {
+		.instances = webView.liveInstancesCountForRegressionTest(),
+		.requests = webView.appRequestCountForRegressionTest(),
+		.activations = webView.appActivateCountForRegressionTest(),
+		.resolves = webView.usernameResolveCountForRegressionTest(),
+		.toasts = webView.unavailableToastCountForRegressionTest(),
+	};
+}
+
+[[nodiscard]] bool WebViewOpenDeltaMatches(
+		const char *stage,
+		const WebViewOpenCounters &before,
+		const WebViewOpenCounters &after,
+		int toasts,
+		int requests,
+		int activations,
+		int resolves,
+		int instances) {
+	if (((after.toasts - before.toasts) == toasts)
+		&& ((after.requests - before.requests) == requests)
+		&& ((after.activations - before.activations) == activations)
+		&& ((after.resolves - before.resolves) == resolves)
+		&& ((after.instances - before.instances) == instances)) {
+		return true;
+	}
+	std::fprintf(
+		stderr,
+		"Mini-app open regression %s: toasts %d->%d, requests %d->%d, "
+		"activations %d->%d, resolves %d->%d, instances %d->%d "
+		"(expected +%d toasts, +%d requests, +%d activations, "
+		"+%d resolves, +%d instances)\n",
+		stage,
+		before.toasts,
+		after.toasts,
+		before.requests,
+		after.requests,
+		before.activations,
+		after.activations,
+		before.resolves,
+		after.resolves,
+		before.instances,
+		after.instances,
+		toasts,
+		requests,
+		activations,
+		resolves,
+		instances);
+	return false;
+}
+
+// Every entry class of the accepted matrix runs through the one gate all of
+// them share: the keyboard WebView and SimpleWebView buttons, the inline
+// switch, app and bot-profile links, the attachment link and attach menu, the
+// Apps tab, the bot menu, game callbacks, the profile entry, age verification,
+// and the invitation link. It returns how many opens the session accepted.
+constexpr int kRegressionEntryClassCount = 12;
+
+[[nodiscard]] int AcceptedMiniAppOpens(
+		not_null<Main::Session*> session,
+		not_null<UserData*> bot,
+		not_null<Window::SessionController*> controller) {
+	const auto action = Api::SendAction(session->data().history(bot));
+	const auto sources = std::vector<InlineBots::WebViewSource>{
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceButton{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceSwitch{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceLinkApp{} },
+		InlineBots::WebViewSource{
+			InlineBots::WebViewSourceLinkAttachMenu{} },
+		InlineBots::WebViewSource{
+			InlineBots::WebViewSourceLinkBotProfile{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceMainMenu{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceAttachMenu{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceBotMenu{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceGame{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceBotProfile{} },
+		InlineBots::WebViewSource{
+			InlineBots::WebViewSourceAgeVerification{} },
+		InlineBots::WebViewSource{ InlineBots::WebViewSourceJoinChat{} },
+	};
+	if (static_cast<int>(sources.size()) != kRegressionEntryClassCount) {
+		return -1;
+	}
+	auto accepted = 0;
+	for (const auto &source : sources) {
+		if (session->attachWebView().open({
+			.bot = bot,
+			.context = {
+				.controller = controller,
+				.action = action,
+				.maySkipConfirmation = true,
+			},
+			.source = source,
+		})) {
+			++accepted;
+		}
+	}
+	return accepted;
+}
+
+// The accepted refusal contract, observed instead of inferred: a refused
+// mini-app open shows the shared unavailable-server toast on the owning
+// session and leaves the webview path untouched, while a stock session keeps
+// its opens, its existing app, and the activation of that app. A session
+// pinned to a custom server, a session blocked with no custom pin, and
+// a session whose window belongs to another account are all covered.
+[[nodiscard]] bool RunMiniAppOpenRefusalRegression(
+		Core::Application &app,
+		UserId selfId,
+		not_null<Main::Account*> stock,
+		not_null<Main::Account*> pinned,
+		not_null<Main::Account*> discarded,
+		not_null<Main::Account*> blank,
+		not_null<Window::Controller*> stockWindow,
+		not_null<Window::Controller*> pinnedWindow,
+		not_null<Window::Controller*> blankWindow) {
+	const auto stockController = stockWindow->sessionController();
+	const auto pinnedController = pinnedWindow->sessionController();
+	if (!stockController || !pinnedController) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: no session controller: stock=%p "
+			"pinned=%p\n",
+			static_cast<const void *>(stockController),
+			static_cast<const void *>(pinnedController));
+		return false;
+	}
+	if (stock->mtp().dcOptions().hasCustomServer()
+		|| stock->mtp().dcOptions().blocked()
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| pinned->mtp().dcOptions().blocked()
+		|| stock->session().botAppsSupported()
+		|| pinned->session().botAppsSupported()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: fixture configuration is not stock "
+			"and custom-pinned.\n");
+		return false;
+	}
+	const auto regressionUserId = UserId(777);
+	const auto stockBot = stock->session().data().peer(
+		peerFromUser(regressionUserId)
+	)->asUser();
+	const auto pinnedBot = pinned->session().data().peer(
+		peerFromUser(regressionUserId)
+	)->asUser();
+	if (!stockBot || !pinnedBot) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: no bot peer fixture in the sessions.\n");
+		return false;
+	}
+	const auto stockAction = Api::SendAction(
+		stock->session().data().history(stock->session().user()));
+	const auto pinnedAction = Api::SendAction(
+		pinned->session().data().history(pinned->session().user()));
+	const auto appSource = InlineBots::WebViewSourceLinkApp{
+		.appname = u"regression_app"_q,
+		.token = u"token"_q,
+	};
+
+	// A stock session accepts the app open: that is the app the refusal on the
+	// custom session must not touch.
+	const auto stockBefore = ReadWebViewOpenCounters(&stock->session());
+	if (!stock->session().attachWebView().open({
+		.bot = stockBot,
+		.context = {
+			.controller = stockController,
+			.action = stockAction,
+			.maySkipConfirmation = true,
+		},
+		.source = appSource,
+	})) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: stock session refused an app link.\n");
+		return false;
+	}
+	const auto stockOpened = ReadWebViewOpenCounters(&stock->session());
+	if (!WebViewOpenDeltaMatches(
+			"stock app link",
+			stockBefore,
+			stockOpened,
+			0,
+			1,
+			1,
+			0,
+			1)) {
+		return false;
+	}
+
+	// A custom-pinned session refuses every entry class and the username entry,
+	// with the toast as the only observable effect.
+	const auto pinnedBefore = ReadWebViewOpenCounters(&pinned->session());
+	if (AcceptedMiniAppOpens(&pinned->session(), pinnedBot, pinnedController)
+		!= 0) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: custom-pinned session accepted an "
+			"entry-class open.\n");
+		return false;
+	}
+	const auto pinnedRefused = ReadWebViewOpenCounters(&pinned->session());
+	if (!WebViewOpenDeltaMatches(
+			"custom-pinned entry classes",
+			pinnedBefore,
+			pinnedRefused,
+			kRegressionEntryClassCount,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+	if (pinned->session().attachWebView().openByUsername(
+			pinnedController,
+			pinnedAction,
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: custom-pinned session accepted a "
+			"username open.\n");
+		return false;
+	}
+	const auto pinnedUsername = ReadWebViewOpenCounters(&pinned->session());
+	if (!WebViewOpenDeltaMatches(
+			"custom-pinned username open",
+			pinnedRefused,
+			pinnedUsername,
+			1,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+
+	// An open whose window belongs to another account is refused without
+	// a toast and without any webview side effect: no active-account
+	// substitution, on the session that would have been substituted into.
+	const auto guardBefore = ReadWebViewOpenCounters(&stock->session());
+	if (stock->session().attachWebView().open({
+		.bot = stockBot,
+		.context = {
+			.controller = pinnedController,
+			.action = stockAction,
+			.maySkipConfirmation = true,
+		},
+		.source = InlineBots::WebViewSourceBotProfile{},
+	})) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: a window of another account opened an "
+			"app.\n");
+		return false;
+	}
+	if (stock->session().attachWebView().openByUsername(
+			pinnedController,
+			stockAction,
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: a window of another account resolved "
+			"an app.\n");
+		return false;
+	}
+	const auto guardAfter = ReadWebViewOpenCounters(&stock->session());
+	if (!WebViewOpenDeltaMatches(
+			"foreign window substitution",
+			guardBefore,
+			guardAfter,
+			0,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+
+	// The stock app survived every refusal on the custom session, and the same
+	// open activates it instead of building a second one.
+	const auto stockAlive = ReadWebViewOpenCounters(&stock->session());
+	if (!WebViewOpenDeltaMatches(
+			"stock app after custom refusals",
+			stockOpened,
+			stockAlive,
+			0,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+	if (!stock->session().attachWebView().open({
+		.bot = stockBot,
+		.context = {
+			.controller = stockController,
+			.action = stockAction,
+			.maySkipConfirmation = true,
+		},
+		.source = appSource,
+	})) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: stock session refused a repeat open.\n");
+		return false;
+	}
+	const auto stockActivated = ReadWebViewOpenCounters(&stock->session());
+	if (!WebViewOpenDeltaMatches(
+			"stock app activation",
+			stockAlive,
+			stockActivated,
+			0,
+			0,
+			1,
+			0,
+			0)) {
+		return false;
+	}
+	stock->session().attachWebView().cancel();
+	stock->session().attachWebView().closeAll();
+
+	// A link that names a chat opens that chat first, then the attach-bot open
+	// is refused with the toast, and the chat stays shown.
+	const auto contact = pinned->session().data().peer(
+		peerFromUser(UserId(2)));
+	const auto chatBefore = ReadWebViewOpenCounters(&pinned->session());
+	pinnedController->showPeerHistory(contact);
+	QCoreApplication::processEvents();
+	const auto chatShown = pinnedController->dialogsEntryStateCurrent();
+	const auto chatOpened = ReadWebViewOpenCounters(&pinned->session());
+	if ((chatShown.key.peer() != contact.get())
+		|| !WebViewOpenDeltaMatches(
+			"chat link opened the chat first",
+			chatBefore,
+			chatOpened,
+			0,
+			0,
+			0,
+			0,
+			0)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: attach link chat did not open before "
+			"the refusal: peer=%p expected=%p\n",
+			static_cast<const void *>(chatShown.key.peer()),
+			static_cast<const void *>(contact.get()));
+		return false;
+	}
+	if (pinned->session().attachWebView().openByUsername(
+			pinnedController,
+			Api::SendAction(pinned->session().data().history(contact)),
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: custom session accepted the attach link "
+			"app.\n");
+		return false;
+	}
+	const auto afterChatRefusal = pinnedController->dialogsEntryStateCurrent();
+	const auto chatRefused = ReadWebViewOpenCounters(&pinned->session());
+	if ((afterChatRefusal.key.peer() != contact.get())
+		|| !WebViewOpenDeltaMatches(
+			"chat link attach refusal",
+			chatOpened,
+			chatRefused,
+			1,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+
+	// A session blocked with no custom pin to fall back on refuses the same
+	// matrix: the block alone is enough, with no custom server set.
+	blank->setSessionUserId(selfId);
+	if (!blank->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not create the blocked-session "
+			"fixture.\n");
+		return false;
+	}
+	blank->mtp().dcOptions().constructBlocked();
+	const auto blankController = blankWindow->sessionController()
+		? blankWindow->sessionController()
+		: blank->session().tryResolveWindow();
+	if (!blankController
+		|| blank->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->session().botAppsSupported()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: blocked fixture is not blocked-without-"
+			"pin: blocked=%d custom=%d apps=%d controller=%p\n",
+			blank->mtp().dcOptions().blocked(),
+			blank->mtp().dcOptions().hasCustomServer(),
+			blank->session().botAppsSupported(),
+			static_cast<const void *>(blankController));
+		blank->forcedLogOut();
+		return false;
+	}
+	const auto blankBot = blank->session().data().peer(
+		peerFromUser(regressionUserId)
+	)->asUser();
+	const auto blankBefore = ReadWebViewOpenCounters(&blank->session());
+	if (!blankBot
+		|| AcceptedMiniAppOpens(&blank->session(), blankBot, blankController)
+			!= 0) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: blocked-without-pin session accepted "
+			"an open.\n");
+		return false;
+	}
+	if (blank->session().attachWebView().openByUsername(
+			blankController,
+			Api::SendAction(blank->session().data().history(
+				peerFromUser(selfId))),
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: blocked-without-pin session accepted "
+			"a username open.\n");
+		return false;
+	}
+	const auto blankRefused = ReadWebViewOpenCounters(&blank->session());
+	if (!WebViewOpenDeltaMatches(
+			"blocked-without-pin refusals",
+			blankBefore,
+			blankRefused,
+			kRegressionEntryClassCount + 1,
+			0,
+			0,
+			0,
+			0)) {
+		blank->forcedLogOut();
+		return false;
+	}
+	blank->forcedLogOut();
+
+	// Teardown during a deferred resolution: a stock session starts the
+	// username resolve, its session is destroyed while the request is in
+	// flight, and a replacement session for the same user id takes its
+	// window. The deferred handler must open nothing there.
+	discarded->setSessionUserId(selfId);
+	if (!discarded->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not create the deferred "
+			"resolution fixture.\n");
+		return false;
+	}
+	const auto deferredWindow = app.ensureSeparateWindowFor(discarded);
+	const auto deferredController = deferredWindow
+		? deferredWindow->sessionController()
+		: nullptr;
+	if (!deferredController || !discarded->session().botAppsSupported()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: deferred fixture has no stock session "
+			"window.\n");
+		return false;
+	}
+	const auto deferredBefore = ReadWebViewOpenCounters(&discarded->session());
+	if (!discarded->session().attachWebView().openByUsername(
+			deferredController,
+			Api::SendAction(
+				discarded->session().data().history(
+					discarded->session().user())),
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: stock session refused a username "
+			"open.\n");
+		return false;
+	}
+	const auto deferredResolving = ReadWebViewOpenCounters(
+		&discarded->session());
+	if (!WebViewOpenDeltaMatches(
+			"stock deferred resolve",
+			deferredBefore,
+			deferredResolving,
+			0,
+			0,
+			0,
+			1,
+			0)) {
+		return false;
+	}
+	discarded->forcedLogOut();
+	if (discarded->sessionExists()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: teardown kept the session with a "
+			"resolve in flight.\n");
+		return false;
+	}
+	app.closeWindow(deferredWindow);
+	QCoreApplication::processEvents();
+	if (!discarded->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not create the replacement "
+			"session.\n");
+		return false;
+	}
+	const auto replacementWindow = app.ensureSeparateWindowFor(discarded);
+	QCoreApplication::processEvents();
+	QCoreApplication::processEvents();
+	if (!replacementWindow
+		|| !replacementWindow->sessionController()
+		|| (&replacementWindow->sessionController()->session()
+			!= &discarded->session())) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: the replacement session did not take "
+			"the window.\n");
+		return false;
+	}
+	const auto replacementCounters = ReadWebViewOpenCounters(
+		&discarded->session());
+	if ((replacementCounters.instances != 0)
+		|| (replacementCounters.requests != 0)
+		|| (replacementCounters.activations != 0)
+		|| (replacementCounters.resolves != 0)
+		|| (replacementCounters.toasts != 0)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: deferred resolution reached the "
+			"replacement session: instances=%d requests=%d activations=%d "
+			"resolves=%d toasts=%d\n",
+			replacementCounters.instances,
+			replacementCounters.requests,
+			replacementCounters.activations,
+			replacementCounters.resolves,
+			replacementCounters.toasts);
+		return false;
+	}
+	discarded->forcedLogOut();
+	if (replacementWindow
+		&& (app.separateWindowFor(discarded) == replacementWindow)) {
+		app.closeWindow(replacementWindow);
+	}
+	std::fprintf(
+		stderr,
+		"Mini-app open regression passed: %d entry classes refused on "
+		"custom-pinned and blocked-without-pin sessions with the toast as the "
+		"only effect, a foreign window open refused, the stock app kept and "
+		"activated, the chat opened before the refusal, and a deferred "
+		"resolution kept out of the replacement session.\n",
+		kRegressionEntryClassCount);
+	return true;
+}
+
 [[nodiscard]] int FailChatParticipantsRegression(const char *reason) {
 	std::fprintf(
 		stderr,
@@ -1574,6 +2161,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			return false;
 		}
 		auto &webView = pinned->session().attachWebView();
+		const auto before = ReadWebViewOpenCounters(&pinned->session());
 		const auto action = Api::SendAction(
 			pinned->session().data().history(pinned->session().user()));
 		const auto usernameOpened = webView.openByUsername(
@@ -1592,8 +2180,28 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (usernameOpened || directOpened) {
 			webView.cancel();
 			webView.closeAll();
+			return false;
 		}
-		return !usernameOpened && !directOpened;
+		// The refusal is the toast and nothing else, at both switching orders:
+		// no resolve, no app request, no instance, no activation.
+		const auto refused = WebViewOpenDeltaMatches(
+			"custom open at an activation order",
+			before,
+			ReadWebViewOpenCounters(&pinned->session()),
+			2,
+			0,
+			0,
+			0,
+			0);
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Custom webview open at this activation order: username=%d "
+				"direct=%d\n",
+				usernameOpened,
+				directOpened);
+		}
+		return refused;
 	};
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
@@ -1665,6 +2273,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !activateAndCheck(true)) {
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
+	}
+	if (!RunMiniAppOpenRefusalRegression(
+			app,
+			selfId,
+			stock,
+			pinned,
+			discarded,
+			blank,
+			stockWindow,
+			pinnedWindow,
+			blankWindow)) {
+		return FailChatParticipantsRegression(
+			"mini-app open refusal was not observable on the owning session");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
