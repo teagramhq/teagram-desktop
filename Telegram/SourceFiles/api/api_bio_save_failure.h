@@ -84,6 +84,7 @@ public:
 private:
 	Generation _generation = 0;
 	QString _requestedText;
+
 };
 
 class BioSaveEditorState final {
@@ -166,6 +167,7 @@ private:
 	QString _storedBio;
 	QString _editorBio;
 	int _debounceGeneration = 0;
+
 };
 
 } // namespace Api

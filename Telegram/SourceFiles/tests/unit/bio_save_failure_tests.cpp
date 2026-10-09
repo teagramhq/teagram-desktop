@@ -55,6 +55,7 @@ public:
 private:
 	QString _text;
 	std::vector<QString> _undo;
+
 };
 
 class ControlledBioApi final {
@@ -89,6 +90,7 @@ public:
 private:
 	Api::BioSaveRequestState::Generation _generation = 0;
 	int _requestCount = 0;
+
 };
 
 } // namespace
