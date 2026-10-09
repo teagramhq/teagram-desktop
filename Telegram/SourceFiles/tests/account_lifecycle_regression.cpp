@@ -2991,24 +2991,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"id");
 	}
 	discarded->mtp().dcOptions().constructBlocked();
-	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
-	const auto discardedController = discardedWindow
-		? discardedWindow->sessionController()
-		: nullptr;
-	if (!discardedController) {
-		return FailChatParticipantsRegression(
-			"could not create a controller for deferred call-link teardown");
-	}
-	const auto destroyedSessionChannelId = ChannelId(3051);
-	PrepareRegressionChannel(
-		discarded->session().data().channel(destroyedSessionChannelId));
-	ResetCallStartRegressionForTest();
-	ReportCallRegressionCheckpoint("destroyed-session link begin");
-	discardedController->showPeerByLink(Window::PeerByLinkInfo{
-		.usernameOrId = destroyedSessionChannelId,
-		.voicechatHash = u"destroyed-session"_q,
-	});
-	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -3075,6 +3057,26 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"queued teardown-to-stock switch missed its inline session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
+	// Keep the lifecycle update regression on the primary window. A separate
+	// window for discarded would make showAccount(discarded) route elsewhere.
+	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	const auto discardedController = discardedWindow
+		? discardedWindow->sessionController()
+		: nullptr;
+	if (!discardedController) {
+		return FailChatParticipantsRegression(
+			"could not create a controller for deferred call-link teardown");
+	}
+	const auto destroyedSessionChannelId = ChannelId(3051);
+	PrepareRegressionChannel(
+		discarded->session().data().channel(destroyedSessionChannelId));
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("destroyed-session link begin");
+	discardedController->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = destroyedSessionChannelId,
+		.voicechatHash = u"destroyed-session"_q,
+	});
+	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
