@@ -275,9 +275,12 @@ Application::~Application() {
 
 void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	const auto headlessRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		|| qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	const auto authLifecycleRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	const auto headlessRegression = qEnvironmentVariableIsSet(
+		"TDESKTOP_SIGNUP_UI_REGRESSION") || authLifecycleRegression;
+	const auto windowedApplication = !headlessRegression
+		|| authLifecycleRegression;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -286,6 +289,7 @@ void Application::run() {
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 #if !defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	constexpr auto headlessRegression = false;
+	constexpr auto windowedApplication = true;
 #endif // !TDESKTOP_LIFECYCLE_REGRESSION
 
 	// Depends on OpenSSL on macOS, so on ThirdParty::start().
@@ -333,7 +337,7 @@ void Application::run() {
 	startShortcuts();
 	startEmojiImageLoader();
 	startSystemDarkModeViewer();
-	if (!headlessRegression) {
+	if (windowedApplication) {
 		Media::Player::start(_audio.get());
 	}
 
@@ -372,7 +376,7 @@ void Application::run() {
 			= Core::CachedWebviewAvailability();
 	}
 
-	if (!headlessRegression) {
+	if (windowedApplication) {
 		_windows.emplace(nullptr, std::make_unique<Window::Controller>());
 		setLastActiveWindow(_windows.front().second.get());
 		_windowInSettings = _lastActivePrimaryWindow = _lastActiveWindow;
@@ -503,13 +507,26 @@ void Application::showAccount(not_null<Main::Account*> account) {
 
 void Application::checkWindowId(not_null<Window::Controller*> window) {
 	const auto id = window->id();
-	for (auto &[existingId, existing] : _windows) {
-		if (existing.get() == window && existingId != id) {
-			auto found = std::move(existing);
-			_windows.remove(existingId);
-			_windows.emplace(id, std::move(found));
-			break;
+	for (const auto &[existingId, existing] : _windows) {
+		if (existing.get() != window || existingId == id) {
+			continue;
 		}
+		// Every window is stored under its own id, so switching the primary
+		// window to another account moves it to a new key here. The id the
+		// window is about to claim is freed before the rebind, in
+		// Controller::showAccount, so this target key is free. The map refuses a
+		// duplicate key and drops the transferred pointer, which would destroy
+		// this window inside its own call stack: keep it under its current key
+		// should a collision ever reach this point.
+		if (_windows.contains(id)) {
+			return;
+		}
+		auto moved = _windows.take(existingId);
+		if (!moved) {
+			return;
+		}
+		_windows.emplace(id, std::move(*moved));
+		return;
 	}
 }
 
@@ -595,6 +612,19 @@ void Application::processCreatedWindow(
 	window->openInMediaViewRequests(
 	) | rpl::start_to_stream(_openInMediaViewRequests, window->lifetime());
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void Application::createPrimaryWindowForLifecycleRegression() {
+	Expects(_windows.empty());
+	const auto window = _windows.emplace(
+		nullptr,
+		std::make_unique<Window::Controller>()
+	).first->second.get();
+	setLastActiveWindow(window);
+	_windowInSettings = _lastActivePrimaryWindow = window;
+	processCreatedWindow(window);
+}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 void Application::startMediaView() {
 #ifdef Q_OS_MAC

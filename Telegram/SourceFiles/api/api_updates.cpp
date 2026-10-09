@@ -1092,6 +1092,9 @@ rpl::producer<bool> Updates::isIdleValue() const {
 }
 
 void Updates::updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_onlineUpdateCallsForRegressionTest;
+#endif
 	if (!lastNonIdleTime) {
 		lastNonIdleTime = Core::App().lastNonIdleTime();
 	}
@@ -1179,6 +1182,12 @@ bool Updates::lastWasOnline() const {
 crl::time Updates::lastSetOnline() const {
 	return _lastSetOnline;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+int Updates::onlineUpdateCallsForRegressionTest() const {
+	return _onlineUpdateCallsForRegressionTest;
+}
+#endif
 
 bool Updates::isQuitPrevent() {
 	if (!_lastWasOnline) {

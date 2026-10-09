@@ -146,11 +146,28 @@ void Controller::showAccount(
 		MsgId singlePeerShowAtMsgId) {
 	Expects(isPrimary() || _id.account == account);
 
-	const auto prevAccount = _id.account;
+	if (isPrimary()) {
+		// Every window is registered under its own id, so a primary window
+		// that starts showing an account claims that account's id. When
+		// another window already owns that id, the registry cannot hold both:
+		// rebinding here would leave one window keyed to an account it no
+		// longer shows, and windowFor(account), showAccount(account) and
+		// ensureSeparateWindowFor(account) would then hand out a window bound
+		// to a different session. Show the account's own window, which is what
+		// an account switch does, and keep this window on its own account.
+		const auto owner = Core::App().separateWindowFor(SeparateId(account));
+		if (owner && owner != this) {
+			Core::App().setActivePrimaryWindow(owner);
+			owner->activate();
+			return;
+		}
+	}
+
 	const auto prevSession = maybeSession();
-	const auto prevSessionUniqueId = prevSession
-		? prevSession->uniqueId()
-		: 0;
+	const auto prevSessionWeak = prevSession
+		? base::make_weak(prevSession)
+		: base::weak_ptr<Main::Session>();
+	const auto prevAccount = _id.account;
 	const auto accountBeforeIntro = (prevAccount
 		&& prevAccount != account
 		&& prevAccount->sessionExists())
@@ -161,17 +178,9 @@ void Controller::showAccount(
 	Core::App().checkWindowId(this);
 	_serverIdentityDialogShown = false;
 
-	const auto updateOnlineOfPrevSesssion = crl::guard(account, [=] {
-		if (!prevSessionUniqueId) {
-			return;
-		}
-		for (auto &[index, account] : _id.account->domain().accounts()) {
-			if (const auto anotherSession = account->maybeSession()) {
-				if (anotherSession->uniqueId() == prevSessionUniqueId) {
-					anotherSession->updates().updateOnline(crl::now());
-					return;
-				}
-			}
+	crl::on_main([prevSessionWeak] {
+		if (const auto prevSession = prevSessionWeak.get()) {
+			prevSession->updates().updateOnline(crl::now());
 		}
 	});
 
@@ -229,7 +238,6 @@ void Controller::showAccount(
 			_widget.updateGlobalMenu();
 		}
 
-		crl::on_main(updateOnlineOfPrevSesssion);
 	}, _accountLifetime);
 
 	account->mtp().pinnedServerFailure(
