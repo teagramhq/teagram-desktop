@@ -1616,6 +1616,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
+	domain.activate(stock);
 	QCoreApplication::processEvents();
 	const auto stockToPinnedStockUpdates
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
