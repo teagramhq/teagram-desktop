@@ -2596,6 +2596,11 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	});
 	for (const auto &url : {
 			u"tg://settings/privacy/calls"_q,
+			u"tg://settings/privacy/calls/never"_q,
+			u"tg://settings/privacy/calls/always"_q,
+			u"tg://settings/privacy/calls/p2p"_q,
+			u"tg://settings/privacy/calls/p2p/never"_q,
+			u"tg://settings/privacy/calls/p2p/always"_q,
 			u"tg://settings/calls/all"_q,
 			u"tg://settings/calls/start-call"_q,
 		}) {
