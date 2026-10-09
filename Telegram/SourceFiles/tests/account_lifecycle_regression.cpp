@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
+#include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -5539,6 +5540,20 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			   && (Main::details::scheduledMessagesSupportedForPeer(
 					   session.user())
 				   == supported);
+	};
+	const auto callStartGateMatches = [](not_null<Main::Account*> account,
+									 bool supported) {
+		auto unavailableShown = false;
+		auto existingStockCallReplaced = false;
+		const auto allowed = Calls::details::AllowCallStart(
+			account->session().callsSupported(),
+			[&] { unavailableShown = true; });
+		if (allowed) {
+			existingStockCallReplaced = true;
+		}
+		return (allowed == supported)
+			&& (unavailableShown == !supported)
+			&& (supported || !existingStockCallReplaced);
 	};
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));

@@ -80,6 +80,20 @@ struct ConferenceInvites {
 	base::flat_map<not_null<UserData*>, ConferenceInviteMessages> users;
 };
 
+namespace details {
+
+[[nodiscard]] inline bool AllowCallStart(
+		bool supported,
+		Fn<void()> showUnavailable) {
+	if (supported) {
+		return true;
+	}
+	showUnavailable();
+	return false;
+}
+
+} // namespace details
+
 class Instance final : public base::has_weak_ptr {
 public:
 	Instance();
