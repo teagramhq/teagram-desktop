@@ -991,6 +991,9 @@ void SessionNavigation::resolveConferenceCall(
 	_conferenceCallInviteMsgId = inviteMsgId;
 
 	const auto limit = 5;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_conferenceCallRequestId = _api.request(MTPphone_GetGroupCall(
 		(inviteMsgId
 			? MTP_inputGroupCallInviteMessage(MTP_int(inviteMsgId.bare))

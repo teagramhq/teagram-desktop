@@ -1326,6 +1326,36 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 		&& calls.currentGroupCall() == group;
 }
 
+[[nodiscard]] bool RunConferenceLinkPreservesStockCallRegression(
+		not_null<Main::Account*> account,
+		not_null<Window::Controller*> window,
+		not_null<Calls::Call*> stockCall) {
+	const auto controller = window->sessionController();
+	if (!controller
+		|| &controller->session() != &account->session()
+		|| &stockCall->user()->session() == &account->session()) {
+		return false;
+	}
+	const auto context = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = base::make_weak(controller),
+	});
+	ResetCallStartRegressionForTest();
+	if (!Core::App().openLocalUrl(
+			u"tg://call?slug=regression-conference"_q,
+			context)) {
+		return false;
+	}
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	return snapshot.navigationEvents == std::vector<
+		SessionNavigationRegressionEvent>{
+			SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		}
+		&& CallStartEffectsStayedQuiet(snapshot)
+		&& Core::App().calls().currentCall() == stockCall.get()
+		&& stockCall->state() == Calls::Call::State::Established
+		&& !window->isLayerShown();
+}
+
 [[nodiscard]] bool RunCallLinkAndSettingsRegression(
 		not_null<Main::Account*> account,
 		not_null<Window::Controller*> window) {
@@ -2064,10 +2094,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blocked pinned session reached a Calls::Instance start path");
 	}
-	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
 	pinned->mtp().dcOptions().constructUnenrolled();
 	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
-		|| !RunCallLinkAndSettingsRegression(pinned, pinnedWindow)) {
+		|| !RunConferenceLinkPreservesStockCallRegression(
+			pinned,
+			pinnedWindow,
+			stockCall)) {
+		return FailChatParticipantsRegression(
+			"unsupported conference link replaced the stock call");
+	}
+	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	if (!RunCallLinkAndSettingsRegression(pinned, pinnedWindow)) {
 		return FailChatParticipantsRegression(
 			"call links or settings links bypassed the pinned-session gate");
 	}
