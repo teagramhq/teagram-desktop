@@ -1633,18 +1633,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"test windows lost their owning sessions before folder smoke tests");
 	}
-	if (!Settings::RunFoldersCrudRegressionForTest(
-			stockController,
-			pinnedController,
-			stock->session().data().history(stockPeer))
-		|| !Settings::RunFoldersCrudRegressionForTest(
-			pinnedController,
-			stockController,
-			pinned->session().data().history(pinnedPeer))) {
-		return FailChatParticipantsRegression(
-			"ordinary folder create, rename, save, or remove did not stay "
-			"in its owning session");
-	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	if (pinnedController->session().api()
 			.checkFilterInviteRequestPendingForRegressionTest()) {
@@ -1719,6 +1707,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasExpectedParticipants(pinnedChat, UserId(2))) {
 		return FailChatParticipantsRegression(
 			"pinned phone-free self did not retain creator and members");
+	}
+	if (!Settings::RunFoldersCrudRegressionForTest(
+			stockController,
+			pinnedController,
+			stock->session().data().history(stockPeer))
+		|| !Settings::RunFoldersCrudRegressionForTest(
+			pinnedController,
+			stockController,
+			pinned->session().data().history(pinnedPeer))) {
+		return FailChatParticipantsRegression(
+			"ordinary folder create, rename, save, or remove did not stay "
+			"in its owning session");
 	}
 
 	const auto actionChatId = ChatId(1052);
