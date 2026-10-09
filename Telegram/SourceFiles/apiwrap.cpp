@@ -5625,20 +5625,19 @@ void ApiWrap::saveSelfBio(
 			return;
 		}
 		_bio.requestId = 0;
-		if (Api::ClassifyBioSaveFailure(error.type())
-			== Api::BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry) {
-			_bio.requestedText = QString();
-			auto onAboutNotSupported = base::take(
-				_bio.onAboutNotSupported);
-			if (onAboutNotSupported && onAboutNotSupported()) {
-				return;
-			}
+		const auto onAboutNotSupported = base::take(
+			_bio.onAboutNotSupported);
+		const auto transition = Api::ResolveBioSaveFailure(
+			error.type(),
+			_bio.requestedText,
+			[onAboutNotSupported] {
+				return onAboutNotSupported && onAboutNotSupported();
+			});
+		if (transition.showFallbackToast) {
 			for (const auto &window : _session->windows()) {
 				window->showFeatureUnavailableOnServerToast();
 				break;
 			}
-		} else {
-			_bio.onAboutNotSupported = nullptr;
 		}
 	}).send();
 }

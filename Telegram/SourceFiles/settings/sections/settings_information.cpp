@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_peer_menu.h"
 #include "apiwrap.h"
+#include "api/api_bio_save_failure.h"
 #include "api/api_peer_photo.h"
 #include "api/api_user_names.h"
 #include "api/api_user_privacy.h"
@@ -775,7 +776,7 @@ void SetupBio(
 				const auto controllerOwnsSession = weakController
 					&& (&weakController->session() == owner);
 				if (weakBio && controllerOwnsSession) {
-					*generation = 0;
+					Api::CancelBioSaveDebounce(*generation);
 					assign(*current);
 				}
 				if (controllerOwnsSession) {
@@ -790,9 +791,9 @@ void SetupBio(
 		if (changed) {
 			const auto saved = *generation = std::abs(*generation) + 1;
 			base::call_delayed(kSaveBioTimeout, bio, [=] {
-				if (*generation == saved) {
+				if (Api::BioSaveDebounceIsCurrent(*generation, saved)) {
 					save();
-					*generation = 0;
+					Api::CancelBioSaveDebounce(*generation);
 				}
 			});
 		} else if (*generation > 0) {
@@ -801,7 +802,7 @@ void SetupBio(
 	}, bio->lifetime());
 
 	container->lifetime().add([=] {
-		if (*generation > 0) {
+		if (Api::BioSaveNeedsCloseRetry(*generation)) {
 			save();
 		}
 	});
