@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "history/history.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
