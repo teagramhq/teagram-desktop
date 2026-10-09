@@ -4,6 +4,16 @@ on:
   # Fork policy: per-push CI is Linux only. MacOS Packaged is deferred, not abandoned --
   # run it by hand from the Actions tab when it is needed again.
   workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch name to group by when dispatching a commit SHA.
+        required: false
+        type: string
+
+concurrency:
+  # Keep one run per workflow and target branch; pass branch for SHA refs.
+  group: ${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
 
