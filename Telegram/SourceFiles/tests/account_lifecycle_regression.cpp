@@ -2623,8 +2623,8 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto showsSettings = [&](Settings::Type expected) {
 		const auto widgets = controller->content()->findChildren<QWidget*>();
 		return std::any_of(
-			begin(widgets),
-			end(widgets),
+			widgets.cbegin(),
+			widgets.cend(),
 			[&](QWidget *widget) {
 				const auto wrapped = dynamic_cast<Info::WrapWidget*>(widget);
 				return wrapped
