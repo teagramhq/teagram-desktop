@@ -382,10 +382,12 @@ public:
 	}
 
 	bool open(WebViewDescriptor &&descriptor);
-	bool openByUsername(not_null<Window::SessionController *> controller,
-						const Api::SendAction &action,
-						const QString &botUsername, const QString &startCommand,
-						bool fullscreen);
+	bool openByUsername(
+		not_null<Window::SessionController*> controller,
+		const Api::SendAction &action,
+		const QString &botUsername,
+		const QString &startCommand,
+		bool fullscreen);
 
 	// Refusal observability for the account regression, in the shape of
 	// Api::Updates::onlineUpdateCallsForRegressionTest(): a refused open has
@@ -400,11 +402,11 @@ public:
 	// Drives the completion an in-flight username resolve would run, with its
 	// real guards, so the regression can complete it after a window or a
 	// session teardown without a server.
-	void completePendingResolveForRegressionTest(not_null<PeerData *> peer);
+	void completePendingResolveForRegressionTest(not_null<PeerData*> peer);
 
 	// Hands the guarded completion to the caller, so the regression can keep it
 	// past the death of the session that made it and run it there.
-	[[nodiscard]] Fn<void(not_null<PeerData *>)>
+	[[nodiscard]] Fn<void(not_null<PeerData*>)>
 	takePendingResolveForRegressionTest();
 	void watchJoinChatWebView(
 		uint64 queryId,
@@ -456,42 +458,47 @@ public:
 	[[nodiscard]] rpl::producer<> popularAppBotsLoaded() const;
 
 private:
-  void showBotAppsUnavailable(Window::SessionController *controller);
-  void destroyDeferred(std::vector<std::unique_ptr<WebViewInstance>> instances);
+	void showBotAppsUnavailable(Window::SessionController *controller);
+	void destroyDeferred(
+		std::vector<std::unique_ptr<WebViewInstance>> instances);
 
-  void resolveUsername(base::weak_ptr<Window::SessionController> controller,
-					   Fn<void(not_null<PeerData *>)> done);
+	void resolveUsername(
+		base::weak_ptr<Window::SessionController> controller,
+		Fn<void(not_null<PeerData*>)> done);
 
-  enum class ToggledState {
-	  Removed,
-	  Added,
-	  AllowedToWrite,
-  };
-  void toggleInMenu(not_null<UserData *> bot, ToggledState state,
-					Fn<void(bool success)> callback = nullptr);
-  void confirmAddToMenu(AttachWebViewBot bot,
-						Fn<void(bool added)> callback = nullptr);
+	enum class ToggledState {
+		Removed,
+		Added,
+		AllowedToWrite,
+	};
+	void toggleInMenu(
+		not_null<UserData*> bot,
+		ToggledState state,
+		Fn<void(bool success)> callback = nullptr);
+	void confirmAddToMenu(
+		AttachWebViewBot bot,
+		Fn<void(bool added)> callback = nullptr);
 
-  const not_null<Main::Session *> _session;
-  const std::unique_ptr<Downloads> _downloads;
-  const std::unique_ptr<Storage> _storage;
+	const not_null<Main::Session*> _session;
+	const std::unique_ptr<Downloads> _downloads;
+	const std::unique_ptr<Storage> _storage;
 
-  base::Timer _refreshTimer;
+	base::Timer _refreshTimer;
 
-  QString _botUsername;
-  QString _startCommand;
-  bool _fullScreenRequested = false;
+	QString _botUsername;
+	QString _startCommand;
+	bool _fullScreenRequested = false;
 
-  mtpRequestId _requestId = 0;
+	mtpRequestId _requestId = 0;
 
-  uint64 _botsHash = 0;
-  mtpRequestId _botsRequestId = 0;
-  std::vector<Fn<void()>> _botsRequestCallbacks;
+	uint64 _botsHash = 0;
+	mtpRequestId _botsRequestId = 0;
+	std::vector<Fn<void()>> _botsRequestCallbacks;
 
-  struct AddToMenuProcess {
-	  mtpRequestId requestId = 0;
-	  std::vector<Fn<void(AddToMenuResult, PeerTypes supported)>> done;
-  };
+	struct AddToMenuProcess {
+		mtpRequestId requestId = 0;
+		std::vector<Fn<void(AddToMenuResult, PeerTypes supported)>> done;
+	};
 	base::flat_map<not_null<UserData*>, AddToMenuProcess> _addToMenu;
 
 	std::vector<AttachWebViewBot> _attachBots;
@@ -511,7 +518,7 @@ private:
 	int _appActivationsCountForRegressionTest = 0;
 	int _usernameResolvesCountForRegressionTest = 0;
 	int _unavailableToastsCountForRegressionTest = 0;
-	Fn<void(not_null<PeerData *>)> _pendingResolveForRegressionTest;
+	Fn<void(not_null<PeerData*>)> _pendingResolveForRegressionTest;
 
 	std::vector<not_null<UserData*>> _popularAppBots;
 	mtpRequestId _popularAppBotsRequestId = 0;
