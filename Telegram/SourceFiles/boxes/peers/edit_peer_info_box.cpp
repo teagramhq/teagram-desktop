@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_type_box.h"
 #include "boxes/peers/edit_peer_history_visibility_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
+#include "boxes/peers/edit_peer_permissions_save.h"
 #include "boxes/peers/edit_peer_invite_links.h"
 #include "boxes/peers/add_to_community_box.h"
 #include "boxes/peers/edit_discussion_link_box.h"
@@ -240,7 +241,7 @@ void AddCommunityRow(
 void SaveDefaultRestrictions(
 		not_null<PeerData*> peer,
 		ChatRestrictions rights,
-		Fn<void()> done) {
+		Fn<void(QString)> done) {
 	const auto api = &peer->session().api();
 	const auto key = Api::RequestKey("default_restrictions", peer->id);
 
@@ -251,20 +252,19 @@ void SaveDefaultRestrictions(
 	).done([=](const MTPUpdates &result) {
 		api->clearModifyRequest(key);
 		api->applyUpdates(result);
-		done();
+		done(QString());
 	}).fail([=](const MTP::Error &error) {
 		api->clearModifyRequest(key);
-		if (error.type() != u"CHAT_NOT_MODIFIED"_q) {
-			return;
+		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
+			if (const auto chat = peer->asChat()) {
+				chat->setDefaultRestrictions(rights);
+			} else if (const auto channel = peer->asChannel()) {
+				channel->setDefaultRestrictions(rights);
+			} else {
+				Unexpected("Peer in ApiWrap::saveDefaultRestrictions.");
+			}
 		}
-		if (const auto chat = peer->asChat()) {
-			chat->setDefaultRestrictions(rights);
-		} else if (const auto channel = peer->asChannel()) {
-			channel->setDefaultRestrictions(rights);
-		} else {
-			Unexpected("Peer in ApiWrap::saveDefaultRestrictions.");
-		}
-		done();
+		done(error.type());
 	}).send();
 
 	api->registerModifyRequest(key, requestId);
@@ -273,7 +273,7 @@ void SaveDefaultRestrictions(
 void SaveSlowmodeSeconds(
 		not_null<ChannelData*> channel,
 		int seconds,
-		Fn<void()> done) {
+		Fn<void(QString)> done) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("slowmode_seconds", channel->id);
 
@@ -284,24 +284,22 @@ void SaveSlowmodeSeconds(
 		api->clearModifyRequest(key);
 		api->applyUpdates(result);
 		channel->setSlowmodeSeconds(seconds);
-		done();
+		done(QString());
 	}).fail([=](const MTP::Error &error) {
 		api->clearModifyRequest(key);
-		if (error.type() != u"CHAT_NOT_MODIFIED"_q) {
-			return;
+		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
+			channel->setSlowmodeSeconds(seconds);
 		}
-		channel->setSlowmodeSeconds(seconds);
-		done();
+		done(error.type());
 	}).send();
 
 	api->registerModifyRequest(key, requestId);
 }
 
 void SaveStarsPerMessage(
-		std::shared_ptr<Ui::Show> show,
 		not_null<ChannelData*> channel,
 		int starsPerMessage,
-		Fn<void(bool)> done) {
+		Fn<void(QString)> done) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("stars_per_message", channel->id);
 
@@ -321,20 +319,17 @@ void SaveStarsPerMessage(
 		if (!broadcast) {
 			channel->owner().editStarsPerMessage(channel, starsPerMessage);
 		}
-		done(true);
+		done(QString());
 	}).fail([=](const MTP::Error &error) {
 		api->clearModifyRequest(key);
-		if (error.type() != u"CHAT_NOT_MODIFIED"_q) {
-			show->showToast(error.type());
-			done(false);
-		} else {
+		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
 			if (!broadcast) {
 				channel->owner().editStarsPerMessage(
 					channel,
 					starsPerMessage);
 			}
-			done(true);
 		}
+		done(error.type());
 	}).send();
 
 	api->registerModifyRequest(key, requestId);
@@ -343,7 +338,7 @@ void SaveStarsPerMessage(
 void SaveBoostsUnrestrict(
 		not_null<ChannelData*> channel,
 		int boostsUnrestrict,
-		Fn<void()> done) {
+		Fn<void(QString)> done) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("boosts_unrestrict", channel->id);
 	const auto requestId = api->request(
@@ -356,16 +351,15 @@ void SaveBoostsUnrestrict(
 		channel->setBoostsUnrestrict(
 			channel->boostsApplied(),
 			boostsUnrestrict);
-		done();
+		done(QString());
 	}).fail([=](const MTP::Error &error) {
 		api->clearModifyRequest(key);
-		if (error.type() != u"CHAT_NOT_MODIFIED"_q) {
-			return;
+		if (error.type() == u"CHAT_NOT_MODIFIED"_q) {
+			channel->setBoostsUnrestrict(
+				channel->boostsApplied(),
+				boostsUnrestrict);
 		}
-		channel->setBoostsUnrestrict(
-			channel->boostsApplied(),
-			boostsUnrestrict);
-		done();
+		done(error.type());
 	}).send();
 
 	api->registerModifyRequest(key, requestId);
@@ -380,23 +374,52 @@ void ShowEditPermissions(
 		const auto save = [=](
 				not_null<PeerData*> peer,
 				EditPeerPermissionsBoxResult result) {
-			Expects(result.slowmodeSeconds == 0 || peer->isChannel());
+			const auto channel = peer->asChannel();
+			Expects(result.slowmodeSeconds == 0 || channel);
 
-			const auto close = crl::guard(box, [=] { box->closeBox(); });
+			const auto plan = Ui::EditPeer::Permissions::PlanSave(
+				(channel != nullptr),
+				peer->session().paidFeaturesSupported(),
+				result.slowmodeSeconds,
+				result.boostsUnrestrict,
+				result.starsPerMessage);
+			const auto progress = std::make_shared<
+				Ui::EditPeer::Permissions::SaveProgress
+			>(plan.requestCount());
+			const auto complete = crl::guard(box, [=](QString errorType) {
+				if (!progress->complete(errorType)) {
+					return;
+				}
+				if (progress->succeeded()) {
+					box->closeBox();
+				} else {
+					*saving = false;
+					show->showToast(progress->error());
+				}
+			});
 			SaveDefaultRestrictions(
 				peer,
 				result.rights,
-				close);
-			if (const auto channel = peer->asChannel()) {
-				SaveSlowmodeSeconds(channel, result.slowmodeSeconds, close);
-				SaveBoostsUnrestrict(
-					channel,
-					result.boostsUnrestrict,
-					close);
-				const auto price = result.starsPerMessage;
-				SaveStarsPerMessage(show, channel, price, [=](bool ok) {
-					close();
-				});
+				complete);
+			if (channel) {
+				if (plan.saveSlowmode) {
+					SaveSlowmodeSeconds(
+						channel,
+						result.slowmodeSeconds,
+						complete);
+				}
+				if (plan.saveBoosts) {
+					SaveBoostsUnrestrict(
+						channel,
+						result.boostsUnrestrict,
+						complete);
+				}
+				if (plan.savePrice) {
+					SaveStarsPerMessage(
+						channel,
+						result.starsPerMessage,
+						complete);
+				}
 			}
 		};
 		auto done = [=](EditPeerPermissionsBoxResult result) {
@@ -407,10 +430,19 @@ void ShowEditPermissions(
 
 			const auto saveFor = peer->migrateToOrMe();
 			const auto chat = saveFor->asChat();
-			if (!chat
-				|| (!result.slowmodeSeconds
-					&& !result.boostsUnrestrict
-					&& !result.starsPerMessage)) {
+			const auto channel = saveFor->asChannel();
+			const auto paidFeaturesSupported
+				= saveFor->session().paidFeaturesSupported();
+			if (!channel && !paidFeaturesSupported) {
+				result.slowmodeSeconds = 0;
+			}
+			const auto plan = Ui::EditPeer::Permissions::PlanSave(
+				(channel != nullptr),
+				paidFeaturesSupported,
+				result.slowmodeSeconds,
+				result.boostsUnrestrict,
+				result.starsPerMessage);
+			if (!chat || !plan.migrateChat) {
 				save(saveFor, result);
 				return;
 			}
@@ -2605,7 +2637,14 @@ void Controller::saveDirectMessagesPrice() {
 			cancelSave();
 		}
 	};
-	SaveStarsPerMessage(show, channel, desired, crl::guard(this, done));
+	SaveStarsPerMessage(channel, desired, crl::guard(this, [=](QString error) {
+		const auto ok = error.isEmpty()
+			|| (error == u"CHAT_NOT_MODIFIED"_q);
+		if (!ok) {
+			show->showToast(error);
+		}
+		done(ok);
+	}));
 }
 
 void Controller::saveTitle() {
