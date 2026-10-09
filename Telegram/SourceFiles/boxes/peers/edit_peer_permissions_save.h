@@ -53,7 +53,6 @@ public:
 	}
 
 	[[nodiscard]] bool complete(const QString &errorType = QString()) {
-		Q_ASSERT(_remaining > 0);
 		if (!errorType.isEmpty()
 			&& errorType != u"CHAT_NOT_MODIFIED"_q) {
 			_failed = true;
@@ -61,7 +60,16 @@ public:
 				_error = errorType;
 			}
 		}
-		return --_remaining == 0;
+		return advance();
+	}
+
+	// A request that a newer save of the same setting supersed is cancelled and
+	// never answers. Counting it is what keeps Save from waiting on a request
+	// that can never arrive. It fails the save, and it invents no error string:
+	// the newer save is the one that wrote the value.
+	[[nodiscard]] bool superseded() {
+		_failed = true;
+		return advance();
 	}
 	[[nodiscard]] bool finished() const {
 		return !_remaining;
@@ -74,6 +82,16 @@ public:
 	}
 
 private:
+	// Never run the count below zero: a completion counted twice would leave the
+	// save waiting for a request that can no longer arrive. Both entry points
+	// rely on this, a request answering after its supersession included.
+	[[nodiscard]] bool advance() {
+		if (_remaining <= 0) {
+			return false;
+		}
+		return --_remaining == 0;
+	}
+
 	int _remaining = 0;
 	bool _failed = false;
 	QString _error;

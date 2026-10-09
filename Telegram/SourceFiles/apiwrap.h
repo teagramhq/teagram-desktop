@@ -162,7 +162,13 @@ public:
 		PeerData *peer, // May be nullptr, like for deletePhoneCallHistory.
 		const MTPmessages_AffectedHistory &result) const;
 
-	void registerModifyRequest(const QString &key, mtpRequestId requestId);
+	// The request registered under `key` replaces the previous one, which is
+	// cancelled. A cancelled request never calls its handlers, so the owner of
+	// the cancelled one is told through `onSuperseded` that it is gone.
+	void registerModifyRequest(
+		const QString &key,
+		mtpRequestId requestId,
+		Fn<void()> onSuperseded = nullptr);
 	void clearModifyRequest(const QString &key);
 
 	void saveCurrentDraftToCloud();
@@ -654,7 +660,12 @@ private:
 
 	const not_null<Main::Session*> _session;
 
-	base::flat_map<QString, int> _modifyRequests;
+	struct ModifyRequest {
+		mtpRequestId id = 0;
+		Fn<void()> onSuperseded;
+	};
+
+	base::flat_map<QString, ModifyRequest> _modifyRequests;
 
 	MessageDataRequests _messageDataRequests;
 	base::flat_map<

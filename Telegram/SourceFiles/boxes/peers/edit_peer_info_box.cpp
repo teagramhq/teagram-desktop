@@ -241,7 +241,8 @@ void AddCommunityRow(
 void SaveDefaultRestrictions(
 		not_null<PeerData*> peer,
 		ChatRestrictions rights,
-		Fn<void(QString)> done) {
+		Fn<void(QString)> done,
+		Fn<void()> onSuperseded = nullptr) {
 	const auto api = &peer->session().api();
 	const auto key = Api::RequestKey("default_restrictions", peer->id);
 
@@ -267,13 +268,17 @@ void SaveDefaultRestrictions(
 		done(error.type());
 	}).send();
 
-	api->registerModifyRequest(key, requestId);
+	api->registerModifyRequest(
+		key,
+		requestId,
+		std::move(onSuperseded));
 }
 
 void SaveSlowmodeSeconds(
 		not_null<ChannelData*> channel,
 		int seconds,
-		Fn<void(QString)> done) {
+		Fn<void(QString)> done,
+		Fn<void()> onSuperseded = nullptr) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("slowmode_seconds", channel->id);
 
@@ -293,13 +298,17 @@ void SaveSlowmodeSeconds(
 		done(error.type());
 	}).send();
 
-	api->registerModifyRequest(key, requestId);
+	api->registerModifyRequest(
+		key,
+		requestId,
+		std::move(onSuperseded));
 }
 
 void SaveStarsPerMessage(
 		not_null<ChannelData*> channel,
 		int starsPerMessage,
-		Fn<void(QString)> done) {
+		Fn<void(QString)> done,
+		Fn<void()> onSuperseded = nullptr) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("stars_per_message", channel->id);
 
@@ -332,13 +341,17 @@ void SaveStarsPerMessage(
 		done(error.type());
 	}).send();
 
-	api->registerModifyRequest(key, requestId);
+	api->registerModifyRequest(
+		key,
+		requestId,
+		std::move(onSuperseded));
 }
 
 void SaveBoostsUnrestrict(
 		not_null<ChannelData*> channel,
 		int boostsUnrestrict,
-		Fn<void(QString)> done) {
+		Fn<void(QString)> done,
+		Fn<void()> onSuperseded = nullptr) {
 	const auto api = &channel->session().api();
 	const auto key = Api::RequestKey("boosts_unrestrict", channel->id);
 	const auto requestId = api->request(
@@ -362,7 +375,10 @@ void SaveBoostsUnrestrict(
 		done(error.type());
 	}).send();
 
-	api->registerModifyRequest(key, requestId);
+	api->registerModifyRequest(
+		key,
+		requestId,
+		std::move(onSuperseded));
 }
 
 void ShowEditPermissions(
@@ -386,39 +402,57 @@ void ShowEditPermissions(
 			const auto progress = std::make_shared<
 				Ui::EditPeer::Permissions::SaveProgress
 			>(plan.requestCount());
-			const auto complete = crl::guard(box, [=](QString errorType) {
-				if (!progress->complete(errorType)) {
-					return;
-				}
+			const auto finish = [=] {
 				if (progress->succeeded()) {
 					box->closeBox();
 				} else {
 					*saving = false;
-					show->showToast(progress->error());
+					if (!progress->error().isEmpty()) {
+						show->showToast(progress->error());
+					}
 				}
+			};
+			const auto complete = crl::guard(box, [=](QString errorType) {
+				if (!progress->complete(errorType)) {
+					return;
+				}
+				finish();
+			});
+			// A newer save of the same setting, from another Permissions box for
+			// this peer, cancels this box's request, and a cancelled request never
+			// answers. Counting it is what keeps Save from staying busy forever.
+			const auto superseded = crl::guard(box, [=] {
+				if (!progress->superseded()) {
+					return;
+				}
+				finish();
 			});
 			SaveDefaultRestrictions(
 				peer,
 				result.rights,
-				complete);
+				complete,
+				superseded);
 			if (channel) {
 				if (plan.saveSlowmode) {
 					SaveSlowmodeSeconds(
 						channel,
 						result.slowmodeSeconds,
-						complete);
+						complete,
+						superseded);
 				}
 				if (plan.saveBoosts) {
 					SaveBoostsUnrestrict(
 						channel,
 						result.boostsUnrestrict,
-						complete);
+						complete,
+						superseded);
 				}
 				if (plan.savePrice) {
 					SaveStarsPerMessage(
 						channel,
 						result.starsPerMessage,
-						complete);
+						complete,
+						superseded);
 				}
 			}
 		};

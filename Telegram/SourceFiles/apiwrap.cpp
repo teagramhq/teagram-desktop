@@ -2617,13 +2617,28 @@ void ApiWrap::checkQuitPreventFinished() {
 
 void ApiWrap::registerModifyRequest(
 		const QString &key,
-		mtpRequestId requestId) {
+		mtpRequestId requestId,
+		Fn<void()> onSuperseded) {
 	const auto i = _modifyRequests.find(key);
 	if (i != end(_modifyRequests)) {
-		request(i->second).cancel();
-		i->second = requestId;
+		request(i->second.id).cancel();
+		// The cancelled request never reports anything to its owner, so the
+		// replacement is what tells it that the request is gone. The new request
+		// is registered before the callback runs, so a save restarted from there
+		// sees the key as taken.
+		const auto onOldSuperseded = std::move(i->second.onSuperseded);
+		i->second = ModifyRequest{
+			.id = requestId,
+			.onSuperseded = std::move(onSuperseded),
+		};
+		if (onOldSuperseded) {
+			onOldSuperseded();
+		}
 	} else {
-		_modifyRequests.emplace(key, requestId);
+		_modifyRequests.emplace(key, ModifyRequest{
+			.id = requestId,
+			.onSuperseded = std::move(onSuperseded),
+		});
 	}
 }
 

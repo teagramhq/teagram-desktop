@@ -101,6 +101,41 @@ TEST_CASE(PermissionsSaveKeepsTheSlowmodeError) {
 	CHECK_EQ(progress.error(), u"CHAT_ADMIN_REQUIRED"_q);
 }
 
+// One save's request superseded by a newer save of the same setting, from a
+// second Permissions box for the same peer: the cancelled request never answers,
+// so the first save must finish on the supersession, not stay busy forever.
+TEST_CASE(PermissionsSaveSupersededRequestDoesNotStayBusy) {
+	Permissions::SaveProgress progress(2);
+	CHECK(!progress.superseded());
+	CHECK(progress.complete(QString()));
+	CHECK(progress.finished());
+	CHECK(!progress.succeeded());
+	CHECK(progress.error().isEmpty());
+}
+
+// Every request of a save cancelled by a newer save: Save still ends, and it
+// does not claim success.
+TEST_CASE(PermissionsSaveAllSupersededCompletes) {
+	Permissions::SaveProgress progress(2);
+	CHECK(!progress.superseded());
+	CHECK(progress.superseded());
+	CHECK(progress.finished());
+	CHECK(!progress.succeeded());
+}
+
+// A superseded request answers nothing, so a completion that arrives after the
+// supersession must not run the count below zero: that would leave the save
+// waiting for a request that can never arrive.
+TEST_CASE(PermissionsSaveDoesNotCountARequestTwice) {
+	Permissions::SaveProgress progress(1);
+	CHECK(progress.superseded());
+	CHECK(progress.finished());
+	CHECK(!progress.succeeded());
+	CHECK(!progress.complete());
+	CHECK(progress.finished());
+	CHECK(!progress.succeeded());
+}
+
 TEST_CASE(LatePermissionsSaveSuccessCannotCompleteRetry) {
 	Permissions::SaveProgress failed(2);
 	Permissions::SaveProgress retry(2);
