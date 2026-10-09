@@ -42,6 +42,7 @@ jobs:
       UPLOAD_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && matrix.variant == 'non-store' && 'true' || 'false' }}
       ONLY_CACHE: "false"
       CCACHE_MAXSIZE: "5G"
+      CCACHE_SLOPPINESS: "pch_defines,time_macros"
 
     steps:
       - name: Get repository name.
@@ -121,6 +122,8 @@ jobs:
           {
             xcodebuild -version
             ccache --version
+            printf 'CCACHE_SLOPPINESS=%s\n' "$CCACHE_SLOPPINESS"
+            printf '%s\n' 'Clang PCH timestamp disabled'
           } > "$GITHUB_WORKSPACE/CCACHE_KEY.txt"
           echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
 
@@ -283,7 +286,13 @@ jobs:
           -D CMAKE_CONFIGURATION_TYPES=Debug \
           -D CMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -D CMAKE_C_COMPILER_LAUNCHER=ccache \
-          -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -D CMAKE_OBJC_COMPILER_LAUNCHER=ccache \
+          -D "CMAKE_CXX_COMPILER_LAUNCHER=$GITHUB_WORKSPACE/$REPO_NAME/.github/scripts/ccache_launcher.sh" \
+          -D "CMAKE_OBJCXX_COMPILER_LAUNCHER=$GITHUB_WORKSPACE/$REPO_NAME/.github/scripts/ccache_launcher.sh" \
+          -D "CMAKE_C_FLAGS=-Xclang -fno-pch-timestamp" \
+          -D "CMAKE_CXX_FLAGS=-Xclang -fno-pch-timestamp" \
+          -D "CMAKE_OBJC_FLAGS=-Xclang -fno-pch-timestamp" \
+          -D "CMAKE_OBJCXX_FLAGS=-Xclang -fno-pch-timestamp" \
           -D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
           -D CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
           -D TDESKTOP_API_TEST=ON \
@@ -297,7 +306,7 @@ jobs:
 
           grep -F 'DESKTOP_APP_DISABLE_AUTOUPDATE:BOOL=ON' ../out/CMakeCache.txt
           grep -F 'CMAKE_GENERATOR:INTERNAL=Ninja Multi-Config' ../out/CMakeCache.txt
-          grep -E '^CMAKE_CXX_COMPILER_LAUNCHER:[^=]+=ccache$' ../out/CMakeCache.txt
+          grep -E '^CMAKE_CXX_COMPILER_LAUNCHER:[^=]+=.*ccache_launcher\.sh$' ../out/CMakeCache.txt
           ccache --max-size="$CCACHE_MAXSIZE"
           ccache --zero-stats
           build_status=0
@@ -874,6 +883,7 @@ jobs:
         env:
           CCACHE_MATCHED_KEY: ${{ steps.cache-ccache.outputs.cache-matched-key }}
           LIBRARIES_CACHE_HIT: ${{ steps.cache-libs.outputs.cache-hit }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
           set -Eeuo pipefail
           ccache --show-stats

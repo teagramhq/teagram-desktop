@@ -13,6 +13,8 @@ on:
       - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
+      - '.github/scripts/ccache_launcher.sh'
+      - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'README.md'
   pull_request:
@@ -25,6 +27,8 @@ on:
       - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
+      - '.github/scripts/ccache_launcher.sh'
+      - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'README.md'
   workflow_dispatch:
@@ -74,6 +78,9 @@ jobs:
 
       - name: Test ccache miss count.
         run: bash .github/scripts/test_ccache_miss_count.sh
+
+      - name: Test ccache launcher.
+        run: bash .github/scripts/test_ccache_launcher.sh
 
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
