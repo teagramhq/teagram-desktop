@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_updates.h"
 #include "apiwrap.h"
+#include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
@@ -1231,6 +1232,20 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.aiComposeSupported() == supported)
 			&& (session.serverTranslationSupported() == supported);
 	};
+	const auto callStartGateMatches = [](not_null<Main::Account*> account,
+									 bool supported) {
+		auto unavailableShown = false;
+		auto existingStockCallReplaced = false;
+		const auto allowed = Calls::details::AllowCallStart(
+			account->session().callsSupported(),
+			[&] { unavailableShown = true; });
+		if (allowed) {
+			existingStockCallReplaced = true;
+		}
+		return (allowed == supported)
+			&& (unavailableShown == !supported)
+			&& (supported || !existingStockCallReplaced);
+	};
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1526,6 +1541,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& capabilitiesMatch(stockController->session(), true);
 		const auto pinnedCapabilitiesMatch = pinnedController
 			&& capabilitiesMatch(pinnedController->session(), false);
+		const auto stockCallStartGateMatches
+			= callStartGateMatches(stock, true);
+		const auto pinnedCallStartGateMatches
+			= callStartGateMatches(pinned, false);
 		const auto matches = (stockWindow != pinnedWindow)
 			&& stockMapped
 			&& pinnedMapped
@@ -1534,13 +1553,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& stockSessionMatches
 			&& pinnedSessionMatches
 			&& stockCapabilitiesMatch
-			&& pinnedCapabilitiesMatch;
+			&& pinnedCapabilitiesMatch
+			&& stockCallStartGateMatches
+			&& pinnedCallStartGateMatches;
 		if (!matches) {
 			std::fprintf(
 				stderr,
 				"Window/session regression mismatch at %s: "
 				"distinct=%d mapped=%d/%d account=%d/%d "
-				"controller=%d/%d session=%d/%d gates=%d/%d active=%p\n",
+				"controller=%d/%d session=%d/%d gates=%d/%d "
+				"call-start=%d/%d active=%p\n",
 				stage,
 				stockWindow != pinnedWindow,
 				stockMapped,
@@ -1553,6 +1575,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				pinnedSessionMatches,
 				stockCapabilitiesMatch,
 				pinnedCapabilitiesMatch,
+				stockCallStartGateMatches,
+				pinnedCallStartGateMatches,
 				static_cast<const void *>(&domain.active()));
 			printCapabilities("stock account", stock->session());
 			printCapabilities("pinned account", pinned->session());

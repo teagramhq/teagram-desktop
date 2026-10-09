@@ -38,6 +38,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/audio/media_audio_track.h"
 #include "platform/platform_specific.h"
 #include "ui/toast/toast.h"
+#include "window/window_controller.h"
+#include "window/window_separate_id.h"
 #include "base/unixtime.h"
 #include "mtproto/mtproto_config.h"
 #include "boxes/abstract_box.h" // Ui::show().
@@ -52,6 +54,20 @@ constexpr auto kServerConfigUpdateTimeoutMs = 24 * 3600 * crl::time(1000);
 
 using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
+
+void ShowCallUnavailableToast(not_null<Main::Session*> session) {
+	const auto show = [&](Window::Controller *window) {
+		if (!window || window->maybeSession() != session.get()) {
+			return false;
+		}
+		window->showToast(tr::lng_server_feature_unavailable(tr::now));
+		return true;
+	};
+	if (!show(Core::App().activeWindow())) {
+		show(Core::App().windowFor(Window::SeparateId(
+			not_null(&session->account()))));
+	}
+}
 
 } // namespace
 
@@ -199,6 +215,11 @@ Instance::~Instance() {
 void Instance::startOutgoingCall(
 		not_null<UserData*> user,
 		StartOutgoingCallArgs args) {
+	if (!details::AllowCallStart(user->session().callsSupported(), [=] {
+			ShowCallUnavailableToast(&user->session());
+		})) {
+		return;
+	}
 	if (activateCurrentCall()) {
 		return;
 	}
@@ -220,6 +241,11 @@ void Instance::startOrJoinGroupCall(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer,
 		StartGroupCallArgs args) {
+	if (!details::AllowCallStart(peer->session().callsSupported(), [=] {
+			ShowCallUnavailableToast(&peer->session());
+		})) {
+		return;
+	}
 	confirmLeaveCurrent(show, peer, args, [=](StartGroupCallArgs args) {
 		using JoinConfirm = Calls::StartGroupCallArgs::JoinConfirm;
 		const auto context = (args.confirm == JoinConfirm::Always)
@@ -245,6 +271,15 @@ void Instance::startOrJoinGroupCall(
 void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 	Expects(args.call || args.show);
 
+	const auto session = args.call
+		? &args.call->session()
+		: &args.show->session();
+	if (!details::AllowCallStart(session->callsSupported(), [=] {
+			ShowCallUnavailableToast(session);
+		})) {
+		return;
+	}
+
 	const auto migrationInfo = (args.migrating
 		&& args.call
 		&& _currentCallPanel)
@@ -254,9 +289,6 @@ void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 		destroyCurrentCall();
 	}
 
-	const auto session = args.show
-		? &args.show->session()
-		: &args.call->session();
 	auto call = std::make_unique<GroupCall>(_delegate.get(), args);
 	const auto raw = call.get();
 
@@ -367,6 +399,11 @@ void Instance::confirmLeaveCurrent(
 void Instance::showStartWithRtmp(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer) {
+	if (!details::AllowCallStart(peer->session().callsSupported(), [=] {
+			ShowCallUnavailableToast(&peer->session());
+		})) {
+		return;
+	}
 	_startWithRtmp->start(peer, show, [=](Group::JoinInfo info) {
 		confirmLeaveCurrent(show, peer, {}, [=](auto) {
 			_startWithRtmp->close();
