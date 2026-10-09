@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
+#include "settings/sections/settings_folders.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
@@ -1624,10 +1625,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window boundaries");
 	}
 	const auto pinnedController = pinnedWindow->sessionController();
+	const auto stockController = stockWindow->sessionController();
 	if (!pinnedController
-		|| (&pinnedController->session() != &pinned->session())) {
+		|| !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
 		return FailChatParticipantsRegression(
-			"pinned window lost its owning session before invite refusal test");
+			"test windows lost their owning sessions before folder smoke tests");
+	}
+	if (!Settings::RunFoldersCrudRegressionForTest(
+			stockController,
+			pinnedController,
+			stock->session().data().history(stockPeer))
+		|| !Settings::RunFoldersCrudRegressionForTest(
+			pinnedController,
+			stockController,
+			pinned->session().data().history(pinnedPeer))) {
+		return FailChatParticipantsRegression(
+			"ordinary folder create, rename, save, or remove did not stay "
+			"in its owning session");
 	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	if (pinnedController->session().api()

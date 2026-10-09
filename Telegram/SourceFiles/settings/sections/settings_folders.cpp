@@ -52,6 +52,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_settings.h"
 #include "styles/style_stickers_box.h"
 
+#include <QtCore/QCoreApplication>
+
 namespace Settings {
 namespace {
 
@@ -359,6 +361,10 @@ struct FoldersState {
 	std::vector<FilterRow> rows;
 	rpl::variable<int> count;
 	rpl::variable<int> suggested;
+	Ui::SettingsButton *createButton = nullptr;
+	Fn<not_null<FilterRowButton*>(const Data::ChatFilter &)> add;
+	Fn<void(not_null<FilterRowButton*>, const Data::ChatFilter &)> edit;
+	Fn<void(not_null<FilterRowButton*>)> remove;
 	Fn<void(const FilterRowButton*, Fn<void(Data::ChatFilter)>)> save;
 	Ui::Animations::Simple tagsEnabledAnimation;
 	rpl::event_stream<bool> tagsButtonEnabled;
@@ -462,14 +468,21 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 			markForRemoval(button);
 		}
 	};
+	state->remove = remove;
 	const auto wrap = container->add(object_ptr<Ui::VerticalLayout>(
 		container));
+	state->edit = [=](
+			not_null<FilterRowButton*> button,
+			const Data::ChatFilter &result) {
+		find(button)->filter = result;
+		button->updateData(result);
+	};
 	const auto addFilter = [=](const Data::ChatFilter &filter) {
 		const auto button = wrap->add(
 			object_ptr<FilterRowButton>(wrap, session, filter));
 		button->removeRequests(
 		) | rpl::on_next([=] {
-			remove(button);
+			state->remove(button);
 		}, button->lifetime());
 		button->restoreRequests(
 		) | rpl::on_next([=] {
@@ -485,8 +498,7 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 				return;
 			}
 			const auto doneCallback = [=](const Data::ChatFilter &result) {
-				find(button)->filter = result;
-				button->updateData(result);
+				state->edit(button, result);
 			};
 			const auto saveAnd = [=](
 					const Data::ChatFilter &data,
@@ -540,6 +552,7 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 
 		return button;
 	};
+	state->add = addFilter;
 	const auto &list = session->data().chatsFilters().list();
 	for (const auto &filter : list) {
 		if (filter.id()) {
@@ -567,6 +580,7 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 		tr::lng_filters_create(),
 		st::settingsButtonActive,
 		{ &st::settingsIconAdd, IconType::Round, &st::windowBgActive });
+	state->createButton = createButton.get();
 	if (highlights) {
 		highlights->push_back({ u"folders/create"_q, { createButton.get() } });
 	}
@@ -577,10 +591,9 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 		const auto created = std::make_shared<FilterRowButton*>(nullptr);
 		const auto doneCallback = [=](const Data::ChatFilter &result) {
 			if (const auto button = *created) {
-				find(button)->filter = result;
-				button->updateData(result);
+				state->edit(button, result);
 			} else {
-				*created = addFilter(result);
+				*created = state->add(result);
 			}
 		};
 		const auto saveAnd = [=](
@@ -1321,6 +1334,85 @@ const auto kMeta = BuildHelper({
 });
 
 } // namespace
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool RunFoldersCrudRegressionForTest(
+		not_null<Window::SessionController*> controller,
+		not_null<Window::SessionController*> other,
+		not_null<History*> history) {
+	if (&controller->session() == &other->session()) {
+		return false;
+	}
+	auto parent = QWidget();
+	parent.resize(800, 600);
+	auto container = object_ptr<Ui::VerticalLayout>(&parent);
+	auto state = std::make_shared<FoldersState>();
+	SetupFoldersList(controller, container.get(), state.get(), nullptr);
+	if (!state->createButton
+		|| !state->createButton->isEnabled()
+		|| !state->add
+		|| !state->edit
+		|| !state->remove
+		|| !state->save) {
+		return false;
+	}
+	const auto title = [](QString text) {
+		return Data::ChatFilterTitle{
+			.text = TextWithEntities{ .text = std::move(text) },
+		};
+	};
+	const auto initial = Data::ChatFilter(
+		FilterId(0),
+		{},
+		{},
+		{},
+		{},
+		{ history },
+		{},
+		{}).withTitle(title(u"Regression folder"_q));
+	// Drive the same row callbacks used by Create, Edit, Remove, and Save.
+	const auto button = state->add(initial);
+	state->save(button.get(), nullptr);
+	QCoreApplication::processEvents();
+	const auto row = ranges::find(state->rows, button, &FilterRow::button);
+	if (row == end(state->rows) || !row->filter.id()) {
+		return false;
+	}
+	const auto id = row->filter.id();
+	const auto locate = [=](not_null<Window::SessionController*> owner) {
+		const auto &filters = owner->session().data().chatsFilters().list();
+		return ranges::find(filters, id, &Data::ChatFilter::id);
+	};
+	const auto created = locate(controller);
+	if (created == end(controller->session().data().chatsFilters().list())
+		|| created->titleText().text != u"Regression folder"_q
+		|| created->always().size() != 1
+		|| !created->always().contains(history)
+		|| locate(other) != end(other->session().data().chatsFilters().list())) {
+		return false;
+	}
+	state->edit(
+		button,
+		row->filter.withTitle(title(u"Renamed regression folder"_q)));
+	state->save(nullptr, nullptr);
+	QCoreApplication::processEvents();
+	const auto renamed = locate(controller);
+	if (renamed == end(controller->session().data().chatsFilters().list())
+		|| renamed->titleText().text != u"Renamed regression folder"_q
+		|| renamed->always().size() != 1
+		|| !renamed->always().contains(history)
+		|| locate(other) != end(other->session().data().chatsFilters().list())) {
+		return false;
+	}
+	state->remove(button);
+	state->save(nullptr, nullptr);
+	QCoreApplication::processEvents();
+	return locate(controller)
+		== end(controller->session().data().chatsFilters().list())
+		&& locate(other)
+			== end(other->session().data().chatsFilters().list());
+}
+#endif
 
 Type FoldersId() {
 	return Folders::Id();
