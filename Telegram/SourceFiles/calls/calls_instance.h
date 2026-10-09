@@ -9,6 +9,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/sender.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace Tests {
+class CallsInstanceRegressionAccess;
+} // namespace Tests
+#endif
+
 namespace crl {
 class semaphore;
 } // namespace crl
@@ -172,6 +178,9 @@ public:
 	[[nodiscard]] bool isQuitPrevent();
 
 private:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	friend class Tests::CallsInstanceRegressionAccess;
+#endif
 	class Delegate;
 	friend class Delegate;
 
