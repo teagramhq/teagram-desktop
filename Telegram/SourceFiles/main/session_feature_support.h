@@ -49,4 +49,9 @@ sharedFoldersSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool accountBioEditSupported(
+		const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
 } // namespace Main::details

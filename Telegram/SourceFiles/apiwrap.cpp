@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 
 #include "api/api_authorizations.h"
+#include "api/api_bio_save_failure.h"
 #include "api/api_attached_stickers.h"
 #include "api/api_blocked_peers.h"
 #include "api/api_chat_invite.h"
@@ -5590,27 +5591,55 @@ void ApiWrap::requestBotCommonGroups(
 	}).send();
 }
 
-void ApiWrap::saveSelfBio(const QString &text) {
+void ApiWrap::saveSelfBio(
+		const QString &text,
+		Fn<bool()> onAboutNotSupported) {
 	if (_bio.requestId) {
 		if (text != _bio.requestedText) {
-			request(_bio.requestId).cancel();
+			const auto requestId = base::take(_bio.requestId);
+			++_bio.generation;
+			request(requestId).cancel();
 		} else {
 			return;
 		}
 	}
 	_bio.requestedText = text;
+	_bio.onAboutNotSupported = std::move(onAboutNotSupported);
+	const auto generation = ++_bio.generation;
 	_bio.requestId = request(MTPaccount_UpdateProfile(
 		MTP_flags(MTPaccount_UpdateProfile::Flag::f_about),
 		MTPstring(),
 		MTPstring(),
 		MTP_string(text)
 	)).done([=](const MTPUser &result) {
+		if (_bio.generation != generation) {
+			return;
+		}
 		_bio.requestId = 0;
+		_bio.onAboutNotSupported = nullptr;
 
 		_session->data().processUser(result);
 		_session->user()->setAbout(_bio.requestedText);
-	}).fail([=] {
+	}).fail([=](const MTP::Error &error) {
+		if (_bio.generation != generation) {
+			return;
+		}
 		_bio.requestId = 0;
+		if (Api::ClassifyBioSaveFailure(error.type())
+			== Api::BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry) {
+			_bio.requestedText = QString();
+			auto onAboutNotSupported = base::take(
+				_bio.onAboutNotSupported);
+			if (onAboutNotSupported && onAboutNotSupported()) {
+				return;
+			}
+			for (const auto &window : _session->windows()) {
+				window->showFeatureUnavailableOnServerToast();
+				break;
+			}
+		} else {
+			_bio.onAboutNotSupported = nullptr;
+		}
 	}).send();
 }
 

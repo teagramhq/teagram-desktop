@@ -64,14 +64,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/options.h"
 #include "base/unixtime.h"
 #include "base/random.h"
+#include "base/weak_ptr.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_window.h"
 
-#include <QtGui/QGuiApplication>
 #include <QtCore/QBuffer>
+#include <QtCore/QPointer>
+#include <QtGui/QGuiApplication>
 
 namespace Settings {
 namespace {
@@ -684,7 +686,12 @@ void SetupRows(
 void SetupBio(
 		not_null<Ui::VerticalLayout*> container,
 		not_null<UserData*> self,
+		not_null<Window::SessionController*> controller,
 		InformationHighlightTargets *targets) {
+	if (!self->session().accountBioEditSupported()) {
+		Ui::AddDivider(container);
+		return;
+	}
 	const auto limits = Data::PremiumLimits(&self->session());
 	const auto defaultLimit = limits.aboutLengthDefault();
 	const auto premiumLimit = limits.aboutLengthPremium();
@@ -744,11 +751,6 @@ void SetupBio(
 		countdown->setTextColorOverride(
 			countLeft < 0 ? st::boxTextFgError->c : std::optional<QColor>());
 	};
-	const auto save = [=] {
-		self->session().api().saveSelfBio(
-			TextUtilities::PrepareForSending(bio->getLastText()));
-	};
-
 	Info::Profile::AboutValue(
 		self
 	) | rpl::on_next([=](const TextWithEntities &text) {
@@ -763,6 +765,26 @@ void SetupBio(
 	}, bio->lifetime());
 
 	const auto generation = Ui::CreateChild<int>(bio);
+	const auto owner = &self->session();
+	const auto weakBio = QPointer<Ui::InputField>(bio.get());
+	const auto weakController = base::make_weak(controller.get());
+	const auto save = [=] {
+		self->session().api().saveSelfBio(
+			TextUtilities::PrepareForSending(bio->getLastText()),
+			[=] {
+				const auto controllerOwnsSession = weakController
+					&& (&weakController->session() == owner);
+				if (weakBio && controllerOwnsSession) {
+					*generation = 0;
+					assign(*current);
+				}
+				if (controllerOwnsSession) {
+					weakController->showFeatureUnavailableOnServerToast();
+					return true;
+				}
+				return false;
+			});
+	};
 	changed->events(
 	) | rpl::on_next([=](bool changed) {
 		if (changed) {
@@ -1204,13 +1226,15 @@ void AccountsList::rebuild() {
 }
 
 void BuildInformationSection(SectionBuilder &builder) {
-	builder.add(nullptr, [] {
-		return SearchEntry{
-			.id = u"edit/bio"_q,
-			.title = tr::lng_bio_placeholder(tr::now),
-			.keywords = { u"bio"_q, u"about"_q, u"description"_q },
-		};
-	});
+	if (builder.session()->accountBioEditSupported()) {
+		builder.add(nullptr, [] {
+			return SearchEntry{
+				.id = u"edit/bio"_q,
+				.title = tr::lng_bio_placeholder(tr::now),
+				.keywords = { u"bio"_q, u"about"_q, u"description"_q },
+			};
+		});
+	}
 	builder.add(nullptr, [] {
 		return SearchEntry{
 			.id = u"edit/name"_q,
@@ -1354,7 +1378,7 @@ void Information::setupContent() {
 		auto targets = InformationHighlightTargets();
 
 		SetupPhoto(container, controller, self, &targets);
-		SetupBio(container, self, &targets);
+		SetupBio(container, self, controller, &targets);
 		SetupRows(container, controller, self, &targets);
 		SetupPersonalChannel(container, controller, self, &targets);
 		SetupBirthday(container, controller, self, &targets);
@@ -1472,6 +1496,19 @@ const auto kMeta = BuildHelper({
 Type InformationId() {
 	return Information::Id();
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool InformationBioEditorTargetPresentForRegressionTest(
+		not_null<Window::SessionController*> controller) {
+	const auto container = Ui::CreateChild<Ui::VerticalLayout>(
+		controller->widget().get());
+	auto targets = InformationHighlightTargets();
+	SetupBio(container, controller->session().user(), controller, &targets);
+	const auto result = !targets.bio.isNull();
+	delete container.get();
+	return result;
+}
+#endif
 
 AccountsEvents SetupAccounts(
 		not_null<Ui::VerticalLayout*> container,

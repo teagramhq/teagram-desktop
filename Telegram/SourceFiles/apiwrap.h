@@ -443,7 +443,9 @@ public:
 		-> std::optional<std::vector<not_null<PeerData*>>>;
 	void requestBotCommonGroups(not_null<UserData*> bot, Fn<void()> done);
 
-	void saveSelfBio(const QString &text);
+	void saveSelfBio(
+		const QString &text,
+		Fn<bool()> onAboutNotSupported = nullptr);
 
 	void registerStatsRequest(MTP::DcId dcId, mtpRequestId id);
 	void unregisterStatsRequest(MTP::DcId dcId, mtpRequestId id);
@@ -814,7 +816,9 @@ private:
 
 	struct {
 		mtpRequestId requestId = 0;
+		uint64 generation = 0;
 		QString requestedText;
+		Fn<bool()> onAboutNotSupported = nullptr;
 	} _bio;
 
 	base::flat_map<MTP::DcId, base::flat_set<mtpRequestId>> _statsRequests;
