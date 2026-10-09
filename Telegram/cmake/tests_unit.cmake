@@ -81,7 +81,6 @@ PRIVATE
     storage/storage_account_persistence.cpp
     storage/storage_server_forget_startup.cpp
     storage/storage_domain.cpp
-    tests/unit/calls_start_gate_tests.cpp
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
     tests/unit/debug_mode_tests.cpp

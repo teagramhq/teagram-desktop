@@ -15,6 +15,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "webrtc/webrtc_device_resolver.h"
 #include "webrtc/webrtc_system_audio_capture.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace Tests {
+class CallsInstanceRegressionAccess;
+} // namespace Tests
+#endif
+
 namespace Data {
 class GroupCall;
 } // namespace Data
@@ -276,6 +282,9 @@ public:
 	~Call();
 
 private:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	friend class Tests::CallsInstanceRegressionAccess;
+#endif
 	enum class FinishType {
 		None,
 		Ended,

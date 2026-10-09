@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_session_controller.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "apiwrap.h"
 #include "api/api_cloud_password.h"
 #include "api/api_text_entities.h"
@@ -618,6 +622,10 @@ void SessionNavigation::showPeerByLinkResolved(
 		if (!peer->session().callsSupported()) {
 			crl::on_main(this, [=] {
 				showPeerHistory(peer, params, ShowAtUnreadMsgId);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+				Tests::RecordCallLinkChannelOpenedForRegressionTest(
+					peer.get());
+#endif
 				showFeatureUnavailableOnServerToast();
 			});
 			return;
@@ -1526,6 +1534,9 @@ auto SessionNavigation::showToast(
 
 void SessionNavigation::showFeatureUnavailableOnServerToast() {
 	showToast(tr::lng_server_feature_unavailable(tr::now));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordFeatureUnavailableToastForRegressionTest();
+#endif
 }
 
 std::shared_ptr<ChatHelpers::Show> SessionNavigation::uiShow() {
