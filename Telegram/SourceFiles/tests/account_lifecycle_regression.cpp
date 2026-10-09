@@ -95,6 +95,11 @@ auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
 auto gCallStartRegressionIntercept = false;
 
+void ReportCallRegressionCheckpoint(const char *name) {
+	std::fprintf(stderr, "Call regression checkpoint: %s\n", name);
+	std::fflush(stderr);
+}
+
 } // namespace
 
 class CallsInstanceRegressionAccess {
@@ -2475,10 +2480,15 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto show = controller->uiShow();
 	ResetCallStartRegressionForTest();
 	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("direct starts begin");
 	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("outgoing start returned");
 	calls.startOrJoinGroupCall(show, peer, {});
+	ReportCallRegressionCheckpoint("group start returned");
 	calls.startOrJoinConferenceCall({ .show = show });
+	ReportCallRegressionCheckpoint("conference start returned");
 	calls.showStartWithRtmp(show, peer);
+	ReportCallRegressionCheckpoint("RTMP start returned");
 	SetCallStartRegressionInterceptForTest(false);
 	const auto snapshot = GetCallStartRegressionSnapshotForTest();
 	const auto expectedPassed = supported
@@ -2519,7 +2529,9 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto group = calls.currentGroupCall();
 	ResetCallStartRegressionForTest();
 	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("selection outgoing start begin");
 	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("selection outgoing start returned");
 	SetCallStartRegressionInterceptForTest(false);
 	const auto snapshot = GetCallStartRegressionSnapshotForTest();
 	const auto expectedPassed = supported
@@ -2548,11 +2560,13 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 		.sessionWindow = base::make_weak(controller),
 	});
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("conference link begin");
 	if (!Core::App().openLocalUrl(
 			u"tg://call?slug=regression-conference"_q,
 			context)) {
 		return false;
 	}
+	ReportCallRegressionCheckpoint("conference link returned");
 	const auto snapshot = GetCallStartRegressionSnapshotForTest();
 	return snapshot.navigationEvents == std::vector<
 		SessionNavigationRegressionEvent>{
@@ -2575,11 +2589,14 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto channel = account->session().data().channel(channelId);
 	PrepareRegressionChannel(channel);
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("channel call link begin");
 	controller->showPeerByLink(Window::PeerByLinkInfo{
 		.usernameOrId = channelId,
 		.voicechatHash = u"regression-link"_q,
 	});
+	ReportCallRegressionCheckpoint("channel call link dispatched");
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("channel call link events processed");
 	const auto linkEvents = GetCallStartRegressionSnapshotForTest();
 	if (linkEvents.navigationEvents != std::vector<
 			SessionNavigationRegressionEvent>{
@@ -2594,6 +2611,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto context = QVariant::fromValue(ClickHandlerContext{
 		.sessionWindow = base::make_weak(controller),
 	});
+	auto settingLinkNumber = 0;
 	for (const auto &url : {
 			u"tg://settings/privacy/calls"_q,
 			u"tg://settings/privacy/calls/never"_q,
@@ -2604,10 +2622,16 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 			u"tg://settings/calls/all"_q,
 			u"tg://settings/calls/start-call"_q,
 		}) {
+		std::fprintf(stderr,
+			"Call regression checkpoint: setting link %d begin\n",
+			settingLinkNumber);
+		std::fflush(stderr);
 		ResetCallStartRegressionForTest();
 		if (!Core::App().openLocalUrl(url, context)) {
 			return false;
 		}
+		++settingLinkNumber;
+		ReportCallRegressionCheckpoint("call setting link returned");
 		const auto events = GetCallStartRegressionSnapshotForTest();
 		if (events.navigationEvents != std::vector<
 				SessionNavigationRegressionEvent>{
@@ -2620,10 +2644,12 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	}
 
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("calls settings begin");
 	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
 		return false;
 	}
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("calls settings events processed");
 	const auto settingsEvents = GetCallStartRegressionSnapshotForTest();
 	const auto showsSettings = [&](Settings::Type expected) {
 		const auto widgets = controller->content()->findChildren<QWidget*>();
@@ -2646,10 +2672,12 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	}
 
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("device settings begin");
 	if (!Core::App().openLocalUrl(u"tg://settings/devices"_q, context)) {
 		return false;
 	}
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("device settings events processed");
 	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
 	return devicesSettingsEvents.navigationEvents.empty()
 		&& showsSettings(Settings::SessionsId())
@@ -2660,6 +2688,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
 								Fn<void(int)> done) {
+	ReportCallRegressionCheckpoint("chat participant regression begin");
 	if (Core::MacProtectedPath::IntegrationTestActive()
 		&& !RunCacheConcurrentDeletionRegression()) {
 		return FailChatParticipantsRegression(
@@ -2974,10 +3003,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	PrepareRegressionChannel(
 		discarded->session().data().channel(destroyedSessionChannelId));
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("destroyed-session link begin");
 	discardedController->showPeerByLink(Window::PeerByLinkInfo{
 		.usernameOrId = destroyedSessionChannelId,
 		.voicechatHash = u"destroyed-session"_q,
 	});
+	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -3049,7 +3080,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	ReportCallRegressionCheckpoint("destroyed-session logout complete");
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("destroyed-session events processed");
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeQueuedSwitches.switchDeferred + 1);
 	const auto queuedPinnedDeferredObserved = WaitForDeferredSwitchUpdate(
@@ -3096,10 +3129,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	PrepareRegressionChannel(
 		stock->session().data().channel(replacedSessionChannelId));
 	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("replaced-session link begin");
 	replacedController->showPeerByLink(Window::PeerByLinkInfo{
 		.usernameOrId = replacedSessionChannelId,
 		.voicechatHash = u"replaced-session"_q,
 	});
+	ReportCallRegressionCheckpoint("replaced-session link dispatched");
 	primary->showAccount(pinned);
 	primary->showAccount(stock);
 	stock->mtp().dcOptions().constructUnenrolled();
@@ -3109,6 +3144,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"could not restore stock DC options after deferred link test");
 	}
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("replaced-session events processed");
 	if (replacedControllerWeak.get()
 		|| primary->maybeSession() != &stock->session()
 		|| !GetCallStartRegressionSnapshotForTest().navigationEvents.empty()
@@ -3424,7 +3460,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
 		const auto second = customFirst ? stock : pinned;
+		ReportCallRegressionCheckpoint("account activation begin");
 		domain.activate(first);
+		ReportCallRegressionCheckpoint("first account activated");
 		const auto firstActive = &domain.active() == first.get();
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
@@ -3556,6 +3594,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		}
 		domain.activate(second);
+		ReportCallRegressionCheckpoint("second account activated");
 		const auto secondActive = &domain.active() == second.get();
 		const auto secondCapabilities
 			= capabilitiesMatch(second->session(), customFirst);
@@ -3620,6 +3659,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	});
 	const auto stockDcOptions = stock->mtp().dcOptions().serialize();
 	const auto pinnedDcOptions = pinned->mtp().dcOptions().serialize();
+	ReportCallRegressionCheckpoint("call start fixtures ready");
 	if (!RunCallsInstanceStartRegression(
 			stock,
 			stockWindow,
@@ -3633,6 +3673,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"Calls::Instance starts crossed stock and pinned session policies");
 	}
+	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
 	stock->mtp().dcOptions().constructBlocked();
 	if (stock->local().hasStoredCustomServer()
 		|| !stock->mtp().dcOptions().blocked()
@@ -3644,6 +3685,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blocked unpinned session reached a Calls::Instance start path");
 	}
+	ReportCallRegressionCheckpoint("blocked stock starts complete");
 	stock->mtp().dcOptions().constructUnenrolled();
 	if (!stock->mtp().dcOptions().constructFromSerialized(stockDcOptions)) {
 		return FailChatParticipantsRegression(
@@ -3661,6 +3703,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blocked pinned session reached a Calls::Instance start path");
 	}
+	ReportCallRegressionCheckpoint("blocked pinned starts complete");
 	pinned->mtp().dcOptions().constructUnenrolled();
 	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
 		|| !RunConferenceLinkPreservesStockCallRegression(
@@ -3670,11 +3713,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"unsupported conference link replaced the stock call");
 	}
+	ReportCallRegressionCheckpoint("conference preservation complete");
 	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
 	if (!RunCallLinkAndSettingsRegression(pinned, pinnedWindow)) {
 		return FailChatParticipantsRegression(
 			"call links or settings links bypassed the pinned-session gate");
 	}
+	ReportCallRegressionCheckpoint("call links and settings complete");
 	const auto pinnedController = pinnedWindow->sessionController();
 	const auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
@@ -3709,6 +3754,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"unsupported pinned session sent a chatlist invite check request");
 	}
+	ReportCallRegressionCheckpoint("account activation regressions complete");
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
@@ -3858,6 +3904,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		QString error;
 	};
 	const auto migration = std::make_shared<MigrationResult>();
+	ReportCallRegressionCheckpoint("migration callback begin");
 	pinned->session().api().migrateChat(
 		pinnedActionChat,
 		[migration](not_null<ChannelData*>) {
@@ -3900,6 +3947,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		std::fprintf(stderr, "Chat participants regression passed.\n");
 		done(0);
 	});
+	ReportCallRegressionCheckpoint("migration callback scheduled");
 	return 0;
 }
 
@@ -3908,6 +3956,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"Teagram icon choice did not survive settings serialization");
 	}
+	ReportCallRegressionCheckpoint("account lifecycle setup begins");
 	const auto failureVariable = QByteArray(
 		"TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
 	const auto failWrites = gsl::finally([&] {
@@ -4367,6 +4416,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"blocked teardown wrote authorization data or a failure marker");
 	}
 
+	ReportCallRegressionCheckpoint("account lifecycle setup complete");
 	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
 }
 
