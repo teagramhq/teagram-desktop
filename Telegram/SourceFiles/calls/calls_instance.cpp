@@ -56,7 +56,7 @@ using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
 void ShowCallUnavailableToast(not_null<Main::Session*> session) {
-	const auto show = [&](Window::Controller *window) {
+	const auto show = [&](::Window::Controller *window) {
 		if (!window || window->maybeSession() != session.get()) {
 			return false;
 		}
@@ -64,7 +64,7 @@ void ShowCallUnavailableToast(not_null<Main::Session*> session) {
 		return true;
 	};
 	if (!show(Core::App().activeWindow())) {
-		show(Core::App().windowFor(Window::SeparateId(
+		show(Core::App().windowFor(::Window::SeparateId(
 			not_null(&session->account()))));
 	}
 }
