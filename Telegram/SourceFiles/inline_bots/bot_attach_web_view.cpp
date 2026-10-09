@@ -2487,6 +2487,11 @@ void AttachWebView::completePendingResolveForRegressionTest(
 	}
 }
 
+Fn<void(not_null<PeerData*>)>
+AttachWebView::takePendingResolveForRegressionTest() {
+	return base::take(_pendingResolveForRegressionTest);
+}
+
 bool AttachWebView::openByUsername(
 		not_null<Window::SessionController*> controller,
 		const Api::SendAction &action,
@@ -2775,10 +2780,19 @@ void AttachWebView::resolveUsername(
 	}
 	_session->api().request(base::take(_requestId)).cancel();
 	const auto weak = base::make_weak(this);
-	// The completion the response would run, kept for the regression seam. It
-	// is dropped by the request handlers and by cancel(), so it cannot outlive
-	// the request it belongs to.
-	_pendingResolveForRegressionTest = done;
+	// The completion the response would run, wrapped in the liveness guard the
+	// request handlers use. It is dropped by those handlers and by cancel(),
+	// so it cannot outlive the request it belongs to. The regression can keep a
+	// copy of it past the death of this session: running such a copy does what
+	// the request would do, nothing, without touching the destroyed session.
+	_pendingResolveForRegressionTest = [weak, done](not_null<PeerData*> peer) {
+		const auto self = weak.get();
+		if (!self) {
+			return;
+		}
+		self->_pendingResolveForRegressionTest = nullptr;
+		done(peer);
+	};
 	_requestId = _session->api().request(MTPcontacts_ResolveUsername(
 		MTP_flags(0),
 		MTP_string(_botUsername),

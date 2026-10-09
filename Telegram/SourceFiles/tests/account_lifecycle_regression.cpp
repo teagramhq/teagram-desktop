@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
+#include "base/weak_ptr.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
@@ -1709,35 +1710,47 @@ constexpr int kRegressionEntryClassCount = 13;
 			0)) {
 		return false;
 	}
+	// Weak observations of the objects the pending completion is bound to,
+	// taken before the teardown. Expiry is asserted, so no address that the
+	// allocator can hand to the replacement is ever compared.
+	const auto firstControllerWeak = base::make_weak(firstController);
 	app.closeWindow(firstWindow);
 	QCoreApplication::processEvents();
+	QCoreApplication::processEvents();
+	if (!firstControllerWeak.empty()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: the closed window's controller "
+			"outlived the teardown.\n");
+		return false;
+	}
+	if (!discarded->session().windows().empty()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: the closed window is still registered "
+			"with the session.\n");
+		return false;
+	}
 	const auto secondWindow = app.ensureSeparateWindowFor(discarded);
 	QCoreApplication::processEvents();
 	const auto secondController = secondWindow
 		? secondWindow->sessionController()
 		: nullptr;
-	if (!secondController || (secondController == firstController)) {
+	// The premise of the refusal below, read off the live session: it has
+	// exactly one window registered, the replacement, the account shows that
+	// window, and the controller of that window serves this session.
+	const auto firstRegistration = discarded->session().windows();
+	if (!secondController
+		|| (firstRegistration.size() != 1)
+		|| (*firstRegistration.begin()
+			!= not_null<Window::SessionController*>(secondController))
+		|| (app.separateWindowFor(discarded) != secondWindow)
+		|| (&secondController->session() != &discarded->session())) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: no replacement window after the "
-			"teardown.\n");
-		return false;
-	}
-	// The premise of the refusal below: the first window's controller is gone
-	// from the session, and the replacement one is registered in its place.
-	QCoreApplication::processEvents();
-	if (discarded->session().windows().contains(
-			not_null<Window::SessionController*>(firstController))
-		|| !discarded->session().windows().contains(
-			not_null<Window::SessionController*>(secondController))) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: the closed window's controller is still "
-			"registered: first=%d second=%d\n",
-			discarded->session().windows().contains(
-				not_null<Window::SessionController*>(firstController)),
-			discarded->session().windows().contains(
-				not_null<Window::SessionController*>(secondController)));
+			"Mini-app open regression: the replacement window is not the one "
+			"registered with the session: windows=%d\n",
+			static_cast<int>(firstRegistration.size()));
 		return false;
 	}
 	discarded->session().attachWebView()
@@ -1759,10 +1772,12 @@ constexpr int kRegressionEntryClassCount = 13;
 	discarded->session().attachWebView().cancel();
 	discarded->session().attachWebView().closeAll();
 
-	// A resolution in flight when the session is destroyed must not reach the
-	// replacement session for the same user id.
+	// A resolution in flight when the session is destroyed. The completion is
+	// taken out of the session first, so it can be run against the
+	// replacement session: its guard is production code, and a retained copy
+	// must refuse without touching the session that replaced the one it came
+	// from.
 	const auto diedBefore = ReadWebViewOpenCounters(&discarded->session());
-	const auto oldSession = &discarded->session();
 	if (!OpenMiniAppByUsername(&discarded->session(),
 		secondController)) {
 		std::fprintf(
@@ -1783,6 +1798,18 @@ constexpr int kRegressionEntryClassCount = 13;
 			0)) {
 		return false;
 	}
+	auto retained = discarded->session().attachWebView()
+		.takePendingResolveForRegressionTest();
+	const auto diedWebviewWeak = base::make_weak(
+		&discarded->session().attachWebView());
+	const auto diedControllerWeak = base::make_weak(secondController);
+	if (!retained || !diedWebviewWeak || !diedControllerWeak) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: no completion retained for the "
+			"session teardown.\n");
+		return false;
+	}
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		std::fprintf(
@@ -1791,8 +1818,25 @@ constexpr int kRegressionEntryClassCount = 13;
 			"resolve in flight.\n");
 		return false;
 	}
+	// Expiry, not an address: the session that owned the retained completion
+	// is destroyed, and so is the window that owned its controller.
+	if (!diedWebviewWeak.empty()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: the destroyed session kept its "
+			"webview.\n");
+		return false;
+	}
 	app.closeWindow(secondWindow);
 	QCoreApplication::processEvents();
+	QCoreApplication::processEvents();
+	if (!diedControllerWeak.empty()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: the destroyed session kept its window "
+			"controller.\n");
+		return false;
+	}
 	if (!discarded->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
@@ -1808,13 +1852,20 @@ constexpr int kRegressionEntryClassCount = 13;
 	const auto thirdController = thirdWindow
 		? thirdWindow->sessionController()
 		: nullptr;
+	// The replacement is a live session of this account with its own window
+	// registered, established without comparing any destroyed address.
+	const auto secondRegistration = discarded->session().windows();
 	if (!thirdController
-		|| (&thirdController->session() != &discarded->session())
-		|| (oldSession == &discarded->session())) {
+		|| (secondRegistration.size() != 1)
+		|| (*secondRegistration.begin()
+			!= not_null<Window::SessionController*>(thirdController))
+		|| (app.separateWindowFor(discarded) != thirdWindow)
+		|| (&thirdController->session() != &discarded->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session did not take "
-			"the window.\n");
+			"the window: windows=%d\n",
+			static_cast<int>(secondRegistration.size()));
 		return false;
 	}
 	const auto replacementCounters = ReadWebViewOpenCounters(
@@ -1826,8 +1877,8 @@ constexpr int kRegressionEntryClassCount = 13;
 		|| (replacementCounters.toasts != 0)) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: the destroyed session's resolution "
-			"reached the replacement session: instances=%d requests=%d "
+			"Mini-app open regression: the replacement session was not "
+			"clean at the teardown boundary: instances=%d requests=%d "
 			"activations=%d resolves=%d toasts=%d\n",
 			replacementCounters.instances,
 			replacementCounters.requests,
@@ -1836,13 +1887,36 @@ constexpr int kRegressionEntryClassCount = 13;
 			replacementCounters.toasts);
 		return false;
 	}
-	// The replacement session keeps a working webview of its own.
+	// The retained completion of the destroyed session, run against a live
+	// peer of the replacement session: its guard fires, and the replacement
+	// session sees no access and no side effect.
 	const auto replacementBot = discarded->session().data().processUsers(
 		MTP_vector<MTPUser>({ botUser }));
-	const auto replacementBefore = ReadWebViewOpenCounters(
+	if (!replacementBot) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: no bot peer in the replacement "
+			"session.\n");
+		return false;
+	}
+	retained(not_null<PeerData*>(replacementBot));
+	QCoreApplication::processEvents();
+	const auto afterRetained = ReadWebViewOpenCounters(
 		&discarded->session());
-	if (!replacementBot
-		|| !OpenMiniAppByUsername(&discarded->session(), thirdController)) {
+	if (!WebViewOpenDeltaMatches(
+			"retained completion of the destroyed session",
+			replacementCounters,
+			afterRetained,
+			0,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+	// Positive control: the same seam opens on the replacement session,
+	// so the zeros above are a refusal and not an inert webview.
+	if (!OpenMiniAppByUsername(&discarded->session(), thirdController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session refused a "
@@ -1857,7 +1931,7 @@ constexpr int kRegressionEntryClassCount = 13;
 		&discarded->session());
 	if (!WebViewOpenDeltaMatches(
 			"replacement session opens its own app",
-			replacementBefore,
+			afterRetained,
 			replacementOpened,
 			0,
 			1,

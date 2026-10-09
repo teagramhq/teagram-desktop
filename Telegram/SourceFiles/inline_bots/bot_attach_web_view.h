@@ -403,6 +403,11 @@ public:
 	// real guards, so the regression can complete it after a window or a
 	// session teardown without a server.
 	void completePendingResolveForRegressionTest(not_null<PeerData*> peer);
+
+	// Hands the guarded completion to the caller, so the regression can keep it
+	// past the death of the session that made it and run it there.
+	[[nodiscard]] Fn<void(not_null<PeerData*>)>
+	takePendingResolveForRegressionTest();
 	void watchJoinChatWebView(
 		uint64 queryId,
 		std::shared_ptr<Ui::Show> show,
