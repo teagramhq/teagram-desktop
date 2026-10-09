@@ -2480,6 +2480,13 @@ int AttachWebView::unavailableToastCountForRegressionTest() const {
 	return _unavailableToastsCountForRegressionTest;
 }
 
+void AttachWebView::completePendingResolveForRegressionTest(
+		not_null<PeerData*> peer) {
+	if (const auto done = base::take(_pendingResolveForRegressionTest)) {
+		done(peer);
+	}
+}
+
 bool AttachWebView::openByUsername(
 		not_null<Window::SessionController*> controller,
 		const Api::SendAction &action,
@@ -2639,6 +2646,7 @@ rpl::producer<> AttachWebView::popularAppBotsLoaded() const {
 
 void AttachWebView::cancel() {
 	_session->api().request(base::take(_requestId)).cancel();
+	_pendingResolveForRegressionTest = nullptr;
 	_botUsername = QString();
 	_startCommand = QString();
 }
@@ -2767,6 +2775,10 @@ void AttachWebView::resolveUsername(
 	}
 	_session->api().request(base::take(_requestId)).cancel();
 	const auto weak = base::make_weak(this);
+	// The completion the response would run, kept for the regression seam. It
+	// is dropped by the request handlers and by cancel(), so it cannot outlive
+	// the request it belongs to.
+	_pendingResolveForRegressionTest = done;
 	_requestId = _session->api().request(MTPcontacts_ResolveUsername(
 		MTP_flags(0),
 		MTP_string(_botUsername),
@@ -2777,6 +2789,7 @@ void AttachWebView::resolveUsername(
 			return;
 		}
 		self->_requestId = 0;
+		self->_pendingResolveForRegressionTest = nullptr;
 		result.match([&](const MTPDcontacts_resolvedPeer &data) {
 			self->_session->data().processUsers(data.vusers());
 			self->_session->data().processChats(data.vchats());
@@ -2790,6 +2803,7 @@ void AttachWebView::resolveUsername(
 			return;
 		}
 		self->_requestId = 0;
+		self->_pendingResolveForRegressionTest = nullptr;
 		if (error.code() == 400) {
 			if (const auto strong = controller.get(); strong
 				&& &strong->session() == self->_session) {

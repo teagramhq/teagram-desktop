@@ -398,6 +398,11 @@ public:
 	[[nodiscard]] int appActivateCountForRegressionTest() const;
 	[[nodiscard]] int usernameResolveCountForRegressionTest() const;
 	[[nodiscard]] int unavailableToastCountForRegressionTest() const;
+
+	// Drives the completion an in-flight username resolve would run, with its
+	// real guards, so the regression can complete it after a window or a
+	// session teardown without a server.
+	void completePendingResolveForRegressionTest(not_null<PeerData*> peer);
 	void watchJoinChatWebView(
 		uint64 queryId,
 		std::shared_ptr<Ui::Show> show,
@@ -508,6 +513,7 @@ private:
 	int _appActivationsCountForRegressionTest = 0;
 	int _usernameResolvesCountForRegressionTest = 0;
 	int _unavailableToastsCountForRegressionTest = 0;
+	Fn<void(not_null<PeerData*>)> _pendingResolveForRegressionTest;
 
 	std::vector<not_null<UserData*>> _popularAppBots;
 	mtpRequestId _popularAppBotsRequestId = 0;
