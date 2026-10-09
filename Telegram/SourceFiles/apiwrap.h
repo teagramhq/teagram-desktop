@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "api/api_bio_save_failure.h"
 #include "api/api_common.h"
 #include "api/api_modify_requests.h"
 #include "base/timer.h"
@@ -816,8 +817,7 @@ private:
 
 	struct {
 		mtpRequestId requestId = 0;
-		uint64 generation = 0;
-		QString requestedText;
+		Api::BioSaveRequestState state;
 		Fn<bool()> onAboutNotSupported = nullptr;
 	} _bio;
 

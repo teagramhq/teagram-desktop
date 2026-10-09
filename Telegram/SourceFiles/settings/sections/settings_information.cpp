@@ -703,7 +703,9 @@ void SetupBio(
 		return result;
 	};
 	const auto style = Ui::AttachAsChild(container, bioStyle());
-	const auto current = Ui::AttachAsChild(container, self->about());
+	const auto state = Ui::AttachAsChild(
+		container,
+		Api::BioSaveEditorState(self->about()));
 	const auto changed = Ui::CreateChild<rpl::event_stream<bool>>(
 		container.get());
 	const auto bio = container->add(
@@ -712,7 +714,7 @@ void SetupBio(
 			*style,
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_bio_placeholder(),
-			*current),
+			state->editorBio()),
 		st::settingsBioMargins);
 	if (targets) {
 		targets->bio = bio;
@@ -734,7 +736,8 @@ void SetupBio(
 
 	const auto assign = [=](QString text) {
 		auto position = bio->textCursor().position();
-		bio->setText(text.replace('\n', ' '));
+		state->setEditorBio(text.replace('\n', ' '));
+		bio->setText(state->editorBio());
 		auto cursor = bio->textCursor();
 		cursor.setPosition(position);
 		bio->setTextCursor(cursor);
@@ -745,7 +748,8 @@ void SetupBio(
 			assign(text);
 			text = bio->getLastText();
 		}
-		changed->fire(*current != text);
+		state->setEditorBio(text);
+		changed->fire(state->storedBio() != text);
 		const auto limit = self->isPremium() ? premiumLimit : defaultLimit;
 		const auto countLeft = limit - Ui::ComputeFieldCharacterCount(bio);
 		countdown->setText(QString::number(countLeft));
@@ -755,17 +759,16 @@ void SetupBio(
 	Info::Profile::AboutValue(
 		self
 	) | rpl::on_next([=](const TextWithEntities &text) {
-		const auto wasChanged = (*current != bio->getLastText());
-		*current = text.text;
+		const auto wasChanged = (state->storedBio() != bio->getLastText());
+		state->setStoredBio(text.text);
 		if (wasChanged) {
-			changed->fire(*current != bio->getLastText());
+			changed->fire(state->storedBio() != bio->getLastText());
 		} else {
 			assign(text.text);
-			*current = bio->getLastText();
+			state->setStoredBio(bio->getLastText());
 		}
 	}, bio->lifetime());
 
-	const auto generation = Ui::CreateChild<int>(bio);
 	const auto owner = &self->session();
 	const auto weakBio = QPointer<Ui::InputField>(bio);
 	const auto weakController = base::make_weak(controller.get());
@@ -776,8 +779,8 @@ void SetupBio(
 				const auto controllerOwnsSession = weakController
 					&& (&weakController->session() == owner);
 				if (weakBio && controllerOwnsSession) {
-					Api::CancelBioSaveDebounce(*generation);
-					assign(*current);
+					state->aboutNotSupported();
+					assign(state->editorBio());
 				}
 				if (controllerOwnsSession) {
 					weakController->showFeatureUnavailableOnServerToast();
@@ -789,22 +792,17 @@ void SetupBio(
 	changed->events(
 	) | rpl::on_next([=](bool changed) {
 		if (changed) {
-			const auto saved = *generation = std::abs(*generation) + 1;
+			const auto saved = state->scheduleDebounce();
 			base::call_delayed(kSaveBioTimeout, bio, [=] {
-				if (Api::BioSaveDebounceIsCurrent(*generation, saved)) {
-					save();
-					Api::CancelBioSaveDebounce(*generation);
-				}
+				state->runDebounce(saved, save);
 			});
-		} else if (*generation > 0) {
-			*generation = -*generation;
+		} else {
+			state->markUnchanged();
 		}
 	}, bio->lifetime());
 
 	container->lifetime().add([=] {
-		if (Api::BioSaveNeedsCloseRetry(*generation)) {
-			save();
-		}
+		state->saveOnClose(save);
 	});
 
 	bio->setMaxLength(premiumLimit * 2);
