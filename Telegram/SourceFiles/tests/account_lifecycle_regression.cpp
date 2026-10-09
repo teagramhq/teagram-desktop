@@ -5936,6 +5936,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
+	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after the initial session switch");
