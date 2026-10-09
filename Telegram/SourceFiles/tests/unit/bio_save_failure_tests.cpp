@@ -9,7 +9,53 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_bio_save_failure.h"
 
+#include <utility>
+#include <vector>
+
 namespace {
+
+class UndoableBioField final {
+public:
+	enum class HistoryAction {
+		Clear,
+		NewEntry,
+	};
+
+	explicit UndoableBioField(QString text)
+	: _text(std::move(text)) {
+	}
+
+	void type(QString text) {
+		_undo.push_back(_text);
+		_text = std::move(text);
+	}
+
+	void setTextWithTags(QString text, HistoryAction action) {
+		if (action == HistoryAction::Clear) {
+			_undo.clear();
+		} else {
+			_undo.push_back(_text);
+		}
+		_text = std::move(text);
+	}
+
+	[[nodiscard]] bool undo() {
+		if (_undo.empty()) {
+			return false;
+		}
+		_text = std::move(_undo.back());
+		_undo.pop_back();
+		return true;
+	}
+
+	[[nodiscard]] const QString &text() const {
+		return _text;
+	}
+
+private:
+	QString _text;
+	std::vector<QString> _undo;
+};
 
 class ControlledBioApi final {
 public:
@@ -21,9 +67,10 @@ public:
 	[[nodiscard]] auto fail(
 			Api::BioSaveRequestState &state,
 			Api::BioSaveEditorState &editor,
+			UndoableBioField &field,
 			const QString &errorType) {
 		return state.failed(_generation, errorType, [&] {
-			return editor.aboutNotSupported();
+			return editor.aboutNotSupported(field, editor.storedBio());
 		});
 	}
 
@@ -49,7 +96,9 @@ private:
 TEST_CASE(AboutNotSupportedBioFailureRestoresAndCancelsPendingSave) {
 	const auto savedBio = u"stored bio"_q;
 	auto editor = Api::BioSaveEditorState(savedBio);
-	editor.setEditorBio(u"refused draft"_q);
+	auto field = UndoableBioField(savedBio);
+	field.type(u"refused draft"_q);
+	editor.setEditorBio(field.text());
 	const auto scheduled = editor.scheduleDebounce();
 	auto request = Api::BioSaveRequestState();
 	auto api = ControlledBioApi();
@@ -58,6 +107,7 @@ TEST_CASE(AboutNotSupportedBioFailureRestoresAndCancelsPendingSave) {
 	const auto transition = api.fail(
 		request,
 		editor,
+		field,
 		u"ABOUT_NOT_SUPPORTED"_q);
 
 	CHECK(transition.has_value());
@@ -67,6 +117,8 @@ TEST_CASE(AboutNotSupportedBioFailureRestoresAndCancelsPendingSave) {
 	CHECK(request.requestedText().isEmpty());
 	CHECK_EQ(editor.storedBio(), savedBio);
 	CHECK_EQ(editor.editorBio(), savedBio);
+	CHECK_EQ(field.text(), savedBio);
+	CHECK(!field.undo());
 	CHECK(!editor.runDebounce(scheduled, [&] {
 		api.save(request, editor.editorBio());
 	}));
@@ -79,7 +131,9 @@ TEST_CASE(AboutNotSupportedBioFailureRestoresAndCancelsPendingSave) {
 TEST_CASE(OtherBioSaveFailuresKeepTheDraftAndPendingSave) {
 	const auto savedBio = u"stored bio"_q;
 	auto editor = Api::BioSaveEditorState(savedBio);
-	editor.setEditorBio(u"draft"_q);
+	auto field = UndoableBioField(savedBio);
+	field.type(u"draft"_q);
+	editor.setEditorBio(field.text());
 	const auto scheduled = editor.scheduleDebounce();
 	auto request = Api::BioSaveRequestState();
 	auto api = ControlledBioApi();
@@ -88,6 +142,7 @@ TEST_CASE(OtherBioSaveFailuresKeepTheDraftAndPendingSave) {
 	const auto transition = api.fail(
 		request,
 		editor,
+		field,
 		u"ABOUT_INVALID"_q);
 
 	CHECK(transition.has_value());
@@ -96,6 +151,7 @@ TEST_CASE(OtherBioSaveFailuresKeepTheDraftAndPendingSave) {
 	CHECK_EQ(request.requestedText(), u"draft"_q);
 	CHECK_EQ(editor.storedBio(), savedBio);
 	CHECK_EQ(editor.editorBio(), u"draft"_q);
+	CHECK_EQ(field.text(), u"draft"_q);
 	CHECK(editor.debounceIsCurrent(scheduled));
 	CHECK(editor.needsCloseRetry());
 	CHECK_EQ(api.requestCount(), 1);

@@ -109,9 +109,14 @@ public:
 		_editorBio = std::move(text);
 	}
 
-	bool aboutNotSupported() {
+	template <typename Field, typename Text>
+	bool aboutNotSupported(Field &field, Text text) {
 		cancelDebounce();
 		_editorBio = _storedBio;
+		using HistoryAction = typename Field::HistoryAction;
+		field.setTextWithTags(
+			std::move(text),
+			HistoryAction::Clear);
 		return true;
 	}
 

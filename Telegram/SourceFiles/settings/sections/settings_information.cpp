@@ -779,8 +779,16 @@ void SetupBio(
 				const auto controllerOwnsSession = weakController
 					&& (&weakController->session() == owner);
 				if (weakBio && controllerOwnsSession) {
-					state->aboutNotSupported();
-					assign(state->editorBio());
+					const auto position = bio->textCursor().position();
+					auto restored = state->storedBio();
+					restored.replace('\n', ' ');
+					state->aboutNotSupported(
+						*bio,
+						TextWithTags{ restored, {} });
+					auto cursor = bio->textCursor();
+					cursor.setPosition(position);
+					bio->setTextCursor(cursor);
+					state->setEditorBio(bio->getLastText());
 				}
 				if (controllerOwnsSession) {
 					weakController->showFeatureUnavailableOnServerToast();
