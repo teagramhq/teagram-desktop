@@ -77,6 +77,30 @@ TEST_CASE(PermissionsSaveWaitsForEveryResponseAndKeepsTheRightsError) {
 	CHECK_EQ(progress.error(), u"CHAT_ADMIN_REQUIRED"_q);
 }
 
+// Every request answering CHAT_NOT_MODIFIED is a successful save: the box
+// must close, not report a failure. Kept separate from the mixed case, where
+// the first real error wins and a CHAT_NOT_MODIFIED mishandling
+// would stay hidden.
+TEST_CASE(PermissionsSaveAllUnchangedSucceeds) {
+	Permissions::SaveProgress progress(2);
+	CHECK(!progress.complete(u"CHAT_NOT_MODIFIED"_q));
+	CHECK(progress.complete(u"CHAT_NOT_MODIFIED"_q));
+	CHECK(progress.finished());
+	CHECK(progress.succeeded());
+	CHECK(progress.error().isEmpty());
+}
+
+// The mirrored order of the mixed failure: rights succeed, slow mode
+// fails, so the box stays open with the slow mode error.
+TEST_CASE(PermissionsSaveKeepsTheSlowmodeError) {
+	Permissions::SaveProgress progress(2);
+	CHECK(!progress.complete(QString()));
+	CHECK(progress.complete(u"CHAT_ADMIN_REQUIRED"_q));
+	CHECK(progress.finished());
+	CHECK(!progress.succeeded());
+	CHECK_EQ(progress.error(), u"CHAT_ADMIN_REQUIRED"_q);
+}
+
 TEST_CASE(LatePermissionsSaveSuccessCannotCompleteRetry) {
 	Permissions::SaveProgress failed(2);
 	Permissions::SaveProgress retry(2);
