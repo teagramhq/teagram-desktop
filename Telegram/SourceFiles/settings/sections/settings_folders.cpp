@@ -53,6 +53,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_stickers_box.h"
 
 #include <QtCore/QCoreApplication>
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include <QtGui/QKeyEvent>
+#endif
 
 namespace Settings {
 namespace {
@@ -80,6 +83,11 @@ public:
 	[[nodiscard]] rpl::producer<> addRequests() const;
 
 	void setColorIndexProgress(float64 progress);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void triggerRemoveForTest() {
+		_remove.clicked(Qt::NoModifier, Qt::LeftButton);
+	}
+#endif
 
 private:
 	enum class State {
@@ -362,6 +370,11 @@ struct FoldersState {
 	rpl::variable<int> count;
 	rpl::variable<int> suggested;
 	Ui::SettingsButton *createButton = nullptr;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	base::weak_qptr<Ui::GenericBox> regressionEditor;
+	Data::ChatFilter regressionCreateFilter;
+	bool useRegressionCreateFilter = false;
+#endif
 	Fn<not_null<FilterRowButton*>(const Data::ChatFilter &)> add;
 	Fn<void(not_null<FilterRowButton*>, const Data::ChatFilter &)> edit;
 	Fn<void(not_null<FilterRowButton*>)> remove;
@@ -506,12 +519,19 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 				doneCallback(data);
 				state->save(button, next);
 			};
-			controller->window().show(Box(
+			auto editor = Box(
 				EditFilterBox,
 				controller,
 				found->filter,
 				crl::guard(button, doneCallback),
-				crl::guard(button, saveAnd)));
+				crl::guard(button, saveAnd));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			state->regressionEditor.reset();
+			state->regressionEditor = controller->window().show(
+				std::move(editor));
+#else
+			controller->window().show(std::move(editor));
+#endif
 		});
 		state->rows.push_back({ button, filter });
 		state->count = state->rows.size();
@@ -602,12 +622,26 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 			doneCallback(data);
 			state->save(*created, next);
 		};
-		controller->window().show(Box(
+		auto initial = Data::ChatFilter();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		if (state->useRegressionCreateFilter) {
+			initial = state->regressionCreateFilter;
+			state->useRegressionCreateFilter = false;
+		}
+#endif
+		auto editor = Box(
 			EditFilterBox,
 			controller,
-			Data::ChatFilter(),
+			initial,
 			crl::guard(container, doneCallback),
-			crl::guard(container, saveAnd)));
+			crl::guard(container, saveAnd));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		state->regressionEditor.reset();
+		state->regressionEditor = controller->window().show(
+			std::move(editor));
+#else
+		controller->window().show(std::move(editor));
+#endif
 	});
 
 	const auto prepareGoodIdsForNewFilters = [=] {
@@ -1356,12 +1390,7 @@ bool RunFoldersCrudRegressionForTest(
 		|| !state->save) {
 		return false;
 	}
-	const auto title = [](QString text) {
-		return Data::ChatFilterTitle{
-			.text = TextWithEntities{ .text = std::move(text) },
-		};
-	};
-	const auto initial = Data::ChatFilter(
+	state->regressionCreateFilter = Data::ChatFilter(
 		FilterId(0),
 		{},
 		{},
@@ -1369,42 +1398,95 @@ bool RunFoldersCrudRegressionForTest(
 		{},
 		{ history },
 		{},
-		{}).withTitle(title(u"Regression folder"_q));
-	// Drive the same row callbacks used by Create, Edit, Remove, and Save.
-	const auto button = state->add(initial);
-	state->save(button.get(), nullptr);
+		{});
+	state->useRegressionCreateFilter = true;
+	const auto submit = [&](const QString &name, bool enter) {
+		const auto editor = state->regressionEditor.get();
+		if (!editor) {
+			return false;
+		}
+		auto field = static_cast<Ui::InputField*>(nullptr);
+		for (const auto widget : editor->findChildren<QWidget*>()) {
+			if (const auto input = dynamic_cast<Ui::InputField*>(widget)) {
+				field = input;
+				break;
+			}
+		}
+		if (!field) {
+			return false;
+		}
+		field->setText(name);
+		if (enter) {
+			auto event = QKeyEvent(
+				QEvent::KeyPress,
+				Qt::Key_Return,
+				Qt::NoModifier);
+			QCoreApplication::sendEvent(field, &event);
+		} else {
+			editor->triggerButton(0);
+		}
+		QCoreApplication::processEvents();
+		return true;
+	};
+	const auto rowsBeforeCreate = state->rows.size();
+	state->createButton->clicked(Qt::NoModifier, Qt::LeftButton);
 	QCoreApplication::processEvents();
-	const auto row = ranges::find(state->rows, button, &FilterRow::button);
-	if (row == end(state->rows) || !row->filter.id()) {
+	if (!submit(u"Folder One"_q, false)
+		|| state->rows.size() != rowsBeforeCreate + 1) {
 		return false;
 	}
-	const auto id = row->filter.id();
+	const auto button = state->rows.back().button;
+	state->save(button.get(), nullptr);
+	QCoreApplication::processEvents();
+	const auto createdRow = ranges::find(
+		state->rows,
+		button,
+		&FilterRow::button);
+	if (createdRow == end(state->rows) || !createdRow->filter.id()) {
+		return false;
+	}
+	const auto id = createdRow->filter.id();
 	const auto locate = [=](not_null<Window::SessionController*> owner) {
 		const auto &filters = owner->session().data().chatsFilters().list();
 		return ranges::find(filters, id, &Data::ChatFilter::id);
 	};
-	const auto created = locate(controller);
-	if (created == end(controller->session().data().chatsFilters().list())
-		|| created->titleText().text != u"Regression folder"_q
-		|| created->always().size() != 1
-		|| !created->always().contains(history)
-		|| locate(other) != end(other->session().data().chatsFilters().list())) {
+	const auto verifySaved = [&](const QString &expectedTitle) {
+		const auto &filters = controller->session().data().chatsFilters().list();
+		const auto saved = ranges::find(
+			filters,
+			id,
+			&Data::ChatFilter::id);
+		return (saved != end(filters))
+			&& (saved->titleText().text == expectedTitle)
+			&& (saved->always().size() == 1)
+			&& saved->always().contains(history)
+			&& (locate(other)
+				== end(other->session().data().chatsFilters().list()));
+	};
+	if (!verifySaved(u"Folder One"_q)) {
 		return false;
 	}
-	state->edit(
-		button,
-		row->filter.withTitle(title(u"Renamed regression folder"_q)));
+	button->clicked(Qt::NoModifier, Qt::LeftButton);
+	QCoreApplication::processEvents();
+	if (!submit(u"Folder Two"_q, false)) {
+		return false;
+	}
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
-	const auto renamed = locate(controller);
-	if (renamed == end(controller->session().data().chatsFilters().list())
-		|| renamed->titleText().text != u"Renamed regression folder"_q
-		|| renamed->always().size() != 1
-		|| !renamed->always().contains(history)
-		|| locate(other) != end(other->session().data().chatsFilters().list())) {
+	if (!verifySaved(u"Folder Two"_q)) {
 		return false;
 	}
-	state->remove(button);
+	button->clicked(Qt::NoModifier, Qt::LeftButton);
+	QCoreApplication::processEvents();
+	if (!submit(u"Folder Key"_q, true)) {
+		return false;
+	}
+	state->save(nullptr, nullptr);
+	QCoreApplication::processEvents();
+	if (!verifySaved(u"Folder Key"_q)) {
+		return false;
+	}
+	button->triggerRemoveForTest();
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
 	return locate(controller)
