@@ -474,7 +474,7 @@ jobs:
           set -euo pipefail
           checked_out_sha="$(git rev-parse HEAD)"
           test "$checked_out_sha" = "$GITHUB_SHA"
-          test ! -e Libraries/local/lib/libiconv.a
+          test ! -e ../Libraries/local/lib/libiconv.a
           {
             echo '### Focused libiconv validation'
             printf -- '- Tested SHA: `%s`\n' "$checked_out_sha"
@@ -526,7 +526,7 @@ jobs:
       - name: Verify the universal static library.
         run: |
           set -euo pipefail
-          archive=Libraries/local/lib/libiconv.a
+          archive=../Libraries/local/lib/libiconv.a
           test -s "$archive"
           lipo_tool="$(xcrun --find lipo)"
           architectures="$("$lipo_tool" -archs "$archive")"
