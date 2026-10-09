@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_chat_filters.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -1229,7 +1230,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.exportSupported() == supported)
 			&& (session.passportSupported() == supported)
 			&& (session.aiComposeSupported() == supported)
-			&& (session.serverTranslationSupported() == supported);
+			&& (session.serverTranslationSupported() == supported)
+			&& (session.sharedFoldersSupported() == supported);
 	};
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
@@ -1500,7 +1502,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto printCapabilities = [](const char *name,
 								  const Main::Session &session) {
 		std::fprintf(stderr,
-			"%s capabilities=%d%d%d%d%d%d%d%d\n",
+			"%s capabilities=%d%d%d%d%d%d%d%d%d\n",
 			name,
 			session.callsSupported(),
 			session.botAppsSupported(),
@@ -1509,7 +1511,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			session.exportSupported(),
 			session.passportSupported(),
 			session.aiComposeSupported(),
-			session.serverTranslationSupported());
+			session.serverTranslationSupported(),
+			session.sharedFoldersSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -1619,6 +1622,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !activateAndCheck(true)) {
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
+	}
+	const auto pinnedController = pinnedWindow->sessionController();
+	if (!pinnedController
+		|| (&pinnedController->session() != &pinned->session())) {
+		return FailChatParticipantsRegression(
+			"pinned window lost its owning session before invite refusal test");
+	}
+	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
+	if (pinnedController->session().api()
+			.checkFilterInviteRequestPendingForRegressionTest()) {
+		return FailChatParticipantsRegression(
+			"unsupported pinned session sent a chatlist invite check request");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
