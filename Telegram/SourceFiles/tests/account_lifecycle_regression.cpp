@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -20,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "inline_bots/bot_attach_web_view.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -1565,6 +1567,33 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		return matches;
 	};
+	const auto customWebViewOpenIsRefused = [&] {
+		const auto controller = pinnedWindow->sessionController();
+		if (!controller) {
+			return false;
+		}
+		auto &webView = pinned->session().attachWebView();
+		const auto action = Api::SendAction(
+			pinned->session().data().history(pinned->session().user()));
+		const auto usernameOpened = webView.openByUsername(
+			controller,
+			action,
+			u"regression_bot"_q,
+			QString(),
+			false);
+		const auto directOpened = webView.open({
+			.bot = pinned->session().user(),
+			.context = { .controller = controller },
+			.source = InlineBots::WebViewSourceGame{
+				.title = u"Regression"_q,
+			},
+		});
+		if (usernameOpened || directOpened) {
+			webView.cancel();
+			webView.closeAll();
+		}
+		return !usernameOpened && !directOpened;
+	};
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
 		const auto second = customFirst ? stock : pinned;
@@ -1575,11 +1604,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto firstWindows = windowsMatch(customFirst
 			? "custom account first activation"
 			: "stock account first activation");
-		if (!firstActive || !firstCapabilities || !firstWindows) {
+		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
+		if (!firstActive
+			|| !firstCapabilities
+			|| !firstWindows
+			|| !firstCustomWebViewRefused) {
 			std::fprintf(stderr,
 				"First activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d\n",
-				customFirst, firstActive, firstCapabilities, firstWindows);
+				"capabilities=%d windows=%d webview-refused=%d\n",
+				customFirst,
+				firstActive,
+				firstCapabilities,
+				firstWindows,
+				firstCustomWebViewRefused);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 					first->session());
@@ -1593,11 +1630,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto secondWindows = windowsMatch(customFirst
 			? "stock account second activation"
 			: "custom account second activation");
-		if (!secondActive || !secondCapabilities || !secondWindows) {
+		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
+		if (!secondActive
+			|| !secondCapabilities
+			|| !secondWindows
+			|| !secondCustomWebViewRefused) {
 			std::fprintf(stderr,
 				"Second activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d\n",
-				customFirst, secondActive, secondCapabilities, secondWindows);
+				"capabilities=%d windows=%d webview-refused=%d\n",
+				customFirst,
+				secondActive,
+				secondCapabilities,
+				secondWindows,
+				secondCustomWebViewRefused);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second" : "pinned second",
 					second->session());

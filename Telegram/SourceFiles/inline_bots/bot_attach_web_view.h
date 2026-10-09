@@ -381,8 +381,8 @@ public:
 		return *_storage;
 	}
 
-	void open(WebViewDescriptor &&descriptor);
-	void openByUsername(
+	bool open(WebViewDescriptor &&descriptor);
+	bool openByUsername(
 		not_null<Window::SessionController*> controller,
 		const Api::SendAction &action,
 		const QString &botUsername,
@@ -438,11 +438,12 @@ public:
 	[[nodiscard]] rpl::producer<> popularAppBotsLoaded() const;
 
 private:
+	void showBotAppsUnavailable(Window::SessionController *controller) const;
 	void destroyDeferred(
 		std::vector<std::unique_ptr<WebViewInstance>> instances);
 
 	void resolveUsername(
-		std::shared_ptr<Ui::Show> show,
+		base::weak_ptr<Window::SessionController> controller,
 		Fn<void(not_null<PeerData*>)> done);
 
 	enum class ToggledState {
