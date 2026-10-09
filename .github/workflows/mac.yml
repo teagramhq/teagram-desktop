@@ -147,7 +147,10 @@ jobs:
               "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
               "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
               "BreakBeforeBinaryOperators: All, "
-              "NamespaceIndentation: None}"
+              "NamespaceIndentation: None, AlignAfterOpenBracket: false, "
+              "AlignOperands: DontAlign, Cpp11BracedListStyle: Block, "
+              "DerivePointerAlignment: false, PointerAlignment: Left, "
+              "PackArguments: OnePerLine, PackParameters: OnePerLine}"
           )
           failed = False
           for relative, ranges in sorted(changed.items()):
