@@ -2619,31 +2619,15 @@ void ApiWrap::registerModifyRequest(
 		const QString &key,
 		mtpRequestId requestId,
 		Fn<void()> onSuperseded) {
-	const auto i = _modifyRequests.find(key);
-	if (i != end(_modifyRequests)) {
-		request(i->second.id).cancel();
-		// The cancelled request never reports anything to its owner, so the
-		// replacement is what tells it that the request is gone. The new request
-		// is registered before the callback runs, so a save restarted from there
-		// sees the key as taken.
-		const auto onOldSuperseded = std::move(i->second.onSuperseded);
-		i->second = ModifyRequest{
-			.id = requestId,
-			.onSuperseded = std::move(onSuperseded),
-		};
-		if (onOldSuperseded) {
-			onOldSuperseded();
-		}
-	} else {
-		_modifyRequests.emplace(key, ModifyRequest{
-			.id = requestId,
-			.onSuperseded = std::move(onSuperseded),
-		});
-	}
+	_modifyRequests.registerRequest(
+		key,
+		requestId,
+		std::move(onSuperseded),
+		[this](int supersededId) { request(supersededId).cancel(); });
 }
 
 void ApiWrap::clearModifyRequest(const QString &key) {
-	_modifyRequests.remove(key);
+	_modifyRequests.clear(key);
 }
 
 void ApiWrap::gotStickerSet(

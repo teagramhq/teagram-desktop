@@ -7,7 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "api/api_modify_requests.h"
 #include "boxes/peers/edit_peer_permissions_save.h"
+
+#include <vector>
 
 namespace {
 
@@ -134,6 +137,179 @@ TEST_CASE(PermissionsSaveDoesNotCountARequestTwice) {
 	CHECK(!progress.complete());
 	CHECK(progress.finished());
 	CHECK(!progress.succeeded());
+}
+
+// The registration path the Permissions boxes use, not SaveProgress on its own:
+// a save from a second box for the same peer replaces the first box's in-flight
+// request under the same key. A save of a custom basic group is one request, so
+// the replaced save is told exactly once, and that notification is its last
+// answer: `finished() && !succeeded()` is what the box keys on to keep Save
+// retryable. Drop the notification from the registry and these tests fail
+// along with the permanently busy Save they cover.
+TEST_CASE(RegistrySupersedesTheInFlightSaveExactlyOnce) {
+	Api::ModifyRequestRegistry registry;
+	std::vector<int> cancelled;
+	const auto cancel = [&](int requestId) { cancelled.push_back(requestId); };
+
+	Permissions::SaveProgress first(1);
+	int firstSuperseded = 0;
+	int firstLastAnswer = 0;
+	const auto onFirstSuperseded = [&] {
+		++firstSuperseded;
+		if (first.superseded()) {
+			++firstLastAnswer;
+		}
+	};
+	registry.registerRequest(
+		"default_restrictions|1",
+		101,
+		onFirstSuperseded,
+		cancel);
+	CHECK_EQ(firstSuperseded, 0);
+	CHECK(cancelled.empty());
+	CHECK(!first.finished());
+
+	Permissions::SaveProgress second(1);
+	int secondSuperseded = 0;
+	int secondLastAnswer = 0;
+	registry.registerRequest(
+		"default_restrictions|1",
+		201,
+		[&] {
+			++secondSuperseded;
+			if (second.superseded()) {
+				++secondLastAnswer;
+			}
+		},
+		cancel);
+
+	CHECK_EQ(firstSuperseded, 1);
+	CHECK_EQ(firstLastAnswer, 1);
+	CHECK_EQ(secondSuperseded, 0);
+	CHECK_EQ(secondLastAnswer, 0);
+	CHECK_EQ(static_cast<int>(cancelled.size()), 1);
+	CHECK_EQ(cancelled[0], 101);
+	CHECK(first.finished());
+	CHECK(!first.succeeded());
+	CHECK(first.error().isEmpty());
+
+	// The replacement save answers on its own and is not tied to the first.
+	CHECK(second.complete(QString()));
+	CHECK(second.succeeded());
+	CHECK(!first.succeeded());
+}
+
+// A second box saving every setting of the peer replaces every request of the
+// first: one notification per replaced request, its requests cancelled in order,
+// and exactly one notification reported as the last answer.
+TEST_CASE(RegistrySupersedesEveryRequestOfAReplacedSave) {
+	Api::ModifyRequestRegistry registry;
+	std::vector<int> cancelled;
+	const auto cancel = [&](int requestId) { cancelled.push_back(requestId); };
+
+	Permissions::SaveProgress first(2);
+	int firstSuperseded = 0;
+	int firstLastAnswer = 0;
+	const auto onFirstSuperseded = [&] {
+		++firstSuperseded;
+		if (first.superseded()) {
+			++firstLastAnswer;
+		}
+	};
+	registry.registerRequest(
+		"default_restrictions|1",
+		101,
+		onFirstSuperseded,
+		cancel);
+	registry.registerRequest(
+		"slowmode_seconds|1",
+		102,
+		onFirstSuperseded,
+		cancel);
+	CHECK_EQ(firstSuperseded, 0);
+
+	Permissions::SaveProgress second(2);
+	int secondSuperseded = 0;
+	int secondLastAnswer = 0;
+	const auto onSecondSuperseded = [&] {
+		++secondSuperseded;
+		if (second.superseded()) {
+			++secondLastAnswer;
+		}
+	};
+	registry.registerRequest(
+		"default_restrictions|1",
+		201,
+		onSecondSuperseded,
+		cancel);
+	registry.registerRequest(
+		"slowmode_seconds|1",
+		202,
+		onSecondSuperseded,
+		cancel);
+
+	CHECK_EQ(firstSuperseded, 2);
+	CHECK_EQ(firstLastAnswer, 1);
+	CHECK_EQ(secondSuperseded, 0);
+	CHECK_EQ(secondLastAnswer, 0);
+	CHECK_EQ(static_cast<int>(cancelled.size()), 2);
+	CHECK_EQ(cancelled[0], 101);
+	CHECK_EQ(cancelled[1], 102);
+	CHECK(first.finished());
+	CHECK(!first.succeeded());
+
+	// The replacement completes independently of the save it replaced.
+	CHECK(!second.complete(QString()));
+	CHECK(second.complete(QString()));
+	CHECK(second.succeeded());
+	CHECK(!first.succeeded());
+}
+
+// The key carries the peer, so a save in another window for another peer cannot
+// supersede this peer's requests.
+TEST_CASE(RegistryKeepsSavesOfDifferentPeersApart) {
+	Api::ModifyRequestRegistry registry;
+	std::vector<int> cancelled;
+	const auto cancel = [&](int requestId) { cancelled.push_back(requestId); };
+
+	int superseded = 0;
+	const auto onSuperseded = [&] { ++superseded; };
+	registry.registerRequest(
+		"default_restrictions|1",
+		101,
+		onSuperseded,
+		cancel);
+	registry.registerRequest(
+		"default_restrictions|2",
+		102,
+		onSuperseded,
+		cancel);
+	CHECK_EQ(superseded, 0);
+	CHECK(cancelled.empty());
+}
+
+// A request that answered is cleared, so a later request under the same key is
+// never reported to a save whose answer already arrived.
+TEST_CASE(RegistryDoesNotSupersedeAnAnsweredRequest) {
+	Api::ModifyRequestRegistry registry;
+	std::vector<int> cancelled;
+	const auto cancel = [&](int requestId) { cancelled.push_back(requestId); };
+
+	int superseded = 0;
+	const auto onSuperseded = [&] { ++superseded; };
+	registry.registerRequest(
+		"slowmode_seconds|1",
+		101,
+		onSuperseded,
+		cancel);
+	registry.clear("slowmode_seconds|1");
+	registry.registerRequest(
+		"slowmode_seconds|1",
+		102,
+		onSuperseded,
+		cancel);
+	CHECK_EQ(superseded, 0);
+	CHECK(cancelled.empty());
 }
 
 TEST_CASE(LatePermissionsSaveSuccessCannotCompleteRetry) {

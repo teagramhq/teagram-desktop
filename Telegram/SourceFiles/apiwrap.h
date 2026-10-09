@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "api/api_common.h"
+#include "api/api_modify_requests.h"
 #include "base/timer.h"
 #include "mtproto/sender.h"
 #include "data/stickers/data_stickers_set.h"
@@ -660,12 +661,7 @@ private:
 
 	const not_null<Main::Session*> _session;
 
-	struct ModifyRequest {
-		mtpRequestId id = 0;
-		Fn<void()> onSuperseded;
-	};
-
-	base::flat_map<QString, ModifyRequest> _modifyRequests;
+	Api::ModifyRequestRegistry _modifyRequests;
 
 	MessageDataRequests _messageDataRequests;
 	base::flat_map<
