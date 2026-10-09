@@ -1052,6 +1052,13 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
+			if (!ctx.controller) {
+				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
+			}
 			return ShowPrivacyBox(
 				ctx,
 				PrivacyKey::Calls,
@@ -1710,6 +1717,10 @@ void RegisterSettingsHandlers(Router &router) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
 			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
+			}
 			Calls::ShowCallsBox(ctx.controller);
 			return Result::Handled;
 		}},
@@ -1857,6 +1868,10 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = CodeBlock{ [](const Context &ctx) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
 			}
 			Calls::ShowCallsBox(ctx.controller, true);
 			return Result::Handled;

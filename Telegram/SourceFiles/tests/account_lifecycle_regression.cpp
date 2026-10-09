@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/weak_ptr.h"
+#include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
@@ -2428,19 +2429,33 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch
-		= [](const Main::Session &session, bool supported) {
-			  return (session.callsSupported() == supported)
-					 && (session.botAppsSupported() == supported)
-					 && (session.paidFeaturesSupported() == supported)
-					 && (session.storiesSupported() == supported)
-					 && (session.exportSupported() == supported)
-					 && (session.passportSupported() == supported)
-					 && (session.aiComposeSupported() == supported)
-					 && (session.serverTranslationSupported() == supported)
-					 && (session.sharedFoldersSupported() == supported)
-					 && (session.accountBioEditSupported() == supported);
-		  };
+	const auto capabilitiesMatch = [](const Main::Session &session,
+								  bool supported) {
+		return (session.callsSupported() == supported)
+			&& (session.botAppsSupported() == supported)
+			&& (session.paidFeaturesSupported() == supported)
+			&& (session.storiesSupported() == supported)
+			&& (session.exportSupported() == supported)
+			&& (session.passportSupported() == supported)
+			&& (session.aiComposeSupported() == supported)
+			&& (session.serverTranslationSupported() == supported)
+			&& (session.sharedFoldersSupported() == supported)
+			&& (session.accountBioEditSupported() == supported);
+	};
+	const auto callStartGateMatches = [](not_null<Main::Account*> account,
+									 bool supported) {
+		auto unavailableShown = false;
+		auto existingStockCallReplaced = false;
+		const auto allowed = Calls::details::AllowCallStart(
+			account->session().callsSupported(),
+			[&] { unavailableShown = true; });
+		if (allowed) {
+			existingStockCallReplaced = true;
+		}
+		return (allowed == supported)
+			&& (unavailableShown == !supported)
+			&& (supported || !existingStockCallReplaced);
+	};
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
 	const auto searchHasBioTarget = [](not_null<Main::Session *> session) {
