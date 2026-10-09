@@ -766,7 +766,7 @@ void SetupBio(
 
 	const auto generation = Ui::CreateChild<int>(bio);
 	const auto owner = &self->session();
-	const auto weakBio = QPointer<Ui::InputField>(bio.get());
+	const auto weakBio = QPointer<Ui::InputField>(bio);
 	const auto weakController = base::make_weak(controller.get());
 	const auto save = [=] {
 		self->session().api().saveSelfBio(
@@ -1505,7 +1505,7 @@ bool InformationBioEditorTargetPresentForRegressionTest(
 	auto targets = InformationHighlightTargets();
 	SetupBio(container, controller->session().user(), controller, &targets);
 	const auto result = !targets.bio.isNull();
-	delete container.get();
+	delete container;
 	return result;
 }
 #endif
