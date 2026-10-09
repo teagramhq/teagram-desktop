@@ -528,10 +528,18 @@ jobs:
           set -euo pipefail
           archive=Libraries/local/lib/libiconv.a
           test -s "$archive"
-          architectures="$(lipo -archs "$archive")"
-          lipo -verify_arch arm64 x86_64 "$archive"
+          lipo_tool="$(xcrun --find lipo)"
+          architectures="$("$lipo_tool" -archs "$archive")"
+          echo "Xcode lipo: $lipo_tool"
+          echo "Library architectures: $architectures"
+          "$lipo_tool" -info "$archive"
+          if ! "$lipo_tool" -verify_arch arm64 x86_64 "$archive"; then
+            echo "::error::libiconv archive is missing arm64 or x86_64."
+            exit 1
+          fi
           {
             echo '### Universal library'
             printf -- '- Archive: `%s`\n' "$archive"
+            printf -- '- Xcode lipo: `%s`\n' "$lipo_tool"
             printf -- '- Architectures: `%s`\n' "$architectures"
           } >> "$GITHUB_STEP_SUMMARY"
