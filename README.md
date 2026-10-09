@@ -12,6 +12,10 @@ This is the complete source code and the build instructions for the official [Te
 
 The source code is published under GPLv3 with OpenSSL exception, the license is available [here][license].
 
+## Teagram desktop CI
+
+The `MacOS.` workflow is the required pull request gate for changes targeting `dev`: it builds the arm64 client from the PR merge head and checks that the app launches. Its nightly run on `dev` also replays the full chat info session regression under LLDB. `MacOS Packaged.` and `MacOS unit feedback.` remain manually dispatchable and are not merge gates.
+
 ## Supported systems
 
 The latest version is available for
@@ -96,4 +100,3 @@ Version **1.8.15** was the last that supports older systems
 </a>
 
 CI infrastructure sponsored by [Depot](https://depot.dev) — fast GitHub Actions runners.
-

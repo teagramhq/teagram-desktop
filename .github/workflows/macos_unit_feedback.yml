@@ -33,9 +33,6 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 180
 
-    env:
-      PREPARE_PATH: Telegram/build/prepare/prepare.py
-
     steps:
       - name: Validate repeat count.
         id: repeat-count
@@ -120,11 +117,11 @@ jobs:
           path: |
             Libraries
             ThirdParty
-          key: ${{ runner.OS }}-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
-          restore-keys: ${{ runner.OS }}-libs-
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
 
       - name: Libraries.
         id: libraries
+        if: steps.cache-libs.outputs.cache-hit != 'true'
         run: ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
@@ -137,7 +134,7 @@ jobs:
           path: |
             Libraries
             ThirdParty
-          key: ${{ runner.OS }}-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
 
       - name: Record tested revision.
         run: echo "TESTED_SHA=$(git -C "$REPO_NAME" rev-parse HEAD)" >> "$GITHUB_ENV"
