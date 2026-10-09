@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_instance.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "calls/calls_call.h"
 #include "calls/group/calls_group_common.h"
 #include "calls/group/calls_choose_join_as.h"
@@ -56,6 +60,9 @@ using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
 void ShowCallUnavailableToast(not_null<Main::Session*> session) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallUnavailableToastForRegressionTest(session.get());
+#endif
 	const auto show = [&](::Window::Controller *window) {
 		if (!window || window->maybeSession() != session.get()) {
 			return false;
@@ -220,6 +227,12 @@ void Instance::startOutgoingCall(
 		})) {
 		return;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallStartForRegressionTest(
+			Tests::CallStartRegressionKind::Outgoing)) {
+		return;
+	}
+#endif
 	if (activateCurrentCall()) {
 		return;
 	}
@@ -246,6 +259,12 @@ void Instance::startOrJoinGroupCall(
 		})) {
 		return;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallStartForRegressionTest(
+			Tests::CallStartRegressionKind::Group)) {
+		return;
+	}
+#endif
 	confirmLeaveCurrent(show, peer, args, [=](StartGroupCallArgs args) {
 		using JoinConfirm = Calls::StartGroupCallArgs::JoinConfirm;
 		const auto context = (args.confirm == JoinConfirm::Always)
@@ -279,6 +298,12 @@ void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 		})) {
 		return;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallStartForRegressionTest(
+			Tests::CallStartRegressionKind::Conference)) {
+		return;
+	}
+#endif
 
 	const auto migrationInfo = (args.migrating
 		&& args.call
@@ -357,6 +382,9 @@ void Instance::confirmLeaveCurrent(
 	confirmedArgs.confirm = JoinConfirm::None;
 
 	const auto askConfirmation = [&](QString text, QString button) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		Tests::RecordCallLeavePromptForRegressionTest();
+#endif
 		show->showBox(Ui::MakeConfirmBox({
 			.text = text,
 			.confirmed = [=] {
@@ -404,6 +432,12 @@ void Instance::showStartWithRtmp(
 		})) {
 		return;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallStartForRegressionTest(
+			Tests::CallStartRegressionKind::Rtmp)) {
+		return;
+	}
+#endif
 	_startWithRtmp->start(peer, show, [=](Group::JoinInfo info) {
 		confirmLeaveCurrent(show, peer, {}, [=](auto) {
 			_startWithRtmp->close();
@@ -926,6 +960,9 @@ bool Instance::hasActivePanel(Main::Session *session) const {
 }
 
 bool Instance::activateCurrentCall(const QString &joinHash) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallActivationForRegressionTest();
+#endif
 	if (inCall()) {
 		_currentCallPanel->showAndActivate();
 		return true;
@@ -986,6 +1023,9 @@ rpl::producer<GroupCall*> Instance::currentGroupCallValue() const {
 }
 
 void Instance::requestPermissionsOrFail(Fn<void()> onSuccess, bool video) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallPermissionRequestForRegressionTest();
+#endif
 	using Type = Platform::PermissionType;
 	requestPermissionOrFail(Type::Microphone, [=] {
 		auto callback = [=] { crl::on_main(onSuccess); };
