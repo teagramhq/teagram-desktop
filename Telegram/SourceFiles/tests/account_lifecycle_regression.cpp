@@ -1084,42 +1084,24 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 // of an app open requires before it builds the app. It carries no
 // username, so a username lookup misses it and the deferred path is taken.
 [[nodiscard]] MTPUser RegressionBotUser(UserId id) {
-	return MTP_user(
-		MTP_flags(MTPDuser::Flag::f_bot),
-		MTP_long(id.bare),
-		MTPlong(),
-		MTP_string(u"Regression Bot"_q),
-		MTPstring(),
-		MTPstring(),
-		MTPstring(),
-		MTPUserProfilePhoto(),
-		MTPUserStatus(),
-		MTP_int(1),
-		MTP_vector<MTPRestrictionReason>(0),
-		MTPstring(),
-		MTPstring(),
-		MTPEmojiStatus(),
-		MTP_vector<MTPUsername>(0),
-		MTPRecentStory(),
-		MTPPeerColor(),
-		MTPPeerColor(),
-		MTPint(),
-		MTPlong(),
-		MTPlong(),
-		MTPlong());
+	return MTP_user(MTP_flags(MTPDuser::Flag::f_bot), MTP_long(id.bare),
+					MTPlong(), MTP_string(u"Regression Bot"_q), MTPstring(),
+					MTPstring(), MTPstring(), MTPUserProfilePhoto(),
+					MTPUserStatus(), MTP_int(1),
+					MTP_vector<MTPRestrictionReason>(0), MTPstring(),
+					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
+					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
+					MTPlong(), MTPlong(), MTPlong());
 }
 
 // A username open on the session that owns it, taken session by session so
 // that no reference can outlive the session it was bound to.
-[[nodiscard]] bool OpenMiniAppByUsername(
-		not_null<Main::Session*> session,
-		not_null<Window::SessionController*> controller) {
+[[nodiscard]] bool
+OpenMiniAppByUsername(not_null<Main::Session *> session,
+					  not_null<Window::SessionController *> controller) {
 	return session->attachWebView().openByUsername(
-		controller,
-		Api::SendAction(session->data().history(session->user())),
-		u"regression_bot"_q,
-		QString(),
-		false);
+		controller, Api::SendAction(session->data().history(session->user())),
+		u"regression_bot"_q, QString(), false);
 }
 
 [[nodiscard]] bool HasParticipant(
@@ -1156,8 +1138,8 @@ struct WebViewOpenCounters {
 	int toasts = 0;
 };
 
-[[nodiscard]] WebViewOpenCounters ReadWebViewOpenCounters(
-		not_null<Main::Session*> session) {
+[[nodiscard]] WebViewOpenCounters
+ReadWebViewOpenCounters(not_null<Main::Session *> session) {
 	const auto &webView = session->attachWebView();
 	return {
 		.instances = webView.liveInstancesCountForRegressionTest(),
@@ -1168,15 +1150,12 @@ struct WebViewOpenCounters {
 	};
 }
 
-[[nodiscard]] bool WebViewOpenDeltaMatches(
-		const char *stage,
-		const WebViewOpenCounters &before,
-		const WebViewOpenCounters &after,
-		int toasts,
-		int requests,
-		int activations,
-		int resolves,
-		int instances) {
+[[nodiscard]] bool WebViewOpenDeltaMatches(const char *stage,
+										   const WebViewOpenCounters &before,
+										   const WebViewOpenCounters &after,
+										   int toasts, int requests,
+										   int activations, int resolves,
+										   int instances) {
 	if (((after.toasts - before.toasts) == toasts)
 		&& ((after.requests - before.requests) == requests)
 		&& ((after.activations - before.activations) == activations)
@@ -1184,28 +1163,16 @@ struct WebViewOpenCounters {
 		&& ((after.instances - before.instances) == instances)) {
 		return true;
 	}
-	std::fprintf(
-		stderr,
-		"Mini-app open regression %s: toasts %d->%d, requests %d->%d, "
-		"activations %d->%d, resolves %d->%d, instances %d->%d "
-		"(expected +%d toasts, +%d requests, +%d activations, "
-		"+%d resolves, +%d instances)\n",
-		stage,
-		before.toasts,
-		after.toasts,
-		before.requests,
-		after.requests,
-		before.activations,
-		after.activations,
-		before.resolves,
-		after.resolves,
-		before.instances,
-		after.instances,
-		toasts,
-		requests,
-		activations,
-		resolves,
-		instances);
+	std::fprintf(stderr,
+				 "Mini-app open regression %s: toasts %d->%d, requests %d->%d, "
+				 "activations %d->%d, resolves %d->%d, instances %d->%d "
+				 "(expected +%d toasts, +%d requests, +%d activations, "
+				 "+%d resolves, +%d instances)\n",
+				 stage, before.toasts, after.toasts, before.requests,
+				 after.requests, before.activations, after.activations,
+				 before.resolves, after.resolves, before.instances,
+				 after.instances, toasts, requests, activations, resolves,
+				 instances);
 	return false;
 }
 
@@ -1217,29 +1184,26 @@ struct WebViewOpenCounters {
 // session accepted.
 constexpr int kRegressionEntryClassCount = 13;
 
-[[nodiscard]] int AcceptedMiniAppOpens(
-		not_null<Main::Session*> session,
-		not_null<UserData*> bot,
-		not_null<Window::SessionController*> controller) {
+[[nodiscard]] int
+AcceptedMiniAppOpens(not_null<Main::Session *> session,
+					 not_null<UserData *> bot,
+					 not_null<Window::SessionController *> controller) {
 	const auto action = Api::SendAction(session->data().history(bot));
 	const auto sources = std::vector<InlineBots::WebViewSource>{
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceButton{} },
+		InlineBots::WebViewSource{InlineBots::WebViewSourceButton{}},
 		InlineBots::WebViewSource{
-			InlineBots::WebViewSourceButton{ .simple = true } },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceSwitch{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceLinkApp{} },
-		InlineBots::WebViewSource{
-			InlineBots::WebViewSourceLinkAttachMenu{} },
-		InlineBots::WebViewSource{
-			InlineBots::WebViewSourceLinkBotProfile{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceMainMenu{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceAttachMenu{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceBotMenu{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceGame{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceBotProfile{} },
-		InlineBots::WebViewSource{
-			InlineBots::WebViewSourceAgeVerification{} },
-		InlineBots::WebViewSource{ InlineBots::WebViewSourceJoinChat{} },
+			InlineBots::WebViewSourceButton{.simple = true}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceSwitch{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceLinkApp{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceLinkAttachMenu{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceLinkBotProfile{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceMainMenu{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceAttachMenu{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceBotMenu{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceGame{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceBotProfile{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceAgeVerification{}},
+		InlineBots::WebViewSource{InlineBots::WebViewSourceJoinChat{}},
 	};
 	if (static_cast<int>(sources.size()) != kRegressionEntryClassCount) {
 		return -1;
@@ -1268,15 +1232,11 @@ constexpr int kRegressionEntryClassCount = 13;
 // pinned to a custom server, a session blocked with no custom pin, and
 // a session whose window belongs to another account are all covered.
 [[nodiscard]] bool RunMiniAppOpenRefusalRegression(
-		Core::Application &app,
-		UserId selfId,
-		not_null<Main::Account*> stock,
-		not_null<Main::Account*> pinned,
-		not_null<Main::Account*> discarded,
-		not_null<Main::Account*> blank,
-		not_null<Window::Controller*> stockWindow,
-		not_null<Window::Controller*> pinnedWindow,
-		not_null<Window::Controller*> blankWindow) {
+	Core::Application &app, UserId selfId, not_null<Main::Account *> stock,
+	not_null<Main::Account *> pinned, not_null<Main::Account *> blank,
+	not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow,
+	not_null<Window::Controller *> blankWindow) {
 	const auto stockController = stockWindow->sessionController();
 	const auto pinnedController = pinnedWindow->sessionController();
 	if (!stockController || !pinnedController) {
@@ -1301,12 +1261,14 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto regressionUserId = UserId(777);
-	const auto stockBot = stock->session().data().peer(
-		peerFromUser(regressionUserId)
-	)->asUser();
-	const auto pinnedBot = pinned->session().data().peer(
-		peerFromUser(regressionUserId)
-	)->asUser();
+	const auto stockBot = stock->session()
+							  .data()
+							  .peer(peerFromUser(regressionUserId))
+							  ->asUser();
+	const auto pinnedBot = pinned->session()
+							   .data()
+							   .peer(peerFromUser(regressionUserId))
+							   ->asUser();
 	if (!stockBot || !pinnedBot) {
 		std::fprintf(
 			stderr,
@@ -1340,15 +1302,8 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto stockOpened = ReadWebViewOpenCounters(&stock->session());
-	if (!WebViewOpenDeltaMatches(
-			"stock app link",
-			stockBefore,
-			stockOpened,
-			0,
-			1,
-			1,
-			0,
-			1)) {
+	if (!WebViewOpenDeltaMatches("stock app link", stockBefore, stockOpened, 0,
+								 1, 1, 0, 1)) {
 		return false;
 	}
 
@@ -1364,22 +1319,13 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto pinnedRefused = ReadWebViewOpenCounters(&pinned->session());
-	if (!WebViewOpenDeltaMatches(
-			"custom-pinned entry classes",
-			pinnedBefore,
-			pinnedRefused,
-			kRegressionEntryClassCount,
-			0,
-			0,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("custom-pinned entry classes", pinnedBefore,
+								 pinnedRefused, kRegressionEntryClassCount, 0,
+								 0, 0, 0)) {
 		return false;
 	}
 	if (pinned->session().attachWebView().openByUsername(
-			pinnedController,
-			pinnedAction,
-			u"regression_bot"_q,
-			QString(),
+			pinnedController, pinnedAction, u"regression_bot"_q, QString(),
 			false)) {
 		std::fprintf(
 			stderr,
@@ -1388,15 +1334,8 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto pinnedUsername = ReadWebViewOpenCounters(&pinned->session());
-	if (!WebViewOpenDeltaMatches(
-			"custom-pinned username open",
-			pinnedRefused,
-			pinnedUsername,
-			1,
-			0,
-			0,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("custom-pinned username open", pinnedRefused,
+								 pinnedUsername, 1, 0, 0, 0, 0)) {
 		return false;
 	}
 
@@ -1420,10 +1359,7 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	if (stock->session().attachWebView().openByUsername(
-			pinnedController,
-			stockAction,
-			u"regression_bot"_q,
-			QString(),
+			pinnedController, stockAction, u"regression_bot"_q, QString(),
 			false)) {
 		std::fprintf(
 			stderr,
@@ -1432,30 +1368,16 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto guardAfter = ReadWebViewOpenCounters(&stock->session());
-	if (!WebViewOpenDeltaMatches(
-			"foreign window substitution",
-			guardBefore,
-			guardAfter,
-			0,
-			0,
-			0,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("foreign window substitution", guardBefore,
+								 guardAfter, 0, 0, 0, 0, 0)) {
 		return false;
 	}
 
 	// The stock app survived every refusal on the custom session, and the same
 	// open activates it instead of building a second one.
 	const auto stockAlive = ReadWebViewOpenCounters(&stock->session());
-	if (!WebViewOpenDeltaMatches(
-			"stock app after custom refusals",
-			stockOpened,
-			stockAlive,
-			0,
-			0,
-			0,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("stock app after custom refusals", stockOpened,
+								 stockAlive, 0, 0, 0, 0, 0)) {
 		return false;
 	}
 	if (!stock->session().attachWebView().open({
@@ -1473,15 +1395,8 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto stockActivated = ReadWebViewOpenCounters(&stock->session());
-	if (!WebViewOpenDeltaMatches(
-			"stock app activation",
-			stockAlive,
-			stockActivated,
-			0,
-			0,
-			1,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("stock app activation", stockAlive,
+								 stockActivated, 0, 0, 1, 0, 0)) {
 		return false;
 	}
 	stock->session().attachWebView().cancel();
@@ -1489,23 +1404,15 @@ constexpr int kRegressionEntryClassCount = 13;
 
 	// A link that names a chat opens that chat first, then the attach-bot open
 	// is refused with the toast, and the chat stays shown.
-	const auto contact = pinned->session().data().peer(
-		peerFromUser(UserId(2)));
+	const auto contact = pinned->session().data().peer(peerFromUser(UserId(2)));
 	const auto chatBefore = ReadWebViewOpenCounters(&pinned->session());
 	pinnedController->showPeerHistory(contact);
 	QCoreApplication::processEvents();
 	const auto chatShown = pinnedController->dialogsEntryStateCurrent();
 	const auto chatOpened = ReadWebViewOpenCounters(&pinned->session());
 	if ((chatShown.key.peer() != contact.get())
-		|| !WebViewOpenDeltaMatches(
-			"chat link opened the chat first",
-			chatBefore,
-			chatOpened,
-			0,
-			0,
-			0,
-			0,
-			0)) {
+		|| !WebViewOpenDeltaMatches("chat link opened the chat first",
+									chatBefore, chatOpened, 0, 0, 0, 0, 0)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: attach link chat did not open before "
@@ -1517,9 +1424,7 @@ constexpr int kRegressionEntryClassCount = 13;
 	if (pinned->session().attachWebView().openByUsername(
 			pinnedController,
 			Api::SendAction(pinned->session().data().history(contact)),
-			u"regression_bot"_q,
-			QString(),
-			false)) {
+			u"regression_bot"_q, QString(), false)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: custom session accepted the attach link "
@@ -1529,24 +1434,16 @@ constexpr int kRegressionEntryClassCount = 13;
 	const auto afterChatRefusal = pinnedController->dialogsEntryStateCurrent();
 	const auto chatRefused = ReadWebViewOpenCounters(&pinned->session());
 	if ((afterChatRefusal.key.peer() != contact.get())
-		|| !WebViewOpenDeltaMatches(
-			"chat link attach refusal",
-			chatOpened,
-			chatRefused,
-			1,
-			0,
-			0,
-			0,
-			0)) {
+		|| !WebViewOpenDeltaMatches("chat link attach refusal", chatOpened,
+									chatRefused, 1, 0, 0, 0, 0)) {
 		return false;
 	}
 
 	// A session blocked with no custom pin to fall back on refuses the same
 	// matrix: the block alone is enough, with no custom server set.
 	blank->setSessionUserId(selfId);
-	if (!blank->createSession(
-			RegressionUser(selfId, true, QString()),
-			std::make_unique<Main::SessionSettings>())) {
+	if (!blank->createSession(RegressionUser(selfId, true, QString()),
+							  std::make_unique<Main::SessionSettings>())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: could not create the blocked-session "
@@ -1555,10 +1452,9 @@ constexpr int kRegressionEntryClassCount = 13;
 	}
 	blank->mtp().dcOptions().constructBlocked();
 	const auto blankController = blankWindow->sessionController()
-		? blankWindow->sessionController()
-		: blank->session().tryResolveWindow();
-	if (!blankController
-		|| blank->mtp().dcOptions().hasCustomServer()
+									 ? blankWindow->sessionController()
+									 : blank->session().tryResolveWindow();
+	if (!blankController || blank->mtp().dcOptions().hasCustomServer()
 		|| !blank->mtp().dcOptions().blocked()
 		|| blank->session().botAppsSupported()) {
 		std::fprintf(
@@ -1572,13 +1468,14 @@ constexpr int kRegressionEntryClassCount = 13;
 		blank->forcedLogOut();
 		return false;
 	}
-	const auto blankBot = blank->session().data().peer(
-		peerFromUser(regressionUserId)
-	)->asUser();
+	const auto blankBot = blank->session()
+							  .data()
+							  .peer(peerFromUser(regressionUserId))
+							  ->asUser();
 	const auto blankBefore = ReadWebViewOpenCounters(&blank->session());
 	if (!blankBot
 		|| AcceptedMiniAppOpens(&blank->session(), blankBot, blankController)
-			!= 0) {
+			   != 0) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: blocked-without-pin session accepted "
@@ -1587,11 +1484,9 @@ constexpr int kRegressionEntryClassCount = 13;
 	}
 	if (blank->session().attachWebView().openByUsername(
 			blankController,
-			Api::SendAction(blank->session().data().history(
-				peerFromUser(selfId))),
-			u"regression_bot"_q,
-			QString(),
-			false)) {
+			Api::SendAction(
+				blank->session().data().history(peerFromUser(selfId))),
+			u"regression_bot"_q, QString(), false)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: blocked-without-pin session accepted "
@@ -1599,15 +1494,9 @@ constexpr int kRegressionEntryClassCount = 13;
 		return false;
 	}
 	const auto blankRefused = ReadWebViewOpenCounters(&blank->session());
-	if (!WebViewOpenDeltaMatches(
-			"blocked-without-pin refusals",
-			blankBefore,
-			blankRefused,
-			kRegressionEntryClassCount + 1,
-			0,
-			0,
-			0,
-			0)) {
+	if (!WebViewOpenDeltaMatches("blocked-without-pin refusals", blankBefore,
+								 blankRefused, kRegressionEntryClassCount + 1,
+								 0, 0, 0, 0)) {
 		blank->forcedLogOut();
 		return false;
 	}
@@ -1618,27 +1507,24 @@ constexpr int kRegressionEntryClassCount = 13;
 	// owning session, it refuses after that window is destroyed instead of
 	// opening in the window that replaced it, and it dies with a session so
 	// that a replacement session for the same user id gets nothing.
-	discarded->setSessionUserId(selfId);
-	if (!discarded->createSession(
-			RegressionUser(selfId, true, QString()),
-			std::make_unique<Main::SessionSettings>())) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: could not create the deferred "
-			"resolution fixture.\n");
+	const auto deferred = app.domain().add(MTP::Environment::Production);
+	deferred->mtp().stopForServerEnrollment();
+	deferred->setSessionUserId(selfId);
+	if (!deferred->createSession(RegressionUser(selfId, true, QString()),
+								 std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(stderr,
+					 "Mini-app open regression: could not create the deferred "
+					 "resolution fixture.\n");
 		return false;
 	}
 	const auto botUser = RegressionBotUser(regressionUserId);
-	const auto deferredBot = discarded->session().data().processUsers(
-		MTP_vector<MTPUser>({ botUser }));
-	const auto firstWindow = app.ensureSeparateWindowFor(discarded);
-	const auto firstController = firstWindow
-		? firstWindow->sessionController()
-		: nullptr;
-	if (!firstController
-		|| !deferredBot
-		|| !deferredBot->isBot()
-		|| !discarded->session().botAppsSupported()) {
+	const auto deferredBot = deferred->session().data().processUsers(
+		MTP_vector<MTPUser>({botUser}));
+	const auto firstWindow = app.ensureSeparateWindowFor(deferred);
+	const auto firstController
+		= firstWindow ? firstWindow->sessionController() : nullptr;
+	if (!firstController || !deferredBot || !deferredBot->isBot()
+		|| !deferred->session().botAppsSupported()) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: deferred fixture has no stock session "
@@ -1648,66 +1534,43 @@ constexpr int kRegressionEntryClassCount = 13;
 
 	// The seam opens when its guards pass, so every zero asserted below is a
 	// refusal and not a no-op.
-	const auto seamBefore = ReadWebViewOpenCounters(&discarded->session());
-	if (!OpenMiniAppByUsername(&discarded->session(), firstController)) {
+	const auto seamBefore = ReadWebViewOpenCounters(&deferred->session());
+	if (!OpenMiniAppByUsername(&deferred->session(), firstController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: stock session refused a username "
 			"open.\n");
 		return false;
 	}
-	const auto seamResolving = ReadWebViewOpenCounters(&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"stock deferred resolve",
-			seamBefore,
-			seamResolving,
-			0,
-			0,
-			0,
-			1,
-			0)) {
+	const auto seamResolving = ReadWebViewOpenCounters(&deferred->session());
+	if (!WebViewOpenDeltaMatches("stock deferred resolve", seamBefore,
+								 seamResolving, 0, 0, 0, 1, 0)) {
 		return false;
 	}
-	discarded->session().attachWebView()
-		.completePendingResolveForRegressionTest(
-			not_null<PeerData*>(deferredBot));
+	deferred->session().attachWebView().completePendingResolveForRegressionTest(
+		not_null<PeerData *>(deferredBot));
 	QCoreApplication::processEvents();
-	const auto seamOpened = ReadWebViewOpenCounters(&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"completion with a live window opens the app",
-			seamResolving,
-			seamOpened,
-			0,
-			1,
-			1,
-			0,
-			1)) {
+	const auto seamOpened = ReadWebViewOpenCounters(&deferred->session());
+	if (!WebViewOpenDeltaMatches("completion with a live window opens the app",
+								 seamResolving, seamOpened, 0, 1, 1, 0, 1)) {
 		return false;
 	}
-	discarded->session().attachWebView().cancel();
-	discarded->session().attachWebView().closeAll();
+	deferred->session().attachWebView().cancel();
+	deferred->session().attachWebView().closeAll();
 
 	// A completion that arrives after its window was destroyed must not use
 	// the window that replaced it.
-	const auto goneBefore = ReadWebViewOpenCounters(&discarded->session());
-	if (!OpenMiniAppByUsername(&discarded->session(),
-		firstController)) {
+	const auto goneBefore = ReadWebViewOpenCounters(&deferred->session());
+	if (!OpenMiniAppByUsername(&deferred->session(), firstController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: stock session refused the second "
 			"username open.\n");
 		return false;
 	}
-	const auto goneResolving = ReadWebViewOpenCounters(&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"resolve in flight at window teardown",
-			goneBefore,
-			goneResolving,
-			0,
-			0,
-			0,
-			1,
-			0)) {
+	const auto goneResolving = ReadWebViewOpenCounters(&deferred->session());
+	if (!WebViewOpenDeltaMatches("resolve in flight at window teardown",
+								 goneBefore, goneResolving, 0, 0, 0, 1, 0)) {
 		return false;
 	}
 	// Weak observations of the objects the pending completion is bound to,
@@ -1718,34 +1581,31 @@ constexpr int kRegressionEntryClassCount = 13;
 	QCoreApplication::processEvents();
 	QCoreApplication::processEvents();
 	if (!firstControllerWeak.empty()) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: the closed window's controller "
-			"outlived the teardown.\n");
+		std::fprintf(stderr,
+					 "Mini-app open regression: the closed window's controller "
+					 "outlived the teardown.\n");
 		return false;
 	}
-	if (!discarded->session().windows().empty()) {
+	if (!deferred->session().windows().empty()) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the closed window is still registered "
 			"with the session.\n");
 		return false;
 	}
-	const auto secondWindow = app.ensureSeparateWindowFor(discarded);
+	const auto secondWindow = app.ensureSeparateWindowFor(deferred);
 	QCoreApplication::processEvents();
-	const auto secondController = secondWindow
-		? secondWindow->sessionController()
-		: nullptr;
+	const auto secondController
+		= secondWindow ? secondWindow->sessionController() : nullptr;
 	// The premise of the refusal below, read off the live session: it has
 	// exactly one window registered, the replacement, the account shows that
 	// window, and the controller of that window serves this session.
-	const auto firstRegistration = discarded->session().windows();
-	if (!secondController
-		|| (firstRegistration.size() != 1)
+	const auto firstRegistration = deferred->session().windows();
+	if (!secondController || (firstRegistration.size() != 1)
 		|| (*firstRegistration.begin()
-			!= not_null<Window::SessionController*>(secondController))
-		|| (app.separateWindowFor(discarded) != secondWindow)
-		|| (&secondController->session() != &discarded->session())) {
+			!= not_null<Window::SessionController *>(secondController))
+		|| (app.separateWindowFor(deferred) != secondWindow)
+		|| (&secondController->session() != &deferred->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement window is not the one "
@@ -1753,65 +1613,48 @@ constexpr int kRegressionEntryClassCount = 13;
 			static_cast<int>(firstRegistration.size()));
 		return false;
 	}
-	discarded->session().attachWebView()
-		.completePendingResolveForRegressionTest(
-			not_null<PeerData*>(deferredBot));
+	deferred->session().attachWebView().completePendingResolveForRegressionTest(
+		not_null<PeerData *>(deferredBot));
 	QCoreApplication::processEvents();
-	const auto goneAfter = ReadWebViewOpenCounters(&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"completion after its window was destroyed",
-			goneResolving,
-			goneAfter,
-			0,
-			0,
-			0,
-			0,
-			0)) {
+	const auto goneAfter = ReadWebViewOpenCounters(&deferred->session());
+	if (!WebViewOpenDeltaMatches("completion after its window was destroyed",
+								 goneResolving, goneAfter, 0, 0, 0, 0, 0)) {
 		return false;
 	}
-	discarded->session().attachWebView().cancel();
-	discarded->session().attachWebView().closeAll();
+	deferred->session().attachWebView().cancel();
+	deferred->session().attachWebView().closeAll();
 
 	// A resolution in flight when the session is destroyed. The completion is
 	// taken out of the session first, so it can be run against the
 	// replacement session: its guard is production code, and a retained copy
 	// must refuse without touching the session that replaced the one it came
 	// from.
-	const auto diedBefore = ReadWebViewOpenCounters(&discarded->session());
-	if (!OpenMiniAppByUsername(&discarded->session(),
-		secondController)) {
+	const auto diedBefore = ReadWebViewOpenCounters(&deferred->session());
+	if (!OpenMiniAppByUsername(&deferred->session(), secondController)) {
 		std::fprintf(
-			stderr,
-			"Mini-app open regression: stock session refused the third "
-			"username open.\n");
+			stderr, "Mini-app open regression: stock session refused the third "
+					"username open.\n");
 		return false;
 	}
-	const auto diedResolving = ReadWebViewOpenCounters(&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"resolve in flight at session teardown",
-			diedBefore,
-			diedResolving,
-			0,
-			0,
-			0,
-			1,
-			0)) {
+	const auto diedResolving = ReadWebViewOpenCounters(&deferred->session());
+	if (!WebViewOpenDeltaMatches("resolve in flight at session teardown",
+								 diedBefore, diedResolving, 0, 0, 0, 1, 0)) {
 		return false;
 	}
-	auto retained = discarded->session().attachWebView()
-		.takePendingResolveForRegressionTest();
-	const auto diedWebviewWeak = base::make_weak(
-		&discarded->session().attachWebView());
+	auto retained = deferred->session()
+						.attachWebView()
+						.takePendingResolveForRegressionTest();
+	const auto diedWebviewWeak
+		= base::make_weak(&deferred->session().attachWebView());
 	const auto diedControllerWeak = base::make_weak(secondController);
 	if (!retained || !diedWebviewWeak || !diedControllerWeak) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: no completion retained for the "
-			"session teardown.\n");
+		std::fprintf(stderr,
+					 "Mini-app open regression: no completion retained for the "
+					 "session teardown.\n");
 		return false;
 	}
-	discarded->forcedLogOut();
-	if (discarded->sessionExists()) {
+	deferred->forcedLogOut();
+	if (deferred->sessionExists()) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: teardown kept the session with a "
@@ -1821,10 +1664,9 @@ constexpr int kRegressionEntryClassCount = 13;
 	// Expiry, not an address: the session that owned the retained completion
 	// is destroyed, and so is the window that owned its controller.
 	if (!diedWebviewWeak.empty()) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: the destroyed session kept its "
-			"webview.\n");
+		std::fprintf(stderr,
+					 "Mini-app open regression: the destroyed session kept its "
+					 "webview.\n");
 		return false;
 	}
 	app.closeWindow(secondWindow);
@@ -1837,7 +1679,13 @@ constexpr int kRegressionEntryClassCount = 13;
 			"controller.\n");
 		return false;
 	}
-	if (!discarded->createSession(
+	// Closing the old window lets the domain remove its now-sessionless
+	// account, so the replacement must be a fresh account with the same user
+	// id.
+	const auto replacement = app.domain().add(MTP::Environment::Production);
+	replacement->mtp().stopForServerEnrollment();
+	replacement->setSessionUserId(selfId);
+	if (!replacement->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
 		std::fprintf(
@@ -1846,21 +1694,19 @@ constexpr int kRegressionEntryClassCount = 13;
 			"session.\n");
 		return false;
 	}
-	const auto thirdWindow = app.ensureSeparateWindowFor(discarded);
+	const auto thirdWindow = app.ensureSeparateWindowFor(replacement);
 	QCoreApplication::processEvents();
 	QCoreApplication::processEvents();
-	const auto thirdController = thirdWindow
-		? thirdWindow->sessionController()
-		: nullptr;
+	const auto thirdController
+		= thirdWindow ? thirdWindow->sessionController() : nullptr;
 	// The replacement is a live session of this account with its own window
 	// registered, established without comparing any destroyed address.
-	const auto secondRegistration = discarded->session().windows();
-	if (!thirdController
-		|| (secondRegistration.size() != 1)
+	const auto secondRegistration = replacement->session().windows();
+	if (!thirdController || (secondRegistration.size() != 1)
 		|| (*secondRegistration.begin()
-			!= not_null<Window::SessionController*>(thirdController))
-		|| (app.separateWindowFor(discarded) != thirdWindow)
-		|| (&thirdController->session() != &discarded->session())) {
+			!= not_null<Window::SessionController *>(thirdController))
+		|| (app.separateWindowFor(replacement) != thirdWindow)
+		|| (&thirdController->session() != &replacement->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session did not take "
@@ -1868,8 +1714,8 @@ constexpr int kRegressionEntryClassCount = 13;
 			static_cast<int>(secondRegistration.size()));
 		return false;
 	}
-	const auto replacementCounters = ReadWebViewOpenCounters(
-		&discarded->session());
+	const auto replacementCounters
+		= ReadWebViewOpenCounters(&replacement->session());
 	if ((replacementCounters.instances != 0)
 		|| (replacementCounters.requests != 0)
 		|| (replacementCounters.activations != 0)
@@ -1880,70 +1726,55 @@ constexpr int kRegressionEntryClassCount = 13;
 			"Mini-app open regression: the replacement session was not "
 			"clean at the teardown boundary: instances=%d requests=%d "
 			"activations=%d resolves=%d toasts=%d\n",
-			replacementCounters.instances,
-			replacementCounters.requests,
-			replacementCounters.activations,
-			replacementCounters.resolves,
+			replacementCounters.instances, replacementCounters.requests,
+			replacementCounters.activations, replacementCounters.resolves,
 			replacementCounters.toasts);
 		return false;
 	}
 	// The retained completion of the destroyed session, run against a live
 	// peer of the replacement session: its guard fires, and the replacement
 	// session sees no access and no side effect.
-	const auto replacementBot = discarded->session().data().processUsers(
-		MTP_vector<MTPUser>({ botUser }));
+	const auto replacementBot = replacement->session().data().processUsers(
+		MTP_vector<MTPUser>({botUser}));
 	if (!replacementBot) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: no bot peer in the replacement "
-			"session.\n");
+		std::fprintf(stderr,
+					 "Mini-app open regression: no bot peer in the replacement "
+					 "session.\n");
 		return false;
 	}
-	retained(not_null<PeerData*>(replacementBot));
+	retained(not_null<PeerData *>(replacementBot));
 	QCoreApplication::processEvents();
-	const auto afterRetained = ReadWebViewOpenCounters(
-		&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"retained completion of the destroyed session",
-			replacementCounters,
-			afterRetained,
-			0,
-			0,
-			0,
-			0,
-			0)) {
+	const auto afterRetained = ReadWebViewOpenCounters(&replacement->session());
+	if (!WebViewOpenDeltaMatches("retained completion of the destroyed session",
+								 replacementCounters, afterRetained, 0, 0, 0, 0,
+								 0)) {
 		return false;
 	}
 	// Positive control: the same seam opens on the replacement session,
 	// so the zeros above are a refusal and not an inert webview.
-	if (!OpenMiniAppByUsername(&discarded->session(), thirdController)) {
+	if (!OpenMiniAppByUsername(&replacement->session(), thirdController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session refused a "
 			"username open.\n");
 		return false;
 	}
-	discarded->session().attachWebView()
+	replacement->session()
+		.attachWebView()
 		.completePendingResolveForRegressionTest(
-			not_null<PeerData*>(replacementBot));
+			not_null<PeerData *>(replacementBot));
 	QCoreApplication::processEvents();
-	const auto replacementOpened = ReadWebViewOpenCounters(
-		&discarded->session());
-	if (!WebViewOpenDeltaMatches(
-			"replacement session opens its own app",
-			afterRetained,
-			replacementOpened,
-			0,
-			1,
-			1,
-			1,
-			1)) {
+	const auto replacementOpened
+		= ReadWebViewOpenCounters(&replacement->session());
+	if (!WebViewOpenDeltaMatches("replacement session opens its own app",
+								 afterRetained, replacementOpened, 0, 1, 1, 1,
+								 1)) {
 		return false;
 	}
-	discarded->session().attachWebView().cancel();
-	discarded->session().attachWebView().closeAll();
-	discarded->forcedLogOut();
-	if (thirdWindow && (app.separateWindowFor(discarded) == thirdWindow)) {
+	replacement->session().attachWebView().cancel();
+	replacement->session().attachWebView().closeAll();
+	replacement->forcedLogOut();
+	if (thirdWindow && (app.separateWindowFor(replacement) == thirdWindow)) {
 		app.closeWindow(thirdWindow);
 	}
 	std::fprintf(
@@ -1964,6 +1795,37 @@ constexpr int kRegressionEntryClassCount = 13;
 		"Chat participants regression failed: %s\n",
 		reason);
 	return 1;
+}
+
+[[nodiscard]] bool WaitForOnlineUpdateCallsForRegression(Main::Session &stock,
+														 int stockExpected,
+														 Main::Session &pinned,
+														 int pinnedExpected) {
+	const auto matches = [&] {
+		return stock.updates().onlineUpdateCallsForRegressionTest()
+				   == stockExpected
+			   && pinned.updates().onlineUpdateCallsForRegressionTest()
+					  == pinnedExpected;
+	};
+	if (matches()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	auto poll = QTimer();
+	timeout.setSingleShot(true);
+	poll.setInterval(10);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (matches()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	timeout.start(5000);
+	loop.exec();
+	poll.stop();
+	return matches();
 }
 
 [[nodiscard]] int
@@ -2119,11 +1981,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update only the shown session inline");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockToPinnedStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedPinnedUpdates + 1) {
+	if (!WaitForOnlineUpdateCallsForRegression(
+			stock->session(), stockToPinnedStockUpdates + 1, pinned->session(),
+			stockToPinnedPinnedUpdates + 1)) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update each session exactly once");
 	}
@@ -2140,11 +2000,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update only the shown session inline");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= pinnedToStockStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockPinnedUpdates + 1) {
+	if (!WaitForOnlineUpdateCallsForRegression(
+			stock->session(), pinnedToStockStockUpdates + 1, pinned->session(),
+			pinnedToStockPinnedUpdates + 1)) {
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update each session exactly once");
 	}
@@ -2205,11 +2063,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockBeforeQueuedSwitches + 2
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 2) {
+	if (!WaitForOnlineUpdateCallsForRegression(
+			stock->session(), stockBeforeQueuedSwitches + 2, pinned->session(),
+			pinnedBeforeQueuedSwitches + 2)) {
 		return FailChatParticipantsRegression(
 			"queued live and destroyed-session updates reached the wrong sessions");
 	}
@@ -2437,11 +2293,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto action = Api::SendAction(
 			pinned->session().data().history(pinned->session().user()));
 		const auto usernameOpened = webView.openByUsername(
-			controller,
-			action,
-			u"regression_bot"_q,
-			QString(),
-			false);
+			controller, action, u"regression_bot"_q, QString(), false);
 		const auto directOpened = webView.open({
 			.bot = pinned->session().user(),
 			.context = { .controller = controller },
@@ -2457,21 +2309,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		// The refusal is the toast and nothing else, at both switching orders:
 		// no resolve, no app request, no instance, no activation.
 		const auto refused = WebViewOpenDeltaMatches(
-			"custom open at an activation order",
-			before,
-			ReadWebViewOpenCounters(&pinned->session()),
-			2,
-			0,
-			0,
-			0,
-			0);
+			"custom open at an activation order", before,
+			ReadWebViewOpenCounters(&pinned->session()), 2, 0, 0, 0, 0);
 		if (!refused) {
 			std::fprintf(
 				stderr,
 				"Custom webview open at this activation order: username=%d "
 				"direct=%d\n",
-				usernameOpened,
-				directOpened);
+				usernameOpened, directOpened);
 		}
 		return refused;
 	};
@@ -2486,18 +2331,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			? "custom account first activation"
 			: "stock account first activation");
 		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
-		if (!firstActive
-			|| !firstCapabilities
-			|| !firstWindows
+		if (!firstActive || !firstCapabilities || !firstWindows
 			|| !firstCustomWebViewRefused) {
 			std::fprintf(stderr,
-				"First activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d webview-refused=%d\n",
-				customFirst,
-				firstActive,
-				firstCapabilities,
-				firstWindows,
-				firstCustomWebViewRefused);
+						 "First activation mismatch: customFirst=%d active=%d "
+						 "capabilities=%d windows=%d webview-refused=%d\n",
+						 customFirst, firstActive, firstCapabilities,
+						 firstWindows, firstCustomWebViewRefused);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 					first->session());
@@ -2512,18 +2352,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			? "stock account second activation"
 			: "custom account second activation");
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
-		if (!secondActive
-			|| !secondCapabilities
-			|| !secondWindows
+		if (!secondActive || !secondCapabilities || !secondWindows
 			|| !secondCustomWebViewRefused) {
 			std::fprintf(stderr,
-				"Second activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d webview-refused=%d\n",
-				customFirst,
-				secondActive,
-				secondCapabilities,
-				secondWindows,
-				secondCustomWebViewRefused);
+						 "Second activation mismatch: customFirst=%d active=%d "
+						 "capabilities=%d windows=%d webview-refused=%d\n",
+						 customFirst, secondActive, secondCapabilities,
+						 secondWindows, secondCustomWebViewRefused);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second" : "pinned second",
 					second->session());
@@ -2546,16 +2381,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
 	}
-	if (!RunMiniAppOpenRefusalRegression(
-			app,
-			selfId,
-			stock,
-			pinned,
-			discarded,
-			blank,
-			stockWindow,
-			pinnedWindow,
-			blankWindow)) {
+	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
+										 stockWindow, pinnedWindow,
+										 blankWindow)) {
 		return FailChatParticipantsRegression(
 			"mini-app open refusal was not observable on the owning session");
 	}

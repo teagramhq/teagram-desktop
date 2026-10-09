@@ -2450,7 +2450,7 @@ AttachWebView::~AttachWebView() {
 }
 
 void AttachWebView::showBotAppsUnavailable(
-		Window::SessionController *controller) {
+	Window::SessionController *controller) {
 	if (!controller || &controller->session() != _session) {
 		controller = _session->tryResolveWindow();
 	}
@@ -2481,23 +2481,21 @@ int AttachWebView::unavailableToastCountForRegressionTest() const {
 }
 
 void AttachWebView::completePendingResolveForRegressionTest(
-		not_null<PeerData*> peer) {
+	not_null<PeerData *> peer) {
 	if (const auto done = base::take(_pendingResolveForRegressionTest)) {
 		done(peer);
 	}
 }
 
-Fn<void(not_null<PeerData*>)>
+Fn<void(not_null<PeerData *>)>
 AttachWebView::takePendingResolveForRegressionTest() {
 	return base::take(_pendingResolveForRegressionTest);
 }
 
 bool AttachWebView::openByUsername(
-		not_null<Window::SessionController*> controller,
-		const Api::SendAction &action,
-		const QString &botUsername,
-		const QString &startCommand,
-		bool fullscreen) {
+	not_null<Window::SessionController *> controller,
+	const Api::SendAction &action, const QString &botUsername,
+	const QString &startCommand, bool fullscreen) {
 	if (botUsername.isEmpty()) {
 		return false;
 	} else if (!_session->botAppsSupported()) {
@@ -2507,9 +2505,8 @@ bool AttachWebView::openByUsername(
 	} else if (&controller->session() != _session) {
 		cancel();
 		return false;
-	} else if (_botUsername == botUsername
-			&& _startCommand == startCommand
-			&& _fullScreenRequested == fullscreen) {
+	} else if (_botUsername == botUsername && _startCommand == startCommand
+			   && _fullScreenRequested == fullscreen) {
 		return true;
 	}
 	cancel();
@@ -2520,14 +2517,13 @@ bool AttachWebView::openByUsername(
 	const auto weak = base::make_weak(this);
 	const auto weakController = base::make_weak(controller);
 	resolveUsername(
-		weakController,
-		crl::guard(weak, [=](not_null<PeerData*> peer) {
+		weakController, crl::guard(weak, [=](not_null<PeerData *> peer) {
 			const auto self = weak.get();
 			const auto strongController = weakController.get();
 			if (!self) {
 				return;
 			} else if (!strongController
-				|| &strongController->session() != self->_session) {
+					   || &strongController->session() != self->_session) {
 				self->cancel();
 				return;
 			}
@@ -2772,8 +2768,8 @@ void AttachWebView::removeFromMenu(
 }
 
 void AttachWebView::resolveUsername(
-		base::weak_ptr<Window::SessionController> controller,
-		Fn<void(not_null<PeerData*>)> done) {
+	base::weak_ptr<Window::SessionController> controller,
+	Fn<void(not_null<PeerData *>)> done) {
 	if (const auto peer = _session->data().peerByUsername(_botUsername)) {
 		done(peer);
 		return;
@@ -2785,7 +2781,7 @@ void AttachWebView::resolveUsername(
 	// so it cannot outlive the request it belongs to. The regression can keep a
 	// copy of it past the death of this session: running such a copy does what
 	// the request would do, nothing, without touching the destroyed session.
-	_pendingResolveForRegressionTest = [weak, done](not_null<PeerData*> peer) {
+	_pendingResolveForRegressionTest = [weak, done](not_null<PeerData *> peer) {
 		const auto self = weak.get();
 		if (!self) {
 			return;
@@ -2793,41 +2789,41 @@ void AttachWebView::resolveUsername(
 		self->_pendingResolveForRegressionTest = nullptr;
 		done(peer);
 	};
-	_requestId = _session->api().request(MTPcontacts_ResolveUsername(
-		MTP_flags(0),
-		MTP_string(_botUsername),
-		MTP_string()
-	)).done([=](const MTPcontacts_ResolvedPeer &result) {
-		const auto self = weak.get();
-		if (!self) {
-			return;
-		}
-		self->_requestId = 0;
-		self->_pendingResolveForRegressionTest = nullptr;
-		result.match([&](const MTPDcontacts_resolvedPeer &data) {
-			self->_session->data().processUsers(data.vusers());
-			self->_session->data().processChats(data.vchats());
-			if (const auto peerId = peerFromMTP(data.vpeer())) {
-				done(self->_session->data().peer(peerId));
-			}
-		});
-	}).fail([=](const MTP::Error &error) {
-		const auto self = weak.get();
-		if (!self) {
-			return;
-		}
-		self->_requestId = 0;
-		self->_pendingResolveForRegressionTest = nullptr;
-		if (error.code() == 400) {
-			if (const auto strong = controller.get(); strong
-				&& &strong->session() == self->_session) {
-				strong->showToast(tr::lng_username_not_found(
-					tr::now,
-					lt_user,
-					self->_botUsername));
-			}
-		}
-	}).send();
+	_requestId
+		= _session->api()
+			  .request(MTPcontacts_ResolveUsername(
+				  MTP_flags(0), MTP_string(_botUsername), MTP_string()))
+			  .done([=](const MTPcontacts_ResolvedPeer &result) {
+				  const auto self = weak.get();
+				  if (!self) {
+					  return;
+				  }
+				  self->_requestId = 0;
+				  self->_pendingResolveForRegressionTest = nullptr;
+				  result.match([&](const MTPDcontacts_resolvedPeer &data) {
+					  self->_session->data().processUsers(data.vusers());
+					  self->_session->data().processChats(data.vchats());
+					  if (const auto peerId = peerFromMTP(data.vpeer())) {
+						  done(self->_session->data().peer(peerId));
+					  }
+				  });
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  const auto self = weak.get();
+				  if (!self) {
+					  return;
+				  }
+				  self->_requestId = 0;
+				  self->_pendingResolveForRegressionTest = nullptr;
+				  if (error.code() == 400) {
+					  if (const auto strong = controller.get();
+						  strong && &strong->session() == self->_session) {
+						  strong->showToast(tr::lng_username_not_found(
+							  tr::now, lt_user, self->_botUsername));
+					  }
+				  }
+			  })
+			  .send();
 	++_usernameResolvesCountForRegressionTest;
 }
 
