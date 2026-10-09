@@ -2617,18 +2617,17 @@ void ApiWrap::checkQuitPreventFinished() {
 
 void ApiWrap::registerModifyRequest(
 		const QString &key,
-		mtpRequestId requestId) {
-	const auto i = _modifyRequests.find(key);
-	if (i != end(_modifyRequests)) {
-		request(i->second).cancel();
-		i->second = requestId;
-	} else {
-		_modifyRequests.emplace(key, requestId);
-	}
+		mtpRequestId requestId,
+		Fn<void()> onSuperseded) {
+	_modifyRequests.registerRequest(
+		key,
+		requestId,
+		std::move(onSuperseded),
+		[this](int supersededId) { request(supersededId).cancel(); });
 }
 
 void ApiWrap::clearModifyRequest(const QString &key) {
-	_modifyRequests.remove(key);
+	_modifyRequests.clear(key);
 }
 
 void ApiWrap::gotStickerSet(

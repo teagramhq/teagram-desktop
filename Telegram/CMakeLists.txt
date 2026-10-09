@@ -167,6 +167,7 @@ PRIVATE
     api/api_messages_search.h
     api/api_messages_search_merged.cpp
     api/api_messages_search_merged.h
+    api/api_modify_requests.h
     api/api_peer_colors.cpp
     api/api_peer_colors.h
     api/api_peer_photo.cpp
@@ -280,6 +281,7 @@ PRIVATE
     boxes/peers/edit_peer_invite_links.h
     boxes/peers/edit_peer_permissions_box.cpp
     boxes/peers/edit_peer_permissions_box.h
+    boxes/peers/edit_peer_permissions_save.h
     boxes/peers/edit_peer_reactions.cpp
     boxes/peers/edit_peer_reactions.h
     boxes/peers/edit_peer_requests_box.cpp
