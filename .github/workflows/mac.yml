@@ -278,6 +278,7 @@ jobs:
           # arm64-only client against them needs nothing else.
           configure_status=0
           ./configure.sh \
+          -G "Ninja Multi-Config" \
           -D CMAKE_OSX_ARCHITECTURES=arm64 \
           -D CMAKE_CONFIGURATION_TYPES=Debug \
           -D CMAKE_EXPORT_COMPILE_COMMANDS=ON \
@@ -295,6 +296,8 @@ jobs:
           fi
 
           grep -F 'DESKTOP_APP_DISABLE_AUTOUPDATE:BOOL=ON' ../out/CMakeCache.txt
+          grep -F 'CMAKE_GENERATOR:INTERNAL=Ninja Multi-Config' ../out/CMakeCache.txt
+          grep -E '^CMAKE_CXX_COMPILER_LAUNCHER:[^=]+=ccache$' ../out/CMakeCache.txt
           ccache --max-size="$CCACHE_MAXSIZE"
           ccache --zero-stats
           build_status=0
@@ -868,12 +871,15 @@ jobs:
       - name: Report compiler cache hits.
         id: ccache-stats
         if: ${{ always() && steps.setup.outcome == 'success' }}
+        env:
+          CCACHE_MATCHED_KEY: ${{ steps.cache-ccache.outputs.cache-matched-key }}
+          LIBRARIES_CACHE_HIT: ${{ steps.cache-libs.outputs.cache-hit }}
         run: |
           set -Eeuo pipefail
           ccache --show-stats
           stats="$(ccache --print-stats)"
           printf '%s\n' "$stats"
-          hits="$(printf '%s\n' "$stats" | awk -F '\t' '$1 == "cache_hit" && NF == 2 && $2 ~ /^[0-9]+$/ { print $2; found=1 } END { if (!found) exit 2 }')"
+          hits="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_hit_count.sh")"
           misses="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_miss_count.sh")"
           total=$((10#$hits + 10#$misses))
           if ((total)); then
@@ -884,6 +890,27 @@ jobs:
           echo "ccache hits this run: $hits"
           echo "ccache misses this run: $misses"
           echo "ccache hit rate: $hits/$total ($hit_rate)"
+          printf '%s\n' \
+            "- Compiler cache matched key: ${CCACHE_MATCHED_KEY:-none}" \
+            "- Exact Libraries cache hit: ${LIBRARIES_CACHE_HIT:-false}" \
+            "- ccache hits: $hits" \
+            "- ccache misses: $misses" \
+            "- ccache hit rate: $hits/$total ($hit_rate)" \
+            >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' && -n "$CCACHE_MATCHED_KEY" ]]; then
+            if ((hits == 0)); then
+              echo "::error::A restored compiler cache produced no cache hits."
+              exit 1
+            fi
+            if [[ "$LIBRARIES_CACHE_HIT" != 'true' ]]; then
+              echo "::error::A warm MacOS PR run must have an exact Libraries cache hit."
+              exit 1
+            fi
+          fi
+          if [[ "$BUILD_OUTCOME" == 'success' ]] && ((total == 0)); then
+            echo "::error::ccache did not record any compiler invocations for the Teagram build."
+            exit 1
+          fi
           echo "misses=$misses" >> "$GITHUB_OUTPUT"
           bash "$REPO_NAME/.github/scripts/ccache_save_decision.sh" "$misses" >> "$GITHUB_OUTPUT"
 
@@ -902,6 +929,7 @@ jobs:
       - name: Report MacOS job wall time.
         if: always()
         env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
           CCACHE_MATCHED_KEY: ${{ steps.cache-ccache.outputs.cache-matched-key }}
           LIBRARIES_CACHE_HIT: ${{ steps.cache-libs.outputs.cache-hit }}
         run: |

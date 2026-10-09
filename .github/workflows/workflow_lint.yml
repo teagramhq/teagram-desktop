@@ -9,6 +9,8 @@ on:
       - '.github/actionlint.yaml'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_hit_count.sh'
+      - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
@@ -19,6 +21,8 @@ on:
       - '.github/actionlint.yaml'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_hit_count.sh'
+      - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
@@ -64,6 +68,9 @@ jobs:
 
       - name: Test ccache save decision.
         run: bash .github/scripts/test_ccache_save_decision.sh
+
+      - name: Test ccache hit count.
+        run: bash .github/scripts/test_ccache_hit_count.sh
 
       - name: Test ccache miss count.
         run: bash .github/scripts/test_ccache_miss_count.sh
