@@ -127,6 +127,7 @@ private:
 		TeagramUpdateChannel installedChannel,
 		const std::optional<TeagramUpdatePublicKey> &trustedKey);
 #endif // TDESKTOP_UNIT_TESTS
+
 };
 
 struct TeagramUpdateVerificationResult {

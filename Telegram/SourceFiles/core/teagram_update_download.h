@@ -68,6 +68,7 @@ public:
 		quint64 maximumBytes,
 		const ChunkHandler &onChunk,
 		const CancellationCheck &isCancelled) = 0;
+
 };
 
 class TeagramUpdateCandidate final {
@@ -85,6 +86,7 @@ private:
 
 	AuthenticatedTeagramUpdate _metadata;
 	std::unique_ptr<QTemporaryFile> _archive;
+
 };
 
 struct TeagramUpdateDownloadResult {
@@ -126,6 +128,7 @@ private:
 	QString _testStagingDirectory;
 	bool _useTestVerifier = false;
 #endif // TDESKTOP_UNIT_TESTS
+
 };
 
 } // namespace Core
