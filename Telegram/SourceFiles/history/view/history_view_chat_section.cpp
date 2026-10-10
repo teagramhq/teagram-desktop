@@ -2630,9 +2630,7 @@ void ChatWidget::finishSending() {
 void ChatWidget::triggerAiApplyInPlaceForRegressionTest(
 		const QString &text) {
 	Expects(_composeControls != nullptr);
-	_composeControls->setFieldText({ text, {} });
-	_composeControls->triggerAiApplyInPlace();
-	_composeControls->clearFieldText();
+	_composeControls->triggerAiApplyInPlaceForRegressionTest(text);
 }
 #endif
 

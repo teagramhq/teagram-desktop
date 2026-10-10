@@ -4436,6 +4436,15 @@ void ComposeControls::triggerAiApplyInPlace() {
 		}));
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void ComposeControls::triggerAiApplyInPlaceForRegressionTest(
+		const QString &text) {
+	setFieldText({ text, {} });
+	triggerAiApplyInPlace();
+	clearFieldText();
+}
+#endif
+
 bool ComposeControls::canSendAiComposeDirect() const {
 	using Type = Ui::SendButton::Type;
 	return _history
