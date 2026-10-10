@@ -381,13 +381,33 @@ public:
 		return *_storage;
 	}
 
-	void open(WebViewDescriptor &&descriptor);
-	void openByUsername(
+	bool open(WebViewDescriptor &&descriptor);
+	bool openByUsername(
 		not_null<Window::SessionController*> controller,
 		const Api::SendAction &action,
 		const QString &botUsername,
 		const QString &startCommand,
 		bool fullscreen);
+
+	// Refusal observability for the account regression, in the shape of
+	// Api::Updates::onlineUpdateCallsForRegressionTest(): a refused open has
+	// to be visible as the unavailable-server toast, and it must leave every
+	// webview side effect untouched, so the accepted counts stay zero.
+	[[nodiscard]] int liveInstancesCountForRegressionTest() const;
+	[[nodiscard]] int appRequestCountForRegressionTest() const;
+	[[nodiscard]] int appActivateCountForRegressionTest() const;
+	[[nodiscard]] int usernameResolveCountForRegressionTest() const;
+	[[nodiscard]] int unavailableToastCountForRegressionTest() const;
+
+	// Drives the completion an in-flight username resolve would run, with its
+	// real guards, so the regression can complete it after a window or a
+	// session teardown without a server.
+	void completePendingResolveForRegressionTest(not_null<PeerData*> peer);
+
+	// Hands the guarded completion to the caller, so the regression can keep it
+	// past the death of the session that made it and run it there.
+	[[nodiscard]] Fn<void(not_null<PeerData*>)>
+	takePendingResolveForRegressionTest();
 	void watchJoinChatWebView(
 		uint64 queryId,
 		std::shared_ptr<Ui::Show> show,
@@ -438,11 +458,12 @@ public:
 	[[nodiscard]] rpl::producer<> popularAppBotsLoaded() const;
 
 private:
+	void showBotAppsUnavailable(Window::SessionController *controller);
 	void destroyDeferred(
 		std::vector<std::unique_ptr<WebViewInstance>> instances);
 
 	void resolveUsername(
-		std::shared_ptr<Ui::Show> show,
+		base::weak_ptr<Window::SessionController> controller,
 		Fn<void(not_null<PeerData*>)> done);
 
 	enum class ToggledState {
@@ -492,6 +513,12 @@ private:
 	base::flat_map<uint64, JoinChatWebView> _joinChatWebViews;
 	std::vector<std::unique_ptr<WebViewInstance>> _instances;
 	std::vector<std::unique_ptr<WebViewInstance>> _closing;
+
+	int _appRequestsCountForRegressionTest = 0;
+	int _appActivationsCountForRegressionTest = 0;
+	int _usernameResolvesCountForRegressionTest = 0;
+	int _unavailableToastsCountForRegressionTest = 0;
+	Fn<void(not_null<PeerData*>)> _pendingResolveForRegressionTest;
 
 	std::vector<not_null<UserData*>> _popularAppBots;
 	mtpRequestId _popularAppBotsRequestId = 0;

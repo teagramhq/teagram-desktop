@@ -2449,49 +2449,111 @@ AttachWebView::~AttachWebView() {
 	_session->api().request(_popularAppBotsRequestId).cancel();
 }
 
-void AttachWebView::openByUsername(
+void AttachWebView::showBotAppsUnavailable(
+		Window::SessionController *controller) {
+	if (!controller || &controller->session() != _session) {
+		controller = _session->tryResolveWindow();
+	}
+	if (controller && &controller->session() == _session) {
+		controller->showFeatureUnavailableOnServerToast();
+		++_unavailableToastsCountForRegressionTest;
+	}
+}
+
+int AttachWebView::liveInstancesCountForRegressionTest() const {
+	return static_cast<int>(_instances.size());
+}
+
+int AttachWebView::appRequestCountForRegressionTest() const {
+	return _appRequestsCountForRegressionTest;
+}
+
+int AttachWebView::appActivateCountForRegressionTest() const {
+	return _appActivationsCountForRegressionTest;
+}
+
+int AttachWebView::usernameResolveCountForRegressionTest() const {
+	return _usernameResolvesCountForRegressionTest;
+}
+
+int AttachWebView::unavailableToastCountForRegressionTest() const {
+	return _unavailableToastsCountForRegressionTest;
+}
+
+void AttachWebView::completePendingResolveForRegressionTest(
+		not_null<PeerData*> peer) {
+	if (const auto done = base::take(_pendingResolveForRegressionTest)) {
+		done(peer);
+	}
+}
+
+Fn<void(not_null<PeerData*>)>
+AttachWebView::takePendingResolveForRegressionTest() {
+	return base::take(_pendingResolveForRegressionTest);
+}
+
+bool AttachWebView::openByUsername(
 		not_null<Window::SessionController*> controller,
 		const Api::SendAction &action,
 		const QString &botUsername,
 		const QString &startCommand,
 		bool fullscreen) {
-	if (botUsername.isEmpty()
-		|| (_botUsername == botUsername
+	if (botUsername.isEmpty()) {
+		return false;
+	} else if (!_session->botAppsSupported()) {
+		cancel();
+		showBotAppsUnavailable(controller);
+		return false;
+	} else if (&controller->session() != _session) {
+		cancel();
+		return false;
+	} else if (_botUsername == botUsername
 			&& _startCommand == startCommand
-			&& _fullScreenRequested == fullscreen)) {
-		return;
+			&& _fullScreenRequested == fullscreen) {
+		return true;
 	}
 	cancel();
 
 	_botUsername = botUsername;
 	_startCommand = startCommand;
 	_fullScreenRequested = fullscreen;
-	const auto weak = base::make_weak(controller);
-	const auto show = controller->uiShow();
-	resolveUsername(show, crl::guard(weak, [=](not_null<PeerData*> peer) {
-		_botUsername = QString();
-		const auto token = base::take(_startCommand);
-		const auto fullscreen = base::take(_fullScreenRequested);
-
-		const auto bot = peer->asUser();
-		if (!bot || !bot->isBot()) {
-			if (const auto strong = weak.get()) {
-				strong->showToast(tr::lng_bot_menu_not_supported(tr::now));
+	const auto weak = base::make_weak(this);
+	const auto weakController = base::make_weak(controller);
+	resolveUsername(
+		weakController,
+		crl::guard(weak, [=](not_null<PeerData*> peer) {
+			const auto self = weak.get();
+			const auto strongController = weakController.get();
+			if (!self) {
+				return;
+			} else if (!strongController
+				|| &strongController->session() != self->_session) {
+				self->cancel();
+				return;
 			}
-			return;
-		}
+			self->_botUsername = QString();
+			const auto token = base::take(self->_startCommand);
+			const auto fullscreen = base::take(self->_fullScreenRequested);
 
-		open({
-			.bot = bot,
-			.context = {
-				.controller = controller,
-				.action = action,
-				.fullscreen = fullscreen,
-			},
-			.button = { .startCommand = token },
-			.source = InlineBots::WebViewSourceLinkAttachMenu{},
-		});
-	}));
+			const auto bot = peer->asUser();
+			if (!bot || !bot->isBot()) {
+				strongController->showToast(
+					tr::lng_bot_menu_not_supported(tr::now));
+				return;
+			}
+
+			self->open({
+				.bot = bot,
+				.context = {
+					.controller = strongController,
+					.action = action,
+					.fullscreen = fullscreen,
+				},
+				.button = { .startCommand = token },
+				.source = InlineBots::WebViewSourceLinkAttachMenu{},
+			});
+		}));
+	return true;
 }
 
 void AttachWebView::watchJoinChatWebView(
@@ -2589,6 +2651,7 @@ rpl::producer<> AttachWebView::popularAppBotsLoaded() const {
 
 void AttachWebView::cancel() {
 	_session->api().request(base::take(_requestId)).cancel();
+	_pendingResolveForRegressionTest = nullptr;
 	_botUsername = QString();
 	_startCommand = QString();
 }
@@ -2709,46 +2772,91 @@ void AttachWebView::removeFromMenu(
 }
 
 void AttachWebView::resolveUsername(
-		std::shared_ptr<Ui::Show> show,
+		base::weak_ptr<Window::SessionController> controller,
 		Fn<void(not_null<PeerData*>)> done) {
 	if (const auto peer = _session->data().peerByUsername(_botUsername)) {
 		done(peer);
 		return;
 	}
 	_session->api().request(base::take(_requestId)).cancel();
+	const auto weak = base::make_weak(this);
+	// The completion the response would run, wrapped in the liveness guard the
+	// request handlers use. It is dropped by those handlers and by cancel(),
+	// so it cannot outlive the request it belongs to. The regression can keep a
+	// copy of it past the death of this session: running such a copy does what
+	// the request would do, nothing, without touching the destroyed session.
+	_pendingResolveForRegressionTest = [weak, done](not_null<PeerData*> peer) {
+		const auto self = weak.get();
+		if (!self) {
+			return;
+		}
+		self->_pendingResolveForRegressionTest = nullptr;
+		done(peer);
+	};
 	_requestId = _session->api().request(MTPcontacts_ResolveUsername(
 		MTP_flags(0),
 		MTP_string(_botUsername),
 		MTP_string()
 	)).done([=](const MTPcontacts_ResolvedPeer &result) {
-		_requestId = 0;
+		const auto self = weak.get();
+		if (!self) {
+			return;
+		}
+		self->_requestId = 0;
+		self->_pendingResolveForRegressionTest = nullptr;
 		result.match([&](const MTPDcontacts_resolvedPeer &data) {
-			_session->data().processUsers(data.vusers());
-			_session->data().processChats(data.vchats());
+			self->_session->data().processUsers(data.vusers());
+			self->_session->data().processChats(data.vchats());
 			if (const auto peerId = peerFromMTP(data.vpeer())) {
-				done(_session->data().peer(peerId));
+				done(self->_session->data().peer(peerId));
 			}
 		});
 	}).fail([=](const MTP::Error &error) {
-		_requestId = 0;
+		const auto self = weak.get();
+		if (!self) {
+			return;
+		}
+		self->_requestId = 0;
+		self->_pendingResolveForRegressionTest = nullptr;
 		if (error.code() == 400) {
-			show->showToast(
-				tr::lng_username_not_found(tr::now, lt_user, _botUsername));
+			if (const auto strong = controller.get(); strong
+				&& &strong->session() == self->_session) {
+				strong->showToast(tr::lng_username_not_found(
+					tr::now,
+					lt_user,
+					self->_botUsername));
+			}
 		}
 	}).send();
+	++_usernameResolvesCountForRegressionTest;
 }
 
-void AttachWebView::open(WebViewDescriptor &&descriptor) {
+bool AttachWebView::open(WebViewDescriptor &&descriptor) {
+	const auto controller = descriptor.context.controller.get();
+	if (&descriptor.bot->session() != _session) {
+		return false;
+	} else if (!_session->botAppsSupported()) {
+		showBotAppsUnavailable(controller);
+		return false;
+	} else if (controller && &controller->session() != _session) {
+		return false;
+	}
 	for (const auto &instance : _instances) {
 		if (instance->bot() == descriptor.bot
 			&& instance->source() == descriptor.source) {
+			++_appActivationsCountForRegressionTest;
 			instance->activate();
-			return;
+			return true;
 		}
 	}
+	// Constructing the instance is what starts the app request, so this count
+	// is the webview request the refusal has to stay in front of.
+	++_appRequestsCountForRegressionTest;
 	_instances.push_back(
 		std::make_unique<WebViewInstance>(std::move(descriptor)));
+	++_appActivationsCountForRegressionTest;
 	_instances.back()->activate();
+	return true;
 }
 
 void AttachWebView::acceptMainMenuDisclaimer(
