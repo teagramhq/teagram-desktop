@@ -25,6 +25,9 @@ reject_text() {
 
 require_text "$mac_workflow" '  pull_request:'
 require_text "$mac_workflow" '  schedule:'
+require_text "$mac_workflow" 'concurrency:'
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" 'cancel-in-progress: true'
 require_text "$mac_workflow" 'github.event.pull_request.number'
 require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$mac_workflow" 'macOS-arm64-ccache-dev-'
@@ -68,12 +71,18 @@ reject_text "$mac_workflow" 'CCACHE_DISABLE=1'
 require_text "$packaged_workflow" '  workflow_dispatch:'
 reject_text "$packaged_workflow" '  pull_request:'
 reject_text "$packaged_workflow" '  schedule:'
+require_text "$packaged_workflow" 'concurrency:'
+require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || github.ref_name }}'
+require_text "$packaged_workflow" 'cancel-in-progress: true'
 require_text "$packaged_workflow" 'CCACHE_MAXSIZE: "5G"'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
 require_text "$unit_workflow" '  workflow_dispatch:'
 reject_text "$unit_workflow" '  pull_request:'
+require_text "$unit_workflow" 'concurrency:'
+require_text "$unit_workflow" 'group: ${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || inputs.ref || github.ref_name }}'
+require_text "$unit_workflow" 'cancel-in-progress: true'
 require_text "$unit_workflow" 'Telegram/build/prepare/mac.sh'
 require_text "$unit_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
 
