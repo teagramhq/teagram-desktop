@@ -603,6 +603,8 @@ PRIVATE
     core/shortcuts.h
     core/teagram_update_verification.cpp
     core/teagram_update_verification.h
+    core/teagram_update_download.cpp
+    core/teagram_update_download.h
     core/ui_integration.cpp
     core/ui_integration.h
     core/update_checker.cpp

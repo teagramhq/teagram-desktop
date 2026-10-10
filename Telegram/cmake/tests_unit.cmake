@@ -64,6 +64,7 @@ nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/teagram_icon_choice.cpp
     core/teagram_update_verification.cpp
+    core/teagram_update_download.cpp
     core/local_url_conversion.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.
@@ -99,6 +100,7 @@ PRIVATE
     tests/unit/server_enrollment_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp
+    tests/unit/teagram_update_download_tests.cpp
     tests/unit/teagram_update_verification_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
