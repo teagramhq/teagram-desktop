@@ -41,7 +41,7 @@ CheckCachePathForTesting(const QString &path, const char *callsite,
 									   bool forkChild);
 [[nodiscard]] int RunSeatbeltCatProbe(const char *path, bool expectDenied);
 [[nodiscard]] int RunSeatbeltForkExecCatProbe(const char *path,
-											 bool expectDenied);
+											  bool expectDenied);
 #endif
 
 [[nodiscard]] bool CheckPair(Operation operation, const QString &first,

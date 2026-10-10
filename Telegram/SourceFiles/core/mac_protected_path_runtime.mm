@@ -662,15 +662,16 @@ namespace {
 			|| posix_spawn_file_actions_addclose(&actions, output[0]) != 0
 			|| posix_spawn_file_actions_addclose(&actions, output[1]) != 0
 			|| posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
-													"/dev/null", O_WRONLY, 0)
+												"/dev/null", O_WRONLY, 0)
 				   != 0) {
 			::close(output[0]);
 			::close(output[1]);
 			posix_spawn_file_actions_destroy(&actions);
 			return 1;
 		}
-		const auto spawnStatus = posix_spawn(
-			&child, executable.constData(), &actions, nullptr, arguments, environ);
+		const auto spawnStatus
+			= posix_spawn(&child, executable.constData(), &actions, nullptr,
+						  arguments, environ);
 		posix_spawn_file_actions_destroy(&actions);
 		if (spawnStatus != 0) {
 			fprintf(stderr, "Seatbelt /bin/cat posix_spawn failed: %d\n",
@@ -754,7 +755,7 @@ int RunSeatbeltOpenProbe(const char *path, bool expectDenied, bool forkChild) {
 		if (descriptor >= 0) {
 			::close(descriptor);
 		}
-		return ProbeMatchesExpectation(error, expectDenied, "parent");
+		return ProbeMatchesExpectation(error, expectDenied, "parent") ? 0 : 1;
 	}
 	int resultPipe[2] = {};
 	if (::pipe(resultPipe) != 0) {
@@ -780,9 +781,9 @@ int RunSeatbeltOpenProbe(const char *path, bool expectDenied, bool forkChild) {
 	auto error = int(-1);
 	auto received = size_t(0);
 	while (received < sizeof(error)) {
-		const auto count = ::read(resultPipe[0],
-			reinterpret_cast<char *>(&error) + received,
-			sizeof(error) - received);
+		const auto count
+			= ::read(resultPipe[0], reinterpret_cast<char *>(&error) + received,
+					 sizeof(error) - received);
 		if (count > 0) {
 			received += size_t(count);
 			continue;
@@ -805,7 +806,7 @@ int RunSeatbeltOpenProbe(const char *path, bool expectDenied, bool forkChild) {
 				received, status);
 		return 1;
 	}
-	return ProbeMatchesExpectation(error, expectDenied, "fork");
+	return ProbeMatchesExpectation(error, expectDenied, "fork") ? 0 : 1;
 }
 
 int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
