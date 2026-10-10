@@ -13,7 +13,7 @@ Teagram Desktop is supported on macOS. Linux GUI builds are not a release or mer
 Install Xcode and Homebrew, then install the build dependencies:
 
 ```sh
-brew install automake libtool meson nasm ninja pkg-config
+brew install automake cmake libtool meson nasm ninja pkg-config wget
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
