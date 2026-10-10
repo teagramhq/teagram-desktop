@@ -41,6 +41,7 @@ struct CallStartRegressionSnapshot {
 	std::vector<const Main::Session*> unavailableToasts;
 	int permissionRequests = 0;
 	int callRpcs = 0;
+	int voiceChatLinkJoinAttempts = 0;
 	int activations = 0;
 	int leavePrompts = 0;
 	std::vector<SessionNavigationRegressionEvent> navigationEvents;
@@ -57,6 +58,7 @@ void RecordCallUnavailableToastForRegressionTest(
 	const Main::Session *session);
 void RecordCallPermissionRequestForRegressionTest();
 void RecordCallRpcForRegressionTest();
+void RecordVoiceChatLinkJoinAttemptForRegressionTest();
 void RecordCallActivationForRegressionTest();
 void RecordCallLeavePromptForRegressionTest();
 void RecordCallLinkChannelOpenedForRegressionTest(

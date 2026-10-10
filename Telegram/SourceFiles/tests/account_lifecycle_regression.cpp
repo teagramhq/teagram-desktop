@@ -199,6 +199,10 @@ void RecordCallRpcForRegressionTest() {
 	++gCallStartRegressionSnapshot.callRpcs;
 }
 
+void RecordVoiceChatLinkJoinAttemptForRegressionTest() {
+	++gCallStartRegressionSnapshot.voiceChatLinkJoinAttempts;
+}
+
 void RecordCallActivationForRegressionTest() {
 	++gCallStartRegressionSnapshot.activations;
 }
@@ -2451,6 +2455,7 @@ template <typename Predicate>
 		const CallStartRegressionSnapshot &snapshot) {
 	return !snapshot.permissionRequests
 		&& !snapshot.callRpcs
+		&& !snapshot.voiceChatLinkJoinAttempts
 		&& !snapshot.activations
 		&& !snapshot.leavePrompts;
 }
@@ -2578,7 +2583,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 		&& !window->isLayerShown();
 }
 
-[[nodiscard]] bool RunCallLinkAndSettingsRegression(
+[[nodiscard]] bool RunChannelCallLinkRegression(
 		not_null<Main::Account*> account,
 		not_null<Window::Controller*> window) {
 	const auto controller = window->sessionController();
@@ -2604,9 +2609,23 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 				SessionNavigationRegressionEvent::FeatureUnavailableToast,
 			}
 		|| linkEvents.openedPeers != std::vector<const PeerData*>{ channel.get() }
-		|| controller->content()->peer() != channel.get()) {
+		|| controller->content()->peer() != channel.get()
+		|| !CallStartEffectsStayedQuiet(linkEvents)
+		|| window->isLayerShown()) {
 		return false;
 	}
+	return true;
+}
+
+[[nodiscard]] bool RunCallLinkAndSettingsRegression(
+		not_null<Main::Account*> account,
+		not_null<Window::Controller*> window) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()
+		|| !RunChannelCallLinkRegression(account, window)) {
+		return false;
+	}
+	const auto channel = account->session().data().channel(ChannelId(2051));
 
 	const auto context = QVariant::fromValue(ClickHandlerContext{
 		.sessionWindow = base::make_weak(controller),
@@ -3688,6 +3707,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blocked unpinned session reached a Calls::Instance start path");
 	}
+	if (!RunChannelCallLinkRegression(stock, stockWindow)) {
+		return FailChatParticipantsRegression(
+			"blocked unpinned channel link bypassed the call-support gate");
+	}
 	ReportCallRegressionCheckpoint("blocked stock starts complete");
 	stock->mtp().dcOptions().constructUnenrolled();
 	if (!stock->mtp().dcOptions().constructFromSerialized(stockDcOptions)) {
@@ -3705,6 +3728,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			false)) {
 		return FailChatParticipantsRegression(
 			"blocked pinned session reached a Calls::Instance start path");
+	}
+	if (!RunChannelCallLinkRegression(pinned, pinnedWindow)) {
+		return FailChatParticipantsRegression(
+			"blocked pinned channel link bypassed the call-support gate");
 	}
 	ReportCallRegressionCheckpoint("blocked pinned starts complete");
 	pinned->mtp().dcOptions().constructUnenrolled();

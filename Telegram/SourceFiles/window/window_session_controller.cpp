@@ -1196,6 +1196,9 @@ void SessionNavigation::joinVoiceChatFromLink(
 		not_null<PeerData*> peer,
 		const PeerByLinkInfo &info) {
 	Expects(info.voicechatHash.has_value());
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordVoiceChatLinkJoinAttemptForRegressionTest();
+#endif
 
 	const auto bad = crl::guard(this, [=] {
 		uiShow()->showToast(tr::lng_group_invite_bad_link(tr::now));
