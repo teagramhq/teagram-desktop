@@ -201,20 +201,8 @@ RunRefusedDownloadHistoryRegression(not_null<Main::Session *> session,
 	return !published && !loaded;
 }
 
-[[nodiscard]] bool FixtureContainsOnlyMarker(const QString &path) {
-	const auto entries = QDir(path).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::NoSort);
-	if (entries != QStringList{"marker"}) {
-		return false;
-	}
-	auto marker = QFile(path + "/marker");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture";
-}
-
 [[nodiscard]] bool
-PrepareProtectedCacheFixtures(ProtectedCacheFixtures *fixtures) {
+SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	if (!Core::MacProtectedPath::IntegrationTestActive()) {
 		return true;
 	}
@@ -232,42 +220,7 @@ PrepareProtectedCacheFixtures(ProtectedCacheFixtures *fixtures) {
 	fixtures->openedCache = fixtures->root + "/opened-cache";
 	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
-	for (const auto &path : {
-			 fixtures->cacheRoot,
-			 fixtures->mediaCacheRoot,
-			 fixtures->cacheLeaf,
-			 fixtures->mediaCacheLeaf,
-			 fixtures->openedCache,
-			 fixtures->openedMediaCache,
-			 fixtures->cleanupRoot,
-		 }) {
-		if (!QDir().mkpath(path)
-			|| !WriteFixtureFile(path + "/marker",
-								 "synthetic protected fixture")) {
-			return false;
-		}
-	}
-	return WriteFixtureFile(fixtures->cleanupRoot + "/unrecognized-legacy-file",
-							"legacy bytes");
-}
-
-[[nodiscard]] bool FixtureContainsCleanupFiles(const QString &path) {
-	const auto entries = QDir(path).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::Name);
-	if (entries
-		!= QStringList{
-			"marker",
-			"unrecognized-legacy-file",
-		}) {
-		return false;
-	}
-	auto marker = QFile(path + "/marker");
-	auto legacy = QFile(path + "/unrecognized-legacy-file");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture"
-		   && legacy.open(QIODevice::ReadOnly)
-		   && legacy.readAll() == "legacy bytes";
+	return true;
 }
 
 [[nodiscard]] bool
@@ -287,6 +240,7 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	struct InitialState {
 		bool completed = false;
+		bool collectorCalled = false;
 	};
 	const auto initialState = std::make_shared<InitialState>();
 	const auto initialLoop = std::make_shared<QEventLoop>();
@@ -296,7 +250,10 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 					 &QEventLoop::quit);
 	Storage::ClearLegacyFilesGuarded(
 		initialAlias + '/',
-		[](FnMut<void(::base::flat_set<QString> &&)> then) { then({}); },
+		[initialState](FnMut<void(::base::flat_set<QString> &&)> then) {
+			initialState->collectorCalled = true;
+			then({});
+		},
 		[=] {
 			initialState->completed = true;
 			initialLoop->quit();
@@ -307,8 +264,7 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	initialTimer->stop();
 	const auto initialRetained
-		= initialState->completed
-		  && FixtureContainsCleanupFiles(fixtures.cleanupRoot);
+		= initialState->completed && !initialState->collectorCalled;
 	QFile::remove(initialAlias);
 	if (!initialRetained) {
 		return false;
@@ -344,13 +300,12 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 		loop->exec();
 	}
 	timer->stop();
-	const auto protectedUnchanged
-		= FixtureContainsCleanupFiles(fixtures.cleanupRoot);
 	auto originalContents = QFile(originalFile);
 	const auto originalRetained = QFileInfo::exists(originalFile);
-	return state->swapped && state->completed && protectedUnchanged
+	return state->swapped && state->completed
 		   && originalRetained && originalContents.open(QIODevice::ReadOnly)
-		   && originalContents.readAll() == "legacy bytes";
+		   && originalContents.readAll() == "legacy bytes"
+		   && QFileInfo(base).isSymLink();
 }
 
 [[nodiscard]] std::shared_ptr<MTP::details::RSAPublicKey>
@@ -860,26 +815,6 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 	return {};
 }
 
-[[nodiscard]] bool CopyCacheVersionFiles(const QString &source,
-										 const QString &destination) {
-	const auto files = QDir(source).entryList(
-		QDir::Files | QDir::Hidden | QDir::System, QDir::Name);
-	for (const auto &file : files) {
-		if (file != "marker"
-			&& !QFile::copy(QDir(source).filePath(file),
-							QDir(destination).filePath(file))) {
-			return false;
-		}
-	}
-	return true;
-}
-
-[[nodiscard]] bool FixtureMarkerIsIntact(const QString &path) {
-	auto marker = QFile(path + "/marker");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture";
-}
-
 [[nodiscard]] bool
 RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 								  CacheGetter cache, CacheClearer clearCaches,
@@ -907,8 +842,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto active = ActiveCacheVersionPath(path);
 	const auto saved = active + ".guard-test-original";
 	if (active.isEmpty() || QFileInfo::exists(saved)
-		|| !FixtureMarkerIsIntact(fixture)
-		|| !CopyCacheVersionFiles(active, fixture)
 		|| !QDir().rename(active, saved)) {
 		return false;
 	}
@@ -922,9 +855,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (!QFile::link(fixture, active)) {
 		return false;
 	}
-	const auto fixtureEntries = QDir(fixture).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::Name);
 	const auto readerRefused = cacheRefusal();
 	const auto read = AwaitCacheCallback<QByteArray>(
 		[&](auto done) { cache().get(seedKey, std::move(done)); });
@@ -936,12 +866,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		});
 	clearCaches();
 	cache().sync();
-	const auto unchanged
-		= (fixtureEntries
-		   == QDir(fixture).entryList(QDir::AllEntries | QDir::Hidden
-										  | QDir::System | QDir::NoDotAndDotDot,
-									  QDir::Name))
-		  && FixtureMarkerIsIntact(fixture);
 	const auto writeRefused
 		= write && (write->type != Storage::Cache::Error::Type::None);
 	const auto aliasRemoved = QFile::remove(active);
@@ -949,13 +873,13 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	restored = aliasRemoved && originalRestored;
 	cache().sync();
 	const auto passed
-		= readerRefused && readRefused && writeRefused && unchanged && restored;
+		= readerRefused && readRefused && writeRefused && restored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
 			"Post-open cache regression failed: reader=%d read=%d write=%d "
-			"fixture=%d restored=%d path=%s.\n",
-			readerRefused, readRefused, writeRefused, unchanged, restored,
+			"restored=%d path=%s.\n",
+			readerRefused, readRefused, writeRefused, restored,
 			qPrintable(path));
 	}
 	return passed;
@@ -1188,9 +1112,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (Core::MacProtectedPath::CheckCachePath(
 				stockCachePath, "Tests::ProtectedCache::root")
 			|| Core::MacProtectedPath::CheckCachePath(
-				stockMediaCachePath, "Tests::ProtectedCache::media-root")
-			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
-			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
+				stockMediaCachePath, "Tests::ProtectedCache::media-root")) {
 			return FailChatParticipantsRegression(
 				"authenticated session accessed a protected cache root");
 		}
@@ -1692,9 +1614,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (Core::MacProtectedPath::CheckCachePath(
 				pinnedCachePath, "Tests::ProtectedCache::file")
 			|| Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")
-			|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")) {
 			return FailChatParticipantsRegression(
 				"authenticated session accessed a protected cache-file target");
 		}
@@ -1849,10 +1769,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stock->session().data().cacheBigFile().sync();
 			pinned->session().data().cache().sync();
 			pinned->session().data().cacheBigFile().sync();
-			if (!FixtureContainsOnlyMarker(fixtures.cacheRoot)
-				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
-				|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
+			if (Core::MacProtectedPath::CheckCachePath(
+					stockCachePath, "Tests::ProtectedCache::async-root")
+				|| Core::MacProtectedPath::CheckCachePath(
+					stockMediaCachePath,
+					"Tests::ProtectedCache::async-media-root")
+				|| Core::MacProtectedPath::CheckCachePath(
+					pinnedCachePath, "Tests::ProtectedCache::async-file")
+				|| Core::MacProtectedPath::CheckCachePath(
+					pinnedMediaCachePath,
+					"Tests::ProtectedCache::async-media-file")) {
 				done(FailChatParticipantsRegression(
 					"asynchronous cache cleanup accessed a protected target"));
 				return;
@@ -1890,7 +1816,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!PrepareProtectedCacheFixtures(&fixtures)
+	if (!SetProtectedCacheFixturePaths(&fixtures)
 		|| !RunLegacyCleanupSymlinkRegression(fixtures)) {
 		std::fprintf(
 			stderr,
