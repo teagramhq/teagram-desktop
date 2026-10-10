@@ -166,6 +166,13 @@ require_text "$packaged_workflow" 'concurrency:'
 require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ github.event_name == '\''push'\'' && '\''release'\'' || inputs.branch || github.ref_name }}'
 require_text "$packaged_workflow" 'cancel-in-progress: false'
 require_text "$packaged_workflow" 'queue: max'
+require_text "$packaged_workflow" 'openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem"'
+reject_text "$packaged_workflow" '"$REPO_NAME/Telegram/build/teagram_update_public_key.pem"'
+public_key_path="$(sed -n 's/.*openssl pkey -pubin -in "\([^"]*\)".*/\1/p' "$packaged_workflow" | sed -n '1p')"
+if [[ -z "$public_key_path" ]] || ! openssl pkey -pubin -in "$public_key_path" -outform DER | shasum -a 256 >/dev/null; then
+  printf 'The packaged workflow public key path must work from the cloned repository directory.\n' >&2
+  exit 1
+fi
 require_text "$packaged_workflow" "if: \${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}"
 require_text "$packaged_workflow" 'environment:'
 require_text "$packaged_workflow" '      name: release'

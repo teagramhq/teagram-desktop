@@ -409,7 +409,7 @@ jobs:
           fi
 
           digest="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
-          public_key_fingerprint="$(openssl pkey -pubin -in "$REPO_NAME/Telegram/build/teagram_update_public_key.pem" -outform DER | shasum -a 256 | awk '{ print $1 }')"
+          public_key_fingerprint="$(openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem" -outform DER | shasum -a 256 | awk '{ print $1 }')"
           artifact_name="Teagram-macOS-arm64-QA"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             artifact_name="Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}"
@@ -741,6 +741,7 @@ jobs:
           jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" \
             '.tag_name == $tag and .target_commitish == $sha' \
             "$release" >/dev/null
+          bash .github/scripts/ensure_release_tag.sh
           gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > "$reference"
           object_type="$(jq -r '.object.type' "$reference")"
           object_sha="$(jq -r '.object.sha' "$reference")"

@@ -16,6 +16,8 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/ensure_release_tag.sh'
+      - '.github/scripts/test_ensure_release_tag.sh'
       - 'README.md'
   pull_request:
     paths:
@@ -30,6 +32,8 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/ensure_release_tag.sh'
+      - '.github/scripts/test_ensure_release_tag.sh'
       - 'README.md'
   workflow_dispatch:
 
@@ -84,3 +88,6 @@ jobs:
 
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
+
+      - name: Test release tag source.
+        run: bash .github/scripts/test_ensure_release_tag.sh
