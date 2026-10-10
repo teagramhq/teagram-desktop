@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/group/calls_group_common.h"
 #include "calls/calls_call.h"
 #include "calls/calls_instance.h"
+#include "calls/calls_panel.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -112,12 +113,16 @@ public:
 			|| instance->_startingGroupCall) {
 			return nullptr;
 		}
-		instance->_currentCall = std::make_unique<Calls::Call>(
+		auto call = std::make_unique<Calls::Call>(
 			TestDelegate(),
 			user,
 			Calls::Call::Type::Outgoing,
 			false);
-		instance->_currentCall->_state = Calls::Call::State::Established;
+		call->_state = Calls::Call::State::Established;
+		instance->_currentCallPanel = std::make_unique<Calls::Panel>(
+			call.get());
+		instance->_currentCall = std::move(call);
+		instance->_currentCallChanges.fire_copy(instance->_currentCall.get());
 		return instance->_currentCall.get();
 	}
 
@@ -125,7 +130,11 @@ public:
 			not_null<Calls::Instance*> instance,
 			not_null<Calls::Call*> call) {
 		if (instance->_currentCall.get() == call.get()) {
-			instance->_currentCall.reset();
+			instance->_currentCallPanel->closeBeforeDestroy();
+			instance->_currentCallPanel = nullptr;
+			auto taken = base::take(instance->_currentCall);
+			instance->_currentCallChanges.fire(nullptr);
+			taken.reset();
 		}
 	}
 
