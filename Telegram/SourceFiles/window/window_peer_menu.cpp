@@ -1006,7 +1006,8 @@ void Filler::addDirectMessages() {
 }
 
 void Filler::addExportChat() {
-	if (!_peer->canExportChatHistory()) {
+	if (!_peer->session().exportSupported()
+		|| !_peer->canExportChatHistory()) {
 		return;
 	}
 	const auto peer = _peer;

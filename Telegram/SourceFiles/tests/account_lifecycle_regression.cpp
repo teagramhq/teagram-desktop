@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "export/export_manager.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -1231,6 +1232,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.aiComposeSupported() == supported)
 			&& (session.serverTranslationSupported() == supported);
 	};
+	const auto pinnedPeer = not_null<PeerData*>(
+		static_cast<PeerData*>(&*pinned->session().user()));
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1585,6 +1588,31 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					first->session());
 			}
 			return false;
+		}
+		if (!customFirst) {
+			Export::Manager manager;
+			manager.start(pinnedPeer);
+			if (manager.inProgress()
+				|| &domain.active() != first.get()) {
+				return false;
+			}
+			manager.startTopic(pinnedPeer, MsgId(1), QString());
+			if (manager.inProgress()
+				|| &domain.active() != first.get()) {
+				return false;
+			}
+			manager.start(&pinned->session());
+			if (manager.inProgress()
+				|| &domain.active() != first.get()) {
+				return false;
+			}
+		} else {
+			Export::Manager manager;
+			manager.start(pinnedPeer);
+			if (manager.inProgress()
+				|| &domain.active() != first.get()) {
+				return false;
+			}
 		}
 		domain.activate(second);
 		const auto secondActive = &domain.active() == second.get();
