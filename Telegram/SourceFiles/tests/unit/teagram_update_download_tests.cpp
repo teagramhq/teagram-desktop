@@ -380,8 +380,8 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 		CHECK(value >= 0 && value <= 100);
 	}
 	if (devResult.candidate) {
-		CHECK_EQ(devResult.candidate->metadata().build, quint64(102));
-		CHECK(devResult.candidate->metadata().channel
+		CHECK_EQ(devResult.candidate->metadata().build(), quint64(102));
+		CHECK(devResult.candidate->metadata().channel()
 			== TeagramUpdateChannel::Main);
 		QFile downloaded(devResult.candidate->archivePath());
 		CHECK(downloaded.open(QIODevice::ReadOnly));
@@ -421,8 +421,8 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	CHECK(dev101Result.reason == TeagramUpdateDownloadReason::Available);
 	CHECK(dev101Result.candidate != nullptr);
 	if (dev101Result.candidate) {
-		CHECK_EQ(dev101Result.candidate->metadata().build, quint64(101));
-		CHECK(dev101Result.candidate->metadata().channel
+		CHECK_EQ(dev101Result.candidate->metadata().build(), quint64(101));
+		CHECK(dev101Result.candidate->metadata().channel()
 			== TeagramUpdateChannel::Dev);
 	}
 	dev101Result.candidate.reset();

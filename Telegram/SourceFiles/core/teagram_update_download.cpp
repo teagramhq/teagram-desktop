@@ -371,11 +371,11 @@ public:
 				}
 				continue;
 			}
-			if (authenticated.package->build != release.taggedBuild) {
+			if (authenticated.package->build() != release.taggedBuild) {
 				rejectedIdentity = true;
 				continue;
 			}
-			if (!HasAsset(release, authenticated.package->assetName)) {
+			if (!HasAsset(release, authenticated.package->assetName())) {
 				return Failed(Reason::ArchiveRejected);
 			}
 			return DownloadArchive(*authenticated.package);
@@ -548,7 +548,7 @@ private:
 
 	[[nodiscard]] InternalResult DownloadArchive(
 		const AuthenticatedTeagramUpdate &metadata) {
-		if (metadata.assetSize > kMaximumTeagramUpdateArchiveSize) {
+		if (metadata.assetSize() > kMaximumTeagramUpdateArchiveSize) {
 			return Failed(Reason::LimitExceeded);
 		}
 		const auto pattern = _stagingDirectory.isEmpty()
@@ -567,12 +567,12 @@ private:
 		EmitProgress(TeagramUpdateDownloadStage::Downloading, 0);
 		const auto fetched = Request(
 			ReleaseAssetUrl(
-				u"teagram-build-%1"_q.arg(metadata.build),
-				metadata.assetName),
-			metadata.assetSize,
+				u"teagram-build-%1"_q.arg(metadata.build()),
+				metadata.assetName()),
+			metadata.assetSize(),
 			true,
 			[&](QByteArrayView chunk) {
-				if (quint64(chunk.size()) > metadata.assetSize - received) {
+				if (quint64(chunk.size()) > metadata.assetSize() - received) {
 					oversized = true;
 					return false;
 				}
@@ -583,7 +583,7 @@ private:
 				}
 				received += quint64(chunk.size());
 				const auto percent = int(
-					(received * 100) / metadata.assetSize);
+					(received * 100) / metadata.assetSize());
 				EmitProgress(
 					TeagramUpdateDownloadStage::Downloading,
 					std::min(percent, 99));
@@ -597,7 +597,7 @@ private:
 			return Failed(Reason::ArchiveRejected);
 		} else if (!fetched.success) {
 			return Failed(fetched.reason);
-		} else if (received != metadata.assetSize || !archive->flush()) {
+		} else if (received != metadata.assetSize() || !archive->flush()) {
 			return Failed(Reason::ArchiveRejected);
 		}
 		const auto verification = VerifyAuthenticatedTeagramUpdateArchive(
