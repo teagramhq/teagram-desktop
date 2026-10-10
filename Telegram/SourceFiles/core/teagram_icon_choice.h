@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <string_view>
 
+class QImage;
+
 namespace Core {
 
 enum class TeagramIconChoice : int {
@@ -26,6 +28,31 @@ enum class TeagramIconChoice : int {
 	MugBrown = 10,
 	TBrown = 11,
 };
+
+enum class TeagramIconFileAction : int {
+	Skip,
+	Set,
+	Clear,
+};
+
+inline constexpr auto kTeagramIconFileOwnedPreference
+	= std::string_view("teagram-icon-file-owned");
+
+[[nodiscard]] constexpr TeagramIconFileAction TeagramIconFileActionForChoice(
+		TeagramIconChoice choice,
+		bool bundleWritable,
+		bool fileIconOwned,
+		bool roundIconActive) {
+	if (!bundleWritable || roundIconActive) {
+		return TeagramIconFileAction::Skip;
+	}
+	if (choice == TeagramIconChoice::MugSignal) {
+		return fileIconOwned
+			? TeagramIconFileAction::Clear
+			: TeagramIconFileAction::Skip;
+	}
+	return TeagramIconFileAction::Set;
+}
 
 inline constexpr auto kTeagramIconChoicePreference
 	= std::string_view("teagram-icon-choice");
@@ -49,6 +76,22 @@ inline constexpr auto kTeagramIconSvgResources = std::array{
 inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 	kTeagramIconSvgResources.size());
 
+inline constexpr auto kTeagramIconPickerOrder = std::array{
+	TeagramIconChoice::MugSignal,
+	TeagramIconChoice::MugGreen,
+	TeagramIconChoice::MugSky,
+	TeagramIconChoice::MugCrimson,
+	TeagramIconChoice::MugBrown,
+	TeagramIconChoice::TPrimary,
+	TeagramIconChoice::TNavy,
+	TeagramIconChoice::TNight,
+	TeagramIconChoice::TPaper,
+	TeagramIconChoice::TCrimson,
+	TeagramIconChoice::TBrown,
+};
+inline constexpr auto kTeagramIconPickerChoiceCount = static_cast<int>(
+	kTeagramIconPickerOrder.size());
+
 [[nodiscard]] constexpr std::string_view TeagramIconSvgResource(
 		TeagramIconChoice choice) {
 	const auto index = static_cast<int>(choice);
@@ -57,13 +100,18 @@ inline constexpr auto kTeagramIconChoiceCount = static_cast<int>(
 		: kTeagramIconSvgResources[0];
 }
 
+[[nodiscard]] QImage RenderTeagramIconImage(TeagramIconChoice choice);
+
 template <typename Settings>
 [[nodiscard]] TeagramIconChoice ReadTeagramIconChoice(Settings &settings) {
 	const auto choice = settings.template readPref<int>(
 		kTeagramIconChoicePreference,
 		-1);
 	if (choice >= 0 && choice < kTeagramIconChoiceCount) {
-		return static_cast<TeagramIconChoice>(choice);
+		const auto result = static_cast<TeagramIconChoice>(choice);
+		return (result == TeagramIconChoice::MugTea)
+			? TeagramIconChoice::MugSignal
+			: result;
 	}
 	return settings.template readPref<bool>(
 		kLegacyTeagramIconChoicePreference)
@@ -81,6 +129,20 @@ void WriteTeagramIconChoice(
 	settings.template writePref<bool>(
 		kLegacyTeagramIconChoicePreference,
 		choice == TeagramIconChoice::TPrimary);
+}
+
+template <typename Settings>
+[[nodiscard]] bool ReadTeagramIconFileOwned(Settings &settings) {
+	return settings.template readPref<bool>(
+		kTeagramIconFileOwnedPreference,
+		false);
+}
+
+template <typename Settings>
+void WriteTeagramIconFileOwned(Settings &settings, bool owned) {
+	settings.template writePref<bool>(
+		kTeagramIconFileOwnedPreference,
+		owned);
 }
 
 } // namespace Core

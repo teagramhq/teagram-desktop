@@ -104,10 +104,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
-#include <QtGui/QPainter>
-#include <QtGui/QPixmap>
+#include <QtGui/QImage>
 #include <QtGui/QScreen>
-#include <QtSvg/QSvgRenderer>
 
 #include <array>
 #include <utility>
@@ -122,39 +120,6 @@ constexpr auto kAutoLockTimeoutLateMs = crl::time(3000);
 constexpr auto kClearEmojiImageSourceTimeout = 10 * crl::time(1000);
 
 LaunchState GlobalLaunchState/* = LaunchState::Running*/;
-
-#if defined Q_OS_MAC && !defined OS_MAC_STORE
-[[nodiscard]] QIcon CreateTeagramIcon(Core::TeagramIconChoice choice) {
-	const auto resource = Core::TeagramIconSvgResource(choice);
-	auto renderer = QSvgRenderer(QString::fromLatin1(
-		resource.data(),
-		static_cast<qsizetype>(resource.size())));
-	constexpr auto sizes = std::array{
-		std::pair{ 16, 1 },
-		std::pair{ 16, 2 },
-		std::pair{ 32, 1 },
-		std::pair{ 32, 2 },
-		std::pair{ 128, 1 },
-		std::pair{ 128, 2 },
-		std::pair{ 256, 1 },
-		std::pair{ 256, 2 },
-		std::pair{ 512, 1 },
-		std::pair{ 512, 2 },
-	};
-	auto result = QIcon();
-	for (const auto &[logicalSize, scale] : sizes) {
-		auto pixmap = QPixmap(logicalSize * scale, logicalSize * scale);
-		pixmap.setDevicePixelRatio(scale);
-		pixmap.fill(Qt::transparent);
-		{
-			auto p = QPainter(&pixmap);
-			renderer.render(&p, QRectF(0, 0, logicalSize, logicalSize));
-		}
-		result.addPixmap(pixmap);
-	}
-	return result;
-}
-#endif // Q_OS_MAC && !OS_MAC_STORE
 
 void SetCrashAnnotationsGL() {
 #ifdef DESKTOP_APP_USE_ANGLE
@@ -310,9 +275,12 @@ Application::~Application() {
 
 void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	const auto headlessRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		|| qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	const auto authLifecycleRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	const auto headlessRegression = qEnvironmentVariableIsSet(
+		"TDESKTOP_SIGNUP_UI_REGRESSION") || authLifecycleRegression;
+	const auto windowedApplication = !headlessRegression
+		|| authLifecycleRegression;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -321,6 +289,7 @@ void Application::run() {
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 #if !defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	constexpr auto headlessRegression = false;
+	constexpr auto windowedApplication = true;
 #endif // !TDESKTOP_LIFECYCLE_REGRESSION
 
 	// Depends on OpenSSL on macOS, so on ThirdParty::start().
@@ -368,7 +337,7 @@ void Application::run() {
 	startShortcuts();
 	startEmojiImageLoader();
 	startSystemDarkModeViewer();
-	if (!headlessRegression) {
+	if (windowedApplication) {
 		Media::Player::start(_audio.get());
 	}
 
@@ -407,7 +376,7 @@ void Application::run() {
 			= Core::CachedWebviewAvailability();
 	}
 
-	if (!headlessRegression) {
+	if (windowedApplication) {
 		_windows.emplace(nullptr, std::make_unique<Window::Controller>());
 		setLastActiveWindow(_windows.front().second.get());
 		_windowInSettings = _lastActivePrimaryWindow = _lastActiveWindow;
@@ -538,13 +507,26 @@ void Application::showAccount(not_null<Main::Account*> account) {
 
 void Application::checkWindowId(not_null<Window::Controller*> window) {
 	const auto id = window->id();
-	for (auto &[existingId, existing] : _windows) {
-		if (existing.get() == window && existingId != id) {
-			auto found = std::move(existing);
-			_windows.remove(existingId);
-			_windows.emplace(id, std::move(found));
-			break;
+	for (const auto &[existingId, existing] : _windows) {
+		if (existing.get() != window || existingId == id) {
+			continue;
 		}
+		// Every window is stored under its own id, so switching the primary
+		// window to another account moves it to a new key here. The id the
+		// window is about to claim is freed before the rebind, in
+		// Controller::showAccount, so this target key is free. The map refuses a
+		// duplicate key and drops the transferred pointer, which would destroy
+		// this window inside its own call stack: keep it under its current key
+		// should a collision ever reach this point.
+		if (_windows.contains(id)) {
+			return;
+		}
+		auto moved = _windows.take(existingId);
+		if (!moved) {
+			return;
+		}
+		_windows.emplace(id, std::move(*moved));
+		return;
 	}
 }
 
@@ -630,6 +612,19 @@ void Application::processCreatedWindow(
 	window->openInMediaViewRequests(
 	) | rpl::start_to_stream(_openInMediaViewRequests, window->lifetime());
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void Application::createPrimaryWindowForLifecycleRegression() {
+	Expects(_windows.empty());
+	const auto window = _windows.emplace(
+		nullptr,
+		std::make_unique<Window::Controller>()
+	).first->second.get();
+	setLastActiveWindow(window);
+	_windowInSettings = _lastActivePrimaryWindow = window;
+	processCreatedWindow(window);
+}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 void Application::startMediaView() {
 #ifdef Q_OS_MAC
@@ -2003,6 +1998,16 @@ void Application::quitDelayed() {
 }
 
 void Application::refreshApplicationIcon() {
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+	auto &appSettings = settings();
+	if (const auto fileIconOwned = Platform::UpdateApplicationBundleIcon(
+			ReadTeagramIconChoice(appSettings),
+			ReadTeagramIconFileOwned(appSettings),
+			appSettings.macRoundIconDigest().has_value())) {
+		WriteTeagramIconFileOwned(appSettings, *fileIconOwned);
+		saveSettingsDelayed();
+	}
+#endif // Q_OS_MAC && !OS_MAC_STORE
 	const auto session = (domain().started() && domain().active().sessionExists())
 		? &domain().active().session()
 		: nullptr;
@@ -2016,8 +2021,16 @@ void Application::refreshApplicationIcon(Main::Session *session) {
 #if defined Q_OS_MAC && !defined OS_MAC_STORE
 	if constexpr (Platform::IsMac()) {
 		const auto choice = ReadTeagramIconChoice(settings());
-		if (!support && (choice != TeagramIconChoice::MugSignal)) {
-			icon = CreateTeagramIcon(choice);
+		const auto custom = !support
+			&& (choice != TeagramIconChoice::MugSignal);
+		const auto applied = custom
+			&& Platform::SetApplicationIcon(
+				Core::RenderTeagramIconImage(choice));
+		LOG(("Teagram icon: choice=%1 applied=%2")
+			.arg(static_cast<int>(choice))
+			.arg(applied ? 1 : 0));
+		if (applied) {
+			return;
 		}
 	}
 #endif // Q_OS_MAC && !OS_MAC_STORE

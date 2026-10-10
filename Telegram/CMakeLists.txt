@@ -167,6 +167,7 @@ PRIVATE
     api/api_messages_search.h
     api/api_messages_search_merged.cpp
     api/api_messages_search_merged.h
+    api/api_modify_requests.h
     api/api_peer_colors.cpp
     api/api_peer_colors.h
     api/api_peer_photo.cpp
@@ -280,6 +281,7 @@ PRIVATE
     boxes/peers/edit_peer_invite_links.h
     boxes/peers/edit_peer_permissions_box.cpp
     boxes/peers/edit_peer_permissions_box.h
+    boxes/peers/edit_peer_permissions_save.h
     boxes/peers/edit_peer_reactions.cpp
     boxes/peers/edit_peer_reactions.h
     boxes/peers/edit_peer_requests_box.cpp
@@ -558,6 +560,7 @@ PRIVATE
     core/core_cloud_password.h
     core/core_settings.cpp
     core/core_settings.h
+    core/teagram_icon_choice.cpp
     core/teagram_icon_choice.h
     core/core_settings_proxy.cpp
     core/core_settings_proxy.h
@@ -1441,6 +1444,7 @@ PRIVATE
     main/main_domain.h
     main/main_session.cpp
     main/main_session.h
+    main/session_feature_support.h
     main/main_session_settings.cpp
     main/main_session_settings.h
     main/session/send_as_peers.cpp

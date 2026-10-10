@@ -10,8 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/integration.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QResource>
+#include <QtCore/QString>
 
 #include <cstdio>
+#include <string_view>
 #include <vector>
 
 namespace Test::Unit {
@@ -102,7 +105,31 @@ QString Describe(const QByteArray &value) {
 } // namespace Test::Unit
 
 int main(int argc, char *argv[]) {
+	auto selectedCase = std::string_view();
+	if (argc != 1) {
+		if (argc != 3
+			|| std::string_view(argv[1]) != "--case"
+			|| argv[2][0] == '\0') {
+			std::fprintf(stderr, "Usage: %s [--case <exact-name>]\n", argv[0]);
+			return 2;
+		}
+		selectedCase = argv[2];
+	}
 	auto app = QCoreApplication(argc, argv);
+
+#ifdef Q_OS_MAC
+	const auto resources = QCoreApplication::applicationDirPath()
+		+ QStringLiteral("/test_unit.rcc");
+	const auto resourcesBytes = resources.toLocal8Bit();
+	if (!QResource::registerResource(resources)) {
+		std::fprintf(
+			stderr,
+			"Could not register unit test resources at %s\n",
+			resourcesBytes.constData());
+		return 1;
+	}
+#endif // Q_OS_MAC
+
 	auto integration = Test::Unit::Integration(argc, argv);
 	base::Integration::Set(&integration);
 
@@ -122,7 +149,12 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	auto selectedCases = 0;
 	for (const auto &entry : cases) {
+		if (!selectedCase.empty() && selectedCase != entry.name) {
+			continue;
+		}
+		++selectedCases;
 		Test::Unit::CurrentFailures = 0;
 		// Named before it runs rather than after it returns: an Expects or
 		// Assert inside the code under test aborts the process, and that
@@ -136,11 +168,17 @@ int main(int argc, char *argv[]) {
 			std::fprintf(stderr, "ok   %s\n", entry.name);
 		}
 	}
+	if (!selectedCases) {
+		std::fprintf(
+			stderr,
+			"No test case named %s is registered.\n",
+			selectedCase.data());
+	}
 	std::fprintf(
 		stderr,
 		"\n%d case(s), %d failed, %d failed check(s).\n",
-		int(cases.size()),
+		selectedCases,
 		failed,
 		Test::Unit::TotalFailures);
-	return failed ? 1 : 0;
+	return (failed || !selectedCases) ? 1 : 0;
 }

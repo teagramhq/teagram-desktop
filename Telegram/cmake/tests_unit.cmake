@@ -62,6 +62,7 @@ target_precompile_headers(test_unit PRIVATE
 
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
+    core/teagram_icon_choice.cpp
     core/local_url_conversion.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.
@@ -82,6 +83,8 @@ PRIVATE
     storage/storage_domain.cpp
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
+    tests/unit/debug_mode_tests.cpp
+    tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
@@ -94,6 +97,7 @@ PRIVATE
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
+    tests/unit/teagram_icon_render_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
     tests/unit/unit_test.cpp
@@ -102,6 +106,11 @@ PRIVATE
     mtproto/connection_server_resolving.cpp
     mtproto/connection_server_resolving.h
     mtproto/proxy_check.cpp
+)
+
+nice_target_sources(test_unit ${res_loc}
+PRIVATE
+    qrc/telegram/mac_icons.qrc
 )
 
 if(APPLE)
@@ -135,3 +144,14 @@ set_target_properties(test_unit PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+target_prepare_qrc(test_unit)
+
+if(APPLE AND CMAKE_CONFIGURATION_TYPES)
+    add_custom_command(TARGET test_unit POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/test_unit.rcc"
+            "$<TARGET_FILE_DIR:test_unit>/test_unit.rcc"
+        VERBATIM
+    )
+endif()

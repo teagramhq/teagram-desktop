@@ -45,6 +45,18 @@ docker run --rm -u $(id -u) -v $PWD:/usr/src/tdesktop tdesktop:centos_env \
 	bash -lc "cd /usr/src/tdesktop && cmake --build out --config Debug --target test_unit && out/Debug/test_unit"
 ```
 
+### Run one case
+
+Pass the registered case's exact name to run only that case:
+
+```bash
+out/Debug/test_unit --case EveryUpdaterEntryPointIsDenied
+```
+
+Without `--case`, the runner continues to execute every registered case. A
+name that does not match a registered case runs none and exits nonzero. Linux
+CI checks that the named case runs by itself and that an unknown name fails.
+
 ### Adding a case
 
 Write a `TEST_CASE` in a file under `Telegram/SourceFiles/tests/unit/` and add

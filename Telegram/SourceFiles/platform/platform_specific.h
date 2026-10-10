@@ -7,13 +7,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <optional>
+
 namespace Core {
 enum class QuitReason;
+enum class TeagramIconChoice : int;
 } // namespace Core
 
 namespace Data {
 class LocationPoint;
 } // namespace Data
+
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+class QImage;
+#endif
 
 namespace Platform {
 
@@ -36,6 +43,13 @@ enum class SystemSettingsType {
 };
 
 void SetApplicationIcon(const QIcon &icon);
+#if defined Q_OS_MAC && !defined OS_MAC_STORE
+[[nodiscard]] bool SetApplicationIcon(const QImage &image);
+[[nodiscard]] std::optional<bool> UpdateApplicationBundleIcon(
+	Core::TeagramIconChoice choice,
+	bool fileIconOwned,
+	bool roundIconActive);
+#endif
 [[nodiscard]] QString SingleInstanceLocalServerName(const QString &hash);
 [[nodiscard]] PermissionStatus GetPermissionStatus(PermissionType type);
 void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback);

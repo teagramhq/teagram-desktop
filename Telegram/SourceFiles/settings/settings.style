@@ -170,16 +170,14 @@ teagramAppIconTitle: FlatLabel(defaultFlatLabel) {
     minWidth: 100px;
 }
 teagramAppIconTitlePadding: margins(22px, 9px, 66px, 1px);
-teagramAppIconPreviewSize: size(88px, 88px);
+teagramAppIconPreviewSize: size(64px, 64px);
 teagramAppIconScroll: ScrollArea(defaultScrollArea) {
     barHidden: false;
+    hiding: 0;
 }
-teagramAppIconScrollHeight: 148px;
-teagramAppIconChoiceWidth: 116px;
 teagramAppIconChoiceSkip: 8px;
-teagramAppIconChoiceInnerSkip: 4px;
-teagramAppIconSelectionInset: 8px;
-teagramAppIconSelectionRadius: 16px;
+teagramAppIconSelectionInset: 2px;
+teagramAppIconSelectionRadius: 15px;
 teagramAppIconSelectionBorderWidth: 2px;
 teagramAppIconSelectionBorder: windowActiveTextFg;
 

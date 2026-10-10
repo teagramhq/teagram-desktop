@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -36,6 +37,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
+#include "window/window_controller.h"
+#include "window/window_session_controller.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
@@ -49,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSemaphore>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtWidgets/QApplication>
 
 #include <algorithm>
 #include <atomic>
@@ -58,6 +62,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 #include <set>
 #include <thread>
+#include <vector>
 
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -394,12 +399,51 @@ RegressionOtherServerKey() {
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
-[[nodiscard]] bool RestartDomain(Main::Domain &domain) {
+[[nodiscard]] bool RestartDomain(
+		Main::Domain &domain,
+		LifecycleWriteCountsForRegressionTest *teardownWriteCounts = nullptr) {
+	auto &app = Core::App();
+	const auto applicationWindows = [&] {
+		auto result = std::vector<Window::Controller *>();
+		for (const auto widget : QApplication::topLevelWidgets()) {
+			if (const auto window = app.findWindow(widget)) {
+				if (std::find(
+						result.begin(),
+						result.end(),
+						window) == result.end()) {
+					result.push_back(window);
+				}
+			}
+		}
+		return result;
+	};
+	const auto windows = applicationWindows();
+	for (const auto window : windows) {
+		app.closeWindow(window);
+	}
+	if (!applicationWindows().empty()) {
+		return false;
+	}
 	domain.local().writeAccounts();
 	domain.finish();
+	if (teardownWriteCounts) {
+		*teardownWriteCounts = GetLifecycleWriteCountsForRegressionTest();
+	}
 	Storage::details::Sync();
-	return (domain.start(QByteArray()) == Storage::StartResult::Success)
-		&& !domain.accounts().empty();
+	if (domain.start(QByteArray()) != Storage::StartResult::Success
+		|| domain.accounts().empty()) {
+		return false;
+	}
+	app.createPrimaryWindowForLifecycleRegression();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary) {
+		return false;
+	}
+	const auto active = &domain.active();
+	if (primary->id().account != active) {
+		primary->showAccount(active);
+	}
+	return &primary->account() == active;
 }
 
 [[nodiscard]] int FailAccountLifecycleRegression(const char *reason) {
@@ -1172,6 +1216,410 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"could not create the pinned test session");
 	}
+	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
+		return FailChatParticipantsRegression(
+			"stock and pinned sessions did not share the same user id");
+	}
+	const auto capabilitiesMatch = [](const Main::Session &session,
+								  bool supported) {
+		return (session.callsSupported() == supported)
+			&& (session.botAppsSupported() == supported)
+			&& (session.paidFeaturesSupported() == supported)
+			&& (session.storiesSupported() == supported)
+			&& (session.exportSupported() == supported)
+			&& (session.passportSupported() == supported)
+			&& (session.aiComposeSupported() == supported)
+			&& (session.serverTranslationSupported() == supported);
+	};
+	auto &app = Core::App();
+	pinned->mtp().stopForServerEnrollment();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary || !primary->isPrimary()) {
+		return FailChatParticipantsRegression(
+			"primary window disappeared before online-update lifetime regression");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()) {
+		return FailChatParticipantsRegression(
+			"primary window did not switch to the stock session");
+	}
+	QCoreApplication::processEvents();
+	const auto stockToPinnedStockUpdates
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto stockToPinnedPinnedUpdates
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedStockUpdates
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedPinnedUpdates + 1) {
+		return FailChatParticipantsRegression(
+			"stock-to-pinned switch did not update only the shown session inline");
+	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= stockToPinnedStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedPinnedUpdates + 1) {
+		return FailChatParticipantsRegression(
+			"stock-to-pinned switch did not update each session exactly once");
+	}
+	const auto pinnedToStockStockUpdates
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedToStockPinnedUpdates
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockPinnedUpdates) {
+		return FailChatParticipantsRegression(
+			"pinned-to-stock switch did not update only the shown session inline");
+	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= pinnedToStockStockUpdates + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedToStockPinnedUpdates + 1) {
+		return FailChatParticipantsRegression(
+			"pinned-to-stock switch did not update each session exactly once");
+	}
+	const auto discarded = domain.add(MTP::Environment::Production);
+	discarded->mtp().stopForServerEnrollment();
+	discarded->setSessionUserId(selfId);
+	if (!discarded->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		return FailChatParticipantsRegression(
+			"could not create the previous-session teardown fixture");
+	}
+	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
+		return FailChatParticipantsRegression(
+			"previous-session teardown fixture did not share the stock user id");
+	}
+	const auto stockBeforeQueuedSwitches
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeQueuedSwitches
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto discardedBeforeQueuedSwitches
+		= discarded->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches) {
+		return FailChatParticipantsRegression(
+			"queued stock-to-pinned switch missed its inline session update");
+	}
+	primary->showAccount(discarded);
+	if (primary->maybeSession() != &discarded->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches + 1) {
+		return FailChatParticipantsRegression(
+			"queued pinned-to-teardown switch missed its inline session update");
+	}
+	primary->showAccount(stock);
+	if (primary->maybeSession() != &stock->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches + 1
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
+			!= discardedBeforeQueuedSwitches + 1) {
+		return FailChatParticipantsRegression(
+			"queued teardown-to-stock switch missed its inline session update");
+	}
+	discarded->forcedLogOut();
+	if (discarded->sessionExists()) {
+		return FailChatParticipantsRegression(
+			"previous-session teardown fixture was not destroyed");
+	}
+	QCoreApplication::processEvents();
+	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
+		!= stockBeforeQueuedSwitches + 2
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeQueuedSwitches + 2) {
+		return FailChatParticipantsRegression(
+			"queued live and destroyed-session updates reached the wrong sessions");
+	}
+	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	if (app.separateWindowFor(pinned) != pinnedWindow) {
+		return FailChatParticipantsRegression(
+			"pinned window was not mapped before the primary closed");
+	}
+	if (!stock->sessionExists() || !pinned->sessionExists()) {
+		return FailChatParticipantsRegression(
+			"live previous-session fixtures disappeared before primary close");
+	}
+	// The pinned account owns a window, so the pinned id is taken. Switching
+	// the primary here must not rebind it: the pinned window is shown and the
+	// primary stays on the stock account. Every account lookup must keep
+	// returning a window bound to the account it was asked for, and every
+	// window must stay registered under its own id.
+	const auto stockBeforeCollision
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeCollision
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	const auto stockLookup = app.windowFor(stock);
+	const auto pinnedLookup = app.windowFor(pinned);
+	if (primary->maybeSession() != &stock->session()
+		|| app.activePrimaryWindow() != pinnedWindow
+		|| stockLookup != primary
+		|| pinnedLookup != pinnedWindow
+		|| &stockLookup->account() != stock.get()
+		|| &pinnedLookup->account() != pinned.get()
+		|| app.separateWindowFor(stock) != primary
+		|| app.separateWindowFor(pinned) != pinnedWindow
+		|| app.separateWindowFor(primary->id()) != primary
+		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeCollision
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeCollision) {
+		return FailChatParticipantsRegression(
+			"primary switch to an account owning a window left an account "
+			"lookup on a window bound to another account");
+	}
+	QCoreApplication::processEvents();
+	// Free the pinned id, then run the queued-switch teardown on a switch that
+	// is allowed: the previous-session update is queued for the stock session,
+	// the originating window closes synchronously before the dispatch, and the
+	// queued update must reach the stock session once, with no deferred update
+	// of its own for the newly shown session.
+	app.closeWindow(pinnedWindow);
+	if (app.separateWindowFor(pinned) != nullptr
+		|| app.separateWindowFor(stock) != primary
+		|| app.activePrimaryWindow() != primary) {
+		return FailChatParticipantsRegression(
+			"closed account window stayed mapped to the pinned account");
+	}
+	// A window for a brand-new account, which has no session, keeps one window
+	// registered while the originating window closes. A new account cannot have
+	// a window yet, so its id is free, and with no session behind it that window
+	// cannot answer an online update: the stock count dispatched below is
+	// the queued previous-session update and nothing else.
+	const auto blank = domain.add(MTP::Environment::Production);
+	blank->mtp().stopForServerEnrollment();
+	const auto blankWindow = app.ensureSeparateWindowFor(blank);
+	if (app.separateWindowFor(blank) != blankWindow
+		|| blankWindow->sessionController() != nullptr) {
+		std::fprintf(
+			stderr,
+			"Blank window fixture: mapped=%d controller=%p\n",
+			app.separateWindowFor(blank) == blankWindow,
+			static_cast<void *>(blankWindow->sessionController()));
+		return FailChatParticipantsRegression(
+			"blank window fixture was not mapped before the close");
+	}
+	const auto stockBeforeCloseSwitch
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedBeforeCloseSwitch
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	primary->showAccount(pinned);
+	if (primary->maybeSession() != &pinned->session()
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeCloseSwitch
+		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			!= pinnedBeforeCloseSwitch + 1) {
+		return FailChatParticipantsRegression(
+			"stock-to-pinned close switch missed its inline session update");
+	}
+	// The switch is registered under the pinned id, not the stock one it came
+	// from, so no lookup can answer with a window of another account.
+	if (app.separateWindowFor(pinned) != primary
+		|| app.separateWindowFor(stock) != nullptr
+		|| app.separateWindowFor(primary->id()) != primary
+		|| &primary->account() != pinned.get()) {
+		return FailChatParticipantsRegression(
+			"allowed primary switch kept the window keyed to its old account");
+	}
+	// The close is synchronous, before any dispatch of the queued update.
+	app.closeWindow(primary);
+	if (app.separateWindowFor(pinned) != nullptr
+		|| app.separateWindowFor(stock) != nullptr
+		|| app.separateWindowFor(blank) != blankWindow) {
+		return FailChatParticipantsRegression(
+			"closed primary window remained mapped to an account");
+	}
+	const auto stockAfterClose
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedAfterClose
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	QCoreApplication::processEvents();
+	const auto stockDelivered
+		= stock->session().updates().onlineUpdateCallsForRegressionTest()
+			- stockAfterClose;
+	const auto pinnedDelivered
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest()
+			- pinnedAfterClose;
+	// The stock channel is clean at the dispatch: no window is bound to the
+	// stock session then, so its one update is the queued previous-session
+	// update of the closed switch, never a second one. The pinned session gains
+	// at most the update that closing the window which showed it produces
+	// (MainWindow::handleActiveChanged), which is that window's own session.
+	if (stockDelivered != 1 || pinnedDelivered > 1) {
+		std::fprintf(
+			stderr,
+			"Deferred primary-close updates: stock=%d pinned=%d\n",
+			stockDelivered,
+			pinnedDelivered);
+		return FailChatParticipantsRegression(
+			"deferred primary-close update was not delivered once "
+			"to the previous session");
+	}
+	pinnedWindow = app.ensureSeparateWindowFor(pinned);
+	if (app.separateWindowFor(pinned) != pinnedWindow
+		|| &pinnedWindow->account() != pinned.get()) {
+		return FailChatParticipantsRegression(
+			"pinned window was not remapped after the primary closed");
+	}
+
+	const auto stockWindow = app.ensureSeparateWindowFor(stock);
+	const auto closeWindows = gsl::finally([&] {
+		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
+			app.closeWindow(stockWindow);
+		}
+		if (pinnedWindow && app.separateWindowFor(pinned) == pinnedWindow) {
+			app.closeWindow(pinnedWindow);
+		}
+		if (blankWindow && app.separateWindowFor(blank) == blankWindow) {
+			app.closeWindow(blankWindow);
+		}
+		domain.activate(stock);
+	});
+	const auto printCapabilities = [](const char *name,
+								  const Main::Session &session) {
+		std::fprintf(stderr,
+			"%s capabilities=%d%d%d%d%d%d%d%d\n",
+			name,
+			session.callsSupported(),
+			session.botAppsSupported(),
+			session.paidFeaturesSupported(),
+			session.storiesSupported(),
+			session.exportSupported(),
+			session.passportSupported(),
+			session.aiComposeSupported(),
+			session.serverTranslationSupported());
+	};
+	const auto windowsMatch = [&](const char *stage) {
+		const auto stockController = stockWindow->sessionController();
+		const auto pinnedController = pinnedWindow->sessionController();
+		const auto stockMapped = app.separateWindowFor(stock) == stockWindow;
+		const auto pinnedMapped = app.separateWindowFor(pinned) == pinnedWindow;
+		const auto stockBound = &stockWindow->account() == stock.get();
+		const auto pinnedBound = &pinnedWindow->account() == pinned.get();
+		const auto stockSessionMatches = stockController
+			&& (&stockController->session() == &stock->session());
+		const auto pinnedSessionMatches = pinnedController
+			&& (&pinnedController->session() == &pinned->session());
+		const auto stockCapabilitiesMatch = stockController
+			&& capabilitiesMatch(stockController->session(), true);
+		const auto pinnedCapabilitiesMatch = pinnedController
+			&& capabilitiesMatch(pinnedController->session(), false);
+		const auto matches = (stockWindow != pinnedWindow)
+			&& stockMapped
+			&& pinnedMapped
+			&& stockBound
+			&& pinnedBound
+			&& stockSessionMatches
+			&& pinnedSessionMatches
+			&& stockCapabilitiesMatch
+			&& pinnedCapabilitiesMatch;
+		if (!matches) {
+			std::fprintf(
+				stderr,
+				"Window/session regression mismatch at %s: "
+				"distinct=%d mapped=%d/%d account=%d/%d "
+				"controller=%d/%d session=%d/%d gates=%d/%d active=%p\n",
+				stage,
+				stockWindow != pinnedWindow,
+				stockMapped,
+				pinnedMapped,
+				stockBound,
+				pinnedBound,
+				stockController != nullptr,
+				pinnedController != nullptr,
+				stockSessionMatches,
+				pinnedSessionMatches,
+				stockCapabilitiesMatch,
+				pinnedCapabilitiesMatch,
+				static_cast<const void *>(&domain.active()));
+			printCapabilities("stock account", stock->session());
+			printCapabilities("pinned account", pinned->session());
+			if (stockController) {
+				printCapabilities("stock window", stockController->session());
+			}
+			if (pinnedController) {
+				printCapabilities("pinned window", pinnedController->session());
+			}
+		}
+		return matches;
+	};
+	const auto activateAndCheck = [&](bool customFirst) {
+		const auto first = customFirst ? pinned : stock;
+		const auto second = customFirst ? stock : pinned;
+		domain.activate(first);
+		const auto firstActive = &domain.active() == first.get();
+		const auto firstCapabilities
+			= capabilitiesMatch(first->session(), !customFirst);
+		const auto firstWindows = windowsMatch(customFirst
+			? "custom account first activation"
+			: "stock account first activation");
+		if (!firstActive || !firstCapabilities || !firstWindows) {
+			std::fprintf(stderr,
+				"First activation mismatch: customFirst=%d active=%d "
+				"capabilities=%d windows=%d\n",
+				customFirst, firstActive, firstCapabilities, firstWindows);
+			if (!firstCapabilities) {
+				printCapabilities(customFirst ? "pinned first" : "stock first",
+					first->session());
+			}
+			return false;
+		}
+		domain.activate(second);
+		const auto secondActive = &domain.active() == second.get();
+		const auto secondCapabilities
+			= capabilitiesMatch(second->session(), customFirst);
+		const auto secondWindows = windowsMatch(customFirst
+			? "stock account second activation"
+			: "custom account second activation");
+		if (!secondActive || !secondCapabilities || !secondWindows) {
+			std::fprintf(stderr,
+				"Second activation mismatch: customFirst=%d active=%d "
+				"capabilities=%d windows=%d\n",
+				customFirst, secondActive, secondCapabilities, secondWindows);
+			if (!secondCapabilities) {
+				printCapabilities(customFirst ? "stock second" : "pinned second",
+					second->session());
+			}
+			return false;
+		}
+		return true;
+	};
+	if (!stockWindow || !pinnedWindow) {
+		std::fprintf(stderr,
+			"Separate window construction failed: stock=%p pinned=%p\n",
+			static_cast<const void *>(stockWindow),
+			static_cast<const void *>(pinnedWindow));
+		return FailChatParticipantsRegression(
+			"session feature capabilities crossed account or window boundaries");
+	}
+	if (!windowsMatch("initial separate windows")
+		|| !activateAndCheck(false)
+		|| !activateAndCheck(true)) {
+		return FailChatParticipantsRegression(
+			"session feature capabilities crossed account or window boundaries");
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
@@ -1284,7 +1732,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"pinned migration fixture is not an active custom-server group");
 	}
-	pinned->mtp().stopForServerEnrollment();
+	if (!windowsMatch("after primary close")) {
+		return FailChatParticipantsRegression(
+			"primary close changed the separate session windows");
+	}
 
 	struct MigrationResult {
 		int done = 0;
@@ -1353,9 +1804,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"application domain did not start");
 	}
-	if (Core::App().activePrimaryWindow()) {
+	if (!Core::App().activePrimaryWindow()) {
 		return FailAccountLifecycleRegression(
-			"application unexpectedly created a primary window");
+			"application did not create the primary window fixture");
 	}
 	if (domain.accounts().size() != 1
 		|| domain.accounts().front().account->sessionExists()) {
@@ -1604,21 +2055,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"authorization failure marker observer missed an identical-value rewrite");
 	}
-	domain.local().writeAccounts();
 	ResetLifecycleWriteCountsForRegressionTest();
-	domain.finish();
-	const auto blockedTeardownAttempts = GetLifecycleWriteCountsForRegressionTest();
+	auto blockedTeardownAttempts = LifecycleWriteCountsForRegressionTest();
+	if (!RestartDomain(domain, &blockedTeardownAttempts)) {
+		return FailAccountLifecycleRegression(
+			"could not restart after blocked teardown");
+	}
 	if (blockedTeardownAttempts.authorizationSnapshot != 0
 		|| blockedTeardownAttempts.authorizationFailureMarker != 0
 		|| blockedTeardownAttempts.customServerBlockMarker != 0) {
 		return FailAccountLifecycleRegression(
 			"blocked account teardown attempted an authorization or marker write");
-	}
-	Storage::details::Sync();
-	if ((domain.start(QByteArray()) != Storage::StartResult::Success)
-		|| domain.accounts().empty()) {
-		return FailAccountLifecycleRegression(
-			"could not restart after blocked teardown");
 	}
 	failedTeardown = FindAuthorizationBlockedAccount(domain);
 	if (!failedTeardown
@@ -1784,21 +2231,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"block marker observer missed an identical-value rewrite");
 	}
-	domain.local().writeAccounts();
 	ResetLifecycleWriteCountsForRegressionTest();
-	domain.finish();
-	const auto teardownAttempts = GetLifecycleWriteCountsForRegressionTest();
+	auto teardownAttempts = LifecycleWriteCountsForRegressionTest();
+	if (!RestartDomain(domain, &teardownAttempts)) {
+		return FailAccountLifecycleRegression(
+			"blocked teardown did not complete its restart");
+	}
 	if (teardownAttempts.authorizationSnapshot != 0
 		|| teardownAttempts.authorizationFailureMarker != 0
 		|| teardownAttempts.customServerBlockMarker != 0) {
 		return FailAccountLifecycleRegression(
 			"blocked account teardown attempted an authorization or marker write");
-	}
-	Storage::details::Sync();
-	if ((domain.start(QByteArray()) != Storage::StartResult::Success)
-		|| domain.accounts().empty()) {
-		return FailAccountLifecycleRegression(
-			"blocked teardown did not complete its restart");
 	}
 	blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
 		domain.accounts().front().account.get());

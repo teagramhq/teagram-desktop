@@ -139,6 +139,9 @@ public:
 	void checkIdleFinish(crl::time lastNonIdleTime = 0);
 	bool lastWasOnline() const;
 	crl::time lastSetOnline() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int onlineUpdateCallsForRegressionTest() const;
+#endif
 	bool isQuitPrevent();
 
 	bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdates &updates);
@@ -315,6 +318,9 @@ private:
 		base::flat_map<PeerId, crl::time>> _pendingSpeakingCallParticipants;
 
 	mtpRequestId _onlineRequest = 0;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _onlineUpdateCallsForRegressionTest = 0;
+#endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;
 	crl::time _lastSetOnline = 0;
