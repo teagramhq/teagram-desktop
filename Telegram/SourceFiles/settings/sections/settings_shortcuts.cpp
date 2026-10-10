@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/shortcuts.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "settings/sections/settings_chat.h"
 #include "settings/settings_builder.h"
 #include "settings/settings_common_session.h"
