@@ -241,6 +241,9 @@ public:
 		const QString &slug,
 		FnMut<void(const MTPchatlists_ChatlistInvite &)> done,
 		Fn<void(const MTP::Error &)> fail);
+	[[nodiscard]] bool checkFilterInviteRequestPendingForRegressionTest() {
+		return pending(_checkFilterInviteRequestId);
+	}
 
 	void processFullPeer(
 		not_null<PeerData*> peer,

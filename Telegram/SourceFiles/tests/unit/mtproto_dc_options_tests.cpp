@@ -1527,7 +1527,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 8>{
+	const auto capabilities = std::array<Capability, 9>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -1536,6 +1536,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::passportSupported,
 		Main::details::aiComposeSupported,
 		Main::details::serverTranslationSupported,
+		Main::details::sharedFoldersSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));

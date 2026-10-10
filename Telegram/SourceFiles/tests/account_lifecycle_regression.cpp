@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_chat_filters.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -31,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
+#include "settings/sections/settings_folders.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
@@ -1220,17 +1222,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch = [](const Main::Session &session,
-								  bool supported) {
-		return (session.callsSupported() == supported)
-			&& (session.botAppsSupported() == supported)
-			&& (session.paidFeaturesSupported() == supported)
-			&& (session.storiesSupported() == supported)
-			&& (session.exportSupported() == supported)
-			&& (session.passportSupported() == supported)
-			&& (session.aiComposeSupported() == supported)
-			&& (session.serverTranslationSupported() == supported);
-	};
+	const auto capabilitiesMatch
+		= [](const Main::Session &session, bool supported) {
+			  return (session.callsSupported() == supported)
+					 && (session.botAppsSupported() == supported)
+					 && (session.paidFeaturesSupported() == supported)
+					 && (session.storiesSupported() == supported)
+					 && (session.exportSupported() == supported)
+					 && (session.passportSupported() == supported)
+					 && (session.aiComposeSupported() == supported)
+					 && (session.serverTranslationSupported() == supported)
+					 && (session.sharedFoldersSupported() == supported);
+		  };
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1498,18 +1501,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		domain.activate(stock);
 	});
 	const auto printCapabilities = [](const char *name,
-								  const Main::Session &session) {
-		std::fprintf(stderr,
-			"%s capabilities=%d%d%d%d%d%d%d%d\n",
-			name,
-			session.callsSupported(),
-			session.botAppsSupported(),
-			session.paidFeaturesSupported(),
-			session.storiesSupported(),
-			session.exportSupported(),
-			session.passportSupported(),
-			session.aiComposeSupported(),
-			session.serverTranslationSupported());
+									  const Main::Session &session) {
+		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d\n", name,
+					 session.callsSupported(), session.botAppsSupported(),
+					 session.paidFeaturesSupported(),
+					 session.storiesSupported(), session.exportSupported(),
+					 session.passportSupported(), session.aiComposeSupported(),
+					 session.serverTranslationSupported(),
+					 session.sharedFoldersSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -1620,6 +1619,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
 	}
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto stockController = stockWindow->sessionController();
+	if (!pinnedController || !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
+		return FailChatParticipantsRegression(
+			"test windows lost their owning sessions before folder smoke "
+			"tests");
+	}
+	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
+	if (pinnedController->session()
+			.api()
+			.checkFilterInviteRequestPendingForRegressionTest()) {
+		return FailChatParticipantsRegression(
+			"unsupported pinned session sent a chatlist invite check request");
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
@@ -1688,6 +1703,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasExpectedParticipants(pinnedChat, UserId(2))) {
 		return FailChatParticipantsRegression(
 			"pinned phone-free self did not retain creator and members");
+	}
+	if (!Settings::RunFoldersCrudRegressionForTest(
+			stockController, pinnedController,
+			stock->session().data().history(stockPeer))
+		|| !Settings::RunFoldersCrudRegressionForTest(
+			pinnedController, stockController,
+			pinned->session().data().history(pinnedPeer))) {
+		return FailChatParticipantsRegression(
+			"ordinary folder create, rename, save, or remove did not stay "
+			"in its owning session");
 	}
 
 	const auto actionChatId = ChatId(1052);

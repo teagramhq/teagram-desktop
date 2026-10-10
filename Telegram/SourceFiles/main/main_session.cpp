@@ -403,6 +403,10 @@ bool Session::serverTranslationSupported() const {
 	return details::serverTranslationSupported(mtp().dcOptions());
 }
 
+bool Session::sharedFoldersSupported() const {
+	return details::sharedFoldersSupported(mtp().dcOptions());
+}
+
 bool Session::isTestMode() const {
 	return mtp().isTestMode();
 }
