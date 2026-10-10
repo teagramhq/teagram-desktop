@@ -61,22 +61,19 @@ struct TeagramUpdateVerificationResult {
 	[[nodiscard]] bool eligible() const;
 };
 
-[[nodiscard]] TeagramUpdateVerificationResult VerifyTeagramUpdatePackage(
-	const QByteArray &manifest,
-	const QByteArray &signature,
-	QByteArrayView archive,
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel);
+[[nodiscard]] TeagramUpdateVerificationResult
+VerifyTeagramUpdatePackage(const QByteArray &manifest,
+						   const QByteArray &signature, QByteArrayView archive,
+						   quint64 installedBuild,
+						   TeagramUpdateChannel installedChannel);
 
 #ifdef TDESKTOP_UNIT_TESTS
 using TeagramUpdatePublicKey = std::array<unsigned char, 32>;
 
 [[nodiscard]] TeagramUpdateVerificationResult
 VerifyTeagramUpdatePackageForTests(
-	const QByteArray &manifest,
-	const QByteArray &signature,
-	QByteArrayView archive,
-	quint64 installedBuild,
+	const QByteArray &manifest, const QByteArray &signature,
+	QByteArrayView archive, quint64 installedBuild,
 	TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey);
 #endif // TDESKTOP_UNIT_TESTS

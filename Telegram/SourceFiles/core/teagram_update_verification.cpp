@@ -33,19 +33,14 @@ constexpr auto kExpectedFieldCount = 11;
 constexpr auto kMaximumSignatureSize = 64;
 constexpr auto kMaximumHashSize = 32;
 
-constexpr auto kProductionUpdatePublicKey
-	= std::optional<Ed25519PublicKey>();
+constexpr auto kProductionUpdatePublicKey = std::optional<Ed25519PublicKey>();
 
 struct PkeyDeleter {
-	void operator()(EVP_PKEY *value) const {
-		EVP_PKEY_free(value);
-	}
+	void operator()(EVP_PKEY *value) const { EVP_PKEY_free(value); }
 };
 
 struct DigestContextDeleter {
-	void operator()(EVP_MD_CTX *value) const {
-		EVP_MD_CTX_free(value);
-	}
+	void operator()(EVP_MD_CTX *value) const { EVP_MD_CTX_free(value); }
 };
 
 using Pkey = std::unique_ptr<EVP_PKEY, PkeyDeleter>;
@@ -57,7 +52,7 @@ struct ManifestParseResult {
 };
 
 [[nodiscard]] TeagramUpdateVerificationResult Rejected(Reason reason) {
-	return { reason, std::nullopt };
+	return {reason, std::nullopt};
 }
 
 [[nodiscard]] bool IsJsonWhitespace(char ch) {
@@ -65,15 +60,13 @@ struct ManifestParseResult {
 }
 
 void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
-	while (*position < json.size()
-		&& IsJsonWhitespace(json[*position])) {
+	while (*position < json.size() && IsJsonWhitespace(json[*position])) {
 		++*position;
 	}
 }
 
-[[nodiscard]] qsizetype JsonStringEnd(
-		const QByteArray &json,
-		qsizetype position) {
+[[nodiscard]] qsizetype JsonStringEnd(const QByteArray &json,
+									  qsizetype position) {
 	if (position >= json.size() || json[position] != '"') {
 		return -1;
 	}
@@ -87,8 +80,7 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 	return -1;
 }
 
-[[nodiscard]] bool HasDuplicateOrNestedManifestFields(
-		const QByteArray &json) {
+[[nodiscard]] bool HasDuplicateOrNestedManifestFields(const QByteArray &json) {
 	auto position = qsizetype(0);
 	SkipJsonWhitespace(json, &position);
 	if (position >= json.size() || json[position++] != '{') {
@@ -106,7 +98,7 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 		}
 		const auto token = json.mid(position, end - position);
 		const auto wrapped = QByteArrayLiteral("[") + token + "]";
-		auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+		auto error = QJsonParseError{0, QJsonParseError::NoError};
 		const auto document = QJsonDocument::fromJson(wrapped, &error);
 		if (error.error != QJsonParseError::NoError || !document.isArray()) {
 			return true;
@@ -122,8 +114,7 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 			return true;
 		}
 		SkipJsonWhitespace(json, &position);
-		if (position >= json.size()
-			|| json[position] == '{'
+		if (position >= json.size() || json[position] == '{'
 			|| json[position] == '[') {
 			return true;
 		}
@@ -134,10 +125,9 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 			}
 		} else {
 			const auto start = position;
-			while (position < json.size()
-				&& json[position] != ','
-				&& json[position] != '}'
-				&& !IsJsonWhitespace(json[position])) {
+			while (position < json.size() && json[position] != ','
+				   && json[position] != '}'
+				   && !IsJsonWhitespace(json[position])) {
 				++position;
 			}
 			if (position == start) {
@@ -163,17 +153,16 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 	for (const auto ch : value) {
 		const auto code = ch.unicode();
 		if (!((code >= u'0' && code <= u'9')
-			|| (code >= u'a' && code <= u'f'))) {
+			  || (code >= u'a' && code <= u'f'))) {
 			return false;
 		}
 	}
 	return true;
 }
 
-[[nodiscard]] std::optional<quint64> ParseCanonicalUnsigned(
-		const QString &value) {
-	if (value.isEmpty()
-		|| (value.size() > 1 && value.front() == u'0')) {
+[[nodiscard]] std::optional<quint64>
+ParseCanonicalUnsigned(const QString &value) {
+	if (value.isEmpty() || (value.size() > 1 && value.front() == u'0')) {
 		return std::nullopt;
 	}
 	auto encoded = value.toLatin1();
@@ -182,9 +171,7 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 	}
 	auto result = quint64(0);
 	const auto parsed = std::from_chars(
-		encoded.constData(),
-		encoded.constData() + encoded.size(),
-		result);
+		encoded.constData(), encoded.constData() + encoded.size(), result);
 	if (parsed.ec != std::errc()
 		|| parsed.ptr != encoded.constData() + encoded.size()) {
 		return std::nullopt;
@@ -194,71 +181,54 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 
 [[nodiscard]] ManifestParseResult ParseManifest(const QByteArray &manifest) {
 	if (manifest.isEmpty()) {
-		return { Reason::InvalidManifest, std::nullopt };
+		return {Reason::InvalidManifest, std::nullopt};
 	} else if (manifest.size() > kMaximumManifestSize) {
-		return { Reason::ManifestTooLarge, std::nullopt };
+		return {Reason::ManifestTooLarge, std::nullopt};
 	}
-	auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+	auto error = QJsonParseError{0, QJsonParseError::NoError};
 	const auto document = QJsonDocument::fromJson(manifest, &error);
-	if (error.error != QJsonParseError::NoError
-		|| !document.isObject()
+	if (error.error != QJsonParseError::NoError || !document.isObject()
 		|| HasDuplicateOrNestedManifestFields(manifest)) {
-		return { Reason::InvalidManifest, std::nullopt };
+		return {Reason::InvalidManifest, std::nullopt};
 	}
 	const auto fields = document.object();
 	if (fields.size() != kExpectedFieldCount) {
-		return { Reason::InvalidManifest, std::nullopt };
+		return {Reason::InvalidManifest, std::nullopt};
 	}
 	const auto fieldNames = std::array{
-		u"format"_q,
-		u"product"_q,
-		u"repo"_q,
-		u"arch"_q,
-		u"channel"_q,
-		u"build"_q,
-		u"commit"_q,
-		u"asset_name"_q,
-		u"asset_size"_q,
-		u"asset_sha256"_q,
-		u"min_os"_q,
+		u"format"_q,	 u"product"_q,		u"repo"_q,	 u"arch"_q,
+		u"channel"_q,	 u"build"_q,		u"commit"_q, u"asset_name"_q,
+		u"asset_size"_q, u"asset_sha256"_q, u"min_os"_q,
 	};
 	for (const auto &name : fieldNames) {
 		if (!fields.contains(name)) {
-			return { Reason::InvalidManifest, std::nullopt };
+			return {Reason::InvalidManifest, std::nullopt};
 		}
 	}
 	const auto format = fields.value(u"format"_q);
 	if (!format.isDouble()) {
-		return { Reason::InvalidManifest, std::nullopt };
+		return {Reason::InvalidManifest, std::nullopt};
 	} else if (format.toDouble() != 1.) {
-		return { Reason::UnsupportedFormat, std::nullopt };
+		return {Reason::UnsupportedFormat, std::nullopt};
 	}
 	const auto stringFields = std::array{
-		u"product"_q,
-		u"repo"_q,
-		u"arch"_q,
-		u"channel"_q,
-		u"build"_q,
-		u"commit"_q,
-		u"asset_name"_q,
-		u"asset_size"_q,
-		u"asset_sha256"_q,
-		u"min_os"_q,
+		u"product"_q,	   u"repo"_q,	u"arch"_q,		 u"channel"_q,
+		u"build"_q,		   u"commit"_q, u"asset_name"_q, u"asset_size"_q,
+		u"asset_sha256"_q, u"min_os"_q,
 	};
 	for (const auto &name : stringFields) {
 		if (!fields.value(name).isString()) {
-			return { Reason::InvalidManifest, std::nullopt };
+			return {Reason::InvalidManifest, std::nullopt};
 		}
 	}
 	if (fields.value(u"product"_q).toString() != u"io.teagram.desktop"_q) {
-		return { Reason::WrongProduct, std::nullopt };
+		return {Reason::WrongProduct, std::nullopt};
 	}
-	if (fields.value(u"repo"_q).toString()
-		!= u"teagramhq/teagram-desktop"_q) {
-		return { Reason::WrongRepository, std::nullopt };
+	if (fields.value(u"repo"_q).toString() != u"teagramhq/teagram-desktop"_q) {
+		return {Reason::WrongRepository, std::nullopt};
 	}
 	if (fields.value(u"arch"_q).toString() != u"arm64"_q) {
-		return { Reason::WrongArchitecture, std::nullopt };
+		return {Reason::WrongArchitecture, std::nullopt};
 	}
 	const auto channelName = fields.value(u"channel"_q).toString();
 	const auto channel = [&]() -> std::optional<TeagramUpdateChannel> {
@@ -270,31 +240,30 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 		return std::nullopt;
 	}();
 	if (!channel) {
-		return { Reason::InvalidChannel, std::nullopt };
+		return {Reason::InvalidChannel, std::nullopt};
 	}
-	const auto build = ParseCanonicalUnsigned(
-		fields.value(u"build"_q).toString());
+	const auto build
+		= ParseCanonicalUnsigned(fields.value(u"build"_q).toString());
 	if (!build || *build == 0) {
-		return { Reason::InvalidBuild, std::nullopt };
+		return {Reason::InvalidBuild, std::nullopt};
 	}
-	const auto assetSize = ParseCanonicalUnsigned(
-		fields.value(u"asset_size"_q).toString());
+	const auto assetSize
+		= ParseCanonicalUnsigned(fields.value(u"asset_size"_q).toString());
 	if (!assetSize || *assetSize == 0) {
-		return { Reason::InvalidAssetSize, std::nullopt };
+		return {Reason::InvalidAssetSize, std::nullopt};
 	}
 	const auto commit = fields.value(u"commit"_q).toString();
 	if (!IsLowerHex(commit, 40)) {
-		return { Reason::InvalidManifest, std::nullopt };
+		return {Reason::InvalidManifest, std::nullopt};
 	}
 	const auto assetName = fields.value(u"asset_name"_q).toString();
-	const auto expectedAssetName =
-		u"Teagram-macOS-arm64-%1.zip"_q.arg(*build);
+	const auto expectedAssetName = u"Teagram-macOS-arm64-%1.zip"_q.arg(*build);
 	if (assetName != expectedAssetName) {
-		return { Reason::InvalidAssetName, std::nullopt };
+		return {Reason::InvalidAssetName, std::nullopt};
 	}
 	const auto assetSha256 = fields.value(u"asset_sha256"_q).toString();
 	if (!IsLowerHex(assetSha256, 64)) {
-		return { Reason::InvalidHash, std::nullopt };
+		return {Reason::InvalidHash, std::nullopt};
 	}
 	return {
 		Reason::Eligible,
@@ -317,13 +286,11 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 	return result;
 }
 
-[[nodiscard]] TeagramUpdateVerificationResult VerifyPackage(
-		const QByteArray &manifest,
-		const QByteArray &signature,
-		QByteArrayView archive,
-		quint64 installedBuild,
-		TeagramUpdateChannel installedChannel,
-		const std::optional<Ed25519PublicKey> &trustedKey) {
+[[nodiscard]] TeagramUpdateVerificationResult
+VerifyPackage(const QByteArray &manifest, const QByteArray &signature,
+			  QByteArrayView archive, quint64 installedBuild,
+			  TeagramUpdateChannel installedChannel,
+			  const std::optional<Ed25519PublicKey> &trustedKey) {
 	if (!trustedKey) {
 		return Rejected(Reason::MissingTrustedKey);
 	}
@@ -334,26 +301,20 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 		return Rejected(Reason::InvalidSignature);
 	}
 	auto key = Pkey(EVP_PKEY_new_raw_public_key(
-		EVP_PKEY_ED25519,
-		nullptr,
-		trustedKey->data(),
-		trustedKey->size()));
+		EVP_PKEY_ED25519, nullptr, trustedKey->data(), trustedKey->size()));
 	auto context = DigestContext(EVP_MD_CTX_new());
 	if (!key || !context
-		|| EVP_DigestVerifyInit(
-			context.get(),
-			nullptr,
-			nullptr,
-			nullptr,
-			key.get()) != 1) {
+		|| EVP_DigestVerifyInit(context.get(), nullptr, nullptr, nullptr,
+								key.get())
+			   != 1) {
 		return Rejected(Reason::VerifierUnavailable);
 	}
 	const auto message = SignatureMessage(manifest);
 	const auto verified = EVP_DigestVerify(
 		context.get(),
-		reinterpret_cast<const unsigned char*>(signature.constData()),
+		reinterpret_cast<const unsigned char *>(signature.constData()),
 		size_t(signature.size()),
-		reinterpret_cast<const unsigned char*>(message.constData()),
+		reinterpret_cast<const unsigned char *>(message.constData()),
 		size_t(message.size()));
 	if (verified == 0) {
 		return Rejected(Reason::InvalidSignature);
@@ -379,69 +340,52 @@ void SkipJsonWhitespace(const QByteArray &json, qsizetype *position) {
 	default:
 		return Rejected(Reason::InvalidChannel);
 	}
-	if (archive.size() < 0
-		|| quint64(archive.size()) != package.assetSize
+	if (archive.size() < 0 || quint64(archive.size()) != package.assetSize
 		|| package.assetSize > std::numeric_limits<size_t>::max()) {
 		return Rejected(Reason::ArchiveSizeMismatch);
 	}
 	auto digest = std::array<unsigned char, kMaximumHashSize>();
 	auto digestSize = 0U;
-	if (EVP_Digest(
-			archive.data(),
-			size_t(archive.size()),
-			digest.data(),
-			&digestSize,
-			EVP_sha256(),
-			nullptr) != 1
+	if (EVP_Digest(archive.data(), size_t(archive.size()), digest.data(),
+				   &digestSize, EVP_sha256(), nullptr)
+			!= 1
 		|| digestSize != digest.size()) {
 		return Rejected(Reason::VerifierUnavailable);
 	}
-	const auto actualHash = QByteArray(
-		reinterpret_cast<const char*>(digest.data()),
-		int(digest.size())).toHex();
+	const auto actualHash
+		= QByteArray(reinterpret_cast<const char *>(digest.data()),
+					 int(digest.size()))
+			  .toHex();
 	if (actualHash != package.assetSha256.toLatin1()) {
 		return Rejected(Reason::ArchiveHashMismatch);
 	}
-	return { Reason::Eligible, std::move(package) };
+	return {Reason::Eligible, std::move(package)};
 }
 
 } // namespace
 
 bool TeagramUpdateVerificationResult::eligible() const {
 	return reason == TeagramUpdateVerificationReason::Eligible
-		&& package.has_value();
+		   && package.has_value();
 }
 
-TeagramUpdateVerificationResult VerifyTeagramUpdatePackage(
-		const QByteArray &manifest,
-		const QByteArray &signature,
-		QByteArrayView archive,
-		quint64 installedBuild,
-		TeagramUpdateChannel installedChannel) {
-	return VerifyPackage(
-		manifest,
-		signature,
-		archive,
-		installedBuild,
-		installedChannel,
-		kProductionUpdatePublicKey);
+TeagramUpdateVerificationResult
+VerifyTeagramUpdatePackage(const QByteArray &manifest,
+						   const QByteArray &signature, QByteArrayView archive,
+						   quint64 installedBuild,
+						   TeagramUpdateChannel installedChannel) {
+	return VerifyPackage(manifest, signature, archive, installedBuild,
+						 installedChannel, kProductionUpdatePublicKey);
 }
 
 #ifdef TDESKTOP_UNIT_TESTS
 TeagramUpdateVerificationResult VerifyTeagramUpdatePackageForTests(
-		const QByteArray &manifest,
-		const QByteArray &signature,
-		QByteArrayView archive,
-		quint64 installedBuild,
-		TeagramUpdateChannel installedChannel,
-		const std::optional<TeagramUpdatePublicKey> &trustedKey) {
-	return VerifyPackage(
-		manifest,
-		signature,
-		archive,
-		installedBuild,
-		installedChannel,
-		trustedKey);
+	const QByteArray &manifest, const QByteArray &signature,
+	QByteArrayView archive, quint64 installedBuild,
+	TeagramUpdateChannel installedChannel,
+	const std::optional<TeagramUpdatePublicKey> &trustedKey) {
+	return VerifyPackage(manifest, signature, archive, installedBuild,
+						 installedChannel, trustedKey);
 }
 #endif // TDESKTOP_UNIT_TESTS
 

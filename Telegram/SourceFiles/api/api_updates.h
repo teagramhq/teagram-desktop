@@ -140,7 +140,8 @@ public:
 	bool lastWasOnline() const;
 	crl::time lastSetOnline() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int onlineUpdateCallsForRegressionTest() const;
+	void noteSessionSwitchUpdateForTest();
+	int sessionSwitchUpdatesForTest() const;
 #endif
 	bool isQuitPrevent();
 
@@ -319,7 +320,7 @@ private:
 
 	mtpRequestId _onlineRequest = 0;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int _onlineUpdateCallsForRegressionTest = 0;
+	int _sessionSwitchUpdatesForTest = 0;
 #endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;
