@@ -1222,18 +1222,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch = [](const Main::Session &session,
-								  bool supported) {
-		return (session.callsSupported() == supported)
-			&& (session.botAppsSupported() == supported)
-			&& (session.paidFeaturesSupported() == supported)
-			&& (session.storiesSupported() == supported)
-			&& (session.exportSupported() == supported)
-			&& (session.passportSupported() == supported)
-			&& (session.aiComposeSupported() == supported)
-			&& (session.serverTranslationSupported() == supported)
-			&& (session.sharedFoldersSupported() == supported);
-	};
+	const auto capabilitiesMatch
+		= [](const Main::Session &session, bool supported) {
+			  return (session.callsSupported() == supported)
+					 && (session.botAppsSupported() == supported)
+					 && (session.paidFeaturesSupported() == supported)
+					 && (session.storiesSupported() == supported)
+					 && (session.exportSupported() == supported)
+					 && (session.passportSupported() == supported)
+					 && (session.aiComposeSupported() == supported)
+					 && (session.serverTranslationSupported() == supported)
+					 && (session.sharedFoldersSupported() == supported);
+		  };
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1501,19 +1501,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		domain.activate(stock);
 	});
 	const auto printCapabilities = [](const char *name,
-								  const Main::Session &session) {
-		std::fprintf(stderr,
-			"%s capabilities=%d%d%d%d%d%d%d%d%d\n",
-			name,
-			session.callsSupported(),
-			session.botAppsSupported(),
-			session.paidFeaturesSupported(),
-			session.storiesSupported(),
-			session.exportSupported(),
-			session.passportSupported(),
-			session.aiComposeSupported(),
-			session.serverTranslationSupported(),
-			session.sharedFoldersSupported());
+									  const Main::Session &session) {
+		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d\n", name,
+					 session.callsSupported(), session.botAppsSupported(),
+					 session.paidFeaturesSupported(),
+					 session.storiesSupported(), session.exportSupported(),
+					 session.passportSupported(), session.aiComposeSupported(),
+					 session.serverTranslationSupported(),
+					 session.sharedFoldersSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -1626,15 +1621,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	const auto pinnedController = pinnedWindow->sessionController();
 	const auto stockController = stockWindow->sessionController();
-	if (!pinnedController
-		|| !stockController
+	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
 		return FailChatParticipantsRegression(
-			"test windows lost their owning sessions before folder smoke tests");
+			"test windows lost their owning sessions before folder smoke "
+			"tests");
 	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
-	if (pinnedController->session().api()
+	if (pinnedController->session()
+			.api()
 			.checkFilterInviteRequestPendingForRegressionTest()) {
 		return FailChatParticipantsRegression(
 			"unsupported pinned session sent a chatlist invite check request");
@@ -1709,12 +1705,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"pinned phone-free self did not retain creator and members");
 	}
 	if (!Settings::RunFoldersCrudRegressionForTest(
-			stockController,
-			pinnedController,
+			stockController, pinnedController,
 			stock->session().data().history(stockPeer))
 		|| !Settings::RunFoldersCrudRegressionForTest(
-			pinnedController,
-			stockController,
+			pinnedController, stockController,
 			pinned->session().data().history(pinnedPeer))) {
 		return FailChatParticipantsRegression(
 			"ordinary folder create, rename, save, or remove did not stay "

@@ -89,7 +89,7 @@ public:
 	}
 #endif
 
-private:
+  private:
 	enum class State {
 		Suggested,
 		Removed,
@@ -375,9 +375,9 @@ struct FoldersState {
 	Data::ChatFilter regressionCreateFilter;
 	bool useRegressionCreateFilter = false;
 #endif
-	Fn<not_null<FilterRowButton*>(const Data::ChatFilter &)> add;
-	Fn<void(not_null<FilterRowButton*>, const Data::ChatFilter &)> edit;
-	Fn<void(not_null<FilterRowButton*>)> remove;
+	Fn<not_null<FilterRowButton *>(const Data::ChatFilter &)> add;
+	Fn<void(not_null<FilterRowButton *>, const Data::ChatFilter &)> edit;
+	Fn<void(not_null<FilterRowButton *>)> remove;
 	Fn<void(const FilterRowButton*, Fn<void(Data::ChatFilter)>)> save;
 	Ui::Animations::Simple tagsEnabledAnimation;
 	rpl::event_stream<bool> tagsButtonEnabled;
@@ -484,19 +484,16 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 	state->remove = remove;
 	const auto wrap = container->add(object_ptr<Ui::VerticalLayout>(
 		container));
-	state->edit = [=](
-			not_null<FilterRowButton*> button,
-			const Data::ChatFilter &result) {
+	state->edit = [=](not_null<FilterRowButton *> button,
+					  const Data::ChatFilter &result) {
 		find(button)->filter = result;
 		button->updateData(result);
 	};
 	const auto addFilter = [=](const Data::ChatFilter &filter) {
 		const auto button = wrap->add(
 			object_ptr<FilterRowButton>(wrap, session, filter));
-		button->removeRequests(
-		) | rpl::on_next([=] {
-			state->remove(button);
-		}, button->lifetime());
+		button->removeRequests()
+			| rpl::on_next([=] { state->remove(button); }, button->lifetime());
 		button->restoreRequests(
 		) | rpl::on_next([=] {
 			if (showLimitReached()) {
@@ -519,16 +516,13 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 				doneCallback(data);
 				state->save(button, next);
 			};
-			auto editor = Box(
-				EditFilterBox,
-				controller,
-				found->filter,
-				crl::guard(button, doneCallback),
-				crl::guard(button, saveAnd));
+			auto editor = Box(EditFilterBox, controller, found->filter,
+							  crl::guard(button, doneCallback),
+							  crl::guard(button, saveAnd));
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 			state->regressionEditor.reset();
-			state->regressionEditor = controller->window().show(
-				std::move(editor));
+			state->regressionEditor
+				= controller->window().show(std::move(editor));
 #else
 			controller->window().show(std::move(editor));
 #endif
@@ -629,16 +623,12 @@ not_null<Ui::VerticalLayout*> SetupFoldersList(
 			state->useRegressionCreateFilter = false;
 		}
 #endif
-		auto editor = Box(
-			EditFilterBox,
-			controller,
-			initial,
-			crl::guard(container, doneCallback),
-			crl::guard(container, saveAnd));
+		auto editor = Box(EditFilterBox, controller, initial,
+						  crl::guard(container, doneCallback),
+						  crl::guard(container, saveAnd));
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 		state->regressionEditor.reset();
-		state->regressionEditor = controller->window().show(
-			std::move(editor));
+		state->regressionEditor = controller->window().show(std::move(editor));
 #else
 		controller->window().show(std::move(editor));
 #endif
@@ -1371,9 +1361,8 @@ const auto kMeta = BuildHelper({
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 bool RunFoldersCrudRegressionForTest(
-		not_null<Window::SessionController*> controller,
-		not_null<Window::SessionController*> other,
-		not_null<History*> history) {
+	not_null<Window::SessionController *> controller,
+	not_null<Window::SessionController *> other, not_null<History *> history) {
 	if (&controller->session() == &other->session()) {
 		return false;
 	}
@@ -1382,32 +1371,21 @@ bool RunFoldersCrudRegressionForTest(
 	auto container = object_ptr<Ui::VerticalLayout>(&parent);
 	auto state = std::make_shared<FoldersState>();
 	SetupFoldersList(controller, container.get(), state.get(), nullptr);
-	if (!state->createButton
-		|| !state->createButton->isEnabled()
-		|| !state->add
-		|| !state->edit
-		|| !state->remove
-		|| !state->save) {
+	if (!state->createButton || !state->createButton->isEnabled() || !state->add
+		|| !state->edit || !state->remove || !state->save) {
 		return false;
 	}
-	state->regressionCreateFilter = Data::ChatFilter(
-		FilterId(0),
-		{},
-		{},
-		{},
-		{},
-		{ history },
-		{},
-		{});
+	state->regressionCreateFilter
+		= Data::ChatFilter(FilterId(0), {}, {}, {}, {}, {history}, {}, {});
 	state->useRegressionCreateFilter = true;
 	const auto submit = [&](const QString &name, bool enter) {
 		const auto editor = state->regressionEditor.get();
 		if (!editor) {
 			return false;
 		}
-		auto field = static_cast<Ui::InputField*>(nullptr);
-		for (const auto widget : editor->findChildren<QWidget*>()) {
-			if (const auto input = dynamic_cast<Ui::InputField*>(widget)) {
+		auto field = static_cast<Ui::InputField *>(nullptr);
+		for (const auto widget : editor->findChildren<QWidget *>()) {
+			if (const auto input = dynamic_cast<Ui::InputField *>(widget)) {
 				field = input;
 				break;
 			}
@@ -1417,10 +1395,8 @@ bool RunFoldersCrudRegressionForTest(
 		}
 		field->setText(name);
 		if (enter) {
-			auto event = QKeyEvent(
-				QEvent::KeyPress,
-				Qt::Key_Return,
-				Qt::NoModifier);
+			auto event
+				= QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
 			QCoreApplication::sendEvent(field, &event);
 		} else {
 			editor->triggerButton(0);
@@ -1438,30 +1414,26 @@ bool RunFoldersCrudRegressionForTest(
 	const auto button = state->rows.back().button;
 	state->save(button.get(), nullptr);
 	QCoreApplication::processEvents();
-	const auto createdRow = ranges::find(
-		state->rows,
-		button,
-		&FilterRow::button);
+	const auto createdRow
+		= ranges::find(state->rows, button, &FilterRow::button);
 	if (createdRow == end(state->rows) || !createdRow->filter.id()) {
 		return false;
 	}
 	const auto id = createdRow->filter.id();
-	const auto locate = [=](not_null<Window::SessionController*> owner) {
+	const auto locate = [=](not_null<Window::SessionController *> owner) {
 		const auto &filters = owner->session().data().chatsFilters().list();
 		return ranges::find(filters, id, &Data::ChatFilter::id);
 	};
 	const auto verifySaved = [&](const QString &expectedTitle) {
-		const auto &filters = controller->session().data().chatsFilters().list();
-		const auto saved = ranges::find(
-			filters,
-			id,
-			&Data::ChatFilter::id);
+		const auto &filters
+			= controller->session().data().chatsFilters().list();
+		const auto saved = ranges::find(filters, id, &Data::ChatFilter::id);
 		return (saved != end(filters))
-			&& (saved->titleText().text == expectedTitle)
-			&& (saved->always().size() == 1)
-			&& saved->always().contains(history)
-			&& (locate(other)
-				== end(other->session().data().chatsFilters().list()));
+			   && (saved->titleText().text == expectedTitle)
+			   && (saved->always().size() == 1)
+			   && saved->always().contains(history)
+			   && (locate(other)
+				   == end(other->session().data().chatsFilters().list()));
 	};
 	if (!verifySaved(u"Folder One"_q)) {
 		return false;
@@ -1490,9 +1462,9 @@ bool RunFoldersCrudRegressionForTest(
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
 	return locate(controller)
-		== end(controller->session().data().chatsFilters().list())
-		&& locate(other)
-			== end(other->session().data().chatsFilters().list());
+			   == end(controller->session().data().chatsFilters().list())
+		   && locate(other)
+				  == end(other->session().data().chatsFilters().list());
 }
 #endif
 

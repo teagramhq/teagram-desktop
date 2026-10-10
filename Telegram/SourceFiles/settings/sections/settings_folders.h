@@ -21,9 +21,8 @@ namespace Settings {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 [[nodiscard]] bool RunFoldersCrudRegressionForTest(
-	not_null<Window::SessionController*> controller,
-	not_null<Window::SessionController*> other,
-	not_null<History*> history);
+	not_null<Window::SessionController *> controller,
+	not_null<Window::SessionController *> other, not_null<History *> history);
 #endif
 
 } // namespace Settings
