@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Check clang-format on changed C/C++ source lines from an explicit revision range."""
+"""Check tested-head C/C++ contents within source paths selected by revision ranges."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -95,7 +97,96 @@ def self_test(formatter: str) -> int:
             print("::error::Formatter rejected the negative fixture without an actionable diagnostic.")
             return 1
         print(f"Formatter self-test: malformed synthetic C++ fixture rejected: {detail}")
+    try:
+        history_test(formatter)
+    except Exception as error:
+        print(f"::error::Synthetic-history formatter regression failed: {error}")
+        return 1
     return 0
+
+
+def history_test(formatter: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="teagram-format-history-test-") as temporary:
+        root = Path(temporary)
+
+        def git(*arguments: str) -> str:
+            result = subprocess.run(
+                ["git", "-C", str(root), *arguments],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or f"git {' '.join(arguments)} failed")
+            return result.stdout.strip()
+
+        git("init", "--quiet")
+        git("config", "user.name", "Formatter Regression")
+        git("config", "user.email", "formatter-regression@example.invalid")
+
+        profile = root / "profile.cpp"
+        profile.write_text("int initialize_profile() { return 1; }\n", encoding="utf-8")
+        git("add", "profile.cpp")
+        git("commit", "--quiet", "-m", "base")
+        base = git("rev-parse", "HEAD")
+
+        profile.write_text("int initialize_profile() { return 2; }\n", encoding="utf-8")
+        git("add", "profile.cpp")
+        git("commit", "--quiet", "-m", "merged source")
+        merged = git("rev-parse", "HEAD")
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            merged_result = check_source_range(root, formatter, merged, "merged-profile-ipc", base, merged)
+        if merged_result.get("result") != "success":
+            raise RuntimeError(f"compliant merged-source history did not pass: {merged_result}")
+
+        profile.write_text("int initialize_profile() { return    3; }\n", encoding="utf-8")
+        git("add", "profile.cpp")
+        git("commit", "--quiet", "-m", "intervening profile change")
+        repair_base = git("rev-parse", "HEAD")
+        git("merge-base", "--is-ancestor", merged, repair_base)
+        if repair_base == merged:
+            raise RuntimeError("synthetic formatting violation was not introduced after the merge")
+
+        repair = root / "repair.cpp"
+        repair.write_text("int repair_lifecycle() { return 4; }\n", encoding="utf-8")
+        git("add", "repair.cpp")
+        git("commit", "--quiet", "-m", "lifecycle repair")
+        tested_head = git("rev-parse", "HEAD")
+        git("merge-base", "--is-ancestor", repair_base, tested_head)
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            merged_result = check_source_range(
+                root,
+                formatter,
+                tested_head,
+                "merged-profile-ipc",
+                base,
+                merged,
+            )
+        expected_error = "clang-format rejected changed lines in merged-profile-ipc:profile.cpp"
+        if (
+            merged_result.get("result") != "failure"
+            or merged_result.get("checked_source_count") != 1
+            or merged_result.get("checked_changed_line_count", 0) < 1
+            or not any(error.startswith(expected_error) for error in merged_result.get("errors", []))
+        ):
+            raise RuntimeError(
+                "a formatting violation introduced after merge and before the repair base "
+                f"was not rejected from tested-head contents: {merged_result}"
+            )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            repair_result = check_source_range(
+                root,
+                formatter,
+                tested_head,
+                "lifecycle-repair",
+                repair_base,
+                tested_head,
+            )
+        if repair_result.get("result") != "success":
+            raise RuntimeError(f"compliant repair-source history did not pass: {repair_result}")
+    print("Formatter self-test: intervening merged-source violation rejected at tested head.")
 
 
 def resolve_commit(root: Path, revision: str) -> str:
@@ -133,7 +224,7 @@ def check_source_range(
     if head_is_ancestor.returncode:
         raise RuntimeError(f"source range head {resolved_head} is not an ancestor of tested SHA {tested_head}")
 
-    diff = subprocess.run(
+    scope_diff = subprocess.run(
         [
             "git", "-C", str(root), "diff", "--no-ext-diff", "--no-color", "--unified=0",
             "--diff-filter=ACMRT", resolved_base, resolved_head, "--",
@@ -143,15 +234,34 @@ def check_source_range(
         capture_output=True,
         check=False,
     )
-    if diff.returncode:
-        raise RuntimeError(f"git diff failed: {diff.stderr.strip()}")
+    if scope_diff.returncode:
+        raise RuntimeError(f"git diff failed: {scope_diff.stderr.strip()}")
 
-    ranges, changed_lines = parse_changed_ranges(diff.stdout)
+    scope_ranges, _ = parse_changed_ranges(scope_diff.stdout)
+    tested_diff = subprocess.run(
+        [
+            "git", "-C", str(root), "diff", "--no-ext-diff", "--no-color", "--unified=0",
+            "--diff-filter=ACMRT", resolved_base, tested_head, "--",
+            "*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx", "*.m", "*.mm",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if tested_diff.returncode:
+        raise RuntimeError(f"git diff against tested SHA failed: {tested_diff.stderr.strip()}")
+
+    tested_ranges, tested_changed_lines = parse_changed_ranges(tested_diff.stdout)
+    ranges = {path: tested_ranges[path] for path in scope_ranges if path in tested_ranges}
+    changed_lines = {path: tested_changed_lines[path] for path in ranges}
     total_changed_lines = sum(changed_lines.values())
     manifest: dict[str, object] = {
         "name": name,
         "declared_source_range": {"base": base, "head": head},
         "resolved_source_range": {"base": resolved_base, "head": resolved_head},
+        "coverage_range": {"base": resolved_base, "head": tested_head},
+        "content_revision": tested_head,
+        "scope_source_count": len(scope_ranges),
         "checked_source_count": len(ranges),
         "checked_changed_line_count": total_changed_lines,
         "files": [
@@ -166,8 +276,8 @@ def check_source_range(
     }
     if not ranges or not total_changed_lines:
         error = (
-            f"source range {name} ({resolved_base}..{resolved_head}) contains no changed C/C++ source lines; "
-            "refusing zero-coverage pass"
+            f"source range {name} ({resolved_base}..{resolved_head}) has no changed C/C++ source lines "
+            f"at tested SHA {tested_head} in its declared source-file scope; refusing zero-coverage pass"
         )
         manifest.update({"result": "failure", "error": error})
         print(f"::error::{error}")
@@ -180,17 +290,20 @@ def check_source_range(
             source = snapshot / relative
             source.parent.mkdir(parents=True, exist_ok=True)
             content = subprocess.run(
-                ["git", "-C", str(root), "show", f"{resolved_head}:{relative}"],
+                ["git", "-C", str(root), "show", f"{tested_head}:{relative}"],
                 capture_output=True,
                 check=False,
             )
             if content.returncode:
-                error = f"Changed source file is missing at range head {resolved_head}: {relative}"
+                error = f"Changed source file is missing at tested SHA {tested_head}: {relative}"
                 print(f"::error::{error}")
                 errors.append(error)
                 continue
             source.write_bytes(content.stdout)
-            print(f"Checking {name}:{relative} ({changed_lines[relative]} changed lines)")
+            print(
+                f"Checking {name}:{relative} at {tested_head} "
+                f"({changed_lines[relative]} changed lines)"
+            )
             result = format_file(formatter, source, path_ranges)
             detail = (result.stdout + result.stderr).replace(str(source), f"{name}:{relative}")
             if detail:
@@ -206,7 +319,7 @@ def check_source_range(
         return manifest
     print(
         f"Checked {len(ranges)} changed source files and {total_changed_lines} changed lines "
-        f"in {name} ({resolved_base}..{resolved_head})."
+        f"in {name} ({resolved_base}..{tested_head}; scope anchored at {resolved_head})."
     )
     return manifest
 
@@ -222,7 +335,7 @@ def main() -> int:
         nargs=3,
         action="append",
         metavar=("NAME", "BASE", "HEAD"),
-        help="declared C/C++ diff range to check; may be repeated",
+        help="revision range selecting C/C++ source paths; checked against tested-head contents; may be repeated",
     )
     parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
