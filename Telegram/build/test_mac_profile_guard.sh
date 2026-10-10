@@ -913,15 +913,68 @@ run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 mkdir -p "$AUTH_HOME"
+STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+for fixture in \
+	cache-root \
+	media-cache-root \
+	cache-leaf \
+	media-cache-leaf \
+	opened-cache \
+	opened-media-cache \
+	legacy-cleanup; do
+	mkdir -p "$STORAGE_FIXTURE_ROOT/$fixture"
+	printf '%s' 'synthetic protected fixture' \
+		> "$STORAGE_FIXTURE_ROOT/$fixture/marker"
+done
+printf '%s' 'legacy bytes' \
+	> "$STORAGE_FIXTURE_ROOT/legacy-cleanup/unrecognized-legacy-file"
+
+verify_storage_fixture() {
+	local directory="$1"
+	local expected="$(printf '%s\n' "$directory/marker")"
+	local entries="$(find "$directory" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	[[ "$entries" == "$expected" ]] \
+		&& [[ "$(cat "$directory/marker")" == 'synthetic protected fixture' ]]
+}
+
+verify_protected_storage_fixtures() {
+	local fixture
+	for fixture in \
+		cache-root \
+		media-cache-root \
+		cache-leaf \
+		media-cache-leaf \
+		opened-cache \
+		opened-media-cache; do
+		if ! verify_storage_fixture "$STORAGE_FIXTURE_ROOT/$fixture"; then
+			echo "protected_storage_fixture=FAIL fixture=$fixture"
+			return 1
+		fi
+	done
+	local cleanup="$STORAGE_FIXTURE_ROOT/legacy-cleanup"
+	local expected="$(printf '%s\n%s\n' \
+		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
+	local entries="$(find "$cleanup" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	if [[ "$entries" != "$expected" ]] \
+		|| [[ "$(cat "$cleanup/marker")" != 'synthetic protected fixture' ]] \
+		|| [[ "$(cat "$cleanup/unrecognized-legacy-file")" != 'legacy bytes' ]]; then
+		echo "protected_storage_fixture=FAIL fixture=legacy-cleanup"
+		return 1
+	fi
+	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
+}
+
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	verify_protected_storage_fixtures || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
+verify_protected_storage_fixtures
 if ! grep -F -q \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
 	"$AUTH_LOG"; then
