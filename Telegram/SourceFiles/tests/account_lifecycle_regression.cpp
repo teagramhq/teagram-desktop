@@ -3139,7 +3139,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"sessions");
 	}
 	const auto stockDcOptionsBeforeDeferredLink
-		= stock->mtp().dcOptions().serialize();
+		= MTP::DcOptions(MTP::Environment::Production).serialize();
 	stock->mtp().dcOptions().constructBlocked();
 	const auto replacedController = primary->sessionController();
 	if (!replacedController) {
