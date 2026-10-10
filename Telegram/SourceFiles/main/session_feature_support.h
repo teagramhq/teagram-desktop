@@ -44,4 +44,9 @@ namespace Main::details {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool
+sharedFoldersSupported(const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
 } // namespace Main::details
