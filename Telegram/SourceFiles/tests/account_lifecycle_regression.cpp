@@ -1910,6 +1910,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		auto stockBioEditorTarget = stockCapabilitiesMatch;
 		auto pinnedBioEditorTarget = pinnedCapabilitiesMatch;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		stockBioEditorTarget
+			= stockController
+			  && Settings::InformationBioEditorTargetPresentForRegressionTest(
+				  stockController);
 		pinnedBioEditorTarget
 			= pinnedController
 			  && Settings::InformationBioEditorTargetPresentForRegressionTest(
