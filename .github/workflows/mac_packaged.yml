@@ -1,7 +1,9 @@
 name: MacOS Packaged.
 
 on:
-  # QA package builds stay manual; the required pull request gate is in mac.yml.
+  # Dispatch QA packages and publish signed releases from dev/main pushes.
+  push:
+    branches: [dev, main]
   workflow_dispatch:
     inputs:
       branch:
@@ -9,25 +11,27 @@ on:
         required: false
         type: string
 
+env:
+  TEAGRAM_UPDATE_BUILD: ${{ github.run_number }}
+  TEAGRAM_UPDATE_CHANNEL: ${{ github.ref_name == 'main' && 'main' || 'dev' }}
+
 concurrency:
-  # Keep one run per workflow and target branch; pass branch for SHA refs.
-  group: ${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || github.ref_name }}
-  cancel-in-progress: true
+  # Serialize release pushes and keep manual builds scoped to their target ref.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'release' || inputs.branch || github.ref_name }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
 
   macos:
     name: MacOS
-    # This manually dispatched workflow may build locally and publishes only
-    # the ad-hoc-signed Teagram-macOS-arm64-QA artifact for manual QA.
-    # The Teagram-macOS-arm64 artifact remains owned by mac.yml, which checks
-    # identity and artifact metadata. Runtime isolation remains a manual canary.
-    # This fork cannot schedule a depot label, and a build that queues forever
-    # is not a build.
     runs-on: macos-latest
     permissions:
       contents: read
       actions: write
+
+    outputs:
+      minimum_os: ${{ steps.package.outputs.min_os }}
 
     strategy:
       matrix:
@@ -160,6 +164,7 @@ jobs:
           cmake --install build
 
       - name: Teagram build.
+        id: package
         if: env.ONLY_CACHE == 'false'
         run: |
           set -Eeuo pipefail
@@ -178,21 +183,31 @@ jobs:
             -DTDESKTOP_API_TEST=ON \
             -DDESKTOP_APP_DISABLE_AUTOUPDATE=ON \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DTDESKTOP_TEAGRAM_UPDATE_BUILD="$TEAGRAM_UPDATE_BUILD" \
+            -DTDESKTOP_TEAGRAM_UPDATE_CHANNEL="$TEAGRAM_UPDATE_CHANNEL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             $DEFINE
           ccache --max-size="$CCACHE_MAXSIZE"
           ccache --zero-stats
-          cmake --build build
-          if ! ./build/test_unit; then
-            lldb --batch -o run -k bt -- ./build/test_unit
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            cmake --build build
+            if ! ./build/test_unit; then
+              lldb --batch -o run -k bt -- ./build/test_unit
+              exit 1
+            fi
+          else
+            cmake --build build --target Telegram
           fi
           macdeployqt build/Teagram.app -no-strip
 
           app="$PWD/build/Teagram.app"
           executable="$app/Contents/MacOS/Teagram"
-          archive="$PWD/build/Teagram-macOS-arm64-QA.zip"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            archive="$PWD/build/Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip"
+          else
+            archive="$PWD/build/Teagram-macOS-arm64-QA.zip"
+          fi
           package_root="$PWD/build/qa-package"
           extracted_root="$PWD/build/qa-extracted"
           rm -rf "$package_root" "$extracted_root" "$archive"
@@ -200,22 +215,22 @@ jobs:
 
           test -x "$executable"
           command -v otool >/dev/null 2>&1 || {
-            echo "otool is unavailable; refusing to publish the QA artifact"
+            echo "otool is unavailable; refusing to publish the Teagram package"
             exit 1
           }
           command -v nm >/dev/null 2>&1 || {
-            echo "nm is unavailable; refusing to publish the QA artifact"
+            echo "nm is unavailable; refusing to publish the Teagram package"
             exit 1
           }
           tapi_analyze=""
           tapi_lookup_status=0
           tapi_analyze="$(xcrun --find tapi-analyze 2>/dev/null)" || tapi_lookup_status=$?
           if [ "$tapi_lookup_status" -ne 0 ] || [ ! -x "$tapi_analyze" ]; then
-            echo "tapi-analyze is unavailable; refusing to publish the QA artifact"
+            echo "tapi-analyze is unavailable; refusing to publish the Teagram package"
             exit 1
           fi
           command -v jq >/dev/null 2>&1 || {
-            echo "jq is unavailable; refusing to publish the QA artifact"
+            echo "jq is unavailable; refusing to publish the Teagram package"
             exit 1
           }
           abi_loads="$package_root/abi-loads.txt"
@@ -234,6 +249,7 @@ jobs:
             echo "unsupported or missing macOS minimum: ${min_os:-unknown}"
             exit 1
           fi
+          echo "min_os=$min_os" >> "$GITHUB_OUTPUT"
 
           strong_loads="$(awk '
             /cmd (LC_LOAD_DYLIB|LC_REEXPORT_DYLIB|LC_LOAD_UPWARD_DYLIB)$/ {
@@ -291,9 +307,6 @@ jobs:
             exit 1
           fi
 
-          # The QA package is intentionally ad-hoc signed. Sign before creating
-          # the archive, then verify the signature again after extraction so a
-          # manual download exercises the same bundle that was published.
           codesign --force --deep -s - "$app"
           COPYFILE_DISABLE=1 ditto -c -k --keepParent "$app" "$archive"
           COPYFILE_DISABLE=1 ditto -x -k "$archive" "$extracted_root"
@@ -326,6 +339,9 @@ jobs:
           test "$(plutil -extract CFBundleExecutable raw -o - "$extracted_plist")" = Teagram
           test "$(plutil -extract CFBundleName raw -o - "$extracted_plist")" = Teagram
           test "$(plutil -extract CFBundleIdentifier raw -o - "$extracted_plist")" = io.teagram.desktop
+          test "$(plutil -extract TeagramUpdateBuild raw -o - "$extracted_plist")" = "$TEAGRAM_UPDATE_BUILD"
+          test "$(plutil -extract TeagramUpdateChannel raw -o - "$extracted_plist")" = "$TEAGRAM_UPDATE_CHANNEL"
+          test "$(plutil -extract LSMinimumSystemVersion raw -o - "$extracted_plist")" = "$min_os"
           if plutil -extract CFBundleURLTypes xml1 -o - "$extracted_plist" >/dev/null 2>&1; then
             echo "CFBundleURLTypes must be absent from $extracted_plist"
             exit 1
@@ -340,7 +356,7 @@ jobs:
             exit "$find_status"
           fi
           if [ -s "$updater_paths" ]; then
-            echo "updater found in extracted QA bundle"
+            echo "updater found in extracted Teagram bundle"
             cat "$updater_paths"
             exit 1
           fi
@@ -395,11 +411,19 @@ jobs:
           fi
 
           digest="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
+          public_key_fingerprint="$(openssl pkey -pubin -in "$REPO_NAME/Telegram/build/teagram_update_public_key.pem" -outform DER | shasum -a 256 | awk '{ print $1 }')"
+          artifact_name="Teagram-macOS-arm64-QA"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            artifact_name="Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}"
+          fi
           {
-            echo "## Teagram macOS QA package"
+            echo "## Teagram macOS package"
             echo "- Built SHA: \`$GITHUB_SHA\`"
-            echo "- Artifact: \`Teagram-macOS-arm64-QA\`"
-            echo "- Archive: \`Teagram-macOS-arm64-QA.zip\`"
+            echo "- Build: \`$TEAGRAM_UPDATE_BUILD\`"
+            echo "- Channel: \`$TEAGRAM_UPDATE_CHANNEL\`"
+            echo "- Tag: \`teagram-build-$TEAGRAM_UPDATE_BUILD\`"
+            echo "- Artifact: \`$artifact_name\`"
+            echo "- Archive: \`$(basename "$archive")\`"
             echo "- Artifact URL: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"
             echo "- SHA-256: \`$digest\`"
             echo "- Retention: 14 days"
@@ -413,6 +437,7 @@ jobs:
             echo "- Bundle identifier: \`io.teagram.desktop\`"
             echo "- Executable: \`Teagram\` (arm64)"
             echo "- Code signature: ad hoc, verified after extraction"
+            echo "- Update public key SHA-256: \`$public_key_fingerprint\`"
             echo "- URL types: absent"
             echo "- Updater: absent"
             echo "- Launch smoke test: passed"
@@ -442,10 +467,361 @@ jobs:
           key: macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Teagram manual QA artifact.
-        if: success()
+        if: ${{ github.event_name == 'workflow_dispatch' && success() }}
         uses: actions/upload-artifact@v7
         with:
           name: Teagram-macOS-arm64-QA
           path: ${{ env.REPO_NAME }}/build/Teagram-macOS-arm64-QA.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Teagram release candidate.
+        if: ${{ github.event_name == 'push' && success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: teagram-release-candidate-${{ github.run_number }}
+          path: ${{ env.REPO_NAME }}/build/Teagram-macOS-arm64-${{ github.run_number }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Sign and publish Teagram release
+    needs: macos
+    if: ${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TEAGRAM_RELEASE_MIN_OS: ${{ needs.macos.outputs.minimum_os }}
+
+    steps:
+      - name: Clone exact source.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check existing release identity.
+        id: release-check
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          releases="$RUNNER_TEMP/releases.json"
+          existing="$RUNNER_TEMP/existing-release.json"
+          if [ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$releases"
+          jq -c --arg tag "$tag" '[.[] | select(.tag_name == $tag)] | first // empty' "$releases" > "$existing"
+          if [ ! -s "$existing" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "release_id=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" --argjson prerelease "$prerelease" '
+            .tag_name == $tag
+            and .target_commitish == $sha
+            and .prerelease == $prerelease
+          ' "$existing" >/dev/null; then
+            echo "::error::The existing release tag has a different source or channel identity."
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' "$existing")" = "false" ]; then
+            expected_assets="$(printf '%s\n' \
+              "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+              teagram-update.json \
+              teagram-update.sig | LC_ALL=C sort)"
+            actual_assets="$(jq -r '[.assets[].name] | sort | .[]' "$existing")"
+            if [ "$actual_assets" != "$expected_assets" ]; then
+              echo "::error::The published release does not contain the exact package assets."
+              exit 1
+            fi
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "release_id=$(jq -r '.id' "$existing")" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Teagram release already published"
+              echo "- Source: \`$GITHUB_SHA\`"
+              echo "- Build: \`$TEAGRAM_UPDATE_BUILD\`"
+              echo "- Channel: \`$TEAGRAM_UPDATE_CHANNEL\`"
+              echo "- Tag: \`$tag\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! jq -e --argjson prerelease "$prerelease" \
+            --arg archive "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" '
+            .draft == true
+            and .prerelease == $prerelease
+            and ([.assets[].name] | all(
+              . == $archive
+              or . == "teagram-update.json"
+              or . == "teagram-update.sig"
+            ))
+          ' "$existing" >/dev/null; then
+            echo "::error::The existing draft is not a safe retry target."
+            exit 1
+          fi
+          echo "published=false" >> "$GITHUB_OUTPUT"
+          echo "release_id=$(jq -r '.id' "$existing")" >> "$GITHUB_OUTPUT"
+
+      - name: Download release candidate.
+        if: steps.release-check.outputs.published != 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: teagram-release-candidate-${{ github.run_number }}
+          path: ${{ runner.temp }}/teagram-release-candidate
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Create and verify signed manifest.
+        if: steps.release-check.outputs.published != 'true'
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          candidate="$RUNNER_TEMP/teagram-release-candidate"
+          archive="$candidate/Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip"
+          manifest="$candidate/teagram-update.json"
+          signature="$candidate/teagram-update.sig"
+          key_path="$(mktemp "$RUNNER_TEMP/teagram-update-key.XXXXXX")"
+          message="$RUNNER_TEMP/teagram-update-signature-message"
+          trap 'rm -f "$key_path" "$message"' EXIT
+          test -f "$archive"
+          printf '%s\n' "$UPDATE_SIGNING_PRIVATE_KEY" > "$key_path"
+          unset UPDATE_SIGNING_PRIVATE_KEY
+          expected_fingerprint="$(openssl pkey -pubin -in Telegram/build/teagram_update_public_key.pem -outform DER | sha256sum | awk '{ print $1 }')"
+          actual_fingerprint="$(openssl pkey -in "$key_path" -pubout -outform DER | sha256sum | awk '{ print $1 }')"
+          if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+            echo "::error::The release signing key does not match the embedded update public key."
+            exit 1
+          fi
+          python3 Telegram/build/teagram_update_manifest.py \
+            --archive "$archive" \
+            --build "$TEAGRAM_UPDATE_BUILD" \
+            --channel "$TEAGRAM_UPDATE_CHANNEL" \
+            --commit "$GITHUB_SHA" \
+            --min-os "$TEAGRAM_RELEASE_MIN_OS" \
+            --signing-key "$key_path" \
+            --output-dir "$candidate"
+          archive_size="$(stat -c '%s' "$archive")"
+          archive_sha256="$(sha256sum "$archive" | awk '{ print $1 }')"
+          jq -e --arg build "$TEAGRAM_UPDATE_BUILD" \
+            --arg channel "$TEAGRAM_UPDATE_CHANNEL" \
+            --arg commit "$GITHUB_SHA" \
+            --arg min_os "$TEAGRAM_RELEASE_MIN_OS" \
+            --arg asset_name "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+            --arg asset_size "$archive_size" \
+            --arg asset_sha256 "$archive_sha256" '
+              (keys | sort) == ["arch", "asset_name", "asset_sha256", "asset_size", "build", "channel", "commit", "format", "min_os", "product", "repo"]
+              and .format == 1
+              and .product == "io.teagram.desktop"
+              and .repo == "teagramhq/teagram-desktop"
+              and .arch == "arm64"
+              and .build == $build
+              and .channel == $channel
+              and .commit == $commit
+              and .min_os == $min_os
+              and .asset_name == $asset_name
+              and .asset_size == $asset_size
+              and .asset_sha256 == $asset_sha256
+            ' "$manifest" >/dev/null
+          test "$(stat -c '%s' "$signature")" = 64
+          { printf 'teagram-update-v1\0'; cat "$manifest"; } > "$message"
+          openssl pkeyutl -verify -rawin -pubin \
+            -inkey Telegram/build/teagram_update_public_key.pem \
+            -in "$message" -sigfile "$signature" >/dev/null
+          {
+            echo "## Teagram signed release candidate"
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- Build: \`$TEAGRAM_UPDATE_BUILD\`"
+            echo "- Channel: \`$TEAGRAM_UPDATE_CHANNEL\`"
+            echo "- Tag: \`teagram-build-$TEAGRAM_UPDATE_BUILD\`"
+            echo "- Public key SHA-256: \`$expected_fingerprint\`"
+            echo "- Manifest and detached Ed25519 signature: verified"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate release notes from merged pull requests.
+        id: notes
+        if: steps.release-check.outputs.published != 'true'
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          releases="$RUNNER_TEMP/releases.json"
+          response="$RUNNER_TEMP/generated-release-notes.json"
+          notes="$RUNNER_TEMP/release-notes.md"
+          if [ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$releases"
+          previous_tag="$(jq -r --argjson prerelease "$prerelease" '
+            [.[] | select(.draft == false and .prerelease == $prerelease)]
+            | sort_by(.published_at)
+            | last
+            | .tag_name // empty
+          ' "$releases")"
+          if [ -z "$previous_tag" ]; then
+            previous_tag="$(jq -r '[.[] | select(.draft == false)] | sort_by(.published_at) | last | .tag_name // empty' "$releases")"
+          fi
+          arguments=(--method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            --field "tag_name=$tag" --field "target_commitish=$GITHUB_SHA")
+          if [ -n "$previous_tag" ]; then
+            arguments+=(--field "previous_tag_name=$previous_tag")
+          fi
+          gh api "${arguments[@]}" > "$response"
+          jq -er '.body | strings' "$response" > "$notes"
+          echo "notes_file=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Create release draft.
+        id: draft
+        if: steps.release-check.outputs.published != 'true'
+        env:
+          EXISTING_RELEASE_ID: ${{ steps.release-check.outputs.release_id }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          name="Teagram macOS arm64 ${TEAGRAM_UPDATE_CHANNEL} ${TEAGRAM_UPDATE_BUILD}"
+          notes="$(cat "$NOTES_FILE")"
+          if [ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          if [ -n "$EXISTING_RELEASE_ID" ]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/releases/$EXISTING_RELEASE_ID" \
+              --field "name=$name" --field "body=$notes" \
+              --field draft=true --field prerelease="$prerelease" \
+              > "$RUNNER_TEMP/release-draft.json"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              --field "tag_name=$tag" --field "target_commitish=$GITHUB_SHA" \
+              --field "name=$name" --field "body=$notes" \
+              --field draft=true --field prerelease="$prerelease" \
+              > "$RUNNER_TEMP/release-draft.json"
+          fi
+          release_id="$(jq -er '.id | tostring' "$RUNNER_TEMP/release-draft.json")"
+          jq -e --arg tag "$tag" --argjson prerelease "$prerelease" \
+            '.tag_name == $tag and .draft == true and .prerelease == $prerelease' \
+            "$RUNNER_TEMP/release-draft.json" >/dev/null
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release tag source.
+        if: steps.release-check.outputs.release_id != '' || steps.draft.outputs.release_id != ''
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.release_id || steps.release-check.outputs.release_id }}
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          release="$RUNNER_TEMP/release-source.json"
+          reference="$RUNNER_TEMP/release-tag-ref.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release"
+          jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" \
+            '.tag_name == $tag and .target_commitish == $sha' \
+            "$release" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > "$reference"
+          object_type="$(jq -r '.object.type' "$reference")"
+          object_sha="$(jq -r '.object.sha' "$reference")"
+          depth=0
+          while [ "$object_type" = "tag" ] && [ "$depth" -lt 5 ]; do
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" > "$reference"
+            object_type="$(jq -r '.object.type' "$reference")"
+            object_sha="$(jq -r '.object.sha' "$reference")"
+            depth=$((depth + 1))
+          done
+          if [ "$object_type" != "commit" ] || [ "$object_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::The release tag does not resolve to this source commit."
+            exit 1
+          fi
+
+      - name: Upload exact release assets.
+        if: steps.release-check.outputs.published != 'true'
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          candidate="$RUNNER_TEMP/teagram-release-candidate"
+          release="$RUNNER_TEMP/release-before-upload.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release"
+          jq -e --arg tag "$tag" --argjson prerelease "$([ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ] && echo true || echo false)" \
+            '.tag_name == $tag and .draft == true and .prerelease == $prerelease' \
+            "$release" >/dev/null
+          for asset in \
+            "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+            teagram-update.json \
+            teagram-update.sig; do
+            if jq -e --arg asset "$asset" '[.assets[].name] | index($asset) != null' "$release" >/dev/null; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done
+          gh release upload "$tag" \
+            "$candidate/Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+            "$candidate/teagram-update.json" \
+            "$candidate/teagram-update.sig"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release"
+          expected_assets="$(printf '%s\n' \
+            "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+            teagram-update.json \
+            teagram-update.sig | LC_ALL=C sort)"
+          actual_assets="$(jq -r '[.assets[].name] | sort | .[]' "$release")"
+          jq -e --arg tag "$tag" --argjson prerelease "$([ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ] && echo true || echo false)" \
+            '.tag_name == $tag and .draft == true and .prerelease == $prerelease' \
+            "$release" >/dev/null
+          if [ "$actual_assets" != "$expected_assets" ]; then
+            echo "::error::The draft release does not contain the exact package assets."
+            exit 1
+          fi
+          echo "Assets uploaded and verified on draft release $tag."
+
+      - name: Publish complete release.
+        if: steps.release-check.outputs.published != 'true'
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -Eeuo pipefail
+          tag="teagram-build-${TEAGRAM_UPDATE_BUILD}"
+          if [ "$TEAGRAM_UPDATE_CHANNEL" = "dev" ]; then
+            prerelease=true
+            make_latest=false
+          else
+            prerelease=false
+            make_latest=true
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --field draft=false \
+            --field prerelease="$prerelease" \
+            --raw-field make_latest="$make_latest" \
+            > "$RUNNER_TEMP/published-release.json"
+          expected_assets="$(printf '%s\n' \
+            "Teagram-macOS-arm64-${TEAGRAM_UPDATE_BUILD}.zip" \
+            teagram-update.json \
+            teagram-update.sig | LC_ALL=C sort)"
+          actual_assets="$(jq -r '[.assets[].name] | sort | .[]' "$RUNNER_TEMP/published-release.json")"
+          jq -e --arg tag "$tag" --argjson prerelease "$prerelease" \
+            '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
+            "$RUNNER_TEMP/published-release.json" >/dev/null
+          if [ "$actual_assets" != "$expected_assets" ]; then
+            echo "::error::The published release does not contain the exact package assets."
+            exit 1
+          fi
+          fingerprint="$(openssl pkey -pubin -in Telegram/build/teagram_update_public_key.pem -outform DER | sha256sum | awk '{ print $1 }')"
+          {
+            echo "## Teagram release published"
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- Build: \`$TEAGRAM_UPDATE_BUILD\`"
+            echo "- Channel: \`$TEAGRAM_UPDATE_CHANNEL\`"
+            echo "- Tag: \`$tag\`"
+            echo "- Public key SHA-256: \`$fingerprint\`"
+            echo "- Assets: archive, teagram-update.json, teagram-update.sig"
+            echo "- Release notes generated from merged pull request titles"
+          } >> "$GITHUB_STEP_SUMMARY"

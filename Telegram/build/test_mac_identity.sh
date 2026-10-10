@@ -17,6 +17,10 @@ INTRO_FILE="$ROOT/Telegram/SourceFiles/intro/intro_start.cpp"
 LANG_FILE="$ROOT/Telegram/Resources/langs/lang.strings"
 MAC_WORKFLOW_FILE="$ROOT/.github/workflows/mac.yml"
 PACKAGED_WORKFLOW_FILE="$ROOT/.github/workflows/mac_packaged.yml"
+UPDATE_VERIFIER_FILE="$ROOT/Telegram/SourceFiles/core/teagram_update_verification.cpp"
+UPDATE_VERIFIER_HEADER="$ROOT/Telegram/SourceFiles/core/teagram_update_verification.h"
+UPDATE_PUBLIC_KEY_FILE="$ROOT/Telegram/build/teagram_update_public_key.pem"
+UPDATE_PRODUCER_FILE="$ROOT/Telegram/build/teagram_update_manifest.py"
 ISOLATION_FILE="$ROOT/Telegram/build/mac_isolation_test.sh"
 PARSER_FILE="$ROOT/Telegram/build/check_mac_fs_usage.py"
 
@@ -56,8 +60,15 @@ if [ "$MODE" != observer ]; then
 		"$INTRO_FILE" \
 		"$LANG_FILE" \
 		"$MAC_WORKFLOW_FILE" \
-		"$PACKAGED_WORKFLOW_FILE" <<'PY'
+		"$PACKAGED_WORKFLOW_FILE" \
+		"$UPDATE_VERIFIER_FILE" \
+		"$UPDATE_VERIFIER_HEADER" \
+		"$UPDATE_PUBLIC_KEY_FILE" \
+		"$UPDATE_PRODUCER_FILE" <<'PY'
+import base64
+import hashlib
 import pathlib
+import re
 import sys
 import xml.etree.ElementTree as ElementTree
 
@@ -111,6 +122,10 @@ assert '"lng_intro_teagram_about" = "Welcome to Teagram.' in languages
 assert '"lng_mac_menu_show" = "Show Teagram";' in languages
 mac_workflow = pathlib.Path(sys.argv[12]).read_text(encoding='utf-8')
 packaged_workflow = pathlib.Path(sys.argv[13]).read_text(encoding='utf-8')
+verifier = pathlib.Path(sys.argv[14]).read_text(encoding='utf-8')
+verifier_header = pathlib.Path(sys.argv[15]).read_text(encoding='utf-8')
+public_key = pathlib.Path(sys.argv[16]).read_text(encoding='ascii')
+producer = pathlib.Path(sys.argv[17]).read_text(encoding='utf-8')
 for identity in (
     'Teagram.app',
     'Contents/MacOS/Teagram',
@@ -124,8 +139,48 @@ for identity in (
     'Contents/MacOS/Teagram',
     'io.teagram.desktop',
     'Teagram-macOS-arm64-QA',
+    'TeagramUpdateBuild',
+    'TeagramUpdateChannel',
 ):
     assert identity in packaged_workflow
+plist = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+assert 'TeagramUpdateBuild' in keys
+assert 'TeagramUpdateChannel' in keys
+assert '@TDESKTOP_TEAGRAM_UPDATE_BUILD@' in plist
+assert '@TDESKTOP_TEAGRAM_UPDATE_CHANNEL@' in plist
+encoded_key = ''.join(
+    line.strip()
+    for line in public_key.splitlines()
+    if not line.startswith('-----')
+)
+der_key = base64.b64decode(encoded_key)
+assert hashlib.sha256(der_key).hexdigest() == 'ac4f15ba7ac0d5b265e84c2d127fe05db5fbcbb1cf3eb102206f683d80a2596c'
+embedded_key = re.search(r'Ed25519PublicKey\{([^}]*)\}', verifier, re.S)
+assert embedded_key
+embedded_bytes = bytes(
+    int(value, 16)
+    for value in re.findall(r'0x([0-9a-f]{2})', embedded_key.group(1))
+)
+assert embedded_bytes == der_key[-32:]
+assert 'kTeagramUpdateBuild' in verifier_header
+assert 'kTeagramUpdateChannel' in verifier_header
+assert 'TDESKTOP_TEAGRAM_UPDATE_BUILD=' in cmake
+assert 'TDESKTOP_TEAGRAM_UPDATE_CHANNEL=' in cmake
+assert 'teagram-update-v1\\0' in producer
+assert '"asset_size": str(asset_size)' in producer
+assert 'branches: [dev, main]' in packaged_workflow
+assert '  workflow_dispatch:' in packaged_workflow
+assert '  pull_request:' not in packaged_workflow
+assert 'cancel-in-progress: false' in packaged_workflow
+assert "github.event_name == 'push'" in packaged_workflow
+assert "github.ref == 'refs/heads/dev'" in packaged_workflow
+assert "github.ref == 'refs/heads/main'" in packaged_workflow
+assert 'and .target_commitish == $sha' in packaged_workflow
+assert 'name: Verify release tag source.' in packaged_workflow
+assert 'object_sha" != "$GITHUB_SHA"' in packaged_workflow
+assert 'environment:\n      name: release' in packaged_workflow
+assert 'secrets.UPDATE_SIGNING_PRIVATE_KEY' in packaged_workflow
+assert 'secrets.UPDATE_SIGNING_PRIVATE_KEY' not in packaged_workflow.split('  publish:', 1)[0]
 PY
 fi
 
