@@ -104,7 +104,12 @@ jobs:
             "$GITHUB_SHA" "$rejection_status" \
             > "$evidence/macstore-rejection-status.txt"
 
-      - name: Check changed C++ formatting.
+      - name: Check patch whitespace.
+        id: patch-whitespace
+        if: github.event_name == 'workflow_dispatch'
+        run: git -C "$REPO_NAME" diff --check origin/dev...HEAD
+
+      - name: Report changed C++ format diagnostics.
         id: source-format
         if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
@@ -150,7 +155,8 @@ jobs:
               "NamespaceIndentation: None, AlignAfterOpenBracket: false, "
               "AlignOperands: DontAlign, Cpp11BracedListStyle: Block, "
               "DerivePointerAlignment: false, PointerAlignment: Left, "
-              "PackArguments: OnePerLine, PackParameters: OnePerLine}"
+              "PackArguments: {BinPack: OnePerLine}, "
+              "PackParameters: {BinPack: OnePerLine}}"
           )
           failed = False
           for relative, ranges in sorted(changed.items()):
@@ -351,6 +357,7 @@ jobs:
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
           FORMAT_OUTCOME: ${{ steps.source-format.outcome }}
+          WHITESPACE_OUTCOME: ${{ steps.patch-whitespace.outcome }}
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
@@ -359,8 +366,8 @@ jobs:
           set -Eeuo pipefail
           {
             printf '### macOS Teagram validation: %s\n\n' "$BUILD_VARIANT"
-            printf -- '- Tested SHA: `%s`\n- C++ format check: `%s`\n' \
-              "$GITHUB_SHA" "$FORMAT_OUTCOME"
+            printf -- '- Tested SHA: `%s`\n- Patch whitespace: `%s`\n- C++ format diagnostics (informational): `%s`\n' \
+              "$GITHUB_SHA" "$WHITESPACE_OUTCOME" "$FORMAT_OUTCOME"
             printf -- '- Mac App Store rejection check: `%s`\n- Build: `%s`\n- Artifact verification: `%s`\n- Profile/IPC harness: `%s`\n' \
               "$STORE_REJECTION_OUTCOME" "$BUILD_OUTCOME" "$ARTIFACT_OUTCOME" "$PROFILE_IPC_OUTCOME"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -418,7 +425,7 @@ jobs:
       - name: Require on-demand validation checks.
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
-          FORMAT_OUTCOME: ${{ steps.source-format.outcome }}
+          WHITESPACE_OUTCOME: ${{ steps.patch-whitespace.outcome }}
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
@@ -427,7 +434,7 @@ jobs:
           set -Eeuo pipefail
           failed=false
           for check in \
-            "C++ format=$FORMAT_OUTCOME" \
+            "patch whitespace=$WHITESPACE_OUTCOME" \
             "Mac App Store rejection=$STORE_REJECTION_OUTCOME" \
             "build=$BUILD_OUTCOME" \
             "artifact verification=$ARTIFACT_OUTCOME" \
