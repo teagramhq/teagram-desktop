@@ -100,6 +100,35 @@ LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest() {
 	return gLifecycleWriteCounts;
 }
+
+MainQueueBarrierResult WaitForMainQueueBarrierForRegressionTest(
+		int timeoutMilliseconds) {
+	Q_ASSERT(timeoutMilliseconds > 0 && timeoutMilliseconds <= 5000);
+	struct State {
+		QEventLoop *loop = nullptr;
+		bool active = true;
+		bool completed = false;
+	};
+	const auto state = std::make_shared<State>();
+	auto loop = QEventLoop();
+	state->loop = &loop;
+	QTimer::singleShot(timeoutMilliseconds, &loop, &QEventLoop::quit);
+	crl::on_main([state] {
+		if (!state->active || state->completed || !state->loop) {
+			return;
+		}
+		state->completed = true;
+		state->loop->quit();
+	});
+	if (!state->completed) {
+		loop.exec();
+	}
+	state->active = false;
+	state->loop = nullptr;
+	return state->completed
+		? MainQueueBarrierResult::Completed
+		: MainQueueBarrierResult::TimedOut;
+}
 #endif
 
 namespace {
@@ -1110,28 +1139,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 }
 
 [[nodiscard]] bool WaitForMainQueueBarrier() {
-	struct State {
-		QEventLoop *loop = nullptr;
-		bool active = true;
-		bool completed = false;
-	};
-	const auto state = std::make_shared<State>();
-	auto loop = QEventLoop();
-	state->loop = &loop;
-	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
-	crl::on_main([state] {
-		if (!state->active || state->completed || !state->loop) {
-			return;
-		}
-		state->completed = true;
-		state->loop->quit();
-	});
-	if (!state->completed) {
-		loop.exec();
-	}
-	state->active = false;
-	state->loop = nullptr;
-	return state->completed;
+	return WaitForMainQueueBarrierForRegressionTest()
+		== MainQueueBarrierResult::Completed;
 }
 
 [[nodiscard]] int
@@ -1861,10 +1870,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	if (!Settings::RunFoldersCrudRegressionForTest(
 			stockController, pinnedController,
-			stock->session().data().history(stockPeer))
+			stock->session().data().history(stockPeer),
+			Settings::FolderCrudRegressionSide::Stock)
 		|| !Settings::RunFoldersCrudRegressionForTest(
 			pinnedController, stockController,
-			pinned->session().data().history(pinnedPeer))) {
+			pinned->session().data().history(pinnedPeer),
+			Settings::FolderCrudRegressionSide::Pinned)) {
 		return FailChatParticipantsRegression(
 			"ordinary folder create, rename, save, or remove did not stay "
 			"in its owning session");
