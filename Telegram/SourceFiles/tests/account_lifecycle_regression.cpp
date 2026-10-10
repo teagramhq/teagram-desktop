@@ -1269,6 +1269,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedToStockPinnedUpdates
 		= pinned->session().updates().sessionSwitchUpdatesForTest();
+	std::fprintf(stderr, "Pinned-to-stock starts: primary=%p pinned=%p\n",
+				 static_cast<void *>(primary->maybeSession()),
+				 static_cast<void *>(&pinned->session()));
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
 		|| stock->session().updates().sessionSwitchUpdatesForTest()

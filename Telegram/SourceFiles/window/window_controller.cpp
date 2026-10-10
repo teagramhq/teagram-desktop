@@ -38,6 +38,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #include <QtGui/QScreen>
 
+#include <cstdio>
+
 namespace Window {
 namespace {
 
@@ -167,6 +169,10 @@ void Controller::showAccount(
 	const auto prevSessionWeak = prevSession
 		? base::make_weak(prevSession)
 		: base::weak_ptr<Main::Session>();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	std::fprintf(stderr, "Session switch queued: controller=%p previous=%p\n",
+				 static_cast<void *>(this), static_cast<void *>(prevSession));
+#endif
 	const auto prevAccount = _id.account;
 	const auto accountBeforeIntro = (prevAccount
 		&& prevAccount != account
@@ -180,8 +186,23 @@ void Controller::showAccount(
 
 	crl::on_main([prevSessionWeak] {
 		if (const auto prevSession = prevSessionWeak.get()) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			const auto before
+				= prevSession->updates().sessionSwitchUpdatesForTest();
+#endif
 			prevSession->updates().updateOnline(
 				crl::now(), Api::Updates::UpdateOnlineReason::SessionSwitch);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			std::fprintf(
+				stderr,
+				"Session switch callback: previous=%p before=%d after=%d\n",
+				static_cast<void *>(prevSession.get()), before,
+				prevSession->updates().sessionSwitchUpdatesForTest());
+#endif
+		} else {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			std::fprintf(stderr, "Session switch callback: previous expired\n");
+#endif
 		}
 	});
 
