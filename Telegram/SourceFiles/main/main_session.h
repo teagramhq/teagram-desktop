@@ -138,6 +138,7 @@ public:
 	[[nodiscard]] bool passportSupported() const;
 	[[nodiscard]] bool aiComposeSupported() const;
 	[[nodiscard]] bool serverTranslationSupported() const;
+	[[nodiscard]] bool sharedFoldersSupported() const;
 
 	[[nodiscard]] bool isTestMode() const;
 	[[nodiscard]] uint64 uniqueId() const; // userId() with TestDC shift.

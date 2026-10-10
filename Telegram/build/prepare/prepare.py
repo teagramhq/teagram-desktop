@@ -715,7 +715,7 @@ mac:
     VERSION=1.18
     SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
     rm -f libiconv.tar.gz
-    for url in https://ftpmirror.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.osuosl.org/pub/gnu/libiconv/libiconv-$VERSION.tar.gz https://mirrors.kernel.org/gnu/libiconv/libiconv-$VERSION.tar.gz; do
+    for url in https://ftpmirror.gnu.org/libiconv/libiconv-$VERSION.tar.gz https://ftp.gnu.org/gnu/libiconv/libiconv-$VERSION.tar.gz https://ftp.osuosl.org/pub/gnu/libiconv/libiconv-$VERSION.tar.gz https://mirrors.kernel.org/gnu/libiconv/libiconv-$VERSION.tar.gz; do
         if ! wget --timeout=30 --tries=2 -O libiconv.tar.gz "$url"; then
             rm -f libiconv.tar.gz
             continue

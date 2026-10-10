@@ -3,6 +3,12 @@ name: MacOS.
 on:
   # Fork policy: macOS builds run on demand; tag-based release publication is retired.
   workflow_dispatch:
+    inputs:
+      libiconv_only:
+        description: Build and verify universal libiconv without building Telegram.
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,6 +18,7 @@ jobs:
 
   macos:
     name: MacOS
+    if: ${{ !inputs.libiconv_only }}
     permissions:
       contents: read
     # This fork cannot schedule a depot label, and a build that queues forever
@@ -439,3 +446,100 @@ jobs:
             esac
           done
           [[ "$failed" == false ]]
+
+  libiconv:
+    name: Focused libiconv (macOS arm64)
+    if: ${{ inputs.libiconv_only }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require an arm64 runner.
+        run: |
+          set -euo pipefail
+          architecture="$(uname -m)"
+          echo "Runner architecture: $architecture"
+          test "$architecture" = arm64
+
+      - name: Check out the dispatched commit.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the commit and fresh output path.
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$GITHUB_SHA"
+          test ! -e ../Libraries/local/lib/libiconv.a
+          {
+            echo '### Focused libiconv validation'
+            printf -- '- Tested SHA: `%s`\n' "$checked_out_sha"
+            printf -- '- Runner architecture: `%s`\n' "$(uname -m)"
+            echo '- Cache: none; fresh output path confirmed.'
+            echo '- Command: `bash Telegram/build/prepare/mac.sh libiconv silent`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up build tools and Xcode.
+        run: |
+          set -euo pipefail
+          missing=()
+          for formula in wget automake libtool; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+          if ((${#missing[@]})); then
+            brew install "${missing[@]}"
+          fi
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Verify the GNU source archive digest.
+        env:
+          SOURCE_URL: https://ftpmirror.gnu.org/libiconv/libiconv-1.18.tar.gz
+          EXPECTED_SHA256: 3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/libiconv-1.18.tar.gz"
+          curl --silent --show-error --fail --location "$SOURCE_URL" --output "$archive"
+          actual_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$actual_sha256" = "$EXPECTED_SHA256"
+          {
+            echo '### Source integrity'
+            printf -- '- URL: `%s`\n' "$SOURCE_URL"
+            printf -- '- Expected SHA-256: `%s`\n' "$EXPECTED_SHA256"
+            printf -- '- Observed SHA-256: `%s`\n' "$actual_sha256"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build libiconv with the focused preparation command.
+        run: |
+          set -uo pipefail
+          command_status=0
+          bash Telegram/build/prepare/mac.sh libiconv silent || command_status=$?
+          printf -- '- Preparation command exit status: `%s`\n' "$command_status" >> "$GITHUB_STEP_SUMMARY"
+          exit "$command_status"
+
+      - name: Verify the universal static library.
+        run: |
+          set -euo pipefail
+          archive=../Libraries/local/lib/libiconv.a
+          test -s "$archive"
+          lipo_tool="$(xcrun --find lipo)"
+          architectures="$("$lipo_tool" -archs "$archive")"
+          echo "Xcode lipo: $lipo_tool"
+          echo "Library architectures: $architectures"
+          "$lipo_tool" -info "$archive"
+          if ! "$lipo_tool" "$archive" -verify_arch arm64 x86_64; then
+            echo "::error::libiconv archive is missing arm64 or x86_64."
+            exit 1
+          fi
+          {
+            echo '### Universal library'
+            printf -- '- Archive: `%s`\n' "$archive"
+            printf -- '- Xcode lipo: `%s`\n' "$lipo_tool"
+            printf -- '- Architectures: `%s`\n' "$architectures"
+          } >> "$GITHUB_STEP_SUMMARY"

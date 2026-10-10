@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "api/api_common.h"
+#include "api/api_modify_requests.h"
 #include "base/timer.h"
 #include "mtproto/sender.h"
 #include "data/stickers/data_stickers_set.h"
@@ -162,7 +163,13 @@ public:
 		PeerData *peer, // May be nullptr, like for deletePhoneCallHistory.
 		const MTPmessages_AffectedHistory &result) const;
 
-	void registerModifyRequest(const QString &key, mtpRequestId requestId);
+	// The request registered under `key` replaces the previous one, which is
+	// cancelled. A cancelled request never calls its handlers, so the owner of
+	// the cancelled one is told through `onSuperseded` that it is gone.
+	void registerModifyRequest(
+		const QString &key,
+		mtpRequestId requestId,
+		Fn<void()> onSuperseded = nullptr);
 	void clearModifyRequest(const QString &key);
 
 	void saveCurrentDraftToCloud();
@@ -234,6 +241,9 @@ public:
 		const QString &slug,
 		FnMut<void(const MTPchatlists_ChatlistInvite &)> done,
 		Fn<void(const MTP::Error &)> fail);
+	[[nodiscard]] bool checkFilterInviteRequestPendingForRegressionTest() {
+		return pending(_checkFilterInviteRequestId);
+	}
 
 	void processFullPeer(
 		not_null<PeerData*> peer,
@@ -654,7 +664,7 @@ private:
 
 	const not_null<Main::Session*> _session;
 
-	base::flat_map<QString, int> _modifyRequests;
+	Api::ModifyRequestRegistry _modifyRequests;
 
 	MessageDataRequests _messageDataRequests;
 	base::flat_map<

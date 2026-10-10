@@ -1206,7 +1206,10 @@ void ShowEditPeerPermissionsBox(
 	};
 	const auto state = inner->lifetime().make_state<State>();
 	const auto channel = peer->asChannel();
-	const auto available = channel && channel->paidMessagesAvailable();
+	const auto paidFeaturesSupported = peer->session().paidFeaturesSupported();
+	const auto available = channel
+		&& paidFeaturesSupported
+		&& channel->paidMessagesAvailable();
 
 	Ui::AddSkip(inner);
 	Ui::AddDivider(inner);
@@ -1256,11 +1259,15 @@ void ShowEditPeerPermissionsBox(
 		| Flag::SendOther;
 	state->hasSendRestrictions = ((restrictions & kSendRestrictions) != 0)
 		|| (peer->isChannel() && peer->asChannel()->slowmodeSeconds() > 0);
-	state->boostsUnrestrict = AddBoostsUnrestrictWrapped(
-		inner,
-		peer,
-		state->hasSendRestrictions.value());
-	state->slowmodeSeconds = AddSlowmodeSlider(inner, peer);
+	state->boostsUnrestrict = paidFeaturesSupported
+		? AddBoostsUnrestrictWrapped(
+			inner,
+			peer,
+			state->hasSendRestrictions.value())
+		: rpl::single(0);
+	state->slowmodeSeconds = channel || paidFeaturesSupported
+		? AddSlowmodeSlider(inner, peer)
+		: rpl::single(0);
 	state->hasSendRestrictions = rpl::combine(
 		rpl::single(
 			restrictions

@@ -84,6 +84,7 @@ PRIVATE
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
     tests/unit/debug_mode_tests.cpp
+    tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
