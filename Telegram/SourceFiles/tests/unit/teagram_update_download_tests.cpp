@@ -388,7 +388,20 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 		CHECK_EQ(downloaded.readAll(), archive);
 		const auto permissions = QFileInfo(
 			devResult.candidate->archivePath()).permissions();
-		CHECK(permissions == (QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+		const auto ownerPermissions = permissions
+			& (QFileDevice::ReadOwner
+				| QFileDevice::WriteOwner
+				| QFileDevice::ExeOwner);
+		const auto groupAndOtherPermissions = permissions
+			& (QFileDevice::ReadGroup
+				| QFileDevice::WriteGroup
+				| QFileDevice::ExeGroup
+				| QFileDevice::ReadOther
+				| QFileDevice::WriteOther
+				| QFileDevice::ExeOther);
+		CHECK(ownerPermissions
+			== (QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+		CHECK(groupAndOtherPermissions == QFileDevice::Permissions());
 	}
 	CHECK(HasOnlyFixedSourceHosts(fixture->_requests));
 	CHECK_EQ(QDir(staging.path()).entryList(
