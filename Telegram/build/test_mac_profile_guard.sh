@@ -11,6 +11,8 @@ if [[ "$(uname -s)" != Darwin ]]; then
 	echo "macOS profile integration test requires Darwin." >&2
 	exit 2
 fi
+printf 'macos_version=%s architecture=%s\n' \
+	"$(sw_vers -productVersion)" "$(uname -m)"
 
 APP="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
 APP_BUNDLE="$(cd "$(dirname "$APP")/../.." && pwd -P)"
@@ -406,6 +408,8 @@ printf '%s\n%s' 'https://telegramd.example:443' 'fingerprint=1234567890' \
 	> "$ENDPOINT_ENROLLMENT"
 ACCOUNT_STATE_HASH="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
 ENDPOINT_ENROLLMENT_HASH="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+printf 'account_state_sha256_before=%s endpoint_enrollment_sha256_before=%s\n' \
+	"$ACCOUNT_STATE_HASH" "$ENDPOINT_ENROLLMENT_HASH"
 
 SEATBELT_CANARY="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
 mkdir -p "$(dirname "$SEATBELT_CANARY")"
@@ -887,15 +891,17 @@ if (( FAILURES > 0 )); then
 	exit 1
 fi
 
-if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
-	!= "$ACCOUNT_STATE_HASH" \
-	|| "$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')" \
-		!= "$ENDPOINT_ENROLLMENT_HASH" \
+ACCOUNT_STATE_HASH_AFTER="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH_AFTER="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+if [[ "$ACCOUNT_STATE_HASH_AFTER" != "$ACCOUNT_STATE_HASH" \
+	|| "$ENDPOINT_ENROLLMENT_HASH_AFTER" != "$ENDPOINT_ENROLLMENT_HASH" \
 	|| -e "$TELEGRAMD_PROFILE" ]]; then
 	echo "startup changed the existing Teagram profile or created a replacement profile." >&2
 	exit 1
 fi
-printf 'existing_profile_preserved=PASS account_state=1 endpoint_enrollment=1 replacement_profile_absent=1\n'
+printf 'existing_profile_preserved=PASS account_state_sha256_before=%s account_state_sha256_after=%s endpoint_enrollment_sha256_before=%s endpoint_enrollment_sha256_after=%s replacement_profile_absent=1\n' \
+	"$ACCOUNT_STATE_HASH" "$ACCOUNT_STATE_HASH_AFTER" \
+	"$ENDPOINT_ENROLLMENT_HASH" "$ENDPOINT_ENROLLMENT_HASH_AFTER"
 
 CACHE_TEXT="$PROFILE/tdata/emoji/spoiler/text"
 CACHE_TEXT_FILES="$(find "$TEST_HOME" -type f -path '*/tdata/emoji/spoiler/text' -print)"
