@@ -196,7 +196,7 @@ void Controller::showAccount(
 			std::fprintf(
 				stderr,
 				"Session switch callback: previous=%p before=%d after=%d\n",
-				static_cast<void *>(prevSession.get()), before,
+				static_cast<void *>(prevSession), before,
 				prevSession->updates().sessionSwitchUpdatesForTest());
 #endif
 		} else {
