@@ -16,6 +16,7 @@ namespace Core::MacProtectedPath {
 #ifdef Q_OS_MAC
 [[nodiscard]] bool InitializeProfile();
 [[nodiscard]] bool IntegrationTestActive();
+[[nodiscard]] bool IsActive();
 [[nodiscard]] QString InitialWorkingDirectory();
 [[nodiscard]] QString IpcDirectory();
 [[nodiscard]] QString NotificationSoundsDirectory();
@@ -36,6 +37,11 @@ namespace Core::MacProtectedPath {
 [[nodiscard]] bool
 CheckCachePathForTesting(const QString &path, const char *callsite,
 						 std::function<void(const QString &)> beforeEntryStat);
+[[nodiscard]] int RunSeatbeltOpenProbe(const char *path, bool expectDenied,
+									   bool forkChild);
+[[nodiscard]] int RunSeatbeltCatProbe(const char *path, bool expectDenied);
+[[nodiscard]] int RunSeatbeltForkExecCatProbe(const char *path,
+											  bool expectDenied);
 #endif
 
 [[nodiscard]] bool CheckPair(Operation operation, const QString &first,
@@ -43,6 +49,7 @@ CheckCachePathForTesting(const QString &path, const char *callsite,
 #else  // Q_OS_MAC
 [[nodiscard]] inline bool InitializeProfile() { return true; }
 [[nodiscard]] inline bool IntegrationTestActive() { return false; }
+[[nodiscard]] inline bool IsActive() { return false; }
 [[nodiscard]] inline QString InitialWorkingDirectory() { return {}; }
 [[nodiscard]] inline QString IpcDirectory() { return {}; }
 [[nodiscard]] inline QString NotificationSoundsDirectory() { return {}; }

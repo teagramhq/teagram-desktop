@@ -23,6 +23,7 @@ UPDATE_PUBLIC_KEY_FILE="$ROOT/Telegram/build/teagram_update_public_key.pem"
 UPDATE_PRODUCER_FILE="$ROOT/Telegram/build/teagram_update_manifest.py"
 ISOLATION_FILE="$ROOT/Telegram/build/mac_isolation_test.sh"
 PARSER_FILE="$ROOT/Telegram/build/check_mac_fs_usage.py"
+SEATBELT_DIAGNOSE_FILE="$ROOT/Telegram/build/diagnose_mac_seatbelt.py"
 
 case "$MODE" in
 all|identity|observer)
@@ -34,6 +35,90 @@ all|identity|observer)
 esac
 
 if [ "$MODE" != observer ]; then
+	python3 - "$ROOT" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+main = (root / 'Telegram/SourceFiles/main.cpp').read_text(encoding='utf-8')
+runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').read_text(encoding='utf-8')
+runtime_header = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.h').read_text(encoding='utf-8')
+profile_test = (root / 'Telegram/build/test_mac_profile_guard.sh').read_text(encoding='utf-8')
+diagnose = (root / 'Telegram/build/diagnose_mac_seatbelt.py').read_text(encoding='utf-8')
+policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
+root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
+sandbox = (root / 'Telegram/SourceFiles/core/sandbox.cpp').read_text(encoding='utf-8')
+launcher = (root / 'Telegram/SourceFiles/core/launcher.cpp').read_text(encoding='utf-8')
+specific_mac = (root / 'Telegram/SourceFiles/platform/mac/specific_mac.mm').read_text(encoding='utf-8')
+notifications = (root / 'Telegram/SourceFiles/platform/mac/notifications_manager_mac.mm').read_text(encoding='utf-8')
+notifications_un = (root / 'Telegram/SourceFiles/platform/mac/notifications_manager_mac_un.mm').read_text(encoding='utf-8')
+webview = (root / 'Telegram/SourceFiles/platform/mac/webview_file_input_bridge.mm').read_text(encoding='utf-8')
+storage = (root / 'Telegram/SourceFiles/storage/storage_account.cpp').read_text(encoding='utf-8')
+audio_cache = (root / 'Telegram/SourceFiles/media/audio/media_audio_local_cache.cpp').read_text(encoding='utf-8')
+application = (root / 'Telegram/SourceFiles/core/application.cpp').read_text(encoding='utf-8')
+assert 'if (!Core::MacProtectedPath::InitializeProfile())' in main
+assert 'sandbox_init(' in runtime
+assert 'RunSeatbeltCatProbe(argv[2], true)' in main
+assert 'RunSeatbeltCatProbe(argv[2], false)' in main
+assert 'Seatbelt /bin/cat %s probe failed:' in runtime
+for mode_probe in (
+    '--mac-seatbelt-parent-open-probe',
+    '--mac-seatbelt-fork-open-probe',
+    '--mac-seatbelt-fork-exec-cat-probe',
+    '--mac-seatbelt-cat-probe',
+):
+    assert mode_probe in main
+    assert mode_probe in profile_test
+for result in (
+    'seatbelt_parent_open_denial',
+    'seatbelt_fork_open_denial',
+    'seatbelt_fork_exec_cat_denial',
+    'seatbelt_posix_spawn_cat_denial=PASS',
+):
+	assert result in profile_test
+for mode_probe in (
+    '--mac-seatbelt-parent-open-allow-probe',
+    '--mac-seatbelt-fork-open-allow-probe',
+    '--mac-seatbelt-fork-exec-cat-allow-probe',
+    '--mac-seatbelt-cat-allow-probe',
+):
+    assert mode_probe in main
+    assert mode_probe in profile_test
+for result in (
+    'seatbelt_parent_open_allowed',
+    'seatbelt_fork_open_allowed',
+    'seatbelt_fork_exec_cat_allowed',
+    'seatbelt_teagram_profile_allowed',
+):
+    assert result in profile_test
+assert 'RunSeatbeltOpenProbe' in runtime_header
+assert 'RunSeatbeltOpenProbe' in runtime
+assert 'RunSeatbeltCatProbe' in runtime
+assert 'RunSeatbeltForkExecCatProbe' in runtime_header
+assert 'RunSeatbeltForkExecCatProbe' in runtime
+assert 'generated_without_ignored_alternatives' in diagnose
+assert '(allow default)' in policy
+assert '(deny file*' in policy
+assert 'FirmlinkAlias' in policy
+main_entry = main.split('int main(', 1)[1].split('\n}', 1)[0]
+assert main_entry.index('InitializeProfile()') < main_entry.index('Launcher::Create')
+initialize = runtime.split('bool InitializeProfile()', 1)[1]
+assert initialize.index('InitializeSeatbelt(') < initialize.index('QDir().mkpath(profilePath)')
+assert initialize.index('InitializeSeatbelt(') < initialize.index('QDir::currentPath()')
+assert 'sandbox_free_error' in runtime
+assert 'Mac App Store builds are unsupported by Teagram.' in root_cmake
+assert 'if (MacProtectedPath::IsActive())' in sandbox
+assert 'MacProtectedPath::IntegrationTestActive()' in sandbox
+assert 'MacProtectedPath::IsActive()' in specific_mac
+assert 'Core::MacProtectedPath::IsActive()' in notifications
+assert 'Core::MacProtectedPath::IsActive()' in notifications_un
+assert 'Core::MacProtectedPath::IsActive()' in webview
+assert '!Core::MacProtectedPath::IsActive()' in storage
+assert 'Core::MacProtectedPath::IsActive()' in audio_cache
+assert 'MacProtectedPath::IsActive()' in application
+assert 'return true;' in launcher.split('bool Launcher::checkPortableVersionFolder()', 1)[1]
+assert '_customWorkingDir.clear();' in launcher.split('#ifdef TDESKTOP_TEAGRAM', 1)[1]
+PY
 	test -f "$PLIST_FILE"
 	test -f "$CMAKE_FILE"
 	test -f "$VERSION_FILE"
@@ -112,6 +197,29 @@ assert 'Library/Application Support/Teagram' in profile_policy
 assert 'Teagram-lock-' in sandbox
 assert '/Teagram-' in socket
 assert 'Library/Application Support/Teagram' in profile_test
+assert '"$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY"' in profile_test
+for probe in (
+    'seatbelt_container_denial',
+    'seatbelt_bundle_keyed_denial',
+    'run_bundle_keyed_probe seatbelt_bundle_keyed_denial Preferences',
+    'run_bundle_keyed_probe seatbelt_caches_denial Caches',
+    'run_bundle_keyed_probe seatbelt_httpstorages_denial HTTPStorages',
+    'run_bundle_keyed_probe seatbelt_webkit_denial WebKit',
+    'seatbelt_saved_application_state_denial',
+    '"Saved Application State"',
+    'org.telegram.desktop.fixture/synthetic-canary',
+    'seatbelt_application_support_traversal_denial',
+    'seatbelt_application_support_realpath_denial',
+    'seatbelt_application_support_firmlink_denial',
+    'seatbelt_teagram_profile_allowed',
+    '"$PROFILE/../Telegram Desktop/tdata/synthetic-canary"',
+    '"$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"',
+    '"$TEST_HOME/Library/$parent/org.telegram.desktop.fixture/synthetic-canary"',
+    '"/System/Volumes/Data$TEST_HOME"',
+    'Teagram/../Telegram Desktop/tdata/synthetic-canary',
+    '"$ACCOUNT_STATE"',
+):
+    assert probe in profile_test
 assert 'Teagram-lock-' in profile_test
 assert 'Teagram-' in profile_test
 assert 'Show Teagram' in global_menu
@@ -316,6 +424,10 @@ for path in paths:
 		f'(tolerance {tolerance}px)'
 	)
 PY
+fi
+
+if [ "$MODE" != observer ]; then
+	python3 "$SEATBELT_DIAGNOSE_FILE" --self-test
 fi
 
 if [ "$MODE" != identity ]; then

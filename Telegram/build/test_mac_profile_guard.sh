@@ -11,6 +11,8 @@ if [[ "$(uname -s)" != Darwin ]]; then
 	echo "macOS profile integration test requires Darwin." >&2
 	exit 2
 fi
+printf 'macos_version=%s architecture=%s\n' \
+	"$(sw_vers -productVersion)" "$(uname -m)"
 
 APP="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
 APP_BUNDLE="$(cd "$(dirname "$APP")/../.." && pwd -P)"
@@ -26,7 +28,6 @@ IPC_SEARCH_DIRECTORY="$(cd "$IPC_DIRECTORY" 2>/dev/null && pwd -P || printf '%s'
 
 PROFILE="$TEST_HOME/Library/Application Support/Teagram"
 HOSTILE_HOME="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"
-REFUSAL_LOG="$TEST_HOME/refusal.log"
 START_LOG="$TEST_HOME/start.log"
 LOCK_SUFFIX="$(printf '%s' "$APP_BUNDLE" | md5 -q | cut -c1-16)"
 SOCKET_SUFFIX="$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
@@ -75,6 +76,135 @@ fixture_unchanged() {
 	else
 		[[ -d "$fixture" ]] \
 			&& [[ -z "$(find "$fixture" -mindepth 1 -print -quit)" ]]
+	fi
+}
+
+run_seatbelt_cat_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local output
+	local status
+	local expected_errno=EPERM
+	if [[ "$option" == --mac-seatbelt-cat-allow-probe ]]; then
+		expected_errno=0
+	fi
+	if [[ ! -f "$path" ]]; then
+		echo "$name fixture is missing: $path" >&2
+		return 1
+	fi
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+	printf '%s=PASS mode=posix_spawn child=/bin/cat errno=%s path=%s\n' \
+		"$name" "$expected_errno" "$path"
+}
+
+verify_unsandboxed_canary_readable() {
+	local name="$1"
+	local path="$2"
+	local expected_contents="$3"
+	local actual_contents
+	if [[ ! -f "$path" ]]; then
+		echo "$name unsandboxed fixture is missing: $path" >&2
+		return 1
+	fi
+	actual_contents="$(/bin/cat "$path")" || {
+		echo "$name unsandboxed /bin/cat could not read: $path" >&2
+		return 1
+	}
+	if [[ "$actual_contents" != "$expected_contents" ]]; then
+		echo "$name unsandboxed control read unexpected contents: $path" >&2
+		return 1
+	fi
+	printf '%s=PASS unsandboxed=/bin/cat readable=1 path=%s\n' "$name" "$path"
+}
+
+run_home_spelling_probes() {
+	local name="$1"
+	local profile_home="$2"
+	local path_home="$3"
+	local protected_relative="${4:-Library/Application Support/Telegram Desktop}"
+	local allowed_relative="${5:-Library/Application Support/Teagram/tdata}"
+	local protected_canary="$path_home/$protected_relative/synthetic-canary"
+	local allowed_canary="$path_home/$allowed_relative/synthetic-allowed-file"
+	local protected_contents="synthetic $name protected bytes"
+	local allowed_contents="synthetic $name allowed Teagram bytes"
+	mkdir -p "$(dirname "$protected_canary")" "$(dirname "$allowed_canary")"
+	printf '%s' "$protected_contents" > "$protected_canary"
+	printf '%s' "$allowed_contents" > "$allowed_canary"
+	verify_unsandboxed_canary_readable \
+		"${name}_protected_unsandboxed_control" \
+		"$protected_canary" "$protected_contents" \
+		|| return 1
+	verify_unsandboxed_canary_readable \
+		"${name}_allowed_unsandboxed_control" \
+		"$allowed_canary" "$allowed_contents" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_protected_denial" \
+		--mac-seatbelt-cat-probe "$profile_home" "$protected_canary" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_allowed_teagram_file" \
+		--mac-seatbelt-cat-allow-probe "$profile_home" "$allowed_canary" \
+		|| return 1
+}
+
+run_seatbelt_mode_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local mode="$5"
+	local expected_errno="$6"
+	local output
+	local status
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+	printf '%s=PASS mode=%s errno=%s path=%s\n' \
+		"$name" "$mode" "$expected_errno" "$path"
+}
+
+run_bundle_keyed_probe() {
+	local name="$1"
+	local parent="$2"
+	local canary="$TEST_HOME/Library/$parent/org.telegram.desktop.fixture/synthetic-canary"
+	local canary_hash
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected bundle-keyed bytes' > "$canary"
+	canary_hash="$(shasum -a 256 "$canary" | awk '{print $1}')"
+	run_seatbelt_cat_probe \
+		"$name" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| return 1
+	if [[ "$(shasum -a 256 "$canary" | awk '{print $1}')" != "$canary_hash" ]]; then
+		echo "$name canary changed during the denial probe." >&2
+		return 1
 	fi
 }
 
@@ -265,26 +395,20 @@ printf 'socket_path_bytes=PASS %s/%s path=%s\n' \
 	"$SOCKET_PATH_BYTES" "$MAC_SOCKET_PATH_LIMIT" "$SOCKET_PATH"
 
 set +e
-env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit >"$REFUSAL_LOG" 2>&1
+REFUSAL_OUTPUT="$(env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit 2>&1)"
 REFUSAL_STATUS=$?
 set -e
 
 if [[ "$REFUSAL_STATUS" -eq 0 ]]; then
 	echo "hostile HOME unexpectedly started Teagram." >&2
-	cat "$REFUSAL_LOG" >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
-if ! grep -F -q "class=group-container callsite=profile.home" "$REFUSAL_LOG"; then
-	echo "profile refusal did not identify the protected home source." >&2
-	cat "$REFUSAL_LOG" >&2
-	exit 1
-fi
-if grep -F -q "Working dir: $PROFILE/" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC selected:" "$REFUSAL_LOG" \
-	|| grep -F -q "Connecting local socket to $SOCKET_PATH" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC ready:" "$REFUSAL_LOG"; then
-	echo "profile refusal occurred after profile or socket startup began." >&2
-	cat "$REFUSAL_LOG" >&2
+if [[ -n "$REFUSAL_OUTPUT" ]]; then
+	echo "home discovery failure emitted output before Seatbelt activation." >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
 if [[ -n "$(find_lock_path)" ]]; then
@@ -295,11 +419,340 @@ if [[ -S "$SOCKET_PATH" ]]; then
 	echo "profile refusal created an IPC socket." >&2
 	exit 1
 fi
-if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" ]]; then
+if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" || -e "$START_LOG" ]]; then
 	echo "hostile profile initialization created a profile or protected path." >&2
 	exit 1
 fi
-printf 'protected_home_refusal=PASS status=%s class=group-container before_profile_and_ipc=1\n' "$REFUSAL_STATUS"
+printf 'protected_home_refusal=PASS status=%s silent=1 profile_and_ipc_absent=1\n' \
+	"$REFUSAL_STATUS"
+
+COMPILE_FAILURE_HOME="$TEST_HOME/compile-failure-home"
+COMPILE_FAILURE_PROFILE="$COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+mkdir -p "$COMPILE_FAILURE_HOME"
+set +e
+COMPILE_FAILURE_OUTPUT="$(env HOME="$COMPILE_FAILURE_HOME" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
+COMPILE_FAILURE_STATUS=$?
+set -e
+if [[ "$COMPILE_FAILURE_STATUS" -eq 0 ]]; then
+	echo "forced Seatbelt compilation failure unexpectedly started Teagram." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -n "$COMPILE_FAILURE_OUTPUT" ]]; then
+	echo "Seatbelt compilation failure emitted output before activation." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -e "$COMPILE_FAILURE_PROFILE" \
+	|| -e "$COMPILE_FAILURE_PROFILE/log.txt" \
+	|| -e "$COMPILE_FAILURE_HOME/refusal.log" ]]; then
+	echo "Seatbelt compilation failure created a profile or log." >&2
+	exit 1
+fi
+printf 'seatbelt_compile_failure=PASS status=%s silent=1 profile_and_logs_absent=1\n' \
+	"$COMPILE_FAILURE_STATUS"
+
+ACCOUNT_STATE="$PROFILE/tdata/teagram-activation-account-state.fixture"
+ENDPOINT_ENROLLMENT="$PROFILE/tdata/teagram-activation-endpoint-enrollment.fixture"
+TELEGRAMD_PROFILE="$TEST_HOME/Library/Application Support/Telegramd"
+mkdir -p "$PROFILE/tdata"
+printf '%s' 'synthetic account state v1' > "$ACCOUNT_STATE"
+printf '%s\n%s' 'https://telegramd.example:443' 'fingerprint=1234567890' \
+	> "$ENDPOINT_ENROLLMENT"
+ACCOUNT_STATE_HASH="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+printf 'account_state_sha256_before=%s endpoint_enrollment_sha256_before=%s\n' \
+	"$ACCOUNT_STATE_HASH" "$ENDPOINT_ENROLLMENT_HASH"
+
+SEATBELT_CANARY="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$SEATBELT_CANARY")"
+printf '%s' 'synthetic protected canary' > "$SEATBELT_CANARY"
+CANARY_HASH="$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')"
+set +e
+CANARY_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	"$APP" --mac-seatbelt-cat-probe "$SEATBELT_CANARY" 2>&1)"
+CANARY_STATUS=$?
+set -e
+if [[ "$CANARY_STATUS" -ne 0 \
+	|| "$CANARY_OUTPUT" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+	echo "spawned /bin/cat denial probe did not return the expected EPERM result." >&2
+	printf '%s\n' "$CANARY_OUTPUT" >&2
+	printf '%s\n' "$CANARY_OUTPUT" | python3 \
+		"$(dirname "$0")/diagnose_mac_seatbelt.py" \
+		"$TEST_HOME" "$SEATBELT_CANARY" "$ACCOUNT_STATE" \
+		|| echo "Seatbelt diagnostic controls failed; see matrix above." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH" ]]; then
+	echo "Seatbelt canary changed during the descendant denial probe." >&2
+	exit 1
+fi
+printf 'seatbelt_descendant_denial=PASS mode=posix_spawn child=/bin/cat status=%s errno=EPERM\n' \
+	"$CANARY_STATUS"
+printf 'seatbelt_posix_spawn_cat_denial=PASS mode=posix_spawn child=/bin/cat errno=EPERM path=%s\n' \
+	"$SEATBELT_CANARY"
+
+run_home_spelling_probes \
+	seatbelt_case_spelling \
+	"$TEST_HOME" "$TEST_HOME" \
+	"lIBRARY/aPPLICATION sUPPORT/tElEgRaM dEsKtOp" \
+	"lIBRARY/aPPLICATION sUPPORT/OtherApp/TeLeGrAm Desktop/tdata" \
+	|| exit 1
+
+NON_ASCII_HOME_NFC_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "teagram-café"))')"
+NON_ASCII_HOME_NFD_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFD", "teagram-café"))')"
+NON_ASCII_HOME_NFC="$TEST_HOME/$NON_ASCII_HOME_NFC_NAME"
+NON_ASCII_HOME_NFD="$TEST_HOME/$NON_ASCII_HOME_NFD_NAME"
+mkdir -p "$NON_ASCII_HOME_NFC"
+run_home_spelling_probes \
+	seatbelt_non_ascii_nfc_home \
+	"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFC" \
+	|| exit 1
+if [[ -d "$NON_ASCII_HOME_NFD" ]] \
+	&& [[ "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFC")" \
+		== "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFD")" ]]; then
+	run_home_spelling_probes \
+		seatbelt_nfd_home_alias \
+		"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+else
+	mkdir -p "$NON_ASCII_HOME_NFD"
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+fi
+
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_denial \
+	--mac-seatbelt-parent-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	parent EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_denial \
+	--mac-seatbelt-fork-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_denial \
+	--mac-seatbelt-fork-exec-cat-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork-exec EPERM \
+	|| exit 1
+
+DEFAULT_IGNORABLE="$(printf '\342\200\213')"
+IGNORABLE_CHARACTERS=(
+	"$(printf '\342\200\213')"
+	"$(printf '\342\200\214')"
+	"$(printf '\342\200\215')"
+	"$(printf '\342\200\216')"
+	"$(printf '\342\200\217')"
+	"$(printf '\342\200\252')"
+	"$(printf '\342\200\253')"
+	"$(printf '\342\200\254')"
+	"$(printf '\342\200\255')"
+	"$(printf '\342\200\256')"
+	"$(printf '\342\201\252')"
+	"$(printf '\342\201\253')"
+	"$(printf '\342\201\254')"
+	"$(printf '\342\201\255')"
+	"$(printf '\342\201\256')"
+	"$(printf '\342\201\257')"
+	"$(printf '\357\273\277')"
+)
+for index in "${!IGNORABLE_CHARACTERS[@]}"; do
+	ignored="${IGNORABLE_CHARACTERS[$index]}"
+	canary="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Te${ignored}legram/synthetic-canary"
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected canary with a default-ignorable character' \
+		> "$canary"
+	run_seatbelt_cat_probe \
+		"seatbelt_default_ignorable_${index}_denial" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| exit 1
+done
+
+IGNORABLE_LIBRARY_CANARY="$TEST_HOME/Lib${DEFAULT_IGNORABLE}rary/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$IGNORABLE_LIBRARY_CANARY")"
+printf '%s' 'synthetic protected canary with an ignored Library character' \
+	> "$IGNORABLE_LIBRARY_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_library_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_LIBRARY_CANARY" \
+	|| exit 1
+
+FOLDED_GROUP_PARENT_CANARY="$TEST_HOME/Library/Group Con${DEFAULT_IGNORABLE}tainers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_GROUP_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded group parent' \
+	> "$FOLDED_GROUP_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_group_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_GROUP_PARENT_CANARY" \
+	|| exit 1
+
+FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded parent component' \
+	> "$FOLDED_PARENT_CANARY"
+FOLDED_PARENT_CANARY_HASH="$(shasum -a 256 \
+	"$FOLDED_PARENT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_support_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_PARENT_CANARY" \
+	|| exit 1
+
+FOLDED_APPLICATION_CANARY="$TEST_HOME/Library/Application Support/Telegram Des${DEFAULT_IGNORABLE}ktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_APPLICATION_CANARY")"
+printf '%s' 'synthetic protected canary with a folded application component' \
+	> "$FOLDED_APPLICATION_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_APPLICATION_CANARY" \
+	|| exit 1
+
+UNRELATED_CANARY="$TEST_HOME/Library/Application Support/OtherApp/telegram/cache${DEFAULT_IGNORABLE}"
+mkdir -p "$(dirname "$UNRELATED_CANARY")"
+printf '%s' 'synthetic unrelated application bytes' > "$UNRELATED_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_unrelated_telegram_ignorable_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$UNRELATED_CANARY" \
+	|| exit 1
+
+NARROW_NO_BREAK_SPACE="$(printf '\342\200\257')"
+NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Supp${NARROW_NO_BREAK_SPACE}ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$NEAR_MATCH_CANARY")"
+printf '%s' 'synthetic non-ignorable near-match bytes' > "$NEAR_MATCH_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_non_ignorable_application_support_near_match_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$NEAR_MATCH_CANARY" \
+	|| exit 1
+
+CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$CONTAINER_CANARY")"
+printf '%s' 'synthetic protected container bytes' > "$CONTAINER_CANARY"
+CONTAINER_CANARY_HASH="$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$CONTAINER_CANARY" \
+	|| exit 1
+
+FOLDED_CONTAINER_CANARY="$TEST_HOME/Library/Containers/${DEFAULT_IGNORABLE}org.telegram.desktop${DEFAULT_IGNORABLE}/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_CONTAINER_CANARY")"
+printf '%s' 'synthetic protected canary with a folded container bundle id' \
+	> "$FOLDED_CONTAINER_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_CONTAINER_CANARY" \
+	|| exit 1
+
+run_bundle_keyed_probe seatbelt_bundle_keyed_denial Preferences || exit 1
+run_bundle_keyed_probe seatbelt_caches_denial Caches || exit 1
+run_bundle_keyed_probe seatbelt_httpstorages_denial HTTPStorages || exit 1
+run_bundle_keyed_probe seatbelt_webkit_denial WebKit || exit 1
+run_bundle_keyed_probe \
+	seatbelt_saved_application_state_denial \
+	"Saved Application State" \
+	|| exit 1
+
+FOLDED_BUNDLE_CANARY="$TEST_HOME/Library/Preferences/org.telegram.des${DEFAULT_IGNORABLE}ktop.fixture/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed id' \
+	> "$FOLDED_BUNDLE_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_keyed_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_CANARY" \
+	|| exit 1
+
+FOLDED_BUNDLE_PARENT_CANARY="$TEST_HOME/Library/Preference${DEFAULT_IGNORABLE}s/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed parent' \
+	> "$FOLDED_BUNDLE_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_PARENT_CANARY" \
+	|| exit 1
+
+APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
+mkdir -p "$(dirname "$APPLICATION_SUPPORT_CANARY")"
+printf '%s' 'synthetic protected application support bytes' \
+	> "$APPLICATION_SUPPORT_CANARY"
+APPLICATION_SUPPORT_CANARY_HASH="$(shasum -a 256 \
+	"$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_traversal_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$APPLICATION_SUPPORT_CANARY" \
+	|| exit 1
+
+REALPATH_HOME_ALIAS="$TEST_HOME/realpath-home"
+ln -s "$TEST_HOME" "$REALPATH_HOME_ALIAS"
+REALPATH_CANARY="$REALPATH_HOME_ALIAS/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_realpath_denial \
+	--mac-seatbelt-cat-probe "$REALPATH_HOME_ALIAS" "$REALPATH_CANARY" \
+	|| exit 1
+
+FIRMLINK_HOME="/System/Volumes/Data$TEST_HOME"
+if [[ ! -d "$FIRMLINK_HOME" ]] \
+	|| [[ "$(stat -f '%d:%i' "$FIRMLINK_HOME")" \
+		!= "$(stat -f '%d:%i' "$TEST_HOME")" ]]; then
+	echo "synthetic home has no matching /System/Volumes/Data alias." >&2
+	exit 1
+fi
+FIRMLINK_CANARY="$FIRMLINK_HOME/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_firmlink_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FIRMLINK_CANARY" \
+	|| exit 1
+
+run_seatbelt_cat_probe \
+	seatbelt_teagram_profile_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_allowed \
+	--mac-seatbelt-parent-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	parent 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_allowed \
+	--mac-seatbelt-fork-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_allowed \
+	--mac-seatbelt-fork-exec-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork-exec 0 \
+	|| exit 1
+
+if [[ "$(shasum -a 256 "$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')" \
+	!= "$APPLICATION_SUPPORT_CANARY_HASH" ]]; then
+	echo "application support canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')" \
+	!= "$CONTAINER_CANARY_HASH" ]]; then
+	echo "container canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$FOLDED_PARENT_CANARY" | awk '{print $1}')" \
+	!= "$FOLDED_PARENT_CANARY_HASH" ]]; then
+	echo "folded application support parent canary changed during denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
+	!= "$ACCOUNT_STATE_HASH" ]]; then
+	echo "allowed Teagram profile file changed during the access probe." >&2
+	exit 1
+fi
 
 mkdir -p "$IPC_DIRECTORY"
 
@@ -530,6 +983,18 @@ if (( FAILURES > 0 )); then
 	exit 1
 fi
 
+ACCOUNT_STATE_HASH_AFTER="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH_AFTER="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+if [[ "$ACCOUNT_STATE_HASH_AFTER" != "$ACCOUNT_STATE_HASH" \
+	|| "$ENDPOINT_ENROLLMENT_HASH_AFTER" != "$ENDPOINT_ENROLLMENT_HASH" \
+	|| -e "$TELEGRAMD_PROFILE" ]]; then
+	echo "startup changed the existing Teagram profile or created a replacement profile." >&2
+	exit 1
+fi
+printf 'existing_profile_preserved=PASS account_state_sha256_before=%s account_state_sha256_after=%s endpoint_enrollment_sha256_before=%s endpoint_enrollment_sha256_after=%s replacement_profile_absent=1\n' \
+	"$ACCOUNT_STATE_HASH" "$ACCOUNT_STATE_HASH_AFTER" \
+	"$ENDPOINT_ENROLLMENT_HASH" "$ENDPOINT_ENROLLMENT_HASH_AFTER"
+
 CACHE_TEXT="$PROFILE/tdata/emoji/spoiler/text"
 CACHE_TEXT_FILES="$(find "$TEST_HOME" -type f -path '*/tdata/emoji/spoiler/text' -print)"
 report_result spoiler_cache_location "$([[ -f "$CACHE_TEXT" && "$CACHE_TEXT_FILES" == "$CACHE_TEXT" ]] && printf true || printf false)" \
@@ -546,15 +1011,68 @@ run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 mkdir -p "$AUTH_HOME"
+STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+for fixture in \
+	cache-root \
+	media-cache-root \
+	cache-leaf \
+	media-cache-leaf \
+	opened-cache \
+	opened-media-cache \
+	legacy-cleanup; do
+	mkdir -p "$STORAGE_FIXTURE_ROOT/$fixture"
+	printf '%s' 'synthetic protected fixture' \
+		> "$STORAGE_FIXTURE_ROOT/$fixture/marker"
+done
+printf '%s' 'legacy bytes' \
+	> "$STORAGE_FIXTURE_ROOT/legacy-cleanup/unrecognized-legacy-file"
+
+verify_storage_fixture() {
+	local directory="$1"
+	local expected="$(printf '%s\n' "$directory/marker")"
+	local entries="$(find "$directory" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	[[ "$entries" == "$expected" ]] \
+		&& [[ "$(cat "$directory/marker")" == 'synthetic protected fixture' ]]
+}
+
+verify_protected_storage_fixtures() {
+	local fixture
+	for fixture in \
+		cache-root \
+		media-cache-root \
+		cache-leaf \
+		media-cache-leaf \
+		opened-cache \
+		opened-media-cache; do
+		if ! verify_storage_fixture "$STORAGE_FIXTURE_ROOT/$fixture"; then
+			echo "protected_storage_fixture=FAIL fixture=$fixture"
+			return 1
+		fi
+	done
+	local cleanup="$STORAGE_FIXTURE_ROOT/legacy-cleanup"
+	local expected="$(printf '%s\n%s\n' \
+		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
+	local entries="$(find "$cleanup" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	if [[ "$entries" != "$expected" ]] \
+		|| [[ "$(cat "$cleanup/marker")" != 'synthetic protected fixture' ]] \
+		|| [[ "$(cat "$cleanup/unrecognized-legacy-file")" != 'legacy bytes' ]]; then
+		echo "protected_storage_fixture=FAIL fixture=legacy-cleanup"
+		return 1
+	fi
+	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
+}
+
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	verify_protected_storage_fixtures || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
+verify_protected_storage_fixtures
 if ! grep -F -q \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
 	"$AUTH_LOG"; then

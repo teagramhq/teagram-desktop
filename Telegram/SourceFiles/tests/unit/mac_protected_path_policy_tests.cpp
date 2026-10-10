@@ -127,6 +127,30 @@ void CheckRefusedWithoutProtectedProbe(
 	}
 }
 
+template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
+	if constexpr (requires(const Policy &candidate) {
+					  candidate.SeatbeltProfile();
+				  }) {
+		const auto profile = policy.SeatbeltProfile();
+		CHECK(profile.startsWith("(version 1)\n(allow default)\n"));
+		for (const auto &line : profile.split('\n')) {
+			CHECK(line.size() < 900);
+		}
+		CHECK(profile.count("(deny file*") >= 16);
+		CHECK(profile.count("(regex\n") >= 16);
+		CHECK(profile.contains("/Users/alice"));
+		CHECK(profile.contains("/System/Volumes/Data/Users/alice"));
+		CHECK(profile.contains("/Users/bob"));
+		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
+		CHECK(profile.contains("[Ll]"));
+		CHECK(profile.contains("[Gg]"));
+		CHECK(profile.contains("[^/]*"));
+		CHECK(profile.contains("[Ss]"));
+	} else {
+		CHECK(false);
+	}
+}
+
 } // namespace
 
 TEST_CASE(GroupContainerRefusesBeforeProtectedProbe) {
@@ -284,6 +308,54 @@ TEST_CASE(HomeRootsFromAllSourcesAreProtected) {
 	CHECK(policy.Classify(
 		"/Users/carol/Library/Caches/org.telegram.desktop/x")
 		== ProtectedClass::BundleKeyed);
+}
+
+TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
+	auto fs = FakeFileSystem();
+	AddDirectoryHierarchy(fs, "/Users/alice.test");
+	AddDirectoryHierarchy(fs, "/Users/bob");
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = "/Users/alice.test",
+				  .environment = "/Users/bob",
+				  .foundation = "/Users/alice.test"},
+		fs.operations());
+	CHECK(policy.valid());
+	CheckSeatbeltProfile(policy);
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(profile.contains("/Users/alice\\\\.test"));
+	CHECK(!profile.contains("\"^/Users/alice\\\\.test/.*"));
+	const auto unrelated
+		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
+	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
+	const auto foldedApplicationSupport
+		= u"/Users/alice.test/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
+	CHECK(policy.Classify(foldedApplicationSupport.toUtf8())
+		  == ProtectedClass::ApplicationSupport);
+	CHECK(!profile.contains(u"[\u200B-\u200F"_q.toUtf8()));
+	CHECK(profile.contains("(string-append"));
+	for (const auto &character : std::vector<QByteArray>{
+			 u"\u200B"_q.toUtf8(), u"\u200C"_q.toUtf8(), u"\u200D"_q.toUtf8(),
+			 u"\u200E"_q.toUtf8(), u"\u200F"_q.toUtf8(), u"\u202A"_q.toUtf8(),
+			 u"\u202B"_q.toUtf8(), u"\u202C"_q.toUtf8(), u"\u202D"_q.toUtf8(),
+			 u"\u202E"_q.toUtf8(), u"\u206A"_q.toUtf8(), u"\u206B"_q.toUtf8(),
+			 u"\u206C"_q.toUtf8(), u"\u206D"_q.toUtf8(), u"\u206E"_q.toUtf8(),
+			 u"\u206F"_q.toUtf8(), u"\uFEFF"_q.toUtf8()}) {
+		CHECK(profile.contains(character));
+	}
+}
+
+TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {
+	auto fs = FakeFileSystem();
+	const auto longHome = "/Users/" + QByteArray(350, 'c') + "/"
+						  + QByteArray(350, 'd') + "/" + QByteArray(350, 'e');
+	AddDirectoryHierarchy(fs, longHome);
+	const auto policy
+		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
+												  .environment = longHome,
+												  .foundation = longHome},
+										fs.operations());
+	CHECK(policy.valid());
+	CHECK(policy.SeatbeltProfile().isEmpty());
 }
 
 TEST_CASE(BuildRejectsMissingRequiredHomesWithoutProbing) {

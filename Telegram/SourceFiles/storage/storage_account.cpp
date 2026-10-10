@@ -339,7 +339,7 @@ void ClearLegacyFilesGuarded(
 	Fn<void()> done) {
 	Expects(base.endsWith('/'));
 #ifdef Q_OS_MAC
-	if (!Core::MacProtectedPath::IntegrationTestActive()) {
+	if (!Core::MacProtectedPath::IsActive()) {
 		ClearLegacyFiles(base, std::move(collectGoodNames));
 		if (done) {
 			crl::on_main(std::move(done));

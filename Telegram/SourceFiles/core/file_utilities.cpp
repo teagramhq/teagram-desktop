@@ -455,7 +455,7 @@ bool GetDefault(
 		startFile.clear();
 	} else if ((startFile.isEmpty() || startFile.at(0) != '/')
 			   && (!lastPath.isEmpty()
-				   || !Core::MacProtectedPath::IntegrationTestActive())) {
+				   || !Core::MacProtectedPath::IsActive())) {
 		startFile = lastPath + '/' + startFile;
 	}
 	if (!startFile.isEmpty()

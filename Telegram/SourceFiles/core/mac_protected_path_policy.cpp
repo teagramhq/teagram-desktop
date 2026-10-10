@@ -20,6 +20,8 @@ namespace {
 
 constexpr auto kSymlinkHopLimit = 32;
 constexpr auto kRefusalInterval = qint64(60);
+// Leave headroom below the SBPL parser's 1025-byte string-token limit.
+constexpr auto kMaxSbplStringBytes = qsizetype(900);
 
 struct ParsedPath {
 	bool absolute = false;
@@ -233,6 +235,109 @@ struct WalkResult {
 	MacProtectedPathPolicy::Components result;
 	for (const auto value : values) {
 		result.push_back(Fold(QByteArray(value)));
+	}
+	return result;
+}
+
+[[nodiscard]] QByteArray SbplQuoted(const QByteArray &value) {
+	auto result = QByteArray("\"");
+	for (const auto character : value) {
+		const auto byte = uchar(character);
+		if (byte < 0x20 || byte == 0x7F) {
+			return {};
+		}
+		if (character == '\\' || character == '"') {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	result.append('"');
+	return (result.size() < kMaxSbplStringBytes) ? result : QByteArray();
+}
+
+[[nodiscard]] bool AppendSbplRegex(QByteArray &profile,
+								   const QByteArray &expression) {
+	profile.append("(regex\n");
+	const auto appendString = [&](const QByteArray &value) {
+		const auto quoted = SbplQuoted(value);
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		return true;
+	};
+	if (appendString(expression)) {
+		profile.append(")\n");
+		return true;
+	}
+	profile.append("(string-append\n");
+	for (auto start = qsizetype(0); start < expression.size();) {
+		auto end = std::min(start + 512, expression.size());
+		while (end > start && end < expression.size()
+			   && IsContinuation(uchar(expression.at(end)))) {
+			--end;
+		}
+		auto quoted = QByteArray();
+		while (end > start) {
+			quoted = SbplQuoted(expression.mid(start, end - start));
+			if (!quoted.isEmpty()) {
+				break;
+			}
+			--end;
+			while (end > start && end < expression.size()
+				   && IsContinuation(uchar(expression.at(end)))) {
+				--end;
+			}
+		}
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		start = end;
+	}
+	profile.append(")\n)\n");
+	return true;
+}
+
+[[nodiscard]] QByteArray RegexLiteral(const QByteArray &value) {
+	const auto special = QByteArray("\\.^$|()[]{}*+?");
+	auto result = QByteArray();
+	for (const auto character : value) {
+		if (special.contains(character)) {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	return result;
+}
+
+[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
+											   const QByteArray &ignored = {}) {
+	const auto special = QByteArray("\\.^$|()[]{}*+?");
+	auto result = ignored;
+	for (const auto value : component) {
+		const auto byte = uchar(value);
+		auto character = QByteArray();
+		if (byte >= 'a' && byte <= 'z') {
+			character.append('[');
+			character.append(char(byte - 'a' + 'A'));
+			character.append(char(byte));
+			character.append(']');
+		} else if (byte >= 'A' && byte <= 'Z') {
+			character.append('[');
+			character.append(char(byte));
+			character.append(char(byte - 'A' + 'a'));
+			character.append(']');
+		} else {
+			if (special.contains(char(byte))) {
+				character.append('\\');
+			}
+			character.append(char(byte));
+		}
+		result.append(character);
+		result.append(ignored);
 	}
 	return result;
 }
@@ -522,6 +627,20 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 				roots.push_back(std::move(root));
 			}
 		};
+	const auto addProfileHomePath
+		= [&](const std::vector<QByteArray> &components) {
+			  if (components.empty()) {
+				  return;
+			  }
+			  for (const auto &path :
+				   {Join(components), Join(FirmlinkAlias(components))}) {
+				  if (std::find(result._profileHomePaths.begin(),
+								result._profileHomePaths.end(), path)
+					  == result._profileHomePaths.end()) {
+					  result._profileHomePaths.push_back(path);
+				  }
+			  }
+		  };
 	// A home beneath Library needs the prefix before Library for classification.
 	// Seed every candidate before the first filesystem probe.
 	const auto addHomeCandidates = [&](
@@ -598,6 +717,8 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 			}
 			return result;
 		}
+		addProfileHomePath(candidate.raw);
+		addProfileHomePath(resolved.components);
 		addHomeCandidates(resolved.components, preflightHomes);
 
 		const auto physical = FoldedComponents(resolved.components);
@@ -626,6 +747,77 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 
 bool MacProtectedPathPolicy::valid() const {
 	return _valid;
+}
+
+QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
+	if (!_valid || _profileHomePaths.empty()) {
+		return {};
+	}
+	const auto ignoredSequence
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	auto result = QByteArray("(version 1)\n(allow default)\n");
+	struct ProtectedPrefix final {
+		QByteArray parent;
+		QByteArray key;
+	};
+	const auto component = [&](const QByteArray &value) {
+		return ProfileComponentRegex(value, ignoredSequence);
+	};
+	const auto foldedTelegram = component("telegram");
+	const auto foldedDesktop = component("desktop");
+	auto protectedPrefixes = std::vector<ProtectedPrefix>{
+		{"Application Support",
+		 component("Telegram ") + foldedDesktop + "(/|$)"},
+		{"Containers", component("org") + component(".") + foldedTelegram
+						   + component(".") + foldedDesktop + "(/|$)"},
+		{"Containers", component("ru") + component(".") + component("keepcoder")
+						   + component(".") + foldedTelegram + "(/|$)"},
+		{"Group Containers", "[^/]*" + foldedTelegram + "[^/]*(/|$)"},
+	};
+	const auto bundleParents = std::vector<QByteArray>{
+		"Preferences",
+		"Caches",
+		"HTTPStorages",
+		"WebKit",
+		"Saved Application State",
+	};
+	const auto bundlePrefixes = std::vector<QByteArray>{
+		component("com") + component(".") + component("tdesktop")
+			+ component(".") + foldedTelegram,
+		component("org") + component(".") + foldedTelegram + component(".")
+			+ foldedDesktop,
+		component("ru") + component(".") + component("keepcoder")
+			+ component(".") + foldedTelegram,
+	};
+	for (const auto &parent : bundleParents) {
+		for (const auto &prefix : bundlePrefixes) {
+			protectedPrefixes.push_back({parent, prefix + "[^/]*(/|$)"});
+		}
+	}
+	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
+		const auto home = RegexLiteral(_profileHomePaths[i]);
+		if (home.isEmpty() || home.size() >= kMaxSbplStringBytes) {
+			return {};
+		}
+		const auto library = component("Library");
+		for (const auto &prefix : protectedPrefixes) {
+			const auto expressions = std::vector<QByteArray>{
+				"^" + home + "/" + library + "/",
+				"^" + home + "/[^/]+/" + component(prefix.parent) + "/",
+				"^" + home + "/[^/]+/[^/]+/" + prefix.key,
+			};
+			result.append("(deny file* (require-all\n");
+			for (const auto &expression : expressions) {
+				if (!AppendSbplRegex(result, expression)) {
+					return {};
+				}
+			}
+			result.append("))\n");
+		}
+	}
+	return result;
 }
 
 ProtectedClass MacProtectedPathPolicy::Classify(

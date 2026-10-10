@@ -140,6 +140,8 @@ public:
 	[[nodiscard]] ProtectedClass Classify(
 		const QByteArray &absolutePath) const;
 
+	[[nodiscard]] QByteArray SeatbeltProfile() const;
+
 	[[nodiscard]] Resolution Resolve(
 		Operation operation,
 		const QByteArray &path,
@@ -175,7 +177,7 @@ private:
 	bool _valid = false;
 	FileSystem _filesystem;
 	std::vector<Components> _homeRoots;
-
+	std::vector<QByteArray> _profileHomePaths;
 };
 
 } // namespace Core::MacProtectedPath

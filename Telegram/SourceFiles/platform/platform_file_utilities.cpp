@@ -20,8 +20,7 @@ void UnsafeOpenUrl(const QString &url) {
 	};
 #ifdef Q_OS_MAC
 	const auto fileUrlResult = Core::MacProtectedPath::DispatchFileUrlIfAllowed(
-		url, "platform.open-url",
-		Core::MacProtectedPath::IntegrationTestActive(), dispatch);
+		url, "platform.open-url", Core::MacProtectedPath::IsActive(), dispatch);
 	if (fileUrlResult
 		!= Core::MacProtectedPath::FileUrlDispatchResult::NotFileUrl) {
 		return;

@@ -16,18 +16,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMutexLocker>
 
 #include <Cocoa/Cocoa.h>
+#include <sandbox.h>
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <memory>
 #include <pwd.h>
+#include <spawn.h>
 #include <set>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+
+extern "C" char **environ;
 
 namespace Core::MacProtectedPath {
 namespace {
@@ -46,6 +52,12 @@ struct RuntimeState final {
 [[nodiscard]] RuntimeState &State() {
 	static auto result = RuntimeState();
 	return result;
+}
+
+[[nodiscard]] bool IntegrationTestRequested() {
+	const auto value
+		= std::getenv("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST");
+	return value && !std::strcmp(value, "1");
 }
 
 [[nodiscard]] QByteArray AccountDatabaseHome() {
@@ -71,12 +83,17 @@ struct RuntimeState final {
 }
 
 [[nodiscard]] HomeRoots NativeHomeRoots() {
-	auto result = HomeRoots{.accountDatabase = AccountDatabaseHome(),
-							.environment = qgetenv("HOME"),
-							.foundation = FoundationHome()};
+	auto result
+		= HomeRoots{.accountDatabase = AccountDatabaseHome(),
+					.environment =
+						[] {
+							const auto home = std::getenv("HOME");
+							return home ? QByteArray(home) : QByteArray();
+						}(),
+					.foundation = FoundationHome()};
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	const auto testHome = qgetenv("TDESKTOP_MAC_PROFILE_TEST_HOME");
-	if (!testHome.isEmpty()) {
+	const auto testHome = std::getenv("TDESKTOP_MAC_PROFILE_TEST_HOME");
+	if (testHome && *testHome) {
 		result.accountDatabase = testHome;
 		result.foundation = testHome;
 	}
@@ -211,28 +228,74 @@ void ReportInvalidInitialization(const QString &callsite) {
 #endif // !OS_MAC_STORE
 }
 
+[[nodiscard]] int InitializeSeatbelt(const char *profile, char **error) {
+	int output[2] = {};
+	if (::pipe(output) != 0) {
+		return -1;
+	}
+	const auto savedStderr = ::dup(STDERR_FILENO);
+	if (savedStderr < 0) {
+		::close(output[0]);
+		::close(output[1]);
+		return -1;
+	}
+	if (::dup2(output[1], STDERR_FILENO) < 0) {
+		::close(savedStderr);
+		::close(output[0]);
+		::close(output[1]);
+		return -1;
+	}
+	::close(output[1]);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	const auto status = sandbox_init(profile, 0, error);
+#pragma clang diagnostic pop
+	const auto restoreStatus = ::dup2(savedStderr, STDERR_FILENO);
+	::close(savedStderr);
+	::close(output[0]);
+	return (restoreStatus < 0) ? -1 : status;
+}
+
 } // namespace
 
 bool IntegrationTestActive() {
 #if defined(TDESKTOP_TEAGRAM)                                                  \
 	&& defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	return qEnvironmentVariable("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST")
-		   == "1";
+	return IntegrationTestRequested();
 #else
 	return false;
 #endif
 }
 
+bool IsActive() {
+	auto &state = State();
+	QMutexLocker lock(&state.mutex);
+	return state.ready;
+}
+
 bool InitializeProfile() {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
-		if (qEnvironmentVariable("TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST")
-			== "1") {
-			ReportInvalidInitialization(u"profile.integration-test-build"_q);
-			return false;
-		}
-		return true;
+		return !IntegrationTestRequested();
 	}
-	const auto initialWorkingDirectory = QDir::currentPath() + '/';
+#else  // TDESKTOP_TEAGRAM
+	if (IntegrationTestRequested() && !IntegrationTestActive()) {
+		return false;
+	}
+#endif // TDESKTOP_TEAGRAM
+	const auto failForIntegrationTest = [](const char *stage) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto diagnostics
+			= std::getenv("TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS");
+		if (IntegrationTestActive() && diagnostics
+			&& !std::strcmp(diagnostics, "1")) {
+			fprintf(stderr,
+					"Mac profile integration initialization failed: stage=%s\n",
+					stage);
+		}
+#endif
+		return false;
+	};
 	auto &state = State();
 	{
 		QMutexLocker lock(&state.mutex);
@@ -240,49 +303,79 @@ bool InitializeProfile() {
 			return state.ready;
 		}
 		state.initialized = true;
-		state.initialWorkingDirectory = initialWorkingDirectory;
 	}
 
 	const auto homes = NativeHomeRoots();
 	const auto filesystem = NativeFileSystem();
-	auto failure = RefusalRecord();
-	const auto policy
-		= MacProtectedPathPolicy::Build(homes, filesystem, &failure);
+	const auto policy = MacProtectedPathPolicy::Build(homes, filesystem);
 	if (!policy.valid()) {
-		ReportRefusal(failure);
-		return false;
+		return failForIntegrationTest("policy");
 	}
+	auto profileText = policy.SeatbeltProfile();
+	if (profileText.isEmpty()) {
+		return failForIntegrationTest("profile");
+	}
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	if (IntegrationTestActive()) {
+		const auto forceFailure
+			= std::getenv("TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE");
+		if (forceFailure && !std::strcmp(forceFailure, "1")) {
+			profileText.append("(\n");
+		}
+	}
+#endif
+	auto *error = static_cast<char *>(nullptr);
+	const auto sandboxStatus
+		= InitializeSeatbelt(profileText.constData(), &error);
+	if (sandboxStatus != 0) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto diagnostics
+			= std::getenv("TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS");
+		if (IntegrationTestActive() && diagnostics
+			&& !std::strcmp(diagnostics, "1")) {
+			fprintf(stderr,
+					"Mac profile integration initialization failed: "
+					"stage=seatbelt status=%d error=%s\n",
+					sandboxStatus, error ? error : "unavailable");
+		}
+#endif
+	}
+	if (error) {
+		sandbox_free_error(error);
+	}
+	if (sandboxStatus != 0) {
+		return failForIntegrationTest("seatbelt");
+	}
+	const auto currentWorkingDirectory = QDir::currentPath();
+	if (currentWorkingDirectory.isEmpty()) {
+		return failForIntegrationTest("working-directory");
+	}
+	const auto initialWorkingDirectory = currentWorkingDirectory + '/';
 	const auto profileBytes = TeagramProfileRoot(homes, AppSandboxed());
 	if (profileBytes.isEmpty()) {
-		ReportInvalidInitialization(u"profile.home-source"_q);
-		return false;
+		return failForIntegrationTest("profile-root");
 	}
 	const auto profile
 		= policy.Resolve(Operation::Open, profileBytes, homes.accountDatabase,
 						 u"profile.root"_q);
 	if (!profile.allowed()) {
-		ReportRefusal(profile.refusal);
-		return false;
+		return failForIntegrationTest("profile-resolution");
 	}
 	const auto profilePath = QString::fromUtf8(profile.resolvedPath);
 	const auto create
 		= policy.Resolve(Operation::Mkdir, profile.resolvedPath,
 						 homes.accountDatabase, u"profile.create"_q);
 	if (!create.allowed()) {
-		ReportRefusal(create.refusal);
-		return false;
+		return failForIntegrationTest("profile-create-resolution");
 	}
 	const auto temporaryPath = profilePath + u"/tdata/temp"_q;
 	const auto temporaryPrepared = PrepareExternalDirectoryIfAllowed(
 		temporaryPath, "profile.helper-temp",
 		[&](Operation operation, const QString &path, const char *callsite) {
-			const auto result = policy.Resolve(
-				operation, QFile::encodeName(path), homes.accountDatabase,
-				QString::fromUtf8(callsite));
-			if (!result.allowed()) {
-				ReportRefusal(result.refusal);
-			}
-			return result.allowed();
+			return policy
+				.Resolve(operation, QFile::encodeName(path),
+						 homes.accountDatabase, QString::fromUtf8(callsite))
+				.allowed();
 		},
 		[&] {
 			if (!QDir().mkpath(profilePath) || !QDir().mkpath(temporaryPath)) {
@@ -298,7 +391,7 @@ bool InitializeProfile() {
 			return true;
 		});
 	if (!temporaryPrepared) {
-		return false;
+		return failForIntegrationTest("helper-temp");
 	}
 
 	const auto appSandboxed = AppSandboxed();
@@ -308,6 +401,7 @@ bool InitializeProfile() {
 	cForceWorkingDir(profilePath + '/');
 	{
 		QMutexLocker lock(&state.mutex);
+		state.initialWorkingDirectory = initialWorkingDirectory;
 		state.ipcDirectory = ipcDirectory;
 		state.profile = cWorkingDir();
 		state.policy = std::make_shared<MacProtectedPathPolicy>(policy);
@@ -323,34 +417,33 @@ bool InitializeProfile() {
 }
 
 QString InitialWorkingDirectory() {
-	if (!IntegrationTestActive()) {
-		return {};
-	}
 	auto &state = State();
 	QMutexLocker lock(&state.mutex);
-	return state.initialWorkingDirectory;
+	return state.ready ? state.initialWorkingDirectory : QString();
 }
 
 QString ProfileRoot() {
-	if (!IntegrationTestActive()) {
-		return {};
-	}
 	auto &state = State();
 	QMutexLocker lock(&state.mutex);
 	return state.ready ? state.profile : QString();
 }
 
 QString NotificationSoundsDirectory() {
-	const auto home = NativeHomeRoots().foundation;
+	if (IsActive()) {
+		return ProfileRoot() + u"/tdata/sounds"_q;
+	}
+	const auto home = FoundationHome();
 	return home.isEmpty() ? QString()
 						  : QString::fromUtf8(home) + u"/Library/Sounds"_q;
 }
 
 QString IpcDirectory() {
-	if (IntegrationTestActive()) {
+	{
 		auto &state = State();
 		QMutexLocker lock(&state.mutex);
-		return state.ready ? state.ipcDirectory : QString();
+		if (state.ready) {
+			return state.ipcDirectory;
+		}
 	}
 	if (AppSandboxed()) {
 		const auto home = FoundationHome();
@@ -361,9 +454,11 @@ QString IpcDirectory() {
 
 bool CheckPathAt(Operation operation, const QString &path,
 				 const QString &anchor, const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto policy = std::shared_ptr<const MacProtectedPathPolicy>();
 	{
 		auto &state = State();
@@ -385,9 +480,11 @@ bool CheckPathAt(Operation operation, const QString &path,
 }
 
 bool CheckPath(Operation operation, const QString &path, const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto anchor = QString();
 	{
 		auto &state = State();
@@ -411,9 +508,11 @@ namespace {
 bool CheckCachePathImpl(
 	const QString &path, const char *callsite,
 	const std::function<void(const QString &)> &beforeEntryStat) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	if (!CheckPath(Operation::OpenDir, path, callsite)) {
 		return false;
 	}
@@ -507,13 +606,225 @@ bool CheckCachePathForTesting(
 	std::function<void(const QString &)> beforeEntryStat) {
 	return CheckCachePathImpl(path, callsite, beforeEntryStat);
 }
+
+namespace {
+
+[[nodiscard]] bool ProbeMatchesExpectation(int error, bool expectDenied,
+										   const char *mode) {
+	const auto passed = expectDenied ? (error == EPERM) : (error == 0);
+	if (!passed) {
+		fprintf(stderr,
+				"Seatbelt open probe failed: mode=%s expected_errno=%d "
+				"actual_errno=%d\n",
+				mode, expectDenied ? EPERM : 0, error);
+	}
+	return passed;
+}
+
+[[nodiscard]] int RunSeatbeltCatProbeImpl(const char *path, bool expectDenied,
+										  bool forkExec) {
+	if (!IntegrationTestActive() || !path || !*path) {
+		return 1;
+	}
+	int output[2] = {};
+	if (::pipe(output) != 0) {
+		return 1;
+	}
+	auto child = pid_t(0);
+	auto executable = QByteArray("/bin/cat");
+	auto argument = QByteArray(path);
+	char *arguments[] = {executable.data(), argument.data(), nullptr};
+	if (forkExec) {
+		child = ::fork();
+		if (child == 0) {
+			::close(output[0]);
+			const auto sink = ::open("/dev/null", O_WRONLY);
+			if (sink < 0 || ::dup2(output[1], STDERR_FILENO) < 0
+				|| ::dup2(sink, STDOUT_FILENO) < 0) {
+				::_exit(126);
+			}
+			::close(output[1]);
+			::close(sink);
+			::execve(executable.constData(), arguments, environ);
+			const auto message = "Seatbelt /bin/cat execve failed.\n";
+			(void)::write(STDERR_FILENO, message, sizeof(message) - 1);
+			::_exit(127);
+		}
+	} else {
+		auto actions = posix_spawn_file_actions_t();
+		if (posix_spawn_file_actions_init(&actions) != 0) {
+			::close(output[0]);
+			::close(output[1]);
+			return 1;
+		}
+		if (posix_spawn_file_actions_adddup2(&actions, output[1], STDERR_FILENO)
+				!= 0
+			|| posix_spawn_file_actions_addclose(&actions, output[0]) != 0
+			|| posix_spawn_file_actions_addclose(&actions, output[1]) != 0
+			|| posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
+												"/dev/null", O_WRONLY, 0)
+				   != 0) {
+			::close(output[0]);
+			::close(output[1]);
+			posix_spawn_file_actions_destroy(&actions);
+			return 1;
+		}
+		const auto spawnStatus
+			= posix_spawn(&child, executable.constData(), &actions, nullptr,
+						  arguments, environ);
+		posix_spawn_file_actions_destroy(&actions);
+		if (spawnStatus != 0) {
+			fprintf(stderr, "Seatbelt /bin/cat posix_spawn failed: %d\n",
+					spawnStatus);
+			::close(output[0]);
+			::close(output[1]);
+			return 1;
+		}
+	}
+	::close(output[1]);
+	if (child < 0) {
+		fprintf(stderr, "Seatbelt /bin/cat process creation failed: errno=%d\n",
+				errno);
+		::close(output[0]);
+		return 1;
+	}
+	auto diagnostic = QByteArray();
+	char buffer[1024] = {};
+	while (true) {
+		const auto count = ::read(output[0], buffer, sizeof(buffer));
+		if (count > 0) {
+			diagnostic.append(buffer, int(count));
+			continue;
+		}
+		if (count < 0 && errno == EINTR) {
+			continue;
+		}
+		break;
+	}
+	::close(output[0]);
+	auto status = int(0);
+	auto waited = pid_t(0);
+	do {
+		waited = ::waitpid(child, &status, 0);
+	} while (waited < 0 && errno == EINTR);
+	const auto mode = forkExec ? "fork-exec" : "posix_spawn";
+	if (waited != child || !WIFEXITED(status)) {
+		fprintf(stderr,
+				"Seatbelt /bin/cat %s probe failed: wait_status=%d "
+				"diagnostic=%s\n",
+				mode, status, diagnostic.constData());
+		return 1;
+	}
+	if (expectDenied) {
+		const auto catExitedWithError = WEXITSTATUS(status) == 1;
+		const auto reportedPermissionError
+			= diagnostic.contains(QByteArray(std::strerror(EPERM)));
+		if (!catExitedWithError || !reportedPermissionError) {
+			fprintf(stderr,
+					"Seatbelt /bin/cat %s probe failed: expected=EPERM exit=%d "
+					"diagnostic=%s\n",
+					mode, WEXITSTATUS(status), diagnostic.constData());
+			const auto descriptor = ::open(path, O_RDONLY);
+			const auto parentError = (descriptor < 0) ? errno : 0;
+			if (descriptor >= 0) {
+				::close(descriptor);
+			}
+			fprintf(stderr, "Seatbelt parent open probe: errno=%d\n",
+					parentError);
+			const auto policy = State().policy;
+			if (policy) {
+				const auto profile = policy->SeatbeltProfile();
+				fprintf(stderr, "Seatbelt profile:\n%s\n", profile.constData());
+			}
+			return 1;
+		}
+		return 0;
+	}
+	return WEXITSTATUS(status) == 0 && diagnostic.isEmpty() ? 0 : 1;
+}
+
+} // namespace
+
+int RunSeatbeltOpenProbe(const char *path, bool expectDenied, bool forkChild) {
+	if (!IntegrationTestActive() || !path || !*path) {
+		return 1;
+	}
+	if (!forkChild) {
+		const auto descriptor = ::open(path, O_RDONLY);
+		const auto error = (descriptor < 0) ? errno : 0;
+		if (descriptor >= 0) {
+			::close(descriptor);
+		}
+		return ProbeMatchesExpectation(error, expectDenied, "parent") ? 0 : 1;
+	}
+	int resultPipe[2] = {};
+	if (::pipe(resultPipe) != 0) {
+		return 1;
+	}
+	const auto child = ::fork();
+	if (child == 0) {
+		::close(resultPipe[0]);
+		const auto descriptor = ::open(path, O_RDONLY);
+		const auto error = (descriptor < 0) ? errno : 0;
+		if (descriptor >= 0) {
+			::close(descriptor);
+		}
+		const auto written = ::write(resultPipe[1], &error, sizeof(error));
+		::close(resultPipe[1]);
+		::_exit(written == ssize_t(sizeof(error)) ? 0 : 1);
+	}
+	::close(resultPipe[1]);
+	if (child < 0) {
+		::close(resultPipe[0]);
+		return 1;
+	}
+	auto error = int(-1);
+	auto received = size_t(0);
+	while (received < sizeof(error)) {
+		const auto count
+			= ::read(resultPipe[0], reinterpret_cast<char *>(&error) + received,
+					 sizeof(error) - received);
+		if (count > 0) {
+			received += size_t(count);
+			continue;
+		}
+		if (count < 0 && errno == EINTR) {
+			continue;
+		}
+		break;
+	}
+	::close(resultPipe[0]);
+	auto status = int(0);
+	auto waited = pid_t(0);
+	do {
+		waited = ::waitpid(child, &status, 0);
+	} while (waited < 0 && errno == EINTR);
+	if (received != sizeof(error) || waited != child || !WIFEXITED(status)
+		|| WEXITSTATUS(status) != 0) {
+		fprintf(stderr,
+				"Seatbelt fork open probe failed: bytes=%zu status=%d\n",
+				received, status);
+		return 1;
+	}
+	return ProbeMatchesExpectation(error, expectDenied, "fork") ? 0 : 1;
+}
+
+int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
+	return RunSeatbeltCatProbeImpl(path, expectDenied, false);
+}
+
+int RunSeatbeltForkExecCatProbe(const char *path, bool expectDenied) {
+	return RunSeatbeltCatProbeImpl(path, expectDenied, true);
+}
 #endif
 
 bool CheckPair(Operation operation, const QString &first, const QString &second,
 			   const char *callsite) {
+#ifndef TDESKTOP_TEAGRAM
 	if (!IntegrationTestActive()) {
 		return true;
 	}
+#endif // TDESKTOP_TEAGRAM
 	auto policy = std::shared_ptr<const MacProtectedPathPolicy>();
 	auto anchor = QString();
 	{
