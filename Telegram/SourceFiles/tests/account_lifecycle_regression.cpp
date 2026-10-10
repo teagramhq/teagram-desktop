@@ -1650,6 +1650,38 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					"custom export start bypassed the stock panel refusal\n");
 				return false;
 			}
+			const auto stockSessionController
+				= stockWindow->sessionController();
+			if (!stockSessionController) {
+				return false;
+			}
+			const auto stockRefusalCalls
+				= stockSessionController
+					->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto activeBeforeNoWindowRefusal = &domain.active();
+			app.closeWindow(pinnedWindow);
+			if (app.separateWindowFor(pinned) != nullptr
+				|| !pinned->session().windows().empty()
+				|| &domain.active() != activeBeforeNoWindowRefusal) {
+				return false;
+			}
+			manager.start(&pinned->session());
+			QCoreApplication::processEvents();
+			const auto noWindowRefused = manager.inProgress(&stock->session())
+				&& !manager.inProgress(&pinned->session())
+				&& &domain.active() == activeBeforeNoWindowRefusal
+				&& stockExportPanel
+				&& !stockExportPanel->panelVisibleForRegressionTest()
+				&& stockSessionController
+					->featureUnavailableOnServerToastCallsForRegressionTest()
+					== stockRefusalCalls
+				&& Export::ExportStartsForRegressionTest() == exportStarts;
+			pinnedWindow = app.ensureSeparateWindowFor(pinned);
+			if (!noWindowRefused) {
+				std::fprintf(stderr,
+					"custom export refusal activated a session without a window\n");
+				return false;
+			}
 		} else {
 			Export::Manager manager;
 			manager.start(pinnedUserPeer);

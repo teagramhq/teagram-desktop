@@ -23,7 +23,16 @@ bool RefuseIfUnsupported(not_null<Main::Session*> session) {
 	if (session->exportSupported()) {
 		return false;
 	}
-	if (const auto window = session->tryResolveWindow()) {
+	auto window = (Window::SessionController*)nullptr;
+	for (const auto &candidate : session->windows()) {
+		if (!window || candidate->isPrimary()) {
+			window = candidate;
+		}
+		if (candidate->isPrimary()) {
+			break;
+		}
+	}
+	if (window) {
 		window->showFeatureUnavailableOnServerToast();
 	}
 	return true;
