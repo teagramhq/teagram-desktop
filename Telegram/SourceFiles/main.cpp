@@ -16,6 +16,31 @@ int main(int argc, char *argv[]) {
 	}
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	if (Core::MacProtectedPath::IntegrationTestActive() && argc == 3) {
+		if (!std::strcmp(argv[1], "--mac-seatbelt-parent-open-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltOpenProbe(
+				argv[2], true, false);
+		}
+		if (!std::strcmp(argv[1], "--mac-seatbelt-parent-open-allow-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltOpenProbe(
+				argv[2], false, false);
+		}
+		if (!std::strcmp(argv[1], "--mac-seatbelt-fork-open-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltOpenProbe(
+				argv[2], true, true);
+		}
+		if (!std::strcmp(argv[1], "--mac-seatbelt-fork-open-allow-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltOpenProbe(
+				argv[2], false, true);
+		}
+		if (!std::strcmp(argv[1], "--mac-seatbelt-fork-exec-cat-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltForkExecCatProbe(
+				argv[2], true);
+		}
+		if (!std::strcmp(argv[1],
+					 "--mac-seatbelt-fork-exec-cat-allow-probe")) {
+			return Core::MacProtectedPath::RunSeatbeltForkExecCatProbe(
+				argv[2], false);
+		}
 		if (!std::strcmp(argv[1], "--mac-seatbelt-cat-probe")) {
 			return Core::MacProtectedPath::RunSeatbeltCatProbe(argv[2], true);
 		}

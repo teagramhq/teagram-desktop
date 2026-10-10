@@ -19,6 +19,7 @@ MAC_WORKFLOW_FILE="$ROOT/.github/workflows/mac.yml"
 PACKAGED_WORKFLOW_FILE="$ROOT/.github/workflows/mac_packaged.yml"
 ISOLATION_FILE="$ROOT/Telegram/build/mac_isolation_test.sh"
 PARSER_FILE="$ROOT/Telegram/build/check_mac_fs_usage.py"
+SEATBELT_DIAGNOSE_FILE="$ROOT/Telegram/build/diagnose_mac_seatbelt.py"
 
 case "$MODE" in
 all|identity|observer)
@@ -37,6 +38,9 @@ import sys
 root = pathlib.Path(sys.argv[1])
 main = (root / 'Telegram/SourceFiles/main.cpp').read_text(encoding='utf-8')
 runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').read_text(encoding='utf-8')
+runtime_header = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.h').read_text(encoding='utf-8')
+profile_test = (root / 'Telegram/build/test_mac_profile_guard.sh').read_text(encoding='utf-8')
+diagnose = (root / 'Telegram/build/diagnose_mac_seatbelt.py').read_text(encoding='utf-8')
 policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
 root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
 sandbox = (root / 'Telegram/SourceFiles/core/sandbox.cpp').read_text(encoding='utf-8')
@@ -52,7 +56,43 @@ assert 'if (!Core::MacProtectedPath::InitializeProfile())' in main
 assert 'sandbox_init(' in runtime
 assert 'RunSeatbeltCatProbe(argv[2], true)' in main
 assert 'RunSeatbeltCatProbe(argv[2], false)' in main
-assert 'Seatbelt /bin/cat probe failed:' in runtime
+assert 'Seatbelt /bin/cat %s probe failed:' in runtime
+for mode_probe in (
+    '--mac-seatbelt-parent-open-probe',
+    '--mac-seatbelt-fork-open-probe',
+    '--mac-seatbelt-fork-exec-cat-probe',
+    '--mac-seatbelt-cat-probe',
+):
+    assert mode_probe in main
+    assert mode_probe in profile_test
+for result in (
+    'seatbelt_parent_open_denial',
+    'seatbelt_fork_open_denial',
+    'seatbelt_fork_exec_cat_denial',
+    'seatbelt_posix_spawn_cat_denial=PASS',
+):
+	assert result in profile_test
+for mode_probe in (
+    '--mac-seatbelt-parent-open-allow-probe',
+    '--mac-seatbelt-fork-open-allow-probe',
+    '--mac-seatbelt-fork-exec-cat-allow-probe',
+    '--mac-seatbelt-cat-allow-probe',
+):
+    assert mode_probe in main
+    assert mode_probe in profile_test
+for result in (
+    'seatbelt_parent_open_allowed',
+    'seatbelt_fork_open_allowed',
+    'seatbelt_fork_exec_cat_allowed',
+    'seatbelt_teagram_profile_allowed',
+):
+    assert result in profile_test
+assert 'RunSeatbeltOpenProbe' in runtime_header
+assert 'RunSeatbeltOpenProbe' in runtime
+assert 'RunSeatbeltCatProbe' in runtime
+assert 'RunSeatbeltForkExecCatProbe' in runtime_header
+assert 'RunSeatbeltForkExecCatProbe' in runtime
+assert 'generated_without_ignored_alternatives' in diagnose
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy
@@ -326,6 +366,10 @@ for path in paths:
 		f'(tolerance {tolerance}px)'
 	)
 PY
+fi
+
+if [ "$MODE" != observer ]; then
+	python3 "$SEATBELT_DIAGNOSE_FILE" --self-test
 fi
 
 if [ "$MODE" != identity ]; then

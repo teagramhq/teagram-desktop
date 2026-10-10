@@ -102,7 +102,34 @@ run_seatbelt_cat_probe() {
 		printf '%s\n' "$output" >&2
 		return 1
 	fi
-	printf '%s=PASS child=/bin/cat path=%s\n' "$name" "$path"
+	printf '%s=PASS mode=posix_spawn child=/bin/cat path=%s\n' "$name" "$path"
+}
+
+run_seatbelt_mode_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local mode="$5"
+	local expected_errno="$6"
+	local output
+	local status
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+	printf '%s=PASS mode=%s errno=%s path=%s\n' \
+		"$name" "$mode" "$expected_errno" "$path"
 }
 
 run_bundle_keyed_probe() {
@@ -406,8 +433,25 @@ if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH"
 	echo "Seatbelt canary changed during the descendant denial probe." >&2
 	exit 1
 fi
-printf 'seatbelt_descendant_denial=PASS child=/bin/cat status=%s errno=EPERM\n' \
+printf 'seatbelt_descendant_denial=PASS mode=posix_spawn child=/bin/cat status=%s errno=EPERM\n' \
 	"$CANARY_STATUS"
+printf 'seatbelt_posix_spawn_cat_denial=PASS mode=posix_spawn child=/bin/cat errno=EPERM path=%s\n' \
+	"$SEATBELT_CANARY"
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_denial \
+	--mac-seatbelt-parent-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	parent EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_denial \
+	--mac-seatbelt-fork-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_denial \
+	--mac-seatbelt-fork-exec-cat-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork-exec EPERM \
+	|| exit 1
 
 DEFAULT_IGNORABLE="$(printf '\342\200\213')"
 IGNORABLE_CHARACTERS=(
@@ -576,6 +620,21 @@ run_seatbelt_cat_probe \
 run_seatbelt_cat_probe \
 	seatbelt_teagram_profile_allowed \
 	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_allowed \
+	--mac-seatbelt-parent-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	parent 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_allowed \
+	--mac-seatbelt-fork-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_allowed \
+	--mac-seatbelt-fork-exec-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork-exec 0 \
 	|| exit 1
 
 if [[ "$(shasum -a 256 "$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')" \

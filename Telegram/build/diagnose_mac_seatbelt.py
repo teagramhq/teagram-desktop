@@ -8,6 +8,37 @@ import platform
 import re
 import sys
 
+IGNORABLE_CHARACTERS = (
+    '\u200B', '\u200C', '\u200D', '\u200E', '\u200F',
+    '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',
+    '\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F',
+    '\uFEFF',
+)
+IGNORED_ALTERNATIVES = '(' + '|'.join(IGNORABLE_CHARACTERS) + ')*'
+
+
+def generated_without_ignored_alternatives(generated):
+    if IGNORED_ALTERNATIVES not in generated:
+        raise ValueError('generated profile has no ignored-character alternatives')
+    result = generated.replace(IGNORED_ALTERNATIVES, '')
+    if result == generated or IGNORED_ALTERNATIVES in result:
+        raise AssertionError('ignored-character alternatives were not removed')
+    return result
+
+
+def self_test():
+    generated = '(regex "^/home/Library/' + IGNORED_ALTERNATIVES + 'Telegram$")'
+    without_ignored = generated_without_ignored_alternatives(generated)
+    if without_ignored == generated or IGNORED_ALTERNATIVES in without_ignored:
+        raise AssertionError('diagnostic profile variant did not change')
+    try:
+        generated_without_ignored_alternatives('(allow default)')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('missing alternatives were silently accepted')
+    print('diagnose_mac_seatbelt_profile_variants=PASS')
+
 
 def open_error(path):
     try:
@@ -109,6 +140,9 @@ def apply_and_probe(library, name, profile, denied, allowed):
 
 
 def main():
+    if sys.argv[1:] == ['--self-test']:
+        self_test()
+        return 0
     if platform.system() != 'Darwin' or len(sys.argv) != 4:
         raise ValueError('requires macOS and synthetic home, denied, allowed paths')
     home, denied, allowed = map(os.path.realpath, sys.argv[1:])
@@ -124,7 +158,6 @@ def main():
         raise ValueError('application did not provide the generated profile')
     generated = output.split(marker, 1)[1].strip()
     base = '(version 1)\n(allow default)\n'
-    ignored = '[\u200B-\u200F\u202A-\u202E\u206A-\u206F\uFEFF]*'
     quoted = json.dumps(denied, ensure_ascii=False)
     escaped = re.sub(r'([\\.^$*+?{}\[\]()|])', r'\\\1', denied)
     ascii_regex = json.dumps('^' + escaped + '$', ensure_ascii=False)
@@ -133,7 +166,8 @@ def main():
         ('literal', base + '(deny file* (literal ' + quoted + '))'),
         ('ascii_regex', base + '(deny file* (regex ' + ascii_regex + '))'),
         ('generated', generated),
-        ('generated_without_ignored_ranges', generated.replace(ignored, '')),
+        ('generated_without_ignored_alternatives',
+         generated_without_ignored_alternatives(generated)),
         ('invalid', base + '('),
     ]
     library = ctypes.CDLL('/usr/lib/libsandbox.dylib', use_errno=True)

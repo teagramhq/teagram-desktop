@@ -607,7 +607,22 @@ bool CheckCachePathForTesting(
 	return CheckCachePathImpl(path, callsite, beforeEntryStat);
 }
 
-int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
+namespace {
+
+[[nodiscard]] bool ProbeMatchesExpectation(int error, bool expectDenied,
+										   const char *mode) {
+	const auto passed = expectDenied ? (error == EPERM) : (error == 0);
+	if (!passed) {
+		fprintf(stderr,
+				"Seatbelt open probe failed: mode=%s expected_errno=%d "
+				"actual_errno=%d\n",
+				mode, expectDenied ? EPERM : 0, error);
+	}
+	return passed;
+}
+
+[[nodiscard]] int RunSeatbeltCatProbeImpl(const char *path, bool expectDenied,
+										  bool forkExec) {
 	if (!IntegrationTestActive() || !path || !*path) {
 		return 1;
 	}
@@ -615,35 +630,60 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	if (::pipe(output) != 0) {
 		return 1;
 	}
-	auto actions = posix_spawn_file_actions_t();
-	if (posix_spawn_file_actions_init(&actions) != 0) {
-		::close(output[0]);
-		::close(output[1]);
-		return 1;
-	}
-	if (posix_spawn_file_actions_adddup2(&actions, output[1], STDERR_FILENO)
-			!= 0
-		|| posix_spawn_file_actions_addclose(&actions, output[0]) != 0
-		|| posix_spawn_file_actions_addclose(&actions, output[1]) != 0
-		|| posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
-											"/dev/null", O_WRONLY, 0)
-			   != 0) {
-		::close(output[0]);
-		::close(output[1]);
-		posix_spawn_file_actions_destroy(&actions);
-		return 1;
-	}
 	auto child = pid_t(0);
 	auto executable = QByteArray("/bin/cat");
 	auto argument = QByteArray(path);
 	char *arguments[] = {executable.data(), argument.data(), nullptr};
-	const auto spawnStatus = posix_spawn(&child, executable.constData(),
-										 &actions, nullptr, arguments, environ);
-	posix_spawn_file_actions_destroy(&actions);
+	if (forkExec) {
+		child = ::fork();
+		if (child == 0) {
+			::close(output[0]);
+			const auto sink = ::open("/dev/null", O_WRONLY);
+			if (sink < 0 || ::dup2(output[1], STDERR_FILENO) < 0
+				|| ::dup2(sink, STDOUT_FILENO) < 0) {
+				::_exit(126);
+			}
+			::close(output[1]);
+			::close(sink);
+			::execve(executable.constData(), arguments, environ);
+			const auto message = "Seatbelt /bin/cat execve failed.\n";
+			(void)::write(STDERR_FILENO, message, sizeof(message) - 1);
+			::_exit(127);
+		}
+	} else {
+		auto actions = posix_spawn_file_actions_t();
+		if (posix_spawn_file_actions_init(&actions) != 0) {
+			::close(output[0]);
+			::close(output[1]);
+			return 1;
+		}
+		if (posix_spawn_file_actions_adddup2(&actions, output[1], STDERR_FILENO)
+				!= 0
+			|| posix_spawn_file_actions_addclose(&actions, output[0]) != 0
+			|| posix_spawn_file_actions_addclose(&actions, output[1]) != 0
+			|| posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
+													"/dev/null", O_WRONLY, 0)
+				   != 0) {
+			::close(output[0]);
+			::close(output[1]);
+			posix_spawn_file_actions_destroy(&actions);
+			return 1;
+		}
+		const auto spawnStatus = posix_spawn(
+			&child, executable.constData(), &actions, nullptr, arguments, environ);
+		posix_spawn_file_actions_destroy(&actions);
+		if (spawnStatus != 0) {
+			fprintf(stderr, "Seatbelt /bin/cat posix_spawn failed: %d\n",
+					spawnStatus);
+			::close(output[0]);
+			::close(output[1]);
+			return 1;
+		}
+	}
 	::close(output[1]);
-	if (spawnStatus != 0) {
-		fprintf(stderr, "Seatbelt /bin/cat probe failed: posix_spawn=%d\n",
-				spawnStatus);
+	if (child < 0) {
+		fprintf(stderr, "Seatbelt /bin/cat process creation failed: errno=%d\n",
+				errno);
 		::close(output[0]);
 		return 1;
 	}
@@ -651,10 +691,14 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	char buffer[1024] = {};
 	while (true) {
 		const auto count = ::read(output[0], buffer, sizeof(buffer));
-		if (count <= 0) {
-			break;
+		if (count > 0) {
+			diagnostic.append(buffer, int(count));
+			continue;
 		}
-		diagnostic.append(buffer, int(count));
+		if (count < 0 && errno == EINTR) {
+			continue;
+		}
+		break;
 	}
 	::close(output[0]);
 	auto status = int(0);
@@ -662,23 +706,23 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 	do {
 		waited = ::waitpid(child, &status, 0);
 	} while (waited < 0 && errno == EINTR);
-	const auto permissionError = QByteArray(std::strerror(EPERM));
+	const auto mode = forkExec ? "fork-exec" : "posix_spawn";
 	if (waited != child || !WIFEXITED(status)) {
 		fprintf(stderr,
-				"Seatbelt /bin/cat probe failed: wait_status=%d "
+				"Seatbelt /bin/cat %s probe failed: wait_status=%d "
 				"diagnostic=%s\n",
-				status, diagnostic.constData());
+				mode, status, diagnostic.constData());
 		return 1;
 	}
 	if (expectDenied) {
 		const auto catExitedWithError = WEXITSTATUS(status) == 1;
 		const auto reportedPermissionError
-			= diagnostic.contains(permissionError);
+			= diagnostic.contains(QByteArray(std::strerror(EPERM)));
 		if (!catExitedWithError || !reportedPermissionError) {
 			fprintf(stderr,
-					"Seatbelt /bin/cat probe failed: expected=EPERM exit=%d "
+					"Seatbelt /bin/cat %s probe failed: expected=EPERM exit=%d "
 					"diagnostic=%s\n",
-					WEXITSTATUS(status), diagnostic.constData());
+					mode, WEXITSTATUS(status), diagnostic.constData());
 			const auto descriptor = ::open(path, O_RDONLY);
 			const auto parentError = (descriptor < 0) ? errno : 0;
 			if (descriptor >= 0) {
@@ -696,6 +740,80 @@ int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
 		return 0;
 	}
 	return WEXITSTATUS(status) == 0 && diagnostic.isEmpty() ? 0 : 1;
+}
+
+} // namespace
+
+int RunSeatbeltOpenProbe(const char *path, bool expectDenied, bool forkChild) {
+	if (!IntegrationTestActive() || !path || !*path) {
+		return 1;
+	}
+	if (!forkChild) {
+		const auto descriptor = ::open(path, O_RDONLY);
+		const auto error = (descriptor < 0) ? errno : 0;
+		if (descriptor >= 0) {
+			::close(descriptor);
+		}
+		return ProbeMatchesExpectation(error, expectDenied, "parent");
+	}
+	int resultPipe[2] = {};
+	if (::pipe(resultPipe) != 0) {
+		return 1;
+	}
+	const auto child = ::fork();
+	if (child == 0) {
+		::close(resultPipe[0]);
+		const auto descriptor = ::open(path, O_RDONLY);
+		const auto error = (descriptor < 0) ? errno : 0;
+		if (descriptor >= 0) {
+			::close(descriptor);
+		}
+		const auto written = ::write(resultPipe[1], &error, sizeof(error));
+		::close(resultPipe[1]);
+		::_exit(written == ssize_t(sizeof(error)) ? 0 : 1);
+	}
+	::close(resultPipe[1]);
+	if (child < 0) {
+		::close(resultPipe[0]);
+		return 1;
+	}
+	auto error = int(-1);
+	auto received = size_t(0);
+	while (received < sizeof(error)) {
+		const auto count = ::read(resultPipe[0],
+			reinterpret_cast<char *>(&error) + received,
+			sizeof(error) - received);
+		if (count > 0) {
+			received += size_t(count);
+			continue;
+		}
+		if (count < 0 && errno == EINTR) {
+			continue;
+		}
+		break;
+	}
+	::close(resultPipe[0]);
+	auto status = int(0);
+	auto waited = pid_t(0);
+	do {
+		waited = ::waitpid(child, &status, 0);
+	} while (waited < 0 && errno == EINTR);
+	if (received != sizeof(error) || waited != child || !WIFEXITED(status)
+		|| WEXITSTATUS(status) != 0) {
+		fprintf(stderr,
+				"Seatbelt fork open probe failed: bytes=%zu status=%d\n",
+				received, status);
+		return 1;
+	}
+	return ProbeMatchesExpectation(error, expectDenied, "fork");
+}
+
+int RunSeatbeltCatProbe(const char *path, bool expectDenied) {
+	return RunSeatbeltCatProbeImpl(path, expectDenied, false);
+}
+
+int RunSeatbeltForkExecCatProbe(const char *path, bool expectDenied) {
+	return RunSeatbeltCatProbeImpl(path, expectDenied, true);
 }
 #endif
 
