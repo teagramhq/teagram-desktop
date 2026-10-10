@@ -23,12 +23,39 @@ reject_text() {
   fi
 }
 
+macos_group_for_event() {
+  local pr_head="$1"
+  local dispatch_branch="$2"
+  local ref_name="$3"
+  printf 'MacOS.-%s\n' "${pr_head:-${dispatch_branch:-$ref_name}}"
+}
+
+assert_same_branch_group() {
+  local branch="$1"
+  local pr_group
+  local dispatch_group
+  pr_group="$(macos_group_for_event "$branch" '' '105/merge')"
+  dispatch_group="$(macos_group_for_event '' "$branch" 'dev')"
+  if [[ "$pr_group" != "$dispatch_group" ]]; then
+    printf 'PR and dispatch runs for %s must share a concurrency group.\n' "$branch" >&2
+    exit 1
+  fi
+}
+
 require_text "$mac_workflow" '  pull_request:'
 require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" 'group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || inputs.branch || github.ref_name }}'
 require_text "$mac_workflow" 'cancel-in-progress: true'
-require_text "$mac_workflow" 'github.event.pull_request.number'
+require_text "$mac_workflow" 'github.event.pull_request.head.ref || inputs.branch || github.ref_name'
+assert_same_branch_group 'feature/cache-refresh'
+assert_same_branch_group 'dev'
+dev_group="$(macos_group_for_event '' 'dev' 'main')"
+main_group="$(macos_group_for_event '' 'main' 'dev')"
+if [[ "$dev_group" == "$main_group" ]]; then
+  printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
+  exit 1
+fi
 require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$mac_workflow" 'macOS-arm64-ccache-dev-'
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
@@ -40,8 +67,20 @@ require_text "$mac_workflow" '-G "Ninja Multi-Config"'
 require_text "$mac_workflow" 'ccache --show-stats'
 require_text "$mac_workflow" 'ccache hit rate'
 require_text "$mac_workflow" 'ccache_hit_count.sh'
+require_text "$mac_workflow" 'ccache_save_decision.sh'
 require_text "$mac_workflow" 'A restored compiler cache produced no cache hits.'
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
+require_text "$mac_workflow" "github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'"
+reject_text "$mac_workflow" 'startsWith(steps.cache-ccache.outputs.cache-matched-key'
+save_cache_step="$(awk '
+  /^      - name: Save Teagram compiler cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+if grep -Eq 'cache-(matched-key|hit)' <<< "$save_cache_step"; then
+  printf 'A restored PR compiler cache with new misses must remain eligible for saving.\n' >&2
+  exit 1
+fi
 require_text "$mac_workflow" 'build_dir="$repo/out"'
 require_text "$mac_workflow" 'cache_file="$build_dir/CMakeCache.txt"'
 require_text "$mac_workflow" 'compile_commands="$build_dir/compile_commands.json"'

@@ -18,8 +18,8 @@ on:
         type: string
 
 concurrency:
-  # Keep one merge-head build per PR, or one manual/nightly run per branch.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', inputs.branch || github.ref_name) }}
+  # PRs and dispatches for one source branch share the same group.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || inputs.branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -928,7 +928,7 @@ jobs:
             && !cancelled()
             && steps.ccache-stats.outcome == 'success'
             && steps.ccache-stats.outputs.save == 'true'
-            && (github.ref == 'refs/heads/dev' || (github.event_name == 'pull_request' && !startsWith(steps.cache-ccache.outputs.cache-matched-key, format('macOS-arm64-ccache-pr-{0}-', hashFiles('CCACHE_KEY.txt')))))
+            && (github.ref == 'refs/heads/dev' || github.event_name == 'pull_request')
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/ccache
