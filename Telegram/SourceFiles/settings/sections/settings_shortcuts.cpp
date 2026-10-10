@@ -174,7 +174,12 @@ struct SetupShortcutsResult {
 		Fn<void(S::Command command)> showMenuFor;
 	};
 	const auto state = content->lifetime().make_state<State>();
-	const auto labeled = Entries();
+	auto labeled = Entries();
+	if (!controller->session().aiComposeSupported()) {
+		labeled.erase(ranges::remove_if(labeled, [](const Labeled &entry) {
+			return entry.command == S::Command::ComposeAiApplyInPlace;
+		}), end(labeled));
+	}
 	auto &entries = state->entries = ranges::views::all(
 		labeled
 	) | ranges::views::transform([](Labeled labeled) {

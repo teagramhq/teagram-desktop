@@ -1709,7 +1709,8 @@ void WindowHost::Impl::setupWindow(ShowWindowDescriptor &&descriptor) {
 			}
 		});
 	}
-	if (!base::options::value<bool>(Ui::kOptionHideAiButton)) {
+	if (descriptor.session->aiComposeSupported()
+		&& !base::options::value<bool>(Ui::kOptionHideAiButton)) {
 		const auto session = descriptor.session;
 		_aiPill = object_ptr<ToolbarPill>(
 			_bottom.data(),

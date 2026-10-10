@@ -4422,7 +4422,7 @@ void ComposeControls::triggerAiApplyInPlace() {
 		_show,
 		_wrap.get(),
 		field,
-		prepareTextForEditMsg(),
+		[=] { return prepareTextForEditMsg(); },
 		crl::guard(_wrap.get(), [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
 				textWithTags,

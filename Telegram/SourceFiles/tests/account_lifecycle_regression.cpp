@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
+#include "data/data_ai_compose_tones.h"
 #include "data/data_chat.h"
 #include "data/data_download_manager.h"
 #include "data/data_peer_id.h"
@@ -36,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
+#include "ui/controls/compose_ai_button_factory.h"
 #include "ui/image/image_location.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -1220,6 +1222,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
+	const auto &stockTones = stock->session().data().aiComposeTones();
+	const auto &pinnedTones = pinned->session().data().aiComposeTones();
+	if (stockTones.refreshRequestsForRegressionTest() != 1
+		|| !stockTones.periodicRefreshScheduledForRegressionTest()
+		|| pinnedTones.refreshRequestsForRegressionTest() != 0
+		|| pinnedTones.periodicRefreshScheduledForRegressionTest()) {
+		return FailChatParticipantsRegression(
+			"tone refresh escaped the stock-session capability boundary");
+	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
 								  bool supported) {
 		return (session.callsSupported() == supported)
@@ -1229,6 +1240,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.exportSupported() == supported)
 			&& (session.passportSupported() == supported)
 			&& (session.aiComposeSupported() == supported)
+			&& (Ui::AiComposeButtonAllowed(
+				session.aiComposeSupported(),
+				false,
+				true) == supported)
 			&& (session.serverTranslationSupported() == supported);
 	};
 	auto &app = Core::App();
@@ -1257,6 +1272,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update only the shown session inline");
 	}
+	const auto pinnedResolveCalls = pinnedTones.resolveCallsForRegressionTest();
+	if (!app.openLocalUrl(u"tg://addstyle?slug=test"_q, {})
+		|| pinnedTones.resolveCallsForRegressionTest() != pinnedResolveCalls) {
+		return FailChatParticipantsRegression(
+			"custom-session style link did not stop before tone resolution");
+	}
 	QCoreApplication::processEvents();
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
 		!= stockToPinnedStockUpdates + 1
@@ -1277,6 +1298,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			!= pinnedToStockPinnedUpdates) {
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update only the shown session inline");
+	}
+	const auto stockResolveCalls = stockTones.resolveCallsForRegressionTest();
+	if (!app.openLocalUrl(u"tg://addstyle?slug=test"_q, {})
+		|| stockTones.resolveCallsForRegressionTest() != stockResolveCalls + 1) {
+		return FailChatParticipantsRegression(
+			"stock-session style link no longer resolves its tone");
 	}
 	QCoreApplication::processEvents();
 	if (stock->session().updates().onlineUpdateCallsForRegressionTest()

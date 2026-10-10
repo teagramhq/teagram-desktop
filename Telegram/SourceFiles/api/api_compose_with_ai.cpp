@@ -209,8 +209,11 @@ void TriggerAiApplyInPlace(
 		std::shared_ptr<Ui::Show> show,
 		not_null<QObject*> guard,
 		not_null<Ui::InputField*> field,
-		TextWithEntities fullFieldText,
+		Fn<TextWithEntities()> fullFieldText,
 		Fn<void(TextWithTags textWithTags, int cursor)> applyToField) {
+	if (!session->aiComposeSupported()) {
+		return;
+	}
 	const auto slug = AiApplyBoundSlug();
 	if (slug.isEmpty()) {
 		show->showToast(tr::lng_ai_compose_apply_unbound(tr::now));
@@ -231,7 +234,7 @@ void TriggerAiApplyInPlace(
 			TextUtilities::ConvertTextTagsToEntities(part.tags),
 		};
 	} else {
-		text = std::move(fullFieldText);
+		text = fullFieldText();
 	}
 	if (text.text.isEmpty()) {
 		show->showToast(tr::lng_ai_compose_apply_empty(tr::now));

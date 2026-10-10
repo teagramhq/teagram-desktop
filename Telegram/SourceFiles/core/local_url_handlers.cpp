@@ -307,6 +307,11 @@ bool ShowAiStyle(
 	if (!controller) {
 		return false;
 	}
+	if (!controller->session().aiComposeSupported()) {
+		controller->window().activate();
+		controller->showFeatureUnavailableOnServerToast();
+		return true;
+	}
 	const auto slug = match->captured(1);
 	Core::App().hideMediaView();
 	const auto weak = base::make_weak(controller);
