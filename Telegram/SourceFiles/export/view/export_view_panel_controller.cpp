@@ -7,29 +7,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "export/view/export_view_panel_controller.h"
 
-#include "export/view/export_view_settings.h"
+#include "base/platform/base_platform_info.h"
+#include "base/qt/qt_common_adapters.h"
+#include "base/unixtime.h"
+#include "base/weak_ptr.h"
+#include "boxes/abstract_box.h" // Ui::show().
+#include "core/application.h"
+#include "core/file_utilities.h"
+#include "data/data_session.h"
 #include "export/view/export_view_progress.h"
+#include "export/view/export_view_settings.h"
 #include "export/export_manager.h"
+#include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "mtproto/mtproto_config.h"
+#include "storage/storage_account.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/separate_panel.h"
 #include "ui/wrap/padding_wrap.h"
-#include "mtproto/mtproto_config.h"
-#include "ui/boxes/confirm_box.h"
-#include "lang/lang_keys.h"
-#include "storage/storage_account.h"
-#include "core/application.h"
-#include "core/file_utilities.h"
-#include "main/main_session.h"
-#include "data/data_session.h"
-#include "base/platform/base_platform_info.h"
-#include "base/unixtime.h"
-#include "base/weak_ptr.h"
-#include "base/qt/qt_common_adapters.h"
-#include "boxes/abstract_box.h" // Ui::show().
-#include "styles/style_export.h"
-#include "styles/style_layers.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
+#include "styles/style_export.h"
+#include "styles/style_layers.h"
 
 namespace Export {
 namespace View {
