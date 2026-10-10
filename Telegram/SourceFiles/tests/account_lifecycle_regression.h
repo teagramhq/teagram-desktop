@@ -12,6 +12,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Tests {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+enum class MainQueueBarrierResult {
+	Completed,
+	TimedOut,
+};
+
+[[nodiscard]] MainQueueBarrierResult
+WaitForMainQueueBarrierForRegressionTest(
+	int timeoutMilliseconds = 5000,
+	bool scheduleCompletion = true);
+
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,
 	AuthorizationFailureMarker,

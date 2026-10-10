@@ -28,6 +28,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
 #include "settings/settings_common_session.h"
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
 #include "ui/boxes/confirm_box.h"
 #include "ui/empty_userpic.h"
 #include "ui/filter_icons.h"
@@ -54,7 +57,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include <QtCore/QByteArray>
 #include <QtGui/QKeyEvent>
+
+#include <cstdio>
+#include <optional>
 #endif
 
 namespace Settings {
@@ -1360,28 +1367,225 @@ const auto kMeta = BuildHelper({
 } // namespace
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace {
+
+enum class FolderCrudFailure {
+	None,
+	BarrierTimeout,
+	IncompleteOwnerApply,
+	WrongOwnerContent,
+	CrossSessionPresence,
+};
+
+struct FolderPresence {
+	bool owner = false;
+	bool other = false;
+};
+
+struct FolderApplyObservation {
+	FolderCrudFailure failure = FolderCrudFailure::None;
+	FolderPresence presence;
+};
+
+[[nodiscard]] const char *FolderCrudSideName(
+		Settings::FolderCrudRegressionSide side) {
+	return (side == Settings::FolderCrudRegressionSide::Stock)
+		? "stock"
+		: "pinned";
+}
+
+[[nodiscard]] const char *FolderCrudFailureName(FolderCrudFailure failure) {
+	switch (failure) {
+	case FolderCrudFailure::None:
+		return "none";
+	case FolderCrudFailure::BarrierTimeout:
+		return "barrier_timeout";
+	case FolderCrudFailure::IncompleteOwnerApply:
+		return "incomplete_owner_apply";
+	case FolderCrudFailure::WrongOwnerContent:
+		return "wrong_owner_content";
+	case FolderCrudFailure::CrossSessionPresence:
+		return "cross_session_presence";
+	}
+	Unexpected("Unknown folder CRUD regression failure.");
+	return "unknown";
+}
+
+[[nodiscard]] const Data::ChatFilter *FindFolder(
+		not_null<Window::SessionController *> controller,
+		FilterId id) {
+	const auto &filters = controller->session().data().chatsFilters().list();
+	const auto i = ranges::find(filters, id, &Data::ChatFilter::id);
+	return (i == end(filters)) ? nullptr : &*i;
+}
+
+[[nodiscard]] FolderPresence ObserveFolderPresence(
+		not_null<Window::SessionController *> controller,
+		not_null<Window::SessionController *> other,
+		FilterId id) {
+	return {
+		.owner = (FindFolder(controller, id) != nullptr),
+		.other = (FindFolder(other, id) != nullptr),
+	};
+}
+
+[[nodiscard]] FolderApplyObservation ObserveSavedFolder(
+		not_null<Window::SessionController *> controller,
+		not_null<Window::SessionController *> other,
+		FilterId id,
+		const QString &expectedTitle,
+		not_null<History *> history,
+		bool barrierCompleted) {
+	const auto owner = FindFolder(controller, id);
+	const auto otherFolder = FindFolder(other, id);
+	const auto presence = FolderPresence{
+		.owner = (owner != nullptr),
+		.other = (otherFolder != nullptr),
+	};
+	if (!barrierCompleted) {
+		return { FolderCrudFailure::BarrierTimeout, presence };
+	} else if (otherFolder) {
+		return { FolderCrudFailure::CrossSessionPresence, presence };
+	} else if (!owner) {
+		return { FolderCrudFailure::IncompleteOwnerApply, presence };
+	}
+	const auto contentMatches = (owner->titleText().text == expectedTitle)
+		&& (owner->always().size() == 1)
+		&& owner->always().contains(history)
+		&& owner->pinned().empty()
+		&& owner->never().empty();
+	return {
+		contentMatches
+			? FolderCrudFailure::None
+			: FolderCrudFailure::WrongOwnerContent,
+		presence,
+	};
+}
+
+[[nodiscard]] FolderApplyObservation ObserveRemovedFolder(
+		not_null<Window::SessionController *> controller,
+		not_null<Window::SessionController *> other,
+		FilterId id,
+		bool barrierCompleted) {
+	const auto presence = ObserveFolderPresence(controller, other, id);
+	if (!barrierCompleted) {
+		return { FolderCrudFailure::BarrierTimeout, presence };
+	} else if (presence.other) {
+		return { FolderCrudFailure::CrossSessionPresence, presence };
+	} else if (presence.owner) {
+		return { FolderCrudFailure::IncompleteOwnerApply, presence };
+	}
+	return { FolderCrudFailure::None, presence };
+}
+
+[[nodiscard]] bool ReportFolderCrudFailure(
+		const char *reason,
+		Settings::FolderCrudRegressionSide side,
+		const char *operation,
+		const char *stage,
+		std::optional<FilterId> id,
+		std::optional<FolderPresence> presence) {
+	const auto idText = id
+		? QString::number(*id).toUtf8()
+		: QByteArray("unallocated");
+	const auto ownerPresent = presence
+		? (presence->owner ? "1" : "0")
+		: "unknown";
+	const auto otherPresent = presence
+		? (presence->other ? "1" : "0")
+		: "unknown";
+	const auto otherSide = (side == Settings::FolderCrudRegressionSide::Stock)
+		? Settings::FolderCrudRegressionSide::Pinned
+		: Settings::FolderCrudRegressionSide::Stock;
+	std::fprintf(
+		stderr,
+		"Folder CRUD regression failed: reason=%s side=%s other_side=%s "
+		"operation=%s stage=%s synthetic_id=%s owner_present=%s "
+		"other_present=%s\n",
+		reason,
+		FolderCrudSideName(side),
+		FolderCrudSideName(otherSide),
+		operation,
+		stage,
+		idText.constData(),
+		ownerPresent,
+		otherPresent);
+	return false;
+}
+
+[[nodiscard]] bool ReportFolderApplyFailure(
+		FolderApplyObservation observation,
+		Settings::FolderCrudRegressionSide side,
+		const char *operation,
+		const char *stage,
+		FilterId id) {
+	return ReportFolderCrudFailure(
+		FolderCrudFailureName(observation.failure),
+		side,
+		operation,
+		stage,
+		id,
+		observation.presence);
+}
+
+} // namespace
+
 bool RunFoldersCrudRegressionForTest(
 	not_null<Window::SessionController *> controller,
-	not_null<Window::SessionController *> other, not_null<History *> history) {
+	not_null<Window::SessionController *> other,
+	not_null<History *> history,
+	FolderCrudRegressionSide side) {
+	const auto fail = [&](
+			const char *reason,
+			const char *operation,
+			const char *stage,
+			std::optional<FilterId> id = std::nullopt) {
+		const auto presence = id
+			? std::optional<FolderPresence>(ObserveFolderPresence(
+				controller,
+				other,
+				*id))
+			: std::nullopt;
+		return ReportFolderCrudFailure(
+			reason,
+			side,
+			operation,
+			stage,
+			id,
+			presence);
+	};
 	if (&controller->session() == &other->session()) {
-		return false;
+		return fail("setup_failure", "setup", "distinct_sessions");
 	}
 	auto parent = QWidget();
 	parent.resize(800, 600);
 	auto container = object_ptr<Ui::VerticalLayout>(&parent);
 	auto state = std::make_shared<FoldersState>();
 	SetupFoldersList(controller, container.get(), state.get(), nullptr);
-	if (!state->createButton || !state->createButton->isEnabled() || !state->add
-		|| !state->edit || !state->remove || !state->save) {
-		return false;
+	if (!state->createButton) {
+		return fail("setup_failure", "setup", "create_button_missing");
+	} else if (!state->createButton->isEnabled()) {
+		return fail("setup_failure", "setup", "create_button_disabled");
+	} else if (!state->add) {
+		return fail("setup_failure", "setup", "add_callback_missing");
+	} else if (!state->edit) {
+		return fail("setup_failure", "setup", "edit_callback_missing");
+	} else if (!state->remove) {
+		return fail("setup_failure", "setup", "remove_callback_missing");
+	} else if (!state->save) {
+		return fail("setup_failure", "setup", "save_callback_missing");
 	}
 	state->regressionCreateFilter
 		= Data::ChatFilter(FilterId(0), {}, {}, {}, {}, {history}, {}, {});
 	state->useRegressionCreateFilter = true;
-	const auto submit = [&](const QString &name, bool enter) {
+	const auto submit = [&](
+			const QString &name,
+			bool enter,
+			const char *operation,
+			std::optional<FilterId> id) {
 		const auto editor = state->regressionEditor.get();
 		if (!editor) {
-			return false;
+			return fail("editor_missing", operation, "editor_open", id);
 		}
 		auto field = static_cast<Ui::InputField *>(nullptr);
 		for (const auto widget : editor->findChildren<QWidget *>()) {
@@ -1391,7 +1595,7 @@ bool RunFoldersCrudRegressionForTest(
 			}
 		}
 		if (!field) {
-			return false;
+			return fail("title_field_missing", operation, "title_field", id);
 		}
 		field->setText(name);
 		if (enter) {
@@ -1407,64 +1611,171 @@ bool RunFoldersCrudRegressionForTest(
 	const auto rowsBeforeCreate = state->rows.size();
 	state->createButton->clicked(Qt::NoModifier, Qt::LeftButton);
 	QCoreApplication::processEvents();
-	if (!submit(u"Folder One"_q, false)
-		|| state->rows.size() != rowsBeforeCreate + 1) {
+	if (!submit(u"Folder One"_q, false, "create", std::nullopt)) {
 		return false;
+	} else if (state->rows.size() != rowsBeforeCreate + 1) {
+		return fail("created_row_missing", "create", "editor_submit");
 	}
 	const auto button = state->rows.back().button;
 	state->save(button.get(), nullptr);
-	QCoreApplication::processEvents();
 	const auto createdRow
 		= ranges::find(state->rows, button, &FilterRow::button);
-	if (createdRow == end(state->rows) || !createdRow->filter.id()) {
-		return false;
+	if (createdRow == end(state->rows)) {
+		return fail("created_row_missing", "create", "save");
+	} else if (!createdRow->filter.id()) {
+		return fail("filter_id_not_allocated", "create", "save");
 	}
 	const auto id = createdRow->filter.id();
-	const auto locate = [=](not_null<Window::SessionController *> owner) {
-		const auto &filters = owner->session().data().chatsFilters().list();
-		return ranges::find(filters, id, &Data::ChatFilter::id);
+	const auto verifySaved = [&](
+			const char *operation,
+			const char *stage,
+			const QString &expectedTitle,
+			Tests::MainQueueBarrierResult barrier) {
+		const auto observation = ObserveSavedFolder(
+			controller,
+			other,
+			id,
+			expectedTitle,
+			history,
+			barrier == Tests::MainQueueBarrierResult::Completed);
+		return (observation.failure == FolderCrudFailure::None)
+			? true
+			: ReportFolderApplyFailure(observation, side, operation, stage, id);
 	};
-	const auto verifySaved = [&](const QString &expectedTitle) {
-		const auto &filters
-			= controller->session().data().chatsFilters().list();
-		const auto saved = ranges::find(filters, id, &Data::ChatFilter::id);
-		return (saved != end(filters))
-			   && (saved->titleText().text == expectedTitle)
-			   && (saved->always().size() == 1)
-			   && saved->always().contains(history)
-			   && (locate(other)
-				   == end(other->session().data().chatsFilters().list()));
-	};
-	if (!verifySaved(u"Folder One"_q)) {
+	const auto createBarrier
+		= Tests::WaitForMainQueueBarrierForRegressionTest();
+	if (!verifySaved("create", "after_local_apply", u"Folder One"_q,
+			createBarrier)) {
+		return false;
+	}
+	if (side == FolderCrudRegressionSide::Stock) {
+		const auto missingBarrier
+			= Tests::WaitForMainQueueBarrierForRegressionTest(10, false);
+		const auto timeoutObservation = ObserveSavedFolder(
+			controller,
+			other,
+			id,
+			u"Folder One"_q,
+			history,
+			missingBarrier == Tests::MainQueueBarrierResult::Completed);
+		if ((missingBarrier != Tests::MainQueueBarrierResult::TimedOut)
+			|| (timeoutObservation.failure != FolderCrudFailure::BarrierTimeout)
+			|| !timeoutObservation.presence.owner
+			|| timeoutObservation.presence.other) {
+			return ReportFolderCrudFailure(
+				"negative_barrier_self_test_failed",
+				side,
+				"diagnostic",
+				"barrier_never_completed",
+				id,
+				timeoutObservation.presence);
+		}
+		std::fprintf(
+			stderr,
+			"Folder CRUD negative self-test passed: reason=barrier_timeout "
+			"side=%s other_side=pinned operation=diagnostic "
+			"stage=barrier_never_completed synthetic_id=%d "
+			"owner_present=1 other_present=0\n",
+			FolderCrudSideName(side),
+			int(id));
+
+		const auto saved = FindFolder(controller, id);
+		if (!saved) {
+			return ReportFolderCrudFailure(
+				"incomplete_owner_apply",
+				side,
+				"diagnostic",
+				"cross_session_setup",
+				id,
+				ObserveFolderPresence(controller, other, id));
+		}
+		// Exercise cross-session detection with a temporary synthetic write.
+		other->session().data().chatsFilters().apply(
+			MTP_updateDialogFilter(
+				MTP_flags(MTPDupdateDialogFilter::Flag::f_filter),
+				MTP_int(id),
+				saved->tl(id)));
+		const auto crossSessionObservation = ObserveSavedFolder(
+			controller,
+			other,
+			id,
+			u"Folder One"_q,
+			history,
+			true);
+		other->session().data().chatsFilters().remove(id);
+		const auto cleanupObservation = ObserveSavedFolder(
+			controller,
+			other,
+			id,
+			u"Folder One"_q,
+			history,
+			true);
+		if ((crossSessionObservation.failure
+				!= FolderCrudFailure::CrossSessionPresence)
+			|| !crossSessionObservation.presence.owner
+			|| !crossSessionObservation.presence.other) {
+			return ReportFolderCrudFailure(
+				"negative_cross_session_self_test_failed",
+				side,
+				"diagnostic",
+				"other_session_write",
+				id,
+				crossSessionObservation.presence);
+		}
+		if (cleanupObservation.failure != FolderCrudFailure::None) {
+			return ReportFolderApplyFailure(
+				cleanupObservation,
+				side,
+				"diagnostic",
+				"other_session_cleanup",
+				id);
+		}
+		std::fprintf(
+			stderr,
+			"Folder CRUD negative self-test passed: "
+			"reason=cross_session_presence side=%s other_side=pinned "
+			"operation=diagnostic stage=other_session_write synthetic_id=%d "
+			"owner_present=1 other_present=1\n",
+			FolderCrudSideName(side),
+			int(id));
+	}
+	button->clicked(Qt::NoModifier, Qt::LeftButton);
+	QCoreApplication::processEvents();
+	if (!submit(u"Folder Two"_q, false, "button_rename", id)) {
+		return false;
+	}
+	state->save(nullptr, nullptr);
+	const auto buttonRenameBarrier
+		= Tests::WaitForMainQueueBarrierForRegressionTest();
+	if (!verifySaved("button_rename", "after_local_apply", u"Folder Two"_q,
+			buttonRenameBarrier)) {
 		return false;
 	}
 	button->clicked(Qt::NoModifier, Qt::LeftButton);
 	QCoreApplication::processEvents();
-	if (!submit(u"Folder Two"_q, false)) {
+	if (!submit(u"Folder Key"_q, true, "enter_rename", id)) {
 		return false;
 	}
 	state->save(nullptr, nullptr);
-	QCoreApplication::processEvents();
-	if (!verifySaved(u"Folder Two"_q)) {
-		return false;
-	}
-	button->clicked(Qt::NoModifier, Qt::LeftButton);
-	QCoreApplication::processEvents();
-	if (!submit(u"Folder Key"_q, true)) {
-		return false;
-	}
-	state->save(nullptr, nullptr);
-	QCoreApplication::processEvents();
-	if (!verifySaved(u"Folder Key"_q)) {
+	const auto enterRenameBarrier
+		= Tests::WaitForMainQueueBarrierForRegressionTest();
+	if (!verifySaved("enter_rename", "after_local_apply", u"Folder Key"_q,
+			enterRenameBarrier)) {
 		return false;
 	}
 	button->triggerRemoveForTest();
 	state->save(nullptr, nullptr);
-	QCoreApplication::processEvents();
-	return locate(controller)
-			   == end(controller->session().data().chatsFilters().list())
-		   && locate(other)
-				  == end(other->session().data().chatsFilters().list());
+	const auto removeBarrier
+		= Tests::WaitForMainQueueBarrierForRegressionTest();
+	const auto removeObservation = ObserveRemovedFolder(
+		controller,
+		other,
+		id,
+		removeBarrier == Tests::MainQueueBarrierResult::Completed);
+	return (removeObservation.failure == FolderCrudFailure::None)
+		? true
+		: ReportFolderApplyFailure(
+			removeObservation, side, "remove", "after_local_apply", id);
 }
 #endif
 
