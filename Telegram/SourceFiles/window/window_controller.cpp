@@ -180,10 +180,8 @@ void Controller::showAccount(
 
 	crl::on_main([prevSessionWeak] {
 		if (const auto prevSession = prevSessionWeak.get()) {
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-			prevSession->updates().noteSessionSwitchUpdateForTest();
-#endif // TDESKTOP_LIFECYCLE_REGRESSION
-			prevSession->updates().updateOnline(crl::now());
+			prevSession->updates().updateOnline(
+				crl::now(), Api::Updates::UpdateOnlineReason::SessionSwitch);
 		}
 	});
 
@@ -234,10 +232,8 @@ void Controller::showAccount(
 				_widget.setupSetupEmailLock();
 			}
 
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-			session->updates().noteSessionSwitchUpdateForTest();
-#endif // TDESKTOP_LIFECYCLE_REGRESSION
-			session->updates().updateOnline(crl::now());
+			session->updates().updateOnline(
+				crl::now(), Api::Updates::UpdateOnlineReason::SessionSwitch);
 		} else {
 			sideBarChanged();
 			setupIntro(accountBeforeIntro, std::move(oldContentCache));

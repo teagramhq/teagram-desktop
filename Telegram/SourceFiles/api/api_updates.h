@@ -133,14 +133,19 @@ public:
 
 	[[nodiscard]] int32 pts() const;
 
+	enum class UpdateOnlineReason {
+		Regular,
+		OtherOffline,
+		SessionSwitch,
+	};
 	void updateOnline(crl::time lastNonIdleTime = 0);
+	void updateOnline(crl::time lastNonIdleTime, UpdateOnlineReason reason);
 	[[nodiscard]] bool isIdle() const;
 	[[nodiscard]] rpl::producer<bool> isIdleValue() const;
 	void checkIdleFinish(crl::time lastNonIdleTime = 0);
 	bool lastWasOnline() const;
 	crl::time lastSetOnline() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	void noteSessionSwitchUpdateForTest();
 	int sessionSwitchUpdatesForTest() const;
 #endif
 	bool isQuitPrevent();
@@ -194,7 +199,6 @@ private:
 		MsgRange range,
 		const MTPupdates_ChannelDifference &result);
 
-	void updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline);
 	void sendPing();
 	void getDifferenceByPts();
 	void getDifferenceAfterFail();
