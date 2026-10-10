@@ -1104,6 +1104,31 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return 1;
 }
 
+[[nodiscard]] bool WaitForMainQueueBarrier() {
+	struct State {
+		QEventLoop *loop = nullptr;
+		bool active = true;
+		bool completed = false;
+	};
+	const auto state = std::make_shared<State>();
+	auto loop = QEventLoop();
+	state->loop = &loop;
+	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+	crl::on_main([state] {
+		if (!state->active || state->completed || !state->loop) {
+			return;
+		}
+		state->completed = true;
+		state->loop->quit();
+	});
+	if (!state->completed) {
+		loop.exec();
+	}
+	state->active = false;
+	state->loop = nullptr;
+	return state->completed;
+}
+
 [[nodiscard]] int
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
@@ -1243,7 +1268,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the initial session switch");
+	}
 	const auto stockToPinnedStockUpdates
 		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto stockToPinnedPinnedUpdates
@@ -1255,9 +1283,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| pinned->session().updates().sessionSwitchUpdatesForTest()
 			   != stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update only the shown session inline");
+			"stock-to-pinned switch did not update only the shown session "
+			"inline");
 	}
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the stock-to-pinned switch");
+	}
 	if (stock->session().updates().sessionSwitchUpdatesForTest()
 			!= stockToPinnedStockUpdates + 1
 		|| pinned->session().updates().sessionSwitchUpdatesForTest()
@@ -1269,9 +1301,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedToStockPinnedUpdates
 		= pinned->session().updates().sessionSwitchUpdatesForTest();
-	std::fprintf(stderr, "Pinned-to-stock starts: primary=%p pinned=%p\n",
-				 static_cast<void *>(primary->maybeSession()),
-				 static_cast<void *>(&pinned->session()));
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
 		|| stock->session().updates().sessionSwitchUpdatesForTest()
@@ -1279,9 +1308,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| pinned->session().updates().sessionSwitchUpdatesForTest()
 			   != pinnedToStockPinnedUpdates) {
 		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update only the shown session inline");
+			"pinned-to-stock switch did not update only the shown session "
+			"inline");
 	}
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the pinned-to-stock switch");
+	}
 	const auto stockAfterPinnedToStock
 		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedAfterPinnedToStock
@@ -1354,13 +1387,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the queued session "
+			"switches");
+	}
 	if (stock->session().updates().sessionSwitchUpdatesForTest()
 			!= stockBeforeQueuedSwitches + 2
 		|| pinned->session().updates().sessionSwitchUpdatesForTest()
 			   != pinnedBeforeQueuedSwitches + 2) {
 		return FailChatParticipantsRegression(
-			"queued live and destroyed-session updates reached the wrong sessions");
+			"queued live and destroyed-session updates reached the wrong "
+			"sessions");
 	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
@@ -1465,7 +1503,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedAfterClose
 		= pinned->session().updates().sessionSwitchUpdatesForTest();
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after closing the primary window");
+	}
 	const auto stockDelivered
 		= stock->session().updates().sessionSwitchUpdatesForTest()
 		  - stockAfterClose;
