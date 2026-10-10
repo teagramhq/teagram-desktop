@@ -1,25 +1,36 @@
 name: Workflow lint.
 
 on:
-  # The build lanes other than Linux are workflow_dispatch-only, so a broken
-  # expression in one of them would otherwise surface only when somebody
-  # dispatches it. Lint the whole directory whenever any of it changes.
+  # Most macOS feedback lanes are manual/nightly, so lint the whole directory
+  # whenever a workflow or an asserted CI contract changes.
   push:
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_hit_count.sh'
+      - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
+      - '.github/scripts/ccache_launcher.sh'
+      - '.github/scripts/test_ccache_launcher.sh'
+      - '.github/scripts/test_macos_ci_contract.sh'
+      - 'README.md'
   pull_request:
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_hit_count.sh'
+      - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
       - '.github/scripts/test_ccache_miss_count.sh'
+      - '.github/scripts/ccache_launcher.sh'
+      - '.github/scripts/test_ccache_launcher.sh'
+      - '.github/scripts/test_macos_ci_contract.sh'
+      - 'README.md'
   workflow_dispatch:
 
 concurrency:
@@ -62,19 +73,14 @@ jobs:
       - name: Test ccache save decision.
         run: bash .github/scripts/test_ccache_save_decision.sh
 
+      - name: Test ccache hit count.
+        run: bash .github/scripts/test_ccache_hit_count.sh
+
       - name: Test ccache miss count.
         run: bash .github/scripts/test_ccache_miss_count.sh
 
-  ccache-helpers-macos:
-    name: ccache helpers (macOS)
-    runs-on: macos-latest
+      - name: Test ccache launcher.
+        run: bash .github/scripts/test_ccache_launcher.sh
 
-    steps:
-      - name: Clone.
-        uses: actions/checkout@v4
-
-      - name: Test compiler cache helpers.
-        run: |
-          set -euo pipefail
-          bash .github/scripts/test_ccache_save_decision.sh
-          bash .github/scripts/test_ccache_miss_count.sh
+      - name: Test macOS CI contract.
+        run: bash .github/scripts/test_macos_ci_contract.sh

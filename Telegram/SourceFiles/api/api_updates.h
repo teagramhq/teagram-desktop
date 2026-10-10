@@ -133,16 +133,20 @@ public:
 
 	[[nodiscard]] int32 pts() const;
 
+	enum class UpdateOnlineReason {
+		Regular,
+		OtherOffline,
+		SessionSwitch,
+	};
 	void updateOnline(crl::time lastNonIdleTime = 0);
-	void updateOnlineFromWindowSwitch(crl::time lastNonIdleTime);
+	void updateOnline(crl::time lastNonIdleTime, UpdateOnlineReason reason);
 	[[nodiscard]] bool isIdle() const;
 	[[nodiscard]] rpl::producer<bool> isIdleValue() const;
 	void checkIdleFinish(crl::time lastNonIdleTime = 0);
 	bool lastWasOnline() const;
 	crl::time lastSetOnline() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int onlineUpdateCallsForRegressionTest() const;
-	int onlineUpdateCallsFromWindowSwitchForRegressionTest() const;
+	int sessionSwitchUpdatesForTest() const;
 #endif
 	bool isQuitPrevent();
 
@@ -195,7 +199,6 @@ private:
 		MsgRange range,
 		const MTPupdates_ChannelDifference &result);
 
-	void updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline);
 	void sendPing();
 	void getDifferenceByPts();
 	void getDifferenceAfterFail();
@@ -321,8 +324,7 @@ private:
 
 	mtpRequestId _onlineRequest = 0;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int _onlineUpdateCallsForRegressionTest = 0;
-	int _onlineUpdateCallsFromWindowSwitchForRegressionTest = 0;
+	int _sessionSwitchUpdatesForTest = 0;
 #endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;
