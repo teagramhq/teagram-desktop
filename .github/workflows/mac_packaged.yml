@@ -1,7 +1,6 @@
 name: MacOS Packaged.
 
 on:
-  # Dispatch QA packages and publish signed releases from dev/main pushes.
   push:
     branches: [dev, main]
   workflow_dispatch:
@@ -16,7 +15,6 @@ env:
   TEAGRAM_UPDATE_CHANNEL: ${{ github.ref_name == 'main' && 'main' || 'dev' }}
 
 concurrency:
-  # Serialize release pushes and keep manual builds scoped to their target ref.
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'release' || inputs.branch || github.ref_name }}
   cancel-in-progress: false
   queue: max

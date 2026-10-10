@@ -7,8 +7,6 @@ self-hosted-runner:
     - ubuntu-slim
     - ubuntu-26.04
 
-# GitHub supports queue: max for concurrency groups, but the pinned actionlint
-# schema predates that key. Ignore only its unknown-key diagnostic here.
 paths:
   .github/workflows/mac_packaged.yml:
     ignore:
