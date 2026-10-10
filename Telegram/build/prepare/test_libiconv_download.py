@@ -48,6 +48,12 @@ class LibiconvDownloadTests(unittest.TestCase):
     def setUpClass(cls):
         cls.script, cls.original_hash = download_script()
 
+    def test_uses_independent_gnu_https_mirror(self):
+        self.assertIn(
+            "https://ftpmirror.gnu.org/libiconv/libiconv-$VERSION.tar.gz",
+            self.script,
+        )
+
     def run_download(self, mode, preserve_partial=False):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -81,6 +87,10 @@ class LibiconvDownloadTests(unittest.TestCase):
                 "if [ \"$FAKE_WGET_MODE\" = partial-failure ]; then\n"
                 "  printf 'partial archive' > \"$output\"\n"
                 "  exit 1\n"
+                "fi\n"
+                "if [ \"$FAKE_WGET_MODE\" = wrong-digest ]; then\n"
+                "  printf 'corrupt archive' > \"$output\"\n"
+                "  exit 0\n"
                 "fi\n"
                 "if [ \"$count\" -eq 1 ]; then\n"
                 "  printf 'corrupt archive' > \"$output\"\n"
@@ -151,6 +161,16 @@ class LibiconvDownloadTests(unittest.TestCase):
         self.assertEqual(calls, "4")
         self.assertIsNone(tar_input)
         self.assertTrue(archive_exists)
+
+    def test_rejects_wrong_digest_before_extraction(self):
+        result, calls, tar_input, archive_exists = self.run_download(
+            "wrong-digest"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, "4")
+        self.assertIsNone(tar_input)
+        self.assertFalse(archive_exists)
 
     def test_uses_later_mirror_with_the_pinned_checksum(self):
         result, calls, tar_input, _ = self.run_download("fallback")
