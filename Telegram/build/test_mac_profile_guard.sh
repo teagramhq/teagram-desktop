@@ -86,6 +86,10 @@ run_seatbelt_cat_probe() {
 	local path="$4"
 	local output
 	local status
+	local expected_errno=EPERM
+	if [[ "$option" == --mac-seatbelt-cat-allow-probe ]]; then
+		expected_errno=0
+	fi
 	if [[ ! -f "$path" ]]; then
 		echo "$name fixture is missing: $path" >&2
 		return 1
@@ -104,7 +108,59 @@ run_seatbelt_cat_probe() {
 		printf '%s\n' "$output" >&2
 		return 1
 	fi
-	printf '%s=PASS mode=posix_spawn child=/bin/cat path=%s\n' "$name" "$path"
+	printf '%s=PASS mode=posix_spawn child=/bin/cat errno=%s path=%s\n' \
+		"$name" "$expected_errno" "$path"
+}
+
+verify_unsandboxed_canary_readable() {
+	local name="$1"
+	local path="$2"
+	local expected_contents="$3"
+	local actual_contents
+	if [[ ! -f "$path" ]]; then
+		echo "$name unsandboxed fixture is missing: $path" >&2
+		return 1
+	fi
+	actual_contents="$(/bin/cat "$path")" || {
+		echo "$name unsandboxed /bin/cat could not read: $path" >&2
+		return 1
+	}
+	if [[ "$actual_contents" != "$expected_contents" ]]; then
+		echo "$name unsandboxed control read unexpected contents: $path" >&2
+		return 1
+	fi
+	printf '%s=PASS unsandboxed=/bin/cat readable=1 path=%s\n' "$name" "$path"
+}
+
+run_home_spelling_probes() {
+	local name="$1"
+	local profile_home="$2"
+	local path_home="$3"
+	local protected_relative="${4:-Library/Application Support/Telegram Desktop}"
+	local allowed_relative="${5:-Library/Application Support/Teagram/tdata}"
+	local protected_canary="$path_home/$protected_relative/synthetic-canary"
+	local allowed_canary="$path_home/$allowed_relative/synthetic-allowed-file"
+	local protected_contents="synthetic $name protected bytes"
+	local allowed_contents="synthetic $name allowed Teagram bytes"
+	mkdir -p "$(dirname "$protected_canary")" "$(dirname "$allowed_canary")"
+	printf '%s' "$protected_contents" > "$protected_canary"
+	printf '%s' "$allowed_contents" > "$allowed_canary"
+	verify_unsandboxed_canary_readable \
+		"${name}_protected_unsandboxed_control" \
+		"$protected_canary" "$protected_contents" \
+		|| return 1
+	verify_unsandboxed_canary_readable \
+		"${name}_allowed_unsandboxed_control" \
+		"$allowed_canary" "$allowed_contents" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_protected_denial" \
+		--mac-seatbelt-cat-probe "$profile_home" "$protected_canary" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_allowed_teagram_file" \
+		--mac-seatbelt-cat-allow-probe "$profile_home" "$allowed_canary" \
+		|| return 1
 }
 
 run_seatbelt_mode_probe() {
@@ -441,6 +497,42 @@ printf 'seatbelt_descendant_denial=PASS mode=posix_spawn child=/bin/cat status=%
 	"$CANARY_STATUS"
 printf 'seatbelt_posix_spawn_cat_denial=PASS mode=posix_spawn child=/bin/cat errno=EPERM path=%s\n' \
 	"$SEATBELT_CANARY"
+
+run_home_spelling_probes \
+	seatbelt_case_spelling \
+	"$TEST_HOME" "$TEST_HOME" \
+	"lIBRARY/aPPLICATION sUPPORT/tElEgRaM dEsKtOp" \
+	"lIBRARY/aPPLICATION sUPPORT/OtherApp/TeLeGrAm Desktop/tdata" \
+	|| exit 1
+
+NON_ASCII_HOME_NFC_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "teagram-café"))')"
+NON_ASCII_HOME_NFD_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFD", "teagram-café"))')"
+NON_ASCII_HOME_NFC="$TEST_HOME/$NON_ASCII_HOME_NFC_NAME"
+NON_ASCII_HOME_NFD="$TEST_HOME/$NON_ASCII_HOME_NFD_NAME"
+mkdir -p "$NON_ASCII_HOME_NFC"
+run_home_spelling_probes \
+	seatbelt_non_ascii_nfc_home \
+	"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFC" \
+	|| exit 1
+if [[ -d "$NON_ASCII_HOME_NFD" ]] \
+	&& [[ "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFC")" \
+		== "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFD")" ]]; then
+	run_home_spelling_probes \
+		seatbelt_nfd_home_alias \
+		"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+else
+	mkdir -p "$NON_ASCII_HOME_NFD"
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+fi
+
 run_seatbelt_mode_probe \
 	seatbelt_parent_open_denial \
 	--mac-seatbelt-parent-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
