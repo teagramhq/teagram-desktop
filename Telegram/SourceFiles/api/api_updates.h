@@ -118,6 +118,20 @@ private:
 
 class Updates final {
 public:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	struct OnlineUpdateCountsForRegressionTest {
+		int total = 0;
+		int other = 0;
+		int switchInline = 0;
+		int switchDeferred = 0;
+	};
+
+	enum class OnlineUpdateCauseForRegressionTest {
+		SwitchInline,
+		SwitchDeferred,
+	};
+#endif
+
 	explicit Updates(not_null<Main::Session*> session);
 
 	[[nodiscard]] Main::Session &session() const;
@@ -140,14 +154,18 @@ public:
 	};
 	void updateOnline(crl::time lastNonIdleTime = 0);
 	void updateOnline(crl::time lastNonIdleTime, UpdateOnlineReason reason);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void updateOnlineForRegressionTest(
+		crl::time lastNonIdleTime,
+		OnlineUpdateCauseForRegressionTest cause);
+	[[nodiscard]] OnlineUpdateCountsForRegressionTest
+		onlineUpdateCountsForRegressionTest() const;
+#endif
 	[[nodiscard]] bool isIdle() const;
 	[[nodiscard]] rpl::producer<bool> isIdleValue() const;
 	void checkIdleFinish(crl::time lastNonIdleTime = 0);
 	bool lastWasOnline() const;
 	crl::time lastSetOnline() const;
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int sessionSwitchUpdatesForTest() const;
-#endif
 	bool isQuitPrevent();
 
 	bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdates &updates);
@@ -199,6 +217,9 @@ private:
 		MsgRange range,
 		const MTPupdates_ChannelDifference &result);
 
+	void updateOnlineImpl(
+		crl::time lastNonIdleTime,
+		UpdateOnlineReason reason);
 	void sendPing();
 	void getDifferenceByPts();
 	void getDifferenceAfterFail();
@@ -324,7 +345,7 @@ private:
 
 	mtpRequestId _onlineRequest = 0;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	int _sessionSwitchUpdatesForTest = 0;
+	OnlineUpdateCountsForRegressionTest _onlineUpdateCountsForRegressionTest;
 #endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;

@@ -1094,10 +1094,32 @@ rpl::producer<bool> Updates::isIdleValue() const {
 void Updates::updateOnline(crl::time lastNonIdleTime,
 						   UpdateOnlineReason reason) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	if (reason == UpdateOnlineReason::SessionSwitch) {
-		++_sessionSwitchUpdatesForTest;
-	}
+	++_onlineUpdateCountsForRegressionTest.total;
+	++_onlineUpdateCountsForRegressionTest.other;
 #endif
+	updateOnlineImpl(lastNonIdleTime, reason);
+}
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void Updates::updateOnlineForRegressionTest(
+		crl::time lastNonIdleTime,
+		OnlineUpdateCauseForRegressionTest cause) {
+	++_onlineUpdateCountsForRegressionTest.total;
+	switch (cause) {
+	case OnlineUpdateCauseForRegressionTest::SwitchInline:
+		++_onlineUpdateCountsForRegressionTest.switchInline;
+		break;
+	case OnlineUpdateCauseForRegressionTest::SwitchDeferred:
+		++_onlineUpdateCountsForRegressionTest.switchDeferred;
+		break;
+	}
+	updateOnlineImpl(lastNonIdleTime, UpdateOnlineReason::SessionSwitch);
+}
+#endif
+
+void Updates::updateOnlineImpl(
+		crl::time lastNonIdleTime,
+		UpdateOnlineReason reason) {
 	if (!lastNonIdleTime) {
 		lastNonIdleTime = Core::App().lastNonIdleTime();
 	}
@@ -1187,8 +1209,9 @@ crl::time Updates::lastSetOnline() const {
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-int Updates::sessionSwitchUpdatesForTest() const {
-	return _sessionSwitchUpdatesForTest;
+Updates::OnlineUpdateCountsForRegressionTest
+Updates::onlineUpdateCountsForRegressionTest() const {
+	return _onlineUpdateCountsForRegressionTest;
 }
 #endif
 
