@@ -7,15 +7,44 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "export/export_manager.h"
 
+#include "base/unixtime.h"
+#include "data/data_peer.h"
 #include "export/export_controller.h"
 #include "export/view/export_view_panel_controller.h"
-#include "data/data_peer.h"
-#include "main/main_session.h"
 #include "main/main_account.h"
+#include "main/main_session.h"
 #include "ui/layers/box_content.h"
-#include "base/unixtime.h"
+#include "window/window_session_controller.h"
 
 namespace Export {
+namespace {
+
+bool RefuseIfUnsupported(not_null<Main::Session *> session,
+						 Window::SessionController *originatingController
+						 = nullptr) {
+	if (session->exportSupported()) {
+		return false;
+	}
+	if (originatingController) {
+		originatingController->showFeatureUnavailableOnServerToast();
+		return true;
+	}
+	auto window = (Window::SessionController *)nullptr;
+	for (const auto &candidate : session->windows()) {
+		if (!window || candidate->isPrimary()) {
+			window = candidate;
+		}
+		if (candidate->isPrimary()) {
+			break;
+		}
+	}
+	if (window) {
+		window->showFeatureUnavailableOnServerToast();
+	}
+	return true;
+}
+
+} // namespace
 
 Manager::Manager() = default;
 
@@ -29,6 +58,9 @@ void Manager::startTopic(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		const QString &topicTitle) {
+	if (RefuseIfUnsupported(&peer->session())) {
+		return;
+	}
 	if (_panel) {
 		_panel->activatePanel();
 		return;
@@ -42,9 +74,12 @@ void Manager::startTopic(
 	setupPanel(&peer->session());
 }
 
-void Manager::start(
-		not_null<Main::Session*> session,
-		const MTPInputPeer &singlePeer) {
+void Manager::start(not_null<Main::Session *> session,
+					const MTPInputPeer &singlePeer,
+					Window::SessionController *originatingController) {
+	if (RefuseIfUnsupported(session, originatingController)) {
+		return;
+	}
 	if (_panel) {
 		_panel->activatePanel();
 		return;

@@ -19,6 +19,10 @@ class Instance;
 
 namespace Export {
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] int ExportStartsForRegressionTest();
+#endif
+
 class ControllerObject;
 struct Settings;
 struct Environment;

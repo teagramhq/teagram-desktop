@@ -17,6 +17,10 @@ namespace Main {
 class Session;
 } // namespace Main
 
+namespace Window {
+class SessionController;
+} // namespace Window
+
 namespace Export {
 
 class Controller;
@@ -31,9 +35,9 @@ public:
 	~Manager();
 
 	void start(not_null<PeerData*> peer);
-	void start(
-		not_null<Main::Session*> session,
-		const MTPInputPeer &singlePeer = MTP_inputPeerEmpty());
+	void start(not_null<Main::Session *> session,
+			   const MTPInputPeer &singlePeer = MTP_inputPeerEmpty(),
+			   Window::SessionController *originatingController = nullptr);
 	void startTopic(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,

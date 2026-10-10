@@ -1190,6 +1190,7 @@ crl::time Updates::lastSetOnline() const {
 int Updates::sessionSwitchUpdatesForTest() const {
 	return _sessionSwitchUpdatesForTest;
 }
+
 #endif
 
 bool Updates::isQuitPrevent() {
