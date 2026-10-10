@@ -20,7 +20,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "export/export_controller.h"
 #include "export/export_manager.h"
+#include "export/view/export_view_panel_controller.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -1591,19 +1593,62 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		if (!customFirst) {
 			Export::Manager manager;
-			manager.start(pinnedUserPeer);
-			if (manager.inProgress()
-				|| &domain.active() != first.get()) {
+			Export::View::PanelController *stockExportPanel = nullptr;
+			auto panelLifetime = rpl::lifetime();
+			manager.currentView() | rpl::on_next(
+				[&](Export::View::PanelController *view) {
+					if (view && &view->session() == &stock->session()) {
+						stockExportPanel = view;
+					}
+				},
+				panelLifetime);
+			manager.start(&stock->session());
+			QCoreApplication::processEvents();
+			if (!manager.inProgress(&stock->session())
+				|| !stockExportPanel
+				|| !stockExportPanel->panelVisibleForRegressionTest()) {
 				return false;
 			}
-			manager.startTopic(pinnedUserPeer, MsgId(1), QString());
-			if (manager.inProgress()
-				|| &domain.active() != first.get()) {
+			stockExportPanel->hidePanelForRegressionTest();
+			if (stockExportPanel->panelVisibleForRegressionTest()) {
 				return false;
 			}
-			manager.start(&pinned->session());
-			if (manager.inProgress()
-				|| &domain.active() != first.get()) {
+			const auto pinnedSessionController
+				= pinnedWindow->sessionController();
+			if (!pinnedSessionController) {
+				return false;
+			}
+			const auto exportStarts
+				= Export::ExportStartsForRegressionTest();
+			const auto refuseCustomStart = [&](auto start) {
+				const auto refusalCalls = pinnedSessionController
+					->featureUnavailableOnServerToastCallsForRegressionTest();
+				start();
+				QCoreApplication::processEvents();
+				return manager.inProgress(&stock->session())
+					&& !manager.inProgress(&pinned->session())
+					&& &domain.active() == first.get()
+					&& stockExportPanel
+					&& !stockExportPanel->panelVisibleForRegressionTest()
+					&& pinnedSessionController
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+						== refusalCalls + 1
+					&& Export::ExportStartsForRegressionTest()
+						== exportStarts;
+			};
+			const auto peerRefused = refuseCustomStart(
+				[&] { manager.start(pinnedUserPeer); });
+			const auto topicRefused = refuseCustomStart([&] {
+				manager.startTopic(
+					pinnedUserPeer,
+					MsgId(1),
+					QString());
+			});
+			const auto sessionRefused = refuseCustomStart(
+				[&] { manager.start(&pinned->session()); });
+			if (!peerRefused || !topicRefused || !sessionRefused) {
+				std::fprintf(stderr,
+					"custom export start bypassed the stock panel refusal\n");
 				return false;
 			}
 		} else {

@@ -166,6 +166,18 @@ void PanelController::activatePanel() {
 	}
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool PanelController::panelVisibleForRegressionTest() const {
+	return _panel && _panel->isVisible();
+}
+
+void PanelController::hidePanelForRegressionTest() {
+	if (_panel) {
+		_panel->hide();
+	}
+}
+#endif
+
 void PanelController::createPanel() {
 	const auto singlePeer = _settings->onlySinglePeer();
 	const auto singleTopic = _settings->onlySingleTopic();

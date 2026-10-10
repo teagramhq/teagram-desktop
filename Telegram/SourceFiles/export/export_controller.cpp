@@ -18,6 +18,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Export {
 namespace {
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+int gExportStartsForRegressionTest = 0;
+#endif
+
 const auto kNullStateCallback = [](ProcessingState&) {};
 
 Settings NormalizeSettings(const Settings &settings) {
@@ -896,12 +900,21 @@ rpl::producer<State> Controller::state() const {
 void Controller::startExport(
 		const Settings &settings,
 		const Environment &environment) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++gExportStartsForRegressionTest;
+#endif
 	LOG(("Export Info: Started export."));
 
 	_wrapped.with([=](Implementation &unwrapped) {
 		unwrapped.startExport(settings, environment);
 	});
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+int ExportStartsForRegressionTest() {
+	return gExportStartsForRegressionTest;
+}
+#endif
 
 void Controller::skipFile(uint64 randomId) {
 	_wrapped.with([=](Implementation &unwrapped) {
