@@ -1028,6 +1028,30 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return 1;
 }
 
+[[nodiscard]] bool WaitForOnlineUpdateCalls(
+		Main::Session &session,
+		int expected) {
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	auto poll = QTimer();
+	timeout.setSingleShot(true);
+	poll.setInterval(10);
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (session.updates().onlineUpdateCallsForRegressionTest() >= expected) {
+			loop.quit();
+		}
+	});
+	if (session.updates().onlineUpdateCallsForRegressionTest() < expected) {
+		poll.start();
+		timeout.start(1500);
+		loop.exec();
+	}
+	poll.stop();
+	timeout.stop();
+	return (session.updates().onlineUpdateCallsForRegressionTest() == expected);
+}
+
 [[nodiscard]] int
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
@@ -1179,9 +1203,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update only the shown session inline");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockToPinnedStockUpdates + 1
+	if (!WaitForOnlineUpdateCalls(
+			stock->session(), stockToPinnedStockUpdates + 1)
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockToPinnedStockUpdates + 1
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
 			!= stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
@@ -1200,11 +1225,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update only the shown session inline");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= pinnedToStockStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockPinnedUpdates + 1) {
+	const auto pinnedToStockStockReady = WaitForOnlineUpdateCalls(
+		stock->session(), pinnedToStockStockUpdates + 1);
+	const auto pinnedToStockPinnedReady = WaitForOnlineUpdateCalls(
+		pinned->session(), pinnedToStockPinnedUpdates + 1);
+	const auto pinnedToStockStockObserved
+		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+	const auto pinnedToStockPinnedObserved
+		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+	if (!pinnedToStockStockReady || !pinnedToStockPinnedReady
+		|| pinnedToStockStockObserved != pinnedToStockStockUpdates + 1
+		|| pinnedToStockPinnedObserved != pinnedToStockPinnedUpdates + 1) {
+		std::fprintf(
+			stderr,
+			"Pinned-to-stock online updates: stock expected=%d actual=%d "
+			"pinned expected=%d actual=%d\n",
+			pinnedToStockStockUpdates + 1,
+			pinnedToStockStockObserved,
+			pinnedToStockPinnedUpdates + 1,
+			pinnedToStockPinnedObserved);
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update each session exactly once");
 	}
@@ -1265,9 +1304,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockBeforeQueuedSwitches + 2
+	const auto stockQueuedSwitchReady = WaitForOnlineUpdateCalls(
+		stock->session(), stockBeforeQueuedSwitches + 2);
+	const auto pinnedQueuedSwitchReady = WaitForOnlineUpdateCalls(
+		pinned->session(), pinnedBeforeQueuedSwitches + 2);
+	if (!stockQueuedSwitchReady || !pinnedQueuedSwitchReady
+		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+			!= stockBeforeQueuedSwitches + 2
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
 			!= pinnedBeforeQueuedSwitches + 2) {
 		return FailChatParticipantsRegression(
@@ -1377,7 +1420,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= stock->session().updates().onlineUpdateCallsForRegressionTest();
 	const auto pinnedAfterClose
 		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
-	QCoreApplication::processEvents();
+	const auto stockCloseUpdateReady = WaitForOnlineUpdateCalls(
+		stock->session(), stockAfterClose + 1);
 	const auto stockDelivered
 		= stock->session().updates().onlineUpdateCallsForRegressionTest()
 			- stockAfterClose;
@@ -1389,7 +1433,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// update of the closed switch, never a second one. The pinned session gains
 	// at most the update that closing the window which showed it produces
 	// (MainWindow::handleActiveChanged), which is that window's own session.
-	if (stockDelivered != 1 || pinnedDelivered > 1) {
+	if (!stockCloseUpdateReady || stockDelivered != 1 || pinnedDelivered > 1) {
 		std::fprintf(
 			stderr,
 			"Deferred primary-close updates: stock=%d pinned=%d\n",
