@@ -19,9 +19,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Export {
 namespace {
 
-bool RefuseIfUnsupported(
-		not_null<Main::Session*> session,
-		Window::SessionController *originatingController = nullptr) {
+bool RefuseIfUnsupported(not_null<Main::Session *> session,
+						 Window::SessionController *originatingController
+						 = nullptr) {
 	if (session->exportSupported()) {
 		return false;
 	}
@@ -29,7 +29,7 @@ bool RefuseIfUnsupported(
 		originatingController->showFeatureUnavailableOnServerToast();
 		return true;
 	}
-	auto window = (Window::SessionController*)nullptr;
+	auto window = (Window::SessionController *)nullptr;
 	for (const auto &candidate : session->windows()) {
 		if (!window || candidate->isPrimary()) {
 			window = candidate;
@@ -74,10 +74,9 @@ void Manager::startTopic(
 	setupPanel(&peer->session());
 }
 
-void Manager::start(
-		not_null<Main::Session*> session,
-		const MTPInputPeer &singlePeer,
-		Window::SessionController *originatingController) {
+void Manager::start(not_null<Main::Session *> session,
+					const MTPInputPeer &singlePeer,
+					Window::SessionController *originatingController) {
 	if (RefuseIfUnsupported(session, originatingController)) {
 		return;
 	}

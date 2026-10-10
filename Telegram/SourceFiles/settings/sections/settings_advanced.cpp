@@ -1252,15 +1252,15 @@ void BuildExportSection(SectionBuilder &builder) {
 		builder.addButton({
 			.id = u"advanced/export"_q,
 			.title = tr::lng_settings_export_data(),
-			.icon = { &st::menuIconExport },
-			.onClick = [=] {
-				controller->window().hideSettingsAndLayer();
-				base::call_delayed(
-					st::boxDuration,
-					session,
-					[=] { Core::App().exportManager().start(session); });
-			},
-			.keywords = { u"export"_q, u"data"_q, u"backup"_q },
+			.icon = {&st::menuIconExport},
+			.onClick =
+				[=] {
+					controller->window().hideSettingsAndLayer();
+					base::call_delayed(st::boxDuration, session, [=] {
+						Core::App().exportManager().start(session);
+					});
+				},
+			.keywords = {u"export"_q, u"data"_q, u"backup"_q},
 		});
 	}
 

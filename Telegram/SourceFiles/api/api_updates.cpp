@@ -1083,6 +1083,13 @@ void Updates::updateOnline(crl::time lastNonIdleTime) {
 	updateOnline(lastNonIdleTime, false);
 }
 
+void Updates::updateOnlineFromWindowSwitch(crl::time lastNonIdleTime) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_onlineUpdateCallsFromWindowSwitchForRegressionTest;
+#endif
+	updateOnline(lastNonIdleTime);
+}
+
 bool Updates::isIdle() const {
 	return _isIdle.current();
 }
@@ -1186,6 +1193,10 @@ crl::time Updates::lastSetOnline() const {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 int Updates::onlineUpdateCallsForRegressionTest() const {
 	return _onlineUpdateCallsForRegressionTest;
+}
+
+int Updates::onlineUpdateCallsFromWindowSwitchForRegressionTest() const {
+	return _onlineUpdateCallsFromWindowSwitchForRegressionTest;
 }
 #endif
 

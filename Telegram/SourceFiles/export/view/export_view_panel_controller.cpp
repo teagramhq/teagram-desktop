@@ -40,10 +40,8 @@ constexpr auto kSaveSettingsTimeout = crl::time(1000);
 
 class SuggestBox : public Ui::BoxContent {
 public:
-	SuggestBox(
-		QWidget*,
-		not_null<Main::Session*> session,
-		base::weak_ptr<Window::SessionController> originatingController);
+  SuggestBox(QWidget *, not_null<Main::Session *> session,
+			 base::weak_ptr<Window::SessionController> originatingController);
 
 protected:
 	void prepare() override;
@@ -51,16 +49,13 @@ protected:
 private:
 	const not_null<Main::Session*> _session;
 	const base::weak_ptr<Window::SessionController> _originatingController;
-
 };
 
 SuggestBox::SuggestBox(
-		QWidget*,
-		not_null<Main::Session*> session,
-		base::weak_ptr<Window::SessionController> originatingController)
-: _session(session)
-, _originatingController(std::move(originatingController)) {
-}
+	QWidget *, not_null<Main::Session *> session,
+	base::weak_ptr<Window::SessionController> originatingController)
+	: _session(session),
+	  _originatingController(std::move(originatingController)) {}
 
 void SuggestBox::prepare() {
 	setTitle(tr::lng_export_suggest_title());
@@ -70,8 +65,7 @@ void SuggestBox::prepare() {
 		const auto originatingController = _originatingController;
 		closeBox();
 		Core::App().exportManager().start(
-			session,
-			session->local().readExportSettings().singlePeer,
+			session, session->local().readExportSettings().singlePeer,
 			originatingController.get());
 	});
 	addButton(tr::lng_export_suggest_cancel(), [=] { closeBox(); });
@@ -112,16 +106,15 @@ Environment PrepareEnvironment(not_null<Main::Session*> session) {
 
 base::weak_qptr<Ui::BoxContent> SuggestStart(not_null<Main::Session*> session) {
 	ClearSuggestStart(session);
-	auto originatingController
-		= base::weak_ptr<Window::SessionController>();
+	auto originatingController = base::weak_ptr<Window::SessionController>();
 	if (const auto window = Core::App().activePrimaryWindow()) {
 		if (const auto controller = window->sessionController()) {
 			originatingController = base::make_weak(controller);
 		}
 	}
-	return Ui::show(
-		Box<SuggestBox>(session, std::move(originatingController)),
-		Ui::LayerOption::KeepOther).get();
+	return Ui::show(Box<SuggestBox>(session, std::move(originatingController)),
+					Ui::LayerOption::KeepOther)
+		.get();
 }
 
 void ClearSuggestStart(not_null<Main::Session*> session) {

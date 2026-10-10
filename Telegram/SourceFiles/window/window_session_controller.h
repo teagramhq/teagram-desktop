@@ -337,8 +337,8 @@ public:
 		crl::time duration = 0);
 	void showFeatureUnavailableOnServerToast();
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	[[nodiscard]] int featureUnavailableOnServerToastCallsForRegressionTest(
-	) const {
+	[[nodiscard]] int
+	featureUnavailableOnServerToastCallsForRegressionTest() const {
 		return _featureUnavailableOnServerToastCallsForRegressionTest;
 	}
 #endif

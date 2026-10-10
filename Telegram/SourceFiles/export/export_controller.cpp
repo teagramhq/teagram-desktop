@@ -911,9 +911,7 @@ void Controller::startExport(
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-int ExportStartsForRegressionTest() {
-	return gExportStartsForRegressionTest;
-}
+int ExportStartsForRegressionTest() { return gExportStartsForRegressionTest; }
 #endif
 
 void Controller::skipFile(uint64 randomId) {

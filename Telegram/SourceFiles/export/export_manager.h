@@ -35,10 +35,9 @@ public:
 	~Manager();
 
 	void start(not_null<PeerData*> peer);
-	void start(
-		not_null<Main::Session*> session,
-		const MTPInputPeer &singlePeer = MTP_inputPeerEmpty(),
-		Window::SessionController *originatingController = nullptr);
+	void start(not_null<Main::Session *> session,
+			   const MTPInputPeer &singlePeer = MTP_inputPeerEmpty(),
+			   Window::SessionController *originatingController = nullptr);
 	void startTopic(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,

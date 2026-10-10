@@ -134,6 +134,7 @@ public:
 	[[nodiscard]] int32 pts() const;
 
 	void updateOnline(crl::time lastNonIdleTime = 0);
+	void updateOnlineFromWindowSwitch(crl::time lastNonIdleTime);
 	[[nodiscard]] bool isIdle() const;
 	[[nodiscard]] rpl::producer<bool> isIdleValue() const;
 	void checkIdleFinish(crl::time lastNonIdleTime = 0);
@@ -141,6 +142,7 @@ public:
 	crl::time lastSetOnline() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int onlineUpdateCallsForRegressionTest() const;
+	int onlineUpdateCallsFromWindowSwitchForRegressionTest() const;
 #endif
 	bool isQuitPrevent();
 
@@ -320,6 +322,7 @@ private:
 	mtpRequestId _onlineRequest = 0;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _onlineUpdateCallsForRegressionTest = 0;
+	int _onlineUpdateCallsFromWindowSwitchForRegressionTest = 0;
 #endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;

@@ -180,7 +180,7 @@ void Controller::showAccount(
 
 	crl::on_main([prevSessionWeak] {
 		if (const auto prevSession = prevSessionWeak.get()) {
-			prevSession->updates().updateOnline(crl::now());
+			prevSession->updates().updateOnlineFromWindowSwitch(crl::now());
 		}
 	});
 
@@ -231,7 +231,7 @@ void Controller::showAccount(
 				_widget.setupSetupEmailLock();
 			}
 
-			session->updates().updateOnline(crl::now());
+			session->updates().updateOnlineFromWindowSwitch(crl::now());
 		} else {
 			sideBarChanged();
 			setupIntro(accountBeforeIntro, std::move(oldContentCache));

@@ -1237,8 +1237,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					 && (session.serverTranslationSupported() == supported)
 					 && (session.sharedFoldersSupported() == supported);
 		  };
-	const auto pinnedUserPeer = not_null<PeerData*>(
-		static_cast<PeerData*>(&*pinned->session().user()));
+	const auto pinnedUserPeer = not_null<PeerData *>(
+		static_cast<PeerData *>(&*pinned->session().user()));
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1253,44 +1253,70 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	QCoreApplication::processEvents();
 	const auto stockToPinnedStockUpdates
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	const auto stockToPinnedPinnedUpdates
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedStockUpdates
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedPinnedUpdates + 1) {
+		|| stock->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockToPinnedStockUpdates
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update only the shown session inline");
+			"stock-to-pinned switch did not update only the shown session "
+			"inline");
 	}
 	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockToPinnedStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedPinnedUpdates + 1) {
+	if (stock->session()
+				.updates()
+				.onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			!= stockToPinnedStockUpdates + 1
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update each session exactly once");
 	}
 	const auto pinnedToStockStockUpdates
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	const auto pinnedToStockPinnedUpdates
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockPinnedUpdates) {
+		|| stock->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedToStockStockUpdates + 1
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedToStockPinnedUpdates) {
 		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update only the shown session inline");
+			"pinned-to-stock switch did not update only the shown session "
+			"inline");
 	}
 	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= pinnedToStockStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockPinnedUpdates + 1) {
+	if (stock->session()
+				.updates()
+				.onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			!= pinnedToStockStockUpdates + 1
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedToStockPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update each session exactly once");
 	}
@@ -1308,41 +1334,65 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"previous-session teardown fixture did not share the stock user id");
 	}
 	const auto stockBeforeQueuedSwitches
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	const auto discardedBeforeQueuedSwitches
-		= discarded->session().updates().onlineUpdateCallsForRegressionTest();
+		= discarded->session()
+			  .updates()
+			  .onlineUpdateCallsFromWindowSwitchForRegressionTest();
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches) {
+		|| stock->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockBeforeQueuedSwitches
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != discardedBeforeQueuedSwitches) {
 		return FailChatParticipantsRegression(
 			"queued stock-to-pinned switch missed its inline session update");
 	}
 	primary->showAccount(discarded);
 	if (primary->maybeSession() != &discarded->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches + 1) {
+		|| stock->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockBeforeQueuedSwitches
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != discardedBeforeQueuedSwitches + 1) {
 		return FailChatParticipantsRegression(
 			"queued pinned-to-teardown switch missed its inline session update");
 	}
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches + 1) {
+		|| stock->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != stockBeforeQueuedSwitches + 1
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != discardedBeforeQueuedSwitches + 1) {
 		return FailChatParticipantsRegression(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
@@ -1352,12 +1402,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"previous-session teardown fixture was not destroyed");
 	}
 	QCoreApplication::processEvents();
-	if (stock->session().updates().onlineUpdateCallsForRegressionTest()
-		!= stockBeforeQueuedSwitches + 2
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 2) {
+	if (stock->session()
+				.updates()
+				.onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			!= stockBeforeQueuedSwitches + 2
+		|| pinned->session()
+				   .updates()
+				   .onlineUpdateCallsFromWindowSwitchForRegressionTest()
+			   != pinnedBeforeQueuedSwitches + 2) {
 		return FailChatParticipantsRegression(
-			"queued live and destroyed-session updates reached the wrong sessions");
+			"queued live and destroyed-session updates reached the wrong "
+			"sessions");
 	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
@@ -1381,8 +1436,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockLookup = app.windowFor(stock);
 	const auto pinnedLookup = app.windowFor(pinned);
 	if (primary->maybeSession() != &stock->session()
-		|| app.activePrimaryWindow() != pinnedWindow
-		|| stockLookup != primary
+		|| app.activePrimaryWindow() != pinnedWindow || stockLookup != primary
 		|| pinnedLookup != pinnedWindow
 		|| &stockLookup->account() != stock.get()
 		|| &pinnedLookup->account() != pinned.get()
@@ -1391,9 +1445,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(primary->id()) != primary
 		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
 		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeCollision
+			   != stockBeforeCollision
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeCollision) {
+			   != pinnedBeforeCollision) {
 		return FailChatParticipantsRegression(
 			"primary switch to an account owning a window left an account "
 			"lookup on a window bound to another account");
@@ -1436,9 +1490,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
 		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeCloseSwitch
+			   != stockBeforeCloseSwitch
 		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeCloseSwitch + 1) {
+			   != pinnedBeforeCloseSwitch + 1) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned close switch missed its inline session update");
 	}
@@ -1466,10 +1520,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	QCoreApplication::processEvents();
 	const auto stockDelivered
 		= stock->session().updates().onlineUpdateCallsForRegressionTest()
-			- stockAfterClose;
+		  - stockAfterClose;
 	const auto pinnedDelivered
 		= pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			- pinnedAfterClose;
+		  - pinnedAfterClose;
 	// The stock channel is clean at the dispatch: no window is bound to the
 	// stock session then, so its one update is the queued previous-session
 	// update of the closed switch, never a second one. The pinned session gains
@@ -1594,17 +1648,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			Export::Manager manager;
 			Export::View::PanelController *stockExportPanel = nullptr;
 			auto panelLifetime = rpl::lifetime();
-			manager.currentView() | rpl::on_next(
-				[&](Export::View::PanelController *view) {
-					if (view && &view->session() == &stock->session()) {
-						stockExportPanel = view;
-					}
-				},
-				panelLifetime);
+			manager.currentView()
+				| rpl::on_next(
+					[&](Export::View::PanelController *view) {
+						if (view && &view->session() == &stock->session()) {
+							stockExportPanel = view;
+						}
+					},
+					panelLifetime);
 			manager.start(&stock->session());
 			QCoreApplication::processEvents();
-			if (!manager.inProgress(&stock->session())
-				|| !stockExportPanel
+			if (!manager.inProgress(&stock->session()) || !stockExportPanel
 				|| !stockExportPanel->panelVisibleForRegressionTest()) {
 				return false;
 			}
@@ -1617,36 +1671,33 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			if (!pinnedSessionController) {
 				return false;
 			}
-			const auto exportStarts
-				= Export::ExportStartsForRegressionTest();
+			const auto exportStarts = Export::ExportStartsForRegressionTest();
 			const auto refuseCustomStart = [&](auto start) {
-				const auto refusalCalls = pinnedSessionController
-					->featureUnavailableOnServerToastCallsForRegressionTest();
+				const auto refusalCalls
+					= pinnedSessionController
+						  ->featureUnavailableOnServerToastCallsForRegressionTest();
 				start();
 				QCoreApplication::processEvents();
 				return manager.inProgress(&stock->session())
-					&& !manager.inProgress(&pinned->session())
-					&& &domain.active() == first.get()
-					&& stockExportPanel
-					&& !stockExportPanel->panelVisibleForRegressionTest()
-					&& pinnedSessionController
-						->featureUnavailableOnServerToastCallsForRegressionTest()
-						== refusalCalls + 1
-					&& Export::ExportStartsForRegressionTest()
-						== exportStarts;
+					   && !manager.inProgress(&pinned->session())
+					   && &domain.active() == first.get() && stockExportPanel
+					   && !stockExportPanel->panelVisibleForRegressionTest()
+					   && pinnedSessionController
+								  ->featureUnavailableOnServerToastCallsForRegressionTest()
+							  == refusalCalls + 1
+					   && Export::ExportStartsForRegressionTest()
+							  == exportStarts;
 			};
-			const auto peerRefused = refuseCustomStart(
-				[&] { manager.start(pinnedUserPeer); });
+			const auto peerRefused
+				= refuseCustomStart([&] { manager.start(pinnedUserPeer); });
 			const auto topicRefused = refuseCustomStart([&] {
-				manager.startTopic(
-					pinnedUserPeer,
-					MsgId(1),
-					QString());
+				manager.startTopic(pinnedUserPeer, MsgId(1), QString());
 			});
-			const auto sessionRefused = refuseCustomStart(
-				[&] { manager.start(&pinned->session()); });
+			const auto sessionRefused
+				= refuseCustomStart([&] { manager.start(&pinned->session()); });
 			if (!peerRefused || !topicRefused || !sessionRefused) {
-				std::fprintf(stderr,
+				std::fprintf(
+					stderr,
 					"custom export start bypassed the stock panel refusal\n");
 				return false;
 			}
@@ -1657,7 +1708,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 			const auto stockRefusalCalls
 				= stockSessionController
-					->featureUnavailableOnServerToastCallsForRegressionTest();
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
 			const auto activeBeforeNoWindowRefusal = &domain.active();
 			app.closeWindow(pinnedWindow);
 			if (app.separateWindowFor(pinned) != nullptr
@@ -1665,31 +1716,30 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				|| &domain.active() != activeBeforeNoWindowRefusal) {
 				return false;
 			}
-			manager.start(
-				&pinned->session(),
-				MTP_inputPeerEmpty(),
-				stockSessionController);
+			manager.start(&pinned->session(), MTP_inputPeerEmpty(),
+						  stockSessionController);
 			QCoreApplication::processEvents();
-			const auto noWindowRefused = manager.inProgress(&stock->session())
-				&& !manager.inProgress(&pinned->session())
-				&& &domain.active() == activeBeforeNoWindowRefusal
-				&& stockExportPanel
-				&& !stockExportPanel->panelVisibleForRegressionTest()
-				&& stockSessionController
-					->featureUnavailableOnServerToastCallsForRegressionTest()
-					== stockRefusalCalls + 1
-				&& Export::ExportStartsForRegressionTest() == exportStarts;
+			const auto noWindowRefused
+				= manager.inProgress(&stock->session())
+				  && !manager.inProgress(&pinned->session())
+				  && &domain.active() == activeBeforeNoWindowRefusal
+				  && stockExportPanel
+				  && !stockExportPanel->panelVisibleForRegressionTest()
+				  && stockSessionController
+							 ->featureUnavailableOnServerToastCallsForRegressionTest()
+						 == stockRefusalCalls + 1
+				  && Export::ExportStartsForRegressionTest() == exportStarts;
 			pinnedWindow = app.ensureSeparateWindowFor(pinned);
 			if (!noWindowRefused) {
-				std::fprintf(stderr,
+				std::fprintf(
+					stderr,
 					"export refusal mishandled a session without a window\n");
 				return false;
 			}
 		} else {
 			Export::Manager manager;
 			manager.start(pinnedUserPeer);
-			if (manager.inProgress()
-				|| &domain.active() != first.get()) {
+			if (manager.inProgress() || &domain.active() != first.get()) {
 				return false;
 			}
 		}
