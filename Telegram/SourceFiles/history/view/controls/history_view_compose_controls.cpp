@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_controls.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "base/call_delayed.h"
 #include "base/event_filter.h"
 #include "base/options.h"
@@ -5276,6 +5280,10 @@ Ui::InputField *ComposeControls::fieldForMention() const {
 }
 
 TextWithEntities ComposeControls::prepareTextForEditMsg() const {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordAiComposeApplyRegressionEvent(
+		Tests::AiComposeApplyRegressionEvent::ComposeControlsDraftRead);
+#endif
 	if (!_history) {
 		return {};
 	}

@@ -213,6 +213,9 @@ public:
 	void finishAnimating();
 
 	void doneShow();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void triggerAiApplyInPlaceForRegressionTest(const QString &text);
+#endif
 
 	QPoint clampMousePosition(QPoint point);
 

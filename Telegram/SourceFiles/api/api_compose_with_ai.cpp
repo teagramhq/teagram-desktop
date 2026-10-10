@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_compose_with_ai.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "api/api_text_entities.h"
 #include "apiwrap.h"
 #include "base/options.h"
@@ -148,6 +152,10 @@ void ApplyAiInPlaceBySlug(
 		QString slug,
 		Fn<void(TextWithEntities)> done,
 		Fn<void(const MTP::Error &)> fail) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordAiComposeApplyRegressionEvent(
+		Tests::AiComposeApplyRegressionEvent::ApplyDispatched);
+#endif
 	auto apply = [=, text = std::move(text), done = std::move(done)](
 			ComposeWithAi::ToneRef tone) mutable {
 		(void)session->api().composeWithAi().request({

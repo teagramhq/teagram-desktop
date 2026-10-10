@@ -2626,6 +2626,16 @@ void ChatWidget::finishSending() {
 	refreshTopBarActiveChat();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void ChatWidget::triggerAiApplyInPlaceForRegressionTest(
+		const QString &text) {
+	Expects(_composeControls != nullptr);
+	_composeControls->setFieldText({ text, {} });
+	_composeControls->triggerAiApplyInPlace();
+	_composeControls->clearFieldText();
+}
+#endif
+
 void ChatWidget::showAtPosition(
 		Data::MessagePosition position,
 		FullMsgId originItemId) {
