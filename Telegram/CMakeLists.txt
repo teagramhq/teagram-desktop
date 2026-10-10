@@ -7,6 +7,22 @@
 add_executable(Telegram WIN32 MACOSX_BUNDLE)
 init_non_host_target(Telegram)
 
+set(TDESKTOP_TEAGRAM_UPDATE_BUILD "0" CACHE STRING "Teagram release build identity")
+set(TDESKTOP_TEAGRAM_UPDATE_CHANNEL "dev" CACHE STRING "Teagram release channel")
+if (NOT "${TDESKTOP_TEAGRAM_UPDATE_BUILD}" MATCHES "^(0|[1-9][0-9]*)$")
+    message(FATAL_ERROR "TDESKTOP_TEAGRAM_UPDATE_BUILD must be a canonical unsigned decimal value.")
+endif()
+string(LENGTH "${TDESKTOP_TEAGRAM_UPDATE_BUILD}" teagram_update_build_length)
+if (teagram_update_build_length GREATER 20
+    OR (teagram_update_build_length EQUAL 20
+        AND "${TDESKTOP_TEAGRAM_UPDATE_BUILD}" STRGREATER "18446744073709551615"))
+    message(FATAL_ERROR "TDESKTOP_TEAGRAM_UPDATE_BUILD exceeds uint64.")
+endif()
+if (NOT TDESKTOP_TEAGRAM_UPDATE_CHANNEL STREQUAL "dev"
+    AND NOT TDESKTOP_TEAGRAM_UPDATE_CHANNEL STREQUAL "main")
+    message(FATAL_ERROR "TDESKTOP_TEAGRAM_UPDATE_CHANNEL must be dev or main.")
+endif()
+
 option(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
     "Enable the opt-in macOS protected-path integration guard" OFF)
 if (TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST AND NOT APPLE)
@@ -2384,7 +2400,11 @@ PRIVATE
 )
 
 if (APPLE)
-    target_compile_definitions(Telegram PRIVATE TDESKTOP_TEAGRAM)
+    target_compile_definitions(Telegram PRIVATE
+        TDESKTOP_TEAGRAM
+        TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
+        "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
+    )
     if (TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
         target_compile_definitions(Telegram
         PRIVATE

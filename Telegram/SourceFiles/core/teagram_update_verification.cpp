@@ -33,7 +33,17 @@ constexpr auto kExpectedFieldCount = 11;
 constexpr auto kMaximumSignatureSize = 64;
 constexpr auto kMaximumHashSize = 32;
 
+#ifdef TDESKTOP_TEAGRAM
+constexpr auto kProductionUpdatePublicKey = std::optional<Ed25519PublicKey>(
+	Ed25519PublicKey{
+		0xae, 0x76, 0xb3, 0x47, 0xce, 0xdb, 0x9b, 0xc5,
+		0x29, 0x58, 0x11, 0x8f, 0xb2, 0x72, 0x93, 0x90,
+		0xde, 0xb6, 0xb6, 0x80, 0xeb, 0xe9, 0x7a, 0x49,
+		0xf8, 0x74, 0xaa, 0xb6, 0xc0, 0x6b, 0xff, 0x06,
+	});
+#else // TDESKTOP_TEAGRAM
 constexpr auto kProductionUpdatePublicKey = std::optional<Ed25519PublicKey>();
+#endif // TDESKTOP_TEAGRAM
 
 struct PkeyDeleter {
 	void operator()(EVP_PKEY *value) const { EVP_PKEY_free(value); }

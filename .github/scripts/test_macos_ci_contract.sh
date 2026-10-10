@@ -158,12 +158,26 @@ require_text "$mac_workflow" 'elapsed_seconds > 1800'
 reject_text "$mac_workflow" 'CCACHE_DISABLE=1'
 
 require_text "$packaged_workflow" '  workflow_dispatch:'
+require_text "$packaged_workflow" '  push:'
+require_text "$packaged_workflow" 'branches: [dev, main]'
 reject_text "$packaged_workflow" '  pull_request:'
 reject_text "$packaged_workflow" '  schedule:'
 require_text "$packaged_workflow" 'concurrency:'
-require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || github.ref_name }}'
-require_text "$packaged_workflow" 'cancel-in-progress: true'
+require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ github.event_name == '\''push'\'' && '\''release'\'' || inputs.branch || github.ref_name }}'
+require_text "$packaged_workflow" 'cancel-in-progress: false'
+require_text "$packaged_workflow" 'queue: max'
+require_text "$packaged_workflow" 'openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem"'
+reject_text "$packaged_workflow" '"$REPO_NAME/Telegram/build/teagram_update_public_key.pem"'
+public_key_path="$(sed -n 's/.*openssl pkey -pubin -in "\([^"]*\)".*/\1/p' "$packaged_workflow" | sed -n '1p')"
+if [[ -z "$public_key_path" ]] || ! openssl pkey -pubin -in "$public_key_path" -outform DER | shasum -a 256 >/dev/null; then
+  printf 'The packaged workflow public key path must work from the cloned repository directory.\n' >&2
+  exit 1
+fi
+require_text "$packaged_workflow" "if: \${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}"
+require_text "$packaged_workflow" 'environment:'
+require_text "$packaged_workflow" '      name: release'
 require_text "$packaged_workflow" 'CCACHE_MAXSIZE: "5G"'
+require_text "$packaged_workflow" 'Teagram-macOS-arm64-QA'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
