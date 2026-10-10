@@ -19,8 +19,7 @@ enum class MainQueueBarrierResult {
 
 [[nodiscard]] MainQueueBarrierResult
 WaitForMainQueueBarrierForRegressionTest(
-	int timeoutMilliseconds = 5000,
-	bool scheduleCompletion = true);
+	int timeoutMilliseconds = 5000);
 
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,
