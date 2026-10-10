@@ -137,6 +137,11 @@ using OnlineUpdateCounts = Api::Updates::OnlineUpdateCountsForRegressionTest;
 using DeferredOnlineUpdateMutation
 	= Window::Controller::DeferredOnlineUpdateMutationForRegressionTest;
 
+[[nodiscard]] int SessionSwitchUpdateCountForTest(
+		const OnlineUpdateCounts &counts) {
+	return counts.switchInline + counts.switchDeferred;
+}
+
 struct SwitchUpdateExpectation {
 	int inlineSwitch = 0;
 	int deferredSwitch = 0;
@@ -2271,9 +2276,11 @@ template <typename Predicate>
 		Main::Session &pinned,
 		int pinnedExpected) {
 	return WaitForRegressionCondition([&] {
-		return stock.updates().sessionSwitchUpdatesForTest()
+		return SessionSwitchUpdateCountForTest(
+				stock.updates().onlineUpdateCountsForRegressionTest())
 				== stockExpected
-			&& pinned.updates().sessionSwitchUpdatesForTest()
+			&& SessionSwitchUpdateCountForTest(
+					pinned.updates().onlineUpdateCountsForRegressionTest())
 				== pinnedExpected;
 	});
 }
@@ -2522,9 +2529,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
-			stockToPinnedStockUpdates.total + 1,
+			SessionSwitchUpdateCountForTest(stockToPinnedStockUpdates) + 1,
 			pinned->session(),
-			stockToPinnedPinnedUpdates.total + 1)
+			SessionSwitchUpdateCountForTest(stockToPinnedPinnedUpdates) + 1)
 		|| !stockToPinnedDeferredObserved || !stockToPinnedDeferredMatches) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update each session exactly once");
@@ -2565,9 +2572,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
-			pinnedToStockStockUpdates.total + 1,
+			SessionSwitchUpdateCountForTest(pinnedToStockStockUpdates) + 1,
 			pinned->session(),
-			pinnedToStockPinnedUpdates.total + 1)
+			SessionSwitchUpdateCountForTest(pinnedToStockPinnedUpdates) + 1)
 		|| !pinnedToStockDeferredObserved || !pinnedToStockDeferredMatches) {
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update each session exactly once");
@@ -2674,9 +2681,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
-			stockBeforeQueuedSwitches.total + 2,
+			SessionSwitchUpdateCountForTest(stockBeforeQueuedSwitches) + 2,
 			pinned->session(),
-			pinnedBeforeQueuedSwitches.total + 2)
+			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2)
 		|| !queuedStockDeferredObserved || !queuedPinnedDeferredObserved
 		|| !queuedDeferredMatches) {
 		return FailChatParticipantsRegression(
@@ -2811,13 +2818,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"closed primary window remained mapped to an account");
 	}
-	const auto stockAfterClose
-		= stock->session().updates().sessionSwitchUpdatesForTest();
-	const auto pinnedAfterClose
-		= pinned->session().updates().sessionSwitchUpdatesForTest();
+	const auto stockAfterClose = SessionSwitchUpdateCountForTest(
+		stock->session().updates().onlineUpdateCountsForRegressionTest());
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForRegressionCondition([&] {
-			return stock->session().updates().sessionSwitchUpdatesForTest()
+			return SessionSwitchUpdateCountForTest(
+					stock->session().updates().onlineUpdateCountsForRegressionTest())
 				>= stockAfterClose + 1;
 		})) {
 		return FailChatParticipantsRegression(
