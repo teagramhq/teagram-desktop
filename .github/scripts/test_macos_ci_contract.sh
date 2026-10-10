@@ -24,29 +24,32 @@ reject_text() {
 }
 
 macos_group_for_event() {
-  local pr_head="$1"
-  local dispatch_pr_branch="$2"
-  local dispatch_branch="$3"
-  local ref_name="$4"
-  local branch_group
+  local pr_repo="$1"
+  local pr_head="$2"
+  local dispatch_pr_repo="$3"
+  local dispatch_pr_branch="$4"
+  local dispatch_branch="$5"
+  local ref_name="$6"
+  local repository_qualified_identity
   if [[ -n "$pr_head" ]]; then
-    branch_group="pr-$pr_head"
+    repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
-    branch_group="pr-$dispatch_pr_branch"
+    repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
   else
-    branch_group="ref-${dispatch_branch:-$ref_name}"
+    repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
   fi
-  printf 'MacOS.-%s\n' "$branch_group"
+  printf 'MacOS.-%s\n' "$repository_qualified_identity"
 }
 
 assert_pr_dispatch_group() {
-  local branch="$1"
+  local repository="$1"
+  local branch="$2"
   local pr_group
   local dispatch_group
-  pr_group="$(macos_group_for_event "$branch" '' '' '105/merge')"
-  dispatch_group="$(macos_group_for_event '' "$branch" '' 'dev')"
+  pr_group="$(macos_group_for_event "$repository" "$branch" '' '' '' '105/merge')"
+  dispatch_group="$(macos_group_for_event '' '' "$repository" "$branch" '' 'dev')"
   if [[ "$pr_group" != "$dispatch_group" ]]; then
-    printf 'PR and matching dispatch runs for %s must share a concurrency group.\n' "$branch" >&2
+    printf 'PR and matching dispatch runs for %s/%s must share a concurrency group.\n' "$repository" "$branch" >&2
     exit 1
   fi
 }
@@ -55,8 +58,8 @@ assert_pr_base_isolation() {
   local branch="$1"
   local pr_group
   local base_group
-  pr_group="$(macos_group_for_event "$branch" '' '' '105/merge')"
-  base_group="$(macos_group_for_event '' '' "$branch" 'feature')"
+  pr_group="$(macos_group_for_event 'teagramhq/teagram-desktop' "$branch" '' '' '' '105/merge')"
+  base_group="$(macos_group_for_event '' '' '' '' "$branch" 'feature')"
   if [[ "$pr_group" == "$base_group" ]]; then
     printf 'A PR from %s must not share the base branch concurrency group.\n' "$branch" >&2
     exit 1
@@ -66,16 +69,24 @@ assert_pr_base_isolation() {
 require_text "$mac_workflow" '  pull_request:'
 require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
+require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr-{0}', github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr-{0}', inputs.pull_request_branch) || format('ref-{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
 require_text "$mac_workflow" 'cancel-in-progress: true'
-assert_pr_dispatch_group 'feature/cache-refresh'
-assert_pr_dispatch_group 'dev'
-assert_pr_dispatch_group 'main'
+assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
+assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'dev'
+assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'main'
+fork_a_group="$(macos_group_for_event 'teagramhq/teagram-desktop' 'topic' '' '' '' '105/merge')"
+fork_b_group="$(macos_group_for_event 'steward/tdesktop' 'topic' '' '' '' '105/merge')"
+if [[ "$fork_a_group" == "$fork_b_group" ]]; then
+  printf 'PRs from different forks with the same branch must use separate groups.\n' >&2
+  exit 1
+fi
 assert_pr_base_isolation 'dev'
 assert_pr_base_isolation 'main'
-dev_group="$(macos_group_for_event '' '' 'dev' 'main')"
-main_group="$(macos_group_for_event '' '' 'main' 'dev')"
+dev_group="$(macos_group_for_event '' '' '' '' 'dev' 'main')"
+main_group="$(macos_group_for_event '' '' '' '' 'main' 'dev')"
 if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1
