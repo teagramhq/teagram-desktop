@@ -119,76 +119,73 @@ private:
 class Updates final {
 public:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	struct OnlineUpdateCountsForRegressionTest {
-		int total = 0;
-		int other = 0;
-		int switchInline = 0;
-		int switchDeferred = 0;
-	};
+  struct OnlineUpdateCountsForRegressionTest {
+	  int total = 0;
+	  int other = 0;
+	  int switchInline = 0;
+	  int switchDeferred = 0;
+  };
 
-	enum class OnlineUpdateCauseForRegressionTest {
-		SwitchInline,
-		SwitchDeferred,
-	};
+  enum class OnlineUpdateCauseForRegressionTest {
+	  SwitchInline,
+	  SwitchDeferred,
+  };
 #endif
 
-	explicit Updates(not_null<Main::Session*> session);
+  explicit Updates(not_null<Main::Session *> session);
 
-	[[nodiscard]] Main::Session &session() const;
-	[[nodiscard]] ApiWrap &api() const;
+  [[nodiscard]] Main::Session &session() const;
+  [[nodiscard]] ApiWrap &api() const;
 
-	void applyUpdates(
-		const MTPUpdates &updates,
-		uint64 sentMessageRandomId = 0);
-	void applyUpdatesNoPtsCheck(const MTPUpdates &updates);
-	void applyUpdateNoPtsCheck(const MTPUpdate &update);
+  void applyUpdates(const MTPUpdates &updates, uint64 sentMessageRandomId = 0);
+  void applyUpdatesNoPtsCheck(const MTPUpdates &updates);
+  void applyUpdateNoPtsCheck(const MTPUpdate &update);
 
-	void checkForSentToScheduled(const MTPUpdates &updates);
+  void checkForSentToScheduled(const MTPUpdates &updates);
 
-	[[nodiscard]] int32 pts() const;
+  [[nodiscard]] int32 pts() const;
 
-	enum class UpdateOnlineReason {
-		Regular,
-		OtherOffline,
-		SessionSwitch,
-	};
-	void updateOnline(crl::time lastNonIdleTime = 0);
-	void updateOnline(crl::time lastNonIdleTime, UpdateOnlineReason reason);
+  enum class UpdateOnlineReason {
+	  Regular,
+	  OtherOffline,
+	  SessionSwitch,
+  };
+  void updateOnline(crl::time lastNonIdleTime = 0);
+  void updateOnline(crl::time lastNonIdleTime, UpdateOnlineReason reason);
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	void updateOnlineForRegressionTest(
-		crl::time lastNonIdleTime,
-		OnlineUpdateCauseForRegressionTest cause);
-	[[nodiscard]] OnlineUpdateCountsForRegressionTest
-		onlineUpdateCountsForRegressionTest() const;
+  void updateOnlineForRegressionTest(crl::time lastNonIdleTime,
+									 OnlineUpdateCauseForRegressionTest cause);
+  [[nodiscard]] OnlineUpdateCountsForRegressionTest
+  onlineUpdateCountsForRegressionTest() const;
 #endif
-	[[nodiscard]] bool isIdle() const;
-	[[nodiscard]] rpl::producer<bool> isIdleValue() const;
-	void checkIdleFinish(crl::time lastNonIdleTime = 0);
-	bool lastWasOnline() const;
-	crl::time lastSetOnline() const;
-	bool isQuitPrevent();
+  [[nodiscard]] bool isIdle() const;
+  [[nodiscard]] rpl::producer<bool> isIdleValue() const;
+  void checkIdleFinish(crl::time lastNonIdleTime = 0);
+  bool lastWasOnline() const;
+  crl::time lastSetOnline() const;
+  bool isQuitPrevent();
 
-	bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdates &updates);
-	bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdate &update);
-	bool updateAndApply(int32 pts, int32 ptsCount);
+  bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdates &updates);
+  bool updateAndApply(int32 pts, int32 ptsCount, const MTPUpdate &update);
+  bool updateAndApply(int32 pts, int32 ptsCount);
 
-	void checkLastUpdate(bool afterSleep);
+  void checkLastUpdate(bool afterSleep);
 
-	// ms <= 0 - stop timer
-	void ptsWaiterStartTimerFor(ChannelData *channel, crl::time ms);
+  // ms <= 0 - stop timer
+  void ptsWaiterStartTimerFor(ChannelData *channel, crl::time ms);
 
-	void getDifference();
-	void requestChannelRangeDifference(not_null<History*> history);
+  void getDifference();
+  void requestChannelRangeDifference(not_null<History *> history);
 
-	void addActiveChat(rpl::producer<PeerData*> chat);
-	[[nodiscard]] bool inActiveChats(not_null<PeerData*> peer) const;
+  void addActiveChat(rpl::producer<PeerData *> chat);
+  [[nodiscard]] bool inActiveChats(not_null<PeerData *> peer) const;
 
-	[[nodiscard]] bool requestingDifference() const {
-		return _ptsWaiter.requesting();
-	}
-	[[nodiscard]] bool handlingChannelDifference() const {
-		return _handlingChannelDifference;
-	}
+  [[nodiscard]] bool requestingDifference() const {
+	  return _ptsWaiter.requesting();
+  }
+  [[nodiscard]] bool handlingChannelDifference() const {
+	  return _handlingChannelDifference;
+  }
 
 private:
 	enum class ChannelDifferenceRequest {
@@ -217,9 +214,7 @@ private:
 		MsgRange range,
 		const MTPupdates_ChannelDifference &result);
 
-	void updateOnlineImpl(
-		crl::time lastNonIdleTime,
-		UpdateOnlineReason reason);
+	void updateOnlineImpl(crl::time lastNonIdleTime, UpdateOnlineReason reason);
 	void sendPing();
 	void getDifferenceByPts();
 	void getDifferenceAfterFail();

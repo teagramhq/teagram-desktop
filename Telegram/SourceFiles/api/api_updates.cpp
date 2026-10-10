@@ -1102,8 +1102,7 @@ void Updates::updateOnline(crl::time lastNonIdleTime,
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void Updates::updateOnlineForRegressionTest(
-		crl::time lastNonIdleTime,
-		OnlineUpdateCauseForRegressionTest cause) {
+	crl::time lastNonIdleTime, OnlineUpdateCauseForRegressionTest cause) {
 	++_onlineUpdateCountsForRegressionTest.total;
 	switch (cause) {
 	case OnlineUpdateCauseForRegressionTest::SwitchInline:
@@ -1117,9 +1116,8 @@ void Updates::updateOnlineForRegressionTest(
 }
 #endif
 
-void Updates::updateOnlineImpl(
-		crl::time lastNonIdleTime,
-		UpdateOnlineReason reason) {
+void Updates::updateOnlineImpl(crl::time lastNonIdleTime,
+							   UpdateOnlineReason reason) {
 	if (!lastNonIdleTime) {
 		lastNonIdleTime = Core::App().lastNonIdleTime();
 	}

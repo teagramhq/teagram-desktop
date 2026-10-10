@@ -41,135 +41,126 @@ namespace Window {
 class Controller final : public base::has_weak_ptr {
 public:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	enum class DeferredOnlineUpdateMutationForRegressionTest {
-		None,
-		Remove,
-		Duplicate,
-	};
+  enum class DeferredOnlineUpdateMutationForRegressionTest {
+	  None,
+	  Remove,
+	  Duplicate,
+  };
 #endif
 
-	Controller();
-	Controller(SeparateId id, MsgId showAtMsgId);
-	~Controller();
+  Controller();
+  Controller(SeparateId id, MsgId showAtMsgId);
+  ~Controller();
 
-	Controller(const Controller &other) = delete;
-	Controller &operator=(const Controller &other) = delete;
+  Controller(const Controller &other) = delete;
+  Controller &operator=(const Controller &other) = delete;
 
-	void showAccount(not_null<Main::Account*> account);
+  void showAccount(not_null<Main::Account *> account);
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	void setDeferredOnlineUpdateMutationForRegressionTest(
-		DeferredOnlineUpdateMutationForRegressionTest mutation);
+  void setDeferredOnlineUpdateMutationForRegressionTest(
+	  DeferredOnlineUpdateMutationForRegressionTest mutation);
 #endif
-	[[nodiscard]] SeparateId id() const;
-	[[nodiscard]] bool isPrimary() const;
+  [[nodiscard]] SeparateId id() const;
+  [[nodiscard]] bool isPrimary() const;
 
-	[[nodiscard]] not_null<::MainWindow*> widget() {
-		return &_widget;
-	}
-	[[nodiscard]] Main::Account &account() const;
-	[[nodiscard]] Main::Session *maybeSession() const;
-	[[nodiscard]] SessionController *sessionController() const {
-		return _sessionController.get();
-	}
-	[[nodiscard]] auto sessionControllerValue() const
-		-> rpl::producer<SessionController*>;
-	[[nodiscard]] auto sessionControllerChanges() const
-		-> rpl::producer<SessionController*>;
-	[[nodiscard]] bool locked() const;
+  [[nodiscard]] not_null<::MainWindow *> widget() { return &_widget; }
+  [[nodiscard]] Main::Account &account() const;
+  [[nodiscard]] Main::Session *maybeSession() const;
+  [[nodiscard]] SessionController *sessionController() const {
+	  return _sessionController.get();
+  }
+  [[nodiscard]] auto sessionControllerValue() const
+	  -> rpl::producer<SessionController *>;
+  [[nodiscard]] auto sessionControllerChanges() const
+	  -> rpl::producer<SessionController *>;
+  [[nodiscard]] bool locked() const;
 
-	[[nodiscard]] Adaptive &adaptive() const;
+  [[nodiscard]] Adaptive &adaptive() const;
 
-	void firstShow();
-	void finishFirstShow();
+  void firstShow();
+  void finishFirstShow();
 
-	void setupPasscodeLock();
-	void clearPasscodeLock();
-	void setupSetupEmailLock();
-	void clearSetupEmailLock();
+  void setupPasscodeLock();
+  void clearPasscodeLock();
+  void setupSetupEmailLock();
+  void clearSetupEmailLock();
 
-	void showLogoutConfirmation();
+  void showLogoutConfirmation();
 
-	void showSettings();
+  void showSettings();
 
-	[[nodiscard]] int verticalShadowTop() const;
+  [[nodiscard]] int verticalShadowTop() const;
 
-	void showToast(Ui::Toast::Config &&config);
-	void showToast(TextWithEntities &&text, crl::time duration = 0);
-	void showToast(const QString &text, crl::time duration = 0);
+  void showToast(Ui::Toast::Config &&config);
+  void showToast(TextWithEntities &&text, crl::time duration = 0);
+  void showToast(const QString &text, crl::time duration = 0);
 
-	void showRightColumn(object_ptr<Ui::RpWidget> widget);
+  void showRightColumn(object_ptr<Ui::RpWidget> widget);
 
-	void showBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options,
-		anim::type animated);
-	void showLayer(
-		std::unique_ptr<Ui::LayerWidget> &&layer,
-		Ui::LayerOptions options,
-		anim::type animated = anim::type::normal);
+  void showBox(object_ptr<Ui::BoxContent> content, Ui::LayerOptions options,
+			   anim::type animated);
+  void showLayer(std::unique_ptr<Ui::LayerWidget> &&layer,
+				 Ui::LayerOptions options,
+				 anim::type animated = anim::type::normal);
 
-	void hideLayer(anim::type animated = anim::type::normal);
-	void hideSettingsAndLayer(anim::type animated = anim::type::normal);
-	bool closeLayerByBackButton();
-	[[nodiscard]] bool isLayerShown() const;
-	[[nodiscard]] rpl::producer<bool> boxShownValue() const;
+  void hideLayer(anim::type animated = anim::type::normal);
+  void hideSettingsAndLayer(anim::type animated = anim::type::normal);
+  bool closeLayerByBackButton();
+  [[nodiscard]] bool isLayerShown() const;
+  [[nodiscard]] rpl::producer<bool> boxShownValue() const;
 
-	template <
-		typename BoxType,
-		typename = std::enable_if_t<
-			std::is_base_of_v<Ui::BoxContent, BoxType>>>
-		base::weak_qptr<BoxType> show(
-			object_ptr<BoxType> content,
-			Ui::LayerOptions options = Ui::LayerOption::KeepOther,
-			anim::type animated = anim::type()) {
-		auto result = base::weak_qptr<BoxType>(content.data());
-		showBox(std::move(content), options, animated);
-		return result;
-	}
+  template <typename BoxType,
+			typename
+			= std::enable_if_t<std::is_base_of_v<Ui::BoxContent, BoxType>>>
+  base::weak_qptr<BoxType> show(object_ptr<BoxType> content,
+								Ui::LayerOptions options
+								= Ui::LayerOption::KeepOther,
+								anim::type animated = anim::type()) {
+	  auto result = base::weak_qptr<BoxType>(content.data());
+	  showBox(std::move(content), options, animated);
+	  return result;
+  }
 
-	void activate();
-	void updateIsActiveFocus();
-	void updateIsActiveBlur();
-	void updateIsActive();
-	void minimize();
-	void close();
+  void activate();
+  void updateIsActiveFocus();
+  void updateIsActiveBlur();
+  void updateIsActive();
+  void minimize();
+  void close();
 
-	void preventOrInvoke(Fn<void()> &&callback);
+  void preventOrInvoke(Fn<void()> &&callback);
 
-	void invokeForSessionController(
-		not_null<Main::Account*> account,
-		PeerData *singlePeer,
-		Fn<void(not_null<SessionController*>)> &&callback);
+  void invokeForSessionController(
+	  not_null<Main::Account *> account, PeerData *singlePeer,
+	  Fn<void(not_null<SessionController *>)> &&callback);
 
-	void openInMediaView(Media::View::OpenRequest &&request);
-	[[nodiscard]] auto openInMediaViewRequests() const
-	-> rpl::producer<Media::View::OpenRequest>;
+  void openInMediaView(Media::View::OpenRequest &&request);
+  [[nodiscard]] auto openInMediaViewRequests() const
+	  -> rpl::producer<Media::View::OpenRequest>;
 
-	[[nodiscard]] QPoint getPointForCallPanelCenter() const;
+  [[nodiscard]] QPoint getPointForCallPanelCenter() const;
 
-	using FloatDelegate = Media::Player::FloatDelegate;
-	void setDefaultFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> delegate);
-	void replaceFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> replacement);
-	void restoreFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> replacement);
-	[[nodiscard]] FloatDelegate *floatPlayerDelegate() const;
-	[[nodiscard]] auto floatPlayerDelegateValue() const
-		-> rpl::producer<FloatDelegate*>;
+  using FloatDelegate = Media::Player::FloatDelegate;
+  void setDefaultFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> delegate);
+  void replaceFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> replacement);
+  void restoreFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> replacement);
+  [[nodiscard]] FloatDelegate *floatPlayerDelegate() const;
+  [[nodiscard]] auto floatPlayerDelegateValue() const
+	  -> rpl::producer<FloatDelegate *>;
 
-	[[nodiscard]] std::shared_ptr<Ui::Show> uiShow();
+  [[nodiscard]] std::shared_ptr<Ui::Show> uiShow();
 
-	void setHighlightControlId(const QString &id);
-	[[nodiscard]] QString highlightControlId() const;
-	[[nodiscard]] bool takeHighlightControlId(const QString &id);
-	void checkHighlightControl(
-		const QString &id,
-		QWidget *widget,
-		Settings::HighlightArgs &&args);
-	void checkHighlightControl(const QString &id, QWidget *widget);
+  void setHighlightControlId(const QString &id);
+  [[nodiscard]] QString highlightControlId() const;
+  [[nodiscard]] bool takeHighlightControlId(const QString &id);
+  void checkHighlightControl(const QString &id, QWidget *widget,
+							 Settings::HighlightArgs &&args);
+  void checkHighlightControl(const QString &id, QWidget *widget);
 
-	[[nodiscard]] rpl::lifetime &lifetime();
+  [[nodiscard]] rpl::lifetime &lifetime();
 
 private:
 	struct CreateArgs {
@@ -211,7 +202,7 @@ private:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	DeferredOnlineUpdateMutationForRegressionTest
 		_nextDeferredOnlineUpdateMutationForRegressionTest
-			= DeferredOnlineUpdateMutationForRegressionTest::None;
+		= DeferredOnlineUpdateMutationForRegressionTest::None;
 #endif
 	rpl::lifetime _accountLifetime;
 	rpl::lifetime _lifetime;
