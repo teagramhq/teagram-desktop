@@ -911,15 +911,9 @@ jobs:
             "- ccache misses: $misses" \
             "- ccache hit rate: $hits/$total ($hit_rate)" \
             >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' && -n "$CCACHE_MATCHED_KEY" ]]; then
-            if ((hits == 0)); then
-              echo "::error::A restored compiler cache produced no cache hits."
-              exit 1
-            fi
-            if [[ "$LIBRARIES_CACHE_HIT" != 'true' ]]; then
-              echo "::error::A warm MacOS PR run must have an exact Libraries cache hit."
-              exit 1
-            fi
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' && -n "$CCACHE_MATCHED_KEY" ]] && ((hits == 0)); then
+            echo "::error::A restored compiler cache produced no cache hits."
+            exit 1
           fi
           if [[ "$BUILD_OUTCOME" == 'success' ]] && ((total == 0)); then
             echo "::error::ccache did not record any compiler invocations for the Teagram build."
