@@ -684,11 +684,10 @@ void SetupRows(
 	Ui::AddDividerText(container, tr::lng_settings_username_about());
 }
 
-void SetupBio(
-		not_null<Ui::VerticalLayout*> container,
-		not_null<UserData*> self,
-		not_null<Window::SessionController*> controller,
-		InformationHighlightTargets *targets) {
+void SetupBio(not_null<Ui::VerticalLayout *> container,
+			  not_null<UserData *> self,
+			  not_null<Window::SessionController *> controller,
+			  InformationHighlightTargets *targets) {
 	if (!self->session().accountBioEditSupported()) {
 		Ui::AddDivider(container);
 		return;
@@ -703,19 +702,15 @@ void SetupBio(
 		return result;
 	};
 	const auto style = Ui::AttachAsChild(container, bioStyle());
-	const auto state = Ui::AttachAsChild(
-		container,
-		Api::BioSaveEditorState(self->about()));
+	const auto state
+		= Ui::AttachAsChild(container, Api::BioSaveEditorState(self->about()));
 	const auto changed = Ui::CreateChild<rpl::event_stream<bool>>(
 		container.get());
-	const auto bio = container->add(
-		object_ptr<Ui::InputField>(
-			container,
-			*style,
-			Ui::InputField::Mode::MultiLine,
-			tr::lng_bio_placeholder(),
-			state->editorBio()),
-		st::settingsBioMargins);
+	const auto bio
+		= container->add(object_ptr<Ui::InputField>(
+							 container, *style, Ui::InputField::Mode::MultiLine,
+							 tr::lng_bio_placeholder(), state->editorBio()),
+						 st::settingsBioMargins);
 	if (targets) {
 		targets->bio = bio;
 	}
@@ -756,35 +751,34 @@ void SetupBio(
 		countdown->setTextColorOverride(
 			countLeft < 0 ? st::boxTextFgError->c : std::optional<QColor>());
 	};
-	Info::Profile::AboutValue(
-		self
-	) | rpl::on_next([=](const TextWithEntities &text) {
-		const auto wasChanged = (state->storedBio() != bio->getLastText());
-		state->setStoredBio(text.text);
-		if (wasChanged) {
-			changed->fire(state->storedBio() != bio->getLastText());
-		} else {
-			assign(text.text);
-			state->setStoredBio(bio->getLastText());
-		}
-	}, bio->lifetime());
+	Info::Profile::AboutValue(self)
+		| rpl::on_next(
+			[=](const TextWithEntities &text) {
+				const auto wasChanged
+					= (state->storedBio() != bio->getLastText());
+				state->setStoredBio(text.text);
+				if (wasChanged) {
+					changed->fire(state->storedBio() != bio->getLastText());
+				} else {
+					assign(text.text);
+					state->setStoredBio(bio->getLastText());
+				}
+			},
+			bio->lifetime());
 
 	const auto owner = &self->session();
 	const auto weakBio = QPointer<Ui::InputField>(bio);
 	const auto weakController = base::make_weak(controller.get());
 	const auto save = [=] {
 		self->session().api().saveSelfBio(
-			TextUtilities::PrepareForSending(bio->getLastText()),
-			[=] {
-				const auto controllerOwnsSession = weakController
-					&& (&weakController->session() == owner);
+			TextUtilities::PrepareForSending(bio->getLastText()), [=] {
+				const auto controllerOwnsSession
+					= weakController && (&weakController->session() == owner);
 				if (weakBio && controllerOwnsSession) {
 					const auto position = bio->textCursor().position();
 					auto restored = state->storedBio();
 					restored.replace('\n', ' ');
-					state->aboutNotSupported(
-						*bio,
-						TextWithTags{ restored, {} });
+					state->aboutNotSupported(*bio, TextWithTags{restored, {}});
 					auto cursor = bio->textCursor();
 					cursor.setPosition(position);
 					bio->setTextCursor(cursor);
@@ -801,17 +795,14 @@ void SetupBio(
 	) | rpl::on_next([=](bool changed) {
 		if (changed) {
 			const auto saved = state->scheduleDebounce();
-			base::call_delayed(kSaveBioTimeout, bio, [=] {
-				state->runDebounce(saved, save);
-			});
+			base::call_delayed(kSaveBioTimeout, bio,
+							   [=] { state->runDebounce(saved, save); });
 		} else {
 			state->markUnchanged();
 		}
 	}, bio->lifetime());
 
-	container->lifetime().add([=] {
-		state->saveOnClose(save);
-	});
+	container->lifetime().add([=] { state->saveOnClose(save); });
 
 	bio->setMaxLength(premiumLimit * 2);
 	bio->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
@@ -1238,7 +1229,7 @@ void BuildInformationSection(SectionBuilder &builder) {
 			return SearchEntry{
 				.id = u"edit/bio"_q,
 				.title = tr::lng_bio_placeholder(tr::now),
-				.keywords = { u"bio"_q, u"about"_q, u"description"_q },
+				.keywords = {u"bio"_q, u"about"_q, u"description"_q},
 			};
 		});
 	}
@@ -1506,9 +1497,9 @@ Type InformationId() {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 bool InformationBioEditorTargetPresentForRegressionTest(
-		not_null<Window::SessionController*> controller) {
-	const auto container = Ui::CreateChild<Ui::VerticalLayout>(
-		controller->widget().get());
+	not_null<Window::SessionController *> controller) {
+	const auto container
+		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
 	auto targets = InformationHighlightTargets();
 	SetupBio(container, controller->session().user(), controller, &targets);
 	const auto result = !targets.bio.isNull();

@@ -32,7 +32,7 @@ namespace Settings {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 [[nodiscard]] bool InformationBioEditorTargetPresentForRegressionTest(
-	not_null<Window::SessionController*> controller);
+	not_null<Window::SessionController *> controller);
 #endif
 
 struct AccountsEvents {

@@ -37,9 +37,8 @@ private:
 	[[nodiscard]] DispatchResult handleSection(
 		const QString &section,
 		const Context &ctx);
-	[[nodiscard]] DispatchResult executeAction(
-		const Action &action,
-		const Context &ctx);
+	[[nodiscard]] DispatchResult executeAction(const Action &action,
+											   const Context &ctx);
 
 	void showUnsupportedMessage(
 		Window::SessionController *controller,

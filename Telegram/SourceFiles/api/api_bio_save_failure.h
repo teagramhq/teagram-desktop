@@ -26,15 +26,15 @@ struct BioSaveFailureTransition {
 	bool showFallbackToast = false;
 };
 
-[[nodiscard]] inline BioSaveFailureAction ClassifyBioSaveFailure(
-		const QString &errorType) {
+[[nodiscard]] inline BioSaveFailureAction
+ClassifyBioSaveFailure(const QString &errorType) {
 	return (errorType == u"ABOUT_NOT_SUPPORTED"_q)
-		? BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry
-		: BioSaveFailureAction::KeepExistingBehavior;
+			   ? BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry
+			   : BioSaveFailureAction::KeepExistingBehavior;
 }
 
 class BioSaveRequestState final {
-public:
+  public:
 	using Generation = std::uint64_t;
 
 	[[nodiscard]] Generation begin(const QString &text) {
@@ -66,58 +66,44 @@ public:
 	}
 
 	template <typename Recovery>
-	[[nodiscard]] std::optional<BioSaveFailureTransition> failed(
-			Generation generation,
-			const QString &errorType,
-			Recovery recovery) {
+	[[nodiscard]] std::optional<BioSaveFailureTransition>
+	failed(Generation generation, const QString &errorType, Recovery recovery) {
 		if (!isCurrent(generation)) {
 			return std::nullopt;
 		}
 		const auto action = ClassifyBioSaveFailure(errorType);
-		if (action == BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry) {
+		if (action
+			== BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry) {
 			_requestedText = QString();
-			return BioSaveFailureTransition{ action, !recovery() };
+			return BioSaveFailureTransition{action, !recovery()};
 		}
-		return BioSaveFailureTransition{ action };
+		return BioSaveFailureTransition{action};
 	}
 
-private:
+  private:
 	Generation _generation = 0;
 	QString _requestedText;
-
 };
 
 class BioSaveEditorState final {
-public:
+  public:
 	explicit BioSaveEditorState(QString storedBio)
-	: _storedBio(std::move(storedBio))
-	, _editorBio(_storedBio) {
-	}
+		: _storedBio(std::move(storedBio)), _editorBio(_storedBio) {}
 
-	[[nodiscard]] const QString &storedBio() const {
-		return _storedBio;
-	}
+	[[nodiscard]] const QString &storedBio() const { return _storedBio; }
 
-	void setStoredBio(QString text) {
-		_storedBio = std::move(text);
-	}
+	void setStoredBio(QString text) { _storedBio = std::move(text); }
 
-	[[nodiscard]] const QString &editorBio() const {
-		return _editorBio;
-	}
+	[[nodiscard]] const QString &editorBio() const { return _editorBio; }
 
-	void setEditorBio(QString text) {
-		_editorBio = std::move(text);
-	}
+	void setEditorBio(QString text) { _editorBio = std::move(text); }
 
 	template <typename Field, typename Text>
 	bool aboutNotSupported(Field &field, Text text) {
 		cancelDebounce();
 		_editorBio = _storedBio;
 		using HistoryAction = typename Field::HistoryAction;
-		field.setTextWithTags(
-			std::move(text),
-			HistoryAction::Clear);
+		field.setTextWithTags(std::move(text), HistoryAction::Clear);
 		return true;
 	}
 
@@ -136,8 +122,7 @@ public:
 		return (_debounceGeneration == scheduled);
 	}
 
-	template <typename Save>
-	bool runDebounce(int scheduled, Save save) {
+	template <typename Save> bool runDebounce(int scheduled, Save save) {
 		if (!debounceIsCurrent(scheduled)) {
 			return false;
 		}
@@ -146,16 +131,13 @@ public:
 		return true;
 	}
 
-	void cancelDebounce() {
-		_debounceGeneration = 0;
-	}
+	void cancelDebounce() { _debounceGeneration = 0; }
 
 	[[nodiscard]] bool needsCloseRetry() const {
 		return (_debounceGeneration > 0);
 	}
 
-	template <typename Save>
-	bool saveOnClose(Save save) const {
+	template <typename Save> bool saveOnClose(Save save) const {
 		if (!needsCloseRetry()) {
 			return false;
 		}
@@ -163,11 +145,10 @@ public:
 		return true;
 	}
 
-private:
+  private:
 	QString _storedBio;
 	QString _editorBio;
 	int _debounceGeneration = 0;
-
 };
 
 } // namespace Api

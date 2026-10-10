@@ -5591,9 +5591,7 @@ void ApiWrap::requestBotCommonGroups(
 	}).send();
 }
 
-void ApiWrap::saveSelfBio(
-		const QString &text,
-		Fn<bool()> onAboutNotSupported) {
+void ApiWrap::saveSelfBio(const QString &text, Fn<bool()> onAboutNotSupported) {
 	if (_bio.requestId) {
 		if (text != _bio.state.requestedText()) {
 			const auto requestId = base::take(_bio.requestId);
@@ -5605,45 +5603,43 @@ void ApiWrap::saveSelfBio(
 	}
 	_bio.onAboutNotSupported = std::move(onAboutNotSupported);
 	const auto generation = _bio.state.begin(text);
-	_bio.requestId = request(MTPaccount_UpdateProfile(
-		MTP_flags(MTPaccount_UpdateProfile::Flag::f_about),
-		MTPstring(),
-		MTPstring(),
-		MTP_string(text)
-	)).done([=](const MTPUser &result) {
-		if (!_bio.state.isCurrent(generation)) {
-			return;
-		}
-		_bio.requestId = 0;
-		_bio.onAboutNotSupported = nullptr;
-		const auto completed = _bio.state.succeeded(
-			generation,
-			[=](const QString &requestedText) {
-				_session->data().processUser(result);
-				_session->user()->setAbout(requestedText);
-			});
-		Assert(completed);
-	}).fail([=](const MTP::Error &error) {
-		if (!_bio.state.isCurrent(generation)) {
-			return;
-		}
-		_bio.requestId = 0;
-		const auto onAboutNotSupported = base::take(
-			_bio.onAboutNotSupported);
-		const auto transition = _bio.state.failed(
-			generation,
-			error.type(),
-			[onAboutNotSupported] {
-				return onAboutNotSupported && onAboutNotSupported();
-			});
-		Assert(transition.has_value());
-		if (transition->showFallbackToast) {
-			for (const auto &window : _session->windows()) {
-				window->showFeatureUnavailableOnServerToast();
-				break;
-			}
-		}
-	}).send();
+	_bio.requestId
+		= request(MTPaccount_UpdateProfile(
+					  MTP_flags(MTPaccount_UpdateProfile::Flag::f_about),
+					  MTPstring(), MTPstring(), MTP_string(text)))
+			  .done([=](const MTPUser &result) {
+				  if (!_bio.state.isCurrent(generation)) {
+					  return;
+				  }
+				  _bio.requestId = 0;
+				  _bio.onAboutNotSupported = nullptr;
+				  const auto completed = _bio.state.succeeded(
+					  generation, [=](const QString &requestedText) {
+						  _session->data().processUser(result);
+						  _session->user()->setAbout(requestedText);
+					  });
+				  Assert(completed);
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  if (!_bio.state.isCurrent(generation)) {
+					  return;
+				  }
+				  _bio.requestId = 0;
+				  const auto onAboutNotSupported
+					  = base::take(_bio.onAboutNotSupported);
+				  const auto transition = _bio.state.failed(
+					  generation, error.type(), [onAboutNotSupported] {
+						  return onAboutNotSupported && onAboutNotSupported();
+					  });
+				  Assert(transition.has_value());
+				  if (transition->showFallbackToast) {
+					  for (const auto &window : _session->windows()) {
+						  window->showFeatureUnavailableOnServerToast();
+						  break;
+					  }
+				  }
+			  })
+			  .send();
 }
 
 void ApiWrap::registerStatsRequest(MTP::DcId dcId, mtpRequestId id) {

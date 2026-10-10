@@ -1463,8 +1463,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		static_cast<PeerData *>(&*pinned->session().user()));
 	const auto searchHasBioTarget = [](not_null<Main::Session*> session) {
 		const auto entries =
-			Settings::Builder::SearchRegistry::Instance().collectAll(
-				session);
+			Settings::Builder::SearchRegistry::Instance().collectAll(session);
 		return std::any_of(
 			entries.begin(),
 			entries.end(),
@@ -1911,48 +1910,34 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		auto stockBioEditorTarget = stockCapabilitiesMatch;
 		auto pinnedBioEditorTarget = pinnedCapabilitiesMatch;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-		pinnedBioEditorTarget = pinnedController
-			&& Settings::InformationBioEditorTargetPresentForRegressionTest(
-				pinnedController);
+		pinnedBioEditorTarget
+			= pinnedController
+			  && Settings::InformationBioEditorTargetPresentForRegressionTest(
+				  pinnedController);
 #endif
 		const auto bioTargetsMatch
 			= stockBioEditorTarget && !pinnedBioEditorTarget;
-		const auto matches = (stockWindow != pinnedWindow)
-			&& stockMapped
-			&& pinnedMapped
-			&& stockBound
-			&& pinnedBound
-			&& stockSessionMatches
-			&& pinnedSessionMatches
-			&& stockCapabilitiesMatch
-			&& pinnedCapabilitiesMatch
-			&& stockBioSearchMatches
-			&& pinnedBioSearchMatches
-			&& bioTargetsMatch;
+		const auto matches = (stockWindow != pinnedWindow) && stockMapped
+							 && pinnedMapped && stockBound && pinnedBound
+							 && stockSessionMatches && pinnedSessionMatches
+							 && stockCapabilitiesMatch
+							 && pinnedCapabilitiesMatch && stockBioSearchMatches
+							 && pinnedBioSearchMatches && bioTargetsMatch;
 		if (!matches) {
-			std::fprintf(
-				stderr,
-				"Window/session regression mismatch at %s: "
-				"distinct=%d mapped=%d/%d account=%d/%d "
-				"controller=%d/%d session=%d/%d gates=%d/%d "
-				"bio=%d/%d search=%d/%d active=%p\n",
-				stage,
-				stockWindow != pinnedWindow,
-				stockMapped,
-				pinnedMapped,
-				stockBound,
-				pinnedBound,
-				stockController != nullptr,
-				pinnedController != nullptr,
-				stockSessionMatches,
-				pinnedSessionMatches,
-				stockCapabilitiesMatch,
-				pinnedCapabilitiesMatch,
-				stockBioEditorTarget,
-				pinnedBioEditorTarget,
-				stockBioSearchMatches,
-				pinnedBioSearchMatches,
-				static_cast<const void *>(&domain.active()));
+			std::fprintf(stderr,
+						 "Window/session regression mismatch at %s: "
+						 "distinct=%d mapped=%d/%d account=%d/%d "
+						 "controller=%d/%d session=%d/%d gates=%d/%d "
+						 "bio=%d/%d search=%d/%d active=%p\n",
+						 stage, stockWindow != pinnedWindow, stockMapped,
+						 pinnedMapped, stockBound, pinnedBound,
+						 stockController != nullptr,
+						 pinnedController != nullptr, stockSessionMatches,
+						 pinnedSessionMatches, stockCapabilitiesMatch,
+						 pinnedCapabilitiesMatch, stockBioEditorTarget,
+						 pinnedBioEditorTarget, stockBioSearchMatches,
+						 pinnedBioSearchMatches,
+						 static_cast<const void *>(&domain.active()));
 			printCapabilities("stock account", stock->session());
 			printCapabilities("pinned account", pinned->session());
 			if (stockController) {

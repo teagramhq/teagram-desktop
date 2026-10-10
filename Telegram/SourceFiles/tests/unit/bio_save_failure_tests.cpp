@@ -15,15 +15,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 class UndoableBioField final {
-public:
+  public:
 	enum class HistoryAction {
 		Clear,
 		NewEntry,
 	};
 
-	explicit UndoableBioField(QString text)
-	: _text(std::move(text)) {
-	}
+	explicit UndoableBioField(QString text) : _text(std::move(text)) {}
 
 	void type(QString text) {
 		_undo.push_back(_text);
@@ -48,49 +46,40 @@ public:
 		return true;
 	}
 
-	[[nodiscard]] const QString &text() const {
-		return _text;
-	}
+	[[nodiscard]] const QString &text() const { return _text; }
 
-private:
+  private:
 	QString _text;
 	std::vector<QString> _undo;
-
 };
 
 class ControlledBioApi final {
-public:
+  public:
 	void save(Api::BioSaveRequestState &state, const QString &text) {
 		++_requestCount;
 		_generation = state.begin(text);
 	}
 
-	[[nodiscard]] auto fail(
-			Api::BioSaveRequestState &state,
-			Api::BioSaveEditorState &editor,
-			UndoableBioField &field,
-			const QString &errorType) {
+	[[nodiscard]] auto fail(Api::BioSaveRequestState &state,
+							Api::BioSaveEditorState &editor,
+							UndoableBioField &field, const QString &errorType) {
 		return state.failed(_generation, errorType, [&] {
 			return editor.aboutNotSupported(field, editor.storedBio());
 		});
 	}
 
-	[[nodiscard]] bool succeed(
-			Api::BioSaveRequestState &state,
-			Api::BioSaveEditorState &editor) {
+	[[nodiscard]] bool succeed(Api::BioSaveRequestState &state,
+							   Api::BioSaveEditorState &editor) {
 		return state.succeeded(_generation, [&](const QString &text) {
 			editor.setStoredBio(text);
 		});
 	}
 
-	[[nodiscard]] int requestCount() const {
-		return _requestCount;
-	}
+	[[nodiscard]] int requestCount() const { return _requestCount; }
 
-private:
+  private:
 	Api::BioSaveRequestState::Generation _generation = 0;
 	int _requestCount = 0;
-
 };
 
 } // namespace
@@ -106,27 +95,21 @@ TEST_CASE(AboutNotSupportedBioFailureRestoresAndCancelsPendingSave) {
 	auto api = ControlledBioApi();
 
 	api.save(request, editor.editorBio());
-	const auto transition = api.fail(
-		request,
-		editor,
-		field,
-		u"ABOUT_NOT_SUPPORTED"_q);
+	const auto transition
+		= api.fail(request, editor, field, u"ABOUT_NOT_SUPPORTED"_q);
 
 	CHECK(transition.has_value());
 	CHECK(transition->action
-		== Api::BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry);
+		  == Api::BioSaveFailureAction::RestoreStoredValueWithoutWriteOrRetry);
 	CHECK(!transition->showFallbackToast);
 	CHECK(request.requestedText().isEmpty());
 	CHECK_EQ(editor.storedBio(), savedBio);
 	CHECK_EQ(editor.editorBio(), savedBio);
 	CHECK_EQ(field.text(), savedBio);
 	CHECK(!field.undo());
-	CHECK(!editor.runDebounce(scheduled, [&] {
-		api.save(request, editor.editorBio());
-	}));
-	CHECK(!editor.saveOnClose([&] {
-		api.save(request, editor.editorBio());
-	}));
+	CHECK(!editor.runDebounce(scheduled,
+							  [&] { api.save(request, editor.editorBio()); }));
+	CHECK(!editor.saveOnClose([&] { api.save(request, editor.editorBio()); }));
 	CHECK_EQ(api.requestCount(), 1);
 }
 
@@ -141,14 +124,12 @@ TEST_CASE(OtherBioSaveFailuresKeepTheDraftAndPendingSave) {
 	auto api = ControlledBioApi();
 
 	api.save(request, editor.editorBio());
-	const auto transition = api.fail(
-		request,
-		editor,
-		field,
-		u"ABOUT_INVALID"_q);
+	const auto transition
+		= api.fail(request, editor, field, u"ABOUT_INVALID"_q);
 
 	CHECK(transition.has_value());
-	CHECK(transition->action == Api::BioSaveFailureAction::KeepExistingBehavior);
+	CHECK(transition->action
+		  == Api::BioSaveFailureAction::KeepExistingBehavior);
 	CHECK(!transition->showFallbackToast);
 	CHECK_EQ(request.requestedText(), u"draft"_q);
 	CHECK_EQ(editor.storedBio(), savedBio);
