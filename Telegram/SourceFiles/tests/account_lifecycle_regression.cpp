@@ -2952,7 +2952,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(stockToPinnedPinnedUpdates) + 1)
 		|| !stockToPinnedDeferredObserved || !stockToPinnedDeferredMatches) {
 		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update each session exactly once");
+			"stock-to-pinned switch did not update the previous session once");
 	}
 	const auto pinnedToStockStockUpdates
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
@@ -2995,7 +2995,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(pinnedToStockPinnedUpdates) + 1)
 		|| !pinnedToStockDeferredObserved || !pinnedToStockDeferredMatches) {
 		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update each session exactly once");
+			"pinned-to-stock switch did not update the previous session once");
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
