@@ -1029,8 +1029,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 }
 
 [[nodiscard]] bool WaitForOnlineUpdateCalls(
-		Main::Session &session,
-		int expected) {
+	Main::Session &session,
+	int expected) {
 	auto loop = QEventLoop();
 	auto timeout = QTimer();
 	auto poll = QTimer();
