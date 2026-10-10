@@ -1232,7 +1232,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			&& (session.aiComposeSupported() == supported)
 			&& (session.serverTranslationSupported() == supported);
 	};
-	const auto pinnedPeer = not_null<PeerData*>(
+	const auto pinnedUserPeer = not_null<PeerData*>(
 		static_cast<PeerData*>(&*pinned->session().user()));
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
@@ -1591,12 +1591,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		if (!customFirst) {
 			Export::Manager manager;
-			manager.start(pinnedPeer);
+			manager.start(pinnedUserPeer);
 			if (manager.inProgress()
 				|| &domain.active() != first.get()) {
 				return false;
 			}
-			manager.startTopic(pinnedPeer, MsgId(1), QString());
+			manager.startTopic(pinnedUserPeer, MsgId(1), QString());
 			if (manager.inProgress()
 				|| &domain.active() != first.get()) {
 				return false;
@@ -1608,7 +1608,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		} else {
 			Export::Manager manager;
-			manager.start(pinnedPeer);
+			manager.start(pinnedUserPeer);
 			if (manager.inProgress()
 				|| &domain.active() != first.get()) {
 				return false;
