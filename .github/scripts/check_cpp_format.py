@@ -307,7 +307,7 @@ def main() -> int:
             manifest["errors"] = errors
         else:
             status = 0
-    except Exception as error:  # Keep failure details and SHA range in the retained evidence.
+    except Exception as error:
         manifest["error"] = str(error)
         print(f"::error::{error}")
     finally:
