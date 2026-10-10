@@ -36,6 +36,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
 #include "settings/sections/settings_folders.h"
+#include "settings/sections/settings_information.h"
+#include "settings/settings_builder.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
@@ -1454,10 +1456,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					 && (session.passportSupported() == supported)
 					 && (session.aiComposeSupported() == supported)
 					 && (session.serverTranslationSupported() == supported)
-					 && (session.sharedFoldersSupported() == supported);
+					 && (session.sharedFoldersSupported() == supported)
+					 && (session.accountBioEditSupported() == supported);
 		  };
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
+	const auto searchHasBioTarget = [](not_null<Main::Session *> session) {
+		const auto entries
+			= Settings::Builder::SearchRegistry::Instance().collectAll(session);
+		return std::any_of(entries.begin(), entries.end(),
+			[](const auto &entry) {
+				return entry.id == u"edit/bio"_q;
+			});
+	};
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1859,15 +1870,23 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		domain.activate(stock);
 	});
-	const auto printCapabilities = [](const char *name,
-									  const Main::Session &session) {
-		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d\n", name,
-					 session.callsSupported(), session.botAppsSupported(),
-					 session.paidFeaturesSupported(),
-					 session.storiesSupported(), session.exportSupported(),
-					 session.passportSupported(), session.aiComposeSupported(),
-					 session.serverTranslationSupported(),
-					 session.sharedFoldersSupported());
+	const auto printCapabilities = [](
+		const char *name,
+		const Main::Session &session) {
+		std::fprintf(
+			stderr,
+			"%s capabilities=%d%d%d%d%d%d%d%d%d%d\n",
+			name,
+			session.callsSupported(),
+			session.botAppsSupported(),
+			session.paidFeaturesSupported(),
+			session.storiesSupported(),
+			session.exportSupported(),
+			session.passportSupported(),
+			session.aiComposeSupported(),
+			session.serverTranslationSupported(),
+			session.sharedFoldersSupported(),
+			session.accountBioEditSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -1876,34 +1895,45 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto pinnedMapped = app.separateWindowFor(pinned) == pinnedWindow;
 		const auto stockBound = &stockWindow->account() == stock.get();
 		const auto pinnedBound = &pinnedWindow->account() == pinned.get();
-		const auto stockSessionMatches
-			= stockController
-			  && (&stockController->session() == &stock->session());
-		const auto pinnedSessionMatches
-			= pinnedController
-			  && (&pinnedController->session() == &pinned->session());
-		const auto stockCapabilitiesMatch
-			= stockController
-			  && capabilitiesMatch(stockController->session(), true);
-		const auto pinnedCapabilitiesMatch
-			= pinnedController
-			  && capabilitiesMatch(pinnedController->session(), false);
+		const auto stockSessionMatches = stockController
+			&& (&stockController->session() == &stock->session());
+		const auto pinnedSessionMatches = pinnedController
+			&& (&pinnedController->session() == &pinned->session());
+		const auto stockCapabilitiesMatch = stockController
+			&& capabilitiesMatch(stockController->session(), true);
+		const auto pinnedCapabilitiesMatch = pinnedController
+			&& capabilitiesMatch(pinnedController->session(), false);
+		const auto stockBioSearchMatches
+			= searchHasBioTarget(&stock->session());
+		const auto pinnedBioSearchMatches
+			= !searchHasBioTarget(&pinned->session());
 		const auto matches = (stockWindow != pinnedWindow) && stockMapped
 							 && pinnedMapped && stockBound && pinnedBound
 							 && stockSessionMatches && pinnedSessionMatches
 							 && stockCapabilitiesMatch
-							 && pinnedCapabilitiesMatch;
+							 && pinnedCapabilitiesMatch && stockBioSearchMatches
+							 && pinnedBioSearchMatches;
 		if (!matches) {
 			std::fprintf(
 				stderr,
 				"Window/session regression mismatch at %s: "
 				"distinct=%d mapped=%d/%d account=%d/%d "
-				"controller=%d/%d session=%d/%d gates=%d/%d active=%p\n",
-				stage, stockWindow != pinnedWindow, stockMapped, pinnedMapped,
-				stockBound, pinnedBound, stockController != nullptr,
-				pinnedController != nullptr, stockSessionMatches,
-				pinnedSessionMatches, stockCapabilitiesMatch,
+				"controller=%d/%d session=%d/%d gates=%d/%d "
+				"search=%d/%d active=%p\n",
+				stage,
+				stockWindow != pinnedWindow,
+				stockMapped,
+				pinnedMapped,
+				stockBound,
+				pinnedBound,
+				stockController != nullptr,
+				pinnedController != nullptr,
+				stockSessionMatches,
+				pinnedSessionMatches,
+				stockCapabilitiesMatch,
 				pinnedCapabilitiesMatch,
+				stockBioSearchMatches,
+				pinnedBioSearchMatches,
 				static_cast<const void *>(&domain.active()));
 			printCapabilities("stock account", stock->session());
 			printCapabilities("pinned account", pinned->session());
@@ -2068,12 +2098,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
-	if (!windowsMatch("initial separate windows") || !activateAndCheck(false)
-		|| !activateAndCheck(true)) {
-		return FailChatParticipantsRegression(
-			"session feature capabilities crossed account or window "
-			"boundaries");
-	}
 	const auto pinnedController = pinnedWindow->sessionController();
 	const auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
@@ -2082,6 +2106,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"test windows lost their owning sessions before folder smoke "
 			"tests");
+	}
+	if (!windowsMatch("initial separate windows")
+		|| !activateAndCheck(false)
+		|| !activateAndCheck(true)) {
+		return FailChatParticipantsRegression(
+			"session feature capabilities crossed account or window boundaries");
 	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	if (pinnedController->session()
@@ -2169,6 +2199,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"ordinary folder create, rename, save, or remove did not stay "
 			"in its owning session");
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const auto stockBioEditorTarget
+		= Settings::InformationBioEditorTargetPresentForRegressionTest(
+			stockController);
+	const auto pinnedBioEditorTarget
+		= Settings::InformationBioEditorTargetPresentForRegressionTest(
+			pinnedController);
+	if (!stockBioEditorTarget || pinnedBioEditorTarget) {
+		std::fprintf(stderr,
+			"Bio editor target mismatch: stock=%d pinned=%d\n",
+			stockBioEditorTarget,
+			pinnedBioEditorTarget);
+		return FailChatParticipantsRegression(
+			"bio editor target did not follow account support");
+	}
+#endif
 
 	const auto actionChatId = ChatId(1052);
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
