@@ -287,6 +287,9 @@ public:
 	[[nodiscard]] int fieldCharacterCount() const;
 
 	[[nodiscard]] TextWithEntities prepareTextForEditMsg() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void triggerAiApplyInPlaceForRegressionTest(const QString &text);
+#endif
 
 	void applyCloudDraft();
 	void applyDraft(
