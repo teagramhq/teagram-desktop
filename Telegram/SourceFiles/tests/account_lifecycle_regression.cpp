@@ -2639,6 +2639,20 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto context = QVariant::fromValue(ClickHandlerContext{
 		.sessionWindow = base::make_weak(controller),
 	});
+	const auto showsSettings = [&](Settings::Type expected) {
+		const auto widgets = controller->content()->findChildren<QWidget*>();
+		return std::any_of(
+			widgets.cbegin(),
+			widgets.cend(),
+			[&](QWidget *widget) {
+				const auto wrapped = dynamic_cast<Info::WrapWidget*>(widget);
+				return wrapped
+					&& (wrapped->controller()->section().type()
+						== Info::Section::Type::Settings)
+					&& (wrapped->controller()->section().settingsType()
+						== expected);
+			});
+	};
 	auto settingLinkNumber = 0;
 	for (const auto &url : {
 			u"tg://settings/privacy/calls"_q,
@@ -2647,6 +2661,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 			u"tg://settings/privacy/calls/p2p"_q,
 			u"tg://settings/privacy/calls/p2p/never"_q,
 			u"tg://settings/privacy/calls/p2p/always"_q,
+			u"tg://settings/calls"_q,
 			u"tg://settings/calls/all"_q,
 			u"tg://settings/calls/start-call"_q,
 		}) {
@@ -2665,38 +2680,11 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 				SessionNavigationRegressionEvent>{
 					SessionNavigationRegressionEvent::FeatureUnavailableToast,
 				}
+			|| !CallStartEffectsStayedQuiet(events)
 			|| controller->content()->peer() != channel.get()
 			|| window->isLayerShown()) {
 			return false;
 		}
-	}
-
-	ResetCallStartRegressionForTest();
-	ReportCallRegressionCheckpoint("calls settings begin");
-	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
-		return false;
-	}
-	QCoreApplication::processEvents();
-	ReportCallRegressionCheckpoint("calls settings events processed");
-	const auto settingsEvents = GetCallStartRegressionSnapshotForTest();
-	const auto showsSettings = [&](Settings::Type expected) {
-		const auto widgets = controller->content()->findChildren<QWidget*>();
-		return std::any_of(
-			widgets.cbegin(),
-			widgets.cend(),
-			[&](QWidget *widget) {
-				const auto wrapped = dynamic_cast<Info::WrapWidget*>(widget);
-				return wrapped
-					&& (wrapped->controller()->section().type()
-						== Info::Section::Type::Settings)
-					&& (wrapped->controller()->section().settingsType()
-						== expected);
-			});
-	};
-	if (!settingsEvents.navigationEvents.empty()
-		|| !showsSettings(Settings::CallsId())
-		|| window->isLayerShown()) {
-		return false;
 	}
 
 	ResetCallStartRegressionForTest();
@@ -2708,6 +2696,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	ReportCallRegressionCheckpoint("device settings events processed");
 	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
 	return devicesSettingsEvents.navigationEvents.empty()
+		&& CallStartEffectsStayedQuiet(devicesSettingsEvents)
 		&& showsSettings(Settings::SessionsId())
 		&& !window->isLayerShown();
 }

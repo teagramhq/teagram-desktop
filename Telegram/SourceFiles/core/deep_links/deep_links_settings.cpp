@@ -1721,7 +1721,17 @@ void RegisterSettingsHandlers(Router &router) {
 
 	router.add(u"settings"_q, {
 		.path = u"calls"_q,
-		.action = SettingsSection{ ::Settings::CallsId() },
+		.action = CodeBlock{ [](const Context &ctx) {
+			if (!ctx.controller) {
+				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
+			}
+			ctx.controller->showSettings(::Settings::CallsId());
+			return Result::Handled;
+		}},
 	});
 
 	router.add(u"settings"_q, {
