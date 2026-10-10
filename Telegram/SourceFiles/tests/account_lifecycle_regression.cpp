@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_chat_filters.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
@@ -31,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
+#include "settings/sections/settings_folders.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
@@ -199,8 +201,20 @@ RunRefusedDownloadHistoryRegression(not_null<Main::Session *> session,
 	return !published && !loaded;
 }
 
+[[nodiscard]] bool FixtureContainsOnlyMarker(const QString &path) {
+	const auto entries = QDir(path).entryList(
+		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+		QDir::NoSort);
+	if (entries != QStringList{"marker"}) {
+		return false;
+	}
+	auto marker = QFile(path + "/marker");
+	return marker.open(QIODevice::ReadOnly)
+		   && marker.readAll() == "synthetic protected fixture";
+}
+
 [[nodiscard]] bool
-SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
+PrepareProtectedCacheFixtures(ProtectedCacheFixtures *fixtures) {
 	if (!Core::MacProtectedPath::IntegrationTestActive()) {
 		return true;
 	}
@@ -218,7 +232,42 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	fixtures->openedCache = fixtures->root + "/opened-cache";
 	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
-	return true;
+	for (const auto &path : {
+			 fixtures->cacheRoot,
+			 fixtures->mediaCacheRoot,
+			 fixtures->cacheLeaf,
+			 fixtures->mediaCacheLeaf,
+			 fixtures->openedCache,
+			 fixtures->openedMediaCache,
+			 fixtures->cleanupRoot,
+		 }) {
+		if (!QDir().mkpath(path)
+			|| !WriteFixtureFile(path + "/marker",
+								 "synthetic protected fixture")) {
+			return false;
+		}
+	}
+	return WriteFixtureFile(fixtures->cleanupRoot + "/unrecognized-legacy-file",
+							"legacy bytes");
+}
+
+[[nodiscard]] bool FixtureContainsCleanupFiles(const QString &path) {
+	const auto entries = QDir(path).entryList(
+		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+		QDir::Name);
+	if (entries
+		!= QStringList{
+			"marker",
+			"unrecognized-legacy-file",
+		}) {
+		return false;
+	}
+	auto marker = QFile(path + "/marker");
+	auto legacy = QFile(path + "/unrecognized-legacy-file");
+	return marker.open(QIODevice::ReadOnly)
+		   && marker.readAll() == "synthetic protected fixture"
+		   && legacy.open(QIODevice::ReadOnly)
+		   && legacy.readAll() == "legacy bytes";
 }
 
 [[nodiscard]] bool
@@ -238,7 +287,6 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	struct InitialState {
 		bool completed = false;
-		bool collectorCalled = false;
 	};
 	const auto initialState = std::make_shared<InitialState>();
 	const auto initialLoop = std::make_shared<QEventLoop>();
@@ -248,10 +296,7 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 					 &QEventLoop::quit);
 	Storage::ClearLegacyFilesGuarded(
 		initialAlias + '/',
-		[initialState](FnMut<void(::base::flat_set<QString> &&)> then) {
-			initialState->collectorCalled = true;
-			then({});
-		},
+		[](FnMut<void(::base::flat_set<QString> &&)> then) { then({}); },
 		[=] {
 			initialState->completed = true;
 			initialLoop->quit();
@@ -262,7 +307,8 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	initialTimer->stop();
 	const auto initialRetained
-		= initialState->completed && !initialState->collectorCalled;
+		= initialState->completed
+		  && FixtureContainsCleanupFiles(fixtures.cleanupRoot);
 	QFile::remove(initialAlias);
 	if (!initialRetained) {
 		return false;
@@ -298,12 +344,13 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 		loop->exec();
 	}
 	timer->stop();
+	const auto protectedUnchanged
+		= FixtureContainsCleanupFiles(fixtures.cleanupRoot);
 	auto originalContents = QFile(originalFile);
 	const auto originalRetained = QFileInfo::exists(originalFile);
-	return state->swapped && state->completed
+	return state->swapped && state->completed && protectedUnchanged
 		   && originalRetained && originalContents.open(QIODevice::ReadOnly)
-		   && originalContents.readAll() == "legacy bytes"
-		   && QFileInfo(base).isSymLink();
+		   && originalContents.readAll() == "legacy bytes";
 }
 
 [[nodiscard]] std::shared_ptr<MTP::details::RSAPublicKey>
@@ -813,6 +860,26 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 	return {};
 }
 
+[[nodiscard]] bool CopyCacheVersionFiles(const QString &source,
+										 const QString &destination) {
+	const auto files = QDir(source).entryList(
+		QDir::Files | QDir::Hidden | QDir::System, QDir::Name);
+	for (const auto &file : files) {
+		if (file != "marker"
+			&& !QFile::copy(QDir(source).filePath(file),
+							QDir(destination).filePath(file))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] bool FixtureMarkerIsIntact(const QString &path) {
+	auto marker = QFile(path + "/marker");
+	return marker.open(QIODevice::ReadOnly)
+		   && marker.readAll() == "synthetic protected fixture";
+}
+
 [[nodiscard]] bool
 RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 								  CacheGetter cache, CacheClearer clearCaches,
@@ -840,6 +907,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto active = ActiveCacheVersionPath(path);
 	const auto saved = active + ".guard-test-original";
 	if (active.isEmpty() || QFileInfo::exists(saved)
+		|| !FixtureMarkerIsIntact(fixture)
+		|| !CopyCacheVersionFiles(active, fixture)
 		|| !QDir().rename(active, saved)) {
 		return false;
 	}
@@ -853,6 +922,9 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (!QFile::link(fixture, active)) {
 		return false;
 	}
+	const auto fixtureEntries = QDir(fixture).entryList(
+		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+		QDir::Name);
 	const auto readerRefused = cacheRefusal();
 	const auto read = AwaitCacheCallback<QByteArray>(
 		[&](auto done) { cache().get(seedKey, std::move(done)); });
@@ -864,6 +936,12 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		});
 	clearCaches();
 	cache().sync();
+	const auto unchanged
+		= (fixtureEntries
+		   == QDir(fixture).entryList(QDir::AllEntries | QDir::Hidden
+										  | QDir::System | QDir::NoDotAndDotDot,
+									  QDir::Name))
+		  && FixtureMarkerIsIntact(fixture);
 	const auto writeRefused
 		= write && (write->type != Storage::Cache::Error::Type::None);
 	const auto aliasRemoved = QFile::remove(active);
@@ -871,13 +949,13 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	restored = aliasRemoved && originalRestored;
 	cache().sync();
 	const auto passed
-		= readerRefused && readRefused && writeRefused && restored;
+		= readerRefused && readRefused && writeRefused && unchanged && restored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
 			"Post-open cache regression failed: reader=%d read=%d write=%d "
-			"restored=%d path=%s.\n",
-			readerRefused, readRefused, writeRefused, restored,
+			"fixture=%d restored=%d path=%s.\n",
+			readerRefused, readRefused, writeRefused, unchanged, restored,
 			qPrintable(path));
 	}
 	return passed;
@@ -1028,28 +1106,29 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return 1;
 }
 
-[[nodiscard]] bool WaitForOnlineUpdateCalls(
-	Main::Session &session,
-	int expected) {
+[[nodiscard]] bool WaitForMainQueueBarrier() {
+	struct State {
+		QEventLoop *loop = nullptr;
+		bool active = true;
+		bool completed = false;
+	};
+	const auto state = std::make_shared<State>();
 	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	auto poll = QTimer();
-	timeout.setSingleShot(true);
-	poll.setInterval(10);
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-		if (session.updates().onlineUpdateCallsForRegressionTest() >= expected) {
-			loop.quit();
+	state->loop = &loop;
+	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+	crl::on_main([state] {
+		if (!state->active || state->completed || !state->loop) {
+			return;
 		}
+		state->completed = true;
+		state->loop->quit();
 	});
-	if (session.updates().onlineUpdateCallsForRegressionTest() < expected) {
-		poll.start();
-		timeout.start(1500);
+	if (!state->completed) {
 		loop.exec();
 	}
-	poll.stop();
-	timeout.stop();
-	return (session.updates().onlineUpdateCallsForRegressionTest() == expected);
+	state->active = false;
+	state->loop = nullptr;
+	return state->completed;
 }
 
 [[nodiscard]] int
@@ -1109,7 +1188,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (Core::MacProtectedPath::CheckCachePath(
 				stockCachePath, "Tests::ProtectedCache::root")
 			|| Core::MacProtectedPath::CheckCachePath(
-				stockMediaCachePath, "Tests::ProtectedCache::media-root")) {
+				stockMediaCachePath, "Tests::ProtectedCache::media-root")
+			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
+			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
 			return FailChatParticipantsRegression(
 				"authenticated session accessed a protected cache root");
 		}
@@ -1166,17 +1247,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch = [](const Main::Session &session,
-								  bool supported) {
-		return (session.callsSupported() == supported)
-			&& (session.botAppsSupported() == supported)
-			&& (session.paidFeaturesSupported() == supported)
-			&& (session.storiesSupported() == supported)
-			&& (session.exportSupported() == supported)
-			&& (session.passportSupported() == supported)
-			&& (session.aiComposeSupported() == supported)
-			&& (session.serverTranslationSupported() == supported);
-	};
+	const auto capabilitiesMatch
+		= [](const Main::Session &session, bool supported) {
+			  return (session.callsSupported() == supported)
+					 && (session.botAppsSupported() == supported)
+					 && (session.paidFeaturesSupported() == supported)
+					 && (session.storiesSupported() == supported)
+					 && (session.exportSupported() == supported)
+					 && (session.passportSupported() == supported)
+					 && (session.aiComposeSupported() == supported)
+					 && (session.serverTranslationSupported() == supported)
+					 && (session.sharedFoldersSupported() == supported);
+		  };
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -1189,61 +1271,65 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
-	QCoreApplication::processEvents();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the initial session switch");
+	}
 	const auto stockToPinnedStockUpdates
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto stockToPinnedPinnedUpdates
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedStockUpdates
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedPinnedUpdates + 1) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockToPinnedStockUpdates
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update only the shown session inline");
+			"stock-to-pinned switch did not update only the shown session "
+			"inline");
 	}
-	if (!WaitForOnlineUpdateCalls(
-			stock->session(), stockToPinnedStockUpdates + 1)
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the stock-to-pinned switch");
+	}
+	if (stock->session().updates().sessionSwitchUpdatesForTest()
 			!= stockToPinnedStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockToPinnedPinnedUpdates + 1) {
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != stockToPinnedPinnedUpdates + 1) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned switch did not update each session exactly once");
 	}
 	const auto pinnedToStockStockUpdates
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedToStockPinnedUpdates
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockStockUpdates + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedToStockPinnedUpdates) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedToStockStockUpdates + 1
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedToStockPinnedUpdates) {
 		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update only the shown session inline");
+			"pinned-to-stock switch did not update only the shown session "
+			"inline");
 	}
-	const auto pinnedToStockStockReady = WaitForOnlineUpdateCalls(
-		stock->session(), pinnedToStockStockUpdates + 1);
-	const auto pinnedToStockPinnedReady = WaitForOnlineUpdateCalls(
-		pinned->session(), pinnedToStockPinnedUpdates + 1);
-	const auto pinnedToStockStockObserved
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
-	const auto pinnedToStockPinnedObserved
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
-	if (!pinnedToStockStockReady || !pinnedToStockPinnedReady
-		|| pinnedToStockStockObserved != pinnedToStockStockUpdates + 1
-		|| pinnedToStockPinnedObserved != pinnedToStockPinnedUpdates + 1) {
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after the pinned-to-stock switch");
+	}
+	const auto stockAfterPinnedToStock
+		= stock->session().updates().sessionSwitchUpdatesForTest();
+	const auto pinnedAfterPinnedToStock
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
+	if (stockAfterPinnedToStock != pinnedToStockStockUpdates + 1
+		|| pinnedAfterPinnedToStock != pinnedToStockPinnedUpdates + 1) {
 		std::fprintf(
 			stderr,
-			"Pinned-to-stock online updates: stock expected=%d actual=%d "
-			"pinned expected=%d actual=%d\n",
-			pinnedToStockStockUpdates + 1,
-			pinnedToStockStockObserved,
-			pinnedToStockPinnedUpdates + 1,
-			pinnedToStockPinnedObserved);
+			"Pinned-to-stock session-switch updates: stock=%d expected=%d "
+			"pinned=%d expected=%d\n",
+			stockAfterPinnedToStock, pinnedToStockStockUpdates + 1,
+			pinnedAfterPinnedToStock, pinnedToStockPinnedUpdates + 1);
 		return FailChatParticipantsRegression(
 			"pinned-to-stock switch did not update each session exactly once");
 	}
@@ -1261,41 +1347,41 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"previous-session teardown fixture did not share the stock user id");
 	}
 	const auto stockBeforeQueuedSwitches
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedBeforeQueuedSwitches
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
 	const auto discardedBeforeQueuedSwitches
-		= discarded->session().updates().onlineUpdateCallsForRegressionTest();
+		= discarded->session().updates().sessionSwitchUpdatesForTest();
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockBeforeQueuedSwitches
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().sessionSwitchUpdatesForTest()
+			   != discardedBeforeQueuedSwitches) {
 		return FailChatParticipantsRegression(
 			"queued stock-to-pinned switch missed its inline session update");
 	}
 	primary->showAccount(discarded);
 	if (primary->maybeSession() != &discarded->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches + 1) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockBeforeQueuedSwitches
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().sessionSwitchUpdatesForTest()
+			   != discardedBeforeQueuedSwitches + 1) {
 		return FailChatParticipantsRegression(
 			"queued pinned-to-teardown switch missed its inline session update");
 	}
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches + 1
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 1
-		|| discarded->session().updates().onlineUpdateCallsForRegressionTest()
-			!= discardedBeforeQueuedSwitches + 1) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockBeforeQueuedSwitches + 1
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeQueuedSwitches + 1
+		|| discarded->session().updates().sessionSwitchUpdatesForTest()
+			   != discardedBeforeQueuedSwitches + 1) {
 		return FailChatParticipantsRegression(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
@@ -1304,17 +1390,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	const auto stockQueuedSwitchReady = WaitForOnlineUpdateCalls(
-		stock->session(), stockBeforeQueuedSwitches + 2);
-	const auto pinnedQueuedSwitchReady = WaitForOnlineUpdateCalls(
-		pinned->session(), pinnedBeforeQueuedSwitches + 2);
-	if (!stockQueuedSwitchReady || !pinnedQueuedSwitchReady
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeQueuedSwitches + 2
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeQueuedSwitches + 2) {
+	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
-			"queued live and destroyed-session updates reached the wrong sessions");
+			"main-thread queue did not drain after the queued session "
+			"switches");
+	}
+	if (stock->session().updates().sessionSwitchUpdatesForTest()
+			!= stockBeforeQueuedSwitches + 2
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeQueuedSwitches + 2) {
+		return FailChatParticipantsRegression(
+			"queued live and destroyed-session updates reached the wrong "
+			"sessions");
 	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
@@ -1331,15 +1418,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// returning a window bound to the account it was asked for, and every
 	// window must stay registered under its own id.
 	const auto stockBeforeCollision
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedBeforeCollision
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
 	primary->showAccount(pinned);
 	const auto stockLookup = app.windowFor(stock);
 	const auto pinnedLookup = app.windowFor(pinned);
 	if (primary->maybeSession() != &stock->session()
-		|| app.activePrimaryWindow() != pinnedWindow
-		|| stockLookup != primary
+		|| app.activePrimaryWindow() != pinnedWindow || stockLookup != primary
 		|| pinnedLookup != pinnedWindow
 		|| &stockLookup->account() != stock.get()
 		|| &pinnedLookup->account() != pinned.get()
@@ -1347,10 +1433,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(pinned) != pinnedWindow
 		|| app.separateWindowFor(primary->id()) != primary
 		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeCollision
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeCollision) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockBeforeCollision
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeCollision) {
 		return FailChatParticipantsRegression(
 			"primary switch to an account owning a window left an account "
 			"lookup on a window bound to another account");
@@ -1387,15 +1473,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"blank window fixture was not mapped before the close");
 	}
 	const auto stockBeforeCloseSwitch
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedBeforeCloseSwitch
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
 	primary->showAccount(pinned);
 	if (primary->maybeSession() != &pinned->session()
-		|| stock->session().updates().onlineUpdateCallsForRegressionTest()
-			!= stockBeforeCloseSwitch
-		|| pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			!= pinnedBeforeCloseSwitch + 1) {
+		|| stock->session().updates().sessionSwitchUpdatesForTest()
+			   != stockBeforeCloseSwitch
+		|| pinned->session().updates().sessionSwitchUpdatesForTest()
+			   != pinnedBeforeCloseSwitch + 1) {
 		return FailChatParticipantsRegression(
 			"stock-to-pinned close switch missed its inline session update");
 	}
@@ -1417,23 +1503,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"closed primary window remained mapped to an account");
 	}
 	const auto stockAfterClose
-		= stock->session().updates().onlineUpdateCallsForRegressionTest();
+		= stock->session().updates().sessionSwitchUpdatesForTest();
 	const auto pinnedAfterClose
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest();
-	const auto stockCloseUpdateReady = WaitForOnlineUpdateCalls(
-		stock->session(), stockAfterClose + 1);
+		= pinned->session().updates().sessionSwitchUpdatesForTest();
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after closing the primary window");
+	}
 	const auto stockDelivered
-		= stock->session().updates().onlineUpdateCallsForRegressionTest()
-			- stockAfterClose;
+		= stock->session().updates().sessionSwitchUpdatesForTest()
+		  - stockAfterClose;
 	const auto pinnedDelivered
-		= pinned->session().updates().onlineUpdateCallsForRegressionTest()
-			- pinnedAfterClose;
+		= pinned->session().updates().sessionSwitchUpdatesForTest()
+		  - pinnedAfterClose;
 	// The stock channel is clean at the dispatch: no window is bound to the
 	// stock session then, so its one update is the queued previous-session
 	// update of the closed switch, never a second one. The pinned session gains
 	// at most the update that closing the window which showed it produces
 	// (MainWindow::handleActiveChanged), which is that window's own session.
-	if (!stockCloseUpdateReady || stockDelivered != 1 || pinnedDelivered > 1) {
+	if (stockDelivered != 1 || pinnedDelivered > 1) {
 		std::fprintf(
 			stderr,
 			"Deferred primary-close updates: stock=%d pinned=%d\n",
@@ -1464,18 +1552,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		domain.activate(stock);
 	});
 	const auto printCapabilities = [](const char *name,
-								  const Main::Session &session) {
-		std::fprintf(stderr,
-			"%s capabilities=%d%d%d%d%d%d%d%d\n",
-			name,
-			session.callsSupported(),
-			session.botAppsSupported(),
-			session.paidFeaturesSupported(),
-			session.storiesSupported(),
-			session.exportSupported(),
-			session.passportSupported(),
-			session.aiComposeSupported(),
-			session.serverTranslationSupported());
+									  const Main::Session &session) {
+		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d\n", name,
+					 session.callsSupported(), session.botAppsSupported(),
+					 session.paidFeaturesSupported(),
+					 session.storiesSupported(), session.exportSupported(),
+					 session.passportSupported(), session.aiComposeSupported(),
+					 session.serverTranslationSupported(),
+					 session.sharedFoldersSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -1586,13 +1670,31 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window boundaries");
 	}
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto stockController = stockWindow->sessionController();
+	if (!pinnedController || !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
+		return FailChatParticipantsRegression(
+			"test windows lost their owning sessions before folder smoke "
+			"tests");
+	}
+	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
+	if (pinnedController->session()
+			.api()
+			.checkFilterInviteRequestPendingForRegressionTest()) {
+		return FailChatParticipantsRegression(
+			"unsupported pinned session sent a chatlist invite check request");
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
 		if (Core::MacProtectedPath::CheckCachePath(
 				pinnedCachePath, "Tests::ProtectedCache::file")
 			|| Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")) {
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")
+			|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
 			return FailChatParticipantsRegression(
 				"authenticated session accessed a protected cache-file target");
 		}
@@ -1652,6 +1754,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasExpectedParticipants(pinnedChat, UserId(2))) {
 		return FailChatParticipantsRegression(
 			"pinned phone-free self did not retain creator and members");
+	}
+	if (!Settings::RunFoldersCrudRegressionForTest(
+			stockController, pinnedController,
+			stock->session().data().history(stockPeer))
+		|| !Settings::RunFoldersCrudRegressionForTest(
+			pinnedController, stockController,
+			pinned->session().data().history(pinnedPeer))) {
+		return FailChatParticipantsRegression(
+			"ordinary folder create, rename, save, or remove did not stay "
+			"in its owning session");
 	}
 
 	const auto actionChatId = ChatId(1052);
@@ -1737,15 +1849,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stock->session().data().cacheBigFile().sync();
 			pinned->session().data().cache().sync();
 			pinned->session().data().cacheBigFile().sync();
-			if (Core::MacProtectedPath::CheckCachePath(
-					stockCachePath, "Tests::ProtectedCache::async-root")
-				|| Core::MacProtectedPath::CheckCachePath(
-					stockMediaCachePath, "Tests::ProtectedCache::async-media-root")
-				|| Core::MacProtectedPath::CheckCachePath(
-					pinnedCachePath, "Tests::ProtectedCache::async-file")
-				|| Core::MacProtectedPath::CheckCachePath(
-					pinnedMediaCachePath,
-					"Tests::ProtectedCache::async-media-file")) {
+			if (!FixtureContainsOnlyMarker(fixtures.cacheRoot)
+				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
+				|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
 				done(FailChatParticipantsRegression(
 					"asynchronous cache cleanup accessed a protected target"));
 				return;
@@ -1783,18 +1890,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!SetProtectedCacheFixturePaths(&fixtures)) {
+	if (!PrepareProtectedCacheFixtures(&fixtures)
+		|| !RunLegacyCleanupSymlinkRegression(fixtures)) {
 		std::fprintf(
 			stderr,
-			"Protected storage regression failed: synthetic fixture home was "
-			"not configured.\n");
-		return 1;
-	}
-	if (!RunLegacyCleanupSymlinkRegression(fixtures)) {
-		std::fprintf(
-			stderr,
-			"Protected storage regression failed: legacy cleanup followed a "
-			"protected account-directory symlink.\n");
+			"Protected storage regression failed: legacy cleanup followed "
+			"a protected account-directory symlink.\n");
 		return 1;
 	}
 

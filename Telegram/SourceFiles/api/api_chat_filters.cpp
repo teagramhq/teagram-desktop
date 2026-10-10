@@ -884,6 +884,10 @@ void CheckFilterInvite(
 		not_null<Window::SessionController*> controller,
 		const QString &slug) {
 	const auto session = &controller->session();
+	if (!session->sharedFoldersSupported()) {
+		controller->showFeatureUnavailableOnServerToast();
+		return;
+	}
 	const auto weak = base::make_weak(controller);
 	session->api().checkFilterInvite(slug, [=](
 			const MTPchatlists_ChatlistInvite &result) {
