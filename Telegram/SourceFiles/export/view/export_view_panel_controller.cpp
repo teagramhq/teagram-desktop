@@ -23,10 +23,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
+#include "base/weak_ptr.h"
 #include "base/qt/qt_common_adapters.h"
 #include "boxes/abstract_box.h" // Ui::show().
 #include "styles/style_export.h"
 #include "styles/style_layers.h"
+#include "window/window_controller.h"
+#include "window/window_session_controller.h"
 
 namespace Export {
 namespace View {
@@ -36,18 +39,26 @@ constexpr auto kSaveSettingsTimeout = crl::time(1000);
 
 class SuggestBox : public Ui::BoxContent {
 public:
-	SuggestBox(QWidget*, not_null<Main::Session*> session);
+	SuggestBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		base::weak_ptr<Window::SessionController> originatingController);
 
 protected:
 	void prepare() override;
 
 private:
 	const not_null<Main::Session*> _session;
+	const base::weak_ptr<Window::SessionController> _originatingController;
 
 };
 
-SuggestBox::SuggestBox(QWidget*, not_null<Main::Session*> session)
-: _session(session) {
+SuggestBox::SuggestBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		base::weak_ptr<Window::SessionController> originatingController)
+: _session(session)
+, _originatingController(std::move(originatingController)) {
 }
 
 void SuggestBox::prepare() {
@@ -55,10 +66,12 @@ void SuggestBox::prepare() {
 
 	addButton(tr::lng_box_ok(), [=] {
 		const auto session = _session;
+		const auto originatingController = _originatingController;
 		closeBox();
 		Core::App().exportManager().start(
 			session,
-			session->local().readExportSettings().singlePeer);
+			session->local().readExportSettings().singlePeer,
+			originatingController.get());
 	});
 	addButton(tr::lng_export_suggest_cancel(), [=] { closeBox(); });
 	setCloseByOutsideClick(false);
@@ -98,8 +111,15 @@ Environment PrepareEnvironment(not_null<Main::Session*> session) {
 
 base::weak_qptr<Ui::BoxContent> SuggestStart(not_null<Main::Session*> session) {
 	ClearSuggestStart(session);
+	auto originatingController
+		= base::weak_ptr<Window::SessionController>();
+	if (const auto window = Core::App().activePrimaryWindow()) {
+		if (const auto controller = window->sessionController()) {
+			originatingController = base::make_weak(controller);
+		}
+	}
 	return Ui::show(
-		Box<SuggestBox>(session),
+		Box<SuggestBox>(session, std::move(originatingController)),
 		Ui::LayerOption::KeepOther).get();
 }
 

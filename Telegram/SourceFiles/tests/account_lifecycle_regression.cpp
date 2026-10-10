@@ -1665,7 +1665,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				|| &domain.active() != activeBeforeNoWindowRefusal) {
 				return false;
 			}
-			manager.start(&pinned->session());
+			manager.start(
+				&pinned->session(),
+				MTP_inputPeerEmpty(),
+				stockSessionController);
 			QCoreApplication::processEvents();
 			const auto noWindowRefused = manager.inProgress(&stock->session())
 				&& !manager.inProgress(&pinned->session())
@@ -1674,12 +1677,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				&& !stockExportPanel->panelVisibleForRegressionTest()
 				&& stockSessionController
 					->featureUnavailableOnServerToastCallsForRegressionTest()
-					== stockRefusalCalls
+					== stockRefusalCalls + 1
 				&& Export::ExportStartsForRegressionTest() == exportStarts;
 			pinnedWindow = app.ensureSeparateWindowFor(pinned);
 			if (!noWindowRefused) {
 				std::fprintf(stderr,
-					"custom export refusal activated a session without a window\n");
+					"export refusal mishandled a session without a window\n");
 				return false;
 			}
 		} else {
