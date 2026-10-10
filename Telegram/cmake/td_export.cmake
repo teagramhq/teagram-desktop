@@ -7,6 +7,7 @@
 add_library(td_export OBJECT)
 init_non_host_target(td_export)
 add_library(tdesktop::td_export ALIAS td_export)
+target_compile_definitions(td_export PRIVATE TDESKTOP_LIFECYCLE_REGRESSION)
 
 target_precompile_headers(td_export PRIVATE ${src_loc}/export/export_pch.h)
 nice_target_sources(td_export ${src_loc}
