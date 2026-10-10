@@ -5924,20 +5924,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					   session.user())
 				   == supported);
 	};
-	const auto callStartGateMatches = [](not_null<Main::Account*> account,
-									 bool supported) {
-		auto unavailableShown = false;
-		auto existingStockCallReplaced = false;
-		const auto allowed = Calls::details::AllowCallStart(
-			account->session().callsSupported(),
-			[&] { unavailableShown = true; });
-		if (allowed) {
-			existingStockCallReplaced = true;
-		}
-		return (allowed == supported)
-			&& (unavailableShown == !supported)
-			&& (supported || !existingStockCallReplaced);
-	};
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
 	auto &app = Core::App();
