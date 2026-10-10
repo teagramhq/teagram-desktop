@@ -1771,6 +1771,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blank window fixture was not mapped before the close");
 	}
+	domain.activate(blank.get());
+	if (&domain.active() != blank.get()) {
+		return FailChatParticipantsRegression(
+			"blank account was not active before the primary close");
+	}
 	const auto stockBeforeCloseSwitch
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeCloseSwitch
@@ -1809,6 +1814,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"closed primary window remained mapped to an account");
 	}
 	QCoreApplication::processEvents();
+	if (&domain.active() != blank.get()) {
+		return FailChatParticipantsRegression(
+			"primary close changed the active blank account");
+	}
 	const auto closeSwitchDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeCloseSwitch.switchDeferred + 1);
 	const auto stockCloseSwitchDeferred = OnlineUpdateDelta(
