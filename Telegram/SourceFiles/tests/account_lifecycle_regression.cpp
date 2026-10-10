@@ -1670,6 +1670,17 @@ constexpr int kRegressionEntryClassCount = 13;
 			0)) {
 		return false;
 	}
+	if (!ConfigurePinnedServer(pinned, RegressionServerKey())
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| pinned->mtp().dcOptions().blocked()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not restore the custom pin after "
+			"the combined-state matrix: custom=%d blocked=%d\n",
+			pinned->mtp().dcOptions().hasCustomServer(),
+			pinned->mtp().dcOptions().blocked());
+		return false;
+	}
 
 	// Deferred resolution, completed on demand. The seam runs the production
 	// completion with its real guards: it opens for a live window of the
