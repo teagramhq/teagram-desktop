@@ -58,35 +58,30 @@ struct TeagramUpdateTransportResponse {
 };
 
 class TeagramUpdateTransport {
-public:
+  public:
 	using ChunkHandler = std::function<bool(QByteArrayView)>;
 	using CancellationCheck = std::function<bool()>;
 
 	virtual ~TeagramUpdateTransport() = default;
-	[[nodiscard]] virtual TeagramUpdateTransportResponse get(
-		const QUrl &url,
-		quint64 maximumBytes,
-		const ChunkHandler &onChunk,
+	[[nodiscard]] virtual TeagramUpdateTransportResponse
+	get(const QUrl &url, quint64 maximumBytes, const ChunkHandler &onChunk,
 		const CancellationCheck &isCancelled) = 0;
-
 };
 
 class TeagramUpdateCandidate final {
-public:
+  public:
 	~TeagramUpdateCandidate();
 
 	[[nodiscard]] const AuthenticatedTeagramUpdate &metadata() const;
 	[[nodiscard]] QString archivePath() const;
 
-private:
+  private:
 	friend class TeagramUpdateDownloader;
-	TeagramUpdateCandidate(
-		AuthenticatedTeagramUpdate metadata,
-		std::unique_ptr<QTemporaryFile> archive);
+	TeagramUpdateCandidate(AuthenticatedTeagramUpdate metadata,
+						   std::unique_ptr<QTemporaryFile> archive);
 
 	AuthenticatedTeagramUpdate _metadata;
 	std::unique_ptr<QTemporaryFile> _archive;
-
 };
 
 struct TeagramUpdateDownloadResult {
@@ -101,25 +96,24 @@ using TeagramUpdateProgressHandler
 	= std::function<void(TeagramUpdateDownloadStage, int)>;
 
 class TeagramUpdateDownloader final {
-public:
+  public:
 	TeagramUpdateDownloader();
 	explicit TeagramUpdateDownloader(
 		std::unique_ptr<TeagramUpdateTransport> transport);
 
 #ifdef TDESKTOP_UNIT_TESTS
-	TeagramUpdateDownloader(
-		std::unique_ptr<TeagramUpdateTransport> transport,
-		std::optional<TeagramUpdatePublicKey> trustedKey,
-		QString stagingDirectory);
+	TeagramUpdateDownloader(std::unique_ptr<TeagramUpdateTransport> transport,
+							std::optional<TeagramUpdatePublicKey> trustedKey,
+							QString stagingDirectory);
 #endif // TDESKTOP_UNIT_TESTS
 
 	void cancel();
-	[[nodiscard]] TeagramUpdateDownloadResult checkForUpdates(
-		quint64 installedBuild,
-		TeagramUpdateChannel installedChannel,
-		TeagramUpdateProgressHandler progress = {});
+	[[nodiscard]] TeagramUpdateDownloadResult
+	checkForUpdates(quint64 installedBuild,
+					TeagramUpdateChannel installedChannel,
+					TeagramUpdateProgressHandler progress = {});
 
-private:
+  private:
 	std::unique_ptr<TeagramUpdateTransport> _transport;
 	std::atomic_bool _cancelled = false;
 	std::atomic_bool _started = false;
@@ -128,7 +122,6 @@ private:
 	QString _testStagingDirectory;
 	bool _useTestVerifier = false;
 #endif // TDESKTOP_UNIT_TESTS
-
 };
 
 } // namespace Core

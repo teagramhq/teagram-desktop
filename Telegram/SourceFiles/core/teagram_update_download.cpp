@@ -45,8 +45,7 @@ const auto kReleaseApiHost = u"api.github.com"_q;
 const auto kRepositoryHost = u"github.com"_q;
 const auto kReleaseAssetsHost = u"release-assets.githubusercontent.com"_q;
 const auto kObjectsHost = u"objects.githubusercontent.com"_q;
-const auto kRepositoryPath
-	= u"/repos/teagramhq/teagram-desktop/releases"_q;
+const auto kRepositoryPath = u"/repos/teagramhq/teagram-desktop/releases"_q;
 const auto kManifestAsset = u"teagram-update.json"_q;
 const auto kSignatureAsset = u"teagram-update.json.sig"_q;
 const auto kTagPrefix = u"teagram-build-"_q;
@@ -76,18 +75,17 @@ struct InternalResult {
 }
 
 [[nodiscard]] bool IsRedirectStatus(int status) {
-	return status == 301 || status == 302 || status == 303
-		|| status == 307 || status == 308;
+	return status == 301 || status == 302 || status == 303 || status == 307
+		   || status == 308;
 }
 
 [[nodiscard]] bool IsAllowedAssetRedirect(const QUrl &url) {
 	const auto host = url.host().toLower();
-	return url.isValid()
-		&& url.scheme() == u"https"_q
-		&& (host == kReleaseAssetsHost || host == kObjectsHost)
-		&& url.userInfo().isEmpty()
-		&& (url.port(-1) == -1 || url.port(-1) == 443)
-		&& url.fragment().isEmpty();
+	return url.isValid() && url.scheme() == u"https"_q
+		   && (host == kReleaseAssetsHost || host == kObjectsHost)
+		   && url.userInfo().isEmpty()
+		   && (url.port(-1) == -1 || url.port(-1) == 443)
+		   && url.fragment().isEmpty();
 }
 
 [[nodiscard]] QUrl ReleaseListUrl(int page) {
@@ -100,16 +98,14 @@ struct InternalResult {
 	return result;
 }
 
-[[nodiscard]] QUrl ReleaseAssetUrl(const QString &tag,
-									   const QString &name) {
+[[nodiscard]] QUrl ReleaseAssetUrl(const QString &tag, const QString &name) {
 	auto result = QUrl(u"https://github.com"_q);
-	result.setPath(u"/teagramhq/teagram-desktop/releases/download/"_q
-		+ tag + u"/"_q + name);
+	result.setPath(u"/teagramhq/teagram-desktop/releases/download/"_q + tag
+				   + u"/"_q + name);
 	return result;
 }
 
-[[nodiscard]] std::optional<quint64> ReleaseBuildFromTag(
-	const QString &tag) {
+[[nodiscard]] std::optional<quint64> ReleaseBuildFromTag(const QString &tag) {
 	if (!tag.startsWith(kTagPrefix)) {
 		return std::nullopt;
 	}
@@ -121,8 +117,7 @@ struct InternalResult {
 	const auto parsed = std::from_chars(
 		encoded.constData(), encoded.constData() + encoded.size(), build);
 	if (parsed.ec != std::errc()
-		|| parsed.ptr != encoded.constData() + encoded.size()
-		|| build == 0) {
+		|| parsed.ptr != encoded.constData() + encoded.size() || build == 0) {
 		return std::nullopt;
 	}
 	return build;
@@ -134,44 +129,34 @@ struct InternalResult {
 }
 
 [[nodiscard]] bool IsApiReleaseRequest(const QUrl &url) {
-	return url.scheme() == u"https"_q
-		&& url.host() == kReleaseApiHost
-		&& url.path() == kRepositoryPath
-		&& url.userInfo().isEmpty()
-		&& url.port(-1) == -1
-		&& url.fragment().isEmpty();
+	return url.scheme() == u"https"_q && url.host() == kReleaseApiHost
+		   && url.path() == kRepositoryPath && url.userInfo().isEmpty()
+		   && url.port(-1) == -1 && url.fragment().isEmpty();
 }
 
 class HttpTeagramUpdateTransport final : public TeagramUpdateTransport {
-public:
-	[[nodiscard]] TeagramUpdateTransportResponse get(
-		const QUrl &url,
-		quint64 maximumBytes,
-		const ChunkHandler &onChunk,
+  public:
+	[[nodiscard]] TeagramUpdateTransportResponse
+	get(const QUrl &url, quint64 maximumBytes, const ChunkHandler &onChunk,
 		const CancellationCheck &isCancelled) override;
-
 };
 
 class DownloadRunner final {
-public:
-	using ManifestVerifier = std::function<
-		TeagramUpdateManifestVerificationResult(
-			const QByteArray &,
-			const QByteArray &,
-			quint64,
+  public:
+	using ManifestVerifier
+		= std::function<TeagramUpdateManifestVerificationResult(
+			const QByteArray &, const QByteArray &, quint64,
 			TeagramUpdateChannel)>;
 
 	DownloadRunner(TeagramUpdateTransport &transport,
-					const std::atomic_bool &cancelled,
-					QString stagingDirectory,
-					ManifestVerifier verify,
-					TeagramUpdateProgressHandler progress);
+				   const std::atomic_bool &cancelled, QString stagingDirectory,
+				   ManifestVerifier verify,
+				   TeagramUpdateProgressHandler progress);
 
-	[[nodiscard]] InternalResult run(
-		quint64 installedBuild,
-		TeagramUpdateChannel installedChannel);
+	[[nodiscard]] InternalResult run(quint64 installedBuild,
+									 TeagramUpdateChannel installedChannel);
 
-private:
+  private:
 	struct PageResult {
 		bool valid = false;
 		qsizetype count = 0;
@@ -181,25 +166,21 @@ private:
 
 	void emitProgress(TeagramUpdateDownloadStage stage, int value) const;
 
-	[[nodiscard]] RequestResult request(
-		QUrl url,
-		quint64 maximumBytes,
-		bool allowAssetRedirects,
-		const TeagramUpdateTransport::ChunkHandler &onChunk);
+	[[nodiscard]] RequestResult
+	request(QUrl url, quint64 maximumBytes, bool allowAssetRedirects,
+			const TeagramUpdateTransport::ChunkHandler &onChunk);
 
-	[[nodiscard]] RequestResult fetchBytes(
-		const QUrl &url,
-		quint64 maximumBytes,
-		bool allowAssetRedirects,
-		QByteArray *result);
+	[[nodiscard]] RequestResult fetchBytes(const QUrl &url,
+										   quint64 maximumBytes,
+										   bool allowAssetRedirects,
+										   QByteArray *result);
 
-	[[nodiscard]] PageResult parseReleasePage(
-		const QByteArray &body,
-		std::vector<Release> *releases,
-		std::map<QString, bool> *seenTags) const;
+	[[nodiscard]] PageResult
+	parseReleasePage(const QByteArray &body, std::vector<Release> *releases,
+					 std::map<QString, bool> *seenTags) const;
 
-	[[nodiscard]] InternalResult downloadArchive(
-		const AuthenticatedTeagramUpdate &metadata);
+	[[nodiscard]] InternalResult
+	downloadArchive(const AuthenticatedTeagramUpdate &metadata);
 
 	TeagramUpdateTransport &_transport;
 	const std::atomic_bool &_cancelled;
@@ -207,38 +188,28 @@ private:
 	ManifestVerifier _verify;
 	TeagramUpdateProgressHandler _progress;
 	int _requests = 0;
-
 };
 
 TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
-	const QUrl &url,
-	quint64 maximumBytes,
+	const QUrl &url, quint64 maximumBytes,
 	const TeagramUpdateTransport::ChunkHandler &onChunk,
 	const TeagramUpdateTransport::CancellationCheck &isCancelled) {
 	auto request = QNetworkRequest(url);
-	request.setAttribute(
-		QNetworkRequest::RedirectPolicyAttribute,
-		QNetworkRequest::ManualRedirectPolicy);
-	request.setAttribute(
-		QNetworkRequest::CacheLoadControlAttribute,
-		QNetworkRequest::AlwaysNetwork);
-	request.setAttribute(
-		QNetworkRequest::CacheSaveControlAttribute,
-		false);
-	request.setAttribute(
-		QNetworkRequest::CookieLoadControlAttribute,
-		QNetworkRequest::Manual);
-	request.setAttribute(
-		QNetworkRequest::CookieSaveControlAttribute,
-		QNetworkRequest::Manual);
+	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+						 QNetworkRequest::ManualRedirectPolicy);
+	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+						 QNetworkRequest::AlwaysNetwork);
+	request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+	request.setAttribute(QNetworkRequest::CookieLoadControlAttribute,
+						 QNetworkRequest::Manual);
+	request.setAttribute(QNetworkRequest::CookieSaveControlAttribute,
+						 QNetworkRequest::Manual);
 	request.setTransferTimeout(kTransferTimeoutMilliseconds);
 	request.setRawHeader("User-Agent", "Teagram-Desktop");
 	request.setRawHeader("Accept-Encoding", "identity");
-	request.setRawHeader(
-		"Accept",
-		url.host() == kReleaseApiHost
-			? "application/vnd.github+json"
-			: "application/octet-stream");
+	request.setRawHeader("Accept", url.host() == kReleaseApiHost
+									   ? "application/vnd.github+json"
+									   : "application/octet-stream");
 
 	auto manager = QNetworkAccessManager();
 	auto reply = manager.get(request);
@@ -254,8 +225,7 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 		}
 	};
 	const auto checkLength = [&] {
-		const auto length
-			= reply->header(QNetworkRequest::ContentLengthHeader);
+		const auto length = reply->header(QNetworkRequest::ContentLengthHeader);
 		if (!length.isValid()) {
 			return;
 		}
@@ -275,8 +245,8 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 				abort(TransportFailure::Cancelled);
 				return;
 			}
-			const auto size = std::min<qint64>(
-				reply->bytesAvailable(), 16 * 1024);
+			const auto size
+				= std::min<qint64>(reply->bytesAvailable(), 16 * 1024);
 			const auto chunk = reply->read(size);
 			if (chunk.isEmpty()) {
 				break;
@@ -286,8 +256,9 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 				return;
 			}
 			received += quint64(chunk.size());
-			const auto status = reply->attribute(
-				QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const auto status
+				= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+					  .toInt();
 			if (status != 200) {
 				continue;
 			}
@@ -297,8 +268,8 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 			}
 		}
 	};
-	QObject::connect(reply, &QNetworkReply::metaDataChanged,
-		&loop, checkLength);
+	QObject::connect(reply, &QNetworkReply::metaDataChanged, &loop,
+					 checkLength);
 	QObject::connect(reply, &QIODevice::readyRead, &loop, readAvailable);
 	QObject::connect(&timer, &QTimer::timeout, &loop, [&] {
 		if (isCancelled()) {
@@ -316,14 +287,14 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 		readAvailable();
 	}
 	timer.stop();
-	const auto status = reply->attribute(
-		QNetworkRequest::HttpStatusCodeAttribute).toInt();
-	const auto redirect = reply->attribute(
-		QNetworkRequest::RedirectionTargetAttribute).toUrl();
+	const auto status
+		= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+	const auto redirect
+		= reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
 	if (isCancelled()) {
 		failure = TransportFailure::Cancelled;
 	} else if (failure == TransportFailure::None
-		&& reply->error() != QNetworkReply::NoError) {
+			   && reply->error() != QNetworkReply::NoError) {
 		failure = TransportFailure::Network;
 	}
 	reply->deleteLater();
@@ -331,20 +302,16 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 }
 
 DownloadRunner::DownloadRunner(TeagramUpdateTransport &transport,
-				const std::atomic_bool &cancelled,
-				QString stagingDirectory,
-				DownloadRunner::ManifestVerifier verify,
-				TeagramUpdateProgressHandler progress)
-: _transport(transport)
-, _cancelled(cancelled)
-, _stagingDirectory(std::move(stagingDirectory))
-, _verify(std::move(verify))
-, _progress(std::move(progress)) {
-}
+							   const std::atomic_bool &cancelled,
+							   QString stagingDirectory,
+							   DownloadRunner::ManifestVerifier verify,
+							   TeagramUpdateProgressHandler progress)
+	: _transport(transport), _cancelled(cancelled),
+	  _stagingDirectory(std::move(stagingDirectory)),
+	  _verify(std::move(verify)), _progress(std::move(progress)) {}
 
-InternalResult DownloadRunner::run(
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel) {
+InternalResult DownloadRunner::run(quint64 installedBuild,
+								   TeagramUpdateChannel installedChannel) {
 	auto releases = std::vector<Release>();
 	auto seenTags = std::map<QString, bool>();
 	for (auto page = 1; page <= kMaximumReleasePages; ++page) {
@@ -352,13 +319,10 @@ InternalResult DownloadRunner::run(
 			return Failed(Reason::Cancelled);
 		}
 		emitProgress(TeagramUpdateDownloadStage::Discovering,
-			(page - 1) * 100 / kMaximumReleasePages);
+					 (page - 1) * 100 / kMaximumReleasePages);
 		auto body = QByteArray();
-		const auto result = fetchBytes(
-			ReleaseListUrl(page),
-			kMaximumReleasePageBytes,
-			false,
-			&body);
+		const auto result = fetchBytes(ReleaseListUrl(page),
+									   kMaximumReleasePageBytes, false, &body);
 		if (!result.success) {
 			return Failed(result.reason);
 		}
@@ -372,11 +336,10 @@ InternalResult DownloadRunner::run(
 			return Failed(Reason::LimitExceeded);
 		}
 	}
-	std::sort(releases.begin(), releases.end(), [](
-							const Release &a,
-							const Release &b) {
-		return a.taggedBuild > b.taggedBuild;
-	});
+	std::sort(releases.begin(), releases.end(),
+			  [](const Release &a, const Release &b) {
+				  return a.taggedBuild > b.taggedBuild;
+			  });
 	auto candidateCount = 0;
 	auto rejectedManifest = false;
 	auto rejectedIdentity = false;
@@ -392,37 +355,29 @@ InternalResult DownloadRunner::run(
 		if (++candidateCount > kMaximumReleaseCandidates) {
 			return Failed(Reason::LimitExceeded);
 		}
-		emitProgress(
-			TeagramUpdateDownloadStage::Authenticating,
-			(candidateCount - 1) * 100 / kMaximumReleaseCandidates);
+		emitProgress(TeagramUpdateDownloadStage::Authenticating,
+					 (candidateCount - 1) * 100 / kMaximumReleaseCandidates);
 		auto manifest = QByteArray();
-		const auto manifestResult = fetchBytes(
-			ReleaseAssetUrl(release.tag, kManifestAsset),
-			kMaximumTeagramUpdateManifestSize,
-			true,
-			&manifest);
+		const auto manifestResult
+			= fetchBytes(ReleaseAssetUrl(release.tag, kManifestAsset),
+						 kMaximumTeagramUpdateManifestSize, true, &manifest);
 		if (!manifestResult.success) {
 			return Failed(manifestResult.reason);
 		}
 		auto signature = QByteArray();
-		const auto signatureResult = fetchBytes(
-			ReleaseAssetUrl(release.tag, kSignatureAsset),
-			kMaximumSignatureSize,
-			true,
-			&signature);
+		const auto signatureResult
+			= fetchBytes(ReleaseAssetUrl(release.tag, kSignatureAsset),
+						 kMaximumSignatureSize, true, &signature);
 		if (!signatureResult.success) {
 			return Failed(signatureResult.reason);
 		}
-		const auto authenticated = _verify(
-			manifest,
-			signature,
-			installedBuild,
-			installedChannel);
+		const auto authenticated
+			= _verify(manifest, signature, installedBuild, installedChannel);
 		if (!authenticated.authenticated() || !authenticated.package) {
 			if (authenticated.reason
 					!= TeagramUpdateVerificationReason::NotNewer
 				&& authenticated.reason
-					!= TeagramUpdateVerificationReason::IneligibleChannel) {
+					   != TeagramUpdateVerificationReason::IneligibleChannel) {
 				rejectedManifest = true;
 			}
 			continue;
@@ -437,35 +392,32 @@ InternalResult DownloadRunner::run(
 		return downloadArchive(*authenticated.package);
 	}
 	return Failed(rejectedIdentity
-		? Reason::InvalidResponse
-		: (rejectedManifest ? Reason::VerificationFailed : Reason::NoUpdate));
+					  ? Reason::InvalidResponse
+					  : (rejectedManifest ? Reason::VerificationFailed
+										  : Reason::NoUpdate));
 }
 
 bool DownloadRunner::isCancelled() const {
 	return _cancelled.load(std::memory_order_relaxed);
 }
 
-void DownloadRunner::emitProgress(
-	TeagramUpdateDownloadStage stage,
-	int value) const {
+void DownloadRunner::emitProgress(TeagramUpdateDownloadStage stage,
+								  int value) const {
 	if (_progress) {
 		_progress(stage, std::clamp(value, 0, 100));
 	}
 }
 
-RequestResult DownloadRunner::request(
-	QUrl url,
-	quint64 maximumBytes,
-	bool allowAssetRedirects,
-	const TeagramUpdateTransport::ChunkHandler &onChunk) {
+RequestResult
+DownloadRunner::request(QUrl url, quint64 maximumBytes,
+						bool allowAssetRedirects,
+						const TeagramUpdateTransport::ChunkHandler &onChunk) {
 	if ((!allowAssetRedirects && !IsApiReleaseRequest(url))
 		|| (allowAssetRedirects
-			&& (url.scheme() != u"https"_q
-				|| url.host() != kRepositoryHost
+			&& (url.scheme() != u"https"_q || url.host() != kRepositoryHost
 				|| !url.path().startsWith(
 					u"/teagramhq/teagram-desktop/releases/download/"_q)
-				|| !url.userInfo().isEmpty()
-				|| url.port(-1) != -1
+				|| !url.userInfo().isEmpty() || url.port(-1) != -1
 				|| !url.fragment().isEmpty()))) {
 		return {Reason::InvalidResponse, false};
 	}
@@ -478,13 +430,9 @@ RequestResult DownloadRunner::request(
 			return {Reason::LimitExceeded, false};
 		}
 		++_requests;
-		const auto response = _transport.get(
-			url,
-			maximumBytes,
-			onChunk,
-			[&] { return isCancelled(); });
-		if (isCancelled()
-			|| response.failure == TransportFailure::Cancelled) {
+		const auto response = _transport.get(url, maximumBytes, onChunk,
+											 [&] { return isCancelled(); });
+		if (isCancelled() || response.failure == TransportFailure::Cancelled) {
 			return {Reason::Cancelled, false};
 		}
 		if (response.failure == TransportFailure::ResponseTooLarge) {
@@ -518,22 +466,17 @@ RequestResult DownloadRunner::request(
 	}
 }
 
-RequestResult DownloadRunner::fetchBytes(
-	const QUrl &url,
-	quint64 maximumBytes,
-	bool allowAssetRedirects,
-	QByteArray *result) {
+RequestResult DownloadRunner::fetchBytes(const QUrl &url, quint64 maximumBytes,
+										 bool allowAssetRedirects,
+										 QByteArray *result) {
 	auto tooLarge = false;
 	const auto fetched = request(
-		url,
-		maximumBytes,
-		allowAssetRedirects,
-		[&](QByteArrayView chunk) {
+		url, maximumBytes, allowAssetRedirects, [&](QByteArrayView chunk) {
 			if (quint64(result->size()) > maximumBytes
 				|| quint64(chunk.size())
-					> maximumBytes - quint64(result->size())
-				|| chunk.size() > std::numeric_limits<int>::max()
-					- result->size()) {
+					   > maximumBytes - quint64(result->size())
+				|| chunk.size()
+					   > std::numeric_limits<int>::max() - result->size()) {
 				tooLarge = true;
 				return false;
 			}
@@ -546,10 +489,10 @@ RequestResult DownloadRunner::fetchBytes(
 	return fetched;
 }
 
-DownloadRunner::PageResult DownloadRunner::parseReleasePage(
-	const QByteArray &body,
-	std::vector<Release> *releases,
-	std::map<QString, bool> *seenTags) const {
+DownloadRunner::PageResult
+DownloadRunner::parseReleasePage(const QByteArray &body,
+								 std::vector<Release> *releases,
+								 std::map<QString, bool> *seenTags) const {
 	auto error = QJsonParseError{0, QJsonParseError::NoError};
 	const auto document = QJsonDocument::fromJson(body, &error);
 	if (error.error != QJsonParseError::NoError || !document.isArray()) {
@@ -598,19 +541,20 @@ DownloadRunner::PageResult DownloadRunner::parseReleasePage(
 	return {true, array.size()};
 }
 
-InternalResult DownloadRunner::downloadArchive(
-	const AuthenticatedTeagramUpdate &metadata) {
+InternalResult
+DownloadRunner::downloadArchive(const AuthenticatedTeagramUpdate &metadata) {
 	if (metadata.assetSize() > kMaximumTeagramUpdateArchiveSize) {
 		return Failed(Reason::LimitExceeded);
 	}
-	const auto pattern = _stagingDirectory.isEmpty()
-		? QDir::tempPath() + u"/teagram-update-XXXXXX"_q
-		: QDir(_stagingDirectory).filePath(u"teagram-update-XXXXXX"_q);
+	const auto pattern
+		= _stagingDirectory.isEmpty()
+			  ? QDir::tempPath() + u"/teagram-update-XXXXXX"_q
+			  : QDir(_stagingDirectory).filePath(u"teagram-update-XXXXXX"_q);
 	auto archive = std::make_unique<QTemporaryFile>(pattern);
 	archive->setAutoRemove(true);
 	if (!archive->open()
-		|| !archive->setPermissions(
-			QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+		|| !archive->setPermissions(QFileDevice::ReadOwner
+									| QFileDevice::WriteOwner)) {
 		return Failed(Reason::StagingFailure);
 	}
 	auto received = quint64(0);
@@ -618,12 +562,9 @@ InternalResult DownloadRunner::downloadArchive(
 	auto writeFailed = false;
 	emitProgress(TeagramUpdateDownloadStage::Downloading, 0);
 	const auto fetched = request(
-		ReleaseAssetUrl(
-			u"teagram-build-%1"_q.arg(metadata.build()),
-			metadata.assetName()),
-		metadata.assetSize(),
-		true,
-		[&](QByteArrayView chunk) {
+		ReleaseAssetUrl(u"teagram-build-%1"_q.arg(metadata.build()),
+						metadata.assetName()),
+		metadata.assetSize(), true, [&](QByteArrayView chunk) {
 			if (quint64(chunk.size()) > metadata.assetSize() - received) {
 				oversized = true;
 				return false;
@@ -634,11 +575,9 @@ InternalResult DownloadRunner::downloadArchive(
 				return false;
 			}
 			received += quint64(chunk.size());
-			const auto percent = int(
-				(received * 100) / metadata.assetSize());
-			emitProgress(
-				TeagramUpdateDownloadStage::Downloading,
-				std::min(percent, 99));
+			const auto percent = int((received * 100) / metadata.assetSize());
+			emitProgress(TeagramUpdateDownloadStage::Downloading,
+						 std::min(percent, 99));
 			return true;
 		});
 	if (isCancelled() || fetched.reason == Reason::Cancelled) {
@@ -654,14 +593,13 @@ InternalResult DownloadRunner::downloadArchive(
 	}
 	const auto verification = VerifyAuthenticatedTeagramUpdateArchive(
 		metadata, *archive, [&] { return isCancelled(); });
-	if (verification.reason
-		== TeagramUpdateVerificationReason::Cancelled) {
+	if (verification.reason == TeagramUpdateVerificationReason::Cancelled) {
 		return Failed(Reason::Cancelled);
 	}
 	if (!verification.eligible()) {
 		return Failed(
 			verification.reason
-				== TeagramUpdateVerificationReason::ArchiveTooLarge
+					== TeagramUpdateVerificationReason::ArchiveTooLarge
 				? Reason::LimitExceeded
 				: Reason::ArchiveRejected);
 	}
@@ -678,9 +616,7 @@ InternalResult DownloadRunner::downloadArchive(
 TeagramUpdateCandidate::TeagramUpdateCandidate(
 	AuthenticatedTeagramUpdate metadata,
 	std::unique_ptr<QTemporaryFile> archive)
-: _metadata(std::move(metadata))
-, _archive(std::move(archive)) {
-}
+	: _metadata(std::move(metadata)), _archive(std::move(archive)) {}
 
 TeagramUpdateCandidate::~TeagramUpdateCandidate() = default;
 
@@ -694,28 +630,23 @@ QString TeagramUpdateCandidate::archivePath() const {
 
 bool TeagramUpdateDownloadResult::available() const {
 	return reason == TeagramUpdateDownloadReason::Available
-		&& candidate != nullptr;
+		   && candidate != nullptr;
 }
 
 TeagramUpdateDownloader::TeagramUpdateDownloader()
-: TeagramUpdateDownloader(std::make_unique<HttpTeagramUpdateTransport>()) {
-}
+	: TeagramUpdateDownloader(std::make_unique<HttpTeagramUpdateTransport>()) {}
 
 TeagramUpdateDownloader::TeagramUpdateDownloader(
 	std::unique_ptr<TeagramUpdateTransport> transport)
-: _transport(std::move(transport)) {
-}
+	: _transport(std::move(transport)) {}
 
 #ifdef TDESKTOP_UNIT_TESTS
 TeagramUpdateDownloader::TeagramUpdateDownloader(
 	std::unique_ptr<TeagramUpdateTransport> transport,
-	std::optional<TeagramUpdatePublicKey> trustedKey,
-	QString stagingDirectory)
-: _transport(std::move(transport))
-, _testTrustedKey(std::move(trustedKey))
-, _testStagingDirectory(std::move(stagingDirectory))
-, _useTestVerifier(true) {
-}
+	std::optional<TeagramUpdatePublicKey> trustedKey, QString stagingDirectory)
+	: _transport(std::move(transport)), _testTrustedKey(std::move(trustedKey)),
+	  _testStagingDirectory(std::move(stagingDirectory)),
+	  _useTestVerifier(true) {}
 #endif // TDESKTOP_UNIT_TESTS
 
 void TeagramUpdateDownloader::cancel() {
@@ -723,8 +654,7 @@ void TeagramUpdateDownloader::cancel() {
 }
 
 TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	TeagramUpdateProgressHandler progress) {
 	if (_started.exchange(true, std::memory_order_relaxed)) {
 		return {Reason::Busy, nullptr};
@@ -732,46 +662,37 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	if (!_transport) {
 		return {Reason::InvalidResponse, nullptr};
 	}
-	const auto verify = [&](
-						const QByteArray &manifest,
-						const QByteArray &signature,
-						quint64 build,
-						TeagramUpdateChannel channel) {
+	const auto verify
+		= [&](const QByteArray &manifest, const QByteArray &signature,
+			  quint64 build, TeagramUpdateChannel channel) {
 #ifdef TDESKTOP_UNIT_TESTS
-		if (_useTestVerifier) {
-			return AuthenticateTeagramUpdateManifestForTests(
-				manifest, signature, build, channel, _testTrustedKey);
-		}
+			  if (_useTestVerifier) {
+				  return AuthenticateTeagramUpdateManifestForTests(
+					  manifest, signature, build, channel, _testTrustedKey);
+			  }
 #endif // TDESKTOP_UNIT_TESTS
-		return AuthenticateTeagramUpdateManifest(
-			manifest, signature, build, channel);
-	};
+			  return AuthenticateTeagramUpdateManifest(manifest, signature,
+													   build, channel);
+		  };
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto stagingDirectory = _testStagingDirectory;
 #else
 	const auto stagingDirectory = QString();
 #endif // TDESKTOP_UNIT_TESTS
-	auto runner = DownloadRunner(
-		*_transport,
-		_cancelled,
-		stagingDirectory,
-		verify,
-		std::move(progress));
+	auto runner = DownloadRunner(*_transport, _cancelled, stagingDirectory,
+								 verify, std::move(progress));
 	auto result = runner.run(installedBuild, installedChannel);
 	if (_cancelled.load(std::memory_order_relaxed)) {
 		return {Reason::Cancelled, nullptr};
 	}
-	if (result.reason != Reason::Available
-		|| !result.metadata
+	if (result.reason != Reason::Available || !result.metadata
 		|| !result.archive) {
 		return {result.reason, nullptr};
 	}
 	return {
 		Reason::Available,
-		std::unique_ptr<TeagramUpdateCandidate>(
-			new TeagramUpdateCandidate(
-				std::move(*result.metadata),
-				std::move(result.archive))),
+		std::unique_ptr<TeagramUpdateCandidate>(new TeagramUpdateCandidate(
+			std::move(*result.metadata), std::move(result.archive))),
 	};
 }
 

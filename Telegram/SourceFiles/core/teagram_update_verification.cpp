@@ -68,15 +68,11 @@ struct ManifestAuthenticationResult {
 	return {reason, std::nullopt};
 }
 
-[[nodiscard]] VerifiedTeagramUpdate VerifiedPackage(
-	const AuthenticatedTeagramUpdate &package) {
+[[nodiscard]] VerifiedTeagramUpdate
+VerifiedPackage(const AuthenticatedTeagramUpdate &package) {
 	return {
-		package.channel(),
-		package.build(),
-		package.commit(),
-		package.assetName(),
-		package.assetSize(),
-		package.assetSha256(),
+		package.channel(),	 package.build(),	  package.commit(),
+		package.assetName(), package.assetSize(), package.assetSha256(),
 		package.minOs(),
 	};
 }
@@ -312,12 +308,11 @@ ParseCanonicalUnsigned(const QString &value) {
 	return result;
 }
 
-[[nodiscard]] ManifestAuthenticationResult AuthenticatePackage(
-	const QByteArray &manifest,
-	const QByteArray &signature,
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel,
-	const std::optional<Ed25519PublicKey> &trustedKey) {
+[[nodiscard]] ManifestAuthenticationResult
+AuthenticatePackage(const QByteArray &manifest, const QByteArray &signature,
+					quint64 installedBuild,
+					TeagramUpdateChannel installedChannel,
+					const std::optional<Ed25519PublicKey> &trustedKey) {
 	if (!trustedKey) {
 		return RejectedManifest(Reason::MissingTrustedKey);
 	}
@@ -370,9 +365,9 @@ ParseCanonicalUnsigned(const QString &value) {
 	return {Reason::Eligible, std::move(package)};
 }
 
-[[nodiscard]] TeagramUpdateVerificationResult VerifyArchiveBytes(
-	const VerifiedTeagramUpdate &package,
-	QByteArrayView archive) {
+[[nodiscard]] TeagramUpdateVerificationResult
+VerifyArchiveBytes(const VerifiedTeagramUpdate &package,
+				   QByteArrayView archive) {
 	if (archive.size() < 0 || quint64(archive.size()) != package.assetSize
 		|| package.assetSize > std::numeric_limits<size_t>::max()) {
 		return Rejected(Reason::ArchiveSizeMismatch);
@@ -395,10 +390,9 @@ ParseCanonicalUnsigned(const QString &value) {
 	return {Reason::Eligible, package};
 }
 
-[[nodiscard]] TeagramUpdateVerificationResult VerifyArchiveDevice(
-	const VerifiedTeagramUpdate &package,
-	QIODevice &archive,
-	const std::function<bool()> &isCancelled) {
+[[nodiscard]] TeagramUpdateVerificationResult
+VerifyArchiveDevice(const VerifiedTeagramUpdate &package, QIODevice &archive,
+					const std::function<bool()> &isCancelled) {
 	if (package.assetSize > kMaximumTeagramUpdateArchiveSize) {
 		return Rejected(Reason::ArchiveTooLarge);
 	}
@@ -406,7 +400,8 @@ ParseCanonicalUnsigned(const QString &value) {
 		return Rejected(Reason::ArchiveReadFailed);
 	}
 	auto context = DigestContext(EVP_MD_CTX_new());
-	if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
+	if (!context
+		|| EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
 		return Rejected(Reason::VerifierUnavailable);
 	}
 	auto buffer = std::array<char, 64 * 1024>();
@@ -426,9 +421,7 @@ ParseCanonicalUnsigned(const QString &value) {
 			return Rejected(Reason::ArchiveSizeMismatch);
 		}
 		total += quint64(size);
-		if (EVP_DigestUpdate(
-				context.get(), buffer.data(), size_t(size))
-			!= 1) {
+		if (EVP_DigestUpdate(context.get(), buffer.data(), size_t(size)) != 1) {
 			return Rejected(Reason::VerifierUnavailable);
 		}
 	}
@@ -447,20 +440,18 @@ ParseCanonicalUnsigned(const QString &value) {
 	const auto actualHash
 		= QByteArray(reinterpret_cast<const char *>(digest.data()),
 					 int(digest.size()))
-		  .toHex();
+			  .toHex();
 	if (actualHash != package.assetSha256.toLatin1()) {
 		return Rejected(Reason::ArchiveHashMismatch);
 	}
 	return {Reason::Eligible, package};
 }
 
-[[nodiscard]] TeagramUpdateVerificationResult VerifyPackage(
-	const QByteArray &manifest,
-	const QByteArray &signature,
-	QByteArrayView archive,
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel,
-	const std::optional<Ed25519PublicKey> &trustedKey) {
+[[nodiscard]] TeagramUpdateVerificationResult
+VerifyPackage(const QByteArray &manifest, const QByteArray &signature,
+			  QByteArrayView archive, quint64 installedBuild,
+			  TeagramUpdateChannel installedChannel,
+			  const std::optional<Ed25519PublicKey> &trustedKey) {
 	const auto authenticated = AuthenticatePackage(
 		manifest, signature, installedBuild, installedChannel, trustedKey);
 	if (!authenticated.authenticated() || !authenticated.package) {
@@ -473,15 +464,11 @@ ParseCanonicalUnsigned(const QString &value) {
 
 AuthenticatedTeagramUpdate::AuthenticatedTeagramUpdate(
 	VerifiedTeagramUpdate package)
-:
-	_channel(package.channel),
-	_build(package.build),
-	_commit(std::move(package.commit)),
-	_assetName(std::move(package.assetName)),
-	_assetSize(package.assetSize),
-	_assetSha256(std::move(package.assetSha256)),
-	_minOs(std::move(package.minOs)) {
-}
+	: _channel(package.channel), _build(package.build),
+	  _commit(std::move(package.commit)),
+	  _assetName(std::move(package.assetName)), _assetSize(package.assetSize),
+	  _assetSha256(std::move(package.assetSha256)),
+	  _minOs(std::move(package.minOs)) {}
 
 bool TeagramUpdateVerificationResult::eligible() const {
 	return reason == TeagramUpdateVerificationReason::Eligible
@@ -493,14 +480,12 @@ bool TeagramUpdateManifestVerificationResult::authenticated() const {
 		   && package.has_value();
 }
 
-TeagramUpdateManifestVerificationResult
-AuthenticateTeagramUpdateManifest(const QByteArray &manifest,
-								  const QByteArray &signature,
-								  quint64 installedBuild,
-								  TeagramUpdateChannel installedChannel) {
-	auto authenticated = AuthenticatePackage(
-		manifest, signature, installedBuild, installedChannel,
-		kProductionUpdatePublicKey);
+TeagramUpdateManifestVerificationResult AuthenticateTeagramUpdateManifest(
+	const QByteArray &manifest, const QByteArray &signature,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel) {
+	auto authenticated
+		= AuthenticatePackage(manifest, signature, installedBuild,
+							  installedChannel, kProductionUpdatePublicKey);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}
@@ -511,8 +496,7 @@ AuthenticateTeagramUpdateManifest(const QByteArray &manifest,
 }
 
 TeagramUpdateVerificationResult VerifyAuthenticatedTeagramUpdateArchive(
-	const AuthenticatedTeagramUpdate &package,
-	QIODevice &archive,
+	const AuthenticatedTeagramUpdate &package, QIODevice &archive,
 	const std::function<bool()> &isCancelled) {
 	return VerifyArchiveDevice(VerifiedPackage(package), archive, isCancelled);
 }
@@ -538,10 +522,8 @@ TeagramUpdateVerificationResult VerifyTeagramUpdatePackageForTests(
 
 TeagramUpdateManifestVerificationResult
 AuthenticateTeagramUpdateManifestForTests(
-	const QByteArray &manifest,
-	const QByteArray &signature,
-	quint64 installedBuild,
-	TeagramUpdateChannel installedChannel,
+	const QByteArray &manifest, const QByteArray &signature,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey) {
 	auto authenticated = AuthenticatePackage(
 		manifest, signature, installedBuild, installedChannel, trustedKey);
