@@ -533,21 +533,25 @@ jobs:
           }
 
           progress "Checking CMake and compile-command DWARF settings."
-          cmake -LA -N "$repo/out/Debug" > "$diagnostics/cmake-cache.txt"
-          awk -F: '/^CMAKE_(BUILD_TYPE|C_COMPILER|CXX_COMPILER|C_FLAGS_DEBUG|CXX_FLAGS_DEBUG|EXE_LINKER_FLAGS_DEBUG|SHARED_LINKER_FLAGS_DEBUG|OSX_ARCHITECTURES|EXPORT_COMPILE_COMMANDS):/ { print }' "$diagnostics/cmake-cache.txt" > "$diagnostics/build-settings.txt"
+          build_dir="$repo/out"
+          cache_file="$build_dir/CMakeCache.txt"
+          compile_commands="$build_dir/compile_commands.json"
+          test -f "$cache_file" || fail_dwarf_prerequisite "CMakeCache.txt is missing from out"
+          test -f "$compile_commands" || fail_dwarf_prerequisite "compile_commands.json is missing from out"
+          cmake -LA -N "$build_dir" > "$diagnostics/cmake-cache.txt"
+          awk -F: '/^CMAKE_(CONFIGURATION_TYPES|C_COMPILER|CXX_COMPILER|C_FLAGS_DEBUG|CXX_FLAGS_DEBUG|EXE_LINKER_FLAGS_DEBUG|SHARED_LINKER_FLAGS_DEBUG|OSX_ARCHITECTURES|EXPORT_COMPILE_COMMANDS):/ { print }' "$diagnostics/cmake-cache.txt" > "$diagnostics/build-settings.txt"
           printf 'CCACHE_MAXSIZE=%s\n' "$CCACHE_MAXSIZE" >> "$diagnostics/build-settings.txt"
-          build_type="$(awk -F= '$1 ~ "^CMAKE_BUILD_TYPE:" { print substr($0, index($0, "=") + 1); found=1; exit } END { if (!found) exit 1 }' "$repo/out/Debug/CMakeCache.txt")" || fail_dwarf_prerequisite "CMAKE_BUILD_TYPE is missing from CMakeCache.txt"
-          if [ "$build_type" != "Debug" ]; then
-            fail_dwarf_prerequisite "the effective CMake build type is $build_type, not Debug"
+          if ! awk -F= '$1 ~ /^CMAKE_CONFIGURATION_TYPES:/ { count = split($2, configurations, ";"); for (i = 1; i <= count; i++) if (configurations[i] == "Debug") found = 1 } END { exit !found }' "$cache_file"; then
+            fail_dwarf_prerequisite "Debug is missing from CMAKE_CONFIGURATION_TYPES"
           fi
           for flag in CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG; do
-            value="$(awk -F= -v key="$flag" '$1 ~ "^" key ":" { print substr($0, index($0, "=") + 1); found=1; exit } END { if (!found) exit 1 }' "$repo/out/Debug/CMakeCache.txt")" || fail_dwarf_prerequisite "$flag is missing from CMakeCache.txt"
+            value="$(awk -F= -v key="$flag" '$1 ~ "^" key ":" { print substr($0, index($0, "=") + 1); found=1; exit } END { if (!found) exit 1 }' "$cache_file")" || fail_dwarf_prerequisite "$flag is missing from CMakeCache.txt"
             if [[ " $value " != *" -g "* ]]; then
               fail_dwarf_prerequisite "$flag does not preserve the default -g DWARF flag: $value"
             fi
           done
 
-          if ! python3 - "$repo" "$repo/out/Debug/compile_commands.json" > "$diagnostics/compile-command-settings.txt" 2>&1 <<'PY'
+          if ! python3 - "$repo" "$compile_commands" > "$diagnostics/compile-command-settings.txt" 2>&1 <<'PY'
           import json
           import os
           import re
@@ -605,7 +609,7 @@ jobs:
             fail_dwarf_prerequisite "Teagram compile commands do not all retain full -g DWARF; see compile-command-settings.txt"
           fi
 
-          if ! ninja -C "$repo/out/Debug" -t commands Telegram | grep -F 'Teagram.app/Contents/MacOS/Teagram' | tail -n 1 > "$diagnostics/teagram-link-command.txt"; then
+          if ! ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram | grep -F 'Teagram.app/Contents/MacOS/Teagram' | tail -n 1 > "$diagnostics/teagram-link-command.txt"; then
             fail_dwarf_prerequisite "the effective Teagram link command could not be captured"
           fi
           if [ ! -s "$diagnostics/teagram-link-command.txt" ]; then
