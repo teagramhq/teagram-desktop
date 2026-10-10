@@ -57,8 +57,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeyEvent>
 #endif
 
-#include <cstdio>
-
 namespace Settings {
 namespace {
 
@@ -1365,16 +1363,8 @@ const auto kMeta = BuildHelper({
 bool RunFoldersCrudRegressionForTest(
 	not_null<Window::SessionController *> controller,
 	not_null<Window::SessionController *> other, not_null<History *> history) {
-	const auto fail = [&](const char *stage) {
-		std::fprintf(
-			stderr,
-			"Folders CRUD regression failed at %s (shared=%d)\n",
-			stage,
-			controller->session().sharedFoldersSupported());
-		return false;
-	};
 	if (&controller->session() == &other->session()) {
-		return fail("session ownership");
+		return false;
 	}
 	auto parent = QWidget();
 	parent.resize(800, 600);
@@ -1383,7 +1373,7 @@ bool RunFoldersCrudRegressionForTest(
 	SetupFoldersList(controller, container.get(), state.get(), nullptr);
 	if (!state->createButton || !state->createButton->isEnabled() || !state->add
 		|| !state->edit || !state->remove || !state->save) {
-		return fail("setup");
+		return false;
 	}
 	state->regressionCreateFilter
 		= Data::ChatFilter(FilterId(0), {}, {}, {}, {}, {history}, {}, {});
@@ -1419,7 +1409,7 @@ bool RunFoldersCrudRegressionForTest(
 	QCoreApplication::processEvents();
 	if (!submit(u"Folder One"_q, false)
 		|| state->rows.size() != rowsBeforeCreate + 1) {
-		return fail("create dialog");
+		return false;
 	}
 	const auto button = state->rows.back().button;
 	state->save(button.get(), nullptr);
@@ -1427,61 +1417,54 @@ bool RunFoldersCrudRegressionForTest(
 	const auto createdRow
 		= ranges::find(state->rows, button, &FilterRow::button);
 	if (createdRow == end(state->rows) || !createdRow->filter.id()) {
-		return fail("create save");
+		return false;
 	}
 	const auto id = createdRow->filter.id();
 	const auto locate = [=](not_null<Window::SessionController *> owner) {
 		const auto &filters = owner->session().data().chatsFilters().list();
 		return ranges::find(filters, id, &Data::ChatFilter::id);
 	};
-	const auto verifySaved = [&](const QString &expectedTitle,
-								 const char *stage) {
+	const auto verifySaved = [&](const QString &expectedTitle) {
 		const auto &filters
 			= controller->session().data().chatsFilters().list();
 		const auto saved = ranges::find(filters, id, &Data::ChatFilter::id);
-		if ((saved != end(filters))
-			&& (saved->titleText().text == expectedTitle)
-			&& (saved->always().size() == 1)
-			&& saved->always().contains(history)
-			&& (locate(other)
-				== end(other->session().data().chatsFilters().list()))) {
-			return true;
-		}
-		return fail(stage);
+		return (saved != end(filters))
+			   && (saved->titleText().text == expectedTitle)
+			   && (saved->always().size() == 1)
+			   && saved->always().contains(history)
+			   && (locate(other)
+				   == end(other->session().data().chatsFilters().list()));
 	};
-	if (!verifySaved(u"Folder One"_q, "created filter state")) {
+	if (!verifySaved(u"Folder One"_q)) {
 		return false;
 	}
 	button->clicked(Qt::NoModifier, Qt::LeftButton);
 	QCoreApplication::processEvents();
 	if (!submit(u"Folder Two"_q, false)) {
-		return fail("rename dialog");
+		return false;
 	}
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
-	if (!verifySaved(u"Folder Two"_q, "renamed filter state")) {
+	if (!verifySaved(u"Folder Two"_q)) {
 		return false;
 	}
 	button->clicked(Qt::NoModifier, Qt::LeftButton);
 	QCoreApplication::processEvents();
 	if (!submit(u"Folder Key"_q, true)) {
-		return fail("enter rename dialog");
+		return false;
 	}
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
-	if (!verifySaved(u"Folder Key"_q, "enter-renamed filter state")) {
+	if (!verifySaved(u"Folder Key"_q)) {
 		return false;
 	}
 	button->triggerRemoveForTest();
 	state->save(nullptr, nullptr);
 	QCoreApplication::processEvents();
-	if (locate(controller)
-			== end(controller->session().data().chatsFilters().list())
-		&& locate(other)
-			== end(other->session().data().chatsFilters().list())) {
-		return true;
-	}
-	return fail("remove filter state");
+	return locate(controller)
+			   == end(controller->session().data().chatsFilters().list())
+		   && locate(other)
+				  == end(other->session().data().chatsFilters().list());
 }
 #endif
 
