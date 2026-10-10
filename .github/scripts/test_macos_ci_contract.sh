@@ -25,19 +25,40 @@ reject_text() {
 
 macos_group_for_event() {
   local pr_head="$1"
-  local dispatch_branch="$2"
-  local ref_name="$3"
-  printf 'MacOS.-%s\n' "${pr_head:-${dispatch_branch:-$ref_name}}"
+  local dispatch_pr_branch="$2"
+  local dispatch_branch="$3"
+  local ref_name="$4"
+  local branch_group
+  if [[ -n "$pr_head" ]]; then
+    branch_group="pr-$pr_head"
+  elif [[ -n "$dispatch_pr_branch" ]]; then
+    branch_group="pr-$dispatch_pr_branch"
+  else
+    branch_group="ref-${dispatch_branch:-$ref_name}"
+  fi
+  printf 'MacOS.-%s\n' "$branch_group"
 }
 
-assert_same_branch_group() {
+assert_pr_dispatch_group() {
   local branch="$1"
   local pr_group
   local dispatch_group
-  pr_group="$(macos_group_for_event "$branch" '' '105/merge')"
-  dispatch_group="$(macos_group_for_event '' "$branch" 'dev')"
+  pr_group="$(macos_group_for_event "$branch" '' '' '105/merge')"
+  dispatch_group="$(macos_group_for_event '' "$branch" '' 'dev')"
   if [[ "$pr_group" != "$dispatch_group" ]]; then
-    printf 'PR and dispatch runs for %s must share a concurrency group.\n' "$branch" >&2
+    printf 'PR and matching dispatch runs for %s must share a concurrency group.\n' "$branch" >&2
+    exit 1
+  fi
+}
+
+assert_pr_base_isolation() {
+  local branch="$1"
+  local pr_group
+  local base_group
+  pr_group="$(macos_group_for_event "$branch" '' '' '105/merge')"
+  base_group="$(macos_group_for_event '' '' "$branch" 'feature')"
+  if [[ "$pr_group" == "$base_group" ]]; then
+    printf 'A PR from %s must not share the base branch concurrency group.\n' "$branch" >&2
     exit 1
   fi
 }
@@ -45,13 +66,16 @@ assert_same_branch_group() {
 require_text "$mac_workflow" '  pull_request:'
 require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
-require_text "$mac_workflow" 'group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || inputs.branch || github.ref_name }}'
+require_text "$mac_workflow" '  pull_request_branch:'
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr-{0}', github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr-{0}', inputs.pull_request_branch) || format('ref-{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'cancel-in-progress: true'
-require_text "$mac_workflow" 'github.event.pull_request.head.ref || inputs.branch || github.ref_name'
-assert_same_branch_group 'feature/cache-refresh'
-assert_same_branch_group 'dev'
-dev_group="$(macos_group_for_event '' 'dev' 'main')"
-main_group="$(macos_group_for_event '' 'main' 'dev')"
+assert_pr_dispatch_group 'feature/cache-refresh'
+assert_pr_dispatch_group 'dev'
+assert_pr_dispatch_group 'main'
+assert_pr_base_isolation 'dev'
+assert_pr_base_isolation 'main'
+dev_group="$(macos_group_for_event '' '' 'dev' 'main')"
+main_group="$(macos_group_for_event '' '' 'main' 'dev')"
 if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1

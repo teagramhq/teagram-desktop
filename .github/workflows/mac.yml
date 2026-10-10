@@ -16,10 +16,14 @@ on:
         description: Branch name to group by when dispatching a commit SHA.
         required: false
         type: string
+      pull_request_branch:
+        description: PR source branch to share its concurrency group with the automatic PR run.
+        required: false
+        type: string
 
 concurrency:
-  # PRs and dispatches for one source branch share the same group.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || inputs.branch || github.ref_name }}
+  # Keep PRs separate from base runs; set pull_request_branch for matching dispatches.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr-{0}', github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr-{0}', inputs.pull_request_branch) || format('ref-{0}', inputs.branch || github.ref_name) }}
   cancel-in-progress: true
 
 jobs:
