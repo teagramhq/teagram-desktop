@@ -138,6 +138,9 @@ public:
 	void setInternalState(
 		const QRect &geometry,
 		not_null<ChatMemento*> memento);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void triggerAiApplyInPlaceForRegressionTest(const QString &text);
+#endif
 
 	// Tabbed selector management.
 	bool pushTabbedSelectorToThirdSection(

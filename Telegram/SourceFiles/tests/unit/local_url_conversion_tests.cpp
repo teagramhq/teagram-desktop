@@ -205,6 +205,10 @@ TEST_CASE(LegacyTelegramLinksKeepInAppConversions) {
 			u"tg://resolve?domain=example"_q,
 		},
 		{
+			u"https://t.me/addstyle/test"_q,
+			u"tg://addstyle?slug=test"_q,
+		},
+		{
 			u"https://t.me/example/123"_q,
 			u"tg://resolve?domain=example&post=123"_q,
 		},

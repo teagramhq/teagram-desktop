@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history_widget.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
 #include "api/api_bot.h"
@@ -5143,6 +5147,10 @@ void HistoryWidget::windowIsVisibleChanged() {
 }
 
 TextWithEntities HistoryWidget::prepareTextForEditMsg() const {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordAiComposeApplyRegressionEvent(
+		Tests::AiComposeApplyRegressionEvent::HistoryWidgetDraftRead);
+#endif
 	const auto textWithTags = _field->getTextWithAppliedMarkdown();
 	const auto prepareFlags = Ui::ItemTextOptions(
 		_history,
@@ -5223,7 +5231,7 @@ void HistoryWidget::triggerAiApplyInPlace() {
 		controller()->uiShow(),
 		this,
 		_field,
-		prepareTextForEditMsg(),
+		[=] { return prepareTextForEditMsg(); },
 		crl::guard(this, [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
 				textWithTags,
@@ -5232,6 +5240,15 @@ void HistoryWidget::triggerAiApplyInPlace() {
 			_field->setCursorPosition(cursor);
 		}));
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HistoryWidget::triggerAiApplyInPlaceForRegressionTest(
+		const QString &text) {
+	setFieldText({ text, {} });
+	triggerAiApplyInPlace();
+	clearFieldText();
+}
+#endif
 
 void HistoryWidget::saveEditMessage(Api::SendOptions options) {
 	Expects(_history != nullptr);

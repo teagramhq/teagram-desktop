@@ -24,11 +24,28 @@ struct LifecycleWriteCountsForRegressionTest {
 	int customServerBlockMarker = 0;
 };
 
+enum class AiComposeApplyRegressionEvent {
+	HistoryWidgetDraftRead,
+	ComposeControlsDraftRead,
+	ApplyDispatched,
+};
+
+struct AiComposeApplyRegressionCounts {
+	int historyWidgetDraftReads = 0;
+	int composeControlsDraftReads = 0;
+	int applyDispatches = 0;
+};
+
 void RecordLifecycleWriteForRegressionTest(
 	LifecycleWriteForRegressionTest operation);
 void ResetLifecycleWriteCountsForRegressionTest();
 [[nodiscard]] LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest();
+void RecordAiComposeApplyRegressionEvent(
+	AiComposeApplyRegressionEvent event);
+void ResetAiComposeApplyRegressionCounts();
+[[nodiscard]] AiComposeApplyRegressionCounts
+GetAiComposeApplyRegressionCounts();
 #endif
 
 void RunAccountLifecycleRegression(Fn<void(int)> done);
