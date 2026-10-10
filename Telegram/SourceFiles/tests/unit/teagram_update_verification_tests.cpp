@@ -14,10 +14,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <limits>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 using namespace Core;
+
+template <typename T>
+concept HasMutableAuthenticatedArchiveSize
+	= requires(T &package) { package.assetSize = quint64(0); };
+
+template <typename T>
+concept HasMutableAuthenticatedArchiveHash
+	= requires(T &package) { package.assetSha256 = QString(); };
+
+static_assert(!std::is_aggregate_v<AuthenticatedTeagramUpdate>);
+static_assert(!std::is_default_constructible_v<AuthenticatedTeagramUpdate>);
+static_assert(!std::is_constructible_v<AuthenticatedTeagramUpdate,
+									   TeagramUpdateChannel, quint64, QString,
+									   QString, quint64, QString, QString>);
+static_assert(!std::is_constructible_v<AuthenticatedTeagramUpdate,
+									   VerifiedTeagramUpdate>);
+static_assert(!std::is_copy_assignable_v<AuthenticatedTeagramUpdate>);
+static_assert(!HasMutableAuthenticatedArchiveSize<AuthenticatedTeagramUpdate>);
+static_assert(!HasMutableAuthenticatedArchiveHash<AuthenticatedTeagramUpdate>);
 
 namespace {
 
