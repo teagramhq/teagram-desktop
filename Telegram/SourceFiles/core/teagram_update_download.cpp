@@ -41,15 +41,15 @@ constexpr auto kMaximumRedirects = 3;
 constexpr auto kMaximumSignatureSize = quint64(64);
 constexpr auto kTransferTimeoutMilliseconds = 30000;
 
-constexpr auto kReleaseApiHost = u"api.github.com"_q;
-constexpr auto kRepositoryHost = u"github.com"_q;
-constexpr auto kReleaseAssetsHost = u"release-assets.githubusercontent.com"_q;
-constexpr auto kObjectsHost = u"objects.githubusercontent.com"_q;
-constexpr auto kRepositoryPath
+const auto kReleaseApiHost = u"api.github.com"_q;
+const auto kRepositoryHost = u"github.com"_q;
+const auto kReleaseAssetsHost = u"release-assets.githubusercontent.com"_q;
+const auto kObjectsHost = u"objects.githubusercontent.com"_q;
+const auto kRepositoryPath
 	= u"/repos/teagramhq/teagram-desktop/releases"_q;
-constexpr auto kManifestAsset = u"teagram-update.json"_q;
-constexpr auto kSignatureAsset = u"teagram-update.json.sig"_q;
-constexpr auto kTagPrefix = u"teagram-build-"_q;
+const auto kManifestAsset = u"teagram-update.json"_q;
+const auto kSignatureAsset = u"teagram-update.json.sig"_q;
+const auto kTagPrefix = u"teagram-build-"_q;
 
 using Reason = TeagramUpdateDownloadReason;
 using TransportFailure = TeagramUpdateTransportFailure;
