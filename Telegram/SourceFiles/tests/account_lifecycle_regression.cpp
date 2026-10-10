@@ -1612,6 +1612,65 @@ constexpr int kRegressionEntryClassCount = 13;
 	}
 	blank->forcedLogOut();
 
+	// A previously custom-pinned account can be restored into a blocked
+	// config when its stored pin is unreadable; the durable marker retains it.
+	pinned->local().writeCustomServerBlocked(false);
+	pinned->mtp().dcOptions().constructBlocked();
+	if (!pinned->mtp().config().blocked()
+		|| pinned->mtp().dcOptions().hasCustomServer()
+		|| !pinned->local().hasStoredCustomServer()
+		|| pinned->local().customServerPinUnknown()
+		|| pinned->session().botAppsSupported()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: fixture is not custom-plus-blocked: "
+			"blocked=%d custom=%d stored-custom=%d pin-unknown=%d apps=%d\n",
+			pinned->mtp().config().blocked(),
+			pinned->mtp().dcOptions().hasCustomServer(),
+			pinned->local().hasStoredCustomServer(),
+			pinned->local().customServerPinUnknown(),
+			pinned->session().botAppsSupported());
+		return false;
+	}
+	const auto customBlockedBefore = ReadWebViewOpenCounters(
+		&pinned->session());
+	if (AcceptedMiniAppOpens(
+				&pinned->session(),
+				pinnedBot,
+				pinnedController)
+		!= 0) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: custom-plus-blocked session accepted "
+			"an entry-class open.\n");
+		return false;
+	}
+	if (pinned->session().attachWebView().openByUsername(
+			pinnedController,
+			pinnedAction,
+			u"regression_bot"_q,
+			QString(),
+			false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: custom-plus-blocked session accepted "
+			"a username open.\n");
+		return false;
+	}
+	const auto customBlockedRefused = ReadWebViewOpenCounters(
+		&pinned->session());
+	if (!WebViewOpenDeltaMatches(
+			"custom-plus-blocked refusals",
+			customBlockedBefore,
+			customBlockedRefused,
+			kRegressionEntryClassCount + 1,
+			0,
+			0,
+			0,
+			0)) {
+		return false;
+	}
+
 	// Deferred resolution, completed on demand. The seam runs the production
 	// completion with its real guards: it opens for a live window of the
 	// owning session, it refuses after that window is destroyed instead of
@@ -1955,7 +2014,8 @@ constexpr int kRegressionEntryClassCount = 13;
 	std::fprintf(
 		stderr,
 		"Mini-app open regression passed: %d entry classes refused on "
-		"custom-pinned and blocked-without-pin sessions with the toast as "
+		"custom-pinned, blocked-without-pin, and custom-plus-blocked "
+		"sessions with the toast as "
 		"the only effect, a foreign window open refused, the stock app "
 		"kept and activated, the chat opened before the refusal, and every "
 		"deferred completion refused after its window or session was "
