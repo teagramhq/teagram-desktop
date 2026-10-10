@@ -141,6 +141,13 @@ void Controller::showAccount(not_null<Main::Account*> account) {
 	showAccount(account, ShowAtUnreadMsgId);
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void Controller::setDeferredOnlineUpdateMutationForRegressionTest(
+	DeferredOnlineUpdateMutationForRegressionTest mutation) {
+	_nextDeferredOnlineUpdateMutationForRegressionTest = mutation;
+}
+#endif
+
 void Controller::showAccount(
 		not_null<Main::Account*> account,
 		MsgId singlePeerShowAtMsgId) {
@@ -173,15 +180,43 @@ void Controller::showAccount(
 		&& prevAccount->sessionExists())
 		? prevAccount
 		: nullptr;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const auto deferredOnlineUpdateMutation
+		= _nextDeferredOnlineUpdateMutationForRegressionTest;
+	_nextDeferredOnlineUpdateMutationForRegressionTest
+		= DeferredOnlineUpdateMutationForRegressionTest::None;
+#endif
 	_accountLifetime.destroy();
 	_id.account = account;
 	Core::App().checkWindowId(this);
 	_serverIdentityDialogShown = false;
 
-	crl::on_main([prevSessionWeak] {
+	crl::on_main([prevSessionWeak
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+				  ,
+				  deferredOnlineUpdateMutation
+#endif
+	] {
 		if (const auto prevSession = prevSessionWeak.get()) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			const auto updateOnline = [&] {
+				prevSession->updates().updateOnlineForRegressionTest(
+					crl::now(),
+					Api::Updates::OnlineUpdateCauseForRegressionTest::
+						SwitchDeferred);
+			};
+			if (deferredOnlineUpdateMutation
+				!= DeferredOnlineUpdateMutationForRegressionTest::Remove) {
+				updateOnline();
+			}
+			if (deferredOnlineUpdateMutation
+				== DeferredOnlineUpdateMutationForRegressionTest::Duplicate) {
+				updateOnline();
+			}
+#else
 			prevSession->updates().updateOnline(
 				crl::now(), Api::Updates::UpdateOnlineReason::SessionSwitch);
+#endif
 		}
 	});
 
@@ -232,8 +267,14 @@ void Controller::showAccount(
 				_widget.setupSetupEmailLock();
 			}
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			session->updates().updateOnlineForRegressionTest(
+				crl::now(),
+				Api::Updates::OnlineUpdateCauseForRegressionTest::SwitchInline);
+#else
 			session->updates().updateOnline(
 				crl::now(), Api::Updates::UpdateOnlineReason::SessionSwitch);
+#endif
 		} else {
 			sideBarChanged();
 			setupIntro(accountBeforeIntro, std::move(oldContentCache));

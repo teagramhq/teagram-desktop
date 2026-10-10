@@ -14,7 +14,7 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 
 ## Teagram desktop CI
 
-The `MacOS.` workflow is the required pull request gate for changes targeting `dev`: it builds the arm64 client from the PR merge head and checks that the app launches. Its nightly run on `dev` also replays the full chat info session regression under LLDB. `MacOS Packaged.` and `MacOS unit feedback.` remain manually dispatchable and are not merge gates.
+The `MacOS.` workflow is the required pull request gate for changes targeting `dev`: it builds the arm64 client from the PR merge head and checks that the app launches. Its nightly run on `dev` also replays the full chat info session regression under LLDB. `MacOS Packaged.` builds manual QA artifacts on dispatch and publishes signed releases on `dev` and `main` pushes; it is not a merge gate. `MacOS unit feedback.` remains manually dispatchable and is not a merge gate.
 
 ## Supported systems
 

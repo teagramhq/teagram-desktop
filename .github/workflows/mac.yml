@@ -175,70 +175,37 @@ jobs:
         id: source-format
         if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
+        env:
+          SOURCE_FORMAT_MERGED_BASE_SHA: 12e804d5ea3dfef7ef54209dbff2207265ef298f
+          SOURCE_FORMAT_MERGED_HEAD_SHA: 9f4a8d28d588784a81a8aa603ec975245f33045b
+          SOURCE_FORMAT_REPAIR_BASE_SHA: daf71541a0bea6990694d6d6f132ca943f731305
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
           log="$evidence/source-format.log"
-          clang-format --version > "$log" 2>&1
-          git -C "$REPO_NAME" diff --no-ext-diff --unified=0 --no-color origin/dev...HEAD \
-            -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' '*.m' '*.mm' \
-            > "$RUNNER_TEMP/changed-cpp.diff"
+          manifest="$evidence/source-format-manifest.json"
+          script="$REPO_NAME/.github/scripts/check_cpp_format.py"
+          : > "$log"
           set +e
-          python3 - "$REPO_NAME" "$RUNNER_TEMP/changed-cpp.diff" >> "$log" 2>&1 <<'PY'
-          import re
-          import subprocess
-          import sys
-          from collections import defaultdict
-          from pathlib import Path
-
-          root, diff_path = sys.argv[1:]
-          changed = defaultdict(list)
-          current = None
-          with open(diff_path, encoding="utf-8") as source:
-              for line in source:
-                  if line.startswith("+++ b/"):
-                      current = line[6:].strip()
-                  elif line.startswith("@@") and current:
-                      match = re.search(r"\+(\d+)(?:,(\d+))?", line)
-                      if match:
-                          first = int(match.group(1))
-                          count = int(match.group(2) or "1")
-                          if count:
-                              changed[current].append((first, first + count - 1))
-
-          if not changed:
-              print("No changed C++ source lines were found; skipping format check.")
-              sys.exit(0)
-
-          style = (
-              "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
-              "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
-              "BreakBeforeBinaryOperators: All, "
-              "NamespaceIndentation: None}"
-          )
-          failed = False
-          for relative, ranges in sorted(changed.items()):
-              command = ["clang-format", "--dry-run", "--Werror", f"--style={style}"]
-              for first, last in ranges:
-                  command.append(f"--lines={first}:{last}")
-              command.append(str(Path(root, relative)))
-              result = subprocess.run(command, text=True, capture_output=True)
-              print(f"Checking {relative}")
-              if result.stdout:
-                  print(result.stdout, end="")
-              if result.stderr:
-                  print(result.stderr, end="", file=sys.stderr)
-              failed |= result.returncode != 0
-
-          sys.exit(1 if failed else 0)
-          PY
+          python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format --self-test >> "$log" 2>&1
+          self_test_status=$?
+          python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format \
+            --tested-head "$GITHUB_SHA" \
+            --source-range merged-profile-ipc "$SOURCE_FORMAT_MERGED_BASE_SHA" "$SOURCE_FORMAT_MERGED_HEAD_SHA" \
+            --source-range lifecycle-repair "$SOURCE_FORMAT_REPAIR_BASE_SHA" "$GITHUB_SHA" \
+            --manifest "$manifest" >> "$log" 2>&1
           format_status=$?
           set -e
-          printf 'tested_sha=%s\nvariant=%s\nexit_status=%s\n' \
-            "$GITHUB_SHA" "$BUILD_VARIANT" "$format_status" \
+          if [ "$self_test_status" -ne 0 ]; then
+            final_status=$self_test_status
+          else
+            final_status=$format_status
+          fi
+          printf 'tested_sha=%s\nvariant=%s\nself_test_exit_status=%s\ncoverage_exit_status=%s\nexit_status=%s\n' \
+            "$GITHUB_SHA" "$BUILD_VARIANT" "$self_test_status" "$format_status" "$final_status" \
             > "$evidence/source-format-status.txt"
           cat "$log"
-          exit "$format_status"
+          exit "$final_status"
 
       - name: Libraries cache.
         id: cache-libs
@@ -810,8 +777,37 @@ jobs:
             echo "Debugger did not observe a clean lifecycle regression exit; inspect the retained diagnostics artifact."
             exit 1
           fi
+          mutation_evidence="$diagnostics/deferred-switch-mutation-evidence.txt"
+          printf 'Tested SHA: %s\n' "$GITHUB_SHA" > "$mutation_evidence"
+          awk '
+            /Online update lifecycle: case=mutation-remove-deferred / { removed = $0; removed_count++ }
+            /Online update lifecycle: case=mutation-duplicate-deferred / { duplicated = $0; duplicated_count++ }
+            /Deferred switch observation deadline expired:/ { deadline = $0; deadline_count++ }
+            /Deferred switch mutation evidence: mutation=remove-dispatch / { removed_result = $0; removed_result_count++ }
+            /Deferred switch mutation evidence: mutation=duplicate-dispatch / { duplicated_result = $0; duplicated_result_count++ }
+            END {
+              if (removed_count != 1 || duplicated_count != 1 || deadline_count != 1 || removed_result_count != 1 || duplicated_result_count != 1) {
+                print "Expected one remove and duplicate deferred-dispatch assertion log." > "/dev/stderr"
+                exit 1
+              }
+              print removed
+              print deadline
+              print removed_result
+              print duplicated
+              print duplicated_result
+            }
+          ' "$diagnostics/stderr.log" >> "$mutation_evidence"
           echo "Full chat info session regression passed on $GITHUB_SHA."
           echo "Full chat info session regression passed on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deferred switch mutation evidence.
+        if: ${{ always() && steps.lifecycle-regression.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deferred-switch-mutation-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/deferred-switch-mutation-evidence.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload lifecycle regression diagnostics.
         if: ${{ always() && steps.lifecycle-regression.outcome == 'failure' }}

@@ -128,15 +128,14 @@ void ComputeDebugMode() {
 	auto debugModeSetting = std::optional<QByteArray>();
 	if (CheckProfilePath(MacProtectedPath::Operation::Stat,
 						 debugModeSettingPath, Q_FUNC_INFO)
-	&& file.exists()
-	&& CheckProfilePath(MacProtectedPath::Operation::Read,
+		&& file.exists()
+		&& CheckProfilePath(MacProtectedPath::Operation::Read,
 							debugModeSettingPath, Q_FUNC_INFO)
-	&& file.open(QIODevice::ReadOnly)) {
+		&& file.open(QIODevice::ReadOnly)) {
 		debugModeSetting = file.read(1);
 	}
-	Logs::SetDebugEnabled(details::DebugModeEnabled(
-		debugModeSetting,
-		cDebugMode()));
+	Logs::SetDebugEnabled(
+		details::DebugModeEnabled(debugModeSetting, cDebugMode()));
 	if (Logs::DebugEnabled()) {
 		QLoggingCategory::setFilterRules("qt.qpa.gl.debug=true");
 	}
