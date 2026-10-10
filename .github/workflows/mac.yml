@@ -777,8 +777,37 @@ jobs:
             echo "Debugger did not observe a clean lifecycle regression exit; inspect the retained diagnostics artifact."
             exit 1
           fi
+          mutation_evidence="$diagnostics/deferred-switch-mutation-evidence.txt"
+          printf 'Tested SHA: %s\n' "$GITHUB_SHA" > "$mutation_evidence"
+          awk '
+            /Online update lifecycle: case=mutation-remove-deferred / { removed = $0; removed_count++ }
+            /Online update lifecycle: case=mutation-duplicate-deferred / { duplicated = $0; duplicated_count++ }
+            /Deferred switch observation deadline expired:/ { deadline = $0; deadline_count++ }
+            /Deferred switch mutation evidence: mutation=remove-dispatch / { removed_result = $0; removed_result_count++ }
+            /Deferred switch mutation evidence: mutation=duplicate-dispatch / { duplicated_result = $0; duplicated_result_count++ }
+            END {
+              if (removed_count != 1 || duplicated_count != 1 || deadline_count != 1 || removed_result_count != 1 || duplicated_result_count != 1) {
+                print "Expected one remove and duplicate deferred-dispatch assertion log." > "/dev/stderr"
+                exit 1
+              }
+              print removed
+              print deadline
+              print removed_result
+              print duplicated
+              print duplicated_result
+            }
+          ' "$diagnostics/stderr.log" >> "$mutation_evidence"
           echo "Full chat info session regression passed on $GITHUB_SHA."
           echo "Full chat info session regression passed on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deferred switch mutation evidence.
+        if: ${{ always() && steps.lifecycle-regression.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deferred-switch-mutation-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/deferred-switch-mutation-evidence.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload lifecycle regression diagnostics.
         if: ${{ always() && steps.lifecycle-regression.outcome == 'failure' }}

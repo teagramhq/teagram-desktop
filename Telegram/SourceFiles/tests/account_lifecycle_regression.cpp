@@ -128,6 +128,8 @@ RegressionServerKey() {
 
 using OnlineUpdateCounts =
 	Api::Updates::OnlineUpdateCountsForRegressionTest;
+using DeferredOnlineUpdateMutation =
+	Window::Controller::DeferredOnlineUpdateMutationForRegressionTest;
 
 struct SwitchUpdateExpectation {
 	int inlineSwitch = 0;
@@ -235,44 +237,6 @@ enum class SwitchUpdateClassification {
 	return causesMatch;
 }
 
-[[nodiscard]] bool SwitchUpdateAssertionRejectsMissingAndDuplicate() {
-	const auto shown = OnlineUpdateCounts{ 1, 0, 1, 0 };
-	const auto previousMissing = OnlineUpdateCounts{ 0, 0, 0, 0 };
-	const auto previousOnce = OnlineUpdateCounts{ 1, 0, 0, 1 };
-	const auto previousTwice = OnlineUpdateCounts{ 2, 0, 0, 2 };
-	const auto stockWithOther = OnlineUpdateCounts{ 2, 1, 1, 0 };
-	const auto shownExpected = SwitchUpdateExpectation{ 1, 0 };
-	const auto previousExpected = SwitchUpdateExpectation{ 0, 1 };
-	const auto missingRejected = !ReportSwitchUpdateDeltas(
-		"deferred dispatch removed",
-		previousMissing,
-		previousExpected,
-		shown,
-		shownExpected);
-	const auto singleDispatchAccepted = ReportSwitchUpdateDeltas(
-		"deferred dispatch exactly once",
-		previousOnce,
-		previousExpected,
-		shown,
-		shownExpected);
-	const auto duplicateRejected = !ReportSwitchUpdateDeltas(
-		"deferred dispatch duplicated",
-		previousTwice,
-		previousExpected,
-		shown,
-		shownExpected);
-	const auto unrelatedUpdateAccepted = ReportSwitchUpdateDeltas(
-		"pinned-to-stock unrelated stock activation",
-		stockWithOther,
-		shownExpected,
-		previousOnce,
-		previousExpected);
-	return missingRejected
-		&& singleDispatchAccepted
-		&& duplicateRejected
-		&& unrelatedUpdateAccepted;
-}
-
 [[nodiscard]] bool WaitForDeferredSwitchUpdate(
 		Main::Session &session,
 		int expectedCount) {
@@ -313,6 +277,74 @@ enum class SwitchUpdateClassification {
 	}
 	QCoreApplication::processEvents();
 	return currentCount() >= expectedCount;
+}
+
+[[nodiscard]] bool RunDeferredSwitchMutationRegression(
+		Window::Controller &primary,
+		Main::Account &previous,
+		Main::Account &shown,
+		DeferredOnlineUpdateMutation mutation,
+		const char *mutationName,
+		const char *caseName,
+		SwitchUpdateClassification expectedClassification) {
+	const auto previousBefore
+		= previous.session().updates().onlineUpdateCountsForRegressionTest();
+	const auto shownBefore
+		= shown.session().updates().onlineUpdateCountsForRegressionTest();
+	primary.setDeferredOnlineUpdateMutationForRegressionTest(mutation);
+	primary.showAccount(&shown);
+	const auto previousAfterInline
+		= OnlineUpdateDelta(
+			previous.session().updates().onlineUpdateCountsForRegressionTest(),
+			previousBefore);
+	const auto shownAfterInline
+		= OnlineUpdateDelta(
+			shown.session().updates().onlineUpdateCountsForRegressionTest(),
+			shownBefore);
+	const auto inlineMatches = (primary.maybeSession() == &shown.session())
+		&& (previousAfterInline.total == 0)
+		&& (shownAfterInline.total == 1)
+		&& (shownAfterInline.switchInline == 1)
+		&& (shownAfterInline.switchDeferred == 0);
+	QCoreApplication::processEvents();
+	const auto deferredObserved = WaitForDeferredSwitchUpdate(
+		previous.session(),
+		previousBefore.switchDeferred + 1);
+	const auto previousDelta
+		= OnlineUpdateDelta(
+			previous.session().updates().onlineUpdateCountsForRegressionTest(),
+			previousBefore);
+	const auto shownDelta
+		= OnlineUpdateDelta(
+			shown.session().updates().onlineUpdateCountsForRegressionTest(),
+			shownBefore);
+	const auto assertionAccepted = ReportSwitchUpdateDeltas(
+		caseName,
+		previousDelta,
+		{ 0, 1 },
+		shownDelta,
+		{ 1, 0 });
+	const auto classification = ClassifySwitchUpdateDelta(
+		previousDelta,
+		{ 0, 1 });
+	const auto duplicate = mutation
+		== DeferredOnlineUpdateMutation::Duplicate;
+	const auto expectedCount = duplicate ? 2 : 0;
+	const auto expectedObserved = duplicate;
+	const auto failedAsExpected = !assertionAccepted
+		&& classification == expectedClassification
+		&& previousDelta.switchDeferred == expectedCount
+		&& deferredObserved == expectedObserved;
+	std::fprintf(
+		stderr,
+		"Deferred switch mutation evidence: mutation=%s assertion=%s "
+		"inline=%s event_loop=%s deferred=%d\n",
+		mutationName,
+		failedAsExpected ? "failed-as-expected" : "unexpected-result",
+		inlineMatches ? "passed" : "failed",
+		deferredObserved ? "dispatch-observed" : "dispatch-absent",
+		previousDelta.switchDeferred);
+	return inlineMatches && failedAsExpected;
 }
 
 struct ProtectedCacheFixtures {
@@ -1455,14 +1487,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window disappeared before online-update lifetime regression");
 	}
-	if (!SwitchUpdateAssertionRejectsMissingAndDuplicate()) {
-		return FailChatParticipantsRegression(
-			"switch update assertion accepted a missing or duplicate deferred dispatch");
-	}
-	std::fprintf(
-		stderr,
-		"Switch cause negative evidence: deferred=0 rejected, "
-		"deferred=2 rejected, unrelated=1 accepted.\n");
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
 		return FailChatParticipantsRegression(
@@ -1471,6 +1495,51 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after the initial session switch");
+	}
+	QCoreApplication::processEvents();
+	if (!RunDeferredSwitchMutationRegression(
+			*primary,
+			*stock,
+			*pinned,
+			DeferredOnlineUpdateMutation::Remove,
+			"remove-dispatch",
+			"mutation-remove-deferred",
+			SwitchUpdateClassification::MissingDeferred)) {
+		return FailChatParticipantsRegression(
+			"switch fixture did not reject the removed deferred dispatch");
+	}
+	const auto pinnedBeforeRestoreRemoval
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	primary->showAccount(stock);
+	QCoreApplication::processEvents();
+	if (primary->maybeSession() != &stock->session()
+		|| !WaitForDeferredSwitchUpdate(
+			pinned->session(),
+			pinnedBeforeRestoreRemoval.switchDeferred + 1)) {
+		return FailChatParticipantsRegression(
+			"could not restore stock after the removed-dispatch mutation");
+	}
+	if (!RunDeferredSwitchMutationRegression(
+			*primary,
+			*stock,
+			*pinned,
+			DeferredOnlineUpdateMutation::Duplicate,
+			"duplicate-dispatch",
+			"mutation-duplicate-deferred",
+			SwitchUpdateClassification::ExtraDeferred)) {
+		return FailChatParticipantsRegression(
+			"switch fixture did not reject the duplicated deferred dispatch");
+	}
+	const auto pinnedBeforeRestoreDuplicate
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	primary->showAccount(stock);
+	QCoreApplication::processEvents();
+	if (primary->maybeSession() != &stock->session()
+		|| !WaitForDeferredSwitchUpdate(
+			pinned->session(),
+			pinnedBeforeRestoreDuplicate.switchDeferred + 1)) {
+		return FailChatParticipantsRegression(
+			"could not restore stock after the duplicated-dispatch mutation");
 	}
 	const auto stockToPinnedStockUpdates
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();

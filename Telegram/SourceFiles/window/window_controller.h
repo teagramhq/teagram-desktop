@@ -40,6 +40,14 @@ namespace Window {
 
 class Controller final : public base::has_weak_ptr {
 public:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	enum class DeferredOnlineUpdateMutationForRegressionTest {
+		None,
+		Remove,
+		Duplicate,
+	};
+#endif
+
 	Controller();
 	Controller(SeparateId id, MsgId showAtMsgId);
 	~Controller();
@@ -48,6 +56,10 @@ public:
 	Controller &operator=(const Controller &other) = delete;
 
 	void showAccount(not_null<Main::Account*> account);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setDeferredOnlineUpdateMutationForRegressionTest(
+		DeferredOnlineUpdateMutationForRegressionTest mutation);
+#endif
 	[[nodiscard]] SeparateId id() const;
 	[[nodiscard]] bool isPrimary() const;
 
@@ -196,6 +208,11 @@ private:
 
 	QString _highlightControlId;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	DeferredOnlineUpdateMutationForRegressionTest
+		_nextDeferredOnlineUpdateMutationForRegressionTest
+			= DeferredOnlineUpdateMutationForRegressionTest::None;
+#endif
 	rpl::lifetime _accountLifetime;
 	rpl::lifetime _lifetime;
 
