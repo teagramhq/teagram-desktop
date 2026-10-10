@@ -115,7 +115,7 @@ void TriggerAiApplyInPlace(
 	std::shared_ptr<Ui::Show> show,
 	not_null<QObject*> guard,
 	not_null<Ui::InputField*> field,
-	TextWithEntities fullFieldText,
+	Fn<TextWithEntities()> fullFieldText,
 	Fn<void(TextWithTags textWithTags, int cursor)> applyToField);
 
 } // namespace Api

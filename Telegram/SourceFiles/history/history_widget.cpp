@@ -5228,7 +5228,7 @@ void HistoryWidget::triggerAiApplyInPlace() {
 		controller()->uiShow(),
 		this,
 		_field,
-		prepareTextForEditMsg(),
+		[=] { return prepareTextForEditMsg(); },
 		crl::guard(this, [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
 				textWithTags,

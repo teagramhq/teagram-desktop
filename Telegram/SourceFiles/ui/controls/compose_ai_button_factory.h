@@ -29,6 +29,13 @@ struct PreparedList;
 
 extern const char kOptionHideAiButton[];
 
+[[nodiscard]] inline bool AiComposeButtonAllowed(
+		bool sessionSupported,
+		bool hideAiButton,
+		bool hasTones) {
+	return sessionSupported && !hideAiButton && hasTones;
+}
+
 [[nodiscard]] bool HasEnoughLinesForAi(
 	not_null<Main::Session*> session,
 	not_null<Ui::InputField*> field);

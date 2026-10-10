@@ -83,6 +83,12 @@ public:
 
 	void applyUpdate();
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] int refreshRequestsForRegressionTest() const;
+	[[nodiscard]] int resolveCallsForRegressionTest() const;
+	[[nodiscard]] bool periodicRefreshScheduledForRegressionTest() const;
+#endif
+
 	[[nodiscard]] MTPInputAiComposeTone toneToMTP(
 		const AiComposeTone &tone) const;
 
@@ -112,6 +118,11 @@ private:
 	rpl::event_stream<> _updates;
 	base::Timer _refreshTimer;
 	PendingRefresh _pendingRefresh = PendingRefresh::None;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _refreshRequestsForRegressionTest = 0;
+	int _resolveCallsForRegressionTest = 0;
+	bool _periodicRefreshScheduledForRegressionTest = false;
+#endif
 
 };
 

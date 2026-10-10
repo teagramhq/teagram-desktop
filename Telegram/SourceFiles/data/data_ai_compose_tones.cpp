@@ -22,8 +22,14 @@ constexpr auto kRefreshInterval = 3600 * crl::time(1000);
 AiComposeTones::AiComposeTones(not_null<Main::Session*> session)
 : _session(session)
 , _refreshTimer([=] { refresh(); }) {
+	if (!_session->aiComposeSupported()) {
+		return;
+	}
 	refresh();
 	_refreshTimer.callEach(kRefreshInterval);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	_periodicRefreshScheduledForRegressionTest = true;
+#endif
 }
 
 void AiComposeTones::refresh() {
@@ -31,6 +37,9 @@ void AiComposeTones::refresh() {
 }
 
 void AiComposeTones::refreshWithHash(uint64 hash) {
+	if (!_session->aiComposeSupported()) {
+		return;
+	}
 	if (_refreshRequestId) {
 		if (hash == 0) {
 			_pendingRefresh = PendingRefresh::Full;
@@ -39,6 +48,9 @@ void AiComposeTones::refreshWithHash(uint64 hash) {
 		}
 		return;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_refreshRequestsForRegressionTest;
+#endif
 	_refreshRequestId = _session->api().request(MTPaicompose_GetTones(
 		MTP_long(hash)
 	)).done([=](const MTPaicompose_Tones &result) {
@@ -234,6 +246,9 @@ void AiComposeTones::resolve(
 		const QString &slug,
 		Fn<void(AiComposeTone)> done,
 		Fn<void(const MTP::Error &)> fail) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_resolveCallsForRegressionTest;
+#endif
 	_session->api().request(MTPaicompose_GetTone(
 		MTP_inputAiComposeToneSlug(MTP_string(slug))
 	)).done([=](const MTPaicompose_Tones &result) {
@@ -367,6 +382,20 @@ MTPInputAiComposeTone AiComposeTones::toneToMTP(
 const std::vector<AiComposeTone> &AiComposeTones::list() const {
 	return _list;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+int AiComposeTones::refreshRequestsForRegressionTest() const {
+	return _refreshRequestsForRegressionTest;
+}
+
+int AiComposeTones::resolveCallsForRegressionTest() const {
+	return _resolveCallsForRegressionTest;
+}
+
+bool AiComposeTones::periodicRefreshScheduledForRegressionTest() const {
+	return _periodicRefreshScheduledForRegressionTest;
+}
+#endif
 
 rpl::producer<> AiComposeTones::updated() const {
 	return _updates.events();

@@ -45,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
 #include "data/components/scheduled_messages.h"
+#include "data/data_ai_compose_tones.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
@@ -117,6 +118,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
+#include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
@@ -8332,6 +8334,15 @@ void RunProtectedCacheCleanupRegression(
 		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
 	}
+	const auto &stockTones = stock->session().data().aiComposeTones();
+	const auto &pinnedTones = pinned->session().data().aiComposeTones();
+	if (stockTones.refreshRequestsForRegressionTest() != 1
+		|| !stockTones.periodicRefreshScheduledForRegressionTest()
+		|| pinnedTones.refreshRequestsForRegressionTest() != 0
+		|| pinnedTones.periodicRefreshScheduledForRegressionTest()) {
+		return failPrerequisite(
+			"tone refresh escaped the stock-session capability boundary");
+	}
 	if (authenticatedCacheOnly) {
 		nativeLifecycleResults->Report("chat-participants-prerequisites", true);
 		RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned,
@@ -8363,6 +8374,8 @@ void RunProtectedCacheCleanupRegression(
 			   && (session.exportSupported() == supported)
 			   && (session.passportSupported() == supported)
 			   && (session.aiComposeSupported() == supported)
+			   && (Ui::AiComposeButtonAllowed(
+				   session.aiComposeSupported(), false, true) == supported)
 			   && (session.serverTranslationSupported() == supported)
 			   && (session.sharedFoldersSupported() == supported)
 			   && (session.accountBioEditSupported() == supported)

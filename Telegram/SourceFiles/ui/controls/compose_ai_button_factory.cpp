@@ -36,8 +36,10 @@ base::options::toggle HideAiButtonOption({
 bool HasEnoughLinesForAi(
 		not_null<Main::Session*> session,
 		not_null<Ui::InputField*> field) {
-	if (HideAiButtonOption.value()
-		|| session->data().aiComposeTones().list().empty()) {
+	if (!AiComposeButtonAllowed(
+		session->aiComposeSupported(),
+		HideAiButtonOption.value(),
+		!session->data().aiComposeTones().list().empty())) {
 		return false;
 	}
 	const auto &style = field->st().style;

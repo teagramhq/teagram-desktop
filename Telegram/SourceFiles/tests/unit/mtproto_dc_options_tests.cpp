@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtp_instance.h"
 #include "mtproto/proxy_check.h"
 #include "mtproto/session.h"
+#include "ui/controls/compose_ai_button_factory.h"
 #ifdef Q_OS_UNIX
 #include "tests/unit/system_resolver_fixture.h"
 #endif
@@ -1589,6 +1590,26 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	CHECK(!Ui::AiComposeButtonAllowed(
+		Main::details::aiComposeSupported(custom), false, true));
+	CHECK(!Ui::AiComposeButtonAllowed(
+		Main::details::aiComposeSupported(blocked), false, true));
+	CHECK(Ui::AiComposeButtonAllowed(
+		Main::details::aiComposeSupported(stock), false, true));
+	CHECK(!Ui::AiComposeButtonAllowed(
+		Main::details::aiComposeSupported(stock), true, true));
+	CHECK(!Ui::AiComposeButtonAllowed(
+		Main::details::aiComposeSupported(stock), false, false));
 }
 
 TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {
