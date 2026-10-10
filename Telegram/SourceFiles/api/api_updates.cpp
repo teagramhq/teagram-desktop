@@ -1080,7 +1080,7 @@ int32 Updates::pts() const {
 }
 
 void Updates::updateOnline(crl::time lastNonIdleTime) {
-	updateOnline(lastNonIdleTime, false);
+	updateOnline(lastNonIdleTime, UpdateOnlineReason::Regular);
 }
 
 bool Updates::isIdle() const {
@@ -1091,9 +1091,12 @@ rpl::producer<bool> Updates::isIdleValue() const {
 	return _isIdle.value();
 }
 
-void Updates::updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline) {
+void Updates::updateOnline(crl::time lastNonIdleTime,
+						   UpdateOnlineReason reason) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	++_onlineUpdateCallsForRegressionTest;
+	if (reason == UpdateOnlineReason::SessionSwitch) {
+		++_sessionSwitchUpdatesForTest;
+	}
 #endif
 	if (!lastNonIdleTime) {
 		lastNonIdleTime = Core::App().lastNonIdleTime();
@@ -1122,7 +1125,7 @@ void Updates::updateOnline(crl::time lastNonIdleTime, bool gotOtherOffline) {
 	auto ms = crl::now();
 	if (isOnline != _lastWasOnline
 		|| (isOnline && _lastSetOnline + config.onlineUpdatePeriod <= ms)
-		|| (isOnline && gotOtherOffline)) {
+		|| (isOnline && reason == UpdateOnlineReason::OtherOffline)) {
 		api().request(base::take(_onlineRequest)).cancel();
 
 		_lastWasOnline = isOnline;
@@ -1184,8 +1187,8 @@ crl::time Updates::lastSetOnline() const {
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-int Updates::onlineUpdateCallsForRegressionTest() const {
-	return _onlineUpdateCallsForRegressionTest;
+int Updates::sessionSwitchUpdatesForTest() const {
+	return _sessionSwitchUpdatesForTest;
 }
 #endif
 
@@ -2177,7 +2180,8 @@ void Updates::feedUpdate(const MTPUpdate &update) {
 		if (UserId(d.vuser_id()) == session().userId()) {
 			if (d.vstatus().type() == mtpc_userStatusOffline
 				|| d.vstatus().type() == mtpc_userStatusEmpty) {
-				updateOnline(Core::App().lastNonIdleTime(), true);
+				updateOnline(Core::App().lastNonIdleTime(),
+							 UpdateOnlineReason::OtherOffline);
 				if (d.vstatus().type() == mtpc_userStatusOffline) {
 					cSetOtherOnline(
 						d.vstatus().c_userStatusOffline().vwas_online().v);
