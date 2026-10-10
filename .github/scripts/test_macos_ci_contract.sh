@@ -104,9 +104,24 @@ require_text "$mac_workflow" 'ccache hit rate'
 require_text "$mac_workflow" 'ccache_hit_count.sh'
 require_text "$mac_workflow" 'ccache_save_decision.sh'
 require_text "$mac_workflow" 'A restored compiler cache produced no cache hits.'
+reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
+require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
 require_text "$mac_workflow" "github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'"
 reject_text "$mac_workflow" 'startsWith(steps.cache-ccache.outputs.cache-matched-key'
+ccache_stats_step="$(awk '
+  /^      - name: Report compiler cache hits\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+misses_output_line="$(grep -nF 'echo "misses=$misses" >> "$GITHUB_OUTPUT"' <<< "$ccache_stats_step" | cut -d: -f1)"
+save_decision_line="$(grep -nF 'ccache_save_decision.sh' <<< "$ccache_stats_step" | cut -d: -f1)"
+zero_hit_guard_line="$(grep -nF 'A restored compiler cache produced no cache hits.' <<< "$ccache_stats_step" | cut -d: -f1)"
+if [[ -z "$misses_output_line" || -z "$save_decision_line" || -z "$zero_hit_guard_line" ]] \
+  || ((misses_output_line >= zero_hit_guard_line || save_decision_line >= zero_hit_guard_line)); then
+  printf 'Compiler cache outputs must be written before a zero-hit guard can fail the stats step.\n' >&2
+  exit 1
+fi
 save_cache_step="$(awk '
   /^      - name: Save Teagram compiler cache\.$/ { in_step = 1; next }
   in_step && /^      - name:/ { exit }

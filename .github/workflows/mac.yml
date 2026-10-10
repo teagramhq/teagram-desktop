@@ -919,6 +919,8 @@ jobs:
             "- ccache misses: $misses" \
             "- ccache hit rate: $hits/$total ($hit_rate)" \
             >> "$GITHUB_STEP_SUMMARY"
+          echo "misses=$misses" >> "$GITHUB_OUTPUT"
+          bash "$REPO_NAME/.github/scripts/ccache_save_decision.sh" "$misses" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_EVENT_NAME" == 'pull_request' && -n "$CCACHE_MATCHED_KEY" ]] && ((hits == 0)); then
             echo "::error::A restored compiler cache produced no cache hits."
             exit 1
@@ -927,14 +929,11 @@ jobs:
             echo "::error::ccache did not record any compiler invocations for the Teagram build."
             exit 1
           fi
-          echo "misses=$misses" >> "$GITHUB_OUTPUT"
-          bash "$REPO_NAME/.github/scripts/ccache_save_decision.sh" "$misses" >> "$GITHUB_OUTPUT"
 
       - name: Save Teagram compiler cache.
         if: >
           always()
             && !cancelled()
-            && steps.ccache-stats.outcome == 'success'
             && steps.ccache-stats.outputs.save == 'true'
             && (github.ref == 'refs/heads/dev' || github.event_name == 'pull_request')
         uses: actions/cache/save@v6
