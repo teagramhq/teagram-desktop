@@ -34,15 +34,15 @@ using namespace Core;
 namespace {
 
 struct PkeyDeleter {
-	void operator()(EVP_PKEY *value) const { EVP_PKEY_free(value); }
+	void operator()(EVP_PKEY *value) const;
 };
 
 struct PkeyContextDeleter {
-	void operator()(EVP_PKEY_CTX *value) const { EVP_PKEY_CTX_free(value); }
+	void operator()(EVP_PKEY_CTX *value) const;
 };
 
 struct DigestContextDeleter {
-	void operator()(EVP_MD_CTX *value) const { EVP_MD_CTX_free(value); }
+	void operator()(EVP_MD_CTX *value) const;
 };
 
 using Pkey = std::unique_ptr<EVP_PKEY, PkeyDeleter>;
@@ -165,139 +165,185 @@ class FixtureTransport final : public TeagramUpdateTransport {
 public:
 	using AfterChunk = std::function<void(const QUrl &)>;
 
-	void addResponse(const QUrl &url, FakeResponse response) {
-		_responses.insert_or_assign(Key(url), std::move(response));
-	}
+	void addResponse(const QUrl &url, FakeResponse response);
 
-	void addAsset(const QByteArray &tag, const QByteArray &name,
-				 FakeResponse response) {
-		auto url = QUrl(u"https://github.com/teagramhq/teagram-desktop/releases/download/"_q
-			+ QString::fromUtf8(tag) + u"/"_q + QString::fromUtf8(name));
-		addResponse(url, std::move(response));
-	}
+	void addAsset(
+		const QByteArray &tag,
+		const QByteArray &name,
+		FakeResponse response);
 
 	void addRelease(const QByteArray &tag, const QByteArray &channel,
 				const QByteArray &build, EVP_PKEY *key,
 				const QByteArray &archive, bool prerelease = false,
-				const QByteArray &signedSize = {}) {
-		const auto manifest = Manifest(channel, build, archive, signedSize);
-		const auto signature = SignManifest(manifest, key);
-		addAsset(tag, "teagram-update.json", ResponseWithBody(manifest));
-		addAsset(tag, "teagram-update.json.sig", ResponseWithBody(signature));
-		addAsset(tag, QByteArray("Teagram-macOS-arm64-") + build + ".zip",
-				ResponseWithBody(archive));
-		auto assets = QJsonArray();
-		assets.append(QJsonObject{{u"name"_q, u"teagram-update.json"_q}});
-		assets.append(QJsonObject{{u"name"_q, u"teagram-update.json.sig"_q}});
-		assets.append(QJsonObject{
-			{u"name"_q,
-			 u"Teagram-macOS-arm64-%1.zip"_q.arg(QString::fromUtf8(build))},
-		});
-		_releases.append(QJsonObject{
-			{u"tag_name"_q, QString::fromUtf8(tag)},
-			{u"prerelease"_q, prerelease},
-			{u"assets"_q, assets},
-		});
-	}
+				const QByteArray &signedSize = {});
 
-	void addOldReleases(int count) {
-		for (auto i = 0; i != count; ++i) {
-			_releases.append(QJsonObject{
-				{u"tag_name"_q, u"teagram-build-%1"_q.arg(i + 2000)},
-				{u"assets"_q, QJsonArray()},
-			});
-		}
-	}
+	void addOldReleases(int count);
 
-	void addReleaseList() {
-		for (auto page = 0;
-			 qsizetype(page) * 100 < _releases.size();
-			 ++page) {
-			const auto start = qsizetype(page) * 100;
-			const auto end = std::min(start + 100, _releases.size());
-			auto releases = QJsonArray();
-			for (auto i = start; i < end; ++i) {
-				releases.append(_releases[i]);
-			}
-			const auto body = QJsonDocument(releases)
-				.toJson(QJsonDocument::Compact);
-			auto url = QUrl(
-				u"https://api.github.com/repos/teagramhq/teagram-desktop/releases"_q);
-			auto query = QUrlQuery();
-			query.addQueryItem(u"per_page"_q, u"100"_q);
-			query.addQueryItem(u"page"_q, QString::number(page + 1));
-			url.setQuery(query);
-			addResponse(url, ResponseWithBody(body));
-		}
-	}
+	void addReleaseList();
 
-	TeagramUpdateTransportResponse Get(
+	TeagramUpdateTransportResponse get(
 		const QUrl &url,
 		quint64 maximumBytes,
 		const ChunkHandler &onChunk,
-		const CancellationCheck &isCancelled) override {
-		_requests.push_back(url);
-		const auto i = _responses.find(Key(url));
-		if (i == _responses.end()) {
-			return {TeagramUpdateTransportFailure::Network, 0, {}};
-		}
-		const auto &response = i->second;
-		if (response.failure != TeagramUpdateTransportFailure::None) {
-			return {response.failure, response.status, response.redirect};
-		}
-		if (!response.redirect.isEmpty()) {
-			return {TeagramUpdateTransportFailure::None,
-				response.status,
-				response.redirect};
-		}
-		auto received = quint64(0);
-		for (auto offset = qsizetype(0); offset < response.body.size();) {
-			if (isCancelled()) {
-				return {TeagramUpdateTransportFailure::Cancelled,
-					response.status,
-					{}};
-			}
-			const auto size = std::min<qsizetype>(
-				16384, response.body.size() - offset);
-			const auto chunk = QByteArrayView(
-				response.body.constData() + offset, size);
-			if (quint64(size) > maximumBytes - received) {
-				return {TeagramUpdateTransportFailure::ResponseTooLarge,
-					response.status,
-					{}};
-			}
-			if (!onChunk(chunk)) {
-				return {TeagramUpdateTransportFailure::ConsumerStopped,
-					response.status,
-					{}};
-			}
-			if (_afterChunk) {
-				_afterChunk(url);
-			}
-			received += quint64(size);
-			offset += size;
-		}
-		return {TeagramUpdateTransportFailure::None,
-			response.status,
-			{}};
-	}
+		const CancellationCheck &isCancelled) override;
 
 	AfterChunk _afterChunk;
 	std::vector<QUrl> _requests;
 
 private:
-	[[nodiscard]] static QString Key(const QUrl &url) {
-		auto result = url.host() + url.path();
-		if (url.host() == u"api.github.com"_q) {
-			result += u"?page="_q
-				+ QUrlQuery(url).queryItemValue(u"page"_q);
-		}
-		return result;
-	}
+	[[nodiscard]] static QString Key(const QUrl &url);
 
 	std::map<QString, FakeResponse> _responses;
 	QJsonArray _releases;
+
 };
+
+void PkeyDeleter::operator()(EVP_PKEY *value) const {
+	EVP_PKEY_free(value);
+}
+
+void PkeyContextDeleter::operator()(
+	EVP_PKEY_CTX *value) const {
+	EVP_PKEY_CTX_free(value);
+}
+
+void DigestContextDeleter::operator()(
+	EVP_MD_CTX *value) const {
+	EVP_MD_CTX_free(value);
+}
+
+void FixtureTransport::addResponse(const QUrl &url, FakeResponse response) {
+	_responses.insert_or_assign(Key(url), std::move(response));
+}
+
+void FixtureTransport::addAsset(
+	const QByteArray &tag,
+	const QByteArray &name,
+	FakeResponse response) {
+	auto url = QUrl(
+		u"https://github.com/teagramhq/teagram-desktop/releases/download/"_q
+		+ QString::fromUtf8(tag) + u"/"_q + QString::fromUtf8(name));
+	addResponse(url, std::move(response));
+}
+
+void FixtureTransport::addRelease(
+	const QByteArray &tag,
+	const QByteArray &channel,
+	const QByteArray &build,
+	EVP_PKEY *key,
+	const QByteArray &archive,
+	bool prerelease,
+	const QByteArray &signedSize) {
+	const auto manifest = Manifest(channel, build, archive, signedSize);
+	const auto signature = SignManifest(manifest, key);
+	addAsset(tag, "teagram-update.json", ResponseWithBody(manifest));
+	addAsset(tag, "teagram-update.json.sig", ResponseWithBody(signature));
+	addAsset(tag, QByteArray("Teagram-macOS-arm64-") + build + ".zip",
+			ResponseWithBody(archive));
+	auto assets = QJsonArray();
+	assets.append(QJsonObject{{u"name"_q, u"teagram-update.json"_q}});
+	assets.append(QJsonObject{{u"name"_q, u"teagram-update.json.sig"_q}});
+	assets.append(QJsonObject{
+		{u"name"_q,
+		 u"Teagram-macOS-arm64-%1.zip"_q.arg(QString::fromUtf8(build))},
+	});
+	_releases.append(QJsonObject{
+		{u"tag_name"_q, QString::fromUtf8(tag)},
+		{u"prerelease"_q, prerelease},
+		{u"assets"_q, assets},
+	});
+}
+
+void FixtureTransport::addOldReleases(int count) {
+	for (auto i = 0; i != count; ++i) {
+		_releases.append(QJsonObject{
+			{u"tag_name"_q, u"teagram-build-%1"_q.arg(i + 2000)},
+			{u"assets"_q, QJsonArray()},
+		});
+	}
+}
+
+void FixtureTransport::addReleaseList() {
+	for (auto page = 0;
+		 qsizetype(page) * 100 < _releases.size();
+		 ++page) {
+		const auto start = qsizetype(page) * 100;
+		const auto end = std::min(start + 100, _releases.size());
+		auto releases = QJsonArray();
+		for (auto i = start; i < end; ++i) {
+			releases.append(_releases[i]);
+		}
+		const auto body = QJsonDocument(releases)
+			.toJson(QJsonDocument::Compact);
+		auto url = QUrl(
+			u"https://api.github.com/repos/teagramhq/teagram-desktop/releases"_q);
+		auto query = QUrlQuery();
+		query.addQueryItem(u"per_page"_q, u"100"_q);
+		query.addQueryItem(u"page"_q, QString::number(page + 1));
+		url.setQuery(query);
+		addResponse(url, ResponseWithBody(body));
+	}
+}
+
+TeagramUpdateTransportResponse FixtureTransport::get(
+	const QUrl &url,
+	quint64 maximumBytes,
+	const TeagramUpdateTransport::ChunkHandler &onChunk,
+	const TeagramUpdateTransport::CancellationCheck &isCancelled) {
+	_requests.push_back(url);
+	const auto i = _responses.find(Key(url));
+	if (i == _responses.end()) {
+		return {TeagramUpdateTransportFailure::Network, 0, {}};
+	}
+	const auto &response = i->second;
+	if (response.failure != TeagramUpdateTransportFailure::None) {
+		return {response.failure, response.status, response.redirect};
+	}
+	if (!response.redirect.isEmpty()) {
+		return {TeagramUpdateTransportFailure::None,
+			response.status,
+			response.redirect};
+	}
+	auto received = quint64(0);
+	for (auto offset = qsizetype(0); offset < response.body.size();) {
+		if (isCancelled()) {
+			return {TeagramUpdateTransportFailure::Cancelled,
+				response.status,
+				{}};
+		}
+		const auto size = std::min<qsizetype>(
+			16384, response.body.size() - offset);
+		const auto chunk = QByteArrayView(
+			response.body.constData() + offset, size);
+		if (quint64(size) > maximumBytes - received) {
+			return {TeagramUpdateTransportFailure::ResponseTooLarge,
+				response.status,
+				{}};
+		}
+		if (!onChunk(chunk)) {
+			return {TeagramUpdateTransportFailure::ConsumerStopped,
+				response.status,
+				{}};
+		}
+		if (_afterChunk) {
+			_afterChunk(url);
+		}
+		received += quint64(size);
+		offset += size;
+	}
+	return {TeagramUpdateTransportFailure::None,
+		response.status,
+		{}};
+}
+
+QString FixtureTransport::Key(const QUrl &url) {
+	auto result = url.host() + url.path();
+	if (url.host() == u"api.github.com"_q) {
+		result += u"?page="_q
+			+ QUrlQuery(url).queryItemValue(u"page"_q);
+	}
+	return result;
+}
 
 [[nodiscard]] bool HasOnlyFixedSourceHosts(
 	const std::vector<QUrl> &requests) {
@@ -368,7 +414,7 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	TeagramUpdateDownloader dev(std::move(transport), trustedKey,
 		staging.path());
 	auto progress = std::vector<int>();
-	auto devResult = dev.CheckForUpdates(
+	auto devResult = dev.checkForUpdates(
 		100, TeagramUpdateChannel::Dev,
 		[&](TeagramUpdateDownloadStage, int value) {
 			progress.push_back(value);
@@ -416,7 +462,7 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	devOnly->addReleaseList();
 	TeagramUpdateDownloader dev101(std::move(devOnly), trustedKey,
 		staging.path());
-	auto dev101Result = dev101.CheckForUpdates(
+	auto dev101Result = dev101.checkForUpdates(
 		100, TeagramUpdateChannel::Dev);
 	CHECK(dev101Result.reason == TeagramUpdateDownloadReason::Available);
 	CHECK(dev101Result.candidate != nullptr);
@@ -436,7 +482,7 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	devOnlyFixture->addReleaseList();
 	TeagramUpdateDownloader main(std::move(mainDevOnly), trustedKey,
 		staging.path());
-	const auto mainResult = main.CheckForUpdates(
+	const auto mainResult = main.checkForUpdates(
 		100, TeagramUpdateChannel::Main);
 	CHECK(mainResult.reason == TeagramUpdateDownloadReason::NoUpdate);
 	CHECK(mainResult.candidate == nullptr);
@@ -480,11 +526,11 @@ TEST_CASE(TeagramUpdateDownloadFailsWithoutMutation) {
 		if (cancelDuringArchive) {
 			rawFixture->_afterChunk = [&](const QUrl &url) {
 				if (url.path().endsWith(u".zip"_q)) {
-					downloader.Cancel();
+					downloader.cancel();
 				}
 			};
 		}
-		const auto result = downloader.CheckForUpdates(
+		const auto result = downloader.checkForUpdates(
 			100, TeagramUpdateChannel::Dev);
 		CHECK(result.reason == expected);
 		CHECK(result.candidate == nullptr);
@@ -594,7 +640,7 @@ TEST_CASE(TeagramUpdateDownloadFailsWithoutMutation) {
 		signingKey->privateKey.get(), archive);
 	production->addReleaseList();
 	TeagramUpdateDownloader noProductionKey(std::move(production));
-	const auto noKeyResult = noProductionKey.CheckForUpdates(
+	const auto noKeyResult = noProductionKey.checkForUpdates(
 		100, TeagramUpdateChannel::Dev);
 	CHECK(noKeyResult.reason
 		== TeagramUpdateDownloadReason::VerificationFailed);

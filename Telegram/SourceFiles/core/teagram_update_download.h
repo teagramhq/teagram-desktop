@@ -63,7 +63,7 @@ public:
 	using CancellationCheck = std::function<bool()>;
 
 	virtual ~TeagramUpdateTransport() = default;
-	[[nodiscard]] virtual TeagramUpdateTransportResponse Get(
+	[[nodiscard]] virtual TeagramUpdateTransportResponse get(
 		const QUrl &url,
 		quint64 maximumBytes,
 		const ChunkHandler &onChunk,
@@ -111,8 +111,8 @@ public:
 		QString stagingDirectory);
 #endif // TDESKTOP_UNIT_TESTS
 
-	void Cancel();
-	[[nodiscard]] TeagramUpdateDownloadResult CheckForUpdates(
+	void cancel();
+	[[nodiscard]] TeagramUpdateDownloadResult checkForUpdates(
 		quint64 installedBuild,
 		TeagramUpdateChannel installedChannel,
 		TeagramUpdateProgressHandler progress = {});
