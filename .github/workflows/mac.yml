@@ -445,6 +445,7 @@ jobs:
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$evidence/profile-ipc-${BUILD_VARIANT}-authenticated-app.log" \
             bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
               "$executable" \
             2>&1 | tee "$evidence/profile-ipc-${BUILD_VARIANT}.log"

@@ -547,6 +547,7 @@ run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 
 AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
+AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
 mkdir -p "$AUTH_HOME"
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
@@ -589,6 +590,16 @@ if ! grep -F -q "Chat participants regression passed." "$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "chat participants regression did not reach its passing result." >&2
 	exit 1
+fi
+if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
+	mkdir -p "$(dirname "$AUTH_EVIDENCE_LOG")"
+	cp "$AUTH_LOG" "$AUTH_EVIDENCE_LOG"
+	if ! grep -F -q "Chat participants regression passed." "$AUTH_EVIDENCE_LOG"; then
+		echo "authenticated app log evidence missed the chat participants assertion." >&2
+		exit 1
+	fi
+	printf 'authenticated_app_log_evidence=PASS path=%s switch_assertion=PASS\n' \
+		"$AUTH_EVIDENCE_LOG"
 fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
 
