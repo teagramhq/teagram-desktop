@@ -55,14 +55,13 @@ accountBioEditSupported(const MTP::DcOptions &options) {
 }
 
 template <typename User>
-[[nodiscard]] inline bool accountBioEditorTargetSupported(
-	const User &self) {
+[[nodiscard]] inline bool accountBioEditorTargetSupported(const User &self) {
 	return accountBioEditSupported(self.session().mtp().dcOptions());
 }
 
 template <typename Session>
-[[nodiscard]] inline bool accountBioSearchTargetSupported(
-	const Session &session) {
+[[nodiscard]] inline bool
+accountBioSearchTargetSupported(const Session &session) {
 	return accountBioEditSupported(session.mtp().dcOptions());
 }
 

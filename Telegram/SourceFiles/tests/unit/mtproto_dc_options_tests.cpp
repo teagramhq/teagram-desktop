@@ -1558,26 +1558,20 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 struct BioTargetTestMtp {
 	const DcOptions &options;
 
-	[[nodiscard]] const DcOptions &dcOptions() const {
-		return options;
-	}
+	[[nodiscard]] const DcOptions &dcOptions() const { return options; }
 };
 
 struct BioTargetTestSession {
 	quint64 userId = 0;
 	BioTargetTestMtp mtpInstance;
 
-	[[nodiscard]] const BioTargetTestMtp &mtp() const {
-		return mtpInstance;
-	}
+	[[nodiscard]] const BioTargetTestMtp &mtp() const { return mtpInstance; }
 };
 
 struct BioTargetTestUser {
 	const BioTargetTestSession &owner;
 
-	[[nodiscard]] const BioTargetTestSession &session() const {
-		return owner;
-	}
+	[[nodiscard]] const BioTargetTestSession &session() const { return owner; }
 };
 
 TEST_CASE(StockAndCustomBioTargetsFollowTheirOwningSessions) {
@@ -1586,10 +1580,10 @@ TEST_CASE(StockAndCustomBioTargetsFollowTheirOwningSessions) {
 	auto custom = DcOptions(Environment::Production);
 	CHECK(custom.setCustomServer(MakeCustomServer()));
 
-	const auto stockSession = BioTargetTestSession{ 42, { stock } };
-	const auto customSession = BioTargetTestSession{ 42, { custom } };
-	const auto stockUser = BioTargetTestUser{ stockSession };
-	const auto customUser = BioTargetTestUser{ customSession };
+	const auto stockSession = BioTargetTestSession{42, {stock}};
+	const auto customSession = BioTargetTestSession{42, {custom}};
+	const auto stockUser = BioTargetTestUser{stockSession};
+	const auto customUser = BioTargetTestUser{customSession};
 	CHECK_EQ(stockSession.userId, customSession.userId);
 
 	CHECK(Main::details::accountBioEditorTargetSupported(stockUser));
@@ -1605,8 +1599,8 @@ TEST_CASE(BlockedAccountWithoutCustomPinHasNoBioTargets) {
 	CHECK(blocked.blocked());
 	CHECK(!blocked.hasCustomServer());
 
-	const auto session = BioTargetTestSession{ 42, { blocked } };
-	const auto user = BioTargetTestUser{ session };
+	const auto session = BioTargetTestSession{42, {blocked}};
+	const auto user = BioTargetTestUser{session};
 	CHECK(!Main::details::accountBioEditorTargetSupported(user));
 	CHECK(!Main::details::accountBioSearchTargetSupported(session));
 }
@@ -1616,35 +1610,29 @@ TEST_CASE(AccountBioTargetsStayOwnedAcrossSwitchOrdersWithEqualIds) {
 	stockOptions.constructFromBuiltIn();
 	auto customOptions = DcOptions(Environment::Production);
 	CHECK(customOptions.setCustomServer(MakeCustomServer()));
-	const auto stock = BioTargetTestSession{ 42, { stockOptions } };
-	const auto custom = BioTargetTestSession{ 42, { customOptions } };
-	const auto stockUser = BioTargetTestUser{ stock };
-	const auto customUser = BioTargetTestUser{ custom };
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto stockUser = BioTargetTestUser{stock};
+	const auto customUser = BioTargetTestUser{custom};
 	CHECK_EQ(stock.userId, custom.userId);
 
-	const auto checkTargets = [](
-			const BioTargetTestSession &searchOwner,
-			const BioTargetTestUser &editorOwner,
-			bool editorExpected,
-			bool searchExpected) {
-		CHECK_EQ(
-			Main::details::accountBioEditorTargetSupported(editorOwner),
-			editorExpected);
-		CHECK_EQ(
-			Main::details::accountBioSearchTargetSupported(searchOwner),
-			searchExpected);
+	const auto checkTargets = [](const BioTargetTestSession &searchOwner,
+								 const BioTargetTestUser &editorOwner,
+								 bool editorExpected, bool searchExpected) {
+		CHECK_EQ(Main::details::accountBioEditorTargetSupported(editorOwner),
+				 editorExpected);
+		CHECK_EQ(Main::details::accountBioSearchTargetSupported(searchOwner),
+				 searchExpected);
 	};
-	const auto checkSwitchOrder = [&](
-			const BioTargetTestSession &first,
-			const BioTargetTestUser &firstUser,
-			bool firstSupported,
+	const auto checkSwitchOrder =
+		[&](const BioTargetTestSession &first,
+			const BioTargetTestUser &firstUser, bool firstSupported,
 			const BioTargetTestSession &second,
-			const BioTargetTestUser &secondUser,
-			bool secondSupported) {
-		checkTargets(first, firstUser, firstSupported, firstSupported);
-		checkTargets(second, secondUser, secondSupported, secondSupported);
-		checkTargets(first, firstUser, firstSupported, firstSupported);
-	};
+			const BioTargetTestUser &secondUser, bool secondSupported) {
+			checkTargets(first, firstUser, firstSupported, firstSupported);
+			checkTargets(second, secondUser, secondSupported, secondSupported);
+			checkTargets(first, firstUser, firstSupported, firstSupported);
+		};
 
 	checkSwitchOrder(stock, stockUser, true, custom, customUser, false);
 	checkSwitchOrder(custom, customUser, false, stock, stockUser, true);

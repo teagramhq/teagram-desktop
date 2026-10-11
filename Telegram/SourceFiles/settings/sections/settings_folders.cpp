@@ -1387,11 +1387,10 @@ struct FolderApplyObservation {
 	FolderPresence presence;
 };
 
-[[nodiscard]] const char *FolderCrudSideName(
-		Settings::FolderCrudRegressionSide side) {
-	return (side == Settings::FolderCrudRegressionSide::Stock)
-		? "stock"
-		: "pinned";
+[[nodiscard]] const char *
+FolderCrudSideName(Settings::FolderCrudRegressionSide side) {
+	return (side == Settings::FolderCrudRegressionSide::Stock) ? "stock"
+															   : "pinned";
 }
 
 [[nodiscard]] const char *FolderCrudFailureName(FolderCrudFailure failure) {
@@ -1411,31 +1410,28 @@ struct FolderApplyObservation {
 	return "unknown";
 }
 
-[[nodiscard]] const Data::ChatFilter *FindFolder(
-		not_null<Window::SessionController *> controller,
-		FilterId id) {
+[[nodiscard]] const Data::ChatFilter *
+FindFolder(not_null<Window::SessionController *> controller, FilterId id) {
 	const auto &filters = controller->session().data().chatsFilters().list();
 	const auto i = ranges::find(filters, id, &Data::ChatFilter::id);
 	return (i == end(filters)) ? nullptr : &*i;
 }
 
-[[nodiscard]] FolderPresence ObserveFolderPresence(
-		not_null<Window::SessionController *> controller,
-		not_null<Window::SessionController *> other,
-		FilterId id) {
+[[nodiscard]] FolderPresence
+ObserveFolderPresence(not_null<Window::SessionController *> controller,
+					  not_null<Window::SessionController *> other,
+					  FilterId id) {
 	return {
 		.owner = (FindFolder(controller, id) != nullptr),
 		.other = (FindFolder(other, id) != nullptr),
 	};
 }
 
-[[nodiscard]] FolderApplyObservation ObserveSavedFolder(
-		not_null<Window::SessionController *> controller,
-		not_null<Window::SessionController *> other,
-		FilterId id,
-		const QString &expectedTitle,
-		not_null<History *> history,
-		bool barrierCompleted) {
+[[nodiscard]] FolderApplyObservation
+ObserveSavedFolder(not_null<Window::SessionController *> controller,
+				   not_null<Window::SessionController *> other, FilterId id,
+				   const QString &expectedTitle, not_null<History *> history,
+				   bool barrierCompleted) {
 	const auto owner = FindFolder(controller, id);
 	const auto otherFolder = FindFolder(other, id);
 	const auto presence = FolderPresence{
@@ -1443,127 +1439,94 @@ struct FolderApplyObservation {
 		.other = (otherFolder != nullptr),
 	};
 	if (!barrierCompleted) {
-		return { FolderCrudFailure::BarrierTimeout, presence };
+		return {FolderCrudFailure::BarrierTimeout, presence};
 	} else if (otherFolder) {
-		return { FolderCrudFailure::CrossSessionPresence, presence };
+		return {FolderCrudFailure::CrossSessionPresence, presence};
 	} else if (!owner) {
-		return { FolderCrudFailure::IncompleteOwnerApply, presence };
+		return {FolderCrudFailure::IncompleteOwnerApply, presence};
 	}
-	const auto contentMatches = (owner->titleText().text == expectedTitle)
-		&& (owner->always().size() == 1)
-		&& owner->always().contains(history)
-		&& owner->pinned().empty()
-		&& owner->never().empty();
+	const auto contentMatches
+		= (owner->titleText().text == expectedTitle)
+		  && (owner->always().size() == 1) && owner->always().contains(history)
+		  && owner->pinned().empty() && owner->never().empty();
 	return {
-		contentMatches
-			? FolderCrudFailure::None
-			: FolderCrudFailure::WrongOwnerContent,
+		contentMatches ? FolderCrudFailure::None
+					   : FolderCrudFailure::WrongOwnerContent,
 		presence,
 	};
 }
 
-[[nodiscard]] FolderApplyObservation ObserveRemovedFolder(
-		not_null<Window::SessionController *> controller,
-		not_null<Window::SessionController *> other,
-		FilterId id,
-		bool barrierCompleted) {
+[[nodiscard]] FolderApplyObservation
+ObserveRemovedFolder(not_null<Window::SessionController *> controller,
+					 not_null<Window::SessionController *> other, FilterId id,
+					 bool barrierCompleted) {
 	const auto presence = ObserveFolderPresence(controller, other, id);
 	if (!barrierCompleted) {
-		return { FolderCrudFailure::BarrierTimeout, presence };
+		return {FolderCrudFailure::BarrierTimeout, presence};
 	} else if (presence.other) {
-		return { FolderCrudFailure::CrossSessionPresence, presence };
+		return {FolderCrudFailure::CrossSessionPresence, presence};
 	} else if (presence.owner) {
-		return { FolderCrudFailure::IncompleteOwnerApply, presence };
+		return {FolderCrudFailure::IncompleteOwnerApply, presence};
 	}
-	return { FolderCrudFailure::None, presence };
+	return {FolderCrudFailure::None, presence};
 }
 
 [[nodiscard]] bool ReportFolderCrudFailure(
-		const char *reason,
-		Settings::FolderCrudRegressionSide side,
-		const char *operation,
-		const char *stage,
-		std::optional<FilterId> id,
-		std::optional<FolderPresence> presence) {
-	const auto idText = id
-		? QString::number(*id).toUtf8()
-		: QByteArray("unallocated");
-	const auto ownerPresent = presence
-		? (presence->owner ? "1" : "0")
-		: "unknown";
-	const auto otherPresent = presence
-		? (presence->other ? "1" : "0")
-		: "unknown";
+	const char *reason, Settings::FolderCrudRegressionSide side,
+	const char *operation, const char *stage, std::optional<FilterId> id,
+	std::optional<FolderPresence> presence) {
+	const auto idText
+		= id ? QString::number(*id).toUtf8() : QByteArray("unallocated");
+	const auto ownerPresent
+		= presence ? (presence->owner ? "1" : "0") : "unknown";
+	const auto otherPresent
+		= presence ? (presence->other ? "1" : "0") : "unknown";
 	const auto otherSide = (side == Settings::FolderCrudRegressionSide::Stock)
-		? Settings::FolderCrudRegressionSide::Pinned
-		: Settings::FolderCrudRegressionSide::Stock;
+							   ? Settings::FolderCrudRegressionSide::Pinned
+							   : Settings::FolderCrudRegressionSide::Stock;
 	std::fprintf(
 		stderr,
 		"Folder CRUD regression failed: reason=%s side=%s other_side=%s "
 		"operation=%s stage=%s synthetic_id=%s owner_present=%s "
 		"other_present=%s\n",
-		reason,
-		FolderCrudSideName(side),
-		FolderCrudSideName(otherSide),
-		operation,
-		stage,
-		idText.constData(),
-		ownerPresent,
-		otherPresent);
+		reason, FolderCrudSideName(side), FolderCrudSideName(otherSide),
+		operation, stage, idText.constData(), ownerPresent, otherPresent);
 	return false;
 }
 
 [[nodiscard]] bool ReportFolderApplyFailure(
-		FolderApplyObservation observation,
-		Settings::FolderCrudRegressionSide side,
-		const char *operation,
-		const char *stage,
-		FilterId id) {
-	return ReportFolderCrudFailure(
-		FolderCrudFailureName(observation.failure),
-		side,
-		operation,
-		stage,
-		id,
-		observation.presence);
+	FolderApplyObservation observation, Settings::FolderCrudRegressionSide side,
+	const char *operation, const char *stage, FilterId id) {
+	return ReportFolderCrudFailure(FolderCrudFailureName(observation.failure),
+								   side, operation, stage, id,
+								   observation.presence);
 }
 
 } // namespace
 
 bool RunFoldersCrudRegressionForTest(
 	not_null<Window::SessionController *> controller,
-	not_null<Window::SessionController *> other,
-	not_null<History *> history,
+	not_null<Window::SessionController *> other, not_null<History *> history,
 	FolderCrudRegressionSide side) {
-	const auto fail = [&](
-			const char *reason,
-			const char *operation,
-			const char *stage,
-			std::optional<FilterId> id = std::nullopt) {
-		const auto presence = id
-			? std::optional<FolderPresence>(ObserveFolderPresence(
-				controller,
-				other,
-				*id))
-			: std::nullopt;
-		return ReportFolderCrudFailure(
-			reason,
-			side,
-			operation,
-			stage,
-			id,
-			presence);
-	};
-	const auto faultMode = qEnvironmentVariable(
-		"TDESKTOP_FOLDER_CRUD_REGRESSION_FAULT");
-	const auto suppressCreateCompletion = (side
-		== Settings::FolderCrudRegressionSide::Stock)
-		&& (faultMode == u"barrier_timeout"_q);
-	const auto injectCrossSessionFilter = (side
-		== Settings::FolderCrudRegressionSide::Stock)
-		&& (faultMode == u"cross_session_presence"_q);
-	if (!faultMode.isEmpty()
-		&& !suppressCreateCompletion
+	const auto fail
+		= [&](const char *reason, const char *operation, const char *stage,
+			  std::optional<FilterId> id = std::nullopt) {
+			  const auto presence
+				  = id ? std::optional<FolderPresence>(
+							 ObserveFolderPresence(controller, other, *id))
+					   : std::nullopt;
+			  return ReportFolderCrudFailure(reason, side, operation, stage, id,
+											 presence);
+		  };
+	const auto faultMode
+		= qEnvironmentVariable("TDESKTOP_FOLDER_CRUD_REGRESSION_FAULT");
+	const auto suppressCreateCompletion
+		= (side == Settings::FolderCrudRegressionSide::Stock)
+		  && (faultMode == u"barrier_timeout"_q);
+	const auto injectCrossSessionFilter
+		= (side == Settings::FolderCrudRegressionSide::Stock)
+		  && (faultMode == u"cross_session_presence"_q);
+	if (!faultMode.isEmpty() && !suppressCreateCompletion
 		&& !injectCrossSessionFilter) {
 		return fail("unknown_fault_mode", "setup", "fault_mode");
 	}
@@ -1591,11 +1554,8 @@ bool RunFoldersCrudRegressionForTest(
 	state->regressionCreateFilter
 		= Data::ChatFilter(FilterId(0), {}, {}, {}, {}, {history}, {}, {});
 	state->useRegressionCreateFilter = true;
-	const auto submit = [&](
-			const QString &name,
-			bool enter,
-			const char *operation,
-			std::optional<FilterId> id) {
+	const auto submit = [&](const QString &name, bool enter,
+							const char *operation, std::optional<FilterId> id) {
 		const auto editor = state->regressionEditor.get();
 		if (!editor) {
 			return fail("editor_missing", operation, "editor_open", id);
@@ -1639,44 +1599,33 @@ bool RunFoldersCrudRegressionForTest(
 		return fail("filter_id_not_allocated", "create", "save");
 	}
 	const auto id = createdRow->filter.id();
-	const auto verifySaved = [&](
-			const char *operation,
-			const char *stage,
-			const QString &expectedTitle,
-			Tests::MainQueueBarrierResult barrier) {
+	const auto verifySaved = [&](const char *operation, const char *stage,
+								 const QString &expectedTitle,
+								 Tests::MainQueueBarrierResult barrier) {
 		const auto observation = ObserveSavedFolder(
-			controller,
-			other,
-			id,
-			expectedTitle,
-			history,
+			controller, other, id, expectedTitle, history,
 			barrier == Tests::MainQueueBarrierResult::Completed);
 		return (observation.failure == FolderCrudFailure::None)
-			? true
-			: ReportFolderApplyFailure(observation, side, operation, stage, id);
+				   ? true
+				   : ReportFolderApplyFailure(observation, side, operation,
+											  stage, id);
 	};
 	const auto createBarrier = Tests::WaitForMainQueueBarrierForRegressionTest(
-		5000,
-		suppressCreateCompletion);
+		5000, suppressCreateCompletion);
 	if (injectCrossSessionFilter
 		&& (createBarrier == Tests::MainQueueBarrierResult::Completed)) {
 		// The profile guard launches this as an expected-failure fixture.
 		const auto saved = FindFolder(controller, id);
 		if (!saved) {
-			return fail(
-				"incomplete_owner_apply",
-				"create",
-				"fault_injection",
-				id);
+			return fail("incomplete_owner_apply", "create", "fault_injection",
+						id);
 		}
-		other->session().data().chatsFilters().apply(
-			MTP_updateDialogFilter(
-				MTP_flags(MTPDupdateDialogFilter::Flag::f_filter),
-				MTP_int(id),
-				saved->tl(id)));
+		other->session().data().chatsFilters().apply(MTP_updateDialogFilter(
+			MTP_flags(MTPDupdateDialogFilter::Flag::f_filter), MTP_int(id),
+			saved->tl(id)));
 	}
 	if (!verifySaved("create", "after_local_apply", u"Folder One"_q,
-			createBarrier)) {
+					 createBarrier)) {
 		return false;
 	}
 	button->clicked(Qt::NoModifier, Qt::LeftButton);
@@ -1688,7 +1637,7 @@ bool RunFoldersCrudRegressionForTest(
 	const auto buttonRenameBarrier
 		= Tests::WaitForMainQueueBarrierForRegressionTest();
 	if (!verifySaved("button_rename", "after_local_apply", u"Folder Two"_q,
-			buttonRenameBarrier)) {
+					 buttonRenameBarrier)) {
 		return false;
 	}
 	button->clicked(Qt::NoModifier, Qt::LeftButton);
@@ -1700,7 +1649,7 @@ bool RunFoldersCrudRegressionForTest(
 	const auto enterRenameBarrier
 		= Tests::WaitForMainQueueBarrierForRegressionTest();
 	if (!verifySaved("enter_rename", "after_local_apply", u"Folder Key"_q,
-			enterRenameBarrier)) {
+					 enterRenameBarrier)) {
 		return false;
 	}
 	button->triggerRemoveForTest();
@@ -1708,14 +1657,12 @@ bool RunFoldersCrudRegressionForTest(
 	const auto removeBarrier
 		= Tests::WaitForMainQueueBarrierForRegressionTest();
 	const auto removeObservation = ObserveRemovedFolder(
-		controller,
-		other,
-		id,
+		controller, other, id,
 		removeBarrier == Tests::MainQueueBarrierResult::Completed);
 	return (removeObservation.failure == FolderCrudFailure::None)
-		? true
-		: ReportFolderApplyFailure(
-			removeObservation, side, "remove", "after_local_apply", id);
+			   ? true
+			   : ReportFolderApplyFailure(removeObservation, side, "remove",
+										  "after_local_apply", id);
 }
 #endif
 
