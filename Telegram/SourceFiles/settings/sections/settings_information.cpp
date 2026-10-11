@@ -1225,8 +1225,7 @@ void AccountsList::rebuild() {
 }
 
 void BuildInformationSection(SectionBuilder &builder) {
-	if (Main::details::accountBioSearchTargetSupported(
-			*builder.session())) {
+	if (Main::details::accountBioSearchTargetSupported(*builder.session())) {
 		builder.add(nullptr, [] {
 			return SearchEntry{
 				.id = u"edit/bio"_q,
