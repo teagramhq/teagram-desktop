@@ -174,7 +174,10 @@ struct WalkResult {
 		if (!ParseComponent(part)) {
 			return false;
 		}
-		result->components.push_back(part);
+		result->components.push_back(
+			QString::fromUtf8(part)
+				.normalized(QString::NormalizationForm_D)
+				.toUtf8());
 	}
 	return true;
 }

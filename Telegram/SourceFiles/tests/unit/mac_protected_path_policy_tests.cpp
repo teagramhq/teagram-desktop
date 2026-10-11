@@ -264,7 +264,7 @@ TEST_CASE(CaseNormalizationAndFirmlinkAliasesMatch) {
 		LstatResult{ .type = FileType::Directory, .error = FileError::None });
 	const auto unicodeHome = u"/Users/\u00C9lise"_q;
 	unicodeFs.entries.emplace(
-		unicodeHome.toUtf8(),
+		unicodeHome.normalized(QString::NormalizationForm_D).toUtf8(),
 		LstatResult{ .type = FileType::Directory, .error = FileError::None });
 	const auto unicodePolicy = MacProtectedPathPolicy::Build(
 		HomeRoots{
@@ -1874,4 +1874,43 @@ TEST_CASE(ProfileTempSymlinkIntoProtectedPathStopsBeforePreparation) {
 	for (const auto &call : fs.readlinkCalls) {
 		CHECK(policy.Classify(call) == ProtectedClass::None);
 	}
+}
+
+TEST_CASE(ProfileHelperTempUsesFoldUnicodeNormalization) {
+	auto fs = FakeFileSystem();
+	const auto nfdHome = u"/Users/teagram-café"_q.normalized(
+		QString::NormalizationForm_D).toUtf8();
+	AddDirectoryHierarchy(fs, nfdHome);
+	const auto homes = HomeRoots{
+		.accountDatabase = nfdHome,
+		.environment = nfdHome,
+		.foundation = nfdHome };
+	const auto policy = MacProtectedPathPolicy::Build(homes, fs.operations());
+	CHECK(policy.valid());
+	const auto helperTemp = QString::fromUtf8(TeagramProfileRoot(homes, false)
+		+ "/tdata/temp").normalized(QString::NormalizationForm_C).toUtf8();
+	auto preparations = 0;
+	const auto prepared = PrepareExternalDirectoryIfAllowed(
+		QString::fromUtf8(helperTemp), "unit.profile.helper-temp",
+		[&](Operation operation, const QString &path, const char *callsite) {
+			return policy.Resolve(
+				operation,
+				QFile::encodeName(path),
+				homes.accountDatabase,
+				QString::fromUtf8(callsite)).allowed();
+		},
+		[&] {
+			++preparations;
+			return true;
+		});
+	CHECK(prepared);
+	CHECK_EQ(preparations, 1);
+
+	const auto invalid = policy.Resolve(
+		Operation::Open,
+		QByteArray("/Users/teagram-caf\xC3/tdata/temp"),
+		homes.accountDatabase,
+		u"unit.invalid-helper-temp"_q);
+	CHECK(!invalid.allowed());
+	CHECK(invalid.refusal.protectedClass == ProtectedClass::Invalid);
 }
