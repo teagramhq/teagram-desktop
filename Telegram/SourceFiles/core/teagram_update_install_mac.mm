@@ -470,6 +470,7 @@ struct BundleInfo {
 	}
 	const auto stageBundle = QDir(staging).filePath(u"Teagram.app"_q);
 	auto stagePrevious = false;
+	const auto parent = QFileInfo(installed).absolutePath();
 	const auto commitMarkerExists = MarkerExists(parent, kCommitMarker);
 	if (!commitMarkerExists) {
 		return {
@@ -1024,8 +1025,8 @@ void CompleteTeagramUpdateStartup() {
 			!= u"io.teagram.desktop"_q) {
 			return;
 		}
-		CompleteTeagramUpdateStartupForBundle(
-			FromNative([mainBundle bundlePath]));
+			(void)CompleteTeagramUpdateStartupForBundle(
+				FromNative([mainBundle bundlePath]));
 	}
 }
 
