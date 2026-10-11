@@ -132,6 +132,31 @@ verify_unsandboxed_canary_readable() {
 	printf '%s=PASS unsandboxed=/bin/cat readable=1 path=%s\n' "$name" "$path"
 }
 
+verify_casefold_directory_alias() {
+	local name="$1"
+	local canonical_path="$2"
+	local alias_path="$3"
+	local canonical_id
+	local alias_id
+	if [[ "$canonical_path" == "$alias_path" ]]; then
+		echo "$name canonical and alias paths are identical." >&2
+		return 1
+	fi
+	mkdir -p "$canonical_path" || return 1
+	if [[ ! -d "$alias_path" ]]; then
+		echo "$name alias does not resolve to a directory: $alias_path" >&2
+		return 1
+	fi
+	canonical_id="$(stat -f '%d:%i' "$canonical_path")" || return 1
+	alias_id="$(stat -f '%d:%i' "$alias_path")" || return 1
+	if [[ "$canonical_id" != "$alias_id" ]]; then
+		echo "$name alias resolved to a different directory: $alias_path" >&2
+		return 1
+	fi
+	printf '%s=PASS canonical=%s alias=%s inode=%s\n' \
+		"$name" "$canonical_path" "$alias_path" "$canonical_id"
+}
+
 run_home_spelling_probes() {
 	local name="$1"
 	local profile_home="$2"
@@ -503,6 +528,56 @@ run_home_spelling_probes \
 	"$TEST_HOME" "$TEST_HOME" \
 	"lIBRARY/aPPLICATION sUPPORT/tElEgRaM dEsKtOp" \
 	"lIBRARY/aPPLICATION sUPPORT/OtherApp/TeLeGrAm Desktop/tdata" \
+	|| exit 1
+
+CASE_SWAPPED_HOME="$(
+python3 - "$TEST_HOME" <<'PY'
+import os
+import sys
+
+parent, name = os.path.split(sys.argv[1])
+print(os.path.join(parent, name.swapcase()))
+PY
+)"
+if [[ "$CASE_SWAPPED_HOME" == "$TEST_HOME" || ! -d "$CASE_SWAPPED_HOME" ]]; then
+	echo "case-swapped test home does not resolve to the same directory: $CASE_SWAPPED_HOME" >&2
+	exit 1
+fi
+CASE_SWAPPED_HOME_ID="$(stat -f '%d:%i' "$CASE_SWAPPED_HOME")"
+TEST_HOME_ID="$(stat -f '%d:%i' "$TEST_HOME")"
+if [[ "$CASE_SWAPPED_HOME_ID" != "$TEST_HOME_ID" ]]; then
+	echo "case-swapped test home resolved to a different directory: $CASE_SWAPPED_HOME" >&2
+	exit 1
+fi
+printf 'seatbelt_case_swapped_home_alias=PASS profile_home=%s path_home=%s inode=%s\n' \
+	"$TEST_HOME" "$CASE_SWAPPED_HOME" "$CASE_SWAPPED_HOME_ID"
+run_home_spelling_probes \
+	seatbelt_case_swapped_home \
+	"$TEST_HOME" "$CASE_SWAPPED_HOME" \
+	|| exit 1
+
+KELVIN_WEBKIT_CANONICAL="$TEST_HOME/Library/WebKit"
+KELVIN_WEBKIT_ALIAS="$TEST_HOME/Library/WebKit"
+verify_casefold_directory_alias \
+	seatbelt_kelvin_webkit_alias \
+	"$KELVIN_WEBKIT_CANONICAL" "$KELVIN_WEBKIT_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_kelvin_webkit \
+	"$TEST_HOME" "$TEST_HOME" \
+	"Library/WebKit/org.telegram.desktop" \
+	|| exit 1
+
+LONG_S_TELEGRAM_CANONICAL="$TEST_HOME/Library/Application Support/Telegram Desktop"
+LONG_S_TELEGRAM_ALIAS="$TEST_HOME/Library/Application Support/Telegram Deſktop"
+verify_casefold_directory_alias \
+	seatbelt_long_s_telegram_desktop_alias \
+	"$LONG_S_TELEGRAM_CANONICAL" "$LONG_S_TELEGRAM_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_long_s_telegram_desktop \
+	"$TEST_HOME" "$TEST_HOME" \
+	"Library/Application Support/Telegram Deſktop" \
 	|| exit 1
 
 NON_ASCII_HOME_NFC_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "teagram-café"))')"

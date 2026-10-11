@@ -317,10 +317,24 @@ struct WalkResult {
 											   const QByteArray &ignored = {}) {
 	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = ignored;
-	for (const auto value : component) {
-		const auto byte = uchar(value);
+	for (auto i = qsizetype(0); i < component.size();) {
+		const auto byte = uchar(component.at(i));
+		const auto isKelvin = byte == 0xE2
+			&& component.size() - i >= 3
+			&& uchar(component.at(i + 1)) == 0x84
+			&& uchar(component.at(i + 2)) == 0xAA;
+		const auto isLongS = byte == 0xC5
+			&& component.size() - i >= 2
+			&& uchar(component.at(i + 1)) == 0xBF;
 		auto character = QByteArray();
-		if (byte >= 'a' && byte <= 'z') {
+		auto consumed = qsizetype(1);
+		if (byte == 'k' || byte == 'K' || isKelvin) {
+			character = u"([Kk]|\u212A)"_q.toUtf8();
+			consumed = isKelvin ? 3 : 1;
+		} else if (byte == 's' || byte == 'S' || isLongS) {
+			character = u"([Ss]|\u017F)"_q.toUtf8();
+			consumed = isLongS ? 2 : 1;
+		} else if (byte >= 'a' && byte <= 'z') {
 			character.append('[');
 			character.append(char(byte - 'a' + 'A'));
 			character.append(char(byte));
@@ -338,6 +352,7 @@ struct WalkResult {
 		}
 		result.append(character);
 		result.append(ignored);
+		i += consumed;
 	}
 	return result;
 }
@@ -797,9 +812,19 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		}
 	}
 	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
-		const auto home = RegexLiteral(_profileHomePaths[i]);
-		if (home.isEmpty() || home.size() >= kMaxSbplStringBytes) {
+		const auto homePath = _profileHomePaths[i];
+		const auto literalHomePath = RegexLiteral(homePath);
+		if (!homePath.startsWith('/')
+			|| literalHomePath.size() >= kMaxSbplStringBytes) {
 			return {};
+		}
+		auto home = QByteArray("^");
+		for (const auto &part : homePath.split('/')) {
+			if (part.isEmpty()) {
+				continue;
+			}
+			home.append('/');
+			home.append(component(part));
 		}
 		const auto library = component("Library");
 		for (const auto &prefix : protectedPrefixes) {

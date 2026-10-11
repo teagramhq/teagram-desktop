@@ -138,12 +138,21 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		}
 		CHECK(profile.count("(deny file*") >= 16);
 		CHECK(profile.count("(regex\n") >= 16);
-		CHECK(profile.contains("/Users/alice"));
-		CHECK(profile.contains("/System/Volumes/Data/Users/alice"));
-		CHECK(profile.contains("/Users/bob"));
+		const auto ignoredSequence
+			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+		CHECK(profile.contains("^/" + ignoredSequence + "[Uu]"));
+		CHECK(profile.contains("^/" + ignoredSequence + "[Ss]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
+		auto joinedProfileStrings = profile;
+		while (joinedProfileStrings.contains("\"\n\"")) {
+			joinedProfileStrings.replace("\"\n\"", "");
+		}
+		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains(u"([Ss]|\u017F)"_q.toUtf8()));
 		CHECK(profile.contains("[^/]*"));
 		CHECK(profile.contains("[Ss]"));
 	} else {
@@ -322,8 +331,14 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	CHECK(policy.valid());
 	CheckSeatbeltProfile(policy);
 	const auto profile = policy.SeatbeltProfile();
-	CHECK(profile.contains("/Users/alice\\\\.test"));
-	CHECK(!profile.contains("\"^/Users/alice\\\\.test/.*"));
+	const auto ignoredSequence
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	CHECK(profile.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(profile.contains(
+		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Ll]"));
+	CHECK(!profile.contains("^/Users/alice"));
 	const auto unrelated
 		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
 	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
