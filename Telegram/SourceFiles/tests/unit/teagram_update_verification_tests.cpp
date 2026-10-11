@@ -81,9 +81,8 @@ struct TestSigningKey {
 	return result;
 }
 
-[[nodiscard]] bool RunProcess(
-	const QString &program,
-	const QStringList &arguments) {
+[[nodiscard]] bool RunProcess(const QString &program,
+							  const QStringList &arguments) {
 	auto process = QProcess();
 	process.start(program, arguments);
 	const auto started = process.waitForStarted();
@@ -99,7 +98,7 @@ struct TestSigningKey {
 	CHECK(process.exitStatus() == QProcess::NormalExit);
 	CHECK_EQ(process.exitCode(), 0);
 	return process.exitStatus() == QProcess::NormalExit
-		&& process.exitCode() == 0;
+		   && process.exitCode() == 0;
 }
 
 [[nodiscard]] QByteArray ReadFile(const QString &path) {
@@ -113,13 +112,14 @@ struct TestSigningKey {
 	const auto path = QDir(directory).filePath(u"fixture.zip"_q);
 	const auto source = QString::fromLatin1(
 		"import sys, zipfile\n"
-		"with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:\n"
+		"with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as "
+		"archive:\n"
 		"    archive.writestr('Teagram.app/Contents/Info.plist', b'fixture')\n"
 		"    archive.writestr("
 		"'Teagram.app/Contents/MacOS/Teagram', b'executable fixture')\n");
-	const auto succeeded = RunProcess(
-		QString::fromUtf8(TDESKTOP_TEST_PYTHON_EXECUTABLE),
-		{ u"-c"_q, source, path });
+	const auto succeeded
+		= RunProcess(QString::fromUtf8(TDESKTOP_TEST_PYTHON_EXECUTABLE),
+					 {u"-c"_q, source, path});
 	if (!succeeded) {
 		return {};
 	}
@@ -141,10 +141,11 @@ struct TestSigningKey {
 [[nodiscard]] bool WritePrivateKey(EVP_PKEY *key, const QString &path) {
 	const auto localPath = path.toLocal8Bit();
 	auto bio = Bio(BIO_new_file(localPath.constData(), "wb"));
-	const auto written = bio
-		&& (PEM_write_bio_PrivateKey(
-				bio.get(), key, nullptr, nullptr, 0, nullptr, nullptr)
-			== 1);
+	const auto written
+		= bio
+		  && (PEM_write_bio_PrivateKey(bio.get(), key, nullptr, nullptr, 0,
+									   nullptr, nullptr)
+			  == 1);
 	CHECK(written);
 	return written;
 }
@@ -155,18 +156,16 @@ struct ProducedPackage {
 	QByteArray signature;
 };
 
-[[nodiscard]] std::optional<ProducedPackage> ProducePackage(
-	const QByteArray &archive,
-	const QString &keyPath,
-	const QString &directory,
-	const QByteArray &channel,
-	const QByteArray &build) {
+[[nodiscard]] std::optional<ProducedPackage>
+ProducePackage(const QByteArray &archive, const QString &keyPath,
+			   const QString &directory, const QByteArray &channel,
+			   const QByteArray &build) {
 	if (!QDir().mkpath(directory)) {
 		CHECK(false);
 		return std::nullopt;
 	}
-	const auto assetName = u"Teagram-macOS-arm64-%1.zip"_q
-		.arg(QString::fromLatin1(build));
+	const auto assetName
+		= u"Teagram-macOS-arm64-%1.zip"_q.arg(QString::fromLatin1(build));
 	const auto archivePath = QDir(directory).filePath(assetName);
 	const auto archiveWritten = WriteFile(archivePath, archive);
 	if (!archiveWritten) {
@@ -520,9 +519,8 @@ TEST_CASE(TeagramUpdateGeneratedPackageRoundTrip) {
 	}
 	const auto publicKey
 		= std::optional<TeagramUpdatePublicKey>(key->publicKey);
-	const auto devForDev = Verify(
-		dev->manifest, dev->signature, dev->archive, 100,
-		TeagramUpdateChannel::Dev, publicKey);
+	const auto devForDev = Verify(dev->manifest, dev->signature, dev->archive,
+								  100, TeagramUpdateChannel::Dev, publicKey);
 	CHECK(devForDev.eligible());
 	CHECK(devForDev.package.has_value());
 	if (devForDev.package) {
@@ -530,18 +528,17 @@ TEST_CASE(TeagramUpdateGeneratedPackageRoundTrip) {
 		CHECK_EQ(devForDev.package->assetName,
 				 u"Teagram-macOS-arm64-101.zip"_q);
 	}
-	const auto devForMain = Verify(
-		dev->manifest, dev->signature, dev->archive, 100,
-		TeagramUpdateChannel::Main, publicKey);
+	const auto devForMain = Verify(dev->manifest, dev->signature, dev->archive,
+								   100, TeagramUpdateChannel::Main, publicKey);
 	CHECK(devForMain.reason
 		  == TeagramUpdateVerificationReason::IneligibleChannel);
 
-	const auto mainForMain = Verify(
-		main->manifest, main->signature, main->archive, 100,
-		TeagramUpdateChannel::Main, publicKey);
-	const auto mainForDev = Verify(
-		main->manifest, main->signature, main->archive, 100,
-		TeagramUpdateChannel::Dev, publicKey);
+	const auto mainForMain
+		= Verify(main->manifest, main->signature, main->archive, 100,
+				 TeagramUpdateChannel::Main, publicKey);
+	const auto mainForDev
+		= Verify(main->manifest, main->signature, main->archive, 100,
+				 TeagramUpdateChannel::Dev, publicKey);
 	CHECK(mainForMain.eligible());
 	CHECK(mainForDev.eligible());
 	CHECK(mainForMain.package.has_value());
@@ -553,9 +550,8 @@ TEST_CASE(TeagramUpdateGeneratedPackageRoundTrip) {
 
 	auto changed = dev->archive;
 	changed[0] = char(changed[0] ^ 1);
-	const auto tampered = Verify(
-		dev->manifest, dev->signature, changed, 100,
-		TeagramUpdateChannel::Dev, publicKey);
+	const auto tampered = Verify(dev->manifest, dev->signature, changed, 100,
+								 TeagramUpdateChannel::Dev, publicKey);
 	CHECK(tampered.reason
 		  == TeagramUpdateVerificationReason::ArchiveHashMismatch);
 }
