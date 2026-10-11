@@ -1555,6 +1555,66 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	}
 }
 
+TEST_CASE(StockAndCustomAccountBioTargetsUseTheirOwnOptions) {
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+
+	const auto stockTargets = Main::details::accountBioTargets(stock);
+	CHECK(stockTargets.editor);
+	CHECK(stockTargets.search);
+
+	const auto customTargets = Main::details::accountBioTargets(custom);
+	CHECK(!customTargets.editor);
+	CHECK(!customTargets.search);
+}
+
+TEST_CASE(BlockedAccountWithoutCustomPinHasNoBioTargets) {
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	CHECK(blocked.blocked());
+	CHECK(!blocked.hasCustomServer());
+
+	const auto targets = Main::details::accountBioTargets(blocked);
+	CHECK(!targets.editor);
+	CHECK(!targets.search);
+}
+
+TEST_CASE(AccountBioTargetsRemainOwnedAcrossBothSwitchOrdersWithEqualUserIds) {
+	struct SessionOptions {
+		quint64 userId = 0;
+		const DcOptions *options = nullptr;
+	};
+
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	const auto stock = SessionOptions{ 42, &stockOptions };
+	const auto custom = SessionOptions{ 42, &customOptions };
+	CHECK_EQ(stock.userId, custom.userId);
+
+	const auto checkTargets = [](const SessionOptions &active, bool expected) {
+		const auto targets = Main::details::accountBioTargets(*active.options);
+		CHECK_EQ(targets.editor, expected);
+		CHECK_EQ(targets.search, expected);
+	};
+	const auto checkSwitchOrder = [&](
+			const SessionOptions &first,
+			bool firstSupported,
+			const SessionOptions &second,
+			bool secondSupported) {
+		checkTargets(first, firstSupported);
+		checkTargets(second, secondSupported);
+		checkTargets(first, firstSupported);
+	};
+
+	checkSwitchOrder(stock, true, custom, false);
+	checkSwitchOrder(custom, false, stock, true);
+}
+
 // A pin is immutable for the life of the account. Peer and message ids
 // are small server-scoped integers, so reading one server's cached ids
 // against another sends a forward for "user 12345" to an unrelated

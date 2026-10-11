@@ -54,4 +54,18 @@ accountBioEditSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+struct AccountBioTargets {
+	bool editor = false;
+	bool search = false;
+};
+
+[[nodiscard]] inline AccountBioTargets accountBioTargets(
+	const MTP::DcOptions &options) {
+	const auto supported = accountBioEditSupported(options);
+	return {
+		.editor = supported,
+		.search = supported,
+	};
+}
+
 } // namespace Main::details

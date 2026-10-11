@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_session.h"
 #include "main/main_domain.h"
+#include "main/session_feature_support.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
@@ -688,7 +689,9 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 			  not_null<UserData *> self,
 			  not_null<Window::SessionController *> controller,
 			  InformationHighlightTargets *targets) {
-	if (!self->session().accountBioEditSupported()) {
+	const auto bioTargets = Main::details::accountBioTargets(
+		self->session().mtp().dcOptions());
+	if (!bioTargets.editor) {
 		Ui::AddDivider(container);
 		return;
 	}
@@ -1224,7 +1227,9 @@ void AccountsList::rebuild() {
 }
 
 void BuildInformationSection(SectionBuilder &builder) {
-	if (builder.session()->accountBioEditSupported()) {
+	const auto bioTargets = Main::details::accountBioTargets(
+		builder.session()->mtp().dcOptions());
+	if (bioTargets.search) {
 		builder.add(nullptr, [] {
 			return SearchEntry{
 				.id = u"edit/bio"_q,
@@ -1494,19 +1499,6 @@ const auto kMeta = BuildHelper({
 Type InformationId() {
 	return Information::Id();
 }
-
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-bool InformationBioEditorTargetPresentForRegressionTest(
-	not_null<Window::SessionController *> controller) {
-	const auto container
-		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
-	auto targets = InformationHighlightTargets();
-	SetupBio(container, controller->session().user(), controller, &targets);
-	const auto result = !targets.bio.isNull();
-	delete container;
-	return result;
-}
-#endif
 
 AccountsEvents SetupAccounts(
 		not_null<Ui::VerticalLayout*> container,
