@@ -142,15 +142,17 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-		CHECK(profile.contains("^/" + ignoredSequence + "[Uu]"));
-		CHECK(profile.contains("^/" + ignoredSequence + "[Ss]"));
+		auto joinedProfileStrings = profile;
+		const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
+		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
+			joinedProfileStrings.replace(adjacentStringBoundary, "");
+		}
+		CHECK(joinedProfileStrings.contains(
+			"^/" + ignoredSequence + "[Uu]" + ignoredSequence
+			+ u"([Ss]|\u017F)"_q.toUtf8()));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
-		auto joinedProfileStrings = profile;
-		while (joinedProfileStrings.contains("\"\n\"")) {
-			joinedProfileStrings.replace("\"\n\"", "");
-		}
 		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
 		CHECK(joinedProfileStrings.contains(u"([Ss]|\u017F)"_q.toUtf8()));
 		CHECK(profile.contains("[^/]*"));
@@ -335,10 +337,16 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(profile.contains("^/" + ignoredSequence + "[Uu]"));
-	CHECK(profile.contains(
-		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Ll]"));
-	CHECK(!profile.contains("^/Users/alice"));
+	auto joinedProfileStrings = profile;
+	const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
+	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
+		joinedProfileStrings.replace(adjacentStringBoundary, "");
+	}
+	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains(
+		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Pp]"
+		+ ignoredSequence + "[Pp]" + ignoredSequence + "[Ll]"));
+	CHECK(!joinedProfileStrings.contains("^/Users/alice"));
 	const auto unrelated
 		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
 	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
