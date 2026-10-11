@@ -10,6 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_archive.h"
 #include "core/teagram_update_download.h"
 #include "core/teagram_update_replacement.h"
+#if defined(Q_OS_MAC)
+#include "core/teagram_update_install.h"
+#endif // Q_OS_MAC
 
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
@@ -24,6 +27,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <functional>
@@ -379,6 +385,7 @@ struct ZipFixtureEntry {
 	QByteArray data;
 	bool symlink = false;
 	bool special = false;
+	quint32 mode = 0644;
 };
 
 [[nodiscard]] bool RunProcess(const QString &program,
@@ -395,6 +402,7 @@ struct ZipFixtureEntry {
 			{u"data"_q, QString::fromLatin1(entry.data.toBase64())},
 			{u"symlink"_q, entry.symlink},
 			{u"special"_q, entry.special},
+			{u"mode"_q, int(entry.mode)},
 		});
 	}
 	const auto entriesPath = QDir(directory).filePath(u"entries.json"_q);
@@ -421,7 +429,10 @@ struct ZipFixtureEntry {
 		"            info.external_attr = (stat.S_IFIFO | 0o600) << 16\n"
 		"            archive.writestr(info, payload)\n"
 		"        else:\n"
-		"            archive.writestr(entry['path'], payload)\n");
+		"            info = zipfile.ZipInfo(entry['path'])\n"
+		"            info.create_system = 3\n"
+		"            info.external_attr = (stat.S_IFREG | entry['mode']) << 16\n"
+		"            archive.writestr(info, payload)\n");
 	const auto succeeded = RunProcess(
 		QString::fromUtf8(TDESKTOP_TEST_PYTHON_EXECUTABLE),
 		{u"-c"_q, source, path, entriesPath});
@@ -817,6 +828,189 @@ TEST_CASE(TeagramUpdateInstallFailurePreservesApp) {
 	CHECK_EQ(ReadFile(officialCanary), officialBytes);
 	CHECK(!QFileInfo(previous).exists());
 }
+
+TEST_CASE(TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary) {
+	auto root = QTemporaryDir();
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto canary = root.filePath(u"profile-canary"_q);
+	const auto marker = root.filePath(u".teagram-update-pending"_q);
+	CHECK(WriteFile(marker, QByteArrayLiteral("100\n")));
+	CHECK(QFile::setPermissions(
+		marker, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+	struct stat oldMarkerInfo = {};
+	const auto markerBytes = QFile::encodeName(marker);
+	CHECK_EQ(::lstat(markerBytes.constData(), &oldMarkerInfo), 0);
+	CHECK(WriteTeagramUpdateMarker(
+		root.path(), ".teagram-update-pending", 101));
+	CHECK_EQ(ReadFile(marker), QByteArrayLiteral("101\n"));
+	struct stat newMarkerInfo = {};
+	CHECK_EQ(::lstat(markerBytes.constData(), &newMarkerInfo), 0);
+	CHECK(oldMarkerInfo.st_ino != newMarkerInfo.st_ino);
+	CHECK(QFile::remove(marker));
+	const auto original = QByteArrayLiteral("profile remains intact");
+	CHECK(WriteFile(canary, original));
+	CHECK(QFile::setPermissions(
+		canary, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+	const auto canaryBytes = QFile::encodeName(canary);
+	CHECK_EQ(::link(canaryBytes.constData(), markerBytes.constData()), 0);
+	CHECK(!WriteTeagramUpdateMarker(
+		root.path(), ".teagram-update-pending", 101));
+	CHECK_EQ(ReadFile(canary), original);
+	CHECK_EQ(ReadFile(marker), original);
+	struct stat canaryInfo = {};
+	struct stat markerInfo = {};
+	CHECK_EQ(::lstat(canaryBytes.constData(), &canaryInfo), 0);
+	CHECK_EQ(::lstat(markerBytes.constData(), &markerInfo), 0);
+	CHECK(canaryInfo.st_ino == markerInfo.st_ino);
+	CHECK(canaryInfo.st_nlink == 2);
+}
+
+#if defined(Q_OS_MAC)
+TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
+	const auto signingKey = GenerateTestSigningKey();
+	if (!signingKey) {
+		return;
+	}
+	auto generated = QTemporaryDir();
+	auto downloadStaging = QTemporaryDir();
+	CHECK(generated.isValid());
+	CHECK(downloadStaging.isValid());
+	if (!generated.isValid() || !downloadStaging.isValid()) {
+		return;
+	}
+	const auto bundleInfo = [](quint64 build) {
+		return QByteArrayLiteral(
+			"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+			"<plist version=\"1.0\"><dict>"
+			"<key>CFBundleIdentifier</key><string>io.teagram.desktop</string>"
+			"<key>CFBundleExecutable</key><string>Teagram</string>"
+			"<key>TeagramUpdateChannel</key><string>dev</string>"
+			"<key>TeagramUpdateBuild</key><string>")
+			+ QByteArray::number(build)
+			+ QByteArrayLiteral("</string></dict></plist>");
+	};
+	const auto archive = CreateZip(generated.path(), {
+		{u"Teagram.app/Contents/Info.plist"_q, bundleInfo(101)},
+		{u"Teagram.app/Contents/MacOS/Teagram"_q,
+		 "fixture build 101", false, false, 0755},
+	});
+	CHECK(!archive.isEmpty());
+	auto transport = std::make_unique<FixtureTransport>();
+	transport->addRelease(
+		"teagram-build-101", "dev", "101",
+		signingKey->privateKey.get(), archive);
+	transport->addReleaseList();
+	auto downloader = TeagramUpdateDownloader(
+		std::move(transport),
+		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
+		downloadStaging.path());
+	auto downloaded = downloader.checkForUpdates(100, TeagramUpdateChannel::Dev);
+	CHECK(downloaded.available());
+	if (!downloaded.available()) {
+		return;
+	}
+	CHECK_EQ(downloaded.candidate->installedBuild(), quint64(100));
+	CHECK_EQ(downloaded.candidate->metadata().build(), quint64(101));
+	const auto installedBytes = QByteArrayLiteral("fixture build 100");
+	const auto candidateBytes = QByteArrayLiteral("fixture build 101");
+	const auto profileBytes = QByteArrayLiteral("profile stays unchanged");
+	const auto officialBytes = QByteArrayLiteral("official canary");
+	const auto executablePermissions
+		= QFileDevice::ReadOwner | QFileDevice::WriteOwner
+		  | QFileDevice::ExeOwner;
+	const auto runFixture = [&](bool sealValid,
+								bool launchSucceeds,
+								TeagramUpdateInstallReason expected) {
+		auto architectureChecks = 0;
+		auto codeSealChecks = 0;
+		auto launchAttempts = 0;
+		auto root = QTemporaryDir();
+		CHECK(root.isValid());
+		if (!root.isValid()) {
+			return;
+		}
+		const auto installed = root.filePath(u"Teagram.app"_q);
+		const auto installedExecutable = QDir(installed).filePath(
+			u"Contents/MacOS/Teagram"_q);
+		const auto previous = root.filePath(u".Teagram.previous.app"_q);
+		const auto previousExecutable = QDir(previous).filePath(
+			u"Contents/MacOS/Teagram"_q);
+		const auto profileCanary = root.filePath(u"profile/account"_q);
+		const auto officialCanary
+			= root.filePath(u"Telegram.app/Contents/MacOS/Telegram"_q);
+		CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
+		CHECK(QDir().mkpath(QFileInfo(profileCanary).absolutePath()));
+		CHECK(QDir().mkpath(QFileInfo(officialCanary).absolutePath()));
+		CHECK(WriteFile(
+			QDir(installed).filePath(u"Contents/Info.plist"_q),
+			bundleInfo(100)));
+		CHECK(WriteFile(installedExecutable, installedBytes));
+		CHECK(WriteFile(profileCanary, profileBytes));
+		CHECK(WriteFile(officialCanary, officialBytes));
+		CHECK(QFile::setPermissions(installedExecutable, executablePermissions));
+		auto hooks = TeagramUpdateInstallerTestHooks();
+		hooks.runningBundleIdentifier = u"io.teagram.desktop"_q;
+		hooks.runningBundlePath = installed;
+		hooks.hasArchitecture = [&](const QString &path) {
+			++architectureChecks;
+			return QFileInfo(path).isExecutable();
+		};
+		hooks.hasCleanCodeSeal = [&](const QString &) {
+			++codeSealChecks;
+			return sealValid;
+		};
+		hooks.otherInstanceRunning = [] { return false; };
+		hooks.launchBundle = [&](const QString &path) {
+			++launchAttempts;
+			return launchSucceeds && path == installed
+				&& WriteTeagramUpdateMarker(
+					root.path(), ".teagram-update-started", 101);
+		};
+		auto installer = TeagramUpdateInstaller(std::move(hooks));
+		const auto result = installer.install(*downloaded.candidate);
+		CHECK(result.reason == expected);
+		CHECK_EQ(
+			architectureChecks,
+			expected == TeagramUpdateInstallReason::CandidateRejected ? 2 : 3);
+		CHECK_EQ(codeSealChecks, 1);
+		CHECK_EQ(
+			launchAttempts,
+			expected == TeagramUpdateInstallReason::CandidateRejected ? 0 : 1);
+		CHECK_EQ(ReadFile(profileCanary), profileBytes);
+		CHECK_EQ(ReadFile(officialCanary), officialBytes);
+		if (expected == TeagramUpdateInstallReason::CandidateRejected) {
+			CHECK_EQ(ReadFile(installedExecutable), installedBytes);
+			CHECK(!QFileInfo(previous).exists());
+			return;
+		}
+		CHECK_EQ(ReadFile(installedExecutable), candidateBytes);
+		CHECK_EQ(ReadFile(previousExecutable), installedBytes);
+		CHECK(QFileInfo(previousExecutable).isExecutable());
+		CHECK_EQ(result.previousBundlePath, previous);
+		if (expected == TeagramUpdateInstallReason::RelaunchRequested) {
+			CHECK(!QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
+			CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
+		} else {
+			CHECK(QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
+		}
+	};
+	runFixture(
+		true,
+		true,
+		TeagramUpdateInstallReason::RelaunchRequested);
+	runFixture(
+		false,
+		true,
+		TeagramUpdateInstallReason::CandidateRejected);
+	runFixture(
+		true,
+		false,
+		TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable);
+}
+#endif // Q_OS_MAC
 
 TEST_CASE(TeagramUpdateReplacementRetainsPreviousThroughStartup) {
 	auto root = QTemporaryDir();

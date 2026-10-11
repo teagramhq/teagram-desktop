@@ -10,6 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_archive.h"
 
 #include <atomic>
+#include <functional>
+#include <optional>
+#include <utility>
 
 namespace Core {
 
@@ -43,8 +46,26 @@ struct TeagramUpdateInstallResult {
 using TeagramUpdateInstallProgressHandler
 	= std::function<void(TeagramUpdateInstallStage, int)>;
 
+#ifdef TDESKTOP_UNIT_TESTS
+struct TeagramUpdateInstallerTestHooks {
+	QString runningBundleIdentifier;
+	QString runningBundlePath;
+	std::function<bool(const QString &)> hasArchitecture;
+	std::function<bool(const QString &)> hasCleanCodeSeal;
+	std::function<bool()> otherInstanceRunning;
+	std::function<bool(const QString &)> launchBundle;
+};
+#endif // TDESKTOP_UNIT_TESTS
+
 class TeagramUpdateInstaller final {
   public:
+	TeagramUpdateInstaller() = default;
+#ifdef TDESKTOP_UNIT_TESTS
+	explicit TeagramUpdateInstaller(TeagramUpdateInstallerTestHooks hooks)
+		: _testHooks(std::move(hooks)) {
+	}
+#endif // TDESKTOP_UNIT_TESTS
+
 	void cancel();
 
 	[[nodiscard]] TeagramUpdateInstallResult install(
@@ -54,6 +75,9 @@ class TeagramUpdateInstaller final {
   private:
 	std::atomic_bool _cancelled = false;
 	std::atomic_bool _started = false;
+#ifdef TDESKTOP_UNIT_TESTS
+	std::optional<TeagramUpdateInstallerTestHooks> _testHooks;
+#endif // TDESKTOP_UNIT_TESTS
 };
 
 void CompleteTeagramUpdateStartup();

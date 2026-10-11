@@ -210,7 +210,9 @@ struct BundleInfo {
 [[nodiscard]] bool ValidateBundle(const QString &bundlePath,
 								  const QString &expectedChannel,
 								  quint64 expectedBuild,
-								  bool verifySeal) {
+								  bool verifySeal,
+								  const std::function<bool(const QString &)> &hasArchitecture = {},
+								  const std::function<bool(const QString &)> &hasCleanCodeSeal = {}) {
 	if (CanonicalBundlePath(bundlePath) != QDir::cleanPath(bundlePath)) {
 		return false;
 	}
@@ -231,10 +233,13 @@ struct BundleInfo {
 		|| info.identifier != u"io.teagram.desktop"_q
 		|| info.executable != u"Teagram"_q || info.build != expectedBuild
 		|| (!expectedChannel.isEmpty() && info.channel != expectedChannel)
-		|| !HasArchitecture(executable)) {
+		|| !(hasArchitecture ? hasArchitecture(executable)
+								: HasArchitecture(executable))) {
 		return false;
 	}
-	return !verifySeal || HasCleanCodeSeal(bundlePath);
+	return !verifySeal
+		|| (hasCleanCodeSeal ? hasCleanCodeSeal(bundlePath)
+							  : HasCleanCodeSeal(bundlePath));
 }
 
 [[nodiscard]] bool OwnedWritableTarget(const QString &bundlePath) {
@@ -314,49 +319,7 @@ struct BundleInfo {
 [[nodiscard]] bool WriteMarker(const QString &parent,
 							   const char *name,
 							   quint64 build) {
-	const auto parentBytes = QFile::encodeName(parent);
-	auto directory = ::open(
-		parentBytes.constData(),
-		O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
-	if (directory < 0) {
-		return false;
-	}
-	const auto descriptor = ::openat(
-		directory,
-		name,
-		O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
-		0600);
-	if (descriptor < 0) {
-		::close(directory);
-		return false;
-	}
-	struct stat info = {};
-	const auto text = (QByteArray::number(build) + '\n');
-	auto offset = qsizetype(0);
-	auto success = ::fstat(descriptor, &info) == 0
-		&& S_ISREG(info.st_mode)
-		&& info.st_uid == ::geteuid()
-		&& info.st_nlink == 1
-		&& (info.st_mode & 0077) == 0;
-	while (success && offset < text.size()) {
-		const auto written = ::write(
-			descriptor,
-			text.constData() + offset,
-			size_t(text.size() - offset));
-		if (written < 0 && errno == EINTR) {
-			continue;
-		}
-		if (written <= 0) {
-			success = false;
-		} else {
-			offset += qsizetype(written);
-		}
-	}
-	success = success && ::fsync(descriptor) == 0;
-	::close(descriptor);
-	success = success && ::fsync(directory) == 0;
-	::close(directory);
-	return success;
+	return WriteTeagramUpdateMarker(parent, name, build);
 }
 
 [[nodiscard]] std::optional<quint64> ReadMarker(const QString &parent,
@@ -448,7 +411,8 @@ struct BundleInfo {
 		const QString &installed,
 		const QString &staging,
 		const QString &previous,
-		const QString &running) {
+		const QString &running,
+		const std::function<bool()> &otherInstanceRunning = {}) {
 	auto lock = TeagramUpdateInstallLock(installed);
 	if (!lock.acquired()) {
 		return {
@@ -501,7 +465,9 @@ struct BundleInfo {
 		}
 		stagePrevious = stagedInfo.build < installedInfo.build;
 	}
-	const auto noOtherInstance = !OtherInstanceRunning();
+	const auto noOtherInstance = !(otherInstanceRunning
+		? otherInstanceRunning()
+		: OtherInstanceRunning());
 	return RecoverTeagramUpdateReplacement(
 		lock,
 		installed,
@@ -576,11 +542,56 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 			progress(stage, std::clamp(value, 0, 100));
 		}
 	};
+#ifdef TDESKTOP_UNIT_TESTS
+	const auto hasArchitecture = [this](const QString &path) {
+		if (_testHooks && _testHooks->hasArchitecture) {
+			return _testHooks->hasArchitecture(path);
+		}
+		return HasArchitecture(path);
+	};
+	const auto hasCleanCodeSeal = [this](const QString &path) {
+		if (_testHooks && _testHooks->hasCleanCodeSeal) {
+			return _testHooks->hasCleanCodeSeal(path);
+		}
+		return HasCleanCodeSeal(path);
+	};
+	const auto otherInstanceRunning = [this] {
+		if (_testHooks && _testHooks->otherInstanceRunning) {
+			return _testHooks->otherInstanceRunning();
+		}
+		return OtherInstanceRunning();
+	};
+	const auto launchBundle = [this](const QString &path) {
+		if (_testHooks && _testHooks->launchBundle) {
+			return _testHooks->launchBundle(path);
+		}
+		return LaunchBundle(path);
+	};
+#else // TDESKTOP_UNIT_TESTS
+	const auto hasArchitecture = [](const QString &path) {
+		return HasArchitecture(path);
+	};
+	const auto hasCleanCodeSeal = [](const QString &path) {
+		return HasCleanCodeSeal(path);
+	};
+	const auto otherInstanceRunning = [] {
+		return OtherInstanceRunning();
+	};
+	const auto launchBundle = [](const QString &path) {
+		return LaunchBundle(path);
+	};
+#endif // TDESKTOP_UNIT_TESTS
 	@autoreleasepool {
 		emit(TeagramUpdateInstallStage::Verifying, 0);
 		const auto mainBundle = [NSBundle mainBundle];
-		const auto identifier = FromNative([mainBundle bundleIdentifier]);
-		const auto runningBundle = FromNative([mainBundle bundlePath]);
+		auto identifier = FromNative([mainBundle bundleIdentifier]);
+		auto runningBundle = FromNative([mainBundle bundlePath]);
+#ifdef TDESKTOP_UNIT_TESTS
+		if (_testHooks) {
+			identifier = _testHooks->runningBundleIdentifier;
+			runningBundle = _testHooks->runningBundlePath;
+		}
+#endif // TDESKTOP_UNIT_TESTS
 		const auto installed = CanonicalBundlePath(runningBundle);
 		if (identifier != u"io.teagram.desktop"_q || installed.isEmpty()
 			|| IsTranslocated(installed) || cancelled()) {
@@ -601,7 +612,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 		if (installedInfo.identifier != u"io.teagram.desktop"_q
 			|| installedInfo.executable != u"Teagram"_q
 			|| installedInfo.channel != InstalledChannel()
-			|| !HasArchitecture(QDir(installed).filePath(
+			|| !hasArchitecture(QDir(installed).filePath(
 				u"Contents/MacOS/Teagram"_q))) {
 			return InstallResult(TeagramUpdateInstallReason::InvalidTarget);
 		}
@@ -629,7 +640,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 			return InstallResult(TeagramUpdateInstallReason::Cancelled);
 		}
 		const auto recovery = RecoverAtStartup(
-			installed, staging, previous, installed);
+			installed, staging, previous, installed, otherInstanceRunning);
 		if (recovery.reason == TeagramUpdateStartupRecoveryReason::Busy
 			|| recovery.reason == TeagramUpdateStartupRecoveryReason::PreviousRetained) {
 			return InstallResult(TeagramUpdateInstallReason::Busy,
@@ -680,7 +691,9 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				extraction.bundlePath,
 				ChannelName(candidate.metadata().channel()),
 				candidate.metadata().build(),
-				true)) {
+				true,
+				hasArchitecture,
+				hasCleanCodeSeal)) {
 			if (RecoverTeagramUpdateReplacement(
 					lock,
 					installed,
@@ -708,7 +721,9 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				installed,
 				InstalledChannel(),
 				candidate.installedBuild(),
-				false)) {
+				false,
+				hasArchitecture,
+				hasCleanCodeSeal)) {
 			return InstallResult(TeagramUpdateInstallReason::InstalledBuildChanged);
 		}
 		if (!MacProtectedPath::CheckExternalPathForUse(
@@ -776,7 +791,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
 				replacement.previousBundlePath);
 		}
-		if (!LaunchBundle(installed)
+		if (!launchBundle(installed)
 			|| !WaitForStartup(candidate.metadata().build(), parent, {})) {
 			return InstallResult(
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,

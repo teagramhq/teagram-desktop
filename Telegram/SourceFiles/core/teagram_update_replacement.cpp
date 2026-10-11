@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QUuid>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -229,6 +230,81 @@ struct ResolvedPath {
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace
+
+bool WriteTeagramUpdateMarker(const QString &parent,
+							  const char *name,
+							  quint64 build) {
+	if (!name || !*name || strchr(name, '/') || !strcmp(name, ".")
+		|| !strcmp(name, "..")) {
+		return false;
+	}
+	auto directory = OpenDirectory(parent, false);
+	if (directory.value < 0) {
+		return false;
+	}
+	const auto markerName = QByteArray(name);
+	struct stat existing = {};
+	if (::fstatat(
+			directory.value,
+			markerName.constData(),
+			&existing,
+			AT_SYMLINK_NOFOLLOW) == 0) {
+		if (!S_ISREG(existing.st_mode) || existing.st_uid != ::geteuid()
+			|| existing.st_nlink != 1 || (existing.st_mode & 0077) != 0) {
+			return false;
+		}
+	} else if (errno != ENOENT) {
+		return false;
+	}
+	const auto temporaryName = QByteArrayLiteral(".teagram-marker-")
+		+ QUuid::createUuid().toString(QUuid::WithoutBraces).toLatin1();
+	const auto descriptor = ::openat(
+		directory.value,
+		temporaryName.constData(),
+		O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+		0600);
+	if (descriptor < 0) {
+		return false;
+	}
+	struct stat temporary = {};
+	const auto text = QByteArray::number(build) + '\n';
+	auto success = ::fstat(descriptor, &temporary) == 0
+		&& S_ISREG(temporary.st_mode)
+		&& temporary.st_uid == ::geteuid()
+		&& temporary.st_nlink == 1
+		&& (temporary.st_mode & 0077) == 0;
+	auto offset = qsizetype(0);
+	while (success && offset < text.size()) {
+		const auto written = ::write(
+			descriptor,
+			text.constData() + offset,
+			size_t(text.size() - offset));
+		if (written < 0 && errno == EINTR) {
+			continue;
+		}
+		if (written <= 0) {
+			success = false;
+		} else {
+			offset += qsizetype(written);
+		}
+	}
+	success = success && ::fsync(descriptor) == 0;
+	::close(descriptor);
+	if (success) {
+		success = ::renameat(
+			directory.value,
+			temporaryName.constData(),
+			directory.value,
+			markerName.constData()) == 0;
+	}
+	if (success) {
+		success = ::fsync(directory.value) == 0;
+	}
+	if (!success) {
+		::unlinkat(directory.value, temporaryName.constData(), 0);
+	}
+	return success;
+}
 
 TeagramUpdateInstallLock::TeagramUpdateInstallLock(
 	const QString &installedBundlePath) {

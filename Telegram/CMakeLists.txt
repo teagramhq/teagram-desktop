@@ -621,10 +621,6 @@ PRIVATE
     core/teagram_update_verification.h
     core/teagram_update_download.cpp
     core/teagram_update_download.h
-    core/teagram_update_archive.cpp
-    core/teagram_update_archive.h
-    core/teagram_update_replacement.cpp
-    core/teagram_update_replacement.h
     core/ui_integration.cpp
     core/ui_integration.h
     core/update_checker.cpp
@@ -2155,6 +2151,16 @@ PRIVATE
     tray.cpp
     tray.h
 )
+
+if (UNIX)
+    nice_target_sources(Telegram ${src_loc}
+    PRIVATE
+        core/teagram_update_archive.cpp
+        core/teagram_update_archive.h
+        core/teagram_update_replacement.cpp
+        core/teagram_update_replacement.h
+    )
+endif()
 
 if (APPLE)
     nice_target_sources(Telegram ${src_loc}

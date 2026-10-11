@@ -13,6 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
+[[nodiscard]] bool WriteTeagramUpdateMarker(
+	const QString &parent, const char *name, quint64 build);
+
 class TeagramUpdateInstallLock final {
   public:
 	explicit TeagramUpdateInstallLock(const QString &installedBundlePath);
