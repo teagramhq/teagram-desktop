@@ -3114,12 +3114,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					},
 					panelLifetime);
 			manager.start(&stock->session());
-			QCoreApplication::processEvents();
 			const auto stockExportInProgress
 				= manager.inProgress(&stock->session());
 			const auto stockExportPanelVisible
 				= stockExportPanel
-				  && stockExportPanel->panelVisibleForRegressionTest();
+				  && WaitForRegressionCondition([&] {
+					  return stockExportPanel->panelVisibleForRegressionTest();
+				  });
 			if (!stockExportInProgress || !stockExportPanel
 				|| !stockExportPanelVisible) {
 				// clang-format off

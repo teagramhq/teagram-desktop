@@ -127,11 +127,18 @@ jobs:
             sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake
           fi
 
+          # Protected-path integration builds add a Telegram compile definition.
+          # Keep their ccache entries separate from standard PR and schedule builds.
+          protected_path_integration=OFF
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            protected_path_integration=ON
+          fi
           {
             xcodebuild -version
             ccache --version
             printf 'CCACHE_SLOPPINESS=%s\n' "$CCACHE_SLOPPINESS"
             printf '%s\n' 'Clang PCH timestamp disabled'
+            printf 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s\n' "$protected_path_integration"
           } > "$GITHUB_WORKSPACE/CCACHE_KEY.txt"
           echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
 
