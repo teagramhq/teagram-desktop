@@ -13,6 +13,10 @@ namespace Window {
 class SessionController;
 } // namespace Window
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Core::DeepLinks {
 
 enum class Result {
@@ -38,6 +42,7 @@ struct SettingsSection {
 struct SettingsControl {
 	Settings::Type sectionId;
 	QString controlId;
+	Fn<bool(const Main::Session &)> available = nullptr;
 };
 
 struct CodeBlock {

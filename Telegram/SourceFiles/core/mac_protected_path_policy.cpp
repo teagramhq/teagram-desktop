@@ -818,7 +818,7 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			|| literalHomePath.size() >= kMaxSbplStringBytes) {
 			return {};
 		}
-		auto home = QByteArray("^");
+		auto home = QByteArray();
 		for (const auto &part : homePath.split('/')) {
 			if (part.isEmpty()) {
 				continue;

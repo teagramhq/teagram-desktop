@@ -1517,6 +1517,9 @@ auto SessionNavigation::showToast(
 }
 
 void SessionNavigation::showFeatureUnavailableOnServerToast() {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_featureUnavailableOnServerToastCallsForRegressionTest;
+#endif
 	showToast(tr::lng_server_feature_unavailable(tr::now));
 }
 

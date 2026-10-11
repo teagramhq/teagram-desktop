@@ -133,6 +133,7 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 				  }) {
 		const auto profile = policy.SeatbeltProfile();
 		CHECK(profile.startsWith("(version 1)\n(allow default)\n"));
+		CHECK(!profile.contains("\"^^"));
 		for (const auto &line : profile.split('\n')) {
 			CHECK(line.size() < 900);
 		}
@@ -147,7 +148,8 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
-		CHECK(joinedProfileStrings.contains("^/[Uu][Ss][Ee][Rr][Ss]/"));
+		CHECK(joinedProfileStrings.contains(
+			u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"_q.toUtf8()));
 		CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
@@ -342,7 +344,8 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	CHECK(joinedProfileStrings.contains(
-		"^/[Uu][Ss][Ee][Rr][Ss]/[Aa][Ll][Ii][Cc][Ee]"));
+		u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"
+		"[Aa][Ll][Ii][Cc][Ee]"_q.toUtf8()));
 	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 	CHECK(joinedProfileStrings.contains(
 		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Pp]"
@@ -384,7 +387,8 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithoutIgnorableExpansion) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	CHECK(joinedProfileStrings.contains(
-		u"^/[Uu][Ss][Ee][Rr][Ss]/([Kk]|\u212A)([Ss]|\u017F)"_q.toUtf8()));
+		u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"
+		"([Kk]|\u212A)([Ss]|\u017F)"_q.toUtf8()));
 	const auto ignoredSequence
 		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"

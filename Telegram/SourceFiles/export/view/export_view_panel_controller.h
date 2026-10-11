@@ -43,6 +43,10 @@ public:
 	}
 
 	void activatePanel();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool panelVisibleForRegressionTest() const;
+	void hidePanelForRegressionTest();
+#endif
 	void stopWithConfirmation(Fn<void()> callback = nullptr);
 
 	[[nodiscard]] rpl::producer<> stopRequests() const;

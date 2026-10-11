@@ -12,9 +12,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QString>
 
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace Core {
+
+#ifdef TDESKTOP_TEAGRAM
+inline constexpr auto kTeagramUpdateBuild
+	= std::uint64_t(TDESKTOP_TEAGRAM_UPDATE_BUILD);
+inline constexpr std::string_view kTeagramUpdateChannel
+	= TDESKTOP_TEAGRAM_UPDATE_CHANNEL;
+#endif // TDESKTOP_TEAGRAM
 
 enum class TeagramUpdateChannel {
 	Dev,

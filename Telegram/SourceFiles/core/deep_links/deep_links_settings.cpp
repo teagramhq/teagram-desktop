@@ -1800,6 +1800,9 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = SettingsControl{
 			::Settings::InformationId(),
 			u"edit/bio"_q,
+			[](const Main::Session &session) {
+				return session.accountBioEditSupported();
+			},
 		},
 	});
 	router.add(u"settings"_q, {

@@ -27,10 +27,17 @@ if(UNIX)
 endif()
 
 target_include_directories(test_unit PRIVATE ${src_loc})
+find_package(Python3 REQUIRED)
+file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" teagram_test_python_executable)
+file(TO_CMAKE_PATH
+    "${CMAKE_SOURCE_DIR}/Telegram/build/teagram_update_manifest.py"
+    teagram_test_update_manifest_script)
 target_compile_definitions(test_unit PRIVATE
     TDESKTOP_UNIT_TESTS
     TDESKTOP_API_ID=${TDESKTOP_API_ID}
     TDESKTOP_API_HASH=${TDESKTOP_API_HASH}
+    "TDESKTOP_TEST_PYTHON_EXECUTABLE=\"${teagram_test_python_executable}\""
+    "TDESKTOP_TEST_TEAGRAM_UPDATE_PRODUCER=\"${teagram_test_update_manifest_script}\""
 )
 
 # Xcode links every object from an object-library dependency into each
@@ -82,6 +89,7 @@ PRIVATE
     storage/storage_account_persistence.cpp
     storage/storage_server_forget_startup.cpp
     storage/storage_domain.cpp
+    tests/unit/bio_save_failure_tests.cpp
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
     tests/unit/debug_mode_tests.cpp
