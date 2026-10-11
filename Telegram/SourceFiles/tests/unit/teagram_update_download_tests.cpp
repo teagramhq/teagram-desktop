@@ -16,10 +16,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QProcess>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QUrlQuery>
 
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 
 #include <algorithm>
 #include <functional>
@@ -45,9 +47,14 @@ struct DigestContextDeleter {
 	void operator()(EVP_MD_CTX *value) const;
 };
 
+struct BioDeleter {
+	void operator()(BIO *value) const;
+};
+
 using Pkey = std::unique_ptr<EVP_PKEY, PkeyDeleter>;
 using PkeyContext = std::unique_ptr<EVP_PKEY_CTX, PkeyContextDeleter>;
 using DigestContext = std::unique_ptr<EVP_MD_CTX, DigestContextDeleter>;
+using Bio = std::unique_ptr<BIO, BioDeleter>;
 
 struct TestSigningKey {
 	Pkey privateKey;
@@ -172,6 +179,13 @@ class FixtureTransport final : public TeagramUpdateTransport {
 					const QByteArray &archive, bool prerelease = false,
 					const QByteArray &signedSize = {});
 
+	void addReleaseWithArtifacts(const QByteArray &tag,
+								 const QByteArray &build,
+								 const QByteArray &manifest,
+								 const QByteArray &signature,
+								 const QByteArray &archive,
+								 bool prerelease = false);
+
 	void addOldReleases(int count);
 
 	void addReleaseList();
@@ -188,6 +202,7 @@ class FixtureTransport final : public TeagramUpdateTransport {
 
 	std::map<QString, FakeResponse> _responses;
 	QJsonArray _releases;
+
 };
 
 void PkeyDeleter::operator()(EVP_PKEY *value) const { EVP_PKEY_free(value); }
@@ -199,6 +214,8 @@ void PkeyContextDeleter::operator()(EVP_PKEY_CTX *value) const {
 void DigestContextDeleter::operator()(EVP_MD_CTX *value) const {
 	EVP_MD_CTX_free(value);
 }
+
+void BioDeleter::operator()(BIO *value) const { BIO_free(value); }
 
 void FixtureTransport::addResponse(const QUrl &url, FakeResponse response) {
 	_responses.insert_or_assign(Key(url), std::move(response));
@@ -219,13 +236,20 @@ void FixtureTransport::addRelease(const QByteArray &tag,
 								  const QByteArray &signedSize) {
 	const auto manifest = Manifest(channel, build, archive, signedSize);
 	const auto signature = SignManifest(manifest, key);
+	addReleaseWithArtifacts(tag, build, manifest, signature, archive,
+							prerelease);
+}
+
+void FixtureTransport::addReleaseWithArtifacts(
+	const QByteArray &tag, const QByteArray &build, const QByteArray &manifest,
+	const QByteArray &signature, const QByteArray &archive, bool prerelease) {
 	addAsset(tag, "teagram-update.json", ResponseWithBody(manifest));
-	addAsset(tag, "teagram-update.json.sig", ResponseWithBody(signature));
+	addAsset(tag, "teagram-update.sig", ResponseWithBody(signature));
 	addAsset(tag, QByteArray("Teagram-macOS-arm64-") + build + ".zip",
 			 ResponseWithBody(archive));
 	auto assets = QJsonArray();
 	assets.append(QJsonObject{{u"name"_q, u"teagram-update.json"_q}});
-	assets.append(QJsonObject{{u"name"_q, u"teagram-update.json.sig"_q}});
+	assets.append(QJsonObject{{u"name"_q, u"teagram-update.sig"_q}});
 	assets.append(QJsonObject{
 		{u"name"_q,
 		 u"Teagram-macOS-arm64-%1.zip"_q.arg(QString::fromUtf8(build))},
@@ -348,7 +372,150 @@ QString FixtureTransport::Key(const QUrl &url) {
 	return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
 }
 
+[[nodiscard]] bool RunProcess(const QString &program,
+							  const QStringList &arguments) {
+	auto process = QProcess();
+	process.start(program, arguments);
+	const auto started = process.waitForStarted();
+	CHECK(started);
+	if (!started) {
+		return false;
+	}
+	const auto finished = process.waitForFinished();
+	CHECK(finished);
+	if (!finished) {
+		return false;
+	}
+	CHECK(process.exitStatus() == QProcess::NormalExit);
+	CHECK_EQ(process.exitCode(), 0);
+	return process.exitStatus() == QProcess::NormalExit
+		   && process.exitCode() == 0;
+}
+
+[[nodiscard]] QByteArray ReadFile(const QString &path) {
+	auto file = QFile(path);
+	const auto opened = file.open(QIODevice::ReadOnly);
+	CHECK(opened);
+	return opened ? file.readAll() : QByteArray();
+}
+
+[[nodiscard]] bool WritePrivateKey(EVP_PKEY *key, const QString &path) {
+	const auto localPath = path.toLocal8Bit();
+	auto bio = Bio(BIO_new_file(localPath.constData(), "wb"));
+	const auto written
+		= bio
+		  && (PEM_write_bio_PrivateKey(bio.get(), key, nullptr, nullptr, 0,
+										   nullptr, nullptr)
+			  == 1);
+	CHECK(written);
+	return written;
+}
+
+struct ProducedPackage {
+	QByteArray manifest;
+	QByteArray signature;
+};
+
+[[nodiscard]] std::optional<ProducedPackage>
+ProducePackage(const QByteArray &archive, const QString &keyPath,
+				const QString &directory, const QByteArray &channel,
+				const QByteArray &build) {
+	if (!QDir().mkpath(directory)) {
+		CHECK(false);
+		return std::nullopt;
+	}
+	const auto assetName
+		= u"Teagram-macOS-arm64-%1.zip"_q.arg(QString::fromLatin1(build));
+	const auto archivePath = QDir(directory).filePath(assetName);
+	if (!WriteFile(archivePath, archive)) {
+		CHECK(false);
+		return std::nullopt;
+	}
+	const auto output = QDir(directory).filePath(u"output"_q);
+	const auto succeeded = RunProcess(
+		QString::fromUtf8(TDESKTOP_TEST_PYTHON_EXECUTABLE),
+		{
+			QString::fromUtf8(TDESKTOP_TEST_TEAGRAM_UPDATE_PRODUCER),
+			u"--archive"_q,
+			archivePath,
+			u"--build"_q,
+			QString::fromLatin1(build),
+			u"--channel"_q,
+			QString::fromLatin1(channel),
+			u"--commit"_q,
+			u"0123456789abcdef0123456789abcdef01234567"_q,
+			u"--min-os"_q,
+			u"13.0"_q,
+			u"--signing-key"_q,
+			keyPath,
+			u"--output-dir"_q,
+			output,
+		});
+	if (!succeeded) {
+		return std::nullopt;
+	}
+	auto manifest = ReadFile(QDir(output).filePath(u"teagram-update.json"_q));
+	auto signature = ReadFile(QDir(output).filePath(u"teagram-update.sig"_q));
+	CHECK(!manifest.isEmpty());
+	CHECK(!signature.isEmpty());
+	if (manifest.isEmpty() || signature.isEmpty()) {
+		return std::nullopt;
+	}
+	return ProducedPackage{std::move(manifest), std::move(signature)};
+}
+
 } // namespace
+
+TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifacts) {
+	const auto signingKey = GenerateTestSigningKey();
+	if (!signingKey) {
+		return;
+	}
+	auto generated = QTemporaryDir();
+	CHECK(generated.isValid());
+	if (!generated.isValid()) {
+		return;
+	}
+	const auto keyPath = generated.filePath(u"fixture-key.pem"_q);
+	if (!WritePrivateKey(signingKey->privateKey.get(), keyPath)) {
+		return;
+	}
+	const auto archive = QByteArrayLiteral("producer-bound archive bytes");
+	const auto package = ProducePackage(archive, keyPath, generated.path(),
+										QByteArrayLiteral("dev"),
+										QByteArrayLiteral("101"));
+	if (!package) {
+		return;
+	}
+	auto transport = std::make_unique<FixtureTransport>();
+	auto *fixture = transport.get();
+	fixture->addReleaseWithArtifacts(
+		"teagram-build-101", "101", package->manifest, package->signature,
+		archive);
+	fixture->addReleaseList();
+	auto staging = QTemporaryDir();
+	CHECK(staging.isValid());
+	if (!staging.isValid()) {
+		return;
+	}
+	const auto trustedKey
+		= std::optional<TeagramUpdatePublicKey>(signingKey->publicKey);
+	TeagramUpdateDownloader downloader(std::move(transport), trustedKey,
+										  staging.path());
+	const auto result
+		= downloader.checkForUpdates(100, TeagramUpdateChannel::Dev);
+	CHECK(result.reason == TeagramUpdateDownloadReason::Available);
+	CHECK(result.candidate != nullptr);
+	if (result.candidate) {
+		CHECK_EQ(result.candidate->metadata().build(), quint64(101));
+		CHECK(result.candidate->metadata().channel()
+			  == TeagramUpdateChannel::Dev);
+		QFile downloaded(result.candidate->archivePath());
+		CHECK(downloaded.open(QIODevice::ReadOnly));
+		CHECK_EQ(downloaded.readAll(), archive);
+	}
+	CHECK(HasOnlyFixedSourceHosts(fixture->_requests));
+}
 
 TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	const auto signingKey = GenerateTestSigningKey();

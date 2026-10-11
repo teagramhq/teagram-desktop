@@ -47,7 +47,7 @@ const auto kReleaseAssetsHost = u"release-assets.githubusercontent.com"_q;
 const auto kObjectsHost = u"objects.githubusercontent.com"_q;
 const auto kRepositoryPath = u"/repos/teagramhq/teagram-desktop/releases"_q;
 const auto kManifestAsset = u"teagram-update.json"_q;
-const auto kSignatureAsset = u"teagram-update.json.sig"_q;
+const auto kSignatureAsset = u"teagram-update.sig"_q;
 const auto kTagPrefix = u"teagram-build-"_q;
 
 using Reason = TeagramUpdateDownloadReason;
