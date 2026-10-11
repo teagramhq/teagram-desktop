@@ -276,7 +276,7 @@ struct PathInterval {
 				DirectoryEntry{ entry.components, mode });
 		}
 	}
-	const auto root = PathKey({ u"Teagram.app" }, 1);
+	const auto root = PathKey(std::vector<QString>{ u"Teagram.app"_q }, 1);
 	return pathTypes.contains(root)
 		   && pathTypes.at(root) == EntryType::Directory;
 }
@@ -357,7 +357,7 @@ struct PathInterval {
 			|| disk != 0 || compressedSize == 0xffffffff
 			|| expandedSize == 0xffffffff || localOffset == 0xffffffff
 			|| !localOffsets.insert(localOffset).second
-			|| method != 0 && method != 8
+			|| (method != 0 && method != 8)
 			|| (flags & ~quint16(0x080e)) != 0
 			|| ((flags & 0x0006) != 0 && method != 8)) {
 			return ParseStatus::Invalid;
@@ -721,7 +721,7 @@ template <typename Consumer>
 	if (opened < 0) {
 		return false;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstat(opened, &info) != 0 || !S_ISDIR(info.st_mode)
 		|| info.st_uid != ::geteuid()) {
 		::close(opened);
@@ -781,7 +781,7 @@ template <typename Consumer>
 	if (depth > 256) {
 		return false;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
 		return errno == ENOENT;
 	}
@@ -885,7 +885,7 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	if (stage.value < 0) {
 		return Rejected(TeagramUpdateArchiveReason::StagingFailure);
 	}
-	auto stageInfoStat = struct stat();
+	struct stat stageInfoStat = {};
 	if (::fstat(stage.value, &stageInfoStat) != 0
 		|| !S_ISDIR(stageInfoStat.st_mode)
 		|| stageInfoStat.st_uid != ::geteuid()
@@ -902,7 +902,7 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	if (sourceHandle.value < 0) {
 		return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
 	}
-	auto sourceInfo = struct stat();
+	struct stat sourceInfo = {};
 	if (::fstat(sourceHandle.value, &sourceInfo) != 0
 		|| !S_ISREG(sourceInfo.st_mode)
 		|| sourceInfo.st_uid != ::geteuid()
@@ -1035,13 +1035,13 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 			break;
 		}
 		auto destination = FileDescriptor(output);
-		auto info = struct stat();
+		struct stat info = {};
 		if (::fstat(destination.value, &info) != 0 || !S_ISREG(info.st_mode)
 			|| info.st_uid != ::geteuid() || info.st_nlink != 1) {
 			created = false;
 			break;
 		}
-		if (!ReadEntry(file, entry, [&](QByteArrayView bytes) {
+		if (!ReadEntry(snapshot, entry, [&](QByteArrayView bytes) {
 					if (!WriteAll(destination.value, bytes)) {
 						return false;
 					}

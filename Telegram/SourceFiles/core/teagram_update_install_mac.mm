@@ -111,7 +111,7 @@ struct BundleInfo {
 			!= QDir::cleanPath(info.absoluteFilePath())) {
 		return false;
 	}
-	auto stat = struct stat();
+	struct stat stat = {};
 	const auto bytes = QFile::encodeName(canonical);
 	return ::lstat(bytes.constData(), &stat) == 0
 		&& S_ISDIR(stat.st_mode)
@@ -243,8 +243,8 @@ struct BundleInfo {
 		|| IsTranslocated(canonical)) {
 		return false;
 	}
-	auto bundleInfo = struct stat();
-	auto parentInfo = struct stat();
+	struct stat bundleInfo = {};
+	struct stat parentInfo = {};
 	const auto bundleBytes = QFile::encodeName(canonical);
 	const auto parentBytes = QFile::encodeName(parent);
 	return ::lstat(bundleBytes.constData(), &bundleInfo) == 0
@@ -277,7 +277,7 @@ struct BundleInfo {
 		::close(parentDescriptor);
 		return false;
 	}
-	auto stageInfo = struct stat();
+	struct stat stageInfo = {};
 	const auto valid = ::fstatat(
 			parentDescriptor, name.constData(), &stageInfo, AT_SYMLINK_NOFOLLOW)
 			== 0
@@ -336,7 +336,7 @@ struct BundleInfo {
 		::close(directory);
 		return false;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	const auto text = (QByteArray::number(build) + '\n');
 	auto offset = qsizetype(0);
 	auto success = ::fstat(descriptor, &info) == 0
@@ -380,7 +380,7 @@ struct BundleInfo {
 	if (descriptor < 0) {
 		return std::nullopt;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	auto success = ::fstat(descriptor, &info) == 0
 		&& S_ISREG(info.st_mode)
 		&& info.st_uid == ::geteuid()
@@ -428,7 +428,7 @@ struct BundleInfo {
 	if (directory < 0) {
 		return false;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
 		const auto missing = errno == ENOENT;
 		::close(directory);
