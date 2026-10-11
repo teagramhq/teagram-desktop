@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "core/teagram_update_archive.h"
+#include "core/teagram_update_replacement.h"
 
 #include <atomic>
 #include <functional>
@@ -36,6 +37,13 @@ enum class TeagramUpdateInstallReason {
 	RelaunchFailedPreviousAvailable,
 };
 
+enum class TeagramUpdateRelaunchResult {
+	NotPending,
+	CandidateStarted,
+	PreviousStarted,
+	Failed,
+};
+
 struct TeagramUpdateInstallResult {
 	TeagramUpdateInstallReason reason
 		= TeagramUpdateInstallReason::InvalidTarget;
@@ -53,8 +61,27 @@ struct TeagramUpdateInstallerTestHooks {
 	std::function<bool(const QString &)> hasArchitecture;
 	std::function<bool(const QString &)> hasCleanCodeSeal;
 	std::function<bool()> otherInstanceRunning;
-	std::function<bool(const QString &)> launchBundle;
+	std::function<bool()> requestRestart;
 };
+
+[[nodiscard]] TeagramUpdateStartupRecoveryResult
+RecoverTeagramUpdateInstallerAtStartupForTesting(
+	const QString &installedBundlePath,
+	const QString &stagingDirectory,
+	const QString &previousBundlePath,
+	const QString &runningBundlePath,
+	const std::function<bool()> &otherInstanceRunning = {});
+
+[[nodiscard]] bool CompleteTeagramUpdateStartupForTesting(
+	const QString &runningBundlePath,
+	const std::function<bool()> &otherInstanceRunning = {});
+
+[[nodiscard]] TeagramUpdateRelaunchResult
+RelaunchTeagramUpdateAfterShutdownForTesting(
+	const QString &installedBundlePath,
+	const QString &previousBundlePath,
+	const std::function<bool(const QString &)> &launchBundle,
+	const std::function<bool()> &otherInstanceRunning = {});
 #endif // TDESKTOP_UNIT_TESTS
 
 class TeagramUpdateInstaller final {
@@ -81,5 +108,8 @@ class TeagramUpdateInstaller final {
 };
 
 void CompleteTeagramUpdateStartup();
+
+[[nodiscard]] TeagramUpdateRelaunchResult
+RelaunchTeagramUpdateAfterShutdown();
 
 } // namespace Core
