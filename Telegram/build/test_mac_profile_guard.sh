@@ -23,7 +23,9 @@ if [[ ! -x "$APP" ]]; then
 	echo "Teagram executable is not executable: $APP" >&2
 	exit 2
 fi
-IPC_DIRECTORY="/tmp"
+IPC_DIRECTORY="$(mktemp -d /tmp/tg-ipc.XXXXXX)"
+IPC_DIRECTORY="$(cd "$IPC_DIRECTORY" && pwd -P)"
+export TDESKTOP_MAC_PROFILE_TEST_IPC="$IPC_DIRECTORY"
 TEST_HOME="$(mktemp -d "$TEST_TMP_BASE/teagram-profile-test.XXXXXX")"
 TEST_HOME="$(cd "$TEST_HOME" && pwd -P)"
 IPC_SEARCH_DIRECTORY="$(cd "$IPC_DIRECTORY" 2>/dev/null && pwd -P || printf '%s' "$IPC_DIRECTORY")"
@@ -247,7 +249,7 @@ run_spoiler_cache_symlink_case() {
 	local quit_log="$case_home/quit.log"
 	local LOCK_NAME="$LOCK_NAME"
 	local IPC_SEARCH_DIRECTORY="$IPC_SEARCH_DIRECTORY"
-	local SOCKET_PATH="/tmp/Teagram-$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
+	local SOCKET_PATH="$IPC_DIRECTORY/Teagram-$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
 	local socket_bytes
 	local PROFILE_READY=false
 	local IPC_SELECTION_READY=false
@@ -398,7 +400,10 @@ cleanup() {
 	fi
 	if [[ "$status" -eq 0 ]]; then
 		rm -rf "$TEST_HOME"
+		rm -rf "$IPC_DIRECTORY"
 	else
+		cp -R "$IPC_DIRECTORY" "$TEST_TMP_BASE/teagram-profile-ipc-failure"
+		rm -rf "$IPC_DIRECTORY"
 		case "$TEST_HOME/" in
 		"$TEST_TMP_BASE/"*)
 			;;
@@ -421,12 +426,17 @@ fi
 printf 'socket_path_bytes=PASS %s/%s path=%s\n' \
 	"$SOCKET_PATH_BYTES" "$MAC_SOCKET_PATH_LIMIT" "$SOCKET_PATH"
 
+REFUSAL_LOCK_BEFORE="$(find_lock_path)"
 set +e
 REFUSAL_OUTPUT="$(env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit 2>&1)"
 REFUSAL_STATUS=$?
 set -e
+REFUSAL_LOCK_AFTER="$(find_lock_path)"
+printf 'protected_home_refusal_lock_baseline existed_before=%s exists_after=%s refusal_status=%s\n' \
+	"$([[ -n "$REFUSAL_LOCK_BEFORE" ]] && printf 1 || printf 0)" \
+	"$([[ -n "$REFUSAL_LOCK_AFTER" ]] && printf 1 || printf 0)" "$REFUSAL_STATUS"
 
 if [[ "$REFUSAL_STATUS" -eq 0 ]]; then
 	echo "hostile HOME unexpectedly started Teagram." >&2
@@ -438,7 +448,7 @@ if [[ -n "$REFUSAL_OUTPUT" ]]; then
 	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
-if [[ -n "$(find_lock_path)" ]]; then
+if [[ -n "$REFUSAL_LOCK_BEFORE" || -n "$REFUSAL_LOCK_AFTER" ]]; then
 	echo "profile refusal created or found an IPC lock." >&2
 	exit 1
 fi

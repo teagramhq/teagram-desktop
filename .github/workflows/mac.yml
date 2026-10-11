@@ -175,24 +175,20 @@ jobs:
         id: source-format
         if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
-        env:
-          SOURCE_FORMAT_MERGED_BASE_SHA: 12e804d5ea3dfef7ef54209dbff2207265ef298f
-          SOURCE_FORMAT_MERGED_HEAD_SHA: 9f4a8d28d588784a81a8aa603ec975245f33045b
-          SOURCE_FORMAT_REPAIR_BASE_SHA: daf71541a0bea6990694d6d6f132ca943f731305
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
           log="$evidence/source-format.log"
           manifest="$evidence/source-format-manifest.json"
           script="$REPO_NAME/.github/scripts/check_cpp_format.py"
+          source_base="$(git -C "$REPO_NAME" merge-base origin/dev "$GITHUB_SHA")"
           : > "$log"
           set +e
           python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format --self-test >> "$log" 2>&1
           self_test_status=$?
           python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format \
             --tested-head "$GITHUB_SHA" \
-            --source-range merged-profile-ipc "$SOURCE_FORMAT_MERGED_BASE_SHA" "$SOURCE_FORMAT_MERGED_HEAD_SHA" \
-            --source-range lifecycle-repair "$SOURCE_FORMAT_REPAIR_BASE_SHA" "$GITHUB_SHA" \
+            --source-range pr-isolation "$source_base" "$GITHUB_SHA" \
             --manifest "$manifest" >> "$log" 2>&1
           format_status=$?
           set -e

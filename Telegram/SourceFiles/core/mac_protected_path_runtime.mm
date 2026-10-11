@@ -395,9 +395,32 @@ bool InitializeProfile() {
 	}
 
 	const auto appSandboxed = AppSandboxed();
-	const auto ipcDirectory
-		= appSandboxed ? QString::fromUtf8(homes.foundation) + u"/tmp"_q
-					   : u"/tmp"_q;
+	auto ipcDirectory = appSandboxed
+							? QString::fromUtf8(homes.foundation) + u"/tmp"_q
+							: u"/tmp"_q;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	if (IntegrationTestActive()) {
+		const auto testIpc = std::getenv("TDESKTOP_MAC_PROFILE_TEST_IPC");
+		if (testIpc && *testIpc) {
+			const auto directory = QString::fromUtf8(testIpc);
+			if (!QDir::isAbsolutePath(directory)
+				|| !PrepareExternalDirectoryIfAllowed(
+					directory, "profile.test-ipc",
+					[&](Operation operation, const QString &path,
+						const char *callsite) {
+						return policy
+							.Resolve(operation, QFile::encodeName(path),
+									 homes.accountDatabase,
+									 QString::fromUtf8(callsite))
+							.allowed();
+					},
+					[&] { return QDir().mkpath(directory); })) {
+				return failForIntegrationTest("test-ipc");
+			}
+			ipcDirectory = directory;
+		}
+	}
+#endif
 	cForceWorkingDir(profilePath + '/');
 	{
 		QMutexLocker lock(&state.mutex);

@@ -195,5 +195,6 @@ require_text "$unit_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
 require_text README.md '`MacOS.` workflow is the required pull request gate'
 
 python3 .github/scripts/test_macos_launch_smoke.py
+python3 .github/scripts/test_mac_profile_fixture.py
 
 printf 'macOS CI contract tests passed.\n'

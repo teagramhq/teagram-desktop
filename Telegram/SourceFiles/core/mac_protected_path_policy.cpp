@@ -319,13 +319,11 @@ struct WalkResult {
 	auto result = ignored;
 	for (auto i = qsizetype(0); i < component.size();) {
 		const auto byte = uchar(component.at(i));
-		const auto isKelvin = byte == 0xE2
-			&& component.size() - i >= 3
-			&& uchar(component.at(i + 1)) == 0x84
-			&& uchar(component.at(i + 2)) == 0xAA;
-		const auto isLongS = byte == 0xC5
-			&& component.size() - i >= 2
-			&& uchar(component.at(i + 1)) == 0xBF;
+		const auto isKelvin = byte == 0xE2 && component.size() - i >= 3
+							  && uchar(component.at(i + 1)) == 0x84
+							  && uchar(component.at(i + 2)) == 0xAA;
+		const auto isLongS = byte == 0xC5 && component.size() - i >= 2
+							 && uchar(component.at(i + 1)) == 0xBF;
 		auto character = QByteArray();
 		auto consumed = qsizetype(1);
 		if (byte == 'k' || byte == 'K' || isKelvin) {

@@ -691,8 +691,8 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	timer->stop();
 	auto originalContents = QFile(originalFile);
 	const auto originalRetained = QFileInfo::exists(originalFile);
-	return state->swapped && state->completed
-		   && originalRetained && originalContents.open(QIODevice::ReadOnly)
+	return state->swapped && state->completed && originalRetained
+		   && originalContents.open(QIODevice::ReadOnly)
 		   && originalContents.readAll() == "legacy bytes"
 		   && QFileInfo(base).isSymLink();
 }
