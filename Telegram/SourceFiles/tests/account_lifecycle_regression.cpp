@@ -99,7 +99,8 @@ GetLifecycleWriteCountsForRegressionTest() {
 }
 
 MainQueueBarrierResult WaitForMainQueueBarrierForRegressionTest(
-		int timeoutMilliseconds) {
+		int timeoutMilliseconds,
+		bool suppressCompletion) {
 	Q_ASSERT(timeoutMilliseconds > 0 && timeoutMilliseconds <= 5000);
 	struct State {
 		QEventLoop *loop = nullptr;
@@ -110,13 +111,15 @@ MainQueueBarrierResult WaitForMainQueueBarrierForRegressionTest(
 	auto loop = QEventLoop();
 	state->loop = &loop;
 	QTimer::singleShot(timeoutMilliseconds, &loop, &QEventLoop::quit);
-	crl::on_main([state] {
-		if (!state->active || state->completed || !state->loop) {
-			return;
-		}
-		state->completed = true;
-		state->loop->quit();
-	});
+	if (!suppressCompletion) {
+		crl::on_main([state] {
+			if (!state->active || state->completed || !state->loop) {
+				return;
+			}
+			state->completed = true;
+			state->loop->quit();
+		});
+	}
 	if (!state->completed) {
 		loop.exec();
 	}

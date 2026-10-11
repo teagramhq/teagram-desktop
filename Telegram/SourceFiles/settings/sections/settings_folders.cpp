@@ -1554,6 +1554,19 @@ bool RunFoldersCrudRegressionForTest(
 			id,
 			presence);
 	};
+	const auto faultMode = qEnvironmentVariable(
+		"TDESKTOP_FOLDER_CRUD_REGRESSION_FAULT");
+	const auto suppressCreateCompletion = (side
+		== Settings::FolderCrudRegressionSide::Stock)
+		&& (faultMode == u"barrier_timeout"_q);
+	const auto injectCrossSessionFilter = (side
+		== Settings::FolderCrudRegressionSide::Stock)
+		&& (faultMode == u"cross_session_presence"_q);
+	if (!faultMode.isEmpty()
+		&& !suppressCreateCompletion
+		&& !injectCrossSessionFilter) {
+		return fail("unknown_fault_mode", "setup", "fault_mode");
+	}
 	if (&controller->session() == &other->session()) {
 		return fail("setup_failure", "setup", "distinct_sessions");
 	}
@@ -1642,8 +1655,26 @@ bool RunFoldersCrudRegressionForTest(
 			? true
 			: ReportFolderApplyFailure(observation, side, operation, stage, id);
 	};
-	const auto createBarrier
-		= Tests::WaitForMainQueueBarrierForRegressionTest();
+	const auto createBarrier = Tests::WaitForMainQueueBarrierForRegressionTest(
+		5000,
+		suppressCreateCompletion);
+	if (injectCrossSessionFilter
+		&& (createBarrier == Tests::MainQueueBarrierResult::Completed)) {
+		// The profile guard launches this as an expected-failure fixture.
+		const auto saved = FindFolder(controller, id);
+		if (!saved) {
+			return fail(
+				"incomplete_owner_apply",
+				"create",
+				"fault_injection",
+				id);
+		}
+		other->session().data().chatsFilters().apply(
+			MTP_updateDialogFilter(
+				MTP_flags(MTPDupdateDialogFilter::Flag::f_filter),
+				MTP_int(id),
+				saved->tl(id)));
+	}
 	if (!verifySaved("create", "after_local_apply", u"Folder One"_q,
 			createBarrier)) {
 		return false;
