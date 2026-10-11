@@ -147,9 +147,8 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
-		CHECK(joinedProfileStrings.contains(
-			"^/" + ignoredSequence + "[Uu]" + ignoredSequence
-			+ u"([Ss]|\u017F)"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains("^/[Uu][Ss][Ee][Rr][Ss]/"));
+		CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
@@ -342,7 +341,9 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains(
+		"^/[Uu][Ss][Ee][Rr][Ss]/[Aa][Ll][Ii][Cc][Ee]"));
+	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 	CHECK(joinedProfileStrings.contains(
 		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Pp]"
 		+ ignoredSequence + "[Pp]" + ignoredSequence + "[Ll]"));
@@ -365,6 +366,30 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 			 u"\u206F"_q.toUtf8(), u"\uFEFF"_q.toUtf8()}) {
 		CHECK(profile.contains(character));
 	}
+}
+
+TEST_CASE(SeatbeltProfileFoldsHomeNamesWithoutIgnorableExpansion) {
+	auto fs = FakeFileSystem();
+	AddDirectoryHierarchy(fs, u"/Users/k\u017F"_q.toUtf8());
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = u"/Users/k\u017F"_q.toUtf8(),
+				  .environment = u"/Users/k\u017F"_q.toUtf8(),
+				  .foundation = u"/Users/k\u017F"_q.toUtf8()},
+		fs.operations());
+	CHECK(policy.valid());
+	const auto profile = policy.SeatbeltProfile();
+	auto joinedProfileStrings = profile;
+	const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
+	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
+		joinedProfileStrings.replace(adjacentStringBoundary, "");
+	}
+	CHECK(joinedProfileStrings.contains(
+		u"^/[Uu][Ss][Ee][Rr][Ss]/([Kk]|\u212A)([Ss]|\u017F)"_q.toUtf8()));
+	const auto ignoredSequence
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {

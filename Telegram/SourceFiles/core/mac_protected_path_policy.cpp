@@ -824,7 +824,7 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 				continue;
 			}
 			home.append('/');
-			home.append(component(part));
+			home.append(ProfileComponentRegex(part));
 		}
 		const auto library = component("Library");
 		for (const auto &prefix : protectedPrefixes) {
