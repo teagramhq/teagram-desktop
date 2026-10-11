@@ -95,6 +95,20 @@ require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$mac_workflow" 'macOS-arm64-ccache-dev-'
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
+cache_setup_step="$(awk '
+  /^      - name: First set up\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+for cache_profile_setting in \
+  'protected_path_integration=OFF' \
+  'protected_path_integration=ON' \
+  'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s'; do
+  if ! grep -Fq -- "$cache_profile_setting" <<< "$cache_setup_step"; then
+    printf 'MacOS cache setup must include profile setting: %s\n' "$cache_profile_setting" >&2
+    exit 1
+  fi
+done
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
