@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_install.h"
 
 #include "base/platform/mac/base_utilities_mac.h"
+#include "base/platform/base_platform_file_utilities.h"
 #include "core/mac_protected_path_access.h"
 #include "core/teagram_update_replacement.h"
 #include "core/teagram_update_verification.h"
@@ -61,7 +62,7 @@ struct BundleInfo {
 
 [[nodiscard]] QString FromProperty(NSDictionary *properties,
 								   NSString *key) {
-	const auto value = [properties objectForKey:key];
+	const id value = [properties objectForKey:key];
 	return [value isKindOfClass:[NSString class]]
 		? QString::fromUtf8([value UTF8String])
 		: QString();
@@ -84,7 +85,7 @@ struct BundleInfo {
 		return false;
 	}
 	auto properties = [NSDictionary dictionaryWithContentsOfFile:
-		Q2NSString(plistPath)];
+		Platform::Q2NSString(plistPath)];
 	if (![properties isKindOfClass:[NSDictionary class]]) {
 		return false;
 	}
@@ -288,13 +289,6 @@ struct BundleInfo {
 	return valid;
 }
 
-[[nodiscard]] bool CheckPath(MacProtectedPath::Operation operation,
-							 const QString &path,
-							 const char *callsite) {
-	return MacProtectedPath::CheckExternalPathForUse(
-		operation, path, callsite);
-}
-
 [[nodiscard]] QString ChannelName(TeagramUpdateChannel channel) {
 	return channel == TeagramUpdateChannel::Dev ? u"dev"_q : u"main"_q;
 }
@@ -463,15 +457,18 @@ struct BundleInfo {
 		};
 	}
 	const auto previousAllowed
-		= CheckPath(MacProtectedPath::Operation::RecursiveDelete,
+		= MacProtectedPath::CheckExternalPathForUse(
+			MacProtectedPath::Operation::RecursiveDelete,
 			previous,
 			"core.teagram-update.recover-previous");
 	const auto targetAllowed
-		= CheckPath(MacProtectedPath::Operation::Rename,
+		= MacProtectedPath::CheckExternalPathForUse(
+			MacProtectedPath::Operation::Rename,
 			installed,
 			"core.teagram-update.recover-target");
 	const auto stageAllowed
-		= CheckPath(MacProtectedPath::Operation::RecursiveDelete,
+		= MacProtectedPath::CheckExternalPathForUse(
+			MacProtectedPath::Operation::RecursiveDelete,
 			staging,
 			"core.teagram-update.recover-staging");
 	if (!previousAllowed || !targetAllowed || !stageAllowed
@@ -539,7 +536,7 @@ struct BundleInfo {
 	__block NSError *launchError = nil;
 	auto configuration = [NSWorkspaceOpenConfiguration configuration];
 	configuration.createsNewApplicationInstance = YES;
-	const auto url = [NSURL fileURLWithPath:Q2NSString(bundlePath)
+	const auto url = [NSURL fileURLWithPath:Platform::Q2NSString(bundlePath)
 					isDirectory:YES];
 	[[NSWorkspace sharedWorkspace]
 		openApplicationAtURL:url
@@ -579,7 +576,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 			progress(stage, std::clamp(value, 0, 100));
 		}
 	};
-	autoreleasepool {
+	@autoreleasepool {
 		emit(TeagramUpdateInstallStage::Verifying, 0);
 		const auto mainBundle = [NSBundle mainBundle];
 		const auto identifier = FromNative([mainBundle bundleIdentifier]);
@@ -614,15 +611,15 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 		if (candidate.metadata().build() <= candidate.installedBuild()) {
 			return InstallResult(TeagramUpdateInstallReason::CandidateRejected);
 		}
-		if (!CheckPath(
+		if (!MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Write,
 				installed,
 				"core.teagram-update.target")
-			|| !CheckPath(
+			|| !MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Write,
 				parent,
 				"core.teagram-update.parent")
-			|| !CheckPath(
+			|| !MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Read,
 				candidate.archivePath(),
 				"core.teagram-update.archive")) {
@@ -649,7 +646,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 		if (cancelled()) {
 			return InstallResult(TeagramUpdateInstallReason::Cancelled);
 		}
-		if (!CheckPath(
+		if (!MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Mkdir,
 				staging,
 				"core.teagram-update.staging")) {
@@ -675,7 +672,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				: TeagramUpdateInstallReason::ArchiveRejected);
 		}
 		emit(TeagramUpdateInstallStage::Verifying, 0);
-		if (!CheckPath(
+		if (!MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Read,
 				extraction.bundlePath,
 				"core.teagram-update.candidate")
@@ -714,7 +711,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				false)) {
 			return InstallResult(TeagramUpdateInstallReason::InstalledBuildChanged);
 		}
-		if (!CheckPath(
+		if (!MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Write,
 				extraction.bundlePath,
 				"core.teagram-update.quarantine")
@@ -771,7 +768,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 				replacement.previousBundlePath);
 		}
 		emit(TeagramUpdateInstallStage::Relaunching, 0);
-		if (!CheckPath(
+		if (!MacProtectedPath::CheckExternalPathForUse(
 				MacProtectedPath::Operation::Read,
 				installed,
 				"core.teagram-update.relaunch")) {
@@ -805,7 +802,7 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 }
 
 void CompleteTeagramUpdateStartup() {
-	autoreleasepool {
+	@autoreleasepool {
 		const auto mainBundle = [NSBundle mainBundle];
 		if (FromNative([mainBundle bundleIdentifier])
 			!= u"io.teagram.desktop"_q) {
