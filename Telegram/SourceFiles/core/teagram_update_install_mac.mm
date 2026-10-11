@@ -529,7 +529,9 @@ struct BundleInfo {
 	return application && QMetaObject::invokeMethod(
 		application,
 		[application] {
+#ifndef TDESKTOP_UNIT_TESTS
 			cSetRestarting(true);
+#endif // !TDESKTOP_UNIT_TESTS
 			application->quit();
 		},
 		Qt::QueuedConnection);
