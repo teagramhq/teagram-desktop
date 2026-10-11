@@ -14,6 +14,8 @@ fi
 
 APP="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
 APP_BUNDLE="$(cd "$(dirname "$APP")/../.." && pwd -P)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+TESTED_REVISION="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 TEST_TMP_BASE="${TDESKTOP_MAC_PROFILE_TEST_TMP_BASE:-/tmp}"
 if [[ ! -x "$APP" ]]; then
 	echo "Teagram executable is not executable: $APP" >&2
@@ -545,6 +547,7 @@ run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 
 AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
+AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
 mkdir -p "$AUTH_HOME"
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
@@ -583,6 +586,61 @@ if ! grep -F -q \
 	echo "refused download-history fixture did not reach manager resolution." >&2
 	exit 1
 fi
+if ! grep -F -q "Chat participants regression passed." "$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "chat participants regression did not reach its passing result." >&2
+	exit 1
+fi
+if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
+	mkdir -p "$(dirname "$AUTH_EVIDENCE_LOG")"
+	cp "$AUTH_LOG" "$AUTH_EVIDENCE_LOG"
+	if ! grep -F -q "Chat participants regression passed." "$AUTH_EVIDENCE_LOG"; then
+		echo "authenticated app log evidence missed the chat participants assertion." >&2
+		exit 1
+	fi
+	printf 'authenticated_app_log_evidence=PASS path=%s switch_assertion=PASS\n' \
+		"$AUTH_EVIDENCE_LOG"
+fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
 
+run_authenticated_folder_fault_case() {
+	local fault_mode="$1"
+	local reason="$2"
+	local other_present="$3"
+	local case_home="$TEST_HOME/folder-fault-$fault_mode"
+	local case_log="$case_home.log"
+	local exit_status=0
+	local diagnostic
+	mkdir -p "$case_home"
+	if env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+		TDESKTOP_FOLDER_CRUD_REGRESSION_FAULT="$fault_mode" \
+		"$APP" -noupdate -debug >"$case_log" 2>&1; then
+		exit_status=0
+	else
+		exit_status=$?
+	fi
+	if (( exit_status == 0 )); then
+		cat "$case_log" >&2
+		echo "folder fault case unexpectedly exited successfully: $fault_mode" >&2
+		return 1
+	fi
+	if ! grep -E -q \
+		"^Folder CRUD regression failed: reason=$reason side=stock other_side=pinned operation=create stage=after_local_apply synthetic_id=[1-9][0-9]* owner_present=1 other_present=$other_present$" \
+		"$case_log"; then
+		cat "$case_log" >&2
+		echo "folder fault case missed its fail-closed diagnostic: $fault_mode" >&2
+		return 1
+	fi
+	diagnostic="$(grep -E \
+		"^Folder CRUD regression failed: reason=$reason side=stock other_side=pinned operation=create stage=after_local_apply synthetic_id=[1-9][0-9]* owner_present=1 other_present=$other_present$" \
+		"$case_log")"
+	printf 'folder_fault_%s=PASS tested_revision=%s exit_status=%d %s\n' \
+		"$fault_mode" "$TESTED_REVISION" "$exit_status" "$diagnostic"
+}
+
+run_authenticated_folder_fault_case barrier_timeout barrier_timeout 0
+run_authenticated_folder_fault_case cross_session_presence cross_session_presence 1
 echo "profile, spoiler-cache, and non-store single-instance checks passed."

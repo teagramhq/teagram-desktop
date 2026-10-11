@@ -1248,19 +1248,21 @@ void BuildExportSection(SectionBuilder &builder) {
 	builder.addDivider();
 	builder.addSkip();
 
-	builder.addButton({
-		.id = u"advanced/export"_q,
-		.title = tr::lng_settings_export_data(),
-		.icon = { &st::menuIconExport },
-		.onClick = [=] {
-			controller->window().hideSettingsAndLayer();
-			base::call_delayed(
-				st::boxDuration,
-				session,
-				[=] { Core::App().exportManager().start(session); });
-		},
-		.keywords = { u"export"_q, u"data"_q, u"backup"_q },
-	});
+	if (session->exportSupported()) {
+		builder.addButton({
+			.id = u"advanced/export"_q,
+			.title = tr::lng_settings_export_data(),
+			.icon = {&st::menuIconExport},
+			.onClick =
+				[=] {
+					controller->window().hideSettingsAndLayer();
+					base::call_delayed(st::boxDuration, session, [=] {
+						Core::App().exportManager().start(session);
+					});
+				},
+			.keywords = {u"export"_q, u"data"_q, u"backup"_q},
+		});
+	}
 
 	builder.addButton({
 		.id = u"advanced/experimental"_q,

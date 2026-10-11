@@ -336,6 +336,12 @@ public:
 		const QString &text,
 		crl::time duration = 0);
 	void showFeatureUnavailableOnServerToast();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] int
+	featureUnavailableOnServerToastCallsForRegressionTest() const {
+		return _featureUnavailableOnServerToastCallsForRegressionTest;
+	}
+#endif
 
 	[[nodiscard]] virtual std::shared_ptr<ChatHelpers::Show> uiShow();
 
@@ -384,6 +390,9 @@ private:
 		Fn<void(Ui::BoostCounters)> done);
 
 	const not_null<Main::Session*> _session;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _featureUnavailableOnServerToastCallsForRegressionTest = 0;
+#endif
 
 	MTP::Sender _api;
 

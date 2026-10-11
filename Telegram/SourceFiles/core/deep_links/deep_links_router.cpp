@@ -138,9 +138,10 @@ Router::DispatchResult Router::handleSection(
 			if (entry.requiresAuth && !ctx.controller) {
 				return { Result::NeedsAuth };
 			}
+			const auto action = executeAction(entry.action, ctx);
 			return {
-				executeAction(entry.action, ctx),
-				entry.skipActivation,
+				action.result,
+				action.skipActivation || entry.skipActivation,
 			};
 		}
 	}
@@ -150,9 +151,10 @@ Router::DispatchResult Router::handleSection(
 			if (entry.requiresAuth && !ctx.controller) {
 				return { Result::NeedsAuth };
 			}
+			const auto action = executeAction(entry.action, ctx);
 			return {
-				executeAction(entry.action, ctx),
-				entry.skipActivation,
+				action.result,
+				action.skipActivation || entry.skipActivation,
 			};
 		}
 	}
@@ -160,34 +162,42 @@ Router::DispatchResult Router::handleSection(
 	return { Result::Unsupported };
 }
 
-Result Router::executeAction(const Action &action, const Context &ctx) {
-	return v::match(action, [&](const SettingsSection &s) {
-		if (!ctx.controller) {
-			return Result::NeedsAuth;
-		}
-		const auto highlight = ctx.params.value(u"highlight"_q);
-		if (!highlight.isEmpty()) {
-			ctx.controller->setHighlightControlId(highlight);
-		}
-		ctx.controller->showSettings(s.sectionId);
-		return Result::Handled;
-	}, [&](const SettingsControl &s) {
-		if (!ctx.controller) {
-			return Result::NeedsAuth;
-		}
-		if (!s.controlId.isEmpty()) {
-			ctx.controller->setHighlightControlId(s.controlId);
-		}
-		ctx.controller->showSettings(s.sectionId);
-		return Result::Handled;
-	}, [&](const CodeBlock &c) {
-		return c.handler(ctx);
-	}, [&](const AliasTo &a) {
-		auto aliasCtx = ctx;
-		aliasCtx.section = a.section;
-		aliasCtx.path = a.path;
-		return handleSection(a.section, aliasCtx).result;
-	});
+Router::DispatchResult Router::executeAction(const Action &action,
+											 const Context &ctx) {
+	return v::match(
+		action,
+		[&](const SettingsSection &s) -> DispatchResult {
+			if (!ctx.controller) {
+				return {Result::NeedsAuth};
+			}
+			const auto highlight = ctx.params.value(u"highlight"_q);
+			if (!highlight.isEmpty()) {
+				ctx.controller->setHighlightControlId(highlight);
+			}
+			ctx.controller->showSettings(s.sectionId);
+			return {Result::Handled};
+		},
+		[&](const SettingsControl &s) -> DispatchResult {
+			if (!ctx.controller) {
+				return {Result::NeedsAuth};
+			}
+			if (s.available && !s.available(ctx.controller->session())) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return {Result::Handled, true};
+			}
+			if (!s.controlId.isEmpty()) {
+				ctx.controller->setHighlightControlId(s.controlId);
+			}
+			ctx.controller->showSettings(s.sectionId);
+			return {Result::Handled};
+		},
+		[&](const CodeBlock &c) -> DispatchResult { return {c.handler(ctx)}; },
+		[&](const AliasTo &a) -> DispatchResult {
+			auto aliasCtx = ctx;
+			aliasCtx.section = a.section;
+			aliasCtx.path = a.path;
+			return handleSection(a.section, aliasCtx);
+		});
 }
 
 void Router::showUnsupportedMessage(

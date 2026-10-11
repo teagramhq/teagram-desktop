@@ -1527,7 +1527,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 9>{
+	const auto capabilities = std::array<Capability, 10>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -1537,6 +1537,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::aiComposeSupported,
 		Main::details::serverTranslationSupported,
 		Main::details::sharedFoldersSupported,
+		Main::details::accountBioEditSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -1552,6 +1553,103 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+struct BioTargetTestMtp {
+	const DcOptions &options;
+
+	[[nodiscard]] const DcOptions &dcOptions() const {
+		return options;
+	}
+};
+
+struct BioTargetTestSession {
+	quint64 userId = 0;
+	BioTargetTestMtp mtpInstance;
+
+	[[nodiscard]] const BioTargetTestMtp &mtp() const {
+		return mtpInstance;
+	}
+};
+
+struct BioTargetTestUser {
+	const BioTargetTestSession &owner;
+
+	[[nodiscard]] const BioTargetTestSession &session() const {
+		return owner;
+	}
+};
+
+TEST_CASE(StockAndCustomBioTargetsFollowTheirOwningSessions) {
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+
+	const auto stockSession = BioTargetTestSession{ 42, { stock } };
+	const auto customSession = BioTargetTestSession{ 42, { custom } };
+	const auto stockUser = BioTargetTestUser{ stockSession };
+	const auto customUser = BioTargetTestUser{ customSession };
+	CHECK_EQ(stockSession.userId, customSession.userId);
+
+	CHECK(Main::details::accountBioEditorTargetSupported(stockUser));
+	CHECK(Main::details::accountBioSearchTargetSupported(stockSession));
+	CHECK(!Main::details::accountBioEditorTargetSupported(customUser));
+	CHECK(!Main::details::accountBioSearchTargetSupported(customSession));
+}
+
+TEST_CASE(BlockedAccountWithoutCustomPinHasNoBioTargets) {
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	CHECK(blocked.blocked());
+	CHECK(!blocked.hasCustomServer());
+
+	const auto session = BioTargetTestSession{ 42, { blocked } };
+	const auto user = BioTargetTestUser{ session };
+	CHECK(!Main::details::accountBioEditorTargetSupported(user));
+	CHECK(!Main::details::accountBioSearchTargetSupported(session));
+}
+
+TEST_CASE(AccountBioTargetsStayOwnedAcrossSwitchOrdersWithEqualIds) {
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	const auto stock = BioTargetTestSession{ 42, { stockOptions } };
+	const auto custom = BioTargetTestSession{ 42, { customOptions } };
+	const auto stockUser = BioTargetTestUser{ stock };
+	const auto customUser = BioTargetTestUser{ custom };
+	CHECK_EQ(stock.userId, custom.userId);
+
+	const auto checkTargets = [](
+			const BioTargetTestSession &searchOwner,
+			const BioTargetTestUser &editorOwner,
+			bool editorExpected,
+			bool searchExpected) {
+		CHECK_EQ(
+			Main::details::accountBioEditorTargetSupported(editorOwner),
+			editorExpected);
+		CHECK_EQ(
+			Main::details::accountBioSearchTargetSupported(searchOwner),
+			searchExpected);
+	};
+	const auto checkSwitchOrder = [&](
+			const BioTargetTestSession &first,
+			const BioTargetTestUser &firstUser,
+			bool firstSupported,
+			const BioTargetTestSession &second,
+			const BioTargetTestUser &secondUser,
+			bool secondSupported) {
+		checkTargets(first, firstUser, firstSupported, firstSupported);
+		checkTargets(second, secondUser, secondSupported, secondSupported);
+		checkTargets(first, firstUser, firstSupported, firstSupported);
+	};
+
+	checkSwitchOrder(stock, stockUser, true, custom, customUser, false);
+	checkSwitchOrder(custom, customUser, false, stock, stockUser, true);
+	checkTargets(stock, customUser, false, true);
+	checkTargets(custom, stockUser, true, false);
 }
 
 // A pin is immutable for the life of the account. Peer and message ids

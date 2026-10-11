@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 
 #include "api/api_authorizations.h"
+#include "api/api_bio_save_failure.h"
 #include "api/api_attached_stickers.h"
 #include "api/api_blocked_peers.h"
 #include "api/api_chat_invite.h"
@@ -5590,28 +5591,55 @@ void ApiWrap::requestBotCommonGroups(
 	}).send();
 }
 
-void ApiWrap::saveSelfBio(const QString &text) {
+void ApiWrap::saveSelfBio(const QString &text, Fn<bool()> onAboutNotSupported) {
 	if (_bio.requestId) {
-		if (text != _bio.requestedText) {
-			request(_bio.requestId).cancel();
+		if (text != _bio.state.requestedText()) {
+			const auto requestId = base::take(_bio.requestId);
+			_bio.state.cancel();
+			request(requestId).cancel();
 		} else {
 			return;
 		}
 	}
-	_bio.requestedText = text;
-	_bio.requestId = request(MTPaccount_UpdateProfile(
-		MTP_flags(MTPaccount_UpdateProfile::Flag::f_about),
-		MTPstring(),
-		MTPstring(),
-		MTP_string(text)
-	)).done([=](const MTPUser &result) {
-		_bio.requestId = 0;
-
-		_session->data().processUser(result);
-		_session->user()->setAbout(_bio.requestedText);
-	}).fail([=] {
-		_bio.requestId = 0;
-	}).send();
+	_bio.onAboutNotSupported = std::move(onAboutNotSupported);
+	const auto generation = _bio.state.begin(text);
+	_bio.requestId
+		= request(MTPaccount_UpdateProfile(
+					  MTP_flags(MTPaccount_UpdateProfile::Flag::f_about),
+					  MTPstring(), MTPstring(), MTP_string(text)))
+			  .done([=](const MTPUser &result) {
+				  if (!_bio.state.isCurrent(generation)) {
+					  return;
+				  }
+				  _bio.requestId = 0;
+				  _bio.onAboutNotSupported = nullptr;
+				  const auto completed = _bio.state.succeeded(
+					  generation, [=](const QString &requestedText) {
+						  _session->data().processUser(result);
+						  _session->user()->setAbout(requestedText);
+					  });
+				  Assert(completed);
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  if (!_bio.state.isCurrent(generation)) {
+					  return;
+				  }
+				  _bio.requestId = 0;
+				  const auto onAboutNotSupported
+					  = base::take(_bio.onAboutNotSupported);
+				  const auto transition = _bio.state.failed(
+					  generation, error.type(), [onAboutNotSupported] {
+						  return onAboutNotSupported && onAboutNotSupported();
+					  });
+				  Assert(transition.has_value());
+				  if (transition->showFallbackToast) {
+					  for (const auto &window : _session->windows()) {
+						  window->showFeatureUnavailableOnServerToast();
+						  break;
+					  }
+				  }
+			  })
+			  .send();
 }
 
 void ApiWrap::registerStatsRequest(MTP::DcId dcId, mtpRequestId id) {

@@ -277,10 +277,11 @@ void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	const auto authLifecycleRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
-	const auto headlessRegression = qEnvironmentVariableIsSet(
-		"TDESKTOP_SIGNUP_UI_REGRESSION") || authLifecycleRegression;
-	const auto windowedApplication = !headlessRegression
-		|| authLifecycleRegression;
+	const auto headlessRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
+		  || authLifecycleRegression;
+	const auto windowedApplication
+		= !headlessRegression || authLifecycleRegression;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -514,10 +515,10 @@ void Application::checkWindowId(not_null<Window::Controller*> window) {
 		// Every window is stored under its own id, so switching the primary
 		// window to another account moves it to a new key here. The id the
 		// window is about to claim is freed before the rebind, in
-		// Controller::showAccount, so this target key is free. The map refuses a
-		// duplicate key and drops the transferred pointer, which would destroy
-		// this window inside its own call stack: keep it under its current key
-		// should a collision ever reach this point.
+		// Controller::showAccount, so this target key is free. The map refuses
+		// a duplicate key and drops the transferred pointer, which would
+		// destroy this window inside its own call stack: keep it under its
+		// current key should a collision ever reach this point.
 		if (_windows.contains(id)) {
 			return;
 		}
@@ -616,10 +617,9 @@ void Application::processCreatedWindow(
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void Application::createPrimaryWindowForLifecycleRegression() {
 	Expects(_windows.empty());
-	const auto window = _windows.emplace(
-		nullptr,
-		std::make_unique<Window::Controller>()
-	).first->second.get();
+	const auto window
+		= _windows.emplace(nullptr, std::make_unique<Window::Controller>())
+			  .first->second.get();
 	setLastActiveWindow(window);
 	_windowInSettings = _lastActivePrimaryWindow = window;
 	processCreatedWindow(window);
@@ -2021,14 +2021,14 @@ void Application::refreshApplicationIcon(Main::Session *session) {
 #if defined Q_OS_MAC && !defined OS_MAC_STORE
 	if constexpr (Platform::IsMac()) {
 		const auto choice = ReadTeagramIconChoice(settings());
-		const auto custom = !support
-			&& (choice != TeagramIconChoice::MugSignal);
+		const auto custom
+			= !support && (choice != TeagramIconChoice::MugSignal);
 		const auto applied = custom
-			&& Platform::SetApplicationIcon(
-				Core::RenderTeagramIconImage(choice));
+							 && Platform::SetApplicationIcon(
+								 Core::RenderTeagramIconImage(choice));
 		LOG(("Teagram icon: choice=%1 applied=%2")
-			.arg(static_cast<int>(choice))
-			.arg(applied ? 1 : 0));
+				.arg(static_cast<int>(choice))
+				.arg(applied ? 1 : 0));
 		if (applied) {
 			return;
 		}

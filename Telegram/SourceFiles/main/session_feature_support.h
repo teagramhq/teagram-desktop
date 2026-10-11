@@ -49,4 +49,21 @@ sharedFoldersSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool
+accountBioEditSupported(const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
+template <typename User>
+[[nodiscard]] inline bool accountBioEditorTargetSupported(
+	const User &self) {
+	return accountBioEditSupported(self.session().mtp().dcOptions());
+}
+
+template <typename Session>
+[[nodiscard]] inline bool accountBioSearchTargetSupported(
+	const Session &session) {
+	return accountBioEditSupported(session.mtp().dcOptions());
+}
+
 } // namespace Main::details

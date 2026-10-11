@@ -6,3 +6,8 @@ self-hosted-runner:
   labels:
     - ubuntu-slim
     - ubuntu-26.04
+
+paths:
+  .github/workflows/mac_packaged.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

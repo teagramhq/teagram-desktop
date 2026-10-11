@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "api/api_bio_save_failure.h"
 #include "api/api_common.h"
 #include "api/api_modify_requests.h"
 #include "base/timer.h"
@@ -443,7 +444,8 @@ public:
 		-> std::optional<std::vector<not_null<PeerData*>>>;
 	void requestBotCommonGroups(not_null<UserData*> bot, Fn<void()> done);
 
-	void saveSelfBio(const QString &text);
+	void saveSelfBio(const QString &text,
+					 Fn<bool()> onAboutNotSupported = nullptr);
 
 	void registerStatsRequest(MTP::DcId dcId, mtpRequestId id);
 	void unregisterStatsRequest(MTP::DcId dcId, mtpRequestId id);
@@ -814,7 +816,8 @@ private:
 
 	struct {
 		mtpRequestId requestId = 0;
-		QString requestedText;
+		Api::BioSaveRequestState state;
+		Fn<bool()> onAboutNotSupported = nullptr;
 	} _bio;
 
 	base::flat_map<MTP::DcId, base::flat_set<mtpRequestId>> _statsRequests;

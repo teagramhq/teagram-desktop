@@ -40,124 +40,127 @@ namespace Window {
 
 class Controller final : public base::has_weak_ptr {
 public:
-	Controller();
-	Controller(SeparateId id, MsgId showAtMsgId);
-	~Controller();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+  enum class DeferredOnlineUpdateMutationForRegressionTest {
+	  None,
+	  Remove,
+	  Duplicate,
+  };
+#endif
 
-	Controller(const Controller &other) = delete;
-	Controller &operator=(const Controller &other) = delete;
+  Controller();
+  Controller(SeparateId id, MsgId showAtMsgId);
+  ~Controller();
 
-	void showAccount(not_null<Main::Account*> account);
-	[[nodiscard]] SeparateId id() const;
-	[[nodiscard]] bool isPrimary() const;
+  Controller(const Controller &other) = delete;
+  Controller &operator=(const Controller &other) = delete;
 
-	[[nodiscard]] not_null<::MainWindow*> widget() {
-		return &_widget;
-	}
-	[[nodiscard]] Main::Account &account() const;
-	[[nodiscard]] Main::Session *maybeSession() const;
-	[[nodiscard]] SessionController *sessionController() const {
-		return _sessionController.get();
-	}
-	[[nodiscard]] auto sessionControllerValue() const
-		-> rpl::producer<SessionController*>;
-	[[nodiscard]] auto sessionControllerChanges() const
-		-> rpl::producer<SessionController*>;
-	[[nodiscard]] bool locked() const;
+  void showAccount(not_null<Main::Account *> account);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+  void setDeferredOnlineUpdateMutationForRegressionTest(
+	  DeferredOnlineUpdateMutationForRegressionTest mutation);
+#endif
+  [[nodiscard]] SeparateId id() const;
+  [[nodiscard]] bool isPrimary() const;
 
-	[[nodiscard]] Adaptive &adaptive() const;
+  [[nodiscard]] not_null<::MainWindow *> widget() { return &_widget; }
+  [[nodiscard]] Main::Account &account() const;
+  [[nodiscard]] Main::Session *maybeSession() const;
+  [[nodiscard]] SessionController *sessionController() const {
+	  return _sessionController.get();
+  }
+  [[nodiscard]] auto sessionControllerValue() const
+	  -> rpl::producer<SessionController *>;
+  [[nodiscard]] auto sessionControllerChanges() const
+	  -> rpl::producer<SessionController *>;
+  [[nodiscard]] bool locked() const;
 
-	void firstShow();
-	void finishFirstShow();
+  [[nodiscard]] Adaptive &adaptive() const;
 
-	void setupPasscodeLock();
-	void clearPasscodeLock();
-	void setupSetupEmailLock();
-	void clearSetupEmailLock();
+  void firstShow();
+  void finishFirstShow();
 
-	void showLogoutConfirmation();
+  void setupPasscodeLock();
+  void clearPasscodeLock();
+  void setupSetupEmailLock();
+  void clearSetupEmailLock();
 
-	void showSettings();
+  void showLogoutConfirmation();
 
-	[[nodiscard]] int verticalShadowTop() const;
+  void showSettings();
 
-	void showToast(Ui::Toast::Config &&config);
-	void showToast(TextWithEntities &&text, crl::time duration = 0);
-	void showToast(const QString &text, crl::time duration = 0);
+  [[nodiscard]] int verticalShadowTop() const;
 
-	void showRightColumn(object_ptr<Ui::RpWidget> widget);
+  void showToast(Ui::Toast::Config &&config);
+  void showToast(TextWithEntities &&text, crl::time duration = 0);
+  void showToast(const QString &text, crl::time duration = 0);
 
-	void showBox(
-		object_ptr<Ui::BoxContent> content,
-		Ui::LayerOptions options,
-		anim::type animated);
-	void showLayer(
-		std::unique_ptr<Ui::LayerWidget> &&layer,
-		Ui::LayerOptions options,
-		anim::type animated = anim::type::normal);
+  void showRightColumn(object_ptr<Ui::RpWidget> widget);
 
-	void hideLayer(anim::type animated = anim::type::normal);
-	void hideSettingsAndLayer(anim::type animated = anim::type::normal);
-	bool closeLayerByBackButton();
-	[[nodiscard]] bool isLayerShown() const;
-	[[nodiscard]] rpl::producer<bool> boxShownValue() const;
+  void showBox(object_ptr<Ui::BoxContent> content, Ui::LayerOptions options,
+			   anim::type animated);
+  void showLayer(std::unique_ptr<Ui::LayerWidget> &&layer,
+				 Ui::LayerOptions options,
+				 anim::type animated = anim::type::normal);
 
-	template <
-		typename BoxType,
-		typename = std::enable_if_t<
-			std::is_base_of_v<Ui::BoxContent, BoxType>>>
-		base::weak_qptr<BoxType> show(
-			object_ptr<BoxType> content,
-			Ui::LayerOptions options = Ui::LayerOption::KeepOther,
-			anim::type animated = anim::type()) {
-		auto result = base::weak_qptr<BoxType>(content.data());
-		showBox(std::move(content), options, animated);
-		return result;
-	}
+  void hideLayer(anim::type animated = anim::type::normal);
+  void hideSettingsAndLayer(anim::type animated = anim::type::normal);
+  bool closeLayerByBackButton();
+  [[nodiscard]] bool isLayerShown() const;
+  [[nodiscard]] rpl::producer<bool> boxShownValue() const;
 
-	void activate();
-	void updateIsActiveFocus();
-	void updateIsActiveBlur();
-	void updateIsActive();
-	void minimize();
-	void close();
+  template <typename BoxType,
+			typename
+			= std::enable_if_t<std::is_base_of_v<Ui::BoxContent, BoxType>>>
+  base::weak_qptr<BoxType> show(object_ptr<BoxType> content,
+								Ui::LayerOptions options
+								= Ui::LayerOption::KeepOther,
+								anim::type animated = anim::type()) {
+	  auto result = base::weak_qptr<BoxType>(content.data());
+	  showBox(std::move(content), options, animated);
+	  return result;
+  }
 
-	void preventOrInvoke(Fn<void()> &&callback);
+  void activate();
+  void updateIsActiveFocus();
+  void updateIsActiveBlur();
+  void updateIsActive();
+  void minimize();
+  void close();
 
-	void invokeForSessionController(
-		not_null<Main::Account*> account,
-		PeerData *singlePeer,
-		Fn<void(not_null<SessionController*>)> &&callback);
+  void preventOrInvoke(Fn<void()> &&callback);
 
-	void openInMediaView(Media::View::OpenRequest &&request);
-	[[nodiscard]] auto openInMediaViewRequests() const
-	-> rpl::producer<Media::View::OpenRequest>;
+  void invokeForSessionController(
+	  not_null<Main::Account *> account, PeerData *singlePeer,
+	  Fn<void(not_null<SessionController *>)> &&callback);
 
-	[[nodiscard]] QPoint getPointForCallPanelCenter() const;
+  void openInMediaView(Media::View::OpenRequest &&request);
+  [[nodiscard]] auto openInMediaViewRequests() const
+	  -> rpl::producer<Media::View::OpenRequest>;
 
-	using FloatDelegate = Media::Player::FloatDelegate;
-	void setDefaultFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> delegate);
-	void replaceFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> replacement);
-	void restoreFloatPlayerDelegate(
-		not_null<Media::Player::FloatDelegate*> replacement);
-	[[nodiscard]] FloatDelegate *floatPlayerDelegate() const;
-	[[nodiscard]] auto floatPlayerDelegateValue() const
-		-> rpl::producer<FloatDelegate*>;
+  [[nodiscard]] QPoint getPointForCallPanelCenter() const;
 
-	[[nodiscard]] std::shared_ptr<Ui::Show> uiShow();
+  using FloatDelegate = Media::Player::FloatDelegate;
+  void setDefaultFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> delegate);
+  void replaceFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> replacement);
+  void restoreFloatPlayerDelegate(
+	  not_null<Media::Player::FloatDelegate *> replacement);
+  [[nodiscard]] FloatDelegate *floatPlayerDelegate() const;
+  [[nodiscard]] auto floatPlayerDelegateValue() const
+	  -> rpl::producer<FloatDelegate *>;
 
-	void setHighlightControlId(const QString &id);
-	[[nodiscard]] QString highlightControlId() const;
-	[[nodiscard]] bool takeHighlightControlId(const QString &id);
-	void checkHighlightControl(
-		const QString &id,
-		QWidget *widget,
-		Settings::HighlightArgs &&args);
-	void checkHighlightControl(const QString &id, QWidget *widget);
+  [[nodiscard]] std::shared_ptr<Ui::Show> uiShow();
 
-	[[nodiscard]] rpl::lifetime &lifetime();
+  void setHighlightControlId(const QString &id);
+  [[nodiscard]] QString highlightControlId() const;
+  [[nodiscard]] bool takeHighlightControlId(const QString &id);
+  void checkHighlightControl(const QString &id, QWidget *widget,
+							 Settings::HighlightArgs &&args);
+  void checkHighlightControl(const QString &id, QWidget *widget);
+
+  [[nodiscard]] rpl::lifetime &lifetime();
 
 private:
 	struct CreateArgs {
@@ -196,6 +199,11 @@ private:
 
 	QString _highlightControlId;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	DeferredOnlineUpdateMutationForRegressionTest
+		_nextDeferredOnlineUpdateMutationForRegressionTest
+		= DeferredOnlineUpdateMutationForRegressionTest::None;
+#endif
 	rpl::lifetime _accountLifetime;
 	rpl::lifetime _lifetime;
 
