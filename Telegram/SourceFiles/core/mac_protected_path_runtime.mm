@@ -383,8 +383,8 @@ bool InitializeProfile() {
 				return false;
 			}
 			if (!qputenv("TMPDIR", QFile::encodeName(temporaryPath))
-				|| QDir::cleanPath(QDir::tempPath())
-					   != QDir::cleanPath(temporaryPath)) {
+				|| !SameCleanPathAfterUnicodeNormalization(QDir::tempPath(),
+														   temporaryPath)) {
 				ReportInvalidInitialization(u"profile.helper-temp"_q);
 				return false;
 			}

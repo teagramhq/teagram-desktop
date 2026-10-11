@@ -253,31 +253,30 @@ TEST_CASE(CaseNormalizationAndFirmlinkAliasesMatch) {
 		u"/Users/alice/Library/Application Support/Tele\u200Bgram Desktop/tdata"_q;
 	CHECK(policy.Classify(ignored.toUtf8()) == ProtectedClass::ApplicationSupport);
 
-	const auto nfd =
-		u"/Users/alice/Library/Application Support/Telegram Desktop/tdata"_q
-			.normalized(QString::NormalizationForm_D);
+	const auto nfd
+		= u"/Users/alice/Library/Application Support/Telegram Desktop/tdata"_q
+			  .normalized(QString::NormalizationForm_D);
 	CHECK(policy.Classify(nfd.toUtf8()) == ProtectedClass::ApplicationSupport);
 
 	auto unicodeFs = FakeFileSystem();
-	unicodeFs.entries.emplace(
-		"/Users",
-		LstatResult{ .type = FileType::Directory, .error = FileError::None });
+	unicodeFs.entries.emplace("/Users", LstatResult{.type = FileType::Directory,
+													.error = FileError::None});
 	const auto unicodeHome = u"/Users/\u00C9lise"_q;
 	unicodeFs.entries.emplace(
 		unicodeHome.normalized(QString::NormalizationForm_D).toUtf8(),
-		LstatResult{ .type = FileType::Directory, .error = FileError::None });
+		LstatResult{.type = FileType::Directory, .error = FileError::None});
 	const auto unicodePolicy = MacProtectedPathPolicy::Build(
-		HomeRoots{
-			.accountDatabase = unicodeHome.toUtf8(),
-			.foundation = unicodeHome.toUtf8() },
+		HomeRoots{.accountDatabase = unicodeHome.toUtf8(),
+				  .foundation = unicodeHome.toUtf8()},
 		unicodeFs.operations());
 	CHECK(unicodePolicy.valid());
-	const auto decomposedHome = unicodeHome.normalized(
-		QString::NormalizationForm_D);
-	const auto decomposedPath = decomposedHome
-		+ u"/Library/Application Support/Telegram Desktop/tdata"_q;
+	const auto decomposedHome
+		= unicodeHome.normalized(QString::NormalizationForm_D);
+	const auto decomposedPath
+		= decomposedHome
+		  + u"/Library/Application Support/Telegram Desktop/tdata"_q;
 	CHECK(unicodePolicy.Classify(decomposedPath.toUtf8())
-		== ProtectedClass::ApplicationSupport);
+		  == ProtectedClass::ApplicationSupport);
 
 	const auto firmlink
 		= QByteArray("/System/Volumes/Data/Users/alice/Library/Group "
@@ -1878,26 +1877,27 @@ TEST_CASE(ProfileTempSymlinkIntoProtectedPathStopsBeforePreparation) {
 
 TEST_CASE(ProfileHelperTempUsesFoldUnicodeNormalization) {
 	auto fs = FakeFileSystem();
-	const auto nfdHome = u"/Users/teagram-café"_q.normalized(
-		QString::NormalizationForm_D).toUtf8();
+	const auto nfdHome
+		= u"/Users/teagram-café"_q.normalized(QString::NormalizationForm_D)
+			  .toUtf8();
 	AddDirectoryHierarchy(fs, nfdHome);
-	const auto homes = HomeRoots{
-		.accountDatabase = nfdHome,
-		.environment = nfdHome,
-		.foundation = nfdHome };
+	const auto homes = HomeRoots{.accountDatabase = nfdHome,
+								 .environment = nfdHome,
+								 .foundation = nfdHome};
 	const auto policy = MacProtectedPathPolicy::Build(homes, fs.operations());
 	CHECK(policy.valid());
-	const auto helperTemp = QString::fromUtf8(TeagramProfileRoot(homes, false)
-		+ "/tdata/temp").normalized(QString::NormalizationForm_C).toUtf8();
+	const auto helperTemp
+		= QString::fromUtf8(TeagramProfileRoot(homes, false) + "/tdata/temp")
+			  .normalized(QString::NormalizationForm_C)
+			  .toUtf8();
 	auto preparations = 0;
 	const auto prepared = PrepareExternalDirectoryIfAllowed(
 		QString::fromUtf8(helperTemp), "unit.profile.helper-temp",
 		[&](Operation operation, const QString &path, const char *callsite) {
-			return policy.Resolve(
-				operation,
-				QFile::encodeName(path),
-				homes.accountDatabase,
-				QString::fromUtf8(callsite)).allowed();
+			return policy
+				.Resolve(operation, QFile::encodeName(path),
+						 homes.accountDatabase, QString::fromUtf8(callsite))
+				.allowed();
 		},
 		[&] {
 			++preparations;
@@ -1907,10 +1907,22 @@ TEST_CASE(ProfileHelperTempUsesFoldUnicodeNormalization) {
 	CHECK_EQ(preparations, 1);
 
 	const auto invalid = policy.Resolve(
-		Operation::Open,
-		QByteArray("/Users/teagram-caf\xC3/tdata/temp"),
-		homes.accountDatabase,
-		u"unit.invalid-helper-temp"_q);
+		Operation::Open, QByteArray("/Users/teagram-caf\xC3/tdata/temp"),
+		homes.accountDatabase, u"unit.invalid-helper-temp"_q);
 	CHECK(!invalid.allowed());
 	CHECK(invalid.refusal.protectedClass == ProtectedClass::Invalid);
+}
+
+TEST_CASE(ProfileHelperTempAcceptsCanonicalUnicodeSpelling) {
+	const auto nfdHome
+		= u"/Users/teagram-café"_q.normalized(QString::NormalizationForm_D)
+			  .toUtf8();
+	const auto homes = HomeRoots{.accountDatabase = nfdHome,
+								 .environment = nfdHome,
+								 .foundation = nfdHome};
+	const auto nfdTemp
+		= QString::fromUtf8(TeagramProfileRoot(homes, false) + "/tdata/temp");
+	const auto canonicalTemp = nfdTemp.normalized(QString::NormalizationForm_C);
+	CHECK(QDir::cleanPath(nfdTemp) != QDir::cleanPath(canonicalTemp));
+	CHECK(SameCleanPathAfterUnicodeNormalization(canonicalTemp, nfdTemp));
 }
