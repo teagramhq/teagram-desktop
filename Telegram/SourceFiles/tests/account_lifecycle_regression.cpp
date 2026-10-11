@@ -5736,7 +5736,6 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 			u"tg://settings/privacy/calls/p2p"_q,
 			u"tg://settings/privacy/calls/p2p/never"_q,
 			u"tg://settings/privacy/calls/p2p/always"_q,
-			u"tg://settings/calls"_q,
 			u"tg://settings/calls/all"_q,
 			u"tg://settings/calls/start-call"_q,
 		}) {
@@ -5760,6 +5759,36 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 			|| window->isLayerShown()) {
 			return false;
 		}
+	}
+
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("calls settings begin");
+	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("calls settings events processed");
+	const auto callsSettingsEvents = GetCallStartRegressionSnapshotForTest();
+	const auto callsSettingsShown = showsSettings(Settings::CallsId());
+	const auto callsSettingsQuiet
+		= callsSettingsEvents.navigationEvents.empty()
+		&& CallStartEffectsStayedQuiet(callsSettingsEvents);
+	if (!callsSettingsQuiet || !callsSettingsShown || window->isLayerShown()) {
+		std::fprintf(
+			stderr,
+			"Call settings link regression: quiet=%d shown=%d layer=%d "
+			"navigation=%zu permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			callsSettingsQuiet,
+			callsSettingsShown,
+			window->isLayerShown(),
+			callsSettingsEvents.navigationEvents.size(),
+			callsSettingsEvents.permissionRequests,
+			callsSettingsEvents.callRpcs,
+			callsSettingsEvents.voiceChatLinkJoinAttempts,
+			callsSettingsEvents.activations,
+			callsSettingsEvents.leavePrompts);
+		return false;
 	}
 
 	ResetCallStartRegressionForTest();
