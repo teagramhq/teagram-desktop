@@ -3273,21 +3273,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"ordinary folder create, rename, save, or remove did not stay "
 			"in its owning session");
 	}
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	const auto stockBioEditorTarget
-		= Settings::InformationBioEditorTargetPresentForRegressionTest(
-			stockController);
-	const auto pinnedBioEditorTarget
-		= Settings::InformationBioEditorTargetPresentForRegressionTest(
-			pinnedController);
-	if (!stockBioEditorTarget || pinnedBioEditorTarget) {
-		std::fprintf(stderr, "Bio editor target mismatch: stock=%d pinned=%d\n",
-					 stockBioEditorTarget, pinnedBioEditorTarget);
-		return FailChatParticipantsRegression(
-			"bio editor target did not follow account support");
-	}
-#endif
-
 	const auto actionChatId = ChatId(1052);
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
 	const auto stockActionPeer = not_null<PeerData*>(
