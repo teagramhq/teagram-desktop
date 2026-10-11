@@ -72,6 +72,8 @@ PRIVATE
     core/teagram_icon_choice.cpp
     core/teagram_update_verification.cpp
     core/teagram_update_download.cpp
+    core/teagram_update_archive.cpp
+    core/teagram_update_replacement.cpp
     core/local_url_conversion.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.

@@ -615,13 +615,20 @@ DownloadRunner::downloadArchive(const AuthenticatedTeagramUpdate &metadata) {
 
 TeagramUpdateCandidate::TeagramUpdateCandidate(
 	AuthenticatedTeagramUpdate metadata,
+	quint64 installedBuild,
 	std::unique_ptr<QTemporaryFile> archive)
-	: _metadata(std::move(metadata)), _archive(std::move(archive)) {}
+	: _metadata(std::move(metadata)),
+	  _installedBuild(installedBuild),
+	  _archive(std::move(archive)) {}
 
 TeagramUpdateCandidate::~TeagramUpdateCandidate() = default;
 
 const AuthenticatedTeagramUpdate &TeagramUpdateCandidate::metadata() const {
 	return _metadata;
+}
+
+quint64 TeagramUpdateCandidate::installedBuild() const {
+	return _installedBuild;
 }
 
 QString TeagramUpdateCandidate::archivePath() const {
@@ -692,7 +699,8 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	return {
 		Reason::Available,
 		std::unique_ptr<TeagramUpdateCandidate>(new TeagramUpdateCandidate(
-			std::move(*result.metadata), std::move(result.archive))),
+			std::move(*result.metadata), installedBuild,
+			std::move(result.archive))),
 	};
 }
 

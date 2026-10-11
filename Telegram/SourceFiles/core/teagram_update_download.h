@@ -73,14 +73,17 @@ class TeagramUpdateCandidate final {
 	~TeagramUpdateCandidate();
 
 	[[nodiscard]] const AuthenticatedTeagramUpdate &metadata() const;
+	[[nodiscard]] quint64 installedBuild() const;
 	[[nodiscard]] QString archivePath() const;
 
   private:
 	friend class TeagramUpdateDownloader;
 	TeagramUpdateCandidate(AuthenticatedTeagramUpdate metadata,
+						   quint64 installedBuild,
 						   std::unique_ptr<QTemporaryFile> archive);
 
 	AuthenticatedTeagramUpdate _metadata;
+	quint64 _installedBuild = 0;
 	std::unique_ptr<QTemporaryFile> _archive;
 };
 
