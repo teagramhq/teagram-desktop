@@ -179,8 +179,7 @@ class FixtureTransport final : public TeagramUpdateTransport {
 					const QByteArray &archive, bool prerelease = false,
 					const QByteArray &signedSize = {});
 
-	void addReleaseWithArtifacts(const QByteArray &tag,
-								 const QByteArray &build,
+	void addReleaseWithArtifacts(const QByteArray &tag, const QByteArray &build,
 								 const QByteArray &manifest,
 								 const QByteArray &signature,
 								 const QByteArray &archive,
@@ -202,7 +201,6 @@ class FixtureTransport final : public TeagramUpdateTransport {
 
 	std::map<QString, FakeResponse> _responses;
 	QJsonArray _releases;
-
 };
 
 void PkeyDeleter::operator()(EVP_PKEY *value) const { EVP_PKEY_free(value); }
@@ -405,7 +403,7 @@ QString FixtureTransport::Key(const QUrl &url) {
 	const auto written
 		= bio
 		  && (PEM_write_bio_PrivateKey(bio.get(), key, nullptr, nullptr, 0,
-										   nullptr, nullptr)
+									   nullptr, nullptr)
 			  == 1);
 	CHECK(written);
 	return written;
@@ -418,8 +416,8 @@ struct ProducedPackage {
 
 [[nodiscard]] std::optional<ProducedPackage>
 ProducePackage(const QByteArray &archive, const QString &keyPath,
-				const QString &directory, const QByteArray &channel,
-				const QByteArray &build) {
+			   const QString &directory, const QByteArray &channel,
+			   const QByteArray &build) {
 	if (!QDir().mkpath(directory)) {
 		CHECK(false);
 		return std::nullopt;
@@ -481,17 +479,17 @@ TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifacts) {
 		return;
 	}
 	const auto archive = QByteArrayLiteral("producer-bound archive bytes");
-	const auto package = ProducePackage(archive, keyPath, generated.path(),
-										QByteArrayLiteral("dev"),
-										QByteArrayLiteral("101"));
+	const auto package
+		= ProducePackage(archive, keyPath, generated.path(),
+						 QByteArrayLiteral("dev"), QByteArrayLiteral("101"));
 	if (!package) {
 		return;
 	}
 	auto transport = std::make_unique<FixtureTransport>();
 	auto *fixture = transport.get();
-	fixture->addReleaseWithArtifacts(
-		"teagram-build-101", "101", package->manifest, package->signature,
-		archive);
+	fixture->addReleaseWithArtifacts("teagram-build-101", "101",
+									 package->manifest, package->signature,
+									 archive);
 	fixture->addReleaseList();
 	auto staging = QTemporaryDir();
 	CHECK(staging.isValid());
@@ -501,7 +499,7 @@ TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifacts) {
 	const auto trustedKey
 		= std::optional<TeagramUpdatePublicKey>(signingKey->publicKey);
 	TeagramUpdateDownloader downloader(std::move(transport), trustedKey,
-										  staging.path());
+									   staging.path());
 	const auto result
 		= downloader.checkForUpdates(100, TeagramUpdateChannel::Dev);
 	CHECK(result.reason == TeagramUpdateDownloadReason::Available);
