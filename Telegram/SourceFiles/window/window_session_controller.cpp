@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_session_controller.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "apiwrap.h"
 #include "api/api_cloud_password.h"
 #include "api/api_text_entities.h"
@@ -615,12 +619,20 @@ void SessionNavigation::showPeerByLinkResolved(
 	};
 	params.highlight.pollOption = info.pollOption;
 	if (info.voicechatHash && peer->isChannel()) {
-		// First show the channel itself.
+		if (!peer->session().callsSupported()) {
+			crl::on_main(this, [=] {
+				showPeerHistory(peer, params, ShowAtUnreadMsgId);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+				Tests::RecordCallLinkChannelOpenedForRegressionTest(
+					peer.get());
+#endif
+				showFeatureUnavailableOnServerToast();
+			});
+			return;
+		}
 		crl::on_main(this, [=] {
 			showPeerHistory(peer, params, ShowAtUnreadMsgId);
 		});
-
-		// Then try to join the voice chat.
 		joinVoiceChatFromLink(peer, info);
 		return;
 	}
@@ -965,6 +977,10 @@ void SessionNavigation::resolveConferenceCall(
 		QString slug,
 		MsgId inviteMsgId,
 		FullMsgId contextId) {
+	if (!session().callsSupported()) {
+		showFeatureUnavailableOnServerToast();
+		return;
+	}
 	_conferenceCallResolveContextId = contextId;
 	if (_conferenceCallSlug == slug
 		&& _conferenceCallInviteMsgId == inviteMsgId) {
@@ -975,12 +991,15 @@ void SessionNavigation::resolveConferenceCall(
 	_conferenceCallInviteMsgId = inviteMsgId;
 
 	const auto limit = 5;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_conferenceCallRequestId = _api.request(MTPphone_GetGroupCall(
 		(inviteMsgId
 			? MTP_inputGroupCallInviteMessage(MTP_int(inviteMsgId.bare))
 			: MTP_inputGroupCallSlug(MTP_string(slug))),
 		MTP_int(limit)
-	)).done([=](const MTPphone_GroupCall &result) {
+	)).done(crl::guard(this, [=](const MTPphone_GroupCall &result) {
 		_conferenceCallRequestId = 0;
 		const auto slug = base::take(_conferenceCallSlug);
 		const auto inviteMsgId = base::take(_conferenceCallInviteMsgId);
@@ -1039,7 +1058,7 @@ void SessionNavigation::resolveConferenceCall(
 				showToast(tr::lng_confcall_link_inactive(tr::now));
 			}
 		});
-	}).fail([=] {
+	})).fail(crl::guard(this, [=] {
 		_conferenceCallRequestId = 0;
 		_conferenceCallSlug = QString();
 		const auto contextId = base::take(_conferenceCallResolveContextId);
@@ -1055,7 +1074,7 @@ void SessionNavigation::resolveConferenceCall(
 		} else {
 			showToast(tr::lng_confcall_link_inactive(tr::now));
 		}
-	}).send();
+	})).send();
 }
 
 void SessionNavigation::applyBoost(
@@ -1177,6 +1196,9 @@ void SessionNavigation::joinVoiceChatFromLink(
 		not_null<PeerData*> peer,
 		const PeerByLinkInfo &info) {
 	Expects(info.voicechatHash.has_value());
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordVoiceChatLinkJoinAttemptForRegressionTest();
+#endif
 
 	const auto bad = crl::guard(this, [=] {
 		uiShow()->showToast(tr::lng_group_invite_bad_link(tr::now));
@@ -1185,7 +1207,7 @@ void SessionNavigation::joinVoiceChatFromLink(
 	_api.request(base::take(_resolveRequestId)).cancel();
 	_resolveRequestId = _api.request(
 		MTPchannels_GetFullChannel(peer->asChannel()->inputChannel())
-	).done([=](const MTPmessages_ChatFull &result) {
+	).done(crl::guard(this, [=](const MTPmessages_ChatFull &result) {
 		_session->api().processFullPeer(peer, result);
 		const auto call = peer->groupCall();
 		if (!call) {
@@ -1205,7 +1227,7 @@ void SessionNavigation::joinVoiceChatFromLink(
 		const auto limit = 5;
 		_resolveRequestId = _api.request(
 			MTPphone_GetGroupCall(call->input(), MTP_int(limit))
-		).done([=](const MTPphone_GroupCall &result) {
+		).done(crl::guard(this, [=](const MTPphone_GroupCall &result) {
 			if (const auto now = peer->groupCall(); now && now->id() == id) {
 				if (!now->loaded()) {
 					now->processFullCall(result);
@@ -1214,8 +1236,8 @@ void SessionNavigation::joinVoiceChatFromLink(
 			} else {
 				bad();
 			}
-		}).fail(bad).send();
-	}).send();
+		})).fail(bad).send();
+	})).send();
 }
 
 void SessionNavigation::showRepliesForMessage(
@@ -1521,6 +1543,9 @@ void SessionNavigation::showFeatureUnavailableOnServerToast() {
 	++_featureUnavailableOnServerToastCallsForRegressionTest;
 #endif
 	showToast(tr::lng_server_feature_unavailable(tr::now));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordFeatureUnavailableToastForRegressionTest();
+#endif
 }
 
 std::shared_ptr<ChatHelpers::Show> SessionNavigation::uiShow() {

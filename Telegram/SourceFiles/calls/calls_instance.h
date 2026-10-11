@@ -9,6 +9,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/sender.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace Tests {
+class CallsInstanceRegressionAccess;
+} // namespace Tests
+#endif
+
 namespace crl {
 class semaphore;
 } // namespace crl
@@ -79,6 +85,20 @@ struct ConferenceInviteMessages {
 struct ConferenceInvites {
 	base::flat_map<not_null<UserData*>, ConferenceInviteMessages> users;
 };
+
+namespace details {
+
+[[nodiscard]] inline bool AllowCallStart(
+		bool supported,
+		Fn<void()> showUnavailable) {
+	if (supported) {
+		return true;
+	}
+	showUnavailable();
+	return false;
+}
+
+} // namespace details
 
 class Instance final : public base::has_weak_ptr {
 public:
@@ -158,6 +178,9 @@ public:
 	[[nodiscard]] bool isQuitPrevent();
 
 private:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	friend class Tests::CallsInstanceRegressionAccess;
+#endif
 	class Delegate;
 	friend class Delegate;
 

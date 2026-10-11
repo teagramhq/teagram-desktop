@@ -365,6 +365,26 @@ Result ShowPrivacyBox(
 	return Result::Handled;
 }
 
+template <typename ControllerFactory>
+Result ShowCallsPrivacyBox(
+		const Context &ctx,
+		PrivacyKey key,
+		ControllerFactory controllerFactory,
+		const QString &highlightControl = QString()) {
+	if (!ctx.controller) {
+		return Result::NeedsAuth;
+	}
+	if (!ctx.controller->session().callsSupported()) {
+		ctx.controller->showFeatureUnavailableOnServerToast();
+		return Result::Handled;
+	}
+	return ShowPrivacyBox(
+		ctx,
+		key,
+		controllerFactory,
+		highlightControl);
+}
+
 } // namespace
 
 void RegisterSettingsHandlers(Router &router) {
@@ -1052,7 +1072,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::Calls,
 				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); });
@@ -1062,7 +1082,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls/never"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::Calls,
 				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
@@ -1073,7 +1093,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls/always"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::Calls,
 				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
@@ -1084,7 +1104,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls/p2p"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::CallsPeer2Peer,
 				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); });
@@ -1094,7 +1114,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls/p2p/never"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::CallsPeer2Peer,
 				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
@@ -1105,7 +1125,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"privacy/calls/p2p/always"_q,
 		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
+			return ShowCallsPrivacyBox(
 				ctx,
 				PrivacyKey::CallsPeer2Peer,
 				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
@@ -1701,7 +1721,17 @@ void RegisterSettingsHandlers(Router &router) {
 
 	router.add(u"settings"_q, {
 		.path = u"calls"_q,
-		.action = SettingsSection{ ::Settings::CallsId() },
+		.action = CodeBlock{ [](const Context &ctx) {
+			if (!ctx.controller) {
+				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
+			}
+			ctx.controller->showSettings(::Settings::CallsId());
+			return Result::Handled;
+		}},
 	});
 
 	router.add(u"settings"_q, {
@@ -1709,6 +1739,10 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = CodeBlock{ [](const Context &ctx) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
 			}
 			Calls::ShowCallsBox(ctx.controller);
 			return Result::Handled;
@@ -1857,6 +1891,10 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = CodeBlock{ [](const Context &ctx) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
 			}
 			Calls::ShowCallsBox(ctx.controller, true);
 			return Result::Handled;

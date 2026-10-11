@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_call.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "apiwrap.h"
 #include "base/openssl_help.h"
 #include "base/platform/base_platform_info.h"
@@ -348,6 +352,9 @@ void Call::startOutgoing() {
 	const auto flags = _videoCapture
 		? MTPphone_RequestCall::Flag::f_video
 		: MTPphone_RequestCall::Flag(0);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_RequestCall(
 		MTP_flags(flags),
 		_user->inputUser(),
