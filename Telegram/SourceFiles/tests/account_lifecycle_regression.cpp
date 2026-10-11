@@ -3625,7 +3625,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"bio editor target did not follow account support");
 	}
 #endif
-
 	const auto actionChatId = ChatId(1052);
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
 	const auto stockActionPeer = not_null<PeerData*>(
