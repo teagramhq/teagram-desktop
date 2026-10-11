@@ -185,6 +185,12 @@ void Controller::showAccount(
 		= _nextDeferredOnlineUpdateMutationForRegressionTest;
 	_nextDeferredOnlineUpdateMutationForRegressionTest
 		= DeferredOnlineUpdateMutationForRegressionTest::None;
+	const auto deferredOnlineUpdatePhase
+		= Api::Updates::deferredOnlineUpdatePhaseForRegressionTest();
+	if (prevSession) {
+		prevSession->updates().recordDeferredOnlineUpdateEnqueuedForRegressionTest(
+			deferredOnlineUpdatePhase);
+	}
 #endif
 	_accountLifetime.destroy();
 	_id.account = account;
@@ -194,11 +200,14 @@ void Controller::showAccount(
 	crl::on_main([prevSessionWeak
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 				  ,
-				  deferredOnlineUpdateMutation
+				  deferredOnlineUpdateMutation,
+				  deferredOnlineUpdatePhase
 #endif
 	] {
 		if (const auto prevSession = prevSessionWeak.get()) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			prevSession->updates().recordDeferredOnlineUpdateExecutedForRegressionTest(
+				deferredOnlineUpdatePhase);
 			const auto updateOnline = [&] {
 				prevSession->updates().updateOnlineForRegressionTest(
 					crl::now(),
