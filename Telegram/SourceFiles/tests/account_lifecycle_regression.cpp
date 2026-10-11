@@ -2999,7 +2999,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto setupDispatchesSettled
 		= WaitForDeferredOnlineUpdateDispatchesToSettle(
-			stock->session(), pinned->session(), DeferredOnlineUpdatePhase::Setup);
+			stock->session(),
+			pinned->session(),
+			DeferredOnlineUpdatePhase::Setup);
 	const auto stockCloseSwitchDispatchBaseline
 		= stock->session().updates()
 			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
@@ -3124,7 +3126,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"closed primary window remained mapped to an account");
 	}
 	closeDispatchesSettled = WaitForDeferredOnlineUpdateDispatchesToSettle(
-		stock->session(), pinned->session(),
+		stock->session(),
+		pinned->session(),
 		DeferredOnlineUpdatePhase::CloseSwitch);
 	phase.restore();
 	if (&domain.active() != blank.get()) {
