@@ -689,9 +689,7 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 			  not_null<UserData *> self,
 			  not_null<Window::SessionController *> controller,
 			  InformationHighlightTargets *targets) {
-	const auto bioTargets = Main::details::accountBioTargets(
-		self->session().mtp().dcOptions());
-	if (!bioTargets.editor) {
+	if (!Main::details::accountBioEditorTargetSupported(*self)) {
 		Ui::AddDivider(container);
 		return;
 	}
@@ -1227,9 +1225,8 @@ void AccountsList::rebuild() {
 }
 
 void BuildInformationSection(SectionBuilder &builder) {
-	const auto bioTargets = Main::details::accountBioTargets(
-		builder.session()->mtp().dcOptions());
-	if (bioTargets.search) {
+	if (Main::details::accountBioSearchTargetSupported(
+			*builder.session())) {
 		builder.add(nullptr, [] {
 			return SearchEntry{
 				.id = u"edit/bio"_q,

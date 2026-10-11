@@ -54,18 +54,16 @@ accountBioEditSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-struct AccountBioTargets {
-	bool editor = false;
-	bool search = false;
-};
+template <typename User>
+[[nodiscard]] inline bool accountBioEditorTargetSupported(
+	const User &self) {
+	return accountBioEditSupported(self.session().mtp().dcOptions());
+}
 
-[[nodiscard]] inline AccountBioTargets accountBioTargets(
-	const MTP::DcOptions &options) {
-	const auto supported = accountBioEditSupported(options);
-	return {
-		.editor = supported,
-		.search = supported,
-	};
+template <typename Session>
+[[nodiscard]] inline bool accountBioSearchTargetSupported(
+	const Session &session) {
+	return accountBioEditSupported(session.mtp().dcOptions());
 }
 
 } // namespace Main::details
