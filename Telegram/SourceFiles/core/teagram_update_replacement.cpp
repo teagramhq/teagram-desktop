@@ -29,7 +29,8 @@ namespace Core {
 namespace {
 
 struct FileDescriptor final {
-	explicit FileDescriptor(int value = -1) : value(value) {}
+	FileDescriptor() = default;
+	explicit FileDescriptor(int value) : value(value) {}
 	~FileDescriptor() {
 		if (value >= 0) {
 			::close(value);
@@ -90,7 +91,7 @@ struct ResolvedPath {
 	if (descriptor < 0) {
 		return {};
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstat(descriptor, &info) != 0 || !S_ISDIR(info.st_mode)
 		|| info.st_uid != ::geteuid()
 		|| (requirePrivate && (info.st_mode & 0077) != 0)) {
@@ -102,7 +103,7 @@ struct ResolvedPath {
 
 [[nodiscard]] bool IsOwnedDirectoryAt(int parent, const QByteArray &name,
 									  dev_t *device) {
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstatat(parent, name.constData(), &info, AT_SYMLINK_NOFOLLOW) != 0
 		|| !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
 		return false;
@@ -125,7 +126,7 @@ struct ResolvedPath {
 		target.constData(),
 		RENAME_EXCL) == 0;
 #else // Q_OS_MAC
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstatat(targetParent, target.constData(), &info,
 				  AT_SYMLINK_NOFOLLOW)
 		== 0) {
@@ -147,7 +148,7 @@ struct ResolvedPath {
 	if (depth > 256) {
 		return false;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
 		return errno == ENOENT;
 	}
@@ -245,7 +246,7 @@ TeagramUpdateInstallLock::TeagramUpdateInstallLock(
 	if (_descriptor < 0) {
 		return;
 	}
-	auto info = struct stat();
+	struct stat info = {};
 	if (::fstat(_descriptor, &info) != 0 || !S_ISREG(info.st_mode)
 		|| info.st_uid != ::geteuid() || info.st_nlink != 1
 		|| (info.st_mode & 0077) != 0
@@ -326,8 +327,8 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 			candidateParent.value, candidate.name, &candidateDevice)) {
 		return Result(TeagramUpdateReplacementReason::InvalidPath);
 	}
-	auto targetParentStat = struct stat();
-	auto candidateParentStat = struct stat();
+	struct stat targetParentStat = {};
+	struct stat candidateParentStat = {};
 	if (::fstat(installedParent.value, &targetParentStat) != 0
 		|| ::fstat(candidateParent.value, &candidateParentStat) != 0
 		|| targetDevice != candidateDevice
@@ -336,7 +337,7 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 		|| (candidateParentStat.st_mode & 0077) != 0) {
 		return Result(TeagramUpdateReplacementReason::InvalidPath);
 	}
-	auto existingPrevious = struct stat();
+	struct stat existingPrevious = {};
 	if (::fstatat(
 			installedParent.value,
 			previous.name.constData(),
@@ -516,9 +517,9 @@ TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(
 	if (installedParent.value < 0) {
 		return { Reason::Failed, {} };
 	}
-	auto targetInfo = struct stat();
+	struct stat targetInfo = {};
 	auto targetExists = false;
-	auto previousInfo = struct stat();
+	struct stat previousInfo = {};
 	auto previousExists = false;
 	if (!InspectAt(
 			installedParent.value,
@@ -551,7 +552,7 @@ TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(
 				|| previousInfo.st_uid != ::geteuid()))) {
 		return { Reason::Failed, {} };
 	}
-	auto stageRootInfo = struct stat();
+	struct stat stageRootInfo = {};
 	auto stageExists = false;
 	if (!InspectAt(
 			installedParent.value,
@@ -574,7 +575,7 @@ TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(
 		if (stageRoot.value < 0) {
 			return { Reason::Failed, {} };
 		}
-		auto stagedInfo = struct stat();
+		struct stat stagedInfo = {};
 		auto stagedExists = false;
 		if (!InspectAt(
 				stageRoot.value,
