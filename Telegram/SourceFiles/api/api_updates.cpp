@@ -78,6 +78,11 @@ namespace {
 
 constexpr auto kChannelGetDifferenceLimit = 100;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+auto gDeferredOnlineUpdatePhaseForRegressionTest
+	= Updates::DeferredOnlineUpdatePhaseForRegressionTest::Setup;
+#endif
+
 // 1s wait after show channel history before sending getChannelDifference.
 constexpr auto kWaitForChannelGetDifference = crl::time(1000);
 
@@ -1114,6 +1119,41 @@ void Updates::updateOnlineForRegressionTest(
 	}
 	updateOnlineImpl(lastNonIdleTime, UpdateOnlineReason::SessionSwitch);
 }
+
+void Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
+		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	gDeferredOnlineUpdatePhaseForRegressionTest = phase;
+}
+
+Updates::DeferredOnlineUpdatePhaseForRegressionTest
+Updates::deferredOnlineUpdatePhaseForRegressionTest() {
+	return gDeferredOnlineUpdatePhaseForRegressionTest;
+}
+
+void Updates::recordDeferredOnlineUpdateEnqueuedForRegressionTest(
+		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	switch (phase) {
+	case DeferredOnlineUpdatePhaseForRegressionTest::Setup:
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest.setupEnqueued;
+		break;
+	case DeferredOnlineUpdatePhaseForRegressionTest::CloseSwitch:
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest.closeSwitchEnqueued;
+		break;
+	}
+}
+
+void Updates::recordDeferredOnlineUpdateExecutedForRegressionTest(
+		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	switch (phase) {
+	case DeferredOnlineUpdatePhaseForRegressionTest::Setup:
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest.setupExecuted;
+		break;
+	case DeferredOnlineUpdatePhaseForRegressionTest::CloseSwitch:
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest.closeSwitchExecuted;
+		break;
+	}
+}
+
 #endif
 
 void Updates::updateOnlineImpl(crl::time lastNonIdleTime,
@@ -1210,6 +1250,11 @@ crl::time Updates::lastSetOnline() const {
 Updates::OnlineUpdateCountsForRegressionTest
 Updates::onlineUpdateCountsForRegressionTest() const {
 	return _onlineUpdateCountsForRegressionTest;
+}
+
+Updates::DeferredOnlineUpdateDispatchCountsForRegressionTest
+Updates::deferredOnlineUpdateDispatchCountsForRegressionTest() const {
+	return _deferredOnlineUpdateDispatchCountsForRegressionTest;
 }
 
 #endif

@@ -136,8 +136,39 @@ RegressionServerKey() {
 }
 
 using OnlineUpdateCounts = Api::Updates::OnlineUpdateCountsForRegressionTest;
+using DeferredOnlineUpdatePhase
+	= Api::Updates::DeferredOnlineUpdatePhaseForRegressionTest;
+using DeferredOnlineUpdateDispatchCounts
+	= Api::Updates::DeferredOnlineUpdateDispatchCountsForRegressionTest;
 using DeferredOnlineUpdateMutation
 	= Window::Controller::DeferredOnlineUpdateMutationForRegressionTest;
+
+constexpr auto kDeferredSwitchDispatchDeadlineMs = 1000;
+constexpr auto kDeferredSwitchDispatchQuietIntervalMs = 10;
+
+class ScopedDeferredOnlineUpdatePhase final {
+public:
+	explicit ScopedDeferredOnlineUpdatePhase(
+			DeferredOnlineUpdatePhase phase)
+	: _previous(Api::Updates::deferredOnlineUpdatePhaseForRegressionTest()) {
+		Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(phase);
+	}
+
+	~ScopedDeferredOnlineUpdatePhase() {
+		restore();
+	}
+
+	void restore() {
+		if (_active) {
+			Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(_previous);
+			_active = false;
+		}
+	}
+
+private:
+	DeferredOnlineUpdatePhase _previous;
+	bool _active = true;
+};
 
 [[nodiscard]] int SessionSwitchUpdateCountForTest(
 		const OnlineUpdateCounts &counts) {
@@ -165,6 +196,109 @@ OnlineUpdateDelta(const OnlineUpdateCounts &current,
 		current.switchInline - before.switchInline,
 		current.switchDeferred - before.switchDeferred,
 	};
+}
+
+[[nodiscard]] DeferredOnlineUpdateDispatchCounts
+DeferredOnlineUpdateDispatchDelta(
+		const DeferredOnlineUpdateDispatchCounts &current,
+		const DeferredOnlineUpdateDispatchCounts &before) {
+	return {
+		current.setupEnqueued - before.setupEnqueued,
+		current.setupExecuted - before.setupExecuted,
+		current.closeSwitchEnqueued - before.closeSwitchEnqueued,
+		current.closeSwitchExecuted - before.closeSwitchExecuted,
+	};
+}
+
+[[nodiscard]] int DeferredOnlineUpdateDispatchOutstanding(
+		const DeferredOnlineUpdateDispatchCounts &counts,
+		DeferredOnlineUpdatePhase phase) {
+	switch (phase) {
+	case DeferredOnlineUpdatePhase::Setup:
+		return counts.setupEnqueued - counts.setupExecuted;
+	case DeferredOnlineUpdatePhase::CloseSwitch:
+		return counts.closeSwitchEnqueued - counts.closeSwitchExecuted;
+	}
+	return 0;
+}
+
+void ReportDeferredOnlineUpdateDispatchCounts(
+		const char *observation,
+		const DeferredOnlineUpdateDispatchCounts &stock,
+		const DeferredOnlineUpdateDispatchCounts &pinned) {
+	const auto print = [](
+			const char *role,
+			const DeferredOnlineUpdateDispatchCounts &counts) {
+		std::fprintf(
+			stderr,
+			" %s{setup_enqueued=%d setup_executed=%d setup_pending=%d "
+			"close_enqueued=%d close_executed=%d close_pending=%d}",
+			role,
+			counts.setupEnqueued,
+			counts.setupExecuted,
+			counts.setupEnqueued - counts.setupExecuted,
+			counts.closeSwitchEnqueued,
+			counts.closeSwitchExecuted,
+			counts.closeSwitchEnqueued - counts.closeSwitchExecuted);
+	};
+	std::fprintf(
+		stderr,
+		"Deferred online callback provenance: observation=%s",
+		observation);
+	print("stock", stock);
+	print("pinned", pinned);
+	std::fprintf(stderr, "\n");
+}
+
+[[nodiscard]] bool WaitForDeferredOnlineUpdateDispatchesToSettle(
+		Main::Session &stock,
+		Main::Session &pinned,
+		DeferredOnlineUpdatePhase phase) {
+	const auto settled = [&] {
+		return DeferredOnlineUpdateDispatchOutstanding(
+				stock.updates().deferredOnlineUpdateDispatchCountsForRegressionTest(),
+				phase) == 0
+			&& DeferredOnlineUpdateDispatchOutstanding(
+				pinned.updates().deferredOnlineUpdateDispatchCountsForRegressionTest(),
+				phase) == 0;
+	};
+	auto loop = QEventLoop();
+	auto poll = QTimer();
+	auto quiet = QTimer();
+	auto deadline = QTimer();
+	poll.setInterval(1);
+	quiet.setSingleShot(true);
+	deadline.setSingleShot(true);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (settled()) {
+			if (!quiet.isActive()) {
+				quiet.start(kDeferredSwitchDispatchQuietIntervalMs);
+			}
+		} else {
+			quiet.stop();
+		}
+	});
+	QObject::connect(&quiet, &QTimer::timeout, &loop, [&] {
+		if (settled()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	deadline.start(kDeferredSwitchDispatchDeadlineMs);
+	loop.exec();
+	poll.stop();
+	quiet.stop();
+	deadline.stop();
+	const auto result = settled();
+	if (!result) {
+		std::fprintf(
+			stderr,
+			"Deferred switch dispatch observation deadline expired: "
+			"deadline_ms=%d.\n",
+			kDeferredSwitchDispatchDeadlineMs);
+	}
+	return result;
 }
 
 [[nodiscard]] SwitchUpdateClassification
@@ -228,12 +362,20 @@ ReportSwitchUpdateDeltas(const char *caseName, const OnlineUpdateCounts &stock,
 						  ? "unrelated-extra-update"
 						  : SwitchUpdateClassificationName(classification);
 	const auto print = [](const char *role, const OnlineUpdateCounts &delta) {
-		std::fprintf(stderr, " %s{inline=%d deferred=%d total=%d other=%d}",
-					 role, delta.switchInline, delta.switchDeferred,
-					 delta.total, delta.other);
+		std::fprintf(
+			stderr,
+			" %s{inline=%d deferred=%d total=%d other=%d}",
+			role,
+			delta.switchInline,
+			delta.switchDeferred,
+			delta.total,
+			delta.other);
 	};
-	std::fprintf(stderr, "Online update lifecycle: case=%s classification=%s",
-				 caseName, name);
+	std::fprintf(
+		stderr,
+		"Online update lifecycle: case=%s classification=%s",
+		caseName,
+		name);
 	print("stock", stock);
 	print("pinned", pinned);
 	if (additional) {
@@ -245,7 +387,6 @@ ReportSwitchUpdateDeltas(const char *caseName, const OnlineUpdateCounts &stock,
 
 [[nodiscard]] bool WaitForDeferredSwitchUpdate(Main::Session &session,
 											   int expectedCount) {
-	constexpr auto kDeferredSwitchDispatchDeadlineMs = 1000;
 	auto currentCount = [&] {
 		return session.updates()
 			.onlineUpdateCountsForRegressionTest()
@@ -273,10 +414,11 @@ ReportSwitchUpdateDeltas(const char *caseName, const OnlineUpdateCounts &stock,
 		loop.exec();
 		poll.stop();
 		if (deadlineExpired && currentCount() < expectedCount) {
-			std::fprintf(stderr,
-						 "Deferred switch observation deadline expired: "
-						 "deadline_ms=%d.\n",
-						 kDeferredSwitchDispatchDeadlineMs);
+			std::fprintf(
+				stderr,
+				"Deferred switch observation deadline expired: "
+				"deadline_ms=%d.\n",
+				kDeferredSwitchDispatchDeadlineMs);
 			return false;
 		}
 	}
@@ -315,7 +457,11 @@ ReportSwitchUpdateDeltas(const char *caseName, const OnlineUpdateCounts &stock,
 		shown.session().updates().onlineUpdateCountsForRegressionTest(),
 		shownBefore);
 	const auto assertionAccepted = ReportSwitchUpdateDeltas(
-		caseName, previousDelta, {0, 1}, shownDelta, {1, 0});
+		caseName,
+		previousDelta,
+		{0, 1},
+		shownDelta,
+		{1, 0});
 	const auto classification
 		= ClassifySwitchUpdateDelta(previousDelta, {0, 1});
 	const auto duplicate = mutation == DeferredOnlineUpdateMutation::Duplicate;
@@ -325,14 +471,15 @@ ReportSwitchUpdateDeltas(const char *caseName, const OnlineUpdateCounts &stock,
 		= !assertionAccepted && classification == expectedClassification
 		  && previousDelta.switchDeferred == expectedCount
 		  && deferredObserved == expectedObserved;
-	std::fprintf(stderr,
-				 "Deferred switch mutation evidence: mutation=%s assertion=%s "
-				 "inline=%s event_loop=%s deferred=%d\n",
-				 mutationName,
-				 failedAsExpected ? "failed-as-expected" : "unexpected-result",
-				 inlineMatches ? "passed" : "failed",
-				 deferredObserved ? "dispatch-observed" : "dispatch-absent",
-				 previousDelta.switchDeferred);
+	std::fprintf(
+		stderr,
+		"Deferred switch mutation evidence: mutation=%s assertion=%s "
+		"inline=%s event_loop=%s deferred=%d\n",
+		mutationName,
+		failedAsExpected ? "failed-as-expected" : "unexpected-result",
+		inlineMatches ? "passed" : "failed",
+		deferredObserved ? "dispatch-observed" : "dispatch-absent",
+		previousDelta.switchDeferred);
 	return inlineMatches && failedAsExpected;
 }
 
@@ -2316,6 +2463,8 @@ template <typename Predicate>
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
 								Fn<void(int)> done) {
+	Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
+		DeferredOnlineUpdatePhase::Setup);
 	if (Core::MacProtectedPath::IntegrationTestActive()
 		&& !RunCacheConcurrentDeletionRegression()) {
 		return FailChatParticipantsRegression(
@@ -2515,8 +2664,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		stockToPinnedPinnedUpdates);
 	const auto stockToPinnedInlineMatches = ReportSwitchUpdateDeltas(
-		"stock-to-pinned inline", stockToPinnedInlineStock, {0, 0},
-		stockToPinnedInlinePinned, {1, 0});
+		"stock-to-pinned inline",
+		stockToPinnedInlineStock,
+		{0, 0},
+		stockToPinnedInlinePinned,
+		{1, 0});
 	if (primary->maybeSession() != &pinned->session()
 		|| !stockToPinnedInlineMatches || stockToPinnedInlineStock.total != 0
 		|| stockToPinnedInlinePinned.total != 1) {
@@ -2534,8 +2686,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		stockToPinnedPinnedUpdates);
 	const auto stockToPinnedDeferredMatches = ReportSwitchUpdateDeltas(
-		"stock-to-pinned deferred", stockToPinnedDeferredStock, {0, 1},
-		stockToPinnedDeferredPinned, {1, 0});
+		"stock-to-pinned deferred",
+		stockToPinnedDeferredStock,
+		{0, 1},
+		stockToPinnedDeferredPinned,
+		{1, 0});
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
@@ -2558,8 +2713,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedToStockPinnedUpdates);
 	const auto pinnedToStockInlineMatches = ReportSwitchUpdateDeltas(
-		"pinned-to-stock inline", pinnedToStockInlineStock, {1, 0},
-		pinnedToStockInlinePinned, {0, 0});
+		"pinned-to-stock inline",
+		pinnedToStockInlineStock,
+		{1, 0},
+		pinnedToStockInlinePinned,
+		{0, 0});
 	if (primary->maybeSession() != &stock->session()
 		|| !pinnedToStockInlineMatches || pinnedToStockInlineStock.total != 1
 		|| pinnedToStockInlinePinned.total != 0) {
@@ -2577,8 +2735,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedToStockPinnedUpdates);
 	const auto pinnedToStockDeferredMatches = ReportSwitchUpdateDeltas(
-		"pinned-to-stock deferred", pinnedToStockDeferredStock, {1, 0},
-		pinnedToStockDeferredPinned, {0, 1});
+		"pinned-to-stock deferred",
+		pinnedToStockDeferredStock,
+		{1, 0},
+		pinnedToStockDeferredPinned,
+		{0, 1});
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
@@ -2619,8 +2780,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
 		discardedBeforeQueuedSwitches);
 	const auto queuedFirstMatches = ReportSwitchUpdateDeltas(
-		"queued stock-to-pinned inline", stockQueuedFirst, {0, 0},
-		pinnedQueuedFirst, {1, 0}, &discardedQueuedFirst, "discarded", {0, 0});
+		"queued stock-to-pinned inline",
+		stockQueuedFirst,
+		{0, 0},
+		pinnedQueuedFirst,
+		{1, 0},
+		&discardedQueuedFirst,
+		"discarded",
+		{0, 0});
 	if (primary->maybeSession() != &pinned->session() || !queuedFirstMatches
 		|| stockQueuedFirst.total != 0 || pinnedQueuedFirst.total != 1
 		|| discardedQueuedFirst.total != 0) {
@@ -2638,8 +2805,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
 		discardedBeforeQueuedSwitches);
 	const auto queuedSecondMatches = ReportSwitchUpdateDeltas(
-		"queued pinned-to-teardown inline", stockQueuedSecond, {0, 0},
-		pinnedQueuedSecond, {1, 0}, &discardedQueuedSecond, "discarded",
+		"queued pinned-to-teardown inline",
+		stockQueuedSecond,
+		{0, 0},
+		pinnedQueuedSecond,
+		{1, 0},
+		&discardedQueuedSecond,
+		"discarded",
 		{1, 0});
 	if (primary->maybeSession() != &discarded->session() || !queuedSecondMatches
 		|| stockQueuedSecond.total != 0 || pinnedQueuedSecond.total != 1
@@ -2659,8 +2831,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
 		discardedBeforeQueuedSwitches);
 	const auto queuedThirdMatches = ReportSwitchUpdateDeltas(
-		"queued teardown-to-stock inline", stockQueuedThird, {1, 0},
-		pinnedQueuedThird, {1, 0}, &discardedQueuedThird, "discarded", {1, 0});
+		"queued teardown-to-stock inline",
+		stockQueuedThird,
+		{1, 0},
+		pinnedQueuedThird,
+		{1, 0},
+		&discardedQueuedThird,
+		"discarded",
+		{1, 0});
 	if (primary->maybeSession() != &stock->session() || !queuedThirdMatches
 		|| stockQueuedThird.total != 1 || pinnedQueuedThird.total != 1
 		|| discardedQueuedThird.total != 1) {
@@ -2685,9 +2863,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeQueuedSwitches);
 	const auto queuedDeferredMatches = ReportSwitchUpdateDeltas(
-		"queued switch teardown deferred", stockQueuedDeferred, {1, 1},
-		pinnedQueuedDeferred, {1, 1}, &discardedAtTeardown,
-		"discarded-at-teardown", {1, 0});
+		"queued switch teardown deferred",
+		stockQueuedDeferred,
+		{1, 1},
+		pinnedQueuedDeferred,
+		{1, 1},
+		&discardedAtTeardown,
+		"discarded-at-teardown",
+		{1, 0});
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
@@ -2726,8 +2909,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeCollision);
 	const auto collisionInlineMatches = ReportSwitchUpdateDeltas(
-		"window collision inline", stockCollisionInline, {0, 0},
-		pinnedCollisionInline, {0, 0});
+		"window collision inline",
+		stockCollisionInline,
+		{0, 0},
+		pinnedCollisionInline,
+		{0, 0});
 	const auto stockLookup = app.windowFor(stock);
 	const auto pinnedLookup = app.windowFor(pinned);
 	if (primary->maybeSession() != &stock->session()
@@ -2752,9 +2938,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto pinnedCollisionDeferred = OnlineUpdateDelta(
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeCollision);
-	if (!ReportSwitchUpdateDeltas("window collision after event processing",
-								  stockCollisionDeferred, {0, 0},
-								  pinnedCollisionDeferred, {0, 0})) {
+	if (!ReportSwitchUpdateDeltas(
+			"window collision after event processing",
+			stockCollisionDeferred,
+			{0, 0},
+			pinnedCollisionDeferred,
+			{0, 0})) {
 		return FailChatParticipantsRegression(
 			"window collision produced a switch-caused online update");
 	}
@@ -2780,9 +2969,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto blankWindow = app.ensureSeparateWindowFor(blank);
 	if (app.separateWindowFor(blank) != blankWindow
 		|| blankWindow->sessionController() != nullptr) {
-		std::fprintf(stderr, "Blank window fixture: mapped=%d controller=%p\n",
-					 app.separateWindowFor(blank) == blankWindow,
-					 static_cast<void *>(blankWindow->sessionController()));
+		std::fprintf(
+			stderr,
+			"Blank window fixture: mapped=%d controller=%p\n",
+			app.separateWindowFor(blank) == blankWindow,
+			static_cast<void *>(blankWindow->sessionController()));
 		return FailChatParticipantsRegression(
 			"blank window fixture was not mapped before the close");
 	}
@@ -2791,11 +2982,113 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"blank account was not active before the primary close");
 	}
+	const auto stockSetupBeforeCompletion
+		= stock->session().updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedSetupBeforeCompletion
+		= pinned->session().updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"setup before bounded completion",
+		stockSetupBeforeCompletion,
+		pinnedSetupBeforeCompletion);
+	const auto stockSetupOnlineUpdatesBeforeCompletion
+		= stock->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto pinnedSetupOnlineUpdatesBeforeCompletion
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto setupDispatchesSettled
+		= WaitForDeferredOnlineUpdateDispatchesToSettle(
+			stock->session(),
+			pinned->session(),
+			DeferredOnlineUpdatePhase::Setup);
+	const auto stockCloseSwitchDispatchBaseline
+		= stock->session().updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedCloseSwitchDispatchBaseline
+		= pinned->session().updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"close baseline after bounded setup completion",
+		stockCloseSwitchDispatchBaseline,
+		pinnedCloseSwitchDispatchBaseline);
+	const auto stockSetupOutstandingAtBaseline
+		= DeferredOnlineUpdateDispatchOutstanding(
+			stockCloseSwitchDispatchBaseline, DeferredOnlineUpdatePhase::Setup);
+	const auto pinnedSetupOutstandingAtBaseline
+		= DeferredOnlineUpdateDispatchOutstanding(
+			pinnedCloseSwitchDispatchBaseline, DeferredOnlineUpdatePhase::Setup);
+	std::fprintf(
+		stderr,
+		"Deferred online callback setup observation: settled=%d "
+		"deadline_ms=%d outstanding={stock=%d pinned=%d}\n",
+		setupDispatchesSettled,
+		kDeferredSwitchDispatchDeadlineMs,
+		stockSetupOutstandingAtBaseline,
+		pinnedSetupOutstandingAtBaseline);
+	if (!setupDispatchesSettled || stockSetupOutstandingAtBaseline != 0
+		|| pinnedSetupOutstandingAtBaseline != 0) {
+		const auto stockSetupOnlineUpdates = OnlineUpdateDelta(
+			stock->session().updates().onlineUpdateCountsForRegressionTest(),
+			stockSetupOnlineUpdatesBeforeCompletion);
+		const auto pinnedSetupOnlineUpdates = OnlineUpdateDelta(
+			pinned->session().updates().onlineUpdateCountsForRegressionTest(),
+			pinnedSetupOnlineUpdatesBeforeCompletion);
+		const auto stockSetupExpectedDeferred
+			= stockCloseSwitchDispatchBaseline.setupEnqueued
+			  - stockSetupBeforeCompletion.setupExecuted;
+		const auto pinnedSetupExpectedDeferred
+			= pinnedCloseSwitchDispatchBaseline.setupEnqueued
+			  - pinnedSetupBeforeCompletion.setupExecuted;
+		const auto setupOnlineUpdatesMatch = ReportSwitchUpdateDeltas(
+			"setup completion before close baseline",
+			stockSetupOnlineUpdates,
+			{0, stockSetupExpectedDeferred},
+			pinnedSetupOnlineUpdates,
+			{0, pinnedSetupExpectedDeferred});
+		if (!setupOnlineUpdatesMatch) {
+			std::fprintf(
+				stderr,
+				"Setup callback update deltas did not match the "
+				"deferred dispatch counts.\n");
+		}
+		return FailChatParticipantsRegression(
+			"setup deferred switch callbacks remained outstanding at close "
+			"baseline");
+	}
 	const auto stockBeforeCloseSwitch
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeCloseSwitch
 		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	auto closeDispatchesSettled = false;
+	auto closeSwitchEnqueuesMatch = false;
+	auto stockAfterCloseSwitchDispatches
+		= DeferredOnlineUpdateDispatchCounts();
+	auto pinnedAfterCloseSwitchDispatches
+		= DeferredOnlineUpdateDispatchCounts();
+	auto phase = ScopedDeferredOnlineUpdatePhase(
+		DeferredOnlineUpdatePhase::CloseSwitch);
 	primary->showAccount(pinned);
+	stockAfterCloseSwitchDispatches = DeferredOnlineUpdateDispatchDelta(
+		stock->session().updates()
+			.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+		stockCloseSwitchDispatchBaseline);
+	pinnedAfterCloseSwitchDispatches = DeferredOnlineUpdateDispatchDelta(
+		pinned->session().updates()
+			.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+		pinnedCloseSwitchDispatchBaseline);
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"after close switch",
+		stockAfterCloseSwitchDispatches,
+		pinnedAfterCloseSwitchDispatches);
+	closeSwitchEnqueuesMatch
+		= stockAfterCloseSwitchDispatches.setupEnqueued == 0
+		  && stockAfterCloseSwitchDispatches.setupExecuted == 0
+		  && stockAfterCloseSwitchDispatches.closeSwitchEnqueued == 1
+		  && stockAfterCloseSwitchDispatches.closeSwitchExecuted == 0
+		  && pinnedAfterCloseSwitchDispatches.setupEnqueued == 0
+		  && pinnedAfterCloseSwitchDispatches.setupExecuted == 0
+		  && pinnedAfterCloseSwitchDispatches.closeSwitchEnqueued == 0
+		  && pinnedAfterCloseSwitchDispatches.closeSwitchExecuted == 0;
 	const auto stockCloseSwitchInline = OnlineUpdateDelta(
 		stock->session().updates().onlineUpdateCountsForRegressionTest(),
 		stockBeforeCloseSwitch);
@@ -2803,8 +3096,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeCloseSwitch);
 	const auto closeSwitchInlineMatches = ReportSwitchUpdateDeltas(
-		"stock-to-pinned close-switch inline", stockCloseSwitchInline, {0, 0},
-		pinnedCloseSwitchInline, {1, 0});
+		"stock-to-pinned close-switch inline",
+		stockCloseSwitchInline,
+		{0, 0},
+		pinnedCloseSwitchInline,
+		{1, 0});
 	if (primary->maybeSession() != &pinned->session()
 		|| !closeSwitchInlineMatches || stockCloseSwitchInline.total != 0
 		|| pinnedCloseSwitchInline.total != 1) {
@@ -2828,25 +3124,62 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"closed primary window remained mapped to an account");
 	}
-	const auto stockAfterClose = SessionSwitchUpdateCountForTest(
-		stock->session().updates().onlineUpdateCountsForRegressionTest());
-	if (!WaitForMainQueueBarrier()
-		|| !WaitForRegressionCondition([&] {
-			return SessionSwitchUpdateCountForTest(
-					stock->session().updates().onlineUpdateCountsForRegressionTest())
-				>= stockAfterClose + 1;
-		})) {
-		return FailChatParticipantsRegression(
-			"queued primary-close update was not delivered to the previous "
-			"session");
-	}
-	QCoreApplication::processEvents();
+	closeDispatchesSettled = WaitForDeferredOnlineUpdateDispatchesToSettle(
+		stock->session(),
+		pinned->session(),
+		DeferredOnlineUpdatePhase::CloseSwitch);
+	phase.restore();
 	if (&domain.active() != blank.get()) {
 		return FailChatParticipantsRegression(
 			"primary close changed the active blank account");
 	}
-	const auto closeSwitchDeferredObserved = WaitForDeferredSwitchUpdate(
-		stock->session(), stockBeforeCloseSwitch.switchDeferred + 1);
+	const auto stockCloseSwitchDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			stock->session().updates()
+				.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+			stockCloseSwitchDispatchBaseline);
+	const auto pinnedCloseSwitchDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			pinned->session().updates()
+				.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+			pinnedCloseSwitchDispatchBaseline);
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"after primary close and bounded dispatch drain",
+		stockCloseSwitchDispatches,
+		pinnedCloseSwitchDispatches);
+	const auto stockCloseCompletionDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			stockCloseSwitchDispatches, stockAfterCloseSwitchDispatches);
+	const auto pinnedCloseCompletionDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			pinnedCloseSwitchDispatches, pinnedAfterCloseSwitchDispatches);
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"close completion after close switch",
+		stockCloseCompletionDispatches,
+		pinnedCloseCompletionDispatches);
+	const auto closeCompletionDispatchCountsMatch
+		= stockCloseCompletionDispatches.setupEnqueued == 0
+		  && stockCloseCompletionDispatches.setupExecuted == 0
+		  && stockCloseCompletionDispatches.closeSwitchEnqueued == 0
+		  && stockCloseCompletionDispatches.closeSwitchExecuted == 1
+		  && pinnedCloseCompletionDispatches.setupEnqueued == 0
+		  && pinnedCloseCompletionDispatches.setupExecuted == 0
+		  && pinnedCloseCompletionDispatches.closeSwitchEnqueued == 0
+		  && pinnedCloseCompletionDispatches.closeSwitchExecuted == 0;
+	const auto closeDispatchCountsMatch
+		= stockCloseSwitchDispatches.setupEnqueued == 0
+		  && stockCloseSwitchDispatches.setupExecuted == 0
+		  && stockCloseSwitchDispatches.closeSwitchEnqueued == 1
+		  && stockCloseSwitchDispatches.closeSwitchExecuted == 1
+		  && pinnedCloseSwitchDispatches.setupEnqueued == 0
+		  && pinnedCloseSwitchDispatches.setupExecuted == 0
+		  && pinnedCloseSwitchDispatches.closeSwitchEnqueued == 0
+		  && pinnedCloseSwitchDispatches.closeSwitchExecuted == 0;
+	std::fprintf(
+		stderr,
+		"Deferred callback attribution: close_phase=%s source=%s\n",
+		closeDispatchCountsMatch ? "expected-counts" : "unexpected-counts",
+		closeDispatchCountsMatch ? "accounted-for" : "unresolved");
 	const auto stockCloseSwitchDeferred = OnlineUpdateDelta(
 		stock->session().updates().onlineUpdateCountsForRegressionTest(),
 		stockBeforeCloseSwitch);
@@ -2854,12 +3187,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeCloseSwitch);
 	const auto closeSwitchDeferredMatches = ReportSwitchUpdateDeltas(
-		"stock-to-pinned close-switch deferred", stockCloseSwitchDeferred,
-		{0, 1}, pinnedCloseSwitchDeferred, {1, 0});
-	if (!closeSwitchDeferredObserved || !closeSwitchDeferredMatches) {
+		"stock-to-pinned close-switch deferred",
+		stockCloseSwitchDeferred,
+		{0, 1},
+		pinnedCloseSwitchDeferred,
+		{1, 0});
+	if (!closeDispatchesSettled || !closeSwitchEnqueuesMatch
+		|| !closeCompletionDispatchCountsMatch || !closeDispatchCountsMatch
+		|| !closeSwitchDeferredMatches) {
 		return FailChatParticipantsRegression(
 			"deferred primary-close update was not delivered once "
-			"to the previous session");
+			"to the previous session with no pinned-session dispatch");
 	}
 	pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow

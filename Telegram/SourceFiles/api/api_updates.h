@@ -126,6 +126,18 @@ public:
 	  int switchDeferred = 0;
   };
 
+  enum class DeferredOnlineUpdatePhaseForRegressionTest {
+	  Setup,
+	  CloseSwitch,
+  };
+
+  struct DeferredOnlineUpdateDispatchCountsForRegressionTest {
+	  int setupEnqueued = 0;
+	  int setupExecuted = 0;
+	  int closeSwitchEnqueued = 0;
+	  int closeSwitchExecuted = 0;
+  };
+
   enum class OnlineUpdateCauseForRegressionTest {
 	  SwitchInline,
 	  SwitchDeferred,
@@ -155,6 +167,16 @@ public:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
   void updateOnlineForRegressionTest(crl::time lastNonIdleTime,
 									 OnlineUpdateCauseForRegressionTest cause);
+  static void setDeferredOnlineUpdatePhaseForRegressionTest(
+	  DeferredOnlineUpdatePhaseForRegressionTest phase);
+  [[nodiscard]] static DeferredOnlineUpdatePhaseForRegressionTest
+  deferredOnlineUpdatePhaseForRegressionTest();
+  void recordDeferredOnlineUpdateEnqueuedForRegressionTest(
+	  DeferredOnlineUpdatePhaseForRegressionTest phase);
+  void recordDeferredOnlineUpdateExecutedForRegressionTest(
+	  DeferredOnlineUpdatePhaseForRegressionTest phase);
+  [[nodiscard]] DeferredOnlineUpdateDispatchCountsForRegressionTest
+  deferredOnlineUpdateDispatchCountsForRegressionTest() const;
   [[nodiscard]] OnlineUpdateCountsForRegressionTest
   onlineUpdateCountsForRegressionTest() const;
 #endif
@@ -341,6 +363,8 @@ private:
 	mtpRequestId _onlineRequest = 0;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	OnlineUpdateCountsForRegressionTest _onlineUpdateCountsForRegressionTest;
+	DeferredOnlineUpdateDispatchCountsForRegressionTest
+		_deferredOnlineUpdateDispatchCountsForRegressionTest;
 #endif
 	details::UpdateRequestState _syncRequests;
 	base::Timer _idleFinishTimer;
