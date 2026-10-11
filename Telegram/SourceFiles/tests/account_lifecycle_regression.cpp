@@ -2930,6 +2930,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	ReportDeferredOnlineUpdateDispatchCounts(
 		"setup before bounded completion", stockSetupBeforeCompletion,
 		pinnedSetupBeforeCompletion);
+	const auto stockSetupOnlineUpdatesBeforeCompletion
+		= stock->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto pinnedSetupOnlineUpdatesBeforeCompletion
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto setupDispatchesSettled
 		= WaitForDeferredOnlineUpdateDispatchesToSettle(
 			stock->session(), pinned->session(), DeferredOnlineUpdatePhase::Setup);
@@ -2956,6 +2960,27 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				 pinnedSetupOutstandingAtBaseline);
 	if (!setupDispatchesSettled || stockSetupOutstandingAtBaseline != 0
 		|| pinnedSetupOutstandingAtBaseline != 0) {
+		const auto stockSetupOnlineUpdates = OnlineUpdateDelta(
+			stock->session().updates().onlineUpdateCountsForRegressionTest(),
+			stockSetupOnlineUpdatesBeforeCompletion);
+		const auto pinnedSetupOnlineUpdates = OnlineUpdateDelta(
+			pinned->session().updates().onlineUpdateCountsForRegressionTest(),
+			pinnedSetupOnlineUpdatesBeforeCompletion);
+		const auto stockSetupExpectedDeferred
+			= stockCloseSwitchDispatchBaseline.setupEnqueued
+			  - stockSetupBeforeCompletion.setupExecuted;
+		const auto pinnedSetupExpectedDeferred
+			= pinnedCloseSwitchDispatchBaseline.setupEnqueued
+			  - pinnedSetupBeforeCompletion.setupExecuted;
+		const auto setupOnlineUpdatesMatch = ReportSwitchUpdateDeltas(
+			"setup completion before close baseline", stockSetupOnlineUpdates,
+			{0, stockSetupExpectedDeferred}, pinnedSetupOnlineUpdates,
+			{0, pinnedSetupExpectedDeferred});
+		if (!setupOnlineUpdatesMatch) {
+			std::fprintf(stderr,
+						 "Setup callback update deltas did not match the "
+						 "deferred dispatch counts.\n");
+		}
 		return FailChatParticipantsRegression(
 			"setup deferred switch callbacks remained outstanding at close "
 			"baseline");
