@@ -348,6 +348,30 @@ public:
 		}
 	}
 
+	[[nodiscard]] static std::unique_ptr<Calls::Call>
+	CreateIncomingCallForAnswerRegression(
+			not_null<UserData*> user,
+			bool conferenceInvite) {
+		auto call = conferenceInvite
+			? std::make_unique<Calls::Call>(
+				TestDelegate(),
+				user,
+				CallId(3053),
+				MsgId(3053),
+				std::vector<not_null<PeerData*>>(),
+				false)
+			: std::make_unique<Calls::Call>(
+				TestDelegate(),
+				user,
+				Calls::Call::Type::Incoming,
+				false);
+		call->_state = Calls::Call::State::WaitingIncoming;
+		call->_id = CallId(3053);
+		call->_accessHash = 1;
+		call->_gb = bytes::vector(1, gsl::byte{});
+		return call;
+	}
+
 private:
 	class CallDelegate final : public Calls::Call::Delegate {
 	public:
@@ -367,7 +391,9 @@ private:
 		void callPlaySound(Calls::Call::Delegate::CallSound) override {
 		}
 
-		void callRequestPermissionsOrFail(Fn<void()>, bool) override {
+		void callRequestPermissionsOrFail(Fn<void()> onSuccess, bool) override {
+			RecordCallPermissionRequestForRegressionTest();
+			onSuccess();
 		}
 
 		auto callGetVideoCapture(const QString &, bool)
@@ -416,6 +442,14 @@ void RecordCallPermissionRequestForRegressionTest() {
 
 void RecordCallRpcForRegressionTest() {
 	++gCallStartRegressionSnapshot.callRpcs;
+}
+
+bool InterceptCallRpcForRegressionTest() {
+	if (!gCallStartRegressionIntercept) {
+		return false;
+	}
+	RecordCallRpcForRegressionTest();
+	return true;
 }
 
 void RecordVoiceChatLinkJoinAttemptForRegressionTest() {
@@ -5544,6 +5578,37 @@ template <typename Predicate>
 		&& !snapshot.leavePrompts;
 }
 
+[[nodiscard]] bool RunIncomingCallAnswerRegression(
+		not_null<Main::Account*> account,
+		bool supported) {
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	for (const auto conferenceInvite : { false, true }) {
+		ResetCallStartRegressionForTest();
+		auto call = CallsInstanceRegressionAccess::
+			CreateIncomingCallForAnswerRegression(user, conferenceInvite);
+		SetCallStartRegressionInterceptForTest(true);
+		call->answer();
+		SetCallStartRegressionInterceptForTest(false);
+		const auto snapshot = GetCallStartRegressionSnapshotForTest();
+		const auto expectedEffects = supported ? 1 : 0;
+		const auto expectedState = supported
+			? Calls::Call::State::ExchangingKeys
+			: Calls::Call::State::Failed;
+		if (snapshot.permissionRequests != expectedEffects
+			|| snapshot.callRpcs != expectedEffects
+			|| snapshot.unavailableToasts.size() != (supported ? 0U : 1U)
+			|| (!supported
+				&& snapshot.unavailableToasts.front() != &account->session())
+			|| call->state() != expectedState) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	channel->setName(u"Regression channel"_q, QString());
 	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
@@ -7073,6 +7138,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			false)) {
 		return FailChatParticipantsRegression(
 			"Calls::Instance starts crossed stock and pinned session policies");
+	}
+	if (!RunIncomingCallAnswerRegression(stock, true)
+		|| !RunIncomingCallAnswerRegression(pinned, false)) {
+		return FailChatParticipantsRegression(
+			"incoming calls bypassed the unsupported-session gate");
 	}
 	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
 	stock->mtp().dcOptions().constructBlocked();

@@ -73,6 +73,7 @@ void SetCallStartRegressionInterceptForTest(bool enabled);
 GetCallStartRegressionSnapshotForTest();
 [[nodiscard]] bool InterceptCallStartForRegressionTest(
 	CallStartRegressionKind kind);
+[[nodiscard]] bool InterceptCallRpcForRegressionTest();
 void RecordCallUnavailableToastForRegressionTest(
 	const Main::Session *session);
 void RecordCallPermissionRequestForRegressionTest();

@@ -426,6 +426,11 @@ void Call::applyUserConfirmation() {
 }
 
 void Call::answer() {
+	if (!_user->session().callsSupported()) {
+		details::ShowCallUnavailableToast(&_user->session());
+		setState(State::Failed);
+		return;
+	}
 	const auto video = isSharingVideo();
 	_delegate->callRequestPermissionsOrFail(crl::guard(this, [=] {
 		actuallyAnswer();
@@ -449,6 +454,12 @@ void Call::acceptConferenceInvite() {
 	setState(State::ExchangingKeys);
 	const auto limit = 5;
 	const auto messageId = _conferenceInviteMsgId;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallRpcForRegressionTest()) {
+		return;
+	}
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_GetGroupCall(
 		MTP_inputGroupCallInviteMessage(MTP_int(messageId.bare)),
 		MTP_int(limit)
@@ -491,6 +502,12 @@ void Call::actuallyAnswer() {
 	} else {
 		_answerAfterDhConfigReceived = false;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallRpcForRegressionTest()) {
+		return;
+	}
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_AcceptCall(
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash)),
 		MTP_bytes(_gb),

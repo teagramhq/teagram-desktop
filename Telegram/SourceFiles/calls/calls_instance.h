@@ -88,6 +88,8 @@ struct ConferenceInvites {
 
 namespace details {
 
+void ShowCallUnavailableToast(not_null<Main::Session*> session);
+
 [[nodiscard]] inline bool AllowCallStart(
 		bool supported,
 		Fn<void()> showUnavailable) {

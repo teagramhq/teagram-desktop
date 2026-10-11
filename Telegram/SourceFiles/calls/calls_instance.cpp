@@ -59,7 +59,7 @@ constexpr auto kServerConfigUpdateTimeoutMs = 24 * 3600 * crl::time(1000);
 using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
-void ShowCallUnavailableToast(not_null<Main::Session*> session) {
+void ShowCallUnavailableToastImpl(not_null<Main::Session*> session) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	Tests::RecordCallUnavailableToastForRegressionTest(session.get());
 #endif
@@ -77,6 +77,11 @@ void ShowCallUnavailableToast(not_null<Main::Session*> session) {
 }
 
 } // namespace
+
+void details::ShowCallUnavailableToast(
+		not_null<Main::Session*> session) {
+	ShowCallUnavailableToastImpl(session);
+}
 
 class Instance::Delegate final
 	: public Call::Delegate
@@ -223,7 +228,7 @@ void Instance::startOutgoingCall(
 		not_null<UserData*> user,
 		StartOutgoingCallArgs args) {
 	if (!details::AllowCallStart(user->session().callsSupported(), [=] {
-			ShowCallUnavailableToast(&user->session());
+			details::ShowCallUnavailableToast(&user->session());
 		})) {
 		return;
 	}
@@ -255,7 +260,7 @@ void Instance::startOrJoinGroupCall(
 		not_null<PeerData*> peer,
 		StartGroupCallArgs args) {
 	if (!details::AllowCallStart(peer->session().callsSupported(), [=] {
-			ShowCallUnavailableToast(&peer->session());
+			details::ShowCallUnavailableToast(&peer->session());
 		})) {
 		return;
 	}
@@ -294,7 +299,7 @@ void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 		? &args.call->session()
 		: &args.show->session();
 	if (!details::AllowCallStart(session->callsSupported(), [=] {
-			ShowCallUnavailableToast(session);
+			details::ShowCallUnavailableToast(session);
 		})) {
 		return;
 	}
@@ -428,7 +433,7 @@ void Instance::showStartWithRtmp(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer) {
 	if (!details::AllowCallStart(peer->session().callsSupported(), [=] {
-			ShowCallUnavailableToast(&peer->session());
+			details::ShowCallUnavailableToast(&peer->session());
 		})) {
 		return;
 	}
