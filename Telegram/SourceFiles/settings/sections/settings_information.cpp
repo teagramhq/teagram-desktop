@@ -1497,6 +1497,19 @@ Type InformationId() {
 	return Information::Id();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool InformationBioEditorTargetPresentForRegressionTest(
+	not_null<Window::SessionController *> controller) {
+	const auto container
+		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
+	auto targets = InformationHighlightTargets();
+	SetupBio(container, controller->session().user(), controller, &targets);
+	const auto result = !targets.bio.isNull();
+	delete container;
+	return result;
+}
+#endif
+
 AccountsEvents SetupAccounts(
 		not_null<Ui::VerticalLayout*> container,
 		not_null<Window::SessionController*> controller) {
