@@ -59,6 +59,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 #include <QtCore/QByteArray>
 #include <QtGui/QKeyEvent>
+#include <QtWidgets/QTextEdit>
 
 #include <cstdio>
 #include <optional>
@@ -1572,9 +1573,15 @@ bool RunFoldersCrudRegressionForTest(
 		}
 		field->setText(name);
 		if (enter) {
+			const auto textEdit = field->findChild<QTextEdit *>();
+			if (!textEdit) {
+				return fail("title_editor_missing", operation, "title_editor",
+							id);
+			}
+			field->setFocus();
 			auto event
 				= QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-			QCoreApplication::sendEvent(field, &event);
+			QCoreApplication::sendEvent(textEdit, &event);
 		} else {
 			editor->triggerButton(0);
 		}
