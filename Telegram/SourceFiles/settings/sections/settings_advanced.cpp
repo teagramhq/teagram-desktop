@@ -1432,7 +1432,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				box->addButton(
 					tr::lng_teagram_update_recovery_show_finder(),
 					[=] { manager->showPreviousBundleInFinder(); });
-				box->addButton(tr::lng_box_close(), [=] {
+				box->addButton(tr::lng_close(), [=] {
 					box->closeBox();
 				});
 			}));
