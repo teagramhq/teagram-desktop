@@ -1103,7 +1103,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 	});
 	builder.addDividerText(tr::lng_settings_current_version(
 		lt_version,
-		currentVersionText()));
+		rpl::single(currentVersionText())));
 
 	const auto toggle = builder.addButton({
 		.id = u"advanced/auto_update"_q,
