@@ -537,17 +537,31 @@ struct BundleInfo {
 		Qt::QueuedConnection);
 }
 
-[[nodiscard]] bool WaitForStartup(quint64 build, const QString &parent) {
+enum class StartupWaitResult {
+	Acknowledged,
+	PendingRemoved,
+	Failed,
+};
+
+[[nodiscard]] StartupWaitResult WaitForStartup(
+		quint64 build,
+		const QString &parent) {
 	auto timer = QElapsedTimer();
 	timer.start();
 	while (timer.elapsed() < kStartupWaitMs) {
 		if (const auto started = ReadMarker(parent, kStartedMarker);
 			started && *started == build) {
-			return true;
+			return StartupWaitResult::Acknowledged;
+		}
+		const auto pending = MarkerExists(parent, kCommitMarker);
+		if (!pending) {
+			return StartupWaitResult::Failed;
+		} else if (!*pending) {
+			return StartupWaitResult::PendingRemoved;
 		}
 		QThread::msleep(100);
 	}
-	return false;
+	return StartupWaitResult::Failed;
 }
 
 [[nodiscard]] bool LaunchBundle(const QString &bundlePath, pid_t *processId) {
@@ -603,11 +617,18 @@ void StopLaunchedBundle(pid_t processId) {
 }
 
 [[nodiscard]] TeagramUpdateRelaunchResult RelaunchPendingUpdate(
-		const QString &installed,
-		const QString &previous,
+		const QString &currentBundlePath,
 		const std::function<bool(const QString &, pid_t *)> &launchBundle,
 		const std::function<bool()> &otherInstanceRunning = {}) {
-	const auto parent = QFileInfo(installed).absolutePath();
+	const auto current = CanonicalRunningBundlePath(currentBundlePath);
+	if (current.isEmpty()
+		|| current != QDir::cleanPath(currentBundlePath)) {
+		return TeagramUpdateRelaunchResult::Failed;
+	}
+	const auto parent = QFileInfo(current).absolutePath();
+	const auto installed = QDir(parent).filePath(u"Teagram.app"_q);
+	const auto previous = QDir(parent).filePath(
+		QString::fromLatin1(kPreviousBundle));
 	if (CanonicalBundlePath(installed) != QDir::cleanPath(installed)
 		|| !MacProtectedPath::CheckExternalPathForUse(
 			MacProtectedPath::Operation::Read,
@@ -625,13 +646,20 @@ void StopLaunchedBundle(pid_t processId) {
 	if (!pending) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
+	if (!RemoveMarker(parent, kStartedMarker)) {
+		return TeagramUpdateRelaunchResult::Failed;
+	}
 	auto processId = pid_t(0);
-	if (launchBundle(installed, &processId)
-		&& WaitForStartup(*pending, parent)) {
-		return RemoveMarker(parent, kCommitMarker)
-			&& RemoveMarker(parent, kStartedMarker)
-			? TeagramUpdateRelaunchResult::CandidateStarted
-			: TeagramUpdateRelaunchResult::Failed;
+	if (launchBundle(installed, &processId)) {
+		const auto startup = WaitForStartup(*pending, parent);
+		if (startup == StartupWaitResult::Acknowledged) {
+			return RemoveMarker(parent, kCommitMarker)
+				&& RemoveMarker(parent, kStartedMarker)
+				? TeagramUpdateRelaunchResult::CandidateStarted
+				: TeagramUpdateRelaunchResult::Failed;
+		} else if (startup == StartupWaitResult::PendingRemoved) {
+			return TeagramUpdateRelaunchResult::CurrentBundleStarted;
+		}
 	}
 	StopLaunchedBundle(processId);
 	if (otherInstanceRunning ? otherInstanceRunning() : OtherInstanceRunning()) {
@@ -677,22 +705,25 @@ void StopLaunchedBundle(pid_t processId) {
 		return false;
 	}
 	const auto runningIsInstalled = running == QDir::cleanPath(installed);
-	auto startupAcknowledged = false;
-	if (runningIsInstalled && pending && *pending == info.build) {
-		if (!WriteMarker(parent, kStartedMarker, info.build)) {
-			return false;
-		}
-		startupAcknowledged = true;
-	}
+	const auto startupAcknowledged
+		= runningIsInstalled && pending && *pending == info.build;
 	const auto recovered = RecoverAtStartup(
 		installed, staging, previous, running, otherInstanceRunning);
 	if (recovered.reason == TeagramUpdateStartupRecoveryReason::Failed
 		|| recovered.reason == TeagramUpdateStartupRecoveryReason::Busy) {
 		LOG(("Teagram update recovery failed: reason=%1")
 			.arg(static_cast<int>(recovered.reason)));
-		if (startupAcknowledged && !RemoveMarker(parent, kStartedMarker)) {
-			LOG(("Teagram update startup marker could not be removed."));
+		return false;
+	}
+	if (runningIsInstalled && pending && *pending != info.build) {
+		if (!RemoveMarker(parent, kStartedMarker)
+			|| !RemoveMarker(parent, kCommitMarker)) {
+			LOG(("Teagram update pending marker could not be cleared."));
 		}
+		return false;
+	}
+	if (startupAcknowledged
+		&& !WriteMarker(parent, kStartedMarker, info.build)) {
 		return false;
 	}
 	return startupAcknowledged;
@@ -722,14 +753,12 @@ bool CompleteTeagramUpdateStartupForTesting(
 }
 
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
-		const QString &installedBundlePath,
-		const QString &previousBundlePath,
+		const QString &currentBundlePath,
 		const std::function<bool(const QString &)> &launchBundle,
 		const std::function<bool()> &otherInstanceRunning) {
 	@autoreleasepool {
 		return RelaunchPendingUpdate(
-			installedBundlePath,
-			previousBundlePath,
+			currentBundlePath,
 			[&](const QString &path, pid_t *processId) {
 				if (processId) {
 					*processId = 0;
@@ -1039,13 +1068,9 @@ TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdown() {
 			!= u"io.teagram.desktop"_q) {
 			return TeagramUpdateRelaunchResult::NotPending;
 		}
-		const auto installed = FromNative([mainBundle bundlePath]);
-		const auto parent = QFileInfo(installed).absolutePath();
-		const auto previous = QDir(parent).filePath(
-			QString::fromLatin1(kPreviousBundle));
+		const auto current = FromNative([mainBundle bundlePath]);
 		return RelaunchPendingUpdate(
-			installed,
-			previous,
+			current,
 			[](const QString &path, pid_t *processId) {
 				return LaunchBundle(path, processId);
 			});

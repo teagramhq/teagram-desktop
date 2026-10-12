@@ -40,6 +40,7 @@ enum class TeagramUpdateInstallReason {
 enum class TeagramUpdateRelaunchResult {
 	NotPending,
 	CandidateStarted,
+	CurrentBundleStarted,
 	PreviousStarted,
 	Failed,
 };
@@ -78,8 +79,7 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdownForTesting(
-	const QString &installedBundlePath,
-	const QString &previousBundlePath,
+	const QString &currentBundlePath,
 	const std::function<bool(const QString &)> &launchBundle,
 	const std::function<bool()> &otherInstanceRunning = {});
 #endif // TDESKTOP_UNIT_TESTS

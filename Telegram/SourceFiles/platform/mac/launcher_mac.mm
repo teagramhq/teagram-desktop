@@ -50,6 +50,8 @@ bool Launcher::launchUpdater(UpdaterLaunch action) {
 			return result
 				== Core::TeagramUpdateRelaunchResult::CandidateStarted
 				|| result
+					== Core::TeagramUpdateRelaunchResult::CurrentBundleStarted
+				|| result
 					== Core::TeagramUpdateRelaunchResult::PreviousStarted;
 		}
 	}
