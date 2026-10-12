@@ -3287,8 +3287,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
-	const auto pinnedController = pinnedWindow->sessionController();
-	const auto stockController = stockWindow->sessionController();
+	auto pinnedController = pinnedWindow->sessionController();
+	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
@@ -3302,20 +3302,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
+	pinnedController = pinnedWindow->sessionController();
+	stockController = stockWindow->sessionController();
+	if (!pinnedController || !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
+		return FailChatParticipantsRegression(
+			"test windows lost their owning sessions after activation checks");
+	}
 	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
 										 stockWindow, pinnedWindow,
 										 blankWindow)) {
 		return FailChatParticipantsRegression(
 			"mini-app open refusal was not observable on the owning session");
 	}
-	const auto pinnedInviteController = pinnedWindow->sessionController();
-	if (!pinnedInviteController
-		|| (&pinnedInviteController->session() != &pinned->session())) {
-		return FailChatParticipantsRegression(
-			"pinned window lost its owning session before invite refusal test");
-	}
-	Api::CheckFilterInvite(pinnedInviteController, u"regression-slug"_q);
-	if (pinnedInviteController->session()
+	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
+	if (pinnedController->session()
 			.api()
 			.checkFilterInviteRequestPendingForRegressionTest()) {
 		return FailChatParticipantsRegression(
