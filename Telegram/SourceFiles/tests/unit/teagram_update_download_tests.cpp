@@ -1162,15 +1162,12 @@ TEST_CASE(TeagramUpdateWorkerShutdownCleansCandidateArchive) {
 	auto worker = QThread::create([&] {
 		entered.release();
 		QMetaObject::invokeMethod(
-			&receiver,
-			[&] { handled = true; },
-			Qt::BlockingQueuedConnection);
+			&receiver, [&] { handled = true; }, Qt::BlockingQueuedConnection);
 	});
 	worker->start();
 	CHECK(entered.tryAcquire(1, 1'000));
-	ShutdownTeagramUpdateWorker(worker, &receiver, [&] {
-		fixture->candidate->discardArchive();
-	});
+	ShutdownTeagramUpdateWorker(worker, &receiver,
+								[&] { fixture->candidate->discardArchive(); });
 	CHECK(handled);
 	CHECK(!worker->isRunning());
 	CHECK(!fixture->candidate->downloaded());
@@ -1350,7 +1347,8 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 				  || (expected == TeagramUpdateInstallReason::RecoveryRequired
 					  && (leaveStageArtifact || injectCommittedSyncFailure))));
 		CHECK_EQ(architectureChecks,
-				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2 : 3);
+				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2
+																		   : 3);
 		CHECK_EQ(codeSealChecks, 1);
 		CHECK_EQ(restartAttempts,
 				 expected == TeagramUpdateInstallReason::RelaunchRequested
@@ -1528,12 +1526,11 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			   TeagramUpdateRelaunchResult::PreviousStarted, false, false,
 			   false, false);
 	runFixture(true, true, true, TeagramUpdateInstallReason::RelaunchRequested,
-			   TeagramUpdateRelaunchResult::PreviousStarted, false, false,
-			   true, false);
-	runFixture(false, true, false,
-			   TeagramUpdateInstallReason::CandidateRejected,
-			   TeagramUpdateRelaunchResult::NotPending, false, false, false,
+			   TeagramUpdateRelaunchResult::PreviousStarted, false, false, true,
 			   false);
+	runFixture(
+		false, true, false, TeagramUpdateInstallReason::CandidateRejected,
+		TeagramUpdateRelaunchResult::NotPending, false, false, false, false);
 	runFixture(true, false, false,
 			   TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
 			   TeagramUpdateRelaunchResult::Failed, false, false, false, false);
@@ -1970,9 +1967,8 @@ TEST_CASE(TeagramUpdateChannelSwitchDoesNotDowngrade) {
 	}
 	const auto archive = QByteArrayLiteral("main-102");
 	auto transport = std::make_unique<FixtureTransport>();
-	transport->addRelease(
-		"teagram-build-102", "main", "102",
-		signingKey->privateKey.get(), archive, false);
+	transport->addRelease("teagram-build-102", "main", "102",
+						  signingKey->privateKey.get(), archive, false);
 	transport->addReleaseList();
 	TeagramUpdateDownloader downloader(
 		std::move(transport),
@@ -1982,8 +1978,9 @@ TEST_CASE(TeagramUpdateChannelSwitchDoesNotDowngrade) {
 		101, TeagramUpdateChannel::Main, {}, 102, false);
 	CHECK(result.reason == TeagramUpdateDownloadReason::NoUpdate);
 	CHECK(result.candidate == nullptr);
-	CHECK(QDir(root.path()).entryList(
-		QDir::Files | QDir::NoDotAndDotDot).isEmpty());
+	CHECK(QDir(root.path())
+			  .entryList(QDir::Files | QDir::NoDotAndDotDot)
+			  .isEmpty());
 }
 
 TEST_CASE(TeagramUpdateRestartWaitsForActiveWork) {
@@ -1998,16 +1995,15 @@ TEST_CASE(TeagramUpdateRestartWaitsForActiveWork) {
 	}
 	const auto archive = QByteArrayLiteral("main-103");
 	auto transport = std::make_unique<FixtureTransport>();
-	transport->addRelease(
-		"teagram-build-103", "main", "103",
-		signingKey->privateKey.get(), archive, false);
+	transport->addRelease("teagram-build-103", "main", "103",
+						  signingKey->privateKey.get(), archive, false);
 	transport->addReleaseList();
 	TeagramUpdateDownloader downloader(
 		std::move(transport),
 		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
 		root.path());
-	auto result = downloader.checkForUpdates(
-		102, TeagramUpdateChannel::Main, {}, 102, false);
+	auto result = downloader.checkForUpdates(102, TeagramUpdateChannel::Main,
+											 {}, 102, false);
 	CHECK(result.reason == TeagramUpdateDownloadReason::Available);
 	CHECK(result.candidate != nullptr);
 	if (!result.candidate) {
@@ -2015,9 +2011,8 @@ TEST_CASE(TeagramUpdateRestartWaitsForActiveWork) {
 	}
 	CHECK(!result.candidate->downloaded());
 	auto downloadTransport = std::make_unique<FixtureTransport>();
-	downloadTransport->addRelease(
-		"teagram-build-103", "main", "103",
-		signingKey->privateKey.get(), archive, false);
+	downloadTransport->addRelease("teagram-build-103", "main", "103",
+								  signingKey->privateKey.get(), archive, false);
 	TeagramUpdateDownloader downloaderForArchive(
 		std::move(downloadTransport),
 		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
@@ -2030,24 +2025,24 @@ TEST_CASE(TeagramUpdateRestartWaitsForActiveWork) {
 	}
 	CHECK(downloaded.candidate->downloaded());
 	for (const auto work : {
-			TeagramUpdateActiveWork{ .call = true },
-			TeagramUpdateActiveWork{ .recording = true },
-			TeagramUpdateActiveWork{ .upload = true },
-	}) {
-		CHECK(TeagramUpdateRestartWhenSafe(
-			false, work, std::chrono::milliseconds(0))
-			== TeagramUpdateRestartDecision::WaitForActiveWork);
+			 TeagramUpdateActiveWork{.call = true},
+			 TeagramUpdateActiveWork{.recording = true},
+			 TeagramUpdateActiveWork{.upload = true},
+		 }) {
+		CHECK(TeagramUpdateRestartWhenSafe(false, work,
+										   std::chrono::milliseconds(0))
+			  == TeagramUpdateRestartDecision::WaitForActiveWork);
 	}
 	const auto work = TeagramUpdateActiveWork();
-	CHECK(TeagramUpdateRestartWhenSafe(
-		false, work, std::chrono::milliseconds(0))
+	CHECK(
+		TeagramUpdateRestartWhenSafe(false, work, std::chrono::milliseconds(0))
 		== TeagramUpdateRestartDecision::RestartNow);
-	CHECK(TeagramUpdateRestartWhenSafe(
-		true, work, std::chrono::milliseconds(119'999))
-		== TeagramUpdateRestartDecision::WaitForIdleInput);
-	CHECK(TeagramUpdateRestartWhenSafe(
-		true, work, std::chrono::milliseconds(120'000))
-		== TeagramUpdateRestartDecision::RestartNow);
+	CHECK(TeagramUpdateRestartWhenSafe(true, work,
+									   std::chrono::milliseconds(119'999))
+		  == TeagramUpdateRestartDecision::WaitForIdleInput);
+	CHECK(TeagramUpdateRestartWhenSafe(true, work,
+									   std::chrono::milliseconds(120'000))
+		  == TeagramUpdateRestartDecision::RestartNow);
 }
 
 TEST_CASE(TeagramUpdateDownloadFailsWithoutMutation) {

@@ -117,11 +117,10 @@ class TeagramUpdateDownloader final {
 	checkForUpdates(quint64 installedBuild,
 					TeagramUpdateChannel installedChannel,
 					TeagramUpdateProgressHandler progress = {},
-					quint64 highWaterBuild = 0,
-					bool downloadArchive = true);
-	[[nodiscard]] TeagramUpdateDownloadResult download(
-		const TeagramUpdateCandidate &available,
-		TeagramUpdateProgressHandler progress = {});
+					quint64 highWaterBuild = 0, bool downloadArchive = true);
+	[[nodiscard]] TeagramUpdateDownloadResult
+	download(const TeagramUpdateCandidate &available,
+			 TeagramUpdateProgressHandler progress = {});
 
   private:
 	std::unique_ptr<TeagramUpdateTransport> _transport;

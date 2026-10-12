@@ -49,7 +49,7 @@ rpl::producer<TextWithEntities> Text1() {
 rpl::producer<TextWithEntities> Text2() {
 #ifdef TDESKTOP_TEAGRAM
 	constexpr auto repository = "https://github.com/teagramhq/teagram-desktop";
-#else // TDESKTOP_TEAGRAM
+#else  // TDESKTOP_TEAGRAM
 	constexpr auto repository = "https://github.com/telegramdesktop/tdesktop";
 #endif // TDESKTOP_TEAGRAM
 	return tr::lng_about_text2(
@@ -57,10 +57,7 @@ rpl::producer<TextWithEntities> Text2() {
 		rpl::single(tr::link(
 			"GNU GPL",
 			"https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE")),
-		lt_github_link,
-		rpl::single(tr::link(
-			"GitHub",
-			repository)),
+		lt_github_link, rpl::single(tr::link("GitHub", repository)),
 		tr::marked);
 }
 
@@ -78,7 +75,7 @@ rpl::producer<TextWithEntities> Text3() {
 void AboutBox(not_null<Ui::GenericBox*> box) {
 #ifdef TDESKTOP_TEAGRAM
 	box->setTitle(tr::lng_teagram_about_title());
-#else // TDESKTOP_TEAGRAM
+#else  // TDESKTOP_TEAGRAM
 	box->setTitle(u"Telegram Desktop"_q);
 #endif // TDESKTOP_TEAGRAM
 
@@ -103,7 +100,7 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		if (!link.isEmpty()) {
 			File::OpenUrl(link);
 		}
-#else // TDESKTOP_TEAGRAM
+#else  // TDESKTOP_TEAGRAM
 		if (cRealAlphaVersion()) {
 			auto url = u"https://tdesktop.com/"_q;
 			if (Platform::IsWindows32Bit()) {
@@ -157,7 +154,7 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		lt_version,
 		rpl::single(TextWithEntities(QString::fromLatin1(AppVersionStr))),
 		tr::marked));
-#else // TDESKTOP_TEAGRAM
+#else  // TDESKTOP_TEAGRAM
 	addText(Text1());
 	addText(Text2());
 	addText(Text3());
@@ -189,14 +186,13 @@ QString currentVersionText() {
 #ifdef TDESKTOP_TEAGRAM
 	auto result = QString("Teagram %1").arg(QString::fromLatin1(AppVersionStr));
 	if (Core::kTeagramUpdateBuild) {
-		result += u" · build %1"_q.arg(
-			QString::number(Core::kTeagramUpdateBuild));
+		result
+			+= u" · build %1"_q.arg(QString::number(Core::kTeagramUpdateBuild));
 	} else {
 		result += u" · unreleased"_q;
 	}
-	result += (Core::kTeagramUpdateChannel == "main")
-		? u" · Main"_q
-		: u" · Dev"_q;
+	result
+		+= (Core::kTeagramUpdateChannel == "main") ? u" · Main"_q : u" · Dev"_q;
 #ifdef _DEBUG
 	result += " DEBUG";
 #endif
@@ -227,7 +223,7 @@ QString currentVersionReleaseLink() {
 	}
 	return u"https://github.com/teagramhq/teagram-desktop/releases/tag/teagram-build-%1"_q
 		.arg(QString::number(Core::kTeagramUpdateBuild));
-#else // TDESKTOP_TEAGRAM
+#else  // TDESKTOP_TEAGRAM
 	return QString();
 #endif // TDESKTOP_TEAGRAM
 }

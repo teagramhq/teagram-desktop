@@ -17,10 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 template <typename Cleanup>
-void ShutdownTeagramUpdateWorker(
-		QThread *worker,
-		QObject *receiver,
-		Cleanup &&cleanup) {
+void ShutdownTeagramUpdateWorker(QThread *worker, QObject *receiver,
+								 Cleanup &&cleanup) {
 	while (worker && worker->isRunning()) {
 		QCoreApplication::sendPostedEvents(receiver, QEvent::MetaCall);
 		worker->wait(1);

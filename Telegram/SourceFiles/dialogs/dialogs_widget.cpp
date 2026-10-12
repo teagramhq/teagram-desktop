@@ -651,23 +651,20 @@ Widget::Widget(
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 	if (Core::TeagramUpdateUiEnabled()) {
-		Core::TeagramUpdateManager::Instance().stateChanges(
-		) | rpl::on_next([=](const Core::TeagramUpdateSnapshot &) {
-			checkUpdateStatus();
-		}, lifetime());
+		Core::TeagramUpdateManager::Instance().stateChanges()
+			| rpl::on_next(
+				[=](const Core::TeagramUpdateSnapshot &) {
+					checkUpdateStatus();
+				},
+				lifetime());
 	} else
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
-	if (!Core::UpdaterDisabled()) {
-		Core::UpdateChecker checker;
-		rpl::merge(
-			rpl::single(rpl::empty),
-			checker.isLatest(),
-			checker.failed(),
-			checker.ready()
-		) | rpl::on_next([=] {
-			checkUpdateStatus();
-		}, lifetime());
-	}
+		if (!Core::UpdaterDisabled()) {
+			Core::UpdateChecker checker;
+			rpl::merge(rpl::single(rpl::empty), checker.isLatest(),
+					   checker.failed(), checker.ready())
+				| rpl::on_next([=] { checkUpdateStatus(); }, lifetime());
+		}
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });
@@ -2545,17 +2542,15 @@ void Widget::checkUpdateStatus() {
 		const auto manager = &Core::TeagramUpdateManager::Instance();
 		const auto &state = manager->state();
 		using State = Core::TeagramUpdateUiState;
-		const auto visible = Core::TeagramUpdateChatListActionForState(
-			state.state) != Core::TeagramUpdateChatListAction::Hidden;
+		const auto visible
+			= Core::TeagramUpdateChatListActionForState(state.state)
+			  != Core::TeagramUpdateChatListAction::Hidden;
 		if (_layout != Layout::Child && visible) {
 			if (!_updateTelegram) {
 				_updateTelegram.create(
-					this,
-					tr::lng_teagram_update_restart_install(tr::now),
-					st::dialogsUpdateButton,
-					st::dialogsInstallUpdate,
-					st::dialogsInstallUpdateOver,
-					true);
+					this, tr::lng_teagram_update_restart_install(tr::now),
+					st::dialogsUpdateButton, st::dialogsInstallUpdate,
+					st::dialogsInstallUpdateOver, true);
 			}
 			const auto text = [&] {
 				switch (state.state) {
@@ -2582,12 +2577,14 @@ void Widget::checkUpdateStatus() {
 						return tr::lng_teagram_update_bar_after_call_upload(
 							tr::now);
 					} else if (work.recording && work.upload) {
-						return tr::lng_teagram_update_bar_after_recording_upload(
-							tr::now);
+						return tr::
+							lng_teagram_update_bar_after_recording_upload(
+								tr::now);
 					} else if (work.call) {
 						return tr::lng_teagram_update_bar_after_call(tr::now);
 					} else if (work.recording) {
-						return tr::lng_teagram_update_bar_after_recording(tr::now);
+						return tr::lng_teagram_update_bar_after_recording(
+							tr::now);
 					} else if (work.upload) {
 						return tr::lng_teagram_update_bar_after_upload(tr::now);
 					}
@@ -2604,7 +2601,7 @@ void Widget::checkUpdateStatus() {
 			_updateTelegram->setAccessibleName(text);
 			_updateTelegram->setClickedCallback([=] {
 				switch (Core::TeagramUpdateChatListActionForState(
-						manager->state().state)) {
+					manager->state().state)) {
 				case Core::TeagramUpdateChatListAction::DownloadAndInstall:
 					manager->downloadAndInstall();
 					break;

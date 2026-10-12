@@ -40,13 +40,12 @@ constexpr auto kUpdateCheckInterval = 24 * 60 * 60 * 1000;
 constexpr auto kSafetyCheckInterval = 1000;
 
 [[nodiscard]] TeagramUpdateChannel CompiledChannel() {
-	return (kTeagramUpdateChannel == "main")
-		? TeagramUpdateChannel::Main
-		: TeagramUpdateChannel::Dev;
+	return (kTeagramUpdateChannel == "main") ? TeagramUpdateChannel::Main
+											 : TeagramUpdateChannel::Dev;
 }
 
-[[nodiscard]] TeagramUpdateRefusal RefusalFor(
-		TeagramUpdateInstallLocation location) {
+[[nodiscard]] TeagramUpdateRefusal
+RefusalFor(TeagramUpdateInstallLocation location) {
 	switch (location) {
 	case TeagramUpdateInstallLocation::Translocated:
 		return TeagramUpdateRefusal::Translocated;
@@ -71,10 +70,9 @@ constexpr auto kSafetyCheckInterval = 1000;
 		return false;
 	}
 	const auto currentOs = QOperatingSystemVersion::current();
-	const auto current = QVersionNumber(
-		currentOs.majorVersion(),
-		currentOs.minorVersion(),
-		currentOs.microVersion());
+	const auto current
+		= QVersionNumber(currentOs.majorVersion(), currentOs.minorVersion(),
+						 currentOs.microVersion());
 	return QVersionNumber::compare(current, required) >= 0;
 }
 
@@ -95,22 +93,16 @@ TeagramUpdateManager &TeagramUpdateManager::Instance() {
 	return *result;
 }
 
-TeagramUpdateManager::TeagramUpdateManager()
-: QObject(nullptr) {
+TeagramUpdateManager::TeagramUpdateManager() : QObject(nullptr) {
 	if (const auto application = QCoreApplication::instance()) {
-		connect(application, &QCoreApplication::aboutToQuit, this, [=] {
-			shutdown();
-		});
+		connect(application, &QCoreApplication::aboutToQuit, this,
+				[=] { shutdown(); });
 	}
 	_periodicTimer.setInterval(kUpdateCheckInterval);
 	_periodicTimer.setTimerType(Qt::VeryCoarseTimer);
-	connect(&_periodicTimer, &QTimer::timeout, this, [=] {
-		beginCheck(true);
-	});
+	connect(&_periodicTimer, &QTimer::timeout, this, [=] { beginCheck(true); });
 	_safetyTimer.setInterval(kSafetyCheckInterval);
-	connect(&_safetyTimer, &QTimer::timeout, this, [=] {
-		updateSafety();
-	});
+	connect(&_safetyTimer, &QTimer::timeout, this, [=] { updateSafety(); });
 }
 
 TeagramUpdateManager::~TeagramUpdateManager() {
@@ -154,17 +146,15 @@ void TeagramUpdateManager::start() {
 	_started = true;
 	const auto settings = &Core::App().settings();
 	_state.runningBuild = kTeagramUpdateBuild;
-	_state.selectedChannel = ReadTeagramUpdateChannel(
-		*settings,
-		CompiledChannel());
+	_state.selectedChannel
+		= ReadTeagramUpdateChannel(*settings, CompiledChannel());
 	_state.highWaterBuild = ReadTeagramUpdateHighWater(*settings);
 	_state.automatic = cAutoUpdate();
 	_state.previousBundleAvailable = HasPreviousTeagramUpdateBundle();
 	_lastInputAt = crl::now();
-	_updatedToastPending = settings->readPref<bool>(
-		kTeagramUpdateToastPreference,
-		false)
-		&& (_state.highWaterBuild == _state.runningBuild);
+	_updatedToastPending
+		= settings->readPref<bool>(kTeagramUpdateToastPreference, false)
+		  && (_state.highWaterBuild == _state.runningBuild);
 	if (_updatedToastPending) {
 		_state.state = TeagramUpdateUiState::Updated;
 	} else if (_state.runningBuild < _state.highWaterBuild) {
@@ -183,13 +173,10 @@ void TeagramUpdateManager::start() {
 	}
 }
 
-void TeagramUpdateManager::checkNow() {
-	beginCheck(false);
-}
+void TeagramUpdateManager::checkNow() { beginCheck(false); }
 
 void TeagramUpdateManager::setAutomatic(bool enabled) {
-	if (!_started
-		|| _state.state == TeagramUpdateUiState::Restarting
+	if (!_started || _state.state == TeagramUpdateUiState::Restarting
 		|| (_state.automatic == enabled)) {
 		return;
 	}
@@ -221,15 +208,16 @@ void TeagramUpdateManager::setAutomatic(bool enabled) {
 }
 
 void TeagramUpdateManager::setChannel(TeagramUpdateChannel channel) {
-	if (!_started
-		|| _state.state == TeagramUpdateUiState::Restarting
+	if (!_started || _state.state == TeagramUpdateUiState::Restarting
 		|| _state.selectedChannel == channel) {
 		return;
 	}
 	const auto pendingRestart = _pendingExplicitRestart;
-	const auto installedBuildRestart = pendingRestart
-		&& (_pendingRestartState == TeagramUpdateUiState::AlreadyInstalled
-			|| _pendingRestartState == TeagramUpdateUiState::RecoveryRequired);
+	const auto installedBuildRestart
+		= pendingRestart
+		  && (_pendingRestartState == TeagramUpdateUiState::AlreadyInstalled
+			  || _pendingRestartState
+					 == TeagramUpdateUiState::RecoveryRequired);
 	_state.selectedChannel = channel;
 	_state.refusal = TeagramUpdateRefusal::None;
 	_state.rejectionCode.clear();
@@ -241,18 +229,14 @@ void TeagramUpdateManager::setChannel(TeagramUpdateChannel channel) {
 		return;
 	}
 
-	const auto stillEligible = _candidate
-		&& TeagramUpdateBuildIsEligible(
-			_state.runningBuild,
-			_state.highWaterBuild,
-			channel,
-			_candidate->metadata().build(),
-			_candidate->metadata().channel());
+	const auto stillEligible
+		= _candidate
+		  && TeagramUpdateBuildIsEligible(
+			  _state.runningBuild, _state.highWaterBuild, channel,
+			  _candidate->metadata().build(), _candidate->metadata().channel());
 	const auto keepPendingRestart
 		= TeagramUpdateKeepPendingRestartAfterChannelChange(
-			pendingRestart,
-			bool(_candidate),
-			bool(stillEligible),
+			pendingRestart, bool(_candidate), bool(stillEligible),
 			installedBuildRestart);
 	_pendingExplicitRestart = keepPendingRestart;
 	if (_candidate && !stillEligible) {
@@ -292,8 +276,7 @@ void TeagramUpdateManager::setChannel(TeagramUpdateChannel channel) {
 }
 
 void TeagramUpdateManager::downloadAndInstall() {
-	if (!_started
-		|| _state.state == TeagramUpdateUiState::Restarting
+	if (!_started || _state.state == TeagramUpdateUiState::Restarting
 		|| _state.state != TeagramUpdateUiState::Available) {
 		return;
 	}
@@ -306,9 +289,8 @@ void TeagramUpdateManager::cancel() {
 			&& _state.state != TeagramUpdateUiState::Preparing)) {
 		return;
 	}
-	_suppressedAutomaticBuild = std::max(
-		_suppressedAutomaticBuild,
-		_state.candidateBuild);
+	_suppressedAutomaticBuild
+		= std::max(_suppressedAutomaticBuild, _state.candidateBuild);
 	_pendingExplicitRestart = false;
 	++_generation;
 	if (_job && _job->downloader) {
@@ -342,8 +324,7 @@ void TeagramUpdateManager::restartExplicitly() {
 }
 
 void TeagramUpdateManager::dontRestart() {
-	if (!_started
-		|| _state.state == TeagramUpdateUiState::Restarting
+	if (!_started || _state.state == TeagramUpdateUiState::Restarting
 		|| !_pendingExplicitRestart) {
 		return;
 	}
@@ -351,9 +332,7 @@ void TeagramUpdateManager::dontRestart() {
 	setState(_pendingRestartState);
 }
 
-void TeagramUpdateManager::noteUserInput() {
-	_lastInputAt = crl::now();
-}
+void TeagramUpdateManager::noteUserInput() { _lastInputAt = crl::now(); }
 
 void TeagramUpdateManager::showPreviousBundleInFinder() const {
 	ShowPreviousTeagramUpdateBundleInFinder();
@@ -365,19 +344,15 @@ void TeagramUpdateManager::showUpdatedToastIfNeeded() {
 	}
 	const auto window = Core::App().activePrimaryWindow();
 	if (!window) {
-		QTimer::singleShot(kSafetyCheckInterval, this, [=] {
-			showUpdatedToastIfNeeded();
-		});
+		QTimer::singleShot(kSafetyCheckInterval, this,
+						   [=] { showUpdatedToastIfNeeded(); });
 		return;
 	}
 	window->showToast(tr::lng_teagram_update_toast(
-		tr::now,
-		lt_build,
-		QString::number(_state.runningBuild)));
+		tr::now, lt_build, QString::number(_state.runningBuild)));
 	_updatedToastPending = false;
-	Core::App().settings().writePref<bool>(
-		kTeagramUpdateToastPreference,
-		false);
+	Core::App().settings().writePref<bool>(kTeagramUpdateToastPreference,
+										   false);
 	Local::writeSettings();
 }
 
@@ -391,8 +366,7 @@ TeagramUpdateManager::stateChanges() const {
 }
 
 void TeagramUpdateManager::beginCheck(bool automatic) {
-	if (!_started
-		|| _state.state == TeagramUpdateUiState::Checking
+	if (!_started || _state.state == TeagramUpdateUiState::Checking
 		|| _state.state == TeagramUpdateUiState::RecoveryRequired
 		|| _state.state == TeagramUpdateUiState::Restarting
 		|| (automatic && !_state.automatic)) {
@@ -420,131 +394,138 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 	const auto generation = ++_generation;
 	const auto selected = _state.selectedChannel;
 	const auto running = _state.runningBuild;
-	const auto highWater = std::max(
-		_state.highWaterBuild,
-		automatic ? _suppressedAutomaticBuild : quint64(0));
+	const auto highWater
+		= std::max(_state.highWaterBuild,
+				   automatic ? _suppressedAutomaticBuild : quint64(0));
 	const auto job = std::make_shared<Job>();
 	job->downloader = std::make_shared<TeagramUpdateDownloader>();
 	_job = job;
 	_downloadStage = TeagramUpdateDownloadStage::Discovering;
 	auto thread = QThread::create([=] {
 		auto result = job->downloader->checkForUpdates(
-			running,
-			selected,
+			running, selected,
 			[this, generation](TeagramUpdateDownloadStage stage, int progress) {
-				QMetaObject::invokeMethod(this, [=] {
-					if (generation != _generation
-						|| _state.state != TeagramUpdateUiState::Checking) {
-						return;
-					}
-					_downloadStage = stage;
-					_state.progressPercent = progress;
-					_stateChanges.fire_copy(_state);
-				}, Qt::QueuedConnection);
+				QMetaObject::invokeMethod(
+					this,
+					[=] {
+						if (generation != _generation
+							|| _state.state != TeagramUpdateUiState::Checking) {
+							return;
+						}
+						_downloadStage = stage;
+						_state.progressPercent = progress;
+						_stateChanges.fire_copy(_state);
+					},
+					Qt::QueuedConnection);
 			},
-			highWater,
-			false);
+			highWater, false);
 		auto candidate = result.candidate
-			? std::shared_ptr<TeagramUpdateCandidate>(
-				std::move(result.candidate))
-			: nullptr;
-		QMetaObject::invokeMethod(this, [=, reason = result.reason] {
-			if (generation != _generation) {
-				return;
-			}
-			_state.checkedAt = CheckedTime();
-			_state.progressPercent = 0;
-			if (reason == TeagramUpdateDownloadReason::Available
-				&& candidate) {
-				if (!_candidate || candidate->metadata().build()
-					> _candidate->metadata().build()) {
-					_candidate = candidate;
+							 ? std::shared_ptr<TeagramUpdateCandidate>(
+								   std::move(result.candidate))
+							 : nullptr;
+		QMetaObject::invokeMethod(
+			this,
+			[=, reason = result.reason] {
+				if (generation != _generation) {
+					return;
 				}
-				_state.candidateBuild = _candidate->metadata().build();
-				_state.minimumMacOS = _candidate->metadata().minOs();
-				if (!SupportsMinimumMacOS(_state.minimumMacOS)) {
-					setState(TeagramUpdateUiState::NeedsNewerMacOS);
-				} else if (!TeagramUpdateBuildIsEligible(
-						_state.runningBuild,
-						_state.highWaterBuild,
-						_state.selectedChannel,
-						_state.candidateBuild,
-						_candidate->metadata().channel())) {
-					_candidate.reset();
-					_state.candidateBuild = 0;
-					setState(TeagramUpdateUiState::UpToDate);
-				} else {
-					const auto available
-						= TeagramUpdateStateForAvailableCandidate(
-							_state.automatic,
-							_candidate->downloaded());
-					_startDownloadAfterWorker = available.startDownload;
-					setState(available.state);
-				}
-			} else if (reason == TeagramUpdateDownloadReason::NoUpdate) {
-				if (_candidate) {
+				_state.checkedAt = CheckedTime();
+				_state.progressPercent = 0;
+				if (reason == TeagramUpdateDownloadReason::Available
+					&& candidate) {
+					if (!_candidate
+						|| candidate->metadata().build()
+							   > _candidate->metadata().build()) {
+						_candidate = candidate;
+					}
 					_state.candidateBuild = _candidate->metadata().build();
-					setState(_candidate->downloaded()
-						? TeagramUpdateUiState::Ready
-						: TeagramUpdateUiState::Available);
-				} else if (_state.runningBuild < _state.highWaterBuild) {
-					setState(TeagramUpdateUiState::Recovered);
-				} else if (CompiledChannel() == TeagramUpdateChannel::Dev
-					&& _state.selectedChannel == TeagramUpdateChannel::Main) {
-					setState(TeagramUpdateUiState::WaitingForMain);
+					_state.minimumMacOS = _candidate->metadata().minOs();
+					if (!SupportsMinimumMacOS(_state.minimumMacOS)) {
+						setState(TeagramUpdateUiState::NeedsNewerMacOS);
+					} else if (!TeagramUpdateBuildIsEligible(
+								   _state.runningBuild, _state.highWaterBuild,
+								   _state.selectedChannel,
+								   _state.candidateBuild,
+								   _candidate->metadata().channel())) {
+						_candidate.reset();
+						_state.candidateBuild = 0;
+						setState(TeagramUpdateUiState::UpToDate);
+					} else {
+						const auto available
+							= TeagramUpdateStateForAvailableCandidate(
+								_state.automatic, _candidate->downloaded());
+						_startDownloadAfterWorker = available.startDownload;
+						setState(available.state);
+					}
+				} else if (reason == TeagramUpdateDownloadReason::NoUpdate) {
+					if (_candidate) {
+						_state.candidateBuild = _candidate->metadata().build();
+						setState(_candidate->downloaded()
+									 ? TeagramUpdateUiState::Ready
+									 : TeagramUpdateUiState::Available);
+					} else if (_state.runningBuild < _state.highWaterBuild) {
+						setState(TeagramUpdateUiState::Recovered);
+					} else if (CompiledChannel() == TeagramUpdateChannel::Dev
+							   && _state.selectedChannel
+									  == TeagramUpdateChannel::Main) {
+						setState(TeagramUpdateUiState::WaitingForMain);
+					} else {
+						setState(TeagramUpdateUiState::UpToDate);
+					}
+				} else if (reason
+						   == TeagramUpdateDownloadReason::NetworkFailure) {
+					setState(_downloadStage
+									 == TeagramUpdateDownloadStage::Downloading
+								 ? TeagramUpdateUiState::DownloadFailed
+								 : TeagramUpdateUiState::Unreachable);
+				} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
+					setState(TeagramUpdateUiState::Cancelled);
+				} else if (reason == TeagramUpdateDownloadReason::Busy) {
+					setState(TeagramUpdateUiState::Busy);
 				} else {
-					setState(TeagramUpdateUiState::UpToDate);
+					_state.rejectionCode
+						= (reason
+						   == TeagramUpdateDownloadReason::VerificationFailed)
+							  ? u"signature"_q
+						  : (reason
+							 == TeagramUpdateDownloadReason::LimitExceeded)
+							  ? u"package-size"_q
+							  : u"release-metadata"_q;
+					setState(TeagramUpdateUiState::Rejected);
 				}
-			} else if (reason
-					== TeagramUpdateDownloadReason::NetworkFailure) {
-				setState(_downloadStage
-					== TeagramUpdateDownloadStage::Downloading
-					? TeagramUpdateUiState::DownloadFailed
-					: TeagramUpdateUiState::Unreachable);
-			} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
-				setState(TeagramUpdateUiState::Cancelled);
-			} else if (reason == TeagramUpdateDownloadReason::Busy) {
-				setState(TeagramUpdateUiState::Busy);
-			} else {
-				_state.rejectionCode
-					= (reason
-						== TeagramUpdateDownloadReason::VerificationFailed)
-					? u"signature"_q
-					: (reason
-							== TeagramUpdateDownloadReason::LimitExceeded)
-						? u"package-size"_q
-						: u"release-metadata"_q;
-				setState(TeagramUpdateUiState::Rejected);
-			}
-		}, Qt::QueuedConnection);
+			},
+			Qt::QueuedConnection);
 	});
 	_worker = thread;
 	thread->setParent(this);
-	connect(thread, &QThread::finished, this, [=] {
-		if (_worker == thread) {
-			_worker = nullptr;
-		}
-		if (!_started) {
-			if (_candidate) {
-				_candidate->discardArchive();
+	connect(
+		thread, &QThread::finished, this,
+		[=] {
+			if (_worker == thread) {
+				_worker = nullptr;
 			}
-			_candidate.reset();
+			if (!_started) {
+				if (_candidate) {
+					_candidate->discardArchive();
+				}
+				_candidate.reset();
+				_job.reset();
+				thread->deleteLater();
+				return;
+			}
 			_job.reset();
 			thread->deleteLater();
-			return;
-		}
-		_job.reset();
-		thread->deleteLater();
-		if (_startCheckAfterWorker) {
-			_startCheckAfterWorker = false;
-			beginCheck(_automaticJob);
-		} else if (_startDownloadAfterWorker) {
-			_startDownloadAfterWorker = false;
-			beginDownload();
-		} else {
-			updateSafety();
-		}
-	}, Qt::QueuedConnection);
+			if (_startCheckAfterWorker) {
+				_startCheckAfterWorker = false;
+				beginCheck(_automaticJob);
+			} else if (_startDownloadAfterWorker) {
+				_startDownloadAfterWorker = false;
+				beginDownload();
+			} else {
+				updateSafety();
+			}
+		},
+		Qt::QueuedConnection);
 	thread->start();
 }
 
@@ -568,11 +549,8 @@ void TeagramUpdateManager::beginDownload() {
 		return;
 	}
 	if (!TeagramUpdateBuildIsEligible(
-			_state.runningBuild,
-			_state.highWaterBuild,
-			_state.selectedChannel,
-			_candidate->metadata().build(),
-			_candidate->metadata().channel())) {
+			_state.runningBuild, _state.highWaterBuild, _state.selectedChannel,
+			_candidate->metadata().build(), _candidate->metadata().channel())) {
 		_candidate.reset();
 		_state.candidateBuild = 0;
 		setState(TeagramUpdateUiState::Idle);
@@ -591,84 +569,93 @@ void TeagramUpdateManager::beginDownload() {
 		auto result = job->downloader->download(
 			*job->candidate,
 			[this, generation](TeagramUpdateDownloadStage, int progress) {
-				QMetaObject::invokeMethod(this, [=] {
-					if (generation != _generation
-						|| _state.state != TeagramUpdateUiState::Downloading) {
-						return;
-					}
-					_state.progressPercent = progress;
-					_stateChanges.fire_copy(_state);
-				}, Qt::QueuedConnection);
+				QMetaObject::invokeMethod(
+					this,
+					[=] {
+						if (generation != _generation
+							|| _state.state
+								   != TeagramUpdateUiState::Downloading) {
+							return;
+						}
+						_state.progressPercent = progress;
+						_stateChanges.fire_copy(_state);
+					},
+					Qt::QueuedConnection);
 			});
 		auto candidate = result.candidate
-			? std::shared_ptr<TeagramUpdateCandidate>(
-				std::move(result.candidate))
-			: nullptr;
-		QMetaObject::invokeMethod(this, [=, reason = result.reason] {
-			if (generation != _generation) {
-				return;
-			}
-			if (reason == TeagramUpdateDownloadReason::Available
-				&& candidate) {
-				_candidate = candidate;
-				_state.candidateBuild = candidate->metadata().build();
-				_state.progressPercent = 100;
-				setState(TeagramUpdateUiState::Ready);
-				updateSafety();
-			} else if (reason
-					== TeagramUpdateDownloadReason::NetworkFailure) {
-				_candidate.reset();
-				setState(TeagramUpdateUiState::DownloadFailed);
-			} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
-				_candidate.reset();
-				setState(TeagramUpdateUiState::Cancelled);
-			} else if (reason == TeagramUpdateDownloadReason::Busy) {
-				setState(TeagramUpdateUiState::Busy);
-			} else {
-				const auto rejected = TeagramUpdateRecordRejectedBuild(
-					_suppressedAutomaticBuild,
-					_state.candidateBuild);
-				_suppressedAutomaticBuild = rejected.suppressedAutomaticBuild;
-				if (!rejected.candidateRetained) {
-					_candidate.reset();
+							 ? std::shared_ptr<TeagramUpdateCandidate>(
+								   std::move(result.candidate))
+							 : nullptr;
+		QMetaObject::invokeMethod(
+			this,
+			[=, reason = result.reason] {
+				if (generation != _generation) {
+					return;
 				}
-				_state.candidateBuild = rejected.noteBuild;
-				_state.rejectionCode
-					= (reason
-						== TeagramUpdateDownloadReason::LimitExceeded)
-					? u"package-size"_q
-					: u"package-hash"_q;
-				setState(TeagramUpdateUiState::Rejected);
-			}
-		}, Qt::QueuedConnection);
+				if (reason == TeagramUpdateDownloadReason::Available
+					&& candidate) {
+					_candidate = candidate;
+					_state.candidateBuild = candidate->metadata().build();
+					_state.progressPercent = 100;
+					setState(TeagramUpdateUiState::Ready);
+					updateSafety();
+				} else if (reason
+						   == TeagramUpdateDownloadReason::NetworkFailure) {
+					_candidate.reset();
+					setState(TeagramUpdateUiState::DownloadFailed);
+				} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
+					_candidate.reset();
+					setState(TeagramUpdateUiState::Cancelled);
+				} else if (reason == TeagramUpdateDownloadReason::Busy) {
+					setState(TeagramUpdateUiState::Busy);
+				} else {
+					const auto rejected = TeagramUpdateRecordRejectedBuild(
+						_suppressedAutomaticBuild, _state.candidateBuild);
+					_suppressedAutomaticBuild
+						= rejected.suppressedAutomaticBuild;
+					if (!rejected.candidateRetained) {
+						_candidate.reset();
+					}
+					_state.candidateBuild = rejected.noteBuild;
+					_state.rejectionCode
+						= (reason == TeagramUpdateDownloadReason::LimitExceeded)
+							  ? u"package-size"_q
+							  : u"package-hash"_q;
+					setState(TeagramUpdateUiState::Rejected);
+				}
+			},
+			Qt::QueuedConnection);
 	});
 	_worker = thread;
 	thread->setParent(this);
-	connect(thread, &QThread::finished, this, [=] {
-		if (_worker == thread) {
-			_worker = nullptr;
-		}
-		if (!_started) {
-			if (_candidate) {
-				_candidate->discardArchive();
+	connect(
+		thread, &QThread::finished, this,
+		[=] {
+			if (_worker == thread) {
+				_worker = nullptr;
 			}
-			_candidate.reset();
+			if (!_started) {
+				if (_candidate) {
+					_candidate->discardArchive();
+				}
+				_candidate.reset();
+				_job.reset();
+				thread->deleteLater();
+				return;
+			}
 			_job.reset();
 			thread->deleteLater();
-			return;
-		}
-		_job.reset();
-		thread->deleteLater();
-		if (_startCheckAfterWorker) {
-			_startCheckAfterWorker = false;
-			beginCheck(_automaticJob);
-		} else if (_startDownloadAfterWorker) {
-			_startDownloadAfterWorker = false;
-			beginDownload();
-		} else {
-			updateSafety();
-		}
-	}, Qt::QueuedConnection);
+			if (_startCheckAfterWorker) {
+				_startCheckAfterWorker = false;
+				beginCheck(_automaticJob);
+			} else if (_startDownloadAfterWorker) {
+				_startDownloadAfterWorker = false;
+				beginDownload();
+			} else {
+				updateSafety();
+			}
+		},
+		Qt::QueuedConnection);
 	thread->start();
 }
 
@@ -686,10 +673,8 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 		setState(TeagramUpdateUiState::Refused);
 		return;
 	}
-	const auto decision = TeagramUpdateRestartWhenSafe(
-		automatic,
-		activeWork(),
-		idleFor());
+	const auto decision
+		= TeagramUpdateRestartWhenSafe(automatic, activeWork(), idleFor());
 	if (decision == TeagramUpdateRestartDecision::WaitForActiveWork) {
 		if (automatic) {
 			return;
@@ -715,17 +700,22 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 	auto thread = QThread::create([=] {
 		const auto result = job->installer->install(
 			*job->candidate,
-			[this, generation, candidate](TeagramUpdateInstallStage stage, int value) {
+			[this, generation, candidate](TeagramUpdateInstallStage stage,
+										  int value) {
 				if (stage == TeagramUpdateInstallStage::Replacing) {
-					QMetaObject::invokeMethod(this, [=] {
-						if (generation != _generation) {
-							return;
-						}
-						_state.progressPercent = value;
-						setState(TeagramUpdateUiState::Restarting);
-					}, Qt::BlockingQueuedConnection);
+					QMetaObject::invokeMethod(
+						this,
+						[=] {
+							if (generation != _generation) {
+								return;
+							}
+							_state.progressPercent = value;
+							setState(TeagramUpdateUiState::Restarting);
+						},
+						Qt::BlockingQueuedConnection);
 				}
-				if (stage == TeagramUpdateInstallStage::Replacing && value == 100) {
+				if (stage == TeagramUpdateInstallStage::Replacing
+					&& value == 100) {
 					QMetaObject::invokeMethod(
 						this,
 						[=] {
@@ -735,172 +725,188 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 						},
 						Qt::BlockingQueuedConnection);
 				}
-				QMetaObject::invokeMethod(this, [=] {
-					if (generation != _generation) {
-						return;
-					}
-					_state.progressPercent = value;
-					setState((stage == TeagramUpdateInstallStage::Replacing
-						|| stage == TeagramUpdateInstallStage::Relaunching)
-						? TeagramUpdateUiState::Restarting
-						: TeagramUpdateUiState::Preparing);
-				}, Qt::QueuedConnection);
+				QMetaObject::invokeMethod(
+					this,
+					[=] {
+						if (generation != _generation) {
+							return;
+						}
+						_state.progressPercent = value;
+						setState(
+							(stage == TeagramUpdateInstallStage::Replacing
+							 || stage == TeagramUpdateInstallStage::Relaunching)
+								? TeagramUpdateUiState::Restarting
+								: TeagramUpdateUiState::Preparing);
+					},
+					Qt::QueuedConnection);
 			},
-		[this, generation, automatic](
-				const std::function<bool()> &requestRestart) {
-			auto allowed = false;
-			QMetaObject::invokeMethod(this, [=, &allowed, &requestRestart] {
+			[this, generation,
+			 automatic](const std::function<bool()> &requestRestart) {
+				auto allowed = false;
+				QMetaObject::invokeMethod(
+					this,
+					[=, &allowed, &requestRestart] {
+						if (generation != _generation) {
+							return;
+						}
+						if (automatic && !_state.automatic) {
+							setState(TeagramUpdateUiState::AlreadyInstalled);
+							return;
+						}
+						const auto work = activeWork();
+						const auto decision = TeagramUpdateRestartWhenSafe(
+							automatic, work, idleFor());
+						if (decision
+							== TeagramUpdateRestartDecision::RestartNow) {
+							allowed = TeagramUpdateRequestRestartIfSafe(
+								automatic, activeWork(), idleFor(),
+								requestRestart);
+						} else {
+							_state.blockers = work;
+							if (automatic) {
+								_automaticInstalledRestartPending = true;
+								setState(
+									TeagramUpdateUiState::AlreadyInstalled);
+							} else {
+								_pendingRestartState
+									= TeagramUpdateUiState::AlreadyInstalled;
+								_pendingExplicitRestart = true;
+								setState(TeagramUpdateUiState::RestartPending);
+							}
+						}
+					},
+					Qt::BlockingQueuedConnection);
+				return allowed;
+			});
+		QMetaObject::invokeMethod(
+			this,
+			[=] {
 				if (generation != _generation) {
 					return;
 				}
-				if (automatic && !_state.automatic) {
-					setState(TeagramUpdateUiState::AlreadyInstalled);
-					return;
-				}
-				const auto work = activeWork();
-				const auto decision = TeagramUpdateRestartWhenSafe(
-					automatic,
-					work,
-					idleFor());
-				if (decision == TeagramUpdateRestartDecision::RestartNow) {
-					allowed = TeagramUpdateRequestRestartIfSafe(
-						automatic,
-						activeWork(),
-						idleFor(),
-						requestRestart);
-				} else {
-					_state.blockers = work;
-					if (automatic) {
-						_automaticInstalledRestartPending = true;
-						setState(TeagramUpdateUiState::AlreadyInstalled);
-					} else {
-						_pendingRestartState
-							= TeagramUpdateUiState::AlreadyInstalled;
-						_pendingExplicitRestart = true;
-						setState(TeagramUpdateUiState::RestartPending);
+				persistCommittedBuild(candidate->metadata().build(),
+									  result.replacementCommitted);
+				if (result.replacementCommitted) {
+					candidate->discardArchive();
+					if (_candidate == candidate) {
+						_candidate.reset();
 					}
+					_state.candidateBuild = candidate->metadata().build();
 				}
-			}, Qt::BlockingQueuedConnection);
-			return allowed;
-		});
-		QMetaObject::invokeMethod(this, [=] {
-			if (generation != _generation) {
-				return;
-			}
-			persistCommittedBuild(candidate->metadata().build(),
-								  result.replacementCommitted);
-			if (result.replacementCommitted) {
-				candidate->discardArchive();
-				if (_candidate == candidate) {
+				switch (result.reason) {
+				case TeagramUpdateInstallReason::RelaunchRequested:
+					setState(TeagramUpdateUiState::Restarting);
+					break;
+				case TeagramUpdateInstallReason::Cancelled: {
+					_suppressedAutomaticBuild
+						= std::max(_suppressedAutomaticBuild,
+								   candidate->metadata().build());
 					_candidate.reset();
+					_state.candidateBuild = candidate->metadata().build();
+					setState(TeagramUpdateUiState::Cancelled);
+				} break;
+				case TeagramUpdateInstallReason::Busy:
+					setState(TeagramUpdateUiState::Busy);
+					break;
+				case TeagramUpdateInstallReason::
+					RelaunchFailedPreviousAvailable:
+					setState(TeagramUpdateUiState::AlreadyInstalled);
+					break;
+				case TeagramUpdateInstallReason::InstalledBuildChanged:
+					setState(TeagramUpdateUiState::AlreadyInstalled);
+					break;
+				case TeagramUpdateInstallReason::InvalidTarget: {
+					const auto current = CheckTeagramUpdateInstallLocation();
+					_state.refusal = RefusalFor(current);
+					setState(TeagramUpdateUiState::Refused);
+				} break;
+				case TeagramUpdateInstallReason::RefusedTranslocated:
+				case TeagramUpdateInstallReason::RefusedUnwritable:
+				case TeagramUpdateInstallReason::RefusedOtherOwner:
+				case TeagramUpdateInstallReason::RefusedUnsupportedDisk:
+					setState(TeagramUpdateUiState::Refused);
+					break;
+				case TeagramUpdateInstallReason::CandidateRejected:
+				case TeagramUpdateInstallReason::ArchiveRejected: {
+					const auto rejected = TeagramUpdateRecordRejectedBuild(
+						_suppressedAutomaticBuild,
+						candidate->metadata().build());
+					_suppressedAutomaticBuild
+						= rejected.suppressedAutomaticBuild;
+					if (!rejected.candidateRetained) {
+						_candidate.reset();
+					}
+					_state.candidateBuild = rejected.noteBuild;
+					_state.rejectionCode
+						= (result.reason
+						   == TeagramUpdateInstallReason::ArchiveRejected)
+							  ? u"archive"_q
+							  : u"signature"_q;
+					setState(TeagramUpdateUiState::Rejected);
+				} break;
+				case TeagramUpdateInstallReason::ReplacementFailed: {
+					const auto rejected = TeagramUpdateRecordRejectedBuild(
+						_suppressedAutomaticBuild,
+						candidate->metadata().build());
+					_suppressedAutomaticBuild
+						= rejected.suppressedAutomaticBuild;
+					if (!rejected.candidateRetained) {
+						_candidate.reset();
+					}
+					_state.candidateBuild = rejected.noteBuild;
+					_state.rejectionCode = u"bundle-identity"_q;
+					setState(TeagramUpdateUiState::Rejected);
+				} break;
+				case TeagramUpdateInstallReason::RecoveryRequired:
+					candidate->discardArchive();
+					if (_candidate == candidate) {
+						_candidate.reset();
+					}
+					_state.candidateBuild = candidate->metadata().build();
+					_state.rejectionCode.clear();
+					_pendingRestartState
+						= TeagramUpdateUiState::RecoveryRequired;
+					_pendingExplicitRestart = false;
+					_automaticRecoveryRestartPending
+						= result.replacementCommitted && _state.automatic;
+					setState(TeagramUpdateUiState::RecoveryRequired);
+					break;
 				}
-				_state.candidateBuild = candidate->metadata().build();
-			}
-		switch (result.reason) {
-		case TeagramUpdateInstallReason::RelaunchRequested:
-			setState(TeagramUpdateUiState::Restarting);
-			break;
-		case TeagramUpdateInstallReason::Cancelled: {
-			_suppressedAutomaticBuild = std::max(
-				_suppressedAutomaticBuild,
-				candidate->metadata().build());
-			_candidate.reset();
-			_state.candidateBuild = candidate->metadata().build();
-			setState(TeagramUpdateUiState::Cancelled);
-		} break;
-		case TeagramUpdateInstallReason::Busy:
-			setState(TeagramUpdateUiState::Busy);
-			break;
-		case TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable:
-			setState(TeagramUpdateUiState::AlreadyInstalled);
-			break;
-		case TeagramUpdateInstallReason::InstalledBuildChanged:
-			setState(TeagramUpdateUiState::AlreadyInstalled);
-			break;
-		case TeagramUpdateInstallReason::InvalidTarget: {
-			const auto current = CheckTeagramUpdateInstallLocation();
-			_state.refusal = RefusalFor(current);
-			setState(TeagramUpdateUiState::Refused);
-		} break;
-		case TeagramUpdateInstallReason::RefusedTranslocated:
-		case TeagramUpdateInstallReason::RefusedUnwritable:
-		case TeagramUpdateInstallReason::RefusedOtherOwner:
-		case TeagramUpdateInstallReason::RefusedUnsupportedDisk:
-			setState(TeagramUpdateUiState::Refused);
-			break;
-		case TeagramUpdateInstallReason::CandidateRejected:
-		case TeagramUpdateInstallReason::ArchiveRejected: {
-			const auto rejected = TeagramUpdateRecordRejectedBuild(
-				_suppressedAutomaticBuild,
-				candidate->metadata().build());
-			_suppressedAutomaticBuild = rejected.suppressedAutomaticBuild;
-			if (!rejected.candidateRetained) {
-				_candidate.reset();
-			}
-			_state.candidateBuild = rejected.noteBuild;
-			_state.rejectionCode
-				= (result.reason == TeagramUpdateInstallReason::ArchiveRejected)
-				? u"archive"_q
-				: u"signature"_q;
-			setState(TeagramUpdateUiState::Rejected);
-		} break;
-		case TeagramUpdateInstallReason::ReplacementFailed: {
-			const auto rejected = TeagramUpdateRecordRejectedBuild(
-				_suppressedAutomaticBuild,
-				candidate->metadata().build());
-			_suppressedAutomaticBuild = rejected.suppressedAutomaticBuild;
-			if (!rejected.candidateRetained) {
-				_candidate.reset();
-			}
-			_state.candidateBuild = rejected.noteBuild;
-			_state.rejectionCode = u"bundle-identity"_q;
-			setState(TeagramUpdateUiState::Rejected);
-		} break;
-		case TeagramUpdateInstallReason::RecoveryRequired:
-			candidate->discardArchive();
-			if (_candidate == candidate) {
-				_candidate.reset();
-			}
-			_state.candidateBuild = candidate->metadata().build();
-			_state.rejectionCode.clear();
-			_pendingRestartState = TeagramUpdateUiState::RecoveryRequired;
-			_pendingExplicitRestart = false;
-			_automaticRecoveryRestartPending
-				= result.replacementCommitted && _state.automatic;
-			setState(TeagramUpdateUiState::RecoveryRequired);
-			break;
-		}
-		}, Qt::QueuedConnection);
+			},
+			Qt::QueuedConnection);
 	});
 	_worker = thread;
 	thread->setParent(this);
-	connect(thread, &QThread::finished, this, [=] {
-		if (_worker == thread) {
-			_worker = nullptr;
-		}
-		if (!_started) {
-			if (_candidate) {
-				_candidate->discardArchive();
+	connect(
+		thread, &QThread::finished, this,
+		[=] {
+			if (_worker == thread) {
+				_worker = nullptr;
 			}
-			_candidate.reset();
+			if (!_started) {
+				if (_candidate) {
+					_candidate->discardArchive();
+				}
+				_candidate.reset();
+				_job.reset();
+				thread->deleteLater();
+				return;
+			}
 			_job.reset();
 			thread->deleteLater();
-			return;
-		}
-		_job.reset();
-		thread->deleteLater();
-		if (_startCheckAfterWorker) {
-			_startCheckAfterWorker = false;
-			beginCheck(_automaticJob);
-		} else if (_startDownloadAfterWorker) {
-			_startDownloadAfterWorker = false;
-			beginDownload();
-		} else if (_pendingExplicitRestart) {
-			maybeRestart();
-		} else {
-			updateSafety();
-		}
-	}, Qt::QueuedConnection);
+			if (_startCheckAfterWorker) {
+				_startCheckAfterWorker = false;
+				beginCheck(_automaticJob);
+			} else if (_startDownloadAfterWorker) {
+				_startDownloadAfterWorker = false;
+				beginDownload();
+			} else if (_pendingExplicitRestart) {
+				maybeRestart();
+			} else {
+				updateSafety();
+			}
+		},
+		Qt::QueuedConnection);
 	thread->start();
 }
 
@@ -910,8 +916,8 @@ void TeagramUpdateManager::updateSafety() {
 	}
 	const auto work = activeWork();
 	const auto changed = (_state.blockers.call != work.call)
-		|| (_state.blockers.recording != work.recording)
-		|| (_state.blockers.upload != work.upload);
+						 || (_state.blockers.recording != work.recording)
+						 || (_state.blockers.upload != work.upload);
 	_state.blockers = work;
 	if (changed) {
 		_stateChanges.fire_copy(_state);
@@ -943,10 +949,8 @@ void TeagramUpdateManager::maybeRestart() {
 		if (_worker) {
 			return;
 		}
-		if (TeagramUpdateRestartWhenSafe(
-				true,
-				activeWork(),
-				idleFor()) == TeagramUpdateRestartDecision::RestartNow) {
+		if (TeagramUpdateRestartWhenSafe(true, activeWork(), idleFor())
+			== TeagramUpdateRestartDecision::RestartNow) {
 			_automaticRecoveryRestartPending = false;
 			Core::Restart();
 		}
@@ -954,15 +958,13 @@ void TeagramUpdateManager::maybeRestart() {
 		if (_worker) {
 			return;
 		}
-		if (TeagramUpdateRestartWhenSafe(
-				true,
-				activeWork(),
-				idleFor()) == TeagramUpdateRestartDecision::RestartNow) {
+		if (TeagramUpdateRestartWhenSafe(true, activeWork(), idleFor())
+			== TeagramUpdateRestartDecision::RestartNow) {
 			_automaticInstalledRestartPending = false;
 			Core::Restart();
 		}
 	} else if (_state.state == TeagramUpdateUiState::Ready
-		&& _state.automatic) {
+			   && _state.automatic) {
 		beginInstall(true);
 	}
 }
@@ -976,8 +978,8 @@ void TeagramUpdateManager::setState(TeagramUpdateUiState state) {
 
 TeagramUpdateActiveWork TeagramUpdateManager::activeWork() const {
 	auto result = TeagramUpdateActiveWork();
-	result.call = Core::App().calls().inCall()
-		|| Core::App().calls().inGroupCall();
+	result.call
+		= Core::App().calls().inCall() || Core::App().calls().inGroupCall();
 	if (const auto capture = Media::Capture::instance()) {
 		result.recording = capture->started();
 	}
@@ -1005,9 +1007,7 @@ void TeagramUpdateManager::persistCommittedBuild(quint64 build,
 	}
 	_state.highWaterBuild = *highWater;
 	WriteTeagramUpdateHighWater(Core::App().settings(), _state.highWaterBuild);
-	Core::App().settings().writePref<bool>(
-		kTeagramUpdateToastPreference,
-		true);
+	Core::App().settings().writePref<bool>(kTeagramUpdateToastPreference, true);
 	Local::writeSettings();
 }
 

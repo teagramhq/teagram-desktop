@@ -1237,11 +1237,10 @@ private:
 namespace Core {
 
 template <>
-std::optional<QByteArray> Settings::readPrefImpl<QByteArray>(
-	std::string_view key);
+std::optional<QByteArray>
+Settings::readPrefImpl<QByteArray>(std::string_view key);
 template <>
-void Settings::writePrefImpl<QByteArray>(
-	std::string_view key,
-	QByteArray value);
+void Settings::writePrefImpl<QByteArray>(std::string_view key,
+										 QByteArray value);
 
 } // namespace Core

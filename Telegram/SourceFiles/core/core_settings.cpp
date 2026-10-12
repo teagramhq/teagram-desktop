@@ -1344,15 +1344,14 @@ void Settings::writePrefImpl<int>(std::string_view key, int value) {
 }
 
 template <>
-std::optional<QByteArray> Settings::readPrefImpl<QByteArray>(
-		std::string_view key) {
+std::optional<QByteArray>
+Settings::readPrefImpl<QByteArray>(std::string_view key) {
 	return readPrefGeneric(key);
 }
 
 template <>
-void Settings::writePrefImpl<QByteArray>(
-		std::string_view key,
-		QByteArray value) {
+void Settings::writePrefImpl<QByteArray>(std::string_view key,
+										 QByteArray value) {
 	writePrefGeneric(key, value);
 }
 

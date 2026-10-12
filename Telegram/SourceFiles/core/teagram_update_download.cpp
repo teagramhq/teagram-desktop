@@ -158,7 +158,7 @@ class DownloadRunner final {
 									 quint64 highWaterBuild,
 									 bool downloadArchive);
 	[[nodiscard]] InternalResult
-		downloadArchive(const AuthenticatedTeagramUpdate &metadata);
+	downloadArchive(const AuthenticatedTeagramUpdate &metadata);
 
   private:
 	struct PageResult {
@@ -374,9 +374,8 @@ InternalResult DownloadRunner::run(quint64 installedBuild,
 		if (!signatureResult.success) {
 			return Failed(signatureResult.reason);
 		}
-		const auto authenticated
-			= _verify(manifest, signature, installedBuild, highWaterBuild,
-					  installedChannel);
+		const auto authenticated = _verify(manifest, signature, installedBuild,
+										   highWaterBuild, installedChannel);
 		if (!authenticated.authenticated() || !authenticated.package) {
 			if (authenticated.reason
 					!= TeagramUpdateVerificationReason::NotNewer
@@ -393,13 +392,12 @@ InternalResult DownloadRunner::run(quint64 installedBuild,
 		if (!HasAsset(release, authenticated.package->assetName())) {
 			return Failed(Reason::ArchiveRejected);
 		}
-		return shouldDownloadArchive
-			? downloadArchive(*authenticated.package)
-			: InternalResult{
-				Reason::Available,
-				std::move(authenticated.package),
-				nullptr,
-			};
+		return shouldDownloadArchive ? downloadArchive(*authenticated.package)
+									 : InternalResult{
+										   Reason::Available,
+										   std::move(authenticated.package),
+										   nullptr,
+									   };
 	}
 	return Failed(rejectedIdentity
 					  ? Reason::InvalidResponse
@@ -643,9 +641,7 @@ QString TeagramUpdateCandidate::archivePath() const {
 	return _archive ? _archive->fileName() : QString();
 }
 
-bool TeagramUpdateCandidate::downloaded() const {
-	return _archive != nullptr;
-}
+bool TeagramUpdateCandidate::downloaded() const { return _archive != nullptr; }
 
 void TeagramUpdateCandidate::discardArchive() {
 	if (_archive) {
@@ -689,20 +685,19 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	if (!_transport) {
 		return {Reason::InvalidResponse, nullptr};
 	}
-	const auto verify
-		= [&](const QByteArray &manifest, const QByteArray &signature,
-			  quint64 build, quint64 highWater,
-			  TeagramUpdateChannel channel) {
+	const auto verify = [&](const QByteArray &manifest,
+							const QByteArray &signature, quint64 build,
+							quint64 highWater, TeagramUpdateChannel channel) {
 #ifdef TDESKTOP_UNIT_TESTS
-			  if (_useTestVerifier) {
-				  return AuthenticateTeagramUpdateManifestForTests(
-					  manifest, signature, build, channel, _testTrustedKey,
-					  highWater);
-			  }
+		if (_useTestVerifier) {
+			return AuthenticateTeagramUpdateManifestForTests(
+				manifest, signature, build, channel, _testTrustedKey,
+				highWater);
+		}
 #endif // TDESKTOP_UNIT_TESTS
-			  return AuthenticateTeagramUpdateManifest(manifest, signature,
-														   build, channel, highWater);
-		  };
+		return AuthenticateTeagramUpdateManifest(manifest, signature, build,
+												 channel, highWater);
+	};
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto stagingDirectory = _testStagingDirectory;
 #else
@@ -710,8 +705,8 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 #endif // TDESKTOP_UNIT_TESTS
 	auto runner = DownloadRunner(*_transport, _cancelled, stagingDirectory,
 								 verify, std::move(progress));
-	auto result = runner.run(
-		installedBuild, installedChannel, highWaterBuild, downloadArchive);
+	auto result = runner.run(installedBuild, installedChannel, highWaterBuild,
+							 downloadArchive);
 	if (_cancelled.load(std::memory_order_relaxed)) {
 		return {Reason::Cancelled, nullptr};
 	}
@@ -727,9 +722,9 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	};
 }
 
-TeagramUpdateDownloadResult TeagramUpdateDownloader::download(
-		const TeagramUpdateCandidate &available,
-		TeagramUpdateProgressHandler progress) {
+TeagramUpdateDownloadResult
+TeagramUpdateDownloader::download(const TeagramUpdateCandidate &available,
+								  TeagramUpdateProgressHandler progress) {
 	if (_started.exchange(true, std::memory_order_relaxed)) {
 		return {Reason::Busy, nullptr};
 	}
@@ -737,7 +732,7 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::download(
 		return {Reason::InvalidResponse, nullptr};
 	}
 	const auto verify = [](const QByteArray &, const QByteArray &, quint64,
-						 quint64, TeagramUpdateChannel) {
+						   quint64, TeagramUpdateChannel) {
 		return TeagramUpdateManifestVerificationResult();
 	};
 #ifdef TDESKTOP_UNIT_TESTS

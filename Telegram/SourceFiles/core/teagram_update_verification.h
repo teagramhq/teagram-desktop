@@ -166,10 +166,10 @@ VerifyTeagramUpdatePackageForTests(
 
 [[nodiscard]] TeagramUpdateManifestVerificationResult
 AuthenticateTeagramUpdateManifestForTests(
-		const QByteArray &manifest, const QByteArray &signature,
-		quint64 installedBuild, TeagramUpdateChannel installedChannel,
-		const std::optional<TeagramUpdatePublicKey> &trustedKey,
-		quint64 highWaterBuild = 0);
+	const QByteArray &manifest, const QByteArray &signature,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
+	const std::optional<TeagramUpdatePublicKey> &trustedKey,
+	quint64 highWaterBuild = 0);
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace Core

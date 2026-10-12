@@ -318,12 +318,10 @@ ParseCanonicalUnsigned(const QString &value) {
 	return result;
 }
 
-[[nodiscard]] ManifestAuthenticationResult
-AuthenticatePackage(const QByteArray &manifest, const QByteArray &signature,
-					quint64 installedBuild,
-					TeagramUpdateChannel installedChannel,
-					quint64 highWaterBuild,
-					const std::optional<Ed25519PublicKey> &trustedKey) {
+[[nodiscard]] ManifestAuthenticationResult AuthenticatePackage(
+	const QByteArray &manifest, const QByteArray &signature,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
+	quint64 highWaterBuild, const std::optional<Ed25519PublicKey> &trustedKey) {
 	if (!trustedKey) {
 		return RejectedManifest(Reason::MissingTrustedKey);
 	}
@@ -461,12 +459,11 @@ VerifyArchiveDevice(const VerifiedTeagramUpdate &package, QIODevice &archive,
 [[nodiscard]] TeagramUpdateVerificationResult
 VerifyPackage(const QByteArray &manifest, const QByteArray &signature,
 			  QByteArrayView archive, quint64 installedBuild,
-			  TeagramUpdateChannel installedChannel,
-			  quint64 highWaterBuild,
+			  TeagramUpdateChannel installedChannel, quint64 highWaterBuild,
 			  const std::optional<Ed25519PublicKey> &trustedKey) {
-	const auto authenticated = AuthenticatePackage(
-		manifest, signature, installedBuild, installedChannel, highWaterBuild,
-		trustedKey);
+	const auto authenticated
+		= AuthenticatePackage(manifest, signature, installedBuild,
+							  installedChannel, highWaterBuild, trustedKey);
 	if (!authenticated.authenticated() || !authenticated.package) {
 		return Rejected(authenticated.reason);
 	}
@@ -497,10 +494,9 @@ TeagramUpdateManifestVerificationResult AuthenticateTeagramUpdateManifest(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	quint64 highWaterBuild) {
-	auto authenticated
-		= AuthenticatePackage(manifest, signature, installedBuild,
-							  installedChannel, highWaterBuild,
-							  kProductionUpdatePublicKey);
+	auto authenticated = AuthenticatePackage(
+		manifest, signature, installedBuild, installedChannel, highWaterBuild,
+		kProductionUpdatePublicKey);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}
@@ -541,9 +537,9 @@ AuthenticateTeagramUpdateManifestForTests(
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey,
 	quint64 highWaterBuild) {
-	auto authenticated = AuthenticatePackage(
-		manifest, signature, installedBuild, installedChannel, highWaterBuild,
-		trustedKey);
+	auto authenticated
+		= AuthenticatePackage(manifest, signature, installedBuild,
+							  installedChannel, highWaterBuild, trustedKey);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}

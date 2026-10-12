@@ -35,30 +35,23 @@ TEST_CASE(OnlyLastSeenPrivacyKeyIsSupported) {
 }
 
 TEST_CASE(LastSeenExceptionsAllowOnlyUsers) {
-	CHECK(IsPrivacyExceptionPeerAllowed(
-		Key::LastSeen,
-		PrivacyExceptionPeerType::User));
-	CHECK(!IsPrivacyExceptionPeerAllowed(
-		Key::LastSeen,
-		PrivacyExceptionPeerType::Chat));
-	CHECK(!IsPrivacyExceptionPeerAllowed(
-		Key::LastSeen,
-		PrivacyExceptionPeerType::Megagroup));
+	CHECK(IsPrivacyExceptionPeerAllowed(Key::LastSeen,
+										PrivacyExceptionPeerType::User));
+	CHECK(!IsPrivacyExceptionPeerAllowed(Key::LastSeen,
+										 PrivacyExceptionPeerType::Chat));
+	CHECK(!IsPrivacyExceptionPeerAllowed(Key::LastSeen,
+										 PrivacyExceptionPeerType::Megagroup));
 }
 
 TEST_CASE(OtherPrivacyExceptionsKeepTheirPeerTypes) {
-	CHECK(IsPrivacyExceptionPeerAllowed(
-		Key::PhoneNumber,
-		PrivacyExceptionPeerType::User));
-	CHECK(IsPrivacyExceptionPeerAllowed(
-		Key::PhoneNumber,
-		PrivacyExceptionPeerType::Chat));
-	CHECK(IsPrivacyExceptionPeerAllowed(
-		Key::PhoneNumber,
-		PrivacyExceptionPeerType::Megagroup));
-	CHECK(!IsPrivacyExceptionPeerAllowed(
-		Key::PhoneNumber,
-		PrivacyExceptionPeerType::Other));
+	CHECK(IsPrivacyExceptionPeerAllowed(Key::PhoneNumber,
+										PrivacyExceptionPeerType::User));
+	CHECK(IsPrivacyExceptionPeerAllowed(Key::PhoneNumber,
+										PrivacyExceptionPeerType::Chat));
+	CHECK(IsPrivacyExceptionPeerAllowed(Key::PhoneNumber,
+										PrivacyExceptionPeerType::Megagroup));
+	CHECK(!IsPrivacyExceptionPeerAllowed(Key::PhoneNumber,
+										 PrivacyExceptionPeerType::Other));
 }
 
 } // namespace

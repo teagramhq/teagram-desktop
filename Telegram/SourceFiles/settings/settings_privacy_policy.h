@@ -19,14 +19,13 @@ enum class PrivacyExceptionPeerType {
 	Other,
 };
 
-[[nodiscard]] constexpr bool IsPrivacyKeySupported(
-		Api::UserPrivacy::Key key) {
+[[nodiscard]] constexpr bool IsPrivacyKeySupported(Api::UserPrivacy::Key key) {
 	return key == Api::UserPrivacy::Key::LastSeen;
 }
 
-[[nodiscard]] constexpr bool IsPrivacyExceptionPeerAllowed(
-		Api::UserPrivacy::Key key,
-		PrivacyExceptionPeerType type) {
+[[nodiscard]] constexpr bool
+IsPrivacyExceptionPeerAllowed(Api::UserPrivacy::Key key,
+							  PrivacyExceptionPeerType type) {
 	switch (type) {
 	case PrivacyExceptionPeerType::User:
 		return true;

@@ -21,9 +21,8 @@ struct TeagramHighWaterSettings {
 
 	template <typename Type, typename Other = Type>
 	Type readPref(std::string_view, Other &&fallback = Type()) const {
-		return encoded.isEmpty()
-			? std::forward<Other>(fallback)
-			: Type(encoded);
+		return encoded.isEmpty() ? std::forward<Other>(fallback)
+								 : Type(encoded);
 	}
 	template <typename Type, typename Other>
 	void writePref(std::string_view, Other &&value) {
@@ -48,12 +47,12 @@ TEST_CASE(ServerCannotChooseAnUpdateOrigin) {
 
 TEST_CASE(TeagramUpdateEligibilityHonorsHighWaterMark) {
 	using Channel = TeagramUpdateChannel;
-	CHECK(!TeagramUpdateBuildIsEligible(
-		101, 102, Channel::Dev, 102, Channel::Main));
-	CHECK(!TeagramUpdateBuildIsEligible(
-		102, 102, Channel::Main, 103, Channel::Dev));
-	CHECK(TeagramUpdateBuildIsEligible(
-		102, 102, Channel::Main, 103, Channel::Main));
+	CHECK(!TeagramUpdateBuildIsEligible(101, 102, Channel::Dev, 102,
+										Channel::Main));
+	CHECK(!TeagramUpdateBuildIsEligible(102, 102, Channel::Main, 103,
+										Channel::Dev));
+	CHECK(TeagramUpdateBuildIsEligible(102, 102, Channel::Main, 103,
+									   Channel::Main));
 }
 
 TEST_CASE(TeagramUpdateHighWaterPersistsFullUnsignedBuild) {
@@ -76,38 +75,25 @@ TEST_CASE(TeagramUpdateControlsAreDisabledDuringRestarting) {
 }
 
 TEST_CASE(TeagramUpdateChannelSwitchKeepsOnlyValidPendingRestarts) {
-	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(
-		true,
-		true,
-		true,
-		false));
-	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(
-		true,
-		true,
-		false,
-		false));
-	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(
-		true,
-		false,
-		false,
-		true));
-	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(
-		false,
-		true,
-		true,
-		false));
+	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(true, true, true,
+															false));
+	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(true, true, false,
+															 false));
+	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(true, false, false,
+															true));
+	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(false, true, true,
+															 false));
 }
 
 TEST_CASE(TeagramUpdateChatListRestartPendingKeepsRestartAction) {
 	CHECK(TeagramUpdateChatListActionForState(
-		TeagramUpdateUiState::RestartPending)
-		== TeagramUpdateChatListAction::Restart);
+			  TeagramUpdateUiState::RestartPending)
+		  == TeagramUpdateChatListAction::Restart);
+	CHECK(TeagramUpdateChatListActionForState(TeagramUpdateUiState::Downloading)
+		  == TeagramUpdateChatListAction::Cancel);
 	CHECK(TeagramUpdateChatListActionForState(
-		TeagramUpdateUiState::Downloading)
-		== TeagramUpdateChatListAction::Cancel);
-	CHECK(TeagramUpdateChatListActionForState(
-		TeagramUpdateUiState::RecoveryRequired)
-		== TeagramUpdateChatListAction::Restart);
+			  TeagramUpdateUiState::RecoveryRequired)
+		  == TeagramUpdateChatListAction::Restart);
 }
 
 TEST_CASE(TeagramUpdateRecheckPreservesDownloadedCandidateAsReady) {
@@ -122,33 +108,24 @@ TEST_CASE(TeagramUpdateRecheckPreservesDownloadedCandidateAsReady) {
 
 TEST_CASE(TeagramUpdateRestartChecksSafetyAtQuitRequest) {
 	auto work = TeagramUpdateActiveWork();
-	CHECK(TeagramUpdateRestartWhenSafe(
-		false,
-		work,
-		std::chrono::minutes(5))
-		== TeagramUpdateRestartDecision::RestartNow);
+	CHECK(TeagramUpdateRestartWhenSafe(false, work, std::chrono::minutes(5))
+		  == TeagramUpdateRestartDecision::RestartNow);
 
 	work.upload = true;
 	auto requested = false;
-	CHECK(!TeagramUpdateRequestRestartIfSafe(
-		false,
-		work,
-		std::chrono::minutes(5),
-		[&] {
-			requested = true;
-			return true;
-		}));
+	CHECK(!TeagramUpdateRequestRestartIfSafe(false, work,
+											 std::chrono::minutes(5), [&] {
+												 requested = true;
+												 return true;
+											 }));
 	CHECK(!requested);
 
 	work.upload = false;
-	CHECK(TeagramUpdateRequestRestartIfSafe(
-		false,
-		work,
-		std::chrono::minutes(5),
-		[&] {
-			requested = true;
-			return true;
-		}));
+	CHECK(TeagramUpdateRequestRestartIfSafe(false, work,
+											std::chrono::minutes(5), [&] {
+												requested = true;
+												return true;
+											}));
 	CHECK(requested);
 }
 
@@ -168,15 +145,14 @@ TEST_CASE(TeagramUpdateNoteVariantsFollowStateAndAutomaticSetting) {
 	using Note = TeagramUpdateNoteVariant;
 	CHECK(TeagramUpdateNoteForState(State::Idle, true) == Note::AutomaticOn);
 	CHECK(TeagramUpdateNoteForState(State::Checking, false)
-		== Note::AutomaticOff);
+		  == Note::AutomaticOff);
 	CHECK(TeagramUpdateNoteForState(State::Unreachable, true)
-		== Note::UnreachableAutomatic);
+		  == Note::UnreachableAutomatic);
 	CHECK(TeagramUpdateNoteForState(State::Unreachable, false)
-		== Note::UnreachableManual);
+		  == Note::UnreachableManual);
 	CHECK(TeagramUpdateNoteForState(State::Ready, true)
-		== Note::ReadyAutomatic);
-	CHECK(TeagramUpdateNoteForState(State::Ready, false)
-		== Note::ReadyManual);
+		  == Note::ReadyAutomatic);
+	CHECK(TeagramUpdateNoteForState(State::Ready, false) == Note::ReadyManual);
 	CHECK(TeagramUpdateNoteForState(State::RecoveryRequired, false)
-		== Note::RecoveryRequired);
+		  == Note::RecoveryRequired);
 }

@@ -27,7 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 class TeagramUpdateManager final : public QObject {
-public:
+  public:
 	[[nodiscard]] static TeagramUpdateManager &Instance();
 
 	void start();
@@ -46,7 +46,7 @@ public:
 	[[nodiscard]] const TeagramUpdateSnapshot &state() const;
 	[[nodiscard]] rpl::producer<TeagramUpdateSnapshot> stateChanges() const;
 
-private:
+  private:
 	struct Job;
 
 	TeagramUpdateManager();

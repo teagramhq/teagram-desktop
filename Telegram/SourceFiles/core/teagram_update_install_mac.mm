@@ -497,10 +497,7 @@ RecoverAtStartup(const QString &installed, const QString &staging,
 		quit();
 		return true;
 	}
-	return QMetaObject::invokeMethod(
-		application,
-		quit,
-		Qt::QueuedConnection);
+	return QMetaObject::invokeMethod(application, quit, Qt::QueuedConnection);
 }
 
 enum class StartupWaitResult {
@@ -746,8 +743,8 @@ TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
 			!= u"io.teagram.desktop"_q) {
 			return TeagramUpdateInstallLocation::Unwritable;
 		}
-		const auto installed = CanonicalBundlePath(
-			FromNative([mainBundle bundlePath]));
+		const auto installed
+			= CanonicalBundlePath(FromNative([mainBundle bundlePath]));
 		if (installed.isEmpty()) {
 			return TeagramUpdateInstallLocation::Unwritable;
 		} else if (IsTranslocated(installed)) {
@@ -767,10 +764,9 @@ TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
 			return TeagramUpdateInstallLocation::OtherOwner;
 		} else if (bundleInfo.st_dev != parentInfo.st_dev) {
 			return TeagramUpdateInstallLocation::UnsupportedDisk;
-		} else if (!S_ISDIR(bundleInfo.st_mode)
-			|| !S_ISDIR(parentInfo.st_mode)
-			|| ::access(bundleBytes.constData(), W_OK) != 0
-			|| ::access(parentBytes.constData(), W_OK | X_OK) != 0) {
+		} else if (!S_ISDIR(bundleInfo.st_mode) || !S_ISDIR(parentInfo.st_mode)
+				   || ::access(bundleBytes.constData(), W_OK) != 0
+				   || ::access(parentBytes.constData(), W_OK | X_OK) != 0) {
 			return TeagramUpdateInstallLocation::Unwritable;
 		}
 		return TeagramUpdateInstallLocation::Allowed;
@@ -785,8 +781,9 @@ bool HasPreviousTeagramUpdateBundle() {
 			return false;
 		}
 		const auto installed = FromNative([mainBundle bundlePath]);
-		const auto previous = QDir(QFileInfo(installed).absolutePath()).filePath(
-			QString::fromLatin1(kPreviousBundle));
+		const auto previous
+			= QDir(QFileInfo(installed).absolutePath())
+				  .filePath(QString::fromLatin1(kPreviousBundle));
 		return CanonicalBundlePath(previous) == QDir::cleanPath(previous);
 	}
 }
@@ -799,11 +796,10 @@ void ShowPreviousTeagramUpdateBundleInFinder() {
 		const auto mainBundle = [NSBundle mainBundle];
 		const auto installed = FromNative([mainBundle bundlePath]);
 		const auto parent = QFileInfo(installed).absolutePath();
-		const auto previous = QDir(parent).filePath(
-			QString::fromLatin1(kPreviousBundle));
-		[[NSWorkspace sharedWorkspace]
-			selectFile:Platform::Q2NSString(previous)
-			inFileViewerRootedAtPath:Platform::Q2NSString(parent)];
+		const auto previous
+			= QDir(parent).filePath(QString::fromLatin1(kPreviousBundle));
+		[[NSWorkspace sharedWorkspace] selectFile:Platform::Q2NSString(previous)
+						 inFileViewerRootedAtPath:Platform::Q2NSString(parent)];
 	}
 }
 
@@ -1104,10 +1100,8 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 		emit(TeagramUpdateInstallStage::Replacing, 100);
 		if (::rmdir(QFile::encodeName(staging).constData()) != 0
 			&& errno != ENOENT) {
-			return InstallResult(
-				TeagramUpdateInstallReason::RecoveryRequired,
-				replacement.previousBundlePath,
-				true);
+			return InstallResult(TeagramUpdateInstallReason::RecoveryRequired,
+								 replacement.previousBundlePath, true);
 		}
 		emit(TeagramUpdateInstallStage::Relaunching, 0);
 		if (!MacProtectedPath::CheckExternalPathForUse(
@@ -1115,27 +1109,22 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 				"core.teagram-update.relaunch")) {
 			return InstallResult(
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
-				replacement.previousBundlePath,
-				true);
+				replacement.previousBundlePath, true);
 		}
 		if (beforeRelaunch) {
 			if (!beforeRelaunch(requestRestart)) {
 				return InstallResult(
 					TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
-					replacement.previousBundlePath,
-					true);
+					replacement.previousBundlePath, true);
 			}
 		} else if (!requestRestart()) {
 			return InstallResult(
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
-				replacement.previousBundlePath,
-				true);
+				replacement.previousBundlePath, true);
 		}
 		emit(TeagramUpdateInstallStage::Relaunching, 100);
-		return InstallResult(
-			TeagramUpdateInstallReason::RelaunchRequested,
-			replacement.previousBundlePath,
-			true);
+		return InstallResult(TeagramUpdateInstallReason::RelaunchRequested,
+							 replacement.previousBundlePath, true);
 	}
 }
 

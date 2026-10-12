@@ -129,8 +129,7 @@ class TeagramUpdateInstaller final {
 
 void CompleteTeagramUpdateStartup();
 
-[[nodiscard]] TeagramUpdateInstallLocation
-CheckTeagramUpdateInstallLocation();
+[[nodiscard]] TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation();
 [[nodiscard]] bool HasPreviousTeagramUpdateBundle();
 void ShowPreviousTeagramUpdateBundleInFinder();
 

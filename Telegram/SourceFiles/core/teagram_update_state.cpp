@@ -9,23 +9,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
-TeagramUpdateNoteVariant TeagramUpdateNoteForState(
-		TeagramUpdateUiState state,
-		bool automatic) {
+TeagramUpdateNoteVariant TeagramUpdateNoteForState(TeagramUpdateUiState state,
+												   bool automatic) {
 	switch (state) {
 	case TeagramUpdateUiState::Idle:
 	case TeagramUpdateUiState::Checking:
 	case TeagramUpdateUiState::UpToDate:
 	case TeagramUpdateUiState::Updated:
-		return automatic
-			? TeagramUpdateNoteVariant::AutomaticOn
-			: TeagramUpdateNoteVariant::AutomaticOff;
+		return automatic ? TeagramUpdateNoteVariant::AutomaticOn
+						 : TeagramUpdateNoteVariant::AutomaticOff;
 	case TeagramUpdateUiState::WaitingForMain:
 		return TeagramUpdateNoteVariant::WaitingForMain;
 	case TeagramUpdateUiState::Unreachable:
-		return automatic
-			? TeagramUpdateNoteVariant::UnreachableAutomatic
-			: TeagramUpdateNoteVariant::UnreachableManual;
+		return automatic ? TeagramUpdateNoteVariant::UnreachableAutomatic
+						 : TeagramUpdateNoteVariant::UnreachableManual;
 	case TeagramUpdateUiState::Available:
 		return TeagramUpdateNoteVariant::Available;
 	case TeagramUpdateUiState::Downloading:
@@ -33,9 +30,8 @@ TeagramUpdateNoteVariant TeagramUpdateNoteForState(
 	case TeagramUpdateUiState::Preparing:
 		return TeagramUpdateNoteVariant::Preparing;
 	case TeagramUpdateUiState::Ready:
-		return automatic
-			? TeagramUpdateNoteVariant::ReadyAutomatic
-			: TeagramUpdateNoteVariant::ReadyManual;
+		return automatic ? TeagramUpdateNoteVariant::ReadyAutomatic
+						 : TeagramUpdateNoteVariant::ReadyManual;
 	case TeagramUpdateUiState::RestartPending:
 		return TeagramUpdateNoteVariant::RestartPending;
 	case TeagramUpdateUiState::Restarting:
@@ -62,22 +58,19 @@ TeagramUpdateNoteVariant TeagramUpdateNoteForState(
 	Unexpected("Value in TeagramUpdateNoteForState.");
 }
 
-bool TeagramUpdateBuildIsEligible(
-		std::uint64_t runningBuild,
-		std::uint64_t highWaterBuild,
-		TeagramUpdateChannel selectedChannel,
-		std::uint64_t candidateBuild,
-		TeagramUpdateChannel candidateChannel) {
-	return candidateBuild > runningBuild
-		&& candidateBuild > highWaterBuild
-		&& (selectedChannel == TeagramUpdateChannel::Dev
-			|| candidateChannel == TeagramUpdateChannel::Main);
+bool TeagramUpdateBuildIsEligible(std::uint64_t runningBuild,
+								  std::uint64_t highWaterBuild,
+								  TeagramUpdateChannel selectedChannel,
+								  std::uint64_t candidateBuild,
+								  TeagramUpdateChannel candidateChannel) {
+	return candidateBuild > runningBuild && candidateBuild > highWaterBuild
+		   && (selectedChannel == TeagramUpdateChannel::Dev
+			   || candidateChannel == TeagramUpdateChannel::Main);
 }
 
-TeagramUpdateRestartDecision TeagramUpdateRestartWhenSafe(
-		bool automatic,
-		TeagramUpdateActiveWork work,
-		std::chrono::milliseconds idleFor) {
+TeagramUpdateRestartDecision
+TeagramUpdateRestartWhenSafe(bool automatic, TeagramUpdateActiveWork work,
+							 std::chrono::milliseconds idleFor) {
 	if (work.call || work.recording || work.upload) {
 		return TeagramUpdateRestartDecision::WaitForActiveWork;
 	} else if (automatic && idleFor < std::chrono::minutes(2)) {
@@ -87,14 +80,12 @@ TeagramUpdateRestartDecision TeagramUpdateRestartWhenSafe(
 }
 
 bool TeagramUpdateRequestRestartIfSafe(
-		bool automatic,
-		TeagramUpdateActiveWork work,
-		std::chrono::milliseconds idleFor,
-		const std::function<bool()> &requestRestart) {
+	bool automatic, TeagramUpdateActiveWork work,
+	std::chrono::milliseconds idleFor,
+	const std::function<bool()> &requestRestart) {
 	return TeagramUpdateRestartWhenSafe(automatic, work, idleFor)
-		== TeagramUpdateRestartDecision::RestartNow
-		&& requestRestart
-		&& requestRestart();
+			   == TeagramUpdateRestartDecision::RestartNow
+		   && requestRestart && requestRestart();
 }
 
 } // namespace Core

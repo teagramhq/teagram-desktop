@@ -116,23 +116,20 @@ struct TeagramUpdateRejectedBuildState {
 	bool candidateRetained = false;
 };
 
-[[nodiscard]] constexpr bool TeagramUpdateControlDisabled(
-		TeagramUpdateUiState state,
-		bool checkControl) {
+[[nodiscard]] constexpr bool
+TeagramUpdateControlDisabled(TeagramUpdateUiState state, bool checkControl) {
 	return (state == TeagramUpdateUiState::Restarting)
-		|| (checkControl
-			&& (state == TeagramUpdateUiState::Checking
-				|| state == TeagramUpdateUiState::RecoveryRequired));
+		   || (checkControl
+			   && (state == TeagramUpdateUiState::Checking
+				   || state == TeagramUpdateUiState::RecoveryRequired));
 }
 
 [[nodiscard]] constexpr bool TeagramUpdateKeepPendingRestartAfterChannelChange(
-		bool pendingRestart,
-		bool hasCandidate,
-		bool candidateStillEligible,
-		bool installedBuildRestart) {
+	bool pendingRestart, bool hasCandidate, bool candidateStillEligible,
+	bool installedBuildRestart) {
 	return pendingRestart
-		&& (installedBuildRestart
-			|| (hasCandidate && candidateStillEligible));
+		   && (installedBuildRestart
+			   || (hasCandidate && candidateStillEligible));
 }
 
 [[nodiscard]] constexpr TeagramUpdateChatListAction
@@ -154,32 +151,29 @@ TeagramUpdateChatListActionForState(TeagramUpdateUiState state) {
 }
 
 [[nodiscard]] constexpr TeagramUpdateRejectedBuildState
-TeagramUpdateRecordRejectedBuild(
-		quint64 suppressedAutomaticBuild,
-		quint64 rejectedBuild) {
+TeagramUpdateRecordRejectedBuild(quint64 suppressedAutomaticBuild,
+								 quint64 rejectedBuild) {
 	return {
 		.suppressedAutomaticBuild = (rejectedBuild > suppressedAutomaticBuild)
-			? rejectedBuild
-			: suppressedAutomaticBuild,
+										? rejectedBuild
+										: suppressedAutomaticBuild,
 		.noteBuild = rejectedBuild,
 	};
 }
 
-[[nodiscard]] TeagramUpdateNoteVariant TeagramUpdateNoteForState(
-	TeagramUpdateUiState state,
-	bool automatic);
+[[nodiscard]] TeagramUpdateNoteVariant
+TeagramUpdateNoteForState(TeagramUpdateUiState state, bool automatic);
 
 [[nodiscard]] constexpr bool TeagramUpdateUiEnabled() {
 	return kTeagramUpdateEngineActive;
 }
 
 template <typename Settings>
-[[nodiscard]] TeagramUpdateChannel ReadTeagramUpdateChannel(
-		Settings &settings,
-		TeagramUpdateChannel compiledChannel) {
-	switch (settings.template readPref<int>(
-			kTeagramUpdateChannelPreference,
-			-1)) {
+[[nodiscard]] TeagramUpdateChannel
+ReadTeagramUpdateChannel(Settings &settings,
+						 TeagramUpdateChannel compiledChannel) {
+	switch (
+		settings.template readPref<int>(kTeagramUpdateChannelPreference, -1)) {
 	case int(TeagramUpdateChannel::Dev):
 		return TeagramUpdateChannel::Dev;
 	case int(TeagramUpdateChannel::Main):
@@ -190,19 +184,16 @@ template <typename Settings>
 }
 
 template <typename Settings>
-void WriteTeagramUpdateChannel(
-		Settings &settings,
-		TeagramUpdateChannel channel) {
-	settings.template writePref<int>(
-		kTeagramUpdateChannelPreference,
-		static_cast<int>(channel));
+void WriteTeagramUpdateChannel(Settings &settings,
+							   TeagramUpdateChannel channel) {
+	settings.template writePref<int>(kTeagramUpdateChannelPreference,
+									 static_cast<int>(channel));
 }
 
 template <typename Settings>
 [[nodiscard]] quint64 ReadTeagramUpdateHighWater(Settings &settings) {
 	const auto encoded = settings.template readPref<QByteArray>(
-		kTeagramUpdateHighWaterPreference,
-		QByteArray());
+		kTeagramUpdateHighWaterPreference, QByteArray());
 	if (encoded.isEmpty()) {
 		return 0;
 	}
@@ -212,12 +203,9 @@ template <typename Settings>
 }
 
 template <typename Settings>
-void WriteTeagramUpdateHighWater(
-	Settings &settings,
-	quint64 build) {
-	settings.template writePref<QByteArray>(
-		kTeagramUpdateHighWaterPreference,
-		QByteArray::number(build));
+void WriteTeagramUpdateHighWater(Settings &settings, quint64 build) {
+	settings.template writePref<QByteArray>(kTeagramUpdateHighWaterPreference,
+											QByteArray::number(build));
 }
 
 [[nodiscard]] constexpr std::optional<quint64>
@@ -230,10 +218,8 @@ TeagramUpdateCommittedHighWater(quint64 highWaterBuild, quint64 candidateBuild,
 }
 
 [[nodiscard]] bool TeagramUpdateBuildIsEligible(
-	std::uint64_t runningBuild,
-	std::uint64_t highWaterBuild,
-	TeagramUpdateChannel selectedChannel,
-	std::uint64_t candidateBuild,
+	std::uint64_t runningBuild, std::uint64_t highWaterBuild,
+	TeagramUpdateChannel selectedChannel, std::uint64_t candidateBuild,
 	TeagramUpdateChannel candidateChannel);
 
 enum class TeagramUpdateRestartDecision {
@@ -248,9 +234,8 @@ struct TeagramUpdateAvailableCandidateState {
 };
 
 [[nodiscard]] constexpr TeagramUpdateAvailableCandidateState
-TeagramUpdateStateForAvailableCandidate(
-		bool automatic,
-		bool alreadyDownloaded) {
+TeagramUpdateStateForAvailableCandidate(bool automatic,
+										bool alreadyDownloaded) {
 	return alreadyDownloaded
 		? TeagramUpdateAvailableCandidateState{
 			.state = TeagramUpdateUiState::Ready,
@@ -262,15 +247,13 @@ TeagramUpdateStateForAvailableCandidate(
 		};
 }
 
-[[nodiscard]] TeagramUpdateRestartDecision TeagramUpdateRestartWhenSafe(
-	bool automatic,
-	TeagramUpdateActiveWork work,
-	std::chrono::milliseconds idleFor);
+[[nodiscard]] TeagramUpdateRestartDecision
+TeagramUpdateRestartWhenSafe(bool automatic, TeagramUpdateActiveWork work,
+							 std::chrono::milliseconds idleFor);
 
-[[nodiscard]] bool TeagramUpdateRequestRestartIfSafe(
-	bool automatic,
-	TeagramUpdateActiveWork work,
-	std::chrono::milliseconds idleFor,
-	const std::function<bool()> &requestRestart);
+[[nodiscard]] bool
+TeagramUpdateRequestRestartIfSafe(bool automatic, TeagramUpdateActiveWork work,
+								  std::chrono::milliseconds idleFor,
+								  const std::function<bool()> &requestRestart);
 
 } // namespace Core
