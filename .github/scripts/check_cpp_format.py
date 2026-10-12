@@ -130,6 +130,32 @@ def history_test(formatter: str) -> None:
         git("commit", "--quiet", "-m", "base")
         base = git("rev-parse", "HEAD")
 
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            empty_result = check_source_range(
+                root,
+                formatter,
+                base,
+                "empty-range",
+                base,
+                base,
+                allow_empty=True,
+            )
+            strict_empty_result = check_source_range(
+                root,
+                formatter,
+                base,
+                "strict-empty-range",
+                base,
+                base,
+            )
+        if empty_result.get("result") != "success":
+            raise RuntimeError(f"an empty C/C++ source range did not pass when allowed: {empty_result}")
+        if strict_empty_result.get("result") != "failure":
+            raise RuntimeError(
+                "an empty C/C++ source range passed without explicit permission: "
+                f"{strict_empty_result}"
+            )
+
         profile.write_text("int initialize_profile() { return 2; }\n", encoding="utf-8")
         git("add", "profile.cpp")
         git("commit", "--quiet", "-m", "merged source")
@@ -208,6 +234,7 @@ def check_source_range(
     name: str,
     base: str,
     head: str,
+    allow_empty: bool = False,
 ) -> dict[str, object]:
     resolved_base = resolve_commit(root, base)
     resolved_head = resolve_commit(root, head)
@@ -275,6 +302,10 @@ def check_source_range(
         "result": "pending",
     }
     if not ranges or not total_changed_lines:
+        if allow_empty:
+            manifest["result"] = "success"
+            print(f"No changed C/C++ source lines in {name}; format check not needed.")
+            return manifest
         error = (
             f"source range {name} ({resolved_base}..{resolved_head}) has no changed C/C++ source lines "
             f"at tested SHA {tested_head} in its declared source-file scope; refusing zero-coverage pass"
@@ -329,6 +360,11 @@ def main() -> int:
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--formatter", default="clang-format")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="pass when a source range has no added C/C++ lines",
+    )
     parser.add_argument("--tested-head", default="HEAD")
     parser.add_argument(
         "--source-range",
@@ -385,7 +421,15 @@ def main() -> int:
                 continue
             seen_names.add(name)
             try:
-                result = check_source_range(root, formatter, tested_head, name, base, head)
+                result = check_source_range(
+                    root,
+                    formatter,
+                    tested_head,
+                    name,
+                    base,
+                    head,
+                    allow_empty=args.allow_empty,
+                )
             except Exception as error:
                 result = {
                     "name": name,

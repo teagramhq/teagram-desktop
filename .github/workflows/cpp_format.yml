@@ -1,0 +1,79 @@
+name: C++ changed-range format.
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-format-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp-changed-range-format:
+    name: C++ changed-range format
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format 23.1.0.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wheel="clang_format-23.1.0-py2.py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+          formatter_env="$RUNNER_TEMP/clang-format-23.1.0"
+          mkdir -p "$formatter_env"
+          curl -fsSL \
+            "https://files.pythonhosted.org/packages/d6/5e/0cec4027161a74c9b04769a9e157463deee9ccbef672a2d13d9ab58bd7c2/$wheel" \
+            -o "$RUNNER_TEMP/$wheel"
+          printf '%s  %s\n' \
+            9c8e732d10689d23d59854d47efa048b0f87191113d1bc7df4286a5f960ecd17 \
+            "$RUNNER_TEMP/$wheel" \
+            | sha256sum --check
+          python3 - "$RUNNER_TEMP/$wheel" "$formatter_env" <<'PY'
+          import pathlib
+          import sys
+          import zipfile
+
+          wheel, destination = map(pathlib.Path, sys.argv[1:])
+          with zipfile.ZipFile(wheel) as archive:
+              archive.extractall(destination)
+          PY
+          formatter="$formatter_env/clang_format/data/bin/clang-format"
+          chmod +x "$formatter"
+          actual_version="$("$formatter" --version)"
+          printf '%s\n' "$actual_version"
+          test "$actual_version" = 'clang-format version 23.1.0'
+          echo "$(dirname "$formatter")" >> "$GITHUB_PATH"
+
+      - name: Check changed C++ formatting.
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          git cat-file -e "${PR_BASE_SHA}^{commit}"
+          git cat-file -e "${PR_HEAD_SHA}^{commit}"
+          git checkout --detach "$PR_HEAD_SHA"
+          merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+
+          python3 .github/scripts/check_cpp_format.py \
+            --formatter clang-format \
+            --self-test
+          python3 .github/scripts/check_cpp_format.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --formatter clang-format \
+            --allow-empty \
+            --tested-head "$PR_HEAD_SHA" \
+            --source-range pull-request "$merge_base" "$PR_HEAD_SHA"
