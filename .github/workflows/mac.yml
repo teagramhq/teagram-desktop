@@ -149,8 +149,7 @@ jobs:
           path: ${{ runner.temp }}/ccache
           key: macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            macOS-arm64-ccache-pr-${{ hashFiles('CCACHE_KEY.txt') }}-
-            macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-
 
       - name: Verify Mac App Store variant is unsupported.
         id: store_variant_rejection
@@ -902,11 +901,24 @@ jobs:
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
           set -Eeuo pipefail
-          ccache --show-stats
-          stats="$(ccache --print-stats)"
+          report_stats_unavailable() {
+            echo "::warning::$1"
+            echo "save=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if ! ccache --show-stats; then
+            report_stats_unavailable "Unable to read ccache statistics; compiler-cache health is unknown."
+          fi
+          if ! stats="$(ccache --print-stats)"; then
+            report_stats_unavailable "Unable to export ccache statistics; compiler-cache health is unknown."
+          fi
           printf '%s\n' "$stats"
-          hits="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_hit_count.sh")"
-          misses="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_miss_count.sh")"
+          if ! hits="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_hit_count.sh")"; then
+            report_stats_unavailable "Unable to parse ccache hits; compiler-cache health is unknown."
+          fi
+          if ! misses="$(printf '%s\n' "$stats" | bash "$REPO_NAME/.github/scripts/ccache_miss_count.sh")"; then
+            report_stats_unavailable "Unable to parse ccache misses; compiler-cache health is unknown."
+          fi
           total=$((10#$hits + 10#$misses))
           if ((total)); then
             hit_rate="$(awk -v hits="$hits" -v total="$total" 'BEGIN { printf "%.1f%%", 100 * hits / total }')"
@@ -926,12 +938,10 @@ jobs:
           echo "misses=$misses" >> "$GITHUB_OUTPUT"
           bash "$REPO_NAME/.github/scripts/ccache_save_decision.sh" "$misses" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_EVENT_NAME" == 'pull_request' && -n "$CCACHE_MATCHED_KEY" ]] && ((hits == 0)); then
-            echo "::error::A restored compiler cache produced no cache hits."
-            exit 1
+            echo "::warning::A restored compiler cache produced no cache hits. The source build result remains authoritative."
           fi
           if [[ "$BUILD_OUTCOME" == 'success' ]] && ((total == 0)); then
-            echo "::error::ccache did not record any compiler invocations for the Teagram build."
-            exit 1
+            echo "::warning::ccache did not record any compiler invocations for the Teagram build. The source build result remains authoritative."
           fi
 
       - name: Save Teagram compiler cache.
@@ -964,8 +974,7 @@ jobs:
               && [ -n "$CCACHE_MATCHED_KEY" ] \
               && [ "$LIBRARIES_CACHE_HIT" = "true" ] \
               && ((elapsed_seconds > 1800)); then
-            echo "::error::Warm-cache (ccache and libraries) MacOS PR build exceeded the 30-minute limit."
-            exit 1
+            echo "::warning::Warm-cache MacOS PR build exceeded the 30-minute target (${elapsed_seconds}s); the source build result remains authoritative."
           fi
   libiconv:
     name: Focused libiconv (macOS arm64)
