@@ -44,25 +44,20 @@ namespace Main::details {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-[[nodiscard]] inline bool automaticChatTranslationEnabled(
-	bool serverSupported,
-	bool settingEnabled,
-	bool premium,
-	bool channelAutoTranslation) {
-	return serverSupported
-		&& settingEnabled
-		&& (premium || channelAutoTranslation);
+[[nodiscard]] inline bool
+automaticChatTranslationEnabled(bool serverSupported, bool settingEnabled,
+								bool premium, bool channelAutoTranslation) {
+	return serverSupported && settingEnabled
+		   && (premium || channelAutoTranslation);
 }
 
-[[nodiscard]] inline bool canEditChannelAutoTranslation(
-	bool serverSupported,
-	bool canEdit) {
+[[nodiscard]] inline bool canEditChannelAutoTranslation(bool serverSupported,
+														bool canEdit) {
 	return serverSupported && canEdit;
 }
 
-[[nodiscard]] inline bool shouldSaveChannelAutoTranslation(
-	bool serverSupported,
-	bool hasSavedValue) {
+[[nodiscard]] inline bool shouldSaveChannelAutoTranslation(bool serverSupported,
+														   bool hasSavedValue) {
 	return serverSupported && hasSavedValue;
 }
 

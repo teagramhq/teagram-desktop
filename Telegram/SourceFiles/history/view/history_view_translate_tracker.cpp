@@ -72,16 +72,11 @@ void TranslateTracker::setup() {
 	_trackingLanguage = rpl::combine(
 		Core::App().settings().translateChatEnabledValue(),
 		Data::AmPremiumValue(&_history->session()),
-		std::move(autoTranslationValue),
-		rpl::single(serverSupported),
-		[](bool settingEnabled,
-			bool premium,
-			bool channelAutoTranslation,
-			bool serverSupported) {
+		std::move(autoTranslationValue), rpl::single(serverSupported),
+		[](bool settingEnabled, bool premium, bool channelAutoTranslation,
+		   bool serverSupported) {
 			return Main::details::automaticChatTranslationEnabled(
-				serverSupported,
-				settingEnabled,
-				premium,
+				serverSupported, settingEnabled, premium,
 				channelAutoTranslation);
 		});
 	_trackingLanguage.value() | rpl::on_next([=](bool tracking) {

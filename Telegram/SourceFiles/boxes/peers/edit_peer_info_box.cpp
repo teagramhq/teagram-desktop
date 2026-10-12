@@ -1592,10 +1592,11 @@ void Controller::fillManageSection() {
 	const auto canEditSignatures = isChannel
 		&& channel->canEditSignatures()
 		&& !channel->isMegagroup();
-	const auto canEditAutoTranslate = isChannel
-		&& Main::details::canEditChannelAutoTranslation(
-			channel->session().serverTranslationSupported(),
-			channel->canEditAutoTranslate());
+	const auto canEditAutoTranslate
+		= isChannel
+		  && Main::details::canEditChannelAutoTranslation(
+			  channel->session().serverTranslationSupported(),
+			  channel->canEditAutoTranslate());
 	const auto canEditPreHistoryHidden = isChannel
 		? channel->canEditPreHistoryHidden()
 		: chat->canEditPreHistoryHidden();
