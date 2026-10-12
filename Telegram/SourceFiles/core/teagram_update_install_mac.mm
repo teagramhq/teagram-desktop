@@ -9,8 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/mac/base_utilities_mac.h"
 #include "base/platform/base_platform_file_utilities.h"
-#include "config.h"
-#include "core/crash_reports.h"
 #include "core/mac_protected_path_access.h"
 #include "core/teagram_update_replacement.h"
 #include "core/teagram_update_verification.h"
@@ -629,6 +627,7 @@ void StopLaunchedBundle(pid_t processId) {
 
 [[nodiscard]] TeagramUpdateRelaunchResult RelaunchPendingUpdate(
 		const QString &currentBundlePath,
+		const QString &dataFile,
 		const std::function<bool(
 			const QString &,
 			const QStringList &,
@@ -665,8 +664,8 @@ void StopLaunchedBundle(pid_t processId) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
 	auto arguments = QStringList();
-	if (cDataFile() != u"data"_q) {
-		arguments = { u"-key"_q, cDataFile() };
+	if (dataFile != u"data"_q) {
+		arguments = { u"-key"_q, dataFile };
 	}
 	if (prepareForLaunch) {
 		prepareForLaunch();
@@ -776,12 +775,14 @@ bool CompleteTeagramUpdateStartupForTesting(
 
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
 		const QString &currentBundlePath,
+		const QString &dataFile,
 		const std::function<bool(const QString &, const QStringList &)> &launchBundle,
 		const std::function<bool()> &otherInstanceRunning,
 		const std::function<void()> &prepareForLaunch) {
 	@autoreleasepool {
 		return RelaunchPendingUpdate(
 			currentBundlePath,
+			dataFile,
 			[&](const QString &path,
 					const QStringList &arguments,
 					pid_t *processId) {
@@ -1087,7 +1088,9 @@ void CompleteTeagramUpdateStartup() {
 	}
 }
 
-TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdown() {
+TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdown(
+		const QString &dataFile,
+		const std::function<void()> &prepareForLaunch) {
 	@autoreleasepool {
 		const auto mainBundle = [NSBundle mainBundle];
 		if (FromNative([mainBundle bundleIdentifier])
@@ -1097,16 +1100,14 @@ TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdown() {
 		const auto current = FromNative([mainBundle bundlePath]);
 		return RelaunchPendingUpdate(
 			current,
+			dataFile,
 			[](const QString &path,
 					const QStringList &arguments,
 					pid_t *processId) {
 				return LaunchBundle(path, arguments, processId);
 			},
 			{},
-			[] {
-				Logs::closeMain();
-				CrashReports::Finish();
-			});
+			prepareForLaunch);
 	}
 }
 

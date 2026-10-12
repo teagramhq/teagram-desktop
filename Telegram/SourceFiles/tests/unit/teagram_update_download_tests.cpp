@@ -7,9 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
-#if defined(Q_OS_MAC)
-#include "config.h"
-#endif // Q_OS_MAC
 #include "core/teagram_update_archive.h"
 #include "core/teagram_update_download.h"
 #include "core/teagram_update_replacement.h"
@@ -1158,11 +1155,10 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			const auto newSentinel = QByteArrayLiteral("new crash sentinel");
 			CHECK(QDir().mkpath(QFileInfo(crashSentinel).absolutePath()));
 			CHECK(WriteFile(crashSentinel, oldSentinel));
-			const auto oldDataFile = gKeyFile;
-			gKeyFile = u"secondary-account"_q;
+			const auto dataFile = u"secondary-account"_q;
 			const auto expectedArguments = QStringList({
 				u"-key"_q,
-				u"secondary-account"_q,
+				dataFile,
 			});
 			auto oldLifecycleOpen = true;
 			auto lifecycleFinishes = 0;
@@ -1179,6 +1175,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			const auto relaunched
 				= RelaunchTeagramUpdateAfterShutdownForTesting(
 					installed,
+					dataFile,
 					[&](const QString &path, const QStringList &arguments) {
 						CHECK(arguments == expectedArguments);
 						CHECK_EQ(lifecycleFinishes, 1);
@@ -1223,6 +1220,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 					const auto relaunchedFromPrevious
 						= RelaunchTeagramUpdateAfterShutdownForTesting(
 							previous,
+							dataFile,
 							[&](const QString &path, const QStringList &arguments) {
 								CHECK(arguments == expectedArguments);
 								paths.push_back(path);
@@ -1239,7 +1237,6 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 					CHECK(paths == QStringList({ installed, previous }));
 				}
 			}
-			gKeyFile = oldDataFile;
 		} else {
 			CHECK(QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 			CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
@@ -1373,6 +1370,7 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	auto launchAttempts = 0;
 	const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
 		installed,
+		u"data"_q,
 		[&](const QString &path, const QStringList &arguments) {
 			CHECK(arguments.isEmpty());
 			++launchAttempts;

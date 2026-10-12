@@ -82,6 +82,7 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdownForTesting(
 	const QString &currentBundlePath,
+	const QString &dataFile,
 	const std::function<bool(const QString &, const QStringList &)> &launchBundle,
 	const std::function<bool()> &otherInstanceRunning = {},
 	const std::function<void()> &prepareForLaunch = {});
@@ -113,6 +114,8 @@ class TeagramUpdateInstaller final {
 void CompleteTeagramUpdateStartup();
 
 [[nodiscard]] TeagramUpdateRelaunchResult
-RelaunchTeagramUpdateAfterShutdown();
+RelaunchTeagramUpdateAfterShutdown(
+	const QString &dataFile,
+	const std::function<void()> &prepareForLaunch = {});
 
 } // namespace Core

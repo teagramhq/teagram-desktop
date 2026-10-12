@@ -45,7 +45,12 @@ bool Launcher::launchUpdater(UpdaterLaunch action) {
 
 #ifdef TDESKTOP_TEAGRAM
 	if (action == UpdaterLaunch::JustRelaunch) {
-		const auto result = Core::RelaunchTeagramUpdateAfterShutdown();
+		const auto result = Core::RelaunchTeagramUpdateAfterShutdown(
+			cDataFile(),
+			[] {
+				Logs::closeMain();
+				CrashReports::Finish();
+			});
 		if (result != Core::TeagramUpdateRelaunchResult::NotPending) {
 			return result
 				== Core::TeagramUpdateRelaunchResult::CandidateStarted
