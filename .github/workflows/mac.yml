@@ -684,6 +684,7 @@ jobs:
           import signal
           import subprocess
           import sys
+          import time
 
           executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[1:]
           command = ["arch", "-arm64", "lldb", "--batch"]
@@ -702,25 +703,60 @@ jobs:
           ])
 
           with open(log_path, "w", encoding="utf-8") as log:
+              def signal_pid(pid, target, signum):
+                  if pid is None:
+                      return
+                  try:
+                      os.kill(pid, signum)
+                  except ProcessLookupError:
+                      pass
+                  except OSError as error:
+                      log.write(
+                          "Debugger cleanup signal failed: "
+                          f"target={target} signal={signum.name} error={error}\n"
+                      )
+                      log.flush()
+
               process = subprocess.Popen(
                   command,
                   stdout=log,
                   stderr=subprocess.STDOUT,
                   env=os.environ.copy(),
-                  start_new_session=True,
               )
-              try:
-                  status = process.wait(timeout=180)
-              except subprocess.TimeoutExpired:
+              app_startup_timeout = 300
+              app_runtime_timeout = 180
+              app_pid = None
+              startup_deadline = time.monotonic() + app_startup_timeout
+              while process.poll() is None and time.monotonic() < startup_deadline:
                   try:
-                      with open(stderr_path, encoding="utf-8") as stderr:
+                      with open(stderr_path, encoding="utf-8", errors="replace") as stderr:
                           app_pids = re.findall(r"Teagram\[(\d+):", stderr.read())
-                      if app_pids:
-                          sample_path = os.path.join(
-                              os.path.dirname(log_path), "hang-sample.txt"
-                          )
+                  except FileNotFoundError:
+                      app_pids = []
+                  if app_pids:
+                      app_pid = int(app_pids[-1])
+                      break
+                  time.sleep(0.5)
+
+              timeout_phase = ""
+              if app_pid is not None:
+                  try:
+                      status = process.wait(timeout=app_runtime_timeout)
+                  except subprocess.TimeoutExpired:
+                      timeout_phase = "runtime"
+              elif process.poll() is None:
+                  timeout_phase = "startup"
+              else:
+                  status = process.returncode
+
+              if timeout_phase:
+                  if app_pid is not None:
+                      sample_path = os.path.join(
+                          os.path.dirname(log_path), "hang-sample.txt"
+                      )
+                      try:
                           sample = subprocess.run(
-                              ["sample", app_pids[-1], "1", "5", "-file", sample_path],
+                              ["sample", str(app_pid), "1", "5", "-file", sample_path],
                               stdout=log,
                               stderr=subprocess.STDOUT,
                               timeout=12,
@@ -730,23 +766,31 @@ jobs:
                               f"Hang sample exit: {sample.returncode}; "
                               f"sample: {sample_path}\n"
                           )
-                      else:
-                          log.write("Hang sample skipped: Teagram PID was not found.\n")
-                  except (OSError, subprocess.TimeoutExpired) as error:
-                      log.write(f"Hang sample failed: {error}\n")
-                  try:
-                      os.killpg(process.pid, signal.SIGTERM)
-                  except ProcessLookupError:
-                      pass
-                  try:
-                      process.wait(timeout=5)
-                  except subprocess.TimeoutExpired:
+                      except (OSError, subprocess.TimeoutExpired) as error:
+                          log.write(f"Hang sample failed: {error}\n")
+                  else:
+                      log.write("Hang sample skipped: Teagram PID was not found.\n")
+
+                  for cleanup_signal in (signal.SIGTERM, signal.SIGKILL):
+                      signal_pid(app_pid, "Teagram", cleanup_signal)
+                      signal_pid(process.pid, "LLDB", cleanup_signal)
                       try:
-                          os.killpg(process.pid, signal.SIGKILL)
-                      except ProcessLookupError:
-                          pass
-                      process.wait()
-                  log.write("Debugger exceeded its 180-second bound.\n")
+                          process.wait(timeout=5)
+                          break
+                      except subprocess.TimeoutExpired:
+                          if cleanup_signal == signal.SIGKILL:
+                              log.write("Debugger remained alive after cleanup signals.\n")
+
+                  if timeout_phase == "startup":
+                      log.write(
+                          "LLDB did not start Teagram within "
+                          f"{app_startup_timeout} seconds.\n"
+                      )
+                  else:
+                      log.write(
+                          "Teagram exceeded its "
+                          f"{app_runtime_timeout}-second runtime bound.\n"
+                      )
                   status = 124
 
           sys.exit(status)

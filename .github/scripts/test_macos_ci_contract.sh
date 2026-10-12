@@ -195,6 +195,11 @@ require_text "$mac_workflow" 'Telegram/build/qt_version.py'
 require_text "$mac_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
 require_text "$mac_workflow" 'name: Full chat info session regression.'
 require_text "$mac_workflow" "if: github.event_name != 'pull_request'"
+require_text "$mac_workflow" 'app_startup_timeout = 300'
+require_text "$mac_workflow" 'app_runtime_timeout = 180'
+require_text "$mac_workflow" 'Debugger cleanup signal failed:'
+require_text "$mac_workflow" 'signal_pid(app_pid, "Teagram", cleanup_signal)'
+reject_text "$mac_workflow" 'os.killpg(process.pid, signal.SIGTERM)'
 require_text "$mac_workflow" 'name: Upload deferred switch mutation evidence.'
 require_text "$mac_workflow" 'Deferred switch mutation evidence: mutation=remove-dispatch'
 require_text "$mac_workflow" 'Deferred switch mutation evidence: mutation=duplicate-dispatch'
