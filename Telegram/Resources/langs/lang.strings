@@ -594,7 +594,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_refusal_unwritable" = "Teagram can't change the folder it's installed in. Move Teagram to a folder you own, such as Applications.";
 "lng_teagram_update_refusal_owner" = "This copy of Teagram belongs to another user on this Mac. Ask them to update it, or install your own copy.";
 "lng_teagram_update_refusal_disk" = "The disk Teagram is on doesn't support safe updates. Move Teagram to your Mac's main disk.";
-"lng_teagram_update_note_auto_on" = "Teagram checks for updates on launch and periodically. You can turn automatic updates off at any time.";
+"lng_teagram_update_note_auto_on" = "Check for updates looks on GitHub for a newer Teagram build on your channel. Teagram also checks on its own, downloads a newer build, verifies it, and restarts by itself when you're not using it.";
 "lng_teagram_update_note_auto_off" = "Automatic updates are off. Teagram does not check or restart on its own. Check, download and restart still work.";
 "lng_teagram_update_note_waiting_main" = "This build came from Dev. Teagram will move to Main when Main has a build newer than {running}.";
 "lng_teagram_update_note_unreachable_auto" = "Check your internet connection. With automatic updates on, Teagram will try again later.";
