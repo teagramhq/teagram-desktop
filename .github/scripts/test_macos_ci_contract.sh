@@ -247,6 +247,9 @@ require_text "$updater_workflow" 'actions/upload-artifact@v7'
 require_text "$updater_workflow" 'retention-days: 14'
 reject_text "$updater_workflow" 'secrets.'
 reject_text "$updater_workflow" 'TEAGRAM_UPDATE_PRIVATE_KEY'
+require_text "$updater_workflow" 'cmake --build "$REPO_NAME/out"'
+require_text "$updater_workflow" '"$REPO_NAME/out/Debug/test_unit"'
+reject_text "$updater_workflow" '"$REPO_NAME/Telegram/out'
 
 for fixture in \
   TeagramUpdateArchiveWritesStayConfined \

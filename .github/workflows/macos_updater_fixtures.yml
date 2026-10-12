@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           build_log="$RUNNER_TEMP/teagram-updater-fixtures/build.log"
           set +e
-          cmake --build "$REPO_NAME/Telegram/out" \
+          cmake --build "$REPO_NAME/out" \
             --config Debug \
             --target test_unit \
             --parallel 2 2>&1 \
@@ -165,7 +165,7 @@ jobs:
           TESTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash "$REPO_NAME/.github/scripts/run_teagram_updater_fixtures.sh" \
-            "$REPO_NAME/Telegram/out/Debug/test_unit" \
+            "$REPO_NAME/out/Debug/test_unit" \
             "$RUNNER_TEMP/teagram-updater-fixtures"
 
       - name: Upload updater fixture diagnostics.
