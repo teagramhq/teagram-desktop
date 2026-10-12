@@ -1200,7 +1200,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 							[] { return false; });
 					CHECK(relaunchedFromPrevious
 						== TeagramUpdateRelaunchResult::PreviousStarted);
-					CHECK_EQ(paths, QStringList({ installed, previous }));
+					CHECK(paths == QStringList({ installed, previous }));
 				}
 			}
 		} else {
