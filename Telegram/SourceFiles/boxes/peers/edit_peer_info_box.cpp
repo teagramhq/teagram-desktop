@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_statistics.h"
 #include "api/api_user_names.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "ui/boxes/confirm_box.h"
 #include "base/event_filter.h"
 #include "boxes/peers/edit_participants_box.h"
@@ -1592,7 +1593,9 @@ void Controller::fillManageSection() {
 		&& channel->canEditSignatures()
 		&& !channel->isMegagroup();
 	const auto canEditAutoTranslate = isChannel
-		&& channel->canEditAutoTranslate();
+		&& Main::details::canEditChannelAutoTranslation(
+			channel->session().serverTranslationSupported(),
+			channel->canEditAutoTranslate());
 	const auto canEditPreHistoryHidden = isChannel
 		? channel->canEditPreHistoryHidden()
 		: chat->canEditPreHistoryHidden();
@@ -2432,7 +2435,9 @@ bool Controller::validateForum(Saving &to) const {
 }
 
 bool Controller::validateAutotranslate(Saving &to) const {
-	if (!_autotranslateSavedValue.has_value()) {
+	if (!Main::details::shouldSaveChannelAutoTranslation(
+			_peer->session().serverTranslationSupported(),
+			_autotranslateSavedValue.has_value())) {
 		return true;
 	}
 	to.autotranslate = _autotranslateSavedValue;
@@ -2936,7 +2941,9 @@ void Controller::saveForum() {
 
 void Controller::saveAutotranslate() {
 	const auto channel = _peer->asBroadcast();
-	if (!_savingData.autotranslate
+	if (!Main::details::shouldSaveChannelAutoTranslation(
+			_peer->session().serverTranslationSupported(),
+			_savingData.autotranslate.has_value())
 		|| !channel
 		|| (*_savingData.autotranslate == channel->autoTranslation())) {
 		return continueSave();
