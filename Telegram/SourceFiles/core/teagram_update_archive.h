@@ -27,7 +27,7 @@ struct TeagramUpdateArchiveResult {
 
 	[[nodiscard]] bool extracted() const {
 		return reason == TeagramUpdateArchiveReason::Extracted
-			&& !bundlePath.isEmpty();
+			   && !bundlePath.isEmpty();
 	}
 };
 

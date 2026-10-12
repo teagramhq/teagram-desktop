@@ -118,10 +118,8 @@ struct PathInterval {
 
 [[nodiscard]] quint32 U32(const char *bytes) {
 	const auto value = reinterpret_cast<const uchar *>(bytes);
-	return quint32(value[0])
-		| (quint32(value[1]) << 8)
-		| (quint32(value[2]) << 16)
-		| (quint32(value[3]) << 24);
+	return quint32(value[0]) | (quint32(value[1]) << 8)
+		   | (quint32(value[2]) << 16) | (quint32(value[3]) << 24);
 }
 
 [[nodiscard]] bool Cancelled(const std::function<bool()> &isCancelled) {
@@ -151,8 +149,8 @@ struct PathInterval {
 			result.append('/');
 		}
 		result.append(components[i]
-					  .normalized(QString::NormalizationForm_D)
-					  .toCaseFolded());
+						  .normalized(QString::NormalizationForm_D)
+						  .toCaseFolded());
 	}
 	return result;
 }
@@ -249,13 +247,12 @@ struct PathInterval {
 				rawPaths.emplace(key, parentRaw);
 			}
 			archive->directories.try_emplace(
-				key,
-				DirectoryEntry{
-					std::vector<QString>(
-						entry.components.begin(),
-						entry.components.begin() + parentCount),
-					0755,
-				});
+				key, DirectoryEntry{
+						 std::vector<QString>(entry.components.begin(),
+											  entry.components.begin()
+												  + parentCount),
+						 0755,
+					 });
 		}
 		if (!explicitPaths.insert(normalized).second) {
 			return false;
@@ -272,26 +269,22 @@ struct PathInterval {
 		if (entry.type == EntryType::Directory) {
 			const auto mode = (entry.mode & 0777) | 0700;
 			archive->directories.insert_or_assign(
-				normalized,
-				DirectoryEntry{ entry.components, mode });
+				normalized, DirectoryEntry{entry.components, mode});
 		}
 	}
-	const auto root = PathKey(std::vector<QString>{ u"Teagram.app"_q }, 1);
+	const auto root = PathKey(std::vector<QString>{u"Teagram.app"_q}, 1);
 	return pathTypes.contains(root)
 		   && pathTypes.at(root) == EntryType::Directory;
 }
 
-[[nodiscard]] ParseStatus ParseArchive(
-		QFile &file,
-		const std::function<bool()> &isCancelled,
-		ParsedArchive *result) {
+[[nodiscard]] ParseStatus ParseArchive(QFile &file,
+									   const std::function<bool()> &isCancelled,
+									   ParsedArchive *result) {
 	if (!result || file.size() < 22
 		|| quint64(file.size()) > kMaximumArchiveSize) {
 		return ParseStatus::Invalid;
 	}
-	const auto tailSize = qsizetype(std::min<qint64>(
-		file.size(),
-		22 + 65535));
+	const auto tailSize = qsizetype(std::min<qint64>(file.size(), 22 + 65535));
 	auto tail = QByteArray();
 	if (!ReadAt(file, quint64(file.size() - tailSize), tailSize, &tail)) {
 		return ParseStatus::Invalid;
@@ -322,9 +315,8 @@ struct PathInterval {
 	if (entryCount == 0xffff || centralSize == 0xffffffff
 		|| centralOffset == 0xffffffff || entryCount > kMaximumEntryCount
 		|| quint64(centralOffset) + centralSize != endOffset) {
-		return entryCount > kMaximumEntryCount
-			? ParseStatus::LimitExceeded
-			: ParseStatus::Invalid;
+		return entryCount > kMaximumEntryCount ? ParseStatus::LimitExceeded
+											   : ParseStatus::Invalid;
 	}
 	auto offset = quint64(centralOffset);
 	auto totalExpanded = quint64(0);
@@ -352,13 +344,13 @@ struct PathInterval {
 		const auto disk = U16(header.constData() + 34);
 		const auto external = U32(header.constData() + 38);
 		const auto localOffset = U32(header.constData() + 42);
-		const auto recordSize = quint64(46) + nameSize + extraSize + commentSize;
+		const auto recordSize
+			= quint64(46) + nameSize + extraSize + commentSize;
 		if (quint64(centralOffset) + centralSize - offset < recordSize
 			|| disk != 0 || compressedSize == 0xffffffff
 			|| expandedSize == 0xffffffff || localOffset == 0xffffffff
 			|| !localOffsets.insert(localOffset).second
-			|| (method != 0 && method != 8)
-			|| (flags & ~quint16(0x080e)) != 0
+			|| (method != 0 && method != 8) || (flags & ~quint16(0x080e)) != 0
 			|| ((flags & 0x0006) != 0 && method != 8)) {
 			return ParseStatus::Invalid;
 		}
@@ -402,9 +394,8 @@ struct PathInterval {
 			return ParseStatus::Invalid;
 		}
 		if ((flags & 0x0800) == 0
-			&& std::any_of(rawName.cbegin(), rawName.cend(), [](char value) {
-				return uchar(value) >= 0x80;
-			})) {
+			&& std::any_of(rawName.cbegin(), rawName.cend(),
+						   [](char value) { return uchar(value) >= 0x80; })) {
 			return ParseStatus::Invalid;
 		}
 		auto entry = ArchiveEntry();
@@ -449,8 +440,8 @@ struct PathInterval {
 		const auto nameSize = U16(local.constData() + 26);
 		const auto extraSize = U16(local.constData() + 28);
 		auto details = QByteArray();
-		if (!ReadAt(file, quint64(entry.localOffset) + 30,
-					nameSize + extraSize, &details)
+		if (!ReadAt(file, quint64(entry.localOffset) + 30, nameSize + extraSize,
+					&details)
 			|| details.first(nameSize) != entry.rawName
 			|| !ValidateExtraFields(details.mid(nameSize, extraSize))) {
 			return ParseStatus::Invalid;
@@ -464,8 +455,8 @@ struct PathInterval {
 				|| localExpandedSize != entry.expandedSize)) {
 			return ParseStatus::Invalid;
 		}
-		entry.dataOffset = quint64(entry.localOffset) + 30 + nameSize
-			+ extraSize;
+		entry.dataOffset
+			= quint64(entry.localOffset) + 30 + nameSize + extraSize;
 		entry.recordEnd = entry.dataOffset + entry.compressedSize;
 		if (entry.recordEnd > centralOffset) {
 			return ParseStatus::Invalid;
@@ -490,12 +481,12 @@ struct PathInterval {
 		if (entry.recordEnd > centralOffset) {
 			return ParseStatus::Invalid;
 		}
-		intervals.push_back({ entry.localOffset, entry.recordEnd });
+		intervals.push_back({entry.localOffset, entry.recordEnd});
 	}
-	std::sort(intervals.begin(), intervals.end(), [](const auto &left,
-												 const auto &right) {
-		return left.start < right.start;
-	});
+	std::sort(intervals.begin(), intervals.end(),
+			  [](const auto &left, const auto &right) {
+				  return left.start < right.start;
+			  });
 	for (auto i = size_t(1); i < intervals.size(); ++i) {
 		if (intervals[i].start < intervals[i - 1].end) {
 			return ParseStatus::Invalid;
@@ -530,12 +521,11 @@ struct PathInterval {
 
 using SymlinkMap = std::map<QString, const ArchiveEntry *>;
 
-[[nodiscard]] bool ResolveSymlinkComponents(
-		const QByteArray &target,
-		const SymlinkMap &symlinks,
-		std::vector<QString> *resolved,
-		std::set<QString> *active,
-		int depth) {
+[[nodiscard]] bool ResolveSymlinkComponents(const QByteArray &target,
+											const SymlinkMap &symlinks,
+											std::vector<QString> *resolved,
+											std::set<QString> *active,
+											int depth) {
 	if (!resolved || !active || depth > kMaximumPathDepth) {
 		return false;
 	}
@@ -563,11 +553,7 @@ using SymlinkMap = std::map<QString, const ArchiveEntry *>;
 		}
 		resolved->pop_back();
 		const auto valid = ResolveSymlinkComponents(
-			link->second->symlinkTarget,
-			symlinks,
-			resolved,
-			active,
-			depth + 1);
+			link->second->symlinkTarget, symlinks, resolved, active, depth + 1);
 		active->erase(key);
 		if (!valid) {
 			return false;
@@ -589,14 +575,14 @@ using SymlinkMap = std::map<QString, const ArchiveEntry *>;
 		if (entry.type != EntryType::Symlink) {
 			continue;
 		}
-		auto resolved = std::vector<QString>(
-			entry.components.begin(), entry.components.end() - 1);
+		auto resolved = std::vector<QString>(entry.components.begin(),
+											 entry.components.end() - 1);
 		auto active = std::set<QString>();
-		const auto key = PathKey(
-			entry.components, qsizetype(entry.components.size()));
+		const auto key
+			= PathKey(entry.components, qsizetype(entry.components.size()));
 		active.insert(key);
-		if (!ResolveSymlinkComponents(
-				entry.symlinkTarget, symlinks, &resolved, &active, 0)
+		if (!ResolveSymlinkComponents(entry.symlinkTarget, symlinks, &resolved,
+									  &active, 0)
 			|| resolved.size() <= 1) {
 			return false;
 		}
@@ -631,11 +617,10 @@ template <typename Consumer>
 			break;
 		}
 		if (entry.method == 8 && stream.avail_in == 0 && compressedRemaining) {
-			const auto readSize = qsizetype(std::min<quint64>(
-				compressedRemaining,
-				input.size()));
-			const auto read = file.read(
-				reinterpret_cast<char *>(input.data()), readSize);
+			const auto readSize = qsizetype(
+				std::min<quint64>(compressedRemaining, input.size()));
+			const auto read
+				= file.read(reinterpret_cast<char *>(input.data()), readSize);
 			if (read != readSize) {
 				valid = false;
 				break;
@@ -645,11 +630,10 @@ template <typename Consumer>
 			stream.avail_in = uInt(readSize);
 		}
 		if (entry.method == 0) {
-			const auto readSize = qsizetype(std::min<quint64>(
-				compressedRemaining,
-				input.size()));
-			const auto read = file.read(
-				reinterpret_cast<char *>(input.data()), readSize);
+			const auto readSize = qsizetype(
+				std::min<quint64>(compressedRemaining, input.size()));
+			const auto read
+				= file.read(reinterpret_cast<char *>(input.data()), readSize);
 			if (read != readSize) {
 				valid = false;
 				break;
@@ -675,9 +659,9 @@ template <typename Consumer>
 		const auto status = inflate(&stream, Z_NO_FLUSH);
 		const auto produced = output.size() - stream.avail_out;
 		if (produced) {
-			const auto bytes = QByteArrayView(
-				reinterpret_cast<const char *>(output.data()),
-				qsizetype(produced));
+			const auto bytes
+				= QByteArrayView(reinterpret_cast<const char *>(output.data()),
+								 qsizetype(produced));
 			if (quint64(bytes.size()) > entry.expandedSize - expanded
 				|| !consume(bytes)) {
 				valid = false;
@@ -692,8 +676,9 @@ template <typename Consumer>
 				break;
 			}
 			streamFinished = true;
-		} else if (status != Z_OK || (produced == 0 && stream.avail_in == 0
-										 && !compressedRemaining)) {
+		} else if (status != Z_OK
+				   || (produced == 0 && stream.avail_in == 0
+					   && !compressedRemaining)) {
 			valid = false;
 		}
 	}
@@ -705,7 +690,7 @@ template <typename Consumer>
 }
 
 [[nodiscard]] bool OpenChildDirectory(int parent, const QString &name,
-									 bool create, FileDescriptor *result) {
+									  bool create, FileDescriptor *result) {
 	const auto bytes = QFile::encodeName(name);
 	if (bytes.isEmpty()) {
 		return false;
@@ -714,10 +699,9 @@ template <typename Consumer>
 		&& errno != EEXIST) {
 		return false;
 	}
-	const auto opened = ::openat(
-		parent,
-		bytes.constData(),
-		O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+	const auto opened
+		= ::openat(parent, bytes.constData(),
+				   O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
 	if (opened < 0) {
 		return false;
 	}
@@ -744,8 +728,8 @@ template <typename Consumer>
 	}
 	for (auto i = qsizetype(0); i != count; ++i) {
 		auto next = FileDescriptor();
-		if (!OpenChildDirectory(
-				current.value, components[i + 1], create, &next)) {
+		if (!OpenChildDirectory(current.value, components[i + 1], create,
+								&next)) {
 			return false;
 		}
 		current = std::move(next);
@@ -789,9 +773,7 @@ template <typename Consumer>
 		return ::unlinkat(parent, name, 0) == 0;
 	}
 	const auto opened = ::openat(
-		parent,
-		name,
-		O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+		parent, name, O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
 	if (opened < 0) {
 		return false;
 	}
@@ -821,10 +803,8 @@ template <typename Consumer>
 
 [[nodiscard]] bool WriteAll(int file, QByteArrayView bytes) {
 	for (auto offset = qsizetype(0); offset < bytes.size();) {
-		const auto written = ::write(
-			file,
-			bytes.data() + offset,
-			size_t(bytes.size() - offset));
+		const auto written = ::write(file, bytes.data() + offset,
+									 size_t(bytes.size() - offset));
 		if (written < 0 && errno == EINTR) {
 			continue;
 		}
@@ -836,15 +816,16 @@ template <typename Consumer>
 	return true;
 }
 
-[[nodiscard]] bool ReadAndValidateSymlinks(
-		QFile &file,
-		ParsedArchive *archive,
-		const std::function<bool()> &isCancelled) {
+[[nodiscard]] bool
+ReadAndValidateSymlinks(QFile &file, ParsedArchive *archive,
+						const std::function<bool()> &isCancelled) {
 	for (auto &entry : archive->entries) {
 		if (entry.type != EntryType::Symlink) {
 			continue;
 		}
-		if (!ReadEntry(file, entry, [&](QByteArrayView bytes) {
+		if (!ReadEntry(
+				file, entry,
+				[&](QByteArrayView bytes) {
 					entry.symlinkTarget.append(bytes.data(), bytes.size());
 					return entry.symlinkTarget.size() <= kMaximumSymlinkSize;
 				},
@@ -856,9 +837,9 @@ template <typename Consumer>
 	return ValidateSymlinkGraph(*archive);
 }
 
-[[nodiscard]] TeagramUpdateArchiveResult Rejected(
-		TeagramUpdateArchiveReason reason) {
-	return { reason, {} };
+[[nodiscard]] TeagramUpdateArchiveResult
+Rejected(TeagramUpdateArchiveReason reason) {
+	return {reason, {}};
 }
 
 } // namespace
@@ -875,13 +856,13 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	const auto canonicalStage = stageInfo.canonicalFilePath();
 	if (!stageInfo.isDir() || stageInfo.isSymLink() || canonicalStage.isEmpty()
 		|| QDir::cleanPath(canonicalStage)
-			!= QDir::cleanPath(stageInfo.absoluteFilePath())) {
+			   != QDir::cleanPath(stageInfo.absoluteFilePath())) {
 		return Rejected(TeagramUpdateArchiveReason::StagingFailure);
 	}
 	const auto stagePath = QFile::encodeName(canonicalStage);
-	auto stage = FileDescriptor(::open(
-		stagePath.constData(),
-		O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW));
+	auto stage = FileDescriptor(
+		::open(stagePath.constData(),
+			   O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW));
 	if (stage.value < 0) {
 		return Rejected(TeagramUpdateArchiveReason::StagingFailure);
 	}
@@ -897,32 +878,28 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 		return Rejected(TeagramUpdateArchiveReason::Cancelled);
 	}
 	const auto sourcePath = QFile::encodeName(candidate.archivePath());
-	auto sourceHandle = FileDescriptor(::open(
-		sourcePath.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+	auto sourceHandle = FileDescriptor(
+		::open(sourcePath.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
 	if (sourceHandle.value < 0) {
 		return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	struct stat sourceInfo = {};
 	if (::fstat(sourceHandle.value, &sourceInfo) != 0
-		|| !S_ISREG(sourceInfo.st_mode)
-		|| sourceInfo.st_uid != ::geteuid()
-		|| sourceInfo.st_nlink != 1
-		|| (sourceInfo.st_mode & 0077) != 0
+		|| !S_ISREG(sourceInfo.st_mode) || sourceInfo.st_uid != ::geteuid()
+		|| sourceInfo.st_nlink != 1 || (sourceInfo.st_mode & 0077) != 0
 		|| sourceInfo.st_size < 0
 		|| quint64(sourceInfo.st_size) != candidate.metadata().assetSize()
 		|| quint64(sourceInfo.st_size) > kMaximumArchiveSize) {
 		return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	auto source = QFile();
-	if (!source.open(
-			sourceHandle.value,
-			QIODevice::ReadOnly,
-			QFileDevice::AutoCloseHandle)) {
+	if (!source.open(sourceHandle.value, QIODevice::ReadOnly,
+					 QFileDevice::AutoCloseHandle)) {
 		return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	sourceHandle.value = -1;
-	auto snapshot = QTemporaryFile(
-		QDir(canonicalStage).filePath(u".archive-XXXXXX"_q));
+	auto snapshot
+		= QTemporaryFile(QDir(canonicalStage).filePath(u".archive-XXXXXX"_q));
 	if (!snapshot.open()) {
 		return Rejected(TeagramUpdateArchiveReason::StagingFailure);
 	}
@@ -937,8 +914,7 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 			return Rejected(TeagramUpdateArchiveReason::Cancelled);
 		}
 		const auto readSize = qsizetype(std::min<quint64>(
-			candidate.metadata().assetSize() - copied,
-			quint64(buffer.size())));
+			candidate.metadata().assetSize() - copied, quint64(buffer.size())));
 		const auto read = source.read(buffer.data(), readSize);
 		if (read <= 0 || snapshot.write(buffer.constData(), read) != read) {
 			return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
@@ -947,17 +923,16 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	}
 	if (copied != candidate.metadata().assetSize()
 		|| quint64(snapshot.size()) != candidate.metadata().assetSize()
-		|| !snapshot.flush()
-		|| !snapshot.seek(0)) {
+		|| !snapshot.flush() || !snapshot.seek(0)) {
 		return Rejected(TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	const auto verified = VerifyAuthenticatedTeagramUpdateArchive(
 		candidate.metadata(), snapshot, isCancelled);
 	if (!verified.eligible()) {
 		return Rejected(verified.reason
-							== TeagramUpdateVerificationReason::Cancelled
-			? TeagramUpdateArchiveReason::Cancelled
-			: TeagramUpdateArchiveReason::ArchiveRejected);
+								== TeagramUpdateVerificationReason::Cancelled
+							? TeagramUpdateArchiveReason::Cancelled
+							: TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	auto parsed = ParsedArchive();
 	const auto parseStatus = ParseArchive(snapshot, isCancelled, &parsed);
@@ -970,8 +945,8 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	}
 	if (!ReadAndValidateSymlinks(snapshot, &parsed, isCancelled)) {
 		return Rejected(Cancelled(isCancelled)
-			? TeagramUpdateArchiveReason::Cancelled
-			: TeagramUpdateArchiveReason::ArchiveRejected);
+							? TeagramUpdateArchiveReason::Cancelled
+							: TeagramUpdateArchiveReason::ArchiveRejected);
 	}
 	if (!EmptyDirectory(stage.value)) {
 		return Rejected(TeagramUpdateArchiveReason::StagingFailure);
@@ -982,8 +957,8 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	auto app = FileDescriptor();
 	if (!OpenChildDirectory(stage.value, u"Teagram.app"_q, false, &app)) {
 		return Rejected(RemoveTreeAt(stage.value, "Teagram.app")
-			? TeagramUpdateArchiveReason::StagingFailure
-			: TeagramUpdateArchiveReason::WriteFailure);
+							? TeagramUpdateArchiveReason::StagingFailure
+							: TeagramUpdateArchiveReason::WriteFailure);
 	}
 	auto created = true;
 	for (const auto &item : parsed.directories) {
@@ -992,12 +967,9 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 			continue;
 		}
 		FileDescriptor opened;
-		if (!OpenDirectoryPath(
-				app.value,
-				directory.components,
-				qsizetype(directory.components.size()) - 1,
-				true,
-				&opened)) {
+		if (!OpenDirectoryPath(app.value, directory.components,
+							   qsizetype(directory.components.size()) - 1, true,
+							   &opened)) {
 			created = false;
 			break;
 		}
@@ -1005,8 +977,8 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	if (!created) {
 		app = FileDescriptor();
 		return Rejected(RemoveTreeAt(stage.value, "Teagram.app")
-			? TeagramUpdateArchiveReason::WriteFailure
-			: TeagramUpdateArchiveReason::StagingFailure);
+							? TeagramUpdateArchiveReason::WriteFailure
+							: TeagramUpdateArchiveReason::StagingFailure);
 	}
 	auto extracted = quint64(0);
 	for (const auto &entry : parsed.entries) {
@@ -1019,17 +991,15 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 		}
 		const auto parts = qsizetype(entry.components.size());
 		FileDescriptor parent;
-		if (!OpenDirectoryPath(app.value, entry.components, parts - 2,
-								false, &parent)) {
+		if (!OpenDirectoryPath(app.value, entry.components, parts - 2, false,
+							   &parent)) {
 			created = false;
 			break;
 		}
 		const auto name = QFile::encodeName(entry.components.back());
 		const auto output = ::openat(
-			parent.value,
-			name.constData(),
-			O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-			0600);
+			parent.value, name.constData(),
+			O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
 		if (output < 0) {
 			created = false;
 			break;
@@ -1041,7 +1011,9 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 			created = false;
 			break;
 		}
-		if (!ReadEntry(snapshot, entry, [&](QByteArrayView bytes) {
+		if (!ReadEntry(
+				snapshot, entry,
+				[&](QByteArrayView bytes) {
 					if (!WriteAll(destination.value, bytes)) {
 						return false;
 					}
@@ -1066,15 +1038,14 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 			const auto parts = qsizetype(entry.components.size());
 			FileDescriptor parent;
 			if (!OpenDirectoryPath(app.value, entry.components, parts - 2,
-									false, &parent)) {
+								   false, &parent)) {
 				created = false;
 				break;
 			}
 			const auto name = QFile::encodeName(entry.components.back());
-			if (::symlinkat(
-					entry.symlinkTarget.constData(),
-					parent.value,
-					name.constData()) != 0) {
+			if (::symlinkat(entry.symlinkTarget.constData(), parent.value,
+							name.constData())
+				!= 0) {
 				created = false;
 				break;
 			}
@@ -1083,11 +1054,11 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 	if (created) {
 		auto directories = std::vector<std::pair<QString, DirectoryEntry>>(
 			parsed.directories.begin(), parsed.directories.end());
-		std::sort(directories.begin(), directories.end(), [](const auto &left,
-														 const auto &right) {
-			return left.second.components.size()
-				> right.second.components.size();
-		});
+		std::sort(directories.begin(), directories.end(),
+				  [](const auto &left, const auto &right) {
+					  return left.second.components.size()
+							 > right.second.components.size();
+				  });
 		for (const auto &item : directories) {
 			const auto &directory = item.second;
 			const auto count = qsizetype(directory.components.size());
@@ -1100,8 +1071,8 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 				continue;
 			}
 			FileDescriptor opened;
-			if (!OpenDirectoryPath(app.value, directory.components,
-								   count - 1, false, &opened)
+			if (!OpenDirectoryPath(app.value, directory.components, count - 1,
+								   false, &opened)
 				|| ::fchmod(opened.value, directory.mode & 0777) != 0
 				|| ::fsync(opened.value) != 0) {
 				created = false;
@@ -1116,9 +1087,9 @@ TeagramUpdateArchiveResult ExtractAuthenticatedTeagramUpdateArchive(
 		app = FileDescriptor();
 		const auto removed = RemoveTreeAt(stage.value, "Teagram.app");
 		return Rejected(removed && Cancelled(isCancelled)
-			? TeagramUpdateArchiveReason::Cancelled
-			: removed ? TeagramUpdateArchiveReason::WriteFailure
-					   : TeagramUpdateArchiveReason::StagingFailure);
+							? TeagramUpdateArchiveReason::Cancelled
+						: removed ? TeagramUpdateArchiveReason::WriteFailure
+								  : TeagramUpdateArchiveReason::StagingFailure);
 	}
 	if (progress) {
 		progress(100);

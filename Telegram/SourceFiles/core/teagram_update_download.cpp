@@ -614,11 +614,9 @@ DownloadRunner::downloadArchive(const AuthenticatedTeagramUpdate &metadata) {
 } // namespace
 
 TeagramUpdateCandidate::TeagramUpdateCandidate(
-	AuthenticatedTeagramUpdate metadata,
-	quint64 installedBuild,
+	AuthenticatedTeagramUpdate metadata, quint64 installedBuild,
 	std::unique_ptr<QTemporaryFile> archive)
-	: _metadata(std::move(metadata)),
-	  _installedBuild(installedBuild),
+	: _metadata(std::move(metadata)), _installedBuild(installedBuild),
 	  _archive(std::move(archive)) {}
 
 TeagramUpdateCandidate::~TeagramUpdateCandidate() = default;
