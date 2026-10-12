@@ -92,7 +92,6 @@ if [[ "$dev_group" == "$main_group" ]]; then
   exit 1
 fi
 require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
-require_text "$mac_workflow" 'macOS-arm64-ccache-dev-'
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 cache_setup_step="$(awk '
@@ -109,6 +108,19 @@ for cache_profile_setting in \
     exit 1
   fi
 done
+ccache_restore_step="$(awk '
+  /^      - name: Teagram compiler cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+if ! grep -Fq 'macOS-arm64-ccache-pr-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-' <<< "$ccache_restore_step"; then
+  printf 'MacOS PR builds must restore only their PR-scoped compiler cache.\n' >&2
+  exit 1
+fi
+if grep -Fq 'macOS-arm64-ccache-dev-' <<< "$ccache_restore_step"; then
+  printf 'MacOS PR builds must not restore the shared dev compiler cache.\n' >&2
+  exit 1
+fi
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
@@ -118,6 +130,12 @@ require_text "$mac_workflow" 'ccache hit rate'
 require_text "$mac_workflow" 'ccache_hit_count.sh'
 require_text "$mac_workflow" 'ccache_save_decision.sh'
 require_text "$mac_workflow" 'A restored compiler cache produced no cache hits.'
+require_text "$mac_workflow" '::warning::A restored compiler cache produced no cache hits.'
+require_text "$mac_workflow" '::warning::ccache did not record any compiler invocations for the Teagram build.'
+reject_text "$mac_workflow" '::error::A restored compiler cache produced no cache hits.'
+reject_text "$mac_workflow" '::error::ccache did not record any compiler invocations for the Teagram build.'
+require_text "$mac_workflow" '::warning::Warm-cache MacOS PR build exceeded the 30-minute target ('
+reject_text "$mac_workflow" '::error::Warm-cache (ccache and libraries) MacOS PR build exceeded the 30-minute limit.'
 reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
 require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
@@ -133,7 +151,11 @@ save_decision_line="$(grep -nF 'ccache_save_decision.sh' <<< "$ccache_stats_step
 zero_hit_guard_line="$(grep -nF 'A restored compiler cache produced no cache hits.' <<< "$ccache_stats_step" | cut -d: -f1)"
 if [[ -z "$misses_output_line" || -z "$save_decision_line" || -z "$zero_hit_guard_line" ]] \
   || ((misses_output_line >= zero_hit_guard_line || save_decision_line >= zero_hit_guard_line)); then
-  printf 'Compiler cache outputs must be written before a zero-hit guard can fail the stats step.\n' >&2
+  printf 'Compiler cache outputs must be written before the zero-hit warning is reported.\n' >&2
+  exit 1
+fi
+if grep -Eq '::error::|exit 1' <<< "$ccache_stats_step"; then
+  printf 'Compiler cache diagnostics must not fail a passing source build.\n' >&2
   exit 1
 fi
 save_cache_step="$(awk '
