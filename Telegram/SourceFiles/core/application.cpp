@@ -25,6 +25,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/teagram_icon_choice.h"
 #include "core/update_checker.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_install.h"
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "core/sandbox.h"
 #include "core/local_url_handlers.h"
@@ -428,6 +431,9 @@ void Application::run() {
 
 	startDomain();
 	refreshApplicationIcon();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	CompleteTeagramUpdateStartup();
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 		regressionResult |= RunSignupControlsRegression();

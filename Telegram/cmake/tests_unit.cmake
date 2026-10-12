@@ -108,7 +108,6 @@ PRIVATE
     tests/unit/server_enrollment_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp
-    tests/unit/teagram_update_download_tests.cpp
     tests/unit/teagram_update_verification_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
@@ -120,14 +119,31 @@ PRIVATE
     mtproto/proxy_check.cpp
 )
 
+if(UNIX)
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        core/teagram_update_archive.cpp
+        core/teagram_update_replacement.cpp
+        tests/unit/teagram_update_download_tests.cpp
+    )
+endif()
+
 nice_target_sources(test_unit ${res_loc}
 PRIVATE
     qrc/telegram/mac_icons.qrc
 )
 
 if(APPLE)
+    set_property(SOURCE ${src_loc}/core/teagram_update_install_mac.mm APPEND
+        PROPERTY COMPILE_DEFINITIONS
+        TDESKTOP_TEAGRAM
+        TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
+        "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
+    )
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
+        core/teagram_update_install_mac.mm
+        core/teagram_update_install.h
         tests/unit/mac_protected_path_runtime_stub.cpp
         tests/unit/mac_file_bookmark_stub.cpp
     )
