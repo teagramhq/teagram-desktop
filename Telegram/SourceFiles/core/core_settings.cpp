@@ -1343,6 +1343,19 @@ void Settings::writePrefImpl<int>(std::string_view key, int value) {
 	writePrefGeneric(key, QByteArray::number(value));
 }
 
+template <>
+std::optional<QByteArray> Settings::readPrefImpl<QByteArray>(
+		std::string_view key) {
+	return readPrefGeneric(key);
+}
+
+template <>
+void Settings::writePrefImpl<QByteArray>(
+		std::string_view key,
+		QByteArray value) {
+	writePrefGeneric(key, value);
+}
+
 QString Settings::getSoundPath(const QString &key) const {
 	return _externalPaths.getSoundPath(key);
 }

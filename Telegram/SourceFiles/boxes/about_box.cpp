@@ -12,6 +12,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/update_checker.h"
 #include "core/version.h"
+#ifdef TDESKTOP_TEAGRAM
+#include "core/teagram_update_verification.h"
+#endif // TDESKTOP_TEAGRAM
 #include "lang/lang_keys.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
@@ -34,14 +37,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+#ifndef TDESKTOP_TEAGRAM
 rpl::producer<TextWithEntities> Text1() {
 	return tr::lng_about_text1(
 		lt_api_link,
 		tr::lng_about_text1_api(tr::url(u"https://core.telegram.org/api"_q)),
 		tr::marked);
 }
+#endif // TDESKTOP_TEAGRAM
 
 rpl::producer<TextWithEntities> Text2() {
+#ifdef TDESKTOP_TEAGRAM
+	constexpr auto repository = "https://github.com/teagramhq/teagram-desktop";
+#else // TDESKTOP_TEAGRAM
+	constexpr auto repository = "https://github.com/telegramdesktop/tdesktop";
+#endif // TDESKTOP_TEAGRAM
 	return tr::lng_about_text2(
 		lt_gpl_link,
 		rpl::single(tr::link(
@@ -50,21 +60,27 @@ rpl::producer<TextWithEntities> Text2() {
 		lt_github_link,
 		rpl::single(tr::link(
 			"GitHub",
-			"https://github.com/telegramdesktop/tdesktop")),
+			repository)),
 		tr::marked);
 }
 
+#ifndef TDESKTOP_TEAGRAM
 rpl::producer<TextWithEntities> Text3() {
 	return tr::lng_about_text3(
 		lt_faq_link,
 		tr::lng_about_text3_faq(tr::url(telegramFaqLink())),
 		tr::marked);
 }
+#endif // TDESKTOP_TEAGRAM
 
 } // namespace
 
 void AboutBox(not_null<Ui::GenericBox*> box) {
+#ifdef TDESKTOP_TEAGRAM
+	box->setTitle(tr::lng_teagram_about_title());
+#else // TDESKTOP_TEAGRAM
 	box->setTitle(u"Telegram Desktop"_q);
+#endif // TDESKTOP_TEAGRAM
 
 	auto layout = box->verticalLayout();
 
@@ -82,6 +98,12 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 			st::boxRowPadding.right(),
 			st::boxRowPadding.bottom()));
 	version->setClickedCallback([=] {
+#ifdef TDESKTOP_TEAGRAM
+		const auto link = currentVersionReleaseLink();
+		if (!link.isEmpty()) {
+			File::OpenUrl(link);
+		}
+#else // TDESKTOP_TEAGRAM
 		if (cRealAlphaVersion()) {
 			auto url = u"https://tdesktop.com/"_q;
 			if (Platform::IsWindows32Bit()) {
@@ -111,7 +133,13 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		} else {
 			File::OpenUrl(Core::App().changelogLink());
 		}
+#endif // TDESKTOP_TEAGRAM
 	});
+#ifdef TDESKTOP_TEAGRAM
+	if (currentVersionReleaseLink().isEmpty()) {
+		version->setDisabled(true);
+	}
+#endif // TDESKTOP_TEAGRAM
 
 	Ui::AddSkip(layout, st::aboutTopSkip);
 
@@ -123,9 +151,17 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		Ui::AddSkip(layout, st::aboutSkip);
 	};
 
+#ifdef TDESKTOP_TEAGRAM
+	addText(Text2());
+	addText(tr::lng_teagram_about_based_on(
+		lt_version,
+		rpl::single(TextWithEntities(QString::fromLatin1(AppVersionStr))),
+		tr::marked));
+#else // TDESKTOP_TEAGRAM
 	addText(Text1());
 	addText(Text2());
 	addText(Text3());
+#endif // TDESKTOP_TEAGRAM
 
 	box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 
@@ -150,6 +186,22 @@ QString telegramFaqLink() {
 }
 
 QString currentVersionText() {
+#ifdef TDESKTOP_TEAGRAM
+	auto result = QString("Teagram %1").arg(QString::fromLatin1(AppVersionStr));
+	if (Core::kTeagramUpdateBuild) {
+		result += u" · build %1"_q.arg(
+			QString::number(Core::kTeagramUpdateBuild));
+	} else {
+		result += u" · unreleased"_q;
+	}
+	result += (Core::kTeagramUpdateChannel == "main")
+		? u" · Main"_q
+		: u" · Dev"_q;
+#ifdef _DEBUG
+	result += " DEBUG";
+#endif
+	return result;
+#else // TDESKTOP_TEAGRAM
 	auto result = QString::fromLatin1(AppVersionStr);
 	if (cAlphaVersion()) {
 		result += u" alpha %1"_q.arg(cAlphaVersion() % 1000);
@@ -165,6 +217,19 @@ QString currentVersionText() {
 	result += " DEBUG";
 #endif
 	return result;
+#endif // TDESKTOP_TEAGRAM
+}
+
+QString currentVersionReleaseLink() {
+#ifdef TDESKTOP_TEAGRAM
+	if (!Core::kTeagramUpdateBuild) {
+		return QString();
+	}
+	return u"https://github.com/teagramhq/teagram-desktop/releases/tag/teagram-build-%1"_q
+		.arg(QString::number(Core::kTeagramUpdateBuild));
+#else // TDESKTOP_TEAGRAM
+	return QString();
+#endif // TDESKTOP_TEAGRAM
 }
 
 void ArchiveHintBox(
@@ -311,4 +376,3 @@ void ArchiveHintBox(
 		box->addButton(std::move(button));
 	}
 }
-

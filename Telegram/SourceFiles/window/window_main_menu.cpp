@@ -382,10 +382,27 @@ MainMenu::MainMenu(
 
 	parentResized();
 
+#ifdef TDESKTOP_TEAGRAM
+	_telegram->setMarkedText(tr::link(
+		tr::lng_teagram_about_title(tr::now),
+		u"https://github.com/teagramhq/teagram-desktop"_q));
+#else // TDESKTOP_TEAGRAM
 	_telegram->setMarkedText(tr::link(
 		u"Telegram Desktop"_q,
 		u"https://desktop.telegram.org"_q));
+#endif // TDESKTOP_TEAGRAM
 	_telegram->setLinksTrusted();
+#ifdef TDESKTOP_TEAGRAM
+	const auto releaseLink = currentVersionReleaseLink();
+	auto versionText = releaseLink.isEmpty()
+		? rpl::single(TextWithEntities(currentVersionText()))
+		: tr::link(currentVersionText(), 1);
+	_version->setWordWrap(true);
+	_version->setMarkedText(
+		std::move(versionText)
+			.append(QStringLiteral(" · "))
+			.append(tr::link(tr::lng_menu_about(tr::now), 2)));
+#else // TDESKTOP_TEAGRAM
 	_version->setMarkedText(
 		tr::link(
 			tr::lng_settings_current_version(
@@ -394,12 +411,21 @@ MainMenu::MainMenu(
 				currentVersionText()),
 			1) // Link 1.
 		.append(QChar(' '))
-		.append(QChar(8211))
-		.append(QChar(' '))
-		.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
+			.append(QChar(8211))
+			.append(QChar(' '))
+			.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
+#endif // TDESKTOP_TEAGRAM
+#ifdef TDESKTOP_TEAGRAM
+	if (!releaseLink.isEmpty()) {
+		_version->setLink(
+			1,
+			std::make_shared<UrlClickHandler>(releaseLink));
+	}
+#else // TDESKTOP_TEAGRAM
 	_version->setLink(
 		1,
 		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+#endif // TDESKTOP_TEAGRAM
 	_version->setLink(
 		2,
 		std::make_shared<LambdaClickHandler>([=] {

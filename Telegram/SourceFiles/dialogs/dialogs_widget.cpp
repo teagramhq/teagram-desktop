@@ -64,6 +64,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/ui_integration.h"
 #include "core/update_checker.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_manager.h"
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -646,6 +649,14 @@ Widget::Widget(
 		[=] { searchCursorMoved(); },
 		Qt::QueuedConnection); // So getLastText() works already.
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	if (Core::TeagramUpdateUiEnabled()) {
+		Core::TeagramUpdateManager::Instance().stateChanges(
+		) | rpl::on_next([=](const Core::TeagramUpdateSnapshot &) {
+			checkUpdateStatus();
+		}, lifetime());
+	} else
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (!Core::UpdaterDisabled()) {
 		Core::UpdateChecker checker;
 		rpl::merge(
@@ -2529,6 +2540,82 @@ QPixmap Widget::grabForFolderSlideAnimation() {
 }
 
 void Widget::checkUpdateStatus() {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	if (Core::TeagramUpdateUiEnabled()) {
+		const auto manager = &Core::TeagramUpdateManager::Instance();
+		const auto &state = manager->state();
+		using State = Core::TeagramUpdateUiState;
+		const auto visible = (state.state == State::Available)
+			|| (state.state == State::Downloading)
+			|| (state.state == State::Preparing)
+			|| (state.state == State::Ready)
+			|| (state.state == State::RestartPending)
+			|| (state.state == State::AlreadyInstalled);
+		if (_layout != Layout::Child && visible) {
+			if (!_updateTelegram) {
+				_updateTelegram.create(
+					this,
+					tr::lng_teagram_update_restart_install(tr::now),
+					st::dialogsUpdateButton,
+					st::dialogsInstallUpdate,
+					st::dialogsInstallUpdateOver,
+					true);
+			}
+			const auto text = [&] {
+				switch (state.state) {
+				case State::Available:
+					return tr::lng_teagram_update_download_install(tr::now);
+				case State::Downloading:
+					return tr::lng_teagram_update_state_downloading(
+						tr::now, lt_progress,
+						QString::number(state.progressPercent) + '%');
+				case State::Preparing:
+					return tr::lng_teagram_update_state_preparing(
+						tr::now, lt_progress,
+						QString::number(state.progressPercent) + '%');
+				case State::Ready:
+					return tr::lng_teagram_update_restart_install(tr::now);
+				case State::RestartPending:
+					return tr::lng_teagram_update_dont_restart(tr::now);
+				case State::AlreadyInstalled:
+					return tr::lng_teagram_update_restart_app(tr::now);
+				default:
+					Unexpected("Unexpected Teagram update banner state.");
+				}
+			}();
+			_updateTelegram->setText(text);
+			_updateTelegram->setAccessibleName(text);
+			_updateTelegram->setClickedCallback([=] {
+				switch (manager->state().state) {
+				case State::Available:
+					manager->downloadAndInstall();
+					break;
+				case State::Downloading:
+				case State::Preparing:
+					manager->cancel();
+					break;
+				case State::Ready:
+				case State::AlreadyInstalled:
+					manager->restartExplicitly();
+					break;
+				case State::RestartPending:
+					manager->dontRestart();
+					break;
+				default:
+					break;
+				}
+			});
+			_updateTelegram->show();
+			if (_connecting) {
+				_connecting->raise();
+			}
+		} else if (_updateTelegram) {
+			_updateTelegram.destroy();
+		}
+		updateControlsGeometry();
+		return;
+	}
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	Expects(!Core::UpdaterDisabled());
 
 	if (_layout == Layout::Child) {

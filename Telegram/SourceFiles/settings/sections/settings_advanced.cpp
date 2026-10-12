@@ -25,6 +25,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/launcher.h"
 #include "core/mac_protected_path_access.h"
 #include "core/update_checker.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_manager.h"
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "data/data_auto_download.h"
 #include "data/data_session.h"
 #include "export/export_manager.h"
@@ -82,6 +85,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // !TDESKTOP_DISABLE_SPELLCHECK
 
 #include <ksandbox.h>
+
+#include <utility>
 
 namespace Settings {
 namespace {
@@ -1009,7 +1014,248 @@ void BuildSpellcheckerSection(SectionBuilder &builder) {
 #endif // !TDESKTOP_DISABLE_SPELLCHECK
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+QString TeagramUpdateStateText(const Core::TeagramUpdateSnapshot &state) {
+	using State = Core::TeagramUpdateUiState;
+	switch (state.state) {
+	case State::Idle:
+		return state.automatic
+			? tr::lng_teagram_update_state_idle_on(tr::now)
+			: tr::lng_teagram_update_state_idle_off(tr::now);
+	case State::Checking:
+		return tr::lng_teagram_update_state_checking(tr::now);
+	case State::UpToDate:
+		return state.checkedAt.isEmpty()
+			? tr::lng_teagram_update_state_latest(tr::now)
+			: tr::lng_teagram_update_state_checked(
+				tr::now, lt_time, state.checkedAt);
+	case State::WaitingForMain:
+		return tr::lng_teagram_update_state_waiting_main(tr::now);
+	case State::Unreachable:
+		return tr::lng_teagram_update_state_unreachable(tr::now);
+	case State::Available:
+		return tr::lng_teagram_update_state_available(
+			tr::now, lt_build, QString::number(state.candidateBuild));
+	case State::Downloading:
+		return tr::lng_teagram_update_state_downloading(
+			tr::now, lt_progress,
+			QString::number(state.progressPercent) + '%');
+	case State::Preparing:
+		return tr::lng_teagram_update_state_preparing(
+			tr::now, lt_progress,
+			QString::number(state.progressPercent) + '%');
+	case State::Ready:
+		return state.automatic
+			? tr::lng_teagram_update_state_ready_auto(
+				tr::now, lt_build, QString::number(state.candidateBuild))
+			: tr::lng_teagram_update_state_ready(
+				tr::now, lt_build, QString::number(state.candidateBuild));
+	case State::RestartPending:
+		return tr::lng_teagram_update_state_restart_pending(tr::now);
+	case State::Restarting:
+		return tr::lng_teagram_update_state_restarting(tr::now);
+	case State::Updated:
+		return tr::lng_teagram_update_state_updated(
+			tr::now, lt_build, QString::number(state.runningBuild));
+	case State::AlreadyInstalled:
+		return tr::lng_teagram_update_state_already_installed(tr::now);
+	case State::Cancelled:
+		return tr::lng_teagram_update_state_cancelled(tr::now);
+	case State::DownloadFailed:
+		return tr::lng_teagram_update_state_download_failed(tr::now);
+	case State::Rejected:
+		return tr::lng_teagram_update_state_rejected(
+			tr::now, lt_reason, state.rejectionCode);
+	case State::Busy:
+		return tr::lng_teagram_update_state_busy(tr::now);
+	case State::Refused:
+		return tr::lng_teagram_update_state_refused(
+			tr::now,
+			lt_reason,
+			state.refusal == Core::TeagramUpdateRefusal::Translocated
+				? tr::lng_teagram_update_refusal_translocated(tr::now)
+				: state.refusal == Core::TeagramUpdateRefusal::Unwritable
+					? tr::lng_teagram_update_refusal_unwritable(tr::now)
+					: state.refusal == Core::TeagramUpdateRefusal::OtherOwner
+						? tr::lng_teagram_update_refusal_owner(tr::now)
+						: tr::lng_teagram_update_refusal_disk(tr::now));
+	case State::NeedsNewerMacOS:
+		return tr::lng_teagram_update_state_needs_macos(
+			tr::now, lt_version, state.minimumMacOS);
+	case State::Recovered:
+		return tr::lng_teagram_update_state_recovered(tr::now);
+	}
+	Unexpected("Value in TeagramUpdateStateText.");
+}
+
+void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
+	using Channel = Core::TeagramUpdateChannel;
+	const auto manager = &Core::TeagramUpdateManager::Instance();
+	const auto controller = builder.controller();
+	if (!atTop) {
+		builder.addDivider();
+	}
+	builder.addSkip();
+	builder.addSubsectionTitle({
+		.id = u"advanced/version"_q,
+		.title = tr::lng_settings_version_info(),
+		.keywords = { u"version"_q, u"update"_q, u"check"_q },
+	});
+	builder.addDividerText(tr::lng_settings_current_version(
+		tr::now,
+		lt_version,
+		currentVersionText()));
+
+	const auto toggle = builder.addButton({
+		.id = u"advanced/auto_update"_q,
+		.title = tr::lng_settings_update_automatically(),
+		.st = &st::settingsUpdateToggle,
+		.toggled = rpl::single(manager->state().automatic),
+		.keywords = { u"update"_q, u"automatic"_q, u"version"_q },
+	});
+	if (toggle) {
+		toggle->toggledValue(
+		) | rpl::on_next([=](bool enabled) {
+			manager->setAutomatic(enabled);
+		}, toggle->lifetime());
+	}
+
+	const auto stateLabel = manager->stateChanges() | rpl::map(
+		&TeagramUpdateStateText);
+	builder.addDividerText(std::move(stateLabel));
+
+	const auto selectedChannel = manager->stateChanges() | rpl::map(
+		[](const Core::TeagramUpdateSnapshot &state) {
+			return (state.selectedChannel == Channel::Main)
+				? tr::lng_teagram_update_channel_main(tr::now)
+				: tr::lng_teagram_update_channel_dev(tr::now);
+		});
+	builder.addButton({
+		.id = u"advanced/update_channel"_q,
+		.title = tr::lng_teagram_update_channel(tr::now),
+		.st = &st::settingsButtonNoIcon,
+		.label = std::move(selectedChannel),
+		.onClick = [=] {
+			const auto initial = int(manager->state().selectedChannel);
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				box->setTitle(tr::lng_teagram_update_channel());
+				const auto group = std::make_shared<Ui::RadiobuttonGroup>(initial);
+				for (const auto [channel, title] : {
+						std::pair{ int(Channel::Dev),
+							tr::lng_teagram_update_channel_dev(tr::now) },
+						std::pair{ int(Channel::Main),
+							tr::lng_teagram_update_channel_main(tr::now) } }) {
+					box->addRow(
+						object_ptr<Ui::Radiobutton>(
+							box, group, channel, title,
+							st::defaultBoxCheckbox),
+						st::boxOptionListPadding);
+				}
+				box->addButton(tr::lng_box_ok(), [=] {
+					manager->setChannel(Channel(group->current()));
+					box->closeBox();
+				});
+				box->addButton(tr::lng_cancel(), [=] {
+					box->closeBox();
+				});
+			}));
+		},
+		.keywords = { u"update"_q, u"channel"_q, u"dev"_q, u"main"_q },
+	});
+
+	builder.addButton({
+		.id = u"advanced/check_update"_q,
+		.title = tr::lng_teagram_update_check_now(),
+		.st = &st::settingsButtonNoIcon,
+		.onClick = [=] { manager->checkNow(); },
+		.keywords = { u"check"_q, u"update"_q, u"version"_q },
+	});
+
+	const auto actionTitle = manager->stateChanges() | rpl::map(
+		[](const Core::TeagramUpdateSnapshot &state) {
+			using State = Core::TeagramUpdateUiState;
+			switch (state.state) {
+			case State::Available:
+				return tr::lng_teagram_update_download_install(tr::now);
+			case State::Ready:
+				return tr::lng_teagram_update_restart_install(tr::now);
+			case State::AlreadyInstalled:
+				return tr::lng_teagram_update_restart_app(tr::now);
+			case State::RestartPending:
+				return tr::lng_teagram_update_dont_restart(tr::now);
+			case State::Downloading:
+			case State::Preparing:
+				return tr::lng_cancel(tr::now);
+			default:
+				return tr::lng_teagram_update_check_now(tr::now);
+			}
+		});
+	const auto actionShown = manager->stateChanges() | rpl::map(
+		[](const Core::TeagramUpdateSnapshot &state) {
+			using State = Core::TeagramUpdateUiState;
+			return (state.state == State::Available)
+				|| (state.state == State::Downloading)
+				|| (state.state == State::Preparing)
+				|| (state.state == State::Ready)
+				|| (state.state == State::RestartPending)
+				|| (state.state == State::AlreadyInstalled);
+		});
+	builder.addButton({
+		.id = u"advanced/update_action"_q,
+		.title = std::move(actionTitle),
+		.st = &st::settingsButtonNoIcon,
+		.shown = std::move(actionShown),
+		.onClick = [=] {
+			using State = Core::TeagramUpdateUiState;
+			switch (manager->state().state) {
+			case State::Available:
+				manager->downloadAndInstall();
+				break;
+			case State::Ready:
+			case State::AlreadyInstalled:
+				manager->restartExplicitly();
+				break;
+			case State::RestartPending:
+				manager->dontRestart();
+				break;
+			case State::Downloading:
+			case State::Preparing:
+				manager->cancel();
+				break;
+			default:
+				manager->checkNow();
+				break;
+			}
+		},
+		.keywords = { u"update"_q, u"install"_q, u"restart"_q },
+	});
+
+	builder.addButton({
+		.id = u"advanced/update_recovery"_q,
+		.title = tr::lng_teagram_update_show_previous(),
+		.st = &st::settingsButtonNoIcon,
+		.shown = manager->stateChanges() | rpl::map(
+			[](const Core::TeagramUpdateSnapshot &state) {
+				return state.previousBundleAvailable;
+			}),
+		.onClick = [=] { manager->showPreviousBundleInFinder(); },
+		.keywords = { u"update"_q, u"recovery"_q, u"finder"_q },
+	});
+	builder.addDividerText(tr::lng_teagram_update_note());
+	builder.addSkip();
+	if (atTop) {
+		builder.addDivider();
+	}
+}
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
+
 void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	if (Core::TeagramUpdateUiEnabled()) {
+		BuildTeagramUpdateSection(builder, atTop);
+		return;
+	}
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (!HasUpdate()) {
 		return;
 	}

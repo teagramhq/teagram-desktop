@@ -43,7 +43,7 @@ namespace Core {
 namespace {
 
 constexpr auto kStagingDirectory = ".teagram-update-staging";
-constexpr auto kPreviousBundle = ".Teagram.previous.app";
+constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
@@ -148,7 +148,7 @@ struct BundleInfo {
 	const auto parent = CanonicalDirectory(info.absolutePath());
 	if (parent.isEmpty()
 		|| (info.fileName() != u"Teagram.app"_q
-			&& info.fileName() != u".Teagram.previous.app"_q)) {
+			&& info.fileName() != u".Teagram.app.previous"_q)) {
 		return {};
 	}
 	return QDir(parent).filePath(info.fileName());
@@ -731,6 +731,74 @@ enum class StartupWaitResult {
 
 } // namespace
 
+TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
+	@autoreleasepool {
+		const auto mainBundle = [NSBundle mainBundle];
+		if (FromNative([mainBundle bundleIdentifier])
+			!= u"io.teagram.desktop"_q) {
+			return TeagramUpdateInstallLocation::Unwritable;
+		}
+		const auto installed = CanonicalBundlePath(
+			FromNative([mainBundle bundlePath]));
+		if (installed.isEmpty()) {
+			return TeagramUpdateInstallLocation::Unwritable;
+		} else if (IsTranslocated(installed)) {
+			return TeagramUpdateInstallLocation::Translocated;
+		}
+		const auto parent = QFileInfo(installed).absolutePath();
+		struct stat bundleInfo = {};
+		struct stat parentInfo = {};
+		const auto bundleBytes = QFile::encodeName(installed);
+		const auto parentBytes = QFile::encodeName(parent);
+		if (::lstat(bundleBytes.constData(), &bundleInfo) != 0
+			|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
+			return TeagramUpdateInstallLocation::Unwritable;
+		}
+		if (bundleInfo.st_uid != ::geteuid()
+			|| parentInfo.st_uid != ::geteuid()) {
+			return TeagramUpdateInstallLocation::OtherOwner;
+		} else if (bundleInfo.st_dev != parentInfo.st_dev) {
+			return TeagramUpdateInstallLocation::UnsupportedDisk;
+		} else if (!S_ISDIR(bundleInfo.st_mode)
+			|| !S_ISDIR(parentInfo.st_mode)
+			|| ::access(bundleBytes.constData(), W_OK) != 0
+			|| ::access(parentBytes.constData(), W_OK | X_OK) != 0) {
+			return TeagramUpdateInstallLocation::Unwritable;
+		}
+		return TeagramUpdateInstallLocation::Allowed;
+	}
+}
+
+bool HasPreviousTeagramUpdateBundle() {
+	@autoreleasepool {
+		const auto mainBundle = [NSBundle mainBundle];
+		if (FromNative([mainBundle bundleIdentifier])
+			!= u"io.teagram.desktop"_q) {
+			return false;
+		}
+		const auto installed = FromNative([mainBundle bundlePath]);
+		const auto previous = QDir(QFileInfo(installed).absolutePath()).filePath(
+			QString::fromLatin1(kPreviousBundle));
+		return CanonicalBundlePath(previous) == QDir::cleanPath(previous);
+	}
+}
+
+void ShowPreviousTeagramUpdateBundleInFinder() {
+	@autoreleasepool {
+		if (!HasPreviousTeagramUpdateBundle()) {
+			return;
+		}
+		const auto mainBundle = [NSBundle mainBundle];
+		const auto installed = FromNative([mainBundle bundlePath]);
+		const auto parent = QFileInfo(installed).absolutePath();
+		const auto previous = QDir(parent).filePath(
+			QString::fromLatin1(kPreviousBundle));
+		[[NSWorkspace sharedWorkspace]
+			selectFile:Platform::Q2NSString(previous)
+			inFileViewerRootedAtPath:Platform::Q2NSString(parent)];
+	}
+}
+
 #ifdef TDESKTOP_UNIT_TESTS
 TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
@@ -787,7 +855,8 @@ void TeagramUpdateInstaller::cancel() {
 
 TeagramUpdateInstallResult
 TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
-								TeagramUpdateInstallProgressHandler progress) {
+								TeagramUpdateInstallProgressHandler progress,
+								TeagramUpdateBeforeRelaunch beforeRelaunch) {
 	if (_started.exchange(true, std::memory_order_relaxed)) {
 		return InstallResult(TeagramUpdateInstallReason::Busy);
 	}
@@ -1038,7 +1107,7 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
 				replacement.previousBundlePath);
 		}
-		if (!requestRestart()) {
+		if ((beforeRelaunch && !beforeRelaunch()) || !requestRestart()) {
 			return InstallResult(
 				TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
 				replacement.previousBundlePath);

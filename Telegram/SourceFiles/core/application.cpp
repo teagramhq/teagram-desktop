@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 #include "core/teagram_update_install.h"
+#include "core/teagram_update_manager.h"
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "core/sandbox.h"
@@ -433,6 +434,9 @@ void Application::run() {
 	refreshApplicationIcon();
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 	CompleteTeagramUpdateStartup();
+	if (windowedApplication) {
+		TeagramUpdateManager::Instance().start();
+	}
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
@@ -871,6 +875,11 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 			}
 		}
 		_lastMouseIgnored = false;
+		if (e->type() == QEvent::MouseMove) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+			TeagramUpdateManager::Instance().noteUserInput();
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
+		}
 	} break;
 
 	case QEvent::ContextMenu: {
@@ -1417,6 +1426,9 @@ bool Application::passcodeLocked() const {
 
 void Application::updateNonIdle() {
 	_lastNonIdleTime = crl::now();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	TeagramUpdateManager::Instance().noteUserInput();
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (const auto session = maybePrimarySession()) {
 		session->updates().checkIdleFinish(_lastNonIdleTime);
 	}

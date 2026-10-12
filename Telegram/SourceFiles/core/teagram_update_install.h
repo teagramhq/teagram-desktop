@@ -31,12 +31,24 @@ enum class TeagramUpdateInstallReason {
 	Busy,
 	Cancelled,
 	InvalidTarget,
+	RefusedTranslocated,
+	RefusedUnwritable,
+	RefusedOtherOwner,
+	RefusedUnsupportedDisk,
 	InstalledBuildChanged,
 	CandidateRejected,
 	ArchiveRejected,
 	ReplacementFailed,
 	RecoveryRequired,
 	RelaunchFailedPreviousAvailable,
+};
+
+enum class TeagramUpdateInstallLocation {
+	Allowed,
+	Translocated,
+	Unwritable,
+	OtherOwner,
+	UnsupportedDisk,
 };
 
 enum class TeagramUpdateRelaunchResult {
@@ -56,6 +68,7 @@ struct TeagramUpdateInstallResult {
 
 using TeagramUpdateInstallProgressHandler
 	= std::function<void(TeagramUpdateInstallStage, int)>;
+using TeagramUpdateBeforeRelaunch = std::function<bool()>;
 
 #ifdef TDESKTOP_UNIT_TESTS
 struct TeagramUpdateInstallerTestHooks {
@@ -101,7 +114,8 @@ class TeagramUpdateInstaller final {
 
 	[[nodiscard]] TeagramUpdateInstallResult
 	install(const TeagramUpdateCandidate &candidate,
-			TeagramUpdateInstallProgressHandler progress = {});
+			TeagramUpdateInstallProgressHandler progress = {},
+			TeagramUpdateBeforeRelaunch beforeRelaunch = {});
 
   private:
 	std::atomic_bool _cancelled = false;
@@ -112,6 +126,11 @@ class TeagramUpdateInstaller final {
 };
 
 void CompleteTeagramUpdateStartup();
+
+[[nodiscard]] TeagramUpdateInstallLocation
+CheckTeagramUpdateInstallLocation();
+[[nodiscard]] bool HasPreviousTeagramUpdateBundle();
+void ShowPreviousTeagramUpdateBundleInFinder();
 
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdown(const QString &dataFile,

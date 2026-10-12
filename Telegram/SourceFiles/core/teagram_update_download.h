@@ -75,6 +75,7 @@ class TeagramUpdateCandidate final {
 	[[nodiscard]] const AuthenticatedTeagramUpdate &metadata() const;
 	[[nodiscard]] quint64 installedBuild() const;
 	[[nodiscard]] QString archivePath() const;
+	[[nodiscard]] bool downloaded() const;
 
   private:
 	friend class TeagramUpdateDownloader;
@@ -114,7 +115,12 @@ class TeagramUpdateDownloader final {
 	[[nodiscard]] TeagramUpdateDownloadResult
 	checkForUpdates(quint64 installedBuild,
 					TeagramUpdateChannel installedChannel,
-					TeagramUpdateProgressHandler progress = {});
+					TeagramUpdateProgressHandler progress = {},
+					quint64 highWaterBuild = 0,
+					bool downloadArchive = true);
+	[[nodiscard]] TeagramUpdateDownloadResult download(
+		const TeagramUpdateCandidate &available,
+		TeagramUpdateProgressHandler progress = {});
 
   private:
 	std::unique_ptr<TeagramUpdateTransport> _transport;

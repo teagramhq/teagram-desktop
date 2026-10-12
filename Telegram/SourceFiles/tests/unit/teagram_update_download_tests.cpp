@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_archive.h"
 #include "core/teagram_update_download.h"
 #include "core/teagram_update_replacement.h"
+#include "core/teagram_update_state.h"
 #if defined(Q_OS_MAC)
 #include "core/teagram_update_install.h"
 #endif // Q_OS_MAC
@@ -37,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -1041,7 +1043,7 @@ TEST_CASE(TeagramUpdateInstallFailurePreservesApp) {
 	const auto installed = QDir(root.path()).filePath(u"Teagram.app"_q);
 	const auto candidate = QDir(root.path()).filePath(u"staging/Teagram.app"_q);
 	const auto previous
-		= QDir(root.path()).filePath(u".Teagram.previous.app"_q);
+		= QDir(root.path()).filePath(u".Teagram.app.previous"_q);
 	const auto installedExecutable
 		= QDir(installed).filePath(u"Contents/MacOS/Teagram"_q);
 	const auto candidateExecutable
@@ -1481,7 +1483,7 @@ TEST_CASE(TeagramUpdateInstallerRemovesInterruptedExtraction) {
 	}
 	const auto installed = root.filePath(u"Teagram.app"_q);
 	const auto staging = root.filePath(u".teagram-update-staging"_q);
-	const auto previous = root.filePath(u".Teagram.previous.app"_q);
+	const auto previous = root.filePath(u".Teagram.app.previous"_q);
 	const auto running = installed;
 	const auto installedInfo
 		= QDir(installed).filePath(u"Contents/Info.plist"_q);
@@ -1617,7 +1619,7 @@ TEST_CASE(TeagramUpdateReplacementRetainsPreviousThroughStartup) {
 		= QDir(root.path()).filePath(u".teagram-update-staging"_q);
 	const auto stagedPrevious = QDir(staging).filePath(u"Teagram.app"_q);
 	const auto previous
-		= QDir(root.path()).filePath(u".Teagram.previous.app"_q);
+		= QDir(root.path()).filePath(u".Teagram.app.previous"_q);
 	const auto installedExecutable
 		= QDir(installed).filePath(u"Contents/MacOS/Teagram"_q);
 	const auto previousExecutable
@@ -1667,7 +1669,7 @@ TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
 	const auto staging
 		= QDir(root.path()).filePath(u".teagram-update-staging"_q);
 	const auto previous
-		= QDir(root.path()).filePath(u".Teagram.previous.app"_q);
+		= QDir(root.path()).filePath(u".Teagram.app.previous"_q);
 	const auto executable
 		= QDir(previous).filePath(u"Contents/MacOS/Teagram"_q);
 	CHECK(QDir().mkpath(QFileInfo(executable).absolutePath()));
@@ -1852,6 +1854,98 @@ TEST_CASE(TeagramUpdateDownloadAcceptsFixedSource) {
 	CHECK(mainResult.reason == TeagramUpdateDownloadReason::NoUpdate);
 	CHECK(mainResult.candidate == nullptr);
 	CHECK(devOnlyFixture->_requests.size() == 3);
+}
+
+TEST_CASE(TeagramUpdateChannelSwitchDoesNotDowngrade) {
+	const auto signingKey = GenerateTestSigningKey();
+	if (!signingKey) {
+		return;
+	}
+	auto root = QTemporaryDir();
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto archive = QByteArrayLiteral("main-102");
+	auto transport = std::make_unique<FixtureTransport>();
+	transport->addRelease(
+		"teagram-build-102", "main", "102",
+		signingKey->privateKey.get(), archive, false);
+	transport->addReleaseList();
+	TeagramUpdateDownloader downloader(
+		std::move(transport),
+		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
+		root.path());
+	const auto result = downloader.checkForUpdates(
+		101, TeagramUpdateChannel::Main, {}, 102, false);
+	CHECK(result.reason == TeagramUpdateDownloadReason::NoUpdate);
+	CHECK(result.candidate == nullptr);
+	CHECK(QDir(root.path()).entryList(
+		QDir::Files | QDir::NoDotAndDotDot).isEmpty());
+}
+
+TEST_CASE(TeagramUpdateRestartWaitsForActiveWork) {
+	const auto signingKey = GenerateTestSigningKey();
+	if (!signingKey) {
+		return;
+	}
+	auto root = QTemporaryDir();
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto archive = QByteArrayLiteral("main-103");
+	auto transport = std::make_unique<FixtureTransport>();
+	transport->addRelease(
+		"teagram-build-103", "main", "103",
+		signingKey->privateKey.get(), archive, false);
+	transport->addReleaseList();
+	TeagramUpdateDownloader downloader(
+		std::move(transport),
+		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
+		root.path());
+	auto result = downloader.checkForUpdates(
+		102, TeagramUpdateChannel::Main, {}, 102, false);
+	CHECK(result.reason == TeagramUpdateDownloadReason::Available);
+	CHECK(result.candidate != nullptr);
+	if (!result.candidate) {
+		return;
+	}
+	CHECK(!result.candidate->downloaded());
+	auto downloadTransport = std::make_unique<FixtureTransport>();
+	downloadTransport->addRelease(
+		"teagram-build-103", "main", "103",
+		signingKey->privateKey.get(), archive, false);
+	TeagramUpdateDownloader downloaderForArchive(
+		std::move(downloadTransport),
+		std::optional<TeagramUpdatePublicKey>(signingKey->publicKey),
+		root.path());
+	const auto downloaded = downloaderForArchive.download(*result.candidate);
+	CHECK(downloaded.reason == TeagramUpdateDownloadReason::Available);
+	CHECK(downloaded.candidate != nullptr);
+	if (!downloaded.candidate) {
+		return;
+	}
+	CHECK(downloaded.candidate->downloaded());
+	for (const auto work : {
+			TeagramUpdateActiveWork{ .call = true },
+			TeagramUpdateActiveWork{ .recording = true },
+			TeagramUpdateActiveWork{ .upload = true },
+	}) {
+		CHECK(TeagramUpdateRestartWhenSafe(
+			false, work, std::chrono::milliseconds(0))
+			== TeagramUpdateRestartDecision::WaitForActiveWork);
+	}
+	const auto work = TeagramUpdateActiveWork();
+	CHECK(TeagramUpdateRestartWhenSafe(
+		false, work, std::chrono::milliseconds(0))
+		== TeagramUpdateRestartDecision::RestartNow);
+	CHECK(TeagramUpdateRestartWhenSafe(
+		true, work, std::chrono::milliseconds(119'999))
+		== TeagramUpdateRestartDecision::WaitForIdleInput);
+	CHECK(TeagramUpdateRestartWhenSafe(
+		true, work, std::chrono::milliseconds(120'000))
+		== TeagramUpdateRestartDecision::RestartNow);
 }
 
 TEST_CASE(TeagramUpdateDownloadFailsWithoutMutation) {

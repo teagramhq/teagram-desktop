@@ -17,6 +17,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/flags.h"
 #include "emoji.h"
 
+#include <QtCore/QByteArray>
+
+#include <optional>
+#include <string_view>
+
 enum class RectPart;
 struct LanguageId;
 
@@ -1226,5 +1231,17 @@ private:
 	QByteArray _photoEditorBrush;
 
 };
+
+} // namespace Core
+
+namespace Core {
+
+template <>
+std::optional<QByteArray> Settings::readPrefImpl<QByteArray>(
+	std::string_view key);
+template <>
+void Settings::writePrefImpl<QByteArray>(
+	std::string_view key,
+	QByteArray value);
 
 } // namespace Core
