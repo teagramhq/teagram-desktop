@@ -1,0 +1,178 @@
+name: MacOS updater fixtures.
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'Telegram/SourceFiles/core/teagram_update_*'
+      - 'Telegram/SourceFiles/tests/unit/teagram_update_*_tests.cpp'
+      - 'Telegram/SourceFiles/tests/unit/unit_test.cpp'
+      - 'Telegram/SourceFiles/tests/unit/unit_test.h'
+      - 'Telegram/cmake/**'
+      - 'Telegram/build/prepare/mac.sh'
+      - 'Telegram/build/prepare/prepare.py'
+      - 'Telegram/build/qt_version.py'
+      - 'Telegram/build/teagram_update_manifest.py'
+      - '.github/scripts/run_teagram_updater_fixtures.sh'
+      - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/workflows/macos_updater_fixtures.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  updater-fixtures:
+    name: macOS arm64 updater fixtures
+    runs-on: macos-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Require an arm64 runner.
+        run: |
+          set -euo pipefail
+          architecture="$(uname -m)"
+          echo "Runner architecture: $architecture"
+          test "$architecture" = arm64
+
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> "$GITHUB_ENV"
+
+      - name: Check out the exact PR head.
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: recursive
+          persist-credentials: false
+          path: ${{ env.REPO_NAME }}
+
+      - name: Verify the checked out PR head.
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
+          test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
+          printf 'Tested PR head: %s\n' "$checked_out_sha"
+          mkdir -p "$RUNNER_TEMP/teagram-updater-fixtures"
+          printf 'tested_sha=%s\n' "$checked_out_sha" \
+            > "$RUNNER_TEMP/teagram-updater-fixtures/revision.txt"
+
+      - name: Set up build tools and Xcode.
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(whoami)":admin /usr/local/share
+
+          missing=()
+          for formula in automake libtool meson nasm ninja pkg-config; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+          if ((${#missing[@]})); then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"
+          fi
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Restore libraries cache.
+        id: cache-libs
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+
+      - name: Prepare libraries.
+        id: libraries
+        if: steps.cache-libs.outputs.cache-hit != 'true'
+        run: ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
+
+      - name: Save libraries cache.
+        if: ${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+
+      - name: Configure updater fixture runner.
+        id: configure
+        run: |
+          set -euo pipefail
+          cd "$REPO_NAME/Telegram"
+          configure_log="$RUNNER_TEMP/teagram-updater-fixtures/configure.log"
+          set +e
+          ./configure.sh \
+            -G "Ninja Multi-Config" \
+            -D CMAKE_OSX_ARCHITECTURES=arm64 \
+            -D CMAKE_CONFIGURATION_TYPES=Debug \
+            -D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -D CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -D TDESKTOP_API_TEST=ON \
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF 2>&1 \
+            | tail -c 65536 \
+            | tee "$configure_log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          configure_status="${pipeline_status[0]}"
+          if [[ "${pipeline_status[1]}" != 0 || "${pipeline_status[2]}" != 0 ]]; then
+            configure_status=1
+          fi
+          printf 'configure_exit_status=%s\n' "$configure_status" \
+            >> "$RUNNER_TEMP/teagram-updater-fixtures/revision.txt"
+          if ((configure_status != 0)); then
+            echo "::error::Updater fixture configure failed; bounded output is in the updater fixture artifact."
+            exit "$configure_status"
+          fi
+
+      - name: Build updater fixture runner.
+        id: build-fixtures
+        run: |
+          set -euo pipefail
+          build_log="$RUNNER_TEMP/teagram-updater-fixtures/build.log"
+          set +e
+          cmake --build "$REPO_NAME/Telegram/out" \
+            --config Debug \
+            --target test_unit \
+            --parallel 2 2>&1 \
+            | tail -c 65536 \
+            | tee "$build_log"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          build_status="${pipeline_status[0]}"
+          if [[ "${pipeline_status[1]}" != 0 || "${pipeline_status[2]}" != 0 ]]; then
+            build_status=1
+          fi
+          printf 'build_exit_status=%s\n' "$build_status" \
+            >> "$RUNNER_TEMP/teagram-updater-fixtures/revision.txt"
+          if ((build_status != 0)); then
+            echo "::error::test_unit build failed; bounded output is in the updater fixture artifact."
+            exit "$build_status"
+          fi
+
+      - name: Run focused updater fixtures.
+        id: fixtures
+        env:
+          TESTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bash "$REPO_NAME/.github/scripts/run_teagram_updater_fixtures.sh" \
+            "$REPO_NAME/Telegram/out/Debug/test_unit" \
+            "$RUNNER_TEMP/teagram-updater-fixtures"
+
+      - name: Upload updater fixture diagnostics.
+        if: ${{ always() && steps.configure.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: teagram-updater-fixtures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/teagram-updater-fixtures/
+          if-no-files-found: error
+          retention-days: 14

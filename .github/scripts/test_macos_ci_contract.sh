@@ -4,6 +4,8 @@ set -euo pipefail
 mac_workflow="${MACOS_CI_CONTRACT_WORKFLOW:-.github/workflows/mac.yml}"
 packaged_workflow=".github/workflows/mac_packaged.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
+updater_workflow=".github/workflows/macos_updater_fixtures.yml"
+updater_runner=".github/scripts/run_teagram_updater_fixtures.sh"
 
 require_text() {
   local file="$1"
@@ -232,6 +234,43 @@ require_text "$unit_workflow" 'group: ${{ github.workflow }}-${{ inputs.branch |
 require_text "$unit_workflow" 'cancel-in-progress: true'
 require_text "$unit_workflow" 'Telegram/build/prepare/mac.sh'
 require_text "$unit_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
+
+require_text "$updater_workflow" '  pull_request:'
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/teagram_update_*'"
+require_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
+require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"'
+require_text "$updater_workflow" 'runs-on: macos-latest'
+require_text "$updater_workflow" 'timeout-minutes: 180'
+require_text "$updater_workflow" 'cancel-in-progress: true'
+require_text "$updater_workflow" 'run_teagram_updater_fixtures.sh'
+require_text "$updater_workflow" 'actions/upload-artifact@v7'
+require_text "$updater_workflow" 'retention-days: 14'
+reject_text "$updater_workflow" 'secrets.'
+reject_text "$updater_workflow" 'TEAGRAM_UPDATE_PRIVATE_KEY'
+
+for fixture in \
+  TeagramUpdateArchiveWritesStayConfined \
+  TeagramUpdateInstallFailurePreservesApp \
+  TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary \
+  TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback \
+  TeagramUpdateInstallerRemovesInterruptedExtraction \
+  TeagramUpdateInstallerClearsUncommittedCandidateOnRestart \
+  TeagramUpdateReplacementRetainsPreviousThroughStartup \
+  TeagramUpdateReplacementRestoresMissingTarget \
+  TeagramUpdateDownloadFailsWithoutMutation \
+  TeagramUpdateRejectsUntrustedOrIneligiblePackage \
+  TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation \
+  TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation; do
+  require_text "$updater_runner" "$fixture"
+  if ! grep -Fq "TEST_CASE($fixture)" \
+    Telegram/SourceFiles/tests/unit/teagram_update_download_tests.cpp \
+    Telegram/SourceFiles/tests/unit/teagram_update_verification_tests.cpp; then
+    printf 'Updater fixture runner names a missing test case: %s\n' "$fixture" >&2
+    exit 1
+  fi
+done
+require_text "$updater_runner" '"$unit_binary" --case "$fixture"'
+require_text "$updater_runner" 'tail -c "$max_log_bytes"'
 
 require_text README.md '`MacOS.` workflow is the required pull request gate'
 
