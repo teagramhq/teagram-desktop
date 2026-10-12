@@ -3287,8 +3287,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
-	const auto pinnedController = pinnedWindow->sessionController();
-	const auto stockController = stockWindow->sessionController();
+	auto pinnedController = pinnedWindow->sessionController();
+	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
@@ -3301,6 +3301,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"session feature capabilities crossed account or window "
 			"boundaries");
+	}
+	pinnedController = pinnedWindow->sessionController();
+	stockController = stockWindow->sessionController();
+	if (!pinnedController || !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
+		return FailChatParticipantsRegression(
+			"test windows lost their owning sessions after activation checks");
 	}
 	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
 										 stockWindow, pinnedWindow,
