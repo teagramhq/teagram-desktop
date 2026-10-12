@@ -647,6 +647,13 @@ bool TeagramUpdateCandidate::downloaded() const {
 	return _archive != nullptr;
 }
 
+void TeagramUpdateCandidate::discardArchive() {
+	if (_archive) {
+		_archive->close();
+		_archive.reset();
+	}
+}
+
 bool TeagramUpdateDownloadResult::available() const {
 	return reason == TeagramUpdateDownloadReason::Available
 		   && candidate != nullptr;

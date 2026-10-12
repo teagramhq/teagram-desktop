@@ -72,6 +72,7 @@ TEST_CASE(TeagramUpdateControlsAreDisabledDuringRestarting) {
 	CHECK(!TeagramUpdateControlDisabled(State::Checking, false));
 	CHECK(TeagramUpdateControlDisabled(State::Restarting, false));
 	CHECK(!TeagramUpdateControlDisabled(State::Ready, true));
+	CHECK(TeagramUpdateControlDisabled(State::RecoveryRequired, true));
 }
 
 TEST_CASE(TeagramUpdateChannelSwitchKeepsOnlyValidPendingRestarts) {
@@ -104,6 +105,51 @@ TEST_CASE(TeagramUpdateChatListRestartPendingKeepsRestartAction) {
 	CHECK(TeagramUpdateChatListActionForState(
 		TeagramUpdateUiState::Downloading)
 		== TeagramUpdateChatListAction::Cancel);
+	CHECK(TeagramUpdateChatListActionForState(
+		TeagramUpdateUiState::RecoveryRequired)
+		== TeagramUpdateChatListAction::Restart);
+}
+
+TEST_CASE(TeagramUpdateRecheckPreservesDownloadedCandidateAsReady) {
+	const auto checked = TeagramUpdateStateForAvailableCandidate(false, true);
+	CHECK(checked.state == TeagramUpdateUiState::Ready);
+	CHECK(!checked.startDownload);
+
+	const auto automatic = TeagramUpdateStateForAvailableCandidate(true, false);
+	CHECK(automatic.state == TeagramUpdateUiState::Available);
+	CHECK(automatic.startDownload);
+}
+
+TEST_CASE(TeagramUpdateRestartChecksSafetyAtQuitRequest) {
+	auto work = TeagramUpdateActiveWork();
+	CHECK(TeagramUpdateRestartWhenSafe(
+		false,
+		work,
+		std::chrono::minutes(5))
+		== TeagramUpdateRestartDecision::RestartNow);
+
+	work.upload = true;
+	auto requested = false;
+	CHECK(!TeagramUpdateRequestRestartIfSafe(
+		false,
+		work,
+		std::chrono::minutes(5),
+		[&] {
+			requested = true;
+			return true;
+		}));
+	CHECK(!requested);
+
+	work.upload = false;
+	CHECK(TeagramUpdateRequestRestartIfSafe(
+		false,
+		work,
+		std::chrono::minutes(5),
+		[&] {
+			requested = true;
+			return true;
+		}));
+	CHECK(requested);
 }
 
 TEST_CASE(TeagramUpdateRejectedBuildIsSuppressedAndKeptForTheNote) {
@@ -131,4 +177,6 @@ TEST_CASE(TeagramUpdateNoteVariantsFollowStateAndAutomaticSetting) {
 		== Note::ReadyAutomatic);
 	CHECK(TeagramUpdateNoteForState(State::Ready, false)
 		== Note::ReadyManual);
+	CHECK(TeagramUpdateNoteForState(State::RecoveryRequired, false)
+		== Note::RecoveryRequired);
 }

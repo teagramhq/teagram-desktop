@@ -786,7 +786,7 @@ void CheckRejectedInstallerTarget(const TeagramUpdateCandidate &candidate,
 	CHECK_EQ(ReadFile(profileCanary), profileBytes);
 	CHECK_EQ(ReadFile(outsideCanary), outsideBytes);
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-staging"_q)).exists());
-	CHECK(!QFileInfo(root.filePath(u".Teagram.previous.app"_q)).exists());
+	CHECK(!QFileInfo(root.filePath(u".Teagram.app.previous"_q)).exists());
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
 	if (makeUnwritable) {
@@ -1208,7 +1208,8 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 								TeagramUpdateRelaunchResult expectedRelaunch,
 								bool cancelAtReplacing,
 								bool injectReplacingFailure,
-								bool candidateStartupFails) {
+								bool candidateStartupFails,
+								bool leaveStageArtifact) {
 		auto architectureChecks = 0;
 		auto codeSealChecks = 0;
 		auto restartAttempts = 0;
@@ -1220,7 +1221,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		const auto installed = root.filePath(u"Teagram.app"_q);
 		const auto installedExecutable
 			= QDir(installed).filePath(u"Contents/MacOS/Teagram"_q);
-		const auto previous = root.filePath(u".Teagram.previous.app"_q);
+		const auto previous = root.filePath(u".Teagram.app.previous"_q);
 		const auto previousExecutable
 			= QDir(previous).filePath(u"Contents/MacOS/Teagram"_q);
 		const auto profileSocket = root.filePath(u"profile-instance.sock"_q);
@@ -1274,6 +1275,14 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		const auto result = installer.install(
 			*downloaded.candidate,
 			[&](TeagramUpdateInstallStage stage, int value) {
+				if (leaveStageArtifact
+					&& stage == TeagramUpdateInstallStage::Replacing
+					&& value == 100) {
+					CHECK(WriteFile(
+						QDir(root.filePath(u".teagram-update-staging"_q))
+							.filePath(u"cleanup-marker"_q),
+						QByteArrayLiteral("keep staging directory")));
+				}
 				if (cancelAtReplacing
 					&& stage == TeagramUpdateInstallStage::Replacing
 					&& value == 0) {
@@ -1281,9 +1290,15 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 				}
 			});
 		CHECK(result.reason == expected);
+		CHECK(result.replacementCommitted
+			== (expected == TeagramUpdateInstallReason::RelaunchRequested
+				|| expected
+					== TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable
+				|| (expected
+						== TeagramUpdateInstallReason::RecoveryRequired
+					&& leaveStageArtifact)));
 		CHECK_EQ(architectureChecks,
-				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2
-																		   : 3);
+				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2 : 3);
 		CHECK_EQ(codeSealChecks, 1);
 		CHECK_EQ(restartAttempts,
 				 expected == TeagramUpdateInstallReason::RelaunchRequested
@@ -1438,23 +1453,29 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 	};
 	runFixture(true, true, true, TeagramUpdateInstallReason::RelaunchRequested,
 			   TeagramUpdateRelaunchResult::CandidateStarted, false, false,
-			   false);
+			   false, false);
 	runFixture(true, true, false, TeagramUpdateInstallReason::RelaunchRequested,
 			   TeagramUpdateRelaunchResult::PreviousStarted, false, false,
-			   false);
+			   false, false);
 	runFixture(true, true, true, TeagramUpdateInstallReason::RelaunchRequested,
 			   TeagramUpdateRelaunchResult::PreviousStarted, false, false,
-			   true);
+			   true, false);
 	runFixture(false, true, false,
 			   TeagramUpdateInstallReason::CandidateRejected,
-			   TeagramUpdateRelaunchResult::NotPending, false, false, false);
+			   TeagramUpdateRelaunchResult::NotPending, false, false, false,
+			   false);
 	runFixture(true, false, false,
 			   TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
-			   TeagramUpdateRelaunchResult::Failed, false, false, false);
+			   TeagramUpdateRelaunchResult::Failed, false, false, false, false);
 	runFixture(true, true, false, TeagramUpdateInstallReason::Cancelled,
-			   TeagramUpdateRelaunchResult::NotPending, true, false, false);
+			   TeagramUpdateRelaunchResult::NotPending, true, false, false,
+			   false);
 	runFixture(true, true, false, TeagramUpdateInstallReason::ReplacementFailed,
-			   TeagramUpdateRelaunchResult::NotPending, false, true, false);
+			   TeagramUpdateRelaunchResult::NotPending, false, true, false,
+			   false);
+	runFixture(true, true, false, TeagramUpdateInstallReason::RecoveryRequired,
+			   TeagramUpdateRelaunchResult::NotPending, false, false, false,
+			   true);
 }
 
 TEST_CASE(TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation) {
@@ -1528,7 +1549,7 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	const auto installed = root.filePath(u"Teagram.app"_q);
 	const auto staging = root.filePath(u".teagram-update-staging"_q);
 	const auto staged = QDir(staging).filePath(u"Teagram.app"_q);
-	const auto previous = root.filePath(u".Teagram.previous.app"_q);
+	const auto previous = root.filePath(u".Teagram.app.previous"_q);
 	const auto installedInfo
 		= QDir(installed).filePath(u"Contents/Info.plist"_q);
 	const auto installedExecutable
@@ -1693,7 +1714,7 @@ TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
 	CHECK(!QFileInfo(previous).exists());
 }
 
-TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifacts) {
+TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifactsAndDiscardsArchive) {
 	const auto signingKey = GenerateTestSigningKey();
 	if (!signingKey) {
 		return;
@@ -1737,9 +1758,14 @@ TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifacts) {
 		CHECK_EQ(result.candidate->metadata().build(), quint64(101));
 		CHECK(result.candidate->metadata().channel()
 			  == TeagramUpdateChannel::Dev);
-		QFile downloaded(result.candidate->archivePath());
+		const auto downloadedPath = result.candidate->archivePath();
+		QFile downloaded(downloadedPath);
 		CHECK(downloaded.open(QIODevice::ReadOnly));
 		CHECK_EQ(downloaded.readAll(), archive);
+		downloaded.close();
+		result.candidate->discardArchive();
+		CHECK(!result.candidate->downloaded());
+		CHECK(!QFileInfo(downloadedPath).exists());
 	}
 	CHECK(HasOnlyFixedSourceHosts(fixture->_requests));
 }

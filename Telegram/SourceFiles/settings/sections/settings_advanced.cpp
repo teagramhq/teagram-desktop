@@ -1069,6 +1069,8 @@ QString TeagramUpdateStateText(const Core::TeagramUpdateSnapshot &state) {
 		return tr::lng_teagram_update_state_needs_macos(tr::now);
 	case State::Recovered:
 		return tr::lng_teagram_update_state_recovered(tr::now);
+	case State::RecoveryRequired:
+		return tr::lng_teagram_update_state_recovery_required(tr::now);
 	}
 	Unexpected("Value in TeagramUpdateStateText.");
 }
@@ -1238,6 +1240,9 @@ QString TeagramUpdateNoteText(const Core::TeagramUpdateSnapshot &state) {
 			lt_high_water,
 			QString::number(state.highWaterBuild));
 		break;
+	case Note::RecoveryRequired:
+		result = tr::lng_teagram_update_note_recovery_required(tr::now);
+		break;
 	}
 	if (!result.isEmpty()) {
 		result += ' ';
@@ -1359,6 +1364,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 			case State::Ready:
 				return tr::lng_teagram_update_restart_install(tr::now);
 			case State::AlreadyInstalled:
+			case State::RecoveryRequired:
 				return tr::lng_teagram_update_restart_app(tr::now);
 			case State::RestartPending:
 				return tr::lng_teagram_update_dont_restart(tr::now);
@@ -1377,7 +1383,8 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				|| (state.state == State::Preparing)
 				|| (state.state == State::Ready)
 				|| (state.state == State::RestartPending)
-				|| (state.state == State::AlreadyInstalled);
+				|| (state.state == State::AlreadyInstalled)
+				|| (state.state == State::RecoveryRequired);
 		});
 	const auto actionButton = builder.addButton({
 		.id = u"advanced/update_action"_q,
@@ -1391,6 +1398,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				break;
 			case State::Ready:
 			case State::AlreadyInstalled:
+			case State::RecoveryRequired:
 				manager->restartExplicitly();
 				break;
 			case State::RestartPending:
@@ -1414,7 +1422,21 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.id = u"advanced/update_recovery"_q,
 		.title = tr::lng_teagram_update_show_previous(),
 		.st = &st::settingsButtonNoIcon,
-		.onClick = [=] { manager->showPreviousBundleInFinder(); },
+		.onClick = [=] {
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				box->setTitle(tr::lng_teagram_update_recovery_title());
+				box->addRow(object_ptr<Ui::FlatLabel>(
+					box,
+					tr::lng_teagram_update_recovery_instructions(),
+					st::boxLabel));
+				box->addButton(
+					tr::lng_teagram_update_recovery_show_finder(),
+					[=] { manager->showPreviousBundleInFinder(); });
+				box->addButton(tr::lng_box_close(), [=] {
+					box->closeBox();
+				});
+			}));
+		},
 		.keywords = { u"update"_q, u"recovery"_q, u"finder"_q },
 		.shown = manager->stateChanges() | rpl::map(
 			[](const Core::TeagramUpdateSnapshot &state) {

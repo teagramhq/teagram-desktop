@@ -2594,6 +2594,7 @@ void Widget::checkUpdateStatus() {
 					return tr::lng_teagram_update_restart_install(tr::now);
 				}
 				case State::AlreadyInstalled:
+				case State::RecoveryRequired:
 					return tr::lng_teagram_update_restart_app(tr::now);
 				default:
 					Unexpected("Unexpected Teagram update banner state.");

@@ -76,6 +76,7 @@ class TeagramUpdateCandidate final {
 	[[nodiscard]] quint64 installedBuild() const;
 	[[nodiscard]] QString archivePath() const;
 	[[nodiscard]] bool downloaded() const;
+	void discardArchive();
 
   private:
 	friend class TeagramUpdateDownloader;

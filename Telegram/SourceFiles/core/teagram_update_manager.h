@@ -56,6 +56,7 @@ private:
 	void beginInstall(bool automatic);
 	void updateSafety();
 	void maybeRestart();
+	void shutdown();
 	void setState(TeagramUpdateUiState state);
 	[[nodiscard]] TeagramUpdateActiveWork activeWork() const;
 	[[nodiscard]] std::chrono::milliseconds idleFor() const;
@@ -76,6 +77,7 @@ private:
 	bool _startDownloadAfterWorker = false;
 	bool _automaticJob = false;
 	bool _automaticInstalledRestartPending = false;
+	bool _automaticRecoveryRestartPending = false;
 	bool _updatedToastPending = false;
 	TeagramUpdateUiState _pendingRestartState = TeagramUpdateUiState::Ready;
 	TeagramUpdateDownloadStage _downloadStage

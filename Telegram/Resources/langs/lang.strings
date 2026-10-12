@@ -564,7 +564,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_restart_install" = "Restart to install update";
 "lng_teagram_update_restart_app" = "Restart Teagram";
 "lng_teagram_update_dont_restart" = "Keep Teagram open";
-"lng_teagram_update_show_previous" = "Show previous Teagram build in Finder";
+"lng_teagram_update_show_previous" = "How to go back to the previous version";
+"lng_teagram_update_recovery_title" = "Going back to the previous version";
+"lng_teagram_update_recovery_instructions" = "Teagram keeps the version it replaced as a hidden copy in the same folder, until the next update.\n\nTo go back:\n1. Quit Teagram.\n2. In Finder, open the folder that contains Teagram and press Shift-Command-Period to show hidden items.\n3. Rename Teagram to a name that isn't used in that folder yet, for example \"Teagram newer\".\n4. Rename .Teagram.app.previous to Teagram.app, then open it.\n\nIf Finder says a name is already taken, choose another name. Never choose Replace, and don't drag one copy onto another.\n\nAfter going back, Teagram won't reinstall the build you left, and waits for a newer one.\n\nTeagram can't promise that an earlier version works with data saved by a newer one. Check that build's release notes before going back.";
+"lng_teagram_update_recovery_show_finder" = "Show in Finder";
 "lng_teagram_update_note" = "Each update looks like a new app to macOS, so it may ask again for permissions you already gave Teagram, such as microphone or camera access.";
 "lng_teagram_update_state_idle_on" = "Automatic updates are on";
 "lng_teagram_update_state_idle_off" = "Automatic updates are off";
@@ -590,6 +593,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_state_refused" = "Can't update from here";
 "lng_teagram_update_state_needs_macos" = "Update needs newer macOS";
 "lng_teagram_update_state_recovered" = "Running an earlier build";
+"lng_teagram_update_state_recovery_required" = "Update needs recovery";
 "lng_teagram_update_refusal_translocated" = "macOS is running this copy of Teagram from a temporary, read-only location. Quit Teagram, move it to Applications in Finder, then open it.";
 "lng_teagram_update_refusal_unwritable" = "Teagram can't change the folder it's installed in. Move Teagram to a folder you own, such as Applications.";
 "lng_teagram_update_refusal_owner" = "This copy of Teagram belongs to another user on this Mac. Ask them to update it, or install your own copy.";
@@ -620,6 +624,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_note_needs_macos" = "Build {build} needs macOS {version} or later.";
 "lng_teagram_update_note_already_installed" = "Another copy of Teagram already installed build {build}. Restart to start using it.";
 "lng_teagram_update_note_recovered" = "You went back from build {high_water}. Teagram won't reinstall it and will update when a newer build is available.";
+"lng_teagram_update_note_recovery_required" = "Restart Teagram to let it finish recovering the app bundle. If it still can't start, keep both app copies and contact support.";
 "lng_teagram_update_note_guarantee" = "Teagram, your login and your settings are unchanged.";
 "lng_teagram_update_note_rejected_unknown" = "Update metadata didn't pass Teagram's signature and package checks, so Teagram won't install it. Reason: {code}.";
 "lng_teagram_update_bar_after_call" = "Update after call";

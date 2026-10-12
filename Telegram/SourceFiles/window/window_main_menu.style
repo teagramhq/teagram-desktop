@@ -47,7 +47,7 @@ mainMenu: Menu(defaultMenu) {
 	itemToggleShift: 11px;
 }
 mainMenuFooterLeft: 25px;
-mainMenuTelegramBottom: 38px;
 mainMenuVersionBottom: 17px;
+mainMenuFooterLabelSkip: 4px;
 mainMenuToggleSize: 6px;
 mainMenuTogglePosition: point(30px, 30px);

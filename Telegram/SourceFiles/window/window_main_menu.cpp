@@ -79,6 +79,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
 
+#include <algorithm>
+
 namespace Window {
 namespace {
 
@@ -367,11 +369,38 @@ MainMenu::MainMenu(
 		}
 	});
 
-	_footer->heightValue(
-	) | rpl::on_next([=] {
-		_telegram->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuTelegramBottom - _telegram->height());
-		_version->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuVersionBottom - _version->height());
+	const auto resizeFooterLabels = [=](int width) {
+		if (width <= 0) {
+			return;
+		}
+		const auto labelWidth = std::max(
+			0,
+			width - 2 * st::mainMenuFooterLeft);
+		_telegram->resizeToWidth(labelWidth);
+		_version->resizeToWidth(labelWidth);
+	};
+	const auto updateFooterLabelsGeometry = [=] {
+		const auto versionTop = _footer->height()
+			- st::mainMenuVersionBottom
+			- _version->height();
+		_version->moveToLeft(st::mainMenuFooterLeft, versionTop);
+		_telegram->moveToLeft(
+			st::mainMenuFooterLeft,
+			versionTop - st::mainMenuFooterLabelSkip - _telegram->height());
+	};
+	_footer->widthValue() | rpl::on_next([=](int width) {
+		resizeFooterLabels(width);
+		updateInnerControlsGeometry();
+		updateFooterLabelsGeometry();
 	}, _footer->lifetime());
+	rpl::combine(
+		_telegram->heightValue(),
+		_version->heightValue()) | rpl::on_next([=] {
+			updateInnerControlsGeometry();
+			updateFooterLabelsGeometry();
+		}, _footer->lifetime());
+	_footer->heightValue(
+	) | rpl::on_next(updateFooterLabelsGeometry, _footer->lifetime());
 
 	rpl::combine(
 		heightValue(),
@@ -430,6 +459,9 @@ MainMenu::MainMenu(
 		std::make_shared<LambdaClickHandler>([=] {
 			controller->show(Box(AboutBox));
 		}));
+	resizeFooterLabels(_footer->width());
+	updateInnerControlsGeometry();
+	updateFooterLabelsGeometry();
 
 	rpl::combine(
 		_toggleAccounts->rightSkipValue(),
@@ -841,9 +873,13 @@ void MainMenu::updateInnerControlsGeometry() {
 		+ st::mainMenuSkip
 		+ _menu->height();
 	const auto available = height() - st::mainMenuCoverHeight - contentHeight;
+	const auto footerContentHeight = 2 * st::mainMenuVersionBottom
+		+ st::mainMenuFooterLabelSkip
+		+ _telegram->height()
+		+ _version->height();
 	const auto footerHeight = std::max(
 		available,
-		st::mainMenuFooterHeightMin);
+		std::max(st::mainMenuFooterHeightMin, footerContentHeight));
 	if (_footer->height() != footerHeight) {
 		_footer->resize(_footer->width(), footerHeight);
 	}

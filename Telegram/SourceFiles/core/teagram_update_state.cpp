@@ -56,6 +56,8 @@ TeagramUpdateNoteVariant TeagramUpdateNoteForState(
 		return TeagramUpdateNoteVariant::AlreadyInstalled;
 	case TeagramUpdateUiState::Recovered:
 		return TeagramUpdateNoteVariant::Recovered;
+	case TeagramUpdateUiState::RecoveryRequired:
+		return TeagramUpdateNoteVariant::RecoveryRequired;
 	}
 	Unexpected("Value in TeagramUpdateNoteForState.");
 }
@@ -82,6 +84,17 @@ TeagramUpdateRestartDecision TeagramUpdateRestartWhenSafe(
 		return TeagramUpdateRestartDecision::WaitForIdleInput;
 	}
 	return TeagramUpdateRestartDecision::RestartNow;
+}
+
+bool TeagramUpdateRequestRestartIfSafe(
+		bool automatic,
+		TeagramUpdateActiveWork work,
+		std::chrono::milliseconds idleFor,
+		const std::function<bool()> &requestRestart) {
+	return TeagramUpdateRestartWhenSafe(automatic, work, idleFor)
+		== TeagramUpdateRestartDecision::RestartNow
+		&& requestRestart
+		&& requestRestart();
 }
 
 } // namespace Core

@@ -64,11 +64,13 @@ struct TeagramUpdateInstallResult {
 		= TeagramUpdateInstallReason::InvalidTarget;
 	QString previousBundlePath;
 	bool profileRollbackAvailable = false;
+	bool replacementCommitted = false;
 };
 
 using TeagramUpdateInstallProgressHandler
 	= std::function<void(TeagramUpdateInstallStage, int)>;
-using TeagramUpdateBeforeRelaunch = std::function<bool()>;
+using TeagramUpdateBeforeRelaunch
+	= std::function<bool(const std::function<bool()> &)>;
 
 #ifdef TDESKTOP_UNIT_TESTS
 struct TeagramUpdateInstallerTestHooks {

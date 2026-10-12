@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 
 namespace Core {
@@ -44,6 +45,7 @@ enum class TeagramUpdateUiState {
 	Refused,
 	NeedsNewerMacOS,
 	Recovered,
+	RecoveryRequired,
 };
 
 enum class TeagramUpdateRefusal {
@@ -97,6 +99,7 @@ enum class TeagramUpdateNoteVariant {
 	NeedsNewerMacOS,
 	AlreadyInstalled,
 	Recovered,
+	RecoveryRequired,
 };
 
 enum class TeagramUpdateChatListAction {
@@ -116,7 +119,9 @@ struct TeagramUpdateRejectedBuildState {
 		TeagramUpdateUiState state,
 		bool checkControl) {
 	return (state == TeagramUpdateUiState::Restarting)
-		|| (checkControl && state == TeagramUpdateUiState::Checking);
+		|| (checkControl
+			&& (state == TeagramUpdateUiState::Checking
+				|| state == TeagramUpdateUiState::RecoveryRequired));
 }
 
 [[nodiscard]] constexpr bool TeagramUpdateKeepPendingRestartAfterChannelChange(
@@ -140,6 +145,7 @@ TeagramUpdateChatListActionForState(TeagramUpdateUiState state) {
 	case TeagramUpdateUiState::Ready:
 	case TeagramUpdateUiState::RestartPending:
 	case TeagramUpdateUiState::AlreadyInstalled:
+	case TeagramUpdateUiState::RecoveryRequired:
 		return TeagramUpdateChatListAction::Restart;
 	default:
 		return TeagramUpdateChatListAction::Hidden;
@@ -226,9 +232,35 @@ enum class TeagramUpdateRestartDecision {
 	WaitForIdleInput,
 };
 
+struct TeagramUpdateAvailableCandidateState {
+	TeagramUpdateUiState state = TeagramUpdateUiState::Available;
+	bool startDownload = false;
+};
+
+[[nodiscard]] constexpr TeagramUpdateAvailableCandidateState
+TeagramUpdateStateForAvailableCandidate(
+		bool automatic,
+		bool alreadyDownloaded) {
+	return alreadyDownloaded
+		? TeagramUpdateAvailableCandidateState{
+			.state = TeagramUpdateUiState::Ready,
+			.startDownload = false,
+		}
+		: TeagramUpdateAvailableCandidateState{
+			.state = TeagramUpdateUiState::Available,
+			.startDownload = automatic,
+		};
+}
+
 [[nodiscard]] TeagramUpdateRestartDecision TeagramUpdateRestartWhenSafe(
 	bool automatic,
 	TeagramUpdateActiveWork work,
 	std::chrono::milliseconds idleFor);
+
+[[nodiscard]] bool TeagramUpdateRequestRestartIfSafe(
+	bool automatic,
+	TeagramUpdateActiveWork work,
+	std::chrono::milliseconds idleFor,
+	const std::function<bool()> &requestRestart);
 
 } // namespace Core
