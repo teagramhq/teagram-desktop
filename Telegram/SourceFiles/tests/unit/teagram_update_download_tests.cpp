@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_state.h"
 #if defined(Q_OS_MAC)
 #include "core/teagram_update_install.h"
+#include "core/teagram_update_worker.h"
 #endif // Q_OS_MAC
 
 #include <QtCore/QCryptographicHash>
@@ -27,6 +28,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QUrlQuery>
 #if defined(Q_OS_MAC)
+#include <QtCore/QMetaObject>
+#include <QtCore/QSemaphore>
+#include <QtCore/QThread>
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
 #endif // Q_OS_MAC
@@ -1144,6 +1148,36 @@ TEST_CASE(TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary) {
 }
 
 #if defined(Q_OS_MAC)
+TEST_CASE(TeagramUpdateWorkerShutdownCleansCandidateArchive) {
+	auto fixture = CreateInstallerCandidateFixture();
+	CHECK(fixture->candidate != nullptr);
+	if (!fixture->candidate) {
+		return;
+	}
+	const auto archive = fixture->candidate->archivePath();
+	CHECK(QFileInfo::exists(archive));
+	auto receiver = QObject();
+	auto entered = QSemaphore();
+	auto handled = false;
+	auto worker = QThread::create([&] {
+		entered.release();
+		QMetaObject::invokeMethod(
+			&receiver,
+			[&] { handled = true; },
+			Qt::BlockingQueuedConnection);
+	});
+	worker->start();
+	CHECK(entered.tryAcquire(1, 1'000));
+	ShutdownTeagramUpdateWorker(worker, &receiver, [&] {
+		fixture->candidate->discardArchive();
+	});
+	CHECK(handled);
+	CHECK(!worker->isRunning());
+	CHECK(!fixture->candidate->downloaded());
+	CHECK(!QFileInfo::exists(archive));
+	delete worker;
+}
+
 TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 	if (qEnvironmentVariableIsSet(kProfileInstanceRole)) {
 		std::exit(RunProfileInstanceHelper());

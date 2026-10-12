@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "calls/calls_instance.h"
 #include "core/teagram_update_install.h"
+#include "core/teagram_update_worker.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
@@ -137,13 +138,13 @@ void TeagramUpdateManager::shutdown() {
 			_job->installer->cancel();
 		}
 	}
-	if (!_worker || !_worker->isRunning()) {
+	ShutdownTeagramUpdateWorker(_worker, this, [this] {
 		if (_candidate) {
 			_candidate->discardArchive();
 		}
 		_candidate.reset();
 		_job.reset();
-	}
+	});
 }
 
 void TeagramUpdateManager::start() {
