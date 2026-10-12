@@ -181,6 +181,33 @@ def history_test(formatter: str) -> None:
         tested_head = git("rev-parse", "HEAD")
         git("merge-base", "--is-ancestor", repair_base, tested_head)
 
+        allow_empty_result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--repo-root",
+                str(root),
+                "--formatter",
+                formatter,
+                "--allow-empty",
+                "--tested-head",
+                tested_head,
+                "--source-range",
+                "empty-range",
+                tested_head,
+                tested_head,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if allow_empty_result.returncode:
+            detail = (allow_empty_result.stdout + allow_empty_result.stderr).strip()
+            raise RuntimeError(
+                "--allow-empty should accept a declared range without C++ changes: "
+                f"{detail}"
+            )
+
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             merged_result = check_source_range(
                 root,
