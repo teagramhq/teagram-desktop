@@ -2347,7 +2347,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					 && (session.aiComposeSupported() == supported)
 					 && (session.serverTranslationSupported() == supported)
 					 && (session.sharedFoldersSupported() == supported)
-					 && (session.accountBioEditSupported() == supported);
+					 && (session.accountBioEditSupported() == supported)
+					 && (session.accountUsernameEditSupported() == supported);
 		  };
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
@@ -2977,14 +2978,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	});
 	const auto printCapabilities = [](const char *name,
 									  const Main::Session &session) {
-		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d\n", name,
+		std::fprintf(stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d%d\n", name,
 					 session.callsSupported(), session.botAppsSupported(),
 					 session.paidFeaturesSupported(),
 					 session.storiesSupported(), session.exportSupported(),
 					 session.passportSupported(), session.aiComposeSupported(),
 					 session.serverTranslationSupported(),
 					 session.sharedFoldersSupported(),
-					 session.accountBioEditSupported());
+					 session.accountBioEditSupported(),
+					 session.accountUsernameEditSupported());
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();

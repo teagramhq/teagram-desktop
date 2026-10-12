@@ -37,6 +37,25 @@ constexpr auto kUsernameCheckTimeout = crl::time(200);
 	return true;
 }
 
+enum class UsernameUpdateFailureOutcome {
+	Saved,
+	Immutable,
+	Other,
+};
+
+[[nodiscard]] inline UsernameUpdateFailureOutcome
+ResolveUsernameUpdateFailure(
+		const QString &error,
+		const QString &sent,
+		const QString &editable) {
+	if (error == u"USERNAME_IMMUTABLE"_q) {
+		return UsernameUpdateFailureOutcome::Immutable;
+	} else if ((error == u"USERNAME_NOT_MODIFIED"_q) || (sent == editable)) {
+		return UsernameUpdateFailureOutcome::Saved;
+	}
+	return UsernameUpdateFailureOutcome::Other;
+}
+
 class UsernameEditorFlow final {
 public:
 	enum class Mode {

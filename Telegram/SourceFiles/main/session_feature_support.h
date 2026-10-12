@@ -54,6 +54,11 @@ accountBioEditSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool
+accountUsernameEditSupported(const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
 template <typename User>
 [[nodiscard]] inline bool accountBioEditorTargetSupported(const User &self) {
 	return accountBioEditSupported(self.session().mtp().dcOptions());

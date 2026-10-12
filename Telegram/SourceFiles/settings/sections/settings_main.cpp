@@ -273,9 +273,14 @@ void Cover::initViewers() {
 	Info::Profile::UsernameValue(
 		_user
 	) | rpl::on_next([=](const TextWithEntities &value) {
-		_username->setMarkedText(tr::link(value.text.isEmpty()
-			? tr::lng_settings_username_add(tr::now)
-			: value.text));
+		const auto unsupportedEmpty = value.text.isEmpty()
+			&& !_user->session().accountUsernameEditSupported();
+		_username->setVisible(!unsupportedEmpty);
+		if (!unsupportedEmpty) {
+			_username->setMarkedText(tr::link(value.text.isEmpty()
+				? tr::lng_settings_username_add(tr::now)
+				: value.text));
+		}
 		refreshUsernameGeometry(width());
 	}, lifetime());
 
