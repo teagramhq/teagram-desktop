@@ -237,6 +237,10 @@ require_text "$unit_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
 
 require_text "$updater_workflow" '  pull_request:'
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/teagram_update_*'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_access.h'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_runtime.h'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_protected_path_runtime_stub.cpp'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_file_bookmark_stub.cpp'"
 require_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
 require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"'
 require_text "$updater_workflow" 'runs-on: macos-latest'

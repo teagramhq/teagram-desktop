@@ -5,7 +5,11 @@ on:
     branches: [dev]
     paths:
       - 'Telegram/SourceFiles/core/teagram_update_*'
+      - 'Telegram/SourceFiles/core/mac_protected_path_access.h'
+      - 'Telegram/SourceFiles/core/mac_protected_path_runtime.h'
       - 'Telegram/SourceFiles/tests/unit/teagram_update_*_tests.cpp'
+      - 'Telegram/SourceFiles/tests/unit/mac_protected_path_runtime_stub.cpp'
+      - 'Telegram/SourceFiles/tests/unit/mac_file_bookmark_stub.cpp'
       - 'Telegram/SourceFiles/tests/unit/unit_test.cpp'
       - 'Telegram/SourceFiles/tests/unit/unit_test.h'
       - 'Telegram/cmake/**'
