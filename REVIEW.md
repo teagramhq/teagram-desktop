@@ -2,9 +2,9 @@
 
 This file contains style and formatting rules that the review subagent must check and fix. These are mechanical issues that should always be caught during code review.
 
-## Empty line before closing brace
+## No empty line before a class closing brace
 
-Always add an empty line before the closing brace of a **class** (which has one or more sections like `public:` / `private:`). Plain **structs** with just data members do NOT get a trailing empty line — they are compact: `struct Foo { data lines; };`.
+Do not add an empty line before the closing brace of a **class**. The repository's clang-format check removes it. Plain **structs** with just data members also do NOT get a trailing empty line — they are compact: `struct Foo { data lines; };`.
 
 ```cpp
 // BAD:
@@ -14,6 +14,7 @@ public:
 
 private:
     int _value = 0;
+
 };
 
 // GOOD:
@@ -23,7 +24,6 @@ public:
 
 private:
     int _value = 0;
-
 };
 ```
 
