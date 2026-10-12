@@ -59,7 +59,7 @@ constexpr auto kServerConfigUpdateTimeoutMs = 24 * 3600 * crl::time(1000);
 using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
-void ShowCallUnavailableToastImpl(not_null<Main::Session*> session) {
+void ShowCallUnavailableToastImpl(not_null<Main::Session *> session) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	Tests::RecordCallUnavailableToastForRegressionTest(session.get());
 #endif
@@ -71,15 +71,14 @@ void ShowCallUnavailableToastImpl(not_null<Main::Session*> session) {
 		return true;
 	};
 	if (!show(Core::App().activeWindow())) {
-		show(Core::App().windowFor(::Window::SeparateId(
-			not_null(&session->account()))));
+		show(Core::App().windowFor(
+			::Window::SeparateId(not_null(&session->account()))));
 	}
 }
 
 } // namespace
 
-void details::ShowCallUnavailableToast(
-		not_null<Main::Session*> session) {
+void details::ShowCallUnavailableToast(not_null<Main::Session *> session) {
 	ShowCallUnavailableToastImpl(session);
 }
 
@@ -295,9 +294,8 @@ void Instance::startOrJoinGroupCall(
 void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 	Expects(args.call || args.show);
 
-	const auto session = args.call
-		? &args.call->session()
-		: &args.show->session();
+	const auto session
+		= args.call ? &args.call->session() : &args.show->session();
 	if (!details::AllowCallStart(session->callsSupported(), [=] {
 			details::ShowCallUnavailableToast(session);
 		})) {

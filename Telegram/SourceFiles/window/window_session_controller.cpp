@@ -623,8 +623,7 @@ void SessionNavigation::showPeerByLinkResolved(
 			crl::on_main(this, [=] {
 				showPeerHistory(peer, params, ShowAtUnreadMsgId);
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-				Tests::RecordCallLinkChannelOpenedForRegressionTest(
-					peer.get());
+				Tests::RecordCallLinkChannelOpenedForRegressionTest(peer.get());
 #endif
 				showFeatureUnavailableOnServerToast();
 			});
@@ -999,87 +998,107 @@ void SessionNavigation::resolveConferenceCall(
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	Tests::RecordCallRpcForRegressionTest();
 #endif
-	_conferenceCallRequestId = _api.request(MTPphone_GetGroupCall(
-		(inviteMsgId
-			? MTP_inputGroupCallInviteMessage(MTP_int(inviteMsgId.bare))
-			: MTP_inputGroupCallSlug(MTP_string(slug))),
-		MTP_int(limit)
-	)).done(crl::guard(this, [=](const MTPphone_GroupCall &result) {
-		_conferenceCallRequestId = 0;
-		const auto slug = base::take(_conferenceCallSlug);
-		const auto inviteMsgId = base::take(_conferenceCallInviteMsgId);
-		const auto contextId = base::take(_conferenceCallResolveContextId);
-		const auto context = session().data().message(contextId);
-		result.data().vcall().match([&](const MTPDgroupCall &data) {
-			const auto call = session().data().sharedConferenceCall(
-				data.vid().v,
-				data.vaccess_hash().v);
-			call->processFullCall(result);
-			const auto join = [=](Fn<void()> close) {
-				const auto &appConfig = call->session().appConfig();
-				const auto conferenceLimit = appConfig.confcallSizeLimit();
-				if (call->fullCount() >= conferenceLimit) {
-					showToast(tr::lng_confcall_participants_limit(tr::now));
-				} else {
-					//parentController()->window().openInMediaView(
-					//	Media::View::OpenRequest(
-					//		parentController(),
-					//		call,
-					//		slug,
-					//		inviteMsgId));
-					//AssertIsDebug();
-					Core::App().calls().startOrJoinConferenceCall({
-						.call = call,
-						.linkSlug = slug,
-						.joinMessageId = inviteMsgId,
-					});
-					close();
-				}
-			};
-			const auto inviter = context
-				? context->from()->asUser()
-				: nullptr;
-			if (inviteMsgId && call->participants().empty()) {
-				uiShow()->show(Calls::Group::PrepareInviteToEmptyBox(
-					call,
-					inviteMsgId,
-					ExtractParticipantsForInvite(context)));
-			} else {
-				uiShow()->show(Box(
-					Calls::Group::ConferenceCallJoinConfirm,
-					call,
-					(inviter && !inviter->isSelf()) ? inviter : nullptr,
-					join));
-			}
-		}, [&](const MTPDgroupCallDiscarded &data) {
-			if (inviteMsgId) {
-				uiShow()->show(
-					Calls::Group::PrepareCreateCallBox(
-						parentController(),
-						nullptr,
-						inviteMsgId,
-						ExtractParticipantsForInvite(context)));
-			} else {
-				showToast(tr::lng_confcall_link_inactive(tr::now));
-			}
-		});
-	})).fail(crl::guard(this, [=] {
-		_conferenceCallRequestId = 0;
-		_conferenceCallSlug = QString();
-		const auto contextId = base::take(_conferenceCallResolveContextId);
-		const auto context = session().data().message(contextId);
-		const auto inviteMsgId = base::take(_conferenceCallInviteMsgId);
-		if (inviteMsgId) {
-			uiShow()->show(
-				Calls::Group::PrepareCreateCallBox(
-					parentController(),
-					nullptr,
-					inviteMsgId,
-					ExtractParticipantsForInvite(context)));
-		} else {
-			showToast(tr::lng_confcall_link_inactive(tr::now));
-		}
-	})).send();
+	_conferenceCallRequestId
+		= _api
+			  .request(MTPphone_GetGroupCall(
+				  (inviteMsgId ? MTP_inputGroupCallInviteMessage(
+									 MTP_int(inviteMsgId.bare))
+							   : MTP_inputGroupCallSlug(MTP_string(slug))),
+				  MTP_int(limit)))
+			  .done(crl::guard(
+				  this,
+				  [=](const MTPphone_GroupCall &result) {
+					  _conferenceCallRequestId = 0;
+					  const auto slug = base::take(_conferenceCallSlug);
+					  const auto inviteMsgId
+						  = base::take(_conferenceCallInviteMsgId);
+					  const auto contextId
+						  = base::take(_conferenceCallResolveContextId);
+					  const auto context = session().data().message(contextId);
+					  result.data().vcall().match(
+						  [&](const MTPDgroupCall &data) {
+							  const auto call
+								  = session().data().sharedConferenceCall(
+									  data.vid().v, data.vaccess_hash().v);
+							  call->processFullCall(result);
+							  const auto join = [=](Fn<void()> close) {
+								  const auto &appConfig
+									  = call->session().appConfig();
+								  const auto conferenceLimit
+									  = appConfig.confcallSizeLimit();
+								  if (call->fullCount() >= conferenceLimit) {
+									  showToast(
+										  tr::lng_confcall_participants_limit(
+											  tr::now));
+								  } else {
+									  // parentController()->window().openInMediaView(
+									  //	Media::View::OpenRequest(
+									  //		parentController(),
+									  //		call,
+									  //		slug,
+									  //		inviteMsgId));
+									  // AssertIsDebug();
+									  Core::App()
+										  .calls()
+										  .startOrJoinConferenceCall({
+											  .call = call,
+											  .linkSlug = slug,
+											  .joinMessageId = inviteMsgId,
+										  });
+									  close();
+								  }
+							  };
+							  const auto inviter
+								  = context ? context->from()->asUser()
+											: nullptr;
+							  if (inviteMsgId && call->participants().empty()) {
+								  uiShow()->show(
+									  Calls::Group::PrepareInviteToEmptyBox(
+										  call, inviteMsgId,
+										  ExtractParticipantsForInvite(
+											  context)));
+							  } else {
+								  uiShow()->show(Box(
+									  Calls::Group::ConferenceCallJoinConfirm,
+									  call,
+									  (inviter && !inviter->isSelf()) ? inviter
+																	  : nullptr,
+									  join));
+							  }
+						  },
+						  [&](const MTPDgroupCallDiscarded &data) {
+							  if (inviteMsgId) {
+								  uiShow()->show(
+									  Calls::Group::PrepareCreateCallBox(
+										  parentController(), nullptr,
+										  inviteMsgId,
+										  ExtractParticipantsForInvite(
+											  context)));
+							  } else {
+								  showToast(
+									  tr::lng_confcall_link_inactive(tr::now));
+							  }
+						  });
+				  }))
+			  .fail(crl::guard(
+				  this,
+				  [=] {
+					  _conferenceCallRequestId = 0;
+					  _conferenceCallSlug = QString();
+					  const auto contextId
+						  = base::take(_conferenceCallResolveContextId);
+					  const auto context = session().data().message(contextId);
+					  const auto inviteMsgId
+						  = base::take(_conferenceCallInviteMsgId);
+					  if (inviteMsgId) {
+						  uiShow()->show(Calls::Group::PrepareCreateCallBox(
+							  parentController(), nullptr, inviteMsgId,
+							  ExtractParticipantsForInvite(context)));
+					  } else {
+						  showToast(tr::lng_confcall_link_inactive(tr::now));
+					  }
+				  }))
+			  .send();
 }
 
 void SessionNavigation::applyBoost(
@@ -1210,39 +1229,50 @@ void SessionNavigation::joinVoiceChatFromLink(
 	});
 	const auto hash = *info.voicechatHash;
 	_api.request(base::take(_resolveRequestId)).cancel();
-	_resolveRequestId = _api.request(
-		MTPchannels_GetFullChannel(peer->asChannel()->inputChannel())
-	).done(crl::guard(this, [=](const MTPmessages_ChatFull &result) {
-		_session->api().processFullPeer(peer, result);
-		const auto call = peer->groupCall();
-		if (!call) {
-			bad();
-			return;
-		}
-		const auto join = [=] {
-			parentController()->startOrJoinGroupCall(
-				peer,
-				{ hash, Calls::StartGroupCallArgs::JoinConfirm::Always });
-		};
-		if (call->loaded()) {
-			join();
-			return;
-		}
-		const auto id = call->id();
-		const auto limit = 5;
-		_resolveRequestId = _api.request(
-			MTPphone_GetGroupCall(call->input(), MTP_int(limit))
-		).done(crl::guard(this, [=](const MTPphone_GroupCall &result) {
-			if (const auto now = peer->groupCall(); now && now->id() == id) {
-				if (!now->loaded()) {
-					now->processFullCall(result);
-				}
-				join();
-			} else {
-				bad();
-			}
-		})).fail(bad).send();
-	})).send();
+	_resolveRequestId
+		= _api.request(
+				  MTPchannels_GetFullChannel(peer->asChannel()->inputChannel()))
+			  .done(crl::guard(
+				  this,
+				  [=](const MTPmessages_ChatFull &result) {
+					  _session->api().processFullPeer(peer, result);
+					  const auto call = peer->groupCall();
+					  if (!call) {
+						  bad();
+						  return;
+					  }
+					  const auto join = [=] {
+						  parentController()->startOrJoinGroupCall(
+							  peer,
+							  {hash,
+							   Calls::StartGroupCallArgs::JoinConfirm::Always});
+					  };
+					  if (call->loaded()) {
+						  join();
+						  return;
+					  }
+					  const auto id = call->id();
+					  const auto limit = 5;
+					  _resolveRequestId
+						  = _api.request(MTPphone_GetGroupCall(call->input(),
+															   MTP_int(limit)))
+								.done(crl::guard(
+									this,
+									[=](const MTPphone_GroupCall &result) {
+										if (const auto now = peer->groupCall();
+											now && now->id() == id) {
+											if (!now->loaded()) {
+												now->processFullCall(result);
+											}
+											join();
+										} else {
+											bad();
+										}
+									}))
+								.fail(bad)
+								.send();
+				  }))
+			  .send();
 }
 
 void SessionNavigation::showRepliesForMessage(

@@ -377,11 +377,9 @@ Result ShowPrivacyBox(
 }
 
 template <typename ControllerFactory>
-Result ShowCallsPrivacyBox(
-		const Context &ctx,
-		PrivacyKey key,
-		ControllerFactory controllerFactory,
-		const QString &highlightControl = QString()) {
+Result ShowCallsPrivacyBox(const Context &ctx, PrivacyKey key,
+						   ControllerFactory controllerFactory,
+						   const QString &highlightControl = QString()) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
 	}
@@ -389,11 +387,7 @@ Result ShowCallsPrivacyBox(
 		ctx.controller->showFeatureUnavailableOnServerToast();
 		return Result::Handled;
 	}
-	return ShowPrivacyBox(
-		ctx,
-		key,
-		controllerFactory,
-		highlightControl);
+	return ShowPrivacyBox(ctx, key, controllerFactory, highlightControl);
 }
 
 } // namespace
@@ -1093,69 +1087,87 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); });
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(ctx, PrivacyKey::Calls, [=] {
+						   return std::make_unique<
+							   ::Settings::CallsPrivacyController>();
+					   });
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/never"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
-				u"privacy/never"_q);
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls/never"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(
+						   ctx, PrivacyKey::Calls,
+						   [=] {
+							   return std::make_unique<
+								   ::Settings::CallsPrivacyController>();
+						   },
+						   u"privacy/never"_q);
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/always"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
-				u"privacy/always"_q);
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls/always"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(
+						   ctx, PrivacyKey::Calls,
+						   [=] {
+							   return std::make_unique<
+								   ::Settings::CallsPrivacyController>();
+						   },
+						   u"privacy/always"_q);
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); });
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer, [=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					});
+			}},
+		});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p/never"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
-				u"privacy/never"_q);
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p/never"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer,
+					[=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					},
+					u"privacy/never"_q);
+			}},
+		});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p/always"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowCallsPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
-				u"privacy/always"_q);
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p/always"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer,
+					[=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					},
+					u"privacy/always"_q);
+			}},
+		});
 
 	router.add(u"settings"_q, {
 		.path = u"privacy/voice"_q,

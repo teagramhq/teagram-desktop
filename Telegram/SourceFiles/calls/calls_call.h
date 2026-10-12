@@ -283,114 +283,109 @@ public:
 
 private:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	friend class Tests::CallsInstanceRegressionAccess;
+  friend class Tests::CallsInstanceRegressionAccess;
 #endif
-	enum class FinishType {
-		None,
-		Ended,
-		Failed,
-	};
+  enum class FinishType {
+	  None,
+	  Ended,
+	  Failed,
+  };
 
-	void handleRequestError(const QString &error);
-	void handleControllerError(const QString &error);
-	void finish(
-		FinishType type,
-		const MTPPhoneCallDiscardReason &reason
-			= MTP_phoneCallDiscardReasonDisconnect(),
-		Data::GroupCall *migrateCall = nullptr);
-	void finishByMigration(const QString &slug);
-	void startOutgoing();
-	void startIncoming();
-	void startWaitingTrack();
-	void sendSignalingData(const QByteArray &data);
+  void handleRequestError(const QString &error);
+  void handleControllerError(const QString &error);
+  void finish(FinishType type,
+			  const MTPPhoneCallDiscardReason &reason
+			  = MTP_phoneCallDiscardReasonDisconnect(),
+			  Data::GroupCall *migrateCall = nullptr);
+  void finishByMigration(const QString &slug);
+  void startOutgoing();
+  void startIncoming();
+  void startWaitingTrack();
+  void sendSignalingData(const QByteArray &data);
 
-	void generateModExpFirst(bytes::const_span randomSeed);
-	void handleControllerStateChange(tgcalls::State state);
-	void handleControllerBarCountChange(int count);
-	void createAndStartController(const MTPDphoneCall &call);
+  void generateModExpFirst(bytes::const_span randomSeed);
+  void handleControllerStateChange(tgcalls::State state);
+  void handleControllerBarCountChange(int count);
+  void createAndStartController(const MTPDphoneCall &call);
 
-	template <typename T>
-	bool checkCallCommonFields(const T &call);
-	bool checkCallFields(const MTPDphoneCall &call);
-	bool checkCallFields(const MTPDphoneCallAccepted &call);
+  template <typename T> bool checkCallCommonFields(const T &call);
+  bool checkCallFields(const MTPDphoneCall &call);
+  bool checkCallFields(const MTPDphoneCallAccepted &call);
 
-	void actuallyAnswer();
-	void acceptConferenceInvite();
-	void confirmAcceptedCall(const MTPDphoneCallAccepted &call);
-	void startConfirmedCall(const MTPDphoneCall &call);
-	void setState(State state);
-	void setStateQueued(State state);
-	void setFailedQueued(const QString &error);
-	void setSignalBarCount(int count);
-	void destroyController();
+  void actuallyAnswer();
+  void acceptConferenceInvite();
+  void confirmAcceptedCall(const MTPDphoneCallAccepted &call);
+  void startConfirmedCall(const MTPDphoneCall &call);
+  void setState(State state);
+  void setStateQueued(State state);
+  void setFailedQueued(const QString &error);
+  void setSignalBarCount(int count);
+  void destroyController();
 
-	void captureMuteChanged(bool mute) override;
-	rpl::producer<Webrtc::DeviceResolvedId> captureMuteDeviceId() override;
+  void captureMuteChanged(bool mute) override;
+  rpl::producer<Webrtc::DeviceResolvedId> captureMuteDeviceId() override;
 
-	void setupMediaDevices();
-	void setupOutgoingVideo();
-	void updateRemoteMediaState(
-		tgcalls::AudioState audio,
-		tgcalls::VideoState video);
+  void setupMediaDevices();
+  void setupOutgoingVideo();
+  void updateRemoteMediaState(tgcalls::AudioState audio,
+							  tgcalls::VideoState video);
 
-	[[nodiscard]] StartConferenceInfo migrateConferenceInfo(
-		StartConferenceInfo extend);
+  [[nodiscard]] StartConferenceInfo
+  migrateConferenceInfo(StartConferenceInfo extend);
 
-	const not_null<Delegate*> _delegate;
-	const not_null<UserData*> _user;
-	MTP::Sender _api;
-	Type _type = Type::Outgoing;
-	rpl::variable<State> _state = State::Starting;
-	rpl::variable<bool> _conferenceSupported = false;
-	rpl::variable<RemoteAudioState> _remoteAudioState
-		= RemoteAudioState::Active;
-	rpl::variable<Webrtc::VideoState> _remoteVideoState;
-	rpl::variable<RemoteBatteryState> _remoteBatteryState
-		= RemoteBatteryState::Normal;
-	rpl::event_stream<Error> _errors;
-	FinishType _finishAfterRequestingCall = FinishType::None;
-	bool _answerAfterDhConfigReceived = false;
-	rpl::variable<int> _signalBarCount = kSignalBarStarting;
-	crl::time _startTime = 0;
-	base::DelayedCallTimer _finishByTimeoutTimer;
-	base::Timer _discardByTimeoutTimer;
+  const not_null<Delegate *> _delegate;
+  const not_null<UserData *> _user;
+  MTP::Sender _api;
+  Type _type = Type::Outgoing;
+  rpl::variable<State> _state = State::Starting;
+  rpl::variable<bool> _conferenceSupported = false;
+  rpl::variable<RemoteAudioState> _remoteAudioState = RemoteAudioState::Active;
+  rpl::variable<Webrtc::VideoState> _remoteVideoState;
+  rpl::variable<RemoteBatteryState> _remoteBatteryState
+	  = RemoteBatteryState::Normal;
+  rpl::event_stream<Error> _errors;
+  FinishType _finishAfterRequestingCall = FinishType::None;
+  bool _answerAfterDhConfigReceived = false;
+  rpl::variable<int> _signalBarCount = kSignalBarStarting;
+  crl::time _startTime = 0;
+  base::DelayedCallTimer _finishByTimeoutTimer;
+  base::Timer _discardByTimeoutTimer;
 
-	Fn<void(Webrtc::DeviceResolvedId)> _setDeviceIdCallback;
-	Webrtc::DeviceResolver _playbackDeviceId;
-	Webrtc::DeviceResolver _captureDeviceId;
-	Webrtc::DeviceResolver _cameraDeviceId;
+  Fn<void(Webrtc::DeviceResolvedId)> _setDeviceIdCallback;
+  Webrtc::DeviceResolver _playbackDeviceId;
+  Webrtc::DeviceResolver _captureDeviceId;
+  Webrtc::DeviceResolver _cameraDeviceId;
 
-	rpl::variable<bool> _muted = false;
+  rpl::variable<bool> _muted = false;
 
-	DhConfig _dhConfig;
-	bytes::vector _ga;
-	bytes::vector _gb;
-	bytes::vector _gaHash;
-	bytes::vector _randomPower;
-	MTP::AuthKey::Data _authKey;
+  DhConfig _dhConfig;
+  bytes::vector _ga;
+  bytes::vector _gb;
+  bytes::vector _gaHash;
+  bytes::vector _randomPower;
+  MTP::AuthKey::Data _authKey;
 
-	CallId _id = 0;
-	uint64 _accessHash = 0;
-	uint64 _keyFingerprint = 0;
+  CallId _id = 0;
+  uint64 _accessHash = 0;
+  uint64 _keyFingerprint = 0;
 
-	CallId _conferenceId = 0;
-	MsgId _conferenceInviteMsgId = 0;
-	std::vector<not_null<PeerData*>> _conferenceParticipants;
+  CallId _conferenceId = 0;
+  MsgId _conferenceInviteMsgId = 0;
+  std::vector<not_null<PeerData *>> _conferenceParticipants;
 
-	std::unique_ptr<tgcalls::Instance> _instance;
-	std::shared_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
-	QString _videoCaptureDeviceId;
-	bool _videoCaptureIsScreencast = false;
-	bool _screenWithAudio = false;
-	std::unique_ptr<Webrtc::SystemAudioCapture> _systemAudioCapture;
-	const std::unique_ptr<Webrtc::VideoTrack> _videoIncoming;
-	const std::unique_ptr<Webrtc::VideoTrack> _videoOutgoing;
+  std::unique_ptr<tgcalls::Instance> _instance;
+  std::shared_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
+  QString _videoCaptureDeviceId;
+  bool _videoCaptureIsScreencast = false;
+  bool _screenWithAudio = false;
+  std::unique_ptr<Webrtc::SystemAudioCapture> _systemAudioCapture;
+  const std::unique_ptr<Webrtc::VideoTrack> _videoIncoming;
+  const std::unique_ptr<Webrtc::VideoTrack> _videoOutgoing;
 
-	std::unique_ptr<Media::Audio::Track> _waitingTrack;
+  std::unique_ptr<Media::Audio::Track> _waitingTrack;
 
-	rpl::lifetime _instanceLifetime;
-	rpl::lifetime _lifetime;
-
+  rpl::lifetime _instanceLifetime;
+  rpl::lifetime _lifetime;
 };
 
 void UpdateConfig(const std::string &data);

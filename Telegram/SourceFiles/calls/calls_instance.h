@@ -88,11 +88,10 @@ struct ConferenceInvites {
 
 namespace details {
 
-void ShowCallUnavailableToast(not_null<Main::Session*> session);
+void ShowCallUnavailableToast(not_null<Main::Session *> session);
 
-[[nodiscard]] inline bool AllowCallStart(
-		bool supported,
-		Fn<void()> showUnavailable) {
+[[nodiscard]] inline bool AllowCallStart(bool supported,
+										 Fn<void()> showUnavailable) {
 	if (supported) {
 		return true;
 	}
@@ -181,81 +180,70 @@ public:
 
 private:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	friend class Tests::CallsInstanceRegressionAccess;
+  friend class Tests::CallsInstanceRegressionAccess;
 #endif
-	class Delegate;
-	friend class Delegate;
+  class Delegate;
+  friend class Delegate;
 
-	not_null<Media::Audio::Track*> ensureSoundLoaded(const QString &key);
-	void playSoundOnce(const QString &key);
+  not_null<Media::Audio::Track *> ensureSoundLoaded(const QString &key);
+  void playSoundOnce(const QString &key);
 
-	void createCall(
-		not_null<UserData*> user,
-		CallType type,
-		StartOutgoingCallArgs);
-	void destroyCall(not_null<Call*> call);
-	void finishConferenceInvitations(const StartConferenceInfo &args);
+  void createCall(not_null<UserData *> user, CallType type,
+				  StartOutgoingCallArgs);
+  void destroyCall(not_null<Call *> call);
+  void finishConferenceInvitations(const StartConferenceInfo &args);
 
-	void createGroupCall(
-		Group::JoinInfo info,
-		const MTPInputGroupCall &inputCall);
-	void destroyGroupCall(not_null<GroupCall*> call);
-	void confirmLeaveCurrent(
-		std::shared_ptr<Ui::Show> show,
-		not_null<PeerData*> peer,
-		StartGroupCallArgs args,
-		Fn<void(StartGroupCallArgs)> confirmed);
+  void createGroupCall(Group::JoinInfo info,
+					   const MTPInputGroupCall &inputCall);
+  void destroyGroupCall(not_null<GroupCall *> call);
+  void confirmLeaveCurrent(std::shared_ptr<Ui::Show> show,
+						   not_null<PeerData *> peer, StartGroupCallArgs args,
+						   Fn<void(StartGroupCallArgs)> confirmed);
 
-	void requestPermissionOrFail(
-		Platform::PermissionType type,
-		Fn<void()> onSuccess);
+  void requestPermissionOrFail(Platform::PermissionType type,
+							   Fn<void()> onSuccess);
 
-	void refreshDhConfig();
-	void refreshServerConfig(not_null<Main::Session*> session);
-	bytes::const_span updateDhConfig(const MTPmessages_DhConfig &data);
+  void refreshDhConfig();
+  void refreshServerConfig(not_null<Main::Session *> session);
+  bytes::const_span updateDhConfig(const MTPmessages_DhConfig &data);
 
-	void destroyCurrentCall(
-		Data::GroupCall *migrateCall = nullptr,
-		const QString &migrateSlug = QString());
-	void handleCallUpdate(
-		not_null<Main::Session*> session,
-		const MTPPhoneCall &call);
-	void handleSignalingData(
-		not_null<Main::Session*> session,
-		const MTPDupdatePhoneCallSignalingData &data);
-	void handleGroupCallUpdate(
-		not_null<Main::Session*> session,
-		const MTPUpdate &update);
+  void destroyCurrentCall(Data::GroupCall *migrateCall = nullptr,
+						  const QString &migrateSlug = QString());
+  void handleCallUpdate(not_null<Main::Session *> session,
+						const MTPPhoneCall &call);
+  void handleSignalingData(not_null<Main::Session *> session,
+						   const MTPDupdatePhoneCallSignalingData &data);
+  void handleGroupCallUpdate(not_null<Main::Session *> session,
+							 const MTPUpdate &update);
 
-	const std::unique_ptr<Delegate> _delegate;
-	const std::unique_ptr<DhConfig> _cachedDhConfig;
+  const std::unique_ptr<Delegate> _delegate;
+  const std::unique_ptr<DhConfig> _cachedDhConfig;
 
-	crl::time _lastServerConfigUpdateTime = 0;
-	base::weak_ptr<Main::Session> _serverConfigRequestSession;
-	std::weak_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
+  crl::time _lastServerConfigUpdateTime = 0;
+  base::weak_ptr<Main::Session> _serverConfigRequestSession;
+  std::weak_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
 
-	std::unique_ptr<Call> _currentCall;
-	rpl::event_stream<Call*> _currentCallChanges;
-	std::unique_ptr<Panel> _currentCallPanel;
+  std::unique_ptr<Call> _currentCall;
+  rpl::event_stream<Call *> _currentCallChanges;
+  std::unique_ptr<Panel> _currentCallPanel;
 
-	std::unique_ptr<GroupCall> _currentGroupCall;
-	std::unique_ptr<GroupCall> _startingGroupCall;
-	rpl::event_stream<GroupCall*> _currentGroupCallChanges;
-	std::unique_ptr<Group::Panel> _currentGroupCallPanel;
+  std::unique_ptr<GroupCall> _currentGroupCall;
+  std::unique_ptr<GroupCall> _startingGroupCall;
+  rpl::event_stream<GroupCall *> _currentGroupCallChanges;
+  std::unique_ptr<Group::Panel> _currentGroupCallPanel;
 
-	base::flat_map<QString, std::unique_ptr<Media::Audio::Track>> _tracks;
+  base::flat_map<QString, std::unique_ptr<Media::Audio::Track>> _tracks;
 
-	const std::unique_ptr<Group::ChooseJoinAsProcess> _chooseJoinAs;
-	const std::unique_ptr<Group::StartRtmpProcess> _startWithRtmp;
+  const std::unique_ptr<Group::ChooseJoinAsProcess> _chooseJoinAs;
+  const std::unique_ptr<Group::StartRtmpProcess> _startWithRtmp;
 
-	base::flat_map<CallId, ConferenceInvites> _conferenceInvites;
+  base::flat_map<CallId, ConferenceInvites> _conferenceInvites;
 
-	base::flat_set<std::unique_ptr<crl::semaphore>> _asyncWaiters;
+  base::flat_set<std::unique_ptr<crl::semaphore>> _asyncWaiters;
 
-	base::flat_map<
-		not_null<Main::Session*>,
-		std::vector<base::weak_ptr<GroupCall>>> _streams;
-
+  base::flat_map<not_null<Main::Session *>,
+				 std::vector<base::weak_ptr<GroupCall>>>
+	  _streams;
 };
 
 } // namespace Calls

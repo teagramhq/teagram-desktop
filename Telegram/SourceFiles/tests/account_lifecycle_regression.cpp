@@ -314,31 +314,26 @@ void ReportCallRegressionCheckpoint(const char *name) {
 } // namespace
 
 class CallsInstanceRegressionAccess {
-public:
-	[[nodiscard]] static Calls::Call *InstallStockCall(
-			not_null<Calls::Instance*> instance,
-			not_null<UserData*> user) {
-		if (instance->_currentCall
-			|| instance->_currentGroupCall
+  public:
+	[[nodiscard]] static Calls::Call *
+	InstallStockCall(not_null<Calls::Instance *> instance,
+					 not_null<UserData *> user) {
+		if (instance->_currentCall || instance->_currentGroupCall
 			|| instance->_startingGroupCall) {
 			return nullptr;
 		}
 		auto call = std::make_unique<Calls::Call>(
-			TestDelegate(),
-			user,
-			Calls::Call::Type::Outgoing,
-			false);
+			TestDelegate(), user, Calls::Call::Type::Outgoing, false);
 		call->_state = Calls::Call::State::Established;
-		instance->_currentCallPanel = std::make_unique<Calls::Panel>(
-			call.get());
+		instance->_currentCallPanel
+			= std::make_unique<Calls::Panel>(call.get());
 		instance->_currentCall = std::move(call);
 		instance->_currentCallChanges.fire_copy(instance->_currentCall.get());
 		return instance->_currentCall.get();
 	}
 
-	static void RemoveStockCall(
-			not_null<Calls::Instance*> instance,
-			not_null<Calls::Call*> call) {
+	static void RemoveStockCall(not_null<Calls::Instance *> instance,
+								not_null<Calls::Call *> call) {
 		if (instance->_currentCall.get() == call.get()) {
 			instance->_currentCallPanel->closeBeforeDestroy();
 			instance->_currentCallPanel = nullptr;
@@ -349,22 +344,15 @@ public:
 	}
 
 	[[nodiscard]] static std::unique_ptr<Calls::Call>
-	CreateIncomingCallForAnswerRegression(
-			not_null<UserData*> user,
-			bool conferenceInvite) {
+	CreateIncomingCallForAnswerRegression(not_null<UserData *> user,
+										  bool conferenceInvite) {
 		auto call = conferenceInvite
-			? std::make_unique<Calls::Call>(
-				TestDelegate(),
-				user,
-				CallId(3053),
-				MsgId(3053),
-				std::vector<not_null<PeerData*>>(),
-				false)
-			: std::make_unique<Calls::Call>(
-				TestDelegate(),
-				user,
-				Calls::Call::Type::Incoming,
-				false);
+						? std::make_unique<Calls::Call>(
+							  TestDelegate(), user, CallId(3053), MsgId(3053),
+							  std::vector<not_null<PeerData *>>(), false)
+						: std::make_unique<Calls::Call>(
+							  TestDelegate(), user, Calls::Call::Type::Incoming,
+							  false);
 		call->_state = Calls::Call::State::WaitingIncoming;
 		call->_id = CallId(3053);
 		call->_accessHash = 1;
@@ -372,24 +360,18 @@ public:
 		return call;
 	}
 
-private:
+  private:
 	class CallDelegate final : public Calls::Call::Delegate {
-	public:
-		Calls::DhConfig getDhConfig() const override {
-			return {};
-		}
+	  public:
+		Calls::DhConfig getDhConfig() const override { return {}; }
 
-		void callFinished(not_null<Calls::Call*>) override {
-		}
+		void callFinished(not_null<Calls::Call *>) override {}
 
-		void callFailed(not_null<Calls::Call*>) override {
-		}
+		void callFailed(not_null<Calls::Call *>) override {}
 
-		void callRedial(not_null<Calls::Call*>) override {
-		}
+		void callRedial(not_null<Calls::Call *>) override {}
 
-		void callPlaySound(Calls::Call::Delegate::CallSound) override {
-		}
+		void callPlaySound(Calls::Call::Delegate::CallSound) override {}
 
 		void callRequestPermissionsOrFail(Fn<void()> onSuccess, bool) override {
 			RecordCallPermissionRequestForRegressionTest();
@@ -397,17 +379,15 @@ private:
 		}
 
 		auto callGetVideoCapture(const QString &, bool)
-		-> std::shared_ptr<tgcalls::VideoCaptureInterface> override {
+			-> std::shared_ptr<tgcalls::VideoCaptureInterface> override {
 			return nullptr;
 		}
-
 	};
 
 	[[nodiscard]] static CallDelegate *TestDelegate() {
 		static auto result = std::make_unique<CallDelegate>();
 		return result.get();
 	}
-
 };
 
 void ResetCallStartRegressionForTest() {
@@ -426,13 +406,11 @@ bool InterceptCallStartForRegressionTest(CallStartRegressionKind kind) {
 	if (!gCallStartRegressionIntercept) {
 		return false;
 	}
-	++gCallStartRegressionSnapshot.startPassed[
-		static_cast<std::size_t>(kind)];
+	++gCallStartRegressionSnapshot.startPassed[static_cast<std::size_t>(kind)];
 	return true;
 }
 
-void RecordCallUnavailableToastForRegressionTest(
-		const Main::Session *session) {
+void RecordCallUnavailableToastForRegressionTest(const Main::Session *session) {
 	gCallStartRegressionSnapshot.unavailableToasts.push_back(session);
 }
 
@@ -5569,23 +5547,21 @@ template <typename Predicate>
 		   == MainQueueBarrierResult::Completed;
 }
 
-[[nodiscard]] bool CallStartEffectsStayedQuiet(
-		const CallStartRegressionSnapshot &snapshot) {
-	return !snapshot.permissionRequests
-		&& !snapshot.callRpcs
-		&& !snapshot.voiceChatLinkJoinAttempts
-		&& !snapshot.activations
-		&& !snapshot.leavePrompts;
+[[nodiscard]] bool
+CallStartEffectsStayedQuiet(const CallStartRegressionSnapshot &snapshot) {
+	return !snapshot.permissionRequests && !snapshot.callRpcs
+		   && !snapshot.voiceChatLinkJoinAttempts && !snapshot.activations
+		   && !snapshot.leavePrompts;
 }
 
-[[nodiscard]] bool RunIncomingCallAnswerRegression(
-		not_null<Main::Account*> account,
-		bool supported) {
+[[nodiscard]] bool
+RunIncomingCallAnswerRegression(not_null<Main::Account *> account,
+								bool supported) {
 	const auto user = account->session().data().userLoaded(UserId(2));
 	if (!user) {
 		return false;
 	}
-	for (const auto conferenceInvite : { false, true }) {
+	for (const auto conferenceInvite : {false, true}) {
 		ResetCallStartRegressionForTest();
 		auto call = CallsInstanceRegressionAccess::
 			CreateIncomingCallForAnswerRegression(user, conferenceInvite);
@@ -5595,8 +5571,8 @@ template <typename Predicate>
 		const auto snapshot = GetCallStartRegressionSnapshotForTest();
 		const auto expectedEffects = supported ? 1 : 0;
 		const auto expectedState = supported
-			? Calls::Call::State::ExchangingKeys
-			: Calls::Call::State::Failed;
+									   ? Calls::Call::State::ExchangingKeys
+									   : Calls::Call::State::Failed;
 		if (snapshot.permissionRequests != expectedEffects
 			|| snapshot.callRpcs != expectedEffects
 			|| snapshot.unavailableToasts.size() != (supported ? 0U : 1U)
@@ -5609,16 +5585,14 @@ template <typename Predicate>
 	return true;
 }
 
-void PrepareRegressionChannel(not_null<ChannelData*> channel) {
+void PrepareRegressionChannel(not_null<ChannelData *> channel) {
 	channel->setName(u"Regression channel"_q, QString());
 	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
 }
 
 [[nodiscard]] bool RunCallsInstanceStartRegression(
-		not_null<Main::Account*> account,
-		not_null<Window::Controller*> window,
-		not_null<Calls::Call*> stockCall,
-		bool supported) {
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall, bool supported) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()) {
 		return false;
@@ -5630,7 +5604,7 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	auto &calls = Core::App().calls();
 	const auto groupCall = calls.currentGroupCall();
 	const auto chat = account->session().data().chat(ChatId(1051));
-	const auto peer = not_null<PeerData*>(static_cast<PeerData*>(&*chat));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 	const auto show = controller->uiShow();
 	ResetCallStartRegressionForTest();
 	SetCallStartRegressionInterceptForTest(true);
@@ -5639,37 +5613,32 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	ReportCallRegressionCheckpoint("outgoing start returned");
 	calls.startOrJoinGroupCall(show, peer, {});
 	ReportCallRegressionCheckpoint("group start returned");
-	calls.startOrJoinConferenceCall({ .show = show });
+	calls.startOrJoinConferenceCall({.show = show});
 	ReportCallRegressionCheckpoint("conference start returned");
 	calls.showStartWithRtmp(show, peer);
 	ReportCallRegressionCheckpoint("RTMP start returned");
 	SetCallStartRegressionInterceptForTest(false);
 	const auto snapshot = GetCallStartRegressionSnapshotForTest();
-	const auto expectedPassed = supported
-		? std::array<int, 4>{ 1, 1, 1, 1 }
-		: std::array<int, 4>{ 0, 0, 0, 0 };
-	const auto correctToastCount = snapshot.unavailableToasts.size()
-		== (supported ? 0U : 4U);
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 1, 1, 1}
+										  : std::array<int, 4>{0, 0, 0, 0};
+	const auto correctToastCount
+		= snapshot.unavailableToasts.size() == (supported ? 0U : 4U);
 	const auto allToastsBelongToAccount = std::all_of(
-		begin(snapshot.unavailableToasts),
-		end(snapshot.unavailableToasts),
+		begin(snapshot.unavailableToasts), end(snapshot.unavailableToasts),
 		[&](const Main::Session *session) {
 			return session == &account->session();
 		});
-	return snapshot.startPassed == expectedPassed
-		&& correctToastCount
-		&& allToastsBelongToAccount
-		&& CallStartEffectsStayedQuiet(snapshot)
-		&& calls.currentCall() == stockCall.get()
-		&& stockCall->state() == Calls::Call::State::Established
-		&& calls.currentGroupCall() == groupCall
-		&& !window->isLayerShown();
+	return snapshot.startPassed == expectedPassed && correctToastCount
+		   && allToastsBelongToAccount && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == stockCall.get()
+		   && stockCall->state() == Calls::Call::State::Established
+		   && calls.currentGroupCall() == groupCall && !window->isLayerShown();
 }
 
-[[nodiscard]] bool RunOutgoingStartSelectionRegression(
-		not_null<Main::Account*> account,
-		not_null<Window::Controller*> window,
-		bool supported) {
+[[nodiscard]] bool
+RunOutgoingStartSelectionRegression(not_null<Main::Account *> account,
+									not_null<Window::Controller *> window,
+									bool supported) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()) {
 		return false;
@@ -5688,25 +5657,22 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	ReportCallRegressionCheckpoint("selection outgoing start returned");
 	SetCallStartRegressionInterceptForTest(false);
 	const auto snapshot = GetCallStartRegressionSnapshotForTest();
-	const auto expectedPassed = supported
-		? std::array<int, 4>{ 1, 0, 0, 0 }
-		: std::array<int, 4>{ 0, 0, 0, 0 };
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 0, 0, 0}
+										  : std::array<int, 4>{0, 0, 0, 0};
 	return snapshot.startPassed == expectedPassed
-		&& snapshot.unavailableToasts.size() == (supported ? 0U : 1U)
-		&& (snapshot.unavailableToasts.empty()
-			|| snapshot.unavailableToasts.front() == &account->session())
-		&& CallStartEffectsStayedQuiet(snapshot)
-		&& calls.currentCall() == current
-		&& calls.currentGroupCall() == group;
+		   && snapshot.unavailableToasts.size() == (supported ? 0U : 1U)
+		   && (snapshot.unavailableToasts.empty()
+			   || snapshot.unavailableToasts.front() == &account->session())
+		   && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == current
+		   && calls.currentGroupCall() == group;
 }
 
 [[nodiscard]] bool RunConferenceLinkPreservesStockCallRegression(
-		not_null<Main::Account*> account,
-		not_null<Window::Controller*> window,
-		not_null<Calls::Call*> stockCall) {
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall) {
 	const auto controller = window->sessionController();
-	if (!controller
-		|| &controller->session() != &account->session()
+	if (!controller || &controller->session() != &account->session()
 		|| &stockCall->user()->session() == &account->session()) {
 		return false;
 	}
@@ -5715,9 +5681,8 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	});
 	ResetCallStartRegressionForTest();
 	ReportCallRegressionCheckpoint("conference link begin");
-	if (!Core::App().openLocalUrl(
-			u"tg://call?slug=regression-conference"_q,
-			context)) {
+	if (!Core::App().openLocalUrl(u"tg://call?slug=regression-conference"_q,
+								  context)) {
 		return false;
 	}
 	ReportCallRegressionCheckpoint("conference link returned");
@@ -5732,9 +5697,9 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 		&& !window->isLayerShown();
 }
 
-[[nodiscard]] bool RunChannelCallLinkRegression(
-		not_null<Main::Account*> account,
-		not_null<Window::Controller*> window) {
+[[nodiscard]] bool
+RunChannelCallLinkRegression(not_null<Main::Account *> account,
+							 not_null<Window::Controller *> window) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()) {
 		return false;
@@ -5766,9 +5731,9 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	return true;
 }
 
-[[nodiscard]] bool RunCallLinkAndSettingsRegression(
-		not_null<Main::Account*> account,
-		not_null<Window::Controller*> window) {
+[[nodiscard]] bool
+RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
+								 not_null<Window::Controller *> window) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()
 		|| !RunChannelCallLinkRegression(account, window)) {
@@ -5780,33 +5745,31 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 		.sessionWindow = base::make_weak(controller),
 	});
 	const auto showsSettings = [&](Settings::Type expected) {
-		const auto widgets = controller->content()->findChildren<QWidget*>();
+		const auto widgets = controller->content()->findChildren<QWidget *>();
 		return std::any_of(
-			widgets.cbegin(),
-			widgets.cend(),
-			[&](QWidget *widget) {
-				const auto wrapped = dynamic_cast<Info::WrapWidget*>(widget);
+			widgets.cbegin(), widgets.cend(), [&](QWidget *widget) {
+				const auto wrapped = dynamic_cast<Info::WrapWidget *>(widget);
 				return wrapped
-					&& (wrapped->controller()->section().type()
-						== Info::Section::Type::Settings)
-					&& (wrapped->controller()->section().settingsType()
-						== expected);
+					   && (wrapped->controller()->section().type()
+						   == Info::Section::Type::Settings)
+					   && (wrapped->controller()->section().settingsType()
+						   == expected);
 			});
 	};
 	auto settingLinkNumber = 0;
 	for (const auto &url : {
-			u"tg://settings/privacy/calls"_q,
-			u"tg://settings/privacy/calls/never"_q,
-			u"tg://settings/privacy/calls/always"_q,
-			u"tg://settings/privacy/calls/p2p"_q,
-			u"tg://settings/privacy/calls/p2p/never"_q,
-			u"tg://settings/privacy/calls/p2p/always"_q,
-			u"tg://settings/calls/all"_q,
-			u"tg://settings/calls/start-call"_q,
-		}) {
+			 u"tg://settings/privacy/calls"_q,
+			 u"tg://settings/privacy/calls/never"_q,
+			 u"tg://settings/privacy/calls/always"_q,
+			 u"tg://settings/privacy/calls/p2p"_q,
+			 u"tg://settings/privacy/calls/p2p/never"_q,
+			 u"tg://settings/privacy/calls/p2p/always"_q,
+			 u"tg://settings/calls/all"_q,
+			 u"tg://settings/calls/start-call"_q,
+		 }) {
 		std::fprintf(stderr,
-			"Call regression checkpoint: setting link %d begin\n",
-			settingLinkNumber);
+					 "Call regression checkpoint: setting link %d begin\n",
+					 settingLinkNumber);
 		std::fflush(stderr);
 		ResetCallStartRegressionForTest();
 		if (!Core::App().openLocalUrl(url, context)) {
@@ -5837,22 +5800,19 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	const auto callsSettingsShown = showsSettings(Settings::CallsId());
 	const auto callsSettingsQuiet
 		= callsSettingsEvents.navigationEvents.empty()
-		&& CallStartEffectsStayedQuiet(callsSettingsEvents);
+		  && CallStartEffectsStayedQuiet(callsSettingsEvents);
 	if (!callsSettingsQuiet || !callsSettingsShown || window->isLayerShown()) {
 		std::fprintf(
 			stderr,
 			"Call settings link regression: quiet=%d shown=%d layer=%d "
 			"navigation=%zu permissions=%d calls=%d joins=%d activations=%d "
 			"leave-prompts=%d\n",
-			callsSettingsQuiet,
-			callsSettingsShown,
-			window->isLayerShown(),
+			callsSettingsQuiet, callsSettingsShown, window->isLayerShown(),
 			callsSettingsEvents.navigationEvents.size(),
 			callsSettingsEvents.permissionRequests,
 			callsSettingsEvents.callRpcs,
 			callsSettingsEvents.voiceChatLinkJoinAttempts,
-			callsSettingsEvents.activations,
-			callsSettingsEvents.leavePrompts);
+			callsSettingsEvents.activations, callsSettingsEvents.leavePrompts);
 		return false;
 	}
 
@@ -5865,9 +5825,8 @@ void PrepareRegressionChannel(not_null<ChannelData*> channel) {
 	ReportCallRegressionCheckpoint("device settings events processed");
 	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
 	return devicesSettingsEvents.navigationEvents.empty()
-		&& CallStartEffectsStayedQuiet(devicesSettingsEvents)
-		&& showsSettings(Settings::SessionsId())
-		&& !window->isLayerShown();
+		   && CallStartEffectsStayedQuiet(devicesSettingsEvents)
+		   && showsSettings(Settings::SessionsId()) && !window->isLayerShown();
 }
 
 [[nodiscard]] int
@@ -6243,9 +6202,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// Keep the lifecycle update regression on the primary window. A separate
 	// window for discarded would make showAccount(discarded) route elsewhere.
 	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
-	const auto discardedController = discardedWindow
-		? discardedWindow->sessionController()
-		: nullptr;
+	const auto discardedController
+		= discardedWindow ? discardedWindow->sessionController() : nullptr;
 	if (!discardedController) {
 		return FailChatParticipantsRegression(
 			"could not create a controller for deferred call-link teardown");
@@ -6279,16 +6237,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeQueuedSwitches);
 	const auto queuedDeferredMatches = ReportSwitchUpdateDeltas(
-		"queued switch teardown deferred",
-		stockQueuedDeferred,
-		{1, 1},
-		pinnedQueuedDeferred,
-		{1, 1},
-		&discardedAtTeardown,
-		"discarded-at-teardown",
-		{1, 0});
-	const auto destroyedSessionEvents
-		= GetCallStartRegressionSnapshotForTest();
+		"queued switch teardown deferred", stockQueuedDeferred, {1, 1},
+		pinnedQueuedDeferred, {1, 1}, &discardedAtTeardown,
+		"discarded-at-teardown", {1, 0});
+	const auto destroyedSessionEvents = GetCallStartRegressionSnapshotForTest();
 	if (!destroyedSessionEvents.navigationEvents.empty()
 		|| !destroyedSessionEvents.openedPeers.empty()) {
 		return FailChatParticipantsRegression(
@@ -6825,15 +6777,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto firstActive = &domain.active() == first.get();
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
-		const auto firstWindows = windowsMatch(customFirst
-			? "custom account first activation"
-			: "stock account first activation");
+		const auto firstWindows
+			= windowsMatch(customFirst ? "custom account first activation"
+									   : "stock account first activation");
 		const auto firstWindow = app.separateWindowFor(first);
 		const auto firstCallStart = firstWindow
-			&& RunOutgoingStartSelectionRegression(
-				first,
-				firstWindow,
-				!customFirst);
+									&& RunOutgoingStartSelectionRegression(
+										first, firstWindow, !customFirst);
 		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto stockMenuController = stockWindow->sessionController();
 		const auto pinnedMenuController = pinnedWindow->sessionController();
@@ -6859,16 +6809,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !firstCallStart || !firstCustomWebViewRefused
 			|| !firstBoostMenusMatch) {
 			std::fprintf(stderr,
-				"First activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d call-start=%d "
-				"webview-refused=%d boost-menus=%d\n",
-				customFirst,
-				firstActive,
-				firstCapabilities,
-				firstWindows,
-				firstCallStart,
-				firstCustomWebViewRefused,
-				firstBoostMenusMatch);
+						 "First activation mismatch: customFirst=%d active=%d "
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
+						 customFirst, firstActive, firstCapabilities,
+						 firstWindows, firstCallStart,
+						 firstCustomWebViewRefused, firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 								  first->session());
@@ -7036,15 +6982,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto secondActive = &domain.active() == second.get();
 		const auto secondCapabilities
 			= capabilitiesMatch(second->session(), customFirst);
-		const auto secondWindows = windowsMatch(customFirst
-			? "stock account second activation"
-			: "custom account second activation");
+		const auto secondWindows
+			= windowsMatch(customFirst ? "stock account second activation"
+									   : "custom account second activation");
 		const auto secondWindow = app.separateWindowFor(second);
 		const auto secondCallStart = secondWindow
-			&& RunOutgoingStartSelectionRegression(
-				second,
-				secondWindow,
-				customFirst);
+									 && RunOutgoingStartSelectionRegression(
+										 second, secondWindow, customFirst);
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
 			= secondStockMenuController && secondPinnedMenuController
@@ -7068,16 +7012,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !secondCallStart || !secondCustomWebViewRefused
 			|| !secondBoostMenusMatch) {
 			std::fprintf(stderr,
-				"Second activation mismatch: customFirst=%d active=%d "
-				"capabilities=%d windows=%d call-start=%d "
-				"webview-refused=%d boost-menus=%d\n",
-				customFirst,
-				secondActive,
-				secondCapabilities,
-				secondWindows,
-				secondCallStart,
-				secondCustomWebViewRefused,
-				secondBoostMenusMatch);
+						 "Second activation mismatch: customFirst=%d active=%d "
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
+						 customFirst, secondActive, secondCapabilities,
+						 secondWindows, secondCallStart,
+						 secondCustomWebViewRefused, secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
 											  : "pinned second",
@@ -7113,9 +7053,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"stock call-start regression user was not loaded");
 	}
 	auto &calls = app.calls();
-	const auto stockCall = CallsInstanceRegressionAccess::InstallStockCall(
-		&calls,
-		stockUser);
+	const auto stockCall
+		= CallsInstanceRegressionAccess::InstallStockCall(&calls, stockUser);
 	if (!stockCall) {
 		return FailChatParticipantsRegression(
 			"could not install a live stock call for refusal regressions");
@@ -7126,16 +7065,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockDcOptions = stock->mtp().dcOptions().serialize();
 	const auto pinnedDcOptions = pinned->mtp().dcOptions().serialize();
 	ReportCallRegressionCheckpoint("call start fixtures ready");
-	if (!RunCallsInstanceStartRegression(
-			stock,
-			stockWindow,
-			stockCall,
-			true)
-		|| !RunCallsInstanceStartRegression(
-			pinned,
-			pinnedWindow,
-			stockCall,
-			false)) {
+	if (!RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true)
+		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											false)) {
 		return FailChatParticipantsRegression(
 			"Calls::Instance starts crossed stock and pinned session policies");
 	}
@@ -7148,11 +7080,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	stock->mtp().dcOptions().constructBlocked();
 	if (stock->local().hasStoredCustomServer()
 		|| !stock->mtp().dcOptions().blocked()
-		|| !RunCallsInstanceStartRegression(
-			stock,
-			stockWindow,
-			stockCall,
-			false)) {
+		|| !RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
+											false)) {
 		return FailChatParticipantsRegression(
 			"blocked unpinned session reached a Calls::Instance start path");
 	}
@@ -7170,11 +7099,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!pinned->local().hasStoredCustomServer()
 		|| !pinned->mtp().dcOptions().blocked()
 		|| pinned->mtp().dcOptions().hasCustomServer()
-		|| !RunCallsInstanceStartRegression(
-			pinned,
-			pinnedWindow,
-			stockCall,
-			false)) {
+		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											false)) {
 		return FailChatParticipantsRegression(
 			"blocked pinned session reached a Calls::Instance start path");
 	}
@@ -7185,10 +7111,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	ReportCallRegressionCheckpoint("blocked pinned starts complete");
 	pinned->mtp().dcOptions().constructUnenrolled();
 	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
-		|| !RunConferenceLinkPreservesStockCallRegression(
-			pinned,
-			pinnedWindow,
-			stockCall)) {
+		|| !RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
+														  stockCall)) {
 		return FailChatParticipantsRegression(
 			"unsupported conference link replaced the stock call");
 	}

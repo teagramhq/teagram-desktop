@@ -57,32 +57,30 @@ enum class SessionNavigationRegressionEvent {
 
 struct CallStartRegressionSnapshot {
 	std::array<int, 4> startPassed{};
-	std::vector<const Main::Session*> unavailableToasts;
+	std::vector<const Main::Session *> unavailableToasts;
 	int permissionRequests = 0;
 	int callRpcs = 0;
 	int voiceChatLinkJoinAttempts = 0;
 	int activations = 0;
 	int leavePrompts = 0;
 	std::vector<SessionNavigationRegressionEvent> navigationEvents;
-	std::vector<const PeerData*> openedPeers;
+	std::vector<const PeerData *> openedPeers;
 };
 
 void ResetCallStartRegressionForTest();
 void SetCallStartRegressionInterceptForTest(bool enabled);
 [[nodiscard]] CallStartRegressionSnapshot
 GetCallStartRegressionSnapshotForTest();
-[[nodiscard]] bool InterceptCallStartForRegressionTest(
-	CallStartRegressionKind kind);
+[[nodiscard]] bool
+InterceptCallStartForRegressionTest(CallStartRegressionKind kind);
 [[nodiscard]] bool InterceptCallRpcForRegressionTest();
-void RecordCallUnavailableToastForRegressionTest(
-	const Main::Session *session);
+void RecordCallUnavailableToastForRegressionTest(const Main::Session *session);
 void RecordCallPermissionRequestForRegressionTest();
 void RecordCallRpcForRegressionTest();
 void RecordVoiceChatLinkJoinAttemptForRegressionTest();
 void RecordCallActivationForRegressionTest();
 void RecordCallLeavePromptForRegressionTest();
-void RecordCallLinkChannelOpenedForRegressionTest(
-	const PeerData *peer);
+void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer);
 void RecordFeatureUnavailableToastForRegressionTest();
 
 enum class LifecycleWriteForRegressionTest {
