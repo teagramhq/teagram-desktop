@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/mac/base_utilities_mac.h"
 #include "base/platform/base_platform_file_utilities.h"
+#include "config.h"
+#include "core/crash_reports.h"
 #include "core/mac_protected_path_access.h"
 #include "core/teagram_update_replacement.h"
 #include "core/teagram_update_verification.h"
@@ -564,12 +566,21 @@ enum class StartupWaitResult {
 	return StartupWaitResult::Failed;
 }
 
-[[nodiscard]] bool LaunchBundle(const QString &bundlePath, pid_t *processId) {
+[[nodiscard]] bool LaunchBundle(
+		const QString &bundlePath,
+		const QStringList &arguments,
+		pid_t *processId) {
 	auto semaphore = dispatch_semaphore_create(0);
 	__block NSRunningApplication *launched = nil;
 	__block NSError *launchError = nil;
 	auto configuration = [NSWorkspaceOpenConfiguration configuration];
 	configuration.createsNewApplicationInstance = YES;
+	NSMutableArray<NSString *> *nativeArguments
+		= [NSMutableArray arrayWithCapacity:arguments.size()];
+	for (const auto &argument : arguments) {
+		[nativeArguments addObject:Platform::Q2NSString(argument)];
+	}
+	configuration.arguments = nativeArguments;
 	const auto url = [NSURL fileURLWithPath:Platform::Q2NSString(bundlePath)
 					isDirectory:YES];
 	[[NSWorkspace sharedWorkspace]
@@ -618,8 +629,12 @@ void StopLaunchedBundle(pid_t processId) {
 
 [[nodiscard]] TeagramUpdateRelaunchResult RelaunchPendingUpdate(
 		const QString &currentBundlePath,
-		const std::function<bool(const QString &, pid_t *)> &launchBundle,
-		const std::function<bool()> &otherInstanceRunning = {}) {
+		const std::function<bool(
+			const QString &,
+			const QStringList &,
+			pid_t *)> &launchBundle,
+		const std::function<bool()> &otherInstanceRunning = {},
+		const std::function<void()> &prepareForLaunch = {}) {
 	const auto current = CanonicalRunningBundlePath(currentBundlePath);
 	if (current.isEmpty()
 		|| current != QDir::cleanPath(currentBundlePath)) {
@@ -649,8 +664,15 @@ void StopLaunchedBundle(pid_t processId) {
 	if (!RemoveMarker(parent, kStartedMarker)) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
+	auto arguments = QStringList();
+	if (cDataFile() != u"data"_q) {
+		arguments = { u"-key"_q, cDataFile() };
+	}
+	if (prepareForLaunch) {
+		prepareForLaunch();
+	}
 	auto processId = pid_t(0);
-	if (launchBundle(installed, &processId)) {
+	if (launchBundle(installed, arguments, &processId)) {
 		const auto startup = WaitForStartup(*pending, parent);
 		if (startup == StartupWaitResult::Acknowledged) {
 			return RemoveMarker(parent, kCommitMarker)
@@ -679,7 +701,7 @@ void StopLaunchedBundle(pid_t processId) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
 	processId = 0;
-	return launchBundle(canonicalPrevious, &processId)
+	return launchBundle(canonicalPrevious, arguments, &processId)
 		? TeagramUpdateRelaunchResult::PreviousStarted
 		: TeagramUpdateRelaunchResult::Failed;
 }
@@ -754,18 +776,22 @@ bool CompleteTeagramUpdateStartupForTesting(
 
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
 		const QString &currentBundlePath,
-		const std::function<bool(const QString &)> &launchBundle,
-		const std::function<bool()> &otherInstanceRunning) {
+		const std::function<bool(const QString &, const QStringList &)> &launchBundle,
+		const std::function<bool()> &otherInstanceRunning,
+		const std::function<void()> &prepareForLaunch) {
 	@autoreleasepool {
 		return RelaunchPendingUpdate(
 			currentBundlePath,
-			[&](const QString &path, pid_t *processId) {
+			[&](const QString &path,
+					const QStringList &arguments,
+					pid_t *processId) {
 				if (processId) {
 					*processId = 0;
 				}
-				return launchBundle && launchBundle(path);
+				return launchBundle && launchBundle(path, arguments);
 			},
-			otherInstanceRunning);
+			otherInstanceRunning,
+			prepareForLaunch);
 	}
 }
 #endif // TDESKTOP_UNIT_TESTS
@@ -1071,8 +1097,15 @@ TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdown() {
 		const auto current = FromNative([mainBundle bundlePath]);
 		return RelaunchPendingUpdate(
 			current,
-			[](const QString &path, pid_t *processId) {
-				return LaunchBundle(path, processId);
+			[](const QString &path,
+					const QStringList &arguments,
+					pid_t *processId) {
+				return LaunchBundle(path, arguments, processId);
+			},
+			{},
+			[] {
+				Logs::closeMain();
+				CrashReports::Finish();
 			});
 	}
 }

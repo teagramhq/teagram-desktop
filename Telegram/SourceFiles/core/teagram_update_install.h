@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_archive.h"
 #include "core/teagram_update_replacement.h"
 
+#include <QtCore/QStringList>
+
 #include <atomic>
 #include <functional>
 #include <optional>
@@ -80,8 +82,9 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdownForTesting(
 	const QString &currentBundlePath,
-	const std::function<bool(const QString &)> &launchBundle,
-	const std::function<bool()> &otherInstanceRunning = {});
+	const std::function<bool(const QString &, const QStringList &)> &launchBundle,
+	const std::function<bool()> &otherInstanceRunning = {},
+	const std::function<void()> &prepareForLaunch = {});
 #endif // TDESKTOP_UNIT_TESTS
 
 class TeagramUpdateInstaller final {

@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#if defined(Q_OS_MAC)
+#include "config.h"
+#endif // Q_OS_MAC
 #include "core/teagram_update_archive.h"
 #include "core/teagram_update_download.h"
 #include "core/teagram_update_replacement.h"
@@ -1150,25 +1153,57 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			CHECK(QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 			CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
 			StopProfileInstanceHelper(profileOwner, profileSocket);
+			const auto crashSentinel = root.filePath(u"tdata/working"_q);
+			const auto oldSentinel = QByteArrayLiteral("old crash sentinel");
+			const auto newSentinel = QByteArrayLiteral("new crash sentinel");
+			CHECK(QDir().mkpath(QFileInfo(crashSentinel).absolutePath()));
+			CHECK(WriteFile(crashSentinel, oldSentinel));
+			const auto oldDataFile = gKeyFile;
+			gKeyFile = u"secondary-account"_q;
+			const auto expectedArguments = QStringList({
+				u"-key"_q,
+				u"secondary-account"_q,
+			});
+			auto oldLifecycleOpen = true;
+			auto lifecycleFinishes = 0;
+			const auto finishOldLifecycle = [&] {
+				if (!oldLifecycleOpen) {
+					return;
+				}
+				oldLifecycleOpen = false;
+				++lifecycleFinishes;
+				CHECK_EQ(ReadFile(crashSentinel), oldSentinel);
+				CHECK(QFile::remove(crashSentinel));
+			};
 			auto launchAttempts = 0;
 			const auto relaunched
 				= RelaunchTeagramUpdateAfterShutdownForTesting(
 					installed,
-					[&](const QString &path) {
+					[&](const QString &path, const QStringList &arguments) {
+						CHECK(arguments == expectedArguments);
+						CHECK_EQ(lifecycleFinishes, 1);
 						++launchAttempts;
 						if (path == installed) {
-							return candidateLaunchSucceeds
-								&& RunProfileCandidate(
-									"candidate", profileSocket, installed, 0);
+							if (!candidateLaunchSucceeds) {
+								return false;
+							}
+							CHECK(WriteFile(crashSentinel, newSentinel));
+							return RunProfileCandidate(
+								"candidate", profileSocket, installed, 0);
 						} else if (path == previous) {
+							CHECK(WriteFile(crashSentinel, newSentinel));
 							return RunProfileCandidate(
 								"fallback", profileSocket, previous, 0);
 						}
 						return false;
 					},
-					[] { return false; });
+					[] { return false; },
+					finishOldLifecycle);
+			finishOldLifecycle();
 			CHECK(relaunched == expectedRelaunch);
 			CHECK_EQ(launchAttempts, candidateLaunchSucceeds ? 1 : 2);
+			CHECK_EQ(lifecycleFinishes, 1);
+			CHECK_EQ(ReadFile(crashSentinel), newSentinel);
 			if (expectedRelaunch
 				== TeagramUpdateRelaunchResult::CandidateStarted) {
 				CHECK(!QFileInfo(root.filePath(
@@ -1188,7 +1223,8 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 					const auto relaunchedFromPrevious
 						= RelaunchTeagramUpdateAfterShutdownForTesting(
 							previous,
-							[&](const QString &path) {
+							[&](const QString &path, const QStringList &arguments) {
+								CHECK(arguments == expectedArguments);
 								paths.push_back(path);
 								return path == previous
 									&& RunProfileCandidate(
@@ -1203,6 +1239,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 					CHECK(paths == QStringList({ installed, previous }));
 				}
 			}
+			gKeyFile = oldDataFile;
 		} else {
 			CHECK(QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 			CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
@@ -1336,7 +1373,8 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	auto launchAttempts = 0;
 	const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
 		installed,
-		[&](const QString &path) {
+		[&](const QString &path, const QStringList &arguments) {
+			CHECK(arguments.isEmpty());
 			++launchAttempts;
 			return path == installed
 				&& RunProfileCandidate("candidate", profileSocket, installed, 0);
