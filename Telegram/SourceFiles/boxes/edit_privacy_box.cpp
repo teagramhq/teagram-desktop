@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "settings/settings_common.h"
+#include "settings/settings_privacy_policy.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_privacy_controllers.h"
 #include "settings/sections/settings_privacy_security.h"
@@ -54,6 +55,20 @@ constexpr auto kMiniAppsRowId = PeerId(FakeChatId(BareId(2))).value;
 constexpr auto kDefaultPrivateMessagesPrice = 10;
 
 using Exceptions = Api::UserPrivacy::Exceptions;
+using PrivacyKey = Api::UserPrivacy::Key;
+
+Settings::details::PrivacyExceptionPeerType PrivacyExceptionTypeForPeer(
+		not_null<PeerData*> peer) {
+	using Type = Settings::details::PrivacyExceptionPeerType;
+	if (peer->isUser()) {
+		return Type::User;
+	} else if (peer->isChat()) {
+		return Type::Chat;
+	} else if (peer->isMegagroup()) {
+		return Type::Megagroup;
+	}
+	return Type::Other;
+}
 
 enum class SpecialRowType {
 	Premiums,
@@ -160,6 +175,7 @@ class PrivacyExceptionsBoxController : public ChatsListBoxController {
 public:
 	PrivacyExceptionsBoxController(
 		not_null<Main::Session*> session,
+		PrivacyKey key,
 		rpl::producer<QString> title,
 		const Exceptions &selected,
 		std::optional<SpecialRowType> allowChooseSpecial);
@@ -181,6 +197,7 @@ private:
 		SpecialRowType type);
 
 	const not_null<Main::Session*> _session;
+	const PrivacyKey _key;
 	rpl::producer<QString> _title;
 	Exceptions _selected;
 	std::optional<SpecialRowType> _allowChooseSpecial;
@@ -305,11 +322,13 @@ auto TypesController::rowSelectionChanges() const
 
 PrivacyExceptionsBoxController::PrivacyExceptionsBoxController(
 	not_null<Main::Session*> session,
+	PrivacyKey key,
 	rpl::producer<QString> title,
 	const Exceptions &selected,
 	std::optional<SpecialRowType> allowChooseSpecial)
 : ChatsListBoxController(session)
 , _session(session)
+, _key(key)
 , _title(std::move(title))
 , _selected(selected)
 , _allowChooseSpecial(allowChooseSpecial) {
@@ -327,7 +346,13 @@ void PrivacyExceptionsBoxController::prepareViewHook() {
 				? SpecialRowType::Premiums
 				: SpecialRowType::MiniApps)));
 	}
-	delegate()->peerListAddSelectedPeers(_selected.peers);
+	auto selected = _selected.peers;
+	selected.erase(ranges::remove_if(selected, [=](not_null<PeerData*> peer) {
+		return !Settings::details::IsPrivacyExceptionPeerAllowed(
+			_key,
+			PrivacyExceptionTypeForPeer(peer));
+	}), end(selected));
+	delegate()->peerListAddSelectedPeers(selected);
 }
 
 bool PrivacyExceptionsBoxController::isForeignRow(PeerListRowId itemId) {
@@ -439,9 +464,9 @@ auto PrivacyExceptionsBoxController::createRow(not_null<History*> history)
 	const auto peer = history->peer;
 	if (peer->isSelf() || peer->isRepliesChat() || peer->isVerifyCodes()) {
 		return nullptr;
-	} else if (!peer->isUser()
-		&& !peer->isChat()
-		&& !peer->isMegagroup()) {
+	} else if (!Settings::details::IsPrivacyExceptionPeerAllowed(
+			_key,
+			PrivacyExceptionTypeForPeer(peer))) {
 		return nullptr;
 	}
 	auto result = std::make_unique<Row>(history);
@@ -573,6 +598,7 @@ void EditNoPaidMessagesExceptions(
 		const Api::UserPrivacy::Rule &value) {
 	auto controller = std::make_unique<PrivacyExceptionsBoxController>(
 		&window->session(),
+		PrivacyKey::NoPaidMessages,
 		tr::lng_messages_privacy_remove_fee(),
 		value.always,
 		std::optional<SpecialRowType>());
@@ -649,6 +675,7 @@ void EditPrivacyBox::editExceptions(
 		Fn<void()> done) {
 	auto controller = std::make_unique<PrivacyExceptionsBoxController>(
 		&_window->session(),
+		_controller->key(),
 		_controller->exceptionBoxTitle(exception),
 		exceptions(exception),
 		(_controller->allowPremiumsToggle(exception)
@@ -1058,47 +1085,49 @@ void EditMessagesPrivacyBox(
 			(savedValue > 0) ? savedValue : std::optional<int>(),
 			kDefaultPrivateMessagesPrice);
 
-		Ui::AddSkip(chargeInner);
-		Ui::AddSubsectionTitle(
-			chargeInner,
-			tr::lng_messages_privacy_exceptions());
-
 		const auto key = Api::UserPrivacy::Key::NoPaidMessages;
-		session->api().userPrivacy().reload(key);
-		auto label = session->api().userPrivacy().value(
-			key
-		) | rpl::map([=](const Api::UserPrivacy::Rule &value) {
-			using namespace Settings;
-			const auto always = ExceptionUsersCount(value.always.peers);
-			return always
-				? tr::lng_edit_privacy_exceptions_count(
-					tr::now,
-					lt_count,
-					always)
-				: tr::lng_edit_privacy_exceptions_add(tr::now);
-		});
+		if (Settings::details::IsPrivacyKeySupported(key)) {
+			Ui::AddSkip(chargeInner);
+			Ui::AddSubsectionTitle(
+				chargeInner,
+				tr::lng_messages_privacy_exceptions());
 
-		const auto exceptions = Settings::AddButtonWithLabel(
-			chargeInner,
-			tr::lng_messages_privacy_remove_fee(),
-			std::move(label),
-			st::settingsButtonNoIcon);
-		highlightRemoveFee = exceptions;
-
-		const auto shower = exceptions->lifetime().make_state<rpl::lifetime>();
-		exceptions->setClickedCallback([=] {
-			*shower = session->api().userPrivacy().value(
+			session->api().userPrivacy().reload(key);
+			auto label = session->api().userPrivacy().value(
 				key
-			) | rpl::take(
-				1
-			) | rpl::on_next([=](const Api::UserPrivacy::Rule &value) {
-				EditNoPaidMessagesExceptions(controller, value);
+			) | rpl::map([=](const Api::UserPrivacy::Rule &value) {
+				using namespace Settings;
+				const auto always = ExceptionUsersCount(value.always.peers);
+				return always
+					? tr::lng_edit_privacy_exceptions_count(
+						tr::now,
+						lt_count,
+						always)
+					: tr::lng_edit_privacy_exceptions_add(tr::now);
 			});
-		});
-		Ui::AddSkip(chargeInner);
-		Ui::AddDividerText(
-			chargeInner,
-			tr::lng_messages_privacy_remove_about());
+
+			const auto exceptions = Settings::AddButtonWithLabel(
+				chargeInner,
+				tr::lng_messages_privacy_remove_fee(),
+				std::move(label),
+				st::settingsButtonNoIcon);
+			highlightRemoveFee = exceptions;
+
+			const auto shower = exceptions->lifetime().make_state<rpl::lifetime>();
+			exceptions->setClickedCallback([=] {
+				*shower = session->api().userPrivacy().value(
+					key
+				) | rpl::take(
+					1
+				) | rpl::on_next([=](const Api::UserPrivacy::Rule &value) {
+					EditNoPaidMessagesExceptions(controller, value);
+				});
+			});
+			Ui::AddSkip(chargeInner);
+			Ui::AddDividerText(
+				chargeInner,
+				tr::lng_messages_privacy_remove_about());
+		}
 
 		using namespace rpl::mappers;
 		chargeWrap->toggleOn(group->value() | rpl::map(_1 == kOptionCharge));

@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/edit_privacy_box.h"
 #include "main/main_session.h"
 #include "settings/settings_common.h"
+#include "settings/settings_privacy_policy.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
@@ -345,6 +346,9 @@ Ui::SettingsButton *SectionBuilder::addPremiumButton(PremiumButtonArgs &&args) {
 }
 
 Ui::SettingsButton *SectionBuilder::addPrivacyButton(PrivacyButtonArgs &&args) {
+	if (!Settings::details::IsPrivacyKeySupported(args.key)) {
+		return nullptr;
+	}
 	const auto controller = this->controller();
 	const auto session = this->session();
 

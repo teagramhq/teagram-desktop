@@ -972,8 +972,6 @@ void BuildPrivacySection(SectionBuilder &builder) {
 		.keywords = { u"groups"_q, u"invite"_q },
 	});
 
-	session->api().userPrivacy().reload(Privacy::Key::AddedByPhone);
-
 	builder.addSkip(st::settingsPrivacySecurityPadding);
 	builder.addDivider();
 }
