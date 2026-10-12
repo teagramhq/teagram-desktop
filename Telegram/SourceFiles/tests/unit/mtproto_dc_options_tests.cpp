@@ -1661,14 +1661,13 @@ TEST_CASE(AccountUsernameEditorsFollowTheirOwningSessionAcrossSwitchOrders) {
 		return Main::details::accountUsernameEditSupported(
 			user.session().mtp().dcOptions());
 	};
-	const auto checkSwitchOrder = [&](const BioTargetTestUser &first,
-									  bool firstExpected,
-									  const BioTargetTestUser &second,
-									  bool secondExpected) {
-		CHECK_EQ(supported(first), firstExpected);
-		CHECK_EQ(supported(second), secondExpected);
-		CHECK_EQ(supported(first), firstExpected);
-	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, bool firstExpected,
+			  const BioTargetTestUser &second, bool secondExpected) {
+			  CHECK_EQ(supported(first), firstExpected);
+			  CHECK_EQ(supported(second), secondExpected);
+			  CHECK_EQ(supported(first), firstExpected);
+		  };
 
 	checkSwitchOrder(stockUser, true, customUser, false);
 	checkSwitchOrder(customUser, false, stockUser, true);

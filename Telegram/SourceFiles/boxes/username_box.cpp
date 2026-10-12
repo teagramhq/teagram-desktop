@@ -315,9 +315,7 @@ void UsernameEditor::checkInfoPurchaseAvailable() {
 
 void UsernameEditor::updateFail(const QString &error) {
 	const auto outcome = Ui::EditPeer::ResolveUsernameUpdateFailure(
-		error,
-		_sentUsername,
-		editableUsername());
+		error, _sentUsername, editableUsername());
 	if (outcome == Ui::EditPeer::UsernameUpdateFailureOutcome::Saved) {
 		if (const auto user = _peer->asUser()) {
 			user->setName(
@@ -328,7 +326,7 @@ void UsernameEditor::updateFail(const QString &error) {
 		}
 		_saved.fire_done();
 	} else if (outcome
-		== Ui::EditPeer::UsernameUpdateFailureOutcome::Immutable) {
+			   == Ui::EditPeer::UsernameUpdateFailureOutcome::Immutable) {
 		_username->setFocus();
 		_username->showError();
 		_errorText = tr::lng_username_immutable_about(tr::now);
@@ -339,7 +337,7 @@ void UsernameEditor::updateFail(const QString &error) {
 		_errorText = tr::lng_username_invalid(tr::now);
 		checkInfoChange();
 	} else if ((error == u"USERNAME_OCCUPIED"_q)
-		|| (error == u"USERNAMES_UNAVAILABLE"_q)) {
+			   || (error == u"USERNAMES_UNAVAILABLE"_q)) {
 		_username->setFocus();
 		_username->showError();
 		_errorText = tr::lng_username_occupied(tr::now);
@@ -384,10 +382,9 @@ void FillUsernamesBox(
 		not_null<PeerData*> peer,
 		Fn<void()> onSaved) {
 	const auto isBot = peer && peer->isUser() && peer->asUser()->isBot();
-	const auto readOnlyAccountUsername = !isBot
-		&& peer->isUser()
-		&& peer->isSelf()
-		&& !peer->session().accountUsernameEditSupported();
+	const auto readOnlyAccountUsername
+		= !isBot && peer->isUser() && peer->isSelf()
+		  && !peer->session().accountUsernameEditSupported();
 	box->setTitle(isBot
 		? tr::lng_bot_username_title()
 		: tr::lng_username_title());
@@ -405,23 +402,18 @@ void FillUsernamesBox(
 	box->setFocusCallback([=] { editor->setInnerFocus(); });
 	if (readOnlyAccountUsername) {
 		const auto user = peer->asUser();
-		Ui::AddDividerText(
-			container,
-			user->editableUsername().isEmpty()
-				? tr::lng_username_unavailable_about()
-				: tr::lng_username_immutable_about());
+		Ui::AddDividerText(container, user->editableUsername().isEmpty()
+										  ? tr::lng_username_unavailable_about()
+										  : tr::lng_username_immutable_about());
 		for (const auto key : {
-				Qt::Key_Escape,
-				Qt::Key_Return,
-				Qt::Key_Enter,
-			}) {
+				 Qt::Key_Escape,
+				 Qt::Key_Return,
+				 Qt::Key_Enter,
+			 }) {
 			const auto shortcut = new QShortcut(QKeySequence(key), box);
 			shortcut->setContext(Qt::WidgetWithChildrenShortcut);
-			QObject::connect(
-				shortcut,
-				&QShortcut::activated,
-				box,
-				[=] { box->closeBox(); });
+			QObject::connect(shortcut, &QShortcut::activated, box,
+							 [=] { box->closeBox(); });
 		}
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		return;

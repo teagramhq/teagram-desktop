@@ -44,10 +44,8 @@ enum class UsernameUpdateFailureOutcome {
 };
 
 [[nodiscard]] inline UsernameUpdateFailureOutcome
-ResolveUsernameUpdateFailure(
-		const QString &error,
-		const QString &sent,
-		const QString &editable) {
+ResolveUsernameUpdateFailure(const QString &error, const QString &sent,
+							 const QString &editable) {
 	if (error == u"USERNAME_IMMUTABLE"_q) {
 		return UsernameUpdateFailureOutcome::Immutable;
 	} else if ((error == u"USERNAME_NOT_MODIFIED"_q) || (sent == editable)) {
