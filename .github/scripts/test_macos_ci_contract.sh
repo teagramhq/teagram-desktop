@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mac_workflow=".github/workflows/mac.yml"
+mac_workflow="${MACOS_CI_CONTRACT_WORKFLOW:-.github/workflows/mac.yml}"
 packaged_workflow=".github/workflows/mac_packaged.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
 
@@ -91,7 +91,6 @@ if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1
 fi
-require_text "$mac_workflow" "github.event_name == 'pull_request' && 'pr' || 'dev'"
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 cache_setup_step="$(awk '
@@ -113,7 +112,17 @@ ccache_restore_step="$(awk '
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
-if ! grep -Fq 'macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-' <<< "$ccache_restore_step"; then
+ccache_restore_keys="$(awk '
+  /^          restore-keys:/ { in_restore_keys = 1; next }
+  in_restore_keys && /^          [^ ]/ { exit }
+  in_restore_keys && /^            / { sub(/^            /, ""); print }
+' <<< "$ccache_restore_step")"
+if grep -Eq 'macOS-arm64-ccache-(pr|dev)-' <<< "$ccache_restore_keys"; then
+  printf 'MacOS cache restore keys must not include cross-scope PR/dev fallbacks.\n' >&2
+  exit 1
+fi
+expected_ccache_restore_key='macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
+if [[ "$ccache_restore_keys" != "$expected_ccache_restore_key" ]]; then
   printf 'MacOS cache restores must stay in the same PR/dev scope as their saves.\n' >&2
   exit 1
 fi
