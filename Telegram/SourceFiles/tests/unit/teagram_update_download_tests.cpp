@@ -1590,6 +1590,8 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	};
 	CHECK(QDir().mkpath(QFileInfo(installedInfo).absolutePath()));
 	CHECK(QDir().mkpath(QFileInfo(stagedInfo).absolutePath()));
+	CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
+	CHECK(QDir().mkpath(QFileInfo(stagedExecutable).absolutePath()));
 	CHECK(WriteFile(installedInfo, bundleInfo(100)));
 	CHECK(WriteFile(installedExecutable, QByteArrayLiteral("build 100")));
 	CHECK(WriteFile(stagedInfo, bundleInfo(101)));
