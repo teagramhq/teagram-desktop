@@ -65,6 +65,7 @@ struct TeagramUpdateInstallerTestHooks {
 	std::function<bool(const QString &)> hasCleanCodeSeal;
 	std::function<bool()> otherInstanceRunning;
 	std::function<bool()> requestRestart;
+	TeagramUpdateReplacementFailureInjector replacementFailureInjector;
 };
 
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
@@ -83,9 +84,14 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 RelaunchTeagramUpdateAfterShutdownForTesting(
 	const QString &currentBundlePath,
 	const QString &dataFile,
-	const std::function<bool(const QString &, const QStringList &)> &launchBundle,
+	const std::function<bool(
+		const QString &,
+		const QStringList &,
+		qint64 *)> &launchBundle,
 	const std::function<bool()> &otherInstanceRunning = {},
-	const std::function<void()> &prepareForLaunch = {});
+	const std::function<void()> &prepareForLaunch = {},
+	const std::function<bool()> &candidateStartupAcknowledged = {},
+	const std::function<bool(qint64)> &stopCandidate = {});
 #endif // TDESKTOP_UNIT_TESTS
 
 class TeagramUpdateInstaller final {

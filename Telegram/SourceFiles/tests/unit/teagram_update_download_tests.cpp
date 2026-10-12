@@ -1071,7 +1071,10 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 								bool restartSucceeds,
 								bool candidateLaunchSucceeds,
 								TeagramUpdateInstallReason expected,
-								TeagramUpdateRelaunchResult expectedRelaunch) {
+								TeagramUpdateRelaunchResult expectedRelaunch,
+								bool cancelAtReplacing,
+								bool injectReplacingFailure,
+								bool candidateStartupFails) {
 		auto architectureChecks = 0;
 		auto codeSealChecks = 0;
 		auto restartAttempts = 0;
@@ -1112,6 +1115,13 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			return sealValid;
 		};
 		hooks.otherInstanceRunning = [] { return false; };
+		if (injectReplacingFailure) {
+			hooks.replacementFailureInjector = [](
+					TeagramUpdateReplacementFailurePoint point) {
+				return point
+					== TeagramUpdateReplacementFailurePoint::BeforeCandidateMove;
+			};
+		}
 		auto profileOwner = QProcess();
 		if (expected != TeagramUpdateInstallReason::CandidateRejected) {
 			CHECK(StartProfileInstanceHelper(
@@ -1126,7 +1136,15 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			return restartSucceeds;
 		};
 		auto installer = TeagramUpdateInstaller(std::move(hooks));
-		const auto result = installer.install(*downloaded.candidate);
+		const auto result = installer.install(
+			*downloaded.candidate,
+			[&](TeagramUpdateInstallStage stage, int value) {
+				if (cancelAtReplacing
+					&& stage == TeagramUpdateInstallStage::Replacing
+					&& value == 0) {
+					installer.cancel();
+				}
+			});
 		CHECK(result.reason == expected);
 		CHECK_EQ(
 			architectureChecks,
@@ -1134,12 +1152,26 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		CHECK_EQ(codeSealChecks, 1);
 		CHECK_EQ(
 			restartAttempts,
-			expected == TeagramUpdateInstallReason::CandidateRejected ? 0 : 1);
+			expected == TeagramUpdateInstallReason::RelaunchRequested
+					|| expected
+						== TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable
+				? 1
+				: 0);
 		CHECK_EQ(ReadFile(profileCanary), profileBytes);
 		CHECK_EQ(ReadFile(officialCanary), officialBytes);
-		if (expected == TeagramUpdateInstallReason::CandidateRejected) {
+		if (expected == TeagramUpdateInstallReason::CandidateRejected
+			|| expected == TeagramUpdateInstallReason::Cancelled
+			|| expected == TeagramUpdateInstallReason::ReplacementFailed) {
 			CHECK_EQ(ReadFile(installedExecutable), installedBytes);
 			CHECK(!QFileInfo(previous).exists());
+			CHECK(!QFileInfo(root.filePath(
+				u".teagram-update-staging"_q)).exists());
+			CHECK(!QFileInfo(root.filePath(
+				u".teagram-update-pending"_q)).exists());
+			CHECK_EQ(restartAttempts, 0);
+			if (expected != TeagramUpdateInstallReason::CandidateRejected) {
+				StopProfileInstanceHelper(profileOwner, profileSocket);
+			}
 			return;
 		}
 		CHECK_EQ(ReadFile(installedExecutable), candidateBytes);
@@ -1172,15 +1204,22 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 				CHECK(QFile::remove(crashSentinel));
 			};
 			auto launchAttempts = 0;
+			auto candidateStopped = false;
 			const auto relaunched
 				= RelaunchTeagramUpdateAfterShutdownForTesting(
 					installed,
 					dataFile,
-					[&](const QString &path, const QStringList &arguments) {
+					[&](const QString &path,
+							const QStringList &arguments,
+							qint64 *processId) {
 						CHECK(arguments == expectedArguments);
 						CHECK_EQ(lifecycleFinishes, 1);
 						++launchAttempts;
 						if (path == installed) {
+							if (candidateStartupFails) {
+								*processId = 4242;
+								return true;
+							}
 							if (!candidateLaunchSucceeds) {
 								return false;
 							}
@@ -1194,11 +1233,28 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 						}
 						return false;
 					},
-					[] { return false; },
-					finishOldLifecycle);
+					[&] {
+						if (candidateStartupFails) {
+							CHECK(candidateStopped);
+						}
+						return false;
+					},
+					finishOldLifecycle,
+					candidateStartupFails
+						? std::function<bool()>([] { return false; })
+						: std::function<bool()>(),
+					candidateStartupFails
+						? std::function<bool(qint64)>([&](qint64 processId) {
+							CHECK_EQ(processId, 4242);
+							candidateStopped = true;
+							return true;
+						})
+						: std::function<bool(qint64)>());
 			finishOldLifecycle();
 			CHECK(relaunched == expectedRelaunch);
-			CHECK_EQ(launchAttempts, candidateLaunchSucceeds ? 1 : 2);
+			CHECK_EQ(
+				launchAttempts,
+				candidateLaunchSucceeds && !candidateStartupFails ? 1 : 2);
 			CHECK_EQ(lifecycleFinishes, 1);
 			CHECK_EQ(ReadFile(crashSentinel), newSentinel);
 			if (expectedRelaunch
@@ -1221,8 +1277,11 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 						= RelaunchTeagramUpdateAfterShutdownForTesting(
 							previous,
 							dataFile,
-							[&](const QString &path, const QStringList &arguments) {
+							[&](const QString &path,
+									const QStringList &arguments,
+									qint64 *processId) {
 								CHECK(arguments == expectedArguments);
+								*processId = 0;
 								paths.push_back(path);
 								return path == previous
 									&& RunProfileCandidate(
@@ -1249,25 +1308,64 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		true,
 		true,
 		TeagramUpdateInstallReason::RelaunchRequested,
-		TeagramUpdateRelaunchResult::CandidateStarted);
+		TeagramUpdateRelaunchResult::CandidateStarted,
+		false,
+		false,
+		false);
 	runFixture(
 		true,
 		true,
 		false,
 		TeagramUpdateInstallReason::RelaunchRequested,
-		TeagramUpdateRelaunchResult::PreviousStarted);
+		TeagramUpdateRelaunchResult::PreviousStarted,
+		false,
+		false,
+		false);
+	runFixture(
+		true,
+		true,
+		true,
+		TeagramUpdateInstallReason::RelaunchRequested,
+		TeagramUpdateRelaunchResult::PreviousStarted,
+		false,
+		false,
+		true);
 	runFixture(
 		false,
 		true,
 		false,
 		TeagramUpdateInstallReason::CandidateRejected,
-		TeagramUpdateRelaunchResult::NotPending);
+		TeagramUpdateRelaunchResult::NotPending,
+		false,
+		false,
+		false);
 	runFixture(
 		true,
 		false,
 		false,
 		TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable,
-		TeagramUpdateRelaunchResult::Failed);
+		TeagramUpdateRelaunchResult::Failed,
+		false,
+		false,
+		false);
+	runFixture(
+		true,
+		true,
+		false,
+		TeagramUpdateInstallReason::Cancelled,
+		TeagramUpdateRelaunchResult::NotPending,
+		true,
+		false,
+		false);
+	runFixture(
+		true,
+		true,
+		false,
+		TeagramUpdateInstallReason::ReplacementFailed,
+		TeagramUpdateRelaunchResult::NotPending,
+		false,
+		true,
+		false);
 }
 
 TEST_CASE(TeagramUpdateInstallerRemovesInterruptedExtraction) {
@@ -1371,8 +1469,11 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
 		installed,
 		u"data"_q,
-		[&](const QString &path, const QStringList &arguments) {
+		[&](const QString &path,
+				const QStringList &arguments,
+				qint64 *processId) {
 			CHECK(arguments.isEmpty());
+			*processId = 0;
 			++launchAttempts;
 			return path == installed
 				&& RunProfileCandidate("candidate", profileSocket, installed, 0);

@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <Cocoa/Cocoa.h>
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -602,27 +603,46 @@ enum class StartupWaitResult {
 	return true;
 }
 
-void StopLaunchedBundle(pid_t processId) {
+[[nodiscard]] bool ProcessIsRunning(pid_t processId) {
 	if (processId <= 0) {
-		return;
+		return false;
+	}
+	if (::kill(processId, 0) == 0) {
+		return true;
+	}
+	return errno != ESRCH;
+}
+
+[[nodiscard]] bool WaitForProcessExit(pid_t processId, int timeoutMs) {
+	if (processId <= 0) {
+		return true;
+	}
+	auto timer = QElapsedTimer();
+	timer.start();
+	while (ProcessIsRunning(processId) && timer.elapsed() < timeoutMs) {
+		QThread::msleep(100);
+	}
+	return !ProcessIsRunning(processId);
+}
+
+[[nodiscard]] bool StopLaunchedBundle(pid_t processId) {
+	if (processId <= 0) {
+		return true;
 	}
 	auto application
 		= [NSRunningApplication runningApplicationWithProcessIdentifier:processId];
-	if (!application || [application isTerminated]) {
-		return;
+	if (application && ![application isTerminated]) {
+		[application terminate];
 	}
-	[application terminate];
-	auto timer = QElapsedTimer();
-	timer.start();
-	while (timer.elapsed() < 5'000) {
-		application = [NSRunningApplication
-			runningApplicationWithProcessIdentifier:processId];
-		if (!application || [application isTerminated]) {
-			return;
-		}
-		QThread::msleep(100);
+	if (WaitForProcessExit(processId, 5'000)) {
+		return true;
 	}
-	[application forceTerminate];
+	application
+		= [NSRunningApplication runningApplicationWithProcessIdentifier:processId];
+	if (application && ![application isTerminated]) {
+		[application forceTerminate];
+	}
+	return WaitForProcessExit(processId, 5'000);
 }
 
 [[nodiscard]] TeagramUpdateRelaunchResult RelaunchPendingUpdate(
@@ -633,7 +653,9 @@ void StopLaunchedBundle(pid_t processId) {
 			const QStringList &,
 			pid_t *)> &launchBundle,
 		const std::function<bool()> &otherInstanceRunning = {},
-		const std::function<void()> &prepareForLaunch = {}) {
+		const std::function<void()> &prepareForLaunch = {},
+		const std::function<bool()> &candidateStartupAcknowledged = {},
+		const std::function<bool(pid_t)> &stopCandidate = {}) {
 	const auto current = CanonicalRunningBundlePath(currentBundlePath);
 	if (current.isEmpty()
 		|| current != QDir::cleanPath(currentBundlePath)) {
@@ -672,7 +694,11 @@ void StopLaunchedBundle(pid_t processId) {
 	}
 	auto processId = pid_t(0);
 	if (launchBundle(installed, arguments, &processId)) {
-		const auto startup = WaitForStartup(*pending, parent);
+		const auto startup = candidateStartupAcknowledged
+			? (candidateStartupAcknowledged()
+				? StartupWaitResult::Acknowledged
+				: StartupWaitResult::Failed)
+			: WaitForStartup(*pending, parent);
 		if (startup == StartupWaitResult::Acknowledged) {
 			return RemoveMarker(parent, kCommitMarker)
 				&& RemoveMarker(parent, kStartedMarker)
@@ -682,7 +708,12 @@ void StopLaunchedBundle(pid_t processId) {
 			return TeagramUpdateRelaunchResult::CurrentBundleStarted;
 		}
 	}
-	StopLaunchedBundle(processId);
+	const auto candidateStopped = stopCandidate
+		? stopCandidate(processId)
+		: StopLaunchedBundle(processId);
+	if (!candidateStopped) {
+		return TeagramUpdateRelaunchResult::Failed;
+	}
 	if (otherInstanceRunning ? otherInstanceRunning() : OtherInstanceRunning()) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
@@ -776,23 +807,37 @@ bool CompleteTeagramUpdateStartupForTesting(
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
 		const QString &currentBundlePath,
 		const QString &dataFile,
-		const std::function<bool(const QString &, const QStringList &)> &launchBundle,
+		const std::function<bool(
+			const QString &,
+			const QStringList &,
+			qint64 *)> &launchBundle,
 		const std::function<bool()> &otherInstanceRunning,
-		const std::function<void()> &prepareForLaunch) {
+		const std::function<void()> &prepareForLaunch,
+		const std::function<bool()> &candidateStartupAcknowledged,
+		const std::function<bool(qint64)> &stopCandidate) {
 	@autoreleasepool {
 		return RelaunchPendingUpdate(
 			currentBundlePath,
 			dataFile,
 			[&](const QString &path,
-					const QStringList &arguments,
-					pid_t *processId) {
+				const QStringList &arguments,
+				pid_t *processId) {
+				qint64 testProcessId = 0;
+				const auto launched = launchBundle
+					&& launchBundle(path, arguments, &testProcessId);
 				if (processId) {
-					*processId = 0;
+					*processId = pid_t(testProcessId);
 				}
-				return launchBundle && launchBundle(path, arguments);
+				return launched;
 			},
 			otherInstanceRunning,
-			prepareForLaunch);
+			prepareForLaunch,
+			candidateStartupAcknowledged,
+			[&](pid_t processId) {
+				return stopCandidate
+					? stopCandidate(qint64(processId))
+					: StopLaunchedBundle(processId);
+			});
 	}
 }
 #endif // TDESKTOP_UNIT_TESTS
@@ -1025,7 +1070,14 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 			installed,
 			extraction.bundlePath,
 			previous,
-			cancelled);
+			cancelled
+#ifdef TDESKTOP_UNIT_TESTS
+			,
+			_testHooks
+				? _testHooks->replacementFailureInjector
+				: TeagramUpdateReplacementFailureInjector()
+#endif // TDESKTOP_UNIT_TESTS
+		);
 		if (replacement.reason
 			!= TeagramUpdateReplacementReason::Replaced) {
 			if (replacement.reason
@@ -1034,11 +1086,24 @@ TeagramUpdateInstallResult TeagramUpdateInstaller::install(
 					TeagramUpdateInstallReason::RecoveryRequired,
 					replacement.previousBundlePath);
 			}
-			if (!RemoveMarker(parent, kCommitMarker)) {
+			const auto cleanup = RecoverTeagramUpdateReplacement(
+				lock,
+				installed,
+				staging,
+				previous,
+				installed,
+				false,
+				false,
+				false);
+			if (cleanup.reason == TeagramUpdateStartupRecoveryReason::Failed
+				|| cleanup.reason == TeagramUpdateStartupRecoveryReason::Busy
+				|| cleanup.reason
+					== TeagramUpdateStartupRecoveryReason::RestoredPrevious
+				|| cleanup.reason
+					== TeagramUpdateStartupRecoveryReason::PreviousRemoved) {
 				return InstallResult(TeagramUpdateInstallReason::RecoveryRequired);
 			}
-			if (::rmdir(QFile::encodeName(staging).constData()) != 0
-				&& errno != ENOENT) {
+			if (!RemoveMarker(parent, kCommitMarker)) {
 				return InstallResult(TeagramUpdateInstallReason::RecoveryRequired);
 			}
 			return InstallResult(replacement.reason
