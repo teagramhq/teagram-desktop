@@ -2545,12 +2545,8 @@ void Widget::checkUpdateStatus() {
 		const auto manager = &Core::TeagramUpdateManager::Instance();
 		const auto &state = manager->state();
 		using State = Core::TeagramUpdateUiState;
-		const auto visible = (state.state == State::Available)
-			|| (state.state == State::Downloading)
-			|| (state.state == State::Preparing)
-			|| (state.state == State::Ready)
-			|| (state.state == State::RestartPending)
-			|| (state.state == State::AlreadyInstalled);
+		const auto visible = Core::TeagramUpdateChatListActionForState(
+			state.state) != Core::TeagramUpdateChatListAction::Hidden;
 		if (_layout != Layout::Child && visible) {
 			if (!_updateTelegram) {
 				_updateTelegram.create(
@@ -2575,8 +2571,28 @@ void Widget::checkUpdateStatus() {
 						QString::number(state.progressPercent) + '%');
 				case State::Ready:
 					return tr::lng_teagram_update_restart_install(tr::now);
-				case State::RestartPending:
-					return tr::lng_teagram_update_dont_restart(tr::now);
+				case State::RestartPending: {
+					const auto &work = state.blockers;
+					if (work.call && work.recording && work.upload) {
+						return tr::lng_teagram_update_bar_after_all(tr::now);
+					} else if (work.call && work.recording) {
+						return tr::lng_teagram_update_bar_after_call_recording(
+							tr::now);
+					} else if (work.call && work.upload) {
+						return tr::lng_teagram_update_bar_after_call_upload(
+							tr::now);
+					} else if (work.recording && work.upload) {
+						return tr::lng_teagram_update_bar_after_recording_upload(
+							tr::now);
+					} else if (work.call) {
+						return tr::lng_teagram_update_bar_after_call(tr::now);
+					} else if (work.recording) {
+						return tr::lng_teagram_update_bar_after_recording(tr::now);
+					} else if (work.upload) {
+						return tr::lng_teagram_update_bar_after_upload(tr::now);
+					}
+					return tr::lng_teagram_update_restart_install(tr::now);
+				}
 				case State::AlreadyInstalled:
 					return tr::lng_teagram_update_restart_app(tr::now);
 				default:
@@ -2586,22 +2602,18 @@ void Widget::checkUpdateStatus() {
 			_updateTelegram->setText(text);
 			_updateTelegram->setAccessibleName(text);
 			_updateTelegram->setClickedCallback([=] {
-				switch (manager->state().state) {
-				case State::Available:
+				switch (Core::TeagramUpdateChatListActionForState(
+						manager->state().state)) {
+				case Core::TeagramUpdateChatListAction::DownloadAndInstall:
 					manager->downloadAndInstall();
 					break;
-				case State::Downloading:
-				case State::Preparing:
+				case Core::TeagramUpdateChatListAction::Cancel:
 					manager->cancel();
 					break;
-				case State::Ready:
-				case State::AlreadyInstalled:
+				case Core::TeagramUpdateChatListAction::Restart:
 					manager->restartExplicitly();
 					break;
-				case State::RestartPending:
-					manager->dontRestart();
-					break;
-				default:
+				case Core::TeagramUpdateChatListAction::Hidden:
 					break;
 				}
 			});

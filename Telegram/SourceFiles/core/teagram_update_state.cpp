@@ -9,6 +9,57 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
+TeagramUpdateNoteVariant TeagramUpdateNoteForState(
+		TeagramUpdateUiState state,
+		bool automatic) {
+	switch (state) {
+	case TeagramUpdateUiState::Idle:
+	case TeagramUpdateUiState::Checking:
+	case TeagramUpdateUiState::UpToDate:
+	case TeagramUpdateUiState::Updated:
+		return automatic
+			? TeagramUpdateNoteVariant::AutomaticOn
+			: TeagramUpdateNoteVariant::AutomaticOff;
+	case TeagramUpdateUiState::WaitingForMain:
+		return TeagramUpdateNoteVariant::WaitingForMain;
+	case TeagramUpdateUiState::Unreachable:
+		return automatic
+			? TeagramUpdateNoteVariant::UnreachableAutomatic
+			: TeagramUpdateNoteVariant::UnreachableManual;
+	case TeagramUpdateUiState::Available:
+		return TeagramUpdateNoteVariant::Available;
+	case TeagramUpdateUiState::Downloading:
+		return TeagramUpdateNoteVariant::Downloading;
+	case TeagramUpdateUiState::Preparing:
+		return TeagramUpdateNoteVariant::Preparing;
+	case TeagramUpdateUiState::Ready:
+		return automatic
+			? TeagramUpdateNoteVariant::ReadyAutomatic
+			: TeagramUpdateNoteVariant::ReadyManual;
+	case TeagramUpdateUiState::RestartPending:
+		return TeagramUpdateNoteVariant::RestartPending;
+	case TeagramUpdateUiState::Restarting:
+		return TeagramUpdateNoteVariant::Restarting;
+	case TeagramUpdateUiState::Cancelled:
+		return TeagramUpdateNoteVariant::Cancelled;
+	case TeagramUpdateUiState::DownloadFailed:
+		return TeagramUpdateNoteVariant::DownloadFailed;
+	case TeagramUpdateUiState::Rejected:
+		return TeagramUpdateNoteVariant::Rejected;
+	case TeagramUpdateUiState::Busy:
+		return TeagramUpdateNoteVariant::Busy;
+	case TeagramUpdateUiState::Refused:
+		return TeagramUpdateNoteVariant::Refused;
+	case TeagramUpdateUiState::NeedsNewerMacOS:
+		return TeagramUpdateNoteVariant::NeedsNewerMacOS;
+	case TeagramUpdateUiState::AlreadyInstalled:
+		return TeagramUpdateNoteVariant::AlreadyInstalled;
+	case TeagramUpdateUiState::Recovered:
+		return TeagramUpdateNoteVariant::Recovered;
+	}
+	Unexpected("Value in TeagramUpdateNoteForState.");
+}
+
 bool TeagramUpdateBuildIsEligible(
 		std::uint64_t runningBuild,
 		std::uint64_t highWaterBuild,

@@ -65,3 +65,70 @@ TEST_CASE(TeagramUpdateHighWaterPersistsFullUnsignedBuild) {
 	settings.encoded = QByteArrayLiteral("01");
 	CHECK(ReadTeagramUpdateHighWater(settings) == 0);
 }
+
+TEST_CASE(TeagramUpdateControlsAreDisabledDuringRestarting) {
+	using State = TeagramUpdateUiState;
+	CHECK(TeagramUpdateControlDisabled(State::Checking, true));
+	CHECK(!TeagramUpdateControlDisabled(State::Checking, false));
+	CHECK(TeagramUpdateControlDisabled(State::Restarting, false));
+	CHECK(!TeagramUpdateControlDisabled(State::Ready, true));
+}
+
+TEST_CASE(TeagramUpdateChannelSwitchKeepsOnlyValidPendingRestarts) {
+	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(
+		true,
+		true,
+		true,
+		false));
+	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(
+		true,
+		true,
+		false,
+		false));
+	CHECK(TeagramUpdateKeepPendingRestartAfterChannelChange(
+		true,
+		false,
+		false,
+		true));
+	CHECK(!TeagramUpdateKeepPendingRestartAfterChannelChange(
+		false,
+		true,
+		true,
+		false));
+}
+
+TEST_CASE(TeagramUpdateChatListRestartPendingKeepsRestartAction) {
+	CHECK(TeagramUpdateChatListActionForState(
+		TeagramUpdateUiState::RestartPending)
+		== TeagramUpdateChatListAction::Restart);
+	CHECK(TeagramUpdateChatListActionForState(
+		TeagramUpdateUiState::Downloading)
+		== TeagramUpdateChatListAction::Cancel);
+}
+
+TEST_CASE(TeagramUpdateRejectedBuildIsSuppressedAndKeptForTheNote) {
+	const auto first = TeagramUpdateRecordRejectedBuild(100, 103);
+	CHECK(first.suppressedAutomaticBuild == 103);
+	CHECK(first.noteBuild == 103);
+	CHECK(!first.candidateRetained);
+
+	const auto older = TeagramUpdateRecordRejectedBuild(104, 103);
+	CHECK(older.suppressedAutomaticBuild == 104);
+	CHECK(older.noteBuild == 103);
+}
+
+TEST_CASE(TeagramUpdateNoteVariantsFollowStateAndAutomaticSetting) {
+	using State = TeagramUpdateUiState;
+	using Note = TeagramUpdateNoteVariant;
+	CHECK(TeagramUpdateNoteForState(State::Idle, true) == Note::AutomaticOn);
+	CHECK(TeagramUpdateNoteForState(State::Checking, false)
+		== Note::AutomaticOff);
+	CHECK(TeagramUpdateNoteForState(State::Unreachable, true)
+		== Note::UnreachableAutomatic);
+	CHECK(TeagramUpdateNoteForState(State::Unreachable, false)
+		== Note::UnreachableManual);
+	CHECK(TeagramUpdateNoteForState(State::Ready, true)
+		== Note::ReadyAutomatic);
+	CHECK(TeagramUpdateNoteForState(State::Ready, false)
+		== Note::ReadyManual);
+}

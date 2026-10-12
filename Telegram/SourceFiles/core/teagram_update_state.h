@@ -76,6 +76,92 @@ struct TeagramUpdateSnapshot {
 	bool previousBundleAvailable = false;
 };
 
+enum class TeagramUpdateNoteVariant {
+	AutomaticOn,
+	AutomaticOff,
+	WaitingForMain,
+	UnreachableAutomatic,
+	UnreachableManual,
+	Available,
+	Downloading,
+	Preparing,
+	ReadyAutomatic,
+	ReadyManual,
+	RestartPending,
+	Restarting,
+	Cancelled,
+	DownloadFailed,
+	Rejected,
+	Busy,
+	Refused,
+	NeedsNewerMacOS,
+	AlreadyInstalled,
+	Recovered,
+};
+
+enum class TeagramUpdateChatListAction {
+	Hidden,
+	DownloadAndInstall,
+	Cancel,
+	Restart,
+};
+
+struct TeagramUpdateRejectedBuildState {
+	quint64 suppressedAutomaticBuild = 0;
+	quint64 noteBuild = 0;
+	bool candidateRetained = false;
+};
+
+[[nodiscard]] constexpr bool TeagramUpdateControlDisabled(
+		TeagramUpdateUiState state,
+		bool checkControl) {
+	return (state == TeagramUpdateUiState::Restarting)
+		|| (checkControl && state == TeagramUpdateUiState::Checking);
+}
+
+[[nodiscard]] constexpr bool TeagramUpdateKeepPendingRestartAfterChannelChange(
+		bool pendingRestart,
+		bool hasCandidate,
+		bool candidateStillEligible,
+		bool installedBuildRestart) {
+	return pendingRestart
+		&& (installedBuildRestart
+			|| (hasCandidate && candidateStillEligible));
+}
+
+[[nodiscard]] constexpr TeagramUpdateChatListAction
+TeagramUpdateChatListActionForState(TeagramUpdateUiState state) {
+	switch (state) {
+	case TeagramUpdateUiState::Available:
+		return TeagramUpdateChatListAction::DownloadAndInstall;
+	case TeagramUpdateUiState::Downloading:
+	case TeagramUpdateUiState::Preparing:
+		return TeagramUpdateChatListAction::Cancel;
+	case TeagramUpdateUiState::Ready:
+	case TeagramUpdateUiState::RestartPending:
+	case TeagramUpdateUiState::AlreadyInstalled:
+		return TeagramUpdateChatListAction::Restart;
+	default:
+		return TeagramUpdateChatListAction::Hidden;
+	}
+}
+
+[[nodiscard]] constexpr TeagramUpdateRejectedBuildState
+TeagramUpdateRecordRejectedBuild(
+		quint64 suppressedAutomaticBuild,
+		quint64 rejectedBuild) {
+	return {
+		.suppressedAutomaticBuild = (rejectedBuild > suppressedAutomaticBuild)
+			? rejectedBuild
+			: suppressedAutomaticBuild,
+		.noteBuild = rejectedBuild,
+	};
+}
+
+[[nodiscard]] TeagramUpdateNoteVariant TeagramUpdateNoteForState(
+	TeagramUpdateUiState state,
+	bool automatic);
+
 [[nodiscard]] constexpr bool TeagramUpdateUiEnabled() {
 	return kTeagramUpdateEngineActive;
 }

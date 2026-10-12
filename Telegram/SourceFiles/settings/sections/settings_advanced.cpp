@@ -1034,8 +1034,7 @@ QString TeagramUpdateStateText(const Core::TeagramUpdateSnapshot &state) {
 	case State::Unreachable:
 		return tr::lng_teagram_update_state_unreachable(tr::now);
 	case State::Available:
-		return tr::lng_teagram_update_state_available(
-			tr::now, lt_build, QString::number(state.candidateBuild));
+		return tr::lng_teagram_update_state_available(tr::now);
 	case State::Downloading:
 		return tr::lng_teagram_update_state_downloading(
 			tr::now, lt_progress,
@@ -1046,17 +1045,14 @@ QString TeagramUpdateStateText(const Core::TeagramUpdateSnapshot &state) {
 			QString::number(state.progressPercent) + '%');
 	case State::Ready:
 		return state.automatic
-			? tr::lng_teagram_update_state_ready_auto(
-				tr::now, lt_build, QString::number(state.candidateBuild))
-			: tr::lng_teagram_update_state_ready(
-				tr::now, lt_build, QString::number(state.candidateBuild));
+			? tr::lng_teagram_update_state_ready_auto(tr::now)
+			: tr::lng_teagram_update_state_ready(tr::now);
 	case State::RestartPending:
 		return tr::lng_teagram_update_state_restart_pending(tr::now);
 	case State::Restarting:
 		return tr::lng_teagram_update_state_restarting(tr::now);
 	case State::Updated:
-		return tr::lng_teagram_update_state_updated(
-			tr::now, lt_build, QString::number(state.runningBuild));
+		return tr::lng_teagram_update_state_updated(tr::now);
 	case State::AlreadyInstalled:
 		return tr::lng_teagram_update_state_already_installed(tr::now);
 	case State::Cancelled:
@@ -1064,34 +1060,215 @@ QString TeagramUpdateStateText(const Core::TeagramUpdateSnapshot &state) {
 	case State::DownloadFailed:
 		return tr::lng_teagram_update_state_download_failed(tr::now);
 	case State::Rejected:
-		return tr::lng_teagram_update_state_rejected(
-			tr::now, lt_reason, state.rejectionCode);
+		return tr::lng_teagram_update_state_rejected(tr::now);
 	case State::Busy:
 		return tr::lng_teagram_update_state_busy(tr::now);
 	case State::Refused:
-		return tr::lng_teagram_update_state_refused(
-			tr::now,
-			lt_reason,
-			state.refusal == Core::TeagramUpdateRefusal::Translocated
-				? tr::lng_teagram_update_refusal_translocated(tr::now)
-				: state.refusal == Core::TeagramUpdateRefusal::Unwritable
-					? tr::lng_teagram_update_refusal_unwritable(tr::now)
-					: state.refusal == Core::TeagramUpdateRefusal::OtherOwner
-						? tr::lng_teagram_update_refusal_owner(tr::now)
-						: tr::lng_teagram_update_refusal_disk(tr::now));
+		return tr::lng_teagram_update_state_refused(tr::now);
 	case State::NeedsNewerMacOS:
-		return tr::lng_teagram_update_state_needs_macos(
-			tr::now, lt_version, state.minimumMacOS);
+		return tr::lng_teagram_update_state_needs_macos(tr::now);
 	case State::Recovered:
 		return tr::lng_teagram_update_state_recovered(tr::now);
 	}
 	Unexpected("Value in TeagramUpdateStateText.");
 }
 
+QString TeagramUpdatePendingNote(const Core::TeagramUpdateActiveWork &work) {
+	if (work.call && work.recording && work.upload) {
+		return tr::lng_teagram_update_note_restart_pending_all(tr::now);
+	} else if (work.call && work.recording) {
+		return tr::lng_teagram_update_note_restart_pending_call_recording(
+			tr::now);
+	} else if (work.call && work.upload) {
+		return tr::lng_teagram_update_note_restart_pending_call_upload(
+			tr::now);
+	} else if (work.recording && work.upload) {
+		return tr::lng_teagram_update_note_restart_pending_recording_upload(
+			tr::now);
+	} else if (work.call) {
+		return tr::lng_teagram_update_note_restart_pending_call(tr::now);
+	} else if (work.recording) {
+		return tr::lng_teagram_update_note_restart_pending_recording(tr::now);
+	} else if (work.upload) {
+		return tr::lng_teagram_update_note_restart_pending_upload(tr::now);
+	}
+	return tr::lng_teagram_update_note_restart_pending_ready(tr::now);
+}
+
+QString TeagramUpdateRefusalText(Core::TeagramUpdateRefusal refusal) {
+	switch (refusal) {
+	case Core::TeagramUpdateRefusal::Translocated:
+		return tr::lng_teagram_update_refusal_translocated(tr::now);
+	case Core::TeagramUpdateRefusal::Unwritable:
+		return tr::lng_teagram_update_refusal_unwritable(tr::now);
+	case Core::TeagramUpdateRefusal::OtherOwner:
+		return tr::lng_teagram_update_refusal_owner(tr::now);
+	case Core::TeagramUpdateRefusal::UnsupportedDisk:
+	case Core::TeagramUpdateRefusal::None:
+		return tr::lng_teagram_update_refusal_disk(tr::now);
+	}
+	Unexpected("Value in TeagramUpdateRefusalText.");
+}
+
+QString TeagramUpdateNoteText(const Core::TeagramUpdateSnapshot &state) {
+	using Note = Core::TeagramUpdateNoteVariant;
+	const auto variant = Core::TeagramUpdateNoteForState(
+		state.state,
+		state.automatic);
+	auto result = QString();
+	auto guarantee = false;
+	switch (variant) {
+	case Note::AutomaticOn:
+		result = tr::lng_teagram_update_note_auto_on(tr::now);
+		break;
+	case Note::AutomaticOff:
+		result = tr::lng_teagram_update_note_auto_off(tr::now);
+		break;
+	case Note::WaitingForMain:
+		result = tr::lng_teagram_update_note_waiting_main(
+			tr::now,
+			lt_running,
+			QString::number(state.runningBuild));
+		break;
+	case Note::UnreachableAutomatic:
+		result = tr::lng_teagram_update_note_unreachable_auto(tr::now);
+		guarantee = true;
+		break;
+	case Note::UnreachableManual:
+		result = tr::lng_teagram_update_note_unreachable_manual(tr::now);
+		guarantee = true;
+		break;
+	case Note::Available:
+		result = tr::lng_teagram_update_note_available(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::Downloading:
+		result = tr::lng_teagram_update_note_downloading(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::Preparing:
+		result = tr::lng_teagram_update_note_preparing(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::ReadyAutomatic:
+		result = tr::lng_teagram_update_note_ready_auto(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::ReadyManual:
+		result = tr::lng_teagram_update_note_ready_manual(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::RestartPending:
+		result = TeagramUpdatePendingNote(state.blockers);
+		break;
+	case Note::Restarting:
+		break;
+	case Note::Cancelled:
+		result = tr::lng_teagram_update_note_cancelled(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		guarantee = true;
+		break;
+	case Note::DownloadFailed:
+		result = tr::lng_teagram_update_note_download_failed(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		guarantee = true;
+		break;
+	case Note::Rejected:
+		result = state.candidateBuild
+			? tr::lng_teagram_update_note_rejected(
+				tr::now,
+				lt_build,
+				QString::number(state.candidateBuild),
+				lt_code,
+				state.rejectionCode)
+			: tr::lng_teagram_update_note_rejected_unknown(
+				tr::now,
+				lt_code,
+				state.rejectionCode);
+		guarantee = true;
+		break;
+	case Note::Busy:
+		result = tr::lng_teagram_update_note_busy(tr::now);
+		guarantee = true;
+		break;
+	case Note::Refused: {
+		const auto reason = TeagramUpdateRefusalText(state.refusal);
+		result = state.candidateBuild
+			? tr::lng_teagram_update_note_refused_known(
+				tr::now,
+				lt_build,
+				QString::number(state.candidateBuild),
+				lt_reason,
+				reason)
+			: reason;
+		guarantee = true;
+	} break;
+	case Note::NeedsNewerMacOS:
+		result = tr::lng_teagram_update_note_needs_macos(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild),
+			lt_version,
+			state.minimumMacOS);
+		guarantee = true;
+		break;
+	case Note::AlreadyInstalled:
+		result = tr::lng_teagram_update_note_already_installed(
+			tr::now,
+			lt_build,
+			QString::number(state.candidateBuild));
+		break;
+	case Note::Recovered:
+		result = tr::lng_teagram_update_note_recovered(
+			tr::now,
+			lt_high_water,
+			QString::number(state.highWaterBuild));
+		break;
+	}
+	if (!result.isEmpty()) {
+		result += ' ';
+	}
+	result += tr::lng_teagram_update_note(tr::now);
+	if (guarantee) {
+		result += ' ';
+		result += tr::lng_teagram_update_note_guarantee(tr::now);
+	}
+	return result;
+}
+
 void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 	using Channel = Core::TeagramUpdateChannel;
 	const auto manager = &Core::TeagramUpdateManager::Instance();
 	const auto controller = builder.controller();
+	const auto bindDisabled = [=](
+			Ui::SettingsButton *button,
+			bool checkControl) {
+		if (!button) {
+			return;
+		}
+		manager->stateChanges() | rpl::map(
+			[=](const Core::TeagramUpdateSnapshot &state) {
+				return Core::TeagramUpdateControlDisabled(
+					state.state,
+					checkControl);
+			}) | rpl::on_next(
+				[=](bool disabled) { button->setDisabled(disabled); },
+				button->lifetime());
+	};
 	if (!atTop) {
 		builder.addDivider();
 	}
@@ -1113,6 +1290,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.keywords = { u"update"_q, u"automatic"_q, u"version"_q },
 	});
 	if (toggle) {
+		bindDisabled(toggle, false);
 		toggle->toggledValue(
 		) | rpl::on_next([=](bool enabled) {
 			manager->setAutomatic(enabled);
@@ -1129,7 +1307,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				? tr::lng_teagram_update_channel_main(tr::now)
 				: tr::lng_teagram_update_channel_dev(tr::now);
 		});
-	builder.addButton({
+	const auto channelButton = builder.addButton({
 		.id = u"advanced/update_channel"_q,
 		.title = tr::lng_teagram_update_channel(),
 		.st = &st::settingsButtonNoIcon,
@@ -1161,14 +1339,16 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		},
 		.keywords = { u"update"_q, u"channel"_q, u"dev"_q, u"main"_q },
 	});
+	bindDisabled(channelButton, false);
 
-	builder.addButton({
+	const auto checkButton = builder.addButton({
 		.id = u"advanced/check_update"_q,
 		.title = tr::lng_teagram_update_check_now(),
 		.st = &st::settingsButtonNoIcon,
 		.onClick = [=] { manager->checkNow(); },
 		.keywords = { u"check"_q, u"update"_q, u"version"_q },
 	});
+	bindDisabled(checkButton, true);
 
 	const auto actionTitle = manager->stateChanges() | rpl::map(
 		[](const Core::TeagramUpdateSnapshot &state) {
@@ -1199,7 +1379,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				|| (state.state == State::RestartPending)
 				|| (state.state == State::AlreadyInstalled);
 		});
-	builder.addButton({
+	const auto actionButton = builder.addButton({
 		.id = u"advanced/update_action"_q,
 		.title = std::move(actionTitle),
 		.st = &st::settingsButtonNoIcon,
@@ -1228,8 +1408,9 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.keywords = { u"update"_q, u"install"_q, u"restart"_q },
 		.shown = std::move(actionShown),
 	});
+	bindDisabled(actionButton, false);
 
-	builder.addButton({
+	const auto recoveryButton = builder.addButton({
 		.id = u"advanced/update_recovery"_q,
 		.title = tr::lng_teagram_update_show_previous(),
 		.st = &st::settingsButtonNoIcon,
@@ -1240,7 +1421,9 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 				return state.previousBundleAvailable;
 			}),
 	});
-	builder.addDividerText(tr::lng_teagram_update_note());
+	bindDisabled(recoveryButton, false);
+	builder.addDividerText(manager->stateChanges() | rpl::map(
+		&TeagramUpdateNoteText));
 	builder.addSkip();
 	if (atTop) {
 		builder.addDivider();
