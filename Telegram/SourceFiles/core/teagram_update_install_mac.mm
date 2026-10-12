@@ -1076,8 +1076,7 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 				== TeagramUpdateReplacementReason::RecoveryRequired) {
 				return InstallResult(
 					TeagramUpdateInstallReason::RecoveryRequired,
-					replacement.previousBundlePath,
-					replacement.committed);
+					replacement.previousBundlePath, replacement.committed);
 			}
 			const auto cleanup = RecoverTeagramUpdateReplacement(
 				lock, installed, staging, previous, installed, false, false,

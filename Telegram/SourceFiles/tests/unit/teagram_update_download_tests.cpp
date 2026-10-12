@@ -1286,27 +1286,28 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			return sealValid;
 		};
 		hooks.otherInstanceRunning = [] { return false; };
-		if (injectReplacingFailure
-			|| injectRollbackSyncFailure
+		if (injectReplacingFailure || injectRollbackSyncFailure
 			|| injectCommittedSyncFailure) {
-			hooks.replacementFailureInjector
-				= [=](TeagramUpdateReplacementFailurePoint point) {
+			hooks.replacementFailureInjector =
+				[=](TeagramUpdateReplacementFailurePoint point) {
 					const auto beforeCandidateMove
 						= point
-						== TeagramUpdateReplacementFailurePoint::
-							BeforeCandidateMove;
+						  == TeagramUpdateReplacementFailurePoint::
+							  BeforeCandidateMove;
 					const auto rollbackSyncFailure
 						= point
-						== TeagramUpdateReplacementFailurePoint::
-							RollbackSyncFailure;
+						  == TeagramUpdateReplacementFailurePoint::
+							  RollbackSyncFailure;
 					const auto committedSyncFailure
 						= point
-						== TeagramUpdateReplacementFailurePoint::
-							CommittedSyncFailure;
-					return ((injectReplacingFailure || injectRollbackSyncFailure)
+						  == TeagramUpdateReplacementFailurePoint::
+							  CommittedSyncFailure;
+					return ((injectReplacingFailure
+							 || injectRollbackSyncFailure)
 							&& beforeCandidateMove)
-						|| (injectRollbackSyncFailure && rollbackSyncFailure)
-						|| (injectCommittedSyncFailure && committedSyncFailure);
+						   || (injectRollbackSyncFailure && rollbackSyncFailure)
+						   || (injectCommittedSyncFailure
+							   && committedSyncFailure);
 				};
 		}
 		auto profileOwner = QProcess();
@@ -1342,13 +1343,12 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			});
 		CHECK(result.reason == expected);
 		CHECK(result.replacementCommitted
-			== (expected == TeagramUpdateInstallReason::RelaunchRequested
-				|| expected
-					== TeagramUpdateInstallReason::RelaunchFailedPreviousAvailable
-				|| (expected
-						== TeagramUpdateInstallReason::RecoveryRequired
-					&& (leaveStageArtifact
-						|| injectCommittedSyncFailure))));
+			  == (expected == TeagramUpdateInstallReason::RelaunchRequested
+				  || expected
+						 == TeagramUpdateInstallReason::
+							 RelaunchFailedPreviousAvailable
+				  || (expected == TeagramUpdateInstallReason::RecoveryRequired
+					  && (leaveStageArtifact || injectCommittedSyncFailure))));
 		CHECK_EQ(architectureChecks,
 				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2 : 3);
 		CHECK_EQ(codeSealChecks, 1);
@@ -1380,8 +1380,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			CHECK_EQ(ReadFile(installedExecutable), installedBytes);
 			CHECK(!QFileInfo(previous).exists());
 			const auto highWater = TeagramUpdateCommittedHighWater(
-				100,
-				downloaded.candidate->metadata().build(),
+				100, downloaded.candidate->metadata().build(),
 				result.replacementCommitted);
 			CHECK(!highWater);
 			CHECK_EQ(highWater.value_or(100), quint64(100));
@@ -1390,8 +1389,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		}
 		if (injectCommittedSyncFailure) {
 			const auto highWater = TeagramUpdateCommittedHighWater(
-				100,
-				downloaded.candidate->metadata().build(),
+				100, downloaded.candidate->metadata().build(),
 				result.replacementCommitted);
 			CHECK(highWater.has_value());
 			CHECK_EQ(*highWater, quint64(101));

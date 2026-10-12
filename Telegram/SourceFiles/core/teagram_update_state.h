@@ -221,16 +221,12 @@ void WriteTeagramUpdateHighWater(
 }
 
 [[nodiscard]] constexpr std::optional<quint64>
-TeagramUpdateCommittedHighWater(
-		quint64 highWaterBuild,
-		quint64 candidateBuild,
-		bool replacementCommitted) {
+TeagramUpdateCommittedHighWater(quint64 highWaterBuild, quint64 candidateBuild,
+								bool replacementCommitted) {
 	if (!replacementCommitted) {
 		return std::nullopt;
 	}
-	return (candidateBuild > highWaterBuild)
-		? candidateBuild
-		: highWaterBuild;
+	return (candidateBuild > highWaterBuild) ? candidateBuild : highWaterBuild;
 }
 
 [[nodiscard]] bool TeagramUpdateBuildIsEligible(

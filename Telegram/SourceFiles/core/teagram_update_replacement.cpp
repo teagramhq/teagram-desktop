@@ -203,8 +203,7 @@ struct ResolvedPath {
 #endif // Q_OS_MAC
 
 [[nodiscard]] TeagramUpdateReplacementResult
-Result(TeagramUpdateReplacementReason reason,
-	   const QString &previousPath = {},
+Result(TeagramUpdateReplacementReason reason, const QString &previousPath = {},
 	   bool committed = false) {
 	return {reason, previousPath, committed};
 }
@@ -418,14 +417,14 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 		return Result(TeagramUpdateReplacementReason::ReplacementFailed);
 	}
 	const auto rollback = [&](TeagramUpdateReplacementReason reason) {
-		const auto restored = SwapPaths(
-			installedParent.value, installed.name,
-			candidateParent.value, candidate.name);
+		const auto restored = SwapPaths(installedParent.value, installed.name,
+										candidateParent.value, candidate.name);
 #ifdef TDESKTOP_UNIT_TESTS
-		const auto injectedSyncFailure = restored
-			&& Injected(
-				failureInjector,
-				TeagramUpdateReplacementFailurePoint::RollbackSyncFailure);
+		const auto injectedSyncFailure
+			= restored
+			  && Injected(
+				  failureInjector,
+				  TeagramUpdateReplacementFailurePoint::RollbackSyncFailure);
 #else  // TDESKTOP_UNIT_TESTS
 		const auto injectedSyncFailure = false;
 #endif // TDESKTOP_UNIT_TESTS
@@ -467,14 +466,12 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 	}
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto injectedCommitSyncFailure
-		= Injected(
-			failureInjector,
-			TeagramUpdateReplacementFailurePoint::CommittedSyncFailure);
+		= Injected(failureInjector,
+				   TeagramUpdateReplacementFailurePoint::CommittedSyncFailure);
 #else  // TDESKTOP_UNIT_TESTS
 	const auto injectedCommitSyncFailure = false;
 #endif // TDESKTOP_UNIT_TESTS
-	if (injectedCommitSyncFailure
-		|| ::fsync(candidateParent.value) != 0
+	if (injectedCommitSyncFailure || ::fsync(candidateParent.value) != 0
 		|| ::fsync(installedParent.value) != 0) {
 		return Result(TeagramUpdateReplacementReason::RecoveryRequired,
 					  previous.full, true);
@@ -528,20 +525,19 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 	}
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto injectedCommitSyncFailure
-		= Injected(
-			failureInjector,
-			TeagramUpdateReplacementFailurePoint::CommittedSyncFailure);
+		= Injected(failureInjector,
+				   TeagramUpdateReplacementFailurePoint::CommittedSyncFailure);
 #else  // TDESKTOP_UNIT_TESTS
 	const auto injectedCommitSyncFailure = false;
 #endif // TDESKTOP_UNIT_TESTS
-	if (injectedCommitSyncFailure
-		|| ::fsync(candidateParent.value) != 0
+	if (injectedCommitSyncFailure || ::fsync(candidateParent.value) != 0
 		|| ::fsync(installedParent.value) != 0) {
 		return Result(TeagramUpdateReplacementReason::RecoveryRequired,
 					  previous.full, true);
 	}
 #endif // Q_OS_MAC
-	return Result(TeagramUpdateReplacementReason::Replaced, previous.full, true);
+	return Result(TeagramUpdateReplacementReason::Replaced, previous.full,
+				  true);
 }
 
 TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(

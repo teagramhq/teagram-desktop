@@ -726,11 +726,14 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 					}, Qt::BlockingQueuedConnection);
 				}
 				if (stage == TeagramUpdateInstallStage::Replacing && value == 100) {
-					QMetaObject::invokeMethod(this, [=] {
-						persistCommittedBuild(
-							candidate->metadata().build(), true);
-						candidate->discardArchive();
-					}, Qt::BlockingQueuedConnection);
+					QMetaObject::invokeMethod(
+						this,
+						[=] {
+							persistCommittedBuild(candidate->metadata().build(),
+												  true);
+							candidate->discardArchive();
+						},
+						Qt::BlockingQueuedConnection);
 				}
 				QMetaObject::invokeMethod(this, [=] {
 					if (generation != _generation) {
@@ -784,16 +787,15 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 			if (generation != _generation) {
 				return;
 			}
-		persistCommittedBuild(
-			candidate->metadata().build(),
-			result.replacementCommitted);
-		if (result.replacementCommitted) {
-			candidate->discardArchive();
-			if (_candidate == candidate) {
-				_candidate.reset();
+			persistCommittedBuild(candidate->metadata().build(),
+								  result.replacementCommitted);
+			if (result.replacementCommitted) {
+				candidate->discardArchive();
+				if (_candidate == candidate) {
+					_candidate.reset();
+				}
+				_state.candidateBuild = candidate->metadata().build();
 			}
-			_state.candidateBuild = candidate->metadata().build();
-		}
 		switch (result.reason) {
 		case TeagramUpdateInstallReason::RelaunchRequested:
 			setState(TeagramUpdateUiState::Restarting);
@@ -994,13 +996,10 @@ std::chrono::milliseconds TeagramUpdateManager::idleFor() const {
 	return std::chrono::milliseconds(elapsed);
 }
 
-void TeagramUpdateManager::persistCommittedBuild(
-		quint64 build,
-		bool replacementCommitted) {
+void TeagramUpdateManager::persistCommittedBuild(quint64 build,
+												 bool replacementCommitted) {
 	const auto highWater = TeagramUpdateCommittedHighWater(
-		_state.highWaterBuild,
-		build,
-		replacementCommitted);
+		_state.highWaterBuild, build, replacementCommitted);
 	if (!highWater) {
 		return;
 	}
