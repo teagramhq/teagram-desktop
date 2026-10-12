@@ -59,6 +59,15 @@ accountUsernameEditSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+template <typename Callback>
+inline void
+refreshAccountUsernameCacheIfSupported(const MTP::DcOptions &options,
+									   Callback &&refresh) {
+	if (accountUsernameEditSupported(options)) {
+		refresh();
+	}
+}
+
 template <typename User>
 [[nodiscard]] inline bool accountBioEditorTargetSupported(const User &self) {
 	return accountBioEditSupported(self.session().mtp().dcOptions());

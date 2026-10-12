@@ -660,7 +660,9 @@ void SetupRows(
 										   "internal:edit_username"});
 				return result;
 			});
-	session->api().usernames().requestToCache(session->user());
+	Main::details::refreshAccountUsernameCacheIfSupported(
+		session->mtp().dcOptions(),
+		[=] { session->api().usernames().requestToCache(session->user()); });
 	const auto usernameButton = AddRow(
 		container, std::move(label), std::move(usernameValue),
 		tr::lng_context_copy_mention(tr::now),
@@ -670,10 +672,16 @@ void SetupRows(
 			}
 			const auto box = controller->show(
 				Box(UsernamesBox, session->user()));
-			box->boxClosing(
-			) | rpl::on_next([=] {
-				session->api().usernames().requestToCache(session->user());
-			}, box->lifetime());
+			box->boxClosing()
+				| rpl::on_next(
+					[=] {
+						Main::details::refreshAccountUsernameCacheIfSupported(
+							session->mtp().dcOptions(), [=] {
+								session->api().usernames().requestToCache(
+									session->user());
+							});
+					},
+					box->lifetime());
 		},
 		{&st::menuIconUsername}, false, nullptr, nullptr,
 		[=] {

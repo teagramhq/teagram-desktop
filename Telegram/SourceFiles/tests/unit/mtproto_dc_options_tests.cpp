@@ -1556,6 +1556,25 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	}
 }
 
+TEST_CASE(AccountUsernameCacheRefreshRequiresEditableSession) {
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	const auto refreshCount = [](const DcOptions &options) {
+		auto requests = 0;
+		Main::details::refreshAccountUsernameCacheIfSupported(
+			options, [&] { ++requests; });
+		return requests;
+	};
+	CHECK_EQ(refreshCount(stock), 1);
+	CHECK_EQ(refreshCount(custom), 0);
+	CHECK_EQ(refreshCount(blocked), 0);
+}
+
 struct BioTargetTestMtp {
 	const DcOptions &options;
 
