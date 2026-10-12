@@ -75,6 +75,7 @@ enum class TeagramUpdateReplacementFailurePoint {
 	BeforePreviousMove,
 	AfterPreviousMove,
 	BeforeCandidateMove,
+	RollbackSwapFailure,
 	RollbackSyncFailure,
 	CommittedSyncFailure,
 };

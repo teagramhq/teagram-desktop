@@ -417,8 +417,17 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 		return Result(TeagramUpdateReplacementReason::ReplacementFailed);
 	}
 	const auto rollback = [&](TeagramUpdateReplacementReason reason) {
-		const auto restored = SwapPaths(installedParent.value, installed.name,
-										candidateParent.value, candidate.name);
+#ifdef TDESKTOP_UNIT_TESTS
+		const auto injectedRollbackSwapFailure = Injected(
+			failureInjector,
+			TeagramUpdateReplacementFailurePoint::RollbackSwapFailure);
+#else  // TDESKTOP_UNIT_TESTS
+		const auto injectedRollbackSwapFailure = false;
+#endif // TDESKTOP_UNIT_TESTS
+		const auto restored
+			= !injectedRollbackSwapFailure
+			  && SwapPaths(installedParent.value, installed.name,
+						   candidateParent.value, candidate.name);
 #ifdef TDESKTOP_UNIT_TESTS
 		const auto injectedSyncFailure
 			= restored
@@ -432,7 +441,7 @@ TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
 			|| ::fsync(installedParent.value) != 0
 			|| ::fsync(candidateParent.value) != 0) {
 			return Result(TeagramUpdateReplacementReason::RecoveryRequired,
-						  candidate.full);
+						  candidate.full, !restored);
 		}
 		return Result(reason);
 	};

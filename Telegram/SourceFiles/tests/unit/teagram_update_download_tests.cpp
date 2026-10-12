@@ -1242,7 +1242,8 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 								bool candidateStartupFails,
 								bool leaveStageArtifact,
 								bool injectRollbackSyncFailure = false,
-								bool injectCommittedSyncFailure = false) {
+								bool injectCommittedSyncFailure = false,
+								bool injectRollbackSwapFailure = false) {
 		auto architectureChecks = 0;
 		auto codeSealChecks = 0;
 		auto restartAttempts = 0;
@@ -1284,7 +1285,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		};
 		hooks.otherInstanceRunning = [] { return false; };
 		if (injectReplacingFailure || injectRollbackSyncFailure
-			|| injectCommittedSyncFailure) {
+			|| injectCommittedSyncFailure || injectRollbackSwapFailure) {
 			hooks.replacementFailureInjector =
 				[=](TeagramUpdateReplacementFailurePoint point) {
 					const auto beforeCandidateMove
@@ -1295,14 +1296,19 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 						= point
 						  == TeagramUpdateReplacementFailurePoint::
 							  RollbackSyncFailure;
+					const auto rollbackSwapFailure
+						= point
+						  == TeagramUpdateReplacementFailurePoint::
+							  RollbackSwapFailure;
 					const auto committedSyncFailure
 						= point
 						  == TeagramUpdateReplacementFailurePoint::
 							  CommittedSyncFailure;
-					return ((injectReplacingFailure
-							 || injectRollbackSyncFailure)
+					return ((injectReplacingFailure || injectRollbackSyncFailure
+							 || injectRollbackSwapFailure)
 							&& beforeCandidateMove)
 						   || (injectRollbackSyncFailure && rollbackSyncFailure)
+						   || (injectRollbackSwapFailure && rollbackSwapFailure)
 						   || (injectCommittedSyncFailure
 							   && committedSyncFailure);
 				};
@@ -1345,7 +1351,8 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 						 == TeagramUpdateInstallReason::
 							 RelaunchFailedPreviousAvailable
 				  || (expected == TeagramUpdateInstallReason::RecoveryRequired
-					  && (leaveStageArtifact || injectCommittedSyncFailure))));
+					  && (leaveStageArtifact || injectCommittedSyncFailure
+						  || injectRollbackSwapFailure))));
 		CHECK_EQ(architectureChecks,
 				 expected == TeagramUpdateInstallReason::CandidateRejected ? 2
 																		   : 3);
@@ -1382,6 +1389,21 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 				result.replacementCommitted);
 			CHECK(!highWater);
 			CHECK_EQ(highWater.value_or(100), quint64(100));
+			StopProfileInstanceHelper(profileOwner, profileSocket);
+			return;
+		}
+		if (injectRollbackSwapFailure) {
+			CHECK_EQ(ReadFile(installedExecutable), candidateBytes);
+			const auto stagedPreviousExecutable
+				= QDir(result.previousBundlePath)
+					  .filePath(u"Contents/MacOS/Teagram"_q);
+			CHECK_EQ(ReadFile(stagedPreviousExecutable), installedBytes);
+			CHECK(!QFileInfo(previous).exists());
+			const auto highWater = TeagramUpdateCommittedHighWater(
+				100, downloaded.candidate->metadata().build(),
+				result.replacementCommitted);
+			CHECK(highWater.has_value());
+			CHECK_EQ(*highWater, quint64(101));
 			StopProfileInstanceHelper(profileOwner, profileSocket);
 			return;
 		}
@@ -1549,6 +1571,9 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 	runFixture(true, true, false, TeagramUpdateInstallReason::RecoveryRequired,
 			   TeagramUpdateRelaunchResult::NotPending, false, false, false,
 			   false, false, true);
+	runFixture(true, true, false, TeagramUpdateInstallReason::RecoveryRequired,
+			   TeagramUpdateRelaunchResult::NotPending, false, false, false,
+			   false, false, false, true);
 }
 
 TEST_CASE(TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation) {
