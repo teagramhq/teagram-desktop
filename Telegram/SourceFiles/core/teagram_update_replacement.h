@@ -13,8 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
-[[nodiscard]] bool WriteTeagramUpdateMarker(
-	const QString &parent, const char *name, quint64 build);
+[[nodiscard]] bool WriteTeagramUpdateMarker(const QString &parent,
+											const char *name, quint64 build);
 
 class TeagramUpdateInstallLock final {
   public:
@@ -22,9 +22,11 @@ class TeagramUpdateInstallLock final {
 	~TeagramUpdateInstallLock();
 
 	TeagramUpdateInstallLock(TeagramUpdateInstallLock &&other) noexcept;
-	TeagramUpdateInstallLock &operator=(TeagramUpdateInstallLock &&other) noexcept;
+	TeagramUpdateInstallLock &
+	operator=(TeagramUpdateInstallLock &&other) noexcept;
 	TeagramUpdateInstallLock(const TeagramUpdateInstallLock &) = delete;
-	TeagramUpdateInstallLock &operator=(const TeagramUpdateInstallLock &) = delete;
+	TeagramUpdateInstallLock &operator=(const TeagramUpdateInstallLock &)
+		= delete;
 
 	[[nodiscard]] bool acquired() const;
 	[[nodiscard]] const QString &directory() const;
@@ -52,7 +54,7 @@ struct TeagramUpdateReplacementResult {
 
 	[[nodiscard]] bool replaced() const {
 		return reason == TeagramUpdateReplacementReason::Replaced
-			|| reason == TeagramUpdateReplacementReason::RecoveryRequired;
+			   || reason == TeagramUpdateReplacementReason::RecoveryRequired;
 	}
 };
 
@@ -83,12 +85,9 @@ using TeagramUpdateReplacementFailureInjector
 	= std::function<bool(TeagramUpdateReplacementFailurePoint)>;
 #endif // TDESKTOP_UNIT_TESTS
 
-[[nodiscard]] TeagramUpdateReplacementResult
-CommitTeagramUpdateReplacement(
-	const TeagramUpdateInstallLock &lock,
-	const QString &installedBundlePath,
-	const QString &stagedBundlePath,
-	const QString &previousBundlePath,
+[[nodiscard]] TeagramUpdateReplacementResult CommitTeagramUpdateReplacement(
+	const TeagramUpdateInstallLock &lock, const QString &installedBundlePath,
+	const QString &stagedBundlePath, const QString &previousBundlePath,
 	const std::function<bool()> &isCancelled = {}
 #ifdef TDESKTOP_UNIT_TESTS
 	,
@@ -97,14 +96,12 @@ CommitTeagramUpdateReplacement(
 );
 
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
-RecoverTeagramUpdateReplacement(
-	const TeagramUpdateInstallLock &lock,
-	const QString &installedBundlePath,
-	const QString &stagingDirectory,
-	const QString &previousBundlePath,
-	const QString &runningBundlePath,
-	bool stagingBundleIsPrevious,
-	bool startupReady,
-	bool noOtherInstance);
+RecoverTeagramUpdateReplacement(const TeagramUpdateInstallLock &lock,
+								const QString &installedBundlePath,
+								const QString &stagingDirectory,
+								const QString &previousBundlePath,
+								const QString &runningBundlePath,
+								bool stagingBundleIsPrevious, bool startupReady,
+								bool noOtherInstance);
 
 } // namespace Core

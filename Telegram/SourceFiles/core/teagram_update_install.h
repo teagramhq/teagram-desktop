@@ -70,10 +70,8 @@ struct TeagramUpdateInstallerTestHooks {
 
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
-	const QString &installedBundlePath,
-	const QString &stagingDirectory,
-	const QString &previousBundlePath,
-	const QString &runningBundlePath,
+	const QString &installedBundlePath, const QString &stagingDirectory,
+	const QString &previousBundlePath, const QString &runningBundlePath,
 	const std::function<bool()> &otherInstanceRunning = {});
 
 [[nodiscard]] bool CompleteTeagramUpdateStartupForTesting(
@@ -82,12 +80,9 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdownForTesting(
-	const QString &currentBundlePath,
-	const QString &dataFile,
-	const std::function<bool(
-		const QString &,
-		const QStringList &,
-		qint64 *)> &launchBundle,
+	const QString &currentBundlePath, const QString &dataFile,
+	const std::function<bool(const QString &, const QStringList &, qint64 *)>
+		&launchBundle,
 	const std::function<bool()> &otherInstanceRunning = {},
 	const std::function<void()> &prepareForLaunch = {},
 	const std::function<bool()> &candidateStartupAcknowledged = {},
@@ -99,15 +94,14 @@ class TeagramUpdateInstaller final {
 	TeagramUpdateInstaller() = default;
 #ifdef TDESKTOP_UNIT_TESTS
 	explicit TeagramUpdateInstaller(TeagramUpdateInstallerTestHooks hooks)
-		: _testHooks(std::move(hooks)) {
-	}
+		: _testHooks(std::move(hooks)) {}
 #endif // TDESKTOP_UNIT_TESTS
 
 	void cancel();
 
-	[[nodiscard]] TeagramUpdateInstallResult install(
-		const TeagramUpdateCandidate &candidate,
-		TeagramUpdateInstallProgressHandler progress = {});
+	[[nodiscard]] TeagramUpdateInstallResult
+	install(const TeagramUpdateCandidate &candidate,
+			TeagramUpdateInstallProgressHandler progress = {});
 
   private:
 	std::atomic_bool _cancelled = false;
@@ -120,8 +114,8 @@ class TeagramUpdateInstaller final {
 void CompleteTeagramUpdateStartup();
 
 [[nodiscard]] TeagramUpdateRelaunchResult
-RelaunchTeagramUpdateAfterShutdown(
-	const QString &dataFile,
-	const std::function<void()> &prepareForLaunch = {});
+RelaunchTeagramUpdateAfterShutdown(const QString &dataFile,
+								   const std::function<void()> &prepareForLaunch
+								   = {});
 
 } // namespace Core
