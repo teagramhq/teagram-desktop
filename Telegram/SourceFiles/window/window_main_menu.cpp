@@ -395,9 +395,8 @@ MainMenu::MainMenu(
 #ifdef TDESKTOP_TEAGRAM
 	const auto releaseLink = currentVersionReleaseLink();
 	auto versionText = releaseLink.isEmpty()
-		? rpl::single(TextWithEntities(currentVersionText()))
+		? TextWithEntities(currentVersionText())
 		: tr::link(currentVersionText(), 1);
-	_version->setWordWrap(true);
 	_version->setMarkedText(
 		std::move(versionText)
 			.append(QStringLiteral(" · "))
