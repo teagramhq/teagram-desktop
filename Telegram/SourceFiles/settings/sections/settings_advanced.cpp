@@ -1102,7 +1102,6 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.keywords = { u"version"_q, u"update"_q, u"check"_q },
 	});
 	builder.addDividerText(tr::lng_settings_current_version(
-		tr::now,
 		lt_version,
 		currentVersionText()));
 
@@ -1132,7 +1131,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		});
 	builder.addButton({
 		.id = u"advanced/update_channel"_q,
-		.title = tr::lng_teagram_update_channel(tr::now),
+		.title = tr::lng_teagram_update_channel(),
 		.st = &st::settingsButtonNoIcon,
 		.label = std::move(selectedChannel),
 		.onClick = [=] {
@@ -1140,7 +1139,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 				box->setTitle(tr::lng_teagram_update_channel());
 				const auto group = std::make_shared<Ui::RadiobuttonGroup>(initial);
-				for (const auto [channel, title] : {
+				for (const auto &[channel, title] : {
 						std::pair{ int(Channel::Dev),
 							tr::lng_teagram_update_channel_dev(tr::now) },
 						std::pair{ int(Channel::Main),
@@ -1204,7 +1203,6 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.id = u"advanced/update_action"_q,
 		.title = std::move(actionTitle),
 		.st = &st::settingsButtonNoIcon,
-		.shown = std::move(actionShown),
 		.onClick = [=] {
 			using State = Core::TeagramUpdateUiState;
 			switch (manager->state().state) {
@@ -1228,18 +1226,19 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 			}
 		},
 		.keywords = { u"update"_q, u"install"_q, u"restart"_q },
+		.shown = std::move(actionShown),
 	});
 
 	builder.addButton({
 		.id = u"advanced/update_recovery"_q,
 		.title = tr::lng_teagram_update_show_previous(),
 		.st = &st::settingsButtonNoIcon,
+		.onClick = [=] { manager->showPreviousBundleInFinder(); },
+		.keywords = { u"update"_q, u"recovery"_q, u"finder"_q },
 		.shown = manager->stateChanges() | rpl::map(
 			[](const Core::TeagramUpdateSnapshot &state) {
 				return state.previousBundleAvailable;
 			}),
-		.onClick = [=] { manager->showPreviousBundleInFinder(); },
-		.keywords = { u"update"_q, u"recovery"_q, u"finder"_q },
 	});
 	builder.addDividerText(tr::lng_teagram_update_note());
 	builder.addSkip();
