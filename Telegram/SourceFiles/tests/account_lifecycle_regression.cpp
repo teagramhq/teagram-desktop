@@ -3308,8 +3308,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"mini-app open refusal was not observable on the owning session");
 	}
-	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
-	if (pinnedController->session()
+	const auto pinnedInviteController = pinnedWindow->sessionController();
+	if (!pinnedInviteController
+		|| (&pinnedInviteController->session() != &pinned->session())) {
+		return FailChatParticipantsRegression(
+			"pinned window lost its owning session before invite refusal test");
+	}
+	Api::CheckFilterInvite(pinnedInviteController, u"regression-slug"_q);
+	if (pinnedInviteController->session()
 			.api()
 			.checkFilterInviteRequestPendingForRegressionTest()) {
 		return FailChatParticipantsRegression(
