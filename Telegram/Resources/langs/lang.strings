@@ -619,7 +619,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_note_refused_known" = "Build {build} is available, but Teagram can't install it from here. {reason}";
 "lng_teagram_update_note_needs_macos" = "Build {build} needs macOS {version} or later.";
 "lng_teagram_update_note_already_installed" = "Another copy of Teagram already installed build {build}. Restart to start using it.";
-"lng_teagram_update_note_recovered" = "You went back from build {high_water}. Teagram won't reinstall it and will update when a build newer than {high_water} is available.";
+"lng_teagram_update_note_recovered" = "You went back from build {high_water}. Teagram won't reinstall it and will update when a newer build is available.";
 "lng_teagram_update_note_guarantee" = "Teagram, your login and your settings are unchanged.";
 "lng_teagram_update_note_rejected_unknown" = "Update metadata didn't pass Teagram's signature and package checks, so Teagram won't install it. Reason: {code}.";
 "lng_teagram_update_bar_after_call" = "Update after call";
