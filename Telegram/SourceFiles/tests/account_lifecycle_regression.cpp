@@ -3117,8 +3117,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			const auto stockExportInProgress
 				= manager.inProgress(&stock->session());
 			const auto stockExportPanelVisible
-				= stockExportPanel
-				  && WaitForRegressionCondition([&] {
+				= stockExportPanel && WaitForRegressionCondition([&] {
 					  return stockExportPanel->panelVisibleForRegressionTest();
 				  });
 			if (!stockExportInProgress || !stockExportPanel
