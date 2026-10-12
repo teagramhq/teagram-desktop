@@ -172,21 +172,21 @@ void AddPremiumRequiredRow(
 }
 
 class PrivacyExceptionsBoxController : public ChatsListBoxController {
-public:
-  PrivacyExceptionsBoxController(
-	  not_null<Main::Session *> session, PrivacyKey key,
-	  rpl::producer<QString> title, const Exceptions &selected,
-	  std::optional<SpecialRowType> allowChooseSpecial);
+  public:
+	PrivacyExceptionsBoxController(
+		not_null<Main::Session *> session, PrivacyKey key,
+		rpl::producer<QString> title, const Exceptions &selected,
+		std::optional<SpecialRowType> allowChooseSpecial);
 
-  Main::Session &session() const override;
-  void rowClicked(not_null<PeerListRow *> row) override;
-  bool isForeignRow(PeerListRowId itemId) override;
-  bool handleDeselectForeignRow(PeerListRowId itemId) override;
+	Main::Session &session() const override;
+	void rowClicked(not_null<PeerListRow *> row) override;
+	bool isForeignRow(PeerListRowId itemId) override;
+	bool handleDeselectForeignRow(PeerListRowId itemId) override;
 
-  [[nodiscard]] bool premiumsSelected() const;
-  [[nodiscard]] bool miniAppsSelected() const;
+	[[nodiscard]] bool premiumsSelected() const;
+	[[nodiscard]] bool miniAppsSelected() const;
 
-protected:
+  protected:
 	void prepareViewHook() override;
 	std::unique_ptr<Row> createRow(not_null<History*> history) override;
 
