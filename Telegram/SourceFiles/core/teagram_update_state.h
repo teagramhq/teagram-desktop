@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string_view>
 
 namespace Core {
@@ -217,6 +218,19 @@ void WriteTeagramUpdateHighWater(
 	settings.template writePref<QByteArray>(
 		kTeagramUpdateHighWaterPreference,
 		QByteArray::number(build));
+}
+
+[[nodiscard]] constexpr std::optional<quint64>
+TeagramUpdateCommittedHighWater(
+		quint64 highWaterBuild,
+		quint64 candidateBuild,
+		bool replacementCommitted) {
+	if (!replacementCommitted) {
+		return std::nullopt;
+	}
+	return (candidateBuild > highWaterBuild)
+		? candidateBuild
+		: highWaterBuild;
 }
 
 [[nodiscard]] bool TeagramUpdateBuildIsEligible(

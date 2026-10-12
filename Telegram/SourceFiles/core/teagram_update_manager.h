@@ -60,7 +60,7 @@ private:
 	void setState(TeagramUpdateUiState state);
 	[[nodiscard]] TeagramUpdateActiveWork activeWork() const;
 	[[nodiscard]] std::chrono::milliseconds idleFor() const;
-	void persistCommittedBuild(quint64 build);
+	void persistCommittedBuild(quint64 build, bool replacementCommitted);
 
 	TeagramUpdateSnapshot _state;
 	rpl::event_stream<TeagramUpdateSnapshot> _stateChanges;

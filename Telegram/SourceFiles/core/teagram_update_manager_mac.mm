@@ -727,7 +727,8 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 				}
 				if (stage == TeagramUpdateInstallStage::Replacing && value == 100) {
 					QMetaObject::invokeMethod(this, [=] {
-						persistCommittedBuild(candidate->metadata().build());
+						persistCommittedBuild(
+							candidate->metadata().build(), true);
 						candidate->discardArchive();
 					}, Qt::BlockingQueuedConnection);
 				}
@@ -783,8 +784,10 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 			if (generation != _generation) {
 				return;
 			}
+		persistCommittedBuild(
+			candidate->metadata().build(),
+			result.replacementCommitted);
 		if (result.replacementCommitted) {
-			persistCommittedBuild(candidate->metadata().build());
 			candidate->discardArchive();
 			if (_candidate == candidate) {
 				_candidate.reset();
@@ -991,8 +994,17 @@ std::chrono::milliseconds TeagramUpdateManager::idleFor() const {
 	return std::chrono::milliseconds(elapsed);
 }
 
-void TeagramUpdateManager::persistCommittedBuild(quint64 build) {
-	_state.highWaterBuild = std::max(_state.highWaterBuild, build);
+void TeagramUpdateManager::persistCommittedBuild(
+		quint64 build,
+		bool replacementCommitted) {
+	const auto highWater = TeagramUpdateCommittedHighWater(
+		_state.highWaterBuild,
+		build,
+		replacementCommitted);
+	if (!highWater) {
+		return;
+	}
+	_state.highWaterBuild = *highWater;
 	WriteTeagramUpdateHighWater(Core::App().settings(), _state.highWaterBuild);
 	Core::App().settings().writePref<bool>(
 		kTeagramUpdateToastPreference,
