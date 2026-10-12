@@ -149,7 +149,7 @@ jobs:
           path: ${{ runner.temp }}/ccache
           key: macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            macOS-arm64-ccache-pr-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-
 
       - name: Verify Mac App Store variant is unsupported.
         id: store_variant_rejection

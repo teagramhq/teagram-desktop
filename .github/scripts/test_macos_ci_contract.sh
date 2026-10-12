@@ -91,7 +91,7 @@ if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1
 fi
-require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
+require_text "$mac_workflow" "github.event_name == 'pull_request' && 'pr' || 'dev'"
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 cache_setup_step="$(awk '
@@ -113,12 +113,8 @@ ccache_restore_step="$(awk '
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
-if ! grep -Fq 'macOS-arm64-ccache-pr-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-' <<< "$ccache_restore_step"; then
-  printf 'MacOS PR builds must restore only their PR-scoped compiler cache.\n' >&2
-  exit 1
-fi
-if grep -Fq 'macOS-arm64-ccache-dev-' <<< "$ccache_restore_step"; then
-  printf 'MacOS PR builds must not restore the shared dev compiler cache.\n' >&2
+if ! grep -Fq 'macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-' <<< "$ccache_restore_step"; then
+  printf 'MacOS cache restores must stay in the same PR/dev scope as their saves.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
