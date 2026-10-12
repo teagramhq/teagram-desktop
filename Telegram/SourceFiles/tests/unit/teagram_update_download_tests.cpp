@@ -1579,6 +1579,10 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 		u"Contents/MacOS/Teagram"_q);
 	const auto pending = root.filePath(u".teagram-update-pending"_q);
 	const auto started = root.filePath(u".teagram-update-started"_q);
+	const auto profileCanary = root.filePath(u"profile/account"_q);
+	const auto outsideCanary = root.filePath(u"outside-canary"_q);
+	const auto profileBytes = QByteArrayLiteral("fake profile canary");
+	const auto outsideBytes = QByteArrayLiteral("outside target canary");
 	const auto bundleInfo = [](quint64 build) {
 		return QByteArrayLiteral(
 			"<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>"
@@ -1592,10 +1596,13 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	CHECK(QDir().mkpath(QFileInfo(stagedInfo).absolutePath()));
 	CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
 	CHECK(QDir().mkpath(QFileInfo(stagedExecutable).absolutePath()));
+	CHECK(QDir().mkpath(QFileInfo(profileCanary).absolutePath()));
 	CHECK(WriteFile(installedInfo, bundleInfo(100)));
 	CHECK(WriteFile(installedExecutable, QByteArrayLiteral("build 100")));
 	CHECK(WriteFile(stagedInfo, bundleInfo(101)));
 	CHECK(WriteFile(stagedExecutable, QByteArrayLiteral("build 101")));
+	CHECK(WriteFile(profileCanary, profileBytes));
+	CHECK(WriteFile(outsideCanary, outsideBytes));
 	const auto executablePermissions
 		= QFileDevice::ReadOwner | QFileDevice::WriteOwner
 		  | QFileDevice::ExeOwner;
@@ -1614,6 +1621,8 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 		== TeagramUpdateStartupRecoveryReason::IncompleteCandidateRemoved);
 	CHECK(!QFileInfo(staging).exists());
 	CHECK(QFileInfo(pending).exists());
+	CHECK_EQ(ReadFile(profileCanary), profileBytes);
+	CHECK_EQ(ReadFile(outsideCanary), outsideBytes);
 	const auto profileSocket = root.filePath(u"profile-instance.sock"_q);
 	auto launchAttempts = 0;
 	const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
@@ -1632,6 +1641,8 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	CHECK(relaunched == TeagramUpdateRelaunchResult::CurrentBundleStarted);
 	CHECK_EQ(launchAttempts, 1);
 	CHECK_EQ(ReadFile(installedExecutable), QByteArrayLiteral("build 100"));
+	CHECK_EQ(ReadFile(profileCanary), profileBytes);
+	CHECK_EQ(ReadFile(outsideCanary), outsideBytes);
 	CHECK(!QFileInfo(staging).exists());
 	CHECK(!QFileInfo(previous).exists());
 	CHECK(!QFileInfo(pending).exists());
