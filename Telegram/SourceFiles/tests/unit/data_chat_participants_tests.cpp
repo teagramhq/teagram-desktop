@@ -12,15 +12,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-using Data::details::ChatParticipantInfo;
-using Data::details::ResolveChatParticipants;
-using Data::details::CanMarkUserLoadedNormally;
-using Data::details::CanAddBasicChatAdmins;
-using Data::details::CanManageBasicChatCall;
-using Data::details::BasicChatAdminRoleForSave;
 using Data::details::BasicChatAdminCapabilitiesFor;
 using Data::details::BasicChatAdminRightsFor;
+using Data::details::BasicChatAdminRoleForSave;
 using Data::details::BasicChatRole;
+using Data::details::CanAddBasicChatAdmins;
+using Data::details::CanManageBasicChatCall;
+using Data::details::CanMarkUserLoadedNormally;
+using Data::details::ChatParticipantInfo;
+using Data::details::ResolveChatParticipants;
 
 auto ResolveForAccount(
 		const std::vector<ChatParticipantInfo> &participants,

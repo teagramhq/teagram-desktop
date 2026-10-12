@@ -567,9 +567,8 @@ void EditAdminBox::prepare() {
 				disabledByDefaults,
 				tr::lng_rights_permission_for_all(tr::now));
 			if (!adminCapabilities.canEditRights) {
-				result.emplace(
-					~Flags(0),
-					tr::lng_rights_permission_cant_edit(tr::now));
+				result.emplace(~Flags(0),
+							   tr::lng_rights_permission_cant_edit(tr::now));
 			}
 			if (amCreator() && user()->isSelf()) {
 				result.emplace(
@@ -611,9 +610,8 @@ void EditAdminBox::prepare() {
 		changes
 	));
 
-	const auto hasRank = canSave()
-		&& adminCapabilities.canSetRank
-		&& (chat || channel->isMegagroup());
+	const auto hasRank = canSave() && adminCapabilities.canSetRank
+						 && (chat || channel->isMegagroup());
 
 	{
 		const auto aboutAddAdminsInner = inner->add(
@@ -851,8 +849,9 @@ bool EditAdminBox::canTransferOwnership() const {
 		return false;
 	} else if (const auto chat = peer()->asChat()) {
 		return chat->amCreator()
-			&& Data::details::BasicChatAdminCapabilitiesFor(
-				chat->usesCustomServer()).canTransferOwnership;
+			   && Data::details::BasicChatAdminCapabilitiesFor(
+					  chat->usesCustomServer())
+					  .canTransferOwnership;
 	} else if (const auto channel = peer()->asChannel()) {
 		return channel->amCreator() && !channel->isCommunity();
 	}

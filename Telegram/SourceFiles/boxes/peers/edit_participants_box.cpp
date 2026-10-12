@@ -401,8 +401,9 @@ Fn<void(
 				onFail);
 		};
 		if (const auto chat = peer->asChatNotMigrated()) {
-			const auto capabilities = Data::details::BasicChatAdminCapabilitiesFor(
-				chat->usesCustomServer());
+			const auto capabilities
+				= Data::details::BasicChatAdminCapabilitiesFor(
+					chat->usesCustomServer());
 			const auto saveChatAdmin = [&](bool isAdmin) {
 				SaveChatAdmin(show, chat, user, isAdmin, done, onFail);
 				if (rank && capabilities.canSetRank) {
@@ -413,7 +414,7 @@ Fn<void(
 				saveChatAdmin(Data::details::BasicChatAdminRoleForSave(
 					strippedNewRights.flags));
 			} else if (strippedNewRights.flags
-				== chat->defaultAdminRights(user).flags) {
+					   == chat->defaultAdminRights(user).flags) {
 				saveChatAdmin(true);
 			} else if (!strippedNewRights.flags) {
 				saveChatAdmin(false);

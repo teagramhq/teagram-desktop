@@ -24,9 +24,8 @@ enum class BasicChatRole {
 	Creator,
 };
 
-[[nodiscard]] inline constexpr bool CanAddBasicChatAdmins(
-		bool isMember,
-		bool isCreator) {
+[[nodiscard]] inline constexpr bool CanAddBasicChatAdmins(bool isMember,
+														  bool isCreator) {
 	return isMember && isCreator;
 }
 
@@ -46,24 +45,21 @@ BasicChatAdminCapabilitiesFor(bool customServer) {
 }
 
 template <typename Rights>
-[[nodiscard]] inline constexpr bool BasicChatAdminRoleForSave(
-		Rights selectedRights) {
+[[nodiscard]] inline constexpr bool
+BasicChatAdminRoleForSave(Rights selectedRights) {
 	return selectedRights != Rights();
 }
 
 template <typename Rights>
-[[nodiscard]] inline constexpr Rights BasicChatAdminRightsFor(
-		bool isAdmin,
-		bool customServer,
-		Rights defaultRights) {
+[[nodiscard]] inline constexpr Rights
+BasicChatAdminRightsFor(bool isAdmin, bool customServer, Rights defaultRights) {
 	return (isAdmin && !customServer) ? defaultRights : Rights();
 }
 
-[[nodiscard]] inline constexpr bool CanManageBasicChatCall(
-		BasicChatRole role,
-		bool customServer) {
+[[nodiscard]] inline constexpr bool CanManageBasicChatCall(BasicChatRole role,
+														   bool customServer) {
 	return (role == BasicChatRole::Creator)
-		|| (!customServer && (role == BasicChatRole::Admin));
+		   || (!customServer && (role == BasicChatRole::Admin));
 }
 
 struct ChatParticipantInfo {

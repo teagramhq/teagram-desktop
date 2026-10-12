@@ -260,13 +260,12 @@ GroupCall::VideoTrack::VideoTrack(
 	}
 	if (const auto chat = peer->asChat()) {
 		const auto role = (chat->creator == peerToUser(user->id))
-			? Data::details::BasicChatRole::Creator
-			: chat->admins.contains(user)
-			? Data::details::BasicChatRole::Admin
-			: Data::details::BasicChatRole::Member;
-		return Data::details::CanManageBasicChatCall(
-			role,
-			chat->usesCustomServer());
+							  ? Data::details::BasicChatRole::Creator
+						  : chat->admins.contains(user)
+							  ? Data::details::BasicChatRole::Admin
+							  : Data::details::BasicChatRole::Member;
+		return Data::details::CanManageBasicChatCall(role,
+													 chat->usesCustomServer());
 	} else if (const auto group = peer->asChannel()) {
 		if (const auto mgInfo = group->mgInfo.get()) {
 			if (mgInfo->creator == user) {

@@ -428,8 +428,7 @@ void ApplyChatUpdate(
 	const auto isAdmin = mtpIsTrue(update.vis_admin());
 	if (user->isSelf()) {
 		chat->setAdminRights(Data::details::BasicChatAdminRightsFor(
-			isAdmin,
-			chat->usesCustomServer(),
+			isAdmin, chat->usesCustomServer(),
 			chat->defaultAdminRights(user).flags));
 	}
 	if (isAdmin) {
@@ -626,8 +625,7 @@ void ApplyChatUpdate(
 				chat->admins.emplace(user);
 				if (user->isSelf()) {
 					chat->setAdminRights(Data::details::BasicChatAdminRightsFor(
-						true,
-						chat->usesCustomServer(),
+						true, chat->usesCustomServer(),
 						chat->defaultAdminRights(user).flags));
 				}
 			}
