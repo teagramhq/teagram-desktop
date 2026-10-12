@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/application.h"
 #include "base/unixtime.h"
+#include "calls/calls_instance.h"
 #include "core/teagram_update_install.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
@@ -316,7 +317,7 @@ const TeagramUpdateSnapshot &TeagramUpdateManager::state() const {
 
 rpl::producer<TeagramUpdateSnapshot>
 TeagramUpdateManager::stateChanges() const {
-	return _stateChanges.events_starting_with(_state);
+	return _stateChanges.events_starting_with_copy(_state);
 }
 
 void TeagramUpdateManager::beginCheck(bool automatic) {
@@ -373,13 +374,13 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 			? std::shared_ptr<TeagramUpdateCandidate>(
 				std::move(result.candidate))
 			: nullptr;
-		QMetaObject::invokeMethod(this, [=] {
+		QMetaObject::invokeMethod(this, [=, reason = result.reason] {
 			if (generation != _generation) {
 				return;
 			}
 			_state.checkedAt = CheckedTime();
 			_state.progressPercent = 0;
-			if (result.reason == TeagramUpdateDownloadReason::Available
+			if (reason == TeagramUpdateDownloadReason::Available
 				&& candidate) {
 				if (!_candidate || candidate->metadata().build()
 					> _candidate->metadata().build()) {
@@ -405,7 +406,7 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 				} else {
 					setState(TeagramUpdateUiState::Available);
 				}
-			} else if (result.reason == TeagramUpdateDownloadReason::NoUpdate) {
+			} else if (reason == TeagramUpdateDownloadReason::NoUpdate) {
 				if (_candidate) {
 					_state.candidateBuild = _candidate->metadata().build();
 					setState(_candidate->downloaded()
@@ -419,22 +420,22 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 				} else {
 					setState(TeagramUpdateUiState::UpToDate);
 				}
-			} else if (result.reason
+			} else if (reason
 					== TeagramUpdateDownloadReason::NetworkFailure) {
 				setState(_downloadStage
 					== TeagramUpdateDownloadStage::Downloading
 					? TeagramUpdateUiState::DownloadFailed
 					: TeagramUpdateUiState::Unreachable);
-			} else if (result.reason == TeagramUpdateDownloadReason::Cancelled) {
+			} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
 				setState(TeagramUpdateUiState::Cancelled);
-			} else if (result.reason == TeagramUpdateDownloadReason::Busy) {
+			} else if (reason == TeagramUpdateDownloadReason::Busy) {
 				setState(TeagramUpdateUiState::Busy);
 			} else {
 				_state.rejectionCode
-					= (result.reason
+					= (reason
 						== TeagramUpdateDownloadReason::VerificationFailed)
 					? u"signature"_q
-					: (result.reason
+					: (reason
 							== TeagramUpdateDownloadReason::LimitExceeded)
 						? u"package-size"_q
 						: u"release-metadata"_q;
@@ -519,30 +520,30 @@ void TeagramUpdateManager::beginDownload() {
 			? std::shared_ptr<TeagramUpdateCandidate>(
 				std::move(result.candidate))
 			: nullptr;
-		QMetaObject::invokeMethod(this, [=] {
+		QMetaObject::invokeMethod(this, [=, reason = result.reason] {
 			if (generation != _generation) {
 				return;
 			}
-			if (result.reason == TeagramUpdateDownloadReason::Available
+			if (reason == TeagramUpdateDownloadReason::Available
 				&& candidate) {
 				_candidate = candidate;
 				_state.candidateBuild = candidate->metadata().build();
 				_state.progressPercent = 100;
 				setState(TeagramUpdateUiState::Ready);
 				updateSafety();
-			} else if (result.reason
+			} else if (reason
 					== TeagramUpdateDownloadReason::NetworkFailure) {
 				_candidate.reset();
 				setState(TeagramUpdateUiState::DownloadFailed);
-			} else if (result.reason == TeagramUpdateDownloadReason::Cancelled) {
+			} else if (reason == TeagramUpdateDownloadReason::Cancelled) {
 				_candidate.reset();
 				setState(TeagramUpdateUiState::Cancelled);
-			} else if (result.reason == TeagramUpdateDownloadReason::Busy) {
+			} else if (reason == TeagramUpdateDownloadReason::Busy) {
 				setState(TeagramUpdateUiState::Busy);
 			} else {
 				_candidate.reset();
 				_state.rejectionCode
-					= (result.reason
+					= (reason
 						== TeagramUpdateDownloadReason::LimitExceeded)
 					? u"package-size"_q
 					: u"package-hash"_q;
@@ -799,8 +800,8 @@ TeagramUpdateActiveWork TeagramUpdateManager::activeWork() const {
 		result.recording = capture->started();
 	}
 	for (const auto &entry : Core::App().domain().accounts()) {
-		const auto &account = entry.second;
-		if (account && account->session().uploadsInProgress()) {
+		const auto session = entry.account->maybeSession();
+		if (session && session->uploadsInProgress()) {
 			result.upload = true;
 			break;
 		}
