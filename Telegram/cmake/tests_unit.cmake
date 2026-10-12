@@ -106,6 +106,7 @@ PRIVATE
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
+    tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp
     tests/unit/teagram_update_verification_tests.cpp
