@@ -146,7 +146,8 @@ reject_text "$mac_workflow" '::error::Warm-cache (ccache and libraries) MacOS PR
 reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
 require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
-require_text "$mac_workflow" "github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'"
+require_text "$mac_workflow" "github.ref == 'refs/heads/dev'"
+require_text "$mac_workflow" "steps.cache-ccache.outputs.cache-matched-key == ''"
 reject_text "$mac_workflow" 'startsWith(steps.cache-ccache.outputs.cache-matched-key'
 ccache_stats_step="$(awk '
   /^      - name: Report compiler cache hits\.$/ { in_step = 1; next }
@@ -170,8 +171,8 @@ save_cache_step="$(awk '
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
-if grep -Eq 'cache-(matched-key|hit)' <<< "$save_cache_step"; then
-  printf 'A restored PR compiler cache with new misses must remain eligible for saving.\n' >&2
+if ! grep -Fq "steps.cache-ccache.outputs.cache-matched-key == ''" <<< "$save_cache_step"; then
+  printf 'A PR compiler cache must be saved only when no PR cache was restored.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'build_dir="$repo/out"'

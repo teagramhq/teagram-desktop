@@ -1,0 +1,23 @@
+name: Prune pull request caches.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  prune:
+    name: Prune closed pull request caches
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Delete pull request cache scope.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          cache_ref="refs/pull/${PR_NUMBER}/merge"
+          gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"

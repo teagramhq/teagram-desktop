@@ -993,7 +993,13 @@ jobs:
           always()
             && !cancelled()
             && steps.ccache-stats.outputs.save == 'true'
-            && (github.ref == 'refs/heads/dev' || github.event_name == 'pull_request')
+            && (
+              github.ref == 'refs/heads/dev'
+              || (
+                github.event_name == 'pull_request'
+                  && steps.cache-ccache.outputs.cache-matched-key == ''
+              )
+            )
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/ccache
