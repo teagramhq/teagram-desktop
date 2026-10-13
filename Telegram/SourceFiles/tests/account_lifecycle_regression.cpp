@@ -5761,11 +5761,14 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		.sessionWindow = base::make_weak(controller),
 	});
 	const auto showsSettings = [&](Settings::Type expected) {
-		const auto widgets = controller->content()->findChildren<QWidget *>();
+		// Settings sections can be hosted in MainWindow's layer instead of
+		// SessionController's main content.
+		const auto widgets = window->widget()->findChildren<QWidget *>();
 		return std::any_of(
 			widgets.cbegin(), widgets.cend(), [&](QWidget *widget) {
 				const auto wrapped = dynamic_cast<Info::WrapWidget *>(widget);
 				return wrapped
+					   && wrapped->isVisibleTo(window->widget())
 					   && (wrapped->controller()->section().type()
 						   == Info::Section::Type::Settings)
 					   && (wrapped->controller()->section().settingsType()
@@ -5820,7 +5823,7 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 	const auto callsSettingsQuiet
 		= callsSettingsEvents.navigationEvents.empty()
 		  && CallStartEffectsStayedQuiet(callsSettingsEvents);
-	if (!callsSettingsQuiet || !callsSettingsShown || window->isLayerShown()) {
+	if (!callsSettingsQuiet || !callsSettingsShown) {
 		std::fprintf(
 			stderr,
 			"Call settings link regression: quiet=%d shown=%d layer=%d "
@@ -5848,7 +5851,7 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
 	return devicesSettingsEvents.navigationEvents.empty()
 		   && CallStartEffectsStayedQuiet(devicesSettingsEvents)
-		   && showsSettings(Settings::SessionsId()) && !window->isLayerShown();
+		   && showsSettings(Settings::SessionsId());
 }
 
 [[nodiscard]] int
