@@ -79,6 +79,10 @@ combined case counts. The `unit-feedback-<run-id>-<attempt>` artifact retains
 failed runs. Download it with `gh run download <run-id> --repo
 teagramhq/teagram-desktop --name unit-feedback-<run-id>-<attempt>`.
 
+Every requested case runs even if an earlier case fails. The log records each
+case's exit status; any failed or incomplete case makes the batch fail after
+reporting the combined results.
+
 The job has a four-hour limit to include a cold dependency image build; the
 configure, `test_unit` build and execution step has a 30-minute limit. This
 feedback lane does not replace the required `Linux.` build/unit or formatting

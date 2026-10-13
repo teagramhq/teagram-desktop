@@ -114,9 +114,16 @@ jobs:
                 -D TDESKTOP_API_TEST=ON
               cmake --build ../out --config "$CONFIG" --target test_unit
               if [ -s /tmp/unit-cases.txt ]; then
+                batch_status=0
                 while IFS= read -r selected_case; do
-                  "../out/$CONFIG/test_unit" --case "$selected_case"
+                  case_status=0
+                  "../out/$CONFIG/test_unit" --case "$selected_case" || case_status=$?
+                  printf "case_exit %s %s\n" "$selected_case" "$case_status"
+                  if [ "$case_status" -ne 0 ]; then
+                    batch_status=1
+                  fi
                 done < /tmp/unit-cases.txt
+                exit "$batch_status"
               else
                 "../out/$CONFIG/test_unit"
               fi

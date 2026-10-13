@@ -66,6 +66,9 @@ if name == "test_unit":
         print("1 case(s), 0 failed, 1 failed check(s).")
     elif args == ["--case", "NoSummary"]:
         sys.exit(0)
+    elif args == ["--case", "ExitFailure"]:
+        print("1 case(s), 0 failed, 0 failed check(s).")
+        sys.exit(7)
     else:
         print("No test case named " + args[-1] + " is registered.")
         print("0 case(s), 0 failed, 0 failed check(s).")
@@ -116,6 +119,17 @@ status, calls, summary = run_feedback("")
 assert status == 0
 assert [call for call in calls if call[0] == "test_unit"] == [["test_unit"]]
 assert "- Cases: 2" in summary
+
+for first_case in ("FailingCase", "ExitFailure", "MissingCase", "NoSummary"):
+    status, calls, summary = run_feedback(f"{first_case} AnotherCase")
+    assert status != 0, "A failed or incomplete case must fail the whole batch."
+    assert [call for call in calls if call[0] == "test_unit"] == [
+        ["test_unit", "--case", first_case], ["test_unit", "--case", "AnotherCase"]
+    ], "A failed case must not prevent later requested cases from running."
+    if first_case == "FailingCase":
+        assert "- Cases: 2" in summary
+        assert "- Failed cases: 1" in summary
+        assert "- Failed checks: 1" in summary
 
 for selection in ("FailingCase AnotherCase", "MissingCase", "IgnoresSelector", "FalseSuccess", "NoSummary"):
     status, calls, summary = run_feedback(selection)
