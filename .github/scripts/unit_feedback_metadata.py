@@ -15,9 +15,17 @@ from pathlib import Path
 MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_ITEMS = 500
 MAX_TOOL_OUTPUT = 256 * 1024
-SECRET_ASSIGNMENT = re.compile(
-    r'(?i)([A-Z0-9_]*(?:API[_-]?(?:HASH|ID|KEY)|TOKEN|PASSWORD|SECRET|CREDENTIAL|PRIVATE[_-]?KEY)[A-Z0-9_]*)'
-    r'\s*(=|:)\s*("[^"]*"|\'[^\']*\'|[^;\s,]+)'
+SENSITIVE_OPTION_NAME = (
+    r"(?:API[_-]?(?:HASH|ID|KEY)|TOKEN|PASSWORD|SECRET|CREDENTIAL|PRIVATE[_-]?KEY)"
+)
+SENSITIVE_NAME = re.compile(SENSITIVE_OPTION_NAME, re.IGNORECASE)
+SENSITIVE_OPTION = re.compile(
+    rf"(?i)^--?[A-Z0-9_.-]{{0,128}}{SENSITIVE_OPTION_NAME}[A-Z0-9_.-]{{0,128}}$"
+)
+ASSIGNMENT_SEPARATOR = re.compile(r"[=:]")
+OPTION_VALUE = re.compile(
+    r'(?<!\S)(--?[A-Z0-9_.-]{1,256})([ \t]+)("[^"]*"|\'[^\']*\'|[^\s,;]+)',
+    re.IGNORECASE,
 )
 CMAKE_CACHE_KEYS = {
     "CMAKE_GENERATOR",
@@ -33,9 +41,61 @@ CMAKE_CACHE_KEYS = {
 
 def redact(value):
     if isinstance(value, str):
-        return SECRET_ASSIGNMENT.sub(r"\1\2<redacted>", value)
+        parts = []
+        cursor = 0
+        for separator in ASSIGNMENT_SEPARATOR.finditer(value):
+            if separator.start() < cursor:
+                continue
+            key_end = separator.start()
+            while key_end > cursor and value[key_end - 1].isspace():
+                key_end -= 1
+            key_start = key_end
+            while (key_start > cursor
+                   and not value[key_start - 1].isspace()
+                   and value[key_start - 1] not in ",;"):
+                key_start -= 1
+            if not SENSITIVE_NAME.search(value[key_start:key_end]):
+                continue
+            value_start = separator.end()
+            while value_start < len(value) and value[value_start].isspace():
+                value_start += 1
+            value_end = value_start
+            if value_start < len(value) and value[value_start] in "\"'":
+                quote = value[value_start]
+                value_end = value.find(quote, value_start + 1)
+                value_end = len(value) if value_end < 0 else value_end + 1
+            else:
+                while value_end < len(value) and value[value_end] not in ";,":
+                    if value[value_end].isspace():
+                        break
+                    value_end += 1
+            if value_end == value_start:
+                continue
+            parts.extend((value[cursor:value_start], "<redacted>"))
+            cursor = value_end
+        if parts:
+            parts.append(value[cursor:])
+            value = "".join(parts)
+
+        def redact_option(match):
+            if SENSITIVE_OPTION.fullmatch(match.group(1)):
+                return f"{match.group(1)}{match.group(2)}<redacted>"
+            return match.group(0)
+
+        return OPTION_VALUE.sub(redact_option, value)
     if isinstance(value, list):
-        return [redact(item) for item in value]
+        result = []
+        redact_next = False
+        for item in value:
+            if redact_next:
+                result.append("<redacted>" if isinstance(item, str) else redact(item))
+                redact_next = False
+            else:
+                result.append(redact(item))
+                redact_next = isinstance(item, str) and bool(
+                    SENSITIVE_OPTION.fullmatch(item)
+                )
+        return result
     if isinstance(value, dict):
         return {key: redact(item) for key, item in value.items()}
     return value
@@ -57,13 +117,14 @@ def bounded_items(values, report, section):
 def write_report(path, report):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+    safe_report = redact(report)
+    payload = (json.dumps(safe_report, indent=2, sort_keys=True) + "\n").encode()
     if len(payload) > MAX_OUTPUT_BYTES:
         payload = (json.dumps({
             "schema_version": 1,
             "status": "incomplete",
-            "source_sha": report.get("source", {}).get("observed_sha"),
-            "image": report.get("image", {}),
+            "source_sha": safe_report.get("source", {}).get("observed_sha"),
+            "image": safe_report.get("image", {}),
             "failure": "metadata exceeded the 1 MiB output limit",
             "attempted_bytes": len(payload),
             "retained_bytes": 0,

@@ -211,6 +211,38 @@ with tempfile.TemporaryDirectory() as directory:
     assert "1 MiB output limit" in report["failure"]
     assert metadata_path.stat().st_size <= 1024 * 1024
 
+    secret_report = {
+        "status": "complete",
+        "toolchain": {
+            "cxx_compiler_arguments": [
+                "-DAPI_KEY=test-only-argument-value",
+                "--token",
+                "test-only-wrapper-value",
+            ],
+            "cxx_compiler_version_output": {
+                "status": "observed",
+                "output": "wrapper --auth-token test-only-version-value",
+            },
+        },
+    }
+    status = metadata_namespace["write_report"](metadata_path, secret_report)
+    report_text = metadata_path.read_text()
+    report = json.loads(report_text)
+    assert status == "complete"
+    assert report["status"] == "complete"
+    for secret in (
+        "test-only-argument-value",
+        "test-only-wrapper-value",
+        "test-only-version-value",
+    ):
+        assert secret not in report_text, "Compiler metadata must not expose credentials."
+    assert report["toolchain"]["cxx_compiler_arguments"] == [
+        "-DAPI_KEY=<redacted>", "--token", "<redacted>"
+    ]
+    assert report["toolchain"]["cxx_compiler_version_output"]["output"] == (
+        "wrapper --auth-token <redacted>"
+    )
+
 status, calls, summary, metadata_status, metadata_size = run_feedback("PassingCase\nAnotherCase")
 assert status == 0, "Two passing selected cases must pass."
 assert metadata_status == "complete"
