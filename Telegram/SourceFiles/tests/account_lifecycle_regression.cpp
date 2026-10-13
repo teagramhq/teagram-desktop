@@ -5714,18 +5714,34 @@ RunChannelCallLinkRegression(not_null<Main::Account *> account,
 		.voicechatHash = u"regression-link"_q,
 	});
 	ReportCallRegressionCheckpoint("channel call link dispatched");
+	const auto drained = WaitForMainQueueBarrier();
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("channel call link events processed");
 	const auto linkEvents = GetCallStartRegressionSnapshotForTest();
-	if (linkEvents.navigationEvents != std::vector<
-			SessionNavigationRegressionEvent>{
-				SessionNavigationRegressionEvent::ChannelOpened,
-				SessionNavigationRegressionEvent::FeatureUnavailableToast,
-			}
-		|| linkEvents.openedPeers != std::vector<const PeerData*>{ channel.get() }
+	const auto navigationMatches
+		= linkEvents.navigationEvents
+		  == std::vector<SessionNavigationRegressionEvent>{
+			  SessionNavigationRegressionEvent::ChannelOpened,
+			  SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		  };
+	if (!drained || !navigationMatches
+		|| linkEvents.openedPeers
+			   != std::vector<const PeerData *>{channel.get()}
 		|| controller->content()->peer() != channel.get()
-		|| !CallStartEffectsStayedQuiet(linkEvents)
-		|| window->isLayerShown()) {
+		|| !CallStartEffectsStayedQuiet(linkEvents) || window->isLayerShown()) {
+		std::fprintf(
+			stderr,
+			"Channel call link regression: custom=%d blocked=%d drained=%d "
+			"navigation=%d events=%zu opened=%zu peer=%d layer=%d "
+			"permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			account->local().hasStoredCustomServer(),
+			account->mtp().dcOptions().blocked(), drained, navigationMatches,
+			linkEvents.navigationEvents.size(), linkEvents.openedPeers.size(),
+			controller->content()->peer() == channel.get(),
+			window->isLayerShown(), linkEvents.permissionRequests,
+			linkEvents.callRpcs, linkEvents.voiceChatLinkJoinAttempts,
+			linkEvents.activations, linkEvents.leavePrompts);
 		return false;
 	}
 	return true;
@@ -5794,6 +5810,9 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
 		return false;
 	}
+	if (!WaitForMainQueueBarrier()) {
+		return false;
+	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("calls settings events processed");
 	const auto callsSettingsEvents = GetCallStartRegressionSnapshotForTest();
@@ -5819,6 +5838,9 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 	ResetCallStartRegressionForTest();
 	ReportCallRegressionCheckpoint("device settings begin");
 	if (!Core::App().openLocalUrl(u"tg://settings/devices"_q, context)) {
+		return false;
+	}
+	if (!WaitForMainQueueBarrier()) {
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -6224,6 +6246,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"previous-session teardown fixture was not destroyed");
 	}
 	ReportCallRegressionCheckpoint("destroyed-session logout complete");
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after call-link session "
+			"destruction");
+	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
@@ -6284,6 +6311,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stockDcOptionsBeforeDeferredLink)) {
 		return FailChatParticipantsRegression(
 			"could not restore stock DC options after deferred link test");
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after call-link session "
+			"replacement");
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("replaced-session events processed");
