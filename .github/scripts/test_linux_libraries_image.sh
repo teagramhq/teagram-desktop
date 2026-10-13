@@ -46,7 +46,7 @@ grep -Fq -- '- Registry result: miss' "$summary" || fail 'A missing tag must rep
 
 : > "$output"
 env PATH="${temp_dir}/bin:${PATH}" GITHUB_STEP_SUMMARY="$summary" MOCK_DOCKER_STATUS=1 \
-  MOCK_DOCKER_OUTPUT='Error response from daemon: manifest for ghcr.io/example/linux-libraries:missing not found: manifest unknown' \
+  MOCK_DOCKER_OUTPUT='Error response from daemon: failed to resolve reference "ghcr.io/example/linux-libraries:missing": ghcr.io/example/linux-libraries:missing: not found' \
   bash "$script" pull ghcr.io/example/linux-libraries:missing tdesktop:centos_env "$output" \
   > "${temp_dir}/missing-pull.log" 2>&1
 grep -Fqx 'cache-hit=false' "$output" || fail 'A missing image manifest during pull must request a build fallback.'

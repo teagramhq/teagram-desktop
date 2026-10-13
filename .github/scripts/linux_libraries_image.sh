@@ -45,9 +45,16 @@ else
 fi
 
 printf '%s\n' "$command_output" >&2
+missing_image=false
 if grep -Eiq \
   'MANIFEST_UNKNOWN|manifest unknown|no such manifest|manifest for .+ not found|/manifests/[^[:space:]]+[^[:cntrl:]]*: 404([[:space:]]|$)' \
   <<< "$command_output"; then
+  missing_image=true
+elif grep -Fq "failed to resolve reference \"$image\"" <<< "$command_output" \
+    && grep -Fq "$image: not found" <<< "$command_output"; then
+  missing_image=true
+fi
+if [[ "$missing_image" == true ]]; then
   echo "::notice::Linux dependency image tag is missing: ${image}"
   echo 'cache-hit=false' >> "$output_file"
   report_cache_result miss
