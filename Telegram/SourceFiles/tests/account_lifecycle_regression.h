@@ -33,11 +33,28 @@ struct LifecycleWriteCountsForRegressionTest {
 	int customServerBlockMarker = 0;
 };
 
+enum class TranslationRpcForRegressionTest {
+	ChannelAutoTranslationToggle,
+	Text,
+	Rich,
+};
+
+struct TranslationRpcCountsForRegressionTest {
+	int channelAutoTranslationToggle = 0;
+	int text = 0;
+	int rich = 0;
+};
+
 void RecordLifecycleWriteForRegressionTest(
 	LifecycleWriteForRegressionTest operation);
 void ResetLifecycleWriteCountsForRegressionTest();
 [[nodiscard]] LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest();
+void RecordTranslationRpcForRegressionTest(
+	TranslationRpcForRegressionTest operation);
+void ResetTranslationRpcCountsForRegressionTest();
+[[nodiscard]] TranslationRpcCountsForRegressionTest
+GetTranslationRpcCountsForRegressionTest();
 #endif
 
 void RunAccountLifecycleRegression(Fn<void(int)> done);

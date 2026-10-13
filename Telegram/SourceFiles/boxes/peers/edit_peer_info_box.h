@@ -39,6 +39,12 @@ public:
 
 	static bool Available(not_null<PeerData*> peer);
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool autoTranslateControlPresentForRegressionTest() const;
+	[[nodiscard]] bool validateRenameForRegressionTest(QString title);
+	void saveAutoTranslateForRegressionTest(bool enabled);
+#endif
+
 	[[nodiscard]] static object_ptr<Ui::SettingsButton> CreateButton(
 		not_null<QWidget*> parent,
 		rpl::producer<QString> &&text,
@@ -61,7 +67,11 @@ private:
 	rpl::event_stream<> _focusRequests;
 	not_null<Window::SessionNavigation*> _navigation;
 	not_null<PeerData*> _peer;
-
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	bool _autoTranslateControlPresentForRegressionTest = false;
+	Fn<bool(QString)> _validateRenameForRegressionTest;
+	Fn<void(bool)> _saveAutoTranslateForRegressionTest;
+#endif
 };
 
 void ShowEditChatPermissions(

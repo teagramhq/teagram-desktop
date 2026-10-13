@@ -1744,3 +1744,9 @@ base::binary_guard LanguageBox::Show(
 
 	return result;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool LanguageBox::translateChatsRowPresentForRegressionTest() const {
+	return !_translateChatsToggle.isNull();
+}
+#endif

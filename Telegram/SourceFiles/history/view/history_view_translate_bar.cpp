@@ -257,6 +257,12 @@ TranslateBar::TranslateBar(
 
 TranslateBar::~TranslateBar() = default;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool TranslateBar::shouldBeShownForRegressionTest() const {
+	return _shouldBeShown;
+}
+#endif
+
 void TranslateBar::setShadowGeometryPostprocess(
 		Fn<QRect(QRect)> postprocess) {
 	_shadowGeometryPostprocess = std::move(postprocess);
@@ -275,6 +281,9 @@ void TranslateBar::updateShadowGeometry(QRect wrapGeometry) {
 }
 
 void TranslateBar::setup(not_null<History*> history) {
+	if (!history->session().serverTranslationSupported()) {
+		return;
+	}
 	_wrap.geometryValue(
 	) | rpl::on_next([=](QRect rect) {
 		updateShadowGeometry(rect);
