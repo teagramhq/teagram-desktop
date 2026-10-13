@@ -5767,8 +5767,7 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		return std::any_of(
 			widgets.cbegin(), widgets.cend(), [&](QWidget *widget) {
 				const auto wrapped = dynamic_cast<Info::WrapWidget *>(widget);
-				return wrapped
-					   && wrapped->isVisibleTo(window->widget())
+				return wrapped && wrapped->isVisibleTo(window->widget())
 					   && (wrapped->controller()->section().type()
 						   == Info::Section::Type::Settings)
 					   && (wrapped->controller()->section().settingsType()
