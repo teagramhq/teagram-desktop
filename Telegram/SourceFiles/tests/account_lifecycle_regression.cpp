@@ -91,6 +91,58 @@ namespace {
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 
+struct CapturedChannelSaveRequest {
+	mtpRequestId id = 0;
+	mtpBuffer body;
+	MTP::ResponseHandler callbacks;
+};
+
+struct ChannelSaveRequestCapture {
+	not_null<MTP::Instance *> instance;
+	std::vector<CapturedChannelSaveRequest> requests;
+};
+
+ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
+
+template <typename Request>
+[[nodiscard]] bool ReplyToChannelSaveRequestForRegressionTest(
+	ChannelSaveRequestCapture &capture, size_t index,
+	const Request &expectedRequest,
+	const typename Request::ResponseType &result) {
+	if (capture.requests.size() != index + 1) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save request "
+			"%zu was missing or unexpected requests were sent.\n",
+			index);
+		return false;
+	}
+	auto expectedBody = mtpBuffer();
+	expectedRequest.write(expectedBody);
+	auto &request = capture.requests[index];
+	if (request.body != expectedBody || !request.callbacks.done) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save request "
+			"%zu had the wrong payload or no success handler.\n",
+			index);
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	result.write(response.reply);
+	auto done = std::move(request.callbacks.done);
+	if (!done(response)) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save response "
+			"%zu could not be parsed.\n",
+			index);
+		return false;
+	}
+	return true;
+}
+
 } // namespace
 
 void RecordLifecycleWriteForRegressionTest(
@@ -139,6 +191,34 @@ void ResetTranslationRpcCountsForRegressionTest() {
 TranslationRpcCountsForRegressionTest
 GetTranslationRpcCountsForRegressionTest() {
 	return gTranslationRpcCounts;
+}
+
+bool CaptureChannelSaveRequestForRegressionTest(
+	not_null<MTP::Instance *> instance, int32 requestId,
+	const MTP::details::SerializedRequest &request,
+	MTP::ResponseHandler &callbacks) {
+	const auto capture = gChannelSaveRequestCapture;
+	if (!capture || capture->instance != instance) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	switch (body.front()) {
+	case mtpc_channels_deactivateAllUsernames:
+	case mtpc_channels_editTitle:
+	case mtpc_channels_toggleAutotranslation:
+		capture->requests.push_back({
+			.id = requestId,
+			.body = std::move(body),
+			.callbacks = std::move(callbacks),
+		});
+		return true;
+	default:
+		return false;
+	}
 }
 
 MainQueueBarrierResult
@@ -2258,6 +2338,9 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return item;
 }
 
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
 [[nodiscard]] bool RunTranslationControlsLifecycleRegression(
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> customController) {
@@ -2314,42 +2397,80 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		return false;
 	}
 	const auto renamedChannel = u"Renamed custom channel"_q;
-	if (!customEditBox->validateRenameForRegressionTest(renamedChannel)) {
+	auto channelSaveRequests = ChannelSaveRequestCapture{
+		.instance = &customController->session().mtp(),
+	};
+	const auto restoreChannelSaveCapture
+		= gsl::finally([previous = std::exchange(gChannelSaveRequestCapture,
+												 &channelSaveRequests)] {
+			  gChannelSaveRequestCapture = previous;
+		  });
+	customEditBox->saveRenameForRegressionTest(renamedChannel);
+	if (!customEditBox || customChannel->name() != u"Custom channel"_q) {
 		std::fprintf(
 			stderr,
 			"Translation controls regression failed: custom channel rename "
-			"did not validate without an Auto-translate update.\n");
+			"completed before its server response.\n");
 		return false;
 	}
-	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
-		!= 0) {
+	const auto expectedChannel
+		= MTP_inputChannel(MTP_long(1152), MTP_long(115100));
+	if (!ReplyToChannelSaveRequestForRegressionTest(
+			channelSaveRequests, 0,
+			MTPchannels_DeactivateAllUsernames(expectedChannel),
+			MTP_boolTrue())) {
+		return false;
+	}
+	using ChannelFlag = MTPDchannel::Flag;
+	const auto renamedChat = MTP_channel(
+		MTP_flags(ChannelFlag::f_creator | ChannelFlag::f_broadcast
+				  | ChannelFlag::f_access_hash),
+		MTP_long(1152), MTP_long(115100), MTP_string(renamedChannel),
+		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
+		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+	const auto renameReply = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({renamedChat}), MTP_int(1), MTP_int(0));
+	if (!ReplyToChannelSaveRequestForRegressionTest(
+			channelSaveRequests, 1,
+			MTPchannels_EditTitle(expectedChannel, MTP_string(renamedChannel)),
+			renameReply)) {
+		return false;
+	}
+	const auto saveCompleted
+		= WaitForRegressionCondition([&] { return !customEditBox; });
+	const auto namePersisted = (customChannel->name() == renamedChannel);
+	const auto toggles = GetTranslationRpcCountsForRegressionTest()
+							 .channelAutoTranslationToggle;
+	if (!saveCompleted || !namePersisted
+		|| channelSaveRequests.requests.size() != 2 || toggles != 0) {
 		std::fprintf(
 			stderr,
-			"Translation controls regression failed: validating a custom "
-			"channel rename attempted an Auto-translate toggle.\n");
+			"Translation controls regression failed: custom channel Save "
+			"completed=%d persisted=%d requests=%zu toggle RPCs=%d.\n",
+			saveCompleted, namePersisted, channelSaveRequests.requests.size(),
+			toggles);
 		return false;
 	}
-	customEditBox->saveAutoTranslateForRegressionTest(true);
-	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
-		!= 0) {
-		std::fprintf(stderr, "Translation controls regression failed: custom "
-							 "channel attempted an Auto-translate toggle.\n");
-		return false;
-	}
-	customController->hideLayer(anim::type::instant);
-	customChannel->setName(renamedChannel, QString());
 	customEditBox = openEditBox(customController, customChannel);
 	QCoreApplication::processEvents();
 	if (!customEditBox
+		|| customEditBox->titleForRegressionTest() != renamedChannel
 		|| customEditBox->autoTranslateControlPresentForRegressionTest()) {
-		std::fprintf(stderr,
-					 "Translation controls regression failed: Auto-translate "
-					 "appeared after custom-channel rename and reopen.\n");
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: reopening the saved "
+			"custom channel lost its name or exposed Auto-translate.\n");
 		return false;
 	}
 	customEditBox->saveAutoTranslateForRegressionTest(true);
 	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
-		!= 0) {
+			!= 0
+		|| channelSaveRequests.requests.size() != 2) {
 		std::fprintf(stderr,
 					 "Translation controls regression failed: reopened custom "
 					 "channel attempted an Auto-translate toggle.\n");

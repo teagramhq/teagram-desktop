@@ -518,12 +518,14 @@ public:
 	[[nodiscard]] bool autoTranslateControlPresentForRegressionTest() const {
 		return _autoTranslateControlPresentForRegressionTest;
 	}
-	[[nodiscard]] bool validateRenameForRegressionTest(QString title) {
+	[[nodiscard]] QString titleForRegressionTest() const {
+		Expects(_controls.title != nullptr);
+		return _controls.title->getLastText();
+	}
+	void saveRenameForRegressionTest(QString title) {
 		Expects(_controls.title != nullptr);
 		_controls.title->setText(title);
-		const auto saving = validate();
-		return saving && saving->title && (*saving->title == title.trimmed())
-			   && !saving->autotranslate.has_value();
+		save();
 	}
 	void saveAutoTranslateForRegressionTest(bool enabled) {
 		_savingData.autotranslate = enabled;
@@ -3179,8 +3181,10 @@ void EditPeerInfoBox::prepare() {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	_autoTranslateControlPresentForRegressionTest
 		= controller->autoTranslateControlPresentForRegressionTest();
-	_validateRenameForRegressionTest = [=](QString title) {
-		return controller->validateRenameForRegressionTest(std::move(title));
+	_titleForRegressionTest
+		= [=] { return controller->titleForRegressionTest(); };
+	_saveRenameForRegressionTest = [=](QString title) {
+		controller->saveRenameForRegressionTest(std::move(title));
 	};
 	_saveAutoTranslateForRegressionTest = [=](bool enabled) {
 		controller->saveAutoTranslateForRegressionTest(enabled);
@@ -3195,9 +3199,14 @@ bool EditPeerInfoBox::autoTranslateControlPresentForRegressionTest() const {
 	return _autoTranslateControlPresentForRegressionTest;
 }
 
-bool EditPeerInfoBox::validateRenameForRegressionTest(QString title) {
-	Expects(_validateRenameForRegressionTest != nullptr);
-	return _validateRenameForRegressionTest(std::move(title));
+QString EditPeerInfoBox::titleForRegressionTest() const {
+	Expects(_titleForRegressionTest != nullptr);
+	return _titleForRegressionTest();
+}
+
+void EditPeerInfoBox::saveRenameForRegressionTest(QString title) {
+	Expects(_saveRenameForRegressionTest != nullptr);
+	_saveRenameForRegressionTest(std::move(title));
 }
 
 void EditPeerInfoBox::saveAutoTranslateForRegressionTest(bool enabled) {

@@ -9,6 +9,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace MTP {
+class Instance;
+struct ResponseHandler;
+namespace details {
+class SerializedRequest;
+} // namespace details
+} // namespace MTP
+#endif
+
 namespace Tests {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -55,6 +65,10 @@ void RecordTranslationRpcForRegressionTest(
 void ResetTranslationRpcCountsForRegressionTest();
 [[nodiscard]] TranslationRpcCountsForRegressionTest
 GetTranslationRpcCountsForRegressionTest();
+[[nodiscard]] bool CaptureChannelSaveRequestForRegressionTest(
+	not_null<MTP::Instance *> instance, int32 requestId,
+	const MTP::details::SerializedRequest &request,
+	MTP::ResponseHandler &callbacks);
 #endif
 
 void RunAccountLifecycleRegression(Fn<void(int)> done);
