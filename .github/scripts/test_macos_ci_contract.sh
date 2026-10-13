@@ -6,6 +6,7 @@ packaged_workflow=".github/workflows/mac_packaged.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
 updater_workflow=".github/workflows/macos_updater_fixtures.yml"
 updater_runner=".github/scripts/run_teagram_updater_fixtures.sh"
+ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 
 require_text() {
   local file="$1"
@@ -95,14 +96,31 @@ if [[ "$dev_group" == "$main_group" ]]; then
 fi
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
+require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
+reject_text "$mac_workflow" 'CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//'
+pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
+scheduled_profile="$(bash "$ccache_profile_script" schedule)"
+dispatch_profile="$(bash "$ccache_profile_script" workflow_dispatch)"
+if [[ "$pull_request_profile" != "$scheduled_profile" ]]; then
+  printf 'MacOS PR and scheduled builds must share one ccache profile.\n' >&2
+  exit 1
+fi
+if [[ "$pull_request_profile" != $'name=pr-compatible\nprotected_path_integration=OFF' ]]; then
+  printf 'MacOS PR and scheduled builds must use the PR-compatible OFF profile.\n' >&2
+  exit 1
+fi
+if [[ "$dispatch_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
+  printf 'Protected-path dispatches must use a separate ON ccache profile.\n' >&2
+  exit 1
+fi
 cache_setup_step="$(awk '
   /^      - name: First set up\.$/ { in_step = 1; next }
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
 for cache_profile_setting in \
-  'protected_path_integration=OFF' \
-  'protected_path_integration=ON' \
+  'PROTECTED_PATH_INTEGRATION: ${{ steps.ccache-profile.outputs.protected_path_integration }}' \
+  'protected_path_integration="$PROTECTED_PATH_INTEGRATION"' \
   'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s'; do
   if ! grep -Fq -- "$cache_profile_setting" <<< "$cache_setup_step"; then
     printf 'MacOS cache setup must include profile setting: %s\n' "$cache_profile_setting" >&2
@@ -119,12 +137,16 @@ ccache_restore_keys="$(awk '
   in_restore_keys && /^          [^ ]/ { exit }
   in_restore_keys && /^            / { sub(/^            /, ""); print }
 ' <<< "$ccache_restore_step")"
-expected_ccache_restore_key='macOS-arm64-ccache-dev-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
-if [[ "$ccache_restore_keys" != "$expected_ccache_restore_key" ]]; then
+hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
+profile_expression="\${{ steps.ccache-profile.outputs.name }}"
+expected_ccache_restore_keys="macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-
+macOS-arm64-ccache-dev-${hash_expression}-"
+if [[ "$ccache_restore_keys" != "$expected_ccache_restore_keys" ]]; then
   printf 'MacOS pull requests must restore the shared dev compiler cache.\n' >&2
   exit 1
 fi
-require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
+require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
+require_text "$mac_workflow" "github.event_name == 'schedule'"
 reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'

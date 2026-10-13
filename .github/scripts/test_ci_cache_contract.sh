@@ -65,14 +65,16 @@ require_text "$cache_cleanup_workflow" 'gh cache delete "$cache_id" --repo "$GIT
 require_text "$cache_cleanup_workflow" 'SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}'
 require_text "$cache_cleanup_workflow" 'SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}'
 require_text "$cache_cleanup_workflow" '[[ "$SOURCE_BRANCH" != "dev" || "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]'
-require_text "$cache_cleanup_workflow" '--key macOS-arm64-ccache-dev-'
+require_text "$cache_cleanup_workflow" "cache_prefix='macOS-arm64-ccache-dev-'"
 require_text "$cache_cleanup_workflow" '--ref refs/heads/dev'
-require_text "$cache_cleanup_workflow" "--jq '.[1:] | .[].id'"
+require_text "$cache_cleanup_workflow" 'pr-compatible'
 reject_text "$cache_cleanup_workflow" 'actions/checkout@'
 require_text "$cache_threat_model" 'Pull request workflows cannot invoke its write'
 require_text "$cache_threat_model" '## Trusted refs and Linux dependency image publisher'
 require_text "$cache_threat_model" 'numeric PR number, validated'
 require_text "$cache_threat_model" 'actions: write'
 require_text "$cache_threat_model" 'PR-controlled workflow runs fail the source validation'
+
+bash .github/scripts/test_prune_macos_dev_ccache.sh
 
 printf 'CI cache contract tests passed.\n'

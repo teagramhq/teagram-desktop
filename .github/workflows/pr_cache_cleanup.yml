@@ -78,28 +78,63 @@ jobs:
             exit 1
           fi
 
-      - name: Keep only the newest dev compiler cache.
+      - name: Keep the PR-compatible compiler cache.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cache_ids="$(gh cache list \
+          cache_prefix='macOS-arm64-ccache-dev-'
+          cache_entries="$(gh cache list \
             --limit 1000 \
-            --key macOS-arm64-ccache-dev- \
+            --key "$cache_prefix" \
             --ref refs/heads/dev \
             --sort created_at \
             --order desc \
-            --json id \
-            --jq '.[1:] | .[].id' \
+            --json id,key \
+            --jq '.[] | [.id, .key] | @tsv' \
             --repo "$GITHUB_REPOSITORY")"
-          if [[ -z "$cache_ids" ]]; then
-            echo "No superseded dev compiler caches to delete."
-            exit 0
-          fi
-          while IFS= read -r cache_id; do
+          declare -A retained_profiles=()
+          legacy_ids=()
+          has_pr_compatible=false
+          delete_cache() {
+            local cache_id="$1"
             [[ "$cache_id" =~ ^[0-9]+$ ]] || {
               echo "::error::Unexpected cache ID from GitHub: $cache_id"
               exit 1
             }
             gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
-          done <<< "$cache_ids"
+          }
+          while IFS=$'\t' read -r cache_id cache_key; do
+            [[ -n "$cache_id" ]] || continue
+            if [[ ! "$cache_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected cache ID from GitHub: $cache_id"
+              exit 1
+            fi
+            if [[ "$cache_key" =~ ^macOS-arm64-ccache-dev-(pr-compatible|protected)-[[:xdigit:]]{64}-[0-9]+-[0-9]+$ ]]; then
+              profile="${BASH_REMATCH[1]}"
+            elif [[ "$cache_key" =~ ^macOS-arm64-ccache-dev-[[:xdigit:]]{64}-[0-9]+-[0-9]+$ ]]; then
+              profile=legacy
+            else
+              echo "::error::Unexpected dev compiler cache key: $cache_key"
+              exit 1
+            fi
+            if [[ "$profile" == legacy ]]; then
+              legacy_ids+=("$cache_id")
+              continue
+            fi
+            if [[ -z "${retained_profiles[$profile]:-}" ]]; then
+              retained_profiles[$profile]="$cache_id"
+              [[ "$profile" != pr-compatible ]] || has_pr_compatible=true
+            else
+              delete_cache "$cache_id"
+            fi
+          done <<< "$cache_entries"
+          if [[ "$has_pr_compatible" == true ]]; then
+            for cache_id in "${legacy_ids[@]}"; do
+              delete_cache "$cache_id"
+            done
+          elif ((${#legacy_ids[@]} > 1)); then
+            for cache_id in "${legacy_ids[@]:1}"; do
+              delete_cache "$cache_id"
+            done
+          fi
