@@ -85,7 +85,17 @@ public:
 	: _mode(mode) {
 	}
 
+	void setReadOnly() {
+		_readOnly = true;
+		++_revision;
+		_good = false;
+		_status = Status::Default;
+	}
+
 	void inputChanged(const QString &username, bool locallyValid) {
+		if (_readOnly) {
+			return;
+		}
 		++_revision;
 		_username = username;
 		_locallyValid = locallyValid;
@@ -249,7 +259,7 @@ public:
 	}
 
 	[[nodiscard]] bool shouldCheck() const {
-		return !_unavailable;
+		return !_readOnly && !_unavailable;
 	}
 
 	void setGood(bool value) {
@@ -263,7 +273,7 @@ public:
 
 	template <typename Update>
 	[[nodiscard]] bool trySave(bool requireGood, Update update) const {
-		if (requireGood && !_good) {
+		if (_readOnly || (requireGood && !_good)) {
 			return false;
 		}
 		update(_username);
@@ -274,6 +284,7 @@ private:
 	const Mode _mode;
 	quint64 _revision = 0;
 	QString _username;
+	bool _readOnly = false;
 	bool _good = false;
 	bool _unavailable = false;
 	bool _locallyValid = false;

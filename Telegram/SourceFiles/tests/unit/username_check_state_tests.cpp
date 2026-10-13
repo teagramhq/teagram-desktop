@@ -177,6 +177,23 @@ TEST_CASE(StockUsernameNotModifiedStillReportsSaved) {
 	CHECK(outcome == SaveFailureOutcome::Saved);
 }
 
+TEST_CASE(ReadOnlyUsernameFlowRejectsAvailabilityAndSaveRequests) {
+	UsernameEditorFlow flow(Mode::Profile);
+	ControlledUsernameApi api;
+	flow.inputChanged(u"operator"_q, true);
+	flow.setReadOnly();
+	flow.inputChanged(u"operat"_q, true);
+
+	CHECK(!flow.shouldCheck());
+	CHECK(!api.checkAccount(flow, u"operat"_q));
+	auto handle = u"operator"_q;
+	CHECK(!api.updateAccount(
+		flow, [&](const QString &username) { handle = username; }));
+	CHECK_EQ(handle, u"operator"_q);
+	CHECK_EQ(api.checks, 0);
+	CHECK_EQ(api.updates, 0);
+}
+
 TEST_CASE(ProfileFlowFallbackSendsUpdateWithoutRepeatCheck) {
 	UsernameEditorFlow flow(Mode::Profile);
 	ControlledUsernameApi api;

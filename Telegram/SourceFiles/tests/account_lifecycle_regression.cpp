@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/weak_ptr.h"
+#include "boxes/peers/edit_peer_common.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
@@ -48,6 +49,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
+#include "ui/widgets/fields/special_fields.h"
+#include "styles/style_widgets.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
@@ -63,6 +66,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSemaphore>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtGui/QKeyEvent>
+#include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
 
 #include <algorithm>
@@ -3497,7 +3502,66 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	return 0;
 }
 
+[[nodiscard]] bool ReadOnlyUsernameInputRejectsWordDeletion() {
+	const auto shortcuts
+		= QKeySequence::keyBindings(QKeySequence::DeleteStartOfWord);
+	if (shortcuts.isEmpty()) {
+		return false;
+	}
+	Ui::UsernameInput input(nullptr, st::defaultInputField,
+							rpl::single(u"@username"_q), u"operator"_q,
+							QString());
+	Ui::UsernameInput editable(nullptr, st::defaultInputField,
+							   rpl::single(u"@username"_q), u"operator"_q,
+							   QString());
+	input.setReadOnly(true);
+	Ui::EditPeer::UsernameEditorFlow flow;
+	flow.inputChanged(u"operator"_q, true);
+	auto requests = 0;
+	auto checkStarted = false;
+	QObject::connect(&input, &Ui::MaskedInputField::changed, &input, [&] {
+		const auto name = input.getLastText();
+		flow.inputChanged(name, Ui::EditPeer::IsValidPublicUsername(name));
+		checkStarted = flow.checkAccount(
+			name, [&](const QString &, auto, auto) { ++requests; }, [](bool) {},
+			[](const QString &, auto, bool) {});
+	});
+	for (const auto &shortcut : shortcuts) {
+		const auto key = shortcut[0];
+		input.setSelection(6, 2);
+		auto event
+			= QKeyEvent(QEvent::KeyPress, key.key(), key.keyboardModifiers());
+		QCoreApplication::sendEvent(&input, &event);
+		if (input.text() != u"operator"_q
+			|| input.getLastText() != u"operator"_q
+			|| input.selectedText() != u"or"_q || requests != 0
+			|| checkStarted) {
+			std::fprintf(
+				stderr,
+				"Read-only username shortcut changed the handle or sent "
+				"an availability request: handle=%s requests=%d.\n",
+				input.text().toUtf8().constData(), requests);
+			return false;
+		}
+		editable.setText(u"operator"_q);
+		editable.setSelection(6, 2);
+		auto editableEvent
+			= QKeyEvent(QEvent::KeyPress, key.key(), key.keyboardModifiers());
+		QCoreApplication::sendEvent(&editable, &editableEvent);
+		if (editable.text() != u"operat"_q) {
+			return false;
+		}
+	}
+	std::fprintf(stderr, "Read-only username shortcut regression passed: "
+						 "handle=operator requests=0.\n");
+	return true;
+}
+
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
+	if (!ReadOnlyUsernameInputRejectsWordDeletion()) {
+		return FailAccountLifecycleRegression(
+			"read-only username word deletion changed the handle or requests");
+	}
 	if (!TeagramIconChoicePersistsAcrossSettingsReload()) {
 		return FailAccountLifecycleRegression(
 			"Teagram icon choice did not survive settings serialization");

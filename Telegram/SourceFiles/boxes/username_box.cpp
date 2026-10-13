@@ -135,6 +135,9 @@ void UsernameEditor::setEnabled(bool value) {
 }
 
 void UsernameEditor::setReadOnly() {
+	_usernameEditorFlow.setReadOnly();
+	_checkTimer.cancel();
+	_api.request(base::take(_checkRequestId)).cancel();
 	_username->setReadOnly(true);
 	_username->setDisplayFocused(true);
 }
@@ -147,7 +150,7 @@ void UsernameEditor::resizeEvent(QResizeEvent *e) {
 }
 
 rpl::producer<> UsernameEditor::save() {
-	if (_saveRequestId) {
+	if (_username->isReadOnly() || _saveRequestId) {
 		return _saved.events();
 	}
 
@@ -184,6 +187,9 @@ rpl::producer<UsernameCheckInfo> UsernameEditor::checkInfoChanged() const {
 }
 
 void UsernameEditor::check() {
+	if (_username->isReadOnly()) {
+		return;
+	}
 	const auto name = getName();
 	if (name.size() < Ui::EditPeer::kMinUsernameLength) {
 		return;
@@ -229,6 +235,9 @@ void UsernameEditor::check() {
 }
 
 void UsernameEditor::changed() {
+	if (_username->isReadOnly()) {
+		return;
+	}
 	const auto name = getName();
 	_usernameEditorFlow.inputChanged(name, false);
 	_api.request(base::take(_checkRequestId)).cancel();

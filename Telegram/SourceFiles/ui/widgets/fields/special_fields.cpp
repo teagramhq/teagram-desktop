@@ -12,6 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_widgets.h"
 
 #include <QtCore/QRegularExpression>
+#include <QtGui/QKeyEvent>
+#include <QtGui/QKeySequence>
 
 namespace Ui {
 namespace {
@@ -282,6 +284,14 @@ void UsernameInput::setLinkPlaceholder(const QString &placeholder) {
 
 void UsernameInput::setMaxLength(int maxLength) {
 	_maxLength = maxLength;
+}
+
+void UsernameInput::keyPressEvent(QKeyEvent *e) {
+	if (isReadOnly() && e->matches(QKeySequence::DeleteStartOfWord)) {
+		e->accept();
+		return;
+	}
+	MaskedInputField::keyPressEvent(e);
 }
 
 void UsernameInput::paintAdditionalPlaceholder(QPainter &p) {
