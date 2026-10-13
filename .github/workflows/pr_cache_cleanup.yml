@@ -3,6 +3,8 @@ name: Prune pull request caches.
 on:
   pull_request_target:
     types: [closed]
+  push:
+    branches: [dev]
 
 permissions:
   actions: write
@@ -10,6 +12,7 @@ permissions:
 jobs:
   prune:
     name: Prune closed pull request caches
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-26.04
 
     steps:
@@ -21,3 +24,24 @@ jobs:
           set -euo pipefail
           cache_ref="refs/pull/${PR_NUMBER}/merge"
           gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"
+
+  prune-legacy-macos-ccache:
+    name: Prune legacy pull request compiler caches
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Delete PR-scoped macOS compiler caches.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cache_ids="$(gh cache list --limit 1000 --key macOS-arm64-ccache-pr- --json id --jq '.[].id' --repo "$GITHUB_REPOSITORY")"
+          if [[ -z "$cache_ids" ]]; then
+            echo "No PR-scoped macOS compiler caches to delete."
+            exit 0
+          fi
+          while IFS= read -r cache_id; do
+            [[ -n "$cache_id" ]] || continue
+            gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+          done <<< "$cache_ids"

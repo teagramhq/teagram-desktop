@@ -119,15 +119,13 @@ ccache_restore_keys="$(awk '
   in_restore_keys && /^          [^ ]/ { exit }
   in_restore_keys && /^            / { sub(/^            /, ""); print }
 ' <<< "$ccache_restore_step")"
-if grep -Eq 'macOS-arm64-ccache-(pr|dev)-' <<< "$ccache_restore_keys"; then
-  printf 'MacOS cache restore keys must not include cross-scope PR/dev fallbacks.\n' >&2
-  exit 1
-fi
-expected_ccache_restore_key='macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
+expected_ccache_restore_key='macOS-arm64-ccache-dev-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
 if [[ "$ccache_restore_keys" != "$expected_ccache_restore_key" ]]; then
-  printf 'MacOS cache restores must stay in the same PR/dev scope as their saves.\n' >&2
+  printf 'MacOS pull requests must restore the shared dev compiler cache.\n' >&2
   exit 1
 fi
+require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
+reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
@@ -147,7 +145,6 @@ reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
 require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
 require_text "$mac_workflow" "github.ref == 'refs/heads/dev'"
-require_text "$mac_workflow" "steps.cache-ccache.outputs.cache-matched-key == ''"
 reject_text "$mac_workflow" 'startsWith(steps.cache-ccache.outputs.cache-matched-key'
 ccache_stats_step="$(awk '
   /^      - name: Report compiler cache hits\.$/ { in_step = 1; next }
@@ -171,8 +168,9 @@ save_cache_step="$(awk '
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
-if ! grep -Fq "steps.cache-ccache.outputs.cache-matched-key == ''" <<< "$save_cache_step"; then
-  printf 'A PR compiler cache must be saved only when no PR cache was restored.\n' >&2
+if ! grep -Fq "github.ref == 'refs/heads/dev'" <<< "$save_cache_step" \
+  || grep -Fq "github.event_name == 'pull_request'" <<< "$save_cache_step"; then
+  printf 'Only dev runs may save the shared macOS compiler cache.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'build_dir="$repo/out"'
