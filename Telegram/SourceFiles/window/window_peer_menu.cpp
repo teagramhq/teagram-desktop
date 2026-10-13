@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_communities.h"
 #include "api/api_global_privacy.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "lottie/lottie_icon.h"
 #include "ui/boxes/confirm_box.h"
 #include "base/random.h"
@@ -1027,6 +1028,7 @@ void Filler::addExportChat() {
 
 void Filler::addTranslate() {
 	if (_peer->translationFlag() != PeerData::TranslationFlag::Disabled
+		|| !_peer->session().serverTranslationSupported()
 		|| !_peer->session().premium()
 		|| !Core::App().settings().translateChatEnabled()) {
 		return;

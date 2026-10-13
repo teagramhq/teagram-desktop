@@ -1555,6 +1555,53 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	}
 }
 
+TEST_CASE(AutomaticChatTranslationRequiresServerSupport) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	const auto enabled = [](const DcOptions &options) {
+		return Main::details::automaticChatTranslationEnabled(
+			Main::details::serverTranslationSupported(options), true, true,
+			true);
+	};
+	CHECK(!enabled(custom));
+	CHECK(!enabled(blocked));
+	CHECK(enabled(stock));
+	CHECK(!Main::details::automaticChatTranslationEnabled(
+		Main::details::serverTranslationSupported(stock), false, true, true));
+}
+
+TEST_CASE(ChannelAutoTranslationRequiresServerSupport) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(custom), true));
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(blocked), true));
+	CHECK(Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), true));
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), false));
+
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(custom), true));
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(blocked), true));
+	CHECK(Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), true));
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), false));
+}
+
 struct BioTargetTestMtp {
 	const DcOptions &options;
 

@@ -36,7 +36,15 @@ public:
 
 	[[nodiscard]] rpl::producer<bool> trackingLanguage() const;
 
-private:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool trackingLanguageForRegressionTest() const;
+	void requestTextForRegressionTest(not_null<HistoryItem *> item,
+									  LanguageId to);
+	void requestRichForRegressionTest(not_null<HistoryItem *> item,
+									  LanguageId to);
+#endif
+
+  private:
 	using MaybeLanguageId = std::variant<QString, LanguageId>;
 	struct ItemForRecognize {
 		uint64 generation = 0;
@@ -85,4 +93,3 @@ private:
 };
 
 } // namespace HistoryView
-
