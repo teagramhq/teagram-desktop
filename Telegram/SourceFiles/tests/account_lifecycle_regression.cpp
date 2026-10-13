@@ -5761,8 +5761,6 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		.sessionWindow = base::make_weak(controller),
 	});
 	const auto showsSettings = [&](Settings::Type expected) {
-		// Settings sections can be hosted in MainWindow's layer instead of
-		// SessionController's main content.
 		const auto widgets = window->widget()->findChildren<QWidget *>();
 		return std::any_of(
 			widgets.cbegin(), widgets.cend(), [&](QWidget *widget) {
