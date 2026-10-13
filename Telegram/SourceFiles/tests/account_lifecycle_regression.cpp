@@ -5761,16 +5761,12 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		.sessionWindow = base::make_weak(controller),
 	});
 	const auto showsSettings = [&](Settings::Type expected) {
-		const auto widgets = window->widget()->findChildren<QWidget *>();
-		return std::any_of(
-			widgets.cbegin(), widgets.cend(), [&](QWidget *widget) {
-				const auto wrapped = dynamic_cast<Info::WrapWidget *>(widget);
-				return wrapped && wrapped->isVisibleTo(window->widget())
-					   && (wrapped->controller()->section().type()
-						   == Info::Section::Type::Settings)
-					   && (wrapped->controller()->section().settingsType()
-						   == expected);
-			});
+		const auto wrapped = dynamic_cast<Info::WrapWidget *>(
+			controller->activeLayerSection());
+		return wrapped
+			   && (wrapped->controller()->section().type()
+				   == Info::Section::Type::Settings)
+			   && (wrapped->controller()->section().settingsType() == expected);
 	};
 	auto settingLinkNumber = 0;
 	for (const auto &url : {
