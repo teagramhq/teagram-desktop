@@ -64,6 +64,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/ui_integration.h"
 #include "core/update_checker.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_manager.h"
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -646,17 +649,22 @@ Widget::Widget(
 		[=] { searchCursorMoved(); },
 		Qt::QueuedConnection); // So getLastText() works already.
 
-	if (!Core::UpdaterDisabled()) {
-		Core::UpdateChecker checker;
-		rpl::merge(
-			rpl::single(rpl::empty),
-			checker.isLatest(),
-			checker.failed(),
-			checker.ready()
-		) | rpl::on_next([=] {
-			checkUpdateStatus();
-		}, lifetime());
-	}
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	if (Core::TeagramUpdateUiEnabled()) {
+		Core::TeagramUpdateManager::Instance().stateChanges()
+			| rpl::on_next(
+				[=](const Core::TeagramUpdateSnapshot &) {
+					checkUpdateStatus();
+				},
+				lifetime());
+	} else
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
+		if (!Core::UpdaterDisabled()) {
+			Core::UpdateChecker checker;
+			rpl::merge(rpl::single(rpl::empty), checker.isLatest(),
+					   checker.failed(), checker.ready())
+				| rpl::on_next([=] { checkUpdateStatus(); }, lifetime());
+		}
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });
@@ -2529,6 +2537,95 @@ QPixmap Widget::grabForFolderSlideAnimation() {
 }
 
 void Widget::checkUpdateStatus() {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	if (Core::TeagramUpdateUiEnabled()) {
+		const auto manager = &Core::TeagramUpdateManager::Instance();
+		const auto &state = manager->state();
+		using State = Core::TeagramUpdateUiState;
+		const auto visible
+			= Core::TeagramUpdateChatListActionForState(state.state)
+			  != Core::TeagramUpdateChatListAction::Hidden;
+		if (_layout != Layout::Child && visible) {
+			if (!_updateTelegram) {
+				_updateTelegram.create(
+					this, tr::lng_teagram_update_restart_install(tr::now),
+					st::dialogsUpdateButton, st::dialogsInstallUpdate,
+					st::dialogsInstallUpdateOver, true);
+			}
+			const auto text = [&] {
+				switch (state.state) {
+				case State::Available:
+					return tr::lng_teagram_update_download_install(tr::now);
+				case State::Downloading:
+					return tr::lng_teagram_update_state_downloading(
+						tr::now, lt_progress,
+						QString::number(state.progressPercent) + '%');
+				case State::Preparing:
+					return tr::lng_teagram_update_state_preparing(
+						tr::now, lt_progress,
+						QString::number(state.progressPercent) + '%');
+				case State::Ready:
+					return tr::lng_teagram_update_restart_install(tr::now);
+				case State::RestartPending: {
+					const auto &work = state.blockers;
+					if (work.call && work.recording && work.upload) {
+						return tr::lng_teagram_update_bar_after_all(tr::now);
+					} else if (work.call && work.recording) {
+						return tr::lng_teagram_update_bar_after_call_recording(
+							tr::now);
+					} else if (work.call && work.upload) {
+						return tr::lng_teagram_update_bar_after_call_upload(
+							tr::now);
+					} else if (work.recording && work.upload) {
+						return tr::
+							lng_teagram_update_bar_after_recording_upload(
+								tr::now);
+					} else if (work.call) {
+						return tr::lng_teagram_update_bar_after_call(tr::now);
+					} else if (work.recording) {
+						return tr::lng_teagram_update_bar_after_recording(
+							tr::now);
+					} else if (work.upload) {
+						return tr::lng_teagram_update_bar_after_upload(tr::now);
+					}
+					return tr::lng_teagram_update_restart_install(tr::now);
+				}
+				case State::AlreadyInstalled:
+				case State::RecoveryRequired:
+					return tr::lng_teagram_update_restart_app(tr::now);
+				default:
+					Unexpected("Unexpected Teagram update banner state.");
+				}
+			}();
+			_updateTelegram->setText(text);
+			_updateTelegram->setAccessibleName(text);
+			_updateTelegram->setClickedCallback([=] {
+				switch (Core::TeagramUpdateChatListActionForState(
+					manager->state().state)) {
+				case Core::TeagramUpdateChatListAction::DownloadAndInstall:
+					manager->downloadAndInstall();
+					break;
+				case Core::TeagramUpdateChatListAction::Cancel:
+					manager->cancel();
+					break;
+				case Core::TeagramUpdateChatListAction::Restart:
+					manager->restartExplicitly();
+					break;
+				case Core::TeagramUpdateChatListAction::Hidden:
+					break;
+				}
+			});
+			_updateTelegram->show();
+			if (_connecting) {
+				_connecting->raise();
+			}
+		} else if (_updateTelegram) {
+			_updateTelegram.destroy();
+		}
+		updateControlsGeometry();
+		return;
+	}
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	Expects(!Core::UpdaterDisabled());
 
 	if (_layout == Layout::Child) {

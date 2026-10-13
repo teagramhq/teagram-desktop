@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <openssl/evp.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <limits>
@@ -317,11 +318,10 @@ ParseCanonicalUnsigned(const QString &value) {
 	return result;
 }
 
-[[nodiscard]] ManifestAuthenticationResult
-AuthenticatePackage(const QByteArray &manifest, const QByteArray &signature,
-					quint64 installedBuild,
-					TeagramUpdateChannel installedChannel,
-					const std::optional<Ed25519PublicKey> &trustedKey) {
+[[nodiscard]] ManifestAuthenticationResult AuthenticatePackage(
+	const QByteArray &manifest, const QByteArray &signature,
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
+	quint64 highWaterBuild, const std::optional<Ed25519PublicKey> &trustedKey) {
 	if (!trustedKey) {
 		return RejectedManifest(Reason::MissingTrustedKey);
 	}
@@ -357,7 +357,7 @@ AuthenticatePackage(const QByteArray &manifest, const QByteArray &signature,
 		return RejectedManifest(parsed.reason);
 	}
 	auto package = *parsed.package;
-	if (package.build <= installedBuild) {
+	if (package.build <= std::max(installedBuild, highWaterBuild)) {
 		return RejectedManifest(Reason::NotNewer);
 	}
 	switch (installedChannel) {
@@ -459,10 +459,11 @@ VerifyArchiveDevice(const VerifiedTeagramUpdate &package, QIODevice &archive,
 [[nodiscard]] TeagramUpdateVerificationResult
 VerifyPackage(const QByteArray &manifest, const QByteArray &signature,
 			  QByteArrayView archive, quint64 installedBuild,
-			  TeagramUpdateChannel installedChannel,
+			  TeagramUpdateChannel installedChannel, quint64 highWaterBuild,
 			  const std::optional<Ed25519PublicKey> &trustedKey) {
-	const auto authenticated = AuthenticatePackage(
-		manifest, signature, installedBuild, installedChannel, trustedKey);
+	const auto authenticated
+		= AuthenticatePackage(manifest, signature, installedBuild,
+							  installedChannel, highWaterBuild, trustedKey);
 	if (!authenticated.authenticated() || !authenticated.package) {
 		return Rejected(authenticated.reason);
 	}
@@ -491,10 +492,11 @@ bool TeagramUpdateManifestVerificationResult::authenticated() const {
 
 TeagramUpdateManifestVerificationResult AuthenticateTeagramUpdateManifest(
 	const QByteArray &manifest, const QByteArray &signature,
-	quint64 installedBuild, TeagramUpdateChannel installedChannel) {
-	auto authenticated
-		= AuthenticatePackage(manifest, signature, installedBuild,
-							  installedChannel, kProductionUpdatePublicKey);
+	quint64 installedBuild, TeagramUpdateChannel installedChannel,
+	quint64 highWaterBuild) {
+	auto authenticated = AuthenticatePackage(
+		manifest, signature, installedBuild, installedChannel, highWaterBuild,
+		kProductionUpdatePublicKey);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}
@@ -516,7 +518,7 @@ VerifyTeagramUpdatePackage(const QByteArray &manifest,
 						   quint64 installedBuild,
 						   TeagramUpdateChannel installedChannel) {
 	return VerifyPackage(manifest, signature, archive, installedBuild,
-						 installedChannel, kProductionUpdatePublicKey);
+						 installedChannel, 0, kProductionUpdatePublicKey);
 }
 
 #ifdef TDESKTOP_UNIT_TESTS
@@ -526,16 +528,18 @@ TeagramUpdateVerificationResult VerifyTeagramUpdatePackageForTests(
 	TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey) {
 	return VerifyPackage(manifest, signature, archive, installedBuild,
-						 installedChannel, trustedKey);
+						 installedChannel, 0, trustedKey);
 }
 
 TeagramUpdateManifestVerificationResult
 AuthenticateTeagramUpdateManifestForTests(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
-	const std::optional<TeagramUpdatePublicKey> &trustedKey) {
-	auto authenticated = AuthenticatePackage(
-		manifest, signature, installedBuild, installedChannel, trustedKey);
+	const std::optional<TeagramUpdatePublicKey> &trustedKey,
+	quint64 highWaterBuild) {
+	auto authenticated
+		= AuthenticatePackage(manifest, signature, installedBuild,
+							  installedChannel, highWaterBuild, trustedKey);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}

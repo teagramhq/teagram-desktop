@@ -79,6 +79,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QGuiApplication>
 #include <QtGui/QClipboard>
 
+#include <algorithm>
+
 namespace Window {
 namespace {
 
@@ -367,11 +369,39 @@ MainMenu::MainMenu(
 		}
 	});
 
-	_footer->heightValue(
-	) | rpl::on_next([=] {
-		_telegram->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuTelegramBottom - _telegram->height());
-		_version->moveToLeft(st::mainMenuFooterLeft, _footer->height() - st::mainMenuVersionBottom - _version->height());
-	}, _footer->lifetime());
+	const auto resizeFooterLabels = [=](int width) {
+		if (width <= 0) {
+			return;
+		}
+		const auto labelWidth = std::max(0, width - 2 * st::mainMenuFooterLeft);
+		_telegram->resizeToWidth(labelWidth);
+		_version->resizeToWidth(labelWidth);
+	};
+	const auto updateFooterLabelsGeometry = [=] {
+		const auto versionTop = _footer->height() - st::mainMenuVersionBottom
+								- _version->height();
+		_version->moveToLeft(st::mainMenuFooterLeft, versionTop);
+		_telegram->moveToLeft(st::mainMenuFooterLeft,
+							  versionTop - st::mainMenuFooterLabelSkip
+								  - _telegram->height());
+	};
+	_footer->widthValue()
+		| rpl::on_next(
+			[=](int width) {
+				resizeFooterLabels(width);
+				updateInnerControlsGeometry();
+				updateFooterLabelsGeometry();
+			},
+			_footer->lifetime());
+	rpl::combine(_telegram->heightValue(), _version->heightValue())
+		| rpl::on_next(
+			[=] {
+				updateInnerControlsGeometry();
+				updateFooterLabelsGeometry();
+			},
+			_footer->lifetime());
+	_footer->heightValue()
+		| rpl::on_next(updateFooterLabelsGeometry, _footer->lifetime());
 
 	rpl::combine(
 		heightValue(),
@@ -382,29 +412,52 @@ MainMenu::MainMenu(
 
 	parentResized();
 
+#ifdef TDESKTOP_TEAGRAM
+	_telegram->setMarkedText(
+		tr::link(tr::lng_teagram_about_title(tr::now),
+				 u"https://github.com/teagramhq/teagram-desktop"_q));
+#else  // TDESKTOP_TEAGRAM
 	_telegram->setMarkedText(tr::link(
 		u"Telegram Desktop"_q,
 		u"https://desktop.telegram.org"_q));
+#endif // TDESKTOP_TEAGRAM
 	_telegram->setLinksTrusted();
+#ifdef TDESKTOP_TEAGRAM
+	const auto releaseLink = currentVersionReleaseLink();
+	auto versionText = releaseLink.isEmpty()
+						   ? TextWithEntities(currentVersionText())
+						   : tr::link(currentVersionText(), 1);
 	_version->setMarkedText(
-		tr::link(
-			tr::lng_settings_current_version(
-				tr::now,
-				lt_version,
-				currentVersionText()),
-			1) // Link 1.
-		.append(QChar(' '))
-		.append(QChar(8211))
-		.append(QChar(' '))
-		.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
+		std::move(versionText)
+			.append(QStringLiteral(" · "))
+			.append(tr::link(tr::lng_menu_about(tr::now), 2)));
+#else  // TDESKTOP_TEAGRAM
+	_version->setMarkedText(
+		tr::link(tr::lng_settings_current_version(tr::now, lt_version,
+												  currentVersionText()),
+				 1) // Link 1.
+			.append(QChar(' '))
+			.append(QChar(8211))
+			.append(QChar(' '))
+			.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
+#endif // TDESKTOP_TEAGRAM
+#ifdef TDESKTOP_TEAGRAM
+	if (!releaseLink.isEmpty()) {
+		_version->setLink(1, std::make_shared<UrlClickHandler>(releaseLink));
+	}
+#else  // TDESKTOP_TEAGRAM
 	_version->setLink(
 		1,
 		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+#endif // TDESKTOP_TEAGRAM
 	_version->setLink(
 		2,
 		std::make_shared<LambdaClickHandler>([=] {
 			controller->show(Box(AboutBox));
 		}));
+	resizeFooterLabels(_footer->width());
+	updateInnerControlsGeometry();
+	updateFooterLabelsGeometry();
 
 	rpl::combine(
 		_toggleAccounts->rightSkipValue(),
@@ -816,9 +869,11 @@ void MainMenu::updateInnerControlsGeometry() {
 		+ st::mainMenuSkip
 		+ _menu->height();
 	const auto available = height() - st::mainMenuCoverHeight - contentHeight;
+	const auto footerContentHeight = 2 * st::mainMenuVersionBottom
+									 + st::mainMenuFooterLabelSkip
+									 + _telegram->height() + _version->height();
 	const auto footerHeight = std::max(
-		available,
-		st::mainMenuFooterHeightMin);
+		available, std::max(st::mainMenuFooterHeightMin, footerContentHeight));
 	if (_footer->height() != footerHeight) {
 		_footer->resize(_footer->width(), footerHeight);
 	}
