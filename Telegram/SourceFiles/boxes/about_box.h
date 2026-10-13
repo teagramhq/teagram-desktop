@@ -17,3 +17,4 @@ void ArchiveHintBox(
 
 QString telegramFaqLink();
 QString currentVersionText();
+QString currentVersionReleaseLink();

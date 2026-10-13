@@ -109,14 +109,16 @@ class AuthenticatedTeagramUpdate final {
 	AuthenticateTeagramUpdateManifest(const QByteArray &manifest,
 									  const QByteArray &signature,
 									  quint64 installedBuild,
-									  TeagramUpdateChannel installedChannel);
+									  TeagramUpdateChannel installedChannel,
+									  quint64 highWaterBuild);
 
 #ifdef TDESKTOP_UNIT_TESTS
 	friend TeagramUpdateManifestVerificationResult
 	AuthenticateTeagramUpdateManifestForTests(
 		const QByteArray &manifest, const QByteArray &signature,
 		quint64 installedBuild, TeagramUpdateChannel installedChannel,
-		const std::optional<TeagramUpdatePublicKey> &trustedKey);
+		const std::optional<TeagramUpdatePublicKey> &trustedKey,
+		quint64 highWaterBuild);
 #endif // TDESKTOP_UNIT_TESTS
 };
 
@@ -146,7 +148,8 @@ VerifyTeagramUpdatePackage(const QByteArray &manifest,
 AuthenticateTeagramUpdateManifest(const QByteArray &manifest,
 								  const QByteArray &signature,
 								  quint64 installedBuild,
-								  TeagramUpdateChannel installedChannel);
+								  TeagramUpdateChannel installedChannel,
+								  quint64 highWaterBuild = 0);
 
 [[nodiscard]] TeagramUpdateVerificationResult
 VerifyAuthenticatedTeagramUpdateArchive(
@@ -165,7 +168,8 @@ VerifyTeagramUpdatePackageForTests(
 AuthenticateTeagramUpdateManifestForTests(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
-	const std::optional<TeagramUpdatePublicKey> &trustedKey);
+	const std::optional<TeagramUpdatePublicKey> &trustedKey,
+	quint64 highWaterBuild = 0);
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace Core
