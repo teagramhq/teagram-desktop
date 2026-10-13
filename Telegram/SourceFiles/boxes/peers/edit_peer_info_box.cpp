@@ -518,14 +518,57 @@ public:
 	[[nodiscard]] bool autoTranslateControlPresentForRegressionTest() const {
 		return _autoTranslateControlPresentForRegressionTest;
 	}
+	[[nodiscard]] EditPeerInfoBox::ManageRowsForRegressionTest
+	manageRowsForRegressionTest() const {
+		return _manageRowsForRegressionTest;
+	}
 	[[nodiscard]] QString titleForRegressionTest() const {
 		Expects(_controls.title != nullptr);
 		return _controls.title->getLastText();
+	}
+	[[nodiscard]] QString descriptionForRegressionTest() const {
+		Expects(_controls.description != nullptr);
+		return _controls.description->getLastText();
+	}
+	[[nodiscard]] bool descriptionErrorShownForRegressionTest() const {
+		return _descriptionErrorShownForRegressionTest;
 	}
 	void saveRenameForRegressionTest(QString title) {
 		Expects(_controls.title != nullptr);
 		_controls.title->setText(title);
 		save();
+	}
+	void
+	saveManageChangesForRegressionTest(QString title, QString description,
+									   not_null<ChannelData *> discussionLink,
+									   int starsPerDirectMessage) {
+		Expects(_controls.title != nullptr);
+		Expects(_controls.description != nullptr);
+		Expects(_discussionLinkSavedValue.has_value());
+		_controls.title->setText(title);
+		_controls.description->setText(description);
+		*_discussionLinkSavedValue = discussionLink;
+		_starsPerDirectMessageSavedValue
+			= rpl::variable<int>(starsPerDirectMessage);
+		save();
+	}
+	void saveDescriptionForRegressionTest(QString description,
+										  int starsPerDirectMessage) {
+		Expects(_controls.description != nullptr);
+		_controls.description->setText(description);
+		_starsPerDirectMessageSavedValue
+			= rpl::variable<int>(starsPerDirectMessage);
+		save();
+	}
+	void saveDirectMessagesPriceForRegressionTest(int starsPerDirectMessage) {
+		_starsPerDirectMessageSavedValue
+			= rpl::variable<int>(starsPerDirectMessage);
+		save();
+	}
+	void
+	saveDirectMessagesPriceStageForRegressionTest(int starsPerDirectMessage) {
+		_savingData.starsPerDirectMessage = starsPerDirectMessage;
+		saveDirectMessagesPrice();
 	}
 	void saveAutoTranslateForRegressionTest(bool enabled) {
 		_savingData.autotranslate = enabled;
@@ -678,6 +721,8 @@ public:
 	Saving _savingData;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	bool _autoTranslateControlPresentForRegressionTest = false;
+	EditPeerInfoBox::ManageRowsForRegressionTest _manageRowsForRegressionTest;
+	bool _descriptionErrorShownForRegressionTest = false;
 #endif
 
 	struct PrivacyAndForwards {
@@ -1011,6 +1056,9 @@ bool Controller::canEditInformation() const {
 }
 
 bool Controller::canEditReactions() const {
+	if (!_peer->session().paidFeaturesSupported()) {
+		return false;
+	}
 	if (const auto channel = _peer->asChannel()) {
 		return channel->amCreator()
 			|| (channel->adminRights() & ChatAdminRight::ChangeInfo);
@@ -1649,12 +1697,15 @@ void Controller::fillManageSection() {
 		&& channel->canPostMessages();
 	const auto canEditStickers = isChannel && channel->canEditStickers();
 	const auto canDeleteChannel = isChannel && channel->canDelete();
-	const auto canEditColorIndex = isChannel && channel->canEditEmoji();
+	const auto canEditColorIndex = isChannel
+								   && channel->session().paidFeaturesSupported()
+								   && channel->canEditEmoji();
 	const auto canViewOrEditDiscussionLink = isChannel
 		&& (channel->discussionLink()
 			|| (channel->isBroadcast() && channel->canEditInformation()));
-	const auto canEditDirectMessages = isChannel
-		&& (channel->isBroadcast() && channel->canEditInformation());
+	const auto canEditDirectMessages
+		= isChannel && channel->session().paidFeaturesSupported()
+		  && (channel->isBroadcast() && channel->canEditInformation());
 	const auto communityEligible = isChannel
 		&& (channel->isMegagroup() || channel->isBroadcast())
 		&& !channel->isMonoforum()
@@ -1672,6 +1723,9 @@ void Controller::fillManageSection() {
 	}
 	if (canEditDirectMessages) {
 		fillDirectMessagesButton();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_manageRowsForRegressionTest.directMessages = true;
+#endif
 	}
 	if (canEditPreHistoryHidden) {
 		fillHistoryVisibilityButton();
@@ -1681,6 +1735,9 @@ void Controller::fillManageSection() {
 	}
 	if (canEditColorIndex) {
 		fillColorIndexButton();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_manageRowsForRegressionTest.appearance = true;
+#endif
 	}
 	if (canEditAutoTranslate) {
 		fillAutoTranslateButton();
@@ -1725,6 +1782,9 @@ void Controller::fillManageSection() {
 			std::move(label),
 			[=] { editReactions(); },
 			{ &st::menuIconGroupReactions });
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_manageRowsForRegressionTest.reactions = true;
+#endif
 	}
 	if (canEditPermissions) {
 		AddButtonWithCount(
@@ -2407,7 +2467,8 @@ bool Controller::validateDiscussionLink(Saving &to) const {
 }
 
 bool Controller::validateDirectMessagesPrice(Saving &to) const {
-	if (!_starsPerDirectMessageSavedValue) {
+	if (!_peer->session().paidFeaturesSupported()
+		|| !_starsPerDirectMessageSavedValue) {
 		return true;
 	}
 	to.starsPerDirectMessage = _starsPerDirectMessageSavedValue->current();
@@ -2682,7 +2743,7 @@ void Controller::saveDiscussionLink() {
 
 void Controller::saveDirectMessagesPrice() {
 	const auto channel = _peer->asChannel();
-	if (!channel) {
+	if (!channel || !channel->session().paidFeaturesSupported()) {
 		return continueSave();
 	}
 	const auto current = CurrentPricePerDirectMessage(channel);
@@ -2838,6 +2899,9 @@ void Controller::saveDescription() {
 			return;
 		}
 		_controls.description->showError();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_descriptionErrorShownForRegressionTest = true;
+#endif
 		_navigation->showToast(type);
 		cancelSave();
 	}).send();
@@ -3181,11 +3245,37 @@ void EditPeerInfoBox::prepare() {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	_autoTranslateControlPresentForRegressionTest
 		= controller->autoTranslateControlPresentForRegressionTest();
+	_manageRowsForRegressionTest = controller->manageRowsForRegressionTest();
 	_titleForRegressionTest
 		= [=] { return controller->titleForRegressionTest(); };
+	_descriptionForRegressionTest
+		= [=] { return controller->descriptionForRegressionTest(); };
+	_descriptionErrorShownForRegressionTest
+		= [=] { return controller->descriptionErrorShownForRegressionTest(); };
 	_saveRenameForRegressionTest = [=](QString title) {
 		controller->saveRenameForRegressionTest(std::move(title));
 	};
+	_saveManageChangesForRegressionTest =
+		[=](QString title, QString description,
+			not_null<ChannelData *> discussionLink, int starsPerDirectMessage) {
+			controller->saveManageChangesForRegressionTest(
+				std::move(title), std::move(description), discussionLink,
+				starsPerDirectMessage);
+		};
+	_saveDescriptionForRegressionTest
+		= [=](QString description, int starsPerDirectMessage) {
+			  controller->saveDescriptionForRegressionTest(
+				  std::move(description), starsPerDirectMessage);
+		  };
+	_saveDirectMessagesPriceForRegressionTest = [=](int starsPerDirectMessage) {
+		controller->saveDirectMessagesPriceForRegressionTest(
+			starsPerDirectMessage);
+	};
+	_saveDirectMessagesPriceStageForRegressionTest
+		= [=](int starsPerDirectMessage) {
+			  controller->saveDirectMessagesPriceStageForRegressionTest(
+				  starsPerDirectMessage);
+		  };
 	_saveAutoTranslateForRegressionTest = [=](bool enabled) {
 		controller->saveAutoTranslateForRegressionTest(enabled);
 	};
@@ -3199,14 +3289,57 @@ bool EditPeerInfoBox::autoTranslateControlPresentForRegressionTest() const {
 	return _autoTranslateControlPresentForRegressionTest;
 }
 
+EditPeerInfoBox::ManageRowsForRegressionTest
+EditPeerInfoBox::manageRowsForRegressionTest() const {
+	return _manageRowsForRegressionTest;
+}
+
 QString EditPeerInfoBox::titleForRegressionTest() const {
 	Expects(_titleForRegressionTest != nullptr);
 	return _titleForRegressionTest();
 }
 
+QString EditPeerInfoBox::descriptionForRegressionTest() const {
+	Expects(_descriptionForRegressionTest != nullptr);
+	return _descriptionForRegressionTest();
+}
+
+bool EditPeerInfoBox::descriptionErrorShownForRegressionTest() const {
+	Expects(_descriptionErrorShownForRegressionTest != nullptr);
+	return _descriptionErrorShownForRegressionTest();
+}
+
 void EditPeerInfoBox::saveRenameForRegressionTest(QString title) {
 	Expects(_saveRenameForRegressionTest != nullptr);
 	_saveRenameForRegressionTest(std::move(title));
+}
+
+void EditPeerInfoBox::saveManageChangesForRegressionTest(
+	QString title, QString description, not_null<ChannelData *> discussionLink,
+	int starsPerDirectMessage) {
+	Expects(_saveManageChangesForRegressionTest != nullptr);
+	_saveManageChangesForRegressionTest(std::move(title),
+										std::move(description), discussionLink,
+										starsPerDirectMessage);
+}
+
+void EditPeerInfoBox::saveDescriptionForRegressionTest(
+	QString description, int starsPerDirectMessage) {
+	Expects(_saveDescriptionForRegressionTest != nullptr);
+	_saveDescriptionForRegressionTest(std::move(description),
+									  starsPerDirectMessage);
+}
+
+void EditPeerInfoBox::saveDirectMessagesPriceForRegressionTest(
+	int starsPerDirectMessage) {
+	Expects(_saveDirectMessagesPriceForRegressionTest != nullptr);
+	_saveDirectMessagesPriceForRegressionTest(starsPerDirectMessage);
+}
+
+void EditPeerInfoBox::saveDirectMessagesPriceStageForRegressionTest(
+	int starsPerDirectMessage) {
+	Expects(_saveDirectMessagesPriceStageForRegressionTest != nullptr);
+	_saveDirectMessagesPriceStageForRegressionTest(starsPerDirectMessage);
 }
 
 void EditPeerInfoBox::saveAutoTranslateForRegressionTest(bool enabled) {

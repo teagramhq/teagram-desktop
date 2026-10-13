@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
+#include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
@@ -115,22 +116,20 @@ template <typename Request>
 	const Request &expectedRequest,
 	const typename Request::ResponseType &result) {
 	if (capture.requests.size() != index + 1) {
-		std::fprintf(
-			stderr,
-			"Translation controls regression failed: channel Save request "
-			"%zu was missing or unexpected requests were sent.\n",
-			index);
+		std::fprintf(stderr,
+					 "Channel Save regression failed: request "
+					 "%zu was missing or unexpected requests were sent.\n",
+					 index);
 		return false;
 	}
 	auto expectedBody = mtpBuffer();
 	expectedRequest.write(expectedBody);
 	auto &request = capture.requests[index];
 	if (request.body != expectedBody || !request.callbacks.done) {
-		std::fprintf(
-			stderr,
-			"Translation controls regression failed: channel Save request "
-			"%zu had the wrong payload or no success handler.\n",
-			index);
+		std::fprintf(stderr,
+					 "Channel Save regression failed: request "
+					 "%zu had the wrong payload or no success handler.\n",
+					 index);
 		return false;
 	}
 	auto response = MTP::Response();
@@ -138,11 +137,46 @@ template <typename Request>
 	result.write(response.reply);
 	auto done = std::move(request.callbacks.done);
 	if (!done(response)) {
+		std::fprintf(stderr,
+					 "Channel Save regression failed: response "
+					 "%zu could not be parsed.\n",
+					 index);
+		return false;
+	}
+	return true;
+}
+
+template <typename Request>
+[[nodiscard]] bool FailChannelSaveRequestForRegressionTest(
+	ChannelSaveRequestCapture &capture, size_t index,
+	const Request &expectedRequest, const MTP::Error &error) {
+	if (capture.requests.size() != index + 1) {
 		std::fprintf(
 			stderr,
-			"Translation controls regression failed: channel Save response "
-			"%zu could not be parsed.\n",
+			"Manage controls regression failed: save request %zu was missing "
+			"or unexpected requests were sent.\n",
 			index);
+		return false;
+	}
+	auto expectedBody = mtpBuffer();
+	expectedRequest.write(expectedBody);
+	auto &request = capture.requests[index];
+	if (request.body != expectedBody || !request.callbacks.fail) {
+		std::fprintf(
+			stderr,
+			"Manage controls regression failed: save request %zu had the wrong "
+			"payload or no error handler.\n",
+			index);
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	const auto fail = std::move(request.callbacks.fail);
+	if (!fail(error, response)) {
+		std::fprintf(stderr,
+					 "Manage controls regression failed: save error %zu was "
+					 "not handled.\n",
+					 index);
 		return false;
 	}
 	return true;
@@ -214,7 +248,10 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	switch (body.front()) {
 	case mtpc_channels_deactivateAllUsernames:
 	case mtpc_channels_editTitle:
+	case mtpc_channels_setDiscussionGroup:
 	case mtpc_channels_toggleAutotranslation:
+	case mtpc_channels_updatePaidMessagesPrice:
+	case mtpc_messages_editChatAbout:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -2654,6 +2691,331 @@ template <typename Predicate>
 		"absent; stock controls and RPCs remained enabled.\n");
 	return true;
 }
+
+[[nodiscard]] bool RunManageControlsLifecycleRegression(
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> customController) {
+	const auto stockChannel
+		= stockController->session().data().channel(ChannelId(1161));
+	const auto customChannel
+		= customController->session().data().channel(ChannelId(1162));
+	const auto configureChannel
+		= [](not_null<ChannelData *> channel, const QString &name) {
+			  channel->setAccessHash(channel->id.value * 100);
+			  channel->setName(name, QString());
+			  channel->setFlags(ChannelDataFlag::Creator
+								| ChannelDataFlag::Broadcast);
+		  };
+	configureChannel(stockChannel, u"Stock manage channel"_q);
+	configureChannel(customChannel, u"Custom manage channel"_q);
+	const auto stockGroup
+		= stockController->session().data().chat(ChatId(1163));
+	const auto customGroup
+		= customController->session().data().chat(ChatId(1164));
+	stockGroup->setName(u"Stock manage group"_q);
+	stockGroup->setFlags(ChatDataFlag::Creator);
+	customGroup->setName(u"Custom manage group"_q);
+	customGroup->setFlags(ChatDataFlag::Creator);
+	const auto customDiscussion
+		= customController->session().data().channel(ChannelId(1165));
+	customDiscussion->setAccessHash(customDiscussion->id.value * 100);
+	customDiscussion->setName(u"Custom discussion group"_q, QString());
+	customDiscussion->setFlags(ChannelDataFlag::Creator
+							   | ChannelDataFlag::Megagroup);
+	const auto stockChannelPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*stockChannel));
+	const auto customChannelPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*customChannel));
+	const auto stockGroupPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*stockGroup));
+	const auto customGroupPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*customGroup));
+
+	const auto openManageBox
+		= [](not_null<Window::SessionController *> controller,
+			 not_null<PeerData *> peer) {
+			  return controller->window().show(
+				  object_ptr<EditPeerInfoBox>(controller->widget().get(),
+											  controller, peer),
+				  Ui::LayerOption::KeepOther, anim::type::normal);
+		  };
+	const auto channelRowsMatch
+		= [&](EditPeerInfoBox *box, bool paidSupported) {
+			  const auto rows = box->manageRowsForRegressionTest();
+			  return rows.directMessages == paidSupported
+					 && rows.reactions == paidSupported
+					 && rows.appearance == paidSupported;
+		  };
+	for (const auto customFirst : {false, true}) {
+		const auto firstController
+			= customFirst ? customController : stockController;
+		const auto secondController
+			= customFirst ? stockController : customController;
+		const auto firstPeer
+			= customFirst ? customChannelPeer : stockChannelPeer;
+		const auto secondPeer
+			= customFirst ? stockChannelPeer : customChannelPeer;
+		auto firstBox = openManageBox(firstController, firstPeer);
+		QCoreApplication::processEvents();
+		if (!firstBox || !channelRowsMatch(firstBox.data(), !customFirst)) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: case=channel_visibility_"
+				"first_custom=%d.\n",
+				customFirst);
+			return false;
+		}
+		auto secondBox = openManageBox(secondController, secondPeer);
+		QCoreApplication::processEvents();
+		if (!secondBox || !channelRowsMatch(secondBox.data(), customFirst)) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: case=channel_visibility_"
+				"second_custom=%d.\n",
+				!customFirst);
+			return false;
+		}
+		firstController->hideLayer(anim::type::instant);
+		secondController->hideLayer(anim::type::instant);
+	}
+	std::fprintf(
+		stderr,
+		"Manage controls regression passed: cases=channel_visibility_"
+		"separate_windows_stock_then_custom,channel_visibility_separate_"
+		"windows_custom_then_stock\n");
+
+	auto stockGroupBox = openManageBox(stockController, stockGroupPeer);
+	auto customGroupBox = openManageBox(customController, customGroupPeer);
+	QCoreApplication::processEvents();
+	if (!stockGroupBox || !customGroupBox
+		|| !stockGroupBox->manageRowsForRegressionTest().reactions
+		|| customGroupBox->manageRowsForRegressionTest().reactions) {
+		std::fprintf(stderr,
+					 "Manage controls regression failed: case=group_reactions_"
+					 "separate_windows.\n");
+		return false;
+	}
+	stockController->hideLayer(anim::type::instant);
+	customController->hideLayer(anim::type::instant);
+	std::fprintf(
+		stderr,
+		"Manage controls regression passed: case=group_reactions_separate_"
+		"windows.\n");
+	{
+		auto customStageBox
+			= openManageBox(customController, customChannelPeer);
+		if (!customStageBox
+			|| customStageBox->manageRowsForRegressionTest().directMessages) {
+			std::fprintf(stderr, "Manage controls regression failed: custom "
+								 "paid row was present "
+								 "for the stale-price save.\n");
+			return false;
+		}
+		ChannelSaveRequestCapture capture{
+			.instance = &customController->session().mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		customStageBox->saveDirectMessagesPriceStageForRegressionTest(42);
+		if (!capture.requests.empty()) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: stale hidden price sent "
+				"a paid request.\n");
+			return false;
+		}
+		customController->hideLayer(anim::type::instant);
+	}
+	std::fprintf(stderr,
+				 "Manage controls regression passed: case=custom_save_stage_"
+				 "ignores_stale_nonzero_price.\n");
+
+	{
+		auto stockSaveBox = openManageBox(stockController, stockChannelPeer);
+		if (!stockSaveBox
+			|| !stockSaveBox->manageRowsForRegressionTest().directMessages) {
+			std::fprintf(stderr, "Manage controls regression failed: stock "
+								 "paid row was hidden.\n");
+			return false;
+		}
+		ChannelSaveRequestCapture capture{
+			.instance = &stockController->session().mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		stockSaveBox->saveDirectMessagesPriceForRegressionTest(42);
+		const auto stockInput = stockChannel->inputChannel();
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 0, MTPchannels_DeactivateAllUsernames(stockInput),
+				MTP_boolTrue())) {
+			return false;
+		}
+		using PriceFlag = MTPchannels_UpdatePaidMessagesPrice::Flag;
+		if (!FailChannelSaveRequestForRegressionTest(
+				capture, 1,
+				MTPchannels_UpdatePaidMessagesPrice(
+					MTP_flags(PriceFlag::f_broadcast_messages_allowed),
+					stockInput, MTP_long(42)),
+				MTP::Error::Local(u"CHAT_NOT_MODIFIED"_q, QString()))) {
+			return false;
+		}
+		if (!WaitForRegressionCondition([&] { return !stockSaveBox; })) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: stock price save did not "
+				"finish.\n");
+			return false;
+		}
+	}
+	std::fprintf(stderr,
+				 "Manage controls regression passed: case=stock_direct_message_"
+				 "price_save.\n");
+
+	const auto savedTitle = u"Manage saved title"_q;
+	const auto savedDescription = u"Manage saved description"_q;
+	{
+		auto customSaveBox = openManageBox(customController, customChannelPeer);
+		if (!customSaveBox) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: custom save box did not "
+				"open.\n");
+			return false;
+		}
+		ChannelSaveRequestCapture capture{
+			.instance = &customController->session().mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		customSaveBox->saveManageChangesForRegressionTest(
+			savedTitle, savedDescription, customDiscussion, 42);
+		const auto customInput = customChannel->inputChannel();
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 0, MTPchannels_DeactivateAllUsernames(customInput),
+				MTP_boolTrue())) {
+			return false;
+		}
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 1,
+				MTPchannels_SetDiscussionGroup(
+					customInput, customDiscussion->inputChannel()),
+				MTP_updates(MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+							MTP_vector<MTPChat>(), MTP_int(1), MTP_int(0)))) {
+			return false;
+		}
+		using ChannelFlag = MTPDchannel::Flag;
+		const auto titleUpdateChannel = MTP_channel(
+			MTP_flags(ChannelFlag::f_creator | ChannelFlag::f_broadcast
+					  | ChannelFlag::f_access_hash),
+			MTP_long(customChannel->id.value),
+			MTP_long(customChannel->id.value * 100), MTP_string(savedTitle),
+			MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
+			MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+			MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+			MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+			MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+			MTPlong(), MTPlong(), MTPlong());
+		const auto titleReply = MTP_updates(
+			MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+			MTP_vector<MTPChat>({titleUpdateChannel}), MTP_int(1), MTP_int(0));
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 2,
+				MTPchannels_EditTitle(customInput, MTP_string(savedTitle)),
+				titleReply)) {
+			return false;
+		}
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 3,
+				MTPmessages_EditChatAbout(customChannel->input(),
+										  MTP_string(savedDescription)),
+				MTP_boolTrue())) {
+			return false;
+		}
+		if (!WaitForRegressionCondition([&] { return !customSaveBox; })
+			|| capture.requests.size() != 4
+			|| customChannel->name() != savedTitle
+			|| customChannel->about() != savedDescription
+			|| customChannel->discussionLink() != &*customDiscussion) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: custom supported edits "
+				"did not save cleanly without a paid price request.\n");
+			return false;
+		}
+	}
+	auto reopenedCustomBox = openManageBox(customController, customChannelPeer);
+	QCoreApplication::processEvents();
+	if (!reopenedCustomBox || !channelRowsMatch(reopenedCustomBox.data(), false)
+		|| reopenedCustomBox->titleForRegressionTest() != savedTitle
+		|| reopenedCustomBox->descriptionForRegressionTest()
+			   != savedDescription) {
+		std::fprintf(
+			stderr,
+			"Manage controls regression failed: custom saved values did not "
+			"reopen with paid rows hidden.\n");
+		return false;
+	}
+	customController->hideLayer(anim::type::instant);
+	std::fprintf(
+		stderr, "Manage controls regression passed: case=custom_hidden_nonzero_"
+				"price_omitted_title_description_link_saved.\n");
+
+	{
+		auto customErrorBox
+			= openManageBox(customController, customChannelPeer);
+		if (!customErrorBox) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: custom error box did not "
+				"open.\n");
+			return false;
+		}
+		ChannelSaveRequestCapture capture{
+			.instance = &customController->session().mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		const auto rejectedDescription = u"Rejected description"_q;
+		customErrorBox->saveDescriptionForRegressionTest(rejectedDescription,
+														 42);
+		const auto customInput = customChannel->inputChannel();
+		if (!ReplyToChannelSaveRequestForRegressionTest(
+				capture, 0, MTPchannels_DeactivateAllUsernames(customInput),
+				MTP_boolTrue())) {
+			return false;
+		}
+		if (!FailChannelSaveRequestForRegressionTest(
+				capture, 1,
+				MTPmessages_EditChatAbout(customChannel->input(),
+										  MTP_string(rejectedDescription)),
+				MTP::Error::Local(u"CHAT_ABOUT_INVALID"_q, QString()))) {
+			return false;
+		}
+		QCoreApplication::processEvents();
+		if (!customErrorBox
+			|| !customErrorBox->descriptionErrorShownForRegressionTest()
+			|| capture.requests.size() != 2) {
+			std::fprintf(
+				stderr,
+				"Manage controls regression failed: supported description "
+				"error was lost or the box closed.\n");
+			return false;
+		}
+		customController->hideLayer(anim::type::instant);
+	}
+	std::fprintf(
+		stderr, "Manage controls regression passed: case=custom_supported_edit_"
+				"error_keeps_box_open.\n");
+	return true;
+}
 #endif
 
 template <typename Predicate>
@@ -3793,6 +4155,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 												   pinnedController)) {
 		return FailChatParticipantsRegression(
 			"translation controls crossed stock and custom sessions");
+	}
+	if (!RunManageControlsLifecycleRegression(stockController,
+											  pinnedController)) {
+		return FailChatParticipantsRegression(
+			"Manage controls crossed stock and custom sessions");
 	}
 #endif
 	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
