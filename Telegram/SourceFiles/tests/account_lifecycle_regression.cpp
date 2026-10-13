@@ -5757,7 +5757,7 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 	}
 	const auto closeSettingsLayer = gsl::finally([&] {
 		if (window->isLayerShown()) {
-			window->hideLayer(anim::type::instant);
+			window->hideSettingsAndLayer(anim::type::instant);
 		}
 	});
 	const auto channel = account->session().data().channel(ChannelId(2051));
