@@ -2293,6 +2293,33 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	return 1;
 }
 
+[[nodiscard]] bool BasicGroupAdminRightsMatch(not_null<ChatData *> chat,
+											  const char *scenario,
+											  bool moderationAllowed) {
+	const auto hasAdminRights = chat->hasAdminRights();
+	const auto canEditPermissions = chat->canEditPermissions();
+	const auto canDeleteMessages = chat->canDeleteMessages();
+	const auto canBanMembers = chat->canBanMembers();
+	const auto canHaveInviteLink = chat->canHaveInviteLink();
+	const auto canAddAdmins = chat->canAddAdmins();
+	const auto matches = (hasAdminRights == moderationAllowed)
+						 && (canEditPermissions == moderationAllowed)
+						 && (canDeleteMessages == moderationAllowed)
+						 && (canBanMembers == moderationAllowed)
+						 && (canHaveInviteLink == moderationAllowed)
+						 && !canAddAdmins;
+	if (!matches) {
+		std::fprintf(
+			stderr,
+			"Basic-group admin rights mismatch: scenario=%s "
+			"hasAdminRights=%d canEditPermissions=%d canDeleteMessages=%d "
+			"canBanMembers=%d canHaveInviteLink=%d canAddAdmins=%d\n",
+			scenario, hasAdminRights, canEditPermissions, canDeleteMessages,
+			canBanMembers, canHaveInviteLink, canAddAdmins);
+	}
+	return matches;
+}
+
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 [[nodiscard]] HistoryItem *
 AddTranslationRegressionMessage(not_null<Main::Session *> session,
@@ -3869,6 +3896,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"bio editor target did not follow account support");
 	}
 #endif
+	const auto stockSelf = stock->session().user();
+	const auto customSelf = pinned->session().user();
+	if (stockSelf == customSelf || stockSelf->id != customSelf->id
+		|| &stockSelf->session() != &stock->session()
+		|| &customSelf->session() != &pinned->session()) {
+		return FailChatParticipantsRegression(
+			"basic-group admin fixture identities are not distinct "
+			"session-owned objects with the same user id");
+	}
 	const auto actionChatId = ChatId(1052);
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
 	const auto stockActionPeer
@@ -3912,7 +3948,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 								UserId(2)));
 
 	const auto adminActionChatId = ChatId(1054);
-	const auto self = stock->session().user();
 	const auto adminActionChat
 		= stock->session().data().chat(adminActionChatId);
 	const auto adminActionPeer
@@ -3921,14 +3956,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		adminActionPeer,
 		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
 								UserId(2), true));
+	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
+		adminActionChat, "stock full-list promotion", true);
 	if (!HasExpectedParticipants(adminActionChat, UserId(2))
-		|| !adminActionChat->admins.contains(self)
-		|| !adminActionChat->hasAdminRights()
-		|| !adminActionChat->canEditPermissions()
-		|| !adminActionChat->canDeleteMessages()
-		|| !adminActionChat->canBanMembers()
-		|| !adminActionChat->canHaveInviteLink()
-		|| adminActionChat->canAddAdmins()) {
+		|| !adminActionChat->admins.contains(stockSelf)
+		|| !fullListAdminRightsMatch) {
 		return FailChatParticipantsRegression(
 			"official basic-group admin lost its moderation rights or gained "
 			"creator-only powers");
@@ -3943,11 +3975,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		fullListDemotionPeer,
 		RegressionChatFullReply(fullListDemotionChatId, 1, u"+10000000001"_q,
 								UserId(2), true));
-	if (!fullListDemotionChat->admins.contains(self)
-		|| !fullListDemotionChat->canEditPermissions()
-		|| !fullListDemotionChat->canDeleteMessages()
-		|| !fullListDemotionChat->canBanMembers()
-		|| !fullListDemotionChat->canHaveInviteLink()) {
+	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
+		fullListDemotionChat, "stock full-list demotion seed", true);
+	if (!fullListDemotionChat->admins.contains(stockSelf)
+		|| !fullListDemotionSeedRightsMatch) {
 		return FailChatParticipantsRegression(
 			"full-list demotion fixture did not start with admin moderation "
 			"rights");
@@ -3970,14 +4001,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 									MTP_string(QString())),
 			}),
 			MTP_int(2)));
+	const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
+		fullListDemotionChat, "stock full-list demotion", false);
 	if (!HasExpectedParticipants(fullListDemotionChat, UserId(2))
-		|| fullListDemotionChat->admins.contains(self)
+		|| fullListDemotionChat->admins.contains(stockSelf)
 		|| fullListDemotionChat->adminRights() != ChatAdminRights()
-		|| fullListDemotionChat->canEditPermissions()
-		|| fullListDemotionChat->canDeleteMessages()
-		|| fullListDemotionChat->canBanMembers()
-		|| fullListDemotionChat->canHaveInviteLink()
-		|| fullListDemotionChat->canAddAdmins()) {
+		|| !fullListDemotionRightsMatch) {
 		return FailChatParticipantsRegression(
 			"normal-server full-list demotion retained admin rights or "
 			"moderation controls");
@@ -3988,19 +4017,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto customAdminActionPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*customAdminActionChat));
 	customAdminActionChat->setAdminRights(
-		customAdminActionChat->defaultAdminRights(self).flags);
+		customAdminActionChat->defaultAdminRights(customSelf).flags);
+	const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
+		customAdminActionChat, "custom full-list promotion seed", true);
+	if (customAdminActionChat->adminRights() == ChatAdminRights()
+		|| !customFullListSeedRightsMatch) {
+		return FailChatParticipantsRegression(
+			"custom full-list promotion fixture did not seed admin rights");
+	}
 	pinned->session().api().processFullPeer(
 		customAdminActionPeer,
 		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
 								UserId(2), true));
+	const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
+		customAdminActionChat, "custom full-list promotion", false);
 	if (!HasExpectedParticipants(customAdminActionChat, UserId(2))
-		|| !customAdminActionChat->admins.contains(self)
-		|| customAdminActionChat->hasAdminRights()
-		|| customAdminActionChat->canEditPermissions()
-		|| customAdminActionChat->canDeleteMessages()
-		|| customAdminActionChat->canBanMembers()
-		|| customAdminActionChat->canHaveInviteLink()
-		|| customAdminActionChat->canAddAdmins()) {
+		|| !customAdminActionChat->admins.contains(customSelf)
+		|| customAdminActionChat->admins.contains(stockSelf)
+		|| customAdminActionChat->adminRights() != ChatAdminRights()
+		|| !customAdminRightsMatch) {
 		return FailChatParticipantsRegression(
 			"custom-server basic-group admin gained rights or creator-only "
 			"powers");
@@ -4018,13 +4053,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 							  MTP_long(liveAdminChatId.bare),
 							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
 							  .c_updateChatParticipantAdmin());
-	if (!liveAdminChat->admins.contains(self)
-		|| !liveAdminChat->hasAdminRights()
-		|| !liveAdminChat->canEditPermissions()
-		|| !liveAdminChat->canDeleteMessages()
-		|| !liveAdminChat->canBanMembers()
-		|| !liveAdminChat->canHaveInviteLink()
-		|| liveAdminChat->canAddAdmins()) {
+	const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
+		liveAdminChat, "stock incremental promotion", true);
+	if (!liveAdminChat->admins.contains(stockSelf)
+		|| !livePromotionRightsMatch) {
 		return FailChatParticipantsRegression(
 			"incremental official basic-group promotion lost admin rights or "
 			"granted creator-only powers");
@@ -4034,8 +4066,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											 MTP_long(selfId.bare),
 											 MTP_boolFalse(), MTP_int(3))
 											 .c_updateChatParticipantAdmin());
-	if (liveAdminChat->admins.contains(self)
-		|| liveAdminChat->hasAdminRights()) {
+	const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
+		liveAdminChat, "stock incremental demotion", false);
+	if (liveAdminChat->admins.contains(stockSelf) || !liveDemotionRightsMatch) {
 		return FailChatParticipantsRegression(
 			"incremental basic-group demotion did not clear admin display "
 			"state");
@@ -4051,19 +4084,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
 								UserId(2)));
 	customLiveAdminChat->setAdminRights(
-		customLiveAdminChat->defaultAdminRights(self).flags);
+		customLiveAdminChat->defaultAdminRights(customSelf).flags);
+	const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
+		customLiveAdminChat, "custom incremental promotion seed", true);
+	if (customLiveAdminChat->adminRights() == ChatAdminRights()
+		|| !customLiveSeedRightsMatch) {
+		return FailChatParticipantsRegression(
+			"custom incremental promotion fixture did not seed admin rights");
+	}
 	Data::ApplyChatUpdate(customLiveAdminChat,
 						  MTP_updateChatParticipantAdmin(
 							  MTP_long(customLiveAdminChatId.bare),
 							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
 							  .c_updateChatParticipantAdmin());
-	if (!customLiveAdminChat->admins.contains(self)
-		|| customLiveAdminChat->hasAdminRights()
-		|| customLiveAdminChat->canEditPermissions()
-		|| customLiveAdminChat->canDeleteMessages()
-		|| customLiveAdminChat->canBanMembers()
-		|| customLiveAdminChat->canHaveInviteLink()
-		|| customLiveAdminChat->canAddAdmins()) {
+	const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
+		customLiveAdminChat, "custom incremental promotion", false);
+	if (!customLiveAdminChat->admins.contains(customSelf)
+		|| customLiveAdminChat->admins.contains(stockSelf)
+		|| customLiveAdminChat->adminRights() != ChatAdminRights()
+		|| !customPromotionRightsMatch) {
 		return FailChatParticipantsRegression(
 			"incremental custom-server promotion gained admin rights or "
 			"creator-only powers");
@@ -4074,8 +4113,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 									   MTP_long(selfId.bare), MTP_boolFalse(),
 									   MTP_int(3))
 			.c_updateChatParticipantAdmin());
-	if (customLiveAdminChat->admins.contains(self)
-		|| customLiveAdminChat->hasAdminRights()) {
+	const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
+		customLiveAdminChat, "custom incremental demotion", false);
+	if (customLiveAdminChat->admins.contains(customSelf)
+		|| customLiveAdminChat->admins.contains(stockSelf)
+		|| customLiveAdminChat->adminRights() != ChatAdminRights()
+		|| !customDemotionRightsMatch) {
 		return FailChatParticipantsRegression(
 			"incremental custom-server demotion did not clear admin display "
 			"state");
