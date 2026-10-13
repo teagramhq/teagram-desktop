@@ -5755,6 +5755,11 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		|| !RunChannelCallLinkRegression(account, window)) {
 		return false;
 	}
+	const auto closeSettingsLayer = gsl::finally([&] {
+		if (window->isLayerShown()) {
+			window->hideLayer(anim::type::instant);
+		}
+	});
 	const auto channel = account->session().data().channel(ChannelId(2051));
 
 	const auto context = QVariant::fromValue(ClickHandlerContext{
@@ -7146,9 +7151,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	ReportCallRegressionCheckpoint("conference preservation complete");
 	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
-	if (!RunCallLinkAndSettingsRegression(pinned, pinnedWindow)) {
+	const auto callLinksAndSettingsPassed
+		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
+	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
+	if (!callLinksAndSettingsPassed || !settingsLayerClosed) {
 		return FailChatParticipantsRegression(
-			"call links or settings links bypassed the pinned-session gate");
+			"call links or settings links bypassed the pinned-session gate or "
+			"left a settings layer open");
 	}
 	ReportCallRegressionCheckpoint("call links and settings complete");
 	auto pinnedController = pinnedWindow->sessionController();
