@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_install.h"
 #include "core/teagram_update_worker.h"
 #include "lang/lang_keys.h"
+#include "logs.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
@@ -463,14 +464,13 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 						setState(_candidate->downloaded()
 									 ? TeagramUpdateUiState::Ready
 									 : TeagramUpdateUiState::Available);
-					} else if (_state.runningBuild < _state.highWaterBuild) {
-						setState(TeagramUpdateUiState::Recovered);
-					} else if (CompiledChannel() == TeagramUpdateChannel::Dev
-							   && _state.selectedChannel
-									  == TeagramUpdateChannel::Main) {
-						setState(TeagramUpdateUiState::WaitingForMain);
 					} else {
-						setState(TeagramUpdateUiState::UpToDate);
+						setState(TeagramUpdateStateForNoUpdate(
+							_installCommittedInSession,
+							_state.runningBuild < _state.highWaterBuild,
+							CompiledChannel() == TeagramUpdateChannel::Dev
+								&& _state.selectedChannel
+									   == TeagramUpdateChannel::Main));
 					}
 				} else if (reason
 						   == TeagramUpdateDownloadReason::NetworkFailure) {
@@ -491,6 +491,15 @@ void TeagramUpdateManager::beginCheck(bool automatic) {
 							 == TeagramUpdateDownloadReason::LimitExceeded)
 							  ? u"package-size"_q
 							  : u"release-metadata"_q;
+					const auto candidateBuild
+						= candidate ? candidate->metadata().build()
+									: quint64(0);
+					LOG(("Teagram update check rejected: reason=%1 "
+						 "candidateBuild=%2 "
+						 "replacementCommitted=0 rejectionCode=%3")
+							.arg(static_cast<int>(reason))
+							.arg(candidateBuild)
+							.arg(_state.rejectionCode));
 					setState(TeagramUpdateUiState::Rejected);
 				}
 			},
@@ -621,6 +630,12 @@ void TeagramUpdateManager::beginDownload() {
 						= (reason == TeagramUpdateDownloadReason::LimitExceeded)
 							  ? u"package-size"_q
 							  : u"package-hash"_q;
+					LOG(("Teagram update download rejected: reason=%1 "
+						 "candidateBuild=%2 replacementCommitted=0 "
+						 "rejectionCode=%3")
+							.arg(static_cast<int>(reason))
+							.arg(job->candidate->metadata().build())
+							.arg(_state.rejectionCode));
 					setState(TeagramUpdateUiState::Rejected);
 				}
 			},
@@ -842,6 +857,13 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 						   == TeagramUpdateInstallReason::ArchiveRejected)
 							  ? u"archive"_q
 							  : u"signature"_q;
+					LOG(("Teagram update install rejected: reason=%1 "
+						 "candidateBuild=%2 replacementCommitted=%3 "
+						 "rejectionCode=%4")
+							.arg(static_cast<int>(result.reason))
+							.arg(candidate->metadata().build())
+							.arg(result.replacementCommitted ? 1 : 0)
+							.arg(_state.rejectionCode));
 					setState(TeagramUpdateUiState::Rejected);
 				} break;
 				case TeagramUpdateInstallReason::ReplacementFailed: {
@@ -855,6 +877,13 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 					}
 					_state.candidateBuild = rejected.noteBuild;
 					_state.rejectionCode = u"bundle-identity"_q;
+					LOG(("Teagram update replacement failed: reason=%1 "
+						 "candidateBuild=%2 replacementCommitted=%3 "
+						 "rejectionCode=%4")
+							.arg(static_cast<int>(result.reason))
+							.arg(candidate->metadata().build())
+							.arg(result.replacementCommitted ? 1 : 0)
+							.arg(_state.rejectionCode));
 					setState(TeagramUpdateUiState::Rejected);
 				} break;
 				case TeagramUpdateInstallReason::RecoveryRequired:
@@ -869,6 +898,11 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 					_pendingExplicitRestart = false;
 					_automaticRecoveryRestartPending
 						= result.replacementCommitted && _state.automatic;
+					LOG(("Teagram update recovery required: reason=%1 "
+						 "candidateBuild=%2 replacementCommitted=%3")
+							.arg(static_cast<int>(result.reason))
+							.arg(candidate->metadata().build())
+							.arg(result.replacementCommitted ? 1 : 0));
 					setState(TeagramUpdateUiState::RecoveryRequired);
 					break;
 				}
@@ -1000,6 +1034,9 @@ std::chrono::milliseconds TeagramUpdateManager::idleFor() const {
 
 void TeagramUpdateManager::persistCommittedBuild(quint64 build,
 												 bool replacementCommitted) {
+	if (replacementCommitted) {
+		_installCommittedInSession = true;
+	}
 	const auto highWater = TeagramUpdateCommittedHighWater(
 		_state.highWaterBuild, build, replacementCommitted);
 	if (!highWater) {

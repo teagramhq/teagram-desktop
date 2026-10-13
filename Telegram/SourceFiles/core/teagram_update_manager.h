@@ -78,6 +78,7 @@ class TeagramUpdateManager final : public QObject {
 	bool _automaticJob = false;
 	bool _automaticInstalledRestartPending = false;
 	bool _automaticRecoveryRestartPending = false;
+	bool _installCommittedInSession = false;
 	bool _updatedToastPending = false;
 	TeagramUpdateUiState _pendingRestartState = TeagramUpdateUiState::Ready;
 	TeagramUpdateDownloadStage _downloadStage

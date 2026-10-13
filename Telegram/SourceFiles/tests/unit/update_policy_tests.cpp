@@ -65,6 +65,18 @@ TEST_CASE(TeagramUpdateHighWaterPersistsFullUnsignedBuild) {
 	CHECK(ReadTeagramUpdateHighWater(settings) == 0);
 }
 
+TEST_CASE(TeagramUpdateNoUpdatePreservesCommittedInstallState) {
+	using State = TeagramUpdateUiState;
+	CHECK(TeagramUpdateStateForNoUpdate(true, true, false)
+		  == State::AlreadyInstalled);
+	CHECK(TeagramUpdateStateForNoUpdate(false, true, false)
+		  == State::Recovered);
+	CHECK(TeagramUpdateStateForNoUpdate(false, false, true)
+		  == State::WaitingForMain);
+	CHECK(TeagramUpdateStateForNoUpdate(false, false, false)
+		  == State::UpToDate);
+}
+
 TEST_CASE(TeagramUpdateControlsAreDisabledDuringRestarting) {
 	using State = TeagramUpdateUiState;
 	CHECK(TeagramUpdateControlDisabled(State::Checking, true));

@@ -124,6 +124,20 @@ TeagramUpdateControlDisabled(TeagramUpdateUiState state, bool checkControl) {
 				   || state == TeagramUpdateUiState::RecoveryRequired));
 }
 
+[[nodiscard]] constexpr TeagramUpdateUiState
+TeagramUpdateStateForNoUpdate(bool installCommittedInSession,
+							  bool runningBuildBelowHighWater,
+							  bool waitingForMain) {
+	if (installCommittedInSession) {
+		return TeagramUpdateUiState::AlreadyInstalled;
+	} else if (runningBuildBelowHighWater) {
+		return TeagramUpdateUiState::Recovered;
+	} else if (waitingForMain) {
+		return TeagramUpdateUiState::WaitingForMain;
+	}
+	return TeagramUpdateUiState::UpToDate;
+}
+
 [[nodiscard]] constexpr bool TeagramUpdateKeepPendingRestartAfterChannelChange(
 	bool pendingRestart, bool hasCandidate, bool candidateStillEligible,
 	bool installedBuildRestart) {
