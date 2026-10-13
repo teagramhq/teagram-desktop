@@ -93,7 +93,7 @@ if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1
 fi
-require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
+require_text "$mac_workflow" "CCACHE_MAXSIZE: \${{ github.event_name == 'pull_request' && '300M' || '5G' }}"
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 cache_setup_step="$(awk '
   /^      - name: First set up\.$/ { in_step = 1; next }
@@ -123,7 +123,7 @@ if grep -Eq 'macOS-arm64-ccache-(pr|dev)-' <<< "$ccache_restore_keys"; then
   printf 'MacOS cache restore keys must not include cross-scope PR/dev fallbacks.\n' >&2
   exit 1
 fi
-expected_ccache_restore_key='macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
+expected_ccache_restore_key='macOS-arm64-ccache-${{ github.event_name == '\''pull_request'\'' && '\''v2-pr'\'' || '\''dev'\'' }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-'
 if [[ "$ccache_restore_keys" != "$expected_ccache_restore_key" ]]; then
   printf 'MacOS cache restores must stay in the same PR/dev scope as their saves.\n' >&2
   exit 1
@@ -145,6 +145,15 @@ require_text "$mac_workflow" '::warning::Warm-cache MacOS PR build exceeded the 
 reject_text "$mac_workflow" '::error::Warm-cache (ccache and libraries) MacOS PR build exceeded the 30-minute limit.'
 reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
 require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
+require_text "$mac_workflow" 'name: Enforce PR compiler cache budget.'
+require_text "$mac_workflow" 'ccache --max-size="$CCACHE_MAXSIZE"'
+require_text "$mac_workflow" 'ccache --cleanup'
+cache_budget_line="$(grep -nF 'name: Enforce PR compiler cache budget.' "$mac_workflow" | cut -d: -f1)"
+cache_save_line="$(grep -nF 'name: Save Teagram compiler cache.' "$mac_workflow" | cut -d: -f1)"
+if [[ -z "$cache_budget_line" || -z "$cache_save_line" ]] || ((cache_budget_line >= cache_save_line)); then
+  printf 'The PR ccache size cap must run before the cache is saved.\n' >&2
+  exit 1
+fi
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
 require_text "$mac_workflow" "github.ref == 'refs/heads/dev'"
 require_text "$mac_workflow" "steps.cache-ccache.outputs.cache-matched-key == ''"

@@ -1,6 +1,8 @@
 name: Prune pull request caches.
 
 on:
+  push:
+    branches: [dev]
   pull_request_target:
     types: [closed]
 
@@ -10,6 +12,7 @@ permissions:
 jobs:
   prune:
     name: Prune closed pull request caches
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-26.04
 
     steps:
@@ -21,3 +24,32 @@ jobs:
           set -euo pipefail
           cache_ref="refs/pull/${PR_NUMBER}/merge"
           gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"
+
+  prune-obsolete:
+    name: Prune obsolete dependency and PR caches
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Delete cache entries replaced by GHCR and the capped PR scope.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cache_ids="$(gh cache list --repo "$GITHUB_REPOSITORY" --limit 1000 --json id,key --jq '.[] | select((.key | startswith("Linux-libs-")) or (.key | startswith("macOS-arm64-ccache-pr-"))) | .id')"
+          if [[ -z "$cache_ids" ]]; then
+            echo "No obsolete Linux dependency or uncapped macOS PR caches remain."
+          else
+            while IFS= read -r cache_id; do
+              [[ -n "$cache_id" ]] || continue
+              gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+            done <<< "$cache_ids"
+          fi
+          cache_bytes="$(gh cache list --repo "$GITHUB_REPOSITORY" --limit 1000 --json sizeInBytes --jq '[.[].sizeInBytes] | add // 0')"
+          cache_gib="$(awk -v bytes="$cache_bytes" 'BEGIN { printf "%.2f", bytes / 1073741824 }')"
+          printf 'Actions cache after obsolete-entry cleanup: %s bytes (%s GiB).\n' "$cache_bytes" "$cache_gib"
+          printf 'Actions cache after obsolete-entry cleanup: %s bytes (%s GiB).\n' \
+            "$cache_bytes" "$cache_gib" >> "$GITHUB_STEP_SUMMARY"
+          if (( cache_bytes > 9663676416 )); then
+            echo "::warning::Actions cache is above the 9 GiB target (${cache_gib} GiB)."
+          fi
