@@ -9,6 +9,7 @@ fi
 unit_binary="$1"
 log_directory="$2"
 max_log_bytes=65536
+fixture_timeout_seconds=300
 fixtures=(
   TeagramUpdateArchiveWritesStayConfined
   TeagramUpdateInstallFailurePreservesApp
@@ -22,6 +23,7 @@ fixtures=(
   TeagramUpdateRejectsUntrustedOrIneligiblePackage
   TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation
   TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation
+  TeagramUpdateWorkerShutdownCleansCandidateArchive
 )
 
 mkdir -p "$log_directory"
@@ -34,6 +36,7 @@ failed=0
   printf 'tested_sha=%s\n' "$tested_sha"
   printf 'architecture=%s\n' "$architecture"
   printf 'fixture_count=%s\n' "${#fixtures[@]}"
+  printf 'fixture_timeout_seconds=%s\n' "$fixture_timeout_seconds"
 } >> "$results"
 
 if [[ "$architecture" != arm64 ]]; then
@@ -48,12 +51,33 @@ if [[ ! -x "$unit_binary" ]]; then
   exit 1
 fi
 
+run_fixture() {
+  python3 - "$unit_binary" "$fixture" "$fixture_timeout_seconds" <<'PY'
+import subprocess
+import sys
+
+unit_binary, fixture, timeout_seconds = sys.argv[1:]
+try:
+    result = subprocess.run(
+        [unit_binary, "--case", fixture],
+        timeout=int(timeout_seconds),
+    )
+except subprocess.TimeoutExpired:
+    print(
+        f"{fixture} exceeded its {timeout_seconds}-second timeout.",
+        file=sys.stderr,
+    )
+    sys.exit(124)
+sys.exit(result.returncode)
+PY
+}
+
 for fixture in "${fixtures[@]}"; do
   log_file="$log_directory/$fixture.log"
   printf 'Running %s\n' "$fixture"
 
   set +e
-  "$unit_binary" --case "$fixture" 2>&1 \
+  run_fixture 2>&1 \
     | tail -c "$max_log_bytes" > "$log_file"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
@@ -74,8 +98,8 @@ for fixture in "${fixtures[@]}"; do
     failed=1
   fi
 
-  printf '%s result=%s exit=%s log_bytes<=%s\n' \
-    "$fixture" "$result" "$test_status" "$max_log_bytes" \
+  printf '%s result=%s exit=%s timeout_seconds=%s log_bytes<=%s\n' \
+    "$fixture" "$result" "$test_status" "$fixture_timeout_seconds" "$max_log_bytes" \
     | tee -a "$results"
 done
 
@@ -84,6 +108,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     printf '## macOS updater fixtures\n\n'
     printf -- '- Tested PR head: `%s`\n' "$tested_sha"
     printf -- '- Runner architecture: `%s`\n' "$architecture"
+    printf -- '- Per-case timeout: %s seconds.\n' "$fixture_timeout_seconds"
     printf -- '- Fixture logs: at most %s bytes each.\n\n' "$max_log_bytes"
     printf '```text\n'
     tail -n "${#fixtures[@]}" "$results"
