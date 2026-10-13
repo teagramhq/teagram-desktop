@@ -2299,8 +2299,10 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	const auto openEditBox
 		= [](not_null<Window::SessionController *> controller,
 			 not_null<ChannelData *> channel) {
-			  return controller->show(object_ptr<EditPeerInfoBox>(
-				  controller->widget().get(), controller, channel));
+			  return controller->window().show(
+				  object_ptr<EditPeerInfoBox>(controller->widget().get(),
+											  controller, channel),
+				  Ui::LayerOption::KeepOther, anim::type::normal);
 		  };
 	ResetTranslationRpcCountsForRegressionTest();
 	auto customEditBox = openEditBox(customController, customChannel);
@@ -2374,11 +2376,12 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	}
 	stockController->hideLayer(anim::type::instant);
 
-	const auto openLanguageBox
-		= [](not_null<Window::SessionController *> controller) {
-			  return controller->show(object_ptr<LanguageBox>(
-				  controller->widget().get(), controller));
-		  };
+	const auto openLanguageBox =
+		[](not_null<Window::SessionController *> controller) {
+			return controller->window().show(
+				object_ptr<LanguageBox>(controller->widget().get(), controller),
+				Ui::LayerOption::KeepOther, anim::type::normal);
+		};
 	auto customLanguageBox = openLanguageBox(customController);
 	QCoreApplication::processEvents();
 	if (!customLanguageBox
