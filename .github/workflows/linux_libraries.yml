@@ -35,6 +35,7 @@ concurrency:
 permissions:
   contents: read
 
+# Trust boundary and token scope: see .github/ci-cache-threat-model.md.
 jobs:
   publish:
     if: github.repository == 'teagramhq/teagram-desktop'

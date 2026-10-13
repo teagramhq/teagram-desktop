@@ -45,6 +45,13 @@ grep -Fqx 'cache-hit=false' "$output" || fail 'A missing manifest must request a
 grep -Fq -- '- Registry result: miss' "$summary" || fail 'A missing tag must report the cache miss in the step summary.'
 
 : > "$output"
+env PATH="${temp_dir}/bin:${PATH}" GITHUB_STEP_SUMMARY="$summary" MOCK_DOCKER_STATUS=1 \
+  MOCK_DOCKER_OUTPUT='Error response from daemon: manifest for ghcr.io/example/linux-libraries:missing not found: manifest unknown' \
+  bash "$script" pull ghcr.io/example/linux-libraries:missing tdesktop:centos_env "$output" \
+  > "${temp_dir}/missing-pull.log" 2>&1
+grep -Fqx 'cache-hit=false' "$output" || fail 'A missing image manifest during pull must request a build fallback.'
+
+: > "$output"
 if env PATH="${temp_dir}/bin:${PATH}" MOCK_DOCKER_STATUS=1 \
   MOCK_DOCKER_OUTPUT='denied: requested access to the resource is denied' \
   bash "$script" pull ghcr.io/example/linux-libraries:abc tdesktop:centos_env "$output" \
@@ -53,6 +60,17 @@ if env PATH="${temp_dir}/bin:${PATH}" MOCK_DOCKER_STATUS=1 \
 fi
 if [[ -s "$output" ]]; then
   fail 'An authorization error must not report a cache result.'
+fi
+
+: > "$output"
+if env PATH="${temp_dir}/bin:${PATH}" MOCK_DOCKER_STATUS=1 \
+  MOCK_DOCKER_OUTPUT='failed to copy: unexpected status from GET request to https://ghcr.io/v2/example/linux-libraries/blobs/sha256:abc: 404 Not Found' \
+  bash "$script" pull ghcr.io/example/linux-libraries:abc tdesktop:centos_env "$output" \
+  > "${temp_dir}/layer-404.log" 2>&1; then
+  fail 'A missing layer during pull must fail instead of requesting a cache-miss fallback.'
+fi
+if [[ -s "$output" ]]; then
+  fail 'A missing layer during pull must not report a cache result.'
 fi
 
 printf 'Linux dependency image tests passed.\n'
