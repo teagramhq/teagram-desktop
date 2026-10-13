@@ -939,6 +939,7 @@ jobs:
           [[ "$failed" == false ]]
 
       - name: Enforce PR compiler cache budget.
+        id: ccache-budget
         if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.setup.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
@@ -1006,6 +1007,7 @@ jobs:
               github.ref == 'refs/heads/dev'
               || (
                 github.event_name == 'pull_request'
+                  && steps.ccache-budget.outcome == 'success'
                   && steps.cache-ccache.outputs.cache-matched-key == ''
               )
             )

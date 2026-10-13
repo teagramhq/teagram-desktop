@@ -57,6 +57,21 @@ require_text "$mac_workflow" 'macOS-arm64-ccache-${{ github.event_name'
 require_text "$mac_workflow" "&& 'v2-pr' || 'dev'"
 require_text "$mac_workflow" 'name: Enforce PR compiler cache budget.'
 require_text "$mac_workflow" 'ccache --cleanup'
+mac_cache_budget_step="$(awk '
+  /^      - name: Enforce PR compiler cache budget\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+mac_cache_save_step="$(awk '
+  /^      - name: Save Teagram compiler cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+if ! grep -Fq 'id: ccache-budget' <<< "$mac_cache_budget_step" \
+  || ! grep -Fq "&& steps.ccache-budget.outcome == 'success'" <<< "$mac_cache_save_step"; then
+  echo "PR compiler cache saves must require successful budget enforcement." >&2
+  exit 1
+fi
 
 if grep -E '^[[:space:]]*(key|restore-keys):.*null' "$linux_workflow" "$mac_workflow"; then
   echo "Linux and macOS cache keys must not contain null." >&2
