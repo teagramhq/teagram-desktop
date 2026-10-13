@@ -411,6 +411,10 @@ bool Session::accountBioEditSupported() const {
 	return details::accountBioEditSupported(mtp().dcOptions());
 }
 
+bool Session::accountUsernameEditSupported() const {
+	return details::accountUsernameEditSupported(mtp().dcOptions());
+}
+
 bool Session::isTestMode() const {
 	return mtp().isTestMode();
 }

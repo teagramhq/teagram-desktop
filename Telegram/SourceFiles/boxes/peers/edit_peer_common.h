@@ -37,6 +37,23 @@ constexpr auto kUsernameCheckTimeout = crl::time(200);
 	return true;
 }
 
+enum class UsernameUpdateFailureOutcome {
+	Saved,
+	Immutable,
+	Other,
+};
+
+[[nodiscard]] inline UsernameUpdateFailureOutcome
+ResolveUsernameUpdateFailure(const QString &error, const QString &sent,
+							 const QString &editable) {
+	if (error == u"USERNAME_IMMUTABLE"_q) {
+		return UsernameUpdateFailureOutcome::Immutable;
+	} else if ((error == u"USERNAME_NOT_MODIFIED"_q) || (sent == editable)) {
+		return UsernameUpdateFailureOutcome::Saved;
+	}
+	return UsernameUpdateFailureOutcome::Other;
+}
+
 class UsernameEditorFlow final {
 public:
 	enum class Mode {
@@ -68,7 +85,17 @@ public:
 	: _mode(mode) {
 	}
 
+	void setReadOnly() {
+		_readOnly = true;
+		++_revision;
+		_good = false;
+		_status = Status::Default;
+	}
+
 	void inputChanged(const QString &username, bool locallyValid) {
+		if (_readOnly) {
+			return;
+		}
 		++_revision;
 		_username = username;
 		_locallyValid = locallyValid;
@@ -232,7 +259,7 @@ public:
 	}
 
 	[[nodiscard]] bool shouldCheck() const {
-		return !_unavailable;
+		return !_readOnly && !_unavailable;
 	}
 
 	void setGood(bool value) {
@@ -246,7 +273,7 @@ public:
 
 	template <typename Update>
 	[[nodiscard]] bool trySave(bool requireGood, Update update) const {
-		if (requireGood && !_good) {
+		if (_readOnly || (requireGood && !_good)) {
 			return false;
 		}
 		update(_username);
@@ -257,6 +284,7 @@ private:
 	const Mode _mode;
 	quint64 _revision = 0;
 	QString _username;
+	bool _readOnly = false;
 	bool _good = false;
 	bool _unavailable = false;
 	bool _locallyValid = false;

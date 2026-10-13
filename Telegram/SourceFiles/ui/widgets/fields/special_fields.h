@@ -97,12 +97,10 @@ public:
 	void setMaxLength(int maxLength);
 
 protected:
-	void correctValue(
-		const QString &was,
-		int wasCursor,
-		QString &now,
-		int &nowCursor) override;
-	void paintAdditionalPlaceholder(QPainter &p) override;
+  void keyPressEvent(QKeyEvent *e) override;
+  void correctValue(const QString &was, int wasCursor, QString &now,
+					int &nowCursor) override;
+  void paintAdditionalPlaceholder(QPainter &p) override;
 
 private:
 	QString _linkPlaceholder;
