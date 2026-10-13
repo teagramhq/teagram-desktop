@@ -245,7 +245,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	if (body.isEmpty()) {
 		return false;
 	}
-	switch (body.front()) {
+	switch (static_cast<uint32>(body.front())) {
 	case mtpc_channels_deactivateAllUsernames:
 	case mtpc_channels_editTitle:
 	case mtpc_channels_setDiscussionGroup:
@@ -2757,7 +2757,7 @@ template <typename Predicate>
 			= customFirst ? stockChannelPeer : customChannelPeer;
 		auto firstBox = openManageBox(firstController, firstPeer);
 		QCoreApplication::processEvents();
-		if (!firstBox || !channelRowsMatch(firstBox.data(), !customFirst)) {
+		if (!firstBox || !channelRowsMatch(firstBox.get(), !customFirst)) {
 			std::fprintf(
 				stderr,
 				"Manage controls regression failed: case=channel_visibility_"
@@ -2767,7 +2767,7 @@ template <typename Predicate>
 		}
 		auto secondBox = openManageBox(secondController, secondPeer);
 		QCoreApplication::processEvents();
-		if (!secondBox || !channelRowsMatch(secondBox.data(), customFirst)) {
+		if (!secondBox || !channelRowsMatch(secondBox.get(), customFirst)) {
 			std::fprintf(
 				stderr,
 				"Manage controls regression failed: case=channel_visibility_"
@@ -2905,8 +2905,7 @@ template <typename Predicate>
 				capture, 1,
 				MTPchannels_SetDiscussionGroup(
 					customInput, customDiscussion->inputChannel()),
-				MTP_updates(MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
-							MTP_vector<MTPChat>(), MTP_int(1), MTP_int(0)))) {
+				MTP_boolTrue())) {
 			return false;
 		}
 		using ChannelFlag = MTPDchannel::Flag;
@@ -2951,7 +2950,7 @@ template <typename Predicate>
 	}
 	auto reopenedCustomBox = openManageBox(customController, customChannelPeer);
 	QCoreApplication::processEvents();
-	if (!reopenedCustomBox || !channelRowsMatch(reopenedCustomBox.data(), false)
+	if (!reopenedCustomBox || !channelRowsMatch(reopenedCustomBox.get(), false)
 		|| reopenedCustomBox->titleForRegressionTest() != savedTitle
 		|| reopenedCustomBox->descriptionForRegressionTest()
 			   != savedDescription) {
