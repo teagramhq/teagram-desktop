@@ -18,6 +18,7 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
+      - '.github/scripts/test_unit_feedback.py'
       - 'README.md'
   pull_request:
     paths:
@@ -34,6 +35,7 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
+      - '.github/scripts/test_unit_feedback.py'
       - 'README.md'
   workflow_dispatch:
 
@@ -91,3 +93,6 @@ jobs:
 
       - name: Test release tag source.
         run: bash .github/scripts/test_ensure_release_tag.sh
+
+      - name: Test unit feedback selection.
+        run: python3 .github/scripts/test_unit_feedback.py

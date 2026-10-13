@@ -57,6 +57,37 @@ Without `--case`, the runner continues to execute every registered case. A
 name that does not match a registered case runs none and exits nonzero. Linux
 CI checks that the named case runs by itself and that an unknown name fails.
 
+### Focused feedback on GitHub Actions
+
+The opt-in `Unit feedback.` workflow provisions the Linux dependency image,
+configures Debug with `TDESKTOP_API_TEST=ON`, and builds only `test_unit`.
+Its `ref` input selects the source branch or full commit SHA independently
+of the workflow revision. Its optional `cases` input accepts up to 32 exact
+names separated by whitespace; an empty input retains the complete unit run.
+
+For the updater integration cases:
+
+```bash
+gh workflow run unit_feedback.yml --repo teagramhq/teagram-desktop --ref dev \
+  -f ref=FULL_SOURCE_SHA \
+  -f cases='TeagramUpdateDownloadAcceptsProducerArtifactsAndDiscardsArchive TeagramUpdateDownloadAcceptsFixedSource TeagramUpdateChannelSwitchDoesNotDowngrade TeagramUpdateRestartWaitsForActiveWork TeagramUpdateWorkerShutdownCleansCandidateArchive TeagramUpdateDownloadFailsWithoutMutation TeagramUpdateRejectsUntrustedOrIneligiblePackage'
+```
+
+The job summary records the resolved source SHA, requested case names and
+combined case counts. The `unit-feedback-<run-id>-<attempt>` artifact retains
+`tested-sha.txt`, `unit-cases.txt` and `test_unit.log` for seven days, including
+failed runs. Download it with `gh run download <run-id> --repo
+teagramhq/teagram-desktop --name unit-feedback-<run-id>-<attempt>`.
+
+Every requested case runs even if an earlier case fails. The log records each
+case's exit status; any failed or incomplete case makes the batch fail after
+reporting the combined results.
+
+The job has a four-hour limit to include a cold dependency image build; the
+configure, `test_unit` build and execution step has a 30-minute limit. This
+feedback lane does not replace the required `Linux.` build/unit or formatting
+checks. No release assets or shared dependency caches are written.
+
 ### Adding a case
 
 Write a `TEST_CASE` in a file under `Telegram/SourceFiles/tests/unit/` and add

@@ -8,6 +8,11 @@ on:
         required: true
         default: dev
         type: string
+      cases:
+        description: Exact case names separated by whitespace; empty runs all cases.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -17,10 +22,12 @@ jobs:
   unit:
     name: Unit-only feedback
     runs-on: ubuntu-26.04
+    timeout-minutes: 240
 
     env:
       CONFIG: Debug
       IMAGE_TAG: tdesktop:centos_env
+      UNIT_CASES: ${{ inputs.cases }}
 
     steps:
       - name: Clone.
@@ -28,6 +35,35 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
+          persist-credentials: false
+
+      - name: Record tested revision.
+        run: |
+          tested_sha=$(git rev-parse HEAD)
+          echo "TESTED_SHA=$tested_sha" >> "$GITHUB_ENV"
+          printf '%s\n' "$tested_sha" > "$RUNNER_TEMP/tested-sha.txt"
+
+      - name: Validate case selection.
+        shell: bash
+        run: |
+          set -euo pipefail
+          case_input="${UNIT_CASES//$'\n'/ }"
+          read -r -a selected_cases <<< "$case_input"
+          if [[ -n "$UNIT_CASES" && ${#selected_cases[@]} -eq 0 ]] \
+            || (( ${#selected_cases[@]} > 32 )); then
+            echo "::error::Select between 1 and 32 exact case names, or leave cases empty."
+            exit 1
+          fi
+          for selected_case in "${selected_cases[@]}"; do
+            if [[ ! "$selected_case" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "::error::Case names must be C++ identifiers."
+              exit 1
+            fi
+          done
+          : > "$RUNNER_TEMP/unit-cases.txt"
+          if (( ${#selected_cases[@]} > 0 )); then
+            printf '%s\n' "${selected_cases[@]}" > "$RUNNER_TEMP/unit-cases.txt"
+          fi
 
       - name: First set up.
         run: |
@@ -57,10 +93,8 @@ jobs:
           load: true
           tags: ${{ env.IMAGE_TAG }}
 
-      - name: Record tested revision.
-        run: echo "TESTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
       - name: Unit tests.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/test_unit.log"
@@ -69,17 +103,45 @@ jobs:
           docker run --rm \
             -u "$(id -u)" \
             -v "$PWD:/usr/src/tdesktop" \
+            -v "$RUNNER_TEMP/unit-cases.txt:/tmp/unit-cases.txt:ro" \
             -e CONFIG="$CONFIG" \
             "$IMAGE_TAG" \
-            /usr/src/tdesktop/Telegram/build/docker/centos_env/build_tests.sh \
-            -D CMAKE_CONFIGURATION_TYPES=Debug \
-            -D TDESKTOP_API_TEST=ON 2>&1 | tee "$log"
-          test_status=${PIPESTATUS[0]}
+            bash -lc '
+              set -euo pipefail
+              cd /usr/src/tdesktop/Telegram
+              ./configure.sh \
+                -D CMAKE_CONFIGURATION_TYPES=Debug \
+                -D TDESKTOP_API_TEST=ON
+              cmake --build ../out --config "$CONFIG" --target test_unit
+              if [ -s /tmp/unit-cases.txt ]; then
+                batch_status=0
+                while IFS= read -r selected_case; do
+                  case_status=0
+                  "../out/$CONFIG/test_unit" --case "$selected_case" || case_status=$?
+                  printf "case_exit %s %s\n" "$selected_case" "$case_status"
+                  if [ "$case_status" -ne 0 ]; then
+                    batch_status=1
+                  fi
+                done < /tmp/unit-cases.txt
+                exit "$batch_status"
+              else
+                "../out/$CONFIG/test_unit"
+              fi
+            ' 2>&1 | tee "$log"
+          pipeline_status=("${PIPESTATUS[@]}")
           set -e
+          test_status=${pipeline_status[0]}
+          if [ "${pipeline_status[1]}" -ne 0 ]; then
+            echo "::error::Unable to retain the test_unit log."
+            exit 1
+          fi
 
           summary="$(sed -nE \
             's/^([0-9]+) case\(s\), ([0-9]+) failed, ([0-9]+) failed check\(s\)\.$/\1 \2 \3/p' \
-            "$log" | tail -n 1)"
+            "$log" | awk '
+              { cases += $1; failed += $2; checks += $3; summaries++ }
+              END { if (summaries) print cases, failed, checks, summaries }
+            ')"
           if [ -z "$summary" ]; then
             echo "::error::test_unit did not report a case summary."
             {
@@ -91,7 +153,8 @@ jobs:
             exit 1
           fi
 
-          read -r cases failed failed_checks <<< "$summary"
+          read -r cases failed failed_checks summaries <<< "$summary"
+          requested_cases=$(wc -l < "$RUNNER_TEMP/unit-cases.txt")
           {
             echo "## Unit feedback"
             echo
@@ -99,6 +162,11 @@ jobs:
             echo "- Cases: $cases"
             echo "- Failed cases: $failed"
             echo "- Failed checks: $failed_checks"
+            if [ "$requested_cases" -gt 0 ]; then
+              echo
+              echo "Requested case names:"
+              sed 's/^/- /' "$RUNNER_TEMP/unit-cases.txt"
+            fi
             if [ "$failed" -gt 0 ]; then
               echo
               echo "Failed case names:"
@@ -106,12 +174,29 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+          if [ "$requested_cases" -gt 0 ] \
+            && { [ "$summaries" -ne "$requested_cases" ] || [ "$cases" -ne "$requested_cases" ]; }; then
+            echo "::error::Each requested case must report exactly one executed case."
+            exit 1
+          fi
           if [ "$test_status" -eq 0 ] \
             && [ "$cases" -gt 0 ] \
-            && [ "$failed" -eq 0 ]; then
+            && [ "$failed" -eq 0 ] \
+            && [ "$failed_checks" -eq 0 ]; then
             exit 0
           fi
           if [ "$test_status" -eq 0 ]; then
             exit 1
           fi
           exit "$test_status"
+
+      - name: Upload unit feedback.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-feedback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/test_unit.log
+            ${{ runner.temp }}/unit-cases.txt
+            ${{ runner.temp }}/tested-sha.txt
+          retention-days: 7
