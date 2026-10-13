@@ -51,11 +51,7 @@ struct TeagramUpdateReplacementResult {
 	TeagramUpdateReplacementReason reason
 		= TeagramUpdateReplacementReason::InvalidPath;
 	QString previousBundlePath;
-
-	[[nodiscard]] bool replaced() const {
-		return reason == TeagramUpdateReplacementReason::Replaced
-			   || reason == TeagramUpdateReplacementReason::RecoveryRequired;
-	}
+	bool committed = false;
 };
 
 enum class TeagramUpdateStartupRecoveryReason {
@@ -79,6 +75,9 @@ enum class TeagramUpdateReplacementFailurePoint {
 	BeforePreviousMove,
 	AfterPreviousMove,
 	BeforeCandidateMove,
+	RollbackSwapFailure,
+	RollbackSyncFailure,
+	CommittedSyncFailure,
 };
 
 using TeagramUpdateReplacementFailureInjector

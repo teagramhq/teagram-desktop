@@ -13,12 +13,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/weak_ptr.h"
 #include "boxes/peers/edit_peer_common.h"
+#include "boxes/peers/edit_peer_info_box.h"
+#include "boxes/language_box.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
+#include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_download_manager.h"
 #include "data/data_peer_id.h"
@@ -28,7 +31,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
 #include "history/history.h"
+#include "history/history_item.h"
+#include "history/view/history_view_translate_bar.h"
+#include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "iv/iv_rich_page.h"
+#include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -43,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
 #include "settings/settings_builder.h"
+#include "spellcheck/platform/platform_language.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
@@ -85,6 +94,59 @@ namespace Tests {
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
+auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+
+struct CapturedChannelSaveRequest {
+	mtpRequestId id = 0;
+	mtpBuffer body;
+	MTP::ResponseHandler callbacks;
+};
+
+struct ChannelSaveRequestCapture {
+	not_null<MTP::Instance *> instance;
+	std::vector<CapturedChannelSaveRequest> requests;
+};
+
+ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
+
+template <typename Request>
+[[nodiscard]] bool ReplyToChannelSaveRequestForRegressionTest(
+	ChannelSaveRequestCapture &capture, size_t index,
+	const Request &expectedRequest,
+	const typename Request::ResponseType &result) {
+	if (capture.requests.size() != index + 1) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save request "
+			"%zu was missing or unexpected requests were sent.\n",
+			index);
+		return false;
+	}
+	auto expectedBody = mtpBuffer();
+	expectedRequest.write(expectedBody);
+	auto &request = capture.requests[index];
+	if (request.body != expectedBody || !request.callbacks.done) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save request "
+			"%zu had the wrong payload or no success handler.\n",
+			index);
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	result.write(response.reply);
+	auto done = std::move(request.callbacks.done);
+	if (!done(response)) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: channel Save response "
+			"%zu could not be parsed.\n",
+			index);
+		return false;
+	}
+	return true;
+}
 
 } // namespace
 
@@ -110,6 +172,58 @@ void ResetLifecycleWriteCountsForRegressionTest() {
 LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest() {
 	return gLifecycleWriteCounts;
+}
+
+void RecordTranslationRpcForRegressionTest(
+	TranslationRpcForRegressionTest operation) {
+	switch (operation) {
+	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
+		++gTranslationRpcCounts.channelAutoTranslationToggle;
+		break;
+	case TranslationRpcForRegressionTest::Text:
+		++gTranslationRpcCounts.text;
+		break;
+	case TranslationRpcForRegressionTest::Rich:
+		++gTranslationRpcCounts.rich;
+		break;
+	}
+}
+
+void ResetTranslationRpcCountsForRegressionTest() {
+	gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+}
+
+TranslationRpcCountsForRegressionTest
+GetTranslationRpcCountsForRegressionTest() {
+	return gTranslationRpcCounts;
+}
+
+bool CaptureChannelSaveRequestForRegressionTest(
+	not_null<MTP::Instance *> instance, int32 requestId,
+	const MTP::details::SerializedRequest &request,
+	MTP::ResponseHandler &callbacks) {
+	const auto capture = gChannelSaveRequestCapture;
+	if (!capture || capture->instance != instance) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	switch (body.front()) {
+	case mtpc_channels_deactivateAllUsernames:
+	case mtpc_channels_editTitle:
+	case mtpc_channels_toggleAutotranslation:
+		capture->requests.push_back({
+			.id = requestId,
+			.body = std::move(body),
+			.callbacks = std::move(callbacks),
+		});
+		return true;
+	default:
+		return false;
+	}
 }
 
 MainQueueBarrierResult
@@ -1347,33 +1461,33 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPlong(), MTPlong(), MTPlong());
 }
 
-[[nodiscard]] MTPmessages_ChatFull RegressionChatFullReply(
-		ChatId chatId,
-		int version,
-		QString selfPhone,
-		UserId creatorId) {
+[[nodiscard]] MTPmessages_ChatFull
+RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
+						UserId creatorId, bool memberIsAdmin = false) {
 	const auto memberId = (creatorId == UserId(1))
 		? UserId(2)
 		: UserId(1);
+	const auto member
+		= memberIsAdmin
+			  ? MTP_chatParticipantAdmin(
+					MTP_flags(MTPDchatParticipantAdmin::Flags()),
+					MTP_long(memberId.bare), MTP_long(creatorId.bare),
+					MTP_int(0), MTP_string(QString()))
+			  : MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+									MTP_long(memberId.bare),
+									MTP_long(creatorId.bare), MTP_int(0),
+									MTP_string(QString()));
 	const auto participants = MTP_chatParticipants(
 		MTP_long(chatId.bare),
 		MTP_vector<MTPChatParticipant>({
 			MTP_chatParticipantCreator(
 				MTP_flags(MTPDchatParticipantCreator::Flags()),
-				MTP_long(creatorId.bare),
-				MTP_string(QString())),
-			MTP_chatParticipant(
-				MTP_flags(MTPDchatParticipant::Flags()),
-				MTP_long(memberId.bare),
-				MTP_long(creatorId.bare),
-				MTP_int(0),
-				MTP_string(QString())),
-			MTP_chatParticipant(
-				MTP_flags(MTPDchatParticipant::Flags()),
-				MTP_long(UserId(9).bare),
-				MTP_long(UserId(1).bare),
-				MTP_int(0),
-				MTP_string(QString())),
+				MTP_long(creatorId.bare), MTP_string(QString())),
+			member,
+			MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+								MTP_long(UserId(9).bare),
+								MTP_long(UserId(1).bare), MTP_int(0),
+								MTP_string(QString())),
 		}),
 		MTP_int(version));
 	const auto notifySettings = MTP_peerNotifySettings(
@@ -2183,6 +2297,337 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	std::fprintf(stderr, "Chat participants regression failed: %s\n", reason);
 	return 1;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] HistoryItem *
+AddTranslationRegressionMessage(not_null<Main::Session *> session,
+								not_null<ChannelData *> channel, MsgId id,
+								bool rich) {
+	const auto data = MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_post),
+		MTP_int(id), peerToMTP(session->userPeerId()),
+		MTPint(),	 // from_boosts_applied
+		MTPstring(), // from_rank
+		peerToMTP(channel->id),
+		MTPPeer(), // saved_peer_id
+		MTPMessageFwdHeader(),
+		MTP_long(0), // via_bot_id
+		MTPlong(),	 // via_business_bot_id
+		MTPPeer(),	 // guestchat_via_from
+		MTPMessageReplyHeader(),
+		MTP_int(1), // date
+		MTP_string(rich ? u"rich page summary"_q : u"bonjour tout le monde"_q),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(),
+		MTP_int(0), // views
+		MTP_int(0), // forwards
+		MTPMessageReplies(),
+		MTP_int(0), // edit_date
+		MTPstring(), MTPlong(), MTPMessageReactions(),
+		MTPVector<MTPRestrictionReason>(),
+		MTP_int(0), // ttl_period
+		MTPint(),	// quick_reply_shortcut_id
+		MTPlong(),	// effect
+		MTPFactCheck(),
+		MTPint(),  // report_delivery_until_date
+		MTPlong(), // paid_message_stars
+		MTPSuggestedPost(),
+		MTPint(),	 // schedule_repeat_period
+		MTPstring(), // summary_from_language
+		MTPRichMessage());
+	auto item = session->data().addNewMessage(data, MessageFlags(),
+											  NewMessageType::Existing);
+	if (item && rich) {
+		item->setRichPage(std::make_shared<Iv::RichPage>());
+	}
+	return item;
+}
+
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunTranslationControlsLifecycleRegression(
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> customController) {
+	auto &settings = Core::App().settings();
+	const auto previousTranslateChat = settings.translateChatEnabled();
+	const auto previousPlatformTranslate = settings.usePlatformTranslation();
+	const auto previousTranslateTo = settings.translateTo();
+	const auto restoreSettings = gsl::finally([&] {
+		settings.setTranslateChatEnabled(previousTranslateChat);
+		settings.setUsePlatformTranslation(previousPlatformTranslate);
+		settings.setTranslateTo(previousTranslateTo);
+	});
+	const auto target = LanguageId::FromName(Lang::DefaultLanguageId());
+	const auto offered = LanguageId::FromName(u"French"_q);
+	if (!target.known() || !offered.known()) {
+		std::fprintf(stderr, "Translation controls regression failed: language "
+							 "fixtures are unavailable.\n");
+		return false;
+	}
+	settings.setTranslateChatEnabled(true);
+	settings.setUsePlatformTranslation(false);
+	settings.setTranslateTo(target);
+
+	const auto stockChannel
+		= stockController->session().data().channel(ChannelId(1151));
+	const auto customChannel
+		= customController->session().data().channel(ChannelId(1152));
+	const auto configureChannel
+		= [](not_null<ChannelData *> channel, const QString &name) {
+			  channel->setAccessHash(115100);
+			  channel->setName(name, QString());
+			  channel->setFlags(ChannelDataFlag::Creator
+								| ChannelDataFlag::Broadcast);
+			  channel->setTranslationDisabled(false);
+		  };
+	configureChannel(stockChannel, u"Stock channel"_q);
+	configureChannel(customChannel, u"Custom channel"_q);
+
+	const auto openEditBox
+		= [](not_null<Window::SessionController *> controller,
+			 not_null<ChannelData *> channel) {
+			  return controller->window().show(
+				  object_ptr<EditPeerInfoBox>(controller->widget().get(),
+											  controller, channel),
+				  Ui::LayerOption::KeepOther, anim::type::normal);
+		  };
+	ResetTranslationRpcCountsForRegressionTest();
+	auto customEditBox = openEditBox(customController, customChannel);
+	QCoreApplication::processEvents();
+	if (!customEditBox
+		|| customEditBox->autoTranslateControlPresentForRegressionTest()) {
+		std::fprintf(stderr, "Translation controls regression failed: custom "
+							 "channel exposed Auto-translate.\n");
+		return false;
+	}
+	const auto renamedChannel = u"Renamed custom channel"_q;
+	auto channelSaveRequests = ChannelSaveRequestCapture{
+		.instance = &customController->session().mtp(),
+	};
+	const auto restoreChannelSaveCapture
+		= gsl::finally([previous = std::exchange(gChannelSaveRequestCapture,
+												 &channelSaveRequests)] {
+			  gChannelSaveRequestCapture = previous;
+		  });
+	customEditBox->saveRenameForRegressionTest(renamedChannel);
+	if (!customEditBox || customChannel->name() != u"Custom channel"_q) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom channel rename "
+			"completed before its server response.\n");
+		return false;
+	}
+	const auto expectedChannel
+		= MTP_inputChannel(MTP_long(1152), MTP_long(115100));
+	if (!ReplyToChannelSaveRequestForRegressionTest(
+			channelSaveRequests, 0,
+			MTPchannels_DeactivateAllUsernames(expectedChannel),
+			MTP_boolTrue())) {
+		return false;
+	}
+	using ChannelFlag = MTPDchannel::Flag;
+	const auto renamedChat = MTP_channel(
+		MTP_flags(ChannelFlag::f_creator | ChannelFlag::f_broadcast
+				  | ChannelFlag::f_access_hash),
+		MTP_long(1152), MTP_long(115100), MTP_string(renamedChannel),
+		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
+		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+	const auto renameReply = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({renamedChat}), MTP_int(1), MTP_int(0));
+	if (!ReplyToChannelSaveRequestForRegressionTest(
+			channelSaveRequests, 1,
+			MTPchannels_EditTitle(expectedChannel, MTP_string(renamedChannel)),
+			renameReply)) {
+		return false;
+	}
+	const auto saveCompleted
+		= WaitForRegressionCondition([&] { return !customEditBox; });
+	const auto namePersisted = (customChannel->name() == renamedChannel);
+	const auto toggles = GetTranslationRpcCountsForRegressionTest()
+							 .channelAutoTranslationToggle;
+	if (!saveCompleted || !namePersisted
+		|| channelSaveRequests.requests.size() != 2 || toggles != 0) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom channel Save "
+			"completed=%d persisted=%d requests=%zu toggle RPCs=%d.\n",
+			saveCompleted, namePersisted, channelSaveRequests.requests.size(),
+			toggles);
+		return false;
+	}
+	customEditBox = openEditBox(customController, customChannel);
+	QCoreApplication::processEvents();
+	if (!customEditBox
+		|| customEditBox->titleForRegressionTest() != renamedChannel
+		|| customEditBox->autoTranslateControlPresentForRegressionTest()) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: reopening the saved "
+			"custom channel lost its name or exposed Auto-translate.\n");
+		return false;
+	}
+	customEditBox->saveAutoTranslateForRegressionTest(true);
+	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
+			!= 0
+		|| channelSaveRequests.requests.size() != 2) {
+		std::fprintf(stderr,
+					 "Translation controls regression failed: reopened custom "
+					 "channel attempted an Auto-translate toggle.\n");
+		return false;
+	}
+	customController->hideLayer(anim::type::instant);
+
+	ResetTranslationRpcCountsForRegressionTest();
+	auto stockEditBox = openEditBox(stockController, stockChannel);
+	QCoreApplication::processEvents();
+	if (!stockEditBox
+		|| !stockEditBox->autoTranslateControlPresentForRegressionTest()) {
+		std::fprintf(stderr, "Translation controls regression failed: stock "
+							 "channel lost Auto-translate.\n");
+		return false;
+	}
+	stockEditBox->saveAutoTranslateForRegressionTest(true);
+	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
+		!= 1) {
+		std::fprintf(
+			stderr, "Translation controls regression failed: stock channel did "
+					"not attempt its Auto-translate toggle.\n");
+		return false;
+	}
+	stockController->hideLayer(anim::type::instant);
+
+	const auto openLanguageBox =
+		[](not_null<Window::SessionController *> controller) {
+			return controller->window().show(
+				object_ptr<LanguageBox>(controller->widget().get(), controller),
+				Ui::LayerOption::KeepOther, anim::type::normal);
+		};
+	auto customLanguageBox = openLanguageBox(customController);
+	QCoreApplication::processEvents();
+	if (!customLanguageBox
+		|| customLanguageBox->translateChatsRowPresentForRegressionTest()) {
+		std::fprintf(stderr, "Translation controls regression failed: custom "
+							 "session exposed Translate Entire Chats.\n");
+		return false;
+	}
+	customController->hideLayer(anim::type::instant);
+	auto stockLanguageBox = openLanguageBox(stockController);
+	QCoreApplication::processEvents();
+	if (!stockLanguageBox
+		|| !stockLanguageBox->translateChatsRowPresentForRegressionTest()) {
+		std::fprintf(stderr, "Translation controls regression failed: stock "
+							 "session lost Translate Entire Chats.\n");
+		return false;
+	}
+	stockController->hideLayer(anim::type::instant);
+
+	stockChannel->addFlags(ChannelDataFlag::AutoTranslation);
+	customChannel->addFlags(ChannelDataFlag::AutoTranslation);
+	const auto stockHistory
+		= stockController->session().data().history(stockChannel);
+	const auto customHistory
+		= customController->session().data().history(customChannel);
+	customHistory->translateOfferFrom(offered);
+	{
+		const auto customTracker = HistoryView::TranslateTracker(customHistory);
+		if (customTracker.trackingLanguageForRegressionTest()) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: custom "
+						 "session started automatic translation tracking.\n");
+			return false;
+		}
+		HistoryView::TranslateBar bar(customController->widget().get(),
+									  customController, customHistory);
+		bar.finishAnimating();
+		if (bar.shouldBeShownForRegressionTest()) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: custom "
+						 "session showed the automatic translation bar.\n");
+			return false;
+		}
+	}
+	{
+		const auto stockTracker = HistoryView::TranslateTracker(stockHistory);
+		if (!stockTracker.trackingLanguageForRegressionTest()) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: stock "
+						 "session stopped automatic translation tracking.\n");
+			return false;
+		}
+		stockHistory->translateOfferFrom(offered);
+		HistoryView::TranslateBar bar(stockController->widget().get(),
+									  stockController, stockHistory);
+		bar.finishAnimating();
+		if (!bar.shouldBeShownForRegressionTest()) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: stock "
+						 "session lost its automatic translation bar.\n");
+			return false;
+		}
+	}
+	const auto stockTextItem = AddTranslationRegressionMessage(
+		&stockController->session(), stockChannel, MsgId(7101), false);
+	const auto stockRichItem = AddTranslationRegressionMessage(
+		&stockController->session(), stockChannel, MsgId(7102), true);
+	const auto customTextItem = AddTranslationRegressionMessage(
+		&customController->session(), customChannel, MsgId(7201), false);
+	const auto customRichItem = AddTranslationRegressionMessage(
+		&customController->session(), customChannel, MsgId(7202), true);
+	if (!stockTextItem || !stockRichItem || !customTextItem
+		|| !customRichItem) {
+		std::fprintf(stderr,
+					 "Translation controls regression failed: translation "
+					 "message fixtures were not created.\n");
+		return false;
+	}
+
+	ResetTranslationRpcCountsForRegressionTest();
+	{
+		HistoryView::TranslateTracker textTracker(customHistory);
+		textTracker.requestTextForRegressionTest(customTextItem, target);
+		HistoryView::TranslateTracker richTracker(customHistory);
+		richTracker.requestRichForRegressionTest(customRichItem, target);
+	}
+	const auto customRpcs = GetTranslationRpcCountsForRegressionTest();
+	if (customRpcs.text != 0 || customRpcs.rich != 0) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom session sent "
+			"translation RPCs (text=%d rich=%d).\n",
+			customRpcs.text, customRpcs.rich);
+		return false;
+	}
+	ResetTranslationRpcCountsForRegressionTest();
+	{
+		HistoryView::TranslateTracker textTracker(stockHistory);
+		textTracker.requestTextForRegressionTest(stockTextItem, target);
+		HistoryView::TranslateTracker richTracker(stockHistory);
+		richTracker.requestRichForRegressionTest(stockRichItem, target);
+	}
+	const auto stockRpcs = GetTranslationRpcCountsForRegressionTest();
+	if (stockRpcs.text != 1 || stockRpcs.rich != 1) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: stock translation "
+			"RPCs were not sent (text=%d rich=%d).\n",
+			stockRpcs.text, stockRpcs.rich);
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Translation controls regression passed: custom rename/reopen "
+		"kept Auto-translate hidden without a toggle RPC; automatic bar "
+		"and text/rich RPCs stayed off; Translate Entire Chats was "
+		"absent; stock controls and RPCs remained enabled.\n");
+	return true;
+}
+#endif
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
@@ -3293,8 +3738,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
-	const auto pinnedController = pinnedWindow->sessionController();
-	const auto stockController = stockWindow->sessionController();
+	auto pinnedController = pinnedWindow->sessionController();
+	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
@@ -3308,6 +3753,21 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
+	pinnedController = pinnedWindow->sessionController();
+	stockController = stockWindow->sessionController();
+	if (!pinnedController || !stockController
+		|| (&pinnedController->session() != &pinned->session())
+		|| (&stockController->session() != &stock->session())) {
+		return FailChatParticipantsRegression(
+			"test windows lost their owning sessions after activation checks");
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (!RunTranslationControlsLifecycleRegression(stockController,
+												   pinnedController)) {
+		return FailChatParticipantsRegression(
+			"translation controls crossed stock and custom sessions");
+	}
+#endif
 	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
 										 stockWindow, pinnedWindow,
 										 blankWindow)) {
@@ -3441,10 +3901,190 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!HasExpectedParticipants(pinnedActionChat, selfId)
 		|| !pinnedActionChat->canEditInformation()
 		|| !pinnedActionChat->canAddMembers()
-		|| pinnedActionChat->canAddAdmins()
+		|| !pinnedActionChat->canAddAdmins()
 		|| !pinnedActionChat->canBanMembers()) {
 		return FailChatParticipantsRegression(
-			"pinned creator lost a supported action or retained admin grants");
+			"pinned creator lost a supported basic-group admin action");
+	}
+
+	const auto memberActionChatId = ChatId(1053);
+	const auto memberActionChat
+		= stock->session().data().chat(memberActionChatId);
+	const auto memberActionPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
+	stock->session().api().processFullPeer(
+		memberActionPeer,
+		RegressionChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
+								UserId(2)));
+
+	const auto adminActionChatId = ChatId(1054);
+	const auto self = stock->session().user();
+	const auto adminActionChat
+		= stock->session().data().chat(adminActionChatId);
+	const auto adminActionPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
+	stock->session().api().processFullPeer(
+		adminActionPeer,
+		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+								UserId(2), true));
+	if (!HasExpectedParticipants(adminActionChat, UserId(2))
+		|| !adminActionChat->admins.contains(self)
+		|| !adminActionChat->hasAdminRights()
+		|| !adminActionChat->canEditPermissions()
+		|| !adminActionChat->canDeleteMessages()
+		|| !adminActionChat->canBanMembers()
+		|| !adminActionChat->canHaveInviteLink()
+		|| adminActionChat->canAddAdmins()) {
+		return FailChatParticipantsRegression(
+			"official basic-group admin lost its moderation rights or gained "
+			"creator-only powers");
+	}
+
+	const auto fullListDemotionChatId = ChatId(1057);
+	const auto fullListDemotionChat
+		= stock->session().data().chat(fullListDemotionChatId);
+	const auto fullListDemotionPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*fullListDemotionChat));
+	stock->session().api().processFullPeer(
+		fullListDemotionPeer,
+		RegressionChatFullReply(fullListDemotionChatId, 1, u"+10000000001"_q,
+								UserId(2), true));
+	if (!fullListDemotionChat->admins.contains(self)
+		|| !fullListDemotionChat->canEditPermissions()
+		|| !fullListDemotionChat->canDeleteMessages()
+		|| !fullListDemotionChat->canBanMembers()
+		|| !fullListDemotionChat->canHaveInviteLink()) {
+		return FailChatParticipantsRegression(
+			"full-list demotion fixture did not start with admin moderation "
+			"rights");
+	}
+	Data::ApplyChatUpdate(
+		fullListDemotionChat,
+		MTP_chatParticipants(
+			MTP_long(fullListDemotionChatId.bare),
+			MTP_vector<MTPChatParticipant>({
+				MTP_chatParticipantCreator(
+					MTP_flags(MTPDchatParticipantCreator::Flags()),
+					MTP_long(UserId(2).bare), MTP_string(QString())),
+				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+									MTP_long(selfId.bare),
+									MTP_long(UserId(2).bare), MTP_int(0),
+									MTP_string(QString())),
+				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+									MTP_long(UserId(9).bare),
+									MTP_long(selfId.bare), MTP_int(0),
+									MTP_string(QString())),
+			}),
+			MTP_int(2)));
+	if (!HasExpectedParticipants(fullListDemotionChat, UserId(2))
+		|| fullListDemotionChat->admins.contains(self)
+		|| fullListDemotionChat->adminRights() != ChatAdminRights()
+		|| fullListDemotionChat->canEditPermissions()
+		|| fullListDemotionChat->canDeleteMessages()
+		|| fullListDemotionChat->canBanMembers()
+		|| fullListDemotionChat->canHaveInviteLink()
+		|| fullListDemotionChat->canAddAdmins()) {
+		return FailChatParticipantsRegression(
+			"normal-server full-list demotion retained admin rights or "
+			"moderation controls");
+	}
+
+	const auto customAdminActionChat
+		= pinned->session().data().chat(adminActionChatId);
+	const auto customAdminActionPeer = not_null<PeerData *>(
+		static_cast<PeerData *>(&*customAdminActionChat));
+	customAdminActionChat->setAdminRights(
+		customAdminActionChat->defaultAdminRights(self).flags);
+	pinned->session().api().processFullPeer(
+		customAdminActionPeer,
+		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+								UserId(2), true));
+	if (!HasExpectedParticipants(customAdminActionChat, UserId(2))
+		|| !customAdminActionChat->admins.contains(self)
+		|| customAdminActionChat->hasAdminRights()
+		|| customAdminActionChat->canEditPermissions()
+		|| customAdminActionChat->canDeleteMessages()
+		|| customAdminActionChat->canBanMembers()
+		|| customAdminActionChat->canHaveInviteLink()
+		|| customAdminActionChat->canAddAdmins()) {
+		return FailChatParticipantsRegression(
+			"custom-server basic-group admin gained rights or creator-only "
+			"powers");
+	}
+
+	const auto liveAdminChatId = ChatId(1055);
+	const auto liveAdminChat = stock->session().data().chat(liveAdminChatId);
+	const auto liveAdminPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
+	stock->session().api().processFullPeer(
+		liveAdminPeer, RegressionChatFullReply(liveAdminChatId, 1,
+											   u"+10000000001"_q, UserId(2)));
+	Data::ApplyChatUpdate(liveAdminChat,
+						  MTP_updateChatParticipantAdmin(
+							  MTP_long(liveAdminChatId.bare),
+							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
+							  .c_updateChatParticipantAdmin());
+	if (!liveAdminChat->admins.contains(self)
+		|| !liveAdminChat->hasAdminRights()
+		|| !liveAdminChat->canEditPermissions()
+		|| !liveAdminChat->canDeleteMessages()
+		|| !liveAdminChat->canBanMembers()
+		|| !liveAdminChat->canHaveInviteLink()
+		|| liveAdminChat->canAddAdmins()) {
+		return FailChatParticipantsRegression(
+			"incremental official basic-group promotion lost admin rights or "
+			"granted creator-only powers");
+	}
+	Data::ApplyChatUpdate(liveAdminChat, MTP_updateChatParticipantAdmin(
+											 MTP_long(liveAdminChatId.bare),
+											 MTP_long(selfId.bare),
+											 MTP_boolFalse(), MTP_int(3))
+											 .c_updateChatParticipantAdmin());
+	if (liveAdminChat->admins.contains(self)
+		|| liveAdminChat->hasAdminRights()) {
+		return FailChatParticipantsRegression(
+			"incremental basic-group demotion did not clear admin display "
+			"state");
+	}
+
+	const auto customLiveAdminChatId = ChatId(1056);
+	const auto customLiveAdminChat
+		= pinned->session().data().chat(customLiveAdminChatId);
+	const auto customLiveAdminPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*customLiveAdminChat));
+	pinned->session().api().processFullPeer(
+		customLiveAdminPeer,
+		RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
+								UserId(2)));
+	customLiveAdminChat->setAdminRights(
+		customLiveAdminChat->defaultAdminRights(self).flags);
+	Data::ApplyChatUpdate(customLiveAdminChat,
+						  MTP_updateChatParticipantAdmin(
+							  MTP_long(customLiveAdminChatId.bare),
+							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
+							  .c_updateChatParticipantAdmin());
+	if (!customLiveAdminChat->admins.contains(self)
+		|| customLiveAdminChat->hasAdminRights()
+		|| customLiveAdminChat->canEditPermissions()
+		|| customLiveAdminChat->canDeleteMessages()
+		|| customLiveAdminChat->canBanMembers()
+		|| customLiveAdminChat->canHaveInviteLink()
+		|| customLiveAdminChat->canAddAdmins()) {
+		return FailChatParticipantsRegression(
+			"incremental custom-server promotion gained admin rights or "
+			"creator-only powers");
+	}
+	Data::ApplyChatUpdate(
+		customLiveAdminChat,
+		MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
+									   MTP_long(selfId.bare), MTP_boolFalse(),
+									   MTP_int(3))
+			.c_updateChatParticipantAdmin());
+	if (customLiveAdminChat->admins.contains(self)
+		|| customLiveAdminChat->hasAdminRights()) {
+		return FailChatParticipantsRegression(
+			"incremental custom-server demotion did not clear admin display "
+			"state");
 	}
 	if (!pinnedActionChat->usesCustomServer()
 		|| pinnedActionChat->isDeactivated() || pinnedActionChat->migrateTo()) {

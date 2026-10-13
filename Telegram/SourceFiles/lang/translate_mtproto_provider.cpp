@@ -13,6 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "spellcheck/platform/platform_language.h"
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
 
 namespace Ui {
 namespace {
@@ -98,18 +101,22 @@ public:
 			for (const auto &request : requests) {
 				ids.push_back(MTP_int(MsgId(request.msgId)));
 			}
-			_api.request(MTPmessages_TranslateText(
-				MTP_flags(Flag::f_peer | Flag::f_id),
-				peer->input(),
-				MTP_vector<MTPint>(ids),
-				MTPVector<MTPTextWithEntities>(),
-				MTP_string(to.twoLetterCode()),
-				MTPstring() // tone
-			)).done([=](const MTPmessages_TranslatedText &result) {
-				doneFromList(result.data().vresult().v);
-			}).fail([=](const MTP::Error &) {
-				failAll();
-			}).send();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			Tests::RecordTranslationRpcForRegressionTest(
+				Tests::TranslationRpcForRegressionTest::Text);
+#endif
+			_api
+				.request(MTPmessages_TranslateText(
+					MTP_flags(Flag::f_peer | Flag::f_id), peer->input(),
+					MTP_vector<MTPint>(ids), MTPVector<MTPTextWithEntities>(),
+					MTP_string(to.twoLetterCode()),
+					MTPstring() // tone
+					))
+				.done([=](const MTPmessages_TranslatedText &result) {
+					doneFromList(result.data().vresult().v);
+				})
+				.fail([=](const MTP::Error &) { failAll(); })
+				.send();
 			return;
 		}
 
@@ -132,26 +139,28 @@ public:
 		for (const auto &request : requests) {
 			text.push_back(MTP_textWithEntities(
 				MTP_string(request.text.text),
-				Api::EntitiesToMTP(
-					_session,
-					request.text.entities,
-					Api::ConvertOption::SkipLocal)));
+				Api::EntitiesToMTP(_session, request.text.entities,
+								   Api::ConvertOption::SkipLocal)));
 		}
-		_api.request(MTPmessages_TranslateText(
-			MTP_flags(Flag::f_text),
-			MTP_inputPeerEmpty(),
-			MTPVector<MTPint>(),
-			MTP_vector<MTPTextWithEntities>(text),
-			MTP_string(to.twoLetterCode()),
-			MTPstring() // tone
-		)).done([=](const MTPmessages_TranslatedText &result) {
-			doneFromList(result.data().vresult().v);
-		}).fail([=](const MTP::Error &) {
-			failAll();
-		}).send();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		Tests::RecordTranslationRpcForRegressionTest(
+			Tests::TranslationRpcForRegressionTest::Text);
+#endif
+		_api
+			.request(MTPmessages_TranslateText(
+				MTP_flags(Flag::f_text), MTP_inputPeerEmpty(),
+				MTPVector<MTPint>(), MTP_vector<MTPTextWithEntities>(text),
+				MTP_string(to.twoLetterCode()),
+				MTPstring() // tone
+				))
+			.done([=](const MTPmessages_TranslatedText &result) {
+				doneFromList(result.data().vresult().v);
+			})
+			.fail([=](const MTP::Error &) { failAll(); })
+			.send();
 	}
 
-private:
+  private:
 	const not_null<Main::Session*> _session;
 	MTP::Sender _api;
 

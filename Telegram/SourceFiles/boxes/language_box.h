@@ -31,17 +31,21 @@ public:
 
 	void setInnerFocus() override;
 
-	[[nodiscard]] static base::binary_guard Show(
-		Window::SessionController *controller,
-		const QString &highlightId = QString());
+	[[nodiscard]] static base::binary_guard
+	Show(Window::SessionController *controller,
+		 const QString &highlightId = QString());
 
-protected:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool translateChatsRowPresentForRegressionTest() const;
+#endif
+
+  protected:
 	void prepare() override;
 	void showFinished() override;
 
 	void keyPressEvent(QKeyEvent *e) override;
 
-private:
+  private:
 	void setupTop(not_null<Ui::VerticalLayout*> container);
 	[[nodiscard]] int rowsInPage() const;
 

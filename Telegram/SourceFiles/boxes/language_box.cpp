@@ -1611,36 +1611,47 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 
 	using namespace rpl::mappers;
 	auto premium = Data::AmPremiumValue(&_controller->session());
-	const auto translateChat = container->add(object_ptr<Ui::SettingsButton>(
-		container,
-		tr::lng_translate_settings_chat(),
-		st::settingsButtonNoIconLocked
-	))->toggleOn(rpl::merge(
-		rpl::combine(
-			Core::App().settings().translateChatEnabledValue(),
-			rpl::duplicate(premium),
-			_1 && _2),
-		_translateChatTurnOff.events()));
-	_translateChatsToggle = translateChat;
-	std::move(premium) | rpl::on_next([=](bool value) {
-		translateChat->setToggleLocked(!value);
-	}, translateChat->lifetime());
+	rpl::producer<bool> translateChatToggled;
+	if (_controller->session().serverTranslationSupported()) {
+		const auto translateChat
+			= container
+				  ->add(object_ptr<Ui::SettingsButton>(
+					  container, tr::lng_translate_settings_chat(),
+					  st::settingsButtonNoIconLocked))
+				  ->toggleOn(rpl::merge(
+					  rpl::combine(
+						  Core::App().settings().translateChatEnabledValue(),
+						  rpl::duplicate(premium), _1 && _2),
+					  _translateChatTurnOff.events()));
+		_translateChatsToggle = translateChat;
+		translateChatToggled = translateChat->toggledValue();
+		std::move(premium)
+			| rpl::on_next(
+				[=](bool value) { translateChat->setToggleLocked(!value); },
+				translateChat->lifetime());
 
-	translateChat->toggledValue(
-	) | rpl::filter([=](bool checked) {
-		const auto premium = _controller->session().premium();
-		if (checked && !premium) {
-			ShowPremiumPreviewToBuy(
-				_controller,
-				PremiumFeature::RealTimeTranslation);
-			_translateChatTurnOff.fire(false);
-		}
-		return premium
-			&& (checked != Core::App().settings().translateChatEnabled());
-	}) | rpl::on_next([=](bool checked) {
-		Core::App().settings().setTranslateChatEnabled(checked);
-		Core::App().saveSettingsDelayed();
-	}, translateChat->lifetime());
+		translateChat->toggledValue() | rpl::filter([=](bool checked) {
+			const auto premium = _controller->session().premium();
+			if (checked && !premium) {
+				ShowPremiumPreviewToBuy(_controller,
+										PremiumFeature::RealTimeTranslation);
+				_translateChatTurnOff.fire(false);
+			}
+			return premium
+				   && (checked
+					   != Core::App().settings().translateChatEnabled());
+		})
+			| rpl::on_next(
+				[=](bool checked) {
+					Core::App().settings().setTranslateChatEnabled(checked);
+					Core::App().saveSettingsDelayed();
+				},
+				translateChat->lifetime());
+	} else {
+		translateChatToggled
+			= rpl::combine(Core::App().settings().translateChatEnabledValue(),
+						   std::move(premium), _1 && _2);
+	}
 
 	using Languages = std::vector<LanguageId>;
 	const auto translateSkipWrap = container->add(
@@ -1651,8 +1662,7 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 		translateEnabled->toggled(),
 		anim::type::normal);
 	translateSkipWrap->toggleOn(rpl::combine(
-		translateEnabled->toggledValue(),
-		translateChat->toggledValue(),
+		translateEnabled->toggledValue(), std::move(translateChatToggled),
 		rpl::mappers::_1 || rpl::mappers::_2));
 	const auto translateSkip = Settings::AddButtonWithLabel(
 		translateSkipWrap->entity(),
@@ -1734,3 +1744,9 @@ base::binary_guard LanguageBox::Show(
 
 	return result;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool LanguageBox::translateChatsRowPresentForRegressionTest() const {
+	return !_translateChatsToggle.isNull();
+}
+#endif

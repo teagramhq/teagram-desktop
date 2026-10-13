@@ -619,6 +619,8 @@ PRIVATE
     core/shortcuts.h
     core/teagram_update_verification.cpp
     core/teagram_update_verification.h
+    core/teagram_update_state.cpp
+    core/teagram_update_state.h
     core/teagram_update_download.cpp
     core/teagram_update_download.h
     core/ui_integration.cpp
@@ -2172,6 +2174,8 @@ if (APPLE)
         core/mac_protected_path_runtime.h
         core/teagram_update_install_mac.mm
         core/teagram_update_install.h
+        core/teagram_update_manager_mac.mm
+        core/teagram_update_manager.h
     )
 else()
     nice_target_sources(Telegram ${src_loc}

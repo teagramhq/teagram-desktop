@@ -28,6 +28,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "base/network_reachability.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include <crl/crl_on_main.h>
 
 #include <atomic>
@@ -2455,6 +2459,12 @@ void Instance::sendRequest(
 		crl::time msCanWait,
 		bool needsLayer,
 		mtpRequestId afterRequestId) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::CaptureChannelSaveRequestForRegressionTest(this, requestId,
+														  request, callbacks)) {
+		return;
+	}
+#endif
 	return _private->sendRequest(
 		requestId,
 		std::move(request),
