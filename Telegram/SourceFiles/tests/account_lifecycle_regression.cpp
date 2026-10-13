@@ -1464,9 +1464,7 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 [[nodiscard]] MTPmessages_ChatFull
 RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
 						UserId creatorId, bool memberIsAdmin = false) {
-	const auto memberId = (creatorId == UserId(1))
-		? UserId(2)
-		: UserId(1);
+	const auto memberId = (creatorId == UserId(1)) ? UserId(2) : UserId(1);
 	const auto member
 		= memberIsAdmin
 			  ? MTP_chatParticipantAdmin(
@@ -1491,45 +1489,24 @@ RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
 		}),
 		MTP_int(version));
 	const auto notifySettings = MTP_peerNotifySettings(
-		MTP_flags(MTPDpeerNotifySettings::Flags()),
-		MTP_boolFalse(),
-		MTP_boolFalse(),
-		MTP_int(0),
-		MTP_notificationSoundDefault(),
-		MTP_notificationSoundDefault(),
-		MTP_notificationSoundDefault(),
-		MTP_boolFalse(),
-		MTP_boolFalse(),
-		MTP_notificationSoundDefault(),
-		MTP_notificationSoundDefault(),
-		MTP_notificationSoundDefault());
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	const auto fullChat = MTP_chatFull(
-		MTP_flags(MTPDchatFull::Flags()),
-		MTP_long(chatId.bare),
-		MTP_string(QString()),
-		participants,
-		MTP_photoEmpty(MTP_long(0)),
-		notifySettings,
-		MTPExportedChatInvite(),
-		MTP_vector<MTPBotInfo>(0),
-		MTPint(),
-		MTPint(),
-		MTPInputGroupCall(),
-		MTPint(),
-		MTPPeer(),
-		MTPstring(),
-		MTPint(),
-		MTP_vector<MTPlong>(0),
-		MTP_chatReactionsNone(),
+		MTP_flags(MTPDchatFull::Flags()), MTP_long(chatId.bare),
+		MTP_string(QString()), participants, MTP_photoEmpty(MTP_long(0)),
+		notifySettings, MTPExportedChatInvite(), MTP_vector<MTPBotInfo>(0),
+		MTPint(), MTPint(), MTPInputGroupCall(), MTPint(), MTPPeer(),
+		MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTP_chatReactionsNone(),
 		MTPint());
-	return MTP_messages_chatFull(
-		fullChat,
-		MTP_vector<MTPChat>(0),
-		MTP_vector<MTPUser>({
-			RegressionUser(UserId(1), true, selfPhone),
-			RegressionUser(UserId(2), false, u"2"_q),
-			RegressionUser(UserId(9), false, u"9"_q),
-		}));
+	return MTP_messages_chatFull(fullChat, MTP_vector<MTPChat>(0),
+								 MTP_vector<MTPUser>({
+									 RegressionUser(UserId(1), true, selfPhone),
+									 RegressionUser(UserId(2), false, u"2"_q),
+									 RegressionUser(UserId(9), false, u"9"_q),
+								 }));
 }
 
 // A bot peer for the webview fixtures: the bot flag plus a bot info
