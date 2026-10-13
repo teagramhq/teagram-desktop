@@ -276,7 +276,8 @@ for fixture in \
   TeagramUpdateDownloadFailsWithoutMutation \
   TeagramUpdateRejectsUntrustedOrIneligiblePackage \
   TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation \
-  TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation; do
+  TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation \
+  TeagramUpdateWorkerShutdownCleansCandidateArchive; do
   require_text "$updater_runner" "$fixture"
   if ! grep -Fq "TEST_CASE($fixture)" \
     Telegram/SourceFiles/tests/unit/teagram_update_download_tests.cpp \
@@ -285,7 +286,24 @@ for fixture in \
     exit 1
   fi
 done
-require_text "$updater_runner" '"$unit_binary" --case "$fixture"'
+fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
+fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
+if [[ "$fixture_count" != 13 ]]; then
+  printf 'Updater fixture runner must select exactly 13 registered cases, got %s.\n' \
+    "$fixture_count" >&2
+  exit 1
+fi
+worker_shutdown_count="$(grep -Fxc \
+  '  TeagramUpdateWorkerShutdownCleansCandidateArchive' \
+  <<< "$fixture_selection")"
+if [[ "$worker_shutdown_count" != 1 ]]; then
+  printf 'Updater fixture runner must select worker shutdown exactly once.\n' >&2
+  exit 1
+fi
+require_text "$updater_runner" '[unit_binary, "--case", fixture]'
+require_text "$updater_runner" 'fixture_timeout_seconds=300'
+require_text "$updater_runner" 'timeout=int(timeout_seconds)'
+require_text "$updater_runner" 'subprocess.TimeoutExpired'
 require_text "$updater_runner" 'tail -c "$max_log_bytes"'
 
 require_text README.md '`MacOS.` workflow is the required pull request gate'
