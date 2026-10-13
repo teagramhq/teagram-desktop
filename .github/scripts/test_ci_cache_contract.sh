@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-linux_workflow=".github/workflows/linux.yml"
+linux_workflow="${LINUX_CI_CONTRACT_WORKFLOW:-.github/workflows/linux.yml}"
 mac_workflow=".github/workflows/mac.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 
@@ -48,6 +48,15 @@ if ! grep -Fq 'if: github.ref_name == github.event.repository.default_branch' <<
   || ! grep -Fq 'packages: read' <<< "$linux_build_job" \
   || grep -Fq 'packages: write' <<< "$linux_build_job"; then
   echo "Only the default-branch dependency image job may publish to GHCR." >&2
+  exit 1
+fi
+linux_cache_save_step="$(awk '
+  /^      - name: Save Telegram Desktop cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' <<< "$linux_build_job")"
+if ! grep -Fq '&& github.ref_name == github.event.repository.default_branch' <<< "$linux_cache_save_step"; then
+  echo "Only the default branch may save Linux compiler caches." >&2
   exit 1
 fi
 reject_text "$linux_workflow" 'name: Libraries cache.'
