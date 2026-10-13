@@ -548,6 +548,69 @@ ProducePackage(const QByteArray &archive, const QString &keyPath,
 	return ProducedPackage{std::move(manifest), std::move(signature)};
 }
 
+[[nodiscard]] QTemporaryDir
+CreateUpdaterFixtureDirectory(const QString &temporaryRoot) {
+	const auto canonicalRoot = QFileInfo(temporaryRoot).canonicalFilePath();
+	return QTemporaryDir(QDir(canonicalRoot).filePath(u"updater-XXXXXX"_q));
+}
+
+void RunUpdaterFixtureWithTemporaryRoots(
+	const char *name, const std::function<void(const QString &)> &fixture) {
+#if defined(Q_OS_MAC)
+	auto process = QProcess();
+	process.start(u"/usr/bin/getconf"_q, {u"DARWIN_USER_TEMP_DIR"_q});
+	const auto started = process.waitForStarted();
+	CHECK(started);
+	if (!started) {
+		return;
+	}
+	const auto finished = process.waitForFinished();
+	CHECK(finished);
+	CHECK(process.exitStatus() == QProcess::NormalExit);
+	CHECK_EQ(process.exitCode(), 0);
+	if (!finished || process.exitStatus() != QProcess::NormalExit
+		|| process.exitCode() != 0) {
+		return;
+	}
+	const auto output
+		= QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+	CHECK(!output.isEmpty());
+	if (output.isEmpty()) {
+		return;
+	}
+	const auto aliased = QDir::cleanPath(output);
+#else  // Q_OS_MAC
+	auto root = QTemporaryDir();
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto directory = root.filePath(u"temporary"_q);
+	const auto created = QDir().mkpath(directory);
+	CHECK(created);
+	if (!created) {
+		return;
+	}
+	const auto aliased = root.filePath(u"aliased"_q);
+	const auto linked = QFile::link(directory, aliased);
+	CHECK(linked);
+	if (!linked) {
+		return;
+	}
+#endif // Q_OS_MAC
+	const auto canonical = QFileInfo(aliased).canonicalFilePath();
+	CHECK(!canonical.isEmpty());
+	CHECK(aliased != canonical);
+	if (canonical.isEmpty() || aliased == canonical) {
+		return;
+	}
+	for (const auto &temporaryRoot : {aliased, canonical}) {
+		std::fprintf(stderr, "fixture %s temporary_root=%s\n", name,
+					 temporaryRoot.toUtf8().constData());
+		fixture(temporaryRoot);
+	}
+}
+
 #if defined(Q_OS_MAC)
 constexpr auto kProfileInstanceRole = "TDESKTOP_TEAGRAM_UPDATE_TEST_INSTANCE";
 constexpr auto kProfileInstanceSocket = "TDESKTOP_TEAGRAM_UPDATE_TEST_SOCKET";
@@ -727,7 +790,7 @@ CreateInstallerCandidateFixture() {
 void CheckRejectedInstallerTarget(const TeagramUpdateCandidate &candidate,
 								  const QString &bundleName,
 								  bool makeUnwritable) {
-	auto root = QTemporaryDir();
+	auto root = CreateUpdaterFixtureDirectory(QDir::tempPath());
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -799,9 +862,7 @@ void CheckRejectedInstallerTarget(const TeagramUpdateCandidate &candidate,
 }
 #endif // Q_OS_MAC
 
-} // namespace
-
-TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
+void CheckArchiveWritesStayConfined(const QString &temporaryRoot) {
 	const auto signingKey = GenerateTestSigningKey();
 	if (!signingKey) {
 		return;
@@ -821,7 +882,7 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 			  CHECK(result.available());
 			  return std::move(result.candidate);
 		  };
-	auto generated = QTemporaryDir();
+	auto generated = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(generated.isValid());
 	if (!generated.isValid()) {
 		return;
@@ -839,8 +900,8 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 			 "Versions/Current/Resources", true},
 		});
 	CHECK(!safeArchive.isEmpty());
-	auto downloadStaging = QTemporaryDir();
-	auto extracted = QTemporaryDir();
+	auto downloadStaging = CreateUpdaterFixtureDirectory(temporaryRoot);
+	auto extracted = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(downloadStaging.isValid());
 	CHECK(extracted.isValid());
 	if (!downloadStaging.isValid() || !extracted.isValid()) {
@@ -863,8 +924,8 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 		CHECK(QFileInfo(QDir(framework).filePath(u"Resources/Info.plist"_q))
 				  .isFile());
 	}
-	auto tamperedDownloadStaging = QTemporaryDir();
-	auto tamperedExtraction = QTemporaryDir();
+	auto tamperedDownloadStaging = CreateUpdaterFixtureDirectory(temporaryRoot);
+	auto tamperedExtraction = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(tamperedDownloadStaging.isValid());
 	CHECK(tamperedExtraction.isValid());
 	if (!tamperedDownloadStaging.isValid() || !tamperedExtraction.isValid()) {
@@ -885,7 +946,7 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 			  .entryList(QDir::AllEntries | QDir::NoDotAndDotDot)
 			  .isEmpty());
 
-	auto attackRoot = QTemporaryDir();
+	auto attackRoot = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(attackRoot.isValid());
 	if (!attackRoot.isValid()) {
 		return;
@@ -907,7 +968,7 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 			{u"Teagram.app/Contents/Resources"_q, "../../../outside", true},
 		});
 	CHECK(!attackArchive.isEmpty());
-	auto attackDownloadStaging = QTemporaryDir();
+	auto attackDownloadStaging = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(attackDownloadStaging.isValid());
 	if (!attackDownloadStaging.isValid()) {
 		return;
@@ -966,8 +1027,8 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 			  .isEmpty());
 	const auto checkRejected
 		= [&](const QByteArray &archive, TeagramUpdateArchiveReason expected) {
-			  auto download = QTemporaryDir();
-			  auto extraction = QTemporaryDir();
+			  auto download = CreateUpdaterFixtureDirectory(temporaryRoot);
+			  auto extraction = CreateUpdaterFixtureDirectory(temporaryRoot);
 			  CHECK(download.isValid());
 			  CHECK(extraction.isValid());
 			  if (!download.isValid() || !extraction.isValid()) {
@@ -1038,8 +1099,14 @@ TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
 				  TeagramUpdateArchiveReason::LimitExceeded);
 }
 
-TEST_CASE(TeagramUpdateInstallFailurePreservesApp) {
-	auto root = QTemporaryDir();
+TEST_CASE(TeagramUpdateArchiveWritesStayConfined) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateArchiveWritesStayConfined",
+		CheckArchiveWritesStayConfined);
+}
+
+void CheckInstallFailurePreservesApp(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -1106,6 +1173,12 @@ TEST_CASE(TeagramUpdateInstallFailurePreservesApp) {
 	CHECK_EQ(ReadFile(profileCanary), profileBytes);
 	CHECK_EQ(ReadFile(officialCanary), officialBytes);
 	CHECK(!QFileInfo(previous).exists());
+}
+
+TEST_CASE(TeagramUpdateInstallFailurePreservesApp) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallFailurePreservesApp",
+		CheckInstallFailurePreservesApp);
 }
 
 TEST_CASE(TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary) {
@@ -1175,16 +1248,14 @@ TEST_CASE(TeagramUpdateWorkerShutdownCleansCandidateArchive) {
 	delete worker;
 }
 
-TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
-	if (qEnvironmentVariableIsSet(kProfileInstanceRole)) {
-		std::exit(RunProfileInstanceHelper());
-	}
+void CheckInstallerAuthenticatedCandidateAndFallback(
+	const QString &temporaryRoot) {
 	const auto signingKey = GenerateTestSigningKey();
 	if (!signingKey) {
 		return;
 	}
-	auto generated = QTemporaryDir();
-	auto downloadStaging = QTemporaryDir();
+	auto generated = CreateUpdaterFixtureDirectory(temporaryRoot);
+	auto downloadStaging = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(generated.isValid());
 	CHECK(downloadStaging.isValid());
 	if (!generated.isValid() || !downloadStaging.isValid()) {
@@ -1247,7 +1318,7 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 		auto architectureChecks = 0;
 		auto codeSealChecks = 0;
 		auto restartAttempts = 0;
-		auto root = QTemporaryDir();
+		auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 		CHECK(root.isValid());
 		if (!root.isValid()) {
 			return;
@@ -1576,6 +1647,15 @@ TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
 			   false, false, false, true);
 }
 
+TEST_CASE(TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback) {
+	if (qEnvironmentVariableIsSet(kProfileInstanceRole)) {
+		std::exit(RunProfileInstanceHelper());
+	}
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback",
+		CheckInstallerAuthenticatedCandidateAndFallback);
+}
+
 TEST_CASE(TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation) {
 	const auto fixture = CreateInstallerCandidateFixture();
 	CHECK(fixture->candidate != nullptr);
@@ -1594,8 +1674,8 @@ TEST_CASE(TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation) {
 	CheckRejectedInstallerTarget(*fixture->candidate, u"Teagram-copy"_q, false);
 }
 
-TEST_CASE(TeagramUpdateInstallerRemovesInterruptedExtraction) {
-	auto root = QTemporaryDir();
+void CheckInstallerRemovesInterruptedExtraction(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -1638,8 +1718,15 @@ TEST_CASE(TeagramUpdateInstallerRemovesInterruptedExtraction) {
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 }
 
-TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
-	auto root = QTemporaryDir();
+TEST_CASE(TeagramUpdateInstallerRemovesInterruptedExtraction) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallerRemovesInterruptedExtraction",
+		CheckInstallerRemovesInterruptedExtraction);
+}
+
+void CheckInstallerClearsUncommittedCandidateOnRestart(
+	const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -1725,10 +1812,17 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	CHECK(!QFileInfo(pending).exists());
 	CHECK(!QFileInfo(started).exists());
 }
+
+TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallerClearsUncommittedCandidateOnRestart",
+		CheckInstallerClearsUncommittedCandidateOnRestart);
+}
 #endif // Q_OS_MAC
 
-TEST_CASE(TeagramUpdateReplacementRetainsPreviousThroughStartup) {
-	auto root = QTemporaryDir();
+void CheckReplacementRetainsPreviousThroughStartup(
+	const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -1778,8 +1872,14 @@ TEST_CASE(TeagramUpdateReplacementRetainsPreviousThroughStartup) {
 	CHECK(!QFileInfo(previous).exists());
 }
 
-TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
-	auto root = QTemporaryDir();
+TEST_CASE(TeagramUpdateReplacementRetainsPreviousThroughStartup) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateReplacementRetainsPreviousThroughStartup",
+		CheckReplacementRetainsPreviousThroughStartup);
+}
+
+void CheckReplacementRestoresMissingTarget(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
 		return;
@@ -1811,6 +1911,14 @@ TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
 	CHECK(QFileInfo(restoredExecutable).isExecutable());
 	CHECK(!QFileInfo(previous).exists());
 }
+
+TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateReplacementRestoresMissingTarget",
+		CheckReplacementRestoresMissingTarget);
+}
+
+} // namespace
 
 TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifactsAndDiscardsArchive) {
 	const auto signingKey = GenerateTestSigningKey();
