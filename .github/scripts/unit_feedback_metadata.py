@@ -4,6 +4,7 @@ import hashlib
 import json
 import platform
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -21,6 +22,7 @@ SECRET_ASSIGNMENT = re.compile(
 CMAKE_CACHE_KEYS = {
     "CMAKE_GENERATOR",
     "CMAKE_CXX_COMPILER",
+    "CMAKE_CXX_COMPILER_ARG1",
     "CMAKE_CXX_COMPILER_ID",
     "CMAKE_CXX_COMPILER_VERSION",
     "Qt6Core_DIR",
@@ -118,6 +120,54 @@ def parse_cache(path):
     except OSError:
         return {}
     return values
+
+
+def qt_package_version(config_dir):
+    if not config_dir:
+        return None
+    config_dir = Path(config_dir)
+    for filename in (
+        "Qt6CoreConfigVersionImpl.cmake",
+        "Qt6CoreConfigVersion.cmake",
+        "Qt6CoreConfig.cmake",
+    ):
+        path = config_dir / filename
+        try:
+            content = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for variable in ("PACKAGE_VERSION", "Qt6Core_VERSION", "Qt6Core_VERSION_STRING"):
+            match = re.search(
+                rf'(?m)^\s*set\s*\(\s*{variable}\s+"([^"]+)"',
+                content,
+            )
+            if match:
+                return match.group(1)
+    return None
+
+
+def configured_compiler_details(build):
+    root = Path(build) / "CMakeFiles"
+    for path in sorted(root.glob("*/CMakeCXXCompiler.cmake"), reverse=True):
+        try:
+            content = path.read_text(errors="replace")
+        except OSError:
+            continue
+        details = {}
+        for name, variable in (
+            ("id", "CMAKE_CXX_COMPILER_ID"),
+            ("version", "CMAKE_CXX_COMPILER_VERSION"),
+            ("arg1", "CMAKE_CXX_COMPILER_ARG1"),
+        ):
+            match = re.search(
+                rf'(?m)^\s*set\s*\(\s*{variable}\s+"([^"]*)"\s*\)',
+                content,
+            )
+            if match:
+                details[name] = match.group(1)
+        if details:
+            return details
+    return {}
 
 
 def read_os_release(path=Path("/etc/os-release")):
@@ -509,29 +559,43 @@ def collect(args):
 
     cache = parse_cache(build / "CMakeCache.txt")
     compiler = cache.get("CMAKE_CXX_COMPILER")
-    compiler_version = run_command([compiler, "--version"]) if compiler else {
+    compiler_details = configured_compiler_details(build)
+    compiler_id = cache.get("CMAKE_CXX_COMPILER_ID") or compiler_details.get("id")
+    compiler_version_number = (
+        cache.get("CMAKE_CXX_COMPILER_VERSION") or compiler_details.get("version")
+    )
+    compiler_arg1 = (
+        cache.get("CMAKE_CXX_COMPILER_ARG1") or compiler_details.get("arg1") or ""
+    )
+    compiler_arguments = shlex.split(compiler_arg1)
+    compiler_command = [compiler, *compiler_arguments] if compiler else []
+    compiler_version = run_command([*compiler_command, "--version"]) if compiler else {
         "status": "unresolved",
         "reason": "CMAKE_CXX_COMPILER is missing from CMakeCache.txt",
     }
     cmake_version = run_command(["cmake", "--version"])
     qt_core_dir = cache.get("Qt6Core_DIR")
-    qt_version = None
-    if qt_core_dir:
-        config_version = Path(qt_core_dir) / "Qt6CoreConfigVersion.cmake"
-        if config_version.is_file():
-            match = re.search(r'PACKAGE_VERSION\s+"([^"]+)"', config_version.read_text(errors="replace"))
-            qt_version = match.group(1) if match else None
+    qt_version = qt_package_version(qt_core_dir)
     report["toolchain"] = {
         "cmake_generator": cache.get("CMAKE_GENERATOR"),
         "cmake_version": cmake_version,
         "cxx_compiler": compiler,
-        "cxx_compiler_id": cache.get("CMAKE_CXX_COMPILER_ID"),
-        "cxx_compiler_version": cache.get("CMAKE_CXX_COMPILER_VERSION"),
+        "cxx_compiler_arguments": compiler_arguments,
+        "cxx_compiler_invocation": compiler_command,
+        "cxx_compiler_id": compiler_id,
+        "cxx_compiler_version": compiler_version_number,
         "cxx_compiler_version_output": compiler_version,
         "qt6_core_config_dir": qt_core_dir,
         "qt_version": qt_version,
     }
-    if not cache.get("CMAKE_GENERATOR") or not compiler or not qt_core_dir or not qt_version:
+    if (
+        not cache.get("CMAKE_GENERATOR")
+        or not compiler
+        or not compiler_id
+        or not compiler_version_number
+        or not qt_core_dir
+        or not qt_version
+    ):
         mark_incomplete(report, "configured compiler, generator, or Qt package version is unresolved")
     if compiler_version.get("status") != "observed" or cmake_version.get("status") != "observed":
         mark_incomplete(report, "configured compiler or CMake version could not be observed")

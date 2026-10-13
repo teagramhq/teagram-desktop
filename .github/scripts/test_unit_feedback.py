@@ -176,6 +176,30 @@ with tempfile.TemporaryDirectory() as directory:
         "CMAKE_GENERATOR": "Ninja",
         "Qt6Core_DIR": "/usr/local/lib/cmake/Qt6Core",
     }
+    qt_core_dir = Path(directory) / "Qt6Core"
+    qt_core_dir.mkdir()
+    (qt_core_dir / "Qt6CoreConfigVersion.cmake").write_text(
+        'include("${CMAKE_CURRENT_LIST_DIR}/Qt6CoreConfigVersionImpl.cmake")\n'
+    )
+    (qt_core_dir / "Qt6CoreConfigVersionImpl.cmake").write_text(
+        'set(PACKAGE_VERSION "6.11.1")\n'
+    )
+    assert metadata_namespace["qt_package_version"](qt_core_dir) == "6.11.1"
+
+    build_path = Path(directory) / "build"
+    compiler_file = build_path / "CMakeFiles/3.26.5/CMakeCXXCompiler.cmake"
+    compiler_file.parent.mkdir(parents=True)
+    compiler_file.write_text(
+        'set(CMAKE_CXX_COMPILER_ID "GNU")\n'
+        'set(CMAKE_CXX_COMPILER_VERSION "15.1.1")\n'
+        'set(CMAKE_CXX_COMPILER_ARG1 "g++")\n'
+    )
+    assert metadata_namespace["configured_compiler_details"](build_path) == {
+        "id": "GNU",
+        "version": "15.1.1",
+        "arg1": "g++",
+    }
+
     metadata_path = Path(directory) / "metadata.json"
     status = metadata_namespace["write_report"](
         metadata_path,
