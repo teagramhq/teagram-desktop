@@ -1527,7 +1527,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 10>{
+	const auto capabilities = std::array<Capability, 11>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -1538,6 +1538,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::serverTranslationSupported,
 		Main::details::sharedFoldersSupported,
 		Main::details::accountBioEditSupported,
+		Main::details::accountUsernameEditSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -1553,6 +1554,25 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+TEST_CASE(AccountUsernameCacheRefreshRequiresEditableSession) {
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	const auto refreshCount = [](const DcOptions &options) {
+		auto requests = 0;
+		Main::details::refreshAccountUsernameCacheIfSupported(
+			options, [&] { ++requests; });
+		return requests;
+	};
+	CHECK_EQ(refreshCount(stock), 1);
+	CHECK_EQ(refreshCount(custom), 0);
+	CHECK_EQ(refreshCount(blocked), 0);
 }
 
 TEST_CASE(AutomaticChatTranslationRequiresServerSupport) {
@@ -1685,6 +1705,40 @@ TEST_CASE(AccountBioTargetsStayOwnedAcrossSwitchOrdersWithEqualIds) {
 	checkSwitchOrder(custom, customUser, false, stock, stockUser, true);
 	checkTargets(stock, customUser, false, true);
 	checkTargets(custom, stockUser, true, false);
+}
+
+TEST_CASE(AccountUsernameEditorsFollowTheirOwningSessionAcrossSwitchOrders) {
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	auto blockedOptions = DcOptions(Environment::Production);
+	blockedOptions.constructBlocked();
+
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto blocked = BioTargetTestSession{42, {blockedOptions}};
+	const auto stockUser = BioTargetTestUser{stock};
+	const auto customUser = BioTargetTestUser{custom};
+	const auto blockedUser = BioTargetTestUser{blocked};
+	CHECK_EQ(stock.userId, custom.userId);
+
+	const auto supported = [](const BioTargetTestUser &user) {
+		return Main::details::accountUsernameEditSupported(
+			user.session().mtp().dcOptions());
+	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, bool firstExpected,
+			  const BioTargetTestUser &second, bool secondExpected) {
+			  CHECK_EQ(supported(first), firstExpected);
+			  CHECK_EQ(supported(second), secondExpected);
+			  CHECK_EQ(supported(first), firstExpected);
+		  };
+
+	checkSwitchOrder(stockUser, true, customUser, false);
+	checkSwitchOrder(customUser, false, stockUser, true);
+	CHECK(!supported(blockedUser));
+	CHECK(!supported(customUser));
 }
 
 // A pin is immutable for the life of the account. Peer and message ids

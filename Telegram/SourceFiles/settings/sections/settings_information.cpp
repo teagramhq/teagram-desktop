@@ -362,16 +362,13 @@ void ShowMenu(
 	menu->popup(QCursor::pos());
 }
 
-not_null<Ui::SettingsButton*> AddRow(
-		not_null<Ui::VerticalLayout*> container,
-		rpl::producer<QString> label,
-		rpl::producer<TextWithEntities> value,
-		const QString &copyButton,
-		Fn<void()> edit,
-		IconDescriptor &&descriptor,
-		bool markedValue = false,
-		Fn<void(not_null<Ui::PopupMenu*>)> menuExtender = nullptr,
-		const style::icon *copyIcon = nullptr) {
+not_null<Ui::SettingsButton *>
+AddRow(not_null<Ui::VerticalLayout *> container, rpl::producer<QString> label,
+	   rpl::producer<TextWithEntities> value, const QString &copyButton,
+	   Fn<void()> edit, IconDescriptor &&descriptor, bool markedValue = false,
+	   Fn<void(not_null<Ui::PopupMenu *>)> menuExtender = nullptr,
+	   const style::icon *copyIcon = nullptr,
+	   Fn<bool()> copyAllowed = nullptr) {
 	const auto wrap = markedValue
 		? AddButtonWithIcon(
 			container,
@@ -401,7 +398,7 @@ not_null<Ui::SettingsButton*> AddRow(
 	}) | rpl::on_next([=](Qt::MouseButton button) {
 		if (button == Qt::LeftButton) {
 			edit();
-		} else if (!forcopy->isEmpty()) {
+		} else if (!forcopy->isEmpty() && (!copyAllowed || copyAllowed())) {
 			ShowMenu(wrap, copyButton, *forcopy, copyIcon, menuExtender);
 		}
 	}, wrap->lifetime());
@@ -632,38 +629,42 @@ void SetupRows(
 		targets->phone = phoneButton;
 	}
 
+	const auto usernameEditSupported
+		= self->session().accountUsernameEditSupported();
 	auto username = Info::Profile::UsernameValue(self);
 	auto empty = base::duplicate(
 		username
 	) | rpl::map([](const TextWithEntities &username) {
 		return username.text.isEmpty();
 	});
-	auto label = rpl::combine(
-		tr::lng_settings_username_label(),
-		std::move(empty)
-	) | rpl::map([](const QString &label, bool empty) {
-		return empty ? "t.me/username" : label;
-	});
-	auto usernameValue = rpl::combine(
-		std::move(username),
-		tr::lng_settings_username_add()
-	) | rpl::map([](const TextWithEntities &username, const QString &add) {
-		if (!username.text.isEmpty()) {
-			return username;
-		}
-		auto result = TextWithEntities{ add };
-		result.entities.push_back({
-			EntityType::CustomUrl,
-			0,
-			int(add.size()),
-			"internal:edit_username" });
-		return result;
-	});
-	session->api().usernames().requestToCache(session->user());
+	auto label
+		= rpl::combine(tr::lng_settings_username_label(), std::move(empty))
+		  | rpl::map([=](const QString &label, bool empty) {
+				return (empty && usernameEditSupported) ? "t.me/username"
+														: label;
+			});
+	auto usernameValue
+		= rpl::combine(std::move(username), tr::lng_settings_username_add(),
+					   tr::lng_settings_username_none())
+		  | rpl::map([=](const TextWithEntities &username, const QString &add,
+						 const QString &none) {
+				if (!username.text.isEmpty()) {
+					return username;
+				}
+				if (!usernameEditSupported) {
+					return TextWithEntities{none};
+				}
+				auto result = TextWithEntities{add};
+				result.entities.push_back({EntityType::CustomUrl, 0,
+										   int(add.size()),
+										   "internal:edit_username"});
+				return result;
+			});
+	Main::details::refreshAccountUsernameCacheIfSupported(
+		session->mtp().dcOptions(),
+		[=] { session->api().usernames().requestToCache(session->user()); });
 	const auto usernameButton = AddRow(
-		container,
-		std::move(label),
-		std::move(usernameValue),
+		container, std::move(label), std::move(usernameValue),
 		tr::lng_context_copy_mention(tr::now),
 		[=] {
 			if (controller->showFrozenError()) {
@@ -671,12 +672,22 @@ void SetupRows(
 			}
 			const auto box = controller->show(
 				Box(UsernamesBox, session->user()));
-			box->boxClosing(
-			) | rpl::on_next([=] {
-				session->api().usernames().requestToCache(session->user());
-			}, box->lifetime());
+			box->boxClosing()
+				| rpl::on_next(
+					[=] {
+						Main::details::refreshAccountUsernameCacheIfSupported(
+							session->mtp().dcOptions(), [=] {
+								session->api().usernames().requestToCache(
+									session->user());
+							});
+					},
+					box->lifetime());
 		},
-		{ &st::menuIconUsername });
+		{&st::menuIconUsername}, false, nullptr, nullptr,
+		[=] {
+			return usernameEditSupported
+				   || !session->user()->username().isEmpty();
+		});
 	if (targets) {
 		targets->username = usernameButton;
 	}

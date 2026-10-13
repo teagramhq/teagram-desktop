@@ -19,6 +19,7 @@ using Ui::EditPeer::UsernameEditorFlow;
 using FailureResult = UsernameEditorFlow::FailureResult;
 using Mode = UsernameEditorFlow::Mode;
 using Status = UsernameEditorFlow::Status;
+using SaveFailureOutcome = Ui::EditPeer::UsernameUpdateFailureOutcome;
 
 class ControlledUsernameApi final {
 public:
@@ -148,6 +149,49 @@ TEST_CASE(UsernameEditorFlowDiscardsLateAvailabilityAfterInputChanges) {
 	api.succeed(true);
 	CHECK(!flow.good());
 	CHECK(flow.status() == Status::Error);
+}
+
+TEST_CASE(ImmutableUsernameFailurePrecedesUnchangedInputSuccess) {
+	for (const auto &sent : {u"operator"_q, u"newhandle"_q}) {
+		auto persisted = u"operator"_q;
+		auto localWrites = 0;
+		auto saved = false;
+		const auto outcome = Ui::EditPeer::ResolveUsernameUpdateFailure(
+			u"USERNAME_IMMUTABLE"_q, sent, persisted);
+		if (outcome == SaveFailureOutcome::Saved) {
+			++localWrites;
+			persisted = sent;
+			saved = true;
+		}
+
+		CHECK(outcome == SaveFailureOutcome::Immutable);
+		CHECK_EQ(persisted, u"operator"_q);
+		CHECK_EQ(localWrites, 0);
+		CHECK(!saved);
+	}
+}
+
+TEST_CASE(StockUsernameNotModifiedStillReportsSaved) {
+	const auto outcome = Ui::EditPeer::ResolveUsernameUpdateFailure(
+		u"USERNAME_NOT_MODIFIED"_q, u"operator"_q, u"operator"_q);
+	CHECK(outcome == SaveFailureOutcome::Saved);
+}
+
+TEST_CASE(ReadOnlyUsernameFlowRejectsAvailabilityAndSaveRequests) {
+	UsernameEditorFlow flow(Mode::Profile);
+	ControlledUsernameApi api;
+	flow.inputChanged(u"operator"_q, true);
+	flow.setReadOnly();
+	flow.inputChanged(u"operat"_q, true);
+
+	CHECK(!flow.shouldCheck());
+	CHECK(!api.checkAccount(flow, u"operat"_q));
+	auto handle = u"operator"_q;
+	CHECK(!api.updateAccount(
+		flow, [&](const QString &username) { handle = username; }));
+	CHECK_EQ(handle, u"operator"_q);
+	CHECK_EQ(api.checks, 0);
+	CHECK_EQ(api.updates, 0);
 }
 
 TEST_CASE(ProfileFlowFallbackSendsUpdateWithoutRepeatCheck) {
