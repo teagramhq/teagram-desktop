@@ -251,8 +251,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-${{ github.run_id }}
-          restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-
+          key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'default' }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'default' }}-
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
