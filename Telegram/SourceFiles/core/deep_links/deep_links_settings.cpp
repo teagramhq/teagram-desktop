@@ -1615,7 +1615,6 @@ void RegisterSettingsHandlers(Router &router) {
 				   .path = u"stars"_q,
 				   .action = SettingsSection{::Settings::CreditsId()},
 				   .requiresPaidFeatures = true,
-				   .requiresPaidFeaturesForSubpaths = true,
 			   });
 
 	router.add(u"settings"_q, {
@@ -1679,7 +1678,6 @@ void RegisterSettingsHandlers(Router &router) {
 				   .path = u"business"_q,
 				   .action = SettingsSection{::Settings::BusinessId()},
 				   .requiresPaidFeatures = true,
-				   .requiresPaidFeaturesForSubpaths = true,
 			   });
 
 	router.add(u"settings"_q, {

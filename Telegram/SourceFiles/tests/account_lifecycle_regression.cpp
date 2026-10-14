@@ -1706,6 +1706,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
 		u"tg://settings/PREMIUM"_q,
+		u"tg://settings/premium/x"_q,
 		u"tg://settings/stars"_q,
 		u"tg://settings/stars/top-up"_q,
 		u"tg://settings/stars/stats"_q,
@@ -1713,11 +1714,14 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/stars/earn"_q,
 		u"tg://settings/stars/unlisted"_q,
 		u"tg://settings/ton"_q,
+		u"tg://settings/ton/x"_q,
 		u"tg://settings/business"_q,
 		u"tg://settings/business/do-not-hide-ads"_q,
 		u"tg://settings/business/unlisted"_q,
 		u"tg://settings/send-gift"_q,
+		u"tg://settings/send-gift/x"_q,
 		u"tg://settings/send-gift/self"_q,
+		u"tg://settings/send-gift/self/x"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()

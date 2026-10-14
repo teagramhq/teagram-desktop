@@ -66,7 +66,6 @@ struct Entry {
 	bool requiresAuth = true;
 	bool skipActivation = false;
 	bool requiresPaidFeatures = false;
-	bool requiresPaidFeaturesForSubpaths = false;
 };
 
 } // namespace Core::DeepLinks

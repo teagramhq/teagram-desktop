@@ -64,9 +64,7 @@ Context ParseCommand(
 
 [[nodiscard]] bool IsPaidFeaturePath(const Entry &entry, const QString &path) {
 	return entry.requiresPaidFeatures
-		   && (path == entry.path
-			   || (entry.requiresPaidFeaturesForSubpaths
-				   && path.startsWith(entry.path + u"/"_q)));
+		   && (path == entry.path || path.startsWith(entry.path + u"/"_q));
 }
 
 } // namespace
