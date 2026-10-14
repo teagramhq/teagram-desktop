@@ -1753,8 +1753,10 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	};
 	const auto previousCapture
 		= SetBoostRequestCaptureForRegressionTest(&requests);
-	const auto restoreCapture = gsl::finally(
-		[=] { SetBoostRequestCaptureForRegressionTest(previousCapture); });
+	const auto restoreCapture = gsl::finally([=] {
+		static_cast<void>(
+			SetBoostRequestCaptureForRegressionTest(previousCapture));
+	});
 	const auto countsFor = [&](const MTP::Instance *instance)
 		-> const BoostRequestSessionCountsForRegressionTest & {
 		const auto i = std::find_if(
