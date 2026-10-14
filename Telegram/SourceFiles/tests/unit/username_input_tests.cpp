@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "boxes/peers/edit_peer_common.h"
 #include "tests/unit/unit_test.h"
 
 #include "styles/style_widgets.h"
@@ -145,6 +146,90 @@ TEST_CASE(UsernameInputStandaloneEventDispatch) {
 			CHECK_EQ(input.text(), u"operat"_q);
 			CHECK_EQ(input.getLastText(), u"operat"_q);
 			input.setText(QString());
+		}
+		fixture.processPostponedCalls();
+	}
+}
+
+TEST_CASE(ReadOnlyUsernameInputRejectsWordDeletion) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+#ifdef Q_OS_LINUX
+	CHECK_EQ(QApplication::platformName(), u"offscreen"_q);
+#endif // Q_OS_LINUX
+
+	const auto shortcuts
+		= QKeySequence::keyBindings(QKeySequence::DeleteStartOfWord);
+	CHECK(!shortcuts.isEmpty());
+	if (shortcuts.isEmpty()) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto fontResource = QResource(u":/gui/fonts/OpenSans-Regular.ttf"_q);
+	CHECK(fontResource.isValid());
+	if (!fontResource.isValid()) {
+		return;
+	}
+
+	const auto hasFont = bool(st::defaultInputField.style.font);
+	CHECK(hasFont);
+	if (!hasFont) {
+		return;
+	}
+
+	for (const auto &shortcut : shortcuts) {
+		{
+			const auto key = shortcut[0];
+			auto input = Ui::UsernameInput(nullptr, st::defaultInputField,
+										   rpl::single(u"@username"_q),
+										   u"operator"_q, QString());
+			input.setReadOnly(true);
+			input.setSelection(6, 2);
+
+			auto flow = Ui::EditPeer::UsernameEditorFlow();
+			flow.inputChanged(u"operator"_q, true);
+			auto requests = 0;
+			auto checkStarted = false;
+			QObject::connect(
+				&input, &Ui::MaskedInputField::changed, &input, [&] {
+					const auto name = input.getLastText();
+					flow.inputChanged(
+						name, Ui::EditPeer::IsValidPublicUsername(name));
+					checkStarted = flow.checkAccount(
+						name, [&](const QString &, auto, auto) { ++requests; },
+						[](bool) {}, [](const QString &, auto, bool) {});
+				});
+
+			auto event = QKeyEvent(QEvent::KeyPress, key.key(),
+								   key.keyboardModifiers());
+			QCoreApplication::sendEvent(&input, &event);
+
+			CHECK_EQ(input.text(), u"operator"_q);
+			CHECK_EQ(input.getLastText(), u"operator"_q);
+			CHECK_EQ(input.selectedText(), u"or"_q);
+			CHECK_EQ(input.selectionStart(), 6);
+			CHECK_EQ(input.cursorPosition(), 8);
+			CHECK(!checkStarted);
+			CHECK_EQ(requests, 0);
+
+			auto editable = Ui::UsernameInput(nullptr, st::defaultInputField,
+											  rpl::single(u"@username"_q),
+											  u"operator"_q, QString());
+			editable.setSelection(6, 2);
+			auto editableEvent = QKeyEvent(QEvent::KeyPress, key.key(),
+										   key.keyboardModifiers());
+			QCoreApplication::sendEvent(&editable, &editableEvent);
+			CHECK_EQ(editable.text(), u"operat"_q);
+			CHECK_EQ(editable.getLastText(), u"operat"_q);
+
+			input.setText(QString());
+			editable.setText(QString());
 		}
 		fixture.processPostponedCalls();
 	}
