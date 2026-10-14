@@ -2173,7 +2173,8 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		if (!accessible) {
 			continue;
 		}
-		const auto accessibleName = accessible->text(QAccessible::Name).trimmed();
+		const auto accessibleName
+			= accessible->text(QAccessible::Name).trimmed();
 		if (!accessibleName.isEmpty()) {
 			result.accessibleNames.push_back(accessibleName);
 		}
