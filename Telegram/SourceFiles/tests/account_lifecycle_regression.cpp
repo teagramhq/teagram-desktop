@@ -1450,8 +1450,7 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	return nullptr;
 }
 
-[[nodiscard]] MTPUser RegressionUser(UserId id, bool self,
-									 const QString &phone,
+[[nodiscard]] MTPUser RegressionUser(UserId id, bool self, const QString &phone,
 									 bool premium = false) {
 	const auto flags
 		= (self ? MTPDuser::Flag::f_self : MTPDuser::Flag())
@@ -1466,10 +1465,9 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPlong(), MTPlong(), MTPlong());
 }
 
-[[nodiscard]] bool SetRegressionSessionPremium(
-		not_null<Main::Session *> session,
-		UserId selfId,
-		bool premium) {
+[[nodiscard]] bool
+SetRegressionSessionPremium(not_null<Main::Session *> session, UserId selfId,
+							bool premium) {
 	session->data().processUsers(MTP_vector<MTPUser>({
 		RegressionUser(selfId, true, QString(), premium),
 	}));
@@ -1622,71 +1620,66 @@ ReadWebViewOpenCounters(not_null<Main::Session *> session) {
 constexpr int kRegressionEntryClassCount = 13;
 
 [[nodiscard]] bool SettingsSearchHasEntry(
-		const std::vector<Settings::Builder::SearchEntry> &entries,
-		const QString &id) {
-	return std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
-		return entry.id == id;
-	});
+	const std::vector<Settings::Builder::SearchEntry> &entries,
+	const QString &id) {
+	return std::any_of(entries.begin(), entries.end(),
+					   [&](const auto &entry) { return entry.id == id; });
 }
 
 [[nodiscard]] bool SettingsSearchHasPaidEntry(
-		const std::vector<Settings::Builder::SearchEntry> &entries) {
+	const std::vector<Settings::Builder::SearchEntry> &entries) {
 	return std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
 		return entry.section == Settings::PremiumId()
-			|| entry.section == Settings::CreditsId()
-			|| entry.section == Settings::CurrencyId()
-			|| entry.section == Settings::BusinessId()
-			|| entry.id.startsWith(u"premium/"_q)
-			|| entry.id.startsWith(u"stars/"_q)
-			|| entry.id.startsWith(u"business/"_q)
-			|| entry.id == u"main/premium"_q
-			|| entry.id == u"main/credits"_q
-			|| entry.id == u"main/currency"_q
-			|| entry.id == u"main/business"_q
-			|| entry.id == u"main/send-gift"_q;
+			   || entry.section == Settings::CreditsId()
+			   || entry.section == Settings::CurrencyId()
+			   || entry.section == Settings::BusinessId()
+			   || entry.id.startsWith(u"premium/"_q)
+			   || entry.id.startsWith(u"stars/"_q)
+			   || entry.id.startsWith(u"business/"_q)
+			   || entry.id == u"main/premium"_q || entry.id == u"main/credits"_q
+			   || entry.id == u"main/currency"_q
+			   || entry.id == u"main/business"_q
+			   || entry.id == u"main/send-gift"_q;
 	});
 }
 
 [[nodiscard]] bool SettingsSearchHasSectionTitle(
-		const std::vector<Settings::Builder::SearchEntry> &entries,
-		Settings::Type section) {
+	const std::vector<Settings::Builder::SearchEntry> &entries,
+	Settings::Type section) {
 	return std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
 		return entry.id.isEmpty() && entry.section == section;
 	});
 }
 
-[[nodiscard]] bool SettingsSearchMatchesExpected(
-		not_null<Main::Session *> session,
-		bool paidSupported,
-		bool bioSupported) {
+[[nodiscard]] bool
+SettingsSearchMatchesExpected(not_null<Main::Session *> session,
+							  bool paidSupported, bool bioSupported) {
 	const auto entries
 		= Settings::Builder::SearchRegistry::Instance().collectAll(session);
 	const auto hasPaid = SettingsSearchHasPaidEntry(entries);
-	const auto hasPrivacy = SettingsSearchHasEntry(
-		entries, u"privacy/phone_number"_q);
+	const auto hasPrivacy
+		= SettingsSearchHasEntry(entries, u"privacy/phone_number"_q);
 	const auto hasBio = SettingsSearchHasEntry(entries, u"edit/bio"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
-		&& SettingsSearchHasEntry(entries, u"stars/gift"_q)
-		&& SettingsSearchHasEntry(entries, u"business/sponsored"_q)
-		&& SettingsSearchHasEntry(entries, u"main/premium"_q)
-		&& SettingsSearchHasEntry(entries, u"main/credits"_q)
-		&& SettingsSearchHasEntry(entries, u"main/currency"_q)
-		&& SettingsSearchHasEntry(entries, u"main/business"_q)
-		&& SettingsSearchHasSectionTitle(entries, Settings::PremiumId())
-		&& SettingsSearchHasSectionTitle(entries, Settings::CreditsId())
-		&& SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
-	const auto matches = hasPaid == paidSupported
-		&& hasPrivacy
-		&& (hasBio == bioSupported)
-		&& (!paidSupported || hasStockPaidRows);
+		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
+		  && SettingsSearchHasEntry(entries, u"business/sponsored"_q)
+		  && SettingsSearchHasEntry(entries, u"main/premium"_q)
+		  && SettingsSearchHasEntry(entries, u"main/credits"_q)
+		  && SettingsSearchHasEntry(entries, u"main/currency"_q)
+		  && SettingsSearchHasEntry(entries, u"main/business"_q)
+		  && SettingsSearchHasSectionTitle(entries, Settings::PremiumId())
+		  && SettingsSearchHasSectionTitle(entries, Settings::CreditsId())
+		  && SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
+	const auto matches = hasPaid == paidSupported && hasPrivacy
+						 && (hasBio == bioSupported)
+						 && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
-		std::fprintf(
-			stderr,
-			"Settings search regression failed: paid=%d expected=%d, "
-			"privacy=%d, bio=%d expected=%d, stock-rows=%d.\n",
-			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
-			hasStockPaidRows);
+		std::fprintf(stderr,
+					 "Settings search regression failed: paid=%d expected=%d, "
+					 "privacy=%d, bio=%d expected=%d, stock-rows=%d.\n",
+					 hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
+					 hasStockPaidRows);
 	}
 	return matches;
 }
@@ -2001,10 +1994,11 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	const auto blankWasPremium = blank->session().premium();
 	const auto blankPremiumEnabled
 		= SetRegressionSessionPremium(&blank->session(), selfId, true);
-	const auto blankSearchMatches = blankPremiumEnabled
-		&& SettingsSearchMatchesExpected(&blank->session(), false, false);
-	const auto blankPremiumRestored
-		= SetRegressionSessionPremium(&blank->session(), selfId, blankWasPremium);
+	const auto blankSearchMatches
+		= blankPremiumEnabled
+		  && SettingsSearchMatchesExpected(&blank->session(), false, false);
+	const auto blankPremiumRestored = SetRegressionSessionPremium(
+		&blank->session(), selfId, blankWasPremium);
 	if (!blankSearchMatches || !blankPremiumRestored) {
 		blank->forcedLogOut();
 		return false;
