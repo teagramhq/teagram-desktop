@@ -976,8 +976,8 @@ RestartDomain(Main::Domain &domain,
 	return true;
 }
 
-[[nodiscard]] MTPUser RegressionUser(UserId id, bool self,
-									 const QString &phone);
+[[nodiscard]] MTPUser RegressionUser(UserId id, bool self, const QString &phone,
+									 bool premium = false);
 
 [[nodiscard]] bool CacheMismatchWaitsForDestructiveConfirmation(
 	not_null<Main::Account *> account,
@@ -1451,7 +1451,7 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 }
 
 [[nodiscard]] MTPUser RegressionUser(UserId id, bool self, const QString &phone,
-									 bool premium = false) {
+									 bool premium) {
 	const auto flags
 		= (self ? MTPDuser::Flag::f_self : MTPDuser::Flag())
 		  | (phone.isEmpty() ? MTPDuser::Flag() : MTPDuser::Flag::f_phone)
