@@ -2402,7 +2402,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTPlong(), MTPlong(), MTPlong());
 }
 
-[[nodiscard]] MTPChannelFull TranslationRegressionChannelFull(ChannelId id) {
+[[nodiscard]] MTPDchannelFull TranslationRegressionChannelFull(ChannelId id) {
 	const auto notifySettings = MTP_peerNotifySettings(
 		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
 		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
@@ -2457,11 +2457,10 @@ template <typename Predicate>
 		ChannelId(1152), 115100, u"Custom channel"_q));
 	const auto stockChannel = stockSession.data().channel(ChannelId(1151));
 	const auto customChannel = customSession.data().channel(ChannelId(1152));
-	Data::ApplyChannelUpdate(
-		stockChannel, TranslationRegressionChannelFull(ChannelId(1151)).data());
-	Data::ApplyChannelUpdate(
-		customChannel,
-		TranslationRegressionChannelFull(ChannelId(1152)).data());
+	Data::ApplyChannelUpdate(stockChannel,
+							 TranslationRegressionChannelFull(ChannelId(1151)));
+	Data::ApplyChannelUpdate(customChannel,
+							 TranslationRegressionChannelFull(ChannelId(1152)));
 
 	const auto openEditBox
 		= [](not_null<Window::SessionController *> controller,
@@ -2609,7 +2608,8 @@ template <typename Predicate>
 
 	const auto stockLoaded = stockChannel->isLoaded();
 	const auto stockServerSupported = stockSession.serverTranslationSupported();
-	const auto stockNetworkAllowed = stockSession.mtp().networkAllowed();
+	const auto stockNetworkAllowed
+		= stockSession.mtp().isServerEnrollmentNetworkAllowed();
 	const auto stockCreator = stockChannel->amCreator();
 	const auto stockBroadcast = stockChannel->isBroadcast();
 	const auto stockAutoTranslation = stockChannel->autoTranslation();
@@ -2619,7 +2619,8 @@ template <typename Predicate>
 	const auto customLoaded = customChannel->isLoaded();
 	const auto customServerSupported
 		= customSession.serverTranslationSupported();
-	const auto customNetworkAllowed = customSession.mtp().networkAllowed();
+	const auto customNetworkAllowed
+		= customSession.mtp().isServerEnrollmentNetworkAllowed();
 	const auto customCreator = customChannel->amCreator();
 	const auto customBroadcast = customChannel->isBroadcast();
 	const auto customAutoTranslation = customChannel->autoTranslation();
@@ -2749,8 +2750,10 @@ template <typename Predicate>
 	const auto barrier = WaitForMainQueueBarrierForRegressionTest(1000)
 						 == MainQueueBarrierResult::Completed;
 	const auto stockAfterBarrier = GetTranslationRpcCountsForRegressionTest();
-	const auto stockNetworkAllowedAfter = stockSession.mtp().networkAllowed();
-	const auto customNetworkAllowedAfter = customSession.mtp().networkAllowed();
+	const auto stockNetworkAllowedAfter
+		= stockSession.mtp().isServerEnrollmentNetworkAllowed();
+	const auto customNetworkAllowedAfter
+		= customSession.mtp().isServerEnrollmentNetworkAllowed();
 	const auto customCountsUnchanged
 		= (gCustomTranslationRpcCounts.text == customRpcs.text)
 		  && (gCustomTranslationRpcCounts.rich == customRpcs.rich);
