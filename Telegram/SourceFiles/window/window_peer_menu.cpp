@@ -1283,8 +1283,7 @@ void Filler::addViewStatistics() {
 			}, &st::menuIconStats);
 		}
 		if (_controller->session().paidFeaturesSupported()
-			&& (canGetStats
-				|| channel->amCreator()
+			&& (canGetStats || channel->amCreator()
 				|| channel->canPostStories())) {
 			_addAction(tr::lng_boosts_title(tr::now), [=] {
 				if ([[maybe_unused]] const auto strong = weak.get()) {
