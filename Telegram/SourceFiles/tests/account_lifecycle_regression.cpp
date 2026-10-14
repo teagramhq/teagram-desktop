@@ -1908,29 +1908,17 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
 
-	const auto primary = app.activePrimaryWindow();
-	if (!primary) {
-		return false;
-	}
-	const auto primaryAccount = not_null<Main::Account *>(&primary->account());
-	const auto restorePrimary = gsl::finally([&] {
-		if (const auto controller = primary->sessionController()) {
-			resetController(not_null<Window::SessionController *>(controller));
-		}
-		primary->showAccount(primaryAccount);
-	});
-	primary->showAccount(stock);
-	primary->activate();
+	stockController->window().activate();
 	QCoreApplication::processEvents();
-	const auto primaryController = primary->sessionController();
-	if (!primaryController
-		|| (&primaryController->session() != &stock->session())) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: primary window did "
-					 "not target the stock session.\n");
+	if ((app.activeWindow() != &stockController->window())
+		|| (app.activePrimaryWindow() != &stockController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"become active.\n");
 		return false;
 	}
-	resetController(not_null<Window::SessionController *>(primaryController));
+	resetController(stockController);
 	QCoreApplication::processEvents();
 	const auto missingTargetContext
 		= QVariant::fromValue(ClickHandlerContext{});
@@ -1943,9 +1931,6 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 				  ->featureUnavailableOnServerToastCallsForRegressionTest();
 		const auto blockedToastBeforeMissingController
 			= blockedController
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		const auto primaryToastBeforeMissingController
-			= primaryController
 				  ->featureUnavailableOnServerToastCallsForRegressionTest();
 		const auto activeBeforeMissingController = app.activeWindow();
 		const auto handled = app.openLocalUrl(url, missingTargetContext);
@@ -1961,17 +1946,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			  && (blockedController
 					  ->featureUnavailableOnServerToastCallsForRegressionTest()
 				  == blockedToastBeforeMissingController)
-			  && (primaryController
-					  ->featureUnavailableOnServerToastCallsForRegressionTest()
-				  == primaryToastBeforeMissingController)
 			  && !stockController->content()->isMainSectionShown()
 			  && !pinnedController->content()->isMainSectionShown()
 			  && !blockedController->content()->isMainSectionShown()
-			  && !primaryController->content()->isMainSectionShown()
 			  && !stockController->isLayerShown()
 			  && !pinnedController->isLayerShown()
 			  && !blockedController->isLayerShown()
-			  && !primaryController->isLayerShown()
 			  && (app.activeWindow() == activeBeforeMissingController);
 		if (!unchanged) {
 			std::fprintf(
@@ -2394,39 +2374,22 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		return false;
 	}
 	blank->forcedLogOut();
-	const auto primary = app.activePrimaryWindow();
-	if (!primary) {
-		return false;
-	}
-	const auto primaryAccount = not_null<Main::Account *>(&primary->account());
-	const auto restorePrimary = gsl::finally([&] {
-		if (const auto controller = primary->sessionController()) {
-			if (controller->isLayerShown()) {
-				controller->hideLayer(anim::type::instant);
-			}
-			controller->clearSectionStack(Window::SectionShow(
-				anim::type::instant, anim::activation::background));
-		}
-		primary->showAccount(primaryAccount);
-	});
-	primary->showAccount(stock);
-	primary->activate();
+	stockController->window().activate();
 	QCoreApplication::processEvents();
-	const auto primaryController = primary->sessionController();
-	if (!primaryController
-		|| (&primaryController->session() != &stock->session())) {
+	if ((app.activeWindow() != &stockController->window())
+		|| (app.activePrimaryWindow() != &stockController->window())) {
 		return false;
 	}
 	const auto expiredToastBefore
-		= primaryController
+		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	const auto expiredActiveBefore = app.activeWindow();
 	const auto expiredHandled
 		= app.openLocalUrl(u"tg://settings/premium"_q, expiredContext);
 	QCoreApplication::processEvents();
-	if (!expiredHandled || (primaryController->content()->isMainSectionShown())
-		|| primaryController->isLayerShown()
-		|| (primaryController
+	if (!expiredHandled || (stockController->content()->isMainSectionShown())
+		|| stockController->isLayerShown()
+		|| (stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= expiredToastBefore)
 		|| (app.activeWindow() != expiredActiveBefore)) {
