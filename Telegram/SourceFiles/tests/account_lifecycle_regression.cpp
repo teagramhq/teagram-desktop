@@ -2160,8 +2160,6 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 		const auto actionName = action->text().trimmed();
 		result.actions.push_back(actionName);
-		// Menu::handleKeyPress traverses enabled action widgets. Keep this
-		// read-only so detached regression menus do not receive native focus.
 		if (action->isEnabled()) {
 			result.keyboardNames.push_back(actionName);
 		}
