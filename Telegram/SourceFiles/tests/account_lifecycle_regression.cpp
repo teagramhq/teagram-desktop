@@ -2832,6 +2832,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"could not create the stock test session");
 	}
+	const auto stockWasPremium = stock->session().premium();
+	const auto restoreStockPremium = gsl::finally([&] {
+		Expects(SetRegressionSessionPremium(&stock->session(), selfId,
+											stockWasPremium));
+	});
+	if (!SetRegressionSessionPremium(&stock->session(), selfId, true)) {
+		return FailChatParticipantsRegression(
+			"could not enable Premium for stock Settings search checks");
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		if (!RunRefusedDownloadHistoryRegression(&stock->session(),
 												 refusedDownload)) {
