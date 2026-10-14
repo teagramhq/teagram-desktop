@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
+#include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/about_box.h"
@@ -94,6 +95,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
+#include "passport/passport_form_controller.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_calls.h"
@@ -2848,6 +2850,198 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	return true;
 }
 
+[[nodiscard]] bool RunPassportLinkRefusalRegression(
+	Core::Application &app,
+	Main::Domain &domain,
+	not_null<Main::Account *> stock,
+	not_null<Main::Account *> pinned,
+	not_null<Main::Account *> blank,
+	not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow,
+	not_null<Window::Controller *> blankWindow) {
+	const auto stockController = stockWindow->sessionController();
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto blankController = blankWindow->sessionController();
+	if (!stockController || !pinnedController || !blankController) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: a session controller is missing.\n");
+		return false;
+	}
+	if (!stock->session().passportSupported()
+		|| pinned->session().passportSupported()
+		|| blank->session().passportSupported()
+		|| pinned->mtp().dcOptions().blocked()
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->mtp().dcOptions().hasCustomServer()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: fixture capabilities do not match "
+			"stock, custom, and blocked sessions.\n");
+		return false;
+	}
+	stockController->clearPassportForm();
+	pinnedController->clearPassportForm();
+	blankController->clearPassportForm();
+	const auto activeBefore = &domain.active();
+	const auto restore = gsl::finally([&] {
+		stockController->clearPassportForm();
+		pinnedController->clearPassportForm();
+		blankController->clearPassportForm();
+		domain.activate(activeBefore);
+	});
+	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
+	const auto passportUrl = [&](bool hasNonce) {
+		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
+			+ (hasNonce ? u"&nonce=y"_q : QString())
+			+ callback;
+	};
+	const auto resolveUrl = [&](bool hasNonce) {
+		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
+			+ u"&public_key=x"_q
+			+ (hasNonce ? u"&nonce=y"_q : QString())
+			+ callback;
+	};
+	const auto links = std::vector<QString>{
+		passportUrl(true),
+		resolveUrl(true),
+		passportUrl(false),
+		resolveUrl(false),
+	};
+	const auto queuedWithoutController = [&](const QString &url) {
+		const auto command = url.mid(u"tg://"_q.size());
+		const auto options = qthelp::RegExOption::CaseInsensitive;
+		for (const auto &[expression, handler] : Core::LocalUrlHandlers()) {
+			const auto match = qthelp::regex_match(
+				expression,
+				command,
+				options);
+			if (match) {
+				return !handler(nullptr, match, {});
+			}
+		}
+		return false;
+	};
+	for (const auto &url : links) {
+		if (!queuedWithoutController(url)) {
+			std::fprintf(stderr,
+						 "Passport link regression: missing controller consumed "
+						 "or missed a URL.\n");
+			return false;
+		}
+	}
+	const auto contextFor = [](Window::SessionController *controller) {
+		return QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = controller,
+		});
+	};
+	const auto toastCalls = [](Window::SessionController *controller) {
+		return controller->featureUnavailableOnServerToastCallsForRegressionTest();
+	};
+	const auto hasPassportForm = [](Window::SessionController *controller) {
+		return controller->passportFormExistsForRegressionTest();
+	};
+	const auto refuse = [&](const char *label,
+		Window::SessionController *controller,
+		const QString &url) {
+		const auto stockToastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(controller));
+		QCoreApplication::processEvents();
+		const auto stockToastAfter = toastCalls(stockController);
+		const auto pinnedToastAfter = toastCalls(pinnedController);
+		const auto blankToastAfter = toastCalls(blankController);
+		const auto refused = handled
+			&& !hasPassportForm(stockController)
+			&& !hasPassportForm(pinnedController)
+			&& !hasPassportForm(blankController)
+			&& (stockToastAfter
+				== stockToastBefore + (controller == stockController))
+			&& (pinnedToastAfter
+				== pinnedToastBefore + (controller == pinnedController))
+			&& (blankToastAfter
+				== blankToastBefore + (controller == blankController));
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: %s refusal mismatch for %s.\n",
+				label,
+				url.toUtf8().constData());
+		}
+		return refused;
+	};
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(stderr,
+					 "Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("custom", pinnedController, url)) {
+			return false;
+		}
+	}
+	domain.activate(pinned);
+	if (&domain.active() != pinned.get()) {
+		std::fprintf(stderr,
+					 "Passport link regression: custom account was not active.\n");
+		return false;
+	}
+	for (const auto &url : std::vector<QString>{
+		passportUrl(true),
+		resolveUrl(true),
+	}) {
+		const auto toastBefore = toastCalls(stockController);
+		const auto handled = app.openLocalUrl(url, contextFor(stockController));
+		QCoreApplication::processEvents();
+		const auto opened = handled
+			&& hasPassportForm(stockController)
+			&& !hasPassportForm(pinnedController)
+			&& !hasPassportForm(blankController)
+			&& (toastCalls(stockController) == toastBefore);
+		stockController->clearPassportForm();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: stock behavior changed for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(stderr,
+					 "Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("blocked-without-pin", blankController, url)) {
+			return false;
+		}
+	}
+	const auto restartToastBefore = toastCalls(pinnedController);
+	pinnedController->showPassportForm(Passport::FormRequest(
+		UserId(1),
+		u"{}"_q,
+		u"https://example.com"_q,
+		u"x"_q,
+		u"y"_q));
+	if (hasPassportForm(pinnedController)
+		|| (toastCalls(pinnedController) != restartToastBefore + 1)) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: restart bypassed the session gate.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Passport link regression passed: URL variants followed their "
+		"owning stock, custom, and blocked sessions.\n");
+	return true;
+}
+
 [[nodiscard]] int
 AcceptedMiniAppOpens(not_null<Main::Session *> session,
 					 not_null<UserData *> bot,
@@ -4077,6 +4271,18 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return stockFirst && blockedFirst;
 	}();
 	if (!blockedMenuOrdersMatch) {
+		return false;
+	}
+	if (!RunPassportLinkRefusalRegression(
+			app,
+			app.domain(),
+			stock,
+			pinned,
+			blank,
+			stockWindow,
+			pinnedWindow,
+			blankWindow)) {
+		blank->forcedLogOut();
 		return false;
 	}
 	const auto blankBot = blank->session()

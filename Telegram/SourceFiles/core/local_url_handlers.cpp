@@ -460,6 +460,9 @@ bool ShowPassportForm(
 	if (!controller) {
 		return false;
 	}
+	if (controller->showPassportUnavailableIfUnsupported()) {
+		return true;
+	}
 	const auto botId = params.value("bot_id", QString()).toULongLong();
 	const auto scope = params.value("scope", QString());
 	const auto callback = params.value("callback_url", QString());
@@ -480,6 +483,9 @@ bool ShowPassport(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
 	return ShowPassportForm(
 		controller,
 		url_parse_params(
