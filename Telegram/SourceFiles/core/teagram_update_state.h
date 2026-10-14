@@ -17,7 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
-inline constexpr auto kTeagramUpdateEngineActive = false;
+inline constexpr auto kTeagramUpdateEngineActive = true;
 inline constexpr auto kTeagramUpdateChannelPreference
 	= std::string_view("teagram-update-channel");
 inline constexpr auto kTeagramUpdateHighWaterPreference
