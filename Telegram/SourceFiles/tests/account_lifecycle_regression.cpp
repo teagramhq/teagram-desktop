@@ -1697,10 +1697,8 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 }
 
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
-	Core::Application &app,
-	not_null<Main::Account *> stock,
-	not_null<Main::Account *> pinned,
-	not_null<Main::Account *> blocked,
+	Core::Application &app, not_null<Main::Account *> stock,
+	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
@@ -1719,24 +1717,25 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/send-gift"_q,
 		u"tg://settings/send-gift/self"_q,
 	};
-	const auto sameUserId = stock->session().uniqueId()
-		== pinned->session().uniqueId()
-		&& pinned->session().uniqueId() == blocked->session().uniqueId();
-	const auto configured = sameUserId
-		&& stock->session().paidFeaturesSupported()
-		&& !pinned->session().paidFeaturesSupported()
-		&& !blocked->session().paidFeaturesSupported()
-		&& pinned->mtp().dcOptions().hasCustomServer()
-		&& !pinned->mtp().dcOptions().blocked()
-		&& !blocked->mtp().dcOptions().hasCustomServer()
-		&& blocked->mtp().dcOptions().blocked()
-		&& !blocked->local().hasStoredCustomServer()
-		&& !blocked->local().customServerPinUnknown()
-		&& (&stockController->session() == &stock->session())
-		&& (&pinnedController->session() == &pinned->session())
-		&& (&blockedController->session() == &blocked->session());
+	const auto sameUserId
+		= stock->session().uniqueId() == pinned->session().uniqueId()
+		  && pinned->session().uniqueId() == blocked->session().uniqueId();
+	const auto configured
+		= sameUserId && stock->session().paidFeaturesSupported()
+		  && !pinned->session().paidFeaturesSupported()
+		  && !blocked->session().paidFeaturesSupported()
+		  && pinned->mtp().dcOptions().hasCustomServer()
+		  && !pinned->mtp().dcOptions().blocked()
+		  && !blocked->mtp().dcOptions().hasCustomServer()
+		  && blocked->mtp().dcOptions().blocked()
+		  && !blocked->local().hasStoredCustomServer()
+		  && !blocked->local().customServerPinUnknown()
+		  && (&stockController->session() == &stock->session())
+		  && (&pinnedController->session() == &pinned->session())
+		  && (&blockedController->session() == &blocked->session());
 	if (!configured) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Settings deep link regression failed: session fixtures did not "
 			"match stock, custom, and blocked-without-pin accounts.\n");
 		return false;
@@ -1745,112 +1744,115 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	const auto previousWindow = app.activeWindow();
 	const auto restoreWindows = gsl::finally([&] {
 		for (const auto controller : {
-				stockController.get(),
-				pinnedController.get(),
-				blockedController.get(),
-			}) {
+				 stockController.get(),
+				 pinnedController.get(),
+				 blockedController.get(),
+			 }) {
 			if (controller->isLayerShown()) {
 				controller->hideLayer(anim::type::instant);
 			}
 			controller->clearSectionStack(Window::SectionShow(
-				anim::type::instant,
-				anim::activation::background));
+				anim::type::instant, anim::activation::background));
 		}
 		if (previousWindow) {
 			previousWindow->activate();
 		}
 	});
-	const auto resetController = [](
-			not_null<Window::SessionController *> controller) {
-		if (controller->isLayerShown()) {
-			controller->hideLayer(anim::type::instant);
-		}
-		controller->clearSectionStack(Window::SectionShow(
-			anim::type::instant,
-			anim::activation::background));
-	};
+	const auto resetController
+		= [](not_null<Window::SessionController *> controller) {
+			  if (controller->isLayerShown()) {
+				  controller->hideLayer(anim::type::instant);
+			  }
+			  controller->clearSectionStack(Window::SectionShow(
+				  anim::type::instant, anim::activation::background));
+		  };
 	for (const auto controller : {
-			stockController,
-			pinnedController,
-			blockedController,
-		}) {
+			 stockController,
+			 pinnedController,
+			 blockedController,
+		 }) {
 		resetController(controller);
 	}
 	QCoreApplication::processEvents();
 	for (const auto controller : {
-			stockController,
-			pinnedController,
-			blockedController,
-		}) {
+			 stockController,
+			 pinnedController,
+			 blockedController,
+		 }) {
 		if (controller->content()->isMainSectionShown()
 			|| controller->isLayerShown()) {
-			std::fprintf(stderr,
+			std::fprintf(
+				stderr,
 				"Settings deep link regression failed: test window did not "
 				"start at its base section.\n");
 			return false;
 		}
 	}
 
-	const auto contextFor = [](
-			not_null<Window::SessionController *> controller) {
-		return QVariant::fromValue(ClickHandlerContext{
-			.sessionWindow = base::make_weak(controller.get()),
-		});
-	};
+	const auto contextFor
+		= [](not_null<Window::SessionController *> controller) {
+			  return QVariant::fromValue(ClickHandlerContext{
+				  .sessionWindow = base::make_weak(controller.get()),
+			  });
+		  };
 	const auto dispatchRefused = [&](const QString &url,
-									 not_null<Window::SessionController *> target,
+									 not_null<Window::SessionController *>
+										 target,
 									 Window::Controller *activeBefore) {
 		const auto stockToastBefore
-			= stockController->featureUnavailableOnServerToastCallsForRegressionTest();
+			= stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
 		const auto pinnedToastBefore
-			= pinnedController->featureUnavailableOnServerToastCallsForRegressionTest();
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
 		const auto blockedToastBefore
-			= blockedController->featureUnavailableOnServerToastCallsForRegressionTest();
+			= blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
 		const auto handled = app.openLocalUrl(url, contextFor(target));
 		QCoreApplication::processEvents();
 		const auto targetToastOnly
-			= (stockController->featureUnavailableOnServerToastCallsForRegressionTest()
-				== stockToastBefore + (target.get() == stockController.get()))
-			&& (pinnedController->featureUnavailableOnServerToastCallsForRegressionTest()
-				== pinnedToastBefore + (target.get() == pinnedController.get()))
-			&& (blockedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-				== blockedToastBefore + (target.get() == blockedController.get()));
+			= (stockController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   == stockToastBefore + (target.get() == stockController.get()))
+			  && (pinnedController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == pinnedToastBefore
+						 + (target.get() == pinnedController.get()))
+			  && (blockedController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == blockedToastBefore
+						 + (target.get() == blockedController.get()));
 		const auto noPaidUiOpen
 			= !stockController->content()->isMainSectionShown()
-			&& !pinnedController->content()->isMainSectionShown()
-			&& !blockedController->content()->isMainSectionShown()
-			&& !stockController->isLayerShown()
-			&& !pinnedController->isLayerShown()
-			&& !blockedController->isLayerShown();
-		const auto refused = handled
-			&& targetToastOnly
-			&& noPaidUiOpen
-			&& (app.activeWindow() == activeBefore);
+			  && !pinnedController->content()->isMainSectionShown()
+			  && !blockedController->content()->isMainSectionShown()
+			  && !stockController->isLayerShown()
+			  && !pinnedController->isLayerShown()
+			  && !blockedController->isLayerShown();
+		const auto refused = handled && targetToastOnly && noPaidUiOpen
+							 && (app.activeWindow() == activeBefore);
 		if (!refused) {
-			std::fprintf(stderr,
+			std::fprintf(
+				stderr,
 				"Settings deep link regression failed: route=%s handled=%d "
 				"toast-only=%d paid-ui-open=%d "
 				"active=%p expected=%p.\n",
-				url.toUtf8().constData(),
-				handled,
-				targetToastOnly,
-				!noPaidUiOpen,
-				static_cast<void *>(app.activeWindow()),
+				url.toUtf8().constData(), handled, targetToastOnly,
+				!noPaidUiOpen, static_cast<void *>(app.activeWindow()),
 				static_cast<void *>(activeBefore));
 		}
 		return refused;
 	};
-	const auto dispatchMatrix = [&](
-			not_null<Window::SessionController *> target,
-			Window::Controller *activeBefore) {
-		for (const auto &url : routes) {
-			if (!dispatchRefused(url, target, activeBefore)) {
-				return false;
-			}
-		}
-		return true;
-	};
+	const auto dispatchMatrix
+		= [&](not_null<Window::SessionController *> target,
+			  Window::Controller *activeBefore) {
+			  for (const auto &url : routes) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
+					  return false;
+				  }
+			  }
+			  return true;
+		  };
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
@@ -1874,52 +1876,57 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
 	const auto ordinaryToastBefore
-		= pinnedController->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(
-			u"tg://settings"_q,
-			contextFor(pinnedController))) {
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
 		return false;
 	}
 	QCoreApplication::processEvents();
 	if (!pinnedController->content()->isMainSectionShown()
 		|| pinnedController->isLayerShown()
-		|| (pinnedController->featureUnavailableOnServerToastCallsForRegressionTest()
+		|| (pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= ordinaryToastBefore)
 		|| (app.activeWindow() != &pinnedController->window())) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Settings deep link regression failed: ordinary Settings link "
 			"lost its section or focus behavior.\n");
 		return false;
 	}
-	pinnedController->clearSectionStack(Window::SectionShow(
-		anim::type::instant,
-		anim::activation::background));
+	pinnedController->clearSectionStack(
+		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
 
 	const auto activeBeforeMissingController = app.activeWindow();
 	const auto stockToastBeforeMissingController
-		= stockController->featureUnavailableOnServerToastCallsForRegressionTest();
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	const auto pinnedToastBeforeMissingController
-		= pinnedController->featureUnavailableOnServerToastCallsForRegressionTest();
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	const auto blockedToastBeforeMissingController
-		= blockedController->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (Core::DeepLinks::Router::Instance().tryHandle(
-			nullptr,
-			u"settings/premium"_q)
-		|| (stockController->featureUnavailableOnServerToastCallsForRegressionTest()
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	if (Core::DeepLinks::Router::Instance().tryHandle(nullptr,
+													  u"settings/premium"_q)
+		|| (stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= stockToastBeforeMissingController)
-		|| (pinnedController->featureUnavailableOnServerToastCallsForRegressionTest()
+		|| (pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= pinnedToastBeforeMissingController)
-		|| (blockedController->featureUnavailableOnServerToastCallsForRegressionTest()
+		|| (blockedController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= blockedToastBeforeMissingController)
 		|| stockController->content()->isMainSectionShown()
 		|| pinnedController->content()->isMainSectionShown()
 		|| blockedController->content()->isMainSectionShown()
-		|| stockController->isLayerShown()
-		|| pinnedController->isLayerShown()
+		|| stockController->isLayerShown() || pinnedController->isLayerShown()
 		|| blockedController->isLayerShown()
 		|| (app.activeWindow() != activeBeforeMissingController)) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Settings deep link regression failed: a missing controller "
 			"was not a no-op.\n");
 		return false;
@@ -1927,30 +1934,33 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	const auto stockToastBefore = stockController
-		->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(
-			u"tg://settings/premium"_q,
-			contextFor(stockController))) {
+	const auto stockToastBefore
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	if (!app.openLocalUrl(u"tg://settings/premium"_q,
+						  contextFor(stockController))) {
 		return false;
 	}
 	QCoreApplication::processEvents();
-	const auto stockOpensPremium = stockController->content()->isMainSectionShown()
-		&& !stockController->isLayerShown()
-		&& (stockController->featureUnavailableOnServerToastCallsForRegressionTest()
-			== stockToastBefore)
-		&& (app.activeWindow() == &stockController->window());
+	const auto stockOpensPremium
+		= stockController->content()->isMainSectionShown()
+		  && !stockController->isLayerShown()
+		  && (stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == stockToastBefore)
+		  && (app.activeWindow() == &stockController->window());
 	if (!stockOpensPremium) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Settings deep link regression failed: stock Premium route did "
 			"not retain its section and focus behavior.\n");
 		return false;
 	}
-	stockController->clearSectionStack(Window::SectionShow(
-		anim::type::instant,
-		anim::activation::background));
+	stockController->clearSectionStack(
+		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
-	std::fprintf(stderr,
+	std::fprintf(
+		stderr,
 		"Settings deep link regression passed: 13 routes refused in custom "
 		"and blocked sessions; stock Premium and ordinary Settings routes "
 		"opened.\n");
