@@ -1535,9 +1535,8 @@ void FillContextMenuItems(
 		}, &st::menuIconCopy);
 	}
 	if (request.overSelection
-		&& !Ui::SkipTranslate(
-			&view->history()->peer->session(),
-			list->getSelectedText().rich)) {
+		&& !Ui::SkipTranslate(&view->history()->peer->session(),
+							  list->getSelectedText().rich)) {
 		const auto owner = &view->history()->owner();
 		result->addAction(tr::lng_context_translate_selected(tr::now), [=] {
 			if (const auto item = owner->message(itemId)) {
@@ -1598,8 +1597,7 @@ void FillContextMenuItems(
 			if ((!item->translation() || !item->history()->translatedTo())
 				&& !translate.text.isEmpty()
 				&& !Ui::SkipTranslate(
-					&item->history()->peer->session(),
-					translate,
+					&item->history()->peer->session(), translate,
 					!mediaHasTextForCopy && bool(item->richPage()))) {
 				result->addAction(tr::lng_context_translate(tr::now), [=] {
 					if (const auto item = owner->message(itemId)) {

@@ -33,10 +33,9 @@ void TranslateBox(
 	TextWithEntities text,
 	bool hasCopyRestriction);
 
-[[nodiscard]] bool SkipTranslate(
-	not_null<Main::Session*> session,
-	TextWithEntities textWithEntities,
-	bool richMessage = false);
+[[nodiscard]] bool SkipTranslate(not_null<Main::Session *> session,
+								 TextWithEntities textWithEntities,
+								 bool richMessage = false);
 
 [[nodiscard]] object_ptr<BoxContent> EditSkipTranslationLanguages();
 [[nodiscard]] object_ptr<BoxContent> ChooseTranslateToBox(

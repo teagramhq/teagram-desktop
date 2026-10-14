@@ -1485,9 +1485,8 @@ Section DetailsFiller::makeInfo() {
 				}
 			}
 			label->fillContextMenu(request);
-			if (Ui::SkipTranslate(
-					&peer->session(),
-					state->labelText.current())) {
+			if (Ui::SkipTranslate(&peer->session(),
+								  state->labelText.current())) {
 				return;
 			}
 			auto item = (request.selection.empty()

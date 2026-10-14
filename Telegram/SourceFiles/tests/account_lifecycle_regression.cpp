@@ -2616,7 +2616,7 @@ template <typename Predicate>
 	settings.setTranslateButtonEnabled(true);
 	settings.setUsePlatformTranslation(false);
 	settings.setTranslateTo(target);
-	settings.setSkipTranslationLanguages({ offered });
+	settings.setSkipTranslationLanguages({offered});
 
 	auto &stockSession = stockController->session();
 	auto &customSession = customController->session();
@@ -2637,33 +2637,35 @@ template <typename Predicate>
 	if (customProviderWithPlatformOff != customProviderAfterStockChange
 		|| customProviderWithPlatformOff != customProviderAfterPreferenceReset
 		|| stockProviderWithPlatformOff
-			== Ui::details::TranslateProviderChoice::Unavailable
+			   == Ui::details::TranslateProviderChoice::Unavailable
 		|| stockProviderWithPlatformOn
-			== Ui::details::TranslateProviderChoice::Unavailable
+			   == Ui::details::TranslateProviderChoice::Unavailable
 		|| stockProviderAfterCustom
-			== Ui::details::TranslateProviderChoice::Unavailable
+			   == Ui::details::TranslateProviderChoice::Unavailable
 		|| customProviderWithPlatformOff
-			== Ui::details::TranslateProviderChoice::MTProto) {
-		std::fprintf(stderr,
+			   == Ui::details::TranslateProviderChoice::MTProto) {
+		std::fprintf(
+			stderr,
 			"Translation controls regression failed: provider choice leaked "
 			"the stock window preference into the custom session.\n");
 		return false;
 	}
 	const auto text = tr::marked(u"Доброго дня"_q);
-	const auto customHasProvider = (customProviderWithPlatformOff
-		!= Ui::details::TranslateProviderChoice::Unavailable);
+	const auto customHasProvider
+		= (customProviderWithPlatformOff
+		   != Ui::details::TranslateProviderChoice::Unavailable);
 	const auto customPlainHidden = Ui::SkipTranslate(&customSession, text);
 	const auto customRichHidden = Ui::SkipTranslate(&customSession, text, true);
 	const auto stockPlainHidden = Ui::SkipTranslate(&stockSession, text);
 	if ((customProviderWithPlatformOff
-			== Ui::details::TranslateProviderChoice::Unavailable
-		&& !customPlainHidden)
+			 == Ui::details::TranslateProviderChoice::Unavailable
+		 && !customPlainHidden)
 		|| (customHasProvider && customPlainHidden)
 		|| customProviderWithPlatformOff
-			== Ui::details::TranslateProviderChoice::MTProto
-		|| !customRichHidden
-		|| stockPlainHidden) {
-		std::fprintf(stderr,
+			   == Ui::details::TranslateProviderChoice::MTProto
+		|| !customRichHidden || stockPlainHidden) {
+		std::fprintf(
+			stderr,
 			"Translation controls regression failed: custom translation "
 			"actions were exposed.\n");
 		return false;
@@ -2672,27 +2674,27 @@ template <typename Predicate>
 	if (customProviderWithPlatformOff
 		== Ui::details::TranslateProviderChoice::Unavailable) {
 		auto provider = Ui::CreateTranslateProvider(&customSession);
-		provider->request(
-			Ui::TranslateProviderRequest{ .text = text },
-			target,
-			[&](Ui::TranslateProviderResult result) {
-				localFailure = !result.text
-					&& (result.error == Ui::TranslateProviderError::Unknown);
-			});
+		provider->request(Ui::TranslateProviderRequest{.text = text}, target,
+						  [&](Ui::TranslateProviderResult result) {
+							  localFailure
+								  = !result.text
+									&& (result.error
+										== Ui::TranslateProviderError::Unknown);
+						  });
 		if (!localFailure) {
 			std::fprintf(stderr,
-				"Translation controls regression failed: stale custom "
-				"translation did not fail locally.\n");
+						 "Translation controls regression failed: stale custom "
+						 "translation did not fail locally.\n");
 			return false;
 		}
 	}
-	std::fprintf(stderr,
+	std::fprintf(
+		stderr,
 		"Translation action routing: custom_provider=%d custom_hidden=%d "
 		"custom_rich_hidden=%d local_failure=%d stock_provider=%d "
 		"stock_hidden=%d.\n",
-		int(customProviderWithPlatformOff), customPlainHidden,
-		customRichHidden, localFailure, int(stockProviderWithPlatformOff),
-		stockPlainHidden);
+		int(customProviderWithPlatformOff), customPlainHidden, customRichHidden,
+		localFailure, int(stockProviderWithPlatformOff), stockPlainHidden);
 	stockSession.data().processChat(TranslationRegressionChannel(
 		ChannelId(1151), 115100, u"Stock channel"_q));
 	customSession.data().processChat(TranslationRegressionChannel(
@@ -2823,54 +2825,53 @@ template <typename Predicate>
 	}
 	stockController->hideLayer(anim::type::instant);
 
-	const auto openLanguageBox =
-		[](not_null<Window::SessionController *> controller,
-			const QString &highlightId) {
-			if (!highlightId.isEmpty()) {
-				controller->setHighlightControlId(highlightId);
-			}
-			return controller->window().show(
-				object_ptr<LanguageBox>(
-					controller->widget().get(), controller, highlightId),
-				Ui::LayerOption::KeepOther, anim::type::normal);
-		};
+	const auto openLanguageBox
+		= [](not_null<Window::SessionController *> controller,
+			 const QString &highlightId) {
+			  if (!highlightId.isEmpty()) {
+				  controller->setHighlightControlId(highlightId);
+			  }
+			  return controller->window().show(
+				  object_ptr<LanguageBox>(controller->widget().get(),
+										  controller, highlightId),
+				  Ui::LayerOption::KeepOther, anim::type::normal);
+		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
 	const auto settingsSkipLanguages = settings.skipTranslationLanguages();
-	auto customLanguageBox = openLanguageBox(
-		customController,
-		u"language/show-button"_q);
+	auto customLanguageBox
+		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
 	if (!customLanguageBox
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
-			!= customHasProvider
+			   != customHasProvider
 		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
-			!= customHasProvider
+			   != customHasProvider
 		|| customLanguageBox->platformTranslationRowPresentForRegressionTest()
 		|| customLanguageBox->translationAboutPresentForRegressionTest()
-			!= customHasProvider
+			   != customHasProvider
 		|| customLanguageBox->platformPackNotePresentForRegressionTest()
-			!= (customProviderWithPlatformOff
-				== Ui::details::TranslateProviderChoice::Platform
-				&& Platform::IsMac())
+			   != (customProviderWithPlatformOff
+					   == Ui::details::TranslateProviderChoice::Platform
+				   && Platform::IsMac())
 		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
 		|| !customController->highlightControlId().isEmpty()) {
-		std::fprintf(stderr, "Translation controls regression failed: custom "
-							 "Language settings exposed unsupported rows or left a "
-							 "highlight pending.\n");
+		std::fprintf(stderr,
+					 "Translation controls regression failed: custom "
+					 "Language settings exposed unsupported rows or left a "
+					 "highlight pending.\n");
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
-	for (const auto &link : {
-			u"language/show-button"_q,
-			u"language/translate-chats"_q,
-			u"language/do-not-translate"_q }) {
+	for (const auto &link :
+		 {u"language/show-button"_q, u"language/translate-chats"_q,
+		  u"language/do-not-translate"_q}) {
 		auto linkBox = openLanguageBox(customController, link);
 		QCoreApplication::processEvents();
 		if (!linkBox || !customController->highlightControlId().isEmpty()) {
-			std::fprintf(stderr,
-				"Translation controls regression failed: Language link "
-				"left an unsupported highlight pending.\n");
+			std::fprintf(
+				stderr, "Translation controls regression failed: Language link "
+						"left an unsupported highlight pending.\n");
 			return false;
 		}
 		customController->hideLayer(anim::type::instant);
@@ -2891,11 +2892,11 @@ template <typename Predicate>
 		return false;
 	}
 	stockController->hideLayer(anim::type::instant);
-	if (!settings.translateButtonEnabled()
-		|| settings.usePlatformTranslation()
+	if (!settings.translateButtonEnabled() || settings.usePlatformTranslation()
 		|| settings.translateChatEnabled() != true
 		|| settings.skipTranslationLanguages() != settingsSkipLanguages) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Translation controls regression failed: displaying Language "
 			"settings wrote shared translation preferences.\n");
 		return false;
@@ -3000,16 +3001,12 @@ template <typename Predicate>
 		return false;
 	}
 	auto staleRichBox = customController->show(
-		Box(
-			Ui::TranslateBox,
-			customRichItem->history()->peer,
-			customRichItem->id,
-			customRichItem->originalText(),
-			false),
-		Ui::LayerOption::KeepOther,
-		anim::type::normal);
+		Box(Ui::TranslateBox, customRichItem->history()->peer,
+			customRichItem->id, customRichItem->originalText(), false),
+		Ui::LayerOption::KeepOther, anim::type::normal);
 	if (!WaitForRegressionCondition([&] { return !staleRichBox; })) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Translation controls regression failed: a stale custom rich "
 			"translation action did not close locally.\n");
 		return false;

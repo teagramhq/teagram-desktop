@@ -432,13 +432,8 @@ void TranslateBox(
 					return;
 				}
 				if (state->provider->supportsMessageId()) {
-					if (TranslateRichBox(
-							box,
-							peer,
-							msgId,
-							page,
-							text,
-							hasCopyRestriction)) {
+					if (TranslateRichBox(box, peer, msgId, page, text,
+										 hasCopyRestriction)) {
 						return;
 					}
 				}
@@ -486,13 +481,10 @@ void TranslateBox(
 	});
 }
 
-bool SkipTranslate(
-		not_null<Main::Session*> session,
-		TextWithEntities textWithEntities,
-		bool richMessage) {
+bool SkipTranslate(not_null<Main::Session *> session,
+				   TextWithEntities textWithEntities, bool richMessage) {
 	const auto &text = textWithEntities.text;
-	if (text.isEmpty()
-		|| !HasTranslateProvider(session)
+	if (text.isEmpty() || !HasTranslateProvider(session)
 		|| (richMessage && !session->serverTranslationSupported())) {
 		return true;
 	}

@@ -21,10 +21,9 @@ class Session;
 namespace Ui {
 
 [[nodiscard]] details::TranslateProviderChoice
-TranslateProviderChoiceForSession(not_null<Main::Session*> session);
+TranslateProviderChoiceForSession(not_null<Main::Session *> session);
 
-[[nodiscard]] bool HasTranslateProvider(
-	not_null<Main::Session*> session);
+[[nodiscard]] bool HasTranslateProvider(not_null<Main::Session *> session);
 
 [[nodiscard]] std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 	not_null<Main::Session*> session);

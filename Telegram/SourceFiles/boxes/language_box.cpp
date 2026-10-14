@@ -1547,7 +1547,7 @@ void LanguageBox::showFinished() {
 	if (!window) {
 		return;
 	}
-	auto widget = static_cast<Ui::RpWidget*>(nullptr);
+	auto widget = static_cast<Ui::RpWidget *>(nullptr);
 	if (_highlightId == u"language/show-button"_q) {
 		widget = _showButtonToggle.data();
 	} else if (_highlightId == u"language/translate-chats"_q) {
@@ -1630,20 +1630,17 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 #endif
 		}
 	} else if (!serverSupported
-		&& (provider == Ui::details::TranslateProviderChoice::Platform)
-		&& Platform::IsMac()) {
-		const auto platformTranslateWrap = container->add(
-			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-				container,
-				object_ptr<Ui::VerticalLayout>(container)));
-		platformTranslateWrap->toggle(
-			translateEnabled->toggled(),
-			anim::type::instant);
+			   && (provider == Ui::details::TranslateProviderChoice::Platform)
+			   && Platform::IsMac()) {
+		const auto platformTranslateWrap
+			= container->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				container, object_ptr<Ui::VerticalLayout>(container)));
+		platformTranslateWrap->toggle(translateEnabled->toggled(),
+									  anim::type::instant);
 		platformTranslateWrap->toggleOn(translateEnabled->toggledValue());
 		Ui::AddSkip(platformTranslateWrap->entity());
-		Ui::AddDividerText(
-			platformTranslateWrap->entity(),
-			tr::lng_translate_settings_use_platform_mac_about());
+		Ui::AddDividerText(platformTranslateWrap->entity(),
+						   tr::lng_translate_settings_use_platform_mac_about());
 		Ui::AddSkip(platformTranslateWrap->entity());
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 		_platformPackNotePresent = true;

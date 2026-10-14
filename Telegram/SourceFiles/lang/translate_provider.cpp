@@ -29,15 +29,11 @@ base::options::option<QString> OptionTranslateUrlTemplate({
 });
 
 class UnavailableTranslateProvider final : public Ui::TranslateProvider {
-public:
-	[[nodiscard]] bool supportsMessageId() const override {
-		return false;
-	}
+  public:
+	[[nodiscard]] bool supportsMessageId() const override { return false; }
 
-	void request(
-			Ui::TranslateProviderRequest,
-			LanguageId,
-			Fn<void(Ui::TranslateProviderResult)> done) override {
+	void request(Ui::TranslateProviderRequest, LanguageId,
+				 Fn<void(Ui::TranslateProviderResult)> done) override {
 		done(Ui::TranslateProviderResult{
 			.error = Ui::TranslateProviderError::Unknown,
 		});
@@ -48,21 +44,20 @@ public:
 
 namespace Ui {
 
-details::TranslateProviderChoice TranslateProviderChoiceForSession(
-		not_null<Main::Session*> session) {
+details::TranslateProviderChoice
+TranslateProviderChoiceForSession(not_null<Main::Session *> session) {
 	const auto urlTemplate = OptionTranslateUrlTemplate.value();
 	const auto hasUrlTemplate = details::HasTranslateUrlTemplate(urlTemplate);
 	return details::ChooseTranslateProvider(
-		session->serverTranslationSupported(),
-		hasUrlTemplate,
+		session->serverTranslationSupported(), hasUrlTemplate,
 		details::IsSecureTranslateUrlTemplate(urlTemplate),
 		Platform::IsTranslateProviderAvailable(),
 		Core::App().settings().usePlatformTranslation());
 }
 
-bool HasTranslateProvider(not_null<Main::Session*> session) {
+bool HasTranslateProvider(not_null<Main::Session *> session) {
 	return (TranslateProviderChoiceForSession(session)
-		!= details::TranslateProviderChoice::Unavailable);
+			!= details::TranslateProviderChoice::Unavailable);
 }
 
 std::unique_ptr<TranslateProvider> CreateTranslateProvider(
@@ -71,8 +66,7 @@ std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 	switch (TranslateProviderChoiceForSession(session)) {
 	case details::TranslateProviderChoice::Url:
 		return CreateUrlTranslateProvider(
-			urlTemplate,
-			!session->serverTranslationSupported());
+			urlTemplate, !session->serverTranslationSupported());
 	case details::TranslateProviderChoice::Platform:
 		return Platform::CreateTranslateProvider();
 	case details::TranslateProviderChoice::MTProto:

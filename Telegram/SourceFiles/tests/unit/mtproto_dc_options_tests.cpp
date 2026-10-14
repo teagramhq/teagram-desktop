@@ -1625,24 +1625,23 @@ TEST_CASE(ChannelAutoTranslationRequiresServerSupport) {
 
 TEST_CASE(TranslationProviderSelectionRespectsSessionAndAvailability) {
 	using Choice = Ui::details::TranslateProviderChoice;
-	const auto flags = std::array{ false, true };
+	const auto flags = std::array{false, true};
 	for (const auto serverSupported : flags) {
 		for (const auto hasUrlTemplate : flags) {
 			for (const auto secureUrlTemplate : flags) {
 				for (const auto platformAvailable : flags) {
 					for (const auto usePlatformTranslation : flags) {
-						const auto actual = Ui::details::ChooseTranslateProvider(
-							serverSupported,
-							hasUrlTemplate,
-							secureUrlTemplate,
-							platformAvailable,
-							usePlatformTranslation);
+						const auto actual
+							= Ui::details::ChooseTranslateProvider(
+								serverSupported, hasUrlTemplate,
+								secureUrlTemplate, platformAvailable,
+								usePlatformTranslation);
 						auto expected = Choice::Unavailable;
 						if (serverSupported) {
 							if (hasUrlTemplate) {
 								expected = Choice::Url;
 							} else if (platformAvailable
-								&& usePlatformTranslation) {
+									   && usePlatformTranslation) {
 								expected = Choice::Platform;
 							} else {
 								expected = Choice::MTProto;
@@ -1682,11 +1681,7 @@ TEST_CASE(TranslationProviderSelectionDoesNotShareStockPreference) {
 	using Choice = Ui::details::TranslateProviderChoice;
 	const auto select = [](bool serverSupported, bool usePlatformTranslation) {
 		return Ui::details::ChooseTranslateProvider(
-			serverSupported,
-			false,
-			false,
-			true,
-			usePlatformTranslation);
+			serverSupported, false, false, true, usePlatformTranslation);
 	};
 	{
 		const auto customBeforeStock = select(false, false);
@@ -1715,11 +1710,8 @@ TEST_CASE(TranslationProviderSelectionUsesOwningDcOptions) {
 	stock.constructFromBuiltIn();
 	const auto choose = [](const DcOptions &options) {
 		return Ui::details::ChooseTranslateProvider(
-			Main::details::serverTranslationSupported(options),
-			false,
-			false,
-			false,
-			true);
+			Main::details::serverTranslationSupported(options), false, false,
+			false, true);
 	};
 	CHECK(choose(custom) == Ui::details::TranslateProviderChoice::Unavailable);
 	CHECK(choose(blocked) == Ui::details::TranslateProviderChoice::Unavailable);

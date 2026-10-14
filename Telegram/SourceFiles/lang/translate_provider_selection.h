@@ -21,13 +21,12 @@ enum class TranslateProviderChoice {
 	MTProto,
 };
 
-[[nodiscard]] inline bool HasTranslateUrlTemplate(
-		const QString &urlTemplate) {
+[[nodiscard]] inline bool HasTranslateUrlTemplate(const QString &urlTemplate) {
 	return !urlTemplate.isEmpty() && urlTemplate.contains(u"%q"_q);
 }
 
-[[nodiscard]] inline bool IsSecureTranslateUrlTemplate(
-		const QString &urlTemplate) {
+[[nodiscard]] inline bool
+IsSecureTranslateUrlTemplate(const QString &urlTemplate) {
 	if (!HasTranslateUrlTemplate(urlTemplate)) {
 		return false;
 	}
@@ -37,16 +36,14 @@ enum class TranslateProviderChoice {
 	substituted.replace(u"%t"_q, u"en"_q);
 	const auto url = QUrl(substituted, QUrl::StrictMode);
 	return url.isValid()
-		&& (url.scheme().compare(u"https"_q, Qt::CaseInsensitive) == 0)
-		&& !url.host().isEmpty();
+		   && (url.scheme().compare(u"https"_q, Qt::CaseInsensitive) == 0)
+		   && !url.host().isEmpty();
 }
 
-[[nodiscard]] inline TranslateProviderChoice ChooseTranslateProvider(
-		bool serverSupported,
-		bool hasUrlTemplate,
-		bool secureUrlTemplate,
-		bool platformAvailable,
-		bool usePlatformTranslation) {
+[[nodiscard]] inline TranslateProviderChoice
+ChooseTranslateProvider(bool serverSupported, bool hasUrlTemplate,
+						bool secureUrlTemplate, bool platformAvailable,
+						bool usePlatformTranslation) {
 	if (serverSupported) {
 		if (hasUrlTemplate) {
 			return TranslateProviderChoice::Url;
@@ -59,9 +56,8 @@ enum class TranslateProviderChoice {
 	if (hasUrlTemplate && secureUrlTemplate) {
 		return TranslateProviderChoice::Url;
 	}
-	return platformAvailable
-		? TranslateProviderChoice::Platform
-		: TranslateProviderChoice::Unavailable;
+	return platformAvailable ? TranslateProviderChoice::Platform
+							 : TranslateProviderChoice::Unavailable;
 }
 
 } // namespace Ui::details

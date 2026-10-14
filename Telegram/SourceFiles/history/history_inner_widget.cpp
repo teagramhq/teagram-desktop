@@ -3368,9 +3368,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					[=] { copySelectedText(); },
 					&st::menuIconCopy);
 			}
-			if (item && !Ui::SkipTranslate(
-					&item->history()->peer->session(),
-					selectedText.rich)) {
+			if (item
+				&& !Ui::SkipTranslate(&item->history()->peer->session(),
+									  selectedText.rich)) {
 				const auto peer = item->history()->peer;
 				_menu->addAction(tr::lng_context_translate_selected({}), [=] {
 					_controller->show(Box(
@@ -3525,9 +3525,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					[=] { copySelectedText(); },
 					&st::menuIconCopy);
 			}
-			if (item && !Ui::SkipTranslate(
-					&item->history()->peer->session(),
-					selectedText.rich)) {
+			if (item
+				&& !Ui::SkipTranslate(&item->history()->peer->session(),
+									  selectedText.rich)) {
 				const auto peer = item->history()->peer;
 				_menu->addAction(tr::lng_context_translate_selected({}), [=] {
 					_controller->show(Box(
@@ -3654,9 +3654,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 							: item->originalText();
 						if (!translate.text.isEmpty()
 							&& !Ui::SkipTranslate(
-								&item->history()->peer->session(),
-								translate,
-								!mediaHasTextForCopy && bool(item->richPage()))) {
+								&item->history()->peer->session(), translate,
+								!mediaHasTextForCopy
+									&& bool(item->richPage()))) {
 							_menu->addAction(tr::lng_context_translate(tr::now), [=] {
 								_controller->show(Box(
 									Ui::TranslateBox,
