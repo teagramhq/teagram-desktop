@@ -9,6 +9,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -33,9 +34,21 @@ CMAKE_CACHE_KEYS = {
     "CMAKE_CXX_COMPILER_ARG1",
     "CMAKE_CXX_COMPILER_ID",
     "CMAKE_CXX_COMPILER_VERSION",
+    "CMAKE_BUILD_TYPE",
+    "CMAKE_CONFIGURATION_TYPES",
     "Qt6Core_DIR",
     "Qt6Gui_DIR",
     "Qt6Widgets_DIR",
+}
+PLATFORM_PLUGIN_TARGETS = {
+    "offscreen": (
+        "Qt6::QOffscreenIntegrationPlugin",
+        "Qt6::QOffscreenIntegrationPlugin_init",
+    ),
+    "minimal": (
+        "Qt6::QMinimalIntegrationPlugin",
+        "Qt6::QMinimalIntegrationPlugin_init",
+    ),
 }
 
 
@@ -285,12 +298,12 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def cmake_target(build_dir, report):
+def file_api_target(build_dir, target_name, report, context):
     reply_dir = Path(build_dir) / ".cmake/api/v1/reply"
     indexes = sorted(reply_dir.glob("index-*.json"), key=lambda path: path.stat().st_mtime)
     if not indexes:
-        mark_incomplete(report, "CMake File API codemodel reply is missing")
-        return None
+        mark_incomplete(report, f"CMake File API codemodel reply for {context} is missing")
+        return None, None
     try:
         index = json.loads(indexes[-1].read_text())
         codemodel_ref = index["reply"]["codemodel-v2"]["jsonFile"]
@@ -302,12 +315,16 @@ def cmake_target(build_dir, report):
         )
         target_ref = next(
             item for item in configuration.get("targets", [])
-            if item.get("name") == "test_unit"
+            if item.get("name") == target_name
         )
         target = json.loads((reply_dir / target_ref["jsonFile"]).read_text())
     except (KeyError, IndexError, StopIteration, OSError, json.JSONDecodeError) as error:
-        mark_incomplete(report, f"CMake File API could not resolve test_unit: {error}")
-        return None
+        mark_incomplete(report, f"CMake File API could not resolve {context}: {error}")
+        return None, None
+    return configuration, target
+
+
+def codemodel_usage(target, configuration, report, source, section):
 
     compile_groups = []
     for index, group in enumerate(target.get("compileGroups", [])):
@@ -315,17 +332,19 @@ def cmake_target(build_dir, report):
             "language": group.get("language"),
             "standard": group.get("languageStandard"),
             "includes": bounded_items(group.get("includes", []), report,
-                                      f"compile_groups[{index}].includes"),
+                                      f"{section}.compile_groups[{index}].includes"),
             "defines": bounded_items(group.get("defines", []), report,
-                                     f"compile_groups[{index}].defines"),
+                                     f"{section}.compile_groups[{index}].defines"),
             "compile_fragments": bounded_items(group.get("compileCommandFragments", []), report,
-                                                f"compile_groups[{index}].compile_fragments"),
+                                                f"{section}.compile_groups[{index}].compile_fragments"),
         })
     link = target.get("link", {})
     sources = [item.get("path", "") for item in target.get("sources", [])]
-    link_fragments = bounded_items(link.get("commandFragments", []), report, "link.command_fragments")
+    link_fragments = bounded_items(
+        link.get("commandFragments", []), report, f"{section}.link.command_fragments"
+    )
     return redact({
-        "source": "CMake File API codemodel-v2 for the configured test_unit consumer",
+        "source": source,
         "configuration": configuration.get("name"),
         "target": target.get("name"),
         "artifacts": target.get("artifacts", []),
@@ -334,7 +353,7 @@ def cmake_target(build_dir, report):
             "language": link.get("language"),
             "fragments": link_fragments,
             "dependencies": bounded_items(target.get("dependencies", []), report,
-                                           "target.dependencies"),
+                                           f"{section}.link.dependencies"),
         },
         "resource_sources": sorted({path for path in sources if path.lower().endswith(".qrc")}),
         "plugin_related_link_inputs": sorted({
@@ -344,6 +363,241 @@ def cmake_target(build_dir, report):
             if re.search(r"(offscreen|minimal|plugin.import|qrc_)", token, re.IGNORECASE)
         }),
     })
+
+
+def cmake_target(build_dir, report):
+    configuration, target = file_api_target(build_dir, "test_unit", report, "test_unit")
+    if target is None:
+        return None
+    return codemodel_usage(
+        target,
+        configuration,
+        report,
+        "CMake File API codemodel-v2 for the configured test_unit consumer",
+        "test_unit",
+    )
+
+
+def plugin_probe_project():
+    lines = [
+        "cmake_minimum_required(VERSION 3.21)",
+        "project(unit_feedback_plugin_usage LANGUAGES CXX)",
+        "find_package(Qt6Core CONFIG REQUIRED)",
+        "find_package(Qt6Gui CONFIG REQUIRED)",
+        'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/plugin_probe.cpp" "int main() { return 0; }\\n")',
+        "function(add_plugin_probe suffix plugin_target init_target)",
+        '  if(NOT TARGET "${plugin_target}")',
+        '    message(FATAL_ERROR "Required Qt plugin target is missing: ${plugin_target}")',
+        "  endif()",
+        '  set(consumer "unit_feedback_plugin_${suffix}")',
+        '  add_executable("${consumer}" EXCLUDE_FROM_ALL "${CMAKE_CURRENT_BINARY_DIR}/plugin_probe.cpp")',
+        '  target_link_libraries("${consumer}" PRIVATE "${plugin_target}")',
+        '  set(interface_content "")',
+        '  foreach(property IN ITEMS INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES INTERFACE_COMPILE_DEFINITIONS INTERFACE_COMPILE_OPTIONS INTERFACE_COMPILE_FEATURES INTERFACE_PRECOMPILE_HEADERS INTERFACE_LINK_DIRECTORIES INTERFACE_LINK_OPTIONS INTERFACE_LINK_LIBRARIES INTERFACE_LINK_DEPENDS INTERFACE_SOURCES)',
+        '    string(APPEND interface_content "${property}=$<JOIN:$<TARGET_GENEX_EVAL:${consumer},$<TARGET_PROPERTY:${plugin_target},${property}>>,|>\\n")',
+        "  endforeach()",
+        '  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${suffix}-interface-$<CONFIG>.txt" CONTENT "${interface_content}" TARGET "${consumer}")',
+        '  if(TARGET "${init_target}")',
+        '    get_target_property(init_type "${init_target}" TYPE)',
+        '    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${suffix}-init-target.txt" "${init_type}")',
+        '    if(init_type STREQUAL "OBJECT_LIBRARY")',
+        '      file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${suffix}-init-objects-$<CONFIG>.txt" CONTENT "$<JOIN:$<TARGET_OBJECTS:${init_target}>,|>")',
+        "    endif()",
+        "  else()",
+        '    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${suffix}-init-target.txt" "absent")',
+        "  endif()",
+        "endfunction()",
+    ]
+    for name, (plugin_target, init_target) in PLATFORM_PLUGIN_TARGETS.items():
+        lines.append(f"add_plugin_probe({name} {plugin_target} {init_target})")
+    return "\n".join(lines) + "\n"
+
+
+def inspect_static_import_objects(name, target, scratch_build, configuration, report):
+    target_name = target + "_init"
+    target_type_path = Path(scratch_build) / f"{name}-init-target.txt"
+    objects_path = Path(scratch_build) / f"{name}-init-objects-{configuration}.txt"
+    try:
+        target_type = target_type_path.read_text().strip()
+    except OSError:
+        target_type = "unresolved"
+    if target_type == "absent":
+        result = {
+            "status": "absent",
+            "target": target_name,
+            "linkage": "imported object library",
+            "objects": [],
+        }
+        if report.get("source_expectations", {}).get("qt_build_shared_libraries_setting") == "OFF":
+            mark_incomplete(report, f"{name} static plugin import target is absent")
+        return result
+    if target_type != "OBJECT_LIBRARY":
+        mark_incomplete(report, f"{name} static plugin import target type is unresolved")
+        return {
+            "status": "unresolved",
+            "target": target_name,
+            "linkage": "imported object library",
+            "objects": [],
+        }
+    try:
+        paths = [item for item in objects_path.read_text().strip().split("|") if item]
+    except OSError:
+        paths = []
+    if not paths:
+        mark_incomplete(report, f"{name} static plugin import object is absent")
+        return {
+            "status": "absent",
+            "target": target_name,
+            "linkage": "imported object library",
+            "objects": [],
+        }
+
+    objects = []
+    status = "present"
+    for path in paths[:MAX_ITEMS]:
+        object_path = Path(path)
+        if not object_path.is_file():
+            mark_incomplete(report, f"{name} static plugin import object is missing")
+            object_status = "absent"
+            architecture = {"status": "absent", "reason": "imported object file is missing"}
+            status = "absent"
+        else:
+            object_status = "present"
+            architecture = elf_identity(object_path)
+            if architecture.get("status") != "observed":
+                mark_incomplete(report, f"{name} static plugin import object architecture is unresolved")
+                status = "unresolved" if status == "present" else status
+        objects.append({
+            "status": object_status,
+            "path": str(object_path),
+            "linkage": "imported object-library object",
+            "architecture": architecture,
+        })
+    if len(paths) > MAX_ITEMS:
+        mark_incomplete(report, f"{name} static plugin import objects exceeded the capture limit")
+    return {
+        "status": status,
+        "target": target_name,
+        "linkage": "imported object library",
+        "objects": bounded_items(objects, report, f"{name}.static_import_objects"),
+    }
+
+
+def read_evaluated_interface(name, scratch_build, configuration, report):
+    path = Path(scratch_build) / f"{name}-interface-{configuration}.txt"
+    try:
+        values = path.read_text().splitlines()
+    except OSError:
+        mark_incomplete(report, f"{name} evaluated Qt plugin interface is missing")
+        return None
+    interface = {}
+    for line in values:
+        key, separator, value = line.partition("=")
+        if not separator:
+            mark_incomplete(report, f"{name} evaluated Qt plugin interface is malformed")
+            return None
+        interface[key] = [item for item in value.split("|") if item]
+    return interface
+
+
+def cmake_plugin_targets(build_dir, cache, report):
+    unresolved = {
+        name: {
+            "usage": {
+                "status": "unresolved",
+                "target": plugin_target,
+                "consumer": f"unit_feedback_plugin_{name}",
+            },
+            "registration_objects": {
+                "status": "unresolved",
+                "target": init_target,
+                "linkage": "imported object library",
+                "objects": [],
+            },
+        }
+        for name, (plugin_target, init_target) in PLATFORM_PLUGIN_TARGETS.items()
+    }
+    if not cache.get("Qt6Core_DIR") or not cache.get("Qt6Gui_DIR"):
+        mark_incomplete(report, "Qt Core or Gui CMake package directory is missing for plugin targets")
+        return unresolved
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="unit-feedback-plugin-usage-", dir=build_dir) as scratch:
+            scratch = Path(scratch)
+            source_dir = scratch / "source"
+            scratch_build = scratch / "build"
+            source_dir.mkdir()
+            (source_dir / "CMakeLists.txt").write_text(plugin_probe_project())
+            query = scratch_build / ".cmake/api/v1/query"
+            query.mkdir(parents=True)
+            (query / "codemodel-v2").touch()
+
+            args = ["cmake", "-S", str(source_dir), "-B", str(scratch_build)]
+            if cache.get("CMAKE_GENERATOR"):
+                args.extend(["-G", cache["CMAKE_GENERATOR"]])
+            args.extend([
+                f"-DQt6Core_DIR:PATH={cache['Qt6Core_DIR']}",
+                f"-DQt6Gui_DIR:PATH={cache['Qt6Gui_DIR']}",
+            ])
+            if cache.get("CMAKE_CONFIGURATION_TYPES"):
+                args.append(f"-DCMAKE_CONFIGURATION_TYPES:STRING={cache['CMAKE_CONFIGURATION_TYPES']}")
+            else:
+                args.append(f"-DCMAKE_BUILD_TYPE:STRING={cache.get('CMAKE_BUILD_TYPE') or 'Debug'}")
+            if cache.get("CMAKE_CXX_COMPILER"):
+                args.append(f"-DCMAKE_CXX_COMPILER:FILEPATH={cache['CMAKE_CXX_COMPILER']}")
+            if cache.get("CMAKE_CXX_COMPILER_ARG1"):
+                args.append(f"-DCMAKE_CXX_COMPILER_ARG1:STRING={cache['CMAKE_CXX_COMPILER_ARG1']}")
+            result = run_command(args, timeout=60)
+            if result.get("status") != "observed":
+                mark_incomplete(report, "job-local Qt plugin target consumer could not be configured")
+                return unresolved
+
+            captured = {}
+            for name, (plugin_target, init_target) in PLATFORM_PLUGIN_TARGETS.items():
+                consumer = f"unit_feedback_plugin_{name}"
+                configuration, target = file_api_target(
+                    scratch_build,
+                    consumer,
+                    report,
+                    f"isolated {name} Qt plugin consumer",
+                )
+                if target is None:
+                    usage = unresolved[name]["usage"]
+                else:
+                    configuration_name = configuration.get("name", "Debug")
+                    usage = codemodel_usage(
+                        target,
+                        configuration,
+                        report,
+                        "CMake File API codemodel-v2 for an isolated imported Qt plugin consumer",
+                        f"plugin_targets.{name}",
+                    )
+                    evaluated_interface = read_evaluated_interface(
+                        name, scratch_build, configuration_name, report
+                    )
+                    usage.update({
+                        "status": "observed",
+                        "target": plugin_target,
+                        "consumer": consumer,
+                        "evaluated_interface": evaluated_interface,
+                    })
+                if target is None:
+                    configuration_name = configuration.get("name", "Debug") if configuration else "Debug"
+                registration_objects = inspect_static_import_objects(
+                    name,
+                    plugin_target,
+                    scratch_build,
+                    configuration_name,
+                    report,
+                )
+                captured[name] = {
+                    "usage": usage,
+                    "registration_objects": registration_objects,
+                }
+            return captured
+    except (OSError, subprocess.TimeoutExpired) as error:
+        mark_incomplete(report, f"job-local Qt plugin target inspection failed: {error}")
+        return unresolved
 
 
 def qt_prefixes(cache):
@@ -359,7 +613,12 @@ def qt_prefixes(cache):
     return sorted(prefixes)
 
 
-def plugin_archive(name, prefixes, link_text, report):
+def plugin_archive(name, prefixes, link_text, plugin_target, report):
+    plugin_target = plugin_target or {}
+    static_import_objects = plugin_target.get("registration_objects", {
+        "status": "unresolved",
+        "objects": [],
+    })
     candidates = []
     searched = []
     for prefix in prefixes:
@@ -380,6 +639,11 @@ def plugin_archive(name, prefixes, link_text, report):
             "observed_status": "unresolved",
             "reason": "Qt install prefix was not available from CMakeCache.txt",
             "searched_paths": [],
+            "registration_status": static_import_objects.get("status", "unresolved"),
+            "registration_objects": {
+                "archive_members": [],
+                "static_import_objects": static_import_objects.get("objects", []),
+            },
         }
     archive = next((path for path in candidates if path.suffix == ".a"), None)
     if archive is None:
@@ -394,6 +658,11 @@ def plugin_archive(name, prefixes, link_text, report):
             "shared_plugin_paths": [str(path) for path in shared],
             "searched_paths": searched,
             "linked_to_test_unit": any(str(path) in link_text for path in shared),
+            "registration_status": static_import_objects.get("status", "not_applicable"),
+            "registration_objects": {
+                "archive_members": [],
+                "static_import_objects": static_import_objects.get("objects", []),
+            },
         }
 
     members_result = run_command(["ar", "t", str(archive)])
@@ -464,15 +733,20 @@ def plugin_archive(name, prefixes, link_text, report):
         "file_type": run_command(["file", "-b", str(archive)]),
         "linked_to_test_unit": str(archive) in link_text or archive.name in link_text,
         "members": bounded_items(members, report, f"{name}.archive_members"),
-        "registration_objects": bounded_items(registration_objects, report,
-                                              f"{name}.registration_objects"),
+        "registration_objects": {
+            "archive_members": bounded_items(
+                registration_objects, report, f"{name}.archive_registration_objects"
+            ),
+            "static_import_objects": static_import_objects.get("objects", []),
+        },
         "registration_symbols": bounded_items(registration_symbols, report,
                                               f"{name}.registration_symbols"),
-        "registration_status": (
+        "archive_registration_status": (
             "unresolved"
             if nm_result.get("status") != "observed" or members_result.get("status") != "observed"
             else "present" if registration_members or registration_symbols else "absent"
         ),
+        "registration_status": static_import_objects.get("status", "unresolved"),
         "inspection_status": {
             "ar": members_result.get("status"),
             "nm": nm_result.get("status"),
@@ -662,10 +936,14 @@ def collect(args):
         mark_incomplete(report, "configured compiler or CMake version could not be observed")
 
     usage = cmake_target(build, report)
+    plugin_targets = cmake_plugin_targets(build, cache, report)
     if usage is None:
         mark_incomplete(report, "evaluated CMake test_unit usage requirements are unavailable")
     else:
         report["evaluated_exported_target_usage_requirements"] = usage
+    report["evaluated_exported_target_usage_requirements"]["platform_plugins"] = {
+        name: item["usage"] for name, item in plugin_targets.items()
+    }
     if not binary.is_file():
         mark_incomplete(report, "configured test_unit executable is missing")
         binary_info = {"status": "absent", "path": str(binary)}
@@ -690,7 +968,7 @@ def collect(args):
 
     prefixes = qt_prefixes(cache)
     report["installed_platform_plugins"] = {
-        name: plugin_archive(name, prefixes, link_text, report)
+        name: plugin_archive(name, prefixes, link_text, plugin_targets.get(name), report)
         for name in ("offscreen", "minimal")
     }
     if any(item.get("observed_status") == "unresolved"

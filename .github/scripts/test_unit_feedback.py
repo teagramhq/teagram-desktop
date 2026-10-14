@@ -243,6 +243,171 @@ with tempfile.TemporaryDirectory() as directory:
         "wrapper --auth-token <redacted>"
     )
 
+    build_path = Path(directory) / "plugin-build"
+    build_path.mkdir()
+    cache = {
+        "CMAKE_GENERATOR": "Ninja Multi-Config",
+        "CMAKE_CONFIGURATION_TYPES": "Debug",
+        "CMAKE_CXX_COMPILER": "/usr/bin/ccache",
+        "CMAKE_CXX_COMPILER_ARG1": "g++",
+        "Qt6Core_DIR": "/usr/local/lib/cmake/Qt6Core",
+        "Qt6Gui_DIR": "/usr/local/lib/cmake/Qt6Gui",
+    }
+    elf_header = bytearray(20)
+    elf_header[:4] = b"\x7fELF"
+    elf_header[4] = 2
+    elf_header[5] = 1
+    elf_header[18:20] = (62).to_bytes(2, "little")
+
+    def write_target(build, name, imported_target, plugin_archive):
+        reply = build / ".cmake/api/v1/reply"
+        reply.mkdir(parents=True, exist_ok=True)
+        target_ref = f"{name}-Debug.json"
+        target = {
+            "name": name,
+            "compileGroups": [{
+                "language": "CXX",
+                "includes": [{"path": "/usr/local/include/qt6", "isSystem": True}],
+                "defines": [{"define": "QT_STATICPLUGIN"}],
+                "compileCommandFragments": [{"fragment": "-fPIC"}],
+            }],
+            "link": {
+                "language": "CXX",
+                "commandFragments": [{"fragment": plugin_archive, "role": "libraries"}],
+            },
+            "dependencies": [{"id": imported_target, "target": imported_target}],
+            "sources": [{"path": "main.cpp"}],
+        }
+        (reply / target_ref).write_text(json.dumps(target))
+        codemodel_path = reply / "codemodel-v2.json"
+        targets = []
+        if codemodel_path.is_file():
+            targets = json.loads(codemodel_path.read_text())["configurations"][0]["targets"]
+        targets.append({"name": name, "jsonFile": target_ref})
+        codemodel_path.write_text(json.dumps({
+            "configurations": [{
+                "name": "Debug",
+                "targets": targets,
+            }],
+        }))
+        (reply / "index-test.json").write_text(json.dumps({
+            "reply": {"codemodel-v2": {"jsonFile": "codemodel-v2.json"}},
+        }))
+
+    original_run_command = metadata_namespace["run_command"]
+
+    def fake_cmake(args, timeout=15, max_output=None):
+        assert args[0] == "cmake"
+        source_arg = Path(args[args.index("-S") + 1])
+        build_arg = Path(args[args.index("-B") + 1])
+        cmake_text = (source_arg / "CMakeLists.txt").read_text()
+        assert "target_link_libraries(\"${consumer}\" PRIVATE \"${plugin_target}\")" in cmake_text
+        assert "TARGET_GENEX_EVAL" in cmake_text
+        assert "INTERFACE_LINK_LIBRARIES" in cmake_text
+        assert "add_plugin_probe(offscreen Qt6::QOffscreenIntegrationPlugin Qt6::QOffscreenIntegrationPlugin_init)" in cmake_text
+        assert "add_plugin_probe(minimal Qt6::QMinimalIntegrationPlugin Qt6::QMinimalIntegrationPlugin_init)" in cmake_text
+        assert "test_unit" not in cmake_text, "Plugin usage must use isolated consumers."
+        write_target(
+            build_arg,
+            "unit_feedback_plugin_offscreen",
+            "Qt6::QOffscreenIntegrationPlugin",
+            "/usr/local/lib/plugins/platforms/libqoffscreen.a",
+        )
+        write_target(
+            build_arg,
+            "unit_feedback_plugin_minimal",
+            "Qt6::QMinimalIntegrationPlugin",
+            "/usr/local/lib/plugins/platforms/libqminimal.a",
+        )
+        for plugin_name in ("offscreen", "minimal"):
+            init_object = build_arg / f"{plugin_name}-init.o"
+            init_object.write_bytes(elf_header)
+            (build_arg / f"{plugin_name}-init-target.txt").write_text("OBJECT_LIBRARY")
+            (build_arg / f"{plugin_name}-init-objects-Debug.txt").write_text(str(init_object))
+            (build_arg / f"{plugin_name}-interface-Debug.txt").write_text(
+                "INTERFACE_INCLUDE_DIRECTORIES=/usr/local/include/qt6|/usr/local/include\n"
+                "INTERFACE_LINK_LIBRARIES=Qt6::Core|Qt6::GuiPrivate\n"
+            )
+        return {"status": "observed", "output": ""}
+
+    metadata_namespace["run_command"] = fake_cmake
+    try:
+        plugin_targets = metadata_namespace["cmake_plugin_targets"](
+            build_path, cache, {"status": "complete", "capture_errors": []}
+        )
+    finally:
+        metadata_namespace["run_command"] = original_run_command
+
+    for plugin_name, imported_target in (
+        ("offscreen", "Qt6::QOffscreenIntegrationPlugin"),
+        ("minimal", "Qt6::QMinimalIntegrationPlugin"),
+    ):
+        target_usage = plugin_targets[plugin_name]["usage"]
+        assert target_usage["status"] == "observed"
+        assert target_usage["target"] == imported_target
+        assert target_usage["configuration"] == "Debug"
+        assert target_usage["compile_groups"][0]["defines"] == [
+            {"define": "QT_STATICPLUGIN"}
+        ]
+        assert target_usage["link"]["dependencies"][0]["target"] == imported_target
+        assert target_usage["evaluated_interface"]["INTERFACE_LINK_LIBRARIES"] == [
+            "Qt6::Core", "Qt6::GuiPrivate"
+        ]
+        import_objects = plugin_targets[plugin_name]["registration_objects"]
+        assert import_objects["status"] == "present"
+        assert import_objects["objects"][0]["linkage"] == "imported object-library object"
+        assert import_objects["objects"][0]["architecture"]["architecture"] == "x86_64"
+
+    plugin_prefix = Path(directory) / "qt-prefix"
+    plugin_path = plugin_prefix / "lib/plugins/platforms/libqoffscreen.a"
+    plugin_path.parent.mkdir(parents=True)
+    plugin_path.write_bytes(b"archive")
+    missing_build = Path(directory) / "missing-init-build"
+    missing_build.mkdir()
+    (missing_build / "offscreen-init-target.txt").write_text("OBJECT_LIBRARY")
+    (missing_build / "offscreen-init-objects-Debug.txt").write_text(
+        str(missing_build / "QOffscreenIntegrationPlugin_init.cpp.o")
+    )
+    missing_report = {
+        "status": "complete",
+        "capture_errors": [],
+        "source_expectations": {"qt_build_shared_libraries_setting": "OFF"},
+    }
+    missing_import_objects = metadata_namespace["inspect_static_import_objects"](
+        "offscreen",
+        "Qt6::QOffscreenIntegrationPlugin",
+        missing_build,
+        "Debug",
+        missing_report,
+    )
+    assert missing_import_objects["status"] == "absent"
+    assert missing_report["status"] == "incomplete"
+    original_run_command = metadata_namespace["run_command"]
+
+    def fake_archive_tool(args, timeout=15, max_output=None):
+        if args[0] in ("ar", "nm"):
+            return {"status": "observed", "output": ""}
+        if args[0] == "file":
+            return {"status": "observed", "output": "current ar archive"}
+        return original_run_command(args, timeout=timeout, max_output=max_output or 256 * 1024)
+
+    metadata_namespace["run_command"] = fake_archive_tool
+    try:
+        plugin_report = metadata_namespace["plugin_archive"](
+            "offscreen",
+            [plugin_prefix],
+            "",
+            {"registration_objects": missing_import_objects},
+            missing_report,
+        )
+    finally:
+        metadata_namespace["run_command"] = original_run_command
+    assert plugin_report["static_archive_status"] == "present"
+    assert plugin_report["registration_status"] == "absent", (
+        "A plugin archive cannot imply that its static import object is installed."
+    )
+    assert plugin_report["registration_objects"]["static_import_objects"][0]["status"] == "absent"
+
 status, calls, summary, metadata_status, metadata_size = run_feedback("PassingCase\nAnotherCase")
 assert status == 0, "Two passing selected cases must pass."
 assert metadata_status == "complete"
