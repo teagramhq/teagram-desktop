@@ -2887,12 +2887,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 }
 
 [[nodiscard]] bool RunPassportLinkRefusalRegression(
-	Core::Application &app,
-	Main::Domain &domain,
-	not_null<Main::Account *> stock,
-	not_null<Main::Account *> pinned,
-	not_null<Main::Account *> blank,
-	not_null<Window::Controller *> stockWindow,
+	Core::Application &app, Main::Domain &domain,
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
 	not_null<Window::Controller *> pinnedWindow,
 	not_null<Window::Controller *> blankWindow) {
 	const auto stockController = stockWindow->sessionController();
@@ -2930,14 +2927,12 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
 	const auto passportUrl = [&](bool hasNonce) {
 		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
-			+ (hasNonce ? u"&nonce=y"_q : QString())
-			+ callback;
+			   + (hasNonce ? u"&nonce=y"_q : QString()) + callback;
 	};
 	const auto resolveUrl = [&](bool hasNonce) {
 		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
-			+ u"&public_key=x"_q
-			+ (hasNonce ? u"&nonce=y"_q : QString())
-			+ callback;
+			   + u"&public_key=x"_q + (hasNonce ? u"&nonce=y"_q : QString())
+			   + callback;
 	};
 	const auto links = std::vector<QString>{
 		passportUrl(true),
@@ -2949,10 +2944,8 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		const auto command = url.mid(u"tg://"_q.size());
 		const auto options = qthelp::RegExOption::CaseInsensitive;
 		for (const auto &[expression, handler] : Core::LocalUrlHandlers()) {
-			const auto match = qthelp::regex_match(
-				expression,
-				command,
-				options);
+			const auto match
+				= qthelp::regex_match(expression, command, options);
 			if (match) {
 				return !handler(nullptr, match, {});
 			}
@@ -2961,9 +2954,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	};
 	for (const auto &url : links) {
 		if (!queuedWithoutController(url)) {
-			std::fprintf(stderr,
-						 "Passport link regression: missing controller consumed "
-						 "or missed a URL.\n");
+			std::fprintf(
+				stderr, "Passport link regression: missing controller consumed "
+						"or missed a URL.\n");
 			return false;
 		}
 	}
@@ -2973,14 +2966,15 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		});
 	};
 	const auto toastCalls = [](Window::SessionController *controller) {
-		return controller->featureUnavailableOnServerToastCallsForRegressionTest();
+		return controller
+			->featureUnavailableOnServerToastCallsForRegressionTest();
 	};
 	const auto hasPassportForm = [](Window::SessionController *controller) {
 		return controller->passportFormExistsForRegressionTest();
 	};
 	const auto refuse = [&](const char *label,
-		Window::SessionController *controller,
-		const QString &url) {
+							Window::SessionController *controller,
+							const QString &url) {
 		const auto stockToastBefore = toastCalls(stockController);
 		const auto pinnedToastBefore = toastCalls(pinnedController);
 		const auto blankToastBefore = toastCalls(blankController);
@@ -2989,29 +2983,29 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		const auto stockToastAfter = toastCalls(stockController);
 		const auto pinnedToastAfter = toastCalls(pinnedController);
 		const auto blankToastAfter = toastCalls(blankController);
-		const auto refused = handled
-			&& !hasPassportForm(stockController)
-			&& !hasPassportForm(pinnedController)
-			&& !hasPassportForm(blankController)
-			&& (stockToastAfter
-				== stockToastBefore + (controller == stockController))
-			&& (pinnedToastAfter
-				== pinnedToastBefore + (controller == pinnedController))
-			&& (blankToastAfter
-				== blankToastBefore + (controller == blankController));
+		const auto refused
+			= handled && !hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (stockToastAfter
+				  == stockToastBefore + (controller == stockController))
+			  && (pinnedToastAfter
+				  == pinnedToastBefore + (controller == pinnedController))
+			  && (blankToastAfter
+				  == blankToastBefore + (controller == blankController));
 		if (!refused) {
 			std::fprintf(
 				stderr,
 				"Passport link regression: %s refusal mismatch for %s.\n",
-				label,
-				url.toUtf8().constData());
+				label, url.toUtf8().constData());
 		}
 		return refused;
 	};
 	domain.activate(stock);
 	if (&domain.active() != stock.get()) {
-		std::fprintf(stderr,
-					 "Passport link regression: stock account was not active.\n");
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
 		return false;
 	}
 	for (const auto &url : links) {
@@ -3021,22 +3015,22 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	}
 	domain.activate(pinned);
 	if (&domain.active() != pinned.get()) {
-		std::fprintf(stderr,
-					 "Passport link regression: custom account was not active.\n");
+		std::fprintf(
+			stderr,
+			"Passport link regression: custom account was not active.\n");
 		return false;
 	}
 	for (const auto &url : std::vector<QString>{
-		passportUrl(true),
-		resolveUrl(true),
-	}) {
+			 passportUrl(true),
+			 resolveUrl(true),
+		 }) {
 		const auto toastBefore = toastCalls(stockController);
 		const auto handled = app.openLocalUrl(url, contextFor(stockController));
 		QCoreApplication::processEvents();
-		const auto opened = handled
-			&& hasPassportForm(stockController)
-			&& !hasPassportForm(pinnedController)
-			&& !hasPassportForm(blankController)
-			&& (toastCalls(stockController) == toastBefore);
+		const auto opened = handled && hasPassportForm(stockController)
+							&& !hasPassportForm(pinnedController)
+							&& !hasPassportForm(blankController)
+							&& (toastCalls(stockController) == toastBefore);
 		stockController->clearPassportForm();
 		if (!opened) {
 			std::fprintf(
@@ -3048,8 +3042,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	}
 	domain.activate(stock);
 	if (&domain.active() != stock.get()) {
-		std::fprintf(stderr,
-					 "Passport link regression: stock account was not active.\n");
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
 		return false;
 	}
 	for (const auto &url : links) {
@@ -3059,11 +3054,7 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	}
 	const auto restartToastBefore = toastCalls(pinnedController);
 	pinnedController->showPassportForm(Passport::FormRequest(
-		UserId(1),
-		u"{}"_q,
-		u"https://example.com"_q,
-		u"x"_q,
-		u"y"_q));
+		UserId(1), u"{}"_q, u"https://example.com"_q, u"x"_q, u"y"_q));
 	if (hasPassportForm(pinnedController)
 		|| (toastCalls(pinnedController) != restartToastBefore + 1)) {
 		std::fprintf(
@@ -3071,10 +3062,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			"Passport link regression: restart bypassed the session gate.\n");
 		return false;
 	}
-	std::fprintf(
-		stderr,
-		"Passport link regression passed: URL variants followed their "
-		"owning stock, custom, and blocked sessions.\n");
+	std::fprintf(stderr,
+				 "Passport link regression passed: URL variants followed their "
+				 "owning stock, custom, and blocked sessions.\n");
 	return true;
 }
 
