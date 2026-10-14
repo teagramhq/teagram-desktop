@@ -1411,21 +1411,19 @@ Suggestions::~Suggestions() = default;
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 bool Suggestions::SearchTabOrderMatchesAppsSupportForRegressionTest(
-		not_null<Window::SessionController*> controller) {
+	not_null<Window::SessionController *> controller) {
 	const auto keys = TabKeysFor(controller);
-	const auto chats = ranges::find(keys, Key{ Tab::Chats });
-	const auto channels = ranges::find(keys, Key{ Tab::Channels });
-	const auto apps = ranges::find(keys, Key{ Tab::Apps });
-	const auto posts = ranges::find(keys, Key{ Tab::Posts });
-	if (chats == end(keys)
-		|| channels == end(keys)
-		|| channels != chats + 1
+	const auto chats = ranges::find(keys, Key{Tab::Chats});
+	const auto channels = ranges::find(keys, Key{Tab::Channels});
+	const auto apps = ranges::find(keys, Key{Tab::Apps});
+	const auto posts = ranges::find(keys, Key{Tab::Posts});
+	if (chats == end(keys) || channels == end(keys) || channels != chats + 1
 		|| posts == end(keys)) {
 		return false;
 	}
 	return controller->session().botAppsSupported()
-		? (apps == channels + 1 && posts == apps + 1)
-		: (apps == end(keys) && posts == channels + 1);
+			   ? (apps == channels + 1 && posts == apps + 1)
+			   : (apps == end(keys) && posts == channels + 1);
 }
 #endif
 
@@ -2341,7 +2339,7 @@ std::vector<Suggestions::Key> Suggestions::TabKeysFor(
 		{ Tab::Media, MediaType::RoundVoiceFile },
 	};
 	if (!controller->session().botAppsSupported()) {
-		result.erase(ranges::find(result, Key{ Tab::Apps }));
+		result.erase(ranges::find(result, Key{Tab::Apps}));
 	}
 	if (Core::App().downloadManager().empty()) {
 		result.erase(ranges::find(result, Key{ Tab::Downloads }));

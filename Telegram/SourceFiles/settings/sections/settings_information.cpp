@@ -1529,11 +1529,8 @@ bool InformationChatAutomationRowPresentForRegressionTest(
 	const auto container
 		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
 	auto targets = InformationHighlightTargets();
-	SetupChatAutomation(
-		container,
-		controller,
-		controller->session().user(),
-		&targets);
+	SetupChatAutomation(container, controller, controller->session().user(),
+						&targets);
 	const auto result = !targets.chatAutomation.isNull();
 	delete container;
 	return result;

@@ -73,7 +73,7 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] static bool SearchTabOrderMatchesAppsSupportForRegressionTest(
-		not_null<Window::SessionController*> controller);
+		not_null<Window::SessionController *> controller);
 #endif
 
 	void selectJump(Qt::Key direction, int pageSize = 0);
