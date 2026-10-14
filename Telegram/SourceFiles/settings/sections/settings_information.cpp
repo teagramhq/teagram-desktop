@@ -479,6 +479,9 @@ void SetupChatAutomation(
 		not_null<UserData*> self,
 		InformationHighlightTargets *targets) {
 	const auto session = &self->session();
+	if (!session->botAppsSupported()) {
+		return;
+	}
 	session->data().chatbots().preload();
 
 	auto label = session->data().chatbots().value(
@@ -1287,19 +1290,21 @@ void BuildInformationSection(SectionBuilder &builder) {
 			.keywords = { u"birthday"_q, u"date"_q, u"birth"_q },
 		};
 	});
-	builder.add(nullptr, [] {
-		return SearchEntry{
-			.id = u"edit/chat-automation"_q,
-			.title = tr::lng_settings_chat_automation_label(tr::now),
-			.keywords = {
-				u"chat"_q,
-				u"automation"_q,
-				u"bot"_q,
-				u"chatbot"_q,
-				u"chatbots"_q,
-			},
-		};
-	});
+	if (builder.session()->botAppsSupported()) {
+		builder.add(nullptr, [] {
+			return SearchEntry{
+				.id = u"edit/chat-automation"_q,
+				.title = tr::lng_settings_chat_automation_label(tr::now),
+				.keywords = {
+					u"chat"_q,
+					u"automation"_q,
+					u"bot"_q,
+					u"chatbot"_q,
+					u"chatbots"_q,
+				},
+			};
+		});
+	}
 	builder.add(nullptr, [] {
 		return SearchEntry{
 			.id = u"edit/add-account"_q,
@@ -1515,6 +1520,21 @@ bool InformationBioEditorTargetPresentForRegressionTest(
 	auto targets = InformationHighlightTargets();
 	SetupBio(container, controller->session().user(), controller, &targets);
 	const auto result = !targets.bio.isNull();
+	delete container;
+	return result;
+}
+
+bool InformationChatAutomationRowPresentForRegressionTest(
+	not_null<Window::SessionController *> controller) {
+	const auto container
+		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
+	auto targets = InformationHighlightTargets();
+	SetupChatAutomation(
+		container,
+		controller,
+		controller->session().user(),
+		&targets);
+	const auto result = !targets.chatAutomation.isNull();
 	delete container;
 	return result;
 }
