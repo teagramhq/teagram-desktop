@@ -38,35 +38,24 @@ rpl::producer<> on_main_update_requests() {
 namespace {
 
 class UsernameInputIntegration final : public Ui::Integration {
-public:
+  public:
 	void postponeCall(FnMut<void()> &&callable) override {
 		_postponed.push_back(std::move(callable));
 	}
 
-	void registerLeaveSubscription(not_null<QWidget*>) override {
-	}
+	void registerLeaveSubscription(not_null<QWidget *>) override {}
 
-	void unregisterLeaveSubscription(not_null<QWidget*>) override {
-	}
+	void unregisterLeaveSubscription(not_null<QWidget *>) override {}
 
-	QString emojiCacheFolder() override {
-		return QString();
-	}
+	QString emojiCacheFolder() override { return QString(); }
 
-	QString openglCheckFilePath() override {
-		return QString();
-	}
+	QString openglCheckFilePath() override { return QString(); }
 
-	QString angleBackendFilePath() override {
-		return QString();
-	}
+	QString angleBackendFilePath() override { return QString(); }
 
-	void touchCounterIncrement() override {
-	}
+	void touchCounterIncrement() override {}
 
-	int touchCounterNow() override {
-		return 0;
-	}
+	int touchCounterNow() override { return 0; }
 
 	void processPostponedCalls() {
 		while (!_postponed.empty()) {
@@ -76,12 +65,12 @@ public:
 		}
 	}
 
-private:
+  private:
 	std::vector<FnMut<void()>> _postponed;
 };
 
 class UsernameInputFixture final {
-public:
+  public:
 	UsernameInputFixture() {
 		Ui::Integration::Set(&Integration());
 		style::internal::StartFonts();
@@ -89,16 +78,14 @@ public:
 		_animations = std::make_unique<Ui::Animations::Manager>();
 	}
 
-	~UsernameInputFixture() {
-		_animations.reset();
-	}
+	~UsernameInputFixture() { _animations.reset(); }
 
 	void processPostponedCalls() {
 		Integration().processPostponedCalls();
 		QCoreApplication::processEvents();
 	}
 
-private:
+  private:
 	static UsernameInputIntegration &Integration() {
 		static auto result = UsernameInputIntegration();
 		return result;
@@ -110,8 +97,8 @@ private:
 } // namespace
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {
-	const auto application = qobject_cast<QApplication*>(
-		QCoreApplication::instance());
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
 	CHECK(application != nullptr);
 	if (!application) {
 		return;
@@ -121,8 +108,8 @@ TEST_CASE(UsernameInputStandaloneEventDispatch) {
 	CHECK_EQ(QApplication::platformName(), u"offscreen"_q);
 #endif // Q_OS_LINUX
 
-	const auto shortcuts = QKeySequence::keyBindings(
-		QKeySequence::DeleteStartOfWord);
+	const auto shortcuts
+		= QKeySequence::keyBindings(QKeySequence::DeleteStartOfWord);
 	CHECK(!shortcuts.isEmpty());
 	if (shortcuts.isEmpty()) {
 		return;
@@ -144,20 +131,15 @@ TEST_CASE(UsernameInputStandaloneEventDispatch) {
 	const auto key = shortcuts.front()[0];
 	for (auto lifetime = 0; lifetime != 2; ++lifetime) {
 		{
-			auto input = Ui::UsernameInput(
-				nullptr,
-				st::defaultInputField,
-				rpl::single(u"@username"_q),
-				u"operator"_q,
-				QString());
+			auto input = Ui::UsernameInput(nullptr, st::defaultInputField,
+										   rpl::single(u"@username"_q),
+										   u"operator"_q, QString());
 			input.setReadOnly(false);
 			CHECK(!input.isVisible());
 			input.setSelection(int(input.text().size()) - 2, 2);
 
-			auto event = QKeyEvent(
-				QEvent::KeyPress,
-				key.key(),
-				key.keyboardModifiers());
+			auto event = QKeyEvent(QEvent::KeyPress, key.key(),
+								   key.keyboardModifiers());
 			QCoreApplication::sendEvent(&input, &event);
 
 			CHECK_EQ(input.text(), u"operat"_q);

@@ -22,13 +22,10 @@ constexpr auto kMaxUsernameLength = 32;
 
 } // namespace
 
-UsernameInput::UsernameInput(
-	QWidget *parent,
-	const style::InputField &st,
-	rpl::producer<QString> placeholder,
-	const QString &val,
-	const QString &linkPlaceholder)
-: MaskedInputField(parent, st, std::move(placeholder), val) {
+UsernameInput::UsernameInput(QWidget *parent, const style::InputField &st,
+							 rpl::producer<QString> placeholder,
+							 const QString &val, const QString &linkPlaceholder)
+	: MaskedInputField(parent, st, std::move(placeholder), val) {
 	setLinkPlaceholder(linkPlaceholder);
 }
 
@@ -37,16 +34,13 @@ void UsernameInput::setLinkPlaceholder(const QString &placeholder) {
 	if (!_linkPlaceholder.isEmpty()) {
 		setTextMargins(style::margins(
 			_st.textMargins.left() + _st.style.font->width(_linkPlaceholder),
-			_st.textMargins.top(),
-			_st.textMargins.right(),
+			_st.textMargins.top(), _st.textMargins.right(),
 			_st.textMargins.bottom()));
 		setPlaceholderHidden(true);
 	}
 }
 
-void UsernameInput::setMaxLength(int maxLength) {
-	_maxLength = maxLength;
-}
+void UsernameInput::setMaxLength(int maxLength) { _maxLength = maxLength; }
 
 void UsernameInput::keyPressEvent(QKeyEvent *e) {
 	if (isReadOnly() && e->matches(QKeySequence::DeleteStartOfWord)) {
@@ -61,21 +55,14 @@ void UsernameInput::paintAdditionalPlaceholder(QPainter &p) {
 		p.setFont(_st.style.font);
 		p.setPen(_st.placeholderFg);
 		p.drawText(
-			QRect(
-				_st.textMargins.left(),
-				_st.textMargins.top(),
-				width(),
-				height() - _st.textMargins.top() - _st.textMargins.bottom()),
-			_linkPlaceholder,
-			style::al_topleft);
+			QRect(_st.textMargins.left(), _st.textMargins.top(), width(),
+				  height() - _st.textMargins.top() - _st.textMargins.bottom()),
+			_linkPlaceholder, style::al_topleft);
 	}
 }
 
-void UsernameInput::correctValue(
-		const QString &was,
-		int wasCursor,
-		QString &now,
-		int &nowCursor) {
+void UsernameInput::correctValue(const QString &was, int wasCursor,
+								 QString &now, int &nowCursor) {
 	auto newPos = nowCursor;
 	auto from = 0, len = int(now.size());
 	for (; from < len; ++from) {
@@ -87,9 +74,7 @@ void UsernameInput::correctValue(
 		}
 	}
 	len -= from;
-	const auto maxLength = (_maxLength > 0)
-		? _maxLength
-		: kMaxUsernameLength;
+	const auto maxLength = (_maxLength > 0) ? _maxLength : kMaxUsernameLength;
 	if (len > maxLength) {
 		len = maxLength + (now.at(from) == '@' ? 1 : 0);
 	}
