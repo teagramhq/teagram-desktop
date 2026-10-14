@@ -4067,10 +4067,12 @@ template <typename Predicate>
 
 [[nodiscard]] bool
 PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
-	const auto actions = menu.actions();
-	if (actions.isEmpty() || menu.focusPolicy() == Qt::NoFocus) {
+	const auto &actions = menu.actions();
+	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
 		return false;
 	}
+	const auto inner = menu.menu();
+	inner->clearSelection();
 	auto hasAction = false;
 	for (auto i = 0; i != actions.size(); ++i) {
 		const auto action = actions[i];
@@ -4081,9 +4083,26 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 			}
 		} else if (action->text().isEmpty()) {
 			return false;
-		} else if (!hasAction) {
-			menu.setActiveAction(action);
-			hasAction = (menu.activeAction() == action);
+		} else {
+			const auto item = inner->itemForAction(action);
+			const auto accessible
+				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
+			if (!accessible || accessible->role() != QAccessible::MenuItem
+				|| accessible->text(QAccessible::Name) != action->text()) {
+				return false;
+			}
+			if (item->isEnabled()) {
+				auto down
+					= QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+				QCoreApplication::sendEvent(&menu, &down);
+				const auto selected = inner->findSelectedAction();
+				if (!selected || selected->action() != action
+					|| selected->lastTriggeredSource()
+						   != Ui::Menu::TriggeredSource::Keyboard) {
+					return false;
+				}
+				hasAction = true;
+			}
 		}
 	}
 	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
@@ -4279,10 +4298,6 @@ template <typename Widget>
 		}
 		if (supported) {
 			if (!theme) {
-				return false;
-			}
-			historyMenu->setActiveAction(theme);
-			if (historyMenu->activeAction() != theme) {
 				return false;
 			}
 			theme->trigger();
