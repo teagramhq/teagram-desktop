@@ -110,6 +110,33 @@ enum class TeagramUpdateChatListAction {
 	Restart,
 };
 
+enum class TeagramUpdateSettingsAction {
+	CheckNow,
+	DownloadAndInstall,
+	Cancel,
+	Restart,
+	DontRestart,
+};
+
+[[nodiscard]] constexpr TeagramUpdateSettingsAction
+TeagramUpdateSettingsActionForState(TeagramUpdateUiState state) {
+	switch (state) {
+	case TeagramUpdateUiState::Available:
+		return TeagramUpdateSettingsAction::DownloadAndInstall;
+	case TeagramUpdateUiState::Ready:
+	case TeagramUpdateUiState::AlreadyInstalled:
+	case TeagramUpdateUiState::RecoveryRequired:
+		return TeagramUpdateSettingsAction::Restart;
+	case TeagramUpdateUiState::RestartPending:
+		return TeagramUpdateSettingsAction::DontRestart;
+	case TeagramUpdateUiState::Downloading:
+	case TeagramUpdateUiState::Preparing:
+		return TeagramUpdateSettingsAction::Cancel;
+	default:
+		return TeagramUpdateSettingsAction::CheckNow;
+	}
+}
+
 struct TeagramUpdateRejectedBuildState {
 	quint64 suppressedAutomaticBuild = 0;
 	quint64 noteBuild = 0;
