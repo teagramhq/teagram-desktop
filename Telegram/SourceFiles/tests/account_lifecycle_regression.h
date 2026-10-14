@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 
+#include <vector>
+
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 namespace MTP {
 class Instance;
@@ -55,6 +57,17 @@ struct TranslationRpcCountsForRegressionTest {
 	int rich = 0;
 };
 
+struct BoostRequestSessionCountsForRegressionTest {
+	MTP::Instance *instance = nullptr;
+	int boostsStatus = 0;
+	int myBoosts = 0;
+	int applyBoost = 0;
+};
+
+struct BoostRequestCaptureForRegressionTest {
+	std::vector<BoostRequestSessionCountsForRegressionTest> sessions;
+};
+
 void RecordLifecycleWriteForRegressionTest(
 	LifecycleWriteForRegressionTest operation);
 void ResetLifecycleWriteCountsForRegressionTest();
@@ -65,6 +78,12 @@ void RecordTranslationRpcForRegressionTest(
 void ResetTranslationRpcCountsForRegressionTest();
 [[nodiscard]] TranslationRpcCountsForRegressionTest
 GetTranslationRpcCountsForRegressionTest();
+[[nodiscard]] BoostRequestCaptureForRegressionTest *
+SetBoostRequestCaptureForRegressionTest(
+	BoostRequestCaptureForRegressionTest *capture);
+[[nodiscard]] bool CaptureBoostRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request);
 [[nodiscard]] bool CaptureChannelSaveRequestForRegressionTest(
 	not_null<MTP::Instance *> instance, int32 requestId,
 	const MTP::details::SerializedRequest &request,

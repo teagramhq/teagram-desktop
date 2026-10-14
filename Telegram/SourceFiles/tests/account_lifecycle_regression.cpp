@@ -11,12 +11,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
+#include "base/qthelp_regex.h"
 #include "base/weak_ptr.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
 #include "core/core_settings.h"
+#include "core/local_url_conversion.h"
+#include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
@@ -95,6 +99,7 @@ namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+BoostRequestCaptureForRegressionTest *gBoostRequestCapture = nullptr;
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -196,6 +201,44 @@ void ResetTranslationRpcCountsForRegressionTest() {
 TranslationRpcCountsForRegressionTest
 GetTranslationRpcCountsForRegressionTest() {
 	return gTranslationRpcCounts;
+}
+
+BoostRequestCaptureForRegressionTest *SetBoostRequestCaptureForRegressionTest(
+	BoostRequestCaptureForRegressionTest *capture) {
+	return std::exchange(gBoostRequestCapture, capture);
+}
+
+bool CaptureBoostRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gBoostRequestCapture;
+	if (!capture) {
+		return false;
+	}
+	const auto i = std::find_if(
+		capture->sessions.begin(), capture->sessions.end(),
+		[&](const auto &session) { return session.instance == instance; });
+	if (i == capture->sessions.end()) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	switch (body.front()) {
+	case mtpc_premium_getBoostsStatus:
+		++i->boostsStatus;
+		return true;
+	case mtpc_premium_getMyBoosts:
+		++i->myBoosts;
+		return true;
+	case mtpc_premium_applyBoost:
+		++i->applyBoost;
+		return true;
+	default:
+		return false;
+	}
 }
 
 bool CaptureChannelSaveRequestForRegressionTest(
@@ -1647,6 +1690,332 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	return accepted;
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] ChannelData *AddBoostRegressionChannel(Main::Session &session,
+													 ChannelId id,
+													 uint64 accessHash,
+													 const QString &name,
+													 const QString &username) {
+	using Flag = MTPDchannel::Flag;
+	const auto chat = MTP_channel(
+		MTP_flags(Flag::f_broadcast | Flag::f_access_hash | Flag::f_username),
+		MTP_long(id.bare), MTP_long(accessHash), MTP_string(name),
+		MTP_string(username), MTP_chatPhotoEmpty(), MTP_int(1),
+		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+	const auto peer = session.data().processChats(MTP_vector<MTPChat>({chat}));
+	return peer ? peer->asChannel() : nullptr;
+}
+
+[[nodiscard]] bool RunBoostEntryPathRefusalRegression(
+	Core::Application &app, not_null<Main::Account *> stock,
+	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> pinnedController,
+	not_null<Window::SessionController *> blockedController) {
+	const auto activeAtStart = &app.domain().active();
+	const auto restoreActive
+		= gsl::finally([&] { app.domain().activate(activeAtStart); });
+	const auto sameIdentity
+		= stock->session().uniqueId() == pinned->session().uniqueId()
+		  && stock->session().uniqueId() == blocked->session().uniqueId();
+	const auto channelId = ChannelId(1251);
+	const auto accessHash = uint64(125100);
+	const auto username = u"regression_boost"_q;
+	const auto stockChannel
+		= AddBoostRegressionChannel(stock->session(), channelId, accessHash,
+									u"Stock boost channel"_q, username);
+	const auto pinnedChannel
+		= AddBoostRegressionChannel(pinned->session(), channelId, accessHash,
+									u"Pinned boost channel"_q, username);
+	const auto blockedChannel
+		= AddBoostRegressionChannel(blocked->session(), channelId, accessHash,
+									u"Blocked boost channel"_q, username);
+	if (!sameIdentity || !stockChannel || !pinnedChannel || !blockedChannel) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: session or channel fixture "
+					"was incomplete.\n");
+		return false;
+	}
+	const auto pinnedBoostFlowsBefore
+		= pinnedController->boostFlowsOpenedForRegressionTest();
+	const auto blockedBoostFlowsBefore
+		= blockedController->boostFlowsOpenedForRegressionTest();
+	auto requests = BoostRequestCaptureForRegressionTest{
+		.sessions = {
+			{ .instance = &stock->session().mtp() },
+			{ .instance = &pinned->session().mtp() },
+			{ .instance = &blocked->session().mtp() },
+		},
+	};
+	const auto previousCapture
+		= SetBoostRequestCaptureForRegressionTest(&requests);
+	const auto restoreCapture = gsl::finally(
+		[=] { SetBoostRequestCaptureForRegressionTest(previousCapture); });
+	const auto countsFor = [&](const MTP::Instance *instance)
+		-> const BoostRequestSessionCountsForRegressionTest & {
+		const auto i = std::find_if(
+			requests.sessions.begin(), requests.sessions.end(),
+			[&](const auto &session) { return session.instance == instance; });
+		return *i;
+	};
+	const auto noBoostRequestsFor = [&](const MTP::Instance *instance) {
+		const auto &counts = countsFor(instance);
+		return !counts.boostsStatus && !counts.myBoosts && !counts.applyBoost;
+	};
+	const auto openLink = [&](not_null<Window::SessionController *> controller,
+							  const QString &link) {
+		const auto context = QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = base::make_weak(controller.get()),
+		});
+		return app.openLocalUrl(Core::TryConvertUrlToLocal(link), context);
+	};
+	const auto pinnedToastBefore
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	app.domain().activate(stock);
+	const auto tmeBoostOpened
+		= openLink(pinnedController, u"https://t.me/regression_boost?boost"_q);
+	QCoreApplication::processEvents();
+	const auto pinnedLinkOpenedFirst
+		= tmeBoostOpened
+		  && (pinnedController->activeChatCurrent().peer() == pinnedChannel)
+		  && (pinnedController
+				  ->featureUnavailableOnServerPeerForRegressionTest()
+			  == pinnedChannel)
+		  && (pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == pinnedToastBefore + 1);
+	if (!pinnedLinkOpenedFirst || !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| !noBoostRequestsFor(&stock->session().mtp())
+		|| pinnedController->boostFlowsOpenedForRegressionTest()
+			   != pinnedBoostFlowsBefore) {
+		std::fprintf(stderr,
+					 "Boost entry regression failed: custom t.me boost link "
+					 "did not open the channel before the shared refusal.\n");
+		return false;
+	}
+	const auto pinnedToastAfterLink
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->showPeerHistory(pinned->session().user());
+	const auto normalPinnedLinkOpened
+		= openLink(pinnedController, u"https://t.me/regression_boost"_q);
+	QCoreApplication::processEvents();
+	if (!normalPinnedLinkOpened
+		|| pinnedController->activeChatCurrent().peer() != pinnedChannel
+		|| pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != pinnedToastAfterLink
+		|| !noBoostRequestsFor(&pinned->session().mtp())) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: custom normal channel link "
+					"was refused or entered the boost path.\n");
+		return false;
+	}
+	const auto pinnedToastBeforeSlowMode
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->resolveBoostState(pinnedChannel, 2);
+	const auto pinnedSlowModeRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeSlowMode + 1;
+	const auto pinnedToastBeforeApply
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->applyBoostForRegressionTest(pinnedChannel);
+	const auto pinnedApplyRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeApply + 1;
+	const auto pinnedToastBeforeApplyChecked
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->applyBoostsCheckedForRegressionTest(pinnedChannel);
+	const auto pinnedApplyCheckedRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeApplyChecked + 1;
+	if (!pinnedSlowModeRefused || !pinnedApplyRefused
+		|| !pinnedApplyCheckedRefused
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| pinnedController->boostFlowsOpenedForRegressionTest()
+			   != pinnedBoostFlowsBefore) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: custom direct or slow-mode "
+					"boost path was not refused atomically.\n");
+		return false;
+	}
+
+	const auto blockedToastBefore
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	app.domain().activate(stock);
+	const auto blockedBoostOpened
+		= openLink(blockedController, u"tg://boost?channel=1251"_q);
+	QCoreApplication::processEvents();
+	const auto blockedLinkOpenedFirst
+		= blockedBoostOpened
+		  && (blockedController->activeChatCurrent().peer() == blockedChannel)
+		  && (blockedController
+				  ->featureUnavailableOnServerPeerForRegressionTest()
+			  == blockedChannel)
+		  && (blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == blockedToastBefore + 1);
+	if (!blockedLinkOpenedFirst
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| blockedController->boostFlowsOpenedForRegressionTest()
+			   != blockedBoostFlowsBefore) {
+		std::fprintf(stderr,
+					 "Boost entry regression failed: blocked tg boost link "
+					 "did not open the channel before the shared refusal.\n");
+		return false;
+	}
+	const auto blockedToastAfterLink
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->showPeerHistory(blocked->session().user());
+	const auto normalBlockedLinkOpened
+		= openLink(blockedController, u"https://t.me/regression_boost"_q);
+	QCoreApplication::processEvents();
+	if (!normalBlockedLinkOpened
+		|| blockedController->activeChatCurrent().peer() != blockedChannel
+		|| blockedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != blockedToastAfterLink
+		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: blocked normal channel link "
+			"was refused or entered the boost path.\n");
+		return false;
+	}
+	const auto blockedToastBeforeSlowMode
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->resolveBoostState(blockedChannel, 3);
+	const auto blockedSlowModeRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeSlowMode + 1;
+	const auto blockedToastBeforeApply
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->applyBoostForRegressionTest(blockedChannel);
+	const auto blockedApplyRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeApply + 1;
+	const auto blockedToastBeforeApplyChecked
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->applyBoostsCheckedForRegressionTest(blockedChannel);
+	const auto blockedApplyCheckedRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeApplyChecked + 1;
+	if (!blockedSlowModeRefused || !blockedApplyRefused
+		|| !blockedApplyCheckedRefused
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| blockedController->boostFlowsOpenedForRegressionTest()
+			   != blockedBoostFlowsBefore) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: blocked direct or slow-mode "
+			"boost path was not refused atomically.\n");
+		return false;
+	}
+
+	const auto stockToastBefore
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	stockController->showPeerHistory(stock->session().user());
+	app.domain().activate(pinned);
+	const auto stockBoostOpened
+		= openLink(stockController, u"tg://boost?channel=1251"_q);
+	const auto stockStatusKept
+		= countsFor(&stock->session().mtp()).boostsStatus == 1;
+	const auto stockToastKept
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == stockToastBefore;
+	const auto stockNavigationKept = stockController->activeChatCurrent().peer()
+									 == stock->session().user();
+	stockController->applyBoostForRegressionTest(stockChannel);
+	const auto stockApplicationKept
+		= countsFor(&stock->session().mtp()).myBoosts == 1;
+	stockController->applyBoostsCheckedForRegressionTest(stockChannel);
+	const auto stockApplyKept
+		= countsFor(&stock->session().mtp()).applyBoost == 1;
+	if (!stockBoostOpened || !stockStatusKept || !stockToastKept
+		|| !stockNavigationKept || !stockApplicationKept || !stockApplyKept
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: stock boost behavior changed "
+			"or the owning session was crossed.\n");
+		return false;
+	}
+
+	const auto pinnedToastAtNoController
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto stockToastAtNoController
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto blockedToastAtNoController
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto stockRequestsAtNoController = countsFor(&stock->session().mtp());
+	auto noControllerNoOp = false;
+	for (const auto &handler : Core::LocalUrlHandlers()) {
+		const auto match
+			= qthelp::regex_match(handler.expression, u"boost?channel=1251"_q,
+								  qthelp::RegExOption::CaseInsensitive);
+		if (match) {
+			noControllerNoOp = !handler.handler(nullptr, match, QVariant());
+			break;
+		}
+	}
+	if (!noControllerNoOp
+		|| pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != pinnedToastAtNoController
+		|| stockController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != stockToastAtNoController
+		|| blockedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != blockedToastAtNoController
+		|| countsFor(&stock->session().mtp()).boostsStatus
+			   != stockRequestsAtNoController.boostsStatus
+		|| countsFor(&stock->session().mtp()).myBoosts
+			   != stockRequestsAtNoController.myBoosts
+		|| countsFor(&stock->session().mtp()).applyBoost
+			   != stockRequestsAtNoController.applyBoost
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: missing controller context "
+					"fell back to another window.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Boost entry regression passed: custom and blocked links opened the "
+		"channel before refusal, unsupported sessions sent no boost requests, "
+		"and stock behavior stayed on its owning session.\n");
+	return true;
+}
+#endif
+
 // The accepted refusal contract, observed instead of inferred: a refused
 // mini-app open shows the shared unavailable-server toast on the owning
 // session and leaves the webview path untouched, while a stock session keeps
@@ -1922,6 +2291,14 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		blank->forcedLogOut();
 		return false;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (!RunBoostEntryPathRefusalRegression(app, stock, pinned, blank,
+											stockController, pinnedController,
+											blankController)) {
+		blank->forcedLogOut();
+		return false;
+	}
+#endif
 	blank->forcedLogOut();
 
 	// A previously custom-pinned account can be restored into a blocked
