@@ -2551,7 +2551,7 @@ template <typename Predicate>
 			"custom channel lost its name or exposed Auto-translate.\n");
 		return false;
 	}
-	customEditBox->saveAutoTranslateForRegressionTest(true);
+	customEditBox->saveAutoTranslateForRegressionTest(false);
 	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
 			!= 0
 		|| channelSaveRequests.requests.size() != 2) {
@@ -2571,7 +2571,7 @@ template <typename Predicate>
 							 "channel lost Auto-translate.\n");
 		return false;
 	}
-	stockEditBox->saveAutoTranslateForRegressionTest(true);
+	stockEditBox->saveAutoTranslateForRegressionTest(false);
 	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
 		!= 1) {
 		std::fprintf(
