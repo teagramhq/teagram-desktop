@@ -160,8 +160,8 @@ template <typename Request>
 }
 
 void IncrementTranslationRpcCountForRegressionTest(
-		TranslationRpcCountsForRegressionTest &counts,
-		TranslationRpcForRegressionTest operation) {
+	TranslationRpcCountsForRegressionTest &counts,
+	TranslationRpcForRegressionTest operation) {
 	switch (operation) {
 	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
 		++counts.channelAutoTranslationToggle;
@@ -204,7 +204,7 @@ GetLifecycleWriteCountsForRegressionTest() {
 void RecordTranslationRpcForRegressionTest(
 	TranslationRpcForRegressionTest operation) {
 	IncrementTranslationRpcCountForRegressionTest(gTranslationRpcCounts,
-		operation);
+												  operation);
 	switch (gTranslationRpcRoleForRegressionTest) {
 	case TranslationRpcRoleForRegressionTest::Stock:
 		IncrementTranslationRpcCountForRegressionTest(
@@ -2387,17 +2387,17 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return item;
 }
 
-[[nodiscard]] MTPChat TranslationRegressionChannel(
-		ChannelId id, uint64 accessHash, const QString &title) {
+[[nodiscard]] MTPChat TranslationRegressionChannel(ChannelId id,
+												   uint64 accessHash,
+												   const QString &title) {
 	using Flag = MTPDchannel::Flag;
 	return MTP_channel(
 		MTP_flags(Flag::f_creator | Flag::f_broadcast | Flag::f_access_hash
-			| Flag::f_autotranslation),
-		MTP_long(id.bare), MTP_long(accessHash), MTP_string(title),
-		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
-		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
-		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
-		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+				  | Flag::f_autotranslation),
+		MTP_long(id.bare), MTP_long(accessHash), MTP_string(title), MTPstring(),
+		MTP_chatPhotoEmpty(), MTP_int(1), MTPVector<MTPRestrictionReason>(),
+		MTPChatAdminRights(), MTPChatBannedRights(), MTPChatBannedRights(),
+		MTPint(), MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
 		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
 		MTPlong(), MTPlong(), MTPlong());
 }
@@ -2460,7 +2460,8 @@ template <typename Predicate>
 	Data::ApplyChannelUpdate(
 		stockChannel, TranslationRegressionChannelFull(ChannelId(1151)).data());
 	Data::ApplyChannelUpdate(
-		customChannel, TranslationRegressionChannelFull(ChannelId(1152)).data());
+		customChannel,
+		TranslationRegressionChannelFull(ChannelId(1152)).data());
 
 	const auto openEditBox
 		= [](not_null<Window::SessionController *> controller,
@@ -2613,16 +2614,18 @@ template <typename Predicate>
 	const auto stockBroadcast = stockChannel->isBroadcast();
 	const auto stockAutoTranslation = stockChannel->autoTranslation();
 	const auto stockTranslationEnabled
-		= (stockChannel->translationFlag() == PeerData::TranslationFlag::Enabled);
+		= (stockChannel->translationFlag()
+		   == PeerData::TranslationFlag::Enabled);
 	const auto customLoaded = customChannel->isLoaded();
-	const auto customServerSupported = customSession.serverTranslationSupported();
+	const auto customServerSupported
+		= customSession.serverTranslationSupported();
 	const auto customNetworkAllowed = customSession.mtp().networkAllowed();
 	const auto customCreator = customChannel->amCreator();
 	const auto customBroadcast = customChannel->isBroadcast();
 	const auto customAutoTranslation = customChannel->autoTranslation();
 	const auto customTranslationEnabled
 		= (customChannel->translationFlag()
-			== PeerData::TranslationFlag::Enabled);
+		   == PeerData::TranslationFlag::Enabled);
 	std::fprintf(
 		stderr,
 		"Translation controls precondition: stock loaded=%d "
@@ -2743,21 +2746,20 @@ template <typename Predicate>
 	std::fprintf(stderr,
 				 "Translation controls stock requests: text=%d rich=%d.\n",
 				 stockRpcs.text, stockRpcs.rich);
-	const auto barrier
-		= WaitForMainQueueBarrierForRegressionTest(1000)
-		== MainQueueBarrierResult::Completed;
+	const auto barrier = WaitForMainQueueBarrierForRegressionTest(1000)
+						 == MainQueueBarrierResult::Completed;
 	const auto stockAfterBarrier = GetTranslationRpcCountsForRegressionTest();
 	const auto stockNetworkAllowedAfter = stockSession.mtp().networkAllowed();
 	const auto customNetworkAllowedAfter = customSession.mtp().networkAllowed();
 	const auto customCountsUnchanged
 		= (gCustomTranslationRpcCounts.text == customRpcs.text)
-		&& (gCustomTranslationRpcCounts.rich == customRpcs.rich);
+		  && (gCustomTranslationRpcCounts.rich == customRpcs.rich);
 	const auto stockRoleCountsUnchanged
 		= (gStockTranslationRpcCounts.text == stockRpcs.text)
-		&& (gStockTranslationRpcCounts.rich == stockRpcs.rich);
+		  && (gStockTranslationRpcCounts.rich == stockRpcs.rich);
 	const auto stockCountsUnchanged
 		= (stockAfterBarrier.text == stockRpcs.text)
-		&& (stockAfterBarrier.rich == stockRpcs.rich);
+		  && (stockAfterBarrier.rich == stockRpcs.rich);
 	if (!barrier || !customCountsUnchanged || !stockRoleCountsUnchanged
 		|| !stockCountsUnchanged || stockNetworkAllowedAfter
 		|| customNetworkAllowedAfter) {
@@ -2767,9 +2769,9 @@ template <typename Predicate>
 			"text=%d rich=%d stock text=%d rich=%d network_allowed "
 			"stock=%d custom=%d.\n",
 			barrier, gCustomTranslationRpcCounts.text,
-			gCustomTranslationRpcCounts.rich,
-			gStockTranslationRpcCounts.text, gStockTranslationRpcCounts.rich,
-			stockNetworkAllowedAfter, customNetworkAllowedAfter);
+			gCustomTranslationRpcCounts.rich, gStockTranslationRpcCounts.text,
+			gStockTranslationRpcCounts.rich, stockNetworkAllowedAfter,
+			customNetworkAllowedAfter);
 		return false;
 	}
 	std::fprintf(
