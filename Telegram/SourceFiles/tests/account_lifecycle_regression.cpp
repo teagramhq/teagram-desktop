@@ -1751,18 +1751,24 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	const auto hasChatAutomation
 		= SettingsSearchHasEntry(entries, u"edit/chat-automation"_q);
 	const auto callsSupported = session->callsSupported();
+	const auto hasCallsAcceptEntry
+		= SettingsSearchHasEntry(entries, u"calls/accept"_q);
+	const auto hasCallsNotificationsSection
+		= SettingsSearchHasEntry(entries, u"notifications/calls"_q);
+	const auto hasCallsNotificationsAcceptEntry
+		= SettingsSearchHasEntry(entries, u"notifications/calls/accept"_q);
+	const auto hasPrivacyCallsEntry
+		= SettingsSearchHasEntry(entries, u"privacy/calls"_q);
 	const auto hasCallSettings
-		= SettingsSearchHasEntry(entries, u"calls/accept"_q)
-		  && SettingsSearchHasEntry(entries, u"notifications/calls"_q)
-		  && SettingsSearchHasEntry(entries, u"notifications/calls/accept"_q)
-		  && SettingsSearchHasEntry(entries, u"privacy/calls"_q);
-	const auto hasAcceptCallSectionKeyword = std::any_of(
-		entries.begin(),
-		entries.end(),
-		[](const auto &entry) {
-			return (entry.id == u"calls/other"_q)
-				&& entry.keywords.contains(u"accept"_q);
-		});
+		= hasCallsAcceptEntry
+		  && hasCallsNotificationsSection
+		  && hasCallsNotificationsAcceptEntry
+		  && hasPrivacyCallsEntry;
+	const auto hasAcceptCallSectionKeyword
+		= std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
+			  return (entry.id == u"calls/other"_q)
+					 && entry.keywords.contains(u"accept"_q);
+		  });
 	const auto hasSystemPreferencesEntry
 		= SettingsSearchHasEntry(entries, u"calls/system-prefs"_q);
 	const auto hasStockPaidRows
@@ -1779,7 +1785,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	const auto matches = hasPaid == paidSupported && hasPrivacy
 						 && (hasBio == bioSupported)
 						 && (hasChatAutomation == botAppsSupported)
-						 && (hasCallSettings == callsSupported)
+						 && (hasCallsAcceptEntry == callsSupported)
+						 && (hasCallsNotificationsSection == callsSupported)
+						 && (hasCallsNotificationsAcceptEntry == callsSupported)
+						 && (hasPrivacyCallsEntry == callsSupported)
 						 && (callsSupported || !hasAcceptCallSectionKeyword)
 						 && hasSystemPreferencesEntry
 						 && (!paidSupported || hasStockPaidRows);
