@@ -1744,7 +1744,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		= Settings::Builder::SearchRegistry::Instance().collectAll(session);
 	const auto hasPaid = SettingsSearchHasPaidEntry(entries);
 	const auto hasPrivacy
-		= SettingsSearchHasEntry(entries, u"privacy/phone_number"_q);
+		= SettingsSearchHasEntry(entries, u"privacy/last_seen"_q);
 	const auto hasBio = SettingsSearchHasEntry(entries, u"edit/bio"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
