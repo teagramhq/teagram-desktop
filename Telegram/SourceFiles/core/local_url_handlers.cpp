@@ -573,6 +573,14 @@ bool ResolveUsernameOrPhone(
 	const auto params = url_parse_params(
 		match->captured(1),
 		qthelp::UrlParamNameTransform::ToLower);
+	const auto domainParam = params.value(u"domain"_q);
+	const auto appnameParam = params.value(u"appname"_q);
+	const auto webChannelPreviewLink
+		= (domainParam == u"s"_q) && !appnameParam.isEmpty();
+	const auto domain = webChannelPreviewLink ? appnameParam : domainParam;
+	if (domain == u"telegrampassport"_q) {
+		return ShowPassportForm(controller, params);
+	}
 
 	if (params.contains(u"acc"_q)) {
 		const auto switched = ApplyAccountIndex(
@@ -587,8 +595,6 @@ bool ResolveUsernameOrPhone(
 		}
 	}
 
-	const auto domainParam = params.value(u"domain"_q);
-	const auto appnameParam = params.value(u"appname"_q);
 	const auto myContext = context.value<ClickHandlerContext>();
 
 	if (domainParam == u"giftcode"_q && !appnameParam.isEmpty()) {
@@ -618,9 +624,6 @@ bool ResolveUsernameOrPhone(
 	}
 
 	// Fix t.me/s/username links.
-	const auto webChannelPreviewLink = (domainParam == u"s"_q)
-		&& !appnameParam.isEmpty();
-	const auto domain = webChannelPreviewLink ? appnameParam : domainParam;
 	const auto phone = params.value(u"phone"_q);
 	const auto validDomain = [](const QString &domain) {
 		return qthelp::regex_match(
@@ -632,9 +635,7 @@ bool ResolveUsernameOrPhone(
 	const auto validPhone = [](const QString &phone) {
 		return qthelp::regex_match(u"^[0-9]+$"_q, phone, {}).valid();
 	};
-	if (domain == u"telegrampassport"_q) {
-		return ShowPassportForm(controller, params);
-	} else if (!validDomain(domain) && !validPhone(phone)) {
+	if (!validDomain(domain) && !validPhone(phone)) {
 		return false;
 	}
 	using ResolveType = Window::ResolveType;
