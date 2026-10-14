@@ -12,10 +12,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QCoreApplication>
 #include <QtCore/QResource>
 #include <QtCore/QString>
+#include <QtCore/QtPlugin>
+#ifdef Q_OS_LINUX
+#include <QtWidgets/QApplication>
+#endif // Q_OS_LINUX
 
 #include <cstdio>
 #include <string_view>
 #include <vector>
+
+#ifdef Q_OS_LINUX
+Q_IMPORT_PLUGIN(QOffscreenIntegrationPlugin)
+#endif // Q_OS_LINUX
 
 namespace Test::Unit {
 namespace {
@@ -115,7 +123,12 @@ int main(int argc, char *argv[]) {
 		}
 		selectedCase = argv[2];
 	}
+#ifdef Q_OS_LINUX
+	qputenv("QT_QPA_PLATFORM", "offscreen");
+	auto app = QApplication(argc, argv);
+#else
 	auto app = QCoreApplication(argc, argv);
+#endif // Q_OS_LINUX
 
 #ifdef Q_OS_MAC
 	const auto resources = QCoreApplication::applicationDirPath()

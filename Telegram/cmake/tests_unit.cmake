@@ -167,6 +167,25 @@ PRIVATE
     desktop-app::external_xxhash
 )
 
+if (LINUX)
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        tests/unit/username_input_tests.cpp
+        ui/widgets/fields/username_input.cpp
+    )
+
+    target_link_libraries(test_unit
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
+    )
+    if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+        target_link_libraries(test_unit
+        PRIVATE
+            Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
+        )
+    endif()
+endif()
+
 # Put it beside Telegram in out/<config>/ instead of the target's own
 # binary dir, so one documented path finds it. The generator appends the
 # config, as it does for the application.
