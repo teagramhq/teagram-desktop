@@ -591,6 +591,13 @@ if ! grep -F -q "Chat participants regression passed." "$AUTH_LOG"; then
 	echo "chat participants regression did not reach its passing result." >&2
 	exit 1
 fi
+if ! grep -F -q \
+	"Settings deep link regression passed: 13 routes refused in custom and blocked sessions;" \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "Settings deep link regression did not reach its passing result." >&2
+	exit 1
+fi
 if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 	mkdir -p "$(dirname "$AUTH_EVIDENCE_LOG")"
 	cp "$AUTH_LOG" "$AUTH_EVIDENCE_LOG"

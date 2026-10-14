@@ -277,6 +277,14 @@ Result ShowAutoDeleteSetCustom(const Context &ctx) {
 	return Result::Handled;
 }
 
+Result ShowSendGift(const Context &ctx) {
+	if (!ctx.controller) {
+		return Result::NeedsAuth;
+	}
+	Ui::ChooseStarGiftRecipient(ctx.controller);
+	return Result::Handled;
+}
+
 Result ShowLoginEmail(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
@@ -1598,11 +1606,14 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"premium"_q,
 		.action = SettingsSection{ ::Settings::PremiumId() },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
 		.path = u"stars"_q,
 		.action = SettingsSection{ ::Settings::CreditsId() },
+		.requiresPaidFeatures = true,
+		.requiresPaidFeaturesForSubpaths = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -1657,11 +1668,14 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"ton"_q,
 		.action = SettingsSection{ ::Settings::CurrencyId() },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
 		.path = u"business"_q,
 		.action = SettingsSection{ ::Settings::BusinessId() },
+		.requiresPaidFeatures = true,
+		.requiresPaidFeaturesForSubpaths = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -1674,13 +1688,8 @@ void RegisterSettingsHandlers(Router &router) {
 
 	router.add(u"settings"_q, {
 		.path = u"send-gift"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			Ui::ChooseStarGiftRecipient(ctx.controller);
-			return Result::Handled;
-		}},
+		.action = CodeBlock{ ShowSendGift },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -1692,6 +1701,7 @@ void RegisterSettingsHandlers(Router &router) {
 			Ui::ShowStarGiftBox(ctx.controller, ctx.controller->session().user());
 			return Result::Handled;
 		}},
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {

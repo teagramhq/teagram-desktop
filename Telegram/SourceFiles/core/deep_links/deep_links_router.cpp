@@ -132,6 +132,18 @@ Router::DispatchResult Router::handleSection(
 
 	const auto &entries = it->second;
 	const auto path = ctx.path.toLower();
+	if (ctx.controller
+		&& !ctx.controller->session().paidFeaturesSupported()) {
+		for (const auto &entry : entries) {
+			if (entry.requiresPaidFeatures
+				&& (path == entry.path
+					|| (entry.requiresPaidFeaturesForSubpaths
+						&& path.startsWith(entry.path + u"/"_q)))) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return { Result::Handled, true };
+			}
+		}
+	}
 
 	for (const auto &entry : entries) {
 		if (entry.path == path || (entry.path.isEmpty() && path.isEmpty())) {
