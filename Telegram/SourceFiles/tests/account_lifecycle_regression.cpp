@@ -1766,7 +1766,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			  controller->clearSectionStack(Window::SectionShow(
 				  anim::type::instant, anim::activation::background));
 		  };
-	for (const auto controller : {
+	for (const auto &controller : {
 			 stockController,
 			 pinnedController,
 			 blockedController,
@@ -1774,7 +1774,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		resetController(controller);
 	}
 	QCoreApplication::processEvents();
-	for (const auto controller : {
+	for (const auto &controller : {
 			 stockController,
 			 pinnedController,
 			 blockedController,
