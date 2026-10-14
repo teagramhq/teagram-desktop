@@ -24,6 +24,7 @@ fixtures=(
   TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation
   TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation
   TeagramUpdateWorkerShutdownCleansCandidateArchive
+  TeagramUpdateManagerInstallsProducerBundle
 )
 
 mkdir -p "$log_directory"

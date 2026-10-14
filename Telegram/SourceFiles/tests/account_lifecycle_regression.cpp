@@ -52,8 +52,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
+#include "settings/sections/settings_business.h"
+#include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
+#include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
 #include "spellcheck/platform/platform_language.h"
 #include "storage/details/storage_file_utilities.h"
@@ -100,6 +103,17 @@ namespace {
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 BoostRequestCaptureForRegressionTest *gBoostRequestCapture = nullptr;
+
+enum class TranslationRpcRoleForRegressionTest {
+	None,
+	Stock,
+	Custom,
+};
+
+auto gTranslationRpcRoleForRegressionTest
+	= TranslationRpcRoleForRegressionTest::None;
+auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -153,6 +167,22 @@ template <typename Request>
 	return true;
 }
 
+void IncrementTranslationRpcCountForRegressionTest(
+	TranslationRpcCountsForRegressionTest &counts,
+	TranslationRpcForRegressionTest operation) {
+	switch (operation) {
+	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
+		++counts.channelAutoTranslationToggle;
+		break;
+	case TranslationRpcForRegressionTest::Text:
+		++counts.text;
+		break;
+	case TranslationRpcForRegressionTest::Rich:
+		++counts.rich;
+		break;
+	}
+}
+
 } // namespace
 
 void RecordLifecycleWriteForRegressionTest(
@@ -181,21 +211,34 @@ GetLifecycleWriteCountsForRegressionTest() {
 
 void RecordTranslationRpcForRegressionTest(
 	TranslationRpcForRegressionTest operation) {
-	switch (operation) {
-	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
-		++gTranslationRpcCounts.channelAutoTranslationToggle;
+	IncrementTranslationRpcCountForRegressionTest(gTranslationRpcCounts,
+												  operation);
+	switch (gTranslationRpcRoleForRegressionTest) {
+	case TranslationRpcRoleForRegressionTest::Stock:
+		IncrementTranslationRpcCountForRegressionTest(
+			gStockTranslationRpcCounts, operation);
 		break;
-	case TranslationRpcForRegressionTest::Text:
-		++gTranslationRpcCounts.text;
+	case TranslationRpcRoleForRegressionTest::Custom:
+		IncrementTranslationRpcCountForRegressionTest(
+			gCustomTranslationRpcCounts, operation);
 		break;
-	case TranslationRpcForRegressionTest::Rich:
-		++gTranslationRpcCounts.rich;
+	case TranslationRpcRoleForRegressionTest::None:
 		break;
 	}
 }
 
 void ResetTranslationRpcCountsForRegressionTest() {
 	gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+	switch (gTranslationRpcRoleForRegressionTest) {
+	case TranslationRpcRoleForRegressionTest::Stock:
+		gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+		break;
+	case TranslationRpcRoleForRegressionTest::Custom:
+		gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+		break;
+	case TranslationRpcRoleForRegressionTest::None:
+		break;
+	}
 }
 
 TranslationRpcCountsForRegressionTest
@@ -1016,8 +1059,8 @@ RestartDomain(Main::Domain &domain,
 	return true;
 }
 
-[[nodiscard]] MTPUser RegressionUser(UserId id, bool self,
-									 const QString &phone);
+[[nodiscard]] MTPUser RegressionUser(UserId id, bool self, const QString &phone,
+									 bool premium = false);
 
 [[nodiscard]] bool CacheMismatchWaitsForDestructiveConfirmation(
 	not_null<Main::Account *> account,
@@ -1490,11 +1533,12 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	return nullptr;
 }
 
-[[nodiscard]] MTPUser RegressionUser(UserId id, bool self,
-									 const QString &phone) {
+[[nodiscard]] MTPUser RegressionUser(UserId id, bool self, const QString &phone,
+									 bool premium) {
 	const auto flags
 		= (self ? MTPDuser::Flag::f_self : MTPDuser::Flag())
-		  | (phone.isEmpty() ? MTPDuser::Flag() : MTPDuser::Flag::f_phone);
+		  | (phone.isEmpty() ? MTPDuser::Flag() : MTPDuser::Flag::f_phone)
+		  | (premium ? MTPDuser::Flag::f_premium : MTPDuser::Flag());
 	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
 					MTP_string(u"Regression"_q), MTPstring(), MTPstring(),
 					MTP_string(phone), MTPUserProfilePhoto(), MTPUserStatus(),
@@ -1504,9 +1548,19 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPlong(), MTPlong(), MTPlong());
 }
 
+[[nodiscard]] bool
+SetRegressionSessionPremium(not_null<Main::Session *> session, UserId selfId,
+							bool premium) {
+	session->data().processUsers(MTP_vector<MTPUser>({
+		RegressionUser(selfId, true, QString(), premium),
+	}));
+	return session->premium() == premium;
+}
+
 [[nodiscard]] MTPmessages_ChatFull
 RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
-						UserId creatorId, bool memberIsAdmin = false) {
+						UserId creatorId, bool memberIsAdmin = false,
+						bool selfPremium = false) {
 	const auto memberId = (creatorId == UserId(1)) ? UserId(2) : UserId(1);
 	const auto member
 		= memberIsAdmin
@@ -1544,12 +1598,20 @@ RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
 		MTPint(), MTPint(), MTPInputGroupCall(), MTPint(), MTPPeer(),
 		MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTP_chatReactionsNone(),
 		MTPint());
-	return MTP_messages_chatFull(fullChat, MTP_vector<MTPChat>(0),
-								 MTP_vector<MTPUser>({
-									 RegressionUser(UserId(1), true, selfPhone),
-									 RegressionUser(UserId(2), false, u"2"_q),
-									 RegressionUser(UserId(9), false, u"9"_q),
-								 }));
+	return MTP_messages_chatFull(
+		fullChat, MTP_vector<MTPChat>(0),
+		MTP_vector<MTPUser>({
+			RegressionUser(UserId(1), true, selfPhone, selfPremium),
+			RegressionUser(UserId(2), false, u"2"_q),
+			RegressionUser(UserId(9), false, u"9"_q),
+		}));
+}
+
+[[nodiscard]] MTPmessages_ChatFull
+RegressionStockChatFullReply(ChatId chatId, int version, QString selfPhone,
+							 UserId creatorId, bool memberIsAdmin = false) {
+	return RegressionChatFullReply(chatId, version, std::move(selfPhone),
+								   creatorId, memberIsAdmin, true);
 }
 
 // A bot peer for the webview fixtures: the bot flag plus a bot info
@@ -1648,6 +1710,71 @@ ReadWebViewOpenCounters(not_null<Main::Session *> session) {
 // verification, and the invitation link. It returns how many opens the
 // session accepted.
 constexpr int kRegressionEntryClassCount = 13;
+
+[[nodiscard]] bool SettingsSearchHasEntry(
+	const std::vector<Settings::Builder::SearchEntry> &entries,
+	const QString &id) {
+	return std::any_of(entries.begin(), entries.end(),
+					   [&](const auto &entry) { return entry.id == id; });
+}
+
+[[nodiscard]] bool SettingsSearchHasPaidEntry(
+	const std::vector<Settings::Builder::SearchEntry> &entries) {
+	return std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
+		return entry.section == Settings::PremiumId()
+			   || entry.section == Settings::CreditsId()
+			   || entry.section == Settings::CurrencyId()
+			   || entry.section == Settings::BusinessId()
+			   || entry.id.startsWith(u"premium/"_q)
+			   || entry.id.startsWith(u"stars/"_q)
+			   || entry.id.startsWith(u"business/"_q)
+			   || entry.id == u"main/premium"_q || entry.id == u"main/credits"_q
+			   || entry.id == u"main/currency"_q
+			   || entry.id == u"main/business"_q
+			   || entry.id == u"main/send-gift"_q;
+	});
+}
+
+[[nodiscard]] bool SettingsSearchHasSectionTitle(
+	const std::vector<Settings::Builder::SearchEntry> &entries,
+	Settings::Type section) {
+	return std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
+		return entry.id.isEmpty() && entry.section == section;
+	});
+}
+
+[[nodiscard]] bool
+SettingsSearchMatchesExpected(not_null<Main::Session *> session,
+							  bool paidSupported, bool bioSupported) {
+	const auto entries
+		= Settings::Builder::SearchRegistry::Instance().collectAll(session);
+	const auto hasPaid = SettingsSearchHasPaidEntry(entries);
+	const auto hasPrivacy
+		= SettingsSearchHasEntry(entries, u"privacy/phone_number"_q);
+	const auto hasBio = SettingsSearchHasEntry(entries, u"edit/bio"_q);
+	const auto hasStockPaidRows
+		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
+		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
+		  && SettingsSearchHasEntry(entries, u"business/sponsored"_q)
+		  && SettingsSearchHasEntry(entries, u"main/premium"_q)
+		  && SettingsSearchHasEntry(entries, u"main/credits"_q)
+		  && SettingsSearchHasEntry(entries, u"main/currency"_q)
+		  && SettingsSearchHasEntry(entries, u"main/business"_q)
+		  && SettingsSearchHasSectionTitle(entries, Settings::PremiumId())
+		  && SettingsSearchHasSectionTitle(entries, Settings::CreditsId())
+		  && SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
+	const auto matches = hasPaid == paidSupported && hasPrivacy
+						 && (hasBio == bioSupported)
+						 && (!paidSupported || hasStockPaidRows);
+	if (!matches) {
+		std::fprintf(stderr,
+					 "Settings search regression failed: paid=%d expected=%d, "
+					 "privacy=%d, bio=%d expected=%d, stock-rows=%d.\n",
+					 hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
+					 hasStockPaidRows);
+	}
+	return matches;
+}
 
 [[nodiscard]] int
 AcceptedMiniAppOpens(not_null<Main::Session *> session,
@@ -2053,6 +2180,29 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			"and custom-pinned.\n");
 		return false;
 	}
+	{
+		const auto stockWasPremium = stock->session().premium();
+		const auto pinnedWasPremium = pinned->session().premium();
+		const auto restorePremium = gsl::finally([&] {
+			const auto stockRestored = SetRegressionSessionPremium(
+				&stock->session(), selfId, stockWasPremium);
+			const auto pinnedRestored = SetRegressionSessionPremium(
+				&pinned->session(), selfId, pinnedWasPremium);
+			Expects(stockRestored && pinnedRestored);
+		});
+		if (!SetRegressionSessionPremium(&stock->session(), selfId, true)
+			|| !SetRegressionSessionPremium(&pinned->session(), selfId, true)
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)) {
+			std::fprintf(
+				stderr,
+				"Mini-app open regression: Settings search results crossed "
+				"stock and custom sessions.\n");
+			return false;
+		}
+	}
 	const auto regressionUserId = UserId(777);
 	const auto stockBot = stock->session()
 							  .data()
@@ -2258,6 +2408,18 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			blank->mtp().dcOptions().hasCustomServer(),
 			blank->session().botAppsSupported(),
 			static_cast<const void *>(blankController));
+		blank->forcedLogOut();
+		return false;
+	}
+	const auto blankWasPremium = blank->session().premium();
+	const auto blankPremiumEnabled
+		= SetRegressionSessionPremium(&blank->session(), selfId, true);
+	const auto blankSearchMatches
+		= blankPremiumEnabled
+		  && SettingsSearchMatchesExpected(&blank->session(), false, false);
+	const auto blankPremiumRestored = SetRegressionSessionPremium(
+		&blank->session(), selfId, blankWasPremium);
+	if (!blankSearchMatches || !blankPremiumRestored) {
 		blank->forcedLogOut();
 		return false;
 	}
@@ -2726,6 +2888,42 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return item;
 }
 
+[[nodiscard]] MTPChat TranslationRegressionChannel(ChannelId id,
+												   uint64 accessHash,
+												   const QString &title) {
+	using Flag = MTPDchannel::Flag;
+	return MTP_channel(
+		MTP_flags(Flag::f_creator | Flag::f_broadcast | Flag::f_access_hash
+				  | Flag::f_autotranslation),
+		MTP_long(id.bare), MTP_long(accessHash), MTP_string(title), MTPstring(),
+		MTP_chatPhotoEmpty(), MTP_int(1), MTPVector<MTPRestrictionReason>(),
+		MTPChatAdminRights(), MTPChatBannedRights(), MTPChatBannedRights(),
+		MTPint(), MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] MTPDchannelFull TranslationRegressionChannelFull(ChannelId id) {
+	const auto notifySettings = MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
+	return MTPDchannelFull(
+		MTP_flags(MTPDchannelFull::Flags()), MTP_long(id.bare),
+		MTP_string(QString()), MTPint(), MTPint(), MTPint(), MTPint(), MTPint(),
+		MTP_int(0), MTP_int(0), MTP_int(0), MTP_photoEmpty(MTP_long(0)),
+		notifySettings, MTPExportedChatInvite(), MTP_vector<MTPBotInfo>(0),
+		MTPlong(), MTPint(), MTPint(), MTPStickerSet(), MTPint(), MTPint(),
+		MTPlong(), MTPChannelLocation(), MTPint(), MTPint(), MTPint(),
+		MTP_int(0), MTPInputGroupCall(), MTPint(), MTP_vector<MTPstring>(0),
+		MTPPeer(), MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTPPeer(),
+		MTP_chatReactionsNone(), MTPint(), MTPPeerStories(), MTPWallPaper(),
+		MTPint(), MTPint(), MTPStickerSet(), MTPBotVerification(), MTPint(),
+		MTPlong(), MTPProfileTab(), MTPlong());
+}
+
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
@@ -2752,20 +2950,18 @@ template <typename Predicate>
 	settings.setUsePlatformTranslation(false);
 	settings.setTranslateTo(target);
 
-	const auto stockChannel
-		= stockController->session().data().channel(ChannelId(1151));
-	const auto customChannel
-		= customController->session().data().channel(ChannelId(1152));
-	const auto configureChannel
-		= [](not_null<ChannelData *> channel, const QString &name) {
-			  channel->setAccessHash(115100);
-			  channel->setName(name, QString());
-			  channel->setFlags(ChannelDataFlag::Creator
-								| ChannelDataFlag::Broadcast);
-			  channel->setTranslationDisabled(false);
-		  };
-	configureChannel(stockChannel, u"Stock channel"_q);
-	configureChannel(customChannel, u"Custom channel"_q);
+	auto &stockSession = stockController->session();
+	auto &customSession = customController->session();
+	stockSession.data().processChat(TranslationRegressionChannel(
+		ChannelId(1151), 115100, u"Stock channel"_q));
+	customSession.data().processChat(TranslationRegressionChannel(
+		ChannelId(1152), 115100, u"Custom channel"_q));
+	const auto stockChannel = stockSession.data().channel(ChannelId(1151));
+	const auto customChannel = customSession.data().channel(ChannelId(1152));
+	Data::ApplyChannelUpdate(stockChannel,
+							 TranslationRegressionChannelFull(ChannelId(1151)));
+	Data::ApplyChannelUpdate(customChannel,
+							 TranslationRegressionChannelFull(ChannelId(1152)));
 
 	const auto openEditBox
 		= [](not_null<Window::SessionController *> controller,
@@ -2812,7 +3008,8 @@ template <typename Predicate>
 	using ChannelFlag = MTPDchannel::Flag;
 	const auto renamedChat = MTP_channel(
 		MTP_flags(ChannelFlag::f_creator | ChannelFlag::f_broadcast
-				  | ChannelFlag::f_access_hash),
+				  | ChannelFlag::f_access_hash
+				  | ChannelFlag::f_autotranslation),
 		MTP_long(1152), MTP_long(115100), MTP_string(renamedChannel),
 		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
 		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
@@ -2855,7 +3052,7 @@ template <typename Predicate>
 			"custom channel lost its name or exposed Auto-translate.\n");
 		return false;
 	}
-	customEditBox->saveAutoTranslateForRegressionTest(true);
+	customEditBox->saveAutoTranslateForRegressionTest(false);
 	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
 			!= 0
 		|| channelSaveRequests.requests.size() != 2) {
@@ -2875,7 +3072,7 @@ template <typename Predicate>
 							 "channel lost Auto-translate.\n");
 		return false;
 	}
-	stockEditBox->saveAutoTranslateForRegressionTest(true);
+	stockEditBox->saveAutoTranslateForRegressionTest(false);
 	if (GetTranslationRpcCountsForRegressionTest().channelAutoTranslationToggle
 		!= 1) {
 		std::fprintf(
@@ -2910,8 +3107,47 @@ template <typename Predicate>
 	}
 	stockController->hideLayer(anim::type::instant);
 
-	stockChannel->addFlags(ChannelDataFlag::AutoTranslation);
-	customChannel->addFlags(ChannelDataFlag::AutoTranslation);
+	const auto stockLoaded = stockChannel->isLoaded();
+	const auto stockServerSupported = stockSession.serverTranslationSupported();
+	const auto stockNetworkAllowed
+		= stockSession.mtp().isServerEnrollmentNetworkAllowed();
+	const auto stockCreator = stockChannel->amCreator();
+	const auto stockBroadcast = stockChannel->isBroadcast();
+	const auto stockAutoTranslation = stockChannel->autoTranslation();
+	const auto stockTranslationEnabled
+		= (stockChannel->translationFlag()
+		   == PeerData::TranslationFlag::Enabled);
+	const auto customLoaded = customChannel->isLoaded();
+	const auto customServerSupported
+		= customSession.serverTranslationSupported();
+	const auto customNetworkAllowed
+		= customSession.mtp().isServerEnrollmentNetworkAllowed();
+	const auto customCreator = customChannel->amCreator();
+	const auto customBroadcast = customChannel->isBroadcast();
+	const auto customAutoTranslation = customChannel->autoTranslation();
+	const auto customTranslationEnabled
+		= (customChannel->translationFlag()
+		   == PeerData::TranslationFlag::Enabled);
+	std::fprintf(
+		stderr,
+		"Translation controls precondition: stock loaded=%d "
+		"server_supported=%d network_allowed=%d creator=%d broadcast=%d "
+		"auto_translation=%d translation_enabled=%d; custom loaded=%d "
+		"server_supported=%d network_allowed=%d creator=%d broadcast=%d "
+		"auto_translation=%d translation_enabled=%d.\n",
+		stockLoaded, stockServerSupported, stockNetworkAllowed, stockCreator,
+		stockBroadcast, stockAutoTranslation, stockTranslationEnabled,
+		customLoaded, customServerSupported, customNetworkAllowed,
+		customCreator, customBroadcast, customAutoTranslation,
+		customTranslationEnabled);
+	if (!stockLoaded || !stockServerSupported || stockNetworkAllowed
+		|| !stockCreator || !stockBroadcast || !stockAutoTranslation
+		|| !stockTranslationEnabled || !customLoaded || customServerSupported
+		|| customNetworkAllowed || !customCreator || !customBroadcast
+		|| !customAutoTranslation || !customTranslationEnabled) {
+		return false;
+	}
+
 	const auto stockHistory
 		= stockController->session().data().history(stockChannel);
 	const auto customHistory
@@ -2970,6 +3206,8 @@ template <typename Predicate>
 		return false;
 	}
 
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::Custom;
 	ResetTranslationRpcCountsForRegressionTest();
 	{
 		HistoryView::TranslateTracker textTracker(customHistory);
@@ -2986,6 +3224,11 @@ template <typename Predicate>
 			customRpcs.text, customRpcs.rich);
 		return false;
 	}
+	std::fprintf(stderr,
+				 "Translation controls custom requests: text=%d rich=%d.\n",
+				 customRpcs.text, customRpcs.rich);
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::Stock;
 	ResetTranslationRpcCountsForRegressionTest();
 	{
 		HistoryView::TranslateTracker textTracker(stockHistory);
@@ -3002,6 +3245,49 @@ template <typename Predicate>
 			stockRpcs.text, stockRpcs.rich);
 		return false;
 	}
+	std::fprintf(stderr,
+				 "Translation controls stock requests: text=%d rich=%d.\n",
+				 stockRpcs.text, stockRpcs.rich);
+	const auto barrier = WaitForMainQueueBarrierForRegressionTest(1000)
+						 == MainQueueBarrierResult::Completed;
+	const auto stockAfterBarrier = GetTranslationRpcCountsForRegressionTest();
+	const auto stockNetworkAllowedAfter
+		= stockSession.mtp().isServerEnrollmentNetworkAllowed();
+	const auto customNetworkAllowedAfter
+		= customSession.mtp().isServerEnrollmentNetworkAllowed();
+	const auto customCountsUnchanged
+		= (gCustomTranslationRpcCounts.text == customRpcs.text)
+		  && (gCustomTranslationRpcCounts.rich == customRpcs.rich);
+	const auto stockRoleCountsUnchanged
+		= (gStockTranslationRpcCounts.text == stockRpcs.text)
+		  && (gStockTranslationRpcCounts.rich == stockRpcs.rich);
+	const auto stockCountsUnchanged
+		= (stockAfterBarrier.text == stockRpcs.text)
+		  && (stockAfterBarrier.rich == stockRpcs.rich);
+	if (!barrier || !customCountsUnchanged || !stockRoleCountsUnchanged
+		|| !stockCountsUnchanged || stockNetworkAllowedAfter
+		|| customNetworkAllowedAfter) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: barrier=%d custom "
+			"text=%d rich=%d stock text=%d rich=%d network_allowed "
+			"stock=%d custom=%d.\n",
+			barrier, gCustomTranslationRpcCounts.text,
+			gCustomTranslationRpcCounts.rich, gStockTranslationRpcCounts.text,
+			gStockTranslationRpcCounts.rich, stockNetworkAllowedAfter,
+			customNetworkAllowedAfter);
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Translation controls counts unchanged after 1000 ms main-queue "
+		"barrier: custom text=%d rich=%d; stock text=%d rich=%d; "
+		"network_allowed stock=%d custom=%d.\n",
+		gCustomTranslationRpcCounts.text, gCustomTranslationRpcCounts.rich,
+		gStockTranslationRpcCounts.text, gStockTranslationRpcCounts.rich,
+		stockNetworkAllowedAfter, customNetworkAllowedAfter);
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::None;
 	std::fprintf(
 		stderr,
 		"Translation controls regression passed: custom rename/reopen "
@@ -3098,6 +3384,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"could not create the stock test session");
 	}
+	const auto stockWasPremium = stock->session().premium();
+	const auto restoreStockPremium = gsl::finally([&] {
+		Expects(SetRegressionSessionPremium(&stock->session(), selfId,
+											stockWasPremium));
+	});
+	if (!SetRegressionSessionPremium(&stock->session(), selfId, true)) {
+		return FailChatParticipantsRegression(
+			"could not enable Premium for stock Settings search checks");
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		if (!RunRefusedDownloadHistoryRegression(&stock->session(),
 												 refusedDownload)) {
@@ -3123,7 +3418,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockChat));
 	stock->session().api().processFullPeer(
-		stockPeer, RegressionChatFullReply(chatId, 1, QString(), UserId(2)));
+		stockPeer,
+		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
 	if (stock->session().user()->isLoaded()
 		|| !stockChat->participants.empty()) {
 		return FailChatParticipantsRegression(
@@ -3131,7 +3427,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	stock->session().api().processFullPeer(
 		stockPeer,
-		RegressionChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
+		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
 	if (!stock->session().user()->isLoaded()
 		|| !HasExpectedParticipants(stockChat, UserId(2))) {
 		return FailChatParticipantsRegression(
@@ -3185,13 +3481,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		  };
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
-	const auto searchHasBioTarget = [](not_null<Main::Session *> session) {
-		const auto entries
-			= Settings::Builder::SearchRegistry::Instance().collectAll(session);
-		return std::any_of(
-			entries.begin(), entries.end(),
-			[](const auto &entry) { return entry.id == u"edit/bio"_q; });
-	};
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -3839,29 +4128,31 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto pinnedCapabilitiesMatch
 			= pinnedController
 			  && capabilitiesMatch(pinnedController->session(), false);
-		const auto stockBioSearchMatches
-			= searchHasBioTarget(&stock->session());
-		const auto pinnedBioSearchMatches
-			= !searchHasBioTarget(&pinned->session());
+		const auto stockSearchMatches
+			= SettingsSearchMatchesExpected(&stock->session(), true, true);
+		const auto pinnedSearchMatches
+			= SettingsSearchMatchesExpected(&pinned->session(), false, false);
+		const auto stockSearchStillMatches
+			= SettingsSearchMatchesExpected(&stock->session(), true, true);
 		const auto matches = (stockWindow != pinnedWindow) && stockMapped
 							 && pinnedMapped && stockBound && pinnedBound
 							 && stockSessionMatches && pinnedSessionMatches
 							 && stockCapabilitiesMatch
-							 && pinnedCapabilitiesMatch && stockBioSearchMatches
-							 && pinnedBioSearchMatches;
+							 && pinnedCapabilitiesMatch && stockSearchMatches
+							 && pinnedSearchMatches && stockSearchStillMatches;
 		if (!matches) {
 			std::fprintf(stderr,
 						 "Window/session regression mismatch at %s: "
 						 "distinct=%d mapped=%d/%d account=%d/%d "
 						 "controller=%d/%d session=%d/%d gates=%d/%d "
-						 "search=%d/%d active=%p\n",
+						 "search=%d/%d/%d active=%p\n",
 						 stage, stockWindow != pinnedWindow, stockMapped,
 						 pinnedMapped, stockBound, pinnedBound,
 						 stockController != nullptr,
 						 pinnedController != nullptr, stockSessionMatches,
 						 pinnedSessionMatches, stockCapabilitiesMatch,
-						 pinnedCapabilitiesMatch, stockBioSearchMatches,
-						 pinnedBioSearchMatches,
+						 pinnedCapabilitiesMatch, stockSearchMatches,
+						 pinnedSearchMatches, stockSearchStillMatches,
 						 static_cast<const void *>(&domain.active()));
 			printCapabilities("stock account", stock->session());
 			printCapabilities("pinned account", pinned->session());
@@ -4272,8 +4563,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockActionPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
 	stock->session().api().processFullPeer(
-		stockActionPeer,
-		RegressionChatFullReply(actionChatId, 1, u"+10000000001"_q, selfId));
+		stockActionPeer, RegressionStockChatFullReply(
+							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
 	if (!HasExpectedParticipants(stockActionChat, selfId)
 		|| !stockActionChat->canEditInformation()
@@ -4306,8 +4597,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
 	stock->session().api().processFullPeer(
 		memberActionPeer,
-		RegressionChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
-								UserId(2)));
+		RegressionStockChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
+									 UserId(2)));
 
 	const auto adminActionChatId = ChatId(1054);
 	const auto adminActionChat
@@ -4316,8 +4607,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
 	stock->session().api().processFullPeer(
 		adminActionPeer,
-		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
+		RegressionStockChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+									 UserId(2), true));
 	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 		adminActionChat, "stock full-list promotion", true);
 	if (!HasExpectedParticipants(adminActionChat, UserId(2))
@@ -4335,8 +4626,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*fullListDemotionChat));
 	stock->session().api().processFullPeer(
 		fullListDemotionPeer,
-		RegressionChatFullReply(fullListDemotionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
+		RegressionStockChatFullReply(fullListDemotionChatId, 1,
+									 u"+10000000001"_q, UserId(2), true));
 	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
 		fullListDemotionChat, "stock full-list demotion seed", true);
 	if (!fullListDemotionChat->admins.contains(stockSelf)
@@ -4408,8 +4699,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto liveAdminPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
 	stock->session().api().processFullPeer(
-		liveAdminPeer, RegressionChatFullReply(liveAdminChatId, 1,
-											   u"+10000000001"_q, UserId(2)));
+		liveAdminPeer, RegressionStockChatFullReply(
+						   liveAdminChatId, 1, u"+10000000001"_q, UserId(2)));
 	Data::ApplyChatUpdate(liveAdminChat,
 						  MTP_updateChatParticipantAdmin(
 							  MTP_long(liveAdminChatId.bare),

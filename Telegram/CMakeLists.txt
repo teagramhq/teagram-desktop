@@ -2174,8 +2174,9 @@ if (APPLE)
         core/mac_protected_path_runtime.h
         core/teagram_update_install_mac.mm
         core/teagram_update_install.h
-        core/teagram_update_manager_mac.mm
+        core/teagram_update_manager.cpp
         core/teagram_update_manager.h
+        core/teagram_update_manager_mac.mm
     )
 else()
     nice_target_sources(Telegram ${src_loc}

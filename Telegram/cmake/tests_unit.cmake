@@ -125,6 +125,8 @@ if(UNIX)
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         core/teagram_update_archive.cpp
+        core/teagram_update_manager.cpp
+        core/teagram_update_manager.h
         core/teagram_update_replacement.cpp
         tests/unit/teagram_update_download_tests.cpp
     )
@@ -166,6 +168,25 @@ PRIVATE
     desktop-app::external_zlib
     desktop-app::external_xxhash
 )
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        tests/unit/username_input_tests.cpp
+        ui/widgets/fields/username_input.cpp
+    )
+
+    target_link_libraries(test_unit
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
+    )
+    if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+        target_link_libraries(test_unit
+        PRIVATE
+            Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
+        )
+    endif()
+endif()
 
 # Put it beside Telegram in out/<config>/ instead of the target's own
 # binary dir, so one documented path finds it. The generator appends the

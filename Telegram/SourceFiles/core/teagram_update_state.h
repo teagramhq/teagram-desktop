@@ -17,7 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
-inline constexpr auto kTeagramUpdateEngineActive = false;
+inline constexpr auto kTeagramUpdateEngineActive = true;
 inline constexpr auto kTeagramUpdateChannelPreference
 	= std::string_view("teagram-update-channel");
 inline constexpr auto kTeagramUpdateHighWaterPreference
@@ -109,6 +109,33 @@ enum class TeagramUpdateChatListAction {
 	Cancel,
 	Restart,
 };
+
+enum class TeagramUpdateSettingsAction {
+	CheckNow,
+	DownloadAndInstall,
+	Cancel,
+	Restart,
+	DontRestart,
+};
+
+[[nodiscard]] constexpr TeagramUpdateSettingsAction
+TeagramUpdateSettingsActionForState(TeagramUpdateUiState state) {
+	switch (state) {
+	case TeagramUpdateUiState::Available:
+		return TeagramUpdateSettingsAction::DownloadAndInstall;
+	case TeagramUpdateUiState::Ready:
+	case TeagramUpdateUiState::AlreadyInstalled:
+	case TeagramUpdateUiState::RecoveryRequired:
+		return TeagramUpdateSettingsAction::Restart;
+	case TeagramUpdateUiState::RestartPending:
+		return TeagramUpdateSettingsAction::DontRestart;
+	case TeagramUpdateUiState::Downloading:
+	case TeagramUpdateUiState::Preparing:
+		return TeagramUpdateSettingsAction::Cancel;
+	default:
+		return TeagramUpdateSettingsAction::CheckNow;
+	}
+}
 
 struct TeagramUpdateRejectedBuildState {
 	quint64 suppressedAutomaticBuild = 0;

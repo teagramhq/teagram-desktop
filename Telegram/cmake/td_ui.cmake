@@ -588,6 +588,7 @@ PRIVATE
 
     ui/widgets/fields/special_fields.cpp
     ui/widgets/fields/special_fields.h
+    ui/widgets/fields/username_input.cpp
     ui/widgets/fields/time_part_input_with_placeholder.cpp
     ui/widgets/fields/time_part_input_with_placeholder.h
 

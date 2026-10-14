@@ -277,7 +277,8 @@ for fixture in \
   TeagramUpdateRejectsUntrustedOrIneligiblePackage \
   TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation \
   TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation \
-  TeagramUpdateWorkerShutdownCleansCandidateArchive; do
+  TeagramUpdateWorkerShutdownCleansCandidateArchive \
+  TeagramUpdateManagerInstallsProducerBundle; do
   require_text "$updater_runner" "$fixture"
   if ! grep -Fq "TEST_CASE($fixture)" \
     Telegram/SourceFiles/tests/unit/teagram_update_download_tests.cpp \
@@ -288,8 +289,8 @@ for fixture in \
 done
 fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
 fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
-if [[ "$fixture_count" != 13 ]]; then
-  printf 'Updater fixture runner must select exactly 13 registered cases, got %s.\n' \
+if [[ "$fixture_count" != 14 ]]; then
+  printf 'Updater fixture runner must select exactly 14 registered cases, got %s.\n' \
     "$fixture_count" >&2
   exit 1
 fi
