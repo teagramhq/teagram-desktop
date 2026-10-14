@@ -957,14 +957,17 @@ base::weak_qptr<Ui::RpWidget> Business::createPinnedToBottom(
 	return base::make_weak(not_null<Ui::RpWidget*>{ content });
 }
 
-const auto kMeta = BuildHelper({
-	.id = Business::Id(),
-	.parentId = MainId(),
-	.title = &tr::lng_business_title,
-	.icon = &st::menuIconShop,
-}, [](SectionBuilder &builder) {
-	BuildBusinessSectionContent(builder, nullptr);
-});
+const auto kMeta = BuildHelper(
+	{
+		.id = Business::Id(),
+		.parentId = MainId(),
+		.title = &tr::lng_business_title,
+		.icon = &st::menuIconShop,
+		.paidFeatures = true,
+	},
+	[](SectionBuilder &builder) {
+		BuildBusinessSectionContent(builder, nullptr);
+	});
 
 } // namespace
 

@@ -1026,14 +1026,17 @@ void BuildCreditsSectionContent(
 	});
 }
 
-const auto kCreditsBuilderMeta = BuildHelper({
-	.id = Credits::Id(),
-	.parentId = MainId(),
-	.title = &tr::lng_credits_summary_title,
-	.icon = &st::menuIconPremium,
-}, [](SectionBuilder &builder) {
-	BuildCreditsButtons(builder, false, nullptr, nullptr, nullptr);
-});
+const auto kCreditsBuilderMeta = BuildHelper(
+	{
+		.id = Credits::Id(),
+		.parentId = MainId(),
+		.title = &tr::lng_credits_summary_title,
+		.icon = &st::menuIconPremium,
+		.paidFeatures = true,
+	},
+	[](SectionBuilder &builder) {
+		BuildCreditsButtons(builder, false, nullptr, nullptr, nullptr);
+	});
 
 } // namespace
 

@@ -505,7 +505,7 @@ void BuildPremiumSection(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 	const auto showOther = builder.showOther();
 
-	if (!session->premiumPossible()) {
+	if (!session->paidFeaturesSupported() || !session->premiumPossible()) {
 		return;
 	}
 

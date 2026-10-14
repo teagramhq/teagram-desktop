@@ -98,9 +98,10 @@ void SearchRegistry::add(
 
 std::vector<SearchEntry> SearchRegistry::collectAll(
 		not_null<Main::Session*> session) const {
+	const auto paidFeaturesSupported = session->paidFeaturesSupported();
 	auto result = std::vector<SearchEntry>();
 	for (const auto &[sectionId, meta] : _sections) {
-		if (meta->parentId) {
+		if (meta->parentId && (paidFeaturesSupported || !meta->paidFeatures)) {
 			result.push_back({
 				.title = (*meta->title)(tr::now),
 				.section = sectionId,
@@ -109,6 +110,11 @@ std::vector<SearchEntry> SearchRegistry::collectAll(
 		}
 	}
 	for (const auto &entry : _indexers) {
+		if (const auto i = _sections.find(entry.sectionId);
+			i != _sections.end() && i->second->paidFeatures
+			&& !paidFeaturesSupported) {
+			continue;
+		}
 		auto entries = entry.indexer(session);
 		result.insert(result.end(), entries.begin(), entries.end());
 	}

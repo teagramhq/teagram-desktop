@@ -1770,14 +1770,17 @@ base::weak_qptr<Ui::RpWidget> Premium::createPinnedToBottom(
 	return base::make_weak(not_null<Ui::RpWidget*>{ content });
 }
 
-const auto kMeta = BuildHelper({
-	.id = Premium::Id(),
-	.parentId = MainId(),
-	.title = &tr::lng_premium_summary_title,
-	.icon = &st::menuIconPremium,
-}, [](SectionBuilder &builder) {
-	BuildPremiumSectionContent(builder, nullptr);
-});
+const auto kMeta = BuildHelper(
+	{
+		.id = Premium::Id(),
+		.parentId = MainId(),
+		.title = &tr::lng_premium_summary_title,
+		.icon = &st::menuIconPremium,
+		.paidFeatures = true,
+	},
+	[](SectionBuilder &builder) {
+		BuildPremiumSectionContent(builder, nullptr);
+	});
 
 } // namespace
 
