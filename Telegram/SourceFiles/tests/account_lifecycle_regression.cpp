@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "dialogs/ui/dialogs_suggestions.h"
 #include "export/export_controller.h"
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
@@ -1739,13 +1740,16 @@ constexpr int kRegressionEntryClassCount = 13;
 
 [[nodiscard]] bool
 SettingsSearchMatchesExpected(not_null<Main::Session *> session,
-							  bool paidSupported, bool bioSupported) {
+							  bool paidSupported, bool bioSupported,
+							  bool botAppsSupported) {
 	const auto entries
 		= Settings::Builder::SearchRegistry::Instance().collectAll(session);
 	const auto hasPaid = SettingsSearchHasPaidEntry(entries);
 	const auto hasPrivacy
 		= SettingsSearchHasEntry(entries, u"privacy/phone_number"_q);
 	const auto hasBio = SettingsSearchHasEntry(entries, u"edit/bio"_q);
+	const auto hasChatAutomation
+		= SettingsSearchHasEntry(entries, u"edit/chat-automation"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
 		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
@@ -1759,13 +1763,15 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
 	const auto matches = hasPaid == paidSupported && hasPrivacy
 						 && (hasBio == bioSupported)
+						 && (hasChatAutomation == botAppsSupported)
 						 && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
 		std::fprintf(stderr,
 					 "Settings search regression failed: paid=%d expected=%d, "
-					 "privacy=%d, bio=%d expected=%d, stock-rows=%d.\n",
+					 "privacy=%d, bio=%d expected=%d, chat-automation=%d "
+					 "expected=%d, stock-rows=%d.\n",
 					 hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
-					 hasStockPaidRows);
+					 hasChatAutomation, botAppsSupported, hasStockPaidRows);
 	}
 	return matches;
 }
@@ -1846,6 +1852,26 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			"and custom-pinned.\n");
 		return false;
 	}
+	const auto stockChatAutomationRow
+		= Settings::InformationChatAutomationRowPresentForRegressionTest(
+			stockController);
+	const auto pinnedChatAutomationRow
+		= Settings::InformationChatAutomationRowPresentForRegressionTest(
+			pinnedController);
+	const auto stockSearchTabOrder = Dialogs::Suggestions::
+		SearchTabOrderMatchesAppsSupportForRegressionTest(stockController);
+	const auto pinnedSearchTabOrder = Dialogs::Suggestions::
+		SearchTabOrderMatchesAppsSupportForRegressionTest(pinnedController);
+	if (!stockChatAutomationRow || pinnedChatAutomationRow
+		|| !stockSearchTabOrder || !pinnedSearchTabOrder) {
+		std::fprintf(
+			stderr,
+			"Custom-server controls regression failed: automation=%d/%d, "
+			"search tabs=%d/%d.\n",
+			stockChatAutomationRow, pinnedChatAutomationRow,
+			stockSearchTabOrder, pinnedSearchTabOrder);
+		return false;
+	}
 	{
 		const auto stockWasPremium = stock->session().premium();
 		const auto pinnedWasPremium = pinned->session().premium();
@@ -1858,10 +1884,14 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		});
 		if (!SetRegressionSessionPremium(&stock->session(), selfId, true)
 			|| !SetRegressionSessionPremium(&pinned->session(), selfId, true)
-			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)
-			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
-			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
-			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)) {
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true,
+											  true)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false,
+											  false)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false,
+											  false)
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true,
+											  true)) {
 			std::fprintf(
 				stderr,
 				"Mini-app open regression: Settings search results crossed "
@@ -2080,9 +2110,9 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	const auto blankWasPremium = blank->session().premium();
 	const auto blankPremiumEnabled
 		= SetRegressionSessionPremium(&blank->session(), selfId, true);
-	const auto blankSearchMatches
-		= blankPremiumEnabled
-		  && SettingsSearchMatchesExpected(&blank->session(), false, false);
+	const auto blankSearchMatches = blankPremiumEnabled
+									&& SettingsSearchMatchesExpected(
+										&blank->session(), false, false, false);
 	const auto blankPremiumRestored = SetRegressionSessionPremium(
 		&blank->session(), selfId, blankWasPremium);
 	if (!blankSearchMatches || !blankPremiumRestored) {
@@ -4110,12 +4140,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto pinnedCapabilitiesMatch
 			= pinnedController
 			  && capabilitiesMatch(pinnedController->session(), false);
-		const auto stockSearchMatches
-			= SettingsSearchMatchesExpected(&stock->session(), true, true);
-		const auto pinnedSearchMatches
-			= SettingsSearchMatchesExpected(&pinned->session(), false, false);
-		const auto stockSearchStillMatches
-			= SettingsSearchMatchesExpected(&stock->session(), true, true);
+		const auto stockSearchMatches = SettingsSearchMatchesExpected(
+			&stock->session(), true, true, true);
+		const auto pinnedSearchMatches = SettingsSearchMatchesExpected(
+			&pinned->session(), false, false, false);
+		const auto stockSearchStillMatches = SettingsSearchMatchesExpected(
+			&stock->session(), true, true, true);
 		const auto matches = (stockWindow != pinnedWindow) && stockMapped
 							 && pinnedMapped && stockBound && pinnedBound
 							 && stockSessionMatches && pinnedSessionMatches
