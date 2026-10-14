@@ -932,7 +932,7 @@ private:
 	[[nodiscard]] bool showDetachedScheduleBox() {
 		if (!detachedCompose()
 			|| _composeOptions.submitPolicy
-				!= ComposeBoxOptions::SubmitPolicy::Schedule) {
+				   != ComposeBoxOptions::SubmitPolicy::Schedule) {
 			return false;
 		} else if (!Main::details::scheduledMessagesSupportedForPeer(_peer)) {
 			return true;
@@ -1577,8 +1577,7 @@ private:
 
 	void requestSubmit(Api::SendOptions options) {
 		if (!Main::details::scheduledSendAllowedForPeer(
-				_peer,
-				options.scheduled || options.scheduleRepeatPeriod)) {
+				_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 			return;
 		}
 		_submitOptions = std::move(options);

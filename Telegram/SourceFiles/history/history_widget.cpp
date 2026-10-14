@@ -5455,8 +5455,8 @@ void HistoryWidget::sendVoice(const VoiceToSend &data) {
 	if (!canWriteMessage() || data.bytes.isEmpty() || !_history) {
 		return;
 	} else if (!Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			data.options.scheduled || data.options.scheduleRepeatPeriod)) {
+				   _peer, data.options.scheduled
+							  || data.options.scheduleRepeatPeriod)) {
 		return;
 	}
 
@@ -5487,9 +5487,10 @@ void HistoryWidget::send(Api::SendOptions options) {
 	if (!_history) {
 		return;
 	} else if ((options.scheduled || options.scheduleRepeatPeriod)
-		&& (!_peer || !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod))) {
+			   && (!_peer
+				   || !Main::details::scheduledSendAllowedForPeer(
+					   _peer,
+					   options.scheduled || options.scheduleRepeatPeriod))) {
 		return;
 	} else if (_editMsgId) {
 		saveEditMessage({});
@@ -5525,8 +5526,7 @@ void HistoryWidget::sendRichDraft(
 		Api::SendOptions options) {
 	if (!page || !_peer
 		|| !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod)) {
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 	if (ShowEphemeralReplyTextOnlyError(
@@ -5645,9 +5645,9 @@ void HistoryWidget::sendTextWithTags(
 		bool useWebPageDraft,
 		Api::SendOptions options,
 		Fn<void()> done) {
-	if (!_peer || !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod)) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 	if (!options.scheduled) {
@@ -5741,8 +5741,7 @@ void HistoryWidget::sendWithModifiers(Qt::KeyboardModifiers modifiers) {
 }
 
 void HistoryWidget::sendScheduled(Api::SendOptions initialOptions) {
-	if (!_list
-		|| !_peer
+	if (!_list || !_peer
 		|| !Main::details::scheduledMessagesSupportedForPeer(_peer)) {
 		return;
 	}
@@ -5766,17 +5765,15 @@ void HistoryWidget::sendScheduled(Api::SendOptions initialOptions) {
 SendMenu::Details HistoryWidget::sendMenuDetails() const {
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(replyTo().messageId);
-	const auto type = (!_peer || ephemeralReply)
-		? SendMenu::Type::Disabled
-		: !Main::details::scheduledMessagesSupportedForPeer(_peer)
-		? SendMenu::Type::SilentOnly
-		: _peer->starsPerMessageChecked()
-		? SendMenu::Type::SilentOnly
-		: _peer->isSelf()
-		? SendMenu::Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_peer)
-		? SendMenu::Type::ScheduledToUser
-		: SendMenu::Type::Scheduled;
+	const auto type = (!_peer || ephemeralReply) ? SendMenu::Type::Disabled
+					  : !Main::details::scheduledMessagesSupportedForPeer(_peer)
+						  ? SendMenu::Type::SilentOnly
+					  : _peer->starsPerMessageChecked()
+						  ? SendMenu::Type::SilentOnly
+					  : _peer->isSelf() ? SendMenu::Type::Reminder
+					  : HistoryView::CanScheduleUntilOnline(_peer)
+						  ? SendMenu::Type::ScheduledToUser
+						  : SendMenu::Type::Scheduled;
 	const auto effectAllowed = _peer && _peer->isUser();
 	return {
 		.type = type,
@@ -6281,8 +6278,7 @@ void HistoryWidget::sendBotCommand(
 	// replyTo != 0 from ReplyKeyboardMarkup, == 0 from command links
 	if (_peer != request.peer.get()
 		|| !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod)) {
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 
@@ -7672,8 +7668,7 @@ void HistoryWidget::sendingFilesConfirmed(
 		Api::SendOptions options) {
 	if (!_peer
 		|| !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod)
+			_peer, options.scheduled || options.scheduleRepeatPeriod)
 		|| showSendingFilesError(*bundle)) {
 		return;
 	}
@@ -9080,8 +9075,8 @@ void HistoryWidget::sendInlineResult(InlineBots::ResultSelected result) {
 	if (!_peer || !_canSendMessages) {
 		return;
 	} else if (!Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			result.options.scheduled || result.options.scheduleRepeatPeriod)) {
+				   _peer, result.options.scheduled
+							  || result.options.scheduleRepeatPeriod)) {
 		return;
 	} else if (showSlowmodeError()) {
 		return;
@@ -9089,9 +9084,7 @@ void HistoryWidget::sendInlineResult(InlineBots::ResultSelected result) {
 		Data::ShowSendErrorToast(controller(), _peer, error);
 		return;
 	} else if (ShowEphemeralReplyTextOnlyError(
-			controller()->uiShow(),
-			&session(),
-			replyTo().messageId)) {
+				   controller()->uiShow(), &session(), replyTo().messageId)) {
 		return;
 	}
 
@@ -9740,10 +9733,10 @@ bool HistoryWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
 		Api::MessageToSend messageToSend,
 		std::optional<MsgId> localId) {
-	if (!_peer || !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			messageToSend.action.options.scheduled
-				|| messageToSend.action.options.scheduleRepeatPeriod)) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, messageToSend.action.options.scheduled
+					   || messageToSend.action.options.scheduleRepeatPeriod)) {
 		return false;
 	}
 	const auto ephemeralReply = session().ephemeralMessages()
@@ -9797,9 +9790,9 @@ bool HistoryWidget::sendExistingDocument(
 bool HistoryWidget::sendExistingPhoto(
 		not_null<PhotoData*> photo,
 		Api::SendOptions options) {
-	if (!_peer || !Main::details::scheduledSendAllowedForPeer(
-			_peer,
-			options.scheduled || options.scheduleRepeatPeriod)) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return false;
 	}
 	const auto ephemeralReply = session().ephemeralMessages()

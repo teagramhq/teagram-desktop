@@ -1852,8 +1852,8 @@ TEST_CASE(ChatActionsFollowTheirOwningSessionAcrossSwitchOrdersAndWindows) {
 	CHECK_EQ(stock.userId, custom.userId);
 
 	using Features = std::array<bool, 3>;
-	constexpr auto kStockFeatures = Features{ true, true, true };
-	constexpr auto kCustomFeatures = Features{ false, false, false };
+	constexpr auto kStockFeatures = Features{true, true, true};
+	constexpr auto kCustomFeatures = Features{false, false, false};
 	const auto featuresFor = [](const BioTargetTestUser &peer) {
 		const auto owner = &peer;
 		return Features{
@@ -1862,27 +1862,24 @@ TEST_CASE(ChatActionsFollowTheirOwningSessionAcrossSwitchOrdersAndWindows) {
 			Main::details::scheduledMessagesSupportedForPeer(owner),
 		};
 	};
-	const auto checkSwitchOrder = [&](
-			const BioTargetTestUser &first,
-			Features firstExpected,
-			const BioTargetTestUser &second,
-			Features secondExpected) {
-		CHECK(featuresFor(first) == firstExpected);
-		CHECK(featuresFor(second) == secondExpected);
-		CHECK(featuresFor(first) == firstExpected);
-		CHECK(Main::details::scheduledSendAllowedForPeer(&first, false));
-		CHECK_EQ(
-			Main::details::scheduledSendAllowedForPeer(&first, true),
-			firstExpected[2]);
-	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, Features firstExpected,
+			  const BioTargetTestUser &second, Features secondExpected) {
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(featuresFor(second) == secondExpected);
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(Main::details::scheduledSendAllowedForPeer(&first, false));
+			  CHECK_EQ(Main::details::scheduledSendAllowedForPeer(&first, true),
+					   firstExpected[2]);
+		  };
 	checkSwitchOrder(stockPeer, kStockFeatures, customPeer, kCustomFeatures);
 	checkSwitchOrder(customPeer, kCustomFeatures, stockPeer, kStockFeatures);
 
 	struct WindowPeer {
 		const BioTargetTestUser *peer = nullptr;
 	};
-	const auto primaryWindow = WindowPeer{ &stockPeer };
-	const auto separateWindow = WindowPeer{ &customPeer };
+	const auto primaryWindow = WindowPeer{&stockPeer};
+	const auto separateWindow = WindowPeer{&customPeer};
 	CHECK(featuresFor(*primaryWindow.peer) == kStockFeatures);
 	CHECK(featuresFor(*separateWindow.peer) == kCustomFeatures);
 }

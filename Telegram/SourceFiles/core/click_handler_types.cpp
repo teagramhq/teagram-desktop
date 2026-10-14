@@ -672,9 +672,10 @@ void FormattedDateClickHandler::onClick(ClickContext context) const {
 	const auto canForward = item
 		&& !item->forbidsForward()
 		&& item->history()->peer->allowsForwarding();
-	const auto canSchedule = item
-		&& Main::details::scheduledMessagesSupportedForPeer(
-			item->history()->peer);
+	const auto canSchedule
+		= item
+		  && Main::details::scheduledMessagesSupportedForPeer(
+			  item->history()->peer);
 	if (canForward && canSchedule) {
 		menu->addAction(
 			tr::lng_context_set_reminder(tr::now),

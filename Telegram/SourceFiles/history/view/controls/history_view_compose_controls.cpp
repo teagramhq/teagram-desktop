@@ -3905,8 +3905,8 @@ void ComposeControls::fireSendTextAsFile(
 	if (!_sendAsFileConfirmed || !_history) {
 		return;
 	} else if ((_mode == Mode::Scheduled)
-		&& !Main::details::scheduledMessagesSupportedForPeer(
-			_history->peer)) {
+			   && !Main::details::scheduledMessagesSupportedForPeer(
+				   _history->peer)) {
 		return;
 	}
 	const auto peer = _history->peer;

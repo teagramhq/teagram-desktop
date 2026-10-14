@@ -963,14 +963,13 @@ void ScheduledWidget::sendInlineResult(
 }
 
 SendMenu::Details ScheduledWidget::sendMenuDetails() const {
-	const auto type = !Main::details::scheduledMessagesSupportedForPeer(
-		_history->peer)
-		? SendMenu::Type::Disabled
-		: _history->peer->isSelf()
-		? SendMenu::Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_history->peer)
-		? SendMenu::Type::ScheduledToUser
-		: SendMenu::Type::Scheduled;
+	const auto type
+		= !Main::details::scheduledMessagesSupportedForPeer(_history->peer)
+			  ? SendMenu::Type::Disabled
+		  : _history->peer->isSelf() ? SendMenu::Type::Reminder
+		  : HistoryView::CanScheduleUntilOnline(_history->peer)
+			  ? SendMenu::Type::ScheduledToUser
+			  : SendMenu::Type::Scheduled;
 	const auto effectAllowed = _history->peer->isUser();
 	return {
 		.type = type,
@@ -980,16 +979,12 @@ SendMenu::Details ScheduledWidget::sendMenuDetails() const {
 	};
 }
 
-void ScheduledWidget::showScheduleBox(
-		Fn<void(Api::SendOptions)> callback) {
+void ScheduledWidget::showScheduleBox(Fn<void(Api::SendOptions)> callback) {
 	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
 		return;
 	}
-	controller()->show(PrepareScheduleBox(
-		this,
-		_show,
-		sendMenuDetails(),
-		std::move(callback)));
+	controller()->show(PrepareScheduleBox(this, _show, sendMenuDetails(),
+										  std::move(callback)));
 }
 
 bool ScheduledWidget::processChosenSticker(ChatHelpers::FileChosen &&chosen) {

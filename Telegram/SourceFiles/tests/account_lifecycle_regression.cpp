@@ -4227,26 +4227,28 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch
-		= [](const Main::Session &session, bool supported) {
-			  return (session.callsSupported() == supported)
-					 && (session.botAppsSupported() == supported)
-					 && (session.paidFeaturesSupported() == supported)
-					 && (session.storiesSupported() == supported)
-					 && (session.exportSupported() == supported)
-					 && (session.passportSupported() == supported)
-					 && (session.aiComposeSupported() == supported)
-					 && (session.serverTranslationSupported() == supported)
-					 && (session.sharedFoldersSupported() == supported)
-					 && (session.accountBioEditSupported() == supported)
-					 && (session.accountUsernameEditSupported() == supported)
-					 && (Main::details::noForwardsSupportedForPeer(
-						 session.user()) == supported)
-					 && (Main::details::chatThemeEditingSupportedForPeer(
-						 session.user()) == supported)
-					 && (Main::details::scheduledMessagesSupportedForPeer(
-						 session.user()) == supported);
-		  };
+	const auto capabilitiesMatch = [](const Main::Session &session,
+									  bool supported) {
+		return (session.callsSupported() == supported)
+			   && (session.botAppsSupported() == supported)
+			   && (session.paidFeaturesSupported() == supported)
+			   && (session.storiesSupported() == supported)
+			   && (session.exportSupported() == supported)
+			   && (session.passportSupported() == supported)
+			   && (session.aiComposeSupported() == supported)
+			   && (session.serverTranslationSupported() == supported)
+			   && (session.sharedFoldersSupported() == supported)
+			   && (session.accountBioEditSupported() == supported)
+			   && (session.accountUsernameEditSupported() == supported)
+			   && (Main::details::noForwardsSupportedForPeer(session.user())
+				   == supported)
+			   && (Main::details::chatThemeEditingSupportedForPeer(
+					   session.user())
+				   == supported)
+			   && (Main::details::scheduledMessagesSupportedForPeer(
+					   session.user())
+				   == supported);
+	};
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
 	auto &app = Core::App();

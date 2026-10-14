@@ -76,18 +76,17 @@ accountUsernameEditSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-[[nodiscard]] inline bool noForwardsSupported(
-		const MTP::DcOptions &options) {
+[[nodiscard]] inline bool noForwardsSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-[[nodiscard]] inline bool chatThemeEditingSupported(
-		const MTP::DcOptions &options) {
+[[nodiscard]] inline bool
+chatThemeEditingSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-[[nodiscard]] inline bool scheduledMessagesSupported(
-		const MTP::DcOptions &options) {
+[[nodiscard]] inline bool
+scheduledMessagesSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
@@ -97,21 +96,18 @@ template <typename Peer>
 }
 
 template <typename Peer>
-[[nodiscard]] inline bool chatThemeEditingSupportedForPeer(
-		const Peer &peer) {
+[[nodiscard]] inline bool chatThemeEditingSupportedForPeer(const Peer &peer) {
 	return chatThemeEditingSupported(peer->session().mtp().dcOptions());
 }
 
 template <typename Peer>
-[[nodiscard]] inline bool scheduledMessagesSupportedForPeer(
-		const Peer &peer) {
+[[nodiscard]] inline bool scheduledMessagesSupportedForPeer(const Peer &peer) {
 	return scheduledMessagesSupported(peer->session().mtp().dcOptions());
 }
 
 template <typename Peer>
-[[nodiscard]] inline bool scheduledSendAllowedForPeer(
-		const Peer &peer,
-		bool scheduled) {
+[[nodiscard]] inline bool scheduledSendAllowedForPeer(const Peer &peer,
+													  bool scheduled) {
 	return !scheduled || scheduledMessagesSupportedForPeer(peer);
 }
 
