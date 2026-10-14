@@ -31,7 +31,8 @@ branch name, labels, or head repository in a shell command. Its job token has
 `actions: write` and no contents or package permissions; it deletes caches
 only from that PR merge ref.
 
-The dev cache cleanup runs after a completed `MacOS.` workflow. It verifies
+The dev cache cleanup runs after a completed `MacOS.` or `MacOS Packaged.`
+workflow, since either can save a dev compiler cache. It verifies
 that GitHub reports both the source branch as `dev` and the source repository
 as this repository. It does not check out or run source-workflow artifacts.
 Its `actions: write` token is used only to list and delete cache IDs returned
