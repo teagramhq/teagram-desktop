@@ -870,15 +870,17 @@ void BuildPrivacySection(SectionBuilder &builder) {
 		.keywords = { u"forwards"_q, u"link"_q },
 	});
 
-	builder.addPrivacyButton({
-		.id = u"privacy/calls"_q,
-		.title = tr::lng_settings_calls(),
-		.key = Key::Calls,
-		.controllerFactory = [] {
-			return std::make_unique<CallsPrivacyController>();
-		},
-		.keywords = { u"calls"_q, u"voice"_q },
-	});
+	if (session->callsSupported()) {
+		builder.addPrivacyButton({
+			.id = u"privacy/calls"_q,
+			.title = tr::lng_settings_calls(),
+			.key = Key::Calls,
+			.controllerFactory = [] {
+				return std::make_unique<CallsPrivacyController>();
+			},
+			.keywords = { u"calls"_q, u"voice"_q },
+		});
+	}
 
 	builder.addPrivacyButton({
 		.id = u"privacy/voices"_q,
