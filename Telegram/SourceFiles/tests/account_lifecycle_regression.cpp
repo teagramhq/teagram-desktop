@@ -2409,18 +2409,18 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
 		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
-	return MTP_channelFull(
+	return MTPDchannelFull(
 		MTP_flags(MTPDchannelFull::Flags()), MTP_long(id.bare),
 		MTP_string(QString()), MTPint(), MTPint(), MTPint(), MTPint(), MTPint(),
 		MTP_int(0), MTP_int(0), MTP_int(0), MTP_photoEmpty(MTP_long(0)),
 		notifySettings, MTPExportedChatInvite(), MTP_vector<MTPBotInfo>(0),
-		MTPlong(), MTPint(), MTPint(), MTPInputStickerSet(), MTPint(), MTPint(),
+		MTPlong(), MTPint(), MTPint(), MTPStickerSet(), MTPint(), MTPint(),
 		MTPlong(), MTPChannelLocation(), MTPint(), MTPint(), MTPint(),
 		MTP_int(0), MTPInputGroupCall(), MTPint(), MTP_vector<MTPstring>(0),
 		MTPPeer(), MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTPPeer(),
 		MTP_chatReactionsNone(), MTPint(), MTPPeerStories(), MTPWallPaper(),
-		MTPint(), MTPint(), MTPInputStickerSet(), MTPBotVerification(),
-		MTPint(), MTPlong(), MTPProfileTab(), MTPlong());
+		MTPint(), MTPint(), MTPStickerSet(), MTPBotVerification(), MTPint(),
+		MTPlong(), MTPProfileTab(), MTPlong());
 }
 
 template <typename Predicate>
