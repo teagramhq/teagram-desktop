@@ -4952,8 +4952,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		}
 		domain.activate(second);
-		const auto secondStockMenuController
-			= stockWindow->sessionController();
+		const auto secondStockMenuController = stockWindow->sessionController();
 		const auto secondPinnedMenuController
 			= pinnedWindow->sessionController();
 		const auto secondActive = &domain.active() == second.get();
