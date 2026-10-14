@@ -17,6 +17,10 @@ on:
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/mac_ccache_profile.sh'
+      - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/linux_libraries_image.sh'
+      - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
@@ -36,6 +40,10 @@ on:
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/mac_ccache_profile.sh'
+      - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/linux_libraries_image.sh'
+      - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
@@ -97,6 +105,9 @@ jobs:
 
       - name: Test CI cache contract.
         run: bash .github/scripts/test_ci_cache_contract.sh
+
+      - name: Test Linux dependency image handling.
+        run: bash .github/scripts/test_linux_libraries_image.sh
 
       - name: Test release tag source.
         run: bash .github/scripts/test_ensure_release_tag.sh

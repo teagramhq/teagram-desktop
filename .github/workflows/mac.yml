@@ -75,6 +75,10 @@ jobs:
           fetch-depth: 0
           path: ${{ env.REPO_NAME }}
 
+      - name: Select compiler cache profile.
+        id: ccache-profile
+        run: bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"
+
       - name: Verify PR merge head.
         if: github.event_name == 'pull_request'
         env:
@@ -98,6 +102,8 @@ jobs:
 
       - name: First set up.
         id: setup
+        env:
+          PROTECTED_PATH_INTEGRATION: ${{ steps.ccache-profile.outputs.protected_path_integration }}
         run: |
           set -Eeo pipefail
           sudo chown -R `whoami`:admin /usr/local/share
@@ -123,16 +129,7 @@ jobs:
 
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake
-          fi
-
-          # Protected-path integration builds add a Telegram compile definition.
-          # Keep their ccache entries separate from standard PR and schedule builds.
-          protected_path_integration=OFF
-          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
-            protected_path_integration=ON
-          fi
+          protected_path_integration="$PROTECTED_PATH_INTEGRATION"
           {
             xcodebuild -version
             ccache --version
@@ -147,9 +144,10 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/ccache
-          key: macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-
 
       - name: Verify Mac App Store variant is unsupported.
         id: store_variant_rejection
@@ -993,17 +991,12 @@ jobs:
           always()
             && !cancelled()
             && steps.ccache-stats.outputs.save == 'true'
-            && (
-              github.ref == 'refs/heads/dev'
-              || (
-                github.event_name == 'pull_request'
-                  && steps.cache-ccache.outputs.cache-matched-key == ''
-              )
-            )
+            && github.event_name == 'schedule'
+            && github.ref == 'refs/heads/dev'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/ccache
-          key: macOS-arm64-ccache-${{ github.event_name == 'pull_request' && 'pr' || 'dev' }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.cache-ccache.outputs.cache-primary-key }}
 
       - name: Report MacOS job wall time.
         if: always()

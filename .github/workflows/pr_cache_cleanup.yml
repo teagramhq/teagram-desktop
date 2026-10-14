@@ -3,14 +3,24 @@ name: Prune pull request caches.
 on:
   pull_request_target:
     types: [closed]
+  push:
+    branches: [dev]
+  workflow_run:
+    workflows: ["MacOS.", "MacOS Packaged."]
+    branches: [dev]
+    types: [completed]
 
 permissions:
-  actions: write
+  {}
 
+# Trust boundary and token scope: see .github/ci-cache-threat-model.md.
 jobs:
   prune:
     name: Prune closed pull request caches
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-26.04
+    permissions:
+      actions: write
 
     steps:
       - name: Delete pull request cache scope.
@@ -19,5 +29,97 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Refusing to prune a malformed pull request cache scope."
+            exit 1
+          fi
           cache_ref="refs/pull/${PR_NUMBER}/merge"
           gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"
+
+  prune-legacy-macos-ccache:
+    name: Prune legacy pull request compiler caches
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+
+    steps:
+      - name: Delete PR-scoped macOS compiler caches.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cache_ids="$(gh cache list --limit 1000 --key macOS-arm64-ccache-pr- --json id --jq '.[].id' --repo "$GITHUB_REPOSITORY")"
+          if [[ -z "$cache_ids" ]]; then
+            echo "No PR-scoped macOS compiler caches to delete."
+            exit 0
+          fi
+          while IFS= read -r cache_id; do
+            [[ -n "$cache_id" ]] || continue
+            gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+          done <<< "$cache_ids"
+
+  prune-old-dev-macos-ccache:
+    name: Prune superseded dev compiler caches
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+
+    steps:
+      - name: Verify the source run is trusted.
+        env:
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_BRANCH" != "dev" || "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::Refusing to prune caches for an untrusted workflow run."
+            exit 1
+          fi
+
+      - name: Keep the newest compiler cache per profile.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cache_prefix='macOS-arm64-ccache-dev-'
+          cache_entries="$(gh cache list \
+            --limit 1000 \
+            --key "$cache_prefix" \
+            --ref refs/heads/dev \
+            --sort created_at \
+            --order desc \
+            --json id,key \
+            --jq '.[] | [.id, .key] | @tsv' \
+            --repo "$GITHUB_REPOSITORY")"
+          declare -A retained_profiles=()
+          delete_cache() {
+            local cache_id="$1"
+            [[ "$cache_id" =~ ^[0-9]+$ ]] || {
+              echo "::error::Unexpected cache ID from GitHub: $cache_id"
+              exit 1
+            }
+            gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+          }
+          while IFS=$'\t' read -r cache_id cache_key; do
+            [[ -n "$cache_id" ]] || continue
+            if [[ ! "$cache_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected cache ID from GitHub: $cache_id"
+              exit 1
+            fi
+            if [[ "$cache_key" =~ ^macOS-arm64-ccache-dev-(pr-compatible|protected)-[[:xdigit:]]{64}-[0-9]+-[0-9]+$ ]]; then
+              profile="${BASH_REMATCH[1]}"
+            elif [[ "$cache_key" =~ ^macOS-arm64-ccache-dev-[[:xdigit:]]{64}-[0-9]+-[0-9]+$ ]]; then
+              # MacOS Packaged. saves this unprofiled key for release builds.
+              profile=packaged
+            else
+              echo "::error::Unexpected dev compiler cache key: $cache_key"
+              exit 1
+            fi
+            if [[ -z "${retained_profiles[$profile]:-}" ]]; then
+              retained_profiles[$profile]="$cache_id"
+            else
+              delete_cache "$cache_id"
+            fi
+          done <<< "$cache_entries"
