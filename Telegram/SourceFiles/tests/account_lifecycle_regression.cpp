@@ -2924,21 +2924,43 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		blankController->clearPassportForm();
 		domain.activate(activeBefore);
 	});
+	const auto orderedAccounts = domain.orderedAccounts();
+	const auto indexForAccount = [&](not_null<Main::Account *> account) {
+		for (auto i = 0; i != int(orderedAccounts.size()); ++i) {
+			if (orderedAccounts[i].get() == account.get()) {
+				return i + 1;
+			}
+		}
+		return 0;
+	};
+	const auto stockIndex = indexForAccount(stock);
+	const auto pinnedIndex = indexForAccount(pinned);
+	const auto invalidAccountIndex = int(orderedAccounts.size()) + 1;
+	if (!stockIndex || !pinnedIndex) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: account index fixture is incomplete.\n");
+		return false;
+	}
 	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
 	const auto passportUrl = [&](bool hasNonce) {
 		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
 			   + (hasNonce ? u"&nonce=y"_q : QString()) + callback;
 	};
-	const auto resolveUrl = [&](bool hasNonce) {
+	const auto resolveUrl = [&](bool hasNonce, int accountIndex) {
 		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
 			   + u"&public_key=x"_q + (hasNonce ? u"&nonce=y"_q : QString())
-			   + callback;
+			   + callback
+			   + (accountIndex ? u"&acc="_q + QString::number(accountIndex)
+							   : QString());
 	};
 	const auto links = std::vector<QString>{
 		passportUrl(true),
-		resolveUrl(true),
+		resolveUrl(true, 0),
 		passportUrl(false),
-		resolveUrl(false),
+		resolveUrl(false, 0),
+		resolveUrl(true, stockIndex),
+		resolveUrl(false, invalidAccountIndex),
 	};
 	const auto queuedWithoutController = [&](const QString &url) {
 		const auto command = url.mid(u"tg://"_q.size());
@@ -3022,15 +3044,22 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 	}
 	for (const auto &url : std::vector<QString>{
 			 passportUrl(true),
-			 resolveUrl(true),
+			 resolveUrl(true, 0),
+			 resolveUrl(true, pinnedIndex),
+			 resolveUrl(false, invalidAccountIndex),
 		 }) {
 		const auto toastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
 		const auto handled = app.openLocalUrl(url, contextFor(stockController));
 		QCoreApplication::processEvents();
-		const auto opened = handled && hasPassportForm(stockController)
-							&& !hasPassportForm(pinnedController)
-							&& !hasPassportForm(blankController)
-							&& (toastCalls(stockController) == toastBefore);
+		const auto opened
+			= handled && hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (toastCalls(stockController) == toastBefore)
+			  && (toastCalls(pinnedController) == pinnedToastBefore)
+			  && (toastCalls(blankController) == blankToastBefore);
 		stockController->clearPassportForm();
 		if (!opened) {
 			std::fprintf(
