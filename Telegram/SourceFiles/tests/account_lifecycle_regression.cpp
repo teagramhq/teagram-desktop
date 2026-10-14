@@ -2154,7 +2154,7 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 								 },
 								 addAction);
 	auto result = PeerMenuSnapshot();
-	for (const auto action : menu.actions()) {
+	for (const auto &action : menu.actions()) {
 		if (action->isSeparator()) {
 			continue;
 		}
@@ -2173,7 +2173,7 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 	}
 	menu.menu()->clearSelection();
-	const auto down = QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+	auto down = QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
 	const auto actionCount = int(menu.actions().size());
 	for (auto i = 0; i != actionCount; ++i) {
 		menu.menu()->handleKeyPress(&down);
