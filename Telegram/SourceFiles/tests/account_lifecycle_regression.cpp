@@ -4952,6 +4952,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		}
 		domain.activate(second);
+		const auto secondStockMenuController
+			= stockWindow->sessionController();
+		const auto secondPinnedMenuController
+			= pinnedWindow->sessionController();
 		const auto secondActive = &domain.active() == second.get();
 		const auto secondCapabilities
 			= capabilitiesMatch(second->session(), customFirst);
@@ -4960,13 +4964,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 									   : "custom account second activation");
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
-			= stockMenuController && pinnedMenuController
+			= secondStockMenuController && secondPinnedMenuController
 			  && RunBoostMenuVisibilityRegression(
-				  stockMenuController, true,
+				  secondStockMenuController, true,
 				  customFirst ? "stock while stock is active"
 							  : "stock while custom is active")
 			  && RunBoostMenuVisibilityRegression(
-				  pinnedMenuController, false,
+				  secondPinnedMenuController, false,
 				  customFirst ? "custom while stock is active"
 							  : "custom while custom is active");
 		if (!secondActive || !secondCapabilities || !secondWindows
