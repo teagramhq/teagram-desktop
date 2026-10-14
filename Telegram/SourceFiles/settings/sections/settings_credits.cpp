@@ -1031,6 +1031,7 @@ const auto kCreditsBuilderMeta = BuildHelper({
 	.parentId = MainId(),
 	.title = &tr::lng_credits_summary_title,
 	.icon = &st::menuIconPremium,
+	.paidFeatures = true,
 }, [](SectionBuilder &builder) {
 	BuildCreditsButtons(builder, false, nullptr, nullptr, nullptr);
 });

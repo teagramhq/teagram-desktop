@@ -962,6 +962,7 @@ const auto kMeta = BuildHelper({
 	.parentId = MainId(),
 	.title = &tr::lng_business_title,
 	.icon = &st::menuIconShop,
+	.paidFeatures = true,
 }, [](SectionBuilder &builder) {
 	BuildBusinessSectionContent(builder, nullptr);
 });

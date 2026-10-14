@@ -1775,6 +1775,7 @@ const auto kMeta = BuildHelper({
 	.parentId = MainId(),
 	.title = &tr::lng_premium_summary_title,
 	.icon = &st::menuIconPremium,
+	.paidFeatures = true,
 }, [](SectionBuilder &builder) {
 	BuildPremiumSectionContent(builder, nullptr);
 });

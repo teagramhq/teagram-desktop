@@ -48,8 +48,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/sender.h"
+#include "settings/sections/settings_business.h"
+#include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
+#include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
 #include "spellcheck/platform/platform_language.h"
 #include "storage/details/storage_file_utilities.h"
@@ -1448,10 +1451,12 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 }
 
 [[nodiscard]] MTPUser RegressionUser(UserId id, bool self,
-									 const QString &phone) {
+									 const QString &phone,
+									 bool premium = false) {
 	const auto flags
 		= (self ? MTPDuser::Flag::f_self : MTPDuser::Flag())
-		  | (phone.isEmpty() ? MTPDuser::Flag() : MTPDuser::Flag::f_phone);
+		  | (phone.isEmpty() ? MTPDuser::Flag() : MTPDuser::Flag::f_phone)
+		  | (premium ? MTPDuser::Flag::f_premium : MTPDuser::Flag());
 	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
 					MTP_string(u"Regression"_q), MTPstring(), MTPstring(),
 					MTP_string(phone), MTPUserProfilePhoto(), MTPUserStatus(),
@@ -1459,6 +1464,16 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
 					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
 					MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] bool SetRegressionSessionPremium(
+		not_null<Main::Session *> session,
+		UserId selfId,
+		bool premium) {
+	session->data().processUsers(MTP_vector<MTPUser>({
+		RegressionUser(selfId, true, QString(), premium),
+	}));
+	return session->premium() == premium;
 }
 
 [[nodiscard]] MTPmessages_ChatFull
@@ -1606,6 +1621,76 @@ ReadWebViewOpenCounters(not_null<Main::Session *> session) {
 // session accepted.
 constexpr int kRegressionEntryClassCount = 13;
 
+[[nodiscard]] bool SettingsSearchHasEntry(
+		const std::vector<Settings::Builder::SearchEntry> &entries,
+		const QString &id) {
+	return std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
+		return entry.id == id;
+	});
+}
+
+[[nodiscard]] bool SettingsSearchHasPaidEntry(
+		const std::vector<Settings::Builder::SearchEntry> &entries) {
+	return std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
+		return entry.section == Settings::PremiumId()
+			|| entry.section == Settings::CreditsId()
+			|| entry.section == Settings::CurrencyId()
+			|| entry.section == Settings::BusinessId()
+			|| entry.id.startsWith(u"premium/"_q)
+			|| entry.id.startsWith(u"stars/"_q)
+			|| entry.id.startsWith(u"business/"_q)
+			|| entry.id == u"main/premium"_q
+			|| entry.id == u"main/credits"_q
+			|| entry.id == u"main/currency"_q
+			|| entry.id == u"main/business"_q
+			|| entry.id == u"main/send-gift"_q;
+	});
+}
+
+[[nodiscard]] bool SettingsSearchHasSectionTitle(
+		const std::vector<Settings::Builder::SearchEntry> &entries,
+		Settings::Type section) {
+	return std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
+		return entry.id.isEmpty() && entry.section == section;
+	});
+}
+
+[[nodiscard]] bool SettingsSearchMatchesExpected(
+		not_null<Main::Session *> session,
+		bool paidSupported,
+		bool bioSupported) {
+	const auto entries
+		= Settings::Builder::SearchRegistry::Instance().collectAll(session);
+	const auto hasPaid = SettingsSearchHasPaidEntry(entries);
+	const auto hasPrivacy = SettingsSearchHasEntry(
+		entries, u"privacy/phone_number"_q);
+	const auto hasBio = SettingsSearchHasEntry(entries, u"edit/bio"_q);
+	const auto hasStockPaidRows
+		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
+		&& SettingsSearchHasEntry(entries, u"stars/gift"_q)
+		&& SettingsSearchHasEntry(entries, u"business/sponsored"_q)
+		&& SettingsSearchHasEntry(entries, u"main/premium"_q)
+		&& SettingsSearchHasEntry(entries, u"main/credits"_q)
+		&& SettingsSearchHasEntry(entries, u"main/currency"_q)
+		&& SettingsSearchHasEntry(entries, u"main/business"_q)
+		&& SettingsSearchHasSectionTitle(entries, Settings::PremiumId())
+		&& SettingsSearchHasSectionTitle(entries, Settings::CreditsId())
+		&& SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
+	const auto matches = hasPaid == paidSupported
+		&& hasPrivacy
+		&& (hasBio == bioSupported)
+		&& (!paidSupported || hasStockPaidRows);
+	if (!matches) {
+		std::fprintf(
+			stderr,
+			"Settings search regression failed: paid=%d expected=%d, "
+			"privacy=%d, bio=%d expected=%d, stock-rows=%d.\n",
+			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
+			hasStockPaidRows);
+	}
+	return matches;
+}
+
 [[nodiscard]] int
 AcceptedMiniAppOpens(not_null<Main::Session *> session,
 					 not_null<UserData *> bot,
@@ -1681,6 +1766,29 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			"Mini-app open regression: fixture configuration is not stock "
 			"and custom-pinned.\n");
 		return false;
+	}
+	{
+		const auto stockWasPremium = stock->session().premium();
+		const auto pinnedWasPremium = pinned->session().premium();
+		const auto restorePremium = gsl::finally([&] {
+			const auto stockRestored = SetRegressionSessionPremium(
+				&stock->session(), selfId, stockWasPremium);
+			const auto pinnedRestored = SetRegressionSessionPremium(
+				&pinned->session(), selfId, pinnedWasPremium);
+			Expects(stockRestored && pinnedRestored);
+		});
+		if (!SetRegressionSessionPremium(&stock->session(), selfId, true)
+			|| !SetRegressionSessionPremium(&pinned->session(), selfId, true)
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
+			|| !SettingsSearchMatchesExpected(&pinned->session(), false, false)
+			|| !SettingsSearchMatchesExpected(&stock->session(), true, true)) {
+			std::fprintf(
+				stderr,
+				"Mini-app open regression: Settings search results crossed "
+				"stock and custom sessions.\n");
+			return false;
+		}
 	}
 	const auto regressionUserId = UserId(777);
 	const auto stockBot = stock->session()
@@ -1887,6 +1995,17 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			blank->mtp().dcOptions().hasCustomServer(),
 			blank->session().botAppsSupported(),
 			static_cast<const void *>(blankController));
+		blank->forcedLogOut();
+		return false;
+	}
+	const auto blankWasPremium = blank->session().premium();
+	const auto blankPremiumEnabled
+		= SetRegressionSessionPremium(&blank->session(), selfId, true);
+	const auto blankSearchMatches = blankPremiumEnabled
+		&& SettingsSearchMatchesExpected(&blank->session(), false, false);
+	const auto blankPremiumRestored
+		= SetRegressionSessionPremium(&blank->session(), selfId, blankWasPremium);
+	if (!blankSearchMatches || !blankPremiumRestored) {
 		blank->forcedLogOut();
 		return false;
 	}
@@ -2806,13 +2925,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		  };
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
-	const auto searchHasBioTarget = [](not_null<Main::Session *> session) {
-		const auto entries
-			= Settings::Builder::SearchRegistry::Instance().collectAll(session);
-		return std::any_of(
-			entries.begin(), entries.end(),
-			[](const auto &entry) { return entry.id == u"edit/bio"_q; });
-	};
 	auto &app = Core::App();
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
@@ -3460,29 +3572,31 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto pinnedCapabilitiesMatch
 			= pinnedController
 			  && capabilitiesMatch(pinnedController->session(), false);
-		const auto stockBioSearchMatches
-			= searchHasBioTarget(&stock->session());
-		const auto pinnedBioSearchMatches
-			= !searchHasBioTarget(&pinned->session());
+		const auto stockSearchMatches
+			= SettingsSearchMatchesExpected(&stock->session(), true, true);
+		const auto pinnedSearchMatches
+			= SettingsSearchMatchesExpected(&pinned->session(), false, false);
+		const auto stockSearchStillMatches
+			= SettingsSearchMatchesExpected(&stock->session(), true, true);
 		const auto matches = (stockWindow != pinnedWindow) && stockMapped
 							 && pinnedMapped && stockBound && pinnedBound
 							 && stockSessionMatches && pinnedSessionMatches
 							 && stockCapabilitiesMatch
-							 && pinnedCapabilitiesMatch && stockBioSearchMatches
-							 && pinnedBioSearchMatches;
+							 && pinnedCapabilitiesMatch && stockSearchMatches
+							 && pinnedSearchMatches && stockSearchStillMatches;
 		if (!matches) {
 			std::fprintf(stderr,
 						 "Window/session regression mismatch at %s: "
 						 "distinct=%d mapped=%d/%d account=%d/%d "
 						 "controller=%d/%d session=%d/%d gates=%d/%d "
-						 "search=%d/%d active=%p\n",
+						 "search=%d/%d/%d active=%p\n",
 						 stage, stockWindow != pinnedWindow, stockMapped,
 						 pinnedMapped, stockBound, pinnedBound,
 						 stockController != nullptr,
 						 pinnedController != nullptr, stockSessionMatches,
 						 pinnedSessionMatches, stockCapabilitiesMatch,
-						 pinnedCapabilitiesMatch, stockBioSearchMatches,
-						 pinnedBioSearchMatches,
+						 pinnedCapabilitiesMatch, stockSearchMatches,
+						 pinnedSearchMatches, stockSearchStillMatches,
 						 static_cast<const void *>(&domain.active()));
 			printCapabilities("stock account", stock->session());
 			printCapabilities("pinned account", pinned->session());
