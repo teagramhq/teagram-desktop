@@ -26,9 +26,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_download_manager.h"
+#include "data/data_forum.h"
+#include "data/data_forum_topic.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "export/export_controller.h"
 #include "export/export_manager.h"
@@ -67,8 +70,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/menu/menu_item_base.h"
+#include "ui/widgets/popup_menu.h"
 #include "styles/style_widgets.h"
 #include "window/window_controller.h"
+#include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 
 #include <QtCore/QByteArray>
@@ -81,8 +88,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMetaObject>
 #include <QtCore/QMutex>
 #include <QtCore/QSemaphore>
+#include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtGui/QAccessible>
+#include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -2126,6 +2136,184 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	return accepted;
 }
 
+struct PeerMenuSnapshot final {
+	QStringList actions;
+	QStringList accessibleNames;
+	QStringList keyboardNames;
+};
+
+[[nodiscard]] PeerMenuSnapshot SnapshotPeerMenu(
+		not_null<Window::SessionController *> controller,
+		Dialogs::Key key,
+		Dialogs::EntryState::Section section) {
+	auto menu = Ui::PopupMenu(nullptr);
+	const auto addAction = Ui::Menu::CreateAddActionCallback(&menu);
+	Window::FillDialogsEntryMenu(
+		controller,
+		Dialogs::EntryState{
+			.key = key,
+			.section = section,
+		},
+		addAction);
+	auto result = PeerMenuSnapshot();
+	for (const auto action : menu.actions()) {
+		if (action->isSeparator()) {
+			continue;
+		}
+		result.actions.push_back(action->text().trimmed());
+		const auto item = menu.menu()->itemForAction(action);
+		if (!item) {
+			continue;
+		}
+		const auto accessible = QAccessible::queryAccessibleInterface(item);
+		if (!accessible) {
+			continue;
+		}
+		const auto name = accessible->text(QAccessible::Name).trimmed();
+		if (!name.isEmpty()) {
+			result.accessibleNames.push_back(name);
+		}
+	}
+	menu.menu()->clearSelection();
+	const auto down = QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+	const auto actionCount = int(menu.actions().size());
+	for (auto i = 0; i != actionCount; ++i) {
+		menu.menu()->handleKeyPress(&down);
+		const auto selected = menu.menu()->findSelectedAction();
+		if (!selected) {
+			break;
+		}
+		result.keyboardNames.push_back(selected->action()->text().trimmed());
+	}
+	return result;
+}
+
+[[nodiscard]] bool RunBoostMenuVisibilityRegression(
+		not_null<Window::SessionController *> controller,
+		bool supported,
+		const char *sessionName) {
+	auto &session = controller->session();
+	if (session.paidFeaturesSupported() != supported) {
+		std::fprintf(stderr,
+			"Boost menu regression failed: session=%s capability=%d expected=%d.\n",
+			sessionName, session.paidFeaturesSupported(), supported);
+		return false;
+	}
+	const auto configureChannel = [](
+			not_null<ChannelData *> channel,
+			const QString &name,
+			ChannelDataFlags flags,
+			uint64 accessHash) {
+		channel->setAccessHash(accessHash);
+		channel->setName(name, QString());
+		channel->setFlags(flags);
+	};
+	using Flag = ChannelDataFlag;
+	const auto broadcast = session.data().channel(ChannelId(1171));
+	configureChannel(
+		broadcast,
+		u"Boost menu regression channel"_q,
+		Flag::Creator | Flag::Broadcast | Flag::CanGetStatistics
+			| Flag::CanViewRevenue,
+		117100);
+	const auto group = session.data().channel(ChannelId(1172));
+	configureChannel(
+		group,
+		u"Boost menu regression group"_q,
+		Flag::Creator | Flag::Forum | Flag::CanGetStatistics
+			| Flag::CanViewRevenue,
+		117200);
+	const auto broadcastHistory = session.data().history(broadcast);
+	const auto groupHistory = session.data().history(group);
+	const auto forum = group->forum();
+	const auto topic = forum
+		? forum->applyTopicAdded(
+			MsgId(1173),
+			u"Boost menu regression topic"_q,
+			0,
+			DocumentId(),
+			session.userPeerId(),
+			1,
+			true)
+		: nullptr;
+	if (!broadcastHistory || !groupHistory || !topic) {
+		std::fprintf(stderr,
+			"Boost menu regression failed: session=%s could not create menu peers.\n",
+			sessionName);
+		return false;
+	}
+	const auto contains = [](const QStringList &names, const QString &expected) {
+		return std::find(names.begin(), names.end(), expected) != names.end();
+	};
+	const auto checkEntry = [&](
+			const PeerMenuSnapshot &menu,
+			const QString &expected,
+			bool shouldBePresent,
+			const char *surface) {
+		const auto actionPresent = contains(menu.actions, expected);
+		const auto accessiblePresent = contains(menu.accessibleNames, expected);
+		const auto keyboardPresent = contains(menu.keyboardNames, expected);
+		if ((actionPresent != shouldBePresent)
+			|| (accessiblePresent != shouldBePresent)
+			|| (keyboardPresent != shouldBePresent)) {
+			std::fprintf(stderr,
+				"Boost menu regression failed: session=%s surface=%s expected=%d "
+				"action=%d accessibility=%d keyboard=%d label=%s.\n",
+				sessionName, surface, shouldBePresent, actionPresent,
+				accessiblePresent, keyboardPresent, qPrintable(expected));
+			return false;
+		}
+		return true;
+	};
+	const auto channelChat = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(broadcastHistory),
+		Dialogs::EntryState::Section::History);
+	const auto groupChat = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(groupHistory),
+		Dialogs::EntryState::Section::History);
+	const auto groupChatsList = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(groupHistory),
+		Dialogs::EntryState::Section::ChatsList);
+	const auto channelProfile = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(broadcastHistory),
+		Dialogs::EntryState::Section::Profile);
+	const auto groupProfile = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(groupHistory),
+		Dialogs::EntryState::Section::Profile);
+	const auto topicMenu = SnapshotPeerMenu(
+		controller,
+		Dialogs::Key(topic),
+		Dialogs::EntryState::Section::Replies);
+	const auto boostsChannel = tr::lng_boost_channel_button(tr::now);
+	const auto boostsGroup = tr::lng_boost_group_button(tr::now);
+	const auto boosts = tr::lng_boosts_title(tr::now);
+	const auto statistics = tr::lng_stats_title(tr::now);
+	const auto earnings = tr::lng_channel_earn_title(tr::now);
+	const auto match = checkEntry(
+		channelChat, boostsChannel, supported, "channel chat")
+		&& checkEntry(groupChat, boostsGroup, supported, "group chat")
+		&& checkEntry(groupChatsList, boostsGroup, supported, "chat list")
+		&& checkEntry(channelProfile, boosts, supported, "channel profile")
+		&& checkEntry(groupProfile, boosts, supported, "group profile")
+		&& checkEntry(topicMenu, boostsGroup, supported, "topic")
+		&& checkEntry(channelProfile, statistics, true, "channel profile")
+		&& checkEntry(channelProfile, earnings, true, "channel profile")
+		&& checkEntry(groupProfile, statistics, true, "group profile")
+		&& checkEntry(groupProfile, earnings, true, "group profile");
+	if (match) {
+		std::fprintf(stderr,
+			"Boost menu visibility regression passed: session=%s supported=%d; "
+			"menu actions and accessibility items match.\n",
+			sessionName, supported);
+	}
+	return match;
+}
+
 // The accepted refusal contract, observed instead of inferred: a refused
 // mini-app open shows the shared unavailable-server toast on the owning
 // session and leaves the webview path untouched, while a stock session keeps
@@ -2433,6 +2621,27 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 			pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
 		blank->forcedLogOut();
+		return false;
+	}
+	const auto blockedMenuOrdersMatch = [&] {
+		auto &domain = app.domain();
+		const auto active = &domain.active();
+		const auto restoreActive = gsl::finally([&] {
+			domain.activate(active);
+		});
+		domain.activate(stock);
+		const auto stockFirst = RunBoostMenuVisibilityRegression(
+			stockController, true, "stock with blocked account available")
+			&& RunBoostMenuVisibilityRegression(
+				blankController, false, "blocked while stock is active");
+		domain.activate(blank);
+		const auto blockedFirst = RunBoostMenuVisibilityRegression(
+			blankController, false, "blocked with stock account available")
+			&& RunBoostMenuVisibilityRegression(
+				stockController, true, "stock while blocked is active");
+		return stockFirst && blockedFirst;
+	}();
+	if (!blockedMenuOrdersMatch) {
 		return false;
 	}
 	const auto blankBot = blank->session()
@@ -4583,13 +4792,27 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			= windowsMatch(customFirst ? "custom account first activation"
 									   : "stock account first activation");
 		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto stockMenuController = stockWindow->sessionController();
+		const auto pinnedMenuController = pinnedWindow->sessionController();
+		const auto firstBoostMenusMatch
+			= stockMenuController && pinnedMenuController
+			&& RunBoostMenuVisibilityRegression(
+				stockMenuController, true,
+				customFirst ? "stock while custom is active"
+							: "stock while stock is active")
+			&& RunBoostMenuVisibilityRegression(
+				pinnedMenuController, false,
+				customFirst ? "custom while custom is active"
+							: "custom while stock is active");
 		if (!firstActive || !firstCapabilities || !firstWindows
-			|| !firstCustomWebViewRefused) {
+			|| !firstCustomWebViewRefused || !firstBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "First activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d\n",
+						 "capabilities=%d windows=%d webview-refused=%d "
+						 "boost-menus=%d\n",
 						 customFirst, firstActive, firstCapabilities,
-						 firstWindows, firstCustomWebViewRefused);
+						 firstWindows, firstCustomWebViewRefused,
+						 firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 								  first->session());
@@ -4757,13 +4980,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			= windowsMatch(customFirst ? "stock account second activation"
 									   : "custom account second activation");
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto secondBoostMenusMatch
+			= stockMenuController && pinnedMenuController
+			&& RunBoostMenuVisibilityRegression(
+				stockMenuController, true,
+				customFirst ? "stock while stock is active"
+							: "stock while custom is active")
+			&& RunBoostMenuVisibilityRegression(
+				pinnedMenuController, false,
+				customFirst ? "custom while stock is active"
+							: "custom while custom is active");
 		if (!secondActive || !secondCapabilities || !secondWindows
-			|| !secondCustomWebViewRefused) {
+			|| !secondCustomWebViewRefused || !secondBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "Second activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d\n",
+						 "capabilities=%d windows=%d webview-refused=%d "
+						 "boost-menus=%d\n",
 						 customFirst, secondActive, secondCapabilities,
-						 secondWindows, secondCustomWebViewRefused);
+						 secondWindows, secondCustomWebViewRefused,
+						 secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
 											  : "pinned second",
