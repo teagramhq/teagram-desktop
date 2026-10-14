@@ -167,7 +167,7 @@ PRIVATE
     desktop-app::external_xxhash
 )
 
-if (LINUX)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         tests/unit/username_input_tests.cpp
