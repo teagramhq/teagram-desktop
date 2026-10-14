@@ -1358,30 +1358,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.id = u"advanced/update_action"_q,
 		.title = std::move(actionTitle),
 		.st = &st::settingsButtonNoIcon,
-		.onClick =
-			[=] {
-				using State = Core::TeagramUpdateUiState;
-				switch (manager->state().state) {
-				case State::Available:
-					manager->downloadAndInstall();
-					break;
-				case State::Ready:
-				case State::AlreadyInstalled:
-				case State::RecoveryRequired:
-					manager->restartExplicitly();
-					break;
-				case State::RestartPending:
-					manager->dontRestart();
-					break;
-				case State::Downloading:
-				case State::Preparing:
-					manager->cancel();
-					break;
-				default:
-					manager->checkNow();
-					break;
-				}
-			},
+		.onClick = [=] { manager->performSettingsAction(); },
 		.keywords = {u"update"_q, u"install"_q, u"restart"_q},
 		.shown = std::move(actionShown),
 	});

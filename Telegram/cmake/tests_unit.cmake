@@ -125,6 +125,8 @@ if(UNIX)
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         core/teagram_update_archive.cpp
+        core/teagram_update_manager.cpp
+        core/teagram_update_manager.h
         core/teagram_update_replacement.cpp
         tests/unit/teagram_update_download_tests.cpp
     )

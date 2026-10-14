@@ -45,6 +45,10 @@ TEST_CASE(ServerCannotChooseAnUpdateOrigin) {
 	CHECK(!AcceptServerAutoupdatePrefix(u"https://updates.attacker.test"_q));
 }
 
+TEST_CASE(TeagramUpdaterIsEnabledForProduction) {
+	CHECK(TeagramUpdateUiEnabled());
+}
+
 TEST_CASE(TeagramUpdateEligibilityHonorsHighWaterMark) {
 	using Channel = TeagramUpdateChannel;
 	CHECK(!TeagramUpdateBuildIsEligible(101, 102, Channel::Dev, 102,
