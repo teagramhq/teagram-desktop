@@ -1509,6 +1509,20 @@ void ChatWidget::send(Api::SendOptions options) {
 		nullptr);
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void ChatWidget::setDraftTextForRegressionTest(const QString &text) {
+	_composeControls->setText({text, TextWithTags::Tags()});
+}
+
+QString ChatWidget::draftTextForRegressionTest() const {
+	return _composeControls->getTextWithAppliedMarkdown().text;
+}
+
+void ChatWidget::sendForRegressionTest(Api::SendOptions options) {
+	send(options);
+}
+#endif
+
 void ChatWidget::sendRichDraft(
 		std::shared_ptr<const Iv::RichPage> page,
 		Api::SendOptions options) {

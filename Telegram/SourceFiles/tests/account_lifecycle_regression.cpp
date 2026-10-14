@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
+#include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
@@ -26,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
+#include "data/components/scheduled_messages.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_download_manager.h"
@@ -42,6 +44,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_widget.h"
+#include "history/view/history_view_chat_section.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
@@ -55,6 +59,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
 #include "main/session_feature_support.h"
+#include "menu/menu_send.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
@@ -78,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
@@ -4058,6 +4064,272 @@ template <typename Predicate>
 				"error_keeps_box_open.\n");
 	return true;
 }
+
+[[nodiscard]] bool
+PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+	const auto actions = menu.actions();
+	if (actions.isEmpty() || menu.focusPolicy() == Qt::NoFocus) {
+		return false;
+	}
+	auto hasAction = false;
+	for (auto i = 0; i != actions.size(); ++i) {
+		const auto action = actions[i];
+		if (action->isSeparator()) {
+			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
+				|| actions[i + 1]->isSeparator()) {
+				return false;
+			}
+		} else if (action->text().isEmpty()) {
+			return false;
+		} else if (!hasAction) {
+			menu.setActiveAction(action);
+			hasAction = (menu.activeAction() == action);
+		}
+	}
+	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
+	return hasAction && accessible
+		   && (accessible->role() == QAccessible::PopupMenu);
+}
+
+[[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
+	const auto actions = menu.actions();
+	return int(
+		std::count_if(actions.cbegin(), actions.cend(),
+					  [](QAction *action) { return action->isSeparator(); }));
+}
+
+template <typename Widget>
+[[nodiscard]] bool RunScheduledSubmissionForWidget(
+	Widget &widget, Main::Session &session, not_null<History *> history,
+	bool supported, TimeId scheduled, TimeId repeat, const QString &label) {
+	const auto text = u"Scheduled submission "_q + label;
+	const auto count = session.scheduledMessages().count(history);
+	widget.setDraftTextForRegressionTest(text);
+	widget.sendForRegressionTest(Api::SendOptions{
+		.scheduled = scheduled,
+		.scheduleRepeatPeriod = repeat,
+	});
+	if (!supported) {
+		return (session.scheduledMessages().count(history) == count)
+			   && (widget.draftTextForRegressionTest() == text);
+	} else if ((session.scheduledMessages().count(history) != count + 1)
+			   || !widget.draftTextForRegressionTest().isEmpty()) {
+		return false;
+	}
+	const auto messages = session.scheduledMessages().list(history);
+	for (const auto id : messages.ids) {
+		const auto item = session.scheduledMessages().lookupItem(id);
+		if (item && (item->date() == scheduled)
+			&& (item->scheduleRepeatPeriod() == repeat)
+			&& (item->originalText().text == text)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+template <typename Widget>
+[[nodiscard]] bool RunOrdinarySubmissionForWidget(Widget &widget,
+												  not_null<History *> history,
+												  const QString &label) {
+	const auto before = history->lastMessage();
+	const auto text = u"Ordinary submission "_q + label;
+	widget.setDraftTextForRegressionTest(text);
+	widget.sendForRegressionTest(Api::SendOptions());
+	const auto after = history->lastMessage();
+	return after && (after != before) && (after->originalText().text == text)
+		   && widget.draftTextForRegressionTest().isEmpty();
+}
+
+[[nodiscard]] bool RunScheduledSubmissionLifecycleRegression(
+	not_null<Window::SessionController *> controller, bool supported,
+	const QString &label) {
+	auto &session = controller->session();
+	const auto self
+		= not_null<PeerData *>(static_cast<PeerData *>(&*session.user()));
+	const auto history = session.data().history(self);
+	controller->showPeerHistory(self);
+	QCoreApplication::processEvents();
+	const auto content = controller->content();
+	const auto historyWidget = content->historyWidgetForRegressionTest();
+	if (!historyWidget || (historyWidget->peer() != self.get())) {
+		return false;
+	}
+	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
+		content.get(), controller,
+		HistoryView::ChatViewId{
+			.history = history,
+			.repliesRootId = MsgId(),
+		});
+	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
+	const auto repeat = TimeId(7 * 24 * 60 * 60);
+	const auto regularScheduled = RunScheduledSubmissionForWidget(
+		*historyWidget, session, history, supported, tomorrow, 0,
+		label + u" history"_q);
+	const auto repeatedScheduled = RunScheduledSubmissionForWidget(
+		*historyWidget, session, history, supported, tomorrow, repeat,
+		label + u" history repeat"_q);
+	const auto regularChatScheduled = RunScheduledSubmissionForWidget(
+		*chatWidget, session, history, supported, tomorrow, 0,
+		label + u" chat section"_q);
+	const auto repeatedChatScheduled = RunScheduledSubmissionForWidget(
+		*chatWidget, session, history, supported, tomorrow, repeat,
+		label + u" chat section repeat"_q);
+	const auto ordinaryHistory = RunOrdinarySubmissionForWidget(
+		*historyWidget, history, label + u" history"_q);
+	const auto ordinaryChat = RunOrdinarySubmissionForWidget(
+		*chatWidget, history, label + u" chat section"_q);
+	return regularScheduled && repeatedScheduled && regularChatScheduled
+		   && repeatedChatScheduled && ordinaryHistory && ordinaryChat;
+}
+
+[[nodiscard]] bool RunChatFeatureMenusLifecycleRegression(
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> customController,
+	const QString &activationOrder) {
+	struct DividerCounts {
+		int history = 0;
+		int profile = 0;
+		int send = 0;
+	};
+	const auto checkController = [&](not_null<Window::SessionController *>
+										 controller,
+									 bool supported, const QString &label,
+									 DividerCounts &dividers) {
+		auto &session = controller->session();
+		session.data().processUsers(MTP_vector<MTPUser>({
+			RegressionUser(UserId(2), false, u"2"_q),
+		}));
+		const auto peer = session.data().peer(peerFromUser(UserId(2)));
+		const auto history = session.data().history(peer);
+		controller->showPeerHistory(peer);
+		QCoreApplication::processEvents();
+		const auto historyWidget
+			= controller->content()->historyWidgetForRegressionTest();
+		if (!historyWidget || (historyWidget->peer() != peer.get())) {
+			return false;
+		}
+		const auto buildPeerMenu = [&](Dialogs::EntryState::Section section) {
+			auto result = std::make_unique<Ui::PopupMenu>(nullptr);
+			Window::FillDialogsEntryMenu(
+				controller,
+				{
+					.key = history,
+					.section = section,
+				},
+				Ui::Menu::CreateAddActionCallback(result.get()));
+			return result;
+		};
+		const auto findAction
+			= [](const Ui::PopupMenu &menu, const QString &text) -> QAction * {
+			for (const auto action : menu.actions()) {
+				if (action->text() == text) {
+					return action;
+				}
+			}
+			return nullptr;
+		};
+		const auto hasSharingAction = [&](const Ui::PopupMenu &menu) {
+			return findAction(menu, tr::lng_disable_sharing(tr::now))
+				   || findAction(menu, tr::lng_enable_sharing(tr::now));
+		};
+		auto historyMenu = buildPeerMenu(Dialogs::EntryState::Section::History);
+		auto profileMenu = buildPeerMenu(Dialogs::EntryState::Section::Profile);
+		dividers.history = PopupMenuDividerCount(*historyMenu);
+		dividers.profile = PopupMenuDividerCount(*profileMenu);
+		const auto theme
+			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto menusAreNavigable
+			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
+			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+		const auto expectedEntries
+			= supported ? (theme && hasSharingAction(*historyMenu)
+						   && hasSharingAction(*profileMenu))
+						: (!theme && !hasSharingAction(*historyMenu)
+						   && !hasSharingAction(*profileMenu));
+		if (!menusAreNavigable || !expectedEntries) {
+			std::fprintf(
+				stderr,
+				"Chat feature menu regression failed: label=%s supported=%d "
+				"keyboard-accessible=%d entries=%d\n",
+				qPrintable(label), supported, menusAreNavigable,
+				expectedEntries);
+			return false;
+		}
+		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
+		const auto sendMenuResult = SendMenu::FillSendMenu(
+			sendMenu.get(), nullptr, controller->content()->sendMenuDetails(),
+			[](SendMenu::Action, SendMenu::Details) {});
+		dividers.send = PopupMenuDividerCount(*sendMenu);
+		const auto hasSchedule
+			= findAction(*sendMenu, tr::lng_schedule_message(tr::now))
+			  || findAction(*sendMenu,
+							tr::lng_scheduled_send_until_online(tr::now));
+		const auto hasSilentSend
+			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
+			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
+			std::fprintf(stderr,
+						 "Chat feature send menu regression failed: label=%s "
+						 "supported=%d schedule=%d silent=%d\n",
+						 qPrintable(label), supported, bool(hasSchedule),
+						 bool(hasSilentSend));
+			return false;
+		}
+		if (supported) {
+			if (!theme) {
+				return false;
+			}
+			historyMenu->setActiveAction(theme);
+			if (historyMenu->activeAction() != theme) {
+				return false;
+			}
+			theme->trigger();
+			QCoreApplication::processEvents();
+			const auto controlsAccessible
+				= historyWidget->chatThemeControlsAccessibleForRegressionTest();
+			controller->toggleChooseChatTheme(peer, false);
+			if (!controlsAccessible) {
+				std::fprintf(
+					stderr,
+					"Chat theme strip regression failed: stock controls were "
+					"missing, unfocusable, or inaccessible in %s.\n",
+					qPrintable(label));
+				return false;
+			}
+		} else {
+			controller->toggleChooseChatTheme(peer);
+			QCoreApplication::processEvents();
+			if (historyWidget->chatThemeControlsAccessibleForRegressionTest()) {
+				return false;
+			}
+		}
+		return RunScheduledSubmissionLifecycleRegression(
+			controller, supported, activationOrder + u" "_q + label);
+	};
+	const auto stockLabel = u"stock window "_q + activationOrder;
+	const auto customLabel = u"custom window "_q + activationOrder;
+	auto stockDividerCounts = DividerCounts();
+	auto customDividerCounts = DividerCounts();
+	if (!checkController(stockController, true, stockLabel, stockDividerCounts)
+		|| !checkController(customController, false, customLabel,
+							customDividerCounts)) {
+		return false;
+	} else if (stockDividerCounts.history != customDividerCounts.history
+			   || stockDividerCounts.profile != customDividerCounts.profile
+			   || stockDividerCounts.send != customDividerCounts.send) {
+		std::fprintf(stderr,
+					 "Chat feature menu divider regression failed: order=%s "
+					 "stock={%d,%d,%d} custom={%d,%d,%d}\n",
+					 qPrintable(activationOrder), stockDividerCounts.history,
+					 stockDividerCounts.profile, stockDividerCounts.send,
+					 customDividerCounts.history, customDividerCounts.profile,
+					 customDividerCounts.send);
+		return false;
+	}
+	return true;
+}
 #endif
 
 template <typename Predicate>
@@ -5201,6 +5473,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											  : "pinned second",
 								  second->session());
 			}
+			return false;
+		}
+		const auto stockUiController = stockWindow->sessionController();
+		const auto customUiController = pinnedWindow->sessionController();
+		if (!stockUiController || !customUiController
+			|| !RunChatFeatureMenusLifecycleRegression(
+				stockUiController, customUiController,
+				customFirst ? u"custom-first"_q : u"stock-first"_q)) {
 			return false;
 		}
 		return true;

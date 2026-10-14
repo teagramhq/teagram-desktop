@@ -200,6 +200,11 @@ public:
 	void toggleChooseChatTheme(
 		not_null<PeerData*> peer,
 		std::optional<bool> show);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] HistoryWidget *historyWidgetForRegressionTest() const {
+		return _history.get();
+	}
+#endif
 
 	void showHistory(
 		PeerId peer,

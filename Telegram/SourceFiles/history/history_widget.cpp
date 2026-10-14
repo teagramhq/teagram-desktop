@@ -6523,6 +6523,25 @@ bool HistoryWidget::isChoosingTheme() const {
 	return _chooseTheme && _chooseTheme->shouldBeShown();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HistoryWidget::setDraftTextForRegressionTest(const QString &text) {
+	_field->setTextWithTags({text, TextWithTags::Tags()});
+}
+
+QString HistoryWidget::draftTextForRegressionTest() const {
+	return _field->getTextWithTags().text;
+}
+
+void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
+	send(options);
+}
+
+bool HistoryWidget::chatThemeControlsAccessibleForRegressionTest() const {
+	return isChoosingTheme()
+		   && _chooseTheme->accessibleButtonsForRegressionTest();
+}
+#endif
+
 bool HistoryWidget::isMuteUnmute() const {
 	return _peer
 		&& ((_peer->isBroadcast() && !_peer->asChannel()->canPostMessages())
