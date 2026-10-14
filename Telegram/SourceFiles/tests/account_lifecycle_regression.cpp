@@ -96,6 +96,17 @@ namespace {
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 
+enum class TranslationRpcRoleForRegressionTest {
+	None,
+	Stock,
+	Custom,
+};
+
+auto gTranslationRpcRoleForRegressionTest
+	= TranslationRpcRoleForRegressionTest::None;
+auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
 	mtpBuffer body;
@@ -148,6 +159,22 @@ template <typename Request>
 	return true;
 }
 
+void IncrementTranslationRpcCountForRegressionTest(
+		TranslationRpcCountsForRegressionTest &counts,
+		TranslationRpcForRegressionTest operation) {
+	switch (operation) {
+	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
+		++counts.channelAutoTranslationToggle;
+		break;
+	case TranslationRpcForRegressionTest::Text:
+		++counts.text;
+		break;
+	case TranslationRpcForRegressionTest::Rich:
+		++counts.rich;
+		break;
+	}
+}
+
 } // namespace
 
 void RecordLifecycleWriteForRegressionTest(
@@ -176,21 +203,34 @@ GetLifecycleWriteCountsForRegressionTest() {
 
 void RecordTranslationRpcForRegressionTest(
 	TranslationRpcForRegressionTest operation) {
-	switch (operation) {
-	case TranslationRpcForRegressionTest::ChannelAutoTranslationToggle:
-		++gTranslationRpcCounts.channelAutoTranslationToggle;
+	IncrementTranslationRpcCountForRegressionTest(gTranslationRpcCounts,
+		operation);
+	switch (gTranslationRpcRoleForRegressionTest) {
+	case TranslationRpcRoleForRegressionTest::Stock:
+		IncrementTranslationRpcCountForRegressionTest(
+			gStockTranslationRpcCounts, operation);
 		break;
-	case TranslationRpcForRegressionTest::Text:
-		++gTranslationRpcCounts.text;
+	case TranslationRpcRoleForRegressionTest::Custom:
+		IncrementTranslationRpcCountForRegressionTest(
+			gCustomTranslationRpcCounts, operation);
 		break;
-	case TranslationRpcForRegressionTest::Rich:
-		++gTranslationRpcCounts.rich;
+	case TranslationRpcRoleForRegressionTest::None:
 		break;
 	}
 }
 
 void ResetTranslationRpcCountsForRegressionTest() {
 	gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+	switch (gTranslationRpcRoleForRegressionTest) {
+	case TranslationRpcRoleForRegressionTest::Stock:
+		gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+		break;
+	case TranslationRpcRoleForRegressionTest::Custom:
+		gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+		break;
+	case TranslationRpcRoleForRegressionTest::None:
+		break;
+	}
 }
 
 TranslationRpcCountsForRegressionTest
@@ -2347,6 +2387,42 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return item;
 }
 
+[[nodiscard]] MTPChat TranslationRegressionChannel(
+		ChannelId id, uint64 accessHash, const QString &title) {
+	using Flag = MTPDchannel::Flag;
+	return MTP_channel(
+		MTP_flags(Flag::f_creator | Flag::f_broadcast | Flag::f_access_hash
+			| Flag::f_autotranslation),
+		MTP_long(id.bare), MTP_long(accessHash), MTP_string(title),
+		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
+		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] MTPChannelFull TranslationRegressionChannelFull(ChannelId id) {
+	const auto notifySettings = MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
+	return MTP_channelFull(
+		MTP_flags(MTPDchannelFull::Flags()), MTP_long(id.bare),
+		MTP_string(QString()), MTPint(), MTPint(), MTPint(), MTPint(), MTPint(),
+		MTP_int(0), MTP_int(0), MTP_int(0), MTP_photoEmpty(MTP_long(0)),
+		notifySettings, MTPExportedChatInvite(), MTP_vector<MTPBotInfo>(0),
+		MTPlong(), MTPint(), MTPint(), MTPInputStickerSet(), MTPint(), MTPint(),
+		MTPlong(), MTPChannelLocation(), MTPint(), MTPint(), MTPint(),
+		MTP_int(0), MTPInputGroupCall(), MTPint(), MTP_vector<MTPstring>(0),
+		MTPPeer(), MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTPPeer(),
+		MTP_chatReactionsNone(), MTPint(), MTPPeerStories(), MTPWallPaper(),
+		MTPint(), MTPint(), MTPInputStickerSet(), MTPBotVerification(),
+		MTPint(), MTPlong(), MTPProfileTab(), MTPlong());
+}
+
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
@@ -2373,20 +2449,18 @@ template <typename Predicate>
 	settings.setUsePlatformTranslation(false);
 	settings.setTranslateTo(target);
 
-	const auto stockChannel
-		= stockController->session().data().channel(ChannelId(1151));
-	const auto customChannel
-		= customController->session().data().channel(ChannelId(1152));
-	const auto configureChannel
-		= [](not_null<ChannelData *> channel, const QString &name) {
-			  channel->setAccessHash(115100);
-			  channel->setName(name, QString());
-			  channel->setFlags(ChannelDataFlag::Creator
-								| ChannelDataFlag::Broadcast);
-			  channel->setTranslationDisabled(false);
-		  };
-	configureChannel(stockChannel, u"Stock channel"_q);
-	configureChannel(customChannel, u"Custom channel"_q);
+	auto &stockSession = stockController->session();
+	auto &customSession = customController->session();
+	stockSession.data().processChat(TranslationRegressionChannel(
+		ChannelId(1151), 115100, u"Stock channel"_q));
+	customSession.data().processChat(TranslationRegressionChannel(
+		ChannelId(1152), 115100, u"Custom channel"_q));
+	const auto stockChannel = stockSession.data().channel(ChannelId(1151));
+	const auto customChannel = customSession.data().channel(ChannelId(1152));
+	Data::ApplyChannelUpdate(
+		stockChannel, TranslationRegressionChannelFull(ChannelId(1151)).data());
+	Data::ApplyChannelUpdate(
+		customChannel, TranslationRegressionChannelFull(ChannelId(1152)).data());
 
 	const auto openEditBox
 		= [](not_null<Window::SessionController *> controller,
@@ -2433,7 +2507,8 @@ template <typename Predicate>
 	using ChannelFlag = MTPDchannel::Flag;
 	const auto renamedChat = MTP_channel(
 		MTP_flags(ChannelFlag::f_creator | ChannelFlag::f_broadcast
-				  | ChannelFlag::f_access_hash),
+				  | ChannelFlag::f_access_hash
+				  | ChannelFlag::f_autotranslation),
 		MTP_long(1152), MTP_long(115100), MTP_string(renamedChannel),
 		MTPstring(), MTP_chatPhotoEmpty(), MTP_int(1),
 		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
@@ -2531,8 +2606,43 @@ template <typename Predicate>
 	}
 	stockController->hideLayer(anim::type::instant);
 
-	stockChannel->addFlags(ChannelDataFlag::AutoTranslation);
-	customChannel->addFlags(ChannelDataFlag::AutoTranslation);
+	const auto stockLoaded = stockChannel->isLoaded();
+	const auto stockServerSupported = stockSession.serverTranslationSupported();
+	const auto stockNetworkAllowed = stockSession.mtp().networkAllowed();
+	const auto stockCreator = stockChannel->amCreator();
+	const auto stockBroadcast = stockChannel->isBroadcast();
+	const auto stockAutoTranslation = stockChannel->autoTranslation();
+	const auto stockTranslationEnabled
+		= (stockChannel->translationFlag() == PeerData::TranslationFlag::Enabled);
+	const auto customLoaded = customChannel->isLoaded();
+	const auto customServerSupported = customSession.serverTranslationSupported();
+	const auto customNetworkAllowed = customSession.mtp().networkAllowed();
+	const auto customCreator = customChannel->amCreator();
+	const auto customBroadcast = customChannel->isBroadcast();
+	const auto customAutoTranslation = customChannel->autoTranslation();
+	const auto customTranslationEnabled
+		= (customChannel->translationFlag()
+			== PeerData::TranslationFlag::Enabled);
+	std::fprintf(
+		stderr,
+		"Translation controls precondition: stock loaded=%d "
+		"server_supported=%d network_allowed=%d creator=%d broadcast=%d "
+		"auto_translation=%d translation_enabled=%d; custom loaded=%d "
+		"server_supported=%d network_allowed=%d creator=%d broadcast=%d "
+		"auto_translation=%d translation_enabled=%d.\n",
+		stockLoaded, stockServerSupported, stockNetworkAllowed, stockCreator,
+		stockBroadcast, stockAutoTranslation, stockTranslationEnabled,
+		customLoaded, customServerSupported, customNetworkAllowed,
+		customCreator, customBroadcast, customAutoTranslation,
+		customTranslationEnabled);
+	if (!stockLoaded || !stockServerSupported || stockNetworkAllowed
+		|| !stockCreator || !stockBroadcast || !stockAutoTranslation
+		|| !stockTranslationEnabled || !customLoaded || customServerSupported
+		|| customNetworkAllowed || !customCreator || !customBroadcast
+		|| !customAutoTranslation || !customTranslationEnabled) {
+		return false;
+	}
+
 	const auto stockHistory
 		= stockController->session().data().history(stockChannel);
 	const auto customHistory
@@ -2591,6 +2701,8 @@ template <typename Predicate>
 		return false;
 	}
 
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::Custom;
 	ResetTranslationRpcCountsForRegressionTest();
 	{
 		HistoryView::TranslateTracker textTracker(customHistory);
@@ -2607,6 +2719,11 @@ template <typename Predicate>
 			customRpcs.text, customRpcs.rich);
 		return false;
 	}
+	std::fprintf(stderr,
+				 "Translation controls custom requests: text=%d rich=%d.\n",
+				 customRpcs.text, customRpcs.rich);
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::Stock;
 	ResetTranslationRpcCountsForRegressionTest();
 	{
 		HistoryView::TranslateTracker textTracker(stockHistory);
@@ -2623,6 +2740,48 @@ template <typename Predicate>
 			stockRpcs.text, stockRpcs.rich);
 		return false;
 	}
+	std::fprintf(stderr,
+				 "Translation controls stock requests: text=%d rich=%d.\n",
+				 stockRpcs.text, stockRpcs.rich);
+	const auto barrier
+		= WaitForMainQueueBarrierForRegressionTest(1000)
+		== MainQueueBarrierResult::Completed;
+	const auto stockAfterBarrier = GetTranslationRpcCountsForRegressionTest();
+	const auto stockNetworkAllowedAfter = stockSession.mtp().networkAllowed();
+	const auto customNetworkAllowedAfter = customSession.mtp().networkAllowed();
+	const auto customCountsUnchanged
+		= (gCustomTranslationRpcCounts.text == customRpcs.text)
+		&& (gCustomTranslationRpcCounts.rich == customRpcs.rich);
+	const auto stockRoleCountsUnchanged
+		= (gStockTranslationRpcCounts.text == stockRpcs.text)
+		&& (gStockTranslationRpcCounts.rich == stockRpcs.rich);
+	const auto stockCountsUnchanged
+		= (stockAfterBarrier.text == stockRpcs.text)
+		&& (stockAfterBarrier.rich == stockRpcs.rich);
+	if (!barrier || !customCountsUnchanged || !stockRoleCountsUnchanged
+		|| !stockCountsUnchanged || stockNetworkAllowedAfter
+		|| customNetworkAllowedAfter) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: barrier=%d custom "
+			"text=%d rich=%d stock text=%d rich=%d network_allowed "
+			"stock=%d custom=%d.\n",
+			barrier, gCustomTranslationRpcCounts.text,
+			gCustomTranslationRpcCounts.rich,
+			gStockTranslationRpcCounts.text, gStockTranslationRpcCounts.rich,
+			stockNetworkAllowedAfter, customNetworkAllowedAfter);
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Translation controls counts unchanged after 1000 ms main-queue "
+		"barrier: custom text=%d rich=%d; stock text=%d rich=%d; "
+		"network_allowed stock=%d custom=%d.\n",
+		gCustomTranslationRpcCounts.text, gCustomTranslationRpcCounts.rich,
+		gStockTranslationRpcCounts.text, gStockTranslationRpcCounts.rich,
+		stockNetworkAllowedAfter, customNetworkAllowedAfter);
+	gTranslationRpcRoleForRegressionTest
+		= TranslationRpcRoleForRegressionTest::None;
 	std::fprintf(
 		stderr,
 		"Translation controls regression passed: custom rename/reopen "
