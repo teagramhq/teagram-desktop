@@ -1476,7 +1476,8 @@ SetRegressionSessionPremium(not_null<Main::Session *> session, UserId selfId,
 
 [[nodiscard]] MTPmessages_ChatFull
 RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
-						UserId creatorId, bool memberIsAdmin = false) {
+						UserId creatorId, bool memberIsAdmin = false,
+						bool selfPremium = false) {
 	const auto memberId = (creatorId == UserId(1)) ? UserId(2) : UserId(1);
 	const auto member
 		= memberIsAdmin
@@ -1514,12 +1515,20 @@ RegressionChatFullReply(ChatId chatId, int version, QString selfPhone,
 		MTPint(), MTPint(), MTPInputGroupCall(), MTPint(), MTPPeer(),
 		MTPstring(), MTPint(), MTP_vector<MTPlong>(0), MTP_chatReactionsNone(),
 		MTPint());
-	return MTP_messages_chatFull(fullChat, MTP_vector<MTPChat>(0),
-								 MTP_vector<MTPUser>({
-									 RegressionUser(UserId(1), true, selfPhone),
-									 RegressionUser(UserId(2), false, u"2"_q),
-									 RegressionUser(UserId(9), false, u"9"_q),
-								 }));
+	return MTP_messages_chatFull(
+		fullChat, MTP_vector<MTPChat>(0),
+		MTP_vector<MTPUser>({
+			RegressionUser(UserId(1), true, selfPhone, selfPremium),
+			RegressionUser(UserId(2), false, u"2"_q),
+			RegressionUser(UserId(9), false, u"9"_q),
+		}));
+}
+
+[[nodiscard]] MTPmessages_ChatFull
+RegressionStockChatFullReply(ChatId chatId, int version, QString selfPhone,
+							 UserId creatorId, bool memberIsAdmin = false) {
+	return RegressionChatFullReply(chatId, version, std::move(selfPhone),
+								   creatorId, memberIsAdmin, true);
 }
 
 // A bot peer for the webview fixtures: the bot flag plus a bot info
@@ -2866,7 +2875,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockChat));
 	stock->session().api().processFullPeer(
-		stockPeer, RegressionChatFullReply(chatId, 1, QString(), UserId(2)));
+		stockPeer,
+		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
 	if (stock->session().user()->isLoaded()
 		|| !stockChat->participants.empty()) {
 		return FailChatParticipantsRegression(
@@ -2874,7 +2884,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	stock->session().api().processFullPeer(
 		stockPeer,
-		RegressionChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
+		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
 	if (!stock->session().user()->isLoaded()
 		|| !HasExpectedParticipants(stockChat, UserId(2))) {
 		return FailChatParticipantsRegression(
@@ -4010,8 +4020,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto stockActionPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
 	stock->session().api().processFullPeer(
-		stockActionPeer,
-		RegressionChatFullReply(actionChatId, 1, u"+10000000001"_q, selfId));
+		stockActionPeer, RegressionStockChatFullReply(
+							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
 	if (!HasExpectedParticipants(stockActionChat, selfId)
 		|| !stockActionChat->canEditInformation()
@@ -4044,8 +4054,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
 	stock->session().api().processFullPeer(
 		memberActionPeer,
-		RegressionChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
-								UserId(2)));
+		RegressionStockChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
+									 UserId(2)));
 
 	const auto adminActionChatId = ChatId(1054);
 	const auto adminActionChat
@@ -4054,8 +4064,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
 	stock->session().api().processFullPeer(
 		adminActionPeer,
-		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
+		RegressionStockChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+									 UserId(2), true));
 	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 		adminActionChat, "stock full-list promotion", true);
 	if (!HasExpectedParticipants(adminActionChat, UserId(2))
@@ -4073,8 +4083,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*fullListDemotionChat));
 	stock->session().api().processFullPeer(
 		fullListDemotionPeer,
-		RegressionChatFullReply(fullListDemotionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
+		RegressionStockChatFullReply(fullListDemotionChatId, 1,
+									 u"+10000000001"_q, UserId(2), true));
 	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
 		fullListDemotionChat, "stock full-list demotion seed", true);
 	if (!fullListDemotionChat->admins.contains(stockSelf)
@@ -4146,8 +4156,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto liveAdminPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
 	stock->session().api().processFullPeer(
-		liveAdminPeer, RegressionChatFullReply(liveAdminChatId, 1,
-											   u"+10000000001"_q, UserId(2)));
+		liveAdminPeer, RegressionStockChatFullReply(
+						   liveAdminChatId, 1, u"+10000000001"_q, UserId(2)));
 	Data::ApplyChatUpdate(liveAdminChat,
 						  MTP_updateChatParticipantAdmin(
 							  MTP_long(liveAdminChatId.bare),
