@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "core/sandbox.h"
+#include "core/deep_links/deep_links_router.h"
 #include "core/local_url_handlers.h"
 #include "core/launcher.h"
 #include "core/proxy_rotation_manager.h"
@@ -1326,11 +1327,16 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 		&& !passcodeLocked()) {
 		const auto command = urlTrimmed.mid(protocol.size());
 		const auto my = context.value<ClickHandlerContext>();
-		const auto controller = my.sessionWindow.get()
-			? my.sessionWindow.get()
-			: _lastActivePrimaryWindow
-			? _lastActivePrimaryWindow->sessionController()
-			: nullptr;
+		const auto target = my.sessionWindow.get();
+		if (!target
+			&& DeepLinks::Router::Instance().requiresPaidFeatures(command)) {
+			return TryRouterForLocalUrl(nullptr, command);
+		}
+		const auto controller
+			= target ? target
+			  : _lastActivePrimaryWindow
+				  ? _lastActivePrimaryWindow->sessionController()
+				  : nullptr;
 		if (TryRouterForLocalUrl(controller, command)) {
 			return true;
 		}

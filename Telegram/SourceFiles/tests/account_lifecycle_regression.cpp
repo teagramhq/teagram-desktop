@@ -1699,6 +1699,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
+	not_null<Main::Account *> restoredBlocked,
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
@@ -1720,10 +1721,18 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
 		  && pinned->session().uniqueId() == blocked->session().uniqueId();
+	const auto restoredBlockedWithoutPin
+		= !restoredBlocked->sessionExists()
+		  && restoredBlocked->mtp().config().blocked()
+		  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
+		  && !restoredBlocked->local().hasStoredCustomServer()
+		  && !restoredBlocked->local().customServerPinUnknown()
+		  && restoredBlocked->local().mtpAuthorizationWriteFailed();
 	const auto configured
 		= sameUserId && stock->session().paidFeaturesSupported()
 		  && !pinned->session().paidFeaturesSupported()
 		  && !blocked->session().paidFeaturesSupported()
+		  && restoredBlockedWithoutPin
 		  && pinned->mtp().dcOptions().hasCustomServer()
 		  && !pinned->mtp().dcOptions().blocked()
 		  && !blocked->mtp().dcOptions().hasCustomServer()
@@ -1737,7 +1746,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: session fixtures did not "
-			"match stock, custom, and blocked-without-pin accounts.\n");
+			"match stock, custom, blocked, and restored blocked accounts.\n");
 		return false;
 	}
 
@@ -1898,38 +1907,79 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
 
-	const auto activeBeforeMissingController = app.activeWindow();
-	const auto stockToastBeforeMissingController
-		= stockController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	const auto pinnedToastBeforeMissingController
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	const auto blockedToastBeforeMissingController
-		= blockedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (Core::DeepLinks::Router::Instance().tryHandle(nullptr,
-													  u"settings/premium"_q)
-		|| (stockController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= stockToastBeforeMissingController)
-		|| (pinnedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= pinnedToastBeforeMissingController)
-		|| (blockedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= blockedToastBeforeMissingController)
-		|| stockController->content()->isMainSectionShown()
-		|| pinnedController->content()->isMainSectionShown()
-		|| blockedController->content()->isMainSectionShown()
-		|| stockController->isLayerShown() || pinnedController->isLayerShown()
-		|| blockedController->isLayerShown()
-		|| (app.activeWindow() != activeBeforeMissingController)) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: a missing controller "
-			"was not a no-op.\n");
+	const auto primary = app.activePrimaryWindow();
+	if (!primary) {
 		return false;
+	}
+	const auto primaryAccount = not_null<Main::Account *>(&primary->account());
+	const auto restorePrimary = gsl::finally([&] {
+		if (const auto controller = primary->sessionController()) {
+			resetController(not_null<Window::SessionController *>(controller));
+		}
+		primary->showAccount(primaryAccount);
+	});
+	primary->showAccount(stock);
+	primary->activate();
+	QCoreApplication::processEvents();
+	const auto primaryController = primary->sessionController();
+	if (!primaryController
+		|| (&primaryController->session() != &stock->session())) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: primary window did "
+					 "not target the stock session.\n");
+		return false;
+	}
+	resetController(not_null<Window::SessionController *>(primaryController));
+	QCoreApplication::processEvents();
+	const auto missingTargetContext
+		= QVariant::fromValue(ClickHandlerContext{});
+	for (const auto &url : routes) {
+		const auto stockToastBeforeMissingController
+			= stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto pinnedToastBeforeMissingController
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto blockedToastBeforeMissingController
+			= blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto primaryToastBeforeMissingController
+			= primaryController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto activeBeforeMissingController = app.activeWindow();
+		const auto handled = app.openLocalUrl(url, missingTargetContext);
+		QCoreApplication::processEvents();
+		const auto unchanged
+			= handled
+			  && (stockController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == stockToastBeforeMissingController)
+			  && (pinnedController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == pinnedToastBeforeMissingController)
+			  && (blockedController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == blockedToastBeforeMissingController)
+			  && (primaryController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == primaryToastBeforeMissingController)
+			  && !stockController->content()->isMainSectionShown()
+			  && !pinnedController->content()->isMainSectionShown()
+			  && !blockedController->content()->isMainSectionShown()
+			  && !primaryController->content()->isMainSectionShown()
+			  && !stockController->isLayerShown()
+			  && !pinnedController->isLayerShown()
+			  && !blockedController->isLayerShown()
+			  && !primaryController->isLayerShown()
+			  && (app.activeWindow() == activeBeforeMissingController);
+		if (!unchanged) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: missing target was "
+				"not a no-op for route=%s restored-blocked=%d.\n",
+				url.toUtf8().constData(), restoredBlockedWithoutPin);
+			return false;
+		}
 	}
 
 	pinnedController->window().activate();
@@ -2016,8 +2066,8 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 // a session whose window belongs to another account are all covered.
 [[nodiscard]] bool RunMiniAppOpenRefusalRegression(
 	Core::Application &app, UserId selfId, not_null<Main::Account *> stock,
-	not_null<Main::Account *> pinned, not_null<Main::Account *> blank,
-	not_null<Window::Controller *> stockWindow,
+	not_null<Main::Account *> pinned, not_null<Main::Account *> restoredBlocked,
+	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
 	not_null<Window::Controller *> pinnedWindow,
 	not_null<Window::Controller *> blankWindow) {
 	const auto stockController = stockWindow->sessionController();
@@ -2287,7 +2337,8 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		return false;
 	}
 	if (!RunSettingsDeepLinkRefusalRegression(
-			app, stock, pinned, blank, stockController, pinnedController,
+			app, stock, pinned, blank, restoredBlocked, stockController,
+			pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
 		blank->forcedLogOut();
 		return false;
@@ -2324,7 +2375,66 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		blank->forcedLogOut();
 		return false;
 	}
+	const auto expiredController = blankWindow->sessionController();
+	if (!expiredController
+		|| (&expiredController->session() != &blank->session())) {
+		return false;
+	}
+	const auto expiredControllerWeak = base::make_weak(expiredController);
+	const auto expiredContext = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = expiredControllerWeak,
+	});
+	app.closeWindow(blankWindow.get());
+	QCoreApplication::processEvents();
+	if (!expiredControllerWeak.empty()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: closed controller "
+					 "did not expire.\n");
+		return false;
+	}
 	blank->forcedLogOut();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary) {
+		return false;
+	}
+	const auto primaryAccount = not_null<Main::Account *>(&primary->account());
+	const auto restorePrimary = gsl::finally([&] {
+		if (const auto controller = primary->sessionController()) {
+			if (controller->isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+			}
+			controller->clearSectionStack(Window::SectionShow(
+				anim::type::instant, anim::activation::background));
+		}
+		primary->showAccount(primaryAccount);
+	});
+	primary->showAccount(stock);
+	primary->activate();
+	QCoreApplication::processEvents();
+	const auto primaryController = primary->sessionController();
+	if (!primaryController
+		|| (&primaryController->session() != &stock->session())) {
+		return false;
+	}
+	const auto expiredToastBefore
+		= primaryController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto expiredActiveBefore = app.activeWindow();
+	const auto expiredHandled
+		= app.openLocalUrl(u"tg://settings/premium"_q, expiredContext);
+	QCoreApplication::processEvents();
+	if (!expiredHandled || (primaryController->content()->isMainSectionShown())
+		|| primaryController->isLayerShown()
+		|| (primaryController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
+			!= expiredToastBefore)
+		|| (app.activeWindow() != expiredActiveBefore)) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: expired target fell back "
+			"to the stock account.\n");
+		return false;
+	}
 
 	// A previously custom-pinned account can be restored into a blocked
 	// config when its stored pin is unreadable; the durable marker retains it.
@@ -4179,9 +4289,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"translation controls crossed stock and custom sessions");
 	}
 #endif
-	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned, blank,
-										 stockWindow, pinnedWindow,
-										 blankWindow)) {
+	const auto restoredBlocked
+		= not_null<Main::Account *>(domain.accounts().front().account.get());
+	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned,
+										 restoredBlocked, blank, stockWindow,
+										 pinnedWindow, blankWindow)) {
 		return FailChatParticipantsRegression(
 			"mini-app open refusal was not observable on the owning session");
 	}
@@ -5084,6 +5196,26 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)) {
 		return FailAccountLifecycleRegression(
 			"blocked teardown wrote authorization data or a failure marker");
+	}
+	if (!Main::details::CommitServerForget(
+			&blockedWithoutAuthorizationFailure->local(),
+			Storage::ServerCacheBinding{}, [] {})
+		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
+		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
+		|| !blockedWithoutAuthorizationFailure->local()
+				.writeMtpAuthorizationFailure()
+		|| !RestartDomain(domain)) {
+		return FailAccountLifecycleRegression(
+			"could not restore a blocked account without custom-pin metadata");
+	}
+	const auto restoredBlocked = FindAuthorizationBlockedAccount(domain);
+	if (!restoredBlocked || !restoredBlocked->mtp().config().blocked()
+		|| restoredBlocked->sessionExists()
+		|| !restoredBlocked->local().mtpAuthorizationWriteFailed()
+		|| restoredBlocked->local().hasStoredCustomServer()
+		|| restoredBlocked->local().customServerPinUnknown()) {
+		return FailAccountLifecycleRegression(
+			"restored blocked account retained custom-pin metadata");
 	}
 
 	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
