@@ -66,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
+#include "ui/layers/generic_box.h"
 #include "ui/widgets/fields/special_fields.h"
 #include "styles/style_widgets.h"
 #include "window/window_controller.h"
