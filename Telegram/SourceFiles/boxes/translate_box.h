@@ -18,6 +18,14 @@ namespace Ui {
 class BoxContent;
 class GenericBox;
 
+} // namespace Ui
+
+namespace Main {
+class Session;
+} // namespace Main
+
+namespace Ui {
+
 void TranslateBox(
 	not_null<GenericBox*> box,
 	not_null<PeerData*> peer,
@@ -25,7 +33,10 @@ void TranslateBox(
 	TextWithEntities text,
 	bool hasCopyRestriction);
 
-[[nodiscard]] bool SkipTranslate(TextWithEntities textWithEntities);
+[[nodiscard]] bool SkipTranslate(
+	not_null<Main::Session*> session,
+	TextWithEntities textWithEntities,
+	bool richMessage = false);
 
 [[nodiscard]] object_ptr<BoxContent> EditSkipTranslationLanguages();
 [[nodiscard]] object_ptr<BoxContent> ChooseTranslateToBox(

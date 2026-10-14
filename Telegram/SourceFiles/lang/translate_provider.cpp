@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/history_item.h"
+#include "main/main_session.h"
 #include "lang/translate_mtproto_provider.h"
 #include "lang/translate_url_provider.h"
 #include "platform/platform_translate_provider.h"
@@ -27,22 +28,59 @@ base::options::option<QString> OptionTranslateUrlTemplate({
 		" Supports %q text, %f source language and %t target language.",
 });
 
+class UnavailableTranslateProvider final : public Ui::TranslateProvider {
+public:
+	[[nodiscard]] bool supportsMessageId() const override {
+		return false;
+	}
+
+	void request(
+			Ui::TranslateProviderRequest,
+			LanguageId,
+			Fn<void(Ui::TranslateProviderResult)> done) override {
+		done(Ui::TranslateProviderResult{
+			.error = Ui::TranslateProviderError::Unknown,
+		});
+	}
+};
+
 } // namespace
 
 namespace Ui {
 
+details::TranslateProviderChoice TranslateProviderChoiceForSession(
+		not_null<Main::Session*> session) {
+	const auto urlTemplate = OptionTranslateUrlTemplate.value();
+	const auto hasUrlTemplate = details::HasTranslateUrlTemplate(urlTemplate);
+	return details::ChooseTranslateProvider(
+		session->serverTranslationSupported(),
+		hasUrlTemplate,
+		details::IsSecureTranslateUrlTemplate(urlTemplate),
+		Platform::IsTranslateProviderAvailable(),
+		Core::App().settings().usePlatformTranslation());
+}
+
+bool HasTranslateProvider(not_null<Main::Session*> session) {
+	return (TranslateProviderChoiceForSession(session)
+		!= details::TranslateProviderChoice::Unavailable);
+}
+
 std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 		not_null<Main::Session*> session) {
 	const auto urlTemplate = OptionTranslateUrlTemplate.value();
-	if (!urlTemplate.isEmpty()
-		&& urlTemplate.contains(u"%q"_q)) {
-		return CreateUrlTranslateProvider(urlTemplate);
-	}
-	if (Core::App().settings().usePlatformTranslation()
-		&& Platform::IsTranslateProviderAvailable()) {
+	switch (TranslateProviderChoiceForSession(session)) {
+	case details::TranslateProviderChoice::Url:
+		return CreateUrlTranslateProvider(
+			urlTemplate,
+			!session->serverTranslationSupported());
+	case details::TranslateProviderChoice::Platform:
 		return Platform::CreateTranslateProvider();
+	case details::TranslateProviderChoice::MTProto:
+		return CreateMTProtoTranslateProvider(session);
+	case details::TranslateProviderChoice::Unavailable:
+		return std::make_unique<UnavailableTranslateProvider>();
 	}
-	return CreateMTProtoTranslateProvider(session);
+	return std::make_unique<UnavailableTranslateProvider>();
 }
 
 TranslateProviderRequest PrepareTranslateProviderRequest(

@@ -37,6 +37,11 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool translateChatsRowPresentForRegressionTest() const;
+	[[nodiscard]] bool translateButtonRowPresentForRegressionTest() const;
+	[[nodiscard]] bool doNotTranslateRowPresentForRegressionTest() const;
+	[[nodiscard]] bool platformTranslationRowPresentForRegressionTest() const;
+	[[nodiscard]] bool translationAboutPresentForRegressionTest() const;
+	[[nodiscard]] bool platformPackNotePresentForRegressionTest() const;
 #endif
 
   protected:
@@ -54,6 +59,11 @@ public:
 	QPointer<Ui::RpWidget> _showButtonToggle;
 	QPointer<Ui::RpWidget> _translateChatsToggle;
 	QPointer<Ui::RpWidget> _doNotTranslateButton;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	QPointer<Ui::RpWidget> _platformTranslationToggle;
+	bool _translationAboutPresent = false;
+	bool _platformPackNotePresent = false;
+#endif
 	rpl::event_stream<bool> _translateChatTurnOff;
 	Fn<void()> _setInnerFocus;
 	Fn<Ui::ScrollToRequest(int rows)> _jump;

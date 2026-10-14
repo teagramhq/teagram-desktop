@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Ui {
 
 [[nodiscard]] std::unique_ptr<TranslateProvider> CreateUrlTranslateProvider(
-	QString urlTemplate);
+	QString urlTemplate,
+	bool requireHttpsWithHost = false);
 
 } // namespace Ui

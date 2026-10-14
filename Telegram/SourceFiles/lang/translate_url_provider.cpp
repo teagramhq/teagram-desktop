@@ -177,8 +177,9 @@ void CollectJsonLines(
 
 class UrlTranslateProvider final : public TranslateProvider {
 public:
-	explicit UrlTranslateProvider(QString urlTemplate)
-	: _urlTemplate(std::move(urlTemplate)) {
+	UrlTranslateProvider(QString urlTemplate, bool requireHttpsWithHost)
+	: _urlTemplate(std::move(urlTemplate))
+	, _requireHttpsWithHost(requireHttpsWithHost) {
 	}
 
 	[[nodiscard]] bool supportsMessageId() const override {
@@ -210,7 +211,12 @@ public:
 			u"%t"_q,
 			QString::fromLatin1(QUrl::toPercentEncoding(toCode)));
 		const auto requestUrl = QUrl(url);
-		if (!requestUrl.isValid()) {
+		if (!requestUrl.isValid()
+			|| (_requireHttpsWithHost
+				&& (requestUrl.scheme().compare(
+					u"https"_q,
+					Qt::CaseInsensitive) != 0
+					|| requestUrl.host().isEmpty()))) {
 			done(TranslateProviderResult{
 				.error = TranslateProviderError::Unknown,
 			});
@@ -235,6 +241,7 @@ public:
 
 private:
 	const QString _urlTemplate;
+	const bool _requireHttpsWithHost;
 	QNetworkAccessManager _network;
 
 };
@@ -242,8 +249,11 @@ private:
 } // namespace
 
 std::unique_ptr<TranslateProvider> CreateUrlTranslateProvider(
-		QString urlTemplate) {
-	return std::make_unique<UrlTranslateProvider>(std::move(urlTemplate));
+		QString urlTemplate,
+		bool requireHttpsWithHost) {
+	return std::make_unique<UrlTranslateProvider>(
+		std::move(urlTemplate),
+		requireHttpsWithHost);
 }
 
 } // namespace Ui
