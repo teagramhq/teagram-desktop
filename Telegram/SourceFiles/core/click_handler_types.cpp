@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/popup_menu.h"
@@ -671,7 +672,10 @@ void FormattedDateClickHandler::onClick(ClickContext context) const {
 	const auto canForward = item
 		&& !item->forbidsForward()
 		&& item->history()->peer->allowsForwarding();
-	if (canForward) {
+	const auto canSchedule = item
+		&& Main::details::scheduledMessagesSupportedForPeer(
+			item->history()->peer);
+	if (canForward && canSchedule) {
 		menu->addAction(
 			tr::lng_context_set_reminder(tr::now),
 			[date, itemId, show] {

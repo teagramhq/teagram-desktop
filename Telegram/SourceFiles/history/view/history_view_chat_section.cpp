@@ -66,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/mime_type.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "menu/menu_timecode_action.h"
 #include "data/components/ephemeral_messages.h"
@@ -1286,7 +1287,10 @@ bool ChatWidget::checkSendPayment(
 void ChatWidget::sendingFilesConfirmed(
 		std::shared_ptr<Ui::PreparedBundle> bundle,
 		Api::SendOptions options) {
-	if (showSendingFilesError(*bundle)) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)
+		|| showSendingFilesError(*bundle)) {
 		return;
 	}
 	const auto ephemeralReply = session().ephemeralMessages()
@@ -1450,6 +1454,11 @@ void ChatWidget::send() {
 }
 
 void ChatWidget::sendVoice(const ComposeControls::VoiceToSend &data) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			data.options.scheduled || data.options.scheduleRepeatPeriod)) {
+		return;
+	}
 	const auto withPaymentApproved = [=](int approved) {
 		auto copy = data;
 		copy.options.starsApproved = approved;
@@ -1477,6 +1486,11 @@ void ChatWidget::sendVoice(const ComposeControls::VoiceToSend &data) {
 }
 
 void ChatWidget::send(Api::SendOptions options) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)) {
+		return;
+	}
 	if (const auto page = _composeControls->shownRichMessage()) {
 		sendRichDraft(page, options);
 		return;
@@ -1500,7 +1514,9 @@ void ChatWidget::send(Api::SendOptions options) {
 void ChatWidget::sendRichDraft(
 		std::shared_ptr<const Iv::RichPage> page,
 		Api::SendOptions options) {
-	if (!page) {
+	if (!page || !Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 	if (ShowEphemeralReplyTextOnlyError(
@@ -1618,6 +1634,11 @@ void ChatWidget::sendTextWithTags(
 		bool useCurrentWebPageDraft,
 		Api::SendOptions options,
 		Fn<void()> done) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)) {
+		return;
+	}
 	if (!options.scheduled) {
 		_cornerButtons.clearReplyReturns();
 	}
@@ -1934,6 +1955,12 @@ bool ChatWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
 		Api::MessageToSend messageToSend,
 		std::optional<MsgId> localId) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			messageToSend.action.options.scheduled
+				|| messageToSend.action.options.scheduleRepeatPeriod)) {
+		return false;
+	}
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(messageToSend.action.replyTo.messageId);
 	const auto error = !ephemeralReply
@@ -1978,6 +2005,11 @@ void ChatWidget::sendExistingPhoto(not_null<PhotoData*> photo) {
 bool ChatWidget::sendExistingPhoto(
 		not_null<PhotoData*> photo,
 		Api::SendOptions options) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)) {
+		return false;
+	}
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(replyTo().messageId);
 	const auto error = !ephemeralReply
@@ -2035,7 +2067,10 @@ void ChatWidget::sendInlineResult(
 		not_null<UserData*> bot,
 		Api::SendOptions options,
 		std::optional<MsgId> localMessageId) {
-	if (ShowEphemeralReplyTextOnlyError(
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_peer,
+			options.scheduled || options.scheduleRepeatPeriod)
+		|| ShowEphemeralReplyTextOnlyError(
 			controller()->uiShow(),
 			&session(),
 			replyTo().messageId)) {
@@ -2077,6 +2112,8 @@ SendMenu::Details ChatWidget::sendMenuDetails() const {
 		.isEphemeralBotReply(replyTo().messageId);
 	const auto type = ephemeralReply
 		? Type::Disabled
+		: !Main::details::scheduledMessagesSupportedForPeer(_peer)
+		? Type::SilentOnly
 		: (_topic && !_peer->starsPerMessageChecked())
 		? Type::Scheduled
 		: Type::SilentOnly;

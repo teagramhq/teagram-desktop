@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "mainwidget.h"
 #include "menu/menu_send.h"
 #include "settings/sections/settings_premium.h"
@@ -931,8 +932,11 @@ private:
 	[[nodiscard]] bool showDetachedScheduleBox() {
 		if (!detachedCompose()
 			|| _composeOptions.submitPolicy
-				!= ComposeBoxOptions::SubmitPolicy::Schedule
-			|| _submitOptions.scheduled) {
+				!= ComposeBoxOptions::SubmitPolicy::Schedule) {
+			return false;
+		} else if (!Main::details::scheduledMessagesSupportedForPeer(_peer)) {
+			return true;
+		} else if (_submitOptions.scheduled) {
 			return false;
 		} else if (_scheduleBox) {
 			return true;
@@ -1572,6 +1576,11 @@ private:
 	}
 
 	void requestSubmit(Api::SendOptions options) {
+		if (!Main::details::scheduledSendAllowedForPeer(
+				_peer,
+				options.scheduled || options.scheduleRepeatPeriod)) {
+			return;
+		}
 		_submitOptions = std::move(options);
 		if (_composeAction) {
 			_composeAction->options = _submitOptions;

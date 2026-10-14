@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
+#include "main/session_feature_support.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
@@ -4238,7 +4239,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 					 && (session.serverTranslationSupported() == supported)
 					 && (session.sharedFoldersSupported() == supported)
 					 && (session.accountBioEditSupported() == supported)
-					 && (session.accountUsernameEditSupported() == supported);
+					 && (session.accountUsernameEditSupported() == supported)
+					 && (Main::details::noForwardsSupportedForPeer(
+						 session.user()) == supported)
+					 && (Main::details::chatThemeEditingSupportedForPeer(
+						 session.user()) == supported)
+					 && (Main::details::scheduledMessagesSupportedForPeer(
+						 session.user()) == supported);
 		  };
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
@@ -4862,13 +4869,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto printCapabilities = [](const char *name,
 									  const Main::Session &session) {
 		std::fprintf(
-			stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d%d\n", name,
+			stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d%d%d%d%d\n", name,
 			session.callsSupported(), session.botAppsSupported(),
 			session.paidFeaturesSupported(), session.storiesSupported(),
 			session.exportSupported(), session.passportSupported(),
 			session.aiComposeSupported(), session.serverTranslationSupported(),
 			session.sharedFoldersSupported(), session.accountBioEditSupported(),
-			session.accountUsernameEditSupported());
+			session.accountUsernameEditSupported(),
+			Main::details::noForwardsSupportedForPeer(session.user()),
+			Main::details::chatThemeEditingSupportedForPeer(session.user()),
+			Main::details::scheduledMessagesSupportedForPeer(session.user()));
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();

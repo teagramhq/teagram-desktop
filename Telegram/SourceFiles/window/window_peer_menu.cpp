@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "menu/menu_mute.h"
 #include "menu/menu_ttl_validator.h"
@@ -1337,7 +1338,9 @@ SendMenu::Details Filler::createSendMenuDetails() const {
 
 	const auto type = (_request.section == Section::Scheduled)
 		? Type::Disabled
-		: (!_peer || _peer->starsPerMessageChecked())
+		: (!_peer
+			|| _peer->starsPerMessageChecked()
+			|| !Main::details::scheduledMessagesSupportedForPeer(_peer))
 		? Type::SilentOnly
 		: (_request.section == Section::Replies)
 		? (_topic ? Type::Scheduled : Type::SilentOnly)
@@ -1350,7 +1353,10 @@ SendMenu::Details Filler::createSendMenuDetails() const {
 }
 
 void Filler::addCreatePoll() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1386,7 +1392,10 @@ void Filler::addCreatePoll() {
 }
 
 void Filler::addCreateTodoList() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1420,7 +1429,9 @@ void Filler::addCreateTodoList() {
 }
 
 void Filler::addThemeEdit() {
-	if (_peer->isVerifyCodes() || _peer->isRepliesChat()) {
+	if (_peer->isVerifyCodes()
+		|| _peer->isRepliesChat()
+		|| !Main::details::chatThemeEditingSupportedForPeer(_peer)) {
 		return;
 	}
 	const auto user = _peer->asUser();
@@ -1523,7 +1534,8 @@ void ShowDisableSharingBox(
 
 void Filler::addToggleNoForwards() {
 	const auto user = _peer->asUser();
-	if (!user
+	if (!Main::details::noForwardsSupportedForPeer(_peer)
+		|| !user
 		|| user->isInaccessible()
 		|| user->isBot()
 		|| user->isServiceUser()
@@ -3415,7 +3427,13 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			}
 			return false;
 		}();
+		const auto supportsSchedule = ranges::all_of(
+			selected,
+			[](not_null<PeerData*> peer) {
+				return Main::details::scheduledMessagesSupportedForPeer(peer);
+			});
 		return hasPaid
+			|| !supportsSchedule
 			? SendMenu::Type::SilentOnly
 			: ranges::all_of(selected, HistoryView::CanScheduleUntilOnline)
 			? SendMenu::Type::ScheduledToUser
