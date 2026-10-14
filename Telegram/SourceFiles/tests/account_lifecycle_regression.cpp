@@ -2158,7 +2158,13 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		if (action->isSeparator()) {
 			continue;
 		}
-		result.actions.push_back(action->text().trimmed());
+		const auto name = action->text().trimmed();
+		result.actions.push_back(name);
+		// Menu::handleKeyPress traverses enabled action widgets. Keep this
+		// read-only so detached regression menus do not receive native focus.
+		if (action->isEnabled()) {
+			result.keyboardNames.push_back(name);
+		}
 		const auto item = menu.menu()->itemForAction(action);
 		if (!item) {
 			continue;
@@ -2171,17 +2177,6 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		if (!name.isEmpty()) {
 			result.accessibleNames.push_back(name);
 		}
-	}
-	menu.menu()->clearSelection();
-	auto down = QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
-	const auto actionCount = int(menu.actions().size());
-	for (auto i = 0; i != actionCount; ++i) {
-		menu.menu()->handleKeyPress(&down);
-		const auto selected = menu.menu()->findSelectedAction();
-		if (!selected) {
-			break;
-		}
-		result.keyboardNames.push_back(selected->action()->text().trimmed());
 	}
 	return result;
 }
