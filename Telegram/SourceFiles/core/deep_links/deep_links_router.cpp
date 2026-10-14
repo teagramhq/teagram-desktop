@@ -126,11 +126,12 @@ bool Router::tryHandle(
 
 bool Router::requiresPaidFeatures(const QString &command) const {
 	const auto ctx = ParseCommand(nullptr, command);
+	const auto path = ctx.path.toLower();
 	const auto i = _handlers.find(ctx.section);
 	return (i != _handlers.end())
 		   && std::any_of(i->second.begin(), i->second.end(),
 						  [&](const auto &entry) {
-							  return IsPaidFeaturePath(entry, ctx.path);
+							  return IsPaidFeaturePath(entry, path);
 						  });
 }
 

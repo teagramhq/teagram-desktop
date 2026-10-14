@@ -1705,6 +1705,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	not_null<Window::SessionController *> blockedController) {
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
+		u"tg://settings/PREMIUM"_q,
 		u"tg://settings/stars"_q,
 		u"tg://settings/stars/top-up"_q,
 		u"tg://settings/stars/stats"_q,
