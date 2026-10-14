@@ -8,6 +8,19 @@ token or choose the image tag. The tag is derived from the tracked Linux
 dependency recipe, and the job receives only `contents: read` and
 `packages: write`. Pull request Linux jobs receive `packages: read` only.
 
+## Linux build after dependency image publication
+
+`Linux.` also runs on `workflow_run` after `Linux libraries.` completes. That
+event runs in the default-branch context, with its Actions cache scope, even
+when the completed run came from a fork whose branch is also named `dev`. The
+`linux-changes` job therefore carries a job-level condition that admits a
+`workflow_run` source only when GitHub reports a successful `push` run on the
+default branch of this repository. GitHub evaluates that condition
+before any checkout or repository script runs, so an untrusted source gets
+neither, and `linux-build` is skipped with it. A fork-controlled script running here could
+recover the cache token and plant default-branch cache entries that the signed
+`MacOS Packaged.` release build restores.
+
 ## Actions cache cleanup
 
 The `pull_request_target` cleanup runs only when a PR closes. It does not check
@@ -23,7 +36,8 @@ that GitHub reports both the source branch as `dev` and the source repository
 as this repository. It does not check out or run source-workflow artifacts.
 Its `actions: write` token is used only to list and delete cache IDs returned
 for the exact `refs/heads/dev` ref and the `macOS-arm64-ccache-dev-` key
-prefix. PR-controlled workflow runs fail the source validation and cannot
+prefix. It keeps the newest entry of each profile, including the unprofiled
+key `MacOS Packaged.` saves. PR-controlled workflow runs fail the source validation and cannot
 select a cache key or ID.
 
 Cache deletion can cause a later build to compile more work. It cannot change

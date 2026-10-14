@@ -28,6 +28,9 @@ jobs:
 
   linux-changes:
     name: Detect Linux changes
+    # A workflow_run event can come from a fork's run on a branch named dev.
+    # Decide trust before any checkout or repository script runs.
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == github.event.repository.default_branch && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-26.04
     outputs:
       required: ${{ steps.filter.outputs.required }}
@@ -41,22 +44,6 @@ jobs:
 
       - name: Test Linux change detection.
         run: bash .github/scripts/test_detect_linux_changes.sh
-
-      - name: Verify Linux dependency image publication.
-        if: github.event_name == 'workflow_run'
-        env:
-          PUBLICATION_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          PUBLICATION_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          PUBLICATION_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
-        run: |
-          set -euo pipefail
-          if [[ "${PUBLICATION_CONCLUSION}" != "success" \
-              || "${PUBLICATION_BRANCH}" != "${DEFAULT_BRANCH}" \
-              || "${PUBLICATION_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
-            echo "::error::The Linux dependency image workflow did not complete successfully on the default branch."
-            exit 1
-          fi
 
       - name: Detect Linux-relevant changes.
         id: filter

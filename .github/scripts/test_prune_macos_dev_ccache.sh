@@ -40,7 +40,7 @@ fail() {
 
 prune_script="${temp_dir}/prune-macos-cache.sh"
 awk '
-  /^      - name: Keep the PR-compatible compiler cache\.$/ { in_step = 1; next }
+  /^      - name: Keep the newest compiler cache per profile\.$/ { in_step = 1; next }
   in_step && /^      - name:/ { exit }
   in_step && /^        run: \|$/ { in_run = 1; next }
   in_run { sub(/^          /, ""); print }
@@ -73,12 +73,14 @@ fi
 
 dispatch_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1002-1"
 older_dispatch_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1000-1"
-legacy_key="macOS-arm64-ccache-dev-${pr_hash}-999-1"
+packaged_key="macOS-arm64-ccache-dev-${pr_hash}-999-1"
+older_packaged_key="macOS-arm64-ccache-dev-${pr_hash}-998-1"
 {
   printf '202\t%s\n' "$dispatch_key"
   cat "$cache_state"
   printf '201\t%s\n' "$older_dispatch_key"
-  printf '199\t%s\n' "$legacy_key"
+  printf '199\t%s\n' "$packaged_key"
+  printf '198\t%s\n' "$older_packaged_key"
 } > "${cache_state}.next"
 mv "${cache_state}.next" "$cache_state"
 
@@ -87,7 +89,8 @@ env PATH="${temp_dir}/bin:${PATH}" GITHUB_REPOSITORY=teagramhq/teagram-desktop \
   bash "$prune_script" > "${temp_dir}/dispatch-cleanup.log"
 grep -Fq $'101\tmacOS-arm64-ccache-dev-pr-compatible-' "$cache_state" || fail 'Dispatch cleanup must preserve the scheduled PR-compatible snapshot.'
 grep -Fq $'202\tmacOS-arm64-ccache-dev-protected-' "$cache_state" || fail 'Cleanup must retain only the newest protected profile.'
-for cache_id in 100 199 201; do
+grep -Fq $'199\tmacOS-arm64-ccache-dev-'"${pr_hash}" "$cache_state" || fail 'Cleanup must keep the newest MacOS Packaged. compiler cache.'
+for cache_id in 100 198 201; do
   if grep -Fq "${cache_id}"$'\t' "$cache_state"; then
     fail "Cleanup must remove superseded cache id ${cache_id}."
   fi

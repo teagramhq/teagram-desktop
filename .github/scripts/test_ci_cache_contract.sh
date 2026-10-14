@@ -31,6 +31,17 @@ require_text "$linux_workflow" "restore-keys: \${{ runner.OS }}-tdesktop-\${{ ma
 require_text "$linux_workflow" 'workflow_run:'
 require_text "$linux_workflow" 'workflows: ["Linux libraries."]'
 require_text "$linux_workflow" 'packages: read'
+linux_changes_guard="$(awk '
+  /^  linux-changes:$/ { in_job = 1; next }
+  in_job && /^  [^ ]/ { exit }
+  in_job && /^    steps:$/ { exit }
+  in_job && /^    if: / { sub(/^    if: /, ""); print }
+' "$linux_workflow")"
+expected_linux_changes_guard="github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == github.event.repository.default_branch && github.event.workflow_run.head_repository.full_name == github.repository)"
+if [[ "$linux_changes_guard" != "$expected_linux_changes_guard" ]]; then
+  printf '%s linux-changes job must gate workflow_run sources before checkout with: if: %s\n' "$linux_workflow" "$expected_linux_changes_guard" >&2
+  exit 1
+fi
 require_text "$linux_workflow" 'run: bash .github/scripts/linux_libraries_image.sh pull'
 require_text "$linux_workflow" 'name: Report Linux Libraries duration.'
 require_text "$linux_workflow" 'name: Report Actions cache total.'
@@ -74,6 +85,8 @@ require_text "$cache_threat_model" '## Trusted refs and Linux dependency image p
 require_text "$cache_threat_model" 'numeric PR number, validated'
 require_text "$cache_threat_model" 'actions: write'
 require_text "$cache_threat_model" 'PR-controlled workflow runs fail the source validation'
+require_text "$cache_threat_model" '## Linux build after dependency image publication'
+require_text "$cache_threat_model" 'before any checkout or repository script'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
 
