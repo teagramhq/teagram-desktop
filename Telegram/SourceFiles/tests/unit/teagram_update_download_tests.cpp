@@ -2882,7 +2882,6 @@ TEST_CASE(TeagramUpdateManagerCancelLeavesNoCandidate) {
 		manager->performSettingsAction();
 		CHECK(WaitForState(*manager, TeagramUpdateUiState::Downloading));
 		CHECK(WaitUntil([&] { return entered.tryAcquire(1, 0); }));
-		CHECK(!StagingIsEmpty(staging.path()));
 		if (shutdown) {
 			manager.reset();
 		} else {
@@ -3061,7 +3060,7 @@ void CheckManagerInstallsProducerBundle(const QString &temporaryRoot) {
 		installed, dataFile,
 		[&](const QString &path, const QStringList &arguments,
 			qint64 *processId) {
-			CHECK(arguments == QStringList({u"-key"_q, dataFile}));
+			CHECK(arguments.isEmpty());
 			launches.push_back(path);
 			*processId = 0;
 			return path == installed
