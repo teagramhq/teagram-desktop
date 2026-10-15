@@ -904,8 +904,9 @@ void BuildPrivacySection(SectionBuilder &builder) {
 			: tr::lng_edit_privacy_everyone();
 	}) | rpl::flatten_latest();
 
-	const auto messagesPremium = session->paidFeaturesSupported()
-		&& !session->appConfig().newRequirePremiumFree();
+	const auto messagesPremium
+		= session->paidFeaturesSupported()
+		  && !session->appConfig().newRequirePremiumFree();
 	const auto messagesButton = builder.addButton({
 		.id = u"privacy/messages"_q,
 		.title = tr::lng_settings_messages_privacy(),
@@ -939,10 +940,9 @@ void BuildPrivacySection(SectionBuilder &builder) {
 			.id = u"privacy/gifts"_q,
 			.title = tr::lng_settings_gifts_privacy(),
 			.key = Key::GiftsAutoSave,
-			.controllerFactory = [] {
-				return std::make_unique<GiftsAutoSavePrivacyController>();
-			},
-			.keywords = { u"gifts"_q },
+			.controllerFactory
+			= [] { return std::make_unique<GiftsAutoSavePrivacyController>(); },
+			.keywords = {u"gifts"_q},
 		});
 	}
 

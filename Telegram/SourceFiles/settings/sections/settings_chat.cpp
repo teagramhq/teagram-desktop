@@ -852,20 +852,22 @@ void BuildThemeSettingsSection(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 	const auto colorSupported = builder.session()->paidFeaturesSupported();
 
-	builder.add([controller](const WidgetContext &ctx) {
-		SetupThemeSettings(controller, ctx.container.get(), ctx.highlights);
-		return SectionBuilder::WidgetToAdd{};
-	}, [=] {
-		if (!colorSupported) {
-			return SearchEntry();
-		}
-		return SearchEntry{
-			.id = u"chat/peer-color"_q,
-			.title = tr::lng_settings_theme_settings(tr::now),
-			.keywords = { u"color"_q, u"profile"_q, u"name"_q },
-			.icon = { &st::menuIconChangeColors },
-		};
-	});
+	builder.add(
+		[controller](const WidgetContext &ctx) {
+			SetupThemeSettings(controller, ctx.container.get(), ctx.highlights);
+			return SectionBuilder::WidgetToAdd{};
+		},
+		[=] {
+			if (!colorSupported) {
+				return SearchEntry();
+			}
+			return SearchEntry{
+				.id = u"chat/peer-color"_q,
+				.title = tr::lng_settings_theme_settings(tr::now),
+				.keywords = {u"color"_q, u"profile"_q, u"name"_q},
+				.icon = {&st::menuIconChangeColors},
+			};
+		});
 
 	builder.add(nullptr, [] {
 		return SearchEntry{
@@ -2932,11 +2934,9 @@ void SetupThemeSettings(
 	}
 
 	if (controller->session().paidFeaturesSupported()) {
-		AddPeerColorButton(
-			container,
-			controller->uiShow(),
-			controller->session().user(),
-			st::settingsColorButton);
+		AddPeerColorButton(container, controller->uiShow(),
+						   controller->session().user(),
+						   st::settingsColorButton);
 	}
 
 	const auto settings = &Core::App().settings();
