@@ -4,9 +4,11 @@ on:
   # Most macOS feedback lanes are manual/nightly, so lint the whole directory
   # whenever a workflow or an asserted CI contract changes.
   push:
+    branches: [dev]
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
+      - '.github/ci-cache-threat-model.md'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
       - '.github/scripts/ccache_hit_count.sh'
@@ -19,6 +21,7 @@ on:
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/test_prune_linux_dev_ccache.sh'
       - '.github/scripts/linux_libraries_image.sh'
       - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/ensure_release_tag.sh'
@@ -30,6 +33,7 @@ on:
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
+      - '.github/ci-cache-threat-model.md'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
       - '.github/scripts/ccache_hit_count.sh'
@@ -42,6 +46,7 @@ on:
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/test_prune_linux_dev_ccache.sh'
       - '.github/scripts/linux_libraries_image.sh'
       - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/ensure_release_tag.sh'

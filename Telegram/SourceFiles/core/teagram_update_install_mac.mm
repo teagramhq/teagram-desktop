@@ -26,13 +26,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
+#include <copyfile.h>
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <functional>
@@ -47,6 +50,12 @@ constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
+constexpr auto kCustomIconFile = "Icon\r";
+constexpr auto kFinderInfoAttribute = "com.apple.FinderInfo";
+constexpr auto kQuarantineAttribute = "com.apple.quarantine";
+constexpr auto kFinderInfoSize = 32;
+constexpr auto kFinderFlagsOffset = 8;
+constexpr auto kHasCustomIconFlag = 0x04; // High byte of kHasCustomIcon.
 
 struct BundleInfo {
 	QString identifier;
@@ -400,6 +409,76 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 						 && ::fsync(directory) == 0;
 	::close(directory);
 	return removed;
+}
+
+[[nodiscard]] bool CarryCustomIconFile(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed) + '/' + kCustomIconFile;
+	const auto target = QFile::encodeName(candidate) + '/' + kCustomIconFile;
+	struct stat info = {};
+	if (::lstat(source.constData(), &info) != 0) {
+		return errno == ENOENT;
+	} else if (!S_ISREG(info.st_mode) || info.st_uid != ::geteuid()) {
+		return false;
+	}
+	if (::copyfile(source.constData(), target.constData(), nullptr,
+				   COPYFILE_DATA | COPYFILE_XATTR | COPYFILE_EXCL
+					   | COPYFILE_NOFOLLOW)
+		!= 0) {
+		if (errno != EEXIST) {
+			::unlink(target.constData());
+		}
+		return false;
+	}
+	if (::removexattr(target.constData(), kQuarantineAttribute, XATTR_NOFOLLOW)
+			!= 0
+		&& errno != ENOATTR) {
+		::unlink(target.constData());
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool CarryCustomIconFlag(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed);
+	const auto target = QFile::encodeName(candidate);
+	auto installedInfo = std::array<char, kFinderInfoSize>();
+	const auto read = ::getxattr(source.constData(), kFinderInfoAttribute,
+								 installedInfo.data(), installedInfo.size(), 0,
+								 XATTR_NOFOLLOW);
+	if (read < 0) {
+		return errno == ENOATTR;
+	} else if (read != kFinderInfoSize
+			   || !(installedInfo[kFinderFlagsOffset] & kHasCustomIconFlag)) {
+		return true;
+	}
+	auto candidateInfo = std::array<char, kFinderInfoSize>();
+	const auto existing = ::getxattr(target.constData(), kFinderInfoAttribute,
+									 candidateInfo.data(), candidateInfo.size(),
+									 0, XATTR_NOFOLLOW);
+	if (existing != kFinderInfoSize) {
+		if (existing >= 0 || errno != ENOATTR) {
+			return false;
+		}
+		candidateInfo.fill(0);
+	}
+	candidateInfo[kFinderFlagsOffset] |= kHasCustomIconFlag;
+	return ::setxattr(target.constData(), kFinderInfoAttribute,
+					  candidateInfo.data(), candidateInfo.size(), 0,
+					  XATTR_NOFOLLOW)
+		   == 0;
+}
+
+// A custom Finder icon lives outside the sealed Contents directory, so
+// it is carried over only after the candidate's code seal was verified.
+void CarryCustomIcon(const QString &installed, const QString &candidate) {
+	if (!CarryCustomIconFile(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon file."));
+	}
+	if (!CarryCustomIconFlag(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon flag."));
+	}
 }
 
 [[nodiscard]] TeagramUpdateInstallResult
@@ -1055,6 +1134,7 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 			return InstallResult(TeagramUpdateInstallReason::InvalidTarget);
 		}
 		base::Platform::RemoveQuarantine(extraction.bundlePath);
+		CarryCustomIcon(installed, extraction.bundlePath);
 		if (!RemoveMarker(parent, kStartedMarker)) {
 			return InstallResult(TeagramUpdateInstallReason::ReplacementFailed);
 		}

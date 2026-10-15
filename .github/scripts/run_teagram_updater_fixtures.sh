@@ -21,6 +21,7 @@ fixtures=(
   TeagramUpdateInstallerRemovesInterruptedExtraction
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart
   TeagramUpdateStartupKeepsOlderPreviousBundle
+  TeagramUpdateInstallerKeepsCustomIcon
   TeagramUpdateReplacementRetainsPreviousThroughStartup
   TeagramUpdateReplacementRestoresMissingTarget
   TeagramUpdateDownloadFailsWithoutMutation
@@ -111,7 +112,7 @@ done
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     printf '## macOS updater fixtures\n\n'
-    printf -- '- Tested PR head: `%s`\n' "$tested_sha"
+    printf -- '- Tested PR merge ref: `%s`\n' "$tested_sha"
     printf -- '- Runner architecture: `%s`\n' "$architecture"
     printf -- '- Per-case timeout: %s seconds.\n' "$fixture_timeout_seconds"
     printf -- '- Fixture logs: at most %s bytes each.\n\n' "$max_log_bytes"

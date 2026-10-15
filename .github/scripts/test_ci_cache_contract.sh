@@ -5,6 +5,7 @@ linux_workflow=".github/workflows/linux.yml"
 linux_libraries_workflow=".github/workflows/linux_libraries.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 cache_threat_model=".github/ci-cache-threat-model.md"
+workflow_lint_workflow=".github/workflows/workflow_lint.yml"
 
 require_text() {
   local file="$1"
@@ -23,6 +24,23 @@ reject_text() {
     exit 1
   fi
 }
+
+# Linux libraries. publishes the dependency image; nothing pulls centos_env:latest.
+if [[ -e .github/workflows/docker.yml ]]; then
+  printf '%s\n' '.github/workflows/docker.yml must not exist' >&2
+  exit 1
+fi
+
+# The contract tests read the threat model, so editing it must lint, and a PR
+# push must lint once (pull_request), not again through an unfiltered push.
+if [[ "$(grep -Fxc -- "      - '.github/ci-cache-threat-model.md'" "$workflow_lint_workflow")" != 2 ]]; then
+  printf '%s\n' "$workflow_lint_workflow must list .github/ci-cache-threat-model.md under push and pull_request" >&2
+  exit 1
+fi
+if [[ "$(awk 'previous == "  push:" { print; exit } { previous = $0 }' "$workflow_lint_workflow")" != '    branches: [dev]' ]]; then
+  printf '%s\n' "$workflow_lint_workflow must run push lint on dev only" >&2
+  exit 1
+fi
 
 require_text "$linux_workflow" "matrix.defines || 'default'"
 reject_text "$linux_workflow" "matrix.defines || 'null'"
@@ -63,15 +81,15 @@ reject_text "$linux_libraries_workflow" '  pull_request:'
 
 require_text "$cache_cleanup_workflow" '  pull_request_target:'
 require_text "$cache_cleanup_workflow" '    types: [closed]'
-require_text "$cache_cleanup_workflow" '  push:'
+reject_text "$cache_cleanup_workflow" '  push:'
 require_text "$cache_cleanup_workflow" 'branches: [dev]'
 require_text "$cache_cleanup_workflow" '  workflow_run:'
-require_text "$cache_cleanup_workflow" 'workflows: ["MacOS.", "MacOS Packaged."]'
+require_text "$cache_cleanup_workflow" 'workflows: ["MacOS.", "MacOS Packaged.", "Linux."]'
 require_text "$cache_cleanup_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
 require_text "$cache_cleanup_workflow" '      actions: write'
 require_text "$cache_cleanup_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
 require_text "$cache_cleanup_workflow" 'gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"'
-require_text "$cache_cleanup_workflow" 'gh cache list --limit 1000 --key macOS-arm64-ccache-pr-'
+reject_text "$cache_cleanup_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$cache_cleanup_workflow" 'gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"'
 require_text "$cache_cleanup_workflow" 'SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}'
 require_text "$cache_cleanup_workflow" 'SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}'
@@ -79,6 +97,9 @@ require_text "$cache_cleanup_workflow" '[[ "$SOURCE_BRANCH" != "dev" || "$SOURCE
 require_text "$cache_cleanup_workflow" "cache_prefix='macOS-arm64-ccache-dev-'"
 require_text "$cache_cleanup_workflow" '--ref refs/heads/dev'
 require_text "$cache_cleanup_workflow" 'pr-compatible'
+require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'"
+require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
+require_text "$cache_cleanup_workflow" "cache_prefix='Linux-tdesktop-default-'"
 reject_text "$cache_cleanup_workflow" 'actions/checkout@'
 require_text "$cache_threat_model" 'Pull request workflows cannot invoke its write'
 require_text "$cache_threat_model" '## Trusted refs and Linux dependency image publisher'
@@ -89,5 +110,6 @@ require_text "$cache_threat_model" '## Linux build after dependency image public
 require_text "$cache_threat_model" 'before any checkout or repository script'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
+bash .github/scripts/test_prune_linux_dev_ccache.sh
 
 printf 'CI cache contract tests passed.\n'

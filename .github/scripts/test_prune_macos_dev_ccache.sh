@@ -43,6 +43,7 @@ awk '
   /^      - name: Keep the newest compiler cache per profile\.$/ { in_step = 1; next }
   in_step && /^      - name:/ { exit }
   in_step && /^        run: \|$/ { in_run = 1; next }
+  in_run && /^  [^ ]/ { exit }
   in_run { sub(/^          /, ""); print }
 ' "$cleanup_workflow" > "$prune_script"
 [[ -s "$prune_script" ]] || fail 'The cleanup workflow must expose its cache policy for regression tests.'
