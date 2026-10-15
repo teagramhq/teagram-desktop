@@ -40,7 +40,9 @@ macos_group_for_event() {
     repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
     repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
-  elif [[ "$event_name" == 'schedule' || "$event_name" == 'push' ]]; then
+  elif [[ "$event_name" == 'schedule' ]]; then
+    repository_qualified_identity="schedule/${ref_name}"
+  elif [[ "$event_name" == 'push' ]]; then
     repository_qualified_identity="seed/${ref_name}"
   else
     repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
@@ -78,7 +80,7 @@ require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
 require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || github.event_name == 'push' && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
 require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}"
 pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
@@ -251,8 +253,8 @@ if [[ "$schedule_group" == "$dev_dispatch_group" ]]; then
   exit 1
 fi
 push_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'push')"
-if [[ "$push_group" != "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
-  printf 'Dev push seeds must share one cancelling group with the nightly seed, apart from dispatches.\n' >&2
+if [[ "$push_group" == "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
+  printf 'Dev push seeds, the nightly run and dev dispatches must use three separate concurrency groups.\n' >&2
   exit 1
 fi
 mac_triggers="$(awk '/^on:$/ { in_on = 1; next } in_on && /^[^ #]/ { exit } in_on { print }' "$mac_workflow")"
