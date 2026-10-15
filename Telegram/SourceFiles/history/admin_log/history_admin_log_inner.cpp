@@ -100,6 +100,12 @@ constexpr auto kDeleteGroupTimeWindowSeconds = TimeId(5);
 
 } // namespace
 
+bool ShouldShowTranslateAction(not_null<HistoryItem *> item) {
+	return !item->isService()
+		   && !Ui::SkipTranslate(&item->history()->peer->session(),
+								 item->originalText(), bool(item->richPage()));
+}
+
 template <InnerWidget::EnumItemsDirection direction, typename Method>
 void InnerWidget::enumerateItems(Method method) {
 	constexpr auto TopToBottom = (direction == EnumItemsDirection::TopToBottom);
@@ -2283,9 +2289,7 @@ void InnerWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						copyContextText(itemId);
 					}, &st::menuIconCopy);
 				}
-				if (!item->isService()
-					&& !Ui::SkipTranslate(&item->history()->peer->session(),
-										  item->originalText())) {
+				if (ShouldShowTranslateAction(item)) {
 					const auto peer = item->history()->peer;
 					_menu->addAction(tr::lng_context_translate({}), [=] {
 						_controller->show(Box(

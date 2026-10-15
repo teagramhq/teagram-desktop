@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_controller.h"
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
+#include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/view/history_view_translate_bar.h"
@@ -2999,6 +3000,17 @@ template <typename Predicate>
 		std::fprintf(stderr,
 					 "Translation controls regression failed: translation "
 					 "message fixtures were not created.\n");
+		return false;
+	}
+	const auto customAdminLogRichTranslateVisible
+		= AdminLog::ShouldShowTranslateAction(customRichItem);
+	if (!customHasProvider || !customRichItem->richPage()
+		|| customAdminLogRichTranslateVisible) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom admin-log rich "
+			"action visibility did not match (provider=%d visible=%d).\n",
+			customHasProvider, customAdminLogRichTranslateVisible);
 		return false;
 	}
 	auto staleRichBox = customController->show(
