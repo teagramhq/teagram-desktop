@@ -3,6 +3,7 @@ set -euo pipefail
 
 mac_workflow="${MACOS_CI_CONTRACT_WORKFLOW:-.github/workflows/mac.yml}"
 packaged_workflow=".github/workflows/mac_packaged.yml"
+approval_workflow=".github/workflows/mac_pr_approval.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
 updater_workflow=".github/workflows/macos_updater_fixtures.yml"
 updater_runner=".github/scripts/run_teagram_updater_fixtures.sh"
@@ -86,8 +87,17 @@ if [[ "$pr_types" != '[labeled, synchronize]' ]]; then
   exit 1
 fi
 require_text "$mac_workflow" "if: \${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}"
-require_text "$mac_workflow" "if: \${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'macos-build') && github.event.pull_request.head.repo.full_name == github.repository }}"
-require_text "$mac_workflow" 'gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label macos-build'
+reject_text "$mac_workflow" 'pull-requests: write'
+require_text "$approval_workflow" '  pull_request_target:'
+require_text "$approval_workflow" '    branches: [dev]'
+require_text "$approval_workflow" '    types: [synchronize]'
+require_text "$approval_workflow" "if: contains(github.event.pull_request.labels.*.name, 'macos-build')"
+require_text "$approval_workflow" '      pull-requests: write'
+require_text "$approval_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
+require_text "$approval_workflow" 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build"'
+reject_text "$approval_workflow" 'head.repo.full_name'
+reject_text "$approval_workflow" 'actions/checkout'
+reject_text "$approval_workflow" 'github.event.pull_request.head.sha'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'dev'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'main'

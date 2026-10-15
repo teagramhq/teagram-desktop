@@ -1,0 +1,32 @@
+name: Clear macOS build approval.
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [synchronize]
+
+permissions:
+  {}
+
+# Runs with the base repository token so fork PRs are covered; it never checks
+# out or runs PR code.
+jobs:
+  clear:
+    name: Clear macOS build approval
+    if: contains(github.event.pull_request.labels.*.name, 'macos-build')
+    runs-on: ubuntu-26.04
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Remove macos-build from the superseded head.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Refusing to edit a malformed pull request number."
+            exit 1
+          fi
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build"

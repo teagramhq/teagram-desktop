@@ -1,8 +1,8 @@
 name: MacOS.
 
 on:
-  # PR pushes only supersede and clear an earlier approval; the PR build runs once
-  # the approved head is labeled macos-build.
+  # PR pushes only supersede an earlier build (mac_pr_approval.yml clears the label);
+  # the PR build runs once the approved head is labeled macos-build.
   pull_request:
     branches: [dev]
     types: [labeled, synchronize]
@@ -34,19 +34,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action == 'synchronize' || github.event.label.name == 'macos-build' }}
 
 jobs:
-
-  clear-macos-label:
-    name: Clear macOS build approval
-    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'macos-build') && github.event.pull_request.head.repo.full_name == github.repository }}
-    permissions:
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove macos-build from the superseded head.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label macos-build
 
   macos:
     name: MacOS
