@@ -5,6 +5,7 @@ linux_workflow=".github/workflows/linux.yml"
 linux_libraries_workflow=".github/workflows/linux_libraries.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 cache_threat_model=".github/ci-cache-threat-model.md"
+workflow_lint_workflow=".github/workflows/workflow_lint.yml"
 
 require_text() {
   local file="$1"
@@ -23,6 +24,23 @@ reject_text() {
     exit 1
   fi
 }
+
+# Linux libraries. publishes the dependency image; nothing pulls centos_env:latest.
+if [[ -e .github/workflows/docker.yml ]]; then
+  printf '%s\n' '.github/workflows/docker.yml must not exist' >&2
+  exit 1
+fi
+
+# The contract tests read the threat model, so editing it must lint, and a PR
+# push must lint once (pull_request), not again through an unfiltered push.
+if [[ "$(grep -Fxc -- "      - '.github/ci-cache-threat-model.md'" "$workflow_lint_workflow")" != 2 ]]; then
+  printf '%s\n' "$workflow_lint_workflow must list .github/ci-cache-threat-model.md under push and pull_request" >&2
+  exit 1
+fi
+if [[ "$(awk 'previous == "  push:" { print; exit } { previous = $0 }' "$workflow_lint_workflow")" != '    branches: [dev]' ]]; then
+  printf '%s\n' "$workflow_lint_workflow must run push lint on dev only" >&2
+  exit 1
+fi
 
 require_text "$linux_workflow" "matrix.defines || 'default'"
 reject_text "$linux_workflow" "matrix.defines || 'null'"

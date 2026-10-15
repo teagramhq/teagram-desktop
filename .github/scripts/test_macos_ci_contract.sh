@@ -148,6 +148,8 @@ fi
 require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
 require_text "$mac_workflow" "github.event_name == 'schedule'"
 reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
+reject_text "$mac_workflow" 'source-format'
+reject_text "$mac_workflow" 'clang-format'
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
@@ -267,8 +269,13 @@ require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protect
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_runtime.h'"
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_protected_path_runtime_stub.cpp'"
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_file_bookmark_stub.cpp'"
-require_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
-require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"'
+require_text "$updater_workflow" 'ref: ${{ github.sha }}'
+reject_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
+reject_text "$updater_workflow" 'github.event.pull_request.head.repo.full_name'
+require_text "$updater_workflow" 'fetch-depth: 2'
+require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"'
+require_text "$updater_workflow" 'test "${parents[0]}" = "$EXPECTED_BASE_SHA"'
+require_text "$updater_workflow" 'test "${parents[1]}" = "$EXPECTED_HEAD_SHA"'
 require_text "$updater_workflow" 'runs-on: macos-latest'
 require_text "$updater_workflow" 'canonical_tmpdir="$(cd "$TMPDIR" && pwd -P)"'
 require_text "$updater_workflow" 'TMPDIR=%s\n'

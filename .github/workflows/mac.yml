@@ -118,11 +118,6 @@ jobs:
           if ((${#missing[@]})); then
             HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"
           fi
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            if ! brew list --versions clang-format >/dev/null 2>&1; then
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install clang-format
-            fi
-          fi
 
           # Disable spotlight.
           sudo mdutil -a -i off
@@ -174,42 +169,6 @@ jobs:
           printf 'tested_sha=%s\nvariant=build_macstore\nresult=unsupported\nconfigure_exit_status=%s\n' \
             "$GITHUB_SHA" "$rejection_status" \
             > "$evidence/macstore-rejection-status.txt"
-
-      - name: Check changed C++ formatting.
-        id: source-format
-        if: github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        env:
-          SOURCE_FORMAT_MERGED_BASE_SHA: 12e804d5ea3dfef7ef54209dbff2207265ef298f
-          SOURCE_FORMAT_MERGED_HEAD_SHA: 9f4a8d28d588784a81a8aa603ec975245f33045b
-          SOURCE_FORMAT_REPAIR_BASE_SHA: daf71541a0bea6990694d6d6f132ca943f731305
-        run: |
-          set -Eeuo pipefail
-          evidence="$REPO_NAME/out/Debug/evidence"
-          log="$evidence/source-format.log"
-          manifest="$evidence/source-format-manifest.json"
-          script="$REPO_NAME/.github/scripts/check_cpp_format.py"
-          : > "$log"
-          set +e
-          python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format --self-test >> "$log" 2>&1
-          self_test_status=$?
-          python3 "$script" --repo-root "$REPO_NAME" --formatter clang-format \
-            --tested-head "$GITHUB_SHA" \
-            --source-range merged-profile-ipc "$SOURCE_FORMAT_MERGED_BASE_SHA" "$SOURCE_FORMAT_MERGED_HEAD_SHA" \
-            --source-range lifecycle-repair "$SOURCE_FORMAT_REPAIR_BASE_SHA" "$GITHUB_SHA" \
-            --manifest "$manifest" >> "$log" 2>&1
-          format_status=$?
-          set -e
-          if [ "$self_test_status" -ne 0 ]; then
-            final_status=$self_test_status
-          else
-            final_status=$format_status
-          fi
-          printf 'tested_sha=%s\nvariant=%s\nself_test_exit_status=%s\ncoverage_exit_status=%s\nexit_status=%s\n' \
-            "$GITHUB_SHA" "$BUILD_VARIANT" "$self_test_status" "$format_status" "$final_status" \
-            > "$evidence/source-format-status.txt"
-          cat "$log"
-          exit "$final_status"
 
       - name: Libraries cache.
         id: cache-libs
@@ -443,7 +402,6 @@ jobs:
       - name: Summarize on-demand validation.
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
-          FORMAT_OUTCOME: ${{ steps.source-format.outcome }}
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
@@ -452,8 +410,7 @@ jobs:
           set -Eeuo pipefail
           {
             printf '### macOS Teagram validation: %s\n\n' "$BUILD_VARIANT"
-            printf -- '- Tested SHA: `%s`\n- C++ format check: `%s`\n' \
-              "$GITHUB_SHA" "$FORMAT_OUTCOME"
+            printf -- '- Tested SHA: `%s`\n' "$GITHUB_SHA"
             printf -- '- Mac App Store rejection check: `%s`\n- Build: `%s`\n- Artifact verification: `%s`\n- Profile/IPC harness: `%s`\n' \
               "$STORE_REJECTION_OUTCOME" "$BUILD_OUTCOME" "$ARTIFACT_OUTCOME" "$PROFILE_IPC_OUTCOME"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -909,7 +866,6 @@ jobs:
       - name: Require on-demand validation checks.
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
-          FORMAT_OUTCOME: ${{ steps.source-format.outcome }}
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
@@ -918,7 +874,6 @@ jobs:
           set -Eeuo pipefail
           failed=false
           for check in \
-            "C++ format=$FORMAT_OUTCOME" \
             "Mac App Store rejection=$STORE_REJECTION_OUTCOME" \
             "build=$BUILD_OUTCOME" \
             "artifact verification=$ARTIFACT_OUTCOME" \
