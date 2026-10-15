@@ -1343,6 +1343,18 @@ void SendStarsFormRequest(
 	}
 }
 
+[[nodiscard]] bool
+RefuseStarsForm(const std::shared_ptr<Main::SessionShow> &show,
+				Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	const auto session = &show->session();
+	if (!Payments::PaidCheckoutRefused(session)) {
+		return false;
+	}
+	crl::on_main(session,
+				 [=] { done(Payments::CheckoutResult::Cancelled, nullptr); });
+	return true;
+}
+
 void UpgradeGift(
 		not_null<Window::SessionController*> window,
 		Data::SavedStarGiftId savedId,
@@ -4250,6 +4262,9 @@ void SubmitStarsForm(
 		uint64 formId,
 		uint64 price,
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	if (RefuseStarsForm(show, done)) {
+		return;
+	}
 	const auto ready = [=](Settings::SmallBalanceResult result) {
 		SendStarsFormRequest(show, result, formId, invoice, done);
 	};
@@ -4266,6 +4281,9 @@ void SubmitTonForm(
 		uint64 formId,
 		CreditsAmount ton,
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	if (RefuseStarsForm(show, done)) {
+		return;
+	}
 	const auto ready = [=] {
 		SendStarsFormRequest(
 			show,
@@ -4304,6 +4322,11 @@ void RequestOurForm(
 	const auto fail = [=](Payments::CheckoutResult failure) {
 		done(0, {}, failure);
 	};
+	if (Payments::PaidCheckoutRefused(&show->session())) {
+		crl::on_main(&show->session(),
+					 [=] { fail(Payments::CheckoutResult::Cancelled); });
+		return;
+	}
 	show->session().api().request(MTPpayments_GetPaymentForm(
 		MTP_flags(0),
 		invoice,
@@ -4489,7 +4512,8 @@ void DefaultGiftHandler(
 			},
 			Settings::CreditsEntryBoxStyleOverrides()));
 	} else if (unique && star->mine && !peer->isSelf()) {
-		if (ShowTransferGiftLater(window->uiShow(), unique)) {
+		if (Payments::PaidCheckoutRefused(&window->session())
+			|| ShowTransferGiftLater(window->uiShow(), unique)) {
 			return;
 		}
 		const auto done = [=] {
@@ -4593,6 +4617,19 @@ void DefaultGiftHandler(
 		send();
 	}
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HandleDefaultGiftForRegressionTest(
+	not_null<Window::SessionController *> window, not_null<PeerData *> peer,
+	const Info::PeerGifts::GiftDescriptor &descriptor) {
+	const auto state = window->lifetime().make_state<DefaultGiftHandlerState>(
+		DefaultGiftHandlerState{
+			.window = window,
+			.peer = peer,
+		});
+	DefaultGiftHandler(window, state, descriptor);
+}
+#endif
 
 object_ptr<RpWidget> MakeGiftsList(GiftsListArgs &&args) {
 	using namespace Info::PeerGifts;

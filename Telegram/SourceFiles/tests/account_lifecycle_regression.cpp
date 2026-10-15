@@ -19,11 +19,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
+#include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
 #include "core/deep_links/deep_links_router.h"
+#include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
@@ -35,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_download_manager.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
+#include "data/data_media_types.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -51,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
@@ -70,6 +74,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
+#include "payments/payments_checkout_process.h"
+#include "payments/payments_form.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
@@ -156,6 +162,40 @@ struct ChannelSaveRequestCapture {
 };
 
 ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
+
+struct PaymentRequestCapture {
+	not_null<MTP::Instance *> instance;
+	std::vector<uint32> constructors;
+};
+
+PaymentRequestCapture *gPaymentRequestCapture = nullptr;
+
+[[nodiscard]] bool CapturePaymentRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gPaymentRequestCapture;
+	if (!capture || capture->instance != instance) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	const auto constructor = static_cast<uint32>(body.front());
+	switch (constructor) {
+	case mtpc_payments_getPaymentForm:
+	case mtpc_payments_getPaymentReceipt:
+	case mtpc_payments_validateRequestedInfo:
+	case mtpc_payments_sendPaymentForm:
+	case mtpc_payments_sendStarsForm:
+	case mtpc_payments_getStarsStatus:
+		capture->constructors.push_back(constructor);
+		return true;
+	default:
+		return false;
+	}
+}
 
 template <typename Request>
 [[nodiscard]] bool ReplyToChannelSaveRequestForRegressionTest(
@@ -312,6 +352,9 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	not_null<MTP::Instance *> instance, int32 requestId,
 	const MTP::details::SerializedRequest &request,
 	MTP::ResponseHandler &callbacks) {
+	if (CapturePaymentRequestForRegressionTest(instance, request)) {
+		return true;
+	}
 	const auto capture = gChannelSaveRequestCapture;
 	if (!capture || capture->instance != instance) {
 		return false;
@@ -2163,6 +2206,387 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return true;
 }
 
+[[nodiscard]] HistoryItem *
+AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
+								MsgId receiptMsgId) {
+	using MediaFlag = MTPDmessageMediaInvoice::Flag;
+	const auto media = MTP_messageMediaInvoice(
+		MTP_flags(receiptMsgId ? MediaFlag::f_receipt_msg_id : MediaFlag()),
+		MTP_string(u"Regression invoice"_q), MTP_string(u"Paid item"_q),
+		MTPWebDocument(), MTP_int(int(receiptMsgId.bare)), MTP_string(u"USD"_q),
+		MTP_long(100), MTP_string(u"regression"_q), MTPMessageExtendedMedia());
+	const auto data = MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_media),
+		MTP_int(int(id.bare)), peerToMTP(session->userPeerId()),
+		MTPint(),	 // from_boosts_applied
+		MTPstring(), // from_rank
+		peerToMTP(session->userPeerId()),
+		MTPPeer(), // saved_peer_id
+		MTPMessageFwdHeader(),
+		MTP_long(0), // via_bot_id
+		MTPlong(),	 // via_business_bot_id
+		MTPPeer(),	 // guestchat_via_from
+		MTPMessageReplyHeader(),
+		MTP_int(1), // date
+		MTP_string(QString()), media, MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(),
+		MTP_int(0), // views
+		MTP_int(0), // forwards
+		MTPMessageReplies(),
+		MTP_int(0), // edit_date
+		MTPstring(), MTPlong(), MTPMessageReactions(),
+		MTPVector<MTPRestrictionReason>(),
+		MTP_int(0), // ttl_period
+		MTPint(),	// quick_reply_shortcut_id
+		MTPlong(),	// effect
+		MTPFactCheck(),
+		MTPint(),  // report_delivery_until_date
+		MTPlong(), // paid_message_stars
+		MTPSuggestedPost(),
+		MTPint(),	 // schedule_repeat_period
+		MTPstring(), // summary_from_language
+		MTPRichMessage());
+	const auto item = session->data().addNewMessage(data, MessageFlags(),
+													NewMessageType::Existing);
+	const auto invoice
+		= (item && item->media()) ? item->media()->invoice() : nullptr;
+	return (invoice && (invoice->receiptMsgId == receiptMsgId)) ? item
+																: nullptr;
+}
+
+[[nodiscard]] bool RunPaidLinkRefusalRegression(
+	Core::Application &app,
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> pinnedController,
+	not_null<Window::SessionController *> blockedController) {
+	const auto configured
+		= stockController->session().paidFeaturesSupported()
+		  && !pinnedController->session().paidFeaturesSupported()
+		  && !blockedController->session().paidFeaturesSupported()
+		  && pinnedController->session().mtp().dcOptions().hasCustomServer()
+		  && blockedController->session().mtp().dcOptions().blocked();
+	if (!configured) {
+		std::fprintf(
+			stderr,
+			"Paid link regression failed: session fixtures did not match "
+			"stock, custom, and blocked accounts.\n");
+		return false;
+	}
+	const auto controllers = std::vector<not_null<Window::SessionController *>>{
+		stockController,
+		pinnedController,
+		blockedController,
+	};
+	const auto resetControllers = [&] {
+		for (const auto &controller : controllers) {
+			if (controller->isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+			}
+			controller->clearSectionStack(Window::SectionShow(
+				anim::type::instant, anim::activation::background));
+		}
+		QCoreApplication::processEvents();
+	};
+	const auto previousWindow = app.activeWindow();
+	const auto restoreWindows = gsl::finally([&] {
+		resetControllers();
+		if (previousWindow) {
+			previousWindow->activate();
+		}
+	});
+	resetControllers();
+
+	const auto local = std::vector<QString>{
+		u"tg://invoice?slug=regression"_q,
+		u"tg://premium_offer"_q,
+		u"tg://premium_offer?ref=regression"_q,
+		u"tg://premium_multigift?ref=regression"_q,
+		u"tg://stars_topup?balance=10&purpose=regression"_q,
+		u"tg://nft?slug=regression-1"_q,
+		u"tg://stargift_auction?slug=regression"_q,
+		u"tg://stars"_q,
+		u"tg://ton"_q,
+		u"tg://grams"_q,
+		Core::TryConvertUrlToLocal(u"https://t.me/$regression"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/invoice/regression"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/nft/regression-1"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/auction/regression"_q),
+	};
+	const auto internal = std::vector<QString>{
+		u"internal:edit_paid_messages_fee/"_q
+			+ QString::number(pinnedController->session().userPeerId().value),
+		u"internal:stars_examples"_q,
+	};
+	for (const auto &url : local) {
+		if (!url.startsWith(u"tg://"_q)) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: t.me link was not converted to "
+				"a local link: %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	const auto toastCounts = [&] {
+		auto result = std::vector<int>();
+		for (const auto &controller : controllers) {
+			result.push_back(
+				controller
+					->featureUnavailableOnServerToastCallsForRegressionTest());
+		}
+		return result;
+	};
+	const auto paidUiOpen = [&] {
+		return std::any_of(
+			controllers.begin(), controllers.end(), [](const auto &controller) {
+				return controller->content()->isMainSectionShown()
+					   || controller->isLayerShown();
+			});
+	};
+	const auto open = [&](const QString &url, const QVariant &context) {
+		return url.startsWith(u"internal:"_q)
+				   ? app.openInternalUrl(url, context)
+				   : app.openLocalUrl(url, context);
+	};
+	const auto dispatchRefused = [&](const QString &url,
+									 Window::SessionController *target) {
+		const auto activeBefore = app.activeWindow();
+		auto expected = toastCounts();
+		for (auto i = 0; i != int(controllers.size()); ++i) {
+			expected[i] += (controllers[i].get() == target) ? 1 : 0;
+		}
+		const auto context = target
+								 ? QVariant::fromValue(ClickHandlerContext{
+									   .sessionWindow = base::make_weak(target),
+								   })
+								 : QVariant::fromValue(ClickHandlerContext{});
+		const auto handled = open(url, context);
+		QCoreApplication::processEvents();
+		const auto refused = handled && (toastCounts() == expected)
+							 && !paidUiOpen()
+							 && (app.activeWindow() == activeBefore);
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: link=%s target=%p handled=%d "
+				"toast-only=%d paid-ui-open=%d.\n",
+				url.toUtf8().constData(), static_cast<void *>(target), handled,
+				toastCounts() == expected, paidUiOpen());
+		}
+		resetControllers();
+		return refused;
+	};
+	const auto dispatchMatrix
+		= [&](Window::SessionController *target,
+			  not_null<Window::SessionController *> active) {
+			  active->window().activate();
+			  QCoreApplication::processEvents();
+			  if (app.activeWindow() != &active->window()) {
+				  return false;
+			  }
+			  for (const auto &url : local) {
+				  if (!dispatchRefused(url, target)) {
+					  return false;
+				  }
+			  }
+			  for (const auto &url : internal) {
+				  if (!dispatchRefused(url, target)) {
+					  return false;
+				  }
+			  }
+			  return true;
+		  };
+	if (!dispatchMatrix(pinnedController, stockController)
+		|| !dispatchMatrix(pinnedController, pinnedController)
+		|| !dispatchMatrix(blockedController, stockController)
+		|| !dispatchMatrix(blockedController, blockedController)
+		|| !dispatchMatrix(nullptr, stockController)
+		|| !dispatchMatrix(nullptr, pinnedController)) {
+		return false;
+	}
+
+	const auto checkoutRefused = [&](not_null<Window::SessionController *>
+										 target) {
+		const auto session = &target->session();
+		const auto user = session->user();
+		const auto results
+			= std::make_shared<std::vector<Payments::CheckoutResult>>();
+		const auto reactivate = [=](Payments::CheckoutResult result) {
+			results->push_back(result);
+		};
+		const auto invoiceItem
+			= AddPaidInvoiceRegressionMessage(session, MsgId(0x7e5701), 0);
+		const auto receiptItem = AddPaidInvoiceRegressionMessage(
+			session, MsgId(0x7e5702), MsgId(0x7e5703));
+		if (!invoiceItem || !receiptItem) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: invoice message fixtures were "
+				"not created in session %p.\n",
+				static_cast<void *>(target.get()));
+			return false;
+		}
+		auto payments = PaymentRequestCapture{
+			.instance = &session->mtp(),
+		};
+		const auto restorePaymentCapture = gsl::finally(
+			[previous = std::exchange(gPaymentRequestCapture, &payments)] {
+				gPaymentRequestCapture = previous;
+			});
+		session->api()
+			.request(MTPpayments_GetPaymentReceipt(MTP_inputPeerSelf(),
+												   MTP_int(0x7e5703)))
+			.send();
+		const auto captureObserved
+			= (payments.constructors
+			   == std::vector<uint32>{mtpc_payments_getPaymentReceipt});
+		payments.constructors.clear();
+		const auto before = toastCounts();
+		Payments::CheckoutProcess::Start(invoiceItem, Payments::Mode::Payment,
+										 reactivate, nullptr);
+		Payments::CheckoutProcess::Start(receiptItem, Payments::Mode::Receipt,
+										 reactivate, nullptr);
+		Payments::CheckoutProcess::Start(session, u"regression"_q, reactivate,
+										 nullptr);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoiceCredits{
+				.session = session,
+				.randomId = 0x7e57'0001ULL,
+				.credits = 10,
+				.currency = u"XTR"_q,
+				.amount = 10,
+			},
+			reactivate);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoiceStarGift{
+				.giftId = 1,
+				.randomId = 0x7e57'0002ULL,
+				.recipient = user,
+			},
+			reactivate, nullptr);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoicePremiumGiftCode{
+				.purpose = Payments::InvoicePremiumGiftCodeUsers{
+					.users = {user},
+				},
+				.currency = u"XTR"_q,
+				.randomId = 0x7e57'0003ULL,
+				.amount = 10,
+				.storeQuantity = 1,
+				.users = 1,
+				.months = 3,
+			},
+			reactivate, nullptr);
+		const auto starsFormDone
+			= [=](Payments::CheckoutResult result, const MTPUpdates *) {
+				  results->push_back(result);
+			  };
+		const auto savedGift = MTP_inputSavedStarGiftUser(MTP_int(0x7e5704));
+		Ui::RequestStarsFormAndSubmit(
+			target->uiShow(),
+			MTP_inputInvoiceStarGiftUpgrade(
+				MTP_flags(MTPDinputInvoiceStarGiftUpgrade::Flag()), savedGift),
+			starsFormDone);
+		Ui::RequestStarsFormAndSubmit(
+			target->uiShow(),
+			MTP_inputInvoiceStarGiftTransfer(savedGift, MTP_inputPeerSelf()),
+			starsFormDone);
+		const auto directInvoice
+			= MTP_inputInvoiceStarGiftTransfer(savedGift, MTP_inputPeerSelf());
+		Ui::SubmitStarsForm(target->uiShow(), directInvoice, 1, 1,
+							starsFormDone);
+		Ui::SubmitTonForm(target->uiShow(), directInvoice, 1,
+						  CreditsAmount(1, 0, CreditsType::Ton), starsFormDone);
+		const auto activeChatBefore = target->activeChatCurrent();
+		const auto giftDocument
+			= session->data().document(DocumentId(0x7e5707));
+		const auto transferUnique
+			= std::make_shared<Data::UniqueGift>(Data::UniqueGift{
+				.slug = u"regression-1"_q,
+				.model = Data::UniqueGiftModel{{}, giftDocument},
+				.pattern = Data::UniqueGiftPattern{{}, giftDocument},
+			});
+		Ui::HandleDefaultGiftForRegressionTest(
+			target, session->data().user(UserId(0x7e5705)),
+			Info::PeerGifts::GiftTypeStars{
+				.transferId = Data::SavedStarGiftId::User(MsgId(0x7e5704)),
+				.info = Data::StarGift{
+					.id = 0x7e5706,
+					.unique = transferUnique,
+					.document = giftDocument,
+				},
+				.mine = true,
+			});
+		QCoreApplication::processEvents();
+		auto expected = before;
+		for (auto i = 0; i != int(controllers.size()); ++i) {
+			expected[i] += (controllers[i] == target) ? 11 : 0;
+		}
+		const auto refused
+			= (*results
+			   == std::vector<Payments::CheckoutResult>(
+				   10, Payments::CheckoutResult::Cancelled))
+			  && captureObserved && payments.constructors.empty()
+			  && (target->activeChatCurrent() == activeChatBefore)
+			  && (toastCounts() == expected) && !paidUiOpen();
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: checkout start was not refused "
+				"in session %p: results=%d toast-only=%d capture=%d "
+				"payment-requests=%d.\n",
+				static_cast<void *>(target.get()), int(results->size()),
+				toastCounts() == expected, captureObserved,
+				int(payments.constructors.size()));
+		}
+		resetControllers();
+		return refused;
+	};
+	if (!checkoutRefused(pinnedController)
+		|| !checkoutRefused(blockedController)) {
+		return false;
+	}
+
+	const auto stockOpens = [&](const QString &url, bool section) {
+		pinnedController->window().activate();
+		QCoreApplication::processEvents();
+		const auto before = toastCounts();
+		const auto handled = open(
+			url, QVariant::fromValue(ClickHandlerContext{
+					 .sessionWindow = base::make_weak(stockController.get()),
+				 }));
+		QCoreApplication::processEvents();
+		const auto opened
+			= handled && (toastCounts() == before)
+			  && (section ? stockController->content()->isMainSectionShown()
+						  : stockController->isLayerShown())
+			  && !pinnedController->content()->isMainSectionShown()
+			  && !pinnedController->isLayerShown();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: stock link=%s did not keep its "
+				"behavior.\n",
+				url.toUtf8().constData());
+		}
+		resetControllers();
+		return opened;
+	};
+	if (!stockOpens(u"tg://stars"_q, true) || !stockOpens(u"tg://ton"_q, true)
+		|| !stockOpens(u"internal:stars_examples"_q, false)) {
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Paid link regression passed: %d paid links refused in custom and "
+		"blocked sessions and ignored without a target; message invoice, "
+		"receipt, slug, Stars, gift, gift-code, gift upgrade and transfer, "
+		"direct Stars and TON submit, and gift-list transfer starts refused "
+		"before payment requests; stock links opened.\n",
+		int(local.size() + internal.size()));
+	return true;
+}
+
 [[nodiscard]] int
 AcceptedMiniAppOpens(not_null<Main::Session *> session,
 					 not_null<UserData *> bot,
@@ -2808,6 +3232,12 @@ template <typename Predicate>
 											"blocked")
 		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
 											"stock after custom")) {
+		blank->forcedLogOut();
+		return false;
+	}
+	if (!RunPaidLinkRefusalRegression(
+			app, stockController, pinnedController,
+			not_null<Window::SessionController *>(blankController))) {
 		blank->forcedLogOut();
 		return false;
 	}

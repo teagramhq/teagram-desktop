@@ -86,6 +86,18 @@ namespace {
 
 using Match = qthelp::RegularExpressionMatch;
 
+[[nodiscard]] bool PaidFeatureRefused(const QVariant &context) {
+	const auto my = context.value<ClickHandlerContext>();
+	const auto target = my.sessionWindow.get();
+	if (!target) {
+		return true;
+	} else if (!target->session().paidFeaturesSupported()) {
+		target->showFeatureUnavailableOnServerToast();
+		return true;
+	}
+	return false;
+}
+
 class PersonalChannelController final : public PeerListController {
 public:
 	explicit PersonalChannelController(
@@ -1220,6 +1232,9 @@ bool EditPaidMessagesFee(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1273,6 +1288,9 @@ bool ShowStarsExamples(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1448,6 +1466,9 @@ bool ResolveInvoice(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1471,6 +1492,9 @@ bool ResolvePremiumOffer(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1489,6 +1513,9 @@ bool ResolvePremiumMultigift(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1548,6 +1575,9 @@ bool ResolveTopUp(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1612,6 +1642,9 @@ bool ResolveUniqueGift(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1627,6 +1660,9 @@ bool ResolveGiftAuction(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1659,6 +1695,9 @@ bool ResolveStarsSettings(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
@@ -1671,6 +1710,9 @@ bool ResolveTonSettings(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
+	if (PaidFeatureRefused(context)) {
+		return true;
+	}
 	if (!controller) {
 		return false;
 	}
