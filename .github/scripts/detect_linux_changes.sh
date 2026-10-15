@@ -23,11 +23,11 @@ while IFS= read -r path; do
   [[ -n "${path}" ]] || continue
 
   case "${path}" in
-    .github/workflows/linux.yml|.github/scripts/detect_linux_changes.sh|.github/scripts/test_detect_linux_changes.sh|Telegram/build/docker/centos_env/*)
+    .github/workflows/linux.yml|.github/workflows/linux_libraries.yml|.github/scripts/detect_linux_changes.sh|.github/scripts/test_detect_linux_changes.sh|.github/scripts/linux_libraries_image.sh|.github/scripts/test_linux_libraries_image.sh|Telegram/build/docker/centos_env/*|Telegram/build/version|Telegram/build/qt_version.py|Telegram/build/teagram_update_manifest.py|Telegram/build/changelog2appstream.py|changelog.txt)
       required=true
       break
       ;;
-    docs/*|*.md|changelog.txt|LEGAL|LICENSE|.github/*|snap/*|Telegram/build/*|Telegram/Resources/uwp/*|Telegram/Resources/winrc/*|Telegram/SourceFiles/platform/win/*|Telegram/SourceFiles/platform/mac/*|Telegram/Telegram/*|Telegram/configure.bat|Telegram/Telegram.plist)
+    docs/*|*.md|LEGAL|LICENSE|.github/*|snap/*|Telegram/build/*|Telegram/Resources/uwp/*|Telegram/Resources/winrc/*|Telegram/SourceFiles/platform/win/*|Telegram/SourceFiles/platform/mac/*|Telegram/Telegram/*|Telegram/configure.bat|Telegram/Telegram.plist)
       ;;
     *)
       required=true

@@ -569,11 +569,12 @@ void SetupPersonalChannel(
 
 	SetupChatAutomation(container, controller, self, targets);
 
-	const auto colorButton = AddPeerColorButton(
-		container,
-		controller->uiShow(),
-		self,
-		st::settingsColorButton);
+	const auto colorButton
+		= self->session().paidFeaturesSupported()
+			  ? AddPeerColorButton(container, controller->uiShow(), self,
+								   st::settingsColorButton)
+					.get()
+			  : nullptr;
 	if (targets) {
 		targets->channelButton = channelButton;
 		targets->colorButton = colorButton;
@@ -1269,13 +1270,15 @@ void BuildInformationSection(SectionBuilder &builder) {
 			.keywords = { u"username"_q, u"link"_q, u"t.me"_q },
 		};
 	});
-	builder.add(nullptr, [] {
-		return SearchEntry{
-			.id = u"edit/your-color"_q,
-			.title = tr::lng_settings_theme_name_color(tr::now),
-			.keywords = { u"color"_q, u"theme"_q, u"name"_q },
-		};
-	});
+	if (builder.session()->paidFeaturesSupported()) {
+		builder.add(nullptr, [] {
+			return SearchEntry{
+				.id = u"edit/your-color"_q,
+				.title = tr::lng_settings_theme_name_color(tr::now),
+				.keywords = {u"color"_q, u"theme"_q, u"name"_q},
+			};
+		});
+	}
 	builder.add(nullptr, [] {
 		return SearchEntry{
 			.id = u"edit/channel"_q,

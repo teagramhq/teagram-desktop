@@ -13,7 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
+#include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/edit_privacy_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
@@ -26,8 +28,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
+#include "data/components/scheduled_messages.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -42,6 +46,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_widget.h"
+#include "history/view/history_view_chat_section.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
@@ -49,11 +55,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
 #include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
+#include "main/session_feature_support.h"
+#include "menu/menu_send.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
@@ -77,7 +86,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
@@ -319,6 +331,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_channels_toggleAutotranslation:
 	case mtpc_channels_updatePaidMessagesPrice:
 	case mtpc_messages_editChatAbout:
+	case mtpc_account_setGlobalPrivacySettings:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -1793,6 +1806,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  });
 	const auto hasSystemPreferencesEntry
 		= SettingsSearchHasEntry(entries, u"calls/system-prefs"_q);
+	const auto hasYourColorEntry
+		= SettingsSearchHasEntry(entries, u"edit/your-color"_q);
+	const auto hasPeerColorEntry
+		= SettingsSearchHasEntry(entries, u"chat/peer-color"_q);
+	const auto hasPrivacyGiftsEntry
+		= SettingsSearchHasEntry(entries, u"privacy/gifts"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
 		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
@@ -1812,7 +1831,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && (hasCallsNotificationsAcceptEntry == callsSupported)
 		  && (hasPrivacyCallsEntry == privacyCallsExpected)
 		  && (callsSupported || !hasAcceptCallSectionKeyword)
-		  && hasSystemPreferencesEntry && (!paidSupported || hasStockPaidRows);
+		  && hasSystemPreferencesEntry && (hasYourColorEntry == paidSupported)
+		  && (hasPeerColorEntry == paidSupported)
+		  && (paidSupported || !hasPrivacyGiftsEntry)
+		  && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
 		std::fprintf(
 			stderr,
@@ -1820,12 +1842,14 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			"privacy=%d, bio=%d expected=%d, chat-automation=%d "
 			"expected=%d, calls-accept=%d, calls-notifications=%d, "
 			"calls-notifications-accept=%d, privacy-calls=%d expected=%d, "
-			"call-accept-keyword=%d, system-prefs=%d, stock-rows=%d.\n",
+			"call-accept-keyword=%d, system-prefs=%d, your-color=%d, "
+			"peer-color=%d, privacy-gifts=%d, stock-rows=%d.\n",
 			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
 			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
 			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
 			hasPrivacyCallsEntry, privacyCallsExpected,
 			hasAcceptCallSectionKeyword, hasSystemPreferencesEntry,
+			hasYourColorEntry, hasPeerColorEntry, hasPrivacyGiftsEntry,
 			hasStockPaidRows);
 	}
 	return matches;
@@ -1857,6 +1881,16 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/send-gift/x"_q,
 		u"tg://settings/send-gift/self"_q,
 		u"tg://settings/send-gift/self/x"_q,
+		u"tg://settings/emoji-status"_q,
+		u"tg://chats/emoji-status"_q,
+		u"tg://settings/profile-color"_q,
+		u"tg://settings/profile-color/name"_q,
+		u"tg://settings/profile-color/profile/use-gift"_q,
+		u"tg://settings/appearance/your-color"_q,
+		u"tg://settings/appearance/your-color/name/add-icons"_q,
+		u"tg://settings/edit/your-color"_q,
+		u"tg://settings/privacy/gifts"_q,
+		u"tg://settings/privacy/gifts/always"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
@@ -2220,6 +2254,139 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 	}
 	return result;
+}
+
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunMessagesPrivacyBoxPassRegression(
+	not_null<Window::SessionController *> controller, UserId selfId,
+	bool supported, bool premium, const char *sessionName) {
+	auto &session = controller->session();
+	const auto wasPremium = session.premium();
+	if (!SetRegressionSessionPremium(&session, selfId, premium)) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s could "
+					 "not set Premium=%d.\n",
+					 sessionName, premium);
+		return false;
+	}
+	const auto allowed = premium || session.appConfig().newRequirePremiumFree();
+	const auto chargeAvailable = session.appConfig().paidMessagesAvailable();
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &session.mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	auto box = controller->show(
+		Box(EditMessagesPrivacyBox, controller.get(), QString()),
+		Ui::LayerOption::KeepOther, anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s "
+					 "premium=%d box did not open.\n",
+					 sessionName, premium);
+		return false;
+	}
+	auto radios = QStringList();
+	auto controls = QStringList();
+	for (const auto widget : content->findChildren<QWidget *>()) {
+		if (const auto radio = dynamic_cast<Ui::Radiobutton *>(widget)) {
+			radios.push_back(radio->accessibilityName());
+		} else if (const auto button
+				   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+			controls.push_back(button->accessibilityName());
+		}
+	}
+	const auto findButton = [&](const QString &text) {
+		for (const auto widget : layer->findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RoundButton *>(widget);
+			if (button
+				&& !button->accessibilityName().compare(text,
+														Qt::CaseInsensitive)) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RoundButton *>(nullptr);
+	};
+	const auto hasEverybody
+		= radios.contains(tr::lng_messages_privacy_everyone(tr::now));
+	const auto hasRestricted
+		= radios.contains(tr::lng_messages_privacy_restricted(tr::now));
+	const auto hasCharge
+		= radios.contains(tr::lng_messages_privacy_charge(tr::now));
+	const auto hasSubscribe
+		= controls.contains(tr::lng_messages_privacy_premium_button(tr::now));
+	const auto save = findButton(tr::lng_settings_save(tr::now));
+	const auto done = findButton(tr::lng_about_done(tr::now));
+	const auto expectSave = supported && allowed;
+	const auto action = expectSave ? save : done;
+	const auto optionsMatch
+		= supported
+			  ? (hasEverybody && hasRestricted && (hasCharge == chargeAvailable)
+				 && (hasSubscribe == !allowed))
+			  : ((radios.size() == 1) && hasEverybody && !hasRestricted
+				 && !hasCharge && !hasSubscribe);
+	const auto buttonsMatch = (!save == !expectSave) && (!done == expectSave);
+	if (!optionsMatch || !buttonsMatch || !action) {
+		std::fprintf(
+			stderr,
+			"Messages privacy regression failed: session=%s premium=%d "
+			"radios=%d everybody=%d restricted=%d charge=%d subscribe=%d "
+			"save=%d done=%d expected-paid=%d.\n",
+			sessionName, premium, int(radios.size()), hasEverybody,
+			hasRestricted, hasCharge, hasSubscribe, save != nullptr,
+			done != nullptr, supported);
+		return false;
+	}
+	action->clicked(Qt::KeyboardModifiers(), Qt::LeftButton);
+	const auto closed = WaitForRegressionCondition([&] { return !box; });
+	const auto privacyRequests = std::count_if(
+		capture.requests.begin(), capture.requests.end(),
+		[](const CapturedChannelSaveRequest &request) {
+			return !request.body.isEmpty()
+				   && (static_cast<uint32>(request.body.front())
+					   == mtpc_account_setGlobalPrivacySettings);
+		});
+	const auto premiumRestored
+		= SetRegressionSessionPremium(&session, selfId, wasPremium);
+	if (!closed || (privacyRequests != (expectSave ? 1 : 0))
+		|| !premiumRestored) {
+		std::fprintf(
+			stderr,
+			"Messages privacy regression failed: session=%s premium=%d "
+			"closed=%d setGlobalPrivacySettings=%d expected=%d "
+			"premium-restored=%d.\n",
+			sessionName, premium, closed, int(privacyRequests),
+			expectSave ? 1 : 0, premiumRestored);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool RunMessagesPrivacyBoxRegression(
+	not_null<Window::SessionController *> controller, UserId selfId,
+	bool supported, const char *sessionName) {
+	if (controller->session().paidFeaturesSupported() != supported) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s "
+					 "capability=%d expected=%d.\n",
+					 sessionName, controller->session().paidFeaturesSupported(),
+					 supported);
+		return false;
+	}
+	return RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+											   true, sessionName)
+		   && RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+												  false, sessionName);
 }
 
 [[nodiscard]] bool RunBoostMenuVisibilityRegression(
@@ -2639,6 +2806,16 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 			app, stock, pinned, blank, restoredBlocked, stockController,
 			pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
+		blank->forcedLogOut();
+		return false;
+	}
+	if (!RunMessagesPrivacyBoxRegression(stockController, selfId, true, "stock")
+		|| !RunMessagesPrivacyBoxRegression(pinnedController, selfId, false,
+											"custom")
+		|| !RunMessagesPrivacyBoxRegression(blankController, selfId, false,
+											"blocked")
+		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
+											"stock after custom")) {
 		blank->forcedLogOut();
 		return false;
 	}
@@ -3199,9 +3376,6 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTPint(), MTPint(), MTPStickerSet(), MTPBotVerification(), MTPint(),
 		MTPlong(), MTPProfileTab(), MTPlong());
 }
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunTranslationControlsLifecycleRegression(
 	not_null<Window::SessionController *> stockController,
@@ -4065,6 +4239,303 @@ template <typename Predicate>
 				"error_keeps_box_open.\n");
 	return true;
 }
+
+[[nodiscard]] bool
+PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+	const auto &actions = menu.actions();
+	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
+		return false;
+	}
+	const auto inner = menu.menu();
+	inner->clearSelection();
+	auto hasAction = false;
+	for (auto i = 0; i != actions.size(); ++i) {
+		const auto action = actions[i];
+		if (action->isSeparator()) {
+			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
+				|| actions[i + 1]->isSeparator()) {
+				return false;
+			}
+		} else if (action->text().isEmpty()) {
+			return false;
+		} else {
+			const auto item = inner->itemForAction(action);
+			const auto accessible
+				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
+			if (!accessible || accessible->role() != QAccessible::MenuItem
+				|| accessible->text(QAccessible::Name) != action->text()) {
+				return false;
+			}
+			if (item->isEnabled()) {
+				auto down
+					= QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+				QCoreApplication::sendEvent(&menu, &down);
+				const auto selected = inner->findSelectedAction();
+				if (!selected || selected->action() != action
+					|| selected->lastTriggeredSource()
+						   != Ui::Menu::TriggeredSource::Keyboard) {
+					return false;
+				}
+				hasAction = true;
+			}
+		}
+	}
+	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
+	return hasAction && accessible
+		   && (accessible->role() == QAccessible::PopupMenu);
+}
+
+[[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
+	const auto actions = menu.actions();
+	return int(
+		std::count_if(actions.cbegin(), actions.cend(),
+					  [](QAction *action) { return action->isSeparator(); }));
+}
+
+template <typename Widget>
+[[nodiscard]] bool RunScheduledSubmissionForWidget(
+	Widget &widget, Main::Session &session, not_null<History *> history,
+	bool supported, TimeId scheduled, TimeId repeat, const QString &label) {
+	const auto text = u"Scheduled submission "_q + label;
+	const auto count = session.scheduledMessages().count(history);
+	widget.setDraftTextForRegressionTest(text);
+	widget.sendForRegressionTest(Api::SendOptions{
+		.scheduled = scheduled,
+		.scheduleRepeatPeriod = repeat,
+	});
+	if (!supported) {
+		return (session.scheduledMessages().count(history) == count)
+			   && (widget.draftTextForRegressionTest() == text);
+	} else if ((session.scheduledMessages().count(history) != count + 1)
+			   || !widget.draftTextForRegressionTest().isEmpty()) {
+		return false;
+	}
+	const auto messages = session.scheduledMessages().list(history);
+	for (const auto id : messages.ids) {
+		const auto item = session.scheduledMessages().lookupItem(id);
+		if (item && (item->date() == scheduled)
+			&& (item->scheduleRepeatPeriod() == repeat)
+			&& (item->originalText().text == text)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+template <typename Widget>
+[[nodiscard]] bool RunOrdinarySubmissionForWidget(Widget &widget,
+												  not_null<History *> history,
+												  const QString &label) {
+	const auto before = history->lastMessage();
+	const auto text = u"Ordinary submission "_q + label;
+	widget.setDraftTextForRegressionTest(text);
+	widget.sendForRegressionTest(Api::SendOptions());
+	const auto after = history->lastMessage();
+	return after && (after != before) && (after->originalText().text == text)
+		   && widget.draftTextForRegressionTest().isEmpty();
+}
+
+[[nodiscard]] bool RunScheduledSubmissionLifecycleRegression(
+	not_null<Window::SessionController *> controller, bool supported,
+	const QString &label) {
+	auto &session = controller->session();
+	const auto self
+		= not_null<PeerData *>(static_cast<PeerData *>(&*session.user()));
+	const auto history = session.data().history(self);
+	controller->showPeerHistory(self);
+	QCoreApplication::processEvents();
+	const auto content = controller->content();
+	const auto historyWidget = content->historyWidgetForRegressionTest();
+	if (!historyWidget || (historyWidget->peer() != self.get())) {
+		return false;
+	}
+	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
+		content.get(), controller,
+		HistoryView::ChatViewId{
+			.history = history,
+			.repliesRootId = MsgId(),
+		});
+	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
+	const auto repeat = TimeId(7 * 24 * 60 * 60);
+	const auto regularScheduled = RunScheduledSubmissionForWidget(
+		*historyWidget, session, history, supported, tomorrow, 0,
+		label + u" history"_q);
+	const auto repeatedScheduled = RunScheduledSubmissionForWidget(
+		*historyWidget, session, history, supported, tomorrow, repeat,
+		label + u" history repeat"_q);
+	const auto regularChatScheduled = RunScheduledSubmissionForWidget(
+		*chatWidget, session, history, supported, tomorrow, 0,
+		label + u" chat section"_q);
+	const auto repeatedChatScheduled = RunScheduledSubmissionForWidget(
+		*chatWidget, session, history, supported, tomorrow, repeat,
+		label + u" chat section repeat"_q);
+	const auto ordinaryHistory = RunOrdinarySubmissionForWidget(
+		*historyWidget, history, label + u" history"_q);
+	const auto ordinaryChat = RunOrdinarySubmissionForWidget(
+		*chatWidget, history, label + u" chat section"_q);
+	return regularScheduled && repeatedScheduled && regularChatScheduled
+		   && repeatedChatScheduled && ordinaryHistory && ordinaryChat;
+}
+
+[[nodiscard]] bool RunChatFeatureMenusLifecycleRegression(
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> customController,
+	const QString &activationOrder) {
+	struct DividerCounts {
+		int history = 0;
+		int profile = 0;
+		int send = 0;
+	};
+	const auto checkController = [&](not_null<Window::SessionController *>
+										 controller,
+									 bool supported, const QString &label,
+									 DividerCounts &dividers) {
+		auto &session = controller->session();
+		session.data().processUsers(MTP_vector<MTPUser>({
+			RegressionUser(UserId(2), false, u"2"_q),
+		}));
+		const auto peer = session.data().peer(peerFromUser(UserId(2)));
+		const auto history = session.data().history(peer);
+		auto &cloudThemes = session.data().cloudThemes();
+		cloudThemes.setChatThemesForRegressionTest({
+			Data::CloudTheme{
+				.id = 1,
+				.emoticon = QString::fromUtf8("\xF0\x9F\x8F\xA0"),
+			},
+		});
+		if (cloudThemes.chatThemes().empty()
+			|| !cloudThemes.myGiftThemesReady()) {
+			return false;
+		}
+		controller->showPeerHistory(peer);
+		QCoreApplication::processEvents();
+		const auto historyWidget
+			= controller->content()->historyWidgetForRegressionTest();
+		if (!historyWidget || (historyWidget->peer() != peer.get())) {
+			return false;
+		}
+		const auto buildPeerMenu = [&](Dialogs::EntryState::Section section) {
+			auto result = std::make_unique<Ui::PopupMenu>(nullptr);
+			Window::FillDialogsEntryMenu(
+				controller,
+				{
+					.key = history,
+					.section = section,
+				},
+				Ui::Menu::CreateAddActionCallback(result.get()));
+			return result;
+		};
+		const auto findAction
+			= [](const Ui::PopupMenu &menu, const QString &text) -> QAction * {
+			for (const auto &action : menu.actions()) {
+				if (action->text() == text) {
+					return action;
+				}
+			}
+			return nullptr;
+		};
+		const auto hasSharingAction = [&](const Ui::PopupMenu &menu) {
+			return findAction(menu, tr::lng_disable_sharing(tr::now))
+				   || findAction(menu, tr::lng_enable_sharing(tr::now));
+		};
+		auto historyMenu = buildPeerMenu(Dialogs::EntryState::Section::History);
+		auto profileMenu = buildPeerMenu(Dialogs::EntryState::Section::Profile);
+		dividers.history = PopupMenuDividerCount(*historyMenu);
+		dividers.profile = PopupMenuDividerCount(*profileMenu);
+		const auto theme
+			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto menusAreNavigable
+			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
+			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+		const auto expectedEntries
+			= supported ? (theme && hasSharingAction(*historyMenu)
+						   && hasSharingAction(*profileMenu))
+						: (!theme && !hasSharingAction(*historyMenu)
+						   && !hasSharingAction(*profileMenu));
+		if (!menusAreNavigable || !expectedEntries) {
+			std::fprintf(
+				stderr,
+				"Chat feature menu regression failed: label=%s supported=%d "
+				"keyboard-accessible=%d entries=%d\n",
+				qPrintable(label), supported, menusAreNavigable,
+				expectedEntries);
+			return false;
+		}
+		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
+		const auto sendMenuResult = SendMenu::FillSendMenu(
+			sendMenu.get(), nullptr, controller->content()->sendMenuDetails(),
+			[](SendMenu::Action, SendMenu::Details) {});
+		dividers.send = PopupMenuDividerCount(*sendMenu);
+		const auto hasSchedule
+			= findAction(*sendMenu, tr::lng_schedule_message(tr::now))
+			  || findAction(*sendMenu,
+							tr::lng_scheduled_send_until_online(tr::now));
+		const auto hasSilentSend
+			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
+			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
+			std::fprintf(stderr,
+						 "Chat feature send menu regression failed: label=%s "
+						 "supported=%d schedule=%d silent=%d\n",
+						 qPrintable(label), supported, bool(hasSchedule),
+						 bool(hasSilentSend));
+			return false;
+		}
+		if (supported) {
+			if (!theme) {
+				return false;
+			}
+			theme->trigger();
+			QCoreApplication::processEvents();
+			const auto controlsAccessible
+				= historyWidget->chatThemeControlsAccessibleForRegressionTest();
+			controller->toggleChooseChatTheme(peer, false);
+			if (!controlsAccessible) {
+				std::fprintf(
+					stderr,
+					"Chat theme strip regression failed: stock controls were "
+					"missing, unfocusable, or inaccessible in %s.\n",
+					qPrintable(label));
+				return false;
+			}
+		} else {
+			controller->toggleChooseChatTheme(peer);
+			QCoreApplication::processEvents();
+			if (historyWidget->chatThemeControlsAccessibleForRegressionTest()) {
+				std::fprintf(
+					stderr,
+					"Chat theme strip regression failed: custom controls were "
+					"shown in %s.\n",
+					qPrintable(label));
+				return false;
+			}
+		}
+		return RunScheduledSubmissionLifecycleRegression(
+			controller, supported, activationOrder + u" "_q + label);
+	};
+	const auto stockLabel = u"stock window "_q + activationOrder;
+	const auto customLabel = u"custom window "_q + activationOrder;
+	auto stockDividerCounts = DividerCounts();
+	auto customDividerCounts = DividerCounts();
+	if (!checkController(stockController, true, stockLabel, stockDividerCounts)
+		|| !checkController(customController, false, customLabel,
+							customDividerCounts)) {
+		return false;
+	} else if (stockDividerCounts.history != customDividerCounts.history
+			   || stockDividerCounts.profile != customDividerCounts.profile
+			   || stockDividerCounts.send != customDividerCounts.send) {
+		std::fprintf(stderr,
+					 "Chat feature menu divider regression failed: order=%s "
+					 "stock={%d,%d,%d} custom={%d,%d,%d}\n",
+					 qPrintable(activationOrder), stockDividerCounts.history,
+					 stockDividerCounts.profile, stockDividerCounts.send,
+					 customDividerCounts.history, customDividerCounts.profile,
+					 customDividerCounts.send);
+		return false;
+	}
+	return true;
+}
 #endif
 
 template <typename Predicate>
@@ -4234,20 +4705,28 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"stock and pinned sessions did not share the same user id");
 	}
-	const auto capabilitiesMatch
-		= [](const Main::Session &session, bool supported) {
-			  return (session.callsSupported() == supported)
-					 && (session.botAppsSupported() == supported)
-					 && (session.paidFeaturesSupported() == supported)
-					 && (session.storiesSupported() == supported)
-					 && (session.exportSupported() == supported)
-					 && (session.passportSupported() == supported)
-					 && (session.aiComposeSupported() == supported)
-					 && (session.serverTranslationSupported() == supported)
-					 && (session.sharedFoldersSupported() == supported)
-					 && (session.accountBioEditSupported() == supported)
-					 && (session.accountUsernameEditSupported() == supported);
-		  };
+	const auto capabilitiesMatch = [](const Main::Session &session,
+									  bool supported) {
+		return (session.callsSupported() == supported)
+			   && (session.botAppsSupported() == supported)
+			   && (session.paidFeaturesSupported() == supported)
+			   && (session.storiesSupported() == supported)
+			   && (session.exportSupported() == supported)
+			   && (session.passportSupported() == supported)
+			   && (session.aiComposeSupported() == supported)
+			   && (session.serverTranslationSupported() == supported)
+			   && (session.sharedFoldersSupported() == supported)
+			   && (session.accountBioEditSupported() == supported)
+			   && (session.accountUsernameEditSupported() == supported)
+			   && (Main::details::noForwardsSupportedForPeer(session.user())
+				   == supported)
+			   && (Main::details::chatThemeEditingSupportedForPeer(
+					   session.user())
+				   == supported)
+			   && (Main::details::scheduledMessagesSupportedForPeer(
+					   session.user())
+				   == supported);
+	};
 	const auto pinnedUserPeer = not_null<PeerData *>(
 		static_cast<PeerData *>(&*pinned->session().user()));
 	auto &app = Core::App();
@@ -4870,13 +5349,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto printCapabilities = [](const char *name,
 									  const Main::Session &session) {
 		std::fprintf(
-			stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d%d\n", name,
+			stderr, "%s capabilities=%d%d%d%d%d%d%d%d%d%d%d%d%d%d\n", name,
 			session.callsSupported(), session.botAppsSupported(),
 			session.paidFeaturesSupported(), session.storiesSupported(),
 			session.exportSupported(), session.passportSupported(),
 			session.aiComposeSupported(), session.serverTranslationSupported(),
 			session.sharedFoldersSupported(), session.accountBioEditSupported(),
-			session.accountUsernameEditSupported());
+			session.accountUsernameEditSupported(),
+			Main::details::noForwardsSupportedForPeer(session.user()),
+			Main::details::chatThemeEditingSupportedForPeer(session.user()),
+			Main::details::scheduledMessagesSupportedForPeer(session.user()));
 	};
 	const auto windowsMatch = [&](const char *stage) {
 		const auto stockController = stockWindow->sessionController();
@@ -5197,6 +5679,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											  : "pinned second",
 								  second->session());
 			}
+			return false;
+		}
+		const auto stockUiController = stockWindow->sessionController();
+		const auto customUiController = pinnedWindow->sessionController();
+		if (!stockUiController || !customUiController
+			|| !RunChatFeatureMenusLifecycleRegression(
+				stockUiController, customUiController,
+				customFirst ? u"custom-first"_q : u"stock-first"_q)) {
 			return false;
 		}
 		return true;

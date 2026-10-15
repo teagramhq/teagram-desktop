@@ -304,6 +304,9 @@ for fixture in \
   TeagramUpdateArchiveWritesStayConfined \
   TeagramUpdateInstallFailurePreservesApp \
   TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary \
+  TeagramUpdateInstallLocationAllowsSharedWritableParent \
+  TeagramUpdateReplacementSwapsInSharedWritableParent \
+  TeagramUpdateInstallLocationAllowsGroupWritableApplications \
   TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback \
   TeagramUpdateInstallerRemovesInterruptedExtraction \
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart \
@@ -327,8 +330,8 @@ for fixture in \
 done
 fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
 fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
-if [[ "$fixture_count" != 16 ]]; then
-  printf 'Updater fixture runner must select exactly 16 registered cases, got %s.\n' \
+if [[ "$fixture_count" != 19 ]]; then
+  printf 'Updater fixture runner must select exactly 19 registered cases, got %s.\n' \
     "$fixture_count" >&2
   exit 1
 fi

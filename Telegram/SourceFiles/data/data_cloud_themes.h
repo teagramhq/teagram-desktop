@@ -79,6 +79,9 @@ public:
 	void refreshChatThemes();
 	[[nodiscard]] const std::vector<CloudTheme> &chatThemes() const;
 	[[nodiscard]] rpl::producer<> chatThemesUpdated() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setChatThemesForRegressionTest(std::vector<CloudTheme> list);
+#endif
 
 	void myGiftThemesLoadMore(bool reload = false);
 	[[nodiscard]] const std::vector<QString> &myGiftThemesTokens() const;

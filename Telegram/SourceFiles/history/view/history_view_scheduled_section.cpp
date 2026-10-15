@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mime_type.h"
 #include "chat_helpers/tabbed_selector.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "mainwindow.h"
 #include "data/components/recent_inline_bots.h"
 #include "data/components/scheduled_messages.h"
@@ -267,6 +268,9 @@ ScheduledWidget::ScheduledWidget(
 		_inner->setEmptyInfoWidget(std::move(emptyInfo));
 	}
 	setupComposeControls();
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		_composeControls->hide();
+	}
 	Window::SetupSwipeBackSection(this, _scroll, _inner);
 }
 
@@ -438,8 +442,7 @@ void ScheduledWidget::setupComposeControls() {
 			messageToSend.textWithTags = data.caption;
 			sendExistingDocument(document, std::move(messageToSend));
 		});
-		controller()->show(
-			PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+		showScheduleBox(callback);
 	}, lifetime());
 
 	_composeControls->photoChosen(
@@ -543,6 +546,9 @@ bool ScheduledWidget::confirmSendingFiles(
 	not_null<const QMimeData*> data,
 	std::optional<bool> overrideSendImagesAsPhotos,
 	const QString &insertTextOnCancel) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return false;
+	}
 	const auto hasImage = data->hasImage();
 	const auto premium = controller()->session().user()->isPremium();
 
@@ -576,7 +582,9 @@ bool ScheduledWidget::confirmSendingFiles(
 bool ScheduledWidget::confirmSendingFiles(
 	Ui::PreparedList &&list,
 	const QString &insertTextOnCancel) {
-	if (_composeControls->confirmMediaEdit(list)) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return false;
+	} else if (_composeControls->confirmMediaEdit(list)) {
 		return true;
 	} else if (showSendingFilesError(list)) {
 		return false;
@@ -613,7 +621,8 @@ bool ScheduledWidget::confirmSendingFiles(
 void ScheduledWidget::sendingFilesConfirmed(
 		std::shared_ptr<Ui::PreparedBundle> bundle,
 		Api::SendOptions options) {
-	if (showSendingFilesError(*bundle)) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)
+		|| showSendingFilesError(*bundle)) {
 		return;
 	}
 	const auto compress = bundle->way.sendImagesAsPhotos();
@@ -677,8 +686,7 @@ void ScheduledWidget::uploadFile(
 			type,
 			prepareSendAction(options));
 	};
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 bool ScheduledWidget::showSendingFilesError(
@@ -730,11 +738,13 @@ void ScheduledWidget::send() {
 		return;
 	}
 	const auto callback = [=](Api::SendOptions options) { send(options); };
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 void ScheduledWidget::send(Api::SendOptions options) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return;
+	}
 	const auto webPageDraft = _composeControls->webPageDraft();
 
 	auto message = Api::MessageToSend(prepareSendAction(options));
@@ -759,13 +769,15 @@ void ScheduledWidget::sendVoice(const Controls::VoiceToSend &data) {
 	const auto callback = [=](Api::SendOptions options) {
 		sendVoice(base::duplicate(data), options);
 	};
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 void ScheduledWidget::sendVoice(
 		const Controls::VoiceToSend &data,
 		Api::SendOptions options) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return;
+	}
 	session().api().sendVoiceMessage(
 		data.bytes,
 		data.waveform,
@@ -858,6 +870,12 @@ void ScheduledWidget::edit(
 bool ScheduledWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
 		Api::MessageToSend messageToSend) {
+	if (!Main::details::scheduledSendAllowedForPeer(
+			_history->peer,
+			messageToSend.action.options.scheduled
+				|| messageToSend.action.options.scheduleRepeatPeriod)) {
+		return false;
+	}
 	const auto error = Data::RestrictionError(
 		_history->peer,
 		ChatRestriction::SendStickers);
@@ -879,13 +897,15 @@ void ScheduledWidget::sendExistingPhoto(not_null<PhotoData*> photo) {
 	const auto callback = [=](Api::SendOptions options) {
 		sendExistingPhoto(photo, options);
 	};
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 bool ScheduledWidget::sendExistingPhoto(
 		not_null<PhotoData*> photo,
 		Api::SendOptions options) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return false;
+	}
 	const auto error = Data::RestrictionError(
 		_history->peer,
 		ChatRestriction::SendPhotos);
@@ -913,14 +933,16 @@ void ScheduledWidget::sendInlineResult(
 	const auto callback = [=](Api::SendOptions options) {
 		sendInlineResult(result, bot, options);
 	};
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 void ScheduledWidget::sendInlineResult(
 		std::shared_ptr<InlineBots::Result> result,
 		not_null<UserData*> bot,
 		Api::SendOptions options) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return;
+	}
 	auto action = prepareSendAction(options);
 	action.generateLocal = true;
 	session().api().sendInlineResult(
@@ -941,11 +963,13 @@ void ScheduledWidget::sendInlineResult(
 }
 
 SendMenu::Details ScheduledWidget::sendMenuDetails() const {
-	const auto type = _history->peer->isSelf()
-		? SendMenu::Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_history->peer)
-		? SendMenu::Type::ScheduledToUser
-		: SendMenu::Type::Scheduled;
+	const auto type
+		= !Main::details::scheduledMessagesSupportedForPeer(_history->peer)
+			  ? SendMenu::Type::Disabled
+		  : _history->peer->isSelf() ? SendMenu::Type::Reminder
+		  : HistoryView::CanScheduleUntilOnline(_history->peer)
+			  ? SendMenu::Type::ScheduledToUser
+			  : SendMenu::Type::Scheduled;
 	const auto effectAllowed = _history->peer->isUser();
 	return {
 		.type = type,
@@ -955,7 +979,18 @@ SendMenu::Details ScheduledWidget::sendMenuDetails() const {
 	};
 }
 
+void ScheduledWidget::showScheduleBox(Fn<void(Api::SendOptions)> callback) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return;
+	}
+	controller()->show(PrepareScheduleBox(this, _show, sendMenuDetails(),
+										  std::move(callback)));
+}
+
 bool ScheduledWidget::processChosenSticker(ChatHelpers::FileChosen &&chosen) {
+	if (!Main::details::scheduledMessagesSupportedForPeer(_history->peer)) {
+		return false;
+	}
 	_composeControls->processChosenSticker(std::move(chosen));
 	return true;
 }
@@ -1572,8 +1607,7 @@ void ScheduledWidget::listSendBotCommand(
 		message.textWithTags = { text };
 		session().api().sendMessage(std::move(message));
 	};
-	controller()->show(
-		PrepareScheduleBox(this, _show, sendMenuDetails(), callback));
+	showScheduleBox(callback);
 }
 
 void ScheduledWidget::listSearch(
