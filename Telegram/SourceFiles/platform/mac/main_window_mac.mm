@@ -96,7 +96,7 @@ private:
 	NSView * __weak _nativeView = nil;
 
 	MainWindowObserver *_observer = nullptr;
-
+	rpl::lifetime _lifetime;
 };
 
 } // namespace Platform
@@ -272,12 +272,15 @@ void MainWindow::initHook() {
 	}
 
 	rpl::merge(winIdValue() | rpl::to_empty, shownValue() | rpl::to_empty)
-		| rpl::on_next([=] { _private->keepTitleMerged(); }, lifetime());
+		| rpl::on_next([=] { _private->keepTitleMerged(); },
+					   _private->_lifetime);
 
-	Platform::GlobalMenuMarkdownState(
-	) | rpl::on_next([this](Ui::MarkdownEnabledState state) {
-		_private->updateMarkdownState(state);
-	}, lifetime());
+	Platform::GlobalMenuMarkdownState()
+		| rpl::on_next(
+			[this](Ui::MarkdownEnabledState state) {
+				_private->updateMarkdownState(state);
+			},
+			_private->_lifetime);
 }
 
 void MainWindow::updateWindowIcon() {
