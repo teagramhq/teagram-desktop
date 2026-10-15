@@ -116,7 +116,12 @@ if [[ "$*" == *'/actions/workflows/mac.yml/runs'* ]]; then
 fi
 if [[ "$*" == *'/pulls/105'* ]]; then
   # Each read of the live PR head takes the next line; the last one stays.
-  head -n 1 "$FAKE_GH_LIVE_HEADS"
+  live_head="$(head -n 1 "$FAKE_GH_LIVE_HEADS")"
+  if [[ "$live_head" == fail ]]; then
+    printf 'gh: Server Error (HTTP 502)\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "$live_head"
   if (( $(wc -l < "$FAKE_GH_LIVE_HEADS") > 1 )); then
     sed -i.bak 1d "$FAKE_GH_LIVE_HEADS"
   fi
@@ -199,6 +204,18 @@ if ! run_approval_step "$old_head_runs" ok present "new newer"; then
 fi
 if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel ' ]]; then
   printf 'A cleanup overtaken by a newer push before clearing must leave macos-build for that push, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$old_head_runs" ok present fail; then
+  printf 'A failed live PR head lookup must fail the macOS approval step.\n' >&2
+  exit 1
+fi
+if [[ -n "$(approval_calls)" ]]; then
+  printf 'A failed live PR head lookup must not cancel builds or clear approval, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$old_head_runs" ok present "new fail" || [[ "$(approval_calls)" == *labels/macos-build* ]]; then
+  printf 'A failed live PR head lookup before clearing must fail without clearing macos-build.\n' >&2
   exit 1
 fi
 require_text "$approval_workflow" 'group: ${{ github.workflow }}-${{ github.event.pull_request.number }}'

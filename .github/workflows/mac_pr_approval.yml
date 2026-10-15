@@ -38,15 +38,19 @@ jobs:
             exit 1
           fi
           # The event head goes stale once a newer push lands; that push runs its own cleanup.
-          event_head_is_live() {
+          exit_if_event_head_is_stale() {
             local live_head_sha
-            live_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+            if ! live_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" \
+                || [[ -z "$live_head_sha" ]]; then
+              echo "::error::Could not read the live head of PR $PR_NUMBER."
+              exit 1
+            fi
             if [[ "$live_head_sha" != "$HEAD_SHA" ]]; then
               echo "PR $PR_NUMBER moved from $HEAD_SHA to $live_head_sha; leaving its builds and approval alone."
-              return 1
+              exit 0
             fi
           }
-          event_head_is_live || exit 0
+          exit_if_event_head_is_stale
           runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
             -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
             | jq -c --arg repo "$HEAD_REPOSITORY" '[.workflow_runs[] | select(.head_repository.full_name == $repo)]')"
@@ -110,7 +114,7 @@ jobs:
               exit 1
               ;;
           esac
-          event_head_is_live || exit 0
+          exit_if_event_head_is_stale
           if ! remove_output="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build" 2>&1)"; then
             if [[ "$remove_output" != *"(HTTP 404)"* ]]; then
               printf '%s\n' "$remove_output" >&2
