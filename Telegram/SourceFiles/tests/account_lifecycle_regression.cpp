@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
+#include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
@@ -2474,14 +2475,28 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				.months = 3,
 			},
 			reactivate, nullptr);
+		const auto starsFormDone
+			= [=](Payments::CheckoutResult result, const MTPUpdates *) {
+				  results->push_back(result);
+			  };
+		const auto savedGift = MTP_inputSavedStarGiftUser(MTP_int(0x7e5704));
+		Ui::RequestStarsFormAndSubmit(
+			target->uiShow(),
+			MTP_inputInvoiceStarGiftUpgrade(
+				MTP_flags(MTPDinputInvoiceStarGiftUpgrade::Flag()), savedGift),
+			starsFormDone);
+		Ui::RequestStarsFormAndSubmit(
+			target->uiShow(),
+			MTP_inputInvoiceStarGiftTransfer(savedGift, MTP_inputPeerSelf()),
+			starsFormDone);
 		QCoreApplication::processEvents();
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
-			expected[i] += (controllers[i] == target) ? 6 : 0;
+			expected[i] += (controllers[i] == target) ? 8 : 0;
 		}
 		const auto refused = (*results
 							  == std::vector<Payments::CheckoutResult>(
-								  6, Payments::CheckoutResult::Cancelled))
+								  8, Payments::CheckoutResult::Cancelled))
 							 && captureObserved && payments.constructors.empty()
 							 && (toastCounts() == expected) && !paidUiOpen();
 		if (!refused) {
@@ -2535,7 +2550,8 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		stderr,
 		"Paid link regression passed: %d paid links refused in custom and "
 		"blocked sessions and ignored without a target; message invoice, "
-		"receipt, slug, Stars, gift and gift-code checkout starts refused "
+		"receipt, slug, Stars, gift, gift-code, gift upgrade and transfer "
+		"checkout starts refused "
 		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
 	return true;

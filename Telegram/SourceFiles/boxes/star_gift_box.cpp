@@ -1316,6 +1316,12 @@ void SendStarsFormRequest(
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
 	using BalanceResult = Settings::SmallBalanceResult;
 	const auto session = &show->session();
+	if (Payments::PaidCheckoutRefused(session)) {
+		crl::on_main(session, [=] {
+			done(Payments::CheckoutResult::Cancelled, nullptr);
+		});
+		return;
+	}
 	if (result == BalanceResult::Success
 		|| result == BalanceResult::Already) {
 		session->api().request(MTPpayments_SendStarsForm(
@@ -4304,6 +4310,11 @@ void RequestOurForm(
 	const auto fail = [=](Payments::CheckoutResult failure) {
 		done(0, {}, failure);
 	};
+	if (Payments::PaidCheckoutRefused(&show->session())) {
+		crl::on_main(&show->session(),
+					 [=] { fail(Payments::CheckoutResult::Cancelled); });
+		return;
+	}
 	show->session().api().request(MTPpayments_GetPaymentForm(
 		MTP_flags(0),
 		invoice,

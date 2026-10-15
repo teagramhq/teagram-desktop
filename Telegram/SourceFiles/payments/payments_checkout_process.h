@@ -71,6 +71,8 @@ struct PaidInvoice {
 	QString title;
 };
 
+[[nodiscard]] bool PaidCheckoutRefused(not_null<Main::Session *> session);
+
 class CheckoutProcess final
 	: public base::has_weak_ptr
 	, private Ui::PanelDelegate {

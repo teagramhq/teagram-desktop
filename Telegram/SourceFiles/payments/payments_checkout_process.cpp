@@ -64,12 +64,8 @@ base::flat_map<not_null<Main::Session*>, SessionProcesses> Processes;
 [[nodiscard]] bool
 RefusePaidCheckout(not_null<Main::Session *> session,
 				   const Fn<void(CheckoutResult)> &reactivate) {
-	if (session->paidFeaturesSupported()) {
+	if (!PaidCheckoutRefused(session)) {
 		return false;
-	}
-	for (const auto &window : session->windows()) {
-		window->showFeatureUnavailableOnServerToast();
-		break;
 	}
 	if (reactivate) {
 		crl::on_main(session, [=] { reactivate(CheckoutResult::Cancelled); });
@@ -78,6 +74,17 @@ RefusePaidCheckout(not_null<Main::Session *> session,
 }
 
 } // namespace
+
+bool PaidCheckoutRefused(not_null<Main::Session *> session) {
+	if (session->paidFeaturesSupported()) {
+		return false;
+	}
+	for (const auto &window : session->windows()) {
+		window->showFeatureUnavailableOnServerToast();
+		break;
+	}
+	return true;
+}
 
 void CheckoutProcess::Start(
 		not_null<const HistoryItem*> item,
