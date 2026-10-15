@@ -94,8 +94,9 @@ struct ResolvedPath {
 	}
 	struct stat info = {};
 	if (::fstat(descriptor, &info) != 0 || !S_ISDIR(info.st_mode)
-		|| info.st_uid != ::geteuid()
-		|| (requirePrivate && (info.st_mode & 0077) != 0)) {
+		|| (requirePrivate
+				? (info.st_uid != ::geteuid() || (info.st_mode & 0077) != 0)
+				: ::access(encoded.constData(), W_OK | X_OK) != 0)) {
 		::close(descriptor);
 		return {};
 	}
@@ -217,6 +218,50 @@ Injected(const TeagramUpdateReplacementFailureInjector &failureInjector,
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace
+
+TeagramUpdateInstallLocation ClassifyTeagramUpdateInstallLocation(
+	const TeagramUpdateInstallLocationFacts &facts) {
+	if (!facts.bundleDirectory || !facts.parentDirectory) {
+		return TeagramUpdateInstallLocation::Unwritable;
+	} else if (!facts.bundleOwned) {
+		return TeagramUpdateInstallLocation::OtherOwner;
+	} else if (!facts.sameDevice) {
+		return TeagramUpdateInstallLocation::UnsupportedDisk;
+	} else if (!facts.bundleWritable || !facts.parentWritable) {
+		return TeagramUpdateInstallLocation::Unwritable;
+	}
+	return TeagramUpdateInstallLocation::Allowed;
+}
+
+TeagramUpdateInstallLocationFacts
+ReadTeagramUpdateInstallLocationFacts(const QString &bundlePath) {
+	const auto parent = QFileInfo(bundlePath).absolutePath();
+	const auto bundleBytes = QFile::encodeName(bundlePath);
+	const auto parentBytes = QFile::encodeName(parent);
+	struct stat bundleInfo = {};
+	struct stat parentInfo = {};
+	if (bundleBytes.isEmpty() || parentBytes.isEmpty()
+		|| ::lstat(bundleBytes.constData(), &bundleInfo) != 0
+		|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
+		return {};
+	}
+	return {
+		.bundleDirectory = S_ISDIR(bundleInfo.st_mode),
+		.bundleOwned = (bundleInfo.st_uid == ::geteuid()),
+		.bundleWritable = (::access(bundleBytes.constData(), W_OK) == 0),
+		.parentDirectory = S_ISDIR(parentInfo.st_mode),
+		.parentWritable = IsTeagramUpdateParentWritable(parent),
+		.sameDevice = (bundleInfo.st_dev == parentInfo.st_dev),
+	};
+}
+
+bool IsTeagramUpdateParentWritable(const QString &directory) {
+	const auto encoded = QFile::encodeName(directory);
+	struct stat info = {};
+	return !encoded.isEmpty() && ::lstat(encoded.constData(), &info) == 0
+		   && S_ISDIR(info.st_mode)
+		   && ::access(encoded.constData(), W_OK | X_OK) == 0;
+}
 
 bool WriteTeagramUpdateMarker(const QString &parent, const char *name,
 							  quint64 build) {
