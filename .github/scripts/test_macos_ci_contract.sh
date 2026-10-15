@@ -114,6 +114,14 @@ if [[ "$*" == *'/actions/workflows/mac.yml/runs'* ]]; then
   cat "$FAKE_GH_RUNS"
   exit 0
 fi
+if [[ "$*" == *'/pulls/105'* ]]; then
+  # Each read of the live PR head takes the next line; the last one stays.
+  head -n 1 "$FAKE_GH_LIVE_HEADS"
+  if (( $(wc -l < "$FAKE_GH_LIVE_HEADS") > 1 )); then
+    sed -i.bak 1d "$FAKE_GH_LIVE_HEADS"
+  fi
+  exit 0
+fi
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
 if [[ "$*" =~ /actions/runs/([0-9]+)/jobs ]]; then
   cat "$FAKE_GH_JOBS_DIR/${BASH_REMATCH[1]}.json" 2>/dev/null || printf '%s' '{"jobs":[]}'
@@ -135,8 +143,10 @@ printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclu
 printf '%s' '{"jobs":[{"name":"MacOS","status":"completed","conclusion":"skipped"},{"name":"Focused libiconv (macOS arm64)","status":"completed","conclusion":"skipped"}]}' > "$approval_fixture/16.json"
 run_approval_step() {
   printf '{"workflow_runs":[%s]}' "$1" > "$approval_fixture/runs.json"
+  printf '%s\n' ${4:-new} > "$approval_fixture/live_heads"
   : > "$approval_fixture/calls"
   PATH="$approval_fixture:$PATH" FAKE_GH_LOG="$approval_fixture/calls" FAKE_GH_RUNS="$approval_fixture/runs.json" \
+    FAKE_GH_LIVE_HEADS="$approval_fixture/live_heads" \
     FAKE_GH_CANCEL="$2" FAKE_GH_LABEL="$3" FAKE_GH_JOBS_DIR="$approval_fixture" MACOS_APPROVAL_POLL_SECONDS=0 \
     GITHUB_REPOSITORY=teagramhq/teagram-desktop HEAD_REF=feature HEAD_REPOSITORY=fork/teagram-desktop HEAD_SHA=new PR_NUMBER=105 \
     bash -c "$approval_step" >/dev/null 2>&1
@@ -172,6 +182,26 @@ if run_approval_step "$pending_head_run" ok present || [[ "$(approval_calls)" ==
   printf 'A current-head run that never creates its jobs must fail without touching macos-build.\n' >&2
   exit 1
 fi
+# Pushes B ("new") then C ("newer"): B's cleanup starts after C was approved and built.
+newer_head_run='{"id":18,"status":"in_progress","head_sha":"newer","head_repository":{"full_name":"fork/teagram-desktop"}}'
+printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclusion":null}]}' > "$approval_fixture/18.json"
+if ! run_approval_step "$old_head_runs,$newer_head_run" ok present newer; then
+  printf 'A cleanup for a superseded push must exit cleanly.\n' >&2
+  exit 1
+fi
+if [[ -n "$(approval_calls)" ]]; then
+  printf 'A cleanup for a superseded push must not cancel the newer approved build or clear its label, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if ! run_approval_step "$old_head_runs" ok present "new newer"; then
+  printf 'A cleanup overtaken by a newer push must exit cleanly.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel ' ]]; then
+  printf 'A cleanup overtaken by a newer push before clearing must leave macos-build for that push, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+require_text "$approval_workflow" 'group: ${{ github.workflow }}-${{ github.event.pull_request.number }}'
 if ! run_approval_step "" ok absent; then
   printf 'A PR without macos-build must not fail the macOS approval step.\n' >&2
   exit 1
