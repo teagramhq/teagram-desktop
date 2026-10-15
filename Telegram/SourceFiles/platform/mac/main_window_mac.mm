@@ -194,18 +194,18 @@ void MainWindow::Private::setNativeWindow(NSWindow *window, NSView *view) {
 void MainWindow::Private::keepTitleMerged() {
 	const auto view = reinterpret_cast<NSView *>(_public->internalWinId());
 	const auto window = view ? [view window] : nil;
-	if (!window || !_public->_customTitleHeight) {
+	if (!window) {
 		return;
 	}
 	const auto mask = [window styleMask];
-	if (mask & NSWindowStyleMaskFullSizeContentView) {
-		return;
+	if (!(mask & NSWindowStyleMaskFullSizeContentView)) {
+		[window setStyleMask:(mask | NSWindowStyleMaskFullSizeContentView)];
+		[window setTitlebarAppearsTransparent:YES];
+		if (!(mask & NSWindowStyleMaskFullScreen)) {
+			[window setTitleVisibility:NSWindowTitleHidden];
+		}
 	}
-	[window setStyleMask:(mask | NSWindowStyleMaskFullSizeContentView)];
-	[window setTitlebarAppearsTransparent:YES];
-	if (!(mask & NSWindowStyleMaskFullScreen)) {
-		[window setTitleVisibility:NSWindowTitleHidden];
-	}
+	setNativeWindow(window, view);
 }
 
 void MainWindow::Private::initTouchBar(
