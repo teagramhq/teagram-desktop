@@ -50,9 +50,6 @@ jobs:
           submodules: recursive
           path: ${{ env.REPO_NAME }}
 
-      # Only build tools come from Homebrew, the same set the MacOS. gate
-      # installs. Every linked library comes from the pinned
-      # Telegram/build/prepare recipe below.
       - name: First set up.
         id: setup
         run: |
@@ -70,7 +67,6 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"
           fi
 
-          # Disable spotlight.
           sudo mdutil -a -i off
 
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -290,8 +286,6 @@ jobs:
             diff -u "$package_root/source-symlinks.txt" "$package_root/extracted-symlinks.txt"
             exit 1
           fi
-          # Qt is linked statically, so a bundle may carry no versioned
-          # framework. Any framework it does carry must keep Versions/Current.
           if find "$app/Contents/Frameworks" -maxdepth 1 -name '*.framework' -print -quit 2>/dev/null | grep -q .; then
             grep -F '/Versions/Current ->' "$package_root/source-symlinks.txt" >/dev/null
           fi

@@ -1383,7 +1383,7 @@ win:
 release:
     cmake --build build --config RelWithDebInfo
 mac:
-    git checkout coreaudio_device_uid
+    git checkout c2eab43d72890c58d4b51d5d98eafb9f011e1c89
     CFLAGS=$UNGUARDED CPPFLAGS=$UNGUARDED cmake -B build . \\
         -D CMAKE_BUILD_TYPE=RelWithDebInfo \\
         -D CMAKE_INSTALL_PREFIX:PATH=$USED_PREFIX \\

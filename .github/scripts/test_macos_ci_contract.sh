@@ -291,6 +291,20 @@ reject_text "$packaged_workflow" '/opt/homebrew/opt/'
 reject_text "$packaged_workflow" '/opt/homebrew/Cellar/'
 reject_text "$packaged_workflow" 'CMAKE_PREFIX_PATH'
 reject_text "$packaged_workflow" 'macdeployqt'
+prepare_recipe="Telegram/build/prepare/prepare.py"
+mutable_checkouts="$(grep -nE '^ *git checkout ' "$prepare_recipe" \
+  | grep -vE 'git checkout ([0-9a-f]{7,40}|v[0-9]+(\.[0-9]+)+)$' || true)"
+if [[ -n "$mutable_checkouts" ]]; then
+  printf '%s must check out a commit SHA or a version tag:\n%s\n' \
+    "$prepare_recipe" "$mutable_checkouts" >&2
+  exit 1
+fi
+mutable_clones="$(grep -nE '^ *git clone .*-b (master|main|dev)( |$)' "$prepare_recipe" || true)"
+if [[ -n "$mutable_clones" ]]; then
+  printf '%s must not clone a moving branch:\n%s\n' \
+    "$prepare_recipe" "$mutable_clones" >&2
+  exit 1
+fi
 
 require_text "$unit_workflow" '  workflow_dispatch:'
 reject_text "$unit_workflow" '  pull_request:'
