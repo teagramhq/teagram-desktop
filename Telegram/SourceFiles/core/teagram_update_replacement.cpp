@@ -94,8 +94,9 @@ struct ResolvedPath {
 	}
 	struct stat info = {};
 	if (::fstat(descriptor, &info) != 0 || !S_ISDIR(info.st_mode)
-		|| info.st_uid != ::geteuid()
-		|| (requirePrivate && (info.st_mode & 0077) != 0)) {
+		|| (requirePrivate
+				? (info.st_uid != ::geteuid() || (info.st_mode & 0077) != 0)
+				: ::access(encoded.constData(), W_OK | X_OK) != 0)) {
 		::close(descriptor);
 		return {};
 	}
@@ -217,6 +218,27 @@ Injected(const TeagramUpdateReplacementFailureInjector &failureInjector,
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace
+
+TeagramUpdateInstallLocation ClassifyTeagramUpdateInstallLocation(
+	const TeagramUpdateInstallLocationFacts &facts) {
+	if (!facts.bundleOwned) {
+		return TeagramUpdateInstallLocation::OtherOwner;
+	} else if (!facts.sameDevice) {
+		return TeagramUpdateInstallLocation::UnsupportedDisk;
+	} else if (!facts.bundleDirectory || !facts.parentDirectory
+			   || !facts.bundleWritable || !facts.parentWritable) {
+		return TeagramUpdateInstallLocation::Unwritable;
+	}
+	return TeagramUpdateInstallLocation::Allowed;
+}
+
+bool IsTeagramUpdateParentWritable(const QString &directory) {
+	const auto encoded = QFile::encodeName(directory);
+	struct stat info = {};
+	return !encoded.isEmpty() && ::lstat(encoded.constData(), &info) == 0
+		   && S_ISDIR(info.st_mode)
+		   && ::access(encoded.constData(), W_OK | X_OK) == 0;
+}
 
 bool WriteTeagramUpdateMarker(const QString &parent, const char *name,
 							  quint64 build) {

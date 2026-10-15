@@ -13,6 +13,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
+enum class TeagramUpdateInstallLocation {
+	Allowed,
+	Translocated,
+	Unwritable,
+	OtherOwner,
+	UnsupportedDisk,
+};
+
+struct TeagramUpdateInstallLocationFacts {
+	bool bundleDirectory = false;
+	bool bundleOwned = false;
+	bool bundleWritable = false;
+	bool parentDirectory = false;
+	bool parentWritable = false;
+	bool sameDevice = false;
+};
+
+[[nodiscard]] TeagramUpdateInstallLocation ClassifyTeagramUpdateInstallLocation(
+	const TeagramUpdateInstallLocationFacts &facts);
+
+// The folder holding Teagram.app needs no particular owner: /Applications is
+// root:admin 0775 on a stock Mac and admins write to it through the group.
+[[nodiscard]] bool IsTeagramUpdateParentWritable(const QString &directory);
+
 [[nodiscard]] bool WriteTeagramUpdateMarker(const QString &parent,
 											const char *name, quint64 build);
 

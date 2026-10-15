@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QThread>
 #include <QtCore/QUrlQuery>
+#include <QtCore/QUuid>
 #if defined(Q_OS_MAC)
 #include <QtCore/QMetaObject>
 #include <QtNetwork/QLocalServer>
@@ -1224,6 +1225,126 @@ TEST_CASE(TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary) {
 	CHECK_EQ(::lstat(markerBytes.constData(), &markerInfo), 0);
 	CHECK(canaryInfo.st_ino == markerInfo.st_ino);
 	CHECK(canaryInfo.st_nlink == 2);
+}
+
+// A writable folder that belongs to another user, like /Applications
+// (root:admin 0775) seen by an admin. The shared temporary folder is the
+// one such folder every test runner has.
+[[nodiscard]] QString SharedWritableFolder() {
+	for (const auto &path : {u"/tmp"_q, u"/var/tmp"_q}) {
+		const auto canonical = QFileInfo(path).canonicalFilePath();
+		const auto bytes = QFile::encodeName(canonical);
+		struct stat info = {};
+		if (!canonical.isEmpty() && ::lstat(bytes.constData(), &info) == 0
+			&& info.st_uid != ::geteuid()
+			&& IsTeagramUpdateParentWritable(canonical)) {
+			return canonical;
+		}
+	}
+	return {};
+}
+
+TEST_CASE(TeagramUpdateInstallLocationAllowsSharedWritableParent) {
+	const auto allowed = TeagramUpdateInstallLocationFacts{
+		.bundleDirectory = true,
+		.bundleOwned = true,
+		.bundleWritable = true,
+		.parentDirectory = true,
+		.parentWritable = true,
+		.sameDevice = true,
+	};
+	CHECK(ClassifyTeagramUpdateInstallLocation(allowed)
+		  == TeagramUpdateInstallLocation::Allowed);
+	auto otherOwner = allowed;
+	otherOwner.bundleOwned = false;
+	otherOwner.bundleWritable = false;
+	CHECK(ClassifyTeagramUpdateInstallLocation(otherOwner)
+		  == TeagramUpdateInstallLocation::OtherOwner);
+	auto readOnlyParent = allowed;
+	readOnlyParent.parentWritable = false;
+	CHECK(ClassifyTeagramUpdateInstallLocation(readOnlyParent)
+		  == TeagramUpdateInstallLocation::Unwritable);
+	auto readOnlyBundle = allowed;
+	readOnlyBundle.bundleWritable = false;
+	CHECK(ClassifyTeagramUpdateInstallLocation(readOnlyBundle)
+		  == TeagramUpdateInstallLocation::Unwritable);
+	auto otherDisk = allowed;
+	otherDisk.sameDevice = false;
+	CHECK(ClassifyTeagramUpdateInstallLocation(otherDisk)
+		  == TeagramUpdateInstallLocation::UnsupportedDisk);
+
+	if (::geteuid() == 0) {
+		return;
+	}
+	const auto shared = SharedWritableFolder();
+	CHECK(!shared.isEmpty());
+	auto readOnly = QTemporaryDir();
+	CHECK(readOnly.isValid());
+	if (readOnly.isValid()) {
+		CHECK(QFile::setPermissions(
+			readOnly.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+		CHECK(!IsTeagramUpdateParentWritable(readOnly.path()));
+		CHECK(QFile::setPermissions(
+			readOnly.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner
+								 | QFileDevice::ExeOwner));
+	}
+}
+
+TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
+	if (::geteuid() == 0) {
+		return;
+	}
+	const auto shared = SharedWritableFolder();
+	CHECK(!shared.isEmpty());
+	if (shared.isEmpty()) {
+		return;
+	}
+	const auto unique = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	const auto installed
+		= QDir(shared).filePath(u"teagram-test-%1.app"_q.arg(unique));
+	const auto previous
+		= QDir(shared).filePath(u".teagram-test-%1.previous"_q.arg(unique));
+	const auto marker = u".teagram-test-%1.pending"_q.arg(unique);
+	auto staging = QTemporaryDir(QDir(shared).filePath(u"teagram-XXXXXX"_q));
+	CHECK(staging.isValid());
+	if (!staging.isValid()) {
+		return;
+	}
+	const auto candidate = staging.filePath(u"Teagram.app"_q);
+	const auto installedExecutable
+		= QDir(installed).filePath(u"Contents/MacOS/Teagram"_q);
+	const auto candidateExecutable
+		= QDir(candidate).filePath(u"Contents/MacOS/Teagram"_q);
+	const auto cleanup = gsl::finally([&] {
+		QDir(installed).removeRecursively();
+		QDir(previous).removeRecursively();
+		QFile::remove(QDir(shared).filePath(marker));
+		QFile::remove(QDir(shared).filePath(u".teagram-update.lock"_q));
+	});
+	CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
+	CHECK(QDir().mkpath(QFileInfo(candidateExecutable).absolutePath()));
+	CHECK(WriteFile(installedExecutable, QByteArrayLiteral("build 100")));
+	CHECK(WriteFile(candidateExecutable, QByteArrayLiteral("build 101")));
+	CHECK(QFile::setPermissions(staging.path(), QFileDevice::ReadOwner
+													| QFileDevice::WriteOwner
+													| QFileDevice::ExeOwner));
+	CHECK(WriteTeagramUpdateMarker(shared, marker.toLatin1().constData(), 101));
+	auto lock = TeagramUpdateInstallLock(installed);
+	CHECK(lock.acquired());
+	if (!lock.acquired()) {
+		return;
+	}
+	const auto result
+		= CommitTeagramUpdateReplacement(lock, installed, candidate, previous);
+	CHECK(result.reason == TeagramUpdateReplacementReason::Replaced);
+	CHECK(result.committed);
+	CHECK_EQ(ReadFile(installedExecutable), QByteArrayLiteral("build 101"));
+	CHECK_EQ(ReadFile(QDir(previous).filePath(u"Contents/MacOS/Teagram"_q)),
+			 QByteArrayLiteral("build 100"));
+	struct stat installedInfo = {};
+	const auto installedBytes = QFile::encodeName(installed);
+	CHECK_EQ(::lstat(installedBytes.constData(), &installedInfo), 0);
+	CHECK(installedInfo.st_uid == ::geteuid());
 }
 
 #if defined(Q_OS_MAC)
