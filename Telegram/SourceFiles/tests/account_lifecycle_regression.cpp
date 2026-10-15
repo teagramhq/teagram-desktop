@@ -4241,7 +4241,7 @@ template <typename Widget>
 		};
 		const auto findAction
 			= [](const Ui::PopupMenu &menu, const QString &text) -> QAction * {
-			for (const auto action : menu.actions()) {
+			for (const auto &action : menu.actions()) {
 				if (action->text() == text) {
 					return action;
 				}
