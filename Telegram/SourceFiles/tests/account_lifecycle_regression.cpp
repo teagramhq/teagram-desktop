@@ -2498,8 +2498,14 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		Ui::SubmitTonForm(target->uiShow(), directInvoice, 1,
 						  CreditsAmount(1, 0, CreditsType::Ton), starsFormDone);
 		const auto activeChatBefore = target->activeChatCurrent();
-		const auto transferUnique = std::make_shared<Data::UniqueGift>();
-		transferUnique->slug = u"regression-1"_q;
+		const auto giftDocument
+			= session->data().document(DocumentId(0x7e5707));
+		const auto transferUnique
+			= std::make_shared<Data::UniqueGift>(Data::UniqueGift{
+				.slug = u"regression-1"_q,
+				.model = Data::UniqueGiftModel{{}, giftDocument},
+				.pattern = Data::UniqueGiftPattern{{}, giftDocument},
+			});
 		Ui::HandleDefaultGiftForRegressionTest(
 			target, session->data().user(UserId(0x7e5705)),
 			Info::PeerGifts::GiftTypeStars{
@@ -2507,7 +2513,7 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				.info = Data::StarGift{
 					.id = 0x7e5706,
 					.unique = transferUnique,
-					.document = session->data().document(DocumentId(0x7e5707)),
+					.document = giftDocument,
 				},
 				.mine = true,
 			});
