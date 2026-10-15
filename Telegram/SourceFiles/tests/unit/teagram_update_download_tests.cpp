@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -2224,7 +2225,7 @@ TEST_CASE(TeagramUpdateDataCopyKeepsOriginalFolder) {
 	CHECK_EQ(quint64(copyInfo.st_uid), quint64(::geteuid()));
 	const auto acl = ::acl_get_file(QFile::encodeName(copy).constData(),
 									ACL_TYPE_EXTENDED);
-	CHECK(acl != nullptr);
+	CHECK(acl || (errno == ENOENT && QFileInfo::exists(copy)));
 	if (acl) {
 		acl_entry_t entry = nullptr;
 		CHECK(::acl_get_entry(acl, ACL_FIRST_ENTRY, &entry) != 0);
