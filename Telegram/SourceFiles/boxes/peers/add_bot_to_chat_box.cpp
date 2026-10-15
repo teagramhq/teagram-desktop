@@ -162,10 +162,10 @@ void AddBotToGroupBoxController::requestExistingRights(
 	_existingRightsChannel = channel;
 	auto &api = _bot->session().api();
 	api.request(_existingRightsRequestId).cancel();
-	const auto request
+	auto request
 		= MTPchannels_GetParticipant(channel->inputChannel(), _bot->input());
 	_existingRightsRequestId
-		= api.request(request)
+		= api.request(std::move(request))
 			  .done(
 				  crl::guard(this,
 							 [=](const MTPchannels_ChannelParticipant &result) {
