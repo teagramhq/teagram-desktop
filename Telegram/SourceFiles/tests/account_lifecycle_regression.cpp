@@ -1759,11 +1759,6 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		= SettingsSearchHasEntry(entries, u"notifications/calls/accept"_q);
 	const auto hasPrivacyCallsEntry
 		= SettingsSearchHasEntry(entries, u"privacy/calls"_q);
-	const auto hasCallSettings
-		= hasCallsAcceptEntry
-		  && hasCallsNotificationsSection
-		  && hasCallsNotificationsAcceptEntry
-		  && hasPrivacyCallsEntry;
 	const auto hasAcceptCallSectionKeyword
 		= std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
 			  return (entry.id == u"calls/other"_q)
@@ -1782,27 +1777,28 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && SettingsSearchHasSectionTitle(entries, Settings::PremiumId())
 		  && SettingsSearchHasSectionTitle(entries, Settings::CreditsId())
 		  && SettingsSearchHasSectionTitle(entries, Settings::BusinessId());
-	const auto matches = hasPaid == paidSupported && hasPrivacy
-						 && (hasBio == bioSupported)
-						 && (hasChatAutomation == botAppsSupported)
-						 && (hasCallsAcceptEntry == callsSupported)
-						 && (hasCallsNotificationsSection == callsSupported)
-						 && (hasCallsNotificationsAcceptEntry == callsSupported)
-						 && (hasPrivacyCallsEntry == callsSupported)
-						 && (callsSupported || !hasAcceptCallSectionKeyword)
-						 && hasSystemPreferencesEntry
-						 && (!paidSupported || hasStockPaidRows);
+	const auto matches
+		= hasPaid == paidSupported && hasPrivacy && (hasBio == bioSupported)
+		  && (hasChatAutomation == botAppsSupported)
+		  && (hasCallsAcceptEntry == callsSupported)
+		  && (hasCallsNotificationsSection == callsSupported)
+		  && (hasCallsNotificationsAcceptEntry == callsSupported)
+		  && (hasPrivacyCallsEntry == callsSupported)
+		  && (callsSupported || !hasAcceptCallSectionKeyword)
+		  && hasSystemPreferencesEntry && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
-		std::fprintf(stderr,
-					 "Settings search regression failed: paid=%d expected=%d, "
-					 "privacy=%d, bio=%d expected=%d, chat-automation=%d "
-					 "expected=%d, calls=%d expected=%d, "
-					 "call-accept-keyword=%d, system-prefs=%d, stock-rows=%d.\n",
-					 hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
-					 hasChatAutomation, botAppsSupported,
-					 hasCallSettings, callsSupported,
-					 hasAcceptCallSectionKeyword, hasSystemPreferencesEntry,
-					 hasStockPaidRows);
+		std::fprintf(
+			stderr,
+			"Settings search regression failed: paid=%d expected=%d, "
+			"privacy=%d, bio=%d expected=%d, chat-automation=%d "
+			"expected=%d, calls-accept=%d, calls-notifications=%d, "
+			"calls-notifications-accept=%d, privacy-calls=%d expected=%d, "
+			"call-accept-keyword=%d, system-prefs=%d, stock-rows=%d.\n",
+			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
+			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
+			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
+			hasPrivacyCallsEntry, callsSupported, hasAcceptCallSectionKeyword,
+			hasSystemPreferencesEntry, hasStockPaidRows);
 	}
 	return matches;
 }

@@ -875,10 +875,9 @@ void BuildPrivacySection(SectionBuilder &builder) {
 			.id = u"privacy/calls"_q,
 			.title = tr::lng_settings_calls(),
 			.key = Key::Calls,
-			.controllerFactory = [] {
-				return std::make_unique<CallsPrivacyController>();
-			},
-			.keywords = { u"calls"_q, u"voice"_q },
+			.controllerFactory
+			= [] { return std::make_unique<CallsPrivacyController>(); },
+			.keywords = {u"calls"_q, u"voice"_q},
 		});
 	}
 

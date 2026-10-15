@@ -384,8 +384,8 @@ void BuildOtherSection(SectionBuilder &builder) {
 		.id = u"calls/other"_q,
 		.title = tr::lng_settings_call_section_other(),
 		.keywords = callsSupported
-			? QStringList{ u"calls"_q, u"accept"_q, u"system"_q }
-			: QStringList{ u"calls"_q, u"system"_q },
+						? QStringList{u"calls"_q, u"accept"_q, u"system"_q}
+						: QStringList{u"calls"_q, u"system"_q},
 	});
 
 	if (callsSupported) {
@@ -397,18 +397,20 @@ void BuildOtherSection(SectionBuilder &builder) {
 			.title = tr::lng_settings_call_accept_calls(),
 			.st = &st::settingsButtonNoIcon,
 			.toggled = authorizations->callsDisabledHereValue()
-				| rpl::map(!rpl::mappers::_1),
-			.keywords = { u"accept"_q, u"receive"_q, u"incoming"_q },
-			.highlight = { .rippleShape = true },
+					   | rpl::map(!rpl::mappers::_1),
+			.keywords = {u"accept"_q, u"receive"_q, u"incoming"_q},
+			.highlight = {.rippleShape = true},
 		});
 
 		if (acceptCalls) {
-			acceptCalls->toggledChanges(
-			) | rpl::filter([=](bool value) {
+			acceptCalls->toggledChanges() | rpl::filter([=](bool value) {
 				return (value == authorizations->callsDisabledHere());
-			}) | rpl::on_next([=](bool value) {
-				authorizations->toggleCallsDisabledHere(!value);
-			}, acceptCalls->lifetime());
+			})
+				| rpl::on_next(
+					[=](bool value) {
+						authorizations->toggleCallsDisabledHere(!value);
+					},
+					acceptCalls->lifetime());
 		}
 	}
 
