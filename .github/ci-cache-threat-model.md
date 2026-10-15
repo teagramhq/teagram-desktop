@@ -21,6 +21,18 @@ neither, and `linux-build` is skipped with it. A fork-controlled script running 
 recover the cache token and plant default-branch cache entries that the signed
 `MacOS Packaged.` release build restores.
 
+## Manual feedback lanes
+
+`Unit feedback.` and `MacOS unit feedback.` are dispatched on `dev` but build
+a selected feature ref, so that ref's preparation and configure code runs
+with the `dev` cache token. Both workflows set `cache-mode: read`: the cache
+service refuses any save, so a feature ref cannot plant or overwrite entries
+that trusted `dev` builds restore, whatever code it runs. Neither workflow
+contains a save step, and `test_ci_cache_contract.sh` fails if either regains
+cache write access. The Linux lane pulls the dependency image `dev`'s
+publisher pushed for the ref's recipe with `packages: read`; on a missing tag
+it builds the image locally and never pushes it.
+
 ## Actions cache cleanup
 
 The `pull_request_target` cleanup runs only when a PR closes. It does not check
