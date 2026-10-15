@@ -1291,6 +1291,11 @@ void BuildEventNotificationsSection(SectionBuilder &builder) {
 }
 
 void BuildCallNotificationsSection(SectionBuilder &builder) {
+	const auto session = builder.session();
+	if (!session->callsSupported()) {
+		return;
+	}
+
 	builder.addSkip(st::settingsCheckboxesSkip);
 	builder.addDivider();
 	builder.addSkip(st::settingsCheckboxesSkip);
@@ -1300,7 +1305,6 @@ void BuildCallNotificationsSection(SectionBuilder &builder) {
 		.keywords = { u"calls"_q, u"incoming"_q, u"receive"_q },
 	});
 
-	const auto session = builder.session();
 	const auto authorizations = &session->api().authorizations();
 	authorizations->reload();
 

@@ -1289,6 +1289,11 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 					box->setTitle(tr::lng_teagram_update_channel());
 					const auto group
 						= std::make_shared<Ui::RadiobuttonGroup>(initial);
+					const auto optionMargins
+						= st::boxOptionListPadding
+						  + QMargins(st::boxPadding.left(), 0,
+									 st::boxPadding.right(),
+									 st::boxOptionListSkip);
 					for (const auto &[channel, title] :
 						 {std::pair{
 							  int(Channel::Dev),
@@ -1299,7 +1304,7 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 						box->addRow(object_ptr<Ui::Radiobutton>(
 										box, group, channel, title,
 										st::defaultBoxCheckbox),
-									st::boxOptionListPadding);
+									optionMargins);
 					}
 					box->addButton(tr::lng_box_ok(), [=] {
 						manager->setChannel(Channel(group->current()));

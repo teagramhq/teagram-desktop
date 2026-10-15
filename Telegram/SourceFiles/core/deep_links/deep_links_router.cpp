@@ -18,6 +18,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
+#include <algorithm>
+
 namespace Core::DeepLinks {
 namespace {
 
@@ -58,6 +60,11 @@ Context ParseCommand(
 	}
 
 	return result;
+}
+
+[[nodiscard]] bool IsPaidFeaturePath(const Entry &entry, const QString &path) {
+	return entry.requiresPaidFeatures
+		   && (path == entry.path || path.startsWith(entry.path + u"/"_q));
 }
 
 } // namespace
@@ -115,6 +122,17 @@ bool Router::tryHandle(
 	return false;
 }
 
+bool Router::requiresPaidFeatures(const QString &command) const {
+	const auto ctx = ParseCommand(nullptr, command);
+	const auto path = ctx.path.toLower();
+	const auto i = _handlers.find(ctx.section);
+	return (i != _handlers.end())
+		   && std::any_of(i->second.begin(), i->second.end(),
+						  [&](const auto &entry) {
+							  return IsPaidFeaturePath(entry, path);
+						  });
+}
+
 Router::DispatchResult Router::dispatch(const Context &ctx) {
 	if (ctx.section.isEmpty()) {
 		return { Result::NotFound };
@@ -132,6 +150,17 @@ Router::DispatchResult Router::handleSection(
 
 	const auto &entries = it->second;
 	const auto path = ctx.path.toLower();
+	const auto paidRoute
+		= std::any_of(entries.begin(), entries.end(), [&](const auto &entry) {
+			  return IsPaidFeaturePath(entry, path);
+		  });
+	if (paidRoute && !ctx.controller) {
+		return {Result::Handled, true};
+	}
+	if (paidRoute && !ctx.controller->session().paidFeaturesSupported()) {
+		ctx.controller->showFeatureUnavailableOnServerToast();
+		return {Result::Handled, true};
+	}
 
 	for (const auto &entry : entries) {
 		if (entry.path == path || (entry.path.isEmpty() && path.isEmpty())) {
