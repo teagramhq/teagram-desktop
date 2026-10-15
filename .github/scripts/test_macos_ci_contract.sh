@@ -290,6 +290,7 @@ if [[ -n "$floating_tools" ]]; then
   exit 1
 fi
 reject_text "$build_tools_script" 'brew '
+require_text "$build_tools_script" 'ln -sf glibtoolize "$prefix/bin/libtoolize"'
 reject_text "$packaged_workflow" 'refs/heads/master'
 reject_text "$packaged_workflow" 'git clone'
 reject_text "$packaged_workflow" '/opt/homebrew/opt/'

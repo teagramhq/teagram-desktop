@@ -61,7 +61,16 @@ for tool in "${tools[@]}"; do
         make -j"$jobs" >/dev/null
         make install >/dev/null
       )
+      if [ "$name" = libtool ]; then
+        ln -sf glibtoolize "$prefix/bin/libtoolize"
+      fi
       ;;
   esac
   printf '%s %s\n' "$name" "${url##*/}"
 done
+
+if [ "$scope" = libraries ]; then
+  for command in m4 autoconf automake autoreconf libtoolize glibtool nasm meson; do
+    command -v "$command" >/dev/null
+  done
+fi
