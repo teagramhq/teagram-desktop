@@ -68,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
+#include "settings/settings_privacy_policy.h"
 #include "spellcheck/platform/platform_language.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
@@ -1779,6 +1780,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		= SettingsSearchHasEntry(entries, u"notifications/calls"_q);
 	const auto hasCallsNotificationsAcceptEntry
 		= SettingsSearchHasEntry(entries, u"notifications/calls/accept"_q);
+	const auto privacyCallsExpected
+		= callsSupported
+		  && Settings::details::IsPrivacyKeySupported(
+			  Api::UserPrivacy::Key::Calls);
 	const auto hasPrivacyCallsEntry
 		= SettingsSearchHasEntry(entries, u"privacy/calls"_q);
 	const auto hasAcceptCallSectionKeyword
@@ -1805,7 +1810,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && (hasCallsAcceptEntry == callsSupported)
 		  && (hasCallsNotificationsSection == callsSupported)
 		  && (hasCallsNotificationsAcceptEntry == callsSupported)
-		  && (hasPrivacyCallsEntry == callsSupported)
+		  && (hasPrivacyCallsEntry == privacyCallsExpected)
 		  && (callsSupported || !hasAcceptCallSectionKeyword)
 		  && hasSystemPreferencesEntry && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
@@ -1819,8 +1824,9 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
 			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
 			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
-			hasPrivacyCallsEntry, callsSupported, hasAcceptCallSectionKeyword,
-			hasSystemPreferencesEntry, hasStockPaidRows);
+			hasPrivacyCallsEntry, privacyCallsExpected,
+			hasAcceptCallSectionKeyword, hasSystemPreferencesEntry,
+			hasStockPaidRows);
 	}
 	return matches;
 }
