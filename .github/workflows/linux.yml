@@ -45,6 +45,9 @@ jobs:
       - name: Test Linux change detection.
         run: bash .github/scripts/test_detect_linux_changes.sh
 
+      - name: Test brand art.
+        run: bash .github/scripts/test_brand_art.sh
+
       - name: Detect Linux-relevant changes.
         id: filter
         shell: bash
