@@ -16,8 +16,8 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'release' || inputs.branch || github.ref_name }}
+  # A newer push replaces the pending build; the running build still publishes.
   cancel-in-progress: false
-  queue: max
 
 jobs:
 

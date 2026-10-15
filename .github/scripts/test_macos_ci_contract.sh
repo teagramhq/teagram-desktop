@@ -79,7 +79,15 @@ require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
 require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
-require_text "$mac_workflow" 'cancel-in-progress: true'
+require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.action == 'synchronize' || github.event.label.name == 'macos-build' }}"
+pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
+if [[ "$pr_types" != '[labeled, synchronize]' ]]; then
+  printf 'MacOS PR runs must start only from labeled and synchronize events, got: %s\n' "${pr_types:-every push}" >&2
+  exit 1
+fi
+require_text "$mac_workflow" "if: \${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}"
+require_text "$mac_workflow" "if: \${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'macos-build') && github.event.pull_request.head.repo.full_name == github.repository }}"
+require_text "$mac_workflow" 'gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label macos-build'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'dev'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'main'
@@ -248,7 +256,7 @@ reject_text "$packaged_workflow" '  schedule:'
 require_text "$packaged_workflow" 'concurrency:'
 require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ github.event_name == '\''push'\'' && '\''release'\'' || inputs.branch || github.ref_name }}'
 require_text "$packaged_workflow" 'cancel-in-progress: false'
-require_text "$packaged_workflow" 'queue: max'
+reject_text "$packaged_workflow" 'queue: max'
 require_text "$packaged_workflow" 'openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem"'
 reject_text "$packaged_workflow" '"$REPO_NAME/Telegram/build/teagram_update_public_key.pem"'
 public_key_path="$(sed -n 's/.*openssl pkey -pubin -in "\([^"]*\)".*/\1/p' "$packaged_workflow" | sed -n '1p')"

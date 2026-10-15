@@ -1,8 +1,11 @@
 name: MacOS.
 
 on:
+  # PR pushes only supersede and clear an earlier approval; the PR build runs once
+  # the approved head is labeled macos-build.
   pull_request:
     branches: [dev]
+    types: [labeled, synchronize]
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -28,13 +31,26 @@ on:
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action == 'synchronize' || github.event.label.name == 'macos-build' }}
 
 jobs:
 
+  clear-macos-label:
+    name: Clear macOS build approval
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'macos-build') && github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove macos-build from the superseded head.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label macos-build
+
   macos:
     name: MacOS
-    if: ${{ !inputs.libiconv_only }}
+    if: ${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}
     permissions:
       contents: read
     # GitHub-hosted macos-latest is Apple Silicon, which is what we ship.
