@@ -33,11 +33,14 @@ macos_group_for_event() {
   local dispatch_pr_branch="$4"
   local dispatch_branch="$5"
   local ref_name="$6"
+  local event_name="${7:-}"
   local repository_qualified_identity
   if [[ -n "$pr_head" ]]; then
     repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
     repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
+  elif [[ "$event_name" == 'schedule' ]]; then
+    repository_qualified_identity="schedule/${ref_name}"
   else
     repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
   fi
@@ -74,7 +77,7 @@ require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
 require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
 require_text "$mac_workflow" 'cancel-in-progress: true'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
@@ -92,6 +95,12 @@ dev_group="$(macos_group_for_event '' '' '' '' 'dev' 'main')"
 main_group="$(macos_group_for_event '' '' '' '' 'main' 'dev')"
 if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
+  exit 1
+fi
+schedule_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'schedule')"
+dev_dispatch_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'workflow_dispatch')"
+if [[ "$schedule_group" == "$dev_dispatch_group" ]]; then
+  printf 'A dev dispatch must not cancel the scheduled run that seeds the compiler cache.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
@@ -148,6 +157,8 @@ fi
 require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
 require_text "$mac_workflow" "github.event_name == 'schedule'"
 reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
+reject_text "$mac_workflow" 'source-format'
+reject_text "$mac_workflow" 'clang-format'
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
@@ -267,8 +278,13 @@ require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protect
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_runtime.h'"
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_protected_path_runtime_stub.cpp'"
 require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_file_bookmark_stub.cpp'"
-require_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
-require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"'
+require_text "$updater_workflow" 'ref: ${{ github.sha }}'
+reject_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
+reject_text "$updater_workflow" 'github.event.pull_request.head.repo.full_name'
+require_text "$updater_workflow" 'fetch-depth: 2'
+require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"'
+require_text "$updater_workflow" 'test "${parents[0]}" = "$EXPECTED_BASE_SHA"'
+require_text "$updater_workflow" 'test "${parents[1]}" = "$EXPECTED_HEAD_SHA"'
 require_text "$updater_workflow" 'runs-on: macos-latest'
 require_text "$updater_workflow" 'canonical_tmpdir="$(cd "$TMPDIR" && pwd -P)"'
 require_text "$updater_workflow" 'TMPDIR=%s\n'
@@ -288,10 +304,14 @@ for fixture in \
   TeagramUpdateArchiveWritesStayConfined \
   TeagramUpdateInstallFailurePreservesApp \
   TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary \
+  TeagramUpdateInstallLocationAllowsSharedWritableParent \
+  TeagramUpdateReplacementSwapsInSharedWritableParent \
+  TeagramUpdateInstallLocationAllowsGroupWritableApplications \
   TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback \
   TeagramUpdateInstallerRemovesInterruptedExtraction \
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart \
   TeagramUpdateStartupKeepsOlderPreviousBundle \
+  TeagramUpdateInstallerKeepsCustomIcon \
   TeagramUpdateReplacementRetainsPreviousThroughStartup \
   TeagramUpdateReplacementRestoresMissingTarget \
   TeagramUpdateDownloadFailsWithoutMutation \
@@ -310,8 +330,8 @@ for fixture in \
 done
 fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
 fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
-if [[ "$fixture_count" != 15 ]]; then
-  printf 'Updater fixture runner must select exactly 15 registered cases, got %s.\n' \
+if [[ "$fixture_count" != 19 ]]; then
+  printf 'Updater fixture runner must select exactly 19 registered cases, got %s.\n' \
     "$fixture_count" >&2
   exit 1
 fi

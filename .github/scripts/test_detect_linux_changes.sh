@@ -144,6 +144,99 @@ if [[ "$(<"${output}")" != 'required=true' ]]; then
   fail 'Linux-relevant changes should require the Linux build.'
 fi
 
+for path in \
+  Telegram/build/teagram_update_manifest.py \
+  Telegram/build/version \
+  Telegram/build/qt_version.py \
+  Telegram/build/changelog2appstream.py \
+  changelog.txt \
+  .github/scripts/linux_libraries_image.sh \
+  .github/scripts/test_linux_libraries_image.sh \
+  .github/workflows/linux_libraries.yml; do
+  run_detector pull_request 0 "${path}"
+  if [[ "$(<"${output}")" != 'required=true' ]]; then
+    fail "Changes to Linux build input ${path} should require the Linux build."
+  fi
+done
+
+for path in \
+  docs/README.md \
+  Telegram/SourceFiles/platform/mac/main.mm \
+  Telegram/build/mac_isolation_test.sh \
+  Telegram/build/setup.iss \
+  .github/scripts/mac_ccache_profile.sh \
+  .github/workflows/mac.yml; do
+  run_detector pull_request 0 "${path}"
+  if [[ "$(<"${output}")" != 'required=false' ]]; then
+    fail "Changes to ${path} should skip the Linux build."
+  fi
+done
+
+# The dev push filter of the dependency image workflow must start the Linux
+# build for the same paths a pull request does. GitHub applies the last
+# matching pattern; a leading ! excludes.
+push_filter_includes() {
+  local path="$1"
+  local included=false
+  local pattern
+  while IFS= read -r pattern; do
+    local negated=false
+    if [[ "${pattern}" == '!'* ]]; then
+      negated=true
+      pattern="${pattern#!}"
+    fi
+    pattern="${pattern//\*\*/*}"
+    # shellcheck disable=SC2053
+    if [[ "${path}" == ${pattern} ]]; then
+      if [[ "${negated}" == true ]]; then
+        included=false
+      else
+        included=true
+      fi
+    fi
+  done < <(awk '
+    /^    paths:$/ { in_paths = 1; next }
+    in_paths && /^      - / { sub(/^      - /, ""); gsub(/\047/, ""); print; next }
+    in_paths { exit }
+  ' "${scripts_dir}/../workflows/linux_libraries.yml")
+  [[ "${included}" == true ]]
+}
+
+for path in \
+  Telegram/build/teagram_update_manifest.py \
+  Telegram/build/version \
+  Telegram/build/qt_version.py \
+  Telegram/build/changelog2appstream.py \
+  changelog.txt \
+  Telegram/build/docker/centos_env/build.sh \
+  Telegram/build/mac_isolation_test.sh \
+  Telegram/build/setup.iss \
+  .github/workflows/linux.yml \
+  .github/workflows/linux_libraries.yml \
+  .github/workflows/mac.yml \
+  .github/scripts/detect_linux_changes.sh \
+  .github/scripts/test_detect_linux_changes.sh \
+  .github/scripts/linux_libraries_image.sh \
+  .github/scripts/test_linux_libraries_image.sh \
+  .github/scripts/mac_ccache_profile.sh \
+  docs/README.md \
+  README.md \
+  Telegram/SourceFiles/platform/mac/main.mm \
+  Telegram/SourceFiles/platform/win/main.cpp \
+  Telegram/SourceFiles/main.cpp \
+  CMakeLists.txt; do
+  run_detector pull_request 0 "${path}"
+  pull_request_result="$(<"${output}")"
+  if push_filter_includes "${path}"; then
+    push_result='required=true'
+  else
+    push_result='required=false'
+  fi
+  if [[ "${pull_request_result}" != "${push_result}" ]]; then
+    fail "linux_libraries.yml push paths and the pull request filter disagree on ${path}: ${push_result} vs ${pull_request_result}."
+  fi
+done
+
 run_detector push 2 ''
 if [[ "$(<"${output}")" != 'required=true' ]]; then
   fail 'Non-PR events should keep the Linux build enabled.'

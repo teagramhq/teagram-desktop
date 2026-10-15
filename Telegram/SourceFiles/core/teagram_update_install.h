@@ -43,14 +43,6 @@ enum class TeagramUpdateInstallReason {
 	RelaunchFailedPreviousAvailable,
 };
 
-enum class TeagramUpdateInstallLocation {
-	Allowed,
-	Translocated,
-	Unwritable,
-	OtherOwner,
-	UnsupportedDisk,
-};
-
 enum class TeagramUpdateRelaunchResult {
 	NotPending,
 	CandidateStarted,

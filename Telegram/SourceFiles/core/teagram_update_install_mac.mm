@@ -26,13 +26,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
+#include <copyfile.h>
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <functional>
@@ -47,6 +50,12 @@ constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
+constexpr auto kCustomIconFile = "Icon\r";
+constexpr auto kFinderInfoAttribute = "com.apple.FinderInfo";
+constexpr auto kQuarantineAttribute = "com.apple.quarantine";
+constexpr auto kFinderInfoSize = 32;
+constexpr auto kFinderFlagsOffset = 8;
+constexpr auto kHasCustomIconFlag = 0x04; // High byte of kHasCustomIcon.
 
 struct BundleInfo {
 	QString identifier;
@@ -105,24 +114,28 @@ struct BundleInfo {
 	return true;
 }
 
-[[nodiscard]] bool IsCanonicalDirectory(const QString &path,
-										bool privateDirectory) {
+[[nodiscard]] bool IsCanonicalPath(const QString &path) {
 	const auto info = QFileInfo(path);
 	const auto canonical = info.canonicalFilePath();
-	if (!info.isDir() || info.isSymLink() || canonical.isEmpty()
-		|| QDir::cleanPath(canonical)
-			   != QDir::cleanPath(info.absoluteFilePath())) {
+	return info.isDir() && !info.isSymLink() && !canonical.isEmpty()
+		   && QDir::cleanPath(canonical)
+				  == QDir::cleanPath(info.absoluteFilePath());
+}
+
+[[nodiscard]] bool IsCanonicalDirectory(const QString &path,
+										bool privateDirectory) {
+	if (!IsCanonicalPath(path)) {
 		return false;
 	}
 	struct stat stat = {};
-	const auto bytes = QFile::encodeName(canonical);
+	const auto bytes = QFile::encodeName(QFileInfo(path).canonicalFilePath());
 	return ::lstat(bytes.constData(), &stat) == 0 && S_ISDIR(stat.st_mode)
 		   && stat.st_uid == ::geteuid()
 		   && (!privateDirectory || (stat.st_mode & 0077) == 0);
 }
 
 [[nodiscard]] QString CanonicalDirectory(const QString &path) {
-	if (!IsCanonicalDirectory(path, false)) {
+	if (!IsCanonicalPath(path) || !IsTeagramUpdateParentWritable(path)) {
 		return {};
 	}
 	return QDir::cleanPath(QFileInfo(path).canonicalFilePath());
@@ -249,10 +262,9 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 	return ::lstat(bundleBytes.constData(), &bundleInfo) == 0
 		   && S_ISDIR(bundleInfo.st_mode) && bundleInfo.st_uid == ::geteuid()
 		   && ::lstat(parentBytes.constData(), &parentInfo) == 0
-		   && S_ISDIR(parentInfo.st_mode) && parentInfo.st_uid == ::geteuid()
 		   && bundleInfo.st_dev == parentInfo.st_dev
 		   && ::access(bundleBytes.constData(), W_OK) == 0
-		   && ::access(parentBytes.constData(), W_OK | X_OK) == 0;
+		   && IsTeagramUpdateParentWritable(parent);
 }
 
 [[nodiscard]] bool EnsurePrivateStage(const QString &parent,
@@ -397,6 +409,76 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 						 && ::fsync(directory) == 0;
 	::close(directory);
 	return removed;
+}
+
+[[nodiscard]] bool CarryCustomIconFile(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed) + '/' + kCustomIconFile;
+	const auto target = QFile::encodeName(candidate) + '/' + kCustomIconFile;
+	struct stat info = {};
+	if (::lstat(source.constData(), &info) != 0) {
+		return errno == ENOENT;
+	} else if (!S_ISREG(info.st_mode) || info.st_uid != ::geteuid()) {
+		return false;
+	}
+	if (::copyfile(source.constData(), target.constData(), nullptr,
+				   COPYFILE_DATA | COPYFILE_XATTR | COPYFILE_EXCL
+					   | COPYFILE_NOFOLLOW)
+		!= 0) {
+		if (errno != EEXIST) {
+			::unlink(target.constData());
+		}
+		return false;
+	}
+	if (::removexattr(target.constData(), kQuarantineAttribute, XATTR_NOFOLLOW)
+			!= 0
+		&& errno != ENOATTR) {
+		::unlink(target.constData());
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool CarryCustomIconFlag(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed);
+	const auto target = QFile::encodeName(candidate);
+	auto installedInfo = std::array<char, kFinderInfoSize>();
+	const auto read = ::getxattr(source.constData(), kFinderInfoAttribute,
+								 installedInfo.data(), installedInfo.size(), 0,
+								 XATTR_NOFOLLOW);
+	if (read < 0) {
+		return errno == ENOATTR;
+	} else if (read != kFinderInfoSize
+			   || !(installedInfo[kFinderFlagsOffset] & kHasCustomIconFlag)) {
+		return true;
+	}
+	auto candidateInfo = std::array<char, kFinderInfoSize>();
+	const auto existing = ::getxattr(target.constData(), kFinderInfoAttribute,
+									 candidateInfo.data(), candidateInfo.size(),
+									 0, XATTR_NOFOLLOW);
+	if (existing != kFinderInfoSize) {
+		if (existing >= 0 || errno != ENOATTR) {
+			return false;
+		}
+		candidateInfo.fill(0);
+	}
+	candidateInfo[kFinderFlagsOffset] |= kHasCustomIconFlag;
+	return ::setxattr(target.constData(), kFinderInfoAttribute,
+					  candidateInfo.data(), candidateInfo.size(), 0,
+					  XATTR_NOFOLLOW)
+		   == 0;
+}
+
+// A custom Finder icon lives outside the sealed Contents directory, so
+// it is carried over only after the candidate's code seal was verified.
+void CarryCustomIcon(const QString &installed, const QString &candidate) {
+	if (!CarryCustomIconFile(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon file."));
+	}
+	if (!CarryCustomIconFlag(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon flag."));
+	}
 }
 
 [[nodiscard]] TeagramUpdateInstallResult
@@ -759,33 +841,19 @@ TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
 			!= u"io.teagram.desktop"_q) {
 			return TeagramUpdateInstallLocation::Unwritable;
 		}
-		const auto installed
-			= CanonicalBundlePath(FromNative([mainBundle bundlePath]));
-		if (installed.isEmpty()) {
+		const auto bundle = QFileInfo(FromNative([mainBundle bundlePath]));
+		const auto parent = bundle.absolutePath();
+		if (bundle.fileName() != u"Teagram.app"_q
+			|| !IsCanonicalPath(bundle.absoluteFilePath())
+			|| !IsCanonicalPath(parent)) {
 			return TeagramUpdateInstallLocation::Unwritable;
-		} else if (IsTranslocated(installed)) {
+		}
+		const auto installed = QDir::cleanPath(bundle.canonicalFilePath());
+		if (IsTranslocated(installed)) {
 			return TeagramUpdateInstallLocation::Translocated;
 		}
-		const auto parent = QFileInfo(installed).absolutePath();
-		struct stat bundleInfo = {};
-		struct stat parentInfo = {};
-		const auto bundleBytes = QFile::encodeName(installed);
-		const auto parentBytes = QFile::encodeName(parent);
-		if (::lstat(bundleBytes.constData(), &bundleInfo) != 0
-			|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
-			return TeagramUpdateInstallLocation::Unwritable;
-		}
-		if (bundleInfo.st_uid != ::geteuid()
-			|| parentInfo.st_uid != ::geteuid()) {
-			return TeagramUpdateInstallLocation::OtherOwner;
-		} else if (bundleInfo.st_dev != parentInfo.st_dev) {
-			return TeagramUpdateInstallLocation::UnsupportedDisk;
-		} else if (!S_ISDIR(bundleInfo.st_mode) || !S_ISDIR(parentInfo.st_mode)
-				   || ::access(bundleBytes.constData(), W_OK) != 0
-				   || ::access(parentBytes.constData(), W_OK | X_OK) != 0) {
-			return TeagramUpdateInstallLocation::Unwritable;
-		}
-		return TeagramUpdateInstallLocation::Allowed;
+		return ClassifyTeagramUpdateInstallLocation(
+			ReadTeagramUpdateInstallLocationFacts(installed));
 	}
 }
 
@@ -1066,6 +1134,7 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 			return InstallResult(TeagramUpdateInstallReason::InvalidTarget);
 		}
 		base::Platform::RemoveQuarantine(extraction.bundlePath);
+		CarryCustomIcon(installed, extraction.bundlePath);
 		if (!RemoveMarker(parent, kStartedMarker)) {
 			return InstallResult(TeagramUpdateInstallReason::ReplacementFailed);
 		}

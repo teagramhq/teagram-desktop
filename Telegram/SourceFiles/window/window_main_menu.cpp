@@ -677,6 +677,10 @@ void MainMenu::setupAccountsToggle() {
 }
 
 void MainMenu::setupSetEmojiStatus() {
+	if (!_controller->session().paidFeaturesSupported()) {
+		_setEmojiStatus->hide();
+		return;
+	}
 	_setEmojiStatus->overrideLinkClickHandler([=] {
 		chooseEmojiStatus();
 	});
@@ -880,7 +884,8 @@ void MainMenu::updateInnerControlsGeometry() {
 }
 
 void MainMenu::chooseEmojiStatus() {
-	if (_controller->showFrozenError()) {
+	if (!_controller->session().paidFeaturesSupported()
+		|| _controller->showFrozenError()) {
 		return;
 	} else if (const auto widget = _badge->widget()) {
 		setupEmojiStatusDismiss();

@@ -7,7 +7,14 @@ self-hosted-runner:
     - ubuntu-slim
     - ubuntu-26.04
 
+# actionlint 1.7.7 also predates the workflow-level cache-mode key.
 paths:
+  .github/workflows/unit_feedback.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "workflow" section'
+  .github/workflows/macos_unit_feedback.yml:
+    ignore:
+      - 'unexpected key "cache-mode" for "workflow" section'
   .github/workflows/mac_packaged.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'

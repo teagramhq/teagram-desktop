@@ -89,6 +89,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "main/session/send_as_peers.h"
 #include "media/audio/media_audio_capture.h"
@@ -3902,6 +3903,10 @@ void ComposeControls::fireSendTextAsFile(
 		const QString &fileText,
 		Fn<void()> restoreText) {
 	if (!_sendAsFileConfirmed || !_history) {
+		return;
+	} else if ((_mode == Mode::Scheduled)
+			   && !Main::details::scheduledMessagesSupportedForPeer(
+				   _history->peer)) {
 		return;
 	}
 	const auto peer = _history->peer;

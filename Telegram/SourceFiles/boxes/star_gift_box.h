@@ -188,6 +188,11 @@ struct GiftsListArgs {
 	Fn<void(Info::PeerGifts::GiftDescriptor)> handler;
 };
 [[nodiscard]] object_ptr<RpWidget> MakeGiftsList(GiftsListArgs &&args);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HandleDefaultGiftForRegressionTest(
+	not_null<Window::SessionController *> window, not_null<PeerData *> peer,
+	const Info::PeerGifts::GiftDescriptor &descriptor);
+#endif
 
 void SendGiftBox(
 	not_null<GenericBox*> box,
