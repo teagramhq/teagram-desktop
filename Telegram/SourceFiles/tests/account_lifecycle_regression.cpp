@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
@@ -188,6 +189,7 @@ PaymentRequestCapture *gPaymentRequestCapture = nullptr;
 	case mtpc_payments_validateRequestedInfo:
 	case mtpc_payments_sendPaymentForm:
 	case mtpc_payments_sendStarsForm:
+	case mtpc_payments_getStarsStatus:
 		capture->constructors.push_back(constructor);
 		return true;
 	default:
@@ -2489,16 +2491,38 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			target->uiShow(),
 			MTP_inputInvoiceStarGiftTransfer(savedGift, MTP_inputPeerSelf()),
 			starsFormDone);
+		const auto directInvoice
+			= MTP_inputInvoiceStarGiftTransfer(savedGift, MTP_inputPeerSelf());
+		Ui::SubmitStarsForm(target->uiShow(), directInvoice, 1, 1,
+							starsFormDone);
+		Ui::SubmitTonForm(target->uiShow(), directInvoice, 1,
+						  CreditsAmount(1, 0, CreditsType::Ton), starsFormDone);
+		const auto activeChatBefore = target->activeChatCurrent();
+		const auto transferUnique = std::make_shared<Data::UniqueGift>();
+		transferUnique->slug = u"regression-1"_q;
+		Ui::HandleDefaultGiftForRegressionTest(
+			target, session->data().user(UserId(0x7e5705)),
+			Info::PeerGifts::GiftTypeStars{
+				.transferId = Data::SavedStarGiftId::User(MsgId(0x7e5704)),
+				.info = Data::StarGift{
+					.id = 0x7e5706,
+					.unique = transferUnique,
+					.document = session->data().document(DocumentId(0x7e5707)),
+				},
+				.mine = true,
+			});
 		QCoreApplication::processEvents();
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
-			expected[i] += (controllers[i] == target) ? 8 : 0;
+			expected[i] += (controllers[i] == target) ? 11 : 0;
 		}
-		const auto refused = (*results
-							  == std::vector<Payments::CheckoutResult>(
-								  8, Payments::CheckoutResult::Cancelled))
-							 && captureObserved && payments.constructors.empty()
-							 && (toastCounts() == expected) && !paidUiOpen();
+		const auto refused
+			= (*results
+			   == std::vector<Payments::CheckoutResult>(
+				   10, Payments::CheckoutResult::Cancelled))
+			  && captureObserved && payments.constructors.empty()
+			  && (target->activeChatCurrent() == activeChatBefore)
+			  && (toastCounts() == expected) && !paidUiOpen();
 		if (!refused) {
 			std::fprintf(
 				stderr,
@@ -2550,8 +2574,8 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		stderr,
 		"Paid link regression passed: %d paid links refused in custom and "
 		"blocked sessions and ignored without a target; message invoice, "
-		"receipt, slug, Stars, gift, gift-code, gift upgrade and transfer "
-		"checkout starts refused "
+		"receipt, slug, Stars, gift, gift-code, gift upgrade and transfer, "
+		"direct Stars and TON submit, and gift-list transfer starts refused "
 		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
 	return true;

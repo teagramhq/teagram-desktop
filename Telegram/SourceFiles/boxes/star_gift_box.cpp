@@ -1316,12 +1316,6 @@ void SendStarsFormRequest(
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
 	using BalanceResult = Settings::SmallBalanceResult;
 	const auto session = &show->session();
-	if (Payments::PaidCheckoutRefused(session)) {
-		crl::on_main(session, [=] {
-			done(Payments::CheckoutResult::Cancelled, nullptr);
-		});
-		return;
-	}
 	if (result == BalanceResult::Success
 		|| result == BalanceResult::Already) {
 		session->api().request(MTPpayments_SendStarsForm(
@@ -1347,6 +1341,18 @@ void SendStarsFormRequest(
 	} else {
 		done(Payments::CheckoutResult::Failed, nullptr);
 	}
+}
+
+[[nodiscard]] bool
+RefuseStarsForm(const std::shared_ptr<Main::SessionShow> &show,
+				Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	const auto session = &show->session();
+	if (!Payments::PaidCheckoutRefused(session)) {
+		return false;
+	}
+	crl::on_main(session,
+				 [=] { done(Payments::CheckoutResult::Cancelled, nullptr); });
+	return true;
 }
 
 void UpgradeGift(
@@ -4256,6 +4262,9 @@ void SubmitStarsForm(
 		uint64 formId,
 		uint64 price,
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	if (RefuseStarsForm(show, done)) {
+		return;
+	}
 	const auto ready = [=](Settings::SmallBalanceResult result) {
 		SendStarsFormRequest(show, result, formId, invoice, done);
 	};
@@ -4272,6 +4281,9 @@ void SubmitTonForm(
 		uint64 formId,
 		CreditsAmount ton,
 		Fn<void(Payments::CheckoutResult, const MTPUpdates *)> done) {
+	if (RefuseStarsForm(show, done)) {
+		return;
+	}
 	const auto ready = [=] {
 		SendStarsFormRequest(
 			show,
@@ -4500,7 +4512,8 @@ void DefaultGiftHandler(
 			},
 			Settings::CreditsEntryBoxStyleOverrides()));
 	} else if (unique && star->mine && !peer->isSelf()) {
-		if (ShowTransferGiftLater(window->uiShow(), unique)) {
+		if (Payments::PaidCheckoutRefused(&window->session())
+			|| ShowTransferGiftLater(window->uiShow(), unique)) {
 			return;
 		}
 		const auto done = [=] {
@@ -4604,6 +4617,19 @@ void DefaultGiftHandler(
 		send();
 	}
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HandleDefaultGiftForRegressionTest(
+	not_null<Window::SessionController *> window, not_null<PeerData *> peer,
+	const Info::PeerGifts::GiftDescriptor &descriptor) {
+	const auto state = window->lifetime().make_state<DefaultGiftHandlerState>(
+		DefaultGiftHandlerState{
+			.window = window,
+			.peer = peer,
+		});
+	DefaultGiftHandler(window, state, descriptor);
+}
+#endif
 
 object_ptr<RpWidget> MakeGiftsList(GiftsListArgs &&args) {
 	using namespace Info::PeerGifts;
