@@ -74,6 +74,7 @@ public:
 	explicit Private(not_null<MainWindow*> window);
 
 	void setNativeWindow(NSWindow *window, NSView *view);
+	void keepTitleMerged();
 	void initTouchBar(
 		NSWindow *window,
 		not_null<Window::Controller*> controller);
@@ -190,6 +191,23 @@ void MainWindow::Private::setNativeWindow(NSWindow *window, NSView *view) {
 	_public->_customTitleHeight = qMax(qRound(full.size.height - inner.size.height), 0);
 }
 
+void MainWindow::Private::keepTitleMerged() {
+	const auto view = reinterpret_cast<NSView *>(_public->internalWinId());
+	const auto window = view ? [view window] : nil;
+	if (!window || !_public->_customTitleHeight) {
+		return;
+	}
+	const auto mask = [window styleMask];
+	if (mask & NSWindowStyleMaskFullSizeContentView) {
+		return;
+	}
+	[window setStyleMask:(mask | NSWindowStyleMaskFullSizeContentView)];
+	[window setTitlebarAppearsTransparent:YES];
+	if (!(mask & NSWindowStyleMaskFullScreen)) {
+		[window setTitleVisibility:NSWindowTitleHidden];
+	}
+}
+
 void MainWindow::Private::initTouchBar(
 		NSWindow *window,
 		not_null<Window::Controller*> controller) {
@@ -249,6 +267,9 @@ void MainWindow::initHook() {
 			}
 		}
 	}
+
+	rpl::merge(winIdValue() | rpl::to_empty, shownValue() | rpl::to_empty)
+		| rpl::on_next([=] { _private->keepTitleMerged(); }, lifetime());
 
 	Platform::GlobalMenuMarkdownState(
 	) | rpl::on_next([this](Ui::MarkdownEnabledState state) {
