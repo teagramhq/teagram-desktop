@@ -19,17 +19,24 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Cancel MacOS. builds of the superseded head.
+      - name: Cancel superseded MacOS. builds and clear their approval.
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          run_ids="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Refusing to edit a malformed pull request number."
+            exit 1
+          fi
+          runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
             -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
-            | jq -r --arg repo "$HEAD_REPOSITORY" \
-              '.workflow_runs[] | select(.status != "completed" and .head_repository.full_name == $repo) | .id')"
+            | jq -c --arg repo "$HEAD_REPOSITORY" '[.workflow_runs[] | select(.head_repository.full_name == $repo)]')"
+          stale_run_ids="$(jq -r --arg sha "$HEAD_SHA" \
+            '.[] | select(.status != "completed" and .head_sha != $sha) | .id' <<< "$runs")"
           while IFS= read -r run_id; do
             [[ -n "$run_id" ]] || continue
             if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
@@ -46,17 +53,18 @@ jobs:
               fi
               echo "MacOS. run $run_id already finished."
             fi
-          done <<< "$run_ids"
+          done <<< "$stale_run_ids"
 
-      - name: Remove macos-build from the superseded head.
-        if: contains(github.event.pull_request.labels.*.name, 'macos-build')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "::error::Refusing to edit a malformed pull request number."
-            exit 1
+          # A run at the current head means macos-build was added for that head.
+          if jq -e --arg sha "$HEAD_SHA" 'any(.[]; .head_sha == $sha)' <<< "$runs" >/dev/null; then
+            echo "The current head already has a MacOS. run; keeping macos-build."
+            exit 0
           fi
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build"
+          if ! remove_output="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build" 2>&1)"; then
+            if [[ "$remove_output" != *"(HTTP 404)"* ]]; then
+              printf '%s\n' "$remove_output" >&2
+              echo "::error::Could not remove macos-build from PR $PR_NUMBER."
+              exit 1
+            fi
+            echo "PR $PR_NUMBER has no macos-build label."
+          fi
