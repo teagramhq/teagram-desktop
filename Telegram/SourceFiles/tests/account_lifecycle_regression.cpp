@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/edit_privacy_box.h"
+#include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -380,6 +381,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_channels_updatePaidMessagesPrice:
 	case mtpc_messages_editChatAbout:
 	case mtpc_account_setGlobalPrivacySettings:
+	case mtpc_channels_getParticipant:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -3137,6 +3139,75 @@ template <typename Predicate>
 			|| ((saved & visibleChannel).value()
 				!= (checked & visibleChannel).value())) {
 			return fail("new_admin_story_defaults");
+		}
+	}
+	if (!supported) {
+		// Offering a bot's default rights looks up its current rights
+		// first. Closing the chooser before the reply must leave nothing
+		// to run against the destroyed controller.
+		auto capture = ChannelSaveRequestCapture{
+			.instance = &session.mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		const auto bot = session.data().processUsers(
+			MTP_vector<MTPUser>({RegressionBotUser(UserId(1183))}));
+		if (!bot || !bot->botInfo) {
+			return fail("bot_lookup_fixture");
+		}
+		bot->botInfo->channelAdminRights = Rights(Right::ChangeInfo) | stories;
+		const auto lookup
+			= MTPchannels_GetParticipant(channel->inputChannel(), bot->input());
+		const auto reply = MTP_channels_channelParticipant(
+			MTP_channelParticipantAdmin(
+				MTP_flags(0), MTP_long(peerToUser(bot->id).bare), MTPlong(),
+				MTP_long(session.userId().bare), MTP_int(0),
+				AdminRightsToMTP(ChatAdminRightsInfo(Rights(Right::ChangeInfo)
+													 | Right::PostStories)),
+				MTPstring()),
+			MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0));
+		const auto startLookup = [&] {
+			capture.requests.clear();
+			auto chooser = std::make_unique<AddBotToGroupBoxController>(
+				controller, bot, AddBotToGroupBoxController::Scope::All,
+				QString(), ChatAdminRights());
+			auto row = PeerListRow(channelPeer);
+			chooser->rowClicked(&row);
+			return chooser;
+		};
+		const auto hideLayers = [&] {
+			if (controller->isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+			}
+			QCoreApplication::processEvents();
+		};
+		hideLayers();
+		auto chooser = startLookup();
+		if (controller->isLayerShown()
+			|| !ReplyToChannelSaveRequestForRegressionTest(capture, 0, lookup,
+														   reply)) {
+			return fail("bot_lookup_request");
+		}
+		QCoreApplication::processEvents();
+		const auto opened = controller->isLayerShown();
+		hideLayers();
+		chooser = nullptr;
+		if (!opened) {
+			return fail("bot_lookup_opens_editor");
+		}
+
+		chooser = startLookup();
+		chooser = nullptr;
+		if (!ReplyToChannelSaveRequestForRegressionTest(capture, 0, lookup,
+														reply)) {
+			return fail("bot_lookup_after_dismissal_request");
+		}
+		QCoreApplication::processEvents();
+		if (controller->isLayerShown()) {
+			hideLayers();
+			return fail("bot_lookup_after_dismissal");
 		}
 	}
 
