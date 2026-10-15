@@ -264,7 +264,6 @@ require_text "$packaged_workflow" 'Teagram-macOS-arm64-QA'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
-# The shipped package links the same pinned Libraries the MacOS. gate builds.
 prepare_libraries='./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent'
 require_text "$mac_workflow" "$prepare_libraries"
 require_text "$packaged_workflow" "$prepare_libraries"
