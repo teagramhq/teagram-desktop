@@ -260,6 +260,26 @@ if [[ "$mac_triggers" != *$'\n  push:\n    branches: [dev]\n    paths:\n'* ]]; t
   printf 'MacOS. must seed the compiler cache on path-filtered dev pushes.\n' >&2
   exit 1
 fi
+push_paths="$(awk '
+  /^  push:$/ { in_push = 1; next }
+  in_push && /^  [^ ]/ { exit }
+  in_push && /^    paths:$/ { in_paths = 1; next }
+  in_paths && /^    [^ ]/ { exit }
+  in_paths && /^      - / { sub(/^      - /, ""); print }
+' <<< "$mac_triggers")"
+for seed_path in \
+  "'Telegram/**'" \
+  "'cmake'" \
+  "'cmake/**'" \
+  "'CMakeLists.txt'" \
+  "'.github/workflows/mac.yml'" \
+  "'.github/scripts/ccache_*.sh'" \
+  "'.github/scripts/mac_ccache_profile.sh'"; do
+  if ! grep -Fxq -- "$seed_path" <<< "$push_paths"; then
+    printf 'MacOS. dev push seeds must include path %s.\n' "$seed_path" >&2
+    exit 1
+  fi
+done
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
