@@ -18,6 +18,7 @@ public:
 	[[nodiscard]] bool tryHandle(
 		Window::SessionController *controller,
 		const QString &command);
+	[[nodiscard]] bool requiresPaidFeatures(const QString &command) const;
 
 	void add(const QString &section, Entry entry);
 

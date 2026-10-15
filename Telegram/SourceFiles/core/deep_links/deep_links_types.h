@@ -36,11 +36,11 @@ struct Context {
 using Handler = Fn<Result(const Context&)>;
 
 struct SettingsSection {
-	Settings::Type sectionId;
+	::Settings::Type sectionId;
 };
 
 struct SettingsControl {
-	Settings::Type sectionId;
+	::Settings::Type sectionId;
 	QString controlId;
 	Fn<bool(const Main::Session &)> available = nullptr;
 };
@@ -65,6 +65,7 @@ struct Entry {
 	Action action;
 	bool requiresAuth = true;
 	bool skipActivation = false;
+	bool requiresPaidFeatures = false;
 };
 
 } // namespace Core::DeepLinks
