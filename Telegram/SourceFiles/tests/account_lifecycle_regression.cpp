@@ -1901,9 +1901,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 [[nodiscard]] bool
 ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 						Fn<bool(const Info::Section &)> matches) {
-	const auto wraps = controller->widget()->findChildren<Info::WrapWidget *>();
-	for (const auto wrap : wraps) {
-		if (matches(wrap->controller()->section())) {
+	const auto widgets = controller->widget()->findChildren<QWidget *>();
+	for (const auto widget : widgets) {
+		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
+		if (wrap && matches(wrap->controller()->section())) {
 			return true;
 		}
 	}
