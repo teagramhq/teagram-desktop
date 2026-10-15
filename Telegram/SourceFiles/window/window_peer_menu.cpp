@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "menu/menu_mute.h"
 #include "menu/menu_ttl_validator.h"
@@ -1335,22 +1336,24 @@ bool Filler::skipCreateActions() const {
 SendMenu::Details Filler::createSendMenuDetails() const {
 	using Type = SendMenu::Type;
 
-	const auto type = (_request.section == Section::Scheduled)
-		? Type::Disabled
-		: (!_peer || _peer->starsPerMessageChecked())
-		? Type::SilentOnly
-		: (_request.section == Section::Replies)
-		? (_topic ? Type::Scheduled : Type::SilentOnly)
-		: _peer->isSelf()
-		? Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_peer)
-		? Type::ScheduledToUser
-		: Type::Scheduled;
+	const auto type
+		= (_request.section == Section::Scheduled) ? Type::Disabled
+		  : (!_peer || _peer->starsPerMessageChecked()
+			 || !Main::details::scheduledMessagesSupportedForPeer(_peer))
+			  ? Type::SilentOnly
+		  : (_request.section == Section::Replies)
+			  ? (_topic ? Type::Scheduled : Type::SilentOnly)
+		  : _peer->isSelf()							   ? Type::Reminder
+		  : HistoryView::CanScheduleUntilOnline(_peer) ? Type::ScheduledToUser
+													   : Type::Scheduled;
 	return { .type = type };
 }
 
 void Filler::addCreatePoll() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1386,7 +1389,10 @@ void Filler::addCreatePoll() {
 }
 
 void Filler::addCreateTodoList() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1420,7 +1426,8 @@ void Filler::addCreateTodoList() {
 }
 
 void Filler::addThemeEdit() {
-	if (_peer->isVerifyCodes() || _peer->isRepliesChat()) {
+	if (_peer->isVerifyCodes() || _peer->isRepliesChat()
+		|| !Main::details::chatThemeEditingSupportedForPeer(_peer)) {
 		return;
 	}
 	const auto user = _peer->asUser();
@@ -1523,10 +1530,8 @@ void ShowDisableSharingBox(
 
 void Filler::addToggleNoForwards() {
 	const auto user = _peer->asUser();
-	if (!user
-		|| user->isInaccessible()
-		|| user->isBot()
-		|| user->isServiceUser()
+	if (!Main::details::noForwardsSupportedForPeer(_peer) || !user
+		|| user->isInaccessible() || user->isBot() || user->isServiceUser()
 		|| user->isSelf()) {
 		return;
 	}
@@ -3415,13 +3420,16 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			}
 			return false;
 		}();
-		return hasPaid
-			? SendMenu::Type::SilentOnly
-			: ranges::all_of(selected, HistoryView::CanScheduleUntilOnline)
-			? SendMenu::Type::ScheduledToUser
-			: ((selected.size() == 1) && selected.front()->isSelf())
-			? SendMenu::Type::Reminder
-			: SendMenu::Type::Scheduled;
+		const auto supportsSchedule
+			= ranges::all_of(selected, [](not_null<PeerData *> peer) {
+				  return Main::details::scheduledMessagesSupportedForPeer(peer);
+			  });
+		return hasPaid || !supportsSchedule ? SendMenu::Type::SilentOnly
+			   : ranges::all_of(selected, HistoryView::CanScheduleUntilOnline)
+				   ? SendMenu::Type::ScheduledToUser
+			   : ((selected.size() == 1) && selected.front()->isSelf())
+				   ? SendMenu::Type::Reminder
+				   : SendMenu::Type::Scheduled;
 	};
 
 	const auto showMenu = [=](not_null<Ui::RpWidget*> parent) {

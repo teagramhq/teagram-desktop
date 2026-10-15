@@ -224,8 +224,13 @@ public:
 	std::optional<bool> cornerButtonsDownShown() override;
 	bool cornerButtonsUnreadMayBeShown() override;
 	bool cornerButtonsHas(CornerButtonType type) override;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setDraftTextForRegressionTest(const QString &text);
+	[[nodiscard]] QString draftTextForRegressionTest() const;
+	void sendForRegressionTest(Api::SendOptions options);
+#endif
 
-private:
+  private:
 	void resizeEvent(QResizeEvent *e) override;
 	void paintEvent(QPaintEvent *e) override;
 

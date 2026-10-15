@@ -102,6 +102,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
@@ -528,6 +529,11 @@ bool AddRescheduleAction(
 		not_null<Ui::PopupMenu*> menu,
 		const ContextMenuRequest &request,
 		not_null<ListWidget*> list) {
+	if (!request.item
+		|| !Main::details::scheduledMessagesSupportedForPeer(
+			request.item->history()->peer)) {
+		return false;
+	}
 	const auto owner = &request.navigation->session().data();
 
 	const auto goodSingle = HasEditMessageAction(request, list)

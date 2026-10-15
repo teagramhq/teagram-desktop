@@ -1528,7 +1528,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 11>{
+	const auto capabilities = std::array<Capability, 14>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -1540,6 +1540,9 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::sharedFoldersSupported,
 		Main::details::accountBioEditSupported,
 		Main::details::accountUsernameEditSupported,
+		Main::details::noForwardsSupported,
+		Main::details::chatThemeEditingSupported,
+		Main::details::scheduledMessagesSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -1835,6 +1838,50 @@ TEST_CASE(AccountUsernameEditorsFollowTheirOwningSessionAcrossSwitchOrders) {
 	checkSwitchOrder(customUser, false, stockUser, true);
 	CHECK(!supported(blockedUser));
 	CHECK(!supported(customUser));
+}
+
+TEST_CASE(ChatActionsFollowTheirOwningSessionAcrossSwitchOrdersAndWindows) {
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto stockPeer = BioTargetTestUser{stock};
+	const auto customPeer = BioTargetTestUser{custom};
+	CHECK_EQ(stock.userId, custom.userId);
+
+	using Features = std::array<bool, 3>;
+	constexpr auto kStockFeatures = Features{true, true, true};
+	constexpr auto kCustomFeatures = Features{false, false, false};
+	const auto featuresFor = [](const BioTargetTestUser &peer) {
+		const auto owner = &peer;
+		return Features{
+			Main::details::noForwardsSupportedForPeer(owner),
+			Main::details::chatThemeEditingSupportedForPeer(owner),
+			Main::details::scheduledMessagesSupportedForPeer(owner),
+		};
+	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, Features firstExpected,
+			  const BioTargetTestUser &second, Features secondExpected) {
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(featuresFor(second) == secondExpected);
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(Main::details::scheduledSendAllowedForPeer(&first, false));
+			  CHECK_EQ(Main::details::scheduledSendAllowedForPeer(&first, true),
+					   firstExpected[2]);
+		  };
+	checkSwitchOrder(stockPeer, kStockFeatures, customPeer, kCustomFeatures);
+	checkSwitchOrder(customPeer, kCustomFeatures, stockPeer, kStockFeatures);
+
+	struct WindowPeer {
+		const BioTargetTestUser *peer = nullptr;
+	};
+	const auto primaryWindow = WindowPeer{&stockPeer};
+	const auto separateWindow = WindowPeer{&customPeer};
+	CHECK(featuresFor(*primaryWindow.peer) == kStockFeatures);
+	CHECK(featuresFor(*separateWindow.peer) == kCustomFeatures);
 }
 
 // A pin is immutable for the life of the account. Peer and message ids

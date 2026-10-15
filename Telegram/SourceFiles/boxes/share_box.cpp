@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_changes.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "styles/style_calls.h"
@@ -535,15 +536,20 @@ SendMenu::Details ShareBox::sendMenuDetails() const {
 		}
 		return false;
 	}();
-	const auto type = hasPaid
-		? SendMenu::Type::SilentOnly
-		: ranges::all_of(
-			selected | ranges::views::transform(&Data::Thread::peer),
-			HistoryView::CanScheduleUntilOnline)
-		? SendMenu::Type::ScheduledToUser
-		: (selected.size() == 1 && selected.front()->peer()->isSelf())
-		? SendMenu::Type::Reminder
-		: SendMenu::Type::Scheduled;
+	const auto supportsSchedule
+		= ranges::all_of(selected, [](const auto &thread) {
+			  return Main::details::scheduledMessagesSupportedForPeer(
+				  thread->peer());
+		  });
+	const auto type
+		= (hasPaid || !supportsSchedule) ? SendMenu::Type::SilentOnly
+		  : ranges::all_of(selected
+							   | ranges::views::transform(&Data::Thread::peer),
+						   HistoryView::CanScheduleUntilOnline)
+			  ? SendMenu::Type::ScheduledToUser
+		  : (selected.size() == 1 && selected.front()->peer()->isSelf())
+			  ? SendMenu::Type::Reminder
+			  : SendMenu::Type::Scheduled;
 
 	// We can't support effect here because we don't have ChatHelpers::Show.
 	return { .type = type, .effectAllowed = false };
@@ -683,9 +689,16 @@ void ShareBox::innerSelectedChanged(
 }
 
 void ShareBox::submit(Api::SendOptions options) {
+	auto threads = _inner->selected();
+	if ((options.scheduled || options.scheduleRepeatPeriod)
+		&& !ranges::all_of(threads, [](not_null<Data::Thread *> thread) {
+			   return Main::details::scheduledSendAllowedForPeer(thread->peer(),
+																 true);
+		   })) {
+		return;
+	}
 	_submitLifetime.destroy();
 
-	auto threads = _inner->selected();
 	const auto weak = base::make_weak(this);
 	const auto field = _comment->entity();
 	auto comment = field->getTextWithAppliedMarkdown();
