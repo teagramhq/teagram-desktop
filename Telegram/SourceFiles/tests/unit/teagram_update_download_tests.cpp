@@ -2768,17 +2768,12 @@ TEST_CASE(TeagramUpdateManagerAutomaticOffStopsPeriodicChecks) {
 
 	manager->start();
 	CHECK(WaitUntil([&] { return fixture->requestCount() >= 3; }));
-	CHECK(WaitUntil([&] {
-		return manager->state().state == TeagramUpdateUiState::UpToDate;
-	}));
 
 	// Settings: the automatic toggle.
 	manager->setAutomatic(false);
 	CHECK(fixture->automaticWrites == std::vector<bool>{false});
 	CHECK(!manager->state().automatic);
-	CHECK(WaitUntil([&] {
-		return manager->state().state != TeagramUpdateUiState::Checking;
-	}));
+	CHECK(WaitForState(*manager, TeagramUpdateUiState::UpToDate));
 	ProcessEventsFor(50);
 	const auto requests = fixture->requestCount();
 	ProcessEventsFor(200);
