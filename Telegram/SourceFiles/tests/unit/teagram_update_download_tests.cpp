@@ -1314,8 +1314,9 @@ void CheckUpdateInForeignOwnedParent(const QString &shared) {
 	const auto cleanup = gsl::finally([&] {
 		QDir(installed).removeRecursively();
 		QDir(previous).removeRecursively();
+		// The lock file stays: it is the real updater's lock in this folder,
+		// and unlinking it while another updater holds it breaks exclusion.
 		QFile::remove(QDir(shared).filePath(marker));
-		QFile::remove(QDir(shared).filePath(u".teagram-update.lock"_q));
 	});
 	CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
 	CHECK(QDir().mkpath(QFileInfo(candidateExecutable).absolutePath()));
