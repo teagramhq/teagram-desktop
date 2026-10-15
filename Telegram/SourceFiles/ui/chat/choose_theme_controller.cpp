@@ -317,9 +317,7 @@ void ChooseThemeController::initButtons() {
 		controls,
 		tr::lng_chat_theme_change_wallpaper(),
 		st::defaultLightButton);
-	apply->setFocusPolicy(Qt::StrongFocus);
 	apply->setAccessibleName(tr::lng_chat_theme_apply(tr::now));
-	choose->setFocusPolicy(Qt::StrongFocus);
 	choose->setAccessibleName(tr::lng_chat_theme_change_wallpaper(tr::now));
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	_applyButtonForRegressionTest = apply;
@@ -829,13 +827,12 @@ void ChooseThemeController::setFocus() {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 bool ChooseThemeController::accessibleButtonsForRegressionTest() const {
-	const auto accessible = [](const RoundButton *button) {
-		if (!button || (button->focusPolicy() != Qt::StrongFocus)
+	const auto accessible = [](RoundButton *button) {
+		if (!button || (button->accessibilityFocusPolicy() == Qt::NoFocus)
 			|| button->accessibleName().isEmpty()) {
 			return false;
 		}
-		const auto interface = QAccessible::queryAccessibleInterface(
-			const_cast<RoundButton *>(button));
+		const auto interface = QAccessible::queryAccessibleInterface(button);
 		return interface && (interface->role() == QAccessible::Button)
 			   && (interface->text(QAccessible::Name)
 				   == button->accessibleName());
