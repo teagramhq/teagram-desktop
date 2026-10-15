@@ -44,6 +44,7 @@ void RegisterChatsHandlers(Router &router) {
 	router.add(u"chats"_q, {
 		.path = u"emoji-status"_q,
 		.action = CodeBlock{ ShowEmojiStatus },
+		.requiresPaidFeatures = true,
 	});
 }
 

@@ -1786,6 +1786,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  });
 	const auto hasSystemPreferencesEntry
 		= SettingsSearchHasEntry(entries, u"calls/system-prefs"_q);
+	const auto hasYourColorEntry
+		= SettingsSearchHasEntry(entries, u"edit/your-color"_q);
+	const auto hasPeerColorEntry
+		= SettingsSearchHasEntry(entries, u"chat/peer-color"_q);
+	const auto hasPrivacyGiftsEntry
+		= SettingsSearchHasEntry(entries, u"privacy/gifts"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
 		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
@@ -1805,7 +1811,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && (hasCallsNotificationsAcceptEntry == callsSupported)
 		  && (hasPrivacyCallsEntry == callsSupported)
 		  && (callsSupported || !hasAcceptCallSectionKeyword)
-		  && hasSystemPreferencesEntry && (!paidSupported || hasStockPaidRows);
+		  && hasSystemPreferencesEntry && (hasYourColorEntry == paidSupported)
+		  && (hasPeerColorEntry == paidSupported)
+		  && (paidSupported || !hasPrivacyGiftsEntry)
+		  && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
 		std::fprintf(
 			stderr,
@@ -1813,12 +1822,14 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			"privacy=%d, bio=%d expected=%d, chat-automation=%d "
 			"expected=%d, calls-accept=%d, calls-notifications=%d, "
 			"calls-notifications-accept=%d, privacy-calls=%d expected=%d, "
-			"call-accept-keyword=%d, system-prefs=%d, stock-rows=%d.\n",
+			"call-accept-keyword=%d, system-prefs=%d, your-color=%d, "
+			"peer-color=%d, privacy-gifts=%d, stock-rows=%d.\n",
 			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
 			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
 			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
 			hasPrivacyCallsEntry, callsSupported, hasAcceptCallSectionKeyword,
-			hasSystemPreferencesEntry, hasStockPaidRows);
+			hasSystemPreferencesEntry, hasYourColorEntry, hasPeerColorEntry,
+			hasPrivacyGiftsEntry, hasStockPaidRows);
 	}
 	return matches;
 }
@@ -1849,6 +1860,16 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/send-gift/x"_q,
 		u"tg://settings/send-gift/self"_q,
 		u"tg://settings/send-gift/self/x"_q,
+		u"tg://settings/emoji-status"_q,
+		u"tg://chats/emoji-status"_q,
+		u"tg://settings/profile-color"_q,
+		u"tg://settings/profile-color/name"_q,
+		u"tg://settings/profile-color/profile/use-gift"_q,
+		u"tg://settings/appearance/your-color"_q,
+		u"tg://settings/appearance/your-color/name/add-icons"_q,
+		u"tg://settings/edit/your-color"_q,
+		u"tg://settings/privacy/gifts"_q,
+		u"tg://settings/privacy/gifts/always"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()

@@ -989,6 +989,7 @@ void EditMessagesPrivacyBox(
 	constexpr auto kOptionCharge = 2;
 
 	const auto session = &controller->session();
+	const auto paidFeaturesSupported = session->paidFeaturesSupported();
 	const auto allowed = [=] {
 		return session->premium()
 			|| session->appConfig().newRequirePremiumFree();
@@ -1003,7 +1004,7 @@ void EditMessagesPrivacyBox(
 	Ui::AddSkip(inner, st::messagePrivacyTopSkip);
 	Ui::AddSubsectionTitle(inner, tr::lng_messages_privacy_subtitle());
 	const auto group = std::make_shared<Ui::RadiobuttonGroup>(
-		(!allowed()
+		((!paidFeaturesSupported || !allowed())
 			? kOptionAll
 			: privacy->newRequirePremiumCurrent()
 			? kOptionPremium
@@ -1017,23 +1018,32 @@ void EditMessagesPrivacyBox(
 			kOptionAll,
 			tr::lng_messages_privacy_everyone(tr::now),
 			st::messagePrivacyCheck),
-		st::settingsSendTypePadding);
-	const auto restricted = inner->add(
-		object_ptr<Ui::Radiobutton>(
-			inner,
-			group,
-			kOptionPremium,
-			tr::lng_messages_privacy_restricted(tr::now),
-			st::messagePrivacyCheck),
 		st::settingsSendTypePadding + style::margins(
 			0,
-			st::messagePrivacyRadioSkip,
 			0,
-			st::messagePrivacyBottomSkip));
+			0,
+			paidFeaturesSupported ? 0 : st::messagePrivacyBottomSkip));
+	const auto restricted = paidFeaturesSupported
+		? inner->add(
+			object_ptr<Ui::Radiobutton>(
+				inner,
+				group,
+				kOptionPremium,
+				tr::lng_messages_privacy_restricted(tr::now),
+				st::messagePrivacyCheck),
+			st::settingsSendTypePadding + style::margins(
+				0,
+				st::messagePrivacyRadioSkip,
+				0,
+				st::messagePrivacyBottomSkip))
+		: nullptr;
 
-	Ui::AddDividerText(inner, tr::lng_messages_privacy_about());
+	if (paidFeaturesSupported) {
+		Ui::AddDividerText(inner, tr::lng_messages_privacy_about());
+	}
 
-	const auto available = session->appConfig().paidMessagesAvailable();
+	const auto available = paidFeaturesSupported
+		&& session->appConfig().paidMessagesAvailable();
 
 	const auto charged = available
 		? inner->add(
@@ -1146,7 +1156,11 @@ void EditMessagesPrivacyBox(
 		});
 	};
 
-	if (!allowed()) {
+	if (!paidFeaturesSupported) {
+		box->addButton(tr::lng_about_done(), [=] {
+			box->closeBox();
+		});
+	} else if (!allowed()) {
 		CreateRadiobuttonLock(restricted, st::messagePrivacyCheck);
 		if (charged) {
 			CreateRadiobuttonLock(charged, st::messagePrivacyCheck);

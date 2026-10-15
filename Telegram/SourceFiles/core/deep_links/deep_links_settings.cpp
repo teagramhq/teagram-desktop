@@ -446,11 +446,13 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"emoji-status"_q,
 		.action = AliasTo{ u"chats"_q, u"emoji-status"_q },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
 		.path = u"profile-color"_q,
 		.action = AliasTo{ u"settings"_q, u"edit/your-color"_q },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -899,6 +901,7 @@ void RegisterSettingsHandlers(Router &router) {
 				PrivacyKey::GiftsAutoSave,
 				[=] { return std::make_unique<::Settings::GiftsAutoSavePrivacyController>(); });
 		}},
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -1407,6 +1410,7 @@ void RegisterSettingsHandlers(Router &router) {
 	router.add(u"settings"_q, {
 		.path = u"appearance/your-color"_q,
 		.action = AliasTo{ u"settings"_q, u"profile-color"_q },
+		.requiresPaidFeatures = true,
 	});
 
 	router.add(u"settings"_q, {
@@ -1845,6 +1849,7 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = CodeBlock{ [](const Context &ctx) {
 			return ShowPeerColorBox(ctx, PeerColorTab::Profile);
 		}},
+		.requiresPaidFeatures = true,
 	});
 	router.add(u"settings"_q, {
 		.path = u"edit/channel"_q,
