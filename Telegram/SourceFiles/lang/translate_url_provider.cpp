@@ -177,73 +177,70 @@ void CollectJsonLines(
 
 class UrlTranslateProvider final : public TranslateProvider {
 public:
-	explicit UrlTranslateProvider(QString urlTemplate)
-	: _urlTemplate(std::move(urlTemplate)) {
-	}
+  UrlTranslateProvider(QString urlTemplate, bool requireHttpsWithHost)
+	  : _urlTemplate(std::move(urlTemplate)),
+		_requireHttpsWithHost(requireHttpsWithHost) {}
 
-	[[nodiscard]] bool supportsMessageId() const override {
-		return false;
-	}
+  [[nodiscard]] bool supportsMessageId() const override { return false; }
 
-	void request(
-			TranslateProviderRequest request,
-			LanguageId to,
-			Fn<void(TranslateProviderResult)> done) override {
-		if (request.text.text.isEmpty()) {
-			done(TranslateProviderResult{
-				.error = TranslateProviderError::Unknown,
-			});
-			return;
-		}
-		auto url = _urlTemplate;
-		const auto from = DetectFromLanguage(request.text.text);
-		const auto toCode = to.twoLetterCode();
-		url.replace(
-			u"%q"_q,
-			QString::fromLatin1(
-				QUrl::toPercentEncoding(
-					TextUtilities::EscapeForHtml(request.text.text))));
-		url.replace(
-			u"%f"_q,
-			QString::fromLatin1(QUrl::toPercentEncoding(from)));
-		url.replace(
-			u"%t"_q,
-			QString::fromLatin1(QUrl::toPercentEncoding(toCode)));
-		const auto requestUrl = QUrl(url);
-		if (!requestUrl.isValid()) {
-			done(TranslateProviderResult{
-				.error = TranslateProviderError::Unknown,
-			});
-			return;
-		}
-		auto networkRequest = QNetworkRequest(requestUrl);
-		const auto reply = _network.get(networkRequest);
-		QObject::connect(reply, &QNetworkReply::finished, [=] {
-			auto result = TranslateProviderResult();
-			if (reply->error() != QNetworkReply::NoError) {
-				result.error = TranslateProviderError::Unknown;
-			} else {
-				const auto body = reply->readAll();
-				const auto formatted = FormatJsonResponse(body).value_or(
-					QString::fromUtf8(body));
-				result.text = TextWithEntities{ formatted };
-			}
-			done(std::move(result));
-			reply->deleteLater();
-		});
-	}
+  void request(TranslateProviderRequest request, LanguageId to,
+			   Fn<void(TranslateProviderResult)> done) override {
+	  if (request.text.text.isEmpty()) {
+		  done(TranslateProviderResult{
+			  .error = TranslateProviderError::Unknown,
+		  });
+		  return;
+	  }
+	  auto url = _urlTemplate;
+	  const auto from = DetectFromLanguage(request.text.text);
+	  const auto toCode = to.twoLetterCode();
+	  url.replace(u"%q"_q,
+				  QString::fromLatin1(QUrl::toPercentEncoding(
+					  TextUtilities::EscapeForHtml(request.text.text))));
+	  url.replace(u"%f"_q, QString::fromLatin1(QUrl::toPercentEncoding(from)));
+	  url.replace(u"%t"_q,
+				  QString::fromLatin1(QUrl::toPercentEncoding(toCode)));
+	  const auto requestUrl = QUrl(url);
+	  if (!requestUrl.isValid()
+		  || (_requireHttpsWithHost
+			  && (requestUrl.scheme().compare(u"https"_q, Qt::CaseInsensitive)
+					  != 0
+				  || requestUrl.host().isEmpty()))) {
+		  done(TranslateProviderResult{
+			  .error = TranslateProviderError::Unknown,
+		  });
+		  return;
+	  }
+	  auto networkRequest = QNetworkRequest(requestUrl);
+	  const auto reply = _network.get(networkRequest);
+	  QObject::connect(reply, &QNetworkReply::finished, [=] {
+		  auto result = TranslateProviderResult();
+		  if (reply->error() != QNetworkReply::NoError) {
+			  result.error = TranslateProviderError::Unknown;
+		  } else {
+			  const auto body = reply->readAll();
+			  const auto formatted
+				  = FormatJsonResponse(body).value_or(QString::fromUtf8(body));
+			  result.text = TextWithEntities{formatted};
+		  }
+		  done(std::move(result));
+		  reply->deleteLater();
+	  });
+  }
 
 private:
 	const QString _urlTemplate;
+	const bool _requireHttpsWithHost;
 	QNetworkAccessManager _network;
 
 };
 
 } // namespace
 
-std::unique_ptr<TranslateProvider> CreateUrlTranslateProvider(
-		QString urlTemplate) {
-	return std::make_unique<UrlTranslateProvider>(std::move(urlTemplate));
+std::unique_ptr<TranslateProvider>
+CreateUrlTranslateProvider(QString urlTemplate, bool requireHttpsWithHost) {
+	return std::make_unique<UrlTranslateProvider>(std::move(urlTemplate),
+												  requireHttpsWithHost);
 }
 
 } // namespace Ui
