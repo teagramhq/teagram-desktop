@@ -301,6 +301,13 @@ public:
 	[[nodiscard]] rpl::producer<StealthMode> stealthModeValue() const;
 	void activateStealthMode(Fn<void()> done = nullptr);
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool requestsPendingForRegressionTest() const {
+		return !_resolvePending.empty() || !_resolveSent.empty()
+			   || !_requestingPeerStories.empty();
+	}
+#endif
+
 	void sendReaction(FullStoryId id, Data::ReactionId reaction);
 
 private:

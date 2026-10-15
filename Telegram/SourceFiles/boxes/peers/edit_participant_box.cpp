@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_participant_box.h"
 
+#include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_tag_control.h"
 #include "boxes/peers/edit_participants_box.h"
 #include "history/view/history_view_message.h"
@@ -589,12 +590,14 @@ void EditAdminBox::prepare() {
 	const auto anyoneCanAddMembers = chat
 		? chat->anyoneCanAddMembers()
 		: channel->anyoneCanAddMembers();
+	const auto storiesSupported = peer()->session().storiesSupported();
 	const auto options = Data::AdminRightsSetOptions{
 		.isGroup = isGroup,
 		.isForum = peer()->isForum(),
 		.isCommunity = (channel && channel->isCommunity()),
 		.anyoneCanAddMembers = anyoneCanAddMembers,
 		.canProcessJoinRequests = canProcessJoinRequests,
+		.storiesSupported = storiesSupported,
 	};
 	Ui::AddSubsectionTitle(inner, tr::lng_rights_edit_admin_header());
 	auto [checkboxes, getChecked, changes, highlightWidget] = CreateEditAdminRights(
@@ -742,11 +745,27 @@ void EditAdminBox::prepare() {
 				});
 			}
 		}
+		const auto existingRights
+			= _addingBot ? _addingBot->existing : _oldRights.flags;
+		const auto actorLimit
+			= (!channel || channel->amCreator()) ? ~Flags(0) : myEditableRights;
+		const auto rightsToSave = [=](Flags checked) {
+			return Ui::EditPeer::AdminRights::RightsToSave({
+				.checked = checked,
+				.existing = existingRights,
+				.actorLimit = actorLimit,
+				.storiesSupported = storiesSupported,
+			});
+		};
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		for (const auto &entry : AdminRightLabels(options)) {
+			_visibleRightsForRegressionTest |= entry.flags;
+		}
+		_checkedRightsForRegressionTest = getChecked;
+		_rightsToSaveForRegressionTest = rightsToSave;
+#endif
 		_finishSave = [=, value = getChecked] {
-			const auto newFlags = (value() | ChatAdminRight::Other)
-				& ((!channel || channel->amCreator())
-					? ~Flags(0)
-					: myEditableRights);
+			const auto newFlags = rightsToSave(value());
 			confirmGuardBotSave(ChatAdminRightsInfo(newFlags), [=] {
 				_saveCallback(
 					_oldRights,

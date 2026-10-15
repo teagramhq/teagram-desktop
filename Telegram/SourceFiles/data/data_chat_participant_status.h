@@ -110,6 +110,7 @@ struct AdminRightsSetOptions {
 	bool isCommunity : 1 = false;
 	bool anyoneCanAddMembers : 1 = false;
 	bool canProcessJoinRequests : 1 = false;
+	bool storiesSupported : 1 = true;
 };
 
 struct RestrictionsSetOptions {

@@ -67,6 +67,12 @@ Context ParseCommand(
 		   && (path == entry.path || path.startsWith(entry.path + u"/"_q));
 }
 
+[[nodiscard]] bool IsStoriesFeaturePath(const Entry &entry,
+										const QString &path) {
+	return entry.requiresStories
+		   && (path == entry.path || path.startsWith(entry.path + u"/"_q));
+}
+
 } // namespace
 
 Router &Router::Instance() {
@@ -158,6 +164,16 @@ Router::DispatchResult Router::handleSection(
 		return {Result::Handled, true};
 	}
 	if (paidRoute && !ctx.controller->session().paidFeaturesSupported()) {
+		ctx.controller->showFeatureUnavailableOnServerToast();
+		return {Result::Handled, true};
+	}
+	const auto storiesRoute
+		= ctx.controller
+		  && std::any_of(entries.begin(), entries.end(),
+						 [&](const auto &entry) {
+							 return IsStoriesFeaturePath(entry, path);
+						 });
+	if (storiesRoute && !ctx.controller->session().storiesSupported()) {
 		ctx.controller->showFeatureUnavailableOnServerToast();
 		return {Result::Handled, true};
 	}

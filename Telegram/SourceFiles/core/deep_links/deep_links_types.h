@@ -66,6 +66,7 @@ struct Entry {
 	bool requiresAuth = true;
 	bool skipActivation = false;
 	bool requiresPaidFeatures = false;
+	bool requiresStories = false;
 };
 
 } // namespace Core::DeepLinks

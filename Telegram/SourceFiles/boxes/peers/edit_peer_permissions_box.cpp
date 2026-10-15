@@ -170,6 +170,12 @@ constexpr auto kDefaultChargeStars = 10;
 					&AdminRightLabel::flags),
 				end(first));
 		}
+		if (!options.storiesSupported) {
+			return {
+				{std::nullopt, std::move(first)},
+				{std::nullopt, std::move(second)},
+			};
+		}
 		return {
 			{ std::nullopt, std::move(first) },
 			{ tr::lng_rights_channel_manage_stories(), std::move(stories) },
@@ -204,6 +210,13 @@ constexpr auto kDefaultChargeStars = 10;
 			Flag::ProcessJoinRequests,
 			tr::lng_rights_group_process_join_requests(tr::now),
 		});
+	}
+	if (!options.storiesSupported) {
+		return {
+			{std::nullopt, std::move(first)},
+			{tr::lng_rights_channel_manage(), std::move(messages)},
+			{std::nullopt, std::move(second)},
+		};
 	}
 	return {
 		{ std::nullopt, std::move(first) },

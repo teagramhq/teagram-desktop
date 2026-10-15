@@ -16,8 +16,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/edit_privacy_box.h"
+#include "boxes/peers/edit_admin_rights_save.h"
+#include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
+#include "boxes/peers/edit_peer_permissions_box.h"
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
@@ -40,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
+#include "data/data_stories.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
@@ -54,6 +58,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "info/info_controller.h"
+#include "info/info_wrap_widget.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
@@ -100,8 +106,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "styles/style_widgets.h"
 #include "window/window_controller.h"
+#include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
+#include "window/window_session_controller_link_info.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
@@ -1890,6 +1898,26 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return matches;
 }
 
+[[nodiscard]] bool
+ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
+						Fn<bool(const Info::Section &)> matches) {
+	const auto wraps = controller->widget()->findChildren<Info::WrapWidget *>();
+	for (const auto wrap : wraps) {
+		if (matches(wrap->controller()->section())) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool
+ShownStoriesSection(not_null<Window::SessionController *> controller) {
+	return ShownInfoSectionMatches(
+		controller, [](const Info::Section &section) {
+			return (section.type() == Info::Section::Type::Stories);
+		});
+}
+
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -1926,6 +1954,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/edit/your-color"_q,
 		u"tg://settings/privacy/gifts"_q,
 		u"tg://settings/privacy/gifts/always"_q,
+	};
+	const auto storyRoutes = std::vector<QString>{
+		u"tg://settings/my-profile/posts"_q,
+		u"tg://settings/my-profile/posts/add-album"_q,
+		u"tg://settings/my-profile/archived-posts"_q,
+		u"tg://settings/MY-PROFILE/ARCHIVED-POSTS"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
@@ -2069,6 +2103,11 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 					  return false;
 				  }
 			  }
+			  for (const auto &url : storyRoutes) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
+					  return false;
+				  }
+			  }
 			  return true;
 		  };
 
@@ -2115,6 +2154,35 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	pinnedController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
+
+	for (const auto &controller : {pinnedController, blockedController}) {
+		const auto toastBefore
+			= controller
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+							  contextFor(controller))) {
+			return false;
+		}
+		QCoreApplication::processEvents();
+		const auto myAccountShown = ShownInfoSectionMatches(
+			controller, [](const Info::Section &section) {
+				return (section.type() == Info::Section::Type::Settings)
+					   && (section.settingsType() == Settings::InformationId());
+			});
+		if (!controller->content()->isMainSectionShown() || !myAccountShown
+			|| ShownStoriesSection(controller)
+			|| (controller
+					->featureUnavailableOnServerToastCallsForRegressionTest()
+				!= toastBefore)) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: my-profile did not "
+				"open My Account on an unsupported session.\n");
+			return false;
+		}
+		resetController(controller);
+		QCoreApplication::processEvents();
+	}
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
@@ -2198,11 +2266,11 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	stockController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
-	std::fprintf(
-		stderr,
-		"Settings deep link regression passed: 13 routes refused in custom "
-		"and blocked sessions; stock Premium and ordinary Settings routes "
-		"opened.\n");
+	std::fprintf(stderr,
+				 "Settings deep link regression passed: paid and story routes "
+				 "refused in custom and blocked sessions; my-profile opened My "
+				 "Account there; stock Premium and ordinary Settings routes "
+				 "opened.\n");
 	return true;
 }
 
@@ -2916,6 +2984,240 @@ template <typename Predicate>
 	return match;
 }
 
+// Stories are presentation-gated per owning session: the main menu, the
+// own-channel menus, the Edit admin box and story links all read the
+// capability from the window session that acts. The admin box checks run
+// the box's own save computation, so a checkbox-only save that drops the
+// hidden story rights fails here and in the standalone save cases.
+[[nodiscard]] bool RunStoryControlsVisibilityRegression(
+	not_null<Window::SessionController *> controller, bool supported,
+	const char *sessionName) {
+	auto &session = controller->session();
+	const auto fail = [&](const char *what) {
+		std::fprintf(stderr,
+					 "Story controls regression failed: session=%s "
+					 "supported=%d case=%s.\n",
+					 sessionName, supported, what);
+		return false;
+	};
+	if (session.storiesSupported() != supported) {
+		return fail("capability");
+	}
+
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		if (menu->myProfileRowPresentForRegressionTest() != supported
+			|| menu->topDividerShownForRegressionTest() != supported) {
+			return fail("main_menu_my_profile_and_divider");
+		}
+	}
+
+	using Right = ChatAdminRight;
+	using Rights = ChatAdminRights;
+	const auto stories = Ui::EditPeer::AdminRights::StoryRights();
+	const auto labelsHaveStories = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return ((all & stories) == stories)
+			   && ((transfer & stories) == stories);
+	};
+	const auto labelsHaveNoStories = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return !(all & stories) && !(transfer & stories);
+	};
+	const auto labelOptions = std::vector<Data::AdminRightsSetOptions>{
+		{.storiesSupported = supported},
+		{.isGroup = true, .storiesSupported = supported},
+		{.isGroup = true, .isForum = true, .storiesSupported = supported},
+	};
+	for (const auto &options : labelOptions) {
+		if (supported ? !labelsHaveStories(options)
+					  : !labelsHaveNoStories(options)) {
+			return fail("admin_right_labels_and_transfer");
+		}
+	}
+
+	using Flag = ChannelDataFlag;
+	const auto channel = session.data().channel(ChannelId(1181));
+	channel->setAccessHash(118100);
+	channel->setName(u"Story controls regression channel"_q, QString());
+	channel->setFlags(Flag::Creator | Flag::Broadcast);
+	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto channelPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*channel));
+	const auto history = session.data().history(channel);
+	const auto contains = [](const QStringList &names,
+							 const QString &expected) {
+		return std::find(names.begin(), names.end(), expected) != names.end();
+	};
+	const auto archive = tr::lng_stories_archive_button(tr::now);
+	for (const auto section : {
+			 Dialogs::EntryState::Section::History,
+			 Dialogs::EntryState::Section::Profile,
+		 }) {
+		const auto menu
+			= SnapshotPeerMenu(controller, Dialogs::Key(history), section);
+		if (contains(menu.actions, archive) != supported
+			|| contains(menu.accessibleNames, archive) != supported
+			|| contains(menu.keyboardNames, archive) != supported) {
+			return fail("own_channel_story_archive");
+		}
+	}
+
+	const auto admin = session.data().user(UserId(1182));
+	const auto openAdminBox = [&](Rights existing) {
+		auto box = Box<EditAdminBox>(channelPeer, admin,
+									 ChatAdminRightsInfo(existing), QString(),
+									 TimeId(0), nullptr);
+		box->setSaveCallback([](ChatAdminRightsInfo, ChatAdminRightsInfo,
+								const std::optional<QString> &) {});
+		auto result = controller->window().show(
+			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
+		QCoreApplication::processEvents();
+		return result;
+	};
+	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
+								| Right::EditMessages | Right::DeleteMessages
+								| Right::InviteByLinkOrAdd | Right::ManageCall
+								| Right::ManageDirect | Right::BanUsers;
+	const auto adminCase = [&](const char *name, Rights existingStories) {
+		const auto existing = visibleChannel | existingStories | Right::Other;
+		auto box = openAdminBox(existing);
+		if (!box) {
+			return fail(name);
+		}
+		const auto visible = box->visibleRightsForRegressionTest();
+		const auto checked = box->checkedRightsForRegressionTest();
+		const auto saved = box->rightsToSaveForRegressionTest(
+			checked & ~Rights(Right::PostMessages));
+		const auto expected
+			= (existing & ~Rights(Right::PostMessages)) | Right::Other;
+		const auto rowsMatch
+			= supported ? ((visible & stories) == stories)
+						: (!(visible & stories) && !(checked & stories));
+		controller->hideLayer(anim::type::instant);
+		QCoreApplication::processEvents();
+		if (!rowsMatch || (saved.value() != expected.value())) {
+			std::fprintf(stderr,
+						 "Story controls regression: case=%s visible=%d "
+						 "checked=%d saved=%d expected=%d.\n",
+						 name, int(visible.value()), int(checked.value()),
+						 int(saved.value()), int(expected.value()));
+			return fail(name);
+		}
+		return true;
+	};
+	if (!adminCase("existing_admin_all_story_rights", stories)
+		|| !adminCase("existing_admin_no_story_rights", Rights())
+		|| !adminCase("existing_admin_mixed_story_rights",
+					  Rights(Right::PostStories) | Right::DeleteStories)) {
+		return false;
+	}
+	{
+		auto box = openAdminBox(Rights());
+		if (!box) {
+			return fail("new_admin_box");
+		}
+		const auto checked = box->checkedRightsForRegressionTest();
+		const auto saved = box->rightsToSaveForRegressionTest(checked);
+		controller->hideLayer(anim::type::instant);
+		QCoreApplication::processEvents();
+		const auto savedStories = (saved & stories);
+		const auto expectedStories = supported ? stories : Rights();
+		if ((savedStories.value() != expectedStories.value())
+			|| ((saved & visibleChannel).value()
+				!= (checked & visibleChannel).value())) {
+			return fail("new_admin_story_defaults");
+		}
+	}
+
+	const auto resetSections = [&] {
+		if (controller->isLayerShown()) {
+			controller->hideLayer(anim::type::instant);
+		}
+		controller->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
+		QCoreApplication::processEvents();
+	};
+	auto &storiesData = session.data().stories();
+	const auto linkTo = [&](QString storyParam, int albumId) {
+		auto info = Window::PeerByLinkInfo();
+		info.usernameOrId = peerToChannel(channel->id);
+		info.storyParam = storyParam;
+		info.storyAlbumId = albumId;
+		return info;
+	};
+	if (supported) {
+		resetSections();
+		const auto toastBefore
+			= controller
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		controller->showPeerByLink(linkTo(u"1"_q, 0));
+		QCoreApplication::processEvents();
+		if ((controller->featureUnavailableOnServerToastCallsForRegressionTest()
+			 != toastBefore)
+			|| (controller->activeChatCurrent().peer() == channelPeer.get())) {
+			return fail("stock_story_link_not_refused");
+		}
+		resetSections();
+	} else {
+		if (storiesData.requestsPendingForRegressionTest()) {
+			return fail("story_requests_pending_before_links");
+		}
+		const auto links
+			= std::vector<std::pair<const char *, Window::PeerByLinkInfo>>{
+				{"story_link", linkTo(u"1"_q, 0)},
+				{"story_link_in_album", linkTo(u"1"_q, 2)},
+				{"live_story_link", linkTo(u"live"_q, 0)},
+				{"album_link", linkTo(QString(), 2)},
+		};
+		for (const auto &[name, info] : links) {
+			resetSections();
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			controller->showPeerByLink(info);
+			QCoreApplication::processEvents();
+			const auto toastShown
+				= (controller
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == toastBefore + 1);
+			const auto peerShown
+				= (controller->activeChatCurrent().peer() == channelPeer.get());
+			const auto noStoriesUi
+				= !controller->content()->isMainSectionShown()
+				  && !ShownStoriesSection(controller);
+			const auto noStoriesRequest
+				= !storiesData.requestsPendingForRegressionTest();
+			if (!toastShown || !peerShown || !noStoriesUi
+				|| !noStoriesRequest) {
+				std::fprintf(stderr,
+							 "Story controls regression: case=%s toast=%d "
+							 "peer=%d no-stories-ui=%d no-request=%d.\n",
+							 name, toastShown, peerShown, noStoriesUi,
+							 noStoriesRequest);
+				return fail(name);
+			}
+		}
+		resetSections();
+	}
+
+	std::fprintf(stderr,
+				 "Story controls regression passed: session=%s supported=%d; "
+				 "main menu, own-channel menus, admin rights and story links "
+				 "match.\n",
+				 sessionName, supported);
+	return true;
+}
+
 // The accepted refusal contract, observed instead of inferred: a refused
 // mini-app open shows the shared unavailable-server toast on the owning
 // session and leaves the webview path untouched, while a stock session keeps
@@ -3251,6 +3553,10 @@ template <typename Predicate>
 			= RunBoostMenuVisibilityRegression(
 				  stockController, true, "stock with blocked account available")
 			  && RunBoostMenuVisibilityRegression(
+				  blankController, false, "blocked while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  stockController, true, "stock with blocked account available")
+			  && RunStoryControlsVisibilityRegression(
 				  blankController, false, "blocked while stock is active");
 		domain.activate(blank);
 		const auto blockedFirst
@@ -3258,6 +3564,11 @@ template <typename Predicate>
 				  blankController, false,
 				  "blocked with stock account available")
 			  && RunBoostMenuVisibilityRegression(
+				  stockController, true, "stock while blocked is active")
+			  && RunStoryControlsVisibilityRegression(
+				  blankController, false,
+				  "blocked with stock account available")
+			  && RunStoryControlsVisibilityRegression(
 				  stockController, true, "stock while blocked is active");
 		return stockFirst && blockedFirst;
 	}();
@@ -5897,6 +6208,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			  && RunBoostMenuVisibilityRegression(
 				  pinnedMenuController, false,
 				  customFirst ? "custom while custom is active"
+							  : "custom while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  stockMenuController, true,
+				  customFirst ? "stock while custom is active"
+							  : "stock while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  pinnedMenuController, false,
+				  customFirst ? "custom while custom is active"
 							  : "custom while stock is active");
 		if (!firstActive || !firstCapabilities || !firstWindows
 			|| !firstCustomWebViewRefused || !firstBoostMenusMatch) {
@@ -6084,6 +6403,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  customFirst ? "stock while stock is active"
 							  : "stock while custom is active")
 			  && RunBoostMenuVisibilityRegression(
+				  secondPinnedMenuController, false,
+				  customFirst ? "custom while stock is active"
+							  : "custom while custom is active")
+			  && RunStoryControlsVisibilityRegression(
+				  secondStockMenuController, true,
+				  customFirst ? "stock while stock is active"
+							  : "stock while custom is active")
+			  && RunStoryControlsVisibilityRegression(
 				  secondPinnedMenuController, false,
 				  customFirst ? "custom while stock is active"
 							  : "custom while custom is active");
