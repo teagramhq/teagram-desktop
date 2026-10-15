@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
 #include "core/deep_links/deep_links_router.h"
+#include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
@@ -70,6 +71,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
+#include "payments/payments_checkout_process.h"
+#include "payments/payments_form.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
@@ -2163,6 +2166,261 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return true;
 }
 
+[[nodiscard]] bool RunPaidLinkRefusalRegression(
+	Core::Application &app,
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> pinnedController,
+	not_null<Window::SessionController *> blockedController) {
+	const auto configured
+		= stockController->session().paidFeaturesSupported()
+		  && !pinnedController->session().paidFeaturesSupported()
+		  && !blockedController->session().paidFeaturesSupported()
+		  && pinnedController->session().mtp().dcOptions().hasCustomServer()
+		  && blockedController->session().mtp().dcOptions().blocked();
+	if (!configured) {
+		std::fprintf(
+			stderr,
+			"Paid link regression failed: session fixtures did not match "
+			"stock, custom, and blocked accounts.\n");
+		return false;
+	}
+	const auto controllers = std::vector<not_null<Window::SessionController *>>{
+		stockController,
+		pinnedController,
+		blockedController,
+	};
+	const auto resetControllers = [&] {
+		for (const auto &controller : controllers) {
+			if (controller->isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+			}
+			controller->clearSectionStack(Window::SectionShow(
+				anim::type::instant, anim::activation::background));
+		}
+		QCoreApplication::processEvents();
+	};
+	const auto previousWindow = app.activeWindow();
+	const auto restoreWindows = gsl::finally([&] {
+		resetControllers();
+		if (previousWindow) {
+			previousWindow->activate();
+		}
+	});
+	resetControllers();
+
+	const auto local = std::vector<QString>{
+		u"tg://invoice?slug=regression"_q,
+		u"tg://premium_offer"_q,
+		u"tg://premium_offer?ref=regression"_q,
+		u"tg://premium_multigift?ref=regression"_q,
+		u"tg://stars_topup?balance=10&purpose=regression"_q,
+		u"tg://nft?slug=regression-1"_q,
+		u"tg://stargift_auction?slug=regression"_q,
+		u"tg://stars"_q,
+		u"tg://ton"_q,
+		u"tg://grams"_q,
+		Core::TryConvertUrlToLocal(u"https://t.me/$regression"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/invoice/regression"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/nft/regression-1"_q),
+		Core::TryConvertUrlToLocal(u"https://t.me/auction/regression"_q),
+	};
+	const auto internal = std::vector<QString>{
+		u"internal:edit_paid_messages_fee/"_q
+			+ QString::number(pinnedController->session().userPeerId().value),
+		u"internal:stars_examples"_q,
+	};
+	for (const auto &url : local) {
+		if (!url.startsWith(u"tg://"_q)) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: t.me link was not converted to "
+				"a local link: %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	const auto toastCounts = [&] {
+		auto result = std::vector<int>();
+		for (const auto &controller : controllers) {
+			result.push_back(
+				controller
+					->featureUnavailableOnServerToastCallsForRegressionTest());
+		}
+		return result;
+	};
+	const auto paidUiOpen = [&] {
+		return std::any_of(
+			controllers.begin(), controllers.end(), [](const auto &controller) {
+				return controller->content()->isMainSectionShown()
+					   || controller->isLayerShown();
+			});
+	};
+	const auto open = [&](const QString &url, const QVariant &context) {
+		return url.startsWith(u"internal:"_q)
+				   ? app.openInternalUrl(url, context)
+				   : app.openLocalUrl(url, context);
+	};
+	const auto dispatchRefused = [&](const QString &url,
+									 Window::SessionController *target) {
+		const auto activeBefore = app.activeWindow();
+		auto expected = toastCounts();
+		for (auto i = 0; i != int(controllers.size()); ++i) {
+			expected[i] += (controllers[i].get() == target) ? 1 : 0;
+		}
+		const auto context = target
+								 ? QVariant::fromValue(ClickHandlerContext{
+									   .sessionWindow = base::make_weak(target),
+								   })
+								 : QVariant::fromValue(ClickHandlerContext{});
+		const auto handled = open(url, context);
+		QCoreApplication::processEvents();
+		const auto refused = handled && (toastCounts() == expected)
+							 && !paidUiOpen()
+							 && (app.activeWindow() == activeBefore);
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: link=%s target=%p handled=%d "
+				"toast-only=%d paid-ui-open=%d.\n",
+				url.toUtf8().constData(), static_cast<void *>(target), handled,
+				toastCounts() == expected, paidUiOpen());
+		}
+		resetControllers();
+		return refused;
+	};
+	const auto dispatchMatrix
+		= [&](Window::SessionController *target,
+			  not_null<Window::SessionController *> active) {
+			  active->window().activate();
+			  QCoreApplication::processEvents();
+			  if (app.activeWindow() != &active->window()) {
+				  return false;
+			  }
+			  for (const auto &url : local) {
+				  if (!dispatchRefused(url, target)) {
+					  return false;
+				  }
+			  }
+			  for (const auto &url : internal) {
+				  if (!dispatchRefused(url, target)) {
+					  return false;
+				  }
+			  }
+			  return true;
+		  };
+	if (!dispatchMatrix(pinnedController, stockController)
+		|| !dispatchMatrix(pinnedController, pinnedController)
+		|| !dispatchMatrix(blockedController, stockController)
+		|| !dispatchMatrix(blockedController, blockedController)
+		|| !dispatchMatrix(nullptr, stockController)
+		|| !dispatchMatrix(nullptr, pinnedController)) {
+		return false;
+	}
+
+	const auto checkoutRefused = [&](not_null<Window::SessionController *>
+										 target) {
+		const auto session = &target->session();
+		const auto user = session->user();
+		const auto results
+			= std::make_shared<std::vector<Payments::CheckoutResult>>();
+		const auto reactivate = [=](Payments::CheckoutResult result) {
+			results->push_back(result);
+		};
+		const auto before = toastCounts();
+		Payments::CheckoutProcess::Start(session, u"regression"_q, reactivate,
+										 nullptr);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoiceCredits{
+				.session = session,
+				.randomId = 0x7e57'0001ULL,
+				.credits = 10,
+				.currency = u"XTR"_q,
+				.amount = 10,
+			},
+			reactivate);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoiceStarGift{
+				.giftId = 1,
+				.randomId = 0x7e57'0002ULL,
+				.recipient = user,
+			},
+			reactivate, nullptr);
+		Payments::CheckoutProcess::Start(
+			Payments::InvoicePremiumGiftCode{
+				.purpose = Payments::InvoicePremiumGiftCodeUsers{
+					.users = {user},
+				},
+				.currency = u"XTR"_q,
+				.randomId = 0x7e57'0003ULL,
+				.amount = 10,
+				.storeQuantity = 1,
+				.users = 1,
+				.months = 3,
+			},
+			reactivate, nullptr);
+		QCoreApplication::processEvents();
+		auto expected = before;
+		for (auto i = 0; i != int(controllers.size()); ++i) {
+			expected[i] += (controllers[i] == target) ? 4 : 0;
+		}
+		const auto refused = (*results
+							  == std::vector<Payments::CheckoutResult>(
+								  4, Payments::CheckoutResult::Cancelled))
+							 && (toastCounts() == expected) && !paidUiOpen();
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: checkout start was not refused "
+				"in session %p: results=%d toast-only=%d.\n",
+				static_cast<void *>(target.get()), int(results->size()),
+				toastCounts() == expected);
+		}
+		resetControllers();
+		return refused;
+	};
+	if (!checkoutRefused(pinnedController)
+		|| !checkoutRefused(blockedController)) {
+		return false;
+	}
+
+	const auto stockOpens = [&](const QString &url, bool section) {
+		pinnedController->window().activate();
+		QCoreApplication::processEvents();
+		const auto before = toastCounts();
+		const auto handled = open(
+			url, QVariant::fromValue(ClickHandlerContext{
+					 .sessionWindow = base::make_weak(stockController.get()),
+				 }));
+		QCoreApplication::processEvents();
+		const auto opened
+			= handled && (toastCounts() == before)
+			  && (section ? stockController->content()->isMainSectionShown()
+						  : stockController->isLayerShown())
+			  && !pinnedController->content()->isMainSectionShown()
+			  && !pinnedController->isLayerShown();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: stock link=%s did not keep its "
+				"behavior.\n",
+				url.toUtf8().constData());
+		}
+		resetControllers();
+		return opened;
+	};
+	if (!stockOpens(u"tg://stars"_q, true) || !stockOpens(u"tg://ton"_q, true)
+		|| !stockOpens(u"internal:stars_examples"_q, false)) {
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Paid link regression passed: %d paid links refused in custom and "
+		"blocked sessions and ignored without a target; checkout starts "
+		"refused before payment requests; stock links opened.\n",
+		int(local.size() + internal.size()));
+	return true;
+}
+
 [[nodiscard]] int
 AcceptedMiniAppOpens(not_null<Main::Session *> session,
 					 not_null<UserData *> bot,
@@ -2808,6 +3066,12 @@ template <typename Predicate>
 											"blocked")
 		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
 											"stock after custom")) {
+		blank->forcedLogOut();
+		return false;
+	}
+	if (!RunPaidLinkRefusalRegression(
+			app, stockController, pinnedController,
+			not_null<Window::SessionController *>(blankController))) {
 		blank->forcedLogOut();
 		return false;
 	}

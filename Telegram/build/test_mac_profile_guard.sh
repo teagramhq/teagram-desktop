@@ -628,6 +628,13 @@ if ! grep -F -q \
 	echo "Settings deep link regression did not reach its passing result." >&2
 	exit 1
 fi
+if ! grep -F -q \
+	"Paid link regression passed: 16 paid links refused in custom and blocked sessions" \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "Paid link regression did not reach its passing result." >&2
+	exit 1
+fi
 if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 	mkdir -p "$(dirname "$AUTH_EVIDENCE_LOG")"
 	cp "$AUTH_LOG" "$AUTH_EVIDENCE_LOG"

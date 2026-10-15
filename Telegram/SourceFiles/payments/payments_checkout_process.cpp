@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_cloud_password.h"
 #include "webview/webview_dialog.h"
 #include "window/themes/window_theme.h"
+#include "window/window_session_controller.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -60,6 +61,22 @@ base::flat_map<not_null<Main::Session*>, SessionProcesses> Processes;
 	return result;
 }
 
+[[nodiscard]] bool
+RefusePaidCheckout(not_null<Main::Session *> session,
+				   const Fn<void(CheckoutResult)> &reactivate) {
+	if (session->paidFeaturesSupported()) {
+		return false;
+	}
+	for (const auto &window : session->windows()) {
+		window->showFeatureUnavailableOnServerToast();
+		break;
+	}
+	if (reactivate) {
+		crl::on_main(session, [=] { reactivate(CheckoutResult::Cancelled); });
+	}
+	return true;
+}
+
 } // namespace
 
 void CheckoutProcess::Start(
@@ -67,6 +84,9 @@ void CheckoutProcess::Start(
 		Mode mode,
 		Fn<void(CheckoutResult)> reactivate,
 		Fn<void(NonPanelPaymentForm)> nonPanelPaymentFormProcess) {
+	if (RefusePaidCheckout(&item->history()->session(), reactivate)) {
+		return;
+	}
 	auto &processes = LookupSessionProcesses(&item->history()->session());
 	const auto media = item->media();
 	const auto invoice = media ? media->invoice() : nullptr;
@@ -106,6 +126,9 @@ void CheckoutProcess::Start(
 		const QString &slug,
 		Fn<void(CheckoutResult)> reactivate,
 		Fn<void(NonPanelPaymentForm)> nonPanelPaymentFormProcess) {
+	if (RefusePaidCheckout(session, reactivate)) {
+		return;
+	}
 	auto &processes = LookupSessionProcesses(session);
 	const auto i = processes.bySlug.find(slug);
 	if (i != end(processes.bySlug)) {
@@ -132,6 +155,9 @@ void CheckoutProcess::Start(
 		Fn<void(NonPanelPaymentForm)> nonPanelPaymentFormProcess) {
 	const auto randomId = giftCodeInvoice.randomId;
 	auto id = InvoiceId{ std::move(giftCodeInvoice) };
+	if (RefusePaidCheckout(SessionFromId(id), reactivate)) {
+		return;
+	}
 	auto &processes = LookupSessionProcesses(SessionFromId(id));
 	const auto i = processes.byRandomId.find(randomId);
 	if (i != end(processes.byRandomId)) {
@@ -157,6 +183,9 @@ void CheckoutProcess::Start(
 		Fn<void(CheckoutResult)> reactivate) {
 	const auto randomId = creditsInvoice.randomId;
 	auto id = InvoiceId{ std::move(creditsInvoice) };
+	if (RefusePaidCheckout(SessionFromId(id), reactivate)) {
+		return;
+	}
 	auto &processes = LookupSessionProcesses(SessionFromId(id));
 	const auto i = processes.byRandomId.find(randomId);
 	if (i != end(processes.byRandomId)) {
@@ -181,6 +210,9 @@ void CheckoutProcess::Start(
 		Fn<void(NonPanelPaymentForm)> nonPanelPaymentFormProcess) {
 	const auto randomId = giftInvoice.randomId;
 	auto id = InvoiceId{ std::move(giftInvoice) };
+	if (RefusePaidCheckout(SessionFromId(id), reactivate)) {
+		return;
+	}
 	auto &processes = LookupSessionProcesses(SessionFromId(id));
 	const auto i = processes.byRandomId.find(randomId);
 	if (i != end(processes.byRandomId)) {
