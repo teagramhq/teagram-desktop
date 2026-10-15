@@ -100,7 +100,7 @@ RecoverTeagramUpdateReplacement(const TeagramUpdateInstallLock &lock,
 								const QString &stagingDirectory,
 								const QString &previousBundlePath,
 								const QString &runningBundlePath,
-								bool stagingBundleIsPrevious, bool startupReady,
-								bool noOtherInstance);
+								bool stagingBundleIsPrevious,
+								bool discardPrevious, bool noOtherInstance);
 
 } // namespace Core
