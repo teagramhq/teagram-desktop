@@ -40,8 +40,8 @@ macos_group_for_event() {
     repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
     repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
-  elif [[ "$event_name" == 'schedule' ]]; then
-    repository_qualified_identity="schedule/${ref_name}"
+  elif [[ "$event_name" == 'schedule' || "$event_name" == 'push' ]]; then
+    repository_qualified_identity="seed/${ref_name}"
   else
     repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
   fi
@@ -78,7 +78,7 @@ require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
 require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
 require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}"
 pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
@@ -250,14 +250,25 @@ if [[ "$schedule_group" == "$dev_dispatch_group" ]]; then
   printf 'A dev dispatch must not cancel the scheduled run that seeds the compiler cache.\n' >&2
   exit 1
 fi
+push_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'push')"
+if [[ "$push_group" != "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
+  printf 'Dev push seeds must share one cancelling group with the nightly seed, apart from dispatches.\n' >&2
+  exit 1
+fi
+mac_triggers="$(awk '/^on:$/ { in_on = 1; next } in_on && /^[^ #]/ { exit } in_on { print }' "$mac_workflow")"
+if [[ "$mac_triggers" != *$'\n  push:\n    branches: [dev]\n    paths:\n'* ]]; then
+  printf 'MacOS. must seed the compiler cache on path-filtered dev pushes.\n' >&2
+  exit 1
+fi
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
 require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
 reject_text "$mac_workflow" 'CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
 scheduled_profile="$(bash "$ccache_profile_script" schedule)"
+push_profile="$(bash "$ccache_profile_script" push)"
 dispatch_profile="$(bash "$ccache_profile_script" workflow_dispatch)"
-if [[ "$pull_request_profile" != "$scheduled_profile" ]]; then
+if [[ "$pull_request_profile" != "$scheduled_profile" || "$pull_request_profile" != "$push_profile" ]]; then
   printf 'MacOS PR and scheduled builds must share one ccache profile.\n' >&2
   exit 1
 fi
@@ -296,11 +307,13 @@ ccache_restore_keys="$(awk '
 hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
 profile_expression="\${{ steps.ccache-profile.outputs.name }}"
 expected_ccache_restore_keys="macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-
-macOS-arm64-ccache-dev-${hash_expression}-"
+macOS-arm64-ccache-dev-${hash_expression}-
+macOS-arm64-ccache-dev-${profile_expression}-"
 if [[ "$ccache_restore_keys" != "$expected_ccache_restore_keys" ]]; then
-  printf 'MacOS pull requests must restore the shared dev compiler cache.\n' >&2
+  printf 'MacOS pull requests must restore the shared dev compiler cache, falling back to the newest entry of their profile.\n' >&2
   exit 1
 fi
+require_text "$mac_workflow" 'CCACHE_COMPILERCHECK: content'
 require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
 require_text "$mac_workflow" "github.event_name == 'schedule'"
 reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
@@ -351,6 +364,20 @@ save_cache_step="$(awk '
 if ! grep -Fq "github.ref == 'refs/heads/dev'" <<< "$save_cache_step" \
   || grep -Fq "github.event_name == 'pull_request'" <<< "$save_cache_step"; then
   printf 'Only dev runs may save the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+if ! grep -Fq "(github.event_name == 'schedule' || github.event_name == 'push')" <<< "$save_cache_step"; then
+  printf 'Dev push and scheduled runs must seed the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+save_libraries_step="$(awk '
+  /^      - name: Save libraries cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+if ! grep -Fq "github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'" <<< "$save_libraries_step" \
+  || grep -Fq "github.event_name == 'pull_request'" <<< "$save_libraries_step"; then
+  printf 'Pull requests must restore the macOS libraries cache without saving it.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'build_dir="$repo/out"'
