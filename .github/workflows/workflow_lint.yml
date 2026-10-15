@@ -21,6 +21,8 @@ on:
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
       - '.github/scripts/linux_libraries_image.sh'
       - '.github/scripts/test_linux_libraries_image.sh'
+      - '.github/scripts/detect_linux_changes.sh'
+      - '.github/scripts/test_detect_linux_changes.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
@@ -44,6 +46,8 @@ on:
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
       - '.github/scripts/linux_libraries_image.sh'
       - '.github/scripts/test_linux_libraries_image.sh'
+      - '.github/scripts/detect_linux_changes.sh'
+      - '.github/scripts/test_detect_linux_changes.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
@@ -105,6 +109,9 @@ jobs:
 
       - name: Test CI cache contract.
         run: bash .github/scripts/test_ci_cache_contract.sh
+
+      - name: Test Linux change detection.
+        run: bash .github/scripts/test_detect_linux_changes.sh
 
       - name: Test Linux dependency image handling.
         run: bash .github/scripts/test_linux_libraries_image.sh
