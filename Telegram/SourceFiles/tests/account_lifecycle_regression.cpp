@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_download_manager.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
+#include "data/data_media_types.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -159,6 +160,39 @@ struct ChannelSaveRequestCapture {
 };
 
 ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
+
+struct PaymentRequestCapture {
+	not_null<MTP::Instance *> instance;
+	std::vector<uint32> constructors;
+};
+
+PaymentRequestCapture *gPaymentRequestCapture = nullptr;
+
+[[nodiscard]] bool CapturePaymentRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gPaymentRequestCapture;
+	if (!capture || capture->instance != instance) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	const auto constructor = static_cast<uint32>(body.front());
+	switch (constructor) {
+	case mtpc_payments_getPaymentForm:
+	case mtpc_payments_getPaymentReceipt:
+	case mtpc_payments_validateRequestedInfo:
+	case mtpc_payments_sendPaymentForm:
+	case mtpc_payments_sendStarsForm:
+		capture->constructors.push_back(constructor);
+		return true;
+	default:
+		return false;
+	}
+}
 
 template <typename Request>
 [[nodiscard]] bool ReplyToChannelSaveRequestForRegressionTest(
@@ -315,6 +349,9 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	not_null<MTP::Instance *> instance, int32 requestId,
 	const MTP::details::SerializedRequest &request,
 	MTP::ResponseHandler &callbacks) {
+	if (CapturePaymentRequestForRegressionTest(instance, request)) {
+		return true;
+	}
 	const auto capture = gChannelSaveRequestCapture;
 	if (!capture || capture->instance != instance) {
 		return false;
@@ -2166,6 +2203,54 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return true;
 }
 
+[[nodiscard]] HistoryItem *
+AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
+								MsgId receiptMsgId) {
+	using MediaFlag = MTPDmessageMediaInvoice::Flag;
+	const auto media = MTP_messageMediaInvoice(
+		MTP_flags(receiptMsgId ? MediaFlag::f_receipt_msg_id : MediaFlag()),
+		MTP_string(u"Regression invoice"_q), MTP_string(u"Paid item"_q),
+		MTPWebDocument(), MTP_int(int(receiptMsgId.bare)), MTP_string(u"USD"_q),
+		MTP_long(100), MTP_string(u"regression"_q), MTPMessageExtendedMedia());
+	const auto data = MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_media),
+		MTP_int(int(id.bare)), peerToMTP(session->userPeerId()),
+		MTPint(),	 // from_boosts_applied
+		MTPstring(), // from_rank
+		peerToMTP(session->userPeerId()),
+		MTPPeer(), // saved_peer_id
+		MTPMessageFwdHeader(),
+		MTP_long(0), // via_bot_id
+		MTPlong(),	 // via_business_bot_id
+		MTPPeer(),	 // guestchat_via_from
+		MTPMessageReplyHeader(),
+		MTP_int(1), // date
+		MTP_string(QString()), media, MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(),
+		MTP_int(0), // views
+		MTP_int(0), // forwards
+		MTPMessageReplies(),
+		MTP_int(0), // edit_date
+		MTPstring(), MTPlong(), MTPMessageReactions(),
+		MTPVector<MTPRestrictionReason>(),
+		MTP_int(0), // ttl_period
+		MTPint(),	// quick_reply_shortcut_id
+		MTPlong(),	// effect
+		MTPFactCheck(),
+		MTPint(),  // report_delivery_until_date
+		MTPlong(), // paid_message_stars
+		MTPSuggestedPost(),
+		MTPint(),	 // schedule_repeat_period
+		MTPstring(), // summary_from_language
+		MTPRichMessage());
+	const auto item = session->data().addNewMessage(data, MessageFlags(),
+													NewMessageType::Existing);
+	const auto invoice
+		= (item && item->media()) ? item->media()->invoice() : nullptr;
+	return (invoice && (invoice->receiptMsgId == receiptMsgId)) ? item
+																: nullptr;
+}
+
 [[nodiscard]] bool RunPaidLinkRefusalRegression(
 	Core::Application &app,
 	not_null<Window::SessionController *> stockController,
@@ -2326,7 +2411,38 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		const auto reactivate = [=](Payments::CheckoutResult result) {
 			results->push_back(result);
 		};
+		const auto invoiceItem
+			= AddPaidInvoiceRegressionMessage(session, MsgId(0x7e5701), 0);
+		const auto receiptItem = AddPaidInvoiceRegressionMessage(
+			session, MsgId(0x7e5702), MsgId(0x7e5703));
+		if (!invoiceItem || !receiptItem) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: invoice message fixtures were "
+				"not created in session %p.\n",
+				static_cast<void *>(target.get()));
+			return false;
+		}
+		auto payments = PaymentRequestCapture{
+			.instance = &session->mtp(),
+		};
+		const auto restorePaymentCapture = gsl::finally(
+			[previous = std::exchange(gPaymentRequestCapture, &payments)] {
+				gPaymentRequestCapture = previous;
+			});
+		session->api()
+			.request(MTPpayments_GetPaymentReceipt(MTP_inputPeerSelf(),
+												   MTP_int(0x7e5703)))
+			.send();
+		const auto captureObserved
+			= (payments.constructors
+			   == std::vector<uint32>{mtpc_payments_getPaymentReceipt});
+		payments.constructors.clear();
 		const auto before = toastCounts();
+		Payments::CheckoutProcess::Start(invoiceItem, Payments::Mode::Payment,
+										 reactivate, nullptr);
+		Payments::CheckoutProcess::Start(receiptItem, Payments::Mode::Receipt,
+										 reactivate, nullptr);
 		Payments::CheckoutProcess::Start(session, u"regression"_q, reactivate,
 										 nullptr);
 		Payments::CheckoutProcess::Start(
@@ -2361,19 +2477,22 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		QCoreApplication::processEvents();
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
-			expected[i] += (controllers[i] == target) ? 4 : 0;
+			expected[i] += (controllers[i] == target) ? 6 : 0;
 		}
 		const auto refused = (*results
 							  == std::vector<Payments::CheckoutResult>(
-								  4, Payments::CheckoutResult::Cancelled))
+								  6, Payments::CheckoutResult::Cancelled))
+							 && captureObserved && payments.constructors.empty()
 							 && (toastCounts() == expected) && !paidUiOpen();
 		if (!refused) {
 			std::fprintf(
 				stderr,
 				"Paid link regression failed: checkout start was not refused "
-				"in session %p: results=%d toast-only=%d.\n",
+				"in session %p: results=%d toast-only=%d capture=%d "
+				"payment-requests=%d.\n",
 				static_cast<void *>(target.get()), int(results->size()),
-				toastCounts() == expected);
+				toastCounts() == expected, captureObserved,
+				int(payments.constructors.size()));
 		}
 		resetControllers();
 		return refused;
@@ -2415,8 +2534,9 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	std::fprintf(
 		stderr,
 		"Paid link regression passed: %d paid links refused in custom and "
-		"blocked sessions and ignored without a target; checkout starts "
-		"refused before payment requests; stock links opened.\n",
+		"blocked sessions and ignored without a target; message invoice, "
+		"receipt, slug, Stars, gift and gift-code checkout starts refused "
+		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
 	return true;
 }
