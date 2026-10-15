@@ -8,18 +8,21 @@ token or choose the image tag. The tag is derived from the tracked Linux
 dependency recipe, and the job receives only `contents: read` and
 `packages: write`. Pull request Linux jobs receive `packages: read` only.
 
-## Linux build after dependency image publication
+## Post-merge Linux build
 
-`Linux.` also runs on `workflow_run` after `Linux libraries.` completes. That
-event runs in the default-branch context, with its Actions cache scope, even
-when the completed run came from a fork whose branch is also named `dev`. The
-`linux-changes` job therefore carries a job-level condition that admits a
-`workflow_run` source only when GitHub reports a successful `push` run on the
-default branch of this repository. GitHub evaluates that condition
-before any checkout or repository script runs, so an untrusted source gets
-neither, and `linux-build` is skipped with it. A fork-controlled script running here could
-recover the cache token and plant default-branch cache entries that the signed
-`MacOS Packaged.` release build restores.
+`Linux.` runs on the `dev` push itself, never from `workflow_run`. A
+`workflow_run` build ran in the default-branch context: its check attached to
+the current `dev` head while it checked out the source run's commit, and its
+cache token could not write the `dev` scope. On the push, the check, the
+checkout and the cache scope all belong to the pushed commit, and the build
+fails before compiling unless the checked-out commit is `GITHUB_SHA`.
+
+The publisher is the `linux-libraries` job of the same run, and the build
+waits for it, so the build pulls the image of its own recipe. It is the only
+job with `packages: write`. The build saves the compiler cache only when the
+run is not a pull request and its ref is `refs/heads/dev`: a push to `dev`,
+the nightly schedule, or a manual dispatch on `dev`. Each of those runs
+trusted `dev` code. Pull request builds restore that cache and never save.
 
 ## Manual feedback lanes
 
