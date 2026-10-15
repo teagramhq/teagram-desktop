@@ -115,6 +115,10 @@ if [[ "$*" == *'/actions/workflows/mac.yml/runs'* ]]; then
   exit 0
 fi
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+if [[ "$*" =~ /actions/runs/([0-9]+)/jobs ]]; then
+  cat "$FAKE_GH_JOBS_DIR/${BASH_REMATCH[1]}.json" 2>/dev/null || printf '%s' '{"jobs":[]}'
+  exit 0
+fi
 case "$*" in
   *'/runs/11/cancel'*) printf 'gh: Cannot cancel a workflow run that is completed. (HTTP 409)\n' >&2; exit 1 ;;
   *'/runs/12/cancel'*) [[ "$FAKE_GH_CANCEL" == ok ]] && exit 0; printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2; exit 1 ;;
@@ -125,11 +129,15 @@ FAKE_GH
 chmod +x "$approval_fixture/gh"
 old_head_runs='{"id":11,"status":"in_progress","head_sha":"old1","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":12,"status":"queued","head_sha":"old2","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":13,"status":"in_progress","head_sha":"old1","head_repository":{"full_name":"other/teagram-desktop"}},{"id":14,"status":"completed","head_sha":"old1","head_repository":{"full_name":"fork/teagram-desktop"}}'
 current_head_run='{"id":15,"status":"in_progress","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+skipped_head_run='{"id":16,"status":"completed","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+pending_head_run='{"id":17,"status":"queued","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclusion":null}]}' > "$approval_fixture/15.json"
+printf '%s' '{"jobs":[{"name":"MacOS","status":"completed","conclusion":"skipped"},{"name":"Focused libiconv (macOS arm64)","status":"completed","conclusion":"skipped"}]}' > "$approval_fixture/16.json"
 run_approval_step() {
   printf '{"workflow_runs":[%s]}' "$1" > "$approval_fixture/runs.json"
   : > "$approval_fixture/calls"
   PATH="$approval_fixture:$PATH" FAKE_GH_LOG="$approval_fixture/calls" FAKE_GH_RUNS="$approval_fixture/runs.json" \
-    FAKE_GH_CANCEL="$2" FAKE_GH_LABEL="$3" \
+    FAKE_GH_CANCEL="$2" FAKE_GH_LABEL="$3" FAKE_GH_JOBS_DIR="$approval_fixture" MACOS_APPROVAL_POLL_SECONDS=0 \
     GITHUB_REPOSITORY=teagramhq/teagram-desktop HEAD_REF=feature HEAD_REPOSITORY=fork/teagram-desktop HEAD_SHA=new PR_NUMBER=105 \
     bash -c "$approval_step" >/dev/null 2>&1
 }
@@ -150,6 +158,18 @@ if ! run_approval_step "$old_head_runs,$current_head_run" ok present; then
 fi
 if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel ' ]]; then
   printf 'A current-head run approved before cleanup must keep running and keep its label, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if ! run_approval_step "$old_head_runs,$skipped_head_run" ok present; then
+  printf 'The macOS approval step failed with a skipped current-head run.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel labels/macos-build ' ]]; then
+  printf 'A current-head run whose MacOS job was skipped must not keep macos-build, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$pending_head_run" ok present || [[ "$(approval_calls)" == *labels/macos-build* ]]; then
+  printf 'A current-head run that never creates its jobs must fail without touching macos-build.\n' >&2
   exit 1
 fi
 if ! run_approval_step "" ok absent; then

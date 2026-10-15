@@ -55,11 +55,46 @@ jobs:
             fi
           done <<< "$stale_run_ids"
 
-          # A run at the current head means macos-build was added for that head.
-          if jq -e --arg sha "$HEAD_SHA" 'any(.[]; .head_sha == $sha)' <<< "$runs" >/dev/null; then
-            echo "The current head already has a MacOS. run; keeping macos-build."
-            exit 0
-          fi
+          # Keep macos-build only when its MacOS job runs at the current head; a run
+          # started by any other label skips that job.
+          poll_seconds="${MACOS_APPROVAL_POLL_SECONDS:-15}"
+          current_head_build=undecided
+          for _ in $(seq 20); do
+            current_run_ids="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
+              -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
+              | jq -r --arg repo "$HEAD_REPOSITORY" --arg sha "$HEAD_SHA" \
+                '.workflow_runs[] | select(.head_repository.full_name == $repo and .head_sha == $sha) | .id')"
+            current_head_build=absent
+            while IFS= read -r run_id; do
+              [[ -n "$run_id" ]] || continue
+              if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+                echo "::error::Unexpected run ID from GitHub: $run_id"
+                exit 1
+              fi
+              # Matrix jobs carry their variant once they start; a skipped job stays "MacOS".
+              build_job_state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+                | jq -r '[.jobs[] | select(.name == "MacOS" or (.name | startswith("MacOS (")))]
+                  | if length == 0 then "pending"
+                    elif any(.[]; .conclusion != "skipped") then "ran"
+                    else "skipped" end')"
+              case "$build_job_state" in
+                ran) current_head_build=ran; break ;;
+                pending) current_head_build=undecided ;;
+              esac
+            done <<< "$current_run_ids"
+            [[ "$current_head_build" == undecided ]] || break
+            sleep "$poll_seconds"
+          done
+          case "$current_head_build" in
+            ran)
+              echo "The current head has a MacOS build; keeping macos-build."
+              exit 0
+              ;;
+            undecided)
+              echo "::error::A MacOS. run at $HEAD_SHA has not created its jobs; cannot tell whether macos-build applies to it."
+              exit 1
+              ;;
+          esac
           if ! remove_output="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build" 2>&1)"; then
             if [[ "$remove_output" != *"(HTTP 404)"* ]]; then
               printf '%s\n' "$remove_output" >&2
