@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_access.h"
 #include "core/update_checker.h"
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_install.h"
 #include "core/teagram_update_manager.h"
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "data/data_auto_download.h"
@@ -1381,14 +1382,23 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 					return;
 				}
 				const auto running = QString::number(state.runningBuild);
+				const auto copyName = Core::TeagramUpdateDataCopyName(
+					cWorkingDir(), state.runningBuild);
+				if (copyName.isEmpty()) {
+					controller->show(Ui::MakeInformBox(
+						tr::lng_teagram_update_note_data_copy_failed(
+							tr::now, lt_build,
+							QString::number(state.candidateBuild))));
+					return;
+				}
 				controller->show(Ui::MakeConfirmBox({
 					.text = tr::lng_teagram_update_older_text(
 						tr::now, lt_build,
 						QString::number(state.candidateBuild), lt_running,
-						running, lt_folder, u"tdata-dev-"_q + running),
+						running, lt_folder, copyName),
 					.confirmed =
 						[=](Fn<void()> close) {
-							manager->downloadAndInstall();
+							manager->downloadAndInstall(copyName);
 							close();
 						},
 					.confirmText = tr::lng_teagram_update_older_confirm(),

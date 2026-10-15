@@ -136,8 +136,11 @@ void CompleteTeagramUpdateStartup();
 [[nodiscard]] bool HasPreviousTeagramUpdateBundle();
 void ShowPreviousTeagramUpdateBundleInFinder();
 
+[[nodiscard]] QString TeagramUpdateDataCopyName(const QString &workingDirectory,
+												quint64 runningBuild);
 [[nodiscard]] bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
-											 quint64 runningBuild);
+											 quint64 runningBuild,
+											 const QString &confirmedName = {});
 
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdown(const QString &dataFile,

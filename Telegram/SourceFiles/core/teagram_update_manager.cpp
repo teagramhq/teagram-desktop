@@ -263,11 +263,12 @@ void TeagramUpdateManager::performSettingsAction() {
 	}
 }
 
-void TeagramUpdateManager::downloadAndInstall() {
+void TeagramUpdateManager::downloadAndInstall(const QString &dataCopyName) {
 	if (!_started || _state.state == TeagramUpdateUiState::Restarting
 		|| _state.state != TeagramUpdateUiState::Available) {
 		return;
 	}
+	_dataCopyName = dataCopyName;
 	beginDownload();
 }
 
@@ -703,9 +704,11 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 	_state.progressPercent = 0;
 	setState(TeagramUpdateUiState::Preparing);
 	const auto env = _env.get();
+	const auto dataCopyName = _dataCopyName;
 	auto thread = QThread::create([=] {
 		if (candidate->olderThanInstalled()
-			&& !env->copyDataBeforeOlderBuild()) {
+			&& (dataCopyName.isEmpty()
+				|| !env->copyDataBeforeOlderBuild(dataCopyName))) {
 			QMetaObject::invokeMethod(
 				this,
 				[=] {

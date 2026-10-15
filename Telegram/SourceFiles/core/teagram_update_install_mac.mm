@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
+#include <sys/acl.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
@@ -834,16 +835,36 @@ enum class StartupWaitResult {
 	return (errno == ENOENT) ? std::optional<bool>(false) : std::nullopt;
 }
 
+[[nodiscard]] bool SetOwnerOnlyDataCopyAccess(const QString &path) {
+	const auto empty = ::acl_init(0);
+	if (!empty) {
+		return false;
+	}
+	const auto bytes = QFile::encodeName(path);
+	const auto cleared
+		= ::acl_set_file(bytes.constData(), ACL_TYPE_EXTENDED, empty) == 0;
+	::acl_free(empty);
+	return cleared && ::chmod(bytes.constData(), 0700) == 0;
+}
+
 [[nodiscard]] bool CopyDataFolder(const QString &source,
 								  const QString &target) {
 	const auto sourceBytes = QFile::encodeName(source);
 	const auto targetBytes = QFile::encodeName(target);
+	const auto contents
+		= QDir(target).filePath(QString::fromLatin1(kDataFolder));
+	const auto contentsBytes = QFile::encodeName(contents);
 	const auto flags = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW;
 	for (const auto extra :
 		 {copyfile_flags_t(COPYFILE_CLONE), copyfile_flags_t(0)}) {
-		if (::copyfile(sourceBytes.constData(), targetBytes.constData(),
-					   nullptr, flags | extra)
-			== 0) {
+		if (::mkdir(targetBytes.constData(), 0700) != 0) {
+			return false;
+		}
+		if (SetOwnerOnlyDataCopyAccess(target)
+			&& ::copyfile(sourceBytes.constData(), contentsBytes.constData(),
+						  nullptr, flags | extra)
+				   == 0
+			&& SetOwnerOnlyDataCopyAccess(contents)) {
 			return true;
 		}
 		if (!MacProtectedPath::CheckPath(
@@ -927,8 +948,29 @@ void ShowPreviousTeagramUpdateBundleInFinder() {
 	}
 }
 
+QString TeagramUpdateDataCopyName(const QString &workingDirectory,
+								  quint64 runningBuild) {
+	const auto root = QDir(workingDirectory);
+	const auto base = QString::fromLatin1(kDataFolder) + u"-dev-"_q
+					  + QString::number(runningBuild);
+	for (auto index = 1; index <= kMaximumDataCopies; ++index) {
+		const auto name
+			= (index == 1) ? base : (base + u"-"_q + QString::number(index));
+		const auto targetTaken = PathTaken(root.filePath(name));
+		const auto partialTaken
+			= PathTaken(root.filePath(u"."_q + name + u".partial"_q));
+		if (!targetTaken || !partialTaken) {
+			return {};
+		} else if (!*targetTaken && !*partialTaken) {
+			return name;
+		}
+	}
+	return {};
+}
+
 bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
-							   quint64 runningBuild) {
+							   quint64 runningBuild,
+							   const QString &confirmedName) {
 	const auto root = QDir(workingDirectory);
 	const auto source = root.filePath(QString::fromLatin1(kDataFolder));
 	struct stat info = {};
@@ -942,13 +984,21 @@ bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
 	for (auto index = 1; index <= kMaximumDataCopies; ++index) {
 		const auto name
 			= (index == 1) ? base : (base + u"-"_q + QString::number(index));
+		if (!confirmedName.isEmpty() && name != confirmedName) {
+			continue;
+		}
 		const auto target = root.filePath(name);
 		const auto partial = root.filePath(u"."_q + name + u".partial"_q);
+		const auto contents
+			= QDir(partial).filePath(QString::fromLatin1(kDataFolder));
 		const auto targetTaken = PathTaken(target);
 		const auto partialTaken = PathTaken(partial);
 		if (!targetTaken || !partialTaken) {
 			return false;
 		} else if (*targetTaken || *partialTaken) {
+			if (!confirmedName.isEmpty()) {
+				return false;
+			}
 			continue;
 		}
 		if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Copy,
@@ -958,13 +1008,13 @@ bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
 											partial,
 											"core.teagram-update.data-copy")
 			|| !MacProtectedPath::CheckPair(MacProtectedPath::Operation::Rename,
-											partial, target,
+											contents, target,
 											"core.teagram-update.data-copy")
 			|| !CopyDataFolder(source, partial)) {
 			LOG(("Teagram update could not copy the data folder."));
 			return false;
 		}
-		if (::renamex_np(QFile::encodeName(partial).constData(),
+		if (::renamex_np(QFile::encodeName(contents).constData(),
 						 QFile::encodeName(target).constData(), RENAME_EXCL)
 			!= 0) {
 			LOG(("Teagram update could not keep the data copy."));
@@ -973,6 +1023,11 @@ bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
 					"core.teagram-update.data-copy-partial")) {
 				QDir(partial).removeRecursively();
 			}
+			return false;
+		}
+		if (!QDir().rmdir(partial)) {
+			LOG(("Teagram update could not remove the empty data copy staging "
+				 "folder."));
 			return false;
 		}
 		LOG(("Teagram update kept a copy of the data folder: %1").arg(name));

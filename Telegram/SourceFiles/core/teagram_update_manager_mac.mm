@@ -148,8 +148,9 @@ class Environment final : public TeagramUpdateManagerEnvironment {
 		ShowPreviousTeagramUpdateBundleInFinder();
 	}
 
-	bool copyDataBeforeOlderBuild() override {
-		return KeepTeagramUpdateDataCopy(cWorkingDir(), kTeagramUpdateBuild);
+	bool copyDataBeforeOlderBuild(const QString &name) override {
+		return KeepTeagramUpdateDataCopy(cWorkingDir(), kTeagramUpdateBuild,
+										 name);
 	}
 
 	std::shared_ptr<TeagramUpdateDownloader> createDownloader() override {

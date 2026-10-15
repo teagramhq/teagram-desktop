@@ -38,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
 
+#include <sys/acl.h>
 #include <sys/xattr.h>
 #endif // Q_OS_MAC
 
@@ -1828,7 +1829,8 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 		CheckInstallerClearsUncommittedCandidateOnRestart);
 }
 
-void CheckStartupKeepsOlderPreviousBundle(const QString &temporaryRoot) {
+void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
+									 bool downgrade) {
 	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
 	CHECK(root.isValid());
 	if (!root.isValid()) {
@@ -1863,21 +1865,46 @@ void CheckStartupKeepsOlderPreviousBundle(const QString &temporaryRoot) {
 													| QFileDevice::ExeOwner));
 	};
 	writeBundle(installed, 101);
-	writeBundle(previous, 100);
+	const auto previousBuild = downgrade ? 271 : 100;
+	writeBundle(downgrade ? QDir(staging).filePath(u"Teagram.app"_q) : previous,
+				previousBuild);
+	if (downgrade) {
+		CHECK(::chmod(QFile::encodeName(staging).constData(), 0700) == 0);
+	}
 	CHECK(
 		WriteTeagramUpdateMarker(root.path(), ".teagram-update-pending", 101));
+	const auto previousBytes = "build " + QByteArray::number(previousBuild);
+	if (downgrade) {
+		const auto recovered = RecoverTeagramUpdateInstallerAtStartupForTesting(
+			installed, staging, previous, installed, [] { return false; });
+		CHECK(recovered.reason
+			  == TeagramUpdateStartupRecoveryReason::PreviousRetained);
+		CHECK_EQ(ReadFile(previousExecutable), previousBytes);
+		auto launched = QStringList();
+		const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
+			installed, u"data"_q,
+			[&](const QString &path, const QStringList &, qint64 *pid) {
+				*pid = 0;
+				launched.push_back(path);
+				return path == previous;
+			},
+			[] { return false; }, {}, {}, [](qint64) { return true; });
+		CHECK(relaunched == TeagramUpdateRelaunchResult::PreviousStarted);
+		CHECK(launched == QStringList({installed, previous}));
+		CHECK_EQ(ReadFile(previousExecutable), previousBytes);
+	}
 
 	CHECK(
 		CompleteTeagramUpdateStartupForTesting(installed, [] { return true; }));
 	CHECK(QFileInfo(pending).exists());
 	CHECK_EQ(ReadFile(started), QByteArrayLiteral("101\n"));
-	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 
 	CHECK(CompleteTeagramUpdateStartupForTesting(installed,
 												 [] { return false; }));
 	CHECK(!QFileInfo(pending).exists());
 	CHECK(!QFileInfo(started).exists());
-	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
 
 	const auto recovered = RecoverTeagramUpdateInstallerAtStartupForTesting(
@@ -1886,14 +1913,24 @@ void CheckStartupKeepsOlderPreviousBundle(const QString &temporaryRoot) {
 		  == TeagramUpdateStartupRecoveryReason::PreviousRetained);
 	CHECK(!CompleteTeagramUpdateStartupForTesting(installed,
 												  [] { return false; }));
-	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
 }
 
 TEST_CASE(TeagramUpdateStartupKeepsOlderPreviousBundle) {
 	RunUpdaterFixtureWithTemporaryRoots(
 		"TeagramUpdateStartupKeepsOlderPreviousBundle",
-		CheckStartupKeepsOlderPreviousBundle);
+		[](const QString &root) {
+			CheckStartupKeepsPreviousBundle(root, false);
+		});
+}
+
+TEST_CASE(TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt",
+		[](const QString &root) {
+			CheckStartupKeepsPreviousBundle(root, true);
+		});
 }
 
 [[nodiscard]] QByteArray ReadAttribute(const QString &path, const char *name) {
@@ -2021,9 +2058,26 @@ TEST_CASE(TeagramUpdateDataCopyKeepsOriginalFolder) {
 	CHECK(QDir().mkpath(QFileInfo(maps).absolutePath()));
 	CHECK(WriteFile(key, QByteArrayLiteral("accounts")));
 	CHECK(WriteFile(maps, QByteArrayLiteral("maps")));
+	CHECK(::chmod(QFile::encodeName(data).constData(), 0755) == 0);
+	CHECK_EQ(TeagramUpdateDataCopyName(root.path(), 271), u"tdata-dev-271"_q);
 
 	CHECK(KeepTeagramUpdateDataCopy(root.path(), 271));
 	const auto copy = directory.filePath(u"tdata-dev-271"_q);
+	struct stat copyInfo = {};
+	CHECK(::lstat(QFile::encodeName(copy).constData(), &copyInfo) == 0);
+	CHECK_EQ(int(copyInfo.st_mode & 0777), 0700);
+	CHECK_EQ(quint64(copyInfo.st_uid), quint64(::geteuid()));
+	const auto acl = ::acl_get_file(QFile::encodeName(copy).constData(),
+									ACL_TYPE_EXTENDED);
+	CHECK(acl != nullptr);
+	if (acl) {
+		acl_entry_t entry = nullptr;
+		CHECK(::acl_get_entry(acl, ACL_FIRST_ENTRY, &entry) != 0);
+		::acl_free(acl);
+	}
+	struct stat sourceInfo = {};
+	CHECK(::lstat(QFile::encodeName(data).constData(), &sourceInfo) == 0);
+	CHECK_EQ(int(sourceInfo.st_mode & 0777), 0755);
 	CHECK_EQ(ReadFile(QDir(copy).filePath(u"key_datas"_q)),
 			 QByteArrayLiteral("accounts"));
 	CHECK_EQ(ReadFile(QDir(copy).filePath(u"D877F783D5D3EF8C/maps"_q)),
@@ -2032,7 +2086,11 @@ TEST_CASE(TeagramUpdateDataCopyKeepsOriginalFolder) {
 	CHECK_EQ(ReadFile(maps), QByteArrayLiteral("maps"));
 
 	CHECK(WriteFile(key, QByteArrayLiteral("changed")));
-	CHECK(KeepTeagramUpdateDataCopy(root.path(), 271));
+	const auto confirmedName = TeagramUpdateDataCopyName(root.path(), 271);
+	CHECK_EQ(confirmedName, u"tdata-dev-271-2"_q);
+	CHECK(KeepTeagramUpdateDataCopy(root.path(), 271, confirmedName));
+	CHECK(!KeepTeagramUpdateDataCopy(root.path(), 271, confirmedName));
+	CHECK(!QFileInfo::exists(directory.filePath(u"tdata-dev-271-3"_q)));
 	CHECK_EQ(ReadFile(QDir(copy).filePath(u"key_datas"_q)),
 			 QByteArrayLiteral("accounts"));
 	CHECK_EQ(ReadFile(directory.filePath(u"tdata-dev-271-2/key_datas"_q)),
@@ -2684,6 +2742,7 @@ struct ManagerFixture {
 	int installersCreated = 0;
 	int restartRequests = 0;
 	int applicationRestarts = 0;
+	QString copiedDataName;
 	bool dataCopySucceeds = true;
 	std::atomic<int> dataCopies = 0;
 	std::atomic<int> installsBeforeDataCopy = -1;
@@ -2797,7 +2856,8 @@ class ManagerEnvironment final : public TeagramUpdateManagerEnvironment {
 	bool supportsMinimumOs(const QString &) const override { return true; }
 	bool previousBundleAvailable() const override { return false; }
 	void showPreviousBundle() const override {}
-	bool copyDataBeforeOlderBuild() override {
+	bool copyDataBeforeOlderBuild(const QString &name) override {
+		_fixture->copiedDataName = name;
 		if (++_fixture->dataCopies == 1) {
 			_fixture->installsBeforeDataCopy = _fixture->installs.load();
 		}
@@ -3070,8 +3130,6 @@ TEST_CASE(TeagramUpdateManagerChannelSwitchOffersOlderMain) {
 	CHECK_EQ(manager->state().candidateBuild, quint64(101));
 	CHECK(!manager->state().candidateOlder);
 
-	// Dev to Main offers Main's newest build, older than the running one,
-	// and never downloads it on its own.
 	manager->setChannel(TeagramUpdateChannel::Main);
 	CHECK(WaitUntil([&] {
 		return manager->state().state == TeagramUpdateUiState::Available
@@ -3086,7 +3144,6 @@ TEST_CASE(TeagramUpdateManagerChannelSwitchOffersOlderMain) {
 	CHECK(manager->state().state == TeagramUpdateUiState::Available);
 	CHECK_EQ(fixture->installersCreated, 0);
 
-	// Main to Dev offers the newest dev build again.
 	manager->noteUserInput();
 	manager->setChannel(TeagramUpdateChannel::Dev);
 	CHECK(WaitUntil([&] {
@@ -3119,7 +3176,6 @@ TEST_CASE(TeagramUpdateManagerInstallsOlderMainAfterDataCopy) {
 	fixture->transport->addReleaseList();
 	auto manager = CreateManager(fixture);
 
-	// Automatic checks never move to an older build.
 	manager->start();
 	CHECK(WaitForState(*manager, TeagramUpdateUiState::WaitingForMain));
 	CHECK_EQ(manager->state().candidateBuild, quint64(0));
@@ -3133,7 +3189,7 @@ TEST_CASE(TeagramUpdateManagerInstallsOlderMainAfterDataCopy) {
 									manager->state().candidateOlder)
 		  == TeagramUpdateNoteVariant::AvailableOlder);
 
-	manager->downloadAndInstall();
+	manager->downloadAndInstall(u"tdata-dev-100-2"_q);
 	CHECK(WaitForState(*manager, TeagramUpdateUiState::Ready));
 	fixture->now = 10 * kTwoMinutes;
 	ProcessEventsFor(100);
@@ -3145,6 +3201,7 @@ TEST_CASE(TeagramUpdateManagerInstallsOlderMainAfterDataCopy) {
 	CHECK(WaitUntil([&] { return fixture->restartRequests == 1; }));
 	CHECK(WaitForState(*manager, TeagramUpdateUiState::Restarting));
 	CHECK_EQ(fixture->dataCopies.load(), 1);
+	CHECK_EQ(fixture->copiedDataName, u"tdata-dev-100-2"_q);
 	CHECK_EQ(fixture->installsBeforeDataCopy.load(), 0);
 	CHECK_EQ(fixture->installs.load(), 1);
 	CHECK_EQ(fixture->highWater, quint64(90));
@@ -3153,40 +3210,43 @@ TEST_CASE(TeagramUpdateManagerInstallsOlderMainAfterDataCopy) {
 }
 
 TEST_CASE(TeagramUpdateManagerKeepsBuildWhenDataCopyFails) {
-	const auto signingKey = GenerateTestSigningKey();
-	auto staging = QTemporaryDir();
-	CHECK(staging.isValid());
-	if (!signingKey || !staging.isValid()) {
-		return;
+	for (const auto &confirmedName : {QString(), u"tdata-dev-100-2"_q}) {
+		const auto signingKey = GenerateTestSigningKey();
+		auto staging = QTemporaryDir();
+		CHECK(staging.isValid());
+		if (!signingKey || !staging.isValid()) {
+			return;
+		}
+		const auto fixture = std::make_shared<ManagerFixture>();
+		fixture->trustedKey = signingKey->publicKey;
+		fixture->staging = staging.path();
+		fixture->channel = TeagramUpdateChannel::Main;
+		fixture->automatic = false;
+		fixture->dataCopySucceeds = false;
+		fixture->transport->addRelease(
+			"teagram-build-90", "main", "90", signingKey->privateKey.get(),
+			QByteArrayLiteral("signed main 90"), false);
+		fixture->transport->addReleaseList();
+		auto manager = CreateManager(fixture);
+
+		manager->start();
+		manager->checkNow();
+		CHECK(WaitForState(*manager, TeagramUpdateUiState::Available));
+		CHECK(manager->state().candidateOlder);
+		manager->downloadAndInstall(confirmedName);
+		CHECK(WaitForState(*manager, TeagramUpdateUiState::Ready));
+
+		manager->restartExplicitly();
+		CHECK(WaitForState(*manager, TeagramUpdateUiState::Rejected));
+		CHECK_EQ(manager->state().rejectionCode, u"data-copy"_q);
+		CHECK_EQ(manager->state().candidateBuild, quint64(90));
+		CHECK_EQ(fixture->dataCopies.load(), confirmedName.isEmpty() ? 0 : 1);
+		CHECK_EQ(fixture->copiedDataName, confirmedName);
+		CHECK_EQ(fixture->installs.load(), 0);
+		CHECK(fixture->committedHighWaters.empty());
+		CHECK_EQ(fixture->restartRequests, 0);
+		CHECK(WaitUntil([&] { return StagingIsEmpty(staging.path()); }));
 	}
-	const auto fixture = std::make_shared<ManagerFixture>();
-	fixture->trustedKey = signingKey->publicKey;
-	fixture->staging = staging.path();
-	fixture->channel = TeagramUpdateChannel::Main;
-	fixture->automatic = false;
-	fixture->dataCopySucceeds = false;
-	fixture->transport->addRelease("teagram-build-90", "main", "90",
-								   signingKey->privateKey.get(),
-								   QByteArrayLiteral("signed main 90"), false);
-	fixture->transport->addReleaseList();
-	auto manager = CreateManager(fixture);
-
-	manager->start();
-	manager->checkNow();
-	CHECK(WaitForState(*manager, TeagramUpdateUiState::Available));
-	CHECK(manager->state().candidateOlder);
-	manager->downloadAndInstall();
-	CHECK(WaitForState(*manager, TeagramUpdateUiState::Ready));
-
-	manager->restartExplicitly();
-	CHECK(WaitForState(*manager, TeagramUpdateUiState::Rejected));
-	CHECK_EQ(manager->state().rejectionCode, u"data-copy"_q);
-	CHECK_EQ(manager->state().candidateBuild, quint64(90));
-	CHECK_EQ(fixture->dataCopies.load(), 1);
-	CHECK_EQ(fixture->installs.load(), 0);
-	CHECK(fixture->committedHighWaters.empty());
-	CHECK_EQ(fixture->restartRequests, 0);
-	CHECK(WaitUntil([&] { return StagingIsEmpty(staging.path()); }));
 }
 
 TEST_CASE(TeagramUpdateManagerReportsRejectionReasons) {

@@ -63,7 +63,8 @@ class TeagramUpdateManagerEnvironment {
 	[[nodiscard]] virtual bool supportsMinimumOs(const QString &minimum) const
 		= 0;
 	[[nodiscard]] virtual bool previousBundleAvailable() const = 0;
-	[[nodiscard]] virtual bool copyDataBeforeOlderBuild() = 0;
+	[[nodiscard]] virtual bool copyDataBeforeOlderBuild(const QString &name)
+		= 0;
 	virtual void showPreviousBundle() const = 0;
 	[[nodiscard]] virtual std::shared_ptr<TeagramUpdateDownloader>
 	createDownloader() = 0;
@@ -86,7 +87,7 @@ class TeagramUpdateManager final : public QObject {
 	void setAutomatic(bool enabled);
 	void setChannel(TeagramUpdateChannel channel);
 	void performSettingsAction();
-	void downloadAndInstall();
+	void downloadAndInstall(const QString &dataCopyName = {});
 	void cancel();
 	void restartExplicitly();
 	void dontRestart();
@@ -124,6 +125,7 @@ class TeagramUpdateManager final : public QObject {
 	QPointer<QThread> _worker;
 	std::shared_ptr<Job> _job;
 	std::shared_ptr<TeagramUpdateCandidate> _candidate;
+	QString _dataCopyName;
 	crl::time _lastInputAt = 0;
 	quint64 _suppressedAutomaticBuild = 0;
 	bool _started = false;
