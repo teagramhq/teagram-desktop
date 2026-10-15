@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/scheduled_messages.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -4221,6 +4222,16 @@ template <typename Widget>
 		}));
 		const auto peer = session.data().peer(peerFromUser(UserId(2)));
 		const auto history = session.data().history(peer);
+		auto &cloudThemes = session.data().cloudThemes();
+		cloudThemes.setChatThemesForRegressionTest({
+			Data::CloudTheme{
+				.id = 1,
+				.emoticon = QString::fromUtf8("\xF0\x9F\x8F\xA0"),
+			},
+		});
+		if (cloudThemes.chatThemes().empty()) {
+			return false;
+		}
 		controller->showPeerHistory(peer);
 		QCoreApplication::processEvents();
 		const auto historyWidget
@@ -4317,6 +4328,11 @@ template <typename Widget>
 			controller->toggleChooseChatTheme(peer);
 			QCoreApplication::processEvents();
 			if (historyWidget->chatThemeControlsAccessibleForRegressionTest()) {
+				std::fprintf(
+					stderr,
+					"Chat theme strip regression failed: custom controls were "
+					"shown in %s.\n",
+					qPrintable(label));
 				return false;
 			}
 		}

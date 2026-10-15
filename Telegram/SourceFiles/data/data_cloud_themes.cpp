@@ -532,6 +532,13 @@ const std::vector<CloudTheme> &CloudThemes::chatThemes() const {
 	return _chatThemes;
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void CloudThemes::setChatThemesForRegressionTest(std::vector<CloudTheme> list) {
+	_chatThemes = std::move(list);
+	_chatThemesUpdates.fire({});
+}
+#endif
+
 rpl::producer<> CloudThemes::chatThemesUpdated() const {
 	return _chatThemesUpdates.events();
 }
