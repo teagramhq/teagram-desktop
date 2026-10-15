@@ -32,6 +32,8 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - '.github/scripts/test_claude_review.py'
+      - '.github/scripts/claude_review_verdict.py'
       - 'README.md'
   pull_request:
     paths:
@@ -61,6 +63,8 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - '.github/scripts/test_claude_review.py'
+      - '.github/scripts/claude_review_verdict.py'
       - 'README.md'
   workflow_dispatch:
 
@@ -133,3 +137,6 @@ jobs:
 
       - name: Test unit feedback selection.
         run: python3 .github/scripts/test_unit_feedback.py
+
+      - name: Test Claude review contract.
+        run: python3 .github/scripts/test_claude_review.py
