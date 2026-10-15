@@ -163,7 +163,7 @@ template <typename Request>
 template <typename Request>
 [[nodiscard]] bool FailChannelSaveRequestForRegressionTest(
 	ChannelSaveRequestCapture &capture, size_t index,
-	const Request &expectedRequest, const MTP::Error &error) {
+	const Request &expectedRequest, const QString &errorType) {
 	if (capture.requests.size() != index + 1) {
 		std::fprintf(
 			stderr,
@@ -185,6 +185,8 @@ template <typename Request>
 	}
 	auto response = MTP::Response();
 	response.requestId = request.id;
+	const auto error
+		= MTP::Error(MTP_rpc_error(MTP_int(400), MTP_string(errorType)));
 	const auto fail = std::move(request.callbacks.fail);
 	if (!fail(error, response)) {
 		std::fprintf(stderr,
@@ -3123,7 +3125,7 @@ template <typename Predicate>
 				MTPchannels_UpdatePaidMessagesPrice(
 					MTP_flags(PriceFlag::f_broadcast_messages_allowed),
 					stockInput, MTP_long(42)),
-				MTP::Error::Local(u"CHAT_NOT_MODIFIED"_q, QString()))) {
+				u"CHAT_NOT_MODIFIED"_q)) {
 			return false;
 		}
 		if (!WaitForRegressionCondition([&] { return !stockSaveBox; })) {
@@ -3258,7 +3260,7 @@ template <typename Predicate>
 				capture, 1,
 				MTPmessages_EditChatAbout(customChannel->input(),
 										  MTP_string(rejectedDescription)),
-				MTP::Error::Local(u"CHAT_ABOUT_INVALID"_q, QString()))) {
+				u"CHAT_ABOUT_INVALID"_q)) {
 			return false;
 		}
 		QCoreApplication::processEvents();
