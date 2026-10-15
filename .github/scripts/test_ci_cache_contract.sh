@@ -6,6 +6,8 @@ linux_libraries_workflow=".github/workflows/linux_libraries.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 cache_threat_model=".github/ci-cache-threat-model.md"
 workflow_lint_workflow=".github/workflows/workflow_lint.yml"
+unit_feedback_workflow="${UNIT_FEEDBACK_WORKFLOW:-.github/workflows/unit_feedback.yml}"
+macos_unit_feedback_workflow="${MACOS_UNIT_FEEDBACK_WORKFLOW:-.github/workflows/macos_unit_feedback.yml}"
 
 require_text() {
   local file="$1"
@@ -101,6 +103,47 @@ require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' 
 require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
 require_text "$cache_cleanup_workflow" "cache_prefix='Linux-tdesktop-default-'"
 reject_text "$cache_cleanup_workflow" 'actions/checkout@'
+# Feedback lanes run on dev against a selected feature ref, so they carry the
+# dev cache scope. The cache service, not skipped steps, keeps them read-only.
+for feedback_workflow in "$unit_feedback_workflow" "$macos_unit_feedback_workflow"; do
+  if ! grep -Eq '^cache-mode: read$' "$feedback_workflow"; then
+    printf '%s must set workflow-level cache-mode: read\n' "$feedback_workflow" >&2
+    exit 1
+  fi
+  if grep -E '^[[:space:]]*cache-mode:' "$feedback_workflow" \
+      | grep -Evq '^[[:space:]]*cache-mode:[[:space:]]*(read|none)[[:space:]]*$'; then
+    printf '%s must not grant a job cache write access.\n' "$feedback_workflow" >&2
+    exit 1
+  fi
+  reject_text "$feedback_workflow" 'actions/cache@'
+  reject_text "$feedback_workflow" 'actions/cache/save@'
+  reject_text "$feedback_workflow" 'cache-to:'
+  reject_text "$feedback_workflow" 'type=gha'
+done
+
+require_text "$unit_feedback_workflow" 'packages: read'
+reject_text "$unit_feedback_workflow" 'packages: write'
+reject_text "$unit_feedback_workflow" 'push: true'
+require_text "$unit_feedback_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
+require_text "$unit_feedback_workflow" 'LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
+require_text "$linux_workflow" 'LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
+require_text "$unit_feedback_workflow" 'run: bash "$RUNNER_TEMP/linux_libraries_image.sh" pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
+unit_libraries_guard="$(awk '
+  /^      - name: Libraries\.$/ { in_step = 1; next }
+  in_step && /^      - / { exit }
+  in_step && /^        if: / { sub(/^        if: /, ""); print }
+' "$unit_feedback_workflow")"
+if [[ "$unit_libraries_guard" != "steps.pull-libraries.outputs.cache-hit != 'true'" ]]; then
+  printf '%s must build Libraries only when the GHCR image is missing.\n' "$unit_feedback_workflow" >&2
+  exit 1
+fi
+
+reject_text "$macos_unit_feedback_workflow" 'brew upgrade'
+reject_text "$macos_unit_feedback_workflow" 'brew update'
+reject_text "$macos_unit_feedback_workflow" '|| true'
+reject_text "$macos_unit_feedback_workflow" 'sed -i'
+require_text "$macos_unit_feedback_workflow" 'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
+
 require_text "$cache_threat_model" 'Pull request workflows cannot invoke its write'
 require_text "$cache_threat_model" '## Trusted refs and Linux dependency image publisher'
 require_text "$cache_threat_model" 'numeric PR number, validated'
@@ -108,6 +151,8 @@ require_text "$cache_threat_model" 'actions: write'
 require_text "$cache_threat_model" 'PR-controlled workflow runs fail the source validation'
 require_text "$cache_threat_model" '## Linux build after dependency image publication'
 require_text "$cache_threat_model" 'before any checkout or repository script'
+require_text "$cache_threat_model" '## Manual feedback lanes'
+require_text "$cache_threat_model" 'cache-mode: read'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
 bash .github/scripts/test_prune_linux_dev_ccache.sh

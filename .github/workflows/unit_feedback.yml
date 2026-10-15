@@ -16,6 +16,12 @@ on:
 
 permissions:
   contents: read
+  packages: read
+
+# The lane runs on dev while building a selected feature ref, so its cache
+# token carries the dev scope. Read-only access keeps that ref from planting
+# entries trusted dev builds restore. See .github/ci-cache-threat-model.md.
+cache-mode: read
 
 jobs:
 
@@ -35,12 +41,16 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: .unit-feedback-tools
-          sparse-checkout: .github/scripts/unit_feedback_metadata.py
+          sparse-checkout: |
+            .github/scripts/unit_feedback_metadata.py
+            .github/scripts/linux_libraries_image.sh
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Retain metadata inspector.
-        run: install -m 0444 .unit-feedback-tools/.github/scripts/unit_feedback_metadata.py "$RUNNER_TEMP/unit_feedback_metadata.py"
+        run: |
+          install -m 0444 .unit-feedback-tools/.github/scripts/unit_feedback_metadata.py "$RUNNER_TEMP/unit_feedback_metadata.py"
+          install -m 0444 .unit-feedback-tools/.github/scripts/linux_libraries_image.sh "$RUNNER_TEMP/linux_libraries_image.sh"
 
       - name: Clone.
         uses: actions/checkout@v7
@@ -81,9 +91,39 @@ jobs:
             printf '%s\n' "${selected_cases[@]}" > "$RUNNER_TEMP/unit-cases.txt"
           fi
 
-      - name: First set up.
+      - name: Set Linux dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles('Telegram/build/docker/centos_env/**') }}
         run: |
-          sudo apt update
+          set -euo pipefail
+          if [[ ! "${DEPENDENCY_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Linux dependency image hash is missing or malformed."
+            exit 1
+          fi
+          echo "LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}" >> "$GITHUB_ENV"
+
+      - name: Free up some disk space.
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: true
+
+      - name: Log in to GitHub Container Registry.
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pulls the image dev's Linux libraries publisher pushed for this recipe.
+      # Only a missing tag falls back to a local build; a registry error fails.
+      - name: Pull shared Linux dependency image.
+        id: pull-libraries
+        run: bash "$RUNNER_TEMP/linux_libraries_image.sh" pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"
+
+      - name: Generate Dockerfile for a missing dependency image.
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
           curl -sSL https://install.python-poetry.org | python3 -
           cd Telegram/build/docker/centos_env
           poetry install
@@ -91,18 +131,14 @@ jobs:
           echo "$DOCKERFILE" > Dockerfile
           rm -rf __pycache__
 
-      - name: Free up some disk space.
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
-        with:
-          tool-cache: true
-
-      - name: Set up Docker Buildx.
+      - name: Set up Docker Buildx for a missing dependency image.
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
         uses: docker/setup-buildx-action@v4
 
-      # No Actions cache or exported BuildKit cache is used here. Any compiler
-      # or dependency cache is local to this ephemeral runner and disappears
-      # with the opt-in run, so a feature ref cannot write shared state.
+      # No exported BuildKit cache is used here, and the image is loaded
+      # locally, never pushed, so a feature ref cannot write shared state.
       - name: Libraries.
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
         uses: docker/build-push-action@v7
         with:
           context: Telegram/build/docker/centos_env
