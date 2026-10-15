@@ -11,11 +11,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
+#include "base/options.h"
+#include "base/platform/base_platform_info.h"
 #include "base/qthelp_regex.h"
 #include "base/weak_ptr.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
+#include "boxes/translate_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -39,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_controller.h"
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
+#include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/view/history_view_translate_bar.h"
@@ -46,6 +50,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "inline_bots/bot_attach_web_view.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_provider.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -59,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
+#include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
@@ -72,6 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
+#include "ui/layers/generic_box.h"
 #include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -3571,12 +3578,16 @@ template <typename Predicate>
 	not_null<Window::SessionController *> customController) {
 	auto &settings = Core::App().settings();
 	const auto previousTranslateChat = settings.translateChatEnabled();
+	const auto previousTranslateButton = settings.translateButtonEnabled();
 	const auto previousPlatformTranslate = settings.usePlatformTranslation();
 	const auto previousTranslateTo = settings.translateTo();
+	const auto previousSkipLanguages = settings.skipTranslationLanguages();
 	const auto restoreSettings = gsl::finally([&] {
 		settings.setTranslateChatEnabled(previousTranslateChat);
+		settings.setTranslateButtonEnabled(previousTranslateButton);
 		settings.setUsePlatformTranslation(previousPlatformTranslate);
 		settings.setTranslateTo(previousTranslateTo);
+		settings.setSkipTranslationLanguages(previousSkipLanguages);
 	});
 	const auto target = LanguageId::FromName(Lang::DefaultLanguageId());
 	const auto offered = LanguageId::FromName(u"French"_q);
@@ -3586,11 +3597,88 @@ template <typename Predicate>
 		return false;
 	}
 	settings.setTranslateChatEnabled(true);
+	settings.setTranslateButtonEnabled(true);
 	settings.setUsePlatformTranslation(false);
 	settings.setTranslateTo(target);
+	settings.setSkipTranslationLanguages({offered});
 
 	auto &stockSession = stockController->session();
 	auto &customSession = customController->session();
+	const auto customProviderWithPlatformOff
+		= Ui::TranslateProviderChoiceForSession(&customSession);
+	const auto stockProviderWithPlatformOff
+		= Ui::TranslateProviderChoiceForSession(&stockSession);
+	settings.setUsePlatformTranslation(true);
+	const auto stockProviderWithPlatformOn
+		= Ui::TranslateProviderChoiceForSession(&stockSession);
+	const auto customProviderAfterStockChange
+		= Ui::TranslateProviderChoiceForSession(&customSession);
+	settings.setUsePlatformTranslation(false);
+	const auto customProviderAfterPreferenceReset
+		= Ui::TranslateProviderChoiceForSession(&customSession);
+	const auto stockProviderAfterCustom
+		= Ui::TranslateProviderChoiceForSession(&stockSession);
+	if (customProviderWithPlatformOff != customProviderAfterStockChange
+		|| customProviderWithPlatformOff != customProviderAfterPreferenceReset
+		|| stockProviderWithPlatformOff
+			   == Ui::details::TranslateProviderChoice::Unavailable
+		|| stockProviderWithPlatformOn
+			   == Ui::details::TranslateProviderChoice::Unavailable
+		|| stockProviderAfterCustom
+			   == Ui::details::TranslateProviderChoice::Unavailable
+		|| customProviderWithPlatformOff
+			   == Ui::details::TranslateProviderChoice::MTProto) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: provider choice leaked "
+			"the stock window preference into the custom session.\n");
+		return false;
+	}
+	const auto text = tr::marked(u"Доброго дня"_q);
+	const auto customHasProvider
+		= (customProviderWithPlatformOff
+		   != Ui::details::TranslateProviderChoice::Unavailable);
+	const auto customPlainHidden = Ui::SkipTranslate(&customSession, text);
+	const auto customRichHidden = Ui::SkipTranslate(&customSession, text, true);
+	const auto stockPlainHidden = Ui::SkipTranslate(&stockSession, text);
+	if ((customProviderWithPlatformOff
+			 == Ui::details::TranslateProviderChoice::Unavailable
+		 && !customPlainHidden)
+		|| (customHasProvider && customPlainHidden)
+		|| customProviderWithPlatformOff
+			   == Ui::details::TranslateProviderChoice::MTProto
+		|| !customRichHidden || stockPlainHidden) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom translation "
+			"actions were exposed.\n");
+		return false;
+	}
+	auto localFailure = false;
+	if (customProviderWithPlatformOff
+		== Ui::details::TranslateProviderChoice::Unavailable) {
+		auto provider = Ui::CreateTranslateProvider(&customSession);
+		provider->request(Ui::TranslateProviderRequest{.text = text}, target,
+						  [&](Ui::TranslateProviderResult result) {
+							  localFailure
+								  = !result.text
+									&& (result.error
+										== Ui::TranslateProviderError::Unknown);
+						  });
+		if (!localFailure) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: stale custom "
+						 "translation did not fail locally.\n");
+			return false;
+		}
+	}
+	std::fprintf(
+		stderr,
+		"Translation action routing: custom_provider=%d custom_hidden=%d "
+		"custom_rich_hidden=%d local_failure=%d stock_provider=%d "
+		"stock_hidden=%d.\n",
+		int(customProviderWithPlatformOff), customPlainHidden, customRichHidden,
+		localFailure, int(stockProviderWithPlatformOff), stockPlainHidden);
 	stockSession.data().processChat(TranslationRegressionChannel(
 		ChannelId(1151), 115100, u"Stock channel"_q));
 	customSession.data().processChat(TranslationRegressionChannel(
@@ -3721,30 +3809,82 @@ template <typename Predicate>
 	}
 	stockController->hideLayer(anim::type::instant);
 
-	const auto openLanguageBox =
-		[](not_null<Window::SessionController *> controller) {
-			return controller->window().show(
-				object_ptr<LanguageBox>(controller->widget().get(), controller),
-				Ui::LayerOption::KeepOther, anim::type::normal);
-		};
-	auto customLanguageBox = openLanguageBox(customController);
+	const auto openLanguageBox
+		= [](not_null<Window::SessionController *> controller,
+			 const QString &highlightId) {
+			  if (!highlightId.isEmpty()) {
+				  controller->setHighlightControlId(highlightId);
+			  }
+			  return controller->window().show(
+				  object_ptr<LanguageBox>(controller->widget().get(),
+										  controller, highlightId),
+				  Ui::LayerOption::KeepOther, anim::type::normal);
+		  };
+	const auto stockHasPlatformProvider
+		= Platform::IsTranslateProviderAvailable();
+	const auto settingsSkipLanguages = settings.skipTranslationLanguages();
+	auto customLanguageBox
+		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
 	if (!customLanguageBox
-		|| customLanguageBox->translateChatsRowPresentForRegressionTest()) {
-		std::fprintf(stderr, "Translation controls regression failed: custom "
-							 "session exposed Translate Entire Chats.\n");
+		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
+			   != customHasProvider
+		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
+			   != customHasProvider
+		|| customLanguageBox->platformTranslationRowPresentForRegressionTest()
+		|| customLanguageBox->translationAboutPresentForRegressionTest()
+			   != customHasProvider
+		|| customLanguageBox->platformPackNotePresentForRegressionTest()
+			   != (customProviderWithPlatformOff
+					   == Ui::details::TranslateProviderChoice::Platform
+				   && Platform::IsMac())
+		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
+		|| !customController->highlightControlId().isEmpty()) {
+		std::fprintf(stderr,
+					 "Translation controls regression failed: custom "
+					 "Language settings exposed unsupported rows or left a "
+					 "highlight pending.\n");
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
-	auto stockLanguageBox = openLanguageBox(stockController);
+	for (const auto &link :
+		 {u"language/show-button"_q, u"language/translate-chats"_q,
+		  u"language/do-not-translate"_q}) {
+		auto linkBox = openLanguageBox(customController, link);
+		QCoreApplication::processEvents();
+		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+			std::fprintf(
+				stderr, "Translation controls regression failed: Language link "
+						"left an unsupported highlight pending.\n");
+			return false;
+		}
+		customController->hideLayer(anim::type::instant);
+	}
+	auto stockLanguageBox = openLanguageBox(stockController, QString());
 	QCoreApplication::processEvents();
 	if (!stockLanguageBox
+		|| !stockLanguageBox->translateButtonRowPresentForRegressionTest()
+		|| !stockLanguageBox->doNotTranslateRowPresentForRegressionTest()
+		|| !stockLanguageBox->translationAboutPresentForRegressionTest()
+		|| (stockLanguageBox->platformTranslationRowPresentForRegressionTest()
+			!= stockHasPlatformProvider)
+		|| (stockLanguageBox->platformPackNotePresentForRegressionTest()
+			!= (stockHasPlatformProvider && Platform::IsMac()))
 		|| !stockLanguageBox->translateChatsRowPresentForRegressionTest()) {
 		std::fprintf(stderr, "Translation controls regression failed: stock "
-							 "session lost Translate Entire Chats.\n");
+							 "Language settings lost supported rows.\n");
 		return false;
 	}
 	stockController->hideLayer(anim::type::instant);
+	if (!settings.translateButtonEnabled() || settings.usePlatformTranslation()
+		|| settings.translateChatEnabled() != true
+		|| settings.skipTranslationLanguages() != settingsSkipLanguages) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: displaying Language "
+			"settings wrote shared translation preferences.\n");
+		return false;
+	}
 
 	const auto stockLoaded = stockChannel->isLoaded();
 	const auto stockServerSupported = stockSession.serverTranslationSupported();
@@ -3844,6 +3984,41 @@ template <typename Predicate>
 					 "message fixtures were not created.\n");
 		return false;
 	}
+	auto customAdminLogProvider
+		= Ui::details::TranslateProviderChoice::Unavailable;
+	auto customAdminLogRichTranslateVisible = true;
+	{
+		auto &translateUrl
+			= base::options::lookup<QString>("translate-url-template");
+		const auto previousTranslateUrl = translateUrl.value();
+		const auto restoreTranslateUrl
+			= gsl::finally([&] { translateUrl.set(previousTranslateUrl); });
+		translateUrl.set(u"https://translation.example/?q=%q"_q);
+		customAdminLogProvider
+			= Ui::TranslateProviderChoiceForSession(&customSession);
+		customAdminLogRichTranslateVisible
+			= AdminLog::ShouldShowTranslateAction(customRichItem);
+	}
+	if (customAdminLogProvider != Ui::details::TranslateProviderChoice::Url
+		|| !customRichItem->richPage() || customAdminLogRichTranslateVisible) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: admin-log rich action "
+			"visibility did not match (provider=%d visible=%d).\n",
+			int(customAdminLogProvider), customAdminLogRichTranslateVisible);
+		return false;
+	}
+	auto staleRichBox = customController->show(
+		Box(Ui::TranslateBox, customRichItem->history()->peer,
+			customRichItem->id, customRichItem->originalText(), false),
+		Ui::LayerOption::KeepOther, anim::type::normal);
+	if (!WaitForRegressionCondition([&] { return !staleRichBox; })) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: a stale custom rich "
+			"translation action did not close locally.\n");
+		return false;
+	}
 
 	gTranslationRpcRoleForRegressionTest
 		= TranslationRpcRoleForRegressionTest::Custom;
@@ -3929,10 +4104,11 @@ template <typename Predicate>
 		= TranslationRpcRoleForRegressionTest::None;
 	std::fprintf(
 		stderr,
-		"Translation controls regression passed: custom rename/reopen "
-		"kept Auto-translate hidden without a toggle RPC; automatic bar "
-		"and text/rich RPCs stayed off; Translate Entire Chats was "
-		"absent; stock controls and RPCs remained enabled.\n");
+		"Translation controls regression passed: custom action gates followed "
+		"session provider availability, rich actions stayed hidden, stale "
+		"actions failed locally, Language links skipped absent rows without "
+		"writing preferences, automatic chat translation stayed off, and "
+		"stock controls and RPCs remained enabled.\n");
 	return true;
 }
 

@@ -668,14 +668,14 @@ constexpr auto kProfileInstanceBundle = "TDESKTOP_TEAGRAM_UPDATE_TEST_BUNDLE";
 			= QDir(parent).filePath(u".teagram-update-started"_q);
 		const auto pending
 			= QDir(parent).filePath(u".teagram-update-pending"_q);
-		auto recoverySawNoAcknowledgment = false;
+		auto checkedBeforeAcknowledgment = false;
 		const auto acknowledged
 			= CompleteTeagramUpdateStartupForTesting(bundle, [&] {
-				  recoverySawNoAcknowledgment = !QFileInfo(started).exists();
-				  return false;
+				  checkedBeforeAcknowledgment = !QFileInfo(started).exists();
+				  return true;
 			  });
 		return role == "fallback"
-					   || (recoverySawNoAcknowledgment
+					   || (!checkedBeforeAcknowledgment
 						   && (acknowledged || !QFileInfo(pending).exists()))
 				   ? 0
 				   : 23;
@@ -1579,7 +1579,8 @@ void CheckInstallerAuthenticatedCandidateAndFallback(
 						   .exists());
 				CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q))
 						   .exists());
-				CHECK(!QFileInfo(previous).exists());
+				CHECK_EQ(ReadFile(previousExecutable), installedBytes);
+				CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
 			} else {
 				CHECK(QFileInfo(root.filePath(u".teagram-update-pending"_q))
 						  .exists());
@@ -1823,6 +1824,74 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 	RunUpdaterFixtureWithTemporaryRoots(
 		"TeagramUpdateInstallerClearsUncommittedCandidateOnRestart",
 		CheckInstallerClearsUncommittedCandidateOnRestart);
+}
+
+void CheckStartupKeepsOlderPreviousBundle(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto installed = root.filePath(u"Teagram.app"_q);
+	const auto staging = root.filePath(u".teagram-update-staging"_q);
+	const auto previous = root.filePath(u".Teagram.app.previous"_q);
+	const auto pending = root.filePath(u".teagram-update-pending"_q);
+	const auto started = root.filePath(u".teagram-update-started"_q);
+	const auto previousExecutable
+		= QDir(previous).filePath(u"Contents/MacOS/Teagram"_q);
+	const auto bundleInfo = [](quint64 build) {
+		return QByteArrayLiteral(
+				   "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>"
+				   "<key>CFBundleIdentifier</key><string>io.teagram.desktop</"
+				   "string>"
+				   "<key>CFBundleExecutable</key><string>Teagram</string>"
+				   "<key>TeagramUpdateBuild</key><string>")
+			   + QByteArray::number(build)
+			   + QByteArrayLiteral("</string></dict></plist>");
+	};
+	const auto writeBundle = [&](const QString &bundle, quint64 build) {
+		const auto executable
+			= QDir(bundle).filePath(u"Contents/MacOS/Teagram"_q);
+		CHECK(QDir().mkpath(QFileInfo(executable).absolutePath()));
+		CHECK(WriteFile(QDir(bundle).filePath(u"Contents/Info.plist"_q),
+						bundleInfo(build)));
+		CHECK(WriteFile(executable, "build " + QByteArray::number(build)));
+		CHECK(QFile::setPermissions(executable, QFileDevice::ReadOwner
+													| QFileDevice::WriteOwner
+													| QFileDevice::ExeOwner));
+	};
+	writeBundle(installed, 101);
+	writeBundle(previous, 100);
+	CHECK(
+		WriteTeagramUpdateMarker(root.path(), ".teagram-update-pending", 101));
+
+	CHECK(
+		CompleteTeagramUpdateStartupForTesting(installed, [] { return true; }));
+	CHECK(QFileInfo(pending).exists());
+	CHECK_EQ(ReadFile(started), QByteArrayLiteral("101\n"));
+	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+
+	CHECK(CompleteTeagramUpdateStartupForTesting(installed,
+												 [] { return false; }));
+	CHECK(!QFileInfo(pending).exists());
+	CHECK(!QFileInfo(started).exists());
+	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
+
+	const auto recovered = RecoverTeagramUpdateInstallerAtStartupForTesting(
+		installed, staging, previous, installed, [] { return false; });
+	CHECK(recovered.reason
+		  == TeagramUpdateStartupRecoveryReason::PreviousRetained);
+	CHECK(!CompleteTeagramUpdateStartupForTesting(installed,
+												  [] { return false; }));
+	CHECK_EQ(ReadFile(previousExecutable), QByteArrayLiteral("build 100"));
+	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
+}
+
+TEST_CASE(TeagramUpdateStartupKeepsOlderPreviousBundle) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateStartupKeepsOlderPreviousBundle",
+		CheckStartupKeepsOlderPreviousBundle);
 }
 #endif // Q_OS_MAC
 
@@ -3072,7 +3141,7 @@ void CheckManagerInstallsProducerBundle(const QString &temporaryRoot) {
 	CHECK(launches == QStringList({installed}));
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-pending"_q)).exists());
 	CHECK(!QFileInfo(root.filePath(u".teagram-update-started"_q)).exists());
-	CHECK(!QFileInfo(previous).exists());
+	CHECK_EQ(ReadFile(previousExecutable), installedBytes);
 	CHECK_EQ(ReadFile(installedExecutable), candidateBytes);
 	CHECK_EQ(ReadFile(profileCanary), profileBytes);
 	CHECK_EQ(ReadFile(officialCanary), officialBytes);

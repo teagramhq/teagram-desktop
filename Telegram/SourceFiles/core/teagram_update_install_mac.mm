@@ -408,6 +408,7 @@ InstallResult(TeagramUpdateInstallReason reason, const QString &previous = {},
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
 RecoverAtStartup(const QString &installed, const QString &staging,
 				 const QString &previous, const QString &running,
+				 bool discardPrevious,
 				 const std::function<bool()> &otherInstanceRunning = {}) {
 	auto lock = TeagramUpdateInstallLock(installed);
 	if (!lock.acquired()) {
@@ -475,11 +476,13 @@ RecoverAtStartup(const QString &installed, const QString &staging,
 			};
 		}
 	}
-	const auto noOtherInstance = !(
-		otherInstanceRunning ? otherInstanceRunning() : OtherInstanceRunning());
+	const auto noOtherInstance
+		= discardPrevious
+		  && !(otherInstanceRunning ? otherInstanceRunning()
+									: OtherInstanceRunning());
 	return RecoverTeagramUpdateReplacement(lock, installed, staging, previous,
-										   running, stagePrevious, true,
-										   noOtherInstance);
+										   running, stagePrevious,
+										   discardPrevious, noOtherInstance);
 }
 
 [[nodiscard]] bool RequestApplicationRestart() {
@@ -712,8 +715,8 @@ enum class StartupWaitResult {
 	const auto runningIsInstalled = running == QDir::cleanPath(installed);
 	const auto startupAcknowledged
 		= runningIsInstalled && pending && *pending == info.build;
-	const auto recovered = RecoverAtStartup(installed, staging, previous,
-											running, otherInstanceRunning);
+	const auto recovered
+		= RecoverAtStartup(installed, staging, previous, running, false);
 	if (recovered.reason == TeagramUpdateStartupRecoveryReason::Failed
 		|| recovered.reason == TeagramUpdateStartupRecoveryReason::Busy) {
 		LOG(("Teagram update recovery failed: reason=%1")
@@ -727,11 +730,24 @@ enum class StartupWaitResult {
 		}
 		return false;
 	}
-	if (startupAcknowledged
-		&& !WriteMarker(parent, kStartedMarker, info.build)) {
+	if (!startupAcknowledged
+		|| !WriteMarker(parent, kStartedMarker, info.build)) {
 		return false;
 	}
-	return startupAcknowledged;
+	const auto relaunchWaiting = otherInstanceRunning ? otherInstanceRunning()
+													  : OtherInstanceRunning();
+	if (!relaunchWaiting
+		&& (!RemoveMarker(parent, kCommitMarker)
+			|| !RemoveMarker(parent, kStartedMarker))) {
+		LOG(("Teagram update markers could not be cleared after startup."));
+	}
+	return true;
+}
+
+[[nodiscard]] bool HasPreviousBundleBeside(const QString &installed) {
+	const auto previous = QDir(QFileInfo(installed).absolutePath())
+							  .filePath(QString::fromLatin1(kPreviousBundle));
+	return CanonicalRunningBundlePath(previous) == QDir::cleanPath(previous);
 }
 
 } // namespace
@@ -780,11 +796,7 @@ bool HasPreviousTeagramUpdateBundle() {
 			!= u"io.teagram.desktop"_q) {
 			return false;
 		}
-		const auto installed = FromNative([mainBundle bundlePath]);
-		const auto previous
-			= QDir(QFileInfo(installed).absolutePath())
-				  .filePath(QString::fromLatin1(kPreviousBundle));
-		return CanonicalBundlePath(previous) == QDir::cleanPath(previous);
+		return HasPreviousBundleBeside(FromNative([mainBundle bundlePath]));
 	}
 }
 
@@ -808,7 +820,7 @@ TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
 	const QString &installed, const QString &staging, const QString &previous,
 	const QString &running, const std::function<bool()> &otherInstanceRunning) {
-	return RecoverAtStartup(installed, staging, previous, running,
+	return RecoverAtStartup(installed, staging, previous, running, false,
 							otherInstanceRunning);
 }
 
@@ -819,6 +831,11 @@ bool CompleteTeagramUpdateStartupForTesting(
 		return CompleteTeagramUpdateStartupForBundle(runningBundlePath,
 													 otherInstanceRunning);
 	}
+}
+
+bool HasPreviousTeagramUpdateBundleForTesting(
+	const QString &installedBundlePath) {
+	return HasPreviousBundleBeside(installedBundlePath);
 }
 
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
@@ -960,8 +977,9 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 		if (cancelled()) {
 			return InstallResult(TeagramUpdateInstallReason::Cancelled);
 		}
-		const auto recovery = RecoverAtStartup(installed, staging, previous,
-											   installed, otherInstanceRunning);
+		const auto recovery
+			= RecoverAtStartup(installed, staging, previous, installed, true,
+							   otherInstanceRunning);
 		if (recovery.reason == TeagramUpdateStartupRecoveryReason::Busy
 			|| recovery.reason
 				   == TeagramUpdateStartupRecoveryReason::PreviousRetained) {
