@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/edit_privacy_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/language_box.h"
@@ -54,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
 #include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
@@ -83,6 +85,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/streamed_file_downloader.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
@@ -324,6 +328,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_channels_toggleAutotranslation:
 	case mtpc_channels_updatePaidMessagesPrice:
 	case mtpc_messages_editChatAbout:
+	case mtpc_account_setGlobalPrivacySettings:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -1794,6 +1799,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  });
 	const auto hasSystemPreferencesEntry
 		= SettingsSearchHasEntry(entries, u"calls/system-prefs"_q);
+	const auto hasYourColorEntry
+		= SettingsSearchHasEntry(entries, u"edit/your-color"_q);
+	const auto hasPeerColorEntry
+		= SettingsSearchHasEntry(entries, u"chat/peer-color"_q);
+	const auto hasPrivacyGiftsEntry
+		= SettingsSearchHasEntry(entries, u"privacy/gifts"_q);
 	const auto hasStockPaidRows
 		= SettingsSearchHasEntry(entries, u"premium/no_ads"_q)
 		  && SettingsSearchHasEntry(entries, u"stars/gift"_q)
@@ -1813,7 +1824,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && (hasCallsNotificationsAcceptEntry == callsSupported)
 		  && (hasPrivacyCallsEntry == callsSupported)
 		  && (callsSupported || !hasAcceptCallSectionKeyword)
-		  && hasSystemPreferencesEntry && (!paidSupported || hasStockPaidRows);
+		  && hasSystemPreferencesEntry && (hasYourColorEntry == paidSupported)
+		  && (hasPeerColorEntry == paidSupported)
+		  && (paidSupported || !hasPrivacyGiftsEntry)
+		  && (!paidSupported || hasStockPaidRows);
 	if (!matches) {
 		std::fprintf(
 			stderr,
@@ -1821,12 +1835,14 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			"privacy=%d, bio=%d expected=%d, chat-automation=%d "
 			"expected=%d, calls-accept=%d, calls-notifications=%d, "
 			"calls-notifications-accept=%d, privacy-calls=%d expected=%d, "
-			"call-accept-keyword=%d, system-prefs=%d, stock-rows=%d.\n",
+			"call-accept-keyword=%d, system-prefs=%d, your-color=%d, "
+			"peer-color=%d, privacy-gifts=%d, stock-rows=%d.\n",
 			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
 			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
 			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
 			hasPrivacyCallsEntry, callsSupported, hasAcceptCallSectionKeyword,
-			hasSystemPreferencesEntry, hasStockPaidRows);
+			hasSystemPreferencesEntry, hasYourColorEntry, hasPeerColorEntry,
+			hasPrivacyGiftsEntry, hasStockPaidRows);
 	}
 	return matches;
 }
@@ -1857,6 +1873,16 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/send-gift/x"_q,
 		u"tg://settings/send-gift/self"_q,
 		u"tg://settings/send-gift/self/x"_q,
+		u"tg://settings/emoji-status"_q,
+		u"tg://chats/emoji-status"_q,
+		u"tg://settings/profile-color"_q,
+		u"tg://settings/profile-color/name"_q,
+		u"tg://settings/profile-color/profile/use-gift"_q,
+		u"tg://settings/appearance/your-color"_q,
+		u"tg://settings/appearance/your-color/name/add-icons"_q,
+		u"tg://settings/edit/your-color"_q,
+		u"tg://settings/privacy/gifts"_q,
+		u"tg://settings/privacy/gifts/always"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
@@ -2220,6 +2246,139 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 	}
 	return result;
+}
+
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunMessagesPrivacyBoxPassRegression(
+	not_null<Window::SessionController *> controller, UserId selfId,
+	bool supported, bool premium, const char *sessionName) {
+	auto &session = controller->session();
+	const auto wasPremium = session.premium();
+	if (!SetRegressionSessionPremium(&session, selfId, premium)) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s could "
+					 "not set Premium=%d.\n",
+					 sessionName, premium);
+		return false;
+	}
+	const auto allowed = premium || session.appConfig().newRequirePremiumFree();
+	const auto chargeAvailable = session.appConfig().paidMessagesAvailable();
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &session.mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	auto box = controller->show(
+		Box(EditMessagesPrivacyBox, controller.get(), QString()),
+		Ui::LayerOption::KeepOther, anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s "
+					 "premium=%d box did not open.\n",
+					 sessionName, premium);
+		return false;
+	}
+	auto radios = QStringList();
+	auto controls = QStringList();
+	for (const auto widget : content->findChildren<QWidget *>()) {
+		if (const auto radio = dynamic_cast<Ui::Radiobutton *>(widget)) {
+			radios.push_back(radio->accessibilityName());
+		} else if (const auto button
+				   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+			controls.push_back(button->accessibilityName());
+		}
+	}
+	const auto findButton = [&](const QString &text) {
+		for (const auto widget : layer->findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RoundButton *>(widget);
+			if (button
+				&& !button->accessibilityName().compare(text,
+														Qt::CaseInsensitive)) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RoundButton *>(nullptr);
+	};
+	const auto hasEverybody
+		= radios.contains(tr::lng_messages_privacy_everyone(tr::now));
+	const auto hasRestricted
+		= radios.contains(tr::lng_messages_privacy_restricted(tr::now));
+	const auto hasCharge
+		= radios.contains(tr::lng_messages_privacy_charge(tr::now));
+	const auto hasSubscribe
+		= controls.contains(tr::lng_messages_privacy_premium_button(tr::now));
+	const auto save = findButton(tr::lng_settings_save(tr::now));
+	const auto done = findButton(tr::lng_about_done(tr::now));
+	const auto expectSave = supported && allowed;
+	const auto action = expectSave ? save : done;
+	const auto optionsMatch
+		= supported
+			  ? (hasEverybody && hasRestricted && (hasCharge == chargeAvailable)
+				 && (hasSubscribe == !allowed))
+			  : ((radios.size() == 1) && hasEverybody && !hasRestricted
+				 && !hasCharge && !hasSubscribe);
+	const auto buttonsMatch = (!save == !expectSave) && (!done == expectSave);
+	if (!optionsMatch || !buttonsMatch || !action) {
+		std::fprintf(
+			stderr,
+			"Messages privacy regression failed: session=%s premium=%d "
+			"radios=%d everybody=%d restricted=%d charge=%d subscribe=%d "
+			"save=%d done=%d expected-paid=%d.\n",
+			sessionName, premium, int(radios.size()), hasEverybody,
+			hasRestricted, hasCharge, hasSubscribe, save != nullptr,
+			done != nullptr, supported);
+		return false;
+	}
+	action->clicked(Qt::KeyboardModifiers(), Qt::LeftButton);
+	const auto closed = WaitForRegressionCondition([&] { return !box; });
+	const auto privacyRequests = std::count_if(
+		capture.requests.begin(), capture.requests.end(),
+		[](const CapturedChannelSaveRequest &request) {
+			return !request.body.isEmpty()
+				   && (static_cast<uint32>(request.body.front())
+					   == mtpc_account_setGlobalPrivacySettings);
+		});
+	const auto premiumRestored
+		= SetRegressionSessionPremium(&session, selfId, wasPremium);
+	if (!closed || (privacyRequests != (expectSave ? 1 : 0))
+		|| !premiumRestored) {
+		std::fprintf(
+			stderr,
+			"Messages privacy regression failed: session=%s premium=%d "
+			"closed=%d setGlobalPrivacySettings=%d expected=%d "
+			"premium-restored=%d.\n",
+			sessionName, premium, closed, int(privacyRequests),
+			expectSave ? 1 : 0, premiumRestored);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool RunMessagesPrivacyBoxRegression(
+	not_null<Window::SessionController *> controller, UserId selfId,
+	bool supported, const char *sessionName) {
+	if (controller->session().paidFeaturesSupported() != supported) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s "
+					 "capability=%d expected=%d.\n",
+					 sessionName, controller->session().paidFeaturesSupported(),
+					 supported);
+		return false;
+	}
+	return RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+											   true, sessionName)
+		   && RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+												  false, sessionName);
 }
 
 [[nodiscard]] bool RunBoostMenuVisibilityRegression(
@@ -2639,6 +2798,16 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 			app, stock, pinned, blank, restoredBlocked, stockController,
 			pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
+		blank->forcedLogOut();
+		return false;
+	}
+	if (!RunMessagesPrivacyBoxRegression(stockController, selfId, true, "stock")
+		|| !RunMessagesPrivacyBoxRegression(pinnedController, selfId, false,
+											"custom")
+		|| !RunMessagesPrivacyBoxRegression(blankController, selfId, false,
+											"blocked")
+		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
+											"stock after custom")) {
 		blank->forcedLogOut();
 		return false;
 	}
@@ -3199,9 +3368,6 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTPint(), MTPint(), MTPStickerSet(), MTPBotVerification(), MTPint(),
 		MTPlong(), MTPProfileTab(), MTPlong());
 }
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunTranslationControlsLifecycleRegression(
 	not_null<Window::SessionController *> stockController,
