@@ -50,6 +50,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
 #include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
@@ -2242,25 +2243,20 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
-[[nodiscard]] bool RunMessagesPrivacyBoxRegression(
+[[nodiscard]] bool RunMessagesPrivacyBoxPassRegression(
 	not_null<Window::SessionController *> controller, UserId selfId,
-	bool supported, const char *sessionName) {
+	bool supported, bool premium, const char *sessionName) {
 	auto &session = controller->session();
-	if (session.paidFeaturesSupported() != supported) {
-		std::fprintf(stderr,
-					 "Messages privacy regression failed: session=%s "
-					 "capability=%d expected=%d.\n",
-					 sessionName, session.paidFeaturesSupported(), supported);
-		return false;
-	}
 	const auto wasPremium = session.premium();
-	if (!SetRegressionSessionPremium(&session, selfId, true)) {
+	if (!SetRegressionSessionPremium(&session, selfId, premium)) {
 		std::fprintf(stderr,
 					 "Messages privacy regression failed: session=%s could "
-					 "not enable Premium.\n",
-					 sessionName);
+					 "not set Premium=%d.\n",
+					 sessionName, premium);
 		return false;
 	}
+	const auto allowed = premium || session.appConfig().newRequirePremiumFree();
+	const auto chargeAvailable = session.appConfig().paidMessagesAvailable();
 	auto capture = ChannelSaveRequestCapture{
 		.instance = &session.mtp(),
 	};
@@ -2279,18 +2275,21 @@ template <typename Predicate>
 	const auto layer = content ? content->parentWidget() : nullptr;
 	if (!layer) {
 		std::fprintf(stderr,
-					 "Messages privacy regression failed: session=%s box did "
-					 "not open.\n",
-					 sessionName);
+					 "Messages privacy regression failed: session=%s "
+					 "premium=%d box did not open.\n",
+					 sessionName, premium);
 		return false;
 	}
-	const auto hasRadio = [&](const QString &text) {
-		const auto widgets = content->findChildren<QWidget *>();
-		return std::any_of(widgets.begin(), widgets.end(), [&](auto widget) {
-			const auto radio = dynamic_cast<Ui::Radiobutton *>(widget);
-			return radio && (radio->accessibilityName() == text);
-		});
-	};
+	auto radios = QStringList();
+	auto controls = QStringList();
+	for (const auto widget : content->findChildren<QWidget *>()) {
+		if (const auto radio = dynamic_cast<Ui::Radiobutton *>(widget)) {
+			radios.push_back(radio->accessibilityName());
+		} else if (const auto button
+				   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+			controls.push_back(button->accessibilityName());
+		}
+	}
 	const auto findButton = [&](const QString &text) {
 		for (const auto widget : layer->findChildren<QWidget *>()) {
 			const auto button = dynamic_cast<Ui::RoundButton *>(widget);
@@ -2303,20 +2302,32 @@ template <typename Predicate>
 		return static_cast<Ui::RoundButton *>(nullptr);
 	};
 	const auto hasEverybody
-		= hasRadio(tr::lng_messages_privacy_everyone(tr::now));
+		= radios.contains(tr::lng_messages_privacy_everyone(tr::now));
 	const auto hasRestricted
-		= hasRadio(tr::lng_messages_privacy_restricted(tr::now));
+		= radios.contains(tr::lng_messages_privacy_restricted(tr::now));
+	const auto hasCharge
+		= radios.contains(tr::lng_messages_privacy_charge(tr::now));
+	const auto hasSubscribe
+		= controls.contains(tr::lng_messages_privacy_premium_button(tr::now));
 	const auto save = findButton(tr::lng_settings_save(tr::now));
 	const auto done = findButton(tr::lng_about_done(tr::now));
-	const auto action = supported ? save : done;
-	const auto optionsMatch = hasEverybody && (hasRestricted == supported)
-							  && (!save == !supported) && (!done == supported);
-	if (!optionsMatch || !action) {
+	const auto expectSave = supported && allowed;
+	const auto action = expectSave ? save : done;
+	const auto optionsMatch
+		= supported
+			  ? (hasEverybody && hasRestricted && (hasCharge == chargeAvailable)
+				 && (hasSubscribe == !allowed))
+			  : ((radios.size() == 1) && hasEverybody && !hasRestricted
+				 && !hasCharge && !hasSubscribe);
+	const auto buttonsMatch = (!save == !expectSave) && (!done == expectSave);
+	if (!optionsMatch || !buttonsMatch || !action) {
 		std::fprintf(
 			stderr,
-			"Messages privacy regression failed: session=%s everybody=%d "
-			"restricted=%d save=%d done=%d expected-paid=%d.\n",
-			sessionName, hasEverybody, hasRestricted, save != nullptr,
+			"Messages privacy regression failed: session=%s premium=%d "
+			"radios=%d everybody=%d restricted=%d charge=%d subscribe=%d "
+			"save=%d done=%d expected-paid=%d.\n",
+			sessionName, premium, int(radios.size()), hasEverybody,
+			hasRestricted, hasCharge, hasSubscribe, save != nullptr,
 			done != nullptr, supported);
 		return false;
 	}
@@ -2331,17 +2342,35 @@ template <typename Predicate>
 		});
 	const auto premiumRestored
 		= SetRegressionSessionPremium(&session, selfId, wasPremium);
-	if (!closed || (privacyRequests != (supported ? 1 : 0))
+	if (!closed || (privacyRequests != (expectSave ? 1 : 0))
 		|| !premiumRestored) {
 		std::fprintf(
 			stderr,
-			"Messages privacy regression failed: session=%s closed=%d "
-			"setGlobalPrivacySettings=%d expected=%d premium-restored=%d.\n",
-			sessionName, closed, int(privacyRequests), supported ? 1 : 0,
-			premiumRestored);
+			"Messages privacy regression failed: session=%s premium=%d "
+			"closed=%d setGlobalPrivacySettings=%d expected=%d "
+			"premium-restored=%d.\n",
+			sessionName, premium, closed, int(privacyRequests),
+			expectSave ? 1 : 0, premiumRestored);
 		return false;
 	}
 	return true;
+}
+
+[[nodiscard]] bool RunMessagesPrivacyBoxRegression(
+	not_null<Window::SessionController *> controller, UserId selfId,
+	bool supported, const char *sessionName) {
+	if (controller->session().paidFeaturesSupported() != supported) {
+		std::fprintf(stderr,
+					 "Messages privacy regression failed: session=%s "
+					 "capability=%d expected=%d.\n",
+					 sessionName, controller->session().paidFeaturesSupported(),
+					 supported);
+		return false;
+	}
+	return RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+											   true, sessionName)
+		   && RunMessagesPrivacyBoxPassRegression(controller, selfId, supported,
+												  false, sessionName);
 }
 
 [[nodiscard]] bool RunBoostMenuVisibilityRegression(
