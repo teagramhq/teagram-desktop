@@ -899,11 +899,12 @@ void RegisterSettingsHandlers(Router &router) {
 		u"settings"_q,
 		{
 			.path = u"privacy/gifts"_q,
-			.action
-			= CodeBlock{[](const Context &ctx) {
-				  return ShowPrivacyBox(ctx, PrivacyKey::GiftsAutoSave, [=] { return std::make_unique<::Settings::GiftsAutoSavePrivacyController>();
-				  });
-			  }},
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowPrivacyBox(ctx, PrivacyKey::GiftsAutoSave, [=] {
+					return std::make_unique<
+						::Settings::GiftsAutoSavePrivacyController>();
+				});
+			}},
 			.requiresPaidFeatures = true,
 		});
 
