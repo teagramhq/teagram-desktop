@@ -198,12 +198,15 @@ void MainWindow::Private::keepTitleMerged() {
 		return;
 	}
 	const auto mask = [window styleMask];
-	if (!(mask & NSWindowStyleMaskFullSizeContentView)) {
-		[window setStyleMask:(mask | NSWindowStyleMaskFullSizeContentView)];
-		[window setTitlebarAppearsTransparent:YES];
-		if (!(mask & NSWindowStyleMaskFullScreen)) {
-			[window setTitleVisibility:NSWindowTitleHidden];
-		}
+	if (window != _nativeWindow
+		|| !(mask & NSWindowStyleMaskFullSizeContentView)) {
+		// Qt may replace the NSWindow, e.g. when a GL child is added,
+		// and the new one loses the merged title and lib_ui's full screen
+		// observers. Re-applying the current stays-on-top value is the
+		// only lib_ui entry point that re-runs its title setup on the
+		// current NSWindow; the unchanged Qt flags make it otherwise a no-op.
+		const auto flags = _public->windowFlags();
+		_public->setStaysOnTop(flags.testFlag(Qt::WindowStaysOnTopHint));
 	}
 	setNativeWindow(window, view);
 }
