@@ -80,10 +80,10 @@ require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
 require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
-require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.action == 'synchronize' || github.event.label.name == 'macos-build' }}"
+require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}"
 pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
-if [[ "$pr_types" != '[labeled, synchronize]' ]]; then
-  printf 'MacOS PR runs must start only from labeled and synchronize events, got: %s\n' "${pr_types:-every push}" >&2
+if [[ "$pr_types" != '[labeled]' ]]; then
+  printf 'MacOS PR runs must start only from the macos-build label, got: %s\n' "${pr_types:-every push}" >&2
   exit 1
 fi
 require_text "$mac_workflow" "if: \${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}"
@@ -92,10 +92,15 @@ require_text "$approval_workflow" '  pull_request_target:'
 require_text "$approval_workflow" '    branches: [dev]'
 require_text "$approval_workflow" '    types: [synchronize]'
 require_text "$approval_workflow" "if: contains(github.event.pull_request.labels.*.name, 'macos-build')"
+require_text "$approval_workflow" '      actions: write'
 require_text "$approval_workflow" '      pull-requests: write'
+require_text "$approval_workflow" '"repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs"'
+require_text "$approval_workflow" '-f event=pull_request -f branch="$HEAD_REF"'
+require_text "$approval_workflow" 'select(.status != "completed" and .head_repository.full_name == $repo)'
+require_text "$approval_workflow" 'gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel"'
 require_text "$approval_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
 require_text "$approval_workflow" 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build"'
-reject_text "$approval_workflow" 'head.repo.full_name'
+reject_text "$approval_workflow" 'head.repo.full_name == github.repository'
 reject_text "$approval_workflow" 'actions/checkout'
 reject_text "$approval_workflow" 'github.event.pull_request.head.sha'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'

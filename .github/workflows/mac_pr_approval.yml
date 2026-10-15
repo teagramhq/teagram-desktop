@@ -13,13 +13,37 @@ permissions:
 jobs:
   clear:
     name: Clear macOS build approval
-    if: contains(github.event.pull_request.labels.*.name, 'macos-build')
     runs-on: ubuntu-26.04
     permissions:
+      actions: write
       pull-requests: write
 
     steps:
+      - name: Cancel MacOS. builds of the superseded head.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          run_ids="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
+            -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
+            | jq -r --arg repo "$HEAD_REPOSITORY" \
+              '.workflow_runs[] | select(.status != "completed" and .head_repository.full_name == $repo) | .id')"
+          while IFS= read -r run_id; do
+            [[ -n "$run_id" ]] || continue
+            if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected run ID from GitHub: $run_id"
+              exit 1
+            fi
+            echo "Cancelling MacOS. run $run_id"
+            # A run that finished after the listing answers 409; nothing is left to cancel.
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" \
+              || echo "::warning::MacOS. run $run_id could not be cancelled."
+          done <<< "$run_ids"
+
       - name: Remove macos-build from the superseded head.
+        if: contains(github.event.pull_request.labels.*.name, 'macos-build')
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

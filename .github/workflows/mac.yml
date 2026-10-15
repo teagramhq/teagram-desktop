@@ -1,11 +1,11 @@
 name: MacOS.
 
 on:
-  # PR pushes only supersede an earlier build (mac_pr_approval.yml clears the label);
-  # the PR build runs once the approved head is labeled macos-build.
+  # The PR build runs once the approved head is labeled macos-build; a later push
+  # cancels it and clears the label in mac_pr_approval.yml.
   pull_request:
     branches: [dev]
-    types: [labeled, synchronize]
+    types: [labeled]
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -31,7 +31,7 @@ on:
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action == 'synchronize' || github.event.label.name == 'macos-build' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}
 
 jobs:
 
