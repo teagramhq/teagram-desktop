@@ -17,6 +17,7 @@ fixtures=(
   TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback
   TeagramUpdateInstallerRemovesInterruptedExtraction
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart
+  TeagramUpdateStartupKeepsOlderPreviousBundle
   TeagramUpdateReplacementRetainsPreviousThroughStartup
   TeagramUpdateReplacementRestoresMissingTarget
   TeagramUpdateDownloadFailsWithoutMutation
