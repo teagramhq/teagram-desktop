@@ -2285,19 +2285,22 @@ template <typename Predicate>
 		return false;
 	}
 	const auto hasRadio = [&](const QString &text) {
-		const auto radios = content->findChildren<Ui::Radiobutton *>();
-		return std::any_of(radios.begin(), radios.end(), [&](auto radio) {
-			return radio->accessibilityName() == text;
+		const auto widgets = content->findChildren<QWidget *>();
+		return std::any_of(widgets.begin(), widgets.end(), [&](auto widget) {
+			const auto radio = dynamic_cast<Ui::Radiobutton *>(widget);
+			return radio && (radio->accessibilityName() == text);
 		});
 	};
 	const auto findButton = [&](const QString &text) {
-		const auto buttons = layer->findChildren<Ui::RoundButton *>();
-		const auto i
-			= std::find_if(buttons.begin(), buttons.end(), [&](auto button) {
-				  return !button->accessibilityName().compare(
-					  text, Qt::CaseInsensitive);
-			  });
-		return (i != buttons.end()) ? *i : nullptr;
+		for (const auto widget : layer->findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RoundButton *>(widget);
+			if (button
+				&& !button->accessibilityName().compare(text,
+														Qt::CaseInsensitive)) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RoundButton *>(nullptr);
 	};
 	const auto hasEverybody
 		= hasRadio(tr::lng_messages_privacy_everyone(tr::now));
