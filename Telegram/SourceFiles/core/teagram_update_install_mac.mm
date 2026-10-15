@@ -118,24 +118,28 @@ struct BundleInfo {
 	return true;
 }
 
-[[nodiscard]] bool IsCanonicalDirectory(const QString &path,
-										bool privateDirectory) {
+[[nodiscard]] bool IsCanonicalPath(const QString &path) {
 	const auto info = QFileInfo(path);
 	const auto canonical = info.canonicalFilePath();
-	if (!info.isDir() || info.isSymLink() || canonical.isEmpty()
-		|| QDir::cleanPath(canonical)
-			   != QDir::cleanPath(info.absoluteFilePath())) {
+	return info.isDir() && !info.isSymLink() && !canonical.isEmpty()
+		   && QDir::cleanPath(canonical)
+				  == QDir::cleanPath(info.absoluteFilePath());
+}
+
+[[nodiscard]] bool IsCanonicalDirectory(const QString &path,
+										bool privateDirectory) {
+	if (!IsCanonicalPath(path)) {
 		return false;
 	}
 	struct stat stat = {};
-	const auto bytes = QFile::encodeName(canonical);
+	const auto bytes = QFile::encodeName(QFileInfo(path).canonicalFilePath());
 	return ::lstat(bytes.constData(), &stat) == 0 && S_ISDIR(stat.st_mode)
 		   && stat.st_uid == ::geteuid()
 		   && (!privateDirectory || (stat.st_mode & 0077) == 0);
 }
 
 [[nodiscard]] QString CanonicalDirectory(const QString &path) {
-	if (!IsCanonicalDirectory(path, false)) {
+	if (!IsCanonicalPath(path) || !IsTeagramUpdateParentWritable(path)) {
 		return {};
 	}
 	return QDir::cleanPath(QFileInfo(path).canonicalFilePath());
@@ -262,10 +266,9 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 	return ::lstat(bundleBytes.constData(), &bundleInfo) == 0
 		   && S_ISDIR(bundleInfo.st_mode) && bundleInfo.st_uid == ::geteuid()
 		   && ::lstat(parentBytes.constData(), &parentInfo) == 0
-		   && S_ISDIR(parentInfo.st_mode) && parentInfo.st_uid == ::geteuid()
 		   && bundleInfo.st_dev == parentInfo.st_dev
 		   && ::access(bundleBytes.constData(), W_OK) == 0
-		   && ::access(parentBytes.constData(), W_OK | X_OK) == 0;
+		   && IsTeagramUpdateParentWritable(parent);
 }
 
 [[nodiscard]] bool EnsurePrivateStage(const QString &parent,
@@ -892,33 +895,19 @@ TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
 			!= u"io.teagram.desktop"_q) {
 			return TeagramUpdateInstallLocation::Unwritable;
 		}
-		const auto installed
-			= CanonicalBundlePath(FromNative([mainBundle bundlePath]));
-		if (installed.isEmpty()) {
+		const auto bundle = QFileInfo(FromNative([mainBundle bundlePath]));
+		const auto parent = bundle.absolutePath();
+		if (bundle.fileName() != u"Teagram.app"_q
+			|| !IsCanonicalPath(bundle.absoluteFilePath())
+			|| !IsCanonicalPath(parent)) {
 			return TeagramUpdateInstallLocation::Unwritable;
-		} else if (IsTranslocated(installed)) {
+		}
+		const auto installed = QDir::cleanPath(bundle.canonicalFilePath());
+		if (IsTranslocated(installed)) {
 			return TeagramUpdateInstallLocation::Translocated;
 		}
-		const auto parent = QFileInfo(installed).absolutePath();
-		struct stat bundleInfo = {};
-		struct stat parentInfo = {};
-		const auto bundleBytes = QFile::encodeName(installed);
-		const auto parentBytes = QFile::encodeName(parent);
-		if (::lstat(bundleBytes.constData(), &bundleInfo) != 0
-			|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
-			return TeagramUpdateInstallLocation::Unwritable;
-		}
-		if (bundleInfo.st_uid != ::geteuid()
-			|| parentInfo.st_uid != ::geteuid()) {
-			return TeagramUpdateInstallLocation::OtherOwner;
-		} else if (bundleInfo.st_dev != parentInfo.st_dev) {
-			return TeagramUpdateInstallLocation::UnsupportedDisk;
-		} else if (!S_ISDIR(bundleInfo.st_mode) || !S_ISDIR(parentInfo.st_mode)
-				   || ::access(bundleBytes.constData(), W_OK) != 0
-				   || ::access(parentBytes.constData(), W_OK | X_OK) != 0) {
-			return TeagramUpdateInstallLocation::Unwritable;
-		}
-		return TeagramUpdateInstallLocation::Allowed;
+		return ClassifyTeagramUpdateInstallLocation(
+			ReadTeagramUpdateInstallLocationFacts(installed));
 	}
 }
 

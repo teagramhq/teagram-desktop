@@ -206,6 +206,7 @@ private:
 	void updateInnerVisibleArea();
 	void updateControlsGeometry();
 	void updateAdaptiveLayout();
+	void showScheduleBox(Fn<void(Api::SendOptions)> callback);
 	void saveState(not_null<ScheduledMemento*> memento);
 	void restoreState(not_null<ScheduledMemento*> memento);
 	void showAtPosition(

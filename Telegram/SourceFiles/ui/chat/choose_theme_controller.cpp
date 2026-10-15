@@ -38,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_settings.h"
 #include "styles/style_window.h"
 
+#include <QtGui/QAccessible>
 #include <QtWidgets/QApplication>
 
 namespace Ui {
@@ -316,6 +317,12 @@ void ChooseThemeController::initButtons() {
 		controls,
 		tr::lng_chat_theme_change_wallpaper(),
 		st::defaultLightButton);
+	apply->setAccessibleName(tr::lng_chat_theme_apply(tr::now));
+	choose->setAccessibleName(tr::lng_chat_theme_change_wallpaper(tr::now));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	_applyButtonForRegressionTest = apply;
+	_chooseButtonForRegressionTest = choose;
+#endif
 
 	const auto &margin = st::chatThemeButtonMargin;
 	controls->resize(
@@ -817,6 +824,23 @@ void ChooseThemeController::raise() {
 void ChooseThemeController::setFocus() {
 	_content->setFocus();
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool ChooseThemeController::accessibleButtonsForRegressionTest() const {
+	const auto accessible = [](RoundButton *button) {
+		if (!button || (button->accessibilityFocusPolicy() == Qt::NoFocus)
+			|| button->accessibleName().isEmpty()) {
+			return false;
+		}
+		const auto interface = QAccessible::queryAccessibleInterface(button);
+		return interface && (interface->role() == QAccessible::Button)
+			   && (interface->text(QAccessible::Name)
+				   == button->accessibleName());
+	};
+	return accessible(_applyButtonForRegressionTest)
+		   && accessible(_chooseButtonForRegressionTest);
+}
+#endif
 
 rpl::lifetime &ChooseThemeController::lifetime() {
 	return _wrap->lifetime();

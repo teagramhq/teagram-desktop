@@ -74,6 +74,7 @@ public:
 	explicit Private(not_null<MainWindow*> window);
 
 	void setNativeWindow(NSWindow *window, NSView *view);
+	void keepTitleMerged();
 	void initTouchBar(
 		NSWindow *window,
 		not_null<Window::Controller*> controller);
@@ -190,6 +191,26 @@ void MainWindow::Private::setNativeWindow(NSWindow *window, NSView *view) {
 	_public->_customTitleHeight = qMax(qRound(full.size.height - inner.size.height), 0);
 }
 
+void MainWindow::Private::keepTitleMerged() {
+	const auto view = reinterpret_cast<NSView *>(_public->internalWinId());
+	const auto window = view ? [view window] : nil;
+	if (!window) {
+		return;
+	}
+	const auto mask = [window styleMask];
+	if (window != _nativeWindow
+		|| !(mask & NSWindowStyleMaskFullSizeContentView)) {
+		// Qt may replace the NSWindow, e.g. when a GL child is added,
+		// and the new one loses the merged title and lib_ui's full screen
+		// observers. Re-applying the current stays-on-top value is the
+		// only lib_ui entry point that re-runs its title setup on the
+		// current NSWindow; the unchanged Qt flags make it otherwise a no-op.
+		const auto flags = _public->windowFlags();
+		_public->setStaysOnTop(flags.testFlag(Qt::WindowStaysOnTopHint));
+	}
+	setNativeWindow(window, view);
+}
+
 void MainWindow::Private::initTouchBar(
 		NSWindow *window,
 		not_null<Window::Controller*> controller) {
@@ -249,6 +270,9 @@ void MainWindow::initHook() {
 			}
 		}
 	}
+
+	rpl::merge(winIdValue() | rpl::to_empty, shownValue() | rpl::to_empty)
+		| rpl::on_next([=] { _private->keepTitleMerged(); }, lifetime());
 
 	Platform::GlobalMenuMarkdownState(
 	) | rpl::on_next([this](Ui::MarkdownEnabledState state) {

@@ -183,6 +183,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/item_text_options.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "main/session/send_as_peers.h"
 #include "webrtc/webrtc_environment.h"
@@ -2074,6 +2075,10 @@ void HistoryWidget::orderWidgets() {
 void HistoryWidget::toggleChooseChatTheme(
 		not_null<PeerData*> peer,
 		std::optional<bool> show) {
+	if (show.value_or(true)
+		&& !Main::details::chatThemeEditingSupportedForPeer(peer)) {
+		return;
+	}
 	const auto update = [=] {
 		updateInlineBotQuery();
 		updateControlsGeometry();
@@ -5449,6 +5454,10 @@ Api::SendAction HistoryWidget::prepareSendAction(
 void HistoryWidget::sendVoice(const VoiceToSend &data) {
 	if (!canWriteMessage() || data.bytes.isEmpty() || !_history) {
 		return;
+	} else if (!Main::details::scheduledSendAllowedForPeer(
+				   _peer, data.options.scheduled
+							  || data.options.scheduleRepeatPeriod)) {
+		return;
 	}
 
 	const auto withPaymentApproved = [=](int approved) {
@@ -5476,6 +5485,12 @@ void HistoryWidget::sendVoice(const VoiceToSend &data) {
 
 void HistoryWidget::send(Api::SendOptions options) {
 	if (!_history) {
+		return;
+	} else if ((options.scheduled || options.scheduleRepeatPeriod)
+			   && (!_peer
+				   || !Main::details::scheduledSendAllowedForPeer(
+					   _peer,
+					   options.scheduled || options.scheduleRepeatPeriod))) {
 		return;
 	} else if (_editMsgId) {
 		saveEditMessage({});
@@ -5509,7 +5524,9 @@ void HistoryWidget::send(Api::SendOptions options) {
 void HistoryWidget::sendRichDraft(
 		std::shared_ptr<const Iv::RichPage> page,
 		Api::SendOptions options) {
-	if (!page) {
+	if (!page || !_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 	if (ShowEphemeralReplyTextOnlyError(
@@ -5628,6 +5645,11 @@ void HistoryWidget::sendTextWithTags(
 		bool useWebPageDraft,
 		Api::SendOptions options,
 		Fn<void()> done) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
+		return;
+	}
 	if (!options.scheduled) {
 		_cornerButtons.clearReplyReturns();
 	}
@@ -5719,7 +5741,8 @@ void HistoryWidget::sendWithModifiers(Qt::KeyboardModifiers modifiers) {
 }
 
 void HistoryWidget::sendScheduled(Api::SendOptions initialOptions) {
-	if (!_list) {
+	if (!_list || !_peer
+		|| !Main::details::scheduledMessagesSupportedForPeer(_peer)) {
 		return;
 	}
 	const auto ignoreSlowmodeCountdown = true;
@@ -5742,15 +5765,15 @@ void HistoryWidget::sendScheduled(Api::SendOptions initialOptions) {
 SendMenu::Details HistoryWidget::sendMenuDetails() const {
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(replyTo().messageId);
-	const auto type = (!_peer || ephemeralReply)
-		? SendMenu::Type::Disabled
-		: _peer->starsPerMessageChecked()
-		? SendMenu::Type::SilentOnly
-		: _peer->isSelf()
-		? SendMenu::Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_peer)
-		? SendMenu::Type::ScheduledToUser
-		: SendMenu::Type::Scheduled;
+	const auto type = (!_peer || ephemeralReply) ? SendMenu::Type::Disabled
+					  : !Main::details::scheduledMessagesSupportedForPeer(_peer)
+						  ? SendMenu::Type::SilentOnly
+					  : _peer->starsPerMessageChecked()
+						  ? SendMenu::Type::SilentOnly
+					  : _peer->isSelf() ? SendMenu::Type::Reminder
+					  : HistoryView::CanScheduleUntilOnline(_peer)
+						  ? SendMenu::Type::ScheduledToUser
+						  : SendMenu::Type::Scheduled;
 	const auto effectAllowed = _peer && _peer->isUser();
 	return {
 		.type = type,
@@ -6253,7 +6276,9 @@ void HistoryWidget::sendBotCommand(
 		const Bot::SendCommandRequest &request,
 		Api::SendOptions options) {
 	// replyTo != 0 from ReplyKeyboardMarkup, == 0 from command links
-	if (_peer != request.peer.get()) {
+	if (_peer != request.peer.get()
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
 		return;
 	}
 
@@ -6497,6 +6522,25 @@ bool HistoryWidget::isJoinChannel() const {
 bool HistoryWidget::isChoosingTheme() const {
 	return _chooseTheme && _chooseTheme->shouldBeShown();
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HistoryWidget::setDraftTextForRegressionTest(const QString &text) {
+	_field->setTextWithTags({text, TextWithTags::Tags()});
+}
+
+QString HistoryWidget::draftTextForRegressionTest() const {
+	return _field->getTextWithTags().text;
+}
+
+void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
+	send(options);
+}
+
+bool HistoryWidget::chatThemeControlsAccessibleForRegressionTest() const {
+	return isChoosingTheme()
+		   && _chooseTheme->accessibleButtonsForRegressionTest();
+}
+#endif
 
 bool HistoryWidget::isMuteUnmute() const {
 	return _peer
@@ -7641,7 +7685,10 @@ bool HistoryWidget::confirmSendingFiles(
 void HistoryWidget::sendingFilesConfirmed(
 		std::shared_ptr<Ui::PreparedBundle> bundle,
 		Api::SendOptions options) {
-	if (!_peer || showSendingFilesError(*bundle)) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)
+		|| showSendingFilesError(*bundle)) {
 		return;
 	}
 	const auto ephemeralReply = session().ephemeralMessages()
@@ -9046,15 +9093,17 @@ bool HistoryWidget::showSlowmodeError() {
 void HistoryWidget::sendInlineResult(InlineBots::ResultSelected result) {
 	if (!_peer || !_canSendMessages) {
 		return;
+	} else if (!Main::details::scheduledSendAllowedForPeer(
+				   _peer, result.options.scheduled
+							  || result.options.scheduleRepeatPeriod)) {
+		return;
 	} else if (showSlowmodeError()) {
 		return;
 	} else if (const auto error = result.result->getErrorOnSend(_history)) {
 		Data::ShowSendErrorToast(controller(), _peer, error);
 		return;
 	} else if (ShowEphemeralReplyTextOnlyError(
-			controller()->uiShow(),
-			&session(),
-			replyTo().messageId)) {
+				   controller()->uiShow(), &session(), replyTo().messageId)) {
 		return;
 	}
 
@@ -9703,6 +9752,12 @@ bool HistoryWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
 		Api::MessageToSend messageToSend,
 		std::optional<MsgId> localId) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, messageToSend.action.options.scheduled
+					   || messageToSend.action.options.scheduleRepeatPeriod)) {
+		return false;
+	}
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(messageToSend.action.replyTo.messageId);
 	const auto error = (_peer && !ephemeralReply)
@@ -9754,6 +9809,11 @@ bool HistoryWidget::sendExistingDocument(
 bool HistoryWidget::sendExistingPhoto(
 		not_null<PhotoData*> photo,
 		Api::SendOptions options) {
+	if (!_peer
+		|| !Main::details::scheduledSendAllowedForPeer(
+			_peer, options.scheduled || options.scheduleRepeatPeriod)) {
+		return false;
+	}
 	const auto ephemeralReply = session().ephemeralMessages()
 		.isEphemeralBotReply(replyTo().messageId);
 	const auto error = (_peer && !ephemeralReply)

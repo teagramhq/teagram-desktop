@@ -73,7 +73,6 @@ require_text "$linux_workflow" "hashFiles('Telegram/build/docker/centos_env/**')
 require_text "$linux_libraries_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
 require_text "$linux_libraries_workflow" 'branches: [dev]'
 require_text "$linux_libraries_workflow" '    paths:'
-require_text "$linux_libraries_workflow" "      - '!Telegram/build/**'"
 require_text "$linux_libraries_workflow" "      - 'Telegram/build/docker/centos_env/**'"
 require_text "$linux_libraries_workflow" 'packages: write'
 require_text "$linux_libraries_workflow" 'docker/build-push-action@v7'

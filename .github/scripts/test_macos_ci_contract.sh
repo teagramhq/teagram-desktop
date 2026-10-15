@@ -283,7 +283,8 @@ reject_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
 reject_text "$updater_workflow" 'github.event.pull_request.head.repo.full_name'
 require_text "$updater_workflow" 'fetch-depth: 2'
 require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"'
-require_text "$updater_workflow" 'test "${parents[0]}" = "$EXPECTED_BASE_SHA"'
+reject_text "$updater_workflow" 'EXPECTED_BASE_SHA'
+reject_text "$updater_workflow" 'github.event.pull_request.base.sha'
 require_text "$updater_workflow" 'test "${parents[1]}" = "$EXPECTED_HEAD_SHA"'
 require_text "$updater_workflow" 'runs-on: macos-latest'
 require_text "$updater_workflow" 'canonical_tmpdir="$(cd "$TMPDIR" && pwd -P)"'
@@ -304,6 +305,9 @@ for fixture in \
   TeagramUpdateArchiveWritesStayConfined \
   TeagramUpdateInstallFailurePreservesApp \
   TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary \
+  TeagramUpdateInstallLocationAllowsSharedWritableParent \
+  TeagramUpdateReplacementSwapsInSharedWritableParent \
+  TeagramUpdateInstallLocationAllowsGroupWritableApplications \
   TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback \
   TeagramUpdateInstallerRemovesInterruptedExtraction \
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart \
@@ -329,8 +333,8 @@ for fixture in \
 done
 fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
 fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
-if [[ "$fixture_count" != 18 ]]; then
-  printf 'Updater fixture runner must select exactly 18 registered cases, got %s.\n' \
+if [[ "$fixture_count" != 21 ]]; then
+  printf 'Updater fixture runner must select exactly 21 registered cases, got %s.\n' \
     "$fixture_count" >&2
   exit 1
 fi
