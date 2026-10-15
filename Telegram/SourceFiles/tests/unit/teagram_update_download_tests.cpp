@@ -3478,13 +3478,20 @@ TEST_CASE(TeagramUpdateManagerDefersOlderMainUntilStorageShutdown) {
 	CHECK_EQ(fixture->installersCreated, 0);
 	CHECK(fixture->deferredCandidate != nullptr);
 	CHECK_EQ(fixture->deferredDataCopyName, u"tdata-dev-100-2"_q);
-	CHECK_EQ(fixture->highWater, quint64(90));
-	CHECK_EQ(manager->state().highWaterBuild, quint64(90));
+	CHECK_EQ(fixture->highWater, quint64(100));
+	CHECK(fixture->committedHighWaters.empty());
+	CHECK_EQ(manager->state().highWaterBuild, quint64(100));
 	CHECK(fixture->requestedOnlyFixedSource());
 	const auto archive = fixture->deferredCandidate->archivePath();
 	manager.reset();
 	CHECK(QFileInfo::exists(archive));
 	CHECK(fixture->deferredCandidate->downloaded());
+	fixture->automatic = false;
+	auto restartedDev = CreateManager(fixture);
+	restartedDev->start();
+	CHECK_EQ(restartedDev->state().highWaterBuild, quint64(100));
+	CHECK(restartedDev->state().state == TeagramUpdateUiState::Idle);
+	CHECK(fixture->committedHighWaters.empty());
 }
 
 TEST_CASE(TeagramUpdateManagerKeepsBuildWhenShutdownInstallCannotBeQueued) {

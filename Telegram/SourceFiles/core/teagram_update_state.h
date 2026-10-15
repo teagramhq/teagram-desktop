@@ -22,6 +22,8 @@ inline constexpr auto kTeagramUpdateChannelPreference
 	= std::string_view("teagram-update-channel");
 inline constexpr auto kTeagramUpdateHighWaterPreference
 	= std::string_view("teagram-update-high-water");
+inline constexpr auto kTeagramUpdatePendingMainSwitchPreference
+	= std::string_view("teagram-update-pending-main-switch");
 inline constexpr auto kTeagramUpdateToastPreference
 	= std::string_view("teagram-update-pending-toast");
 
@@ -252,6 +254,28 @@ template <typename Settings>
 void WriteTeagramUpdateHighWater(Settings &settings, quint64 build) {
 	settings.template writePref<QByteArray>(kTeagramUpdateHighWaterPreference,
 											QByteArray::number(build));
+}
+
+template <typename Settings>
+[[nodiscard]] bool
+CommitTeagramUpdatePendingMainSwitch(Settings &settings, quint64 runningBuild,
+									 TeagramUpdateChannel compiledChannel) {
+	const auto pending = settings.template readPref<QByteArray>(
+		kTeagramUpdatePendingMainSwitchPreference, QByteArray());
+	if (pending.isEmpty()) {
+		return false;
+	}
+	settings.template writePref<QByteArray>(
+		kTeagramUpdatePendingMainSwitchPreference, QByteArray());
+	auto valid = false;
+	const auto build = pending.toULongLong(&valid);
+	if (!valid || !build || QByteArray::number(build) != pending
+		|| build != runningBuild
+		|| compiledChannel != TeagramUpdateChannel::Main) {
+		return false;
+	}
+	WriteTeagramUpdateHighWater(settings, build);
+	return true;
 }
 
 [[nodiscard]] constexpr std::optional<quint64>

@@ -704,8 +704,6 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 			setState(TeagramUpdateUiState::Rejected);
 			return;
 		}
-		_state.highWaterBuild = _candidate->metadata().build();
-		_env->writeCommittedHighWater(_state.highWaterBuild);
 		setState(TeagramUpdateUiState::Restarting);
 		_candidate.reset();
 		_env->restart();
