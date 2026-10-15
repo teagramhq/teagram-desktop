@@ -4229,7 +4229,8 @@ template <typename Widget>
 				.emoticon = QString::fromUtf8("\xF0\x9F\x8F\xA0"),
 			},
 		});
-		if (cloudThemes.chatThemes().empty()) {
+		if (cloudThemes.chatThemes().empty()
+			|| !cloudThemes.myGiftThemesReady()) {
 			return false;
 		}
 		controller->showPeerHistory(peer);
