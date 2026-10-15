@@ -136,6 +136,9 @@ void CompleteTeagramUpdateStartup();
 [[nodiscard]] bool HasPreviousTeagramUpdateBundle();
 void ShowPreviousTeagramUpdateBundleInFinder();
 
+[[nodiscard]] bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
+											 quint64 runningBuild);
+
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdown(const QString &dataFile,
 								   const std::function<void()> &prepareForLaunch

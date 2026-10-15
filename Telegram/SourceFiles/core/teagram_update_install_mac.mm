@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
@@ -50,6 +51,8 @@ constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
+constexpr auto kDataFolder = "tdata";
+constexpr auto kMaximumDataCopies = 100;
 constexpr auto kCustomIconFile = "Icon\r";
 constexpr auto kFinderInfoAttribute = "com.apple.FinderInfo";
 constexpr auto kQuarantineAttribute = "com.apple.quarantine";
@@ -547,7 +550,7 @@ RecoverAtStartup(const QString &installed, const QString &staging,
 			};
 		}
 		stagePrevious = installedInfo.build == *pending
-						&& stagedInfo.build < installedInfo.build;
+						&& stagedInfo.build != installedInfo.build;
 		if (stagedInfo.build != *pending && !stagePrevious) {
 			return {
 				TeagramUpdateStartupRecoveryReason::Failed,
@@ -762,7 +765,7 @@ enum class StartupWaitResult {
 		|| !ReadBundleInfo(canonicalPrevious, &previousInfo)
 		|| previousInfo.identifier != u"io.teagram.desktop"_q
 		|| previousInfo.executable != u"Teagram"_q
-		|| previousInfo.build >= *pending) {
+		|| previousInfo.build == *pending) {
 		return TeagramUpdateRelaunchResult::Failed;
 	}
 	processId = 0;
@@ -821,6 +824,36 @@ enum class StartupWaitResult {
 		LOG(("Teagram update markers could not be cleared after startup."));
 	}
 	return true;
+}
+
+[[nodiscard]] std::optional<bool> PathTaken(const QString &path) {
+	struct stat info = {};
+	if (::lstat(QFile::encodeName(path).constData(), &info) == 0) {
+		return true;
+	}
+	return (errno == ENOENT) ? std::optional<bool>(false) : std::nullopt;
+}
+
+[[nodiscard]] bool CopyDataFolder(const QString &source,
+								  const QString &target) {
+	const auto sourceBytes = QFile::encodeName(source);
+	const auto targetBytes = QFile::encodeName(target);
+	const auto flags = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW;
+	for (const auto extra :
+		 {copyfile_flags_t(COPYFILE_CLONE), copyfile_flags_t(0)}) {
+		if (::copyfile(sourceBytes.constData(), targetBytes.constData(),
+					   nullptr, flags | extra)
+			== 0) {
+			return true;
+		}
+		if (!MacProtectedPath::CheckPath(
+				MacProtectedPath::Operation::RecursiveDelete, target,
+				"core.teagram-update.data-copy-partial")
+			|| !QDir(target).removeRecursively()) {
+			return false;
+		}
+	}
+	return false;
 }
 
 [[nodiscard]] bool HasPreviousBundleBeside(const QString &installed) {
@@ -892,6 +925,60 @@ void ShowPreviousTeagramUpdateBundleInFinder() {
 		[[NSWorkspace sharedWorkspace] selectFile:Platform::Q2NSString(previous)
 						 inFileViewerRootedAtPath:Platform::Q2NSString(parent)];
 	}
+}
+
+bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
+							   quint64 runningBuild) {
+	const auto root = QDir(workingDirectory);
+	const auto source = root.filePath(QString::fromLatin1(kDataFolder));
+	struct stat info = {};
+	if (::lstat(QFile::encodeName(source).constData(), &info) != 0) {
+		return (errno == ENOENT);
+	} else if (!S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
+		return false;
+	}
+	const auto base = QString::fromLatin1(kDataFolder) + u"-dev-"_q
+					  + QString::number(runningBuild);
+	for (auto index = 1; index <= kMaximumDataCopies; ++index) {
+		const auto name
+			= (index == 1) ? base : (base + u"-"_q + QString::number(index));
+		const auto target = root.filePath(name);
+		const auto partial = root.filePath(u"."_q + name + u".partial"_q);
+		const auto targetTaken = PathTaken(target);
+		const auto partialTaken = PathTaken(partial);
+		if (!targetTaken || !partialTaken) {
+			return false;
+		} else if (*targetTaken || *partialTaken) {
+			continue;
+		}
+		if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Copy,
+										 source,
+										 "core.teagram-update.data-copy")
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Mkdir,
+											partial,
+											"core.teagram-update.data-copy")
+			|| !MacProtectedPath::CheckPair(MacProtectedPath::Operation::Rename,
+											partial, target,
+											"core.teagram-update.data-copy")
+			|| !CopyDataFolder(source, partial)) {
+			LOG(("Teagram update could not copy the data folder."));
+			return false;
+		}
+		if (::renamex_np(QFile::encodeName(partial).constData(),
+						 QFile::encodeName(target).constData(), RENAME_EXCL)
+			!= 0) {
+			LOG(("Teagram update could not keep the data copy."));
+			if (MacProtectedPath::CheckPath(
+					MacProtectedPath::Operation::RecursiveDelete, partial,
+					"core.teagram-update.data-copy-partial")) {
+				QDir(partial).removeRecursively();
+			}
+			return false;
+		}
+		LOG(("Teagram update kept a copy of the data folder: %1").arg(name));
+		return true;
+	}
+	return false;
 }
 
 #ifdef TDESKTOP_UNIT_TESTS
@@ -1039,7 +1126,12 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 			return InstallResult(
 				TeagramUpdateInstallReason::InstalledBuildChanged);
 		}
-		if (candidate.metadata().build() <= candidate.installedBuild()) {
+		const auto build = candidate.metadata().build();
+		const auto switchToMain
+			= candidate.selection() == TeagramUpdateSelection::SwitchToMain
+			  && candidate.metadata().channel() == TeagramUpdateChannel::Main;
+		if (build == candidate.installedBuild()
+			|| (build < candidate.installedBuild() && !switchToMain)) {
 			return InstallResult(TeagramUpdateInstallReason::CandidateRejected);
 		}
 		if (!MacProtectedPath::CheckExternalPathForUse(

@@ -74,6 +74,8 @@ class TeagramUpdateCandidate final {
 
 	[[nodiscard]] const AuthenticatedTeagramUpdate &metadata() const;
 	[[nodiscard]] quint64 installedBuild() const;
+	[[nodiscard]] TeagramUpdateSelection selection() const;
+	[[nodiscard]] bool olderThanInstalled() const;
 	[[nodiscard]] QString archivePath() const;
 	[[nodiscard]] bool downloaded() const;
 	void discardArchive();
@@ -82,10 +84,12 @@ class TeagramUpdateCandidate final {
 	friend class TeagramUpdateDownloader;
 	TeagramUpdateCandidate(AuthenticatedTeagramUpdate metadata,
 						   quint64 installedBuild,
+						   TeagramUpdateSelection selection,
 						   std::unique_ptr<QTemporaryFile> archive);
 
 	AuthenticatedTeagramUpdate _metadata;
 	quint64 _installedBuild = 0;
+	TeagramUpdateSelection _selection = TeagramUpdateSelection::Newer;
 	std::unique_ptr<QTemporaryFile> _archive;
 };
 
@@ -113,11 +117,11 @@ class TeagramUpdateDownloader final {
 #endif // TDESKTOP_UNIT_TESTS
 
 	void cancel();
-	[[nodiscard]] TeagramUpdateDownloadResult
-	checkForUpdates(quint64 installedBuild,
-					TeagramUpdateChannel installedChannel,
-					TeagramUpdateProgressHandler progress = {},
-					quint64 highWaterBuild = 0, bool downloadArchive = true);
+	[[nodiscard]] TeagramUpdateDownloadResult checkForUpdates(
+		quint64 installedBuild, TeagramUpdateChannel installedChannel,
+		TeagramUpdateProgressHandler progress = {}, quint64 highWaterBuild = 0,
+		bool downloadArchive = true,
+		TeagramUpdateSelection selection = TeagramUpdateSelection::Newer);
 	[[nodiscard]] TeagramUpdateDownloadResult
 	download(const TeagramUpdateCandidate &available,
 			 TeagramUpdateProgressHandler progress = {});

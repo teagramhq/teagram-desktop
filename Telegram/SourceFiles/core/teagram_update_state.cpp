@@ -10,7 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 TeagramUpdateNoteVariant TeagramUpdateNoteForState(TeagramUpdateUiState state,
-												   bool automatic) {
+												   bool automatic,
+												   bool candidateOlder) {
 	switch (state) {
 	case TeagramUpdateUiState::Idle:
 	case TeagramUpdateUiState::Checking:
@@ -24,14 +25,16 @@ TeagramUpdateNoteVariant TeagramUpdateNoteForState(TeagramUpdateUiState state,
 		return automatic ? TeagramUpdateNoteVariant::UnreachableAutomatic
 						 : TeagramUpdateNoteVariant::UnreachableManual;
 	case TeagramUpdateUiState::Available:
-		return TeagramUpdateNoteVariant::Available;
+		return candidateOlder ? TeagramUpdateNoteVariant::AvailableOlder
+							  : TeagramUpdateNoteVariant::Available;
 	case TeagramUpdateUiState::Downloading:
 		return TeagramUpdateNoteVariant::Downloading;
 	case TeagramUpdateUiState::Preparing:
 		return TeagramUpdateNoteVariant::Preparing;
 	case TeagramUpdateUiState::Ready:
-		return automatic ? TeagramUpdateNoteVariant::ReadyAutomatic
-						 : TeagramUpdateNoteVariant::ReadyManual;
+		return (automatic && !candidateOlder)
+				   ? TeagramUpdateNoteVariant::ReadyAutomatic
+				   : TeagramUpdateNoteVariant::ReadyManual;
 	case TeagramUpdateUiState::RestartPending:
 		return TeagramUpdateNoteVariant::RestartPending;
 	case TeagramUpdateUiState::Restarting:
@@ -62,7 +65,13 @@ bool TeagramUpdateBuildIsEligible(std::uint64_t runningBuild,
 								  std::uint64_t highWaterBuild,
 								  TeagramUpdateChannel selectedChannel,
 								  std::uint64_t candidateBuild,
-								  TeagramUpdateChannel candidateChannel) {
+								  TeagramUpdateChannel candidateChannel,
+								  TeagramUpdateSelection selection) {
+	if (selection == TeagramUpdateSelection::SwitchToMain) {
+		return candidateBuild != runningBuild
+			   && selectedChannel == TeagramUpdateChannel::Main
+			   && candidateChannel == TeagramUpdateChannel::Main;
+	}
 	return candidateBuild > runningBuild && candidateBuild > highWaterBuild
 		   && (selectedChannel == TeagramUpdateChannel::Dev
 			   || candidateChannel == TeagramUpdateChannel::Main);

@@ -172,3 +172,48 @@ TEST_CASE(TeagramUpdateNoteVariantsFollowStateAndAutomaticSetting) {
 	CHECK(TeagramUpdateNoteForState(State::RecoveryRequired, false)
 		  == Note::RecoveryRequired);
 }
+
+TEST_CASE(TeagramUpdateOlderMainIsEligibleOnlyOnExplicitSwitch) {
+	using Channel = TeagramUpdateChannel;
+	using Selection = TeagramUpdateSelection;
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Main, false)
+		  == Selection::SwitchToMain);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Main, true)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Dev, false)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Main, Channel::Main, false)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Main, Channel::Dev, false)
+		  == Selection::Newer);
+
+	CHECK(!TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+										Channel::Main));
+	CHECK(TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+									   Channel::Main, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(
+		271, 271, Channel::Main, 271, Channel::Main, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+										Channel::Dev, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(
+		271, 271, Channel::Dev, 250, Channel::Main, Selection::SwitchToMain));
+}
+
+TEST_CASE(TeagramUpdateOlderMainResetsHighWaterAndNeedsConfirmation) {
+	CHECK(TeagramUpdateCommittedHighWater(271, 250, true, true)
+		  == std::optional<quint64>(250));
+	CHECK(TeagramUpdateCommittedHighWater(271, 250, true)
+		  == std::optional<quint64>(271));
+	CHECK(!TeagramUpdateCommittedHighWater(271, 250, false, true));
+
+	using State = TeagramUpdateUiState;
+	using Note = TeagramUpdateNoteVariant;
+	CHECK(TeagramUpdateChatListActionForState(State::Available, true)
+		  == TeagramUpdateChatListAction::Hidden);
+	CHECK(TeagramUpdateChatListActionForState(State::Available)
+		  == TeagramUpdateChatListAction::DownloadAndInstall);
+	CHECK(TeagramUpdateNoteForState(State::Available, true, true)
+		  == Note::AvailableOlder);
+	CHECK(TeagramUpdateNoteForState(State::Ready, true, true)
+		  == Note::ReadyManual);
+}
