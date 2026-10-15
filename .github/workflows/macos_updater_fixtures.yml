@@ -45,25 +45,34 @@ jobs:
       - name: Get repository name.
         run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> "$GITHUB_ENV"
 
-      - name: Check out the exact PR head.
+      - name: Check out the exact PR merge ref.
         uses: actions/checkout@v7
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
+          # Depth 2 fetches both parents so the next step can check them.
+          fetch-depth: 2
           submodules: recursive
           persist-credentials: false
           path: ${{ env.REPO_NAME }}
 
-      - name: Verify the checked out PR head.
+      - name: Verify the checked out PR merge ref.
         env:
+          EXPECTED_MERGE_SHA: ${{ github.sha }}
+          EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           checked_out_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
-          test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
-          printf 'Tested PR head: %s\n' "$checked_out_sha"
+          test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"
+          read -r -a parents <<< "$(git -C "$REPO_NAME" show -s --format=%P HEAD)"
+          test "${#parents[@]}" = 2
+          test "${parents[0]}" = "$EXPECTED_BASE_SHA"
+          test "${parents[1]}" = "$EXPECTED_HEAD_SHA"
+          printf 'Tested PR merge ref: %s (base %s, head %s)\n' \
+            "$checked_out_sha" "${parents[0]}" "${parents[1]}"
           mkdir -p "$RUNNER_TEMP/teagram-updater-fixtures"
-          printf 'tested_sha=%s\n' "$checked_out_sha" \
+          printf 'tested_sha=%s\nbase_sha=%s\nhead_sha=%s\n' \
+            "$checked_out_sha" "${parents[0]}" "${parents[1]}" \
             > "$RUNNER_TEMP/teagram-updater-fixtures/revision.txt"
 
       - name: Set up build tools and Xcode.
@@ -173,7 +182,7 @@ jobs:
       - name: Run focused updater fixtures.
         id: fixtures
         env:
-          TESTED_SHA: ${{ github.event.pull_request.head.sha }}
+          TESTED_SHA: ${{ github.sha }}
         run: |
           bash "$REPO_NAME/.github/scripts/run_teagram_updater_fixtures.sh" \
             "$REPO_NAME/out/Debug/test_unit" \
