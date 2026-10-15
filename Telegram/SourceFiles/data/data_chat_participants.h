@@ -70,6 +70,12 @@ template <typename Chat>
 	return BasicChatControlsFor(chat->usesCustomServer());
 }
 
+template <typename Peer>
+[[nodiscard]] inline bool SupportsMemberRestrictions(const Peer &peer) {
+	const auto chat = peer->asChat();
+	return !chat || BasicChatControlsOf(chat).canRestrictMembers;
+}
+
 template <typename Rights>
 [[nodiscard]] inline constexpr bool
 BasicChatAdminRoleForSave(Rights selectedRights) {

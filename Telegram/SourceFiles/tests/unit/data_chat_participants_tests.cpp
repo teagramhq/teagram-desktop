@@ -41,6 +41,20 @@ auto ResolveForAccount(
 	});
 }
 
+struct RestrictionsChat {
+	bool customServer = false;
+	bool usesCustomServer() const;
+};
+
+struct RestrictionsPeer {
+	const RestrictionsChat *chat = nullptr;
+	const RestrictionsChat *asChat() const;
+};
+
+bool RestrictionsChat::usesCustomServer() const { return customServer; }
+
+const RestrictionsChat *RestrictionsPeer::asChat() const { return chat; }
+
 } // namespace
 
 TEST_CASE(BasicGroupAdminPromotionRequiresCreatorMembership) {
@@ -79,6 +93,23 @@ TEST_CASE(StockBasicGroupKeepsEveryControl) {
 	CHECK(stock.canEditHistoryVisibility);
 	CHECK(stock.canRestrictMembers);
 	CHECK(stock.canEditMemberTags);
+}
+
+TEST_CASE(CustomBasicGroupCannotOpenMemberRestrictions) {
+	const auto chat = RestrictionsChat{true};
+	const auto peer = RestrictionsPeer{&chat};
+	CHECK(!Data::details::SupportsMemberRestrictions(&peer));
+}
+
+TEST_CASE(StockBasicGroupCanOpenMemberRestrictions) {
+	const auto chat = RestrictionsChat{false};
+	const auto peer = RestrictionsPeer{&chat};
+	CHECK(Data::details::SupportsMemberRestrictions(&peer));
+}
+
+TEST_CASE(ChannelMemberRestrictionsAreUnchanged) {
+	const auto peer = RestrictionsPeer();
+	CHECK(Data::details::SupportsMemberRestrictions(&peer));
 }
 
 TEST_CASE(CustomServerAdminSaveUsesSelectedRights) {
