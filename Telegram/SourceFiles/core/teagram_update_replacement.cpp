@@ -221,15 +221,38 @@ Injected(const TeagramUpdateReplacementFailureInjector &failureInjector,
 
 TeagramUpdateInstallLocation ClassifyTeagramUpdateInstallLocation(
 	const TeagramUpdateInstallLocationFacts &facts) {
-	if (!facts.bundleOwned) {
+	if (!facts.bundleDirectory || !facts.parentDirectory) {
+		return TeagramUpdateInstallLocation::Unwritable;
+	} else if (!facts.bundleOwned) {
 		return TeagramUpdateInstallLocation::OtherOwner;
 	} else if (!facts.sameDevice) {
 		return TeagramUpdateInstallLocation::UnsupportedDisk;
-	} else if (!facts.bundleDirectory || !facts.parentDirectory
-			   || !facts.bundleWritable || !facts.parentWritable) {
+	} else if (!facts.bundleWritable || !facts.parentWritable) {
 		return TeagramUpdateInstallLocation::Unwritable;
 	}
 	return TeagramUpdateInstallLocation::Allowed;
+}
+
+TeagramUpdateInstallLocationFacts
+ReadTeagramUpdateInstallLocationFacts(const QString &bundlePath) {
+	const auto parent = QFileInfo(bundlePath).absolutePath();
+	const auto bundleBytes = QFile::encodeName(bundlePath);
+	const auto parentBytes = QFile::encodeName(parent);
+	struct stat bundleInfo = {};
+	struct stat parentInfo = {};
+	if (bundleBytes.isEmpty() || parentBytes.isEmpty()
+		|| ::lstat(bundleBytes.constData(), &bundleInfo) != 0
+		|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
+		return {};
+	}
+	return {
+		.bundleDirectory = S_ISDIR(bundleInfo.st_mode),
+		.bundleOwned = (bundleInfo.st_uid == ::geteuid()),
+		.bundleWritable = (::access(bundleBytes.constData(), W_OK) == 0),
+		.parentDirectory = S_ISDIR(parentInfo.st_mode),
+		.parentWritable = IsTeagramUpdateParentWritable(parent),
+		.sameDevice = (bundleInfo.st_dev == parentInfo.st_dev),
+	};
 }
 
 bool IsTeagramUpdateParentWritable(const QString &directory) {

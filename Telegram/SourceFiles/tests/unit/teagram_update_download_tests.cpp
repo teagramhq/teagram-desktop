@@ -38,6 +38,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMetaObject>
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
+
+#include <membership.h>
 #endif // Q_OS_MAC
 
 #include <openssl/evp.h>
@@ -1290,15 +1292,9 @@ TEST_CASE(TeagramUpdateInstallLocationAllowsSharedWritableParent) {
 	}
 }
 
-TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
-	if (::geteuid() == 0) {
-		return;
-	}
-	const auto shared = SharedWritableFolder();
-	CHECK(!shared.isEmpty());
-	if (shared.isEmpty()) {
-		return;
-	}
+// Installs a user-owned bundle into a folder owned by someone else, checks
+// the install-location gate allows it, then swaps in a new build there.
+void CheckUpdateInForeignOwnedParent(const QString &shared) {
 	const auto unique = QUuid::createUuid().toString(QUuid::WithoutBraces);
 	const auto installed
 		= QDir(shared).filePath(u"teagram-test-%1.app"_q.arg(unique));
@@ -1325,6 +1321,9 @@ TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
 	CHECK(QDir().mkpath(QFileInfo(candidateExecutable).absolutePath()));
 	CHECK(WriteFile(installedExecutable, QByteArrayLiteral("build 100")));
 	CHECK(WriteFile(candidateExecutable, QByteArrayLiteral("build 101")));
+	CHECK(ClassifyTeagramUpdateInstallLocation(
+			  ReadTeagramUpdateInstallLocationFacts(installed))
+		  == TeagramUpdateInstallLocation::Allowed);
 	CHECK(QFile::setPermissions(staging.path(), QFileDevice::ReadOwner
 													| QFileDevice::WriteOwner
 													| QFileDevice::ExeOwner));
@@ -1347,7 +1346,42 @@ TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
 	CHECK(installedInfo.st_uid == ::geteuid());
 }
 
+TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
+	if (::geteuid() == 0) {
+		return;
+	}
+	const auto shared = SharedWritableFolder();
+	CHECK(!shared.isEmpty());
+	if (!shared.isEmpty()) {
+		CheckUpdateInForeignOwnedParent(shared);
+	}
+}
+
 #if defined(Q_OS_MAC)
+// /Applications on a stock Mac is root:admin 0775: admins write to it only
+// through the group. macOS CI runs the tests as an admin user.
+TEST_CASE(TeagramUpdateInstallLocationAllowsGroupWritableApplications) {
+	const auto applications = u"/Applications"_q;
+	const auto bytes = QFile::encodeName(applications);
+	struct stat info = {};
+	CHECK_EQ(::lstat(bytes.constData(), &info), 0);
+	CHECK(S_ISDIR(info.st_mode));
+	CHECK(info.st_uid == 0);
+	CHECK((info.st_mode & S_IWGRP) != 0);
+	CHECK((info.st_mode & S_IWOTH) == 0);
+	uuid_t user = {};
+	uuid_t group = {};
+	auto member = 0;
+	CHECK_EQ(::mbr_uid_to_uuid(::geteuid(), user), 0);
+	CHECK_EQ(::mbr_gid_to_uuid(info.st_gid, group), 0);
+	CHECK_EQ(::mbr_check_membership(user, group, &member), 0);
+	if (::geteuid() == 0 || !member) {
+		return;
+	}
+	CHECK(IsTeagramUpdateParentWritable(applications));
+	CheckUpdateInForeignOwnedParent(applications);
+}
+
 TEST_CASE(TeagramUpdateWorkerShutdownCleansCandidateArchive) {
 	auto fixture = CreateInstallerCandidateFixture();
 	CHECK(fixture->candidate != nullptr);

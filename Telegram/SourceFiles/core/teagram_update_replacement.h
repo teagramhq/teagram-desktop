@@ -33,6 +33,9 @@ struct TeagramUpdateInstallLocationFacts {
 [[nodiscard]] TeagramUpdateInstallLocation ClassifyTeagramUpdateInstallLocation(
 	const TeagramUpdateInstallLocationFacts &facts);
 
+[[nodiscard]] TeagramUpdateInstallLocationFacts
+ReadTeagramUpdateInstallLocationFacts(const QString &bundlePath);
+
 // The folder holding Teagram.app needs no particular owner: /Applications is
 // root:admin 0775 on a stock Mac and admins write to it through the group.
 [[nodiscard]] bool IsTeagramUpdateParentWritable(const QString &directory);

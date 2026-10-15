@@ -757,22 +757,8 @@ TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation() {
 		if (IsTranslocated(installed)) {
 			return TeagramUpdateInstallLocation::Translocated;
 		}
-		struct stat bundleInfo = {};
-		struct stat parentInfo = {};
-		const auto bundleBytes = QFile::encodeName(installed);
-		const auto parentBytes = QFile::encodeName(parent);
-		if (::lstat(bundleBytes.constData(), &bundleInfo) != 0
-			|| ::lstat(parentBytes.constData(), &parentInfo) != 0) {
-			return TeagramUpdateInstallLocation::Unwritable;
-		}
-		return ClassifyTeagramUpdateInstallLocation({
-			.bundleDirectory = S_ISDIR(bundleInfo.st_mode),
-			.bundleOwned = (bundleInfo.st_uid == ::geteuid()),
-			.bundleWritable = (::access(bundleBytes.constData(), W_OK) == 0),
-			.parentDirectory = S_ISDIR(parentInfo.st_mode),
-			.parentWritable = IsTeagramUpdateParentWritable(parent),
-			.sameDevice = (bundleInfo.st_dev == parentInfo.st_dev),
-		});
+		return ClassifyTeagramUpdateInstallLocation(
+			ReadTeagramUpdateInstallLocationFacts(installed));
 	}
 }
 
