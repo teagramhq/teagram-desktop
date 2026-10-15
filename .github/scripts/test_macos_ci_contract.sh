@@ -264,6 +264,34 @@ require_text "$packaged_workflow" 'Teagram-macOS-arm64-QA'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
+# The shipped package links the same pinned Libraries the MacOS. gate builds.
+prepare_libraries='./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent'
+require_text "$mac_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" './configure.sh \'
+mac_libs_keys="$(grep -E '^ +key: macOS-libs-' "$mac_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+packaged_libs_keys="$(grep -E '^ +key: macOS-libs-' "$packaged_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+if [[ -z "$mac_libs_keys" || "$mac_libs_keys" != "$packaged_libs_keys" ]]; then
+  printf 'MacOS Packaged. must restore the same Libraries cache key as MacOS.\n' >&2
+  exit 1
+fi
+mac_brew_packages="$(grep -E '^ +packages=\(' "$mac_workflow")"
+packaged_brew_packages="$(grep -E '^ +packages=\(' "$packaged_workflow")"
+if [[ -z "$mac_brew_packages" || "$mac_brew_packages" != "$packaged_brew_packages" ]]; then
+  printf 'MacOS Packaged. must install the same Homebrew build tools as MacOS.\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c 'brew install' "$packaged_workflow")" != 1 ]]; then
+  printf 'MacOS Packaged. must install Homebrew packages only from the shared tool list.\n' >&2
+  exit 1
+fi
+reject_text "$packaged_workflow" 'refs/heads/master'
+reject_text "$packaged_workflow" 'git clone'
+reject_text "$packaged_workflow" '/opt/homebrew/opt/'
+reject_text "$packaged_workflow" '/opt/homebrew/Cellar/'
+reject_text "$packaged_workflow" 'CMAKE_PREFIX_PATH'
+reject_text "$packaged_workflow" 'macdeployqt'
+
 require_text "$unit_workflow" '  workflow_dispatch:'
 reject_text "$unit_workflow" '  pull_request:'
 require_text "$unit_workflow" 'concurrency:'
