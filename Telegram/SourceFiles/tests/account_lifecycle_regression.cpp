@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
+#include "base/options.h"
 #include "base/platform/base_platform_info.h"
 #include "base/weak_ptr.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -3002,15 +3003,28 @@ template <typename Predicate>
 					 "message fixtures were not created.\n");
 		return false;
 	}
-	const auto customAdminLogRichTranslateVisible
-		= AdminLog::ShouldShowTranslateAction(customRichItem);
-	if (!customHasProvider || !customRichItem->richPage()
-		|| customAdminLogRichTranslateVisible) {
+	auto customAdminLogProvider
+		= Ui::details::TranslateProviderChoice::Unavailable;
+	auto customAdminLogRichTranslateVisible = true;
+	{
+		auto &translateUrl
+			= base::options::lookup<QString>("translate-url-template");
+		const auto previousTranslateUrl = translateUrl.value();
+		const auto restoreTranslateUrl
+			= gsl::finally([&] { translateUrl.set(previousTranslateUrl); });
+		translateUrl.set(u"https://translation.example/?q=%q"_q);
+		customAdminLogProvider
+			= Ui::TranslateProviderChoiceForSession(&customSession);
+		customAdminLogRichTranslateVisible
+			= AdminLog::ShouldShowTranslateAction(customRichItem);
+	}
+	if (customAdminLogProvider != Ui::details::TranslateProviderChoice::Url
+		|| !customRichItem->richPage() || customAdminLogRichTranslateVisible) {
 		std::fprintf(
 			stderr,
-			"Translation controls regression failed: custom admin-log rich "
-			"action visibility did not match (provider=%d visible=%d).\n",
-			customHasProvider, customAdminLogRichTranslateVisible);
+			"Translation controls regression failed: admin-log rich action "
+			"visibility did not match (provider=%d visible=%d).\n",
+			int(customAdminLogProvider), customAdminLogRichTranslateVisible);
 		return false;
 	}
 	auto staleRichBox = customController->show(
