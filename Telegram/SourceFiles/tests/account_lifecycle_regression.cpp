@@ -83,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
+#include "settings/settings_privacy_policy.h"
 #include "spellcheck/platform/platform_language.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
@@ -236,7 +237,7 @@ template <typename Request>
 template <typename Request>
 [[nodiscard]] bool FailChannelSaveRequestForRegressionTest(
 	ChannelSaveRequestCapture &capture, size_t index,
-	const Request &expectedRequest, const MTP::Error &error) {
+	const Request &expectedRequest, const QString &errorType) {
 	if (capture.requests.size() != index + 1) {
 		std::fprintf(
 			stderr,
@@ -258,6 +259,8 @@ template <typename Request>
 	}
 	auto response = MTP::Response();
 	response.requestId = request.id;
+	const auto error
+		= MTP::Error(MTP_rpc_error(MTP_int(400), MTP_string(errorType)));
 	const auto fail = std::move(request.callbacks.fail);
 	if (!fail(error, response)) {
 		std::fprintf(stderr,
@@ -1833,6 +1836,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		= SettingsSearchHasEntry(entries, u"notifications/calls"_q);
 	const auto hasCallsNotificationsAcceptEntry
 		= SettingsSearchHasEntry(entries, u"notifications/calls/accept"_q);
+	const auto privacyCallsExpected
+		= callsSupported
+		  && Settings::details::IsPrivacyKeySupported(
+			  Api::UserPrivacy::Key::Calls);
 	const auto hasPrivacyCallsEntry
 		= SettingsSearchHasEntry(entries, u"privacy/calls"_q);
 	const auto hasAcceptCallSectionKeyword
@@ -1865,7 +1872,7 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		  && (hasCallsAcceptEntry == callsSupported)
 		  && (hasCallsNotificationsSection == callsSupported)
 		  && (hasCallsNotificationsAcceptEntry == callsSupported)
-		  && (hasPrivacyCallsEntry == callsSupported)
+		  && (hasPrivacyCallsEntry == privacyCallsExpected)
 		  && (callsSupported || !hasAcceptCallSectionKeyword)
 		  && hasSystemPreferencesEntry && (hasYourColorEntry == paidSupported)
 		  && (hasPeerColorEntry == paidSupported)
@@ -1883,9 +1890,10 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 			hasPaid, paidSupported, hasPrivacy, hasBio, bioSupported,
 			hasChatAutomation, botAppsSupported, hasCallsAcceptEntry,
 			hasCallsNotificationsSection, hasCallsNotificationsAcceptEntry,
-			hasPrivacyCallsEntry, callsSupported, hasAcceptCallSectionKeyword,
-			hasSystemPreferencesEntry, hasYourColorEntry, hasPeerColorEntry,
-			hasPrivacyGiftsEntry, hasStockPaidRows);
+			hasPrivacyCallsEntry, privacyCallsExpected,
+			hasAcceptCallSectionKeyword, hasSystemPreferencesEntry,
+			hasYourColorEntry, hasPeerColorEntry, hasPrivacyGiftsEntry,
+			hasStockPaidRows);
 	}
 	return matches;
 }
@@ -4506,7 +4514,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 				MTPchannels_UpdatePaidMessagesPrice(
 					MTP_flags(PriceFlag::f_broadcast_messages_allowed),
 					stockInput, MTP_long(42)),
-				MTP::Error::Local(u"CHAT_NOT_MODIFIED"_q, QString()))) {
+				u"CHAT_NOT_MODIFIED"_q)) {
 			return false;
 		}
 		if (!WaitForRegressionCondition([&] { return !stockSaveBox; })) {
@@ -4641,7 +4649,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 				capture, 1,
 				MTPmessages_EditChatAbout(customChannel->input(),
 										  MTP_string(rejectedDescription)),
-				MTP::Error::Local(u"CHAT_ABOUT_INVALID"_q, QString()))) {
+				u"CHAT_ABOUT_INVALID"_q)) {
 			return false;
 		}
 		QCoreApplication::processEvents();
