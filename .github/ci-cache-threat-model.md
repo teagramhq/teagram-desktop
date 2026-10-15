@@ -21,6 +21,18 @@ neither, and `linux-build` is skipped with it. A fork-controlled script running 
 recover the cache token and plant default-branch cache entries that the signed
 `MacOS Packaged.` release build restores.
 
+## Manual feedback lanes
+
+`Unit feedback.` and `MacOS unit feedback.` are dispatched on `dev` but build
+a selected feature ref, so that ref's preparation and configure code runs
+with the `dev` cache token. Both workflows set `cache-mode: read`: the cache
+service refuses any save, so a feature ref cannot plant or overwrite entries
+that trusted `dev` builds restore, whatever code it runs. Neither workflow
+contains a save step, and `test_ci_cache_contract.sh` fails if either regains
+cache write access. The Linux lane pulls the dependency image `dev`'s
+publisher pushed for the ref's recipe with `packages: read`; on a missing tag
+it builds the image locally and never pushes it.
+
 ## Actions cache cleanup
 
 The `pull_request_target` cleanup runs only when a PR closes. It does not check
@@ -40,6 +52,13 @@ for the exact `refs/heads/dev` ref and the `macOS-arm64-ccache-dev-` key
 prefix. It keeps the newest entry of each profile, including the unprofiled
 key `MacOS Packaged.` saves. PR-controlled workflow runs fail the source validation and cannot
 select a cache key or ID.
+
+A completed `Linux.` run triggers a separate job with the same source
+validation and token scope. It lists only the `Linux-tdesktop-default-` key
+prefix on `refs/heads/dev`, keeps the newest entry, and deletes the older
+ones. Each run ID-keyed save on `dev` otherwise stays until eviction. The
+Linux dependency image lives in GHCR, not the Actions cache, so this job never
+touches it.
 
 Cache deletion can cause a later build to compile more work. It cannot change
 source, packages, or deployed binaries; caches are reproducible. Reverting

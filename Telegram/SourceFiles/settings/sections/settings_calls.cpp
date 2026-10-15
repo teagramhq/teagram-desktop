@@ -375,6 +375,7 @@ void BuildCameraSection(SectionBuilder &builder) {
 void BuildOtherSection(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 	const auto session = builder.session();
+	const auto callsSupported = session->callsSupported();
 
 	builder.addSkip();
 	builder.addDivider();
@@ -382,30 +383,35 @@ void BuildOtherSection(SectionBuilder &builder) {
 	builder.addSubsectionTitle({
 		.id = u"calls/other"_q,
 		.title = tr::lng_settings_call_section_other(),
-		.keywords = { u"calls"_q, u"accept"_q, u"system"_q },
+		.keywords = callsSupported
+						? QStringList{u"calls"_q, u"accept"_q, u"system"_q}
+						: QStringList{u"calls"_q, u"system"_q},
 	});
 
-	const auto api = &session->api();
-	const auto authorizations = &api->authorizations();
-	authorizations->reload();
+	if (callsSupported) {
+		const auto authorizations = &session->api().authorizations();
+		authorizations->reload();
 
-	const auto acceptCalls = builder.addButton({
-		.id = u"calls/accept"_q,
-		.title = tr::lng_settings_call_accept_calls(),
-		.st = &st::settingsButtonNoIcon,
-		.toggled = authorizations->callsDisabledHereValue()
-			| rpl::map(!rpl::mappers::_1),
-		.keywords = { u"accept"_q, u"receive"_q, u"incoming"_q },
-		.highlight = { .rippleShape = true },
-	});
+		const auto acceptCalls = builder.addButton({
+			.id = u"calls/accept"_q,
+			.title = tr::lng_settings_call_accept_calls(),
+			.st = &st::settingsButtonNoIcon,
+			.toggled = authorizations->callsDisabledHereValue()
+					   | rpl::map(!rpl::mappers::_1),
+			.keywords = {u"accept"_q, u"receive"_q, u"incoming"_q},
+			.highlight = {.rippleShape = true},
+		});
 
-	if (acceptCalls) {
-		acceptCalls->toggledChanges(
-		) | rpl::filter([=](bool value) {
-			return (value == authorizations->callsDisabledHere());
-		}) | rpl::on_next([=](bool value) {
-			authorizations->toggleCallsDisabledHere(!value);
-		}, acceptCalls->lifetime());
+		if (acceptCalls) {
+			acceptCalls->toggledChanges() | rpl::filter([=](bool value) {
+				return (value == authorizations->callsDisabledHere());
+			})
+				| rpl::on_next(
+					[=](bool value) {
+						authorizations->toggleCallsDisabledHere(!value);
+					},
+					acceptCalls->lifetime());
+		}
 	}
 
 	builder.addButton({

@@ -424,17 +424,18 @@ void TranslateBox(
 		rpl::variable<LanguageId> to;
 	};
 	const auto state = box->lifetime().make_state<State>(&peer->session());
-	if (IsServerMsgId(msgId) && state->provider->supportsMessageId()) {
+	if (IsServerMsgId(msgId)) {
 		if (const auto item = peer->owner().message(peer->id, msgId)) {
 			if (const auto page = item->richPage()) {
-				if (TranslateRichBox(
-						box,
-						peer,
-						msgId,
-						page,
-						text,
-						hasCopyRestriction)) {
+				if (!peer->session().serverTranslationSupported()) {
+					box->closeBox();
 					return;
+				}
+				if (state->provider->supportsMessageId()) {
+					if (TranslateRichBox(box, peer, msgId, page, text,
+										 hasCopyRestriction)) {
+						return;
+					}
 				}
 			}
 		}
@@ -480,9 +481,11 @@ void TranslateBox(
 	});
 }
 
-bool SkipTranslate(TextWithEntities textWithEntities) {
+bool SkipTranslate(not_null<Main::Session *> session,
+				   TextWithEntities textWithEntities, bool richMessage) {
 	const auto &text = textWithEntities.text;
-	if (text.isEmpty()) {
+	if (text.isEmpty() || !HasTranslateProvider(session)
+		|| (richMessage && !session->serverTranslationSupported())) {
 		return true;
 	}
 	if (!Core::App().settings().translateButtonEnabled()) {

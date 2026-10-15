@@ -553,7 +553,7 @@ TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(
 	const TeagramUpdateInstallLock &lock, const QString &installedBundlePath,
 	const QString &stagingDirectory, const QString &previousBundlePath,
 	const QString &runningBundlePath, bool stagingBundleIsPrevious,
-	bool startupReady, bool noOtherInstance) {
+	bool discardPrevious, bool noOtherInstance) {
 	using Reason = TeagramUpdateStartupRecoveryReason;
 	if (!lock.acquired()) {
 		return {Reason::Busy, {}};
@@ -651,8 +651,8 @@ TeagramUpdateStartupRecoveryResult RecoverTeagramUpdateReplacement(
 		}
 	}
 	const auto currentIsInstalled = running.full == installed.full;
-	if (previousExists && currentIsInstalled && startupReady && noOtherInstance
-		&& !movedPrevious) {
+	if (previousExists && currentIsInstalled && discardPrevious
+		&& noOtherInstance && !movedPrevious) {
 		if (!RemoveTreeAt(installedParent.value, previous.name.constData())
 			|| ::fsync(installedParent.value) != 0) {
 			return {Reason::Failed, previous.full};

@@ -26,13 +26,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
+#include <copyfile.h>
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <functional>
@@ -47,6 +50,12 @@ constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
+constexpr auto kCustomIconFile = "Icon\r";
+constexpr auto kFinderInfoAttribute = "com.apple.FinderInfo";
+constexpr auto kQuarantineAttribute = "com.apple.quarantine";
+constexpr auto kFinderInfoSize = 32;
+constexpr auto kFinderFlagsOffset = 8;
+constexpr auto kHasCustomIconFlag = 0x04; // High byte of kHasCustomIcon.
 
 struct BundleInfo {
 	QString identifier;
@@ -399,6 +408,76 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 	return removed;
 }
 
+[[nodiscard]] bool CarryCustomIconFile(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed) + '/' + kCustomIconFile;
+	const auto target = QFile::encodeName(candidate) + '/' + kCustomIconFile;
+	struct stat info = {};
+	if (::lstat(source.constData(), &info) != 0) {
+		return errno == ENOENT;
+	} else if (!S_ISREG(info.st_mode) || info.st_uid != ::geteuid()) {
+		return false;
+	}
+	if (::copyfile(source.constData(), target.constData(), nullptr,
+				   COPYFILE_DATA | COPYFILE_XATTR | COPYFILE_EXCL
+					   | COPYFILE_NOFOLLOW)
+		!= 0) {
+		if (errno != EEXIST) {
+			::unlink(target.constData());
+		}
+		return false;
+	}
+	if (::removexattr(target.constData(), kQuarantineAttribute, XATTR_NOFOLLOW)
+			!= 0
+		&& errno != ENOATTR) {
+		::unlink(target.constData());
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool CarryCustomIconFlag(const QString &installed,
+									   const QString &candidate) {
+	const auto source = QFile::encodeName(installed);
+	const auto target = QFile::encodeName(candidate);
+	auto installedInfo = std::array<char, kFinderInfoSize>();
+	const auto read = ::getxattr(source.constData(), kFinderInfoAttribute,
+								 installedInfo.data(), installedInfo.size(), 0,
+								 XATTR_NOFOLLOW);
+	if (read < 0) {
+		return errno == ENOATTR;
+	} else if (read != kFinderInfoSize
+			   || !(installedInfo[kFinderFlagsOffset] & kHasCustomIconFlag)) {
+		return true;
+	}
+	auto candidateInfo = std::array<char, kFinderInfoSize>();
+	const auto existing = ::getxattr(target.constData(), kFinderInfoAttribute,
+									 candidateInfo.data(), candidateInfo.size(),
+									 0, XATTR_NOFOLLOW);
+	if (existing != kFinderInfoSize) {
+		if (existing >= 0 || errno != ENOATTR) {
+			return false;
+		}
+		candidateInfo.fill(0);
+	}
+	candidateInfo[kFinderFlagsOffset] |= kHasCustomIconFlag;
+	return ::setxattr(target.constData(), kFinderInfoAttribute,
+					  candidateInfo.data(), candidateInfo.size(), 0,
+					  XATTR_NOFOLLOW)
+		   == 0;
+}
+
+// A custom Finder icon lives outside the sealed Contents directory, so
+// it is carried over only after the candidate's code seal was verified.
+void CarryCustomIcon(const QString &installed, const QString &candidate) {
+	if (!CarryCustomIconFile(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon file."));
+	}
+	if (!CarryCustomIconFlag(installed, candidate)) {
+		LOG(("Teagram update could not keep the custom icon flag."));
+	}
+}
+
 [[nodiscard]] TeagramUpdateInstallResult
 InstallResult(TeagramUpdateInstallReason reason, const QString &previous = {},
 			  bool replacementCommitted = false) {
@@ -408,6 +487,7 @@ InstallResult(TeagramUpdateInstallReason reason, const QString &previous = {},
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
 RecoverAtStartup(const QString &installed, const QString &staging,
 				 const QString &previous, const QString &running,
+				 bool discardPrevious,
 				 const std::function<bool()> &otherInstanceRunning = {}) {
 	auto lock = TeagramUpdateInstallLock(installed);
 	if (!lock.acquired()) {
@@ -475,11 +555,13 @@ RecoverAtStartup(const QString &installed, const QString &staging,
 			};
 		}
 	}
-	const auto noOtherInstance = !(
-		otherInstanceRunning ? otherInstanceRunning() : OtherInstanceRunning());
+	const auto noOtherInstance
+		= discardPrevious
+		  && !(otherInstanceRunning ? otherInstanceRunning()
+									: OtherInstanceRunning());
 	return RecoverTeagramUpdateReplacement(lock, installed, staging, previous,
-										   running, stagePrevious, true,
-										   noOtherInstance);
+										   running, stagePrevious,
+										   discardPrevious, noOtherInstance);
 }
 
 [[nodiscard]] bool RequestApplicationRestart() {
@@ -712,8 +794,8 @@ enum class StartupWaitResult {
 	const auto runningIsInstalled = running == QDir::cleanPath(installed);
 	const auto startupAcknowledged
 		= runningIsInstalled && pending && *pending == info.build;
-	const auto recovered = RecoverAtStartup(installed, staging, previous,
-											running, otherInstanceRunning);
+	const auto recovered
+		= RecoverAtStartup(installed, staging, previous, running, false);
 	if (recovered.reason == TeagramUpdateStartupRecoveryReason::Failed
 		|| recovered.reason == TeagramUpdateStartupRecoveryReason::Busy) {
 		LOG(("Teagram update recovery failed: reason=%1")
@@ -727,11 +809,24 @@ enum class StartupWaitResult {
 		}
 		return false;
 	}
-	if (startupAcknowledged
-		&& !WriteMarker(parent, kStartedMarker, info.build)) {
+	if (!startupAcknowledged
+		|| !WriteMarker(parent, kStartedMarker, info.build)) {
 		return false;
 	}
-	return startupAcknowledged;
+	const auto relaunchWaiting = otherInstanceRunning ? otherInstanceRunning()
+													  : OtherInstanceRunning();
+	if (!relaunchWaiting
+		&& (!RemoveMarker(parent, kCommitMarker)
+			|| !RemoveMarker(parent, kStartedMarker))) {
+		LOG(("Teagram update markers could not be cleared after startup."));
+	}
+	return true;
+}
+
+[[nodiscard]] bool HasPreviousBundleBeside(const QString &installed) {
+	const auto previous = QDir(QFileInfo(installed).absolutePath())
+							  .filePath(QString::fromLatin1(kPreviousBundle));
+	return CanonicalRunningBundlePath(previous) == QDir::cleanPath(previous);
 }
 
 } // namespace
@@ -780,11 +875,7 @@ bool HasPreviousTeagramUpdateBundle() {
 			!= u"io.teagram.desktop"_q) {
 			return false;
 		}
-		const auto installed = FromNative([mainBundle bundlePath]);
-		const auto previous
-			= QDir(QFileInfo(installed).absolutePath())
-				  .filePath(QString::fromLatin1(kPreviousBundle));
-		return CanonicalBundlePath(previous) == QDir::cleanPath(previous);
+		return HasPreviousBundleBeside(FromNative([mainBundle bundlePath]));
 	}
 }
 
@@ -808,7 +899,7 @@ TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
 	const QString &installed, const QString &staging, const QString &previous,
 	const QString &running, const std::function<bool()> &otherInstanceRunning) {
-	return RecoverAtStartup(installed, staging, previous, running,
+	return RecoverAtStartup(installed, staging, previous, running, false,
 							otherInstanceRunning);
 }
 
@@ -819,6 +910,11 @@ bool CompleteTeagramUpdateStartupForTesting(
 		return CompleteTeagramUpdateStartupForBundle(runningBundlePath,
 													 otherInstanceRunning);
 	}
+}
+
+bool HasPreviousTeagramUpdateBundleForTesting(
+	const QString &installedBundlePath) {
+	return HasPreviousBundleBeside(installedBundlePath);
 }
 
 TeagramUpdateRelaunchResult RelaunchTeagramUpdateAfterShutdownForTesting(
@@ -960,8 +1056,9 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 		if (cancelled()) {
 			return InstallResult(TeagramUpdateInstallReason::Cancelled);
 		}
-		const auto recovery = RecoverAtStartup(installed, staging, previous,
-											   installed, otherInstanceRunning);
+		const auto recovery
+			= RecoverAtStartup(installed, staging, previous, installed, true,
+							   otherInstanceRunning);
 		if (recovery.reason == TeagramUpdateStartupRecoveryReason::Busy
 			|| recovery.reason
 				   == TeagramUpdateStartupRecoveryReason::PreviousRetained) {
@@ -1048,6 +1145,7 @@ TeagramUpdateInstaller::install(const TeagramUpdateCandidate &candidate,
 			return InstallResult(TeagramUpdateInstallReason::InvalidTarget);
 		}
 		base::Platform::RemoveQuarantine(extraction.bundlePath);
+		CarryCustomIcon(installed, extraction.bundlePath);
 		if (!RemoveMarker(parent, kStartedMarker)) {
 			return InstallResult(TeagramUpdateInstallReason::ReplacementFailed);
 		}

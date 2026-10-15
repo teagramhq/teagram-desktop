@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <utility>
 #include <vector>
 
+#include "lang/translate_provider_selection.h"
 #include "main/session_feature_support.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/connection_server_resolving.h"
@@ -1620,6 +1621,101 @@ TEST_CASE(ChannelAutoTranslationRequiresServerSupport) {
 		Main::details::serverTranslationSupported(stock), true));
 	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
 		Main::details::serverTranslationSupported(stock), false));
+}
+
+TEST_CASE(TranslationProviderSelectionRespectsSessionAndAvailability) {
+	using Choice = Ui::details::TranslateProviderChoice;
+	const auto flags = std::array{false, true};
+	for (const auto serverSupported : flags) {
+		for (const auto hasUrlTemplate : flags) {
+			for (const auto secureUrlTemplate : flags) {
+				for (const auto platformAvailable : flags) {
+					for (const auto usePlatformTranslation : flags) {
+						const auto actual
+							= Ui::details::ChooseTranslateProvider(
+								serverSupported, hasUrlTemplate,
+								secureUrlTemplate, platformAvailable,
+								usePlatformTranslation);
+						auto expected = Choice::Unavailable;
+						if (serverSupported) {
+							if (hasUrlTemplate) {
+								expected = Choice::Url;
+							} else if (platformAvailable
+									   && usePlatformTranslation) {
+								expected = Choice::Platform;
+							} else {
+								expected = Choice::MTProto;
+							}
+						} else if (hasUrlTemplate && secureUrlTemplate) {
+							expected = Choice::Url;
+						} else if (platformAvailable) {
+							expected = Choice::Platform;
+						}
+						CHECK(actual == expected);
+						if (!serverSupported) {
+							CHECK(actual != Choice::MTProto);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE(TranslationProviderUrlTemplatesRequireHttpsAndAHost) {
+	CHECK(Ui::details::HasTranslateUrlTemplate(
+		u"https://translate.example/?q=%q"_q));
+	CHECK(Ui::details::IsSecureTranslateUrlTemplate(
+		u"https://translate.example/?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"http://translate.example/?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"https:///translate?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"https://translate.example/%q/%zz"_q));
+	CHECK(!Ui::details::HasTranslateUrlTemplate(
+		u"https://translate.example/?q=%s"_q));
+}
+
+TEST_CASE(TranslationProviderSelectionDoesNotShareStockPreference) {
+	using Choice = Ui::details::TranslateProviderChoice;
+	const auto select = [](bool serverSupported, bool usePlatformTranslation) {
+		return Ui::details::ChooseTranslateProvider(
+			serverSupported, false, false, true, usePlatformTranslation);
+	};
+	{
+		const auto customBeforeStock = select(false, false);
+		const auto stockAfterPreferenceChange = select(true, true);
+		const auto customAfterStock = select(false, true);
+		CHECK(customBeforeStock == Choice::Platform);
+		CHECK(stockAfterPreferenceChange == Choice::Platform);
+		CHECK(customAfterStock == customBeforeStock);
+	}
+	{
+		const auto stockBeforeCustom = select(true, false);
+		const auto customAfterStock = select(false, true);
+		const auto stockAfterCustom = select(true, true);
+		CHECK(stockBeforeCustom == Choice::MTProto);
+		CHECK(customAfterStock == Choice::Platform);
+		CHECK(stockAfterCustom == Choice::Platform);
+	}
+}
+
+TEST_CASE(TranslationProviderSelectionUsesOwningDcOptions) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	const auto choose = [](const DcOptions &options) {
+		return Ui::details::ChooseTranslateProvider(
+			Main::details::serverTranslationSupported(options), false, false,
+			false, true);
+	};
+	CHECK(choose(custom) == Ui::details::TranslateProviderChoice::Unavailable);
+	CHECK(choose(blocked) == Ui::details::TranslateProviderChoice::Unavailable);
+	CHECK(choose(stock) == Ui::details::TranslateProviderChoice::MTProto);
 }
 
 struct BioTargetTestMtp {
