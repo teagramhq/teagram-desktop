@@ -148,6 +148,8 @@ for path in \
   Telegram/build/teagram_update_manifest.py \
   Telegram/build/version \
   Telegram/build/qt_version.py \
+  Telegram/build/changelog2appstream.py \
+  changelog.txt \
   .github/scripts/linux_libraries_image.sh \
   .github/scripts/test_linux_libraries_image.sh \
   .github/workflows/linux_libraries.yml; do
@@ -204,6 +206,8 @@ for path in \
   Telegram/build/teagram_update_manifest.py \
   Telegram/build/version \
   Telegram/build/qt_version.py \
+  Telegram/build/changelog2appstream.py \
+  changelog.txt \
   Telegram/build/docker/centos_env/build.sh \
   Telegram/build/mac_isolation_test.sh \
   Telegram/build/setup.iss \
