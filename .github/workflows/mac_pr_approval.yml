@@ -37,9 +37,15 @@ jobs:
               exit 1
             fi
             echo "Cancelling MacOS. run $run_id"
-            # A run that finished after the listing answers 409; nothing is left to cancel.
-            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" \
-              || echo "::warning::MacOS. run $run_id could not be cancelled."
+            if ! cancel_output="$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" 2>&1)"; then
+              # A run that finished after the listing answers 409; nothing is left to cancel.
+              if [[ "$cancel_output" != *"(HTTP 409)"* ]]; then
+                printf '%s\n' "$cancel_output" >&2
+                echo "::error::MacOS. run $run_id could not be cancelled."
+                exit 1
+              fi
+              echo "MacOS. run $run_id already finished."
+            fi
           done <<< "$run_ids"
 
       - name: Remove macos-build from the superseded head.

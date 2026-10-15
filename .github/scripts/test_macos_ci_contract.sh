@@ -101,6 +101,50 @@ require_text "$approval_workflow" 'gh api -X POST "repos/$GITHUB_REPOSITORY/acti
 require_text "$approval_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
 require_text "$approval_workflow" 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build"'
 reject_text "$approval_workflow" 'head.repo.full_name == github.repository'
+cancel_step="$(awk '
+  /- name: Cancel MacOS. builds of the superseded head./ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step && /^        run: \|$/ { in_run = 1; next }
+  in_run { sub(/^          /, ""); print }
+' "$approval_workflow")"
+if [[ -z "$cancel_step" ]]; then
+  printf 'Could not extract the MacOS. cancel step from %s.\n' "$approval_workflow" >&2
+  exit 1
+fi
+cancel_fixture="$(mktemp -d)"
+trap 'rm -rf "$cancel_fixture"' EXIT
+cat > "$cancel_fixture/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+if [[ "$*" == *'/actions/workflows/mac.yml/runs'* ]]; then
+  printf '%s' '{"workflow_runs":[{"id":11,"status":"in_progress","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":12,"status":"queued","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":13,"status":"in_progress","head_repository":{"full_name":"other/teagram-desktop"}},{"id":14,"status":"completed","head_repository":{"full_name":"fork/teagram-desktop"}}]}'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+case "$*" in
+  *'/runs/11/cancel'*) printf 'gh: Cannot cancel a workflow run that is completed. (HTTP 409)\n' >&2; exit 1 ;;
+  *'/runs/12/cancel'*) [[ "$FAKE_GH_CANCEL_12" == ok ]] && exit 0; printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2; exit 1 ;;
+esac
+exit 0
+FAKE_GH
+chmod +x "$cancel_fixture/gh"
+run_cancel_step() {
+  : > "$cancel_fixture/calls"
+  PATH="$cancel_fixture:$PATH" FAKE_GH_LOG="$cancel_fixture/calls" FAKE_GH_CANCEL_12="$1" \
+    GITHUB_REPOSITORY=teagramhq/teagram-desktop HEAD_REF=feature HEAD_REPOSITORY=fork/teagram-desktop \
+    bash -c "$cancel_step" >/dev/null 2>&1
+}
+if ! run_cancel_step ok; then
+  printf 'A 409 for a run that already finished must not fail the MacOS. cancel step.\n' >&2
+  exit 1
+fi
+if [[ "$(grep -o 'runs/[0-9]*/cancel' "$cancel_fixture/calls" | tr '\n' ' ')" != 'runs/11/cancel runs/12/cancel ' ]]; then
+  printf 'The MacOS. cancel step must cancel only unfinished runs from the PR head repository, got: %s\n' "$(tr '\n' ' ' < "$cancel_fixture/calls")" >&2
+  exit 1
+fi
+if run_cancel_step forbidden; then
+  printf 'A cancel failure other than 409 must fail the MacOS. cancel step before the label is cleared.\n' >&2
+  exit 1
+fi
 reject_text "$approval_workflow" 'actions/checkout'
 reject_text "$approval_workflow" 'github.event.pull_request.head.sha'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
