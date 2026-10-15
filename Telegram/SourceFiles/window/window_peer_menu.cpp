@@ -1242,6 +1242,9 @@ void Filler::addManageChat() {
 }
 
 void Filler::addBoostChat() {
+	if (!_controller->session().paidFeaturesSupported()) {
+		return;
+	}
 	if (const auto channel = _peer->asChannel()) {
 		if (channel->isMonoforum()) {
 			return;
@@ -1279,9 +1282,9 @@ void Filler::addViewStatistics() {
 				}
 			}, &st::menuIconStats);
 		}
-		if (canGetStats
-			|| channel->amCreator()
-			|| channel->canPostStories()) {
+		if (_controller->session().paidFeaturesSupported()
+			&& (canGetStats || channel->amCreator()
+				|| channel->canPostStories())) {
 			_addAction(tr::lng_boosts_title(tr::now), [=] {
 				if ([[maybe_unused]] const auto strong = weak.get()) {
 					controller->showSection(Info::Boosts::Make(peer));

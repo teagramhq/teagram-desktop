@@ -277,6 +277,14 @@ Result ShowAutoDeleteSetCustom(const Context &ctx) {
 	return Result::Handled;
 }
 
+Result ShowSendGift(const Context &ctx) {
+	if (!ctx.controller) {
+		return Result::NeedsAuth;
+	}
+	Ui::ChooseStarGiftRecipient(ctx.controller);
+	return Result::Handled;
+}
+
 Result ShowLoginEmail(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
@@ -1595,15 +1603,19 @@ void RegisterSettingsHandlers(Router &router) {
 		.requiresAuth = false,
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"premium"_q,
-		.action = SettingsSection{ ::Settings::PremiumId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"premium"_q,
+				   .action = SettingsSection{::Settings::PremiumId()},
+				   .requiresPaidFeatures = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"stars"_q,
-		.action = SettingsSection{ ::Settings::CreditsId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"stars"_q,
+				   .action = SettingsSection{::Settings::CreditsId()},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"stars/top-up"_q,
@@ -1654,15 +1666,19 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"ton"_q,
-		.action = SettingsSection{ ::Settings::CurrencyId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"ton"_q,
+				   .action = SettingsSection{::Settings::CurrencyId()},
+				   .requiresPaidFeatures = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"business"_q,
-		.action = SettingsSection{ ::Settings::BusinessId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"business"_q,
+				   .action = SettingsSection{::Settings::BusinessId()},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"business/do-not-hide-ads"_q,
@@ -1673,26 +1689,24 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
-		.path = u"send-gift"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			Ui::ChooseStarGiftRecipient(ctx.controller);
-			return Result::Handled;
-		}},
-	});
+								  .path = u"send-gift"_q,
+								  .action = CodeBlock{ShowSendGift},
+								  .requiresPaidFeatures = true,
+							  });
 
-	router.add(u"settings"_q, {
-		.path = u"send-gift/self"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			Ui::ShowStarGiftBox(ctx.controller, ctx.controller->session().user());
-			return Result::Handled;
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"send-gift/self"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   if (!ctx.controller) {
+						   return Result::NeedsAuth;
+					   }
+					   Ui::ShowStarGiftBox(ctx.controller,
+										   ctx.controller->session().user());
+					   return Result::Handled;
+				   }},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"saved-messages"_q,

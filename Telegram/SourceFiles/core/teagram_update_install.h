@@ -85,6 +85,9 @@ RecoverTeagramUpdateInstallerAtStartupForTesting(
 	const QString &runningBundlePath,
 	const std::function<bool()> &otherInstanceRunning = {});
 
+[[nodiscard]] bool
+HasPreviousTeagramUpdateBundleForTesting(const QString &installedBundlePath);
+
 [[nodiscard]] TeagramUpdateRelaunchResult
 RelaunchTeagramUpdateAfterShutdownForTesting(
 	const QString &currentBundlePath, const QString &dataFile,
