@@ -63,7 +63,8 @@ class TeagramUpdateManagerEnvironment {
 	[[nodiscard]] virtual bool supportsMinimumOs(const QString &minimum) const
 		= 0;
 	[[nodiscard]] virtual bool previousBundleAvailable() const = 0;
-	[[nodiscard]] virtual bool copyDataBeforeOlderBuild(const QString &name)
+	[[nodiscard]] virtual bool deferOlderBuildUntilShutdown(
+		std::shared_ptr<TeagramUpdateCandidate> candidate, const QString &name)
 		= 0;
 	virtual void showPreviousBundle() const = 0;
 	[[nodiscard]] virtual std::shared_ptr<TeagramUpdateDownloader>

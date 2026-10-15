@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/teagram_update_install.h"
+#ifndef TDESKTOP_UNIT_TESTS
+#include "core/application.h"
+#endif
 
 #include "base/platform/mac/base_utilities_mac.h"
 #include "base/platform/base_platform_file_utilities.h"
@@ -67,6 +70,15 @@ struct BundleInfo {
 	QString channel;
 	quint64 build = 0;
 };
+
+struct ShutdownInstall {
+	std::shared_ptr<TeagramUpdateCandidate> candidate;
+	QString workingDirectory;
+	QString confirmedName;
+	QString failureText;
+};
+
+std::optional<ShutdownInstall> PendingShutdownInstall;
 
 [[nodiscard]] bool IsCanonicalDirectory(const QString &path,
 										bool privateDirectory);
@@ -957,6 +969,19 @@ QString TeagramUpdateDataCopyName(const QString &workingDirectory,
 	return {};
 }
 
+bool ScheduleOlderTeagramUpdateAfterShutdown(
+	std::shared_ptr<TeagramUpdateCandidate> candidate,
+	const QString &workingDirectory, const QString &confirmedName,
+	const QString &failureText) {
+	if (PendingShutdownInstall || !candidate || !candidate->downloaded()
+		|| !candidate->olderThanInstalled() || confirmedName.isEmpty()) {
+		return false;
+	}
+	PendingShutdownInstall = ShutdownInstall{
+		std::move(candidate), workingDirectory, confirmedName, failureText};
+	return true;
+}
+
 bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
 							   quint64 runningBuild,
 							   const QString &confirmedName) {
@@ -1025,7 +1050,61 @@ bool KeepTeagramUpdateDataCopy(const QString &workingDirectory,
 	return false;
 }
 
+namespace {
+
+[[nodiscard]] std::optional<TeagramUpdateInstallResult>
+InstallScheduledOlderTeagramUpdate(
 #ifdef TDESKTOP_UNIT_TESTS
+	TeagramUpdateInstallerTestHooks hooks = {}
+#endif
+) {
+	if (!PendingShutdownInstall) {
+		return std::nullopt;
+	}
+#ifdef TDESKTOP_UNIT_TESTS
+	const auto applicationRunning
+		= hooks.applicationRunning && hooks.applicationRunning();
+#else
+	const auto applicationRunning = IsAppLaunched();
+#endif
+	if (applicationRunning) {
+		return InstallResult(TeagramUpdateInstallReason::Busy);
+	}
+	const auto pending = std::exchange(PendingShutdownInstall, std::nullopt);
+#ifdef TDESKTOP_UNIT_TESTS
+	const auto otherInstance = hooks.otherInstanceRunning
+								   ? hooks.otherInstanceRunning()
+								   : OtherInstanceRunning();
+#else
+	const auto otherInstance = OtherInstanceRunning();
+#endif
+	if (otherInstance) {
+		return InstallResult(TeagramUpdateInstallReason::Busy);
+	}
+	if (!KeepTeagramUpdateDataCopy(pending->workingDirectory,
+								   pending->candidate->installedBuild(),
+								   pending->confirmedName)) {
+		return InstallResult(TeagramUpdateInstallReason::DataCopyFailed);
+	}
+#ifdef TDESKTOP_UNIT_TESTS
+	auto installer = TeagramUpdateInstaller(std::move(hooks));
+#else
+	auto installer = TeagramUpdateInstaller();
+#endif
+	return installer.install(
+		*pending->candidate, {},
+		[](const std::function<bool()> &) { return true; });
+}
+
+} // namespace
+
+#ifdef TDESKTOP_UNIT_TESTS
+std::optional<TeagramUpdateInstallResult>
+InstallScheduledOlderTeagramUpdateForTesting(
+	TeagramUpdateInstallerTestHooks hooks) {
+	return InstallScheduledOlderTeagramUpdate(std::move(hooks));
+}
+
 TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
 	const QString &installed, const QString &staging, const QString &previous,
@@ -1371,6 +1450,23 @@ void CompleteTeagramUpdateStartup() {
 		}
 		(void)CompleteTeagramUpdateStartupForBundle(
 			FromNative([mainBundle bundlePath]));
+	}
+}
+
+void CompleteScheduledTeagramUpdateAfterShutdown() {
+	@autoreleasepool {
+		const auto failureText = PendingShutdownInstall
+									 ? PendingShutdownInstall->failureText
+									 : QString();
+		if (const auto result = InstallScheduledOlderTeagramUpdate();
+			result && !result->replacementCommitted) {
+			LOG(("Teagram shutdown update failed: reason=%1")
+					.arg(int(result->reason)));
+			const auto alert = [[NSAlert alloc] init];
+			alert.messageText = Platform::Q2NSString(failureText);
+			[alert runModal];
+			return;
+		}
 	}
 }
 

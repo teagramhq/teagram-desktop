@@ -148,9 +148,13 @@ class Environment final : public TeagramUpdateManagerEnvironment {
 		ShowPreviousTeagramUpdateBundleInFinder();
 	}
 
-	bool copyDataBeforeOlderBuild(const QString &name) override {
-		return KeepTeagramUpdateDataCopy(cWorkingDir(), kTeagramUpdateBuild,
-										 name);
+	bool deferOlderBuildUntilShutdown(
+		std::shared_ptr<TeagramUpdateCandidate> candidate,
+		const QString &name) override {
+		const auto failure = tr::lng_teagram_update_shutdown_failed(
+			tr::now, lt_build, QString::number(candidate->metadata().build()));
+		return ScheduleOlderTeagramUpdateAfterShutdown(
+			std::move(candidate), cWorkingDir(), name, failure);
 	}
 
 	std::shared_ptr<TeagramUpdateDownloader> createDownloader() override {

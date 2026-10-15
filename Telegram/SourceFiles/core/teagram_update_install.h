@@ -37,6 +37,7 @@ enum class TeagramUpdateInstallReason {
 	RefusedUnsupportedDisk,
 	InstalledBuildChanged,
 	CandidateRejected,
+	DataCopyFailed,
 	ArchiveRejected,
 	ReplacementFailed,
 	RecoveryRequired,
@@ -71,9 +72,14 @@ struct TeagramUpdateInstallerTestHooks {
 	std::function<bool(const QString &)> hasArchitecture;
 	std::function<bool(const QString &)> hasCleanCodeSeal;
 	std::function<bool()> otherInstanceRunning;
+	std::function<bool()> applicationRunning;
 	std::function<bool()> requestRestart;
 	TeagramUpdateReplacementFailureInjector replacementFailureInjector;
 };
+
+[[nodiscard]] std::optional<TeagramUpdateInstallResult>
+InstallScheduledOlderTeagramUpdateForTesting(
+	TeagramUpdateInstallerTestHooks hooks);
 
 [[nodiscard]] TeagramUpdateStartupRecoveryResult
 RecoverTeagramUpdateInstallerAtStartupForTesting(
@@ -127,6 +133,13 @@ void CompleteTeagramUpdateStartup();
 [[nodiscard]] TeagramUpdateInstallLocation CheckTeagramUpdateInstallLocation();
 [[nodiscard]] bool HasPreviousTeagramUpdateBundle();
 void ShowPreviousTeagramUpdateBundleInFinder();
+
+[[nodiscard]] bool ScheduleOlderTeagramUpdateAfterShutdown(
+	std::shared_ptr<TeagramUpdateCandidate> candidate,
+	const QString &workingDirectory, const QString &confirmedName,
+	const QString &failureText);
+
+void CompleteScheduledTeagramUpdateAfterShutdown();
 
 [[nodiscard]] QString TeagramUpdateDataCopyName(const QString &workingDirectory,
 												quint64 runningBuild);

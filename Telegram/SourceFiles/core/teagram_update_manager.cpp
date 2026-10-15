@@ -695,6 +695,22 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 	}
 	_pendingExplicitRestart = false;
 	_automaticJob = automatic;
+	if (_candidate->olderThanInstalled()) {
+		if (_dataCopyName.isEmpty()
+			|| !_env->deferOlderBuildUntilShutdown(_candidate, _dataCopyName)) {
+			_candidate->discardArchive();
+			_candidate.reset();
+			_state.rejectionCode = u"data-copy"_q;
+			setState(TeagramUpdateUiState::Rejected);
+			return;
+		}
+		_state.highWaterBuild = _candidate->metadata().build();
+		_env->writeCommittedHighWater(_state.highWaterBuild);
+		setState(TeagramUpdateUiState::Restarting);
+		_candidate.reset();
+		_env->restart();
+		return;
+	}
 	const auto candidate = _candidate;
 	const auto generation = ++_generation;
 	const auto job = std::make_shared<Job>();
@@ -703,33 +719,7 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 	_job = job;
 	_state.progressPercent = 0;
 	setState(TeagramUpdateUiState::Preparing);
-	const auto env = _env.get();
-	const auto dataCopyName = _dataCopyName;
 	auto thread = QThread::create([=] {
-		if (candidate->olderThanInstalled()
-			&& (dataCopyName.isEmpty()
-				|| !env->copyDataBeforeOlderBuild(dataCopyName))) {
-			QMetaObject::invokeMethod(
-				this,
-				[=] {
-					if (generation != _generation) {
-						return;
-					}
-					candidate->discardArchive();
-					if (_candidate == candidate) {
-						_candidate.reset();
-					}
-					_state.candidateBuild = candidate->metadata().build();
-					_state.rejectionCode = u"data-copy"_q;
-					LOG(("Teagram update install stopped: candidateBuild=%1 "
-						 "replacementCommitted=0 rejectionCode=%2")
-							.arg(candidate->metadata().build())
-							.arg(_state.rejectionCode));
-					setState(TeagramUpdateUiState::Rejected);
-				},
-				Qt::QueuedConnection);
-			return;
-		}
 		const auto result = job->installer->install(
 			*job->candidate,
 			[this, generation, candidate](TeagramUpdateInstallStage stage,
@@ -860,6 +850,7 @@ void TeagramUpdateManager::beginInstall(bool automatic) {
 				case TeagramUpdateInstallReason::RefusedUnsupportedDisk:
 					setState(TeagramUpdateUiState::Refused);
 					break;
+				case TeagramUpdateInstallReason::DataCopyFailed:
 				case TeagramUpdateInstallReason::CandidateRejected:
 				case TeagramUpdateInstallReason::ArchiveRejected: {
 					const auto rejected = TeagramUpdateRecordRejectedBuild(

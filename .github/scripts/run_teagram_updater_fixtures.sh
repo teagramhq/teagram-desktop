@@ -23,6 +23,7 @@ fixtures=(
   TeagramUpdateStartupKeepsOlderPreviousBundle
   TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt
   TeagramUpdateDataCopyKeepsOriginalFolder
+  TeagramUpdateShutdownInstallCopiesFinalWrites
   TeagramUpdateInstallerKeepsCustomIcon
   TeagramUpdateReplacementRetainsPreviousThroughStartup
   TeagramUpdateReplacementRestoresMissingTarget

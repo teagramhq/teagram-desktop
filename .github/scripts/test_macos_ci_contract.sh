@@ -314,6 +314,7 @@ for fixture in \
   TeagramUpdateStartupKeepsOlderPreviousBundle \
   TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt \
   TeagramUpdateDataCopyKeepsOriginalFolder \
+  TeagramUpdateShutdownInstallCopiesFinalWrites \
   TeagramUpdateInstallerKeepsCustomIcon \
   TeagramUpdateReplacementRetainsPreviousThroughStartup \
   TeagramUpdateReplacementRestoresMissingTarget \
@@ -333,8 +334,8 @@ for fixture in \
 done
 fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
 fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
-if [[ "$fixture_count" != 21 ]]; then
-  printf 'Updater fixture runner must select exactly 21 registered cases, got %s.\n' \
+if [[ "$fixture_count" != 22 ]]; then
+  printf 'Updater fixture runner must select exactly 22 registered cases, got %s.\n' \
     "$fixture_count" >&2
   exit 1
 fi

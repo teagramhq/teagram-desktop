@@ -632,6 +632,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_older_title" = "Move to an older build?";
 "lng_teagram_update_older_text" = "Main build {build} is older than this build ({running}). Teagram will download it, check its signature, install it and restart on Main.\n\nBefore installing, Teagram keeps a full copy of your data folder next to it, named {folder}, and never removes it. An older build may not read everything this build saved. If an account is missing on Main, switch back to Dev. If it is still missing there, quit Teagram, rename the tdata folder to an unused name, then rename that copy to tdata.";
 "lng_teagram_update_older_confirm" = "Install older build";
+"lng_teagram_update_shutdown_failed" = "Teagram couldn't install Main build {build}. It will reopen the current build. Your data folder was left in place.";
 "lng_teagram_update_bar_after_call" = "Update after call";
 "lng_teagram_update_bar_after_recording" = "Update after recording";
 "lng_teagram_update_bar_after_upload" = "Update after upload";
