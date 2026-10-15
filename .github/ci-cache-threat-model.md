@@ -41,6 +41,13 @@ prefix. It keeps the newest entry of each profile, including the unprofiled
 key `MacOS Packaged.` saves. PR-controlled workflow runs fail the source validation and cannot
 select a cache key or ID.
 
+A completed `Linux.` run triggers a separate job with the same source
+validation and token scope. It lists only the `Linux-tdesktop-default-` key
+prefix on `refs/heads/dev`, keeps the newest entry, and deletes the older
+ones. Each run ID-keyed save on `dev` otherwise stays until eviction. The
+Linux dependency image lives in GHCR, not the Actions cache, so this job never
+touches it.
+
 Cache deletion can cause a later build to compile more work. It cannot change
 source, packages, or deployed binaries; caches are reproducible. Reverting
 the workflow change restores the previous cleanup behavior, while a missed
