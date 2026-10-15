@@ -538,12 +538,13 @@ rpl::producer<int> RestrictionsCountValue(not_null<PeerData*> peer) {
 	};
 
 	if (const auto chat = peer->asChat()) {
-		return peer->session().changes().peerFlagsValue(
-			peer,
-			UpdateFlag::Rights
-		) | rpl::map([=] {
-			return countOfRestrictions({}, chat->defaultRestrictions());
-		});
+		return peer->session().changes().peerFlagsValue(peer,
+														UpdateFlag::Rights)
+			   | rpl::map([=] {
+					 return countOfRestrictions(
+						 {.isCustomServerChat = chat->usesCustomServer()},
+						 chat->defaultRestrictions());
+				 });
 	} else if (const auto channel = peer->asChannel()) {
 		return rpl::combine(
 			Data::PeerFlagValue(channel, ChannelData::Flag::Forum),

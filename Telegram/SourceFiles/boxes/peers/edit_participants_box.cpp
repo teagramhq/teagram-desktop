@@ -57,6 +57,9 @@ constexpr auto kParticipantsPerPage = 200;
 constexpr auto kSortByOnlineDelay = crl::time(1000);
 
 [[nodiscard]] bool SupportsMemberTags(not_null<PeerData*> peer) {
+	if (const auto chat = peer->asChat()) {
+		return Data::details::BasicChatControlsOf(chat).canEditMemberTags;
+	}
 	const auto channel = peer->asChannel();
 	return !channel || (!channel->isBroadcast() && !channel->isCommunity());
 }
@@ -2125,7 +2128,9 @@ base::unique_qptr<Ui::PopupMenu> ParticipantsBoxController::rowContextMenu(
 	if (user && _additional.canRestrictParticipant(participant)) {
 		const auto canRestrictWithoutKick = [&] {
 			if (const auto chat = _peer->asChat()) {
-				return chat->amCreator();
+				return chat->amCreator()
+					   && Data::details::BasicChatControlsOf(chat)
+							  .canRestrictMembers;
 			}
 			return _peer->isMegagroup() && !_peer->isGigagroup();
 		}();

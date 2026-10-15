@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/business/data_business_chatbots.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_session.h"
 #include "ui/effects/toggle_arrow.h"
 #include "ui/wrap/slide_wrap.h"
@@ -110,6 +111,14 @@ constexpr auto kDefaultChargeStars = 10;
 				Flag::CreateTopics | Flag(),
 				&RestrictionLabel::flags),
 			end(second));
+	}
+	if (options.isCustomServerChat) {
+		const auto unsupported = Data::UnsupportedRestrictions(options);
+		const auto isUnsupported = [&](const RestrictionLabel &label) {
+			return (label.flags & unsupported) != 0;
+		};
+		media.erase(ranges::remove_if(media, isUnsupported), end(media));
+		second.erase(ranges::remove_if(second, isUnsupported), end(second));
 	}
 	return {
 		{ std::nullopt, std::move(first) },
@@ -1102,7 +1111,8 @@ void AddBannedButtons(
 		not_null<Window::SessionNavigation*> navigation,
 		not_null<PeerData*> peer) {
 	if (const auto chat = peer->asChat()) {
-		if (!chat->amCreator()) {
+		if (!chat->amCreator()
+			|| !Data::details::BasicChatControlsOf(chat).canRestrictMembers) {
 			return;
 		}
 	}
@@ -1190,11 +1200,13 @@ void ShowEditPeerPermissionsBox(
 	Ui::AddSubsectionTitle(
 		inner,
 		tr::lng_rights_default_restrictions_header());
-	auto [checkboxes, getRestrictions, changes, highlightWidget] = CreateEditRestrictions(
-		inner,
-		restrictions,
-		disabledMessages,
-		{ .isForum = peer->isForum() });
+	const auto options = Data::RestrictionsSetOptions{
+		.isForum = peer->isForum(),
+		.isCustomServerChat = peer->isChat() && peer->usesCustomServer(),
+	};
+	auto [checkboxes, getRestrictions, changes, highlightWidget]
+		= CreateEditRestrictions(inner, restrictions, disabledMessages,
+								 options);
 
 	inner->add(std::move(checkboxes));
 
@@ -1294,7 +1306,7 @@ void ShowEditPeerPermissionsBox(
 	AddBannedButtons(inner, navigation, peer);
 
 	box->addButton(tr::lng_settings_save(), [=, rights = getRestrictions] {
-		const auto restrictions = rights();
+		const auto restrictions = Data::RestrictionsForSave(rights(), options);
 		const auto slowmodeSeconds = state->slowmodeSeconds.current();
 		const auto hasRestrictions = (slowmodeSeconds > 0)
 			|| ((restrictions & kSendRestrictions) != 0);

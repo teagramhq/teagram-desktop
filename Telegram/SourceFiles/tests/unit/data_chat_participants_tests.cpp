@@ -15,6 +15,7 @@ namespace {
 using Data::details::BasicChatAdminCapabilitiesFor;
 using Data::details::BasicChatAdminRightsFor;
 using Data::details::BasicChatAdminRoleForSave;
+using Data::details::BasicChatControlsFor;
 using Data::details::BasicChatRole;
 using Data::details::CanAddBasicChatAdmins;
 using Data::details::CanManageBasicChatCall;
@@ -58,6 +59,26 @@ TEST_CASE(CustomServerBasicGroupAdminEditorIsRoleOnly) {
 	CHECK(normal.canEditRights);
 	CHECK(normal.canSetRank);
 	CHECK(normal.canTransferOwnership);
+}
+
+// A custom server has no chat photos, migration, member tags or per-member
+// restrictions, so none of these controls is built for its basic groups.
+TEST_CASE(CustomServerBasicGroupHidesUnsupportedControls) {
+	const auto custom = BasicChatControlsFor(true);
+	CHECK(!custom.canEditPhoto);
+	CHECK(!custom.canEditType);
+	CHECK(!custom.canEditHistoryVisibility);
+	CHECK(!custom.canRestrictMembers);
+	CHECK(!custom.canEditMemberTags);
+}
+
+TEST_CASE(StockBasicGroupKeepsEveryControl) {
+	const auto stock = BasicChatControlsFor(false);
+	CHECK(stock.canEditPhoto);
+	CHECK(stock.canEditType);
+	CHECK(stock.canEditHistoryVisibility);
+	CHECK(stock.canRestrictMembers);
+	CHECK(stock.canEditMemberTags);
 }
 
 TEST_CASE(CustomServerAdminSaveUsesSelectedRights) {
