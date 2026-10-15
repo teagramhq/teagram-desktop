@@ -23,7 +23,7 @@ while IFS= read -r path; do
   [[ -n "${path}" ]] || continue
 
   case "${path}" in
-    .github/workflows/linux.yml|.github/workflows/linux_libraries.yml|.github/scripts/detect_linux_changes.sh|.github/scripts/test_detect_linux_changes.sh|.github/scripts/linux_libraries_image.sh|.github/scripts/test_linux_libraries_image.sh|Telegram/build/docker/centos_env/*|Telegram/build/version|Telegram/build/qt_version.py|Telegram/build/teagram_update_manifest.py|Telegram/build/changelog2appstream.py|changelog.txt)
+    .github/workflows/linux.yml|.github/scripts/detect_linux_changes.sh|.github/scripts/test_detect_linux_changes.sh|.github/scripts/linux_libraries_image.sh|.github/scripts/test_linux_libraries_image.sh|.github/scripts/verify_built_sha.sh|.github/scripts/test_verify_built_sha.sh|Telegram/build/docker/centos_env/*|Telegram/build/version|Telegram/build/qt_version.py|Telegram/build/teagram_update_manifest.py|Telegram/build/changelog2appstream.py|changelog.txt)
       required=true
       break
       ;;
