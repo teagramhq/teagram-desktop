@@ -175,3 +175,34 @@ TEST_CASE(StockPromotionStillSendsTheDefaultStoryRows) {
 	CHECK_EQ(Bits(saved & AdminRights::StoryRights()),
 			 Bits(AdminRights::StoryRights()));
 }
+
+TEST_CASE(UnsupportedBotLookupFailureBlocksTheEditor) {
+	CHECK(!AdminRights::CanEditAfterExistingRightsFailure(u"FLOOD_WAIT_5"_q,
+														  false));
+	CHECK(!AdminRights::CanEditAfterExistingRightsFailure(u"CHANNEL_PRIVATE"_q,
+														  false));
+	CHECK(!AdminRights::CanEditAfterExistingRightsFailure(QString(), false));
+}
+
+TEST_CASE(UnsupportedBotNotInChatOpensAsNewBot) {
+	CHECK(AdminRights::CanEditAfterExistingRightsFailure(
+		u"USER_NOT_PARTICIPANT"_q, false));
+}
+
+TEST_CASE(StockBotLookupFailureStillOpensTheEditor) {
+	CHECK(AdminRights::CanEditAfterExistingRightsFailure(u"FLOOD_WAIT_5"_q,
+														 true));
+}
+
+TEST_CASE(UnsupportedBotDefaultsNeedTheBotsCurrentRights) {
+	const auto defaults = Flags(Flag::ChangeInfo) | Flag::PostStories;
+	CHECK(AdminRights::NeedsExistingBotRights(false, defaults, false));
+	CHECK(!AdminRights::NeedsExistingBotRights(false, Flags(), false));
+	CHECK(AdminRights::NeedsExistingBotRights(true, Flags(), false));
+}
+
+TEST_CASE(StockBotDefaultsKeepTheirCurrentFlow) {
+	const auto defaults = Flags(Flag::ChangeInfo) | Flag::PostStories;
+	CHECK(!AdminRights::NeedsExistingBotRights(false, defaults, true));
+	CHECK(AdminRights::NeedsExistingBotRights(true, Flags(), true));
+}

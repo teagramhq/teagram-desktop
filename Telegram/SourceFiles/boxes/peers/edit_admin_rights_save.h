@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_chat_participant_status.h"
 
+#include <QtCore/QString>
+
 namespace Ui::EditPeer::AdminRights {
 
 [[nodiscard]] inline ChatAdminRights StoryRights() {
@@ -35,6 +37,24 @@ struct SaveInput final {
 	const auto visible = input.checked & ~hidden;
 	const auto preserved = input.existing & hidden;
 	return (visible | preserved | ChatAdminRight::Other) & input.actorLimit;
+}
+
+// A bot promotion has to know the bot's current rights before saving
+// whenever hidden story rights could be lost, including when the offered
+// rights come from the bot's defaults rather than an admin link.
+[[nodiscard]] inline bool NeedsExistingBotRights(bool requestedAdmin,
+												 ChatAdminRights offered,
+												 bool storiesSupported) {
+	return requestedAdmin || (!storiesSupported && offered != 0);
+}
+
+// Only a bot that is not in the chat has nothing to preserve. Any other
+// lookup failure leaves its hidden story rights unknown, and saving
+// would clear them, so the editor must not open.
+[[nodiscard]] inline bool
+CanEditAfterExistingRightsFailure(const QString &errorType,
+								  bool storiesSupported) {
+	return storiesSupported || (errorType == u"USER_NOT_PARTICIPANT"_q);
 }
 
 } // namespace Ui::EditPeer::AdminRights

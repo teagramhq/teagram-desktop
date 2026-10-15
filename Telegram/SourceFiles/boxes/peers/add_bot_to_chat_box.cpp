@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_histories.h"
 #include "history/history.h"
 #include "main/main_session.h"
+#include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_participants_box.h"
 #include "boxes/filters/edit_filter_chats_list.h"
@@ -160,29 +161,41 @@ void AddBotToGroupBoxController::requestExistingRights(
 	}
 	_existingRightsChannel = channel;
 	_bot->session().api().request(_existingRightsRequestId).cancel();
-	_existingRightsRequestId = _bot->session().api().request(
-		MTPchannels_GetParticipant(
-			_existingRightsChannel->inputChannel(),
-			_bot->input())
-	).done([=](const MTPchannels_ChannelParticipant &result) {
-		result.match([&](const MTPDchannels_channelParticipant &data) {
-			channel->owner().processUsers(data.vusers());
-			const auto participant = Api::ChatParticipant(
-				data.vparticipant(),
-				channel);
-			_existingRights = participant.rights().flags;
-			_existingRank = participant.rank();
-			_promotedSince = participant.promotedSince();
-			_promotedBy = participant.by();
-			addBotToGroup(_existingRightsChannel);
-		});
-	}).fail([=] {
-		_existingRights = ChatAdminRights();
-		_existingRank = QString();
-		_promotedSince = 0;
-		_promotedBy = 0;
-		addBotToGroup(_existingRightsChannel);
-	}).send();
+	_existingRightsRequestId
+		= _bot->session()
+			  .api()
+			  .request(MTPchannels_GetParticipant(
+				  _existingRightsChannel->inputChannel(), _bot->input()))
+			  .done([=](const MTPchannels_ChannelParticipant &result) {
+				  result.match(
+					  [&](const MTPDchannels_channelParticipant &data) {
+						  channel->owner().processUsers(data.vusers());
+						  const auto participant = Api::ChatParticipant(
+							  data.vparticipant(), channel);
+						  _existingRights = participant.rights().flags;
+						  _existingRank = participant.rank();
+						  _promotedSince = participant.promotedSince();
+						  _promotedBy = participant.by();
+						  addBotToGroup(_existingRightsChannel);
+					  });
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  const auto storiesSupported
+					  = _bot->session().storiesSupported();
+				  if (!Ui::EditPeer::AdminRights::
+						  CanEditAfterExistingRightsFailure(error.type(),
+															storiesSupported)) {
+					  _existingRightsChannel = nullptr;
+					  _controller->showToast(error.type());
+					  return;
+				  }
+				  _existingRights = ChatAdminRights();
+				  _existingRank = QString();
+				  _promotedSince = 0;
+				  _promotedBy = 0;
+				  addBotToGroup(_existingRightsChannel);
+			  })
+			  .send();
 }
 
 void AddBotToGroupBoxController::addBotToGroup(not_null<PeerData*> chat) {
@@ -203,12 +216,6 @@ void AddBotToGroupBoxController::addBotToGroup(not_null<PeerData*> chat) {
 	}
 	const auto requestedAddAdmin = (_scope == Scope::GroupAdmin)
 		|| (_scope == Scope::ChannelAdmin);
-	if (chat->isChannel()
-		&& requestedAddAdmin
-		&& !_existingRights.has_value()) {
-		requestExistingRights(chat->asChannel());
-		return;
-	}
 	const auto bot = _bot;
 	const auto controller = _controller;
 	const auto close = [=](auto&&...) {
@@ -225,6 +232,13 @@ void AddBotToGroupBoxController::addBotToGroup(not_null<PeerData*> chat) {
 			|| (chat->isChat() && chat->asChat()->canAddAdmins()))
 		? bot->botInfo->groupAdminRights
 		: ChatAdminRights();
+	if (chat->isChannel()
+		&& Ui::EditPeer::AdminRights::NeedsExistingBotRights(
+			requestedAddAdmin, rights, bot->session().storiesSupported())
+		&& !_existingRights.has_value()) {
+		requestExistingRights(chat->asChannel());
+		return;
+	}
 	const auto addingAdmin = requestedAddAdmin || (rights != 0);
 	const auto show = controller->uiShow();
 	if (addingAdmin) {
