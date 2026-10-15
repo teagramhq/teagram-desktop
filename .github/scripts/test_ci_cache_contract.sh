@@ -63,15 +63,15 @@ reject_text "$linux_libraries_workflow" '  pull_request:'
 
 require_text "$cache_cleanup_workflow" '  pull_request_target:'
 require_text "$cache_cleanup_workflow" '    types: [closed]'
-require_text "$cache_cleanup_workflow" '  push:'
+reject_text "$cache_cleanup_workflow" '  push:'
 require_text "$cache_cleanup_workflow" 'branches: [dev]'
 require_text "$cache_cleanup_workflow" '  workflow_run:'
-require_text "$cache_cleanup_workflow" 'workflows: ["MacOS.", "MacOS Packaged."]'
+require_text "$cache_cleanup_workflow" 'workflows: ["MacOS.", "MacOS Packaged.", "Linux."]'
 require_text "$cache_cleanup_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
 require_text "$cache_cleanup_workflow" '      actions: write'
 require_text "$cache_cleanup_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
 require_text "$cache_cleanup_workflow" 'gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"'
-require_text "$cache_cleanup_workflow" 'gh cache list --limit 1000 --key macOS-arm64-ccache-pr-'
+reject_text "$cache_cleanup_workflow" 'macOS-arm64-ccache-pr-'
 require_text "$cache_cleanup_workflow" 'gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"'
 require_text "$cache_cleanup_workflow" 'SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}'
 require_text "$cache_cleanup_workflow" 'SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}'
@@ -79,6 +79,9 @@ require_text "$cache_cleanup_workflow" '[[ "$SOURCE_BRANCH" != "dev" || "$SOURCE
 require_text "$cache_cleanup_workflow" "cache_prefix='macOS-arm64-ccache-dev-'"
 require_text "$cache_cleanup_workflow" '--ref refs/heads/dev'
 require_text "$cache_cleanup_workflow" 'pr-compatible'
+require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'"
+require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
+require_text "$cache_cleanup_workflow" "cache_prefix='Linux-tdesktop-default-'"
 reject_text "$cache_cleanup_workflow" 'actions/checkout@'
 require_text "$cache_threat_model" 'Pull request workflows cannot invoke its write'
 require_text "$cache_threat_model" '## Trusted refs and Linux dependency image publisher'
@@ -89,5 +92,6 @@ require_text "$cache_threat_model" '## Linux build after dependency image public
 require_text "$cache_threat_model" 'before any checkout or repository script'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
+bash .github/scripts/test_prune_linux_dev_ccache.sh
 
 printf 'CI cache contract tests passed.\n'
