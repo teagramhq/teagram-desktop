@@ -275,16 +275,22 @@ if [[ -z "$mac_libs_keys" || "$mac_libs_keys" != "$packaged_libs_keys" ]]; then
   printf 'MacOS Packaged. must restore the same Libraries cache key as MacOS.\n' >&2
   exit 1
 fi
-mac_brew_packages="$(grep -E '^ +packages=\(' "$mac_workflow")"
-packaged_brew_packages="$(grep -E '^ +packages=\(' "$packaged_workflow")"
-if [[ -z "$mac_brew_packages" || "$mac_brew_packages" != "$packaged_brew_packages" ]]; then
-  printf 'MacOS Packaged. must install the same Homebrew build tools as MacOS.\n' >&2
+build_tools_script=".github/scripts/install_macos_build_tools.sh"
+reject_text "$packaged_workflow" 'brew '
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$tools" client'
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries'
+tool_entries="$(grep -E '^  "[a-z0-9]+\|' "$build_tools_script" || true)"
+if [[ -z "$tool_entries" ]]; then
+  printf '%s must list its pinned tools.\n' "$build_tools_script" >&2
   exit 1
 fi
-if [[ "$(grep -c 'brew install' "$packaged_workflow")" != 1 ]]; then
-  printf 'MacOS Packaged. must install Homebrew packages only from the shared tool list.\n' >&2
+floating_tools="$(grep -vE '^  "[a-z0-9]+\|https://[^|]*[0-9][^|]*\|[0-9a-f]{64}"$' <<< "$tool_entries" || true)"
+if [[ -n "$floating_tools" ]]; then
+  printf '%s must pin every tool to a versioned URL and SHA-256:\n%s\n' \
+    "$build_tools_script" "$floating_tools" >&2
   exit 1
 fi
+reject_text "$build_tools_script" 'brew '
 reject_text "$packaged_workflow" 'refs/heads/master'
 reject_text "$packaged_workflow" 'git clone'
 reject_text "$packaged_workflow" '/opt/homebrew/opt/'

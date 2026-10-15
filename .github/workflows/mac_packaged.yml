@@ -56,16 +56,10 @@ jobs:
           set -Eeo pipefail
           sudo chown -R `whoami`:admin /usr/local/share
 
-          packages=(automake libtool meson nasm ninja pkg-config ccache)
-          missing=()
-          for package in "${packages[@]}"; do
-            if ! brew list --versions "$package" >/dev/null 2>&1; then
-              missing+=("$package")
-            fi
-          done
-          if ((${#missing[@]})); then
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"
-          fi
+          tools="$RUNNER_TEMP/build-tools"
+          bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" client
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          export PATH="$tools/bin:$PATH"
 
           sudo mdutil -a -i off
 
@@ -98,6 +92,7 @@ jobs:
         id: libraries
         if: steps.cache-libs.outputs.cache-hit != 'true'
         run: |
+          bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
