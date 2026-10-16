@@ -149,7 +149,9 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
-		CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
+		CHECK(joinedProfileStrings.contains("^(")
+			  && joinedProfileStrings.contains(")?/("));
+		CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
@@ -160,6 +162,27 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 	} else {
 		CHECK(false);
 	}
+}
+
+QByteArray SeatbeltRegexExpression(const QByteArray &profile) {
+	const auto start = profile.indexOf("(regex\n");
+	CHECK(start >= 0);
+	auto expression = QByteArray();
+	for (const auto &line : profile.mid(start + 7).split('\n')) {
+		if (line == ")") {
+			break;
+		}
+		if (!line.startsWith('"')) {
+			continue;
+		}
+		for (auto i = qsizetype(1); i < line.size() - 1; ++i) {
+			if (line.at(i) == '\\') {
+				++i;
+			}
+			expression.append(line.at(i));
+		}
+	}
+	return expression;
 }
 
 } // namespace
@@ -341,7 +364,9 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains("^(")
+		  && joinedProfileStrings.contains(")?/("));
+	CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
 	CHECK(!joinedProfileStrings.contains("^(/Users/alice"));
 	const auto unrelated
 		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
@@ -382,13 +407,14 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains(ignoredSequence + "([Ss]|\u017F)"
+										+ ignoredSequence));
 }
 
 TEST_CASE(SeatbeltProfileStaysWithinSandboxSizeLimit) {
 	auto fs = FakeFileSystem();
 	const auto longHome
-		= "/Users/" + QByteArray(128, 'q') + "/" + QByteArray(128, 'r');
+		= "/Users/" + QByteArray(45, 'q') + "/" + QByteArray(45, 'r');
 	AddDirectoryHierarchy(fs, longHome);
 	const auto policy
 		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
@@ -398,7 +424,42 @@ TEST_CASE(SeatbeltProfileStaysWithinSandboxSizeLimit) {
 	CHECK(policy.valid());
 	const auto profile = policy.SeatbeltProfile();
 	CHECK(!profile.isEmpty());
-	CHECK(profile.size() < 60 * 1024);
+	CHECK(profile.size() < 32 * 1024);
+}
+
+TEST_CASE(SeatbeltProfileFitsForAccountAndTemporaryHomes) {
+	auto fs = FakeFileSystem();
+	const auto temporaryHome = QByteArray(
+		"/Users/runner/work/_temp/teagram-launch-smoke.ABC123/home");
+	AddDirectoryHierarchy(fs, "/Users/runner");
+	AddDirectoryHierarchy(fs, temporaryHome);
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = "/Users/runner",
+				  .environment = temporaryHome,
+				  .foundation = "/Users/runner"},
+		fs.operations());
+	CHECK(policy.valid());
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(!profile.isEmpty());
+	CHECK(profile.size() < 32 * 1024);
+	const auto regex = QRegularExpression(
+		QString::fromUtf8(SeatbeltRegexExpression(profile)));
+	CHECK(regex.isValid());
+	const auto profilePath = QByteArray(
+		"/Users/runner/Library/Application Support/Telegram Desktop/x");
+	const auto temporaryPath
+		= temporaryHome + "/Library/Application Support/Telegram Desktop/x";
+	const auto firmlinkPath
+		= QByteArray("/System/Volumes/Data") + temporaryPath;
+	for (const auto &path : {profilePath, temporaryPath, firmlinkPath}) {
+		CHECK(policy.Classify(path) == ProtectedClass::ApplicationSupport);
+		CHECK(regex.match(QString::fromUtf8(path)).hasMatch());
+	}
+	const auto unrelatedHome
+		= QByteArray("/Users/runner/work/_temp/other/home/Library/"
+					 "Application Support/Telegram Desktop/x");
+	CHECK(policy.Classify(unrelatedHome) == ProtectedClass::None);
+	CHECK(!regex.match(QString::fromUtf8(unrelatedHome)).hasMatch());
 }
 
 TEST_CASE(SeatbeltProfileRejectsOversizedExpandedHomePolicy) {
@@ -429,10 +490,10 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 		{u"/Users/\U00010400"_q, u"/users/\U00010428"_q},
 		{u"/Users/\u1E9E"_q, u"/users/\u00DF"_q},
 		{u"/Users/\u00D8.[x]"_q, u"/users/\u00F8.[x]"_q},
-		{u"/Users/"_q + QString(120, QChar(0x00D8)) + u"/"_q
-			 + QString(120, QChar(0x0141)),
-		 u"/users/"_q + QString(120, QChar(0x00F8)) + u"/"_q
-			 + QString(120, QChar(0x0142))},
+		{u"/Users/"_q + QString(60, QChar(0x00D8)) + u"/"_q
+			 + QString(60, QChar(0x0141)),
+		 u"/users/"_q + QString(60, QChar(0x00F8)) + u"/"_q
+			 + QString(60, QChar(0x0142))},
 	};
 	for (const auto codepoint : {0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x202A,
 								 0x202B, 0x202C, 0x202D, 0x202E, 0x206A, 0x206B,
@@ -457,23 +518,7 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 		for (const auto &line : profile.split('\n')) {
 			CHECK(line.size() < 900);
 		}
-		const auto start = profile.indexOf("(regex\n");
-		CHECK(start >= 0);
-		auto expression = QByteArray();
-		for (const auto &line : profile.mid(start + 7).split('\n')) {
-			if (line == ")") {
-				break;
-			}
-			if (!line.startsWith('"')) {
-				continue;
-			}
-			for (auto i = qsizetype(1); i < line.size() - 1; ++i) {
-				if (line.at(i) == '\\') {
-					++i;
-				}
-				expression.append(line.at(i));
-			}
-		}
+		const auto expression = SeatbeltRegexExpression(profile);
 		const auto regex = QRegularExpression(QString::fromUtf8(expression));
 		CHECK(regex.isValid());
 		const auto protectedPath

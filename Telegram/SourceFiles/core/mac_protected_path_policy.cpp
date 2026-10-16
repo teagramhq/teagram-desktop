@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <deque>
 #include <initializer_list>
+#include <map>
 #include <utility>
 
 namespace Core::MacProtectedPath {
@@ -23,7 +24,7 @@ constexpr auto kRefusalInterval = qint64(60);
 // Leave headroom below the SBPL parser's 1025-byte string-token limit.
 constexpr auto kMaxSbplStringBytes = qsizetype(900);
 // Keep headroom below the Seatbelt profile-size limit as well.
-constexpr auto kMaxSbplProfileBytes = qsizetype(60 * 1024);
+constexpr auto kMaxSbplProfileBytes = qsizetype(32 * 1024);
 
 struct ParsedPath {
 	bool absolute = false;
@@ -846,31 +847,59 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			+ "[^/]*(/|$)",
 		bundleParents + "/" + bundlePrefixes + "[^/]*(/|$)",
 	});
-	auto homeAlternatives = QByteArray("(");
-	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
-		const auto homePath = _profileHomePaths[i];
+	struct HomeRegexNode {
+		std::map<QByteArray, HomeRegexNode> children;
+		bool terminal = false;
+	};
+	auto homeRoot = HomeRegexNode();
+	const auto firmlink = ComponentsFromAscii({"system", "volumes", "data"});
+	for (const auto &homePath : _profileHomePaths) {
 		const auto literalHomePath = RegexLiteral(homePath);
 		if (!homePath.startsWith('/')
 			|| literalHomePath.size() >= kMaxSbplStringBytes) {
 			return {};
 		}
-		auto home = QByteArray();
+		auto components = std::vector<QByteArray>();
 		for (const auto &part : homePath.split('/')) {
 			if (part.isEmpty()) {
 				continue;
 			}
-			home.append('/');
-			home.append(component(Fold(part).toUtf8()));
+			components.push_back(Fold(part).toUtf8());
 		}
-		if (i > 0) {
-			homeAlternatives.append('|');
+		if (components.size() >= firmlink.size()
+			&& std::equal(firmlink.begin(), firmlink.end(),
+						  components.begin())) {
+			components.erase(components.begin(),
+							 components.begin() + firmlink.size());
 		}
-		homeAlternatives.append(home);
+		if (components.empty()) {
+			return {};
+		}
+		auto node = &homeRoot;
+		for (const auto &part : components) {
+			node = &node->children[part];
+		}
+		node->terminal = true;
 	}
-	homeAlternatives.append(')');
+	const auto homeAlternatives
+		= [&](const auto &self, const HomeRegexNode &node) -> QByteArray {
+		auto branches = std::vector<QByteArray>();
+		for (const auto &[part, child] : node.children) {
+			auto branch = component(part);
+			if (!child.children.empty()) {
+				const auto suffix = "/" + self(self, child);
+				branch.append(child.terminal ? "(" + suffix + ")?" : suffix);
+			}
+			branches.push_back(std::move(branch));
+		}
+		return alternatives(branches);
+	};
 	const auto library = component("Library");
-	const auto expression = "^" + homeAlternatives + "/" + library + "/"
-							+ protectedPathAlternatives;
+	const auto expression = "^(/" + component("System") + "/"
+							+ component("Volumes") + "/" + component("Data")
+							+ ")?/"
+							+ homeAlternatives(homeAlternatives, homeRoot) + "/"
+							+ library + "/" + protectedPathAlternatives;
 	result.append("(deny file*\n");
 	if (!AppendSbplRegex(result, expression)) {
 		return {};
