@@ -104,9 +104,19 @@ jobs:
         id: cache-libs
         run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME" "$GITHUB_OUTPUT"
 
+      - name: Restore legacy macOS libraries cache.
+        id: legacy-cache-libs
+        if: steps.cache-libs.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+
       - name: Libraries.
         id: libraries
-        if: steps.cache-libs.outputs.cache-hit != 'true'
+        if: steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'
         run: |
           bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent

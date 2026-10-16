@@ -124,8 +124,19 @@ require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image 
   "$macos_libraries_image_script\" set-image"
 require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.image-cache.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key' \
+  "macOS-libs-\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+expect_equal "$mac_workflow legacy cache key" \
+  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$mac_workflow" macos-libraries 'Libraries.' '.if' \
+  "steps.image-cache.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 require_step_field "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' '.if' \
-  "steps.image-cache.outputs.cache-hit != 'true' && steps.libraries.outcome == 'success'"
+  "steps.image-cache.outputs.cache-hit != 'true' && (steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true')"
 require_step_script "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' \
   "$macos_libraries_image_script\" push"
 require_step_script "$mac_workflow" macos-libraries 'Prune legacy macOS library caches.' \
@@ -142,8 +153,12 @@ require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.'
   'oras login ghcr.io' '--password-stdin'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
-require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.outputs.cache-hit != 'true'"
-reject_value "$mac_workflow" 'macOS-libs-'
+require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # MacOS. builds a PR once its approved head is labeled macos-build; a later
 # push cancels that build and clears the label from mac_pr_approval.yml.
@@ -426,7 +441,8 @@ reject_step_script "$mac_workflow" macos 'Report MacOS job wall time.' '::error:
 reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
-require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
@@ -709,6 +725,15 @@ require_step_field "$packaged_workflow" macos 'Set macOS dependency image tag.' 
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$packaged_workflow" macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$packaged_workflow legacy cache key" \
+  "$(step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$packaged_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 reject_value "$packaged_workflow" \
   'refs/heads/master' \
   'git clone' \
@@ -750,7 +775,15 @@ require_step_field "$unit_workflow" unit 'Set macOS dependency image tag.' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$unit_workflow" unit 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
-require_step_field "$unit_workflow" unit 'Libraries.' '.if' "steps.cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$unit_workflow legacy cache key" \
+  "$(step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$unit_workflow" unit 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # macOS updater fixtures. tests the exact PR merge ref with read-only package access.
 require_triggers "$updater_workflow" 'pull_request'
@@ -792,6 +825,19 @@ require_step_field "$updater_workflow" updater-fixtures 'Set macOS dependency im
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$updater_workflow" updater-fixtures 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$updater_workflow legacy cache key" \
+  "$(step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$updater_workflow" updater-fixtures 'Prepare libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+for libraries_cache_workflow in "$mac_workflow" "$packaged_workflow" "$unit_workflow" "$updater_workflow"; do
+  expect_lacks "$libraries_cache_workflow legacy cache writers" \
+    "$(cache_writers "$libraries_cache_workflow")" 'Save libraries cache.'
+done
 verify_script="$temp_dir/verify-merge-ref.sh"
 step_field "$updater_workflow" updater-fixtures "$verify_step" '.run' > "$verify_script"
 merge_repo="$temp_dir/merge-repo"
