@@ -1213,6 +1213,14 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
 [[nodiscard]] bool
 PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
 	account->mtp().stopForServerEnrollment();
@@ -1225,7 +1233,9 @@ PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
 		   && !account->local().hasStoredCustomServer()
 		   && !account->local().customServerPinUnknown()
 		   && HasNoAuthorizationState(account)
-		   && (account->local().checkServerCacheBinding(0, 1)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
 			   == Storage::ServerCacheBindingStatus::Match);
 }
 
@@ -5589,6 +5599,16 @@ template <typename Predicate>
 	return condition();
 }
 
+[[nodiscard]] bool WaitForSyntheticStockBindingResetForRegression(
+	not_null<Main::Account *> account) {
+	return WaitForRegressionCondition([&] {
+		return account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::None;
+	});
+}
+
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
 													  int stockExpected,
 													  Main::Session &pinned,
@@ -6305,16 +6325,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	if (!PrepareSyntheticStockAccountForRegression(discarded)) {
-		return FailChatParticipantsRegression(
-			"could not reset the destroyed previous-session fixture for later "
-			"account-slot reuse");
-	}
 	ReportCallRegressionCheckpoint("destroyed-session logout complete");
 	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after call-link session "
 			"destruction");
+	}
+	if (!WaitForSyntheticStockBindingResetForRegression(discarded)) {
+		return FailChatParticipantsRegression(
+			"previous-session logout did not clear its cache binding");
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
@@ -8171,17 +8190,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"blocked teardown wrote authorization data or a failure marker");
 	}
-	// CommitServerForget preserves its binding. Keep it compatible with the
-	// synthetic stock identity that will later reuse this account slot.
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{
-				.fingerprintKnown = true,
-				.fingerprint = 0,
-				.userIdKnown = true,
-				.userId = 1,
-			},
-			[] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
