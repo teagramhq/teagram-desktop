@@ -27,6 +27,8 @@ upstream_hashes=(
   "art/iconbig_green.png b0ad1899c9186c5afc4a4a20cf6edb7406d2f2381feca7b9f6c02512842d05dd"
   "art/icon256.ico 6d27da5cf7669e32dc2cf09e331befe8e39045f75f95e0cbfe02c16e675d81bb"
   "icons/mac_tray_icon.png fdd45401382301b3495398a7e40919e5717c2b7239240a843d01ef15ebc54a1c"
+  "icons/mac_tray_icon@2x.png ccadde7f1b72e1aec15dc1054be5f36191357df847f883bc0f7d54b439f3b369"
+  "icons/mac_tray_icon@3x.png 334731eed269374c2c3cb5836aa70a932fbf2697715bd2574ba4b2c5b4291eb5"
 )
 
 failed=0
