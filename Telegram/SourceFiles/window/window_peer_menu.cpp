@@ -652,7 +652,8 @@ void Filler::addInfo() {
 
 void Filler::addStoryArchive() {
 	const auto channel = _peer ? _peer->asChannel() : nullptr;
-	if (!channel || !channel->canEditStories()) {
+	if (!channel || !channel->canEditStories()
+		|| !_controller->session().storiesSupported()) {
 		return;
 	}
 	const auto controller = _controller;

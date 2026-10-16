@@ -280,6 +280,7 @@ PRIVATE
     boxes/peers/edit_members_visible.h
     boxes/peers/manage_community_box.cpp
     boxes/peers/manage_community_box.h
+    boxes/peers/edit_admin_rights_save.h
     boxes/peers/edit_participant_box.cpp
     boxes/peers/edit_participant_box.h
     boxes/peers/edit_tag_control.cpp

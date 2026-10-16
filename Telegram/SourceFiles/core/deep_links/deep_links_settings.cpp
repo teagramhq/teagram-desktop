@@ -219,6 +219,9 @@ Result OpenInternalUrl(const Context &ctx, const QString &url) {
 Result ShowMyProfile(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
+	} else if (!ctx.controller->session().storiesSupported()) {
+		ctx.controller->showSettings(::Settings::InformationId());
+		return Result::Handled;
 	}
 	ctx.controller->showSection(
 		Info::Stories::Make(ctx.controller->session().user()));
@@ -397,26 +400,30 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts/add-album"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts/add-album"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts/add-album"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts/add-album"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
 		.path = u"my-profile/gifts"_q,
@@ -430,18 +437,20 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"my-profile/archived-posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->showSection(Info::Stories::Make(
-				ctx.controller->session().user(),
-				Info::Stories::ArchiveId()));
-			return Result::Handled;
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"my-profile/archived-posts"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   if (!ctx.controller) {
+						   return Result::NeedsAuth;
+					   }
+					   ctx.controller->showSection(
+						   Info::Stories::Make(ctx.controller->session().user(),
+											   Info::Stories::ArchiveId()));
+					   return Result::Handled;
+				   }},
+				   .requiresStories = true,
+			   });
 
 	router.add(u"settings"_q,
 			   {
