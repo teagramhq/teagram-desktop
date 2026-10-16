@@ -31,17 +31,26 @@ public:
 
 	void setInnerFocus() override;
 
-	[[nodiscard]] static base::binary_guard Show(
-		Window::SessionController *controller,
-		const QString &highlightId = QString());
+	[[nodiscard]] static base::binary_guard
+	Show(Window::SessionController *controller,
+		 const QString &highlightId = QString());
 
-protected:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool translateChatsRowPresentForRegressionTest() const;
+	[[nodiscard]] bool translateButtonRowPresentForRegressionTest() const;
+	[[nodiscard]] bool doNotTranslateRowPresentForRegressionTest() const;
+	[[nodiscard]] bool platformTranslationRowPresentForRegressionTest() const;
+	[[nodiscard]] bool translationAboutPresentForRegressionTest() const;
+	[[nodiscard]] bool platformPackNotePresentForRegressionTest() const;
+#endif
+
+  protected:
 	void prepare() override;
 	void showFinished() override;
 
 	void keyPressEvent(QKeyEvent *e) override;
 
-private:
+  private:
 	void setupTop(not_null<Ui::VerticalLayout*> container);
 	[[nodiscard]] int rowsInPage() const;
 
@@ -50,6 +59,11 @@ private:
 	QPointer<Ui::RpWidget> _showButtonToggle;
 	QPointer<Ui::RpWidget> _translateChatsToggle;
 	QPointer<Ui::RpWidget> _doNotTranslateButton;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	QPointer<Ui::RpWidget> _platformTranslationToggle;
+	bool _translationAboutPresent = false;
+	bool _platformPackNotePresent = false;
+#endif
 	rpl::event_stream<bool> _translateChatTurnOff;
 	Fn<void()> _setInnerFocus;
 	Fn<Ui::ScrollToRequest(int rows)> _jump;

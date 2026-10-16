@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mac_workflow=".github/workflows/mac.yml"
+mac_workflow="${MACOS_CI_CONTRACT_WORKFLOW:-.github/workflows/mac.yml}"
 packaged_workflow=".github/workflows/mac_packaged.yml"
+approval_workflow=".github/workflows/mac_pr_approval.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
+updater_workflow=".github/workflows/macos_updater_fixtures.yml"
+updater_runner=".github/scripts/run_teagram_updater_fixtures.sh"
+ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 
 require_text() {
   local file="$1"
@@ -30,11 +34,14 @@ macos_group_for_event() {
   local dispatch_pr_branch="$4"
   local dispatch_branch="$5"
   local ref_name="$6"
+  local event_name="${7:-}"
   local repository_qualified_identity
   if [[ -n "$pr_head" ]]; then
     repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
     repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
+  elif [[ "$event_name" == 'schedule' || "$event_name" == 'push' ]]; then
+    repository_qualified_identity="seed/${ref_name}"
   else
     repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
   fi
@@ -71,9 +78,155 @@ require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
 require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
-require_text "$mac_workflow" 'cancel-in-progress: true'
+require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}"
+pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
+if [[ "$pr_types" != '[labeled]' ]]; then
+  printf 'MacOS PR runs must start only from the macos-build label, got: %s\n' "${pr_types:-every push}" >&2
+  exit 1
+fi
+require_text "$mac_workflow" "if: \${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}"
+reject_text "$mac_workflow" 'pull-requests: write'
+require_text "$approval_workflow" '  pull_request_target:'
+require_text "$approval_workflow" '    branches: [dev]'
+require_text "$approval_workflow" '    types: [synchronize]'
+require_text "$approval_workflow" '      actions: write'
+require_text "$approval_workflow" '      pull-requests: write'
+reject_text "$approval_workflow" 'head.repo.full_name == github.repository'
+reject_text "$approval_workflow" 'actions/checkout'
+reject_text "$approval_workflow" "contains(github.event.pull_request.labels"
+approval_step="$(awk '
+  /- name: Cancel superseded MacOS. builds and clear their approval./ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step && /^        run: \|$/ { in_run = 1; next }
+  in_run { sub(/^          /, ""); print }
+' "$approval_workflow")"
+if [[ -z "$approval_step" ]]; then
+  printf 'Could not extract the macOS approval step from %s.\n' "$approval_workflow" >&2
+  exit 1
+fi
+approval_fixture="$(mktemp -d)"
+trap 'rm -rf "$approval_fixture"' EXIT
+cat > "$approval_fixture/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+if [[ "$*" == *'/actions/workflows/mac.yml/runs'* ]]; then
+  cat "$FAKE_GH_RUNS"
+  exit 0
+fi
+if [[ "$*" == *'/pulls/105'* ]]; then
+  # Each read of the live PR head takes the next line; the last one stays.
+  live_head="$(head -n 1 "$FAKE_GH_LIVE_HEADS")"
+  if [[ "$live_head" == fail ]]; then
+    printf 'gh: Server Error (HTTP 502)\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "$live_head"
+  if (( $(wc -l < "$FAKE_GH_LIVE_HEADS") > 1 )); then
+    sed -i.bak 1d "$FAKE_GH_LIVE_HEADS"
+  fi
+  exit 0
+fi
+printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+if [[ "$*" =~ /actions/runs/([0-9]+)/jobs ]]; then
+  cat "$FAKE_GH_JOBS_DIR/${BASH_REMATCH[1]}.json" 2>/dev/null || printf '%s' '{"jobs":[]}'
+  exit 0
+fi
+case "$*" in
+  *'/runs/11/cancel'*) printf 'gh: Cannot cancel a workflow run that is completed. (HTTP 409)\n' >&2; exit 1 ;;
+  *'/runs/12/cancel'*) [[ "$FAKE_GH_CANCEL" == ok ]] && exit 0; printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2; exit 1 ;;
+  *'/labels/macos-build'*) [[ "$FAKE_GH_LABEL" == present ]] && exit 0; printf 'gh: Label does not exist (HTTP 404)\n' >&2; exit 1 ;;
+esac
+exit 0
+FAKE_GH
+chmod +x "$approval_fixture/gh"
+old_head_runs='{"id":11,"status":"in_progress","head_sha":"old1","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":12,"status":"queued","head_sha":"old2","head_repository":{"full_name":"fork/teagram-desktop"}},{"id":13,"status":"in_progress","head_sha":"old1","head_repository":{"full_name":"other/teagram-desktop"}},{"id":14,"status":"completed","head_sha":"old1","head_repository":{"full_name":"fork/teagram-desktop"}}'
+current_head_run='{"id":15,"status":"in_progress","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+skipped_head_run='{"id":16,"status":"completed","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+pending_head_run='{"id":17,"status":"queued","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
+printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclusion":null}]}' > "$approval_fixture/15.json"
+printf '%s' '{"jobs":[{"name":"MacOS","status":"completed","conclusion":"skipped"},{"name":"Focused libiconv (macOS arm64)","status":"completed","conclusion":"skipped"}]}' > "$approval_fixture/16.json"
+run_approval_step() {
+  printf '{"workflow_runs":[%s]}' "$1" > "$approval_fixture/runs.json"
+  printf '%s\n' ${4:-new} > "$approval_fixture/live_heads"
+  : > "$approval_fixture/calls"
+  PATH="$approval_fixture:$PATH" FAKE_GH_LOG="$approval_fixture/calls" FAKE_GH_RUNS="$approval_fixture/runs.json" \
+    FAKE_GH_LIVE_HEADS="$approval_fixture/live_heads" \
+    FAKE_GH_CANCEL="$2" FAKE_GH_LABEL="$3" FAKE_GH_JOBS_DIR="$approval_fixture" MACOS_APPROVAL_POLL_SECONDS=0 \
+    GITHUB_REPOSITORY=teagramhq/teagram-desktop HEAD_REF=feature HEAD_REPOSITORY=fork/teagram-desktop HEAD_SHA=new PR_NUMBER=105 \
+    bash -c "$approval_step" >/dev/null 2>&1
+}
+approval_calls() {
+  grep -oE 'runs/[0-9]+/cancel|labels/macos-build' "$approval_fixture/calls" | tr '\n' ' '
+}
+if ! run_approval_step "$old_head_runs" ok present; then
+  printf 'A 409 for a run that already finished must not fail the macOS approval step.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel labels/macos-build ' ]]; then
+  printf 'A push must cancel unfinished older-head runs from the PR head repository and clear the label, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if ! run_approval_step "$old_head_runs,$current_head_run" ok present; then
+  printf 'The macOS approval step failed with an approved current-head run.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel ' ]]; then
+  printf 'A current-head run approved before cleanup must keep running and keep its label, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if ! run_approval_step "$old_head_runs,$skipped_head_run" ok present; then
+  printf 'The macOS approval step failed with a skipped current-head run.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel labels/macos-build ' ]]; then
+  printf 'A current-head run whose MacOS job was skipped must not keep macos-build, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$pending_head_run" ok present || [[ "$(approval_calls)" == *labels/macos-build* ]]; then
+  printf 'A current-head run that never creates its jobs must fail without touching macos-build.\n' >&2
+  exit 1
+fi
+# Pushes B ("new") then C ("newer"): B's cleanup starts after C was approved and built.
+newer_head_run='{"id":18,"status":"in_progress","head_sha":"newer","head_repository":{"full_name":"fork/teagram-desktop"}}'
+printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclusion":null}]}' > "$approval_fixture/18.json"
+if ! run_approval_step "$old_head_runs,$newer_head_run" ok present newer; then
+  printf 'A cleanup for a superseded push must exit cleanly.\n' >&2
+  exit 1
+fi
+if [[ -n "$(approval_calls)" ]]; then
+  printf 'A cleanup for a superseded push must not cancel the newer approved build or clear its label, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if ! run_approval_step "$old_head_runs" ok present "new newer"; then
+  printf 'A cleanup overtaken by a newer push must exit cleanly.\n' >&2
+  exit 1
+fi
+if [[ "$(approval_calls)" != 'runs/11/cancel runs/12/cancel ' ]]; then
+  printf 'A cleanup overtaken by a newer push before clearing must leave macos-build for that push, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$old_head_runs" ok present fail; then
+  printf 'A failed live PR head lookup must fail the macOS approval step.\n' >&2
+  exit 1
+fi
+if [[ -n "$(approval_calls)" ]]; then
+  printf 'A failed live PR head lookup must not cancel builds or clear approval, got: %s\n' "$(approval_calls)" >&2
+  exit 1
+fi
+if run_approval_step "$old_head_runs" ok present "new fail" || [[ "$(approval_calls)" == *labels/macos-build* ]]; then
+  printf 'A failed live PR head lookup before clearing must fail without clearing macos-build.\n' >&2
+  exit 1
+fi
+require_text "$approval_workflow" 'group: ${{ github.workflow }}-${{ github.event.pull_request.number }}'
+if ! run_approval_step "" ok absent; then
+  printf 'A PR without macos-build must not fail the macOS approval step.\n' >&2
+  exit 1
+fi
+if run_approval_step "$old_head_runs" forbidden present || [[ "$(approval_calls)" == *labels/macos-build* ]]; then
+  printf 'A cancel failure other than 409 must fail the macOS approval step before the label is cleared.\n' >&2
+  exit 1
+fi
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'dev'
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'main'
@@ -91,10 +244,122 @@ if [[ "$dev_group" == "$main_group" ]]; then
   printf 'MacOS dev and main runs must remain in separate concurrency groups.\n' >&2
   exit 1
 fi
-require_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
-require_text "$mac_workflow" 'macOS-arm64-ccache-dev-'
+schedule_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'schedule')"
+dev_dispatch_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'workflow_dispatch')"
+if [[ "$schedule_group" == "$dev_dispatch_group" ]]; then
+  printf 'A dev dispatch must not share the seed group.\n' >&2
+  exit 1
+fi
+push_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'push')"
+if [[ "$push_group" != "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
+  printf 'Dev push and nightly seeds must share one group, apart from dev dispatches.\n' >&2
+  exit 1
+fi
+# Mirrors cancel-in-progress. Seed writers queue instead of cancelling, so a
+# nightly run that passed its dev-tip check saves before a later push seed runs.
+macos_cancels_in_progress() {
+  local event_name="$1"
+  local label_name="${2:-}"
+  [[ "$event_name" == 'workflow_dispatch' || "$label_name" == 'macos-build' ]]
+}
+for seed_event in schedule push; do
+  if macos_cancels_in_progress "$seed_event"; then
+    printf 'A %s seed must not cancel the seed writer running in its group.\n' "$seed_event" >&2
+    exit 1
+  fi
+done
+macos_cancels_in_progress workflow_dispatch \
+  || { printf 'A dispatch must still replace a running dispatch.\n' >&2; exit 1; }
+macos_cancels_in_progress pull_request macos-build \
+  || { printf 'An approved PR build must still replace its older build.\n' >&2; exit 1; }
+if macos_cancels_in_progress pull_request other-label; then
+  printf 'An unrelated PR label must not cancel a running build.\n' >&2
+  exit 1
+fi
+mac_triggers="$(awk '/^on:$/ { in_on = 1; next } in_on && /^[^ #]/ { exit } in_on { print }' "$mac_workflow")"
+if [[ "$mac_triggers" != *$'\n  push:\n    branches: [dev]\n    paths:\n'* ]]; then
+  printf 'MacOS. must seed the compiler cache on path-filtered dev pushes.\n' >&2
+  exit 1
+fi
+push_paths="$(awk '
+  /^  push:$/ { in_push = 1; next }
+  in_push && /^  [^ ]/ { exit }
+  in_push && /^    paths:$/ { in_paths = 1; next }
+  in_paths && /^    [^ ]/ { exit }
+  in_paths && /^      - / { sub(/^      - /, ""); print }
+' <<< "$mac_triggers")"
+for seed_path in \
+  "'Telegram/**'" \
+  "'cmake'" \
+  "'cmake/**'" \
+  "'CMakeLists.txt'" \
+  "'.github/workflows/mac.yml'" \
+  "'.github/scripts/ccache_*.sh'" \
+  "'.github/scripts/mac_ccache_profile.sh'"; do
+  if ! grep -Fxq -- "$seed_path" <<< "$push_paths"; then
+    printf 'MacOS. dev push seeds must include path %s.\n' "$seed_path" >&2
+    exit 1
+  fi
+done
 require_text "$mac_workflow" 'CCACHE_MAXSIZE: "5G"'
 require_text "$mac_workflow" 'CCACHE_SLOPPINESS: "pch_defines,time_macros"'
+require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
+reject_text "$mac_workflow" 'CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//'
+pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
+scheduled_profile="$(bash "$ccache_profile_script" schedule)"
+push_profile="$(bash "$ccache_profile_script" push)"
+dispatch_profile="$(bash "$ccache_profile_script" workflow_dispatch)"
+if [[ "$pull_request_profile" != "$scheduled_profile" || "$pull_request_profile" != "$push_profile" ]]; then
+  printf 'MacOS PR and scheduled builds must share one ccache profile.\n' >&2
+  exit 1
+fi
+if [[ "$pull_request_profile" != $'name=pr-compatible\nprotected_path_integration=OFF' ]]; then
+  printf 'MacOS PR and scheduled builds must use the PR-compatible OFF profile.\n' >&2
+  exit 1
+fi
+if [[ "$dispatch_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
+  printf 'Protected-path dispatches must use a separate ON ccache profile.\n' >&2
+  exit 1
+fi
+cache_setup_step="$(awk '
+  /^      - name: First set up\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+for cache_profile_setting in \
+  'PROTECTED_PATH_INTEGRATION: ${{ steps.ccache-profile.outputs.protected_path_integration }}' \
+  'protected_path_integration="$PROTECTED_PATH_INTEGRATION"' \
+  'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s'; do
+  if ! grep -Fq -- "$cache_profile_setting" <<< "$cache_setup_step"; then
+    printf 'MacOS cache setup must include profile setting: %s\n' "$cache_profile_setting" >&2
+    exit 1
+  fi
+done
+ccache_restore_step="$(awk '
+  /^      - name: Teagram compiler cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+ccache_restore_keys="$(awk '
+  /^          restore-keys:/ { in_restore_keys = 1; next }
+  in_restore_keys && /^          [^ ]/ { exit }
+  in_restore_keys && /^            / { sub(/^            /, ""); print }
+' <<< "$ccache_restore_step")"
+hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
+profile_expression="\${{ steps.ccache-profile.outputs.name }}"
+expected_ccache_restore_keys="macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-
+macOS-arm64-ccache-dev-${hash_expression}-
+macOS-arm64-ccache-dev-${profile_expression}-"
+if [[ "$ccache_restore_keys" != "$expected_ccache_restore_keys" ]]; then
+  printf 'MacOS pull requests must restore the shared dev compiler cache, falling back to the newest entry of their profile.\n' >&2
+  exit 1
+fi
+require_text "$mac_workflow" 'CCACHE_COMPILERCHECK: content'
+require_text "$mac_workflow" 'key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('\''CCACHE_KEY.txt'\'') }}-${{ github.run_id }}-${{ github.run_attempt }}'
+require_text "$mac_workflow" "github.event_name == 'schedule'"
+reject_text "$mac_workflow" 'macOS-arm64-ccache-pr-'
+reject_text "$mac_workflow" 'source-format'
+reject_text "$mac_workflow" 'clang-format'
 require_text "$mac_workflow" 'CMAKE_C_COMPILER_LAUNCHER=ccache'
 require_text "$mac_workflow" 'ccache_launcher.sh'
 require_text "$mac_workflow" '-Xclang -fno-pch-timestamp'
@@ -104,10 +369,16 @@ require_text "$mac_workflow" 'ccache hit rate'
 require_text "$mac_workflow" 'ccache_hit_count.sh'
 require_text "$mac_workflow" 'ccache_save_decision.sh'
 require_text "$mac_workflow" 'A restored compiler cache produced no cache hits.'
+require_text "$mac_workflow" '::warning::A restored compiler cache produced no cache hits.'
+require_text "$mac_workflow" '::warning::ccache did not record any compiler invocations for the Teagram build.'
+reject_text "$mac_workflow" '::error::A restored compiler cache produced no cache hits.'
+reject_text "$mac_workflow" '::error::ccache did not record any compiler invocations for the Teagram build.'
+require_text "$mac_workflow" '::warning::Warm-cache MacOS PR build exceeded the 30-minute target ('
+reject_text "$mac_workflow" '::error::Warm-cache (ccache and libraries) MacOS PR build exceeded the 30-minute limit.'
 reject_text "$mac_workflow" "steps.ccache-stats.outcome == 'success'"
 require_text "$mac_workflow" "steps.ccache-stats.outputs.save == 'true'"
 reject_text "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
-require_text "$mac_workflow" "github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'"
+require_text "$mac_workflow" "github.ref == 'refs/heads/dev'"
 reject_text "$mac_workflow" 'startsWith(steps.cache-ccache.outputs.cache-matched-key'
 ccache_stats_step="$(awk '
   /^      - name: Report compiler cache hits\.$/ { in_step = 1; next }
@@ -119,7 +390,11 @@ save_decision_line="$(grep -nF 'ccache_save_decision.sh' <<< "$ccache_stats_step
 zero_hit_guard_line="$(grep -nF 'A restored compiler cache produced no cache hits.' <<< "$ccache_stats_step" | cut -d: -f1)"
 if [[ -z "$misses_output_line" || -z "$save_decision_line" || -z "$zero_hit_guard_line" ]] \
   || ((misses_output_line >= zero_hit_guard_line || save_decision_line >= zero_hit_guard_line)); then
-  printf 'Compiler cache outputs must be written before a zero-hit guard can fail the stats step.\n' >&2
+  printf 'Compiler cache outputs must be written before the zero-hit warning is reported.\n' >&2
+  exit 1
+fi
+if grep -Eq '::error::|exit 1' <<< "$ccache_stats_step"; then
+  printf 'Compiler cache diagnostics must not fail a passing source build.\n' >&2
   exit 1
 fi
 save_cache_step="$(awk '
@@ -127,8 +402,34 @@ save_cache_step="$(awk '
   in_step && /^      - name:/ { exit }
   in_step { print }
 ' "$mac_workflow")"
-if grep -Eq 'cache-(matched-key|hit)' <<< "$save_cache_step"; then
-  printf 'A restored PR compiler cache with new misses must remain eligible for saving.\n' >&2
+if ! grep -Fq "github.ref == 'refs/heads/dev'" <<< "$save_cache_step" \
+  || grep -Fq "github.event_name == 'pull_request'" <<< "$save_cache_step"; then
+  printf 'Only dev runs may save the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+if ! grep -Fq "(github.event_name == 'schedule' || github.event_name == 'push')" <<< "$save_cache_step"; then
+  printf 'Dev push and scheduled runs must seed the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+if ! grep -Fq "steps.seed-current.outputs.current == 'true'" <<< "$save_cache_step"; then
+  printf 'A seed from a superseded dev head must not save the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/ccache_seed_current.sh" "$REPO_NAME" "$GITHUB_SHA" FETCH_HEAD'
+seed_current_line="$(grep -nF 'id: seed-current' "$mac_workflow" | cut -d: -f1)"
+save_cache_line="$(grep -nF 'name: Save Teagram compiler cache.' "$mac_workflow" | cut -d: -f1)"
+if [[ -z "$seed_current_line" || -z "$save_cache_line" ]] || ((seed_current_line >= save_cache_line)); then
+  printf 'The seed currency check must run before the compiler cache save.\n' >&2
+  exit 1
+fi
+save_libraries_step="$(awk '
+  /^      - name: Save libraries cache\.$/ { in_step = 1; next }
+  in_step && /^      - name:/ { exit }
+  in_step { print }
+' "$mac_workflow")"
+if ! grep -Fq "github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'" <<< "$save_libraries_step" \
+  || grep -Fq "github.event_name == 'pull_request'" <<< "$save_libraries_step"; then
+  printf 'Pull requests must restore the macOS libraries cache without saving it.\n' >&2
   exit 1
 fi
 require_text "$mac_workflow" 'build_dir="$repo/out"'
@@ -154,6 +455,11 @@ require_text "$mac_workflow" 'Telegram/build/qt_version.py'
 require_text "$mac_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
 require_text "$mac_workflow" 'name: Full chat info session regression.'
 require_text "$mac_workflow" "if: github.event_name != 'pull_request'"
+require_text "$mac_workflow" 'app_startup_timeout = 300'
+require_text "$mac_workflow" 'app_runtime_timeout = 180'
+require_text "$mac_workflow" 'Debugger cleanup signal failed:'
+require_text "$mac_workflow" 'signal_pid(app_pid, "Teagram", cleanup_signal)'
+reject_text "$mac_workflow" 'os.killpg(process.pid, signal.SIGTERM)'
 require_text "$mac_workflow" 'name: Upload deferred switch mutation evidence.'
 require_text "$mac_workflow" 'Deferred switch mutation evidence: mutation=remove-dispatch'
 require_text "$mac_workflow" 'Deferred switch mutation evidence: mutation=duplicate-dispatch'
@@ -168,7 +474,7 @@ reject_text "$packaged_workflow" '  schedule:'
 require_text "$packaged_workflow" 'concurrency:'
 require_text "$packaged_workflow" 'group: ${{ github.workflow }}-${{ github.event_name == '\''push'\'' && '\''release'\'' || inputs.branch || github.ref_name }}'
 require_text "$packaged_workflow" 'cancel-in-progress: false'
-require_text "$packaged_workflow" 'queue: max'
+reject_text "$packaged_workflow" 'queue: max'
 require_text "$packaged_workflow" 'openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem"'
 reject_text "$packaged_workflow" '"$REPO_NAME/Telegram/build/teagram_update_public_key.pem"'
 public_key_path="$(sed -n 's/.*openssl pkey -pubin -in "\([^"]*\)".*/\1/p' "$packaged_workflow" | sed -n '1p')"
@@ -184,6 +490,54 @@ require_text "$packaged_workflow" 'Teagram-macOS-arm64-QA'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
+prepare_libraries='./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent'
+require_text "$mac_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" './configure.sh \'
+mac_libs_keys="$(grep -E '^ +key: macOS-libs-' "$mac_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+packaged_libs_keys="$(grep -E '^ +key: macOS-libs-' "$packaged_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+if [[ -z "$mac_libs_keys" || "$mac_libs_keys" != "$packaged_libs_keys" ]]; then
+  printf 'MacOS Packaged. must restore the same Libraries cache key as MacOS.\n' >&2
+  exit 1
+fi
+build_tools_script=".github/scripts/install_macos_build_tools.sh"
+reject_text "$packaged_workflow" 'brew '
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$tools" client'
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries'
+tool_entries="$(grep -E '^  "[a-z0-9]+\|' "$build_tools_script" || true)"
+if [[ -z "$tool_entries" ]]; then
+  printf '%s must list its pinned tools.\n' "$build_tools_script" >&2
+  exit 1
+fi
+floating_tools="$(grep -vE '^  "[a-z0-9]+\|https://[^|]*[0-9][^|]*\|[0-9a-f]{64}"$' <<< "$tool_entries" || true)"
+if [[ -n "$floating_tools" ]]; then
+  printf '%s must pin every tool to a versioned URL and SHA-256:\n%s\n' \
+    "$build_tools_script" "$floating_tools" >&2
+  exit 1
+fi
+reject_text "$build_tools_script" 'brew '
+require_text "$build_tools_script" 'ln -sf glibtoolize "$prefix/bin/libtoolize"'
+reject_text "$packaged_workflow" 'refs/heads/master'
+reject_text "$packaged_workflow" 'git clone'
+reject_text "$packaged_workflow" '/opt/homebrew/opt/'
+reject_text "$packaged_workflow" '/opt/homebrew/Cellar/'
+reject_text "$packaged_workflow" 'CMAKE_PREFIX_PATH'
+reject_text "$packaged_workflow" 'macdeployqt'
+prepare_recipe="Telegram/build/prepare/prepare.py"
+mutable_checkouts="$(grep -nE '^ *git checkout ' "$prepare_recipe" \
+  | grep -vE 'git checkout ([0-9a-f]{7,40}|v[0-9]+(\.[0-9]+)+)$' || true)"
+if [[ -n "$mutable_checkouts" ]]; then
+  printf '%s must check out a commit SHA or a version tag:\n%s\n' \
+    "$prepare_recipe" "$mutable_checkouts" >&2
+  exit 1
+fi
+mutable_clones="$(grep -nE '^ *git clone .*-b (master|main|dev)( |$)' "$prepare_recipe" || true)"
+if [[ -n "$mutable_clones" ]]; then
+  printf '%s must not clone a moving branch:\n%s\n' \
+    "$prepare_recipe" "$mutable_clones" >&2
+  exit 1
+fi
+
 require_text "$unit_workflow" '  workflow_dispatch:'
 reject_text "$unit_workflow" '  pull_request:'
 require_text "$unit_workflow" 'concurrency:'
@@ -191,6 +545,86 @@ require_text "$unit_workflow" 'group: ${{ github.workflow }}-${{ inputs.branch |
 require_text "$unit_workflow" 'cancel-in-progress: true'
 require_text "$unit_workflow" 'Telegram/build/prepare/mac.sh'
 require_text "$unit_workflow" "steps.cache-libs.outputs.cache-hit != 'true'"
+
+require_text "$updater_workflow" '  pull_request:'
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/teagram_update_*'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_access.h'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/core/mac_protected_path_runtime.h'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_protected_path_runtime_stub.cpp'"
+require_text "$updater_workflow" "      - 'Telegram/SourceFiles/tests/unit/mac_file_bookmark_stub.cpp'"
+require_text "$updater_workflow" 'ref: ${{ github.sha }}'
+reject_text "$updater_workflow" 'ref: ${{ github.event.pull_request.head.sha }}'
+reject_text "$updater_workflow" 'github.event.pull_request.head.repo.full_name'
+require_text "$updater_workflow" 'fetch-depth: 2'
+require_text "$updater_workflow" 'test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"'
+reject_text "$updater_workflow" 'EXPECTED_BASE_SHA'
+reject_text "$updater_workflow" 'github.event.pull_request.base.sha'
+require_text "$updater_workflow" 'test "${parents[1]}" = "$EXPECTED_HEAD_SHA"'
+require_text "$updater_workflow" 'runs-on: macos-latest'
+require_text "$updater_workflow" 'canonical_tmpdir="$(cd "$TMPDIR" && pwd -P)"'
+require_text "$updater_workflow" 'TMPDIR=%s\n'
+require_text "$updater_workflow" '>> "$GITHUB_ENV"'
+require_text "$updater_workflow" 'timeout-minutes: 180'
+require_text "$updater_workflow" 'cancel-in-progress: true'
+require_text "$updater_workflow" 'run_teagram_updater_fixtures.sh'
+require_text "$updater_workflow" 'actions/upload-artifact@v7'
+require_text "$updater_workflow" 'retention-days: 14'
+reject_text "$updater_workflow" 'secrets.'
+reject_text "$updater_workflow" 'TEAGRAM_UPDATE_PRIVATE_KEY'
+require_text "$updater_workflow" 'cmake --build "$REPO_NAME/out"'
+require_text "$updater_workflow" '"$REPO_NAME/out/Debug/test_unit"'
+reject_text "$updater_workflow" '"$REPO_NAME/Telegram/out'
+
+for fixture in \
+  TeagramUpdateArchiveWritesStayConfined \
+  TeagramUpdateInstallFailurePreservesApp \
+  TeagramUpdateMarkerRejectsHardLinkWithoutTruncatingCanary \
+  TeagramUpdateInstallLocationAllowsSharedWritableParent \
+  TeagramUpdateReplacementSwapsInSharedWritableParent \
+  TeagramUpdateInstallLocationAllowsGroupWritableApplications \
+  TeagramUpdateInstallerExercisesAuthenticatedCandidateAndFallback \
+  TeagramUpdateInstallerRemovesInterruptedExtraction \
+  TeagramUpdateInstallerClearsUncommittedCandidateOnRestart \
+  TeagramUpdateStartupKeepsOlderPreviousBundle \
+  TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt \
+  TeagramUpdateDataCopyKeepsOriginalFolder \
+  TeagramUpdateShutdownInstallCopiesFinalWrites \
+  TeagramUpdateInstallerKeepsCustomIcon \
+  TeagramUpdateReplacementRetainsPreviousThroughStartup \
+  TeagramUpdateReplacementRestoresMissingTarget \
+  TeagramUpdateDownloadFailsWithoutMutation \
+  TeagramUpdateRejectsUntrustedOrIneligiblePackage \
+  TeagramUpdateInstallerRejectsUnwritableTargetWithoutMutation \
+  TeagramUpdateInstallerRejectsUnsupportedTargetWithoutMutation \
+  TeagramUpdateWorkerShutdownCleansCandidateArchive \
+  TeagramUpdateManagerInstallsProducerBundle; do
+  require_text "$updater_runner" "$fixture"
+  if ! grep -Fq "TEST_CASE($fixture)" \
+    Telegram/SourceFiles/tests/unit/teagram_update_download_tests.cpp \
+    Telegram/SourceFiles/tests/unit/teagram_update_verification_tests.cpp; then
+    printf 'Updater fixture runner names a missing test case: %s\n' "$fixture" >&2
+    exit 1
+  fi
+done
+fixture_selection="$(sed -n '/^fixtures=(/,/^)/p' "$updater_runner")"
+fixture_count="$(grep -c '^  [[:alnum:]_]*$' <<< "$fixture_selection")"
+if [[ "$fixture_count" != 22 ]]; then
+  printf 'Updater fixture runner must select exactly 22 registered cases, got %s.\n' \
+    "$fixture_count" >&2
+  exit 1
+fi
+worker_shutdown_count="$(grep -Fxc \
+  '  TeagramUpdateWorkerShutdownCleansCandidateArchive' \
+  <<< "$fixture_selection")"
+if [[ "$worker_shutdown_count" != 1 ]]; then
+  printf 'Updater fixture runner must select worker shutdown exactly once.\n' >&2
+  exit 1
+fi
+require_text "$updater_runner" '[unit_binary, "--case", fixture]'
+require_text "$updater_runner" 'fixture_timeout_seconds=300'
+require_text "$updater_runner" 'timeout=int(timeout_seconds)'
+require_text "$updater_runner" 'subprocess.TimeoutExpired'
+require_text "$updater_runner" 'tail -c "$max_log_bytes"'
 
 require_text README.md '`MacOS.` workflow is the required pull request gate'
 

@@ -674,6 +674,11 @@ void SessionNavigation::showPeerByLinkResolved(
 		showPeerInfo(peer, params);
 	} else if (resolveType == ResolveType::HashtagSearch) {
 		searchMessages(info.text, peer->owner().history(peer));
+	} else if ((info.storyParam == u"live"_q || info.storyParam.toInt()
+				|| info.storyAlbumId > 0)
+			   && !_session->storiesSupported()) {
+		showPeerHistory(peer, params, ShowAtUnreadMsgId);
+		showFeatureUnavailableOnServerToast();
 	} else if (info.storyParam == u"live"_q) {
 		parentController()->openPeerStories(peer->id, std::nullopt, true);
 	} else if (const auto storyId = info.storyParam.toInt()) {
@@ -722,8 +727,8 @@ void SessionNavigation::showPeerByLinkResolved(
 	} else if (bot && resolveType == ResolveType::ShareGame) {
 		Window::ShowShareGameBox(parentController(), bot, info.startToken);
 	} else if (bot
-		&& (resolveType == ResolveType::AddToGroup
-			|| resolveType == ResolveType::AddToChannel)) {
+			   && (resolveType == ResolveType::AddToGroup
+				   || resolveType == ResolveType::AddToChannel)) {
 		const auto scope = (resolveType == ResolveType::AddToGroup)
 			? (info.startAdminRights ? Scope::GroupAdmin : Scope::All)
 			: (resolveType == ResolveType::AddToChannel)
@@ -764,11 +769,11 @@ void SessionNavigation::showPeerByLinkResolved(
 			showPeerInfo(peer, params);
 		}
 	} else if (resolveType == ResolveType::ChannelDirect
-		&& !peer->isFullLoaded()) {
+			   && !peer->isFullLoaded()) {
 		_waitingDirectChannel = peer;
 		peer->updateFull();
-	} else if (const auto monoforum = peer->broadcastMonoforum()
-		; monoforum && resolveType == ResolveType::ChannelDirect) {
+	} else if (const auto monoforum = peer->broadcastMonoforum();
+			   monoforum && resolveType == ResolveType::ChannelDirect) {
 		showPeerHistory(monoforum, params, ShowAtUnreadMsgId);
 	} else {
 		const auto attachBotUsername = info.attachBotUsername;

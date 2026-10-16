@@ -25,8 +25,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/teagram_icon_choice.h"
 #include "core/update_checker.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_install.h"
+#include "core/teagram_update_manager.h"
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "core/shortcuts.h"
 #include "core/sandbox.h"
+#include "core/deep_links/deep_links_router.h"
 #include "core/local_url_handlers.h"
 #include "core/launcher.h"
 #include "core/proxy_rotation_manager.h"
@@ -428,6 +433,12 @@ void Application::run() {
 
 	startDomain();
 	refreshApplicationIcon();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	CompleteTeagramUpdateStartup();
+	if (windowedApplication) {
+		TeagramUpdateManager::Instance().start();
+	}
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 		regressionResult |= RunSignupControlsRegression();
@@ -865,6 +876,11 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 			}
 		}
 		_lastMouseIgnored = false;
+		if (e->type() == QEvent::MouseMove) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+			TeagramUpdateManager::Instance().noteUserInput();
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
+		}
 	} break;
 
 	case QEvent::ContextMenu: {
@@ -1311,11 +1327,16 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 		&& !passcodeLocked()) {
 		const auto command = urlTrimmed.mid(protocol.size());
 		const auto my = context.value<ClickHandlerContext>();
-		const auto controller = my.sessionWindow.get()
-			? my.sessionWindow.get()
-			: _lastActivePrimaryWindow
-			? _lastActivePrimaryWindow->sessionController()
-			: nullptr;
+		const auto target = my.sessionWindow.get();
+		if (!target
+			&& DeepLinks::Router::Instance().requiresPaidFeatures(command)) {
+			return TryRouterForLocalUrl(nullptr, command);
+		}
+		const auto controller
+			= target ? target
+			  : _lastActivePrimaryWindow
+				  ? _lastActivePrimaryWindow->sessionController()
+				  : nullptr;
 		if (TryRouterForLocalUrl(controller, command)) {
 			return true;
 		}
@@ -1411,6 +1432,9 @@ bool Application::passcodeLocked() const {
 
 void Application::updateNonIdle() {
 	_lastNonIdleTime = crl::now();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	TeagramUpdateManager::Instance().noteUserInput();
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (const auto session = maybePrimarySession()) {
 		session->updates().checkIdleFinish(_lastNonIdleTime);
 	}

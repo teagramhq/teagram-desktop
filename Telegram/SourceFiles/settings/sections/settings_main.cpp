@@ -270,14 +270,22 @@ void Cover::initViewers() {
 		updatePhoneText();
 	}, lifetime());
 
-	Info::Profile::UsernameValue(
-		_user
-	) | rpl::on_next([=](const TextWithEntities &value) {
-		_username->setMarkedText(tr::link(value.text.isEmpty()
-			? tr::lng_settings_username_add(tr::now)
-			: value.text));
-		refreshUsernameGeometry(width());
-	}, lifetime());
+	Info::Profile::UsernameValue(_user)
+		| rpl::on_next(
+			[=](const TextWithEntities &value) {
+				const auto unsupportedEmpty
+					= value.text.isEmpty()
+					  && !_user->session().accountUsernameEditSupported();
+				_username->setVisible(!unsupportedEmpty);
+				if (!unsupportedEmpty) {
+					_username->setMarkedText(
+						tr::link(value.text.isEmpty()
+									 ? tr::lng_settings_username_add(tr::now)
+									 : value.text));
+				}
+				refreshUsernameGeometry(width());
+			},
+			lifetime());
 
 	_username->overrideLinkClickHandler([=] {
 		if (_controller->showFrozenError()) {
@@ -497,7 +505,7 @@ void BuildPremiumSection(SectionBuilder &builder) {
 	const auto controller = builder.controller();
 	const auto showOther = builder.showOther();
 
-	if (!session->premiumPossible()) {
+	if (!session->paidFeaturesSupported() || !session->premiumPossible()) {
 		return;
 	}
 

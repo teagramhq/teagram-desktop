@@ -102,6 +102,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
@@ -528,6 +529,11 @@ bool AddRescheduleAction(
 		not_null<Ui::PopupMenu*> menu,
 		const ContextMenuRequest &request,
 		not_null<ListWidget*> list) {
+	if (!request.item
+		|| !Main::details::scheduledMessagesSupportedForPeer(
+			request.item->history()->peer)) {
+		return false;
+	}
 	const auto owner = &request.navigation->session().data();
 
 	const auto goodSingle = HasEditMessageAction(request, list)
@@ -1535,7 +1541,8 @@ void FillContextMenuItems(
 		}, &st::menuIconCopy);
 	}
 	if (request.overSelection
-		&& !Ui::SkipTranslate(list->getSelectedText().rich)) {
+		&& !Ui::SkipTranslate(&view->history()->peer->session(),
+							  list->getSelectedText().rich)) {
 		const auto owner = &view->history()->owner();
 		result->addAction(tr::lng_context_translate_selected(tr::now), [=] {
 			if (const auto item = owner->message(itemId)) {
@@ -1595,7 +1602,9 @@ void FillContextMenuItems(
 				: item->originalText();
 			if ((!item->translation() || !item->history()->translatedTo())
 				&& !translate.text.isEmpty()
-				&& !Ui::SkipTranslate(translate)) {
+				&& !Ui::SkipTranslate(
+					&item->history()->peer->session(), translate,
+					!mediaHasTextForCopy && bool(item->richPage()))) {
 				result->addAction(tr::lng_context_translate(tr::now), [=] {
 					if (const auto item = owner->message(itemId)) {
 						list->controller()->show(Box(
@@ -2020,7 +2029,7 @@ void AddPollActions(
 		for (const auto &answer : poll->answers) {
 			text.append('\n').append(radio).append(answer.text);
 		}
-		if (!Ui::SkipTranslate(text)) {
+		if (!Ui::SkipTranslate(&item->history()->peer->session(), text)) {
 			menu->addAction(tr::lng_context_translate(tr::now), [=] {
 				controller->show(Box(
 					Ui::TranslateBox,

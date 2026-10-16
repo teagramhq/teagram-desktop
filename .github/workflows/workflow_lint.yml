@@ -4,11 +4,15 @@ on:
   # Most macOS feedback lanes are manual/nightly, so lint the whole directory
   # whenever a workflow or an asserted CI contract changes.
   push:
+    branches: [dev]
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
+      - '.github/ci-cache-threat-model.md'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_seed_current.sh'
+      - '.github/scripts/test_ccache_seed_current.sh'
       - '.github/scripts/ccache_hit_count.sh'
       - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
@@ -16,15 +20,32 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/install_macos_build_tools.sh'
+      - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/mac_ccache_profile.sh'
+      - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/test_prune_linux_dev_ccache.sh'
+      - '.github/scripts/linux_libraries_image.sh'
+      - '.github/scripts/test_linux_libraries_image.sh'
+      - '.github/scripts/detect_linux_changes.sh'
+      - '.github/scripts/test_detect_linux_changes.sh'
+      - '.github/scripts/verify_built_sha.sh'
+      - '.github/scripts/test_verify_built_sha.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
+      - '.github/scripts/test_unit_feedback.py'
+      - '.github/scripts/unit_feedback_metadata.py'
+      - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   pull_request:
     paths:
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
+      - '.github/ci-cache-threat-model.md'
       - '.github/scripts/ccache_save_decision.sh'
       - '.github/scripts/test_ccache_save_decision.sh'
+      - '.github/scripts/ccache_seed_current.sh'
+      - '.github/scripts/test_ccache_seed_current.sh'
       - '.github/scripts/ccache_hit_count.sh'
       - '.github/scripts/test_ccache_hit_count.sh'
       - '.github/scripts/ccache_miss_count.sh'
@@ -32,8 +53,22 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/install_macos_build_tools.sh'
+      - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/mac_ccache_profile.sh'
+      - '.github/scripts/test_prune_macos_dev_ccache.sh'
+      - '.github/scripts/test_prune_linux_dev_ccache.sh'
+      - '.github/scripts/linux_libraries_image.sh'
+      - '.github/scripts/test_linux_libraries_image.sh'
+      - '.github/scripts/detect_linux_changes.sh'
+      - '.github/scripts/test_detect_linux_changes.sh'
+      - '.github/scripts/verify_built_sha.sh'
+      - '.github/scripts/test_verify_built_sha.sh'
       - '.github/scripts/ensure_release_tag.sh'
       - '.github/scripts/test_ensure_release_tag.sh'
+      - '.github/scripts/test_unit_feedback.py'
+      - '.github/scripts/unit_feedback_metadata.py'
+      - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:
 
@@ -77,6 +112,9 @@ jobs:
       - name: Test ccache save decision.
         run: bash .github/scripts/test_ccache_save_decision.sh
 
+      - name: Test compiler cache seed currency.
+        run: bash .github/scripts/test_ccache_seed_current.sh
+
       - name: Test ccache hit count.
         run: bash .github/scripts/test_ccache_hit_count.sh
 
@@ -89,5 +127,20 @@ jobs:
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
 
+      - name: Test CI cache contract.
+        run: bash .github/scripts/test_ci_cache_contract.sh
+
+      - name: Test Linux change detection.
+        run: bash .github/scripts/test_detect_linux_changes.sh
+
+      - name: Test Linux dependency image handling.
+        run: bash .github/scripts/test_linux_libraries_image.sh
+
+      - name: Test built commit verification.
+        run: bash .github/scripts/test_verify_built_sha.sh
+
       - name: Test release tag source.
         run: bash .github/scripts/test_ensure_release_tag.sh
+
+      - name: Test unit feedback selection.
+        run: python3 .github/scripts/test_unit_feedback.py

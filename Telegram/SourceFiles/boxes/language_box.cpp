@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_cloud_manager.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_provider.h"
 #include "main/main_session.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/settings_common.h"
@@ -1539,18 +1540,27 @@ void LanguageBox::prepare() {
 }
 
 void LanguageBox::showFinished() {
-	if (_controller && !_highlightId.isEmpty()) {
-		if (const auto window = Core::App().findWindow(this)) {
-			window->checkHighlightControl(
-				u"language/show-button"_q,
-				_showButtonToggle.data());
-			window->checkHighlightControl(
-				u"language/translate-chats"_q,
-				_translateChatsToggle.data());
-			window->checkHighlightControl(
-				u"language/do-not-translate"_q,
-				_doNotTranslateButton.data());
-		}
+	if (!_controller || _highlightId.isEmpty()) {
+		return;
+	}
+	const auto window = Core::App().findWindow(this);
+	if (!window) {
+		return;
+	}
+	auto widget = static_cast<Ui::RpWidget *>(nullptr);
+	if (_highlightId == u"language/show-button"_q) {
+		widget = _showButtonToggle.data();
+	} else if (_highlightId == u"language/translate-chats"_q) {
+		widget = _translateChatsToggle.data();
+	} else if (_highlightId == u"language/do-not-translate"_q) {
+		widget = _doNotTranslateButton.data();
+	} else {
+		return;
+	}
+	if (widget && widget->isVisible()) {
+		window->checkHighlightControl(_highlightId, widget);
+	} else {
+		static_cast<void>(window->takeHighlightControlId(_highlightId));
 	}
 }
 
@@ -1558,6 +1568,12 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 	if (!_controller) {
 		return;
 	}
+	const auto session = &_controller->session();
+	const auto provider = Ui::TranslateProviderChoiceForSession(session);
+	if (provider == Ui::details::TranslateProviderChoice::Unavailable) {
+		return;
+	}
+	const auto serverSupported = session->serverTranslationSupported();
 	const auto translateEnabled = container->add(
 		object_ptr<Ui::SettingsButton>(
 			container,
@@ -1574,7 +1590,7 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 		Core::App().saveSettingsDelayed();
 	}, translateEnabled->lifetime());
 
-	if (Platform::IsTranslateProviderAvailable()) {
+	if (serverSupported && Platform::IsTranslateProviderAvailable()) {
 		const auto platformTranslateWrap = container->add(
 			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 				container,
@@ -1592,6 +1608,9 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 				st::settingsButtonNoIcon))->toggleOn(
 					rpl::single(
 						Core::App().settings().usePlatformTranslation()));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_platformTranslationToggle = platformTranslateEnabled;
+#endif
 		platformTranslateEnabled->toggledValue(
 		) | rpl::filter([](bool checked) {
 			return (checked
@@ -1606,41 +1625,71 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 				platformTranslateWrap->entity(),
 				tr::lng_translate_settings_use_platform_mac_about());
 			Ui::AddSkip(platformTranslateWrap->entity());
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			_platformPackNotePresent = true;
+#endif
 		}
+	} else if (!serverSupported
+			   && (provider == Ui::details::TranslateProviderChoice::Platform)
+			   && Platform::IsMac()) {
+		const auto platformTranslateWrap
+			= container->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				container, object_ptr<Ui::VerticalLayout>(container)));
+		platformTranslateWrap->toggle(translateEnabled->toggled(),
+									  anim::type::instant);
+		platformTranslateWrap->toggleOn(translateEnabled->toggledValue());
+		Ui::AddSkip(platformTranslateWrap->entity());
+		Ui::AddDividerText(platformTranslateWrap->entity(),
+						   tr::lng_translate_settings_use_platform_mac_about());
+		Ui::AddSkip(platformTranslateWrap->entity());
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		_platformPackNotePresent = true;
+#endif
 	}
 
 	using namespace rpl::mappers;
 	auto premium = Data::AmPremiumValue(&_controller->session());
-	const auto translateChat = container->add(object_ptr<Ui::SettingsButton>(
-		container,
-		tr::lng_translate_settings_chat(),
-		st::settingsButtonNoIconLocked
-	))->toggleOn(rpl::merge(
-		rpl::combine(
-			Core::App().settings().translateChatEnabledValue(),
-			rpl::duplicate(premium),
-			_1 && _2),
-		_translateChatTurnOff.events()));
-	_translateChatsToggle = translateChat;
-	std::move(premium) | rpl::on_next([=](bool value) {
-		translateChat->setToggleLocked(!value);
-	}, translateChat->lifetime());
+	rpl::producer<bool> translateChatToggled;
+	if (_controller->session().serverTranslationSupported()) {
+		const auto translateChat
+			= container
+				  ->add(object_ptr<Ui::SettingsButton>(
+					  container, tr::lng_translate_settings_chat(),
+					  st::settingsButtonNoIconLocked))
+				  ->toggleOn(rpl::merge(
+					  rpl::combine(
+						  Core::App().settings().translateChatEnabledValue(),
+						  rpl::duplicate(premium), _1 && _2),
+					  _translateChatTurnOff.events()));
+		_translateChatsToggle = translateChat;
+		translateChatToggled = translateChat->toggledValue();
+		std::move(premium)
+			| rpl::on_next(
+				[=](bool value) { translateChat->setToggleLocked(!value); },
+				translateChat->lifetime());
 
-	translateChat->toggledValue(
-	) | rpl::filter([=](bool checked) {
-		const auto premium = _controller->session().premium();
-		if (checked && !premium) {
-			ShowPremiumPreviewToBuy(
-				_controller,
-				PremiumFeature::RealTimeTranslation);
-			_translateChatTurnOff.fire(false);
-		}
-		return premium
-			&& (checked != Core::App().settings().translateChatEnabled());
-	}) | rpl::on_next([=](bool checked) {
-		Core::App().settings().setTranslateChatEnabled(checked);
-		Core::App().saveSettingsDelayed();
-	}, translateChat->lifetime());
+		translateChat->toggledValue() | rpl::filter([=](bool checked) {
+			const auto premium = _controller->session().premium();
+			if (checked && !premium) {
+				ShowPremiumPreviewToBuy(_controller,
+										PremiumFeature::RealTimeTranslation);
+				_translateChatTurnOff.fire(false);
+			}
+			return premium
+				   && (checked
+					   != Core::App().settings().translateChatEnabled());
+		})
+			| rpl::on_next(
+				[=](bool checked) {
+					Core::App().settings().setTranslateChatEnabled(checked);
+					Core::App().saveSettingsDelayed();
+				},
+				translateChat->lifetime());
+	} else {
+		translateChatToggled
+			= rpl::combine(Core::App().settings().translateChatEnabledValue(),
+						   std::move(premium), _1 && _2);
+	}
 
 	using Languages = std::vector<LanguageId>;
 	const auto translateSkipWrap = container->add(
@@ -1651,8 +1700,7 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 		translateEnabled->toggled(),
 		anim::type::normal);
 	translateSkipWrap->toggleOn(rpl::combine(
-		translateEnabled->toggledValue(),
-		translateChat->toggledValue(),
+		translateEnabled->toggledValue(), std::move(translateChatToggled),
 		rpl::mappers::_1 || rpl::mappers::_2));
 	const auto translateSkip = Settings::AddButtonWithLabel(
 		translateSkipWrap->entity(),
@@ -1671,6 +1719,9 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 	});
 	Ui::AddSkip(container);
 	Ui::AddDividerText(container, tr::lng_translate_settings_about());
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	_translationAboutPresent = true;
+#endif
 }
 
 void LanguageBox::keyPressEvent(QKeyEvent *e) {
@@ -1734,3 +1785,29 @@ base::binary_guard LanguageBox::Show(
 
 	return result;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool LanguageBox::translateChatsRowPresentForRegressionTest() const {
+	return !_translateChatsToggle.isNull();
+}
+
+bool LanguageBox::translateButtonRowPresentForRegressionTest() const {
+	return !_showButtonToggle.isNull();
+}
+
+bool LanguageBox::doNotTranslateRowPresentForRegressionTest() const {
+	return !_doNotTranslateButton.isNull();
+}
+
+bool LanguageBox::platformTranslationRowPresentForRegressionTest() const {
+	return !_platformTranslationToggle.isNull();
+}
+
+bool LanguageBox::translationAboutPresentForRegressionTest() const {
+	return _translationAboutPresent;
+}
+
+bool LanguageBox::platformPackNotePresentForRegressionTest() const {
+	return _platformPackNotePresent;
+}
+#endif

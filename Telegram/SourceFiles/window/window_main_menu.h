@@ -51,6 +51,16 @@ public:
 	MainMenu(QWidget *parent, not_null<SessionController*> controller);
 	~MainMenu();
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool myProfileRowPresentForRegressionTest() const {
+		return _myProfileRowPresentForRegressionTest;
+	}
+	[[nodiscard]] bool topDividerShownForRegressionTest() const {
+		return _topDividerShownForRegressionTest
+			   && _topDividerShownForRegressionTest();
+	}
+#endif
+
 	void parentResized() override;
 	void showFinished() override;
 
@@ -109,6 +119,11 @@ private:
 	rpl::event_stream<bool> _nightThemeSwitches;
 	base::Timer _nightThemeSwitch;
 	base::unique_qptr<Ui::PopupMenu> _contextMenu;
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	bool _myProfileRowPresentForRegressionTest = false;
+	Fn<bool()> _topDividerShownForRegressionTest;
+#endif
 
 	Ui::Controls::SwipeBackResult _swipeBackData;
 

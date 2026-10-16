@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 
 struct ChatRestrictionsInfo;
+class HistoryItem;
 
 namespace Main {
 class Session;
@@ -57,6 +58,8 @@ struct DeleteGroup {
 	int endIndex = -1;
 	int eventCount = 0;
 };
+
+[[nodiscard]] bool ShouldShowTranslateAction(not_null<HistoryItem *> item);
 
 class InnerWidget final
 	: public Ui::RpWidget

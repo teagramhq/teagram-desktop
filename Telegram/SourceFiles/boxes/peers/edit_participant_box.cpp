@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_participant_box.h"
 
+#include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_tag_control.h"
 #include "boxes/peers/edit_participants_box.h"
 #include "history/view/history_view_message.h"
@@ -40,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_changes.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_user.h"
 #include "base/unixtime.h"
 #include "apiwrap.h"
@@ -521,6 +523,8 @@ void EditAdminBox::prepare() {
 
 	const auto chat = peer()->asChat();
 	const auto channel = peer()->asChannel();
+	const auto adminCapabilities = Data::details::BasicChatAdminCapabilitiesFor(
+		chat && chat->usesCustomServer());
 	const auto supportsProcessJoinRequests = canSave()
 		&& CanProcessJoinRequests(peer(), user());
 	const auto canProcessJoinRequests = supportsProcessJoinRequests
@@ -563,6 +567,10 @@ void EditAdminBox::prepare() {
 			result.emplace(
 				disabledByDefaults,
 				tr::lng_rights_permission_for_all(tr::now));
+			if (!adminCapabilities.canEditRights) {
+				result.emplace(~Flags(0),
+							   tr::lng_rights_permission_cant_edit(tr::now));
+			}
 			if (amCreator() && user()->isSelf()) {
 				result.emplace(
 					~Flag::Anonymous,
@@ -582,12 +590,14 @@ void EditAdminBox::prepare() {
 	const auto anyoneCanAddMembers = chat
 		? chat->anyoneCanAddMembers()
 		: channel->anyoneCanAddMembers();
+	const auto storiesSupported = peer()->session().storiesSupported();
 	const auto options = Data::AdminRightsSetOptions{
 		.isGroup = isGroup,
 		.isForum = peer()->isForum(),
 		.isCommunity = (channel && channel->isCommunity()),
 		.anyoneCanAddMembers = anyoneCanAddMembers,
 		.canProcessJoinRequests = canProcessJoinRequests,
+		.storiesSupported = storiesSupported,
 	};
 	Ui::AddSubsectionTitle(inner, tr::lng_rights_edit_admin_header());
 	auto [checkboxes, getChecked, changes, highlightWidget] = CreateEditAdminRights(
@@ -603,7 +613,8 @@ void EditAdminBox::prepare() {
 		changes
 	));
 
-	const auto hasRank = canSave() && (chat || channel->isMegagroup());
+	const auto hasRank = canSave() && adminCapabilities.canSetRank
+						 && (chat || channel->isMegagroup());
 
 	{
 		const auto aboutAddAdminsInner = inner->add(
@@ -734,11 +745,27 @@ void EditAdminBox::prepare() {
 				});
 			}
 		}
+		const auto existingRights
+			= _addingBot ? _addingBot->existing : _oldRights.flags;
+		const auto actorLimit
+			= (!channel || channel->amCreator()) ? ~Flags(0) : myEditableRights;
+		const auto rightsToSave = [=](Flags checked) {
+			return Ui::EditPeer::AdminRights::RightsToSave({
+				.checked = checked,
+				.existing = existingRights,
+				.actorLimit = actorLimit,
+				.storiesSupported = storiesSupported,
+			});
+		};
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		for (const auto &entry : AdminRightLabels(options)) {
+			_visibleRightsForRegressionTest |= entry.flags;
+		}
+		_checkedRightsForRegressionTest = getChecked;
+		_rightsToSaveForRegressionTest = rightsToSave;
+#endif
 		_finishSave = [=, value = getChecked] {
-			const auto newFlags = (value() | ChatAdminRight::Other)
-				& ((!channel || channel->amCreator())
-					? ~Flags(0)
-					: myEditableRights);
+			const auto newFlags = rightsToSave(value());
 			confirmGuardBotSave(ChatAdminRightsInfo(newFlags), [=] {
 				_saveCallback(
 					_oldRights,
@@ -840,7 +867,10 @@ bool EditAdminBox::canTransferOwnership() const {
 	if (user()->isInaccessible() || user()->isBot() || user()->isSelf()) {
 		return false;
 	} else if (const auto chat = peer()->asChat()) {
-		return chat->amCreator();
+		return chat->amCreator()
+			   && Data::details::BasicChatAdminCapabilitiesFor(
+					  chat->usesCustomServer())
+					  .canTransferOwnership;
 	} else if (const auto channel = peer()->asChannel()) {
 		return channel->amCreator() && !channel->isCommunity();
 	}

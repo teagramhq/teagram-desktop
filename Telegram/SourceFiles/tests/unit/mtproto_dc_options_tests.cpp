@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <utility>
 #include <vector>
 
+#include "lang/translate_provider_selection.h"
 #include "main/session_feature_support.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/connection_server_resolving.h"
@@ -1527,7 +1528,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 10>{
+	const auto capabilities = std::array<Capability, 14>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -1538,6 +1539,10 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::serverTranslationSupported,
 		Main::details::sharedFoldersSupported,
 		Main::details::accountBioEditSupported,
+		Main::details::accountUsernameEditSupported,
+		Main::details::noForwardsSupported,
+		Main::details::chatThemeEditingSupported,
+		Main::details::scheduledMessagesSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -1555,29 +1560,184 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	}
 }
 
+TEST_CASE(AccountUsernameCacheRefreshRequiresEditableSession) {
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+
+	const auto refreshCount = [](const DcOptions &options) {
+		auto requests = 0;
+		Main::details::refreshAccountUsernameCacheIfSupported(
+			options, [&] { ++requests; });
+		return requests;
+	};
+	CHECK_EQ(refreshCount(stock), 1);
+	CHECK_EQ(refreshCount(custom), 0);
+	CHECK_EQ(refreshCount(blocked), 0);
+}
+
+TEST_CASE(AutomaticChatTranslationRequiresServerSupport) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	const auto enabled = [](const DcOptions &options) {
+		return Main::details::automaticChatTranslationEnabled(
+			Main::details::serverTranslationSupported(options), true, true,
+			true);
+	};
+	CHECK(!enabled(custom));
+	CHECK(!enabled(blocked));
+	CHECK(enabled(stock));
+	CHECK(!Main::details::automaticChatTranslationEnabled(
+		Main::details::serverTranslationSupported(stock), false, true, true));
+}
+
+TEST_CASE(ChannelAutoTranslationRequiresServerSupport) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(custom), true));
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(blocked), true));
+	CHECK(Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), true));
+	CHECK(!Main::details::canEditChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), false));
+
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(custom), true));
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(blocked), true));
+	CHECK(Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), true));
+	CHECK(!Main::details::shouldSaveChannelAutoTranslation(
+		Main::details::serverTranslationSupported(stock), false));
+}
+
+TEST_CASE(TranslationProviderSelectionRespectsSessionAndAvailability) {
+	using Choice = Ui::details::TranslateProviderChoice;
+	const auto flags = std::array{false, true};
+	for (const auto serverSupported : flags) {
+		for (const auto hasUrlTemplate : flags) {
+			for (const auto secureUrlTemplate : flags) {
+				for (const auto platformAvailable : flags) {
+					for (const auto usePlatformTranslation : flags) {
+						const auto actual
+							= Ui::details::ChooseTranslateProvider(
+								serverSupported, hasUrlTemplate,
+								secureUrlTemplate, platformAvailable,
+								usePlatformTranslation);
+						auto expected = Choice::Unavailable;
+						if (serverSupported) {
+							if (hasUrlTemplate) {
+								expected = Choice::Url;
+							} else if (platformAvailable
+									   && usePlatformTranslation) {
+								expected = Choice::Platform;
+							} else {
+								expected = Choice::MTProto;
+							}
+						} else if (hasUrlTemplate && secureUrlTemplate) {
+							expected = Choice::Url;
+						} else if (platformAvailable) {
+							expected = Choice::Platform;
+						}
+						CHECK(actual == expected);
+						if (!serverSupported) {
+							CHECK(actual != Choice::MTProto);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE(TranslationProviderUrlTemplatesRequireHttpsAndAHost) {
+	CHECK(Ui::details::HasTranslateUrlTemplate(
+		u"https://translate.example/?q=%q"_q));
+	CHECK(Ui::details::IsSecureTranslateUrlTemplate(
+		u"https://translate.example/?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"http://translate.example/?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"https:///translate?q=%q"_q));
+	CHECK(!Ui::details::IsSecureTranslateUrlTemplate(
+		u"https://translate.example/%q/%zz"_q));
+	CHECK(!Ui::details::HasTranslateUrlTemplate(
+		u"https://translate.example/?q=%s"_q));
+}
+
+TEST_CASE(TranslationProviderSelectionDoesNotShareStockPreference) {
+	using Choice = Ui::details::TranslateProviderChoice;
+	const auto select = [](bool serverSupported, bool usePlatformTranslation) {
+		return Ui::details::ChooseTranslateProvider(
+			serverSupported, false, false, true, usePlatformTranslation);
+	};
+	{
+		const auto customBeforeStock = select(false, false);
+		const auto stockAfterPreferenceChange = select(true, true);
+		const auto customAfterStock = select(false, true);
+		CHECK(customBeforeStock == Choice::Platform);
+		CHECK(stockAfterPreferenceChange == Choice::Platform);
+		CHECK(customAfterStock == customBeforeStock);
+	}
+	{
+		const auto stockBeforeCustom = select(true, false);
+		const auto customAfterStock = select(false, true);
+		const auto stockAfterCustom = select(true, true);
+		CHECK(stockBeforeCustom == Choice::MTProto);
+		CHECK(customAfterStock == Choice::Platform);
+		CHECK(stockAfterCustom == Choice::Platform);
+	}
+}
+
+TEST_CASE(TranslationProviderSelectionUsesOwningDcOptions) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+	const auto choose = [](const DcOptions &options) {
+		return Ui::details::ChooseTranslateProvider(
+			Main::details::serverTranslationSupported(options), false, false,
+			false, true);
+	};
+	CHECK(choose(custom) == Ui::details::TranslateProviderChoice::Unavailable);
+	CHECK(choose(blocked) == Ui::details::TranslateProviderChoice::Unavailable);
+	CHECK(choose(stock) == Ui::details::TranslateProviderChoice::MTProto);
+}
+
 struct BioTargetTestMtp {
 	const DcOptions &options;
 
-	[[nodiscard]] const DcOptions &dcOptions() const {
-		return options;
-	}
+	[[nodiscard]] const DcOptions &dcOptions() const { return options; }
 };
 
 struct BioTargetTestSession {
 	quint64 userId = 0;
 	BioTargetTestMtp mtpInstance;
 
-	[[nodiscard]] const BioTargetTestMtp &mtp() const {
-		return mtpInstance;
-	}
+	[[nodiscard]] const BioTargetTestMtp &mtp() const { return mtpInstance; }
 };
 
 struct BioTargetTestUser {
 	const BioTargetTestSession &owner;
 
-	[[nodiscard]] const BioTargetTestSession &session() const {
-		return owner;
-	}
+	[[nodiscard]] const BioTargetTestSession &session() const { return owner; }
 };
 
 TEST_CASE(StockAndCustomBioTargetsFollowTheirOwningSessions) {
@@ -1586,10 +1746,10 @@ TEST_CASE(StockAndCustomBioTargetsFollowTheirOwningSessions) {
 	auto custom = DcOptions(Environment::Production);
 	CHECK(custom.setCustomServer(MakeCustomServer()));
 
-	const auto stockSession = BioTargetTestSession{ 42, { stock } };
-	const auto customSession = BioTargetTestSession{ 42, { custom } };
-	const auto stockUser = BioTargetTestUser{ stockSession };
-	const auto customUser = BioTargetTestUser{ customSession };
+	const auto stockSession = BioTargetTestSession{42, {stock}};
+	const auto customSession = BioTargetTestSession{42, {custom}};
+	const auto stockUser = BioTargetTestUser{stockSession};
+	const auto customUser = BioTargetTestUser{customSession};
 	CHECK_EQ(stockSession.userId, customSession.userId);
 
 	CHECK(Main::details::accountBioEditorTargetSupported(stockUser));
@@ -1605,8 +1765,8 @@ TEST_CASE(BlockedAccountWithoutCustomPinHasNoBioTargets) {
 	CHECK(blocked.blocked());
 	CHECK(!blocked.hasCustomServer());
 
-	const auto session = BioTargetTestSession{ 42, { blocked } };
-	const auto user = BioTargetTestUser{ session };
+	const auto session = BioTargetTestSession{42, {blocked}};
+	const auto user = BioTargetTestUser{session};
 	CHECK(!Main::details::accountBioEditorTargetSupported(user));
 	CHECK(!Main::details::accountBioSearchTargetSupported(session));
 }
@@ -1616,40 +1776,112 @@ TEST_CASE(AccountBioTargetsStayOwnedAcrossSwitchOrdersWithEqualIds) {
 	stockOptions.constructFromBuiltIn();
 	auto customOptions = DcOptions(Environment::Production);
 	CHECK(customOptions.setCustomServer(MakeCustomServer()));
-	const auto stock = BioTargetTestSession{ 42, { stockOptions } };
-	const auto custom = BioTargetTestSession{ 42, { customOptions } };
-	const auto stockUser = BioTargetTestUser{ stock };
-	const auto customUser = BioTargetTestUser{ custom };
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto stockUser = BioTargetTestUser{stock};
+	const auto customUser = BioTargetTestUser{custom};
 	CHECK_EQ(stock.userId, custom.userId);
 
-	const auto checkTargets = [](
-			const BioTargetTestSession &searchOwner,
-			const BioTargetTestUser &editorOwner,
-			bool editorExpected,
-			bool searchExpected) {
-		CHECK_EQ(
-			Main::details::accountBioEditorTargetSupported(editorOwner),
-			editorExpected);
-		CHECK_EQ(
-			Main::details::accountBioSearchTargetSupported(searchOwner),
-			searchExpected);
+	const auto checkTargets = [](const BioTargetTestSession &searchOwner,
+								 const BioTargetTestUser &editorOwner,
+								 bool editorExpected, bool searchExpected) {
+		CHECK_EQ(Main::details::accountBioEditorTargetSupported(editorOwner),
+				 editorExpected);
+		CHECK_EQ(Main::details::accountBioSearchTargetSupported(searchOwner),
+				 searchExpected);
 	};
-	const auto checkSwitchOrder = [&](
-			const BioTargetTestSession &first,
-			const BioTargetTestUser &firstUser,
-			bool firstSupported,
+	const auto checkSwitchOrder =
+		[&](const BioTargetTestSession &first,
+			const BioTargetTestUser &firstUser, bool firstSupported,
 			const BioTargetTestSession &second,
-			const BioTargetTestUser &secondUser,
-			bool secondSupported) {
-		checkTargets(first, firstUser, firstSupported, firstSupported);
-		checkTargets(second, secondUser, secondSupported, secondSupported);
-		checkTargets(first, firstUser, firstSupported, firstSupported);
-	};
+			const BioTargetTestUser &secondUser, bool secondSupported) {
+			checkTargets(first, firstUser, firstSupported, firstSupported);
+			checkTargets(second, secondUser, secondSupported, secondSupported);
+			checkTargets(first, firstUser, firstSupported, firstSupported);
+		};
 
 	checkSwitchOrder(stock, stockUser, true, custom, customUser, false);
 	checkSwitchOrder(custom, customUser, false, stock, stockUser, true);
 	checkTargets(stock, customUser, false, true);
 	checkTargets(custom, stockUser, true, false);
+}
+
+TEST_CASE(AccountUsernameEditorsFollowTheirOwningSessionAcrossSwitchOrders) {
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	auto blockedOptions = DcOptions(Environment::Production);
+	blockedOptions.constructBlocked();
+
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto blocked = BioTargetTestSession{42, {blockedOptions}};
+	const auto stockUser = BioTargetTestUser{stock};
+	const auto customUser = BioTargetTestUser{custom};
+	const auto blockedUser = BioTargetTestUser{blocked};
+	CHECK_EQ(stock.userId, custom.userId);
+
+	const auto supported = [](const BioTargetTestUser &user) {
+		return Main::details::accountUsernameEditSupported(
+			user.session().mtp().dcOptions());
+	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, bool firstExpected,
+			  const BioTargetTestUser &second, bool secondExpected) {
+			  CHECK_EQ(supported(first), firstExpected);
+			  CHECK_EQ(supported(second), secondExpected);
+			  CHECK_EQ(supported(first), firstExpected);
+		  };
+
+	checkSwitchOrder(stockUser, true, customUser, false);
+	checkSwitchOrder(customUser, false, stockUser, true);
+	CHECK(!supported(blockedUser));
+	CHECK(!supported(customUser));
+}
+
+TEST_CASE(ChatActionsFollowTheirOwningSessionAcrossSwitchOrdersAndWindows) {
+	auto stockOptions = DcOptions(Environment::Production);
+	stockOptions.constructFromBuiltIn();
+	auto customOptions = DcOptions(Environment::Production);
+	CHECK(customOptions.setCustomServer(MakeCustomServer()));
+	const auto stock = BioTargetTestSession{42, {stockOptions}};
+	const auto custom = BioTargetTestSession{42, {customOptions}};
+	const auto stockPeer = BioTargetTestUser{stock};
+	const auto customPeer = BioTargetTestUser{custom};
+	CHECK_EQ(stock.userId, custom.userId);
+
+	using Features = std::array<bool, 3>;
+	constexpr auto kStockFeatures = Features{true, true, true};
+	constexpr auto kCustomFeatures = Features{false, false, false};
+	const auto featuresFor = [](const BioTargetTestUser &peer) {
+		const auto owner = &peer;
+		return Features{
+			Main::details::noForwardsSupportedForPeer(owner),
+			Main::details::chatThemeEditingSupportedForPeer(owner),
+			Main::details::scheduledMessagesSupportedForPeer(owner),
+		};
+	};
+	const auto checkSwitchOrder
+		= [&](const BioTargetTestUser &first, Features firstExpected,
+			  const BioTargetTestUser &second, Features secondExpected) {
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(featuresFor(second) == secondExpected);
+			  CHECK(featuresFor(first) == firstExpected);
+			  CHECK(Main::details::scheduledSendAllowedForPeer(&first, false));
+			  CHECK_EQ(Main::details::scheduledSendAllowedForPeer(&first, true),
+					   firstExpected[2]);
+		  };
+	checkSwitchOrder(stockPeer, kStockFeatures, customPeer, kCustomFeatures);
+	checkSwitchOrder(customPeer, kCustomFeatures, stockPeer, kStockFeatures);
+
+	struct WindowPeer {
+		const BioTargetTestUser *peer = nullptr;
+	};
+	const auto primaryWindow = WindowPeer{&stockPeer};
+	const auto separateWindow = WindowPeer{&customPeer};
+	CHECK(featuresFor(*primaryWindow.peer) == kStockFeatures);
+	CHECK(featuresFor(*separateWindow.peer) == kCustomFeatures);
 }
 
 // A pin is immutable for the life of the account. Peer and message ids

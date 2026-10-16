@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/launcher.h"
 #include "core/mac_protected_path_runtime.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_install.h"
+#endif
 
 #include "platform/platform_launcher.h"
 #include "platform/platform_specific.h"
@@ -708,7 +711,11 @@ int Launcher::executeApplication() {
 	Sandbox sandbox(arguments.count(), arguments.values());
 	Ui::MainQueueProcessor processor;
 	base::ConcurrentTimerEnvironment environment;
-	return sandbox.start();
+	const auto result = sandbox.start();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+	CompleteScheduledTeagramUpdateAfterShutdown();
+#endif
+	return result;
 }
 
 } // namespace Core

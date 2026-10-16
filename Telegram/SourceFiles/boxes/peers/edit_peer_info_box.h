@@ -26,6 +26,8 @@ class VerticalLayout;
 class SettingsButton;
 } // namespace Ui
 
+class ChannelData;
+
 class EditPeerInfoBox : public Ui::BoxContent {
 public:
 	EditPeerInfoBox(
@@ -38,6 +40,32 @@ public:
 	}
 
 	static bool Available(not_null<PeerData*> peer);
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	struct ManageRowsForRegressionTest {
+		bool directMessages = false;
+		bool reactions = false;
+		bool appearance = false;
+	};
+
+	[[nodiscard]] bool autoTranslateControlPresentForRegressionTest() const;
+	[[nodiscard]] ManageRowsForRegressionTest
+	manageRowsForRegressionTest() const;
+	[[nodiscard]] QString titleForRegressionTest() const;
+	[[nodiscard]] QString descriptionForRegressionTest() const;
+	[[nodiscard]] bool descriptionErrorShownForRegressionTest() const;
+	void saveRenameForRegressionTest(QString title);
+	void
+	saveManageChangesForRegressionTest(QString title, QString description,
+									   not_null<ChannelData *> discussionLink,
+									   int starsPerDirectMessage);
+	void saveDescriptionForRegressionTest(QString description,
+										  int starsPerDirectMessage);
+	void saveDirectMessagesPriceForRegressionTest(int starsPerDirectMessage);
+	void
+	saveDirectMessagesPriceStageForRegressionTest(int starsPerDirectMessage);
+	void saveAutoTranslateForRegressionTest(bool enabled);
+#endif
 
 	[[nodiscard]] static object_ptr<Ui::SettingsButton> CreateButton(
 		not_null<QWidget*> parent,
@@ -61,7 +89,20 @@ private:
 	rpl::event_stream<> _focusRequests;
 	not_null<Window::SessionNavigation*> _navigation;
 	not_null<PeerData*> _peer;
-
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	bool _autoTranslateControlPresentForRegressionTest = false;
+	ManageRowsForRegressionTest _manageRowsForRegressionTest;
+	Fn<QString()> _titleForRegressionTest;
+	Fn<QString()> _descriptionForRegressionTest;
+	Fn<bool()> _descriptionErrorShownForRegressionTest;
+	Fn<void(QString)> _saveRenameForRegressionTest;
+	Fn<void(QString, QString, not_null<ChannelData *>, int)>
+		_saveManageChangesForRegressionTest;
+	Fn<void(QString, int)> _saveDescriptionForRegressionTest;
+	Fn<void(int)> _saveDirectMessagesPriceForRegressionTest;
+	Fn<void(int)> _saveDirectMessagesPriceStageForRegressionTest;
+	Fn<void(bool)> _saveAutoTranslateForRegressionTest;
+#endif
 };
 
 void ShowEditChatPermissions(

@@ -1121,7 +1121,7 @@ void Updates::updateOnlineForRegressionTest(
 }
 
 void Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
-		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	DeferredOnlineUpdatePhaseForRegressionTest phase) {
 	gDeferredOnlineUpdatePhaseForRegressionTest = phase;
 }
 
@@ -1131,25 +1131,27 @@ Updates::deferredOnlineUpdatePhaseForRegressionTest() {
 }
 
 void Updates::recordDeferredOnlineUpdateEnqueuedForRegressionTest(
-		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	DeferredOnlineUpdatePhaseForRegressionTest phase) {
 	switch (phase) {
 	case DeferredOnlineUpdatePhaseForRegressionTest::Setup:
 		++_deferredOnlineUpdateDispatchCountsForRegressionTest.setupEnqueued;
 		break;
 	case DeferredOnlineUpdatePhaseForRegressionTest::CloseSwitch:
-		++_deferredOnlineUpdateDispatchCountsForRegressionTest.closeSwitchEnqueued;
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest
+			  .closeSwitchEnqueued;
 		break;
 	}
 }
 
 void Updates::recordDeferredOnlineUpdateExecutedForRegressionTest(
-		DeferredOnlineUpdatePhaseForRegressionTest phase) {
+	DeferredOnlineUpdatePhaseForRegressionTest phase) {
 	switch (phase) {
 	case DeferredOnlineUpdatePhaseForRegressionTest::Setup:
 		++_deferredOnlineUpdateDispatchCountsForRegressionTest.setupExecuted;
 		break;
 	case DeferredOnlineUpdatePhaseForRegressionTest::CloseSwitch:
-		++_deferredOnlineUpdateDispatchCountsForRegressionTest.closeSwitchExecuted;
+		++_deferredOnlineUpdateDispatchCountsForRegressionTest
+			  .closeSwitchExecuted;
 		break;
 	}
 }

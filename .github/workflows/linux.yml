@@ -1,33 +1,40 @@
 name: Linux.
 
 on:
-  push:
-    # Pull requests provide feature-branch validation. A direct push without an
-    # open pull request gets no automatic Linux feedback; use workflow_dispatch
-    # for that opt-in validation.
-    branches:
-      - dev
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'changelog.txt'
-      - 'LEGAL'
-      - 'LICENSE'
-      - '.github/**'
-      - '!.github/workflows/linux.yml'
-      - '!.github/scripts/detect_linux_changes.sh'
-      - '!.github/scripts/test_detect_linux_changes.sh'
-      - 'snap/**'
-      - 'Telegram/build/**'
-      - '!Telegram/build/docker/centos_env/**'
-      - 'Telegram/Resources/uwp/**'
-      - 'Telegram/Resources/winrc/**'
-      - 'Telegram/SourceFiles/platform/win/**'
-      - 'Telegram/SourceFiles/platform/mac/**'
-      - 'Telegram/Telegram/**'
-      - 'Telegram/configure.bat'
-      - 'Telegram/Telegram.plist'
   pull_request:
+  # The post-merge build runs on the push itself, so its check is attached to
+  # the commit it checks out and its cache saves land in the dev scope. Keep
+  # these paths in step with detect_linux_changes.sh.
+  push:
+    branches: [dev]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**.md'
+      - '!LEGAL'
+      - '!LICENSE'
+      - '!.github/**'
+      - '.github/workflows/linux.yml'
+      - '.github/scripts/detect_linux_changes.sh'
+      - '.github/scripts/test_detect_linux_changes.sh'
+      - '.github/scripts/linux_libraries_image.sh'
+      - '.github/scripts/test_linux_libraries_image.sh'
+      - '.github/scripts/verify_built_sha.sh'
+      - '.github/scripts/test_verify_built_sha.sh'
+      - '!snap/**'
+      - '!Telegram/build/**'
+      - 'Telegram/build/docker/centos_env/**'
+      - 'Telegram/build/version'
+      - 'Telegram/build/qt_version.py'
+      - 'Telegram/build/teagram_update_manifest.py'
+      - 'Telegram/build/changelog2appstream.py'
+      - '!Telegram/Resources/uwp/**'
+      - '!Telegram/Resources/winrc/**'
+      - '!Telegram/SourceFiles/platform/win/**'
+      - '!Telegram/SourceFiles/platform/mac/**'
+      - '!Telegram/Telegram/**'
+      - '!Telegram/configure.bat'
+      - '!Telegram/Telegram.plist'
   # Keeps the default branch holding a live ccache for feature branches to restore
   # from, instead of leaving it to whenever someone last pushed to it. The restore
   # refreshes the entry's 7-day expiry; the save below only fires when the build
@@ -36,12 +43,15 @@ on:
     - cron: '17 3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   # One live build per branch and pull request. A new pull-request update
   # supersedes its prior run. The default branch is exempt so a cache-refreshing
   # build always finishes.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' }}
 
 jobs:
 
@@ -60,6 +70,9 @@ jobs:
       - name: Test Linux change detection.
         run: bash .github/scripts/test_detect_linux_changes.sh
 
+      - name: Test brand art.
+        run: bash .github/scripts/test_brand_art.sh
+
       - name: Detect Linux-relevant changes.
         id: filter
         shell: bash
@@ -67,11 +80,85 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: bash .github/scripts/detect_linux_changes.sh
 
+  # Trust boundary and token scope: see .github/ci-cache-threat-model.md.
+  linux-libraries:
+    name: Publish Linux dependency image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+
+      - name: Set Linux dependency image tag.
+        id: image-tag
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DEPENDENCY_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Linux dependency image hash is missing or malformed."
+            exit 1
+          fi
+          image="ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "LINUX_LIBRARIES_IMAGE=${image}" >> "$GITHUB_ENV"
+
+      - name: Log in to GitHub Container Registry.
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for an existing dependency image.
+        id: image-cache
+        run: bash .github/scripts/linux_libraries_image.sh inspect "$LINUX_LIBRARIES_IMAGE" "" "$GITHUB_OUTPUT"
+
+      - name: Generate Dockerfile for a missing dependency image.
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -sSL https://install.python-poetry.org | python3 -
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
+
+      - name: Set up Docker Buildx for a missing dependency image.
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and publish Linux dependency image.
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: Telegram/build/docker/centos_env
+          push: true
+          tags: ${{ steps.image-tag.outputs.image }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
   linux-build:
     name: Linux build and unit tests
-    needs: linux-changes
-    if: needs.linux-changes.outputs.required == 'true'
+    # A dev push publishes the dependency image of this commit first, so the
+    # build pulls the image for its own recipe. Other events skip the publisher.
+    needs:
+      - linux-changes
+      - linux-libraries
+    if: >
+      !cancelled()
+        && needs.linux-changes.result == 'success'
+        && needs.linux-changes.outputs.required == 'true'
+        && (needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')
     runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      packages: read
 
     strategy:
       matrix:
@@ -82,16 +169,35 @@ jobs:
       UPLOAD_ARTIFACT: "true"
       ONLY_CACHE: "false"
       IMAGE_TAG: tdesktop:centos_env
-      # The dependency image and its BuildKit cache need headroom beyond the
-      # checked-out tree. Reclaim the runner only when less than this amount
-      # remains, and fail closed if the headroom cannot be confirmed.
+      # The dependency image and build need headroom beyond the checked-out
+      # tree. Reclaim the runner only when less than this amount remains, and
+      # fail closed if the headroom cannot be confirmed.
       MIN_FREE_SPACE_GIB: "30"
 
     steps:
+      - name: Record Linux job start time.
+        run: echo "LINUX_JOB_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+
       - name: Clone.
         uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      # The check is reported against GITHUB_SHA, so the build must be of
+      # exactly that commit.
+      - name: Verify the checked-out commit.
+        run: bash .github/scripts/verify_built_sha.sh "$GITHUB_SHA"
+
+      - name: Set Linux dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DEPENDENCY_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Linux dependency image hash is missing or malformed."
+            exit 1
+          fi
+          echo "LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}" >> "$GITHUB_ENV"
 
       - name: Check free disk space before image preparation.
         id: disk-space-before
@@ -159,17 +265,11 @@ jobs:
       - name: First set up.
         run: |
           sudo apt update
-          curl -sSL https://install.python-poetry.org | python3 -
           curl -sSL https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-glibc.tar.xz \
           | sudo tar xJ -C /usr/local/bin --strip-components=1 ccache-4.13.6-linux-x86_64-glibc/ccache
           echo "CCACHE_DIR=$RUNNER_TEMP/.tdesktop-cache" >> $GITHUB_ENV
-          cd Telegram/build/docker/centos_env
-          poetry install
-          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
-          echo "$DOCKERFILE" > Dockerfile
-          rm -rf __pycache__
 
-      - name: Verify free disk space before dependency image build.
+      - name: Verify free disk space before dependency image use.
         shell: bash
         run: |
           set -euo pipefail
@@ -191,59 +291,63 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Docker Buildx.
-        id: setup-buildx
+      - name: Log in to GitHub Container Registry.
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start Linux Libraries timer.
+        run: echo "LINUX_LIBRARIES_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+
+      - name: Pull shared Linux dependency image.
+        id: pull-libraries
+        run: bash .github/scripts/linux_libraries_image.sh pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"
+
+      - name: Generate Dockerfile for a missing dependency image.
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -sSL https://install.python-poetry.org | python3 -
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
+
+      - name: Set up Docker Buildx for a missing dependency image.
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
         uses: docker/setup-buildx-action@v4
 
-      # Split by branch for the same reason as the ccache below: an entry written
-      # from a feature branch is scoped to that branch, so no other branch can ever
-      # read it, and it still counts against the repository's 10 GB budget. Three
-      # such copies were evicting the entry the default branch depends on. Feature
-      # branches restore only; the default branch keeps the full action, whose
-      # post-job save is what captures the mount cache the dance step extracts.
-      - name: Libraries cache.
-        id: cache-libs
-        if: github.ref_name == github.event.repository.default_branch
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ runner.temp }}/.buildx-cache
-            ${{ runner.temp }}/.mount-cache
-          key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
-          restore-keys: ${{ runner.OS }}-libs-
-
-      - name: Libraries cache (restore only).
-        id: restore-libs
-        if: github.ref_name != github.event.repository.default_branch
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            ${{ runner.temp }}/.buildx-cache
-            ${{ runner.temp }}/.mount-cache
-          key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
-          restore-keys: ${{ runner.OS }}-libs-
-
-      - name: Restore Docker cache mounts.
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723
-        with:
-          builder: ${{ steps.setup-buildx.outputs.name }}
-          cache-dir: ${{ runner.temp }}/.mount-cache
-          dockerfile: Telegram/build/docker/centos_env/Dockerfile
-          skip-extraction: ${{ steps.cache-libs.outputs.cache-hit == 'true' || steps.restore-libs.outputs.cache-hit == 'true' }}
-
       - name: Libraries.
+        id: libraries
+        if: steps.pull-libraries.outputs.cache-hit != 'true'
         uses: docker/build-push-action@v7
         with:
           context: Telegram/build/docker/centos_env
-          load: ${{ env.ONLY_CACHE == 'false' }}
+          load: true
           tags: ${{ env.IMAGE_TAG }}
-          cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
-          cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
 
-      - name: Move cache.
+      - name: Report Linux Libraries duration.
+        if: always()
+        env:
+          IMAGE_CACHE_HIT: ${{ steps.pull-libraries.outputs.cache-hit }}
         run: |
-          rm -rf ${{ runner.temp }}/.buildx-cache
-          mv ${{ runner.temp }}/.buildx-cache{-new,}
+          set -euo pipefail
+          finished_at="$(date -u +%s)"
+          started_at="${LINUX_LIBRARIES_STARTED_AT:-$finished_at}"
+          elapsed_seconds=$((finished_at - started_at))
+          printf 'Linux Libraries phase: %s seconds (%s minutes), image cache hit: %s.\n' \
+            "$elapsed_seconds" "$((elapsed_seconds / 60))" "${IMAGE_CACHE_HIT:-unknown}"
+          printf '### Linux Libraries phase\n\n- Duration: %s seconds (%s minutes)\n- GHCR image hit: %s\n\n' \
+            "$elapsed_seconds" "$((elapsed_seconds / 60))" "${IMAGE_CACHE_HIT:-unknown}" \
+            >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" \
+              && "${IMAGE_CACHE_HIT:-false}" == "true" \
+              && "$elapsed_seconds" -ge 300 ]]; then
+            echo "::warning::Warm Linux Libraries pull exceeded the five-minute target (${elapsed_seconds}s)."
+          fi
 
       - name: Restore Telegram Desktop cache.
         id: cache-tdesktop
@@ -251,8 +355,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-${{ github.run_id }}
-          restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-
+          key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'default' }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'default' }}-
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
@@ -297,14 +401,16 @@ jobs:
       - name: Trim Telegram Desktop cache.
         if: >
           env.ONLY_CACHE == 'false'
-            && github.ref_name == github.event.repository.default_branch
+            && github.event_name != 'pull_request'
+            && github.ref == 'refs/heads/dev'
             && fromJSON(steps.ccache-stats.outputs.misses) > 300
         run: ccache --evict-older-than 1d
 
       - name: Save Telegram Desktop cache.
         if: >
           env.ONLY_CACHE == 'false'
-            && github.ref_name == github.event.repository.default_branch
+            && github.event_name != 'pull_request'
+            && github.ref == 'refs/heads/dev'
             && fromJSON(steps.ccache-stats.outputs.misses) > 300
         uses: actions/cache/save@v6
         with:
@@ -397,6 +503,46 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: out/Debug/artifact/
+
+      - name: Report Actions cache total.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          finished_at="$(date -u +%s)"
+          started_at="${LINUX_JOB_STARTED_AT:-$finished_at}"
+          job_elapsed_seconds=$((finished_at - started_at))
+          printf 'Linux build job duration: %s seconds (%s minutes).\n' \
+            "$job_elapsed_seconds" "$((job_elapsed_seconds / 60))"
+          printf '### Linux build job\n\n- Duration: %s seconds (%s minutes)\n\n' \
+            "$job_elapsed_seconds" "$((job_elapsed_seconds / 60))" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]] \
+              && (( job_elapsed_seconds >= 1200 )); then
+            echo "::warning::Linux PR build job exceeded the 20-minute target (${job_elapsed_seconds}s)."
+          fi
+          if ! cache_sizes="$(gh cache list --limit 1000 --json sizeInBytes --jq '.[].sizeInBytes' --repo "$GITHUB_REPOSITORY" 2>&1)"; then
+            echo "::warning::Unable to read the Actions cache total: ${cache_sizes}"
+            printf '### Actions cache budget\n\n- Total: unavailable\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          total_bytes=0
+          if [[ -n "$cache_sizes" ]]; then
+            while IFS= read -r cache_size; do
+              if [[ ! "$cache_size" =~ ^[0-9]+$ ]]; then
+                echo "::warning::Ignoring an invalid Actions cache size: ${cache_size}"
+                continue
+              fi
+              total_bytes=$((total_bytes + cache_size))
+            done <<< "$cache_sizes"
+          fi
+          total_gib="$(awk -v bytes="$total_bytes" 'BEGIN { printf "%.2f", bytes / 1073741824 }')"
+          printf 'Actions cache total: %s bytes (%s GiB).\n' "$total_bytes" "$total_gib"
+          printf '### Actions cache budget\n\n- Total: %s bytes (%s GiB)\n- Target: under 9000000000 bytes (9 GB)\n' \
+            "$total_bytes" "$total_gib" >> "$GITHUB_STEP_SUMMARY"
+          if (( total_bytes >= 9000000000 )); then
+            echo "::warning::Actions cache total is at or above the 9 GB target (${total_bytes} bytes)."
+          fi
 
   linux:
     name: Rocky Linux 8

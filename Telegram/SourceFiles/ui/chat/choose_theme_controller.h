@@ -23,6 +23,7 @@ class RpWidget;
 class PlainShadow;
 class VerticalLayout;
 class ChatTheme;
+class RoundButton;
 
 [[nodiscard]] QImage GenerateChatThemePreview(
 	not_null<ChatTheme*> theme,
@@ -45,6 +46,9 @@ public:
 	void show();
 	void raise();
 	void setFocus();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool accessibleButtonsForRegressionTest() const;
+#endif
 
 	[[nodiscard]] rpl::lifetime &lifetime();
 
@@ -81,6 +85,10 @@ private:
 	int _dragStartInnerLeft = 0;
 	int _giftsFinishAt = 0;
 	bool _initialInnerLeftApplied = false;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	RoundButton *_applyButtonForRegressionTest = nullptr;
+	RoundButton *_chooseButtonForRegressionTest = nullptr;
+#endif
 
 	rpl::variable<bool> _shouldBeShown = false;
 	rpl::variable<bool> _forceHidden = false;

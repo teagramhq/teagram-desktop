@@ -18,6 +18,82 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Data::details {
 
+enum class BasicChatRole {
+	Member,
+	Admin,
+	Creator,
+};
+
+[[nodiscard]] inline constexpr bool CanAddBasicChatAdmins(bool isMember,
+														  bool isCreator) {
+	return isMember && isCreator;
+}
+
+struct BasicChatAdminCapabilities {
+	bool canEditRights = true;
+	bool canSetRank = true;
+	bool canTransferOwnership = true;
+};
+
+[[nodiscard]] inline constexpr BasicChatAdminCapabilities
+BasicChatAdminCapabilitiesFor(bool customServer) {
+	return {
+		!customServer,
+		!customServer,
+		!customServer,
+	};
+}
+
+// A custom server has no chat photos, migration, member tags or
+// per-member restrictions, so a basic group there offers none of them.
+struct BasicChatControls {
+	bool canEditPhoto = true;
+	bool canEditType = true;
+	bool canEditHistoryVisibility = true;
+	bool canRestrictMembers = true;
+	bool canEditMemberTags = true;
+};
+
+[[nodiscard]] inline constexpr BasicChatControls
+BasicChatControlsFor(bool customServer) {
+	return {
+		.canEditPhoto = !customServer,
+		.canEditType = !customServer,
+		.canEditHistoryVisibility = !customServer,
+		.canRestrictMembers = !customServer,
+		.canEditMemberTags = !customServer,
+	};
+}
+
+template <typename Chat>
+[[nodiscard]] inline BasicChatControls BasicChatControlsOf(const Chat &chat) {
+	return BasicChatControlsFor(chat->usesCustomServer());
+}
+
+template <typename Peer>
+[[nodiscard]] inline bool SupportsMemberRestrictions(const Peer &peer) {
+	const auto chat = peer->asChat();
+	return !chat || BasicChatControlsOf(chat).canRestrictMembers;
+}
+
+template <typename Rights>
+[[nodiscard]] inline constexpr bool
+BasicChatAdminRoleForSave(Rights selectedRights) {
+	return selectedRights != Rights();
+}
+
+template <typename Rights>
+[[nodiscard]] inline constexpr Rights
+BasicChatAdminRightsFor(bool isAdmin, bool customServer, Rights defaultRights) {
+	return (isAdmin && !customServer) ? defaultRights : Rights();
+}
+
+[[nodiscard]] inline constexpr bool CanManageBasicChatCall(BasicChatRole role,
+														   bool customServer) {
+	return (role == BasicChatRole::Creator)
+		   || (!customServer && (role == BasicChatRole::Admin));
+}
+
 struct ChatParticipantInfo {
 	UserId userId;
 	UserId inviterId;

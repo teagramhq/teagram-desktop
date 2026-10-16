@@ -280,6 +280,7 @@ PRIVATE
     boxes/peers/edit_members_visible.h
     boxes/peers/manage_community_box.cpp
     boxes/peers/manage_community_box.h
+    boxes/peers/edit_admin_rights_save.h
     boxes/peers/edit_participant_box.cpp
     boxes/peers/edit_participant_box.h
     boxes/peers/edit_tag_control.cpp
@@ -619,6 +620,10 @@ PRIVATE
     core/shortcuts.h
     core/teagram_update_verification.cpp
     core/teagram_update_verification.h
+    core/teagram_update_state.cpp
+    core/teagram_update_state.h
+    core/teagram_update_download.cpp
+    core/teagram_update_download.h
     core/ui_integration.cpp
     core/ui_integration.h
     core/update_checker.cpp
@@ -2150,6 +2155,16 @@ PRIVATE
     tray.h
 )
 
+if (UNIX)
+    nice_target_sources(Telegram ${src_loc}
+    PRIVATE
+        core/teagram_update_archive.cpp
+        core/teagram_update_archive.h
+        core/teagram_update_replacement.cpp
+        core/teagram_update_replacement.h
+    )
+endif()
+
 if (APPLE)
     nice_target_sources(Telegram ${src_loc}
     PRIVATE
@@ -2158,6 +2173,11 @@ if (APPLE)
         media/streaming/media_streaming_native_frame_mac.mm
         core/mac_protected_path_runtime.mm
         core/mac_protected_path_runtime.h
+        core/teagram_update_install_mac.mm
+        core/teagram_update_install.h
+        core/teagram_update_manager.cpp
+        core/teagram_update_manager.h
+        core/teagram_update_manager_mac.mm
     )
 else()
     nice_target_sources(Telegram ${src_loc}

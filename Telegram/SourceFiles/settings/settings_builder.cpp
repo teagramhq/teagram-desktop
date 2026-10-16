@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/edit_privacy_box.h"
 #include "main/main_session.h"
 #include "settings/settings_common.h"
+#include "settings/settings_privacy_policy.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
@@ -97,9 +98,10 @@ void SearchRegistry::add(
 
 std::vector<SearchEntry> SearchRegistry::collectAll(
 		not_null<Main::Session*> session) const {
+	const auto paidFeaturesSupported = session->paidFeaturesSupported();
 	auto result = std::vector<SearchEntry>();
 	for (const auto &[sectionId, meta] : _sections) {
-		if (meta->parentId) {
+		if (meta->parentId && (paidFeaturesSupported || !meta->paidFeatures)) {
 			result.push_back({
 				.title = (*meta->title)(tr::now),
 				.section = sectionId,
@@ -108,6 +110,11 @@ std::vector<SearchEntry> SearchRegistry::collectAll(
 		}
 	}
 	for (const auto &entry : _indexers) {
+		if (const auto i = _sections.find(entry.sectionId);
+			i != _sections.end() && i->second->paidFeatures
+			&& !paidFeaturesSupported) {
+			continue;
+		}
 		auto entries = entry.indexer(session);
 		result.insert(result.end(), entries.begin(), entries.end());
 	}
@@ -345,6 +352,9 @@ Ui::SettingsButton *SectionBuilder::addPremiumButton(PremiumButtonArgs &&args) {
 }
 
 Ui::SettingsButton *SectionBuilder::addPrivacyButton(PrivacyButtonArgs &&args) {
+	if (!Settings::details::IsPrivacyKeySupported(args.key)) {
+		return nullptr;
+	}
 	const auto controller = this->controller();
 	const auto session = this->session();
 

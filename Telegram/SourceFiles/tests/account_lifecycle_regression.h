@@ -9,6 +9,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace MTP {
+class Instance;
+struct ResponseHandler;
+namespace details {
+class SerializedRequest;
+} // namespace details
+} // namespace MTP
+#endif
+
 namespace Tests {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -18,9 +28,8 @@ enum class MainQueueBarrierResult {
 };
 
 [[nodiscard]] MainQueueBarrierResult
-WaitForMainQueueBarrierForRegressionTest(
-	int timeoutMilliseconds = 5000,
-	bool suppressCompletion = false);
+WaitForMainQueueBarrierForRegressionTest(int timeoutMilliseconds = 5000,
+										 bool suppressCompletion = false);
 
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,
@@ -34,11 +43,32 @@ struct LifecycleWriteCountsForRegressionTest {
 	int customServerBlockMarker = 0;
 };
 
+enum class TranslationRpcForRegressionTest {
+	ChannelAutoTranslationToggle,
+	Text,
+	Rich,
+};
+
+struct TranslationRpcCountsForRegressionTest {
+	int channelAutoTranslationToggle = 0;
+	int text = 0;
+	int rich = 0;
+};
+
 void RecordLifecycleWriteForRegressionTest(
 	LifecycleWriteForRegressionTest operation);
 void ResetLifecycleWriteCountsForRegressionTest();
 [[nodiscard]] LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest();
+void RecordTranslationRpcForRegressionTest(
+	TranslationRpcForRegressionTest operation);
+void ResetTranslationRpcCountsForRegressionTest();
+[[nodiscard]] TranslationRpcCountsForRegressionTest
+GetTranslationRpcCountsForRegressionTest();
+[[nodiscard]] bool CaptureChannelSaveRequestForRegressionTest(
+	not_null<MTP::Instance *> instance, int32 requestId,
+	const MTP::details::SerializedRequest &request,
+	MTP::ResponseHandler &callbacks);
 #endif
 
 void RunAccountLifecycleRegression(Fn<void(int)> done);

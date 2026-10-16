@@ -362,16 +362,13 @@ void ShowMenu(
 	menu->popup(QCursor::pos());
 }
 
-not_null<Ui::SettingsButton*> AddRow(
-		not_null<Ui::VerticalLayout*> container,
-		rpl::producer<QString> label,
-		rpl::producer<TextWithEntities> value,
-		const QString &copyButton,
-		Fn<void()> edit,
-		IconDescriptor &&descriptor,
-		bool markedValue = false,
-		Fn<void(not_null<Ui::PopupMenu*>)> menuExtender = nullptr,
-		const style::icon *copyIcon = nullptr) {
+not_null<Ui::SettingsButton *>
+AddRow(not_null<Ui::VerticalLayout *> container, rpl::producer<QString> label,
+	   rpl::producer<TextWithEntities> value, const QString &copyButton,
+	   Fn<void()> edit, IconDescriptor &&descriptor, bool markedValue = false,
+	   Fn<void(not_null<Ui::PopupMenu *>)> menuExtender = nullptr,
+	   const style::icon *copyIcon = nullptr,
+	   Fn<bool()> copyAllowed = nullptr) {
 	const auto wrap = markedValue
 		? AddButtonWithIcon(
 			container,
@@ -401,7 +398,7 @@ not_null<Ui::SettingsButton*> AddRow(
 	}) | rpl::on_next([=](Qt::MouseButton button) {
 		if (button == Qt::LeftButton) {
 			edit();
-		} else if (!forcopy->isEmpty()) {
+		} else if (!forcopy->isEmpty() && (!copyAllowed || copyAllowed())) {
 			ShowMenu(wrap, copyButton, *forcopy, copyIcon, menuExtender);
 		}
 	}, wrap->lifetime());
@@ -482,6 +479,9 @@ void SetupChatAutomation(
 		not_null<UserData*> self,
 		InformationHighlightTargets *targets) {
 	const auto session = &self->session();
+	if (!session->botAppsSupported()) {
+		return;
+	}
 	session->data().chatbots().preload();
 
 	auto label = session->data().chatbots().value(
@@ -569,11 +569,12 @@ void SetupPersonalChannel(
 
 	SetupChatAutomation(container, controller, self, targets);
 
-	const auto colorButton = AddPeerColorButton(
-		container,
-		controller->uiShow(),
-		self,
-		st::settingsColorButton);
+	const auto colorButton
+		= self->session().paidFeaturesSupported()
+			  ? AddPeerColorButton(container, controller->uiShow(), self,
+								   st::settingsColorButton)
+					.get()
+			  : nullptr;
 	if (targets) {
 		targets->channelButton = channelButton;
 		targets->colorButton = colorButton;
@@ -632,38 +633,42 @@ void SetupRows(
 		targets->phone = phoneButton;
 	}
 
+	const auto usernameEditSupported
+		= self->session().accountUsernameEditSupported();
 	auto username = Info::Profile::UsernameValue(self);
 	auto empty = base::duplicate(
 		username
 	) | rpl::map([](const TextWithEntities &username) {
 		return username.text.isEmpty();
 	});
-	auto label = rpl::combine(
-		tr::lng_settings_username_label(),
-		std::move(empty)
-	) | rpl::map([](const QString &label, bool empty) {
-		return empty ? "t.me/username" : label;
-	});
-	auto usernameValue = rpl::combine(
-		std::move(username),
-		tr::lng_settings_username_add()
-	) | rpl::map([](const TextWithEntities &username, const QString &add) {
-		if (!username.text.isEmpty()) {
-			return username;
-		}
-		auto result = TextWithEntities{ add };
-		result.entities.push_back({
-			EntityType::CustomUrl,
-			0,
-			int(add.size()),
-			"internal:edit_username" });
-		return result;
-	});
-	session->api().usernames().requestToCache(session->user());
+	auto label
+		= rpl::combine(tr::lng_settings_username_label(), std::move(empty))
+		  | rpl::map([=](const QString &label, bool empty) {
+				return (empty && usernameEditSupported) ? "t.me/username"
+														: label;
+			});
+	auto usernameValue
+		= rpl::combine(std::move(username), tr::lng_settings_username_add(),
+					   tr::lng_settings_username_none())
+		  | rpl::map([=](const TextWithEntities &username, const QString &add,
+						 const QString &none) {
+				if (!username.text.isEmpty()) {
+					return username;
+				}
+				if (!usernameEditSupported) {
+					return TextWithEntities{none};
+				}
+				auto result = TextWithEntities{add};
+				result.entities.push_back({EntityType::CustomUrl, 0,
+										   int(add.size()),
+										   "internal:edit_username"});
+				return result;
+			});
+	Main::details::refreshAccountUsernameCacheIfSupported(
+		session->mtp().dcOptions(),
+		[=] { session->api().usernames().requestToCache(session->user()); });
 	const auto usernameButton = AddRow(
-		container,
-		std::move(label),
-		std::move(usernameValue),
+		container, std::move(label), std::move(usernameValue),
 		tr::lng_context_copy_mention(tr::now),
 		[=] {
 			if (controller->showFrozenError()) {
@@ -671,12 +676,22 @@ void SetupRows(
 			}
 			const auto box = controller->show(
 				Box(UsernamesBox, session->user()));
-			box->boxClosing(
-			) | rpl::on_next([=] {
-				session->api().usernames().requestToCache(session->user());
-			}, box->lifetime());
+			box->boxClosing()
+				| rpl::on_next(
+					[=] {
+						Main::details::refreshAccountUsernameCacheIfSupported(
+							session->mtp().dcOptions(), [=] {
+								session->api().usernames().requestToCache(
+									session->user());
+							});
+					},
+					box->lifetime());
 		},
-		{ &st::menuIconUsername });
+		{&st::menuIconUsername}, false, nullptr, nullptr,
+		[=] {
+			return usernameEditSupported
+				   || !session->user()->username().isEmpty();
+		});
 	if (targets) {
 		targets->username = usernameButton;
 	}
@@ -1225,8 +1240,7 @@ void AccountsList::rebuild() {
 }
 
 void BuildInformationSection(SectionBuilder &builder) {
-	if (Main::details::accountBioSearchTargetSupported(
-			*builder.session())) {
+	if (Main::details::accountBioSearchTargetSupported(*builder.session())) {
 		builder.add(nullptr, [] {
 			return SearchEntry{
 				.id = u"edit/bio"_q,
@@ -1256,13 +1270,15 @@ void BuildInformationSection(SectionBuilder &builder) {
 			.keywords = { u"username"_q, u"link"_q, u"t.me"_q },
 		};
 	});
-	builder.add(nullptr, [] {
-		return SearchEntry{
-			.id = u"edit/your-color"_q,
-			.title = tr::lng_settings_theme_name_color(tr::now),
-			.keywords = { u"color"_q, u"theme"_q, u"name"_q },
-		};
-	});
+	if (builder.session()->paidFeaturesSupported()) {
+		builder.add(nullptr, [] {
+			return SearchEntry{
+				.id = u"edit/your-color"_q,
+				.title = tr::lng_settings_theme_name_color(tr::now),
+				.keywords = {u"color"_q, u"theme"_q, u"name"_q},
+			};
+		});
+	}
 	builder.add(nullptr, [] {
 		return SearchEntry{
 			.id = u"edit/channel"_q,
@@ -1277,19 +1293,21 @@ void BuildInformationSection(SectionBuilder &builder) {
 			.keywords = { u"birthday"_q, u"date"_q, u"birth"_q },
 		};
 	});
-	builder.add(nullptr, [] {
-		return SearchEntry{
-			.id = u"edit/chat-automation"_q,
-			.title = tr::lng_settings_chat_automation_label(tr::now),
-			.keywords = {
-				u"chat"_q,
-				u"automation"_q,
-				u"bot"_q,
-				u"chatbot"_q,
-				u"chatbots"_q,
-			},
-		};
-	});
+	if (builder.session()->botAppsSupported()) {
+		builder.add(nullptr, [] {
+			return SearchEntry{
+				.id = u"edit/chat-automation"_q,
+				.title = tr::lng_settings_chat_automation_label(tr::now),
+				.keywords = {
+					u"chat"_q,
+					u"automation"_q,
+					u"bot"_q,
+					u"chatbot"_q,
+					u"chatbots"_q,
+				},
+			};
+		});
+	}
 	builder.add(nullptr, [] {
 		return SearchEntry{
 			.id = u"edit/add-account"_q,
@@ -1505,6 +1523,18 @@ bool InformationBioEditorTargetPresentForRegressionTest(
 	auto targets = InformationHighlightTargets();
 	SetupBio(container, controller->session().user(), controller, &targets);
 	const auto result = !targets.bio.isNull();
+	delete container;
+	return result;
+}
+
+bool InformationChatAutomationRowPresentForRegressionTest(
+	not_null<Window::SessionController *> controller) {
+	const auto container
+		= Ui::CreateChild<Ui::VerticalLayout>(controller->widget().get());
+	auto targets = InformationHighlightTargets();
+	SetupChatAutomation(container, controller, controller->session().user(),
+						&targets);
+	const auto result = !targets.chatAutomation.isNull();
 	delete container;
 	return result;
 }

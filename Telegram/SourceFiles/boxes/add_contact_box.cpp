@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
@@ -564,6 +565,13 @@ void GroupInfoBox::prepare() {
 		st::defaultUserpicButton,
 		(_type == Type::Forum) ? Ui::PeerUserpicShape::Forum : Ui::PeerUserpicShape::Auto);
 	_photo->showCustomOnChosen();
+	const auto customServerGroup
+		= (_type == Type::Group)
+		  && _navigation->session().user()->usesCustomServer();
+	if (!Data::details::BasicChatControlsFor(customServerGroup).canEditPhoto) {
+		// Hidden, it chooses nothing, so the new group gets no photo.
+		_photo->hide();
+	}
 	_title.create(
 		this,
 		st::defaultInputField,
@@ -671,8 +679,10 @@ void GroupInfoBox::resizeEvent(QResizeEvent *e) {
 		st::boxPadding.left() + st::newGroupInfoPadding.left(),
 		st::boxPadding.top() + st::newGroupInfoPadding.top());
 
-	const auto nameLeft = st::defaultUserpicButton.size.width()
-		+ st::newGroupNamePosition.x();
+	const auto nameLeft = _photo->isHidden()
+							  ? 0
+							  : (st::defaultUserpicButton.size.width()
+								 + st::newGroupNamePosition.x());
 	_title->resize(
 		width()
 			- st::boxPadding.left()

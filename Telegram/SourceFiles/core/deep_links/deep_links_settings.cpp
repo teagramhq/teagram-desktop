@@ -219,6 +219,9 @@ Result OpenInternalUrl(const Context &ctx, const QString &url) {
 Result ShowMyProfile(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
+	} else if (!ctx.controller->session().storiesSupported()) {
+		ctx.controller->showSettings(::Settings::InformationId());
+		return Result::Handled;
 	}
 	ctx.controller->showSection(
 		Info::Stories::Make(ctx.controller->session().user()));
@@ -274,6 +277,14 @@ Result ShowAutoDeleteSetCustom(const Context &ctx) {
 	}
 	ctx.controller->setHighlightControlId(u"auto-delete/set-custom"_q);
 	ctx.controller->showSettings(::Settings::GlobalTTLId());
+	return Result::Handled;
+}
+
+Result ShowSendGift(const Context &ctx) {
+	if (!ctx.controller) {
+		return Result::NeedsAuth;
+	}
+	Ui::ChooseStarGiftRecipient(ctx.controller);
 	return Result::Handled;
 }
 
@@ -389,26 +400,30 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts/add-album"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts/add-album"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts/add-album"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts/add-album"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
 		.path = u"my-profile/gifts"_q,
@@ -422,28 +437,34 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"my-profile/archived-posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->showSection(Info::Stories::Make(
-				ctx.controller->session().user(),
-				Info::Stories::ArchiveId()));
-			return Result::Handled;
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"my-profile/archived-posts"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   if (!ctx.controller) {
+						   return Result::NeedsAuth;
+					   }
+					   ctx.controller->showSection(
+						   Info::Stories::Make(ctx.controller->session().user(),
+											   Info::Stories::ArchiveId()));
+					   return Result::Handled;
+				   }},
+				   .requiresStories = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"emoji-status"_q,
-		.action = AliasTo{ u"chats"_q, u"emoji-status"_q },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"emoji-status"_q,
+				   .action = AliasTo{u"chats"_q, u"emoji-status"_q},
+				   .requiresPaidFeatures = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"profile-color"_q,
-		.action = AliasTo{ u"settings"_q, u"edit/your-color"_q },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"profile-color"_q,
+				   .action = AliasTo{u"settings"_q, u"edit/your-color"_q},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"profile-color/profile"_q,
@@ -883,15 +904,18 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/gifts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::GiftsAutoSave,
-				[=] { return std::make_unique<::Settings::GiftsAutoSavePrivacyController>(); });
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/gifts"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowPrivacyBox(ctx, PrivacyKey::GiftsAutoSave, [=] {
+					return std::make_unique<
+						::Settings::GiftsAutoSavePrivacyController>();
+				});
+			}},
+			.requiresPaidFeatures = true,
+		});
 
 	router.add(u"settings"_q, {
 		.path = u"privacy/gifts/show-icon"_q,
@@ -1396,10 +1420,12 @@ void RegisterSettingsHandlers(Router &router) {
 		},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"appearance/your-color"_q,
-		.action = AliasTo{ u"settings"_q, u"profile-color"_q },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"appearance/your-color"_q,
+				   .action = AliasTo{u"settings"_q, u"profile-color"_q},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"appearance/your-color/profile"_q,
@@ -1595,15 +1621,19 @@ void RegisterSettingsHandlers(Router &router) {
 		.requiresAuth = false,
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"premium"_q,
-		.action = SettingsSection{ ::Settings::PremiumId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"premium"_q,
+				   .action = SettingsSection{::Settings::PremiumId()},
+				   .requiresPaidFeatures = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"stars"_q,
-		.action = SettingsSection{ ::Settings::CreditsId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"stars"_q,
+				   .action = SettingsSection{::Settings::CreditsId()},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"stars/top-up"_q,
@@ -1654,15 +1684,19 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"ton"_q,
-		.action = SettingsSection{ ::Settings::CurrencyId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"ton"_q,
+				   .action = SettingsSection{::Settings::CurrencyId()},
+				   .requiresPaidFeatures = true,
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"business"_q,
-		.action = SettingsSection{ ::Settings::BusinessId() },
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"business"_q,
+				   .action = SettingsSection{::Settings::BusinessId()},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"business/do-not-hide-ads"_q,
@@ -1673,26 +1707,24 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
-		.path = u"send-gift"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			Ui::ChooseStarGiftRecipient(ctx.controller);
-			return Result::Handled;
-		}},
-	});
+								  .path = u"send-gift"_q,
+								  .action = CodeBlock{ShowSendGift},
+								  .requiresPaidFeatures = true,
+							  });
 
-	router.add(u"settings"_q, {
-		.path = u"send-gift/self"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			Ui::ShowStarGiftBox(ctx.controller, ctx.controller->session().user());
-			return Result::Handled;
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"send-gift/self"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   if (!ctx.controller) {
+						   return Result::NeedsAuth;
+					   }
+					   Ui::ShowStarGiftBox(ctx.controller,
+										   ctx.controller->session().user());
+					   return Result::Handled;
+				   }},
+				   .requiresPaidFeatures = true,
+			   });
 
 	router.add(u"settings"_q, {
 		.path = u"saved-messages"_q,
@@ -1826,12 +1858,14 @@ void RegisterSettingsHandlers(Router &router) {
 		.path = u"edit/username"_q,
 		.action = CodeBlock{ ShowEditUsername },
 	});
-	router.add(u"settings"_q, {
-		.path = u"edit/your-color"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPeerColorBox(ctx, PeerColorTab::Profile);
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"edit/your-color"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowPeerColorBox(ctx, PeerColorTab::Profile);
+				   }},
+				   .requiresPaidFeatures = true,
+			   });
 	router.add(u"settings"_q, {
 		.path = u"edit/channel"_q,
 		.action = SettingsControl{

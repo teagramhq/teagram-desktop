@@ -71,6 +71,8 @@ nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/teagram_icon_choice.cpp
     core/teagram_update_verification.cpp
+    core/teagram_update_state.cpp
+    core/teagram_update_download.cpp
     core/local_url_conversion.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.
@@ -93,6 +95,7 @@ PRIVATE
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
     tests/unit/debug_mode_tests.cpp
+    tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
@@ -105,6 +108,7 @@ PRIVATE
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
+    tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp
     tests/unit/teagram_update_verification_tests.cpp
@@ -118,14 +122,33 @@ PRIVATE
     mtproto/proxy_check.cpp
 )
 
+if(UNIX)
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        core/teagram_update_archive.cpp
+        core/teagram_update_manager.cpp
+        core/teagram_update_manager.h
+        core/teagram_update_replacement.cpp
+        tests/unit/teagram_update_download_tests.cpp
+    )
+endif()
+
 nice_target_sources(test_unit ${res_loc}
 PRIVATE
     qrc/telegram/mac_icons.qrc
 )
 
 if(APPLE)
+    set_property(SOURCE ${src_loc}/core/teagram_update_install_mac.mm APPEND
+        PROPERTY COMPILE_DEFINITIONS
+        TDESKTOP_TEAGRAM
+        TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
+        "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
+    )
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
+        core/teagram_update_install_mac.mm
+        core/teagram_update_install.h
         tests/unit/mac_protected_path_runtime_stub.cpp
         tests/unit/mac_file_bookmark_stub.cpp
     )
@@ -146,6 +169,25 @@ PRIVATE
     desktop-app::external_zlib
     desktop-app::external_xxhash
 )
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        tests/unit/username_input_tests.cpp
+        ui/widgets/fields/username_input.cpp
+    )
+
+    target_link_libraries(test_unit
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
+    )
+    if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+        target_link_libraries(test_unit
+        PRIVATE
+            Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
+        )
+    endif()
+endif()
 
 # Put it beside Telegram in out/<config>/ instead of the target's own
 # binary dir, so one documented path finds it. The generator appends the

@@ -1331,6 +1331,12 @@ void MainWidget::toggleChooseChatTheme(
 	_history->toggleChooseChatTheme(peer, show);
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+HistoryWidget *MainWidget::historyWidgetForRegressionTest() const {
+	return _history.get();
+}
+#endif
+
 bool MainWidget::showHistoryInDifferentWindow(
 		PeerId peerId,
 		const SectionShow &params,

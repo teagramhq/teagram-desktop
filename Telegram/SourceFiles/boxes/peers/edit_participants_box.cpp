@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_stories.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_user.h"
 #include "data/data_changes.h"
 #include "base/unixtime.h"
@@ -56,6 +57,9 @@ constexpr auto kParticipantsPerPage = 200;
 constexpr auto kSortByOnlineDelay = crl::time(1000);
 
 [[nodiscard]] bool SupportsMemberTags(not_null<PeerData*> peer) {
+	if (const auto chat = peer->asChat()) {
+		return Data::details::BasicChatControlsOf(chat).canEditMemberTags;
+	}
 	const auto channel = peer->asChannel();
 	return !channel || (!channel->isBroadcast() && !channel->isCommunity());
 }
@@ -400,14 +404,20 @@ Fn<void(
 				onFail);
 		};
 		if (const auto chat = peer->asChatNotMigrated()) {
+			const auto capabilities
+				= Data::details::BasicChatAdminCapabilitiesFor(
+					chat->usesCustomServer());
 			const auto saveChatAdmin = [&](bool isAdmin) {
 				SaveChatAdmin(show, chat, user, isAdmin, done, onFail);
-				if (rank) {
+				if (rank && capabilities.canSetRank) {
 					SaveMemberRank(show, chat, user, *rank, [] {}, [] {});
 				}
 			};
-			if (strippedNewRights.flags
-				== chat->defaultAdminRights(user).flags) {
+			if (!capabilities.canEditRights) {
+				saveChatAdmin(Data::details::BasicChatAdminRoleForSave(
+					strippedNewRights.flags));
+			} else if (strippedNewRights.flags
+					   == chat->defaultAdminRights(user).flags) {
 				saveChatAdmin(true);
 			} else if (!strippedNewRights.flags) {
 				saveChatAdmin(false);
@@ -1906,18 +1916,17 @@ void ParticipantsBoxController::rowClicked(not_null<PeerListRow*> row) {
 		Assert(user != nullptr);
 		showAdmin(user);
 	} else if (_role == Role::Restricted
-		&& (_peer->isChat() || _peer->isMegagroup())
-		&& user) {
+			   && (_peer->isChat() || _peer->isMegagroup())
+			   && Data::details::SupportsMemberRestrictions(_peer) && user) {
 		showRestricted(user);
-	} else if (_role == Role::Members
-		&& user
-		&& (_additional.adminRights(user).has_value()
-			|| _additional.isCreator(user))
-		&& _additional.canAddOrEditAdmin(user)) {
+	} else if (_role == Role::Members && user
+			   && (_additional.adminRights(user).has_value()
+				   || _additional.isCreator(user))
+			   && _additional.canAddOrEditAdmin(user)) {
 		showAdmin(user);
-	} else if (_role == Role::Members
-		&& user
-		&& _additional.canRestrictParticipant(participant)) {
+	} else if (_role == Role::Members && user
+			   && Data::details::SupportsMemberRestrictions(_peer)
+			   && _additional.canRestrictParticipant(participant)) {
 		showRestricted(user);
 	} else {
 		Assert(_navigation != nullptr);
@@ -2118,7 +2127,8 @@ base::unique_qptr<Ui::PopupMenu> ParticipantsBoxController::rowContextMenu(
 	if (user && _additional.canRestrictParticipant(participant)) {
 		const auto canRestrictWithoutKick = [&] {
 			if (const auto chat = _peer->asChat()) {
-				return chat->amCreator();
+				return chat->amCreator()
+					   && Data::details::SupportsMemberRestrictions(_peer);
 			}
 			return _peer->isMegagroup() && !_peer->isGigagroup();
 		}();

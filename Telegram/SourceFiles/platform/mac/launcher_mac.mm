@@ -10,6 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/crash_reports.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/update_checker.h"
+#ifdef TDESKTOP_TEAGRAM
+#include "core/teagram_update_install.h"
+#endif // TDESKTOP_TEAGRAM
 #include "base/base_file_utilities.h"
 #include "base/platform/base_platform_file_utilities.h"
 #include "base/platform/mac/base_utilities_mac.h"
@@ -39,6 +42,27 @@ bool Launcher::launchUpdater(UpdaterLaunch action) {
 		return false;
 	}
 	@autoreleasepool {
+
+#ifdef TDESKTOP_TEAGRAM
+		if (action == UpdaterLaunch::JustRelaunch) {
+			const auto result
+				= Core::RelaunchTeagramUpdateAfterShutdown(cDataFile(), [] {
+					  Logs::closeMain();
+					  CrashReports::Finish();
+				  });
+			if (result != Core::TeagramUpdateRelaunchResult::NotPending) {
+				return result
+						   == Core::TeagramUpdateRelaunchResult::
+							   CandidateStarted
+					   || result
+							  == Core::TeagramUpdateRelaunchResult::
+								  CurrentBundleStarted
+					   || result
+							  == Core::TeagramUpdateRelaunchResult::
+								  PreviousStarted;
+			}
+		}
+#endif // TDESKTOP_TEAGRAM
 
 #ifdef OS_MAC_STORE
 	// In AppStore version we don't have Updater.

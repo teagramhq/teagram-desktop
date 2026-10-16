@@ -32,6 +32,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 
+#include <QtGui/QKeySequence>
+#include <QShortcut>
+
 namespace {
 
 class UsernameEditor final : public Ui::RpWidget {
@@ -40,6 +43,7 @@ public:
 
 	void setInnerFocus();
 	void setEnabled(bool value);
+	void setReadOnly();
 	[[nodiscard]] rpl::producer<> submitted() const;
 	[[nodiscard]] rpl::producer<> save();
 	[[nodiscard]] rpl::producer<UsernameCheckInfo> checkInfoChanged() const;
@@ -130,6 +134,14 @@ void UsernameEditor::setEnabled(bool value) {
 	_username->setDisplayFocused(value);
 }
 
+void UsernameEditor::setReadOnly() {
+	_usernameEditorFlow.setReadOnly();
+	_checkTimer.cancel();
+	_api.request(base::take(_checkRequestId)).cancel();
+	_username->setReadOnly(true);
+	_username->setDisplayFocused(true);
+}
+
 void UsernameEditor::resizeEvent(QResizeEvent *e) {
 	_username->resize(
 		width() - _padding.left() - _padding.right(),
@@ -138,7 +150,7 @@ void UsernameEditor::resizeEvent(QResizeEvent *e) {
 }
 
 rpl::producer<> UsernameEditor::save() {
-	if (_saveRequestId) {
+	if (_username->isReadOnly() || _saveRequestId) {
 		return _saved.events();
 	}
 
@@ -175,6 +187,9 @@ rpl::producer<UsernameCheckInfo> UsernameEditor::checkInfoChanged() const {
 }
 
 void UsernameEditor::check() {
+	if (_username->isReadOnly()) {
+		return;
+	}
 	const auto name = getName();
 	if (name.size() < Ui::EditPeer::kMinUsernameLength) {
 		return;
@@ -220,6 +235,9 @@ void UsernameEditor::check() {
 }
 
 void UsernameEditor::changed() {
+	if (_username->isReadOnly()) {
+		return;
+	}
 	const auto name = getName();
 	_usernameEditorFlow.inputChanged(name, false);
 	_api.request(base::take(_checkRequestId)).cancel();
@@ -305,8 +323,9 @@ void UsernameEditor::checkInfoPurchaseAvailable() {
 }
 
 void UsernameEditor::updateFail(const QString &error) {
-	if ((error == u"USERNAME_NOT_MODIFIED"_q)
-		|| (_sentUsername == editableUsername())) {
+	const auto outcome = Ui::EditPeer::ResolveUsernameUpdateFailure(
+		error, _sentUsername, editableUsername());
+	if (outcome == Ui::EditPeer::UsernameUpdateFailureOutcome::Saved) {
 		if (const auto user = _peer->asUser()) {
 			user->setName(
 				TextUtilities::SingleLine(user->firstName),
@@ -315,13 +334,19 @@ void UsernameEditor::updateFail(const QString &error) {
 				TextUtilities::SingleLine(_sentUsername));
 		}
 		_saved.fire_done();
+	} else if (outcome
+			   == Ui::EditPeer::UsernameUpdateFailureOutcome::Immutable) {
+		_username->setFocus();
+		_username->showError();
+		_errorText = tr::lng_username_immutable_about(tr::now);
+		checkInfoChange();
 	} else if (error == u"USERNAME_INVALID"_q) {
 		_username->setFocus();
 		_username->showError();
 		_errorText = tr::lng_username_invalid(tr::now);
 		checkInfoChange();
 	} else if ((error == u"USERNAME_OCCUPIED"_q)
-		|| (error == u"USERNAMES_UNAVAILABLE"_q)) {
+			   || (error == u"USERNAMES_UNAVAILABLE"_q)) {
 		_username->setFocus();
 		_username->showError();
 		_errorText = tr::lng_username_occupied(tr::now);
@@ -366,6 +391,9 @@ void FillUsernamesBox(
 		not_null<PeerData*> peer,
 		Fn<void()> onSaved) {
 	const auto isBot = peer && peer->isUser() && peer->asUser()->isBot();
+	const auto readOnlyAccountUsername
+		= !isBot && peer->isUser() && peer->isSelf()
+		  && !peer->session().accountUsernameEditSupported();
 	box->setTitle(isBot
 		? tr::lng_bot_username_title()
 		: tr::lng_username_title());
@@ -375,8 +403,30 @@ void FillUsernamesBox(
 	const auto editor = box->addRow(
 		object_ptr<UsernameEditor>(box, peer),
 		style::margins());
-	editor->setEnabled(!isBot);
+	if (readOnlyAccountUsername) {
+		editor->setReadOnly();
+	} else {
+		editor->setEnabled(!isBot);
+	}
 	box->setFocusCallback([=] { editor->setInnerFocus(); });
+	if (readOnlyAccountUsername) {
+		const auto user = peer->asUser();
+		Ui::AddDividerText(container, user->editableUsername().isEmpty()
+										  ? tr::lng_username_unavailable_about()
+										  : tr::lng_username_immutable_about());
+		for (const auto key : {
+				 Qt::Key_Escape,
+				 Qt::Key_Return,
+				 Qt::Key_Enter,
+			 }) {
+			const auto shortcut = new QShortcut(QKeySequence(key), box);
+			shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+			QObject::connect(shortcut, &QShortcut::activated, box,
+							 [=] { box->closeBox(); });
+		}
+		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+		return;
+	}
 
 	AddUsernameCheckLabel(container, editor->checkInfoChanged());
 

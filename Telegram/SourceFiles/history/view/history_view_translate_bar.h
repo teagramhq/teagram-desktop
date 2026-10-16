@@ -40,6 +40,10 @@ public:
 
 	void setShadowGeometryPostprocess(Fn<QRect(QRect)> postprocess);
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
+#endif
+
 	void move(int x, int y);
 	void resizeToWidth(int width);
 	[[nodiscard]] int height() const;

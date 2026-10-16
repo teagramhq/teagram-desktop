@@ -20,10 +20,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <limits>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 using namespace Core;
+
+template <typename T>
+concept HasMutableAuthenticatedArchiveSize
+	= requires(T &package) { package.assetSize = quint64(0); };
+
+template <typename T>
+concept HasMutableAuthenticatedArchiveHash
+	= requires(T &package) { package.assetSha256 = QString(); };
+
+static_assert(!std::is_aggregate_v<AuthenticatedTeagramUpdate>);
+static_assert(!std::is_default_constructible_v<AuthenticatedTeagramUpdate>);
+static_assert(!std::is_constructible_v<AuthenticatedTeagramUpdate,
+									   TeagramUpdateChannel, quint64, QString,
+									   QString, quint64, QString, QString>);
+static_assert(!std::is_constructible_v<AuthenticatedTeagramUpdate,
+									   VerifiedTeagramUpdate>);
+static_assert(!std::is_copy_assignable_v<AuthenticatedTeagramUpdate>);
+static_assert(!HasMutableAuthenticatedArchiveSize<AuthenticatedTeagramUpdate>);
+static_assert(!HasMutableAuthenticatedArchiveHash<AuthenticatedTeagramUpdate>);
 
 namespace {
 
@@ -485,6 +505,60 @@ TEST_CASE(TeagramUpdateRejectsUntrustedOrIneligiblePackage) {
 	const auto missing
 		= ReplaceOnce(valid, QByteArrayLiteral(",\"min_os\":\"13.0\""), {});
 	rejects(missing);
+}
+
+TEST_CASE(TeagramUpdateMainSwitchAllowsOnlyOlderSignedMain) {
+	const auto key = GenerateTestSigningKey();
+	if (!key) {
+		return;
+	}
+	const auto publicKey
+		= std::optional<TeagramUpdatePublicKey>(key->publicKey);
+	const auto authenticate
+		= [&](const QByteArray &channel, const QByteArray &build,
+			  TeagramUpdateSelection selection) {
+			  const auto manifest = Manifest(channel, build);
+			  return AuthenticateTeagramUpdateManifestForTests(
+				  manifest, SignManifest(manifest, key->privateKey.get()), 271,
+				  TeagramUpdateChannel::Main, publicKey, 271, selection);
+		  };
+	using Selection = TeagramUpdateSelection;
+	using Reason = TeagramUpdateVerificationReason;
+
+	const auto older
+		= authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("250"),
+					   Selection::SwitchToMain);
+	CHECK(older.authenticated());
+	if (older.package) {
+		CHECK_EQ(older.package->build(), quint64(250));
+		CHECK(older.package->channel() == TeagramUpdateChannel::Main);
+	}
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("280"),
+					   Selection::SwitchToMain)
+			  .authenticated());
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("250"),
+					   Selection::Newer)
+			  .reason
+		  == Reason::NotNewer);
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("271"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::NotNewer);
+	CHECK(authenticate(QByteArrayLiteral("dev"), QByteArrayLiteral("250"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::IneligibleChannel);
+	CHECK(authenticate(QByteArrayLiteral("dev"), QByteArrayLiteral("280"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::IneligibleChannel);
+
+	const auto manifest
+		= Manifest(QByteArrayLiteral("main"), QByteArrayLiteral("250"));
+	const auto unsignedSwitch = AuthenticateTeagramUpdateManifestForTests(
+		manifest, QByteArray(), 271, TeagramUpdateChannel::Main, publicKey, 271,
+		Selection::SwitchToMain);
+	CHECK(unsignedSwitch.reason == Reason::InvalidSignature);
 }
 
 TEST_CASE(TeagramUpdateGeneratedPackageRoundTrip) {

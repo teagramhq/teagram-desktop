@@ -24,7 +24,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/iv_rich_page.h"
 #include "lang/translate_provider.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "spellcheck/platform/platform_language.h"
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
 
 namespace HistoryView {
 namespace {
@@ -54,6 +58,31 @@ rpl::producer<bool> TranslateTracker::trackingLanguage() const {
 	return _trackingLanguage.value();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool TranslateTracker::trackingLanguageForRegressionTest() const {
+	return _trackingLanguage.current();
+}
+
+void TranslateTracker::requestTextForRegressionTest(
+	not_null<HistoryItem *> item, LanguageId to) {
+	_itemsToRequest.clear();
+	_itemsToRequest.emplace(item->fullId(),
+							ItemToRequest{
+								.length = int(item->originalText().text.size()),
+								.rich = false,
+							});
+	_history->translateTo(to);
+	requestSome();
+}
+
+void TranslateTracker::requestRichForRegressionTest(
+	not_null<HistoryItem *> item, LanguageId to) {
+	_requested = {item->fullId()};
+	_history->translateTo(to);
+	requestSomeRich(to, item->history()->peer->id);
+}
+#endif
+
 void TranslateTracker::setup() {
 	const auto peer = _history->peer;
 	peer->updateFull();
@@ -66,12 +95,18 @@ void TranslateTracker::setup() {
 		return (data.value & ChannelDataFlag::AutoTranslation);
 	}) | rpl::distinct_until_changed();
 
-	using namespace rpl::mappers;
+	const auto serverSupported
+		= _history->session().serverTranslationSupported();
 	_trackingLanguage = rpl::combine(
 		Core::App().settings().translateChatEnabledValue(),
 		Data::AmPremiumValue(&_history->session()),
-		std::move(autoTranslationValue),
-		_1 && (_2 || _3));
+		std::move(autoTranslationValue), rpl::single(serverSupported),
+		[](bool settingEnabled, bool premium, bool channelAutoTranslation,
+		   bool serverSupported) {
+			return Main::details::automaticChatTranslationEnabled(
+				serverSupported, settingEnabled, premium,
+				channelAutoTranslation);
+		});
 	_trackingLanguage.value() | rpl::on_next([=](bool tracking) {
 		_trackingLifetime.destroy();
 		if (tracking) {
@@ -160,6 +195,9 @@ bool TranslateTracker::add(
 void TranslateTracker::switchTranslation(
 		not_null<HistoryItem*> item,
 		LanguageId id) {
+	if (!_history->session().serverTranslationSupported()) {
+		return;
+	}
 	_history->session().api().transcribes().checkSummaryToTranslate(
 		item->fullId());
 	if (item->translationShowRequiresRequest(id)) {
@@ -271,6 +309,11 @@ void TranslateTracker::stopAndRevert() {
 }
 
 void TranslateTracker::requestSome() {
+	if (!_history->session().serverTranslationSupported()) {
+		cancelToRequest();
+		cancelSentRequest();
+		return;
+	}
 	if (_requestInProcess || _itemsToRequest.empty()) {
 		return;
 	}
@@ -356,6 +399,10 @@ void TranslateTracker::requestSome() {
 }
 
 void TranslateTracker::requestSomeRich(LanguageId to, PeerId peerId) {
+	if (!_history->session().serverTranslationSupported()) {
+		cancelSentRequest();
+		return;
+	}
 	const auto session = &_history->session();
 	const auto owner = &session->data();
 	const auto peer = owner->peerLoaded(peerId);
@@ -392,37 +439,42 @@ void TranslateTracker::requestSomeRich(LanguageId to, PeerId peerId) {
 		requestSome();
 	};
 	using Flag = MTPmessages_TranslateRichMessage::Flag;
-	_api.request(MTPmessages_TranslateRichMessage(
-		MTP_flags(Flag::f_peer | Flag::f_id),
-		peer->input(),
-		MTP_vector<MTPint>(mtpIds),
-		MTPVector<MTPInputRichMessage>(),
-		MTP_string(to.twoLetterCode()),
-		MTPstring()
-	)).done([=](const MTPmessages_TranslatedRichMessage &result) {
-		if (!_requestInProcess || (_requestToken != requestToken)) {
-			return;
-		}
-		const auto &list = result.data().vresult().v;
-		for (auto i = 0, count = int(_requested.size()); i != count; ++i) {
-			if (const auto item = owner->message(_requested[i])) {
-				item->translationDone(to, (i < list.size())
-					? Iv::ParseRichPage(session, list[i])
-					: nullptr);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordTranslationRpcForRegressionTest(
+		Tests::TranslationRpcForRegressionTest::Rich);
+#endif
+	_api
+		.request(MTPmessages_TranslateRichMessage(
+			MTP_flags(Flag::f_peer | Flag::f_id), peer->input(),
+			MTP_vector<MTPint>(mtpIds), MTPVector<MTPInputRichMessage>(),
+			MTP_string(to.twoLetterCode()), MTPstring()))
+		.done([=](const MTPmessages_TranslatedRichMessage &result) {
+			if (!_requestInProcess || (_requestToken != requestToken)) {
+				return;
 			}
-		}
-		finish();
-	}).fail([=](const MTP::Error &) {
-		if (!_requestInProcess || (_requestToken != requestToken)) {
-			return;
-		}
-		for (const auto &id : _requested) {
-			if (const auto item = owner->message(id)) {
-				item->translationDone(to, TextWithEntities());
+			const auto &list = result.data().vresult().v;
+			for (auto i = 0, count = int(_requested.size()); i != count; ++i) {
+				if (const auto item = owner->message(_requested[i])) {
+					item->translationDone(
+						to, (i < list.size())
+								? Iv::ParseRichPage(session, list[i])
+								: nullptr);
+				}
 			}
-		}
-		finish();
-	}).send();
+			finish();
+		})
+		.fail([=](const MTP::Error &) {
+			if (!_requestInProcess || (_requestToken != requestToken)) {
+				return;
+			}
+			for (const auto &id : _requested) {
+				if (const auto item = owner->message(id)) {
+					item->translationDone(to, TextWithEntities());
+				}
+			}
+			finish();
+		})
+		.send();
 }
 
 void TranslateTracker::applyLimit() {

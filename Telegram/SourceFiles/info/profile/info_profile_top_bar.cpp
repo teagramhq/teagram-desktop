@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_document_media.h"
 #include "data/data_document.h"
 #include "data/data_emoji_statuses.h"
@@ -1212,7 +1213,8 @@ void TopBar::setupUserpicButton(
 				&& !user->isServiceUser();
 		}
 		if (const auto chat = peer->asChat()) {
-			return chat->canEditInformation();
+			return chat->canEditInformation()
+				   && Data::details::BasicChatControlsOf(chat).canEditPhoto;
 		}
 		if (const auto channel = peer->asChannel()) {
 			return channel->canEditInformation();

@@ -1161,6 +1161,36 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	exit 1
 fi
 verify_protected_storage_fixtures
+if ! grep -E -q \
+	'^Translation action routing: custom_provider=[0-3] custom_hidden=[01] custom_rich_hidden=1 local_failure=[01] stock_provider=[1-3] stock_hidden=0\.$' \
+	"$AUTH_LOG"; then
+	echo "translation action routing evidence missing or invalid." >&2
+	cat "$AUTH_LOG" >&2
+	exit 1
+fi
+for translation_evidence in \
+	"Translation controls precondition: stock loaded=1 server_supported=1 network_allowed=0 creator=1 broadcast=1 auto_translation=1 translation_enabled=1; custom loaded=1 server_supported=0 network_allowed=0 creator=1 broadcast=1 auto_translation=1 translation_enabled=1." \
+	"Translation controls custom requests: text=0 rich=0." \
+	"Translation controls stock requests: text=1 rich=1." \
+	"Translation controls counts unchanged after 1000 ms main-queue barrier: custom text=0 rich=0; stock text=1 rich=1; network_allowed stock=0 custom=0." \
+	"Translation controls regression passed: custom action gates followed session provider availability, rich actions stayed hidden, stale actions failed locally, Language links skipped absent rows without writing preferences, automatic chat translation stayed off, and stock controls and RPCs remained enabled."; do
+	if ! grep -F -q "$translation_evidence" "$AUTH_LOG"; then
+		echo "translation controls regression evidence missing: $translation_evidence" >&2
+		exit 1
+	fi
+done
+if ! awk '
+/Translation action routing: / && step == 0 { step = 1; next }
+/Translation controls precondition: / && step == 1 { step = 2; next }
+/Translation controls custom requests: / && step == 2 { step = 3; next }
+/Translation controls stock requests: / && step == 3 { step = 4; next }
+/Translation controls counts unchanged after 1000 ms main-queue barrier: / && step == 4 { step = 5; next }
+/Translation controls regression passed: / && step == 5 { step = 6; next }
+END { exit step != 6 }
+' "$AUTH_LOG"; then
+	echo "translation controls regression evidence was out of order." >&2
+	exit 1
+fi
 if ! grep -F -q \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
 	"$AUTH_LOG"; then
@@ -1192,6 +1222,20 @@ fi
 if ! grep -F -q "Chat participants regression passed." "$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "chat participants regression did not reach its passing result." >&2
+	exit 1
+fi
+if ! grep -F -q \
+	"Settings deep link regression passed: 13 routes refused in custom and blocked sessions;" \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "Settings deep link regression did not reach its passing result." >&2
+	exit 1
+fi
+if ! grep -F -q \
+	"Paid link regression passed: 16 paid links refused in custom and blocked sessions" \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "Paid link regression did not reach its passing result." >&2
 	exit 1
 fi
 if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then

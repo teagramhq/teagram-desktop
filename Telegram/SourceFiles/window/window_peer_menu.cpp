@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_communities.h"
 #include "api/api_global_privacy.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "lottie/lottie_icon.h"
 #include "ui/boxes/confirm_box.h"
 #include "base/random.h"
@@ -62,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "main/main_session_settings.h"
 #include "menu/menu_mute.h"
 #include "menu/menu_ttl_validator.h"
@@ -105,6 +107,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_poll.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_community.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -650,7 +653,8 @@ void Filler::addInfo() {
 
 void Filler::addStoryArchive() {
 	const auto channel = _peer ? _peer->asChannel() : nullptr;
-	if (!channel || !channel->canEditStories()) {
+	if (!channel || !channel->canEditStories()
+		|| !_controller->session().storiesSupported()) {
 		return;
 	}
 	const auto controller = _controller;
@@ -1027,6 +1031,7 @@ void Filler::addExportChat() {
 
 void Filler::addTranslate() {
 	if (_peer->translationFlag() != PeerData::TranslationFlag::Disabled
+		|| !_peer->session().serverTranslationSupported()
 		|| !_peer->session().premium()
 		|| !Core::App().settings().translateChatEnabled()) {
 		return;
@@ -1240,6 +1245,9 @@ void Filler::addManageChat() {
 }
 
 void Filler::addBoostChat() {
+	if (!_controller->session().paidFeaturesSupported()) {
+		return;
+	}
 	if (const auto channel = _peer->asChannel()) {
 		if (channel->isMonoforum()) {
 			return;
@@ -1277,9 +1285,9 @@ void Filler::addViewStatistics() {
 				}
 			}, &st::menuIconStats);
 		}
-		if (canGetStats
-			|| channel->amCreator()
-			|| channel->canPostStories()) {
+		if (_controller->session().paidFeaturesSupported()
+			&& (canGetStats || channel->amCreator()
+				|| channel->canPostStories())) {
 			_addAction(tr::lng_boosts_title(tr::now), [=] {
 				if ([[maybe_unused]] const auto strong = weak.get()) {
 					controller->showSection(Info::Boosts::Make(peer));
@@ -1330,22 +1338,24 @@ bool Filler::skipCreateActions() const {
 SendMenu::Details Filler::createSendMenuDetails() const {
 	using Type = SendMenu::Type;
 
-	const auto type = (_request.section == Section::Scheduled)
-		? Type::Disabled
-		: (!_peer || _peer->starsPerMessageChecked())
-		? Type::SilentOnly
-		: (_request.section == Section::Replies)
-		? (_topic ? Type::Scheduled : Type::SilentOnly)
-		: _peer->isSelf()
-		? Type::Reminder
-		: HistoryView::CanScheduleUntilOnline(_peer)
-		? Type::ScheduledToUser
-		: Type::Scheduled;
+	const auto type
+		= (_request.section == Section::Scheduled) ? Type::Disabled
+		  : (!_peer || _peer->starsPerMessageChecked()
+			 || !Main::details::scheduledMessagesSupportedForPeer(_peer))
+			  ? Type::SilentOnly
+		  : (_request.section == Section::Replies)
+			  ? (_topic ? Type::Scheduled : Type::SilentOnly)
+		  : _peer->isSelf()							   ? Type::Reminder
+		  : HistoryView::CanScheduleUntilOnline(_peer) ? Type::ScheduledToUser
+													   : Type::Scheduled;
 	return { .type = type };
 }
 
 void Filler::addCreatePoll() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1381,7 +1391,10 @@ void Filler::addCreatePoll() {
 }
 
 void Filler::addCreateTodoList() {
-	if (skipCreateActions()) {
+	if (skipCreateActions()
+		|| (_request.section == Section::Scheduled
+			&& (!_peer
+				|| !Main::details::scheduledMessagesSupportedForPeer(_peer)))) {
 		return;
 	}
 	const auto can = _topic
@@ -1415,7 +1428,8 @@ void Filler::addCreateTodoList() {
 }
 
 void Filler::addThemeEdit() {
-	if (_peer->isVerifyCodes() || _peer->isRepliesChat()) {
+	if (_peer->isVerifyCodes() || _peer->isRepliesChat()
+		|| !Main::details::chatThemeEditingSupportedForPeer(_peer)) {
 		return;
 	}
 	const auto user = _peer->asUser();
@@ -1518,10 +1532,8 @@ void ShowDisableSharingBox(
 
 void Filler::addToggleNoForwards() {
 	const auto user = _peer->asUser();
-	if (!user
-		|| user->isInaccessible()
-		|| user->isBot()
-		|| user->isServiceUser()
+	if (!Main::details::noForwardsSupportedForPeer(_peer) || !user
+		|| user->isInaccessible() || user->isBot() || user->isServiceUser()
 		|| user->isSelf()) {
 		return;
 	}
@@ -3410,13 +3422,16 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			}
 			return false;
 		}();
-		return hasPaid
-			? SendMenu::Type::SilentOnly
-			: ranges::all_of(selected, HistoryView::CanScheduleUntilOnline)
-			? SendMenu::Type::ScheduledToUser
-			: ((selected.size() == 1) && selected.front()->isSelf())
-			? SendMenu::Type::Reminder
-			: SendMenu::Type::Scheduled;
+		const auto supportsSchedule
+			= ranges::all_of(selected, [](not_null<PeerData *> peer) {
+				  return Main::details::scheduledMessagesSupportedForPeer(peer);
+			  });
+		return hasPaid || !supportsSchedule ? SendMenu::Type::SilentOnly
+			   : ranges::all_of(selected, HistoryView::CanScheduleUntilOnline)
+				   ? SendMenu::Type::ScheduledToUser
+			   : ((selected.size() == 1) && selected.front()->isSelf())
+				   ? SendMenu::Type::Reminder
+				   : SendMenu::Type::Scheduled;
 	};
 
 	const auto showMenu = [=](not_null<Ui::RpWidget*> parent) {
@@ -4223,6 +4238,11 @@ void FillSenderUserpicMenu(
 			const auto isDiscussionGroup = groupChannel
 				&& groupChannel->isMegagroup()
 				&& groupChannel->discussionLink();
+			const auto groupChat = groupPeer->asChat();
+			const auto tagsSupported
+				= !groupChat
+				  || Data::details::BasicChatControlsOf(groupChat)
+						 .canEditMemberTags;
 			const auto canEditTarget = [&] {
 				if (const auto chat = groupPeer->asChat()) {
 					if (peerToUser(user->id) == chat->creator) {
@@ -4242,10 +4262,8 @@ void FillSenderUserpicMenu(
 				}
 				return false;
 			}();
-			if (!isDiscussionGroup
-				&& canEditTarget
-				&& groupPeer->canManageRanks()
-				&& !user->isSelf()) {
+			if (!isDiscussionGroup && tagsSupported && canEditTarget
+				&& groupPeer->canManageRanks() && !user->isSelf()) {
 				const auto currentRank = LookupMemberRank(
 					groupPeer,
 					user);

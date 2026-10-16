@@ -1,0 +1,125 @@
+name: Clear macOS build approval.
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [synchronize]
+
+permissions:
+  {}
+
+# A newer push supersedes an older cleanup still waiting or running.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Runs with the base repository token so fork PRs are covered; it never checks
+# out or runs PR code.
+jobs:
+  clear:
+    name: Clear macOS build approval
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+      pull-requests: write
+
+    steps:
+      - name: Cancel superseded MacOS. builds and clear their approval.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Refusing to edit a malformed pull request number."
+            exit 1
+          fi
+          # The event head goes stale once a newer push lands; that push runs its own cleanup.
+          exit_if_event_head_is_stale() {
+            local live_head_sha
+            if ! live_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" \
+                || [[ -z "$live_head_sha" ]]; then
+              echo "::error::Could not read the live head of PR $PR_NUMBER."
+              exit 1
+            fi
+            if [[ "$live_head_sha" != "$HEAD_SHA" ]]; then
+              echo "PR $PR_NUMBER moved from $HEAD_SHA to $live_head_sha; leaving its builds and approval alone."
+              exit 0
+            fi
+          }
+          exit_if_event_head_is_stale
+          runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
+            -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
+            | jq -c --arg repo "$HEAD_REPOSITORY" '[.workflow_runs[] | select(.head_repository.full_name == $repo)]')"
+          stale_run_ids="$(jq -r --arg sha "$HEAD_SHA" \
+            '.[] | select(.status != "completed" and .head_sha != $sha) | .id' <<< "$runs")"
+          while IFS= read -r run_id; do
+            [[ -n "$run_id" ]] || continue
+            if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected run ID from GitHub: $run_id"
+              exit 1
+            fi
+            echo "Cancelling MacOS. run $run_id"
+            if ! cancel_output="$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" 2>&1)"; then
+              # A run that finished after the listing answers 409; nothing is left to cancel.
+              if [[ "$cancel_output" != *"(HTTP 409)"* ]]; then
+                printf '%s\n' "$cancel_output" >&2
+                echo "::error::MacOS. run $run_id could not be cancelled."
+                exit 1
+              fi
+              echo "MacOS. run $run_id already finished."
+            fi
+          done <<< "$stale_run_ids"
+
+          # Keep macos-build only when its MacOS job runs at the current head; a run
+          # started by any other label skips that job.
+          poll_seconds="${MACOS_APPROVAL_POLL_SECONDS:-15}"
+          current_head_build=undecided
+          for _ in $(seq 20); do
+            current_run_ids="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs" \
+              -f event=pull_request -f branch="$HEAD_REF" -F per_page=100 \
+              | jq -r --arg repo "$HEAD_REPOSITORY" --arg sha "$HEAD_SHA" \
+                '.workflow_runs[] | select(.head_repository.full_name == $repo and .head_sha == $sha) | .id')"
+            current_head_build=absent
+            while IFS= read -r run_id; do
+              [[ -n "$run_id" ]] || continue
+              if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+                echo "::error::Unexpected run ID from GitHub: $run_id"
+                exit 1
+              fi
+              # Matrix jobs carry their variant once they start; a skipped job stays "MacOS".
+              build_job_state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+                | jq -r '[.jobs[] | select(.name == "MacOS" or (.name | startswith("MacOS (")))]
+                  | if length == 0 then "pending"
+                    elif any(.[]; .conclusion != "skipped") then "ran"
+                    else "skipped" end')"
+              case "$build_job_state" in
+                ran) current_head_build=ran; break ;;
+                pending) current_head_build=undecided ;;
+              esac
+            done <<< "$current_run_ids"
+            [[ "$current_head_build" == undecided ]] || break
+            sleep "$poll_seconds"
+          done
+          case "$current_head_build" in
+            ran)
+              echo "The current head has a MacOS build; keeping macos-build."
+              exit 0
+              ;;
+            undecided)
+              echo "::error::A MacOS. run at $HEAD_SHA has not created its jobs; cannot tell whether macos-build applies to it."
+              exit 1
+              ;;
+          esac
+          exit_if_event_head_is_stale
+          if ! remove_output="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/macos-build" 2>&1)"; then
+            if [[ "$remove_output" != *"(HTTP 404)"* ]]; then
+              printf '%s\n' "$remove_output" >&2
+              echo "::error::Could not remove macos-build from PR $PR_NUMBER."
+              exit 1
+            fi
+            echo "PR $PR_NUMBER has no macos-build label."
+          fi
