@@ -24,6 +24,21 @@ run is not a pull request and its ref is `refs/heads/dev`: a push to `dev`,
 the nightly schedule, or a manual dispatch on `dev`. Each of those runs
 trusted `dev` code. Pull request builds restore that cache and never save.
 
+## macOS dependency artifact publisher
+
+The `macos-libraries` job runs only on a push or schedule for `dev` in
+`teagramhq/teagram-desktop`. It checks out that trusted ref and tags the GHCR
+artifact with the hash of the tracked macOS dependency recipe. It is the only
+job with `packages: write`; the macOS build, packaged build, updater fixtures,
+and manual unit-feedback jobs receive `packages: read` only. Pull request
+builds cannot publish a package. If a recipe hash has no published artifact,
+the consumer builds the dependencies locally and does not publish them.
+
+After an artifact is present, this publisher uses `actions: write` only to
+delete legacy `macOS-libs-` Actions cache entries. Those caches are no longer
+read or written by any macOS workflow. The publisher skips an existing
+recipe-hash tag; only trusted dev runs can publish package contents.
+
 ## Manual feedback lanes
 
 `Unit feedback.` and `MacOS unit feedback.` are dispatched on `dev` but build
@@ -34,7 +49,9 @@ that trusted `dev` builds restore, whatever code it runs. Neither workflow
 contains a save step, and `test_ci_cache_contract.sh` fails if either regains
 cache write access. The Linux lane pulls the dependency image `dev`'s
 publisher pushed for the ref's recipe with `packages: read`; on a missing tag
-it builds the image locally and never pushes it.
+it builds the image locally and never pushes it. MacOS unit feedback uses
+`packages: read` to pull the matching macOS dependency artifact, with a local
+build fallback on a missing tag.
 
 ## Actions cache cleanup
 
@@ -55,6 +72,12 @@ for the exact `refs/heads/dev` ref and the `macOS-arm64-ccache-dev-` key
 prefix. It keeps the newest entry of each profile, including the unprofiled
 key `MacOS Packaged.` saves. PR-controlled workflow runs fail the source validation and cannot
 select a cache key or ID.
+
+The trusted `macos-libraries` publisher deletes the legacy `macOS-libs-` cache
+entries from every ref only after the matching GHCR artifact is present. This
+frees the former 9 GB dependency cache before the app build saves its compiler
+cache. Pull request workflows have no write access to Actions caches or
+packages, so they cannot delete caches or publish artifacts.
 
 A completed `Linux.` run triggers a separate job with the same source
 validation and token scope. It lists only the `Linux-tdesktop-default-` key

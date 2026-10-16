@@ -218,7 +218,10 @@ reject_value() {
 # removing either step fails the other.
 require_contract_tests_in_lint() {
   local lint=".github/workflows/workflow_lint.yml" test_script command step
-  for test_script in test_macos_ci_contract.sh test_ci_cache_contract.sh; do
+  for test_script in \
+    test_macos_ci_contract.sh \
+    test_ci_cache_contract.sh \
+    test_macos_libraries_image.sh; do
     command="bash .github/scripts/$test_script"
     step="$(COMMAND="$command" yq -r '.jobs.actionlint.steps[]
       | select(.run == strenv(COMMAND)) | .name' "$lint")"

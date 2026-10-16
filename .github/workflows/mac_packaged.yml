@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      packages: read
 
     outputs:
       minimum_os: ${{ steps.package.outputs.min_os }}
@@ -50,6 +51,11 @@ jobs:
           submodules: recursive
           path: ${{ env.REPO_NAME }}
 
+      - name: Set macOS dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" set-image
+
       - name: First set up.
         id: setup
         run: |
@@ -60,6 +66,16 @@ jobs:
           bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" client
           echo "$tools/bin" >> "$GITHUB_PATH"
           export PATH="$tools/bin:$PATH"
+
+          missing=()
+          for formula in oras zstd; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+          if ((${#missing[@]})); then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"
+          fi
 
           sudo mdutil -a -i off
 
@@ -79,14 +95,14 @@ jobs:
           key: macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-
 
-      - name: Libraries cache.
+      - name: Log in to GitHub Container Registry.
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Restore macOS libraries artifact.
         id: cache-libs
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            Libraries
-            ThirdParty
-          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME" "$GITHUB_OUTPUT"
 
       - name: Libraries.
         id: libraries
@@ -97,15 +113,6 @@ jobs:
 
       - name: Free up some disk space.
         run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
-
-      - name: Save libraries cache.
-        if: ${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev' }}
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            Libraries
-            ThirdParty
-          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
 
       - name: Teagram build.
         id: package
