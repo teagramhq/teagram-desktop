@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_common.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
-#include "base/event_filter.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
@@ -120,6 +119,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTimer>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -4681,6 +4681,11 @@ PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
 		return u"accessibility-focus-policy"_q;
 	}
+	// The menu is never shown, so it stays wherever it was created. A
+	// keyboard step that scrolls it sends a synthetic mouse move at the real
+	// cursor position, which selects the item under the cursor by mouse
+	// before the key selects it. Keep the cursor off the menu.
+	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
 	auto hasAction = false;
@@ -4709,69 +4714,21 @@ PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 					accessible->text(QAccessible::Name), action->text());
 			}
 			if (item->isEnabled()) {
-				// Records what reached the item while the key was handled:
-				// selection changes as +/- with K or M for the source, and
-				// the hover and focus events that can select by mouse.
-				auto trace = QStringList();
-				auto traceLifetime = rpl::lifetime();
-				item->selects()
-					| rpl::on_next(
-						[&](const Ui::Menu::CallbackData &data) {
-							trace.push_back(
-								(data.selected ? u"+"_q : u"-"_q)
-								+ ((data.source
-									== Ui::Menu::TriggeredSource::Keyboard)
-									   ? u"K"_q
-									   : u"M"_q));
-						},
-						traceLifetime);
-				base::install_event_filter(
-					item,
-					[&](not_null<QEvent *> e) {
-						switch (e->type()) {
-						case QEvent::Enter:
-							trace.push_back(u"enter"_q);
-							break;
-						case QEvent::Leave:
-							trace.push_back(u"leave"_q);
-							break;
-						case QEvent::MouseMove:
-							trace.push_back(u"move"_q);
-							break;
-						case QEvent::FocusIn:
-							trace.push_back(u"focus-in"_q);
-							break;
-						case QEvent::FocusOut:
-							trace.push_back(u"focus-out"_q);
-							break;
-						default:
-							break;
-						}
-						return base::EventFilterResult::Continue;
-					},
-					traceLifetime);
-				const auto preselected = item->isSelected();
 				auto down
 					= QKeyEvent(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
 				QCoreApplication::sendEvent(&menu, &down);
-				traceLifetime.destroy();
 				const auto selected = inner->findSelectedAction();
 				if (!selected || selected->action() != action
 					|| selected->lastTriggeredSource()
 						   != Ui::Menu::TriggeredSource::Keyboard) {
 					return u"keyboard-selection action=\"%1\" selected=\"%2\" "
-						   "source=%3 preselected=%4 focus-policy=%5 "
-						   "trace=%6"_q
+						   "source=%3"_q
 							   .arg(action->text(),
 									selected ? selected->action()->text()
 											 : u"<none>"_q)
 							   .arg(selected
 										? int(selected->lastTriggeredSource())
-										: -1)
-							   .arg(int(preselected))
-							   .arg(int(item->focusPolicy()))
-							   .arg(trace.isEmpty() ? u"none"_q
-													: trace.join(','));
+										: -1);
 				}
 				hasAction = true;
 			}
