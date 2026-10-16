@@ -6222,8 +6222,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"queued teardown-to-stock switch missed its inline session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
-	// Keep the lifecycle update regression on the primary window. A separate
-	// window for discarded would make showAccount(discarded) route elsewhere.
 	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
