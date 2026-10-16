@@ -658,9 +658,9 @@ void Launcher::processArguments() {
 	gStartInTray = parseResult.contains("-startintray");
 	gQuit = parseResult.contains("-quit");
 	_customWorkingDir = parseResult.value("-workdir", {}).join(QString());
-#ifdef TDESKTOP_TEAGRAM
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 	_customWorkingDir.clear();
-#endif // TDESKTOP_TEAGRAM
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (!_customWorkingDir.isEmpty()) {
 		_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
 	}

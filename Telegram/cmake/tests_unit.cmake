@@ -171,8 +171,16 @@ PRIVATE
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(test_unit PRIVATE
+        TDESKTOP_TEAGRAM
+        TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
+        "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
+    )
+
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
+        platform/linux/app_data_path.cpp
+        tests/unit/linux_data_path_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )
