@@ -40,9 +40,7 @@ macos_group_for_event() {
     repository_qualified_identity="pr/${pr_repo:-teagramhq/teagram-desktop}/${pr_head}"
   elif [[ -n "$dispatch_pr_branch" ]]; then
     repository_qualified_identity="pr/${dispatch_pr_repo:-teagramhq/teagram-desktop}/${dispatch_pr_branch}"
-  elif [[ "$event_name" == 'schedule' ]]; then
-    repository_qualified_identity="schedule/${ref_name}"
-  elif [[ "$event_name" == 'push' ]]; then
+  elif [[ "$event_name" == 'schedule' || "$event_name" == 'push' ]]; then
     repository_qualified_identity="seed/${ref_name}"
   else
     repository_qualified_identity="ref/${dispatch_branch:-$ref_name}"
@@ -80,9 +78,9 @@ require_text "$mac_workflow" '  schedule:'
 require_text "$mac_workflow" 'concurrency:'
 require_text "$mac_workflow" '  pull_request_repository:'
 require_text "$mac_workflow" '  pull_request_branch:'
-require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || github.event_name == 'push' && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
+require_text "$mac_workflow" "group: \${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 require_text "$mac_workflow" 'github.event.pull_request.head.repo.full_name'
-require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}"
+require_text "$mac_workflow" "cancel-in-progress: \${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}"
 pr_types="$(sed -n '/^  pull_request:$/,/^  [a-z_]*:$/p' "$mac_workflow" | sed -n 's/^    types: //p')"
 if [[ "$pr_types" != '[labeled]' ]]; then
   printf 'MacOS PR runs must start only from the macos-build label, got: %s\n' "${pr_types:-every push}" >&2
@@ -249,12 +247,33 @@ fi
 schedule_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'schedule')"
 dev_dispatch_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'workflow_dispatch')"
 if [[ "$schedule_group" == "$dev_dispatch_group" ]]; then
-  printf 'A dev dispatch must not cancel the scheduled run that seeds the compiler cache.\n' >&2
+  printf 'A dev dispatch must not share the seed group.\n' >&2
   exit 1
 fi
 push_group="$(macos_group_for_event '' '' '' '' '' 'dev' 'push')"
-if [[ "$push_group" == "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
-  printf 'Dev push seeds, the nightly run and dev dispatches must use three separate concurrency groups.\n' >&2
+if [[ "$push_group" != "$schedule_group" || "$push_group" == "$dev_dispatch_group" ]]; then
+  printf 'Dev push and nightly seeds must share one group, apart from dev dispatches.\n' >&2
+  exit 1
+fi
+# Mirrors cancel-in-progress. Seed writers queue instead of cancelling, so a
+# nightly run that passed its dev-tip check saves before a later push seed runs.
+macos_cancels_in_progress() {
+  local event_name="$1"
+  local label_name="${2:-}"
+  [[ "$event_name" == 'workflow_dispatch' || "$label_name" == 'macos-build' ]]
+}
+for seed_event in schedule push; do
+  if macos_cancels_in_progress "$seed_event"; then
+    printf 'A %s seed must not cancel the seed writer running in its group.\n' "$seed_event" >&2
+    exit 1
+  fi
+done
+macos_cancels_in_progress workflow_dispatch \
+  || { printf 'A dispatch must still replace a running dispatch.\n' >&2; exit 1; }
+macos_cancels_in_progress pull_request macos-build \
+  || { printf 'An approved PR build must still replace its older build.\n' >&2; exit 1; }
+if macos_cancels_in_progress pull_request other-label; then
+  printf 'An unrelated PR label must not cancel a running build.\n' >&2
   exit 1
 fi
 mac_triggers="$(awk '/^on:$/ { in_on = 1; next } in_on && /^[^ #]/ { exit } in_on { print }' "$mac_workflow")"

@@ -41,8 +41,10 @@ on:
 
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || github.event_name == 'push' && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}
+  # Nightly and push seeds share one group and never cancel each other, so
+  # only one seed writer runs at a time; a newer pending seed replaces an older one.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}
 
 jobs:
 
