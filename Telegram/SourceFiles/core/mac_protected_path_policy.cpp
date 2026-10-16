@@ -850,7 +850,7 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 				continue;
 			}
 			home.append('/');
-			home.append(ProfileComponentRegex(part));
+			home.append(component(Fold(part).toUtf8()));
 		}
 		const auto library = component("Library");
 		for (const auto &prefix : protectedPrefixes) {

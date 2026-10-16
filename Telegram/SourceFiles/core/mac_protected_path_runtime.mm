@@ -10,6 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_access.h"
 #include "settings.h"
 
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#include "media/audio/media_audio_local_cache.h"
+#include <QtCore/QTemporaryDir>
+#endif
+
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -452,9 +457,6 @@ QString ProfileRoot() {
 }
 
 QString NotificationSoundsDirectory() {
-	if (IsActive()) {
-		return ProfileRoot() + u"/tdata/sounds"_q;
-	}
 	const auto home = FoundationHome();
 	return home.isEmpty() ? QString()
 						  : QString::fromUtf8(home) + u"/Library/Sounds"_q;
@@ -624,6 +626,57 @@ bool CheckCachePath(const QString &path, const char *callsite) {
 }
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+int RunNotificationSoundProbe() {
+	if (!IntegrationTestActive()) {
+		return 1;
+	}
+	const auto directory = NotificationSoundsDirectory();
+	if (directory.isEmpty()) {
+		return 1;
+	}
+	const auto id = uint64(getpid());
+	const auto destination
+		= directory
+		  + u"/Teagram_%1.wav"_q.arg(QString::number(id, 16).toUpper());
+	if (!CheckPath(Operation::Lstat, destination, Q_FUNC_INFO)
+		|| QFileInfo::exists(destination)) {
+		return 1;
+	}
+	auto source = QTemporaryDir(ProfileRoot() + u"/sound-lookup-XXXXXX"_q);
+	if (!source.isValid()) {
+		return 1;
+	}
+	const auto wav = QByteArray::fromHex(
+		"524946462600000057415645666d74201000000001000100401f0000"
+		"803e00000200100064617461020000000000");
+	auto cache = Media::Audio::LocalDiskCache(source.path());
+	const auto name = cache.name({id, wav});
+	if (name.isEmpty()) {
+		return 1;
+	}
+	auto file = QFile(destination);
+	const auto readable = CheckPath(Operation::Open, destination, Q_FUNC_INFO)
+						  && file.open(QIODevice::ReadOnly)
+						  && file.readAll() == wav;
+	file.close();
+	auto found = false;
+	@autoreleasepool {
+		const auto nativeName =
+			[NSString stringWithUTF8String:name.toUtf8().constData()];
+		found = readable && [NSSound soundNamed:nativeName] != nil;
+	}
+	const auto removed = CheckPath(Operation::Unlink, destination, Q_FUNC_INFO)
+						 && QFile::remove(destination);
+	if (!found || !removed) {
+		fprintf(stderr,
+				"Notification sound lookup failed: readable=%d found=%d "
+				"removed=%d\n",
+				readable, found, removed);
+		return 1;
+	}
+	return 0;
+}
+
 bool CheckCachePathForTesting(
 	const QString &path, const char *callsite,
 	std::function<void(const QString &)> beforeEntryStat) {

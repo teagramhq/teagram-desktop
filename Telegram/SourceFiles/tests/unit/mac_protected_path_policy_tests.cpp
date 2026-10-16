@@ -149,9 +149,7 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
-		CHECK(joinedProfileStrings.contains(
-			u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"_q.toUtf8()));
-		CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+		CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
@@ -343,10 +341,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	CHECK(joinedProfileStrings.contains(
-		u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"
-		"[Aa][Ll][Ii][Cc][Ee]"_q.toUtf8()));
-	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 	CHECK(joinedProfileStrings.contains(
 		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Pp]"
 		+ ignoredSequence + "[Pp]" + ignoredSequence + "[Ll]"));
@@ -371,7 +366,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	}
 }
 
-TEST_CASE(SeatbeltProfileFoldsHomeNamesWithoutIgnorableExpansion) {
+TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 	auto fs = FakeFileSystem();
 	AddDirectoryHierarchy(fs, u"/Users/k\u017F"_q.toUtf8());
 	const auto policy = MacProtectedPathPolicy::Build(
@@ -386,18 +381,17 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithoutIgnorableExpansion) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	CHECK(joinedProfileStrings.contains(
-		u"^/[Uu]([Ss]|\u017F)[Ee][Rr]([Ss]|\u017F)/"
-		"([Kk]|\u212A)([Ss]|\u017F)"_q.toUtf8()));
 	const auto ignoredSequence
 		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
 }
 
 TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
-	const auto homes = std::vector<std::pair<QString, QString>>{
+	auto homes = std::vector<std::pair<QString, QString>>{
+		{u"/Users/alice"_q, u"/U\u200Bsers/al\u200Bice"_q},
+		{u"/U\u200Bsers/al\u200Bice"_q, u"/Users/alice"_q},
 		{u"/Users/\u00C9lise"_q, u"/users/\u00E9LISE"_q},
 		{u"/Users/\u00D8lise"_q, u"/users/\u00F8LISE"_q},
 		{u"/Users/\u0141ukasz"_q, u"/users/\u0142UKASZ"_q},
@@ -413,6 +407,15 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 		 u"/users/"_q + QString(120, QChar(0x00F8)) + u"/"_q
 			 + QString(120, QChar(0x0142))},
 	};
+	for (const auto codepoint : {0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x202A,
+								 0x202B, 0x202C, 0x202D, 0x202E, 0x206A, 0x206B,
+								 0x206C, 0x206D, 0x206E, 0x206F, 0xFEFF}) {
+		const auto alias = u"/Us"_q + QChar(codepoint) + u"ers"_q
+						   + QChar(codepoint) + u"/al"_q + QChar(codepoint)
+						   + u"ice"_q + QChar(codepoint);
+		homes.emplace_back(u"/Users/alice"_q, alias);
+		homes.emplace_back(alias, u"/Users/alice"_q);
+	}
 	for (const auto &[home, alias] : homes) {
 		auto fs = FakeFileSystem();
 		AddDirectoryHierarchy(

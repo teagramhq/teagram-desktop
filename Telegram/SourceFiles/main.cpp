@@ -15,6 +15,10 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	if (Core::MacProtectedPath::IntegrationTestActive() && argc == 2
+		&& !std::strcmp(argv[1], "--mac-notification-sound-probe")) {
+		return Core::MacProtectedPath::RunNotificationSoundProbe();
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive() && argc == 3) {
 		if (!std::strcmp(argv[1], "--mac-seatbelt-parent-open-probe")) {
 			return Core::MacProtectedPath::RunSeatbeltOpenProbe(argv[2], true,

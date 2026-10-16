@@ -535,6 +535,28 @@ printf 'seatbelt_descendant_denial=PASS mode=posix_spawn child=/bin/cat status=%
 printf 'seatbelt_posix_spawn_cat_denial=PASS mode=posix_spawn child=/bin/cat errno=EPERM path=%s\n' \
 	"$SEATBELT_CANARY"
 
+SOUND_LOOKUP_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	"$APP" --mac-notification-sound-probe 2>&1)" || {
+	echo "native notification sound lookup failed." >&2
+	printf '%s\n' "$SOUND_LOOKUP_OUTPUT" >&2
+	exit 1
+}
+printf 'notification_sound_lookup=PASS namespace=Teagram_ lookup=NSSound bytes=unchanged cleanup=PASS\n'
+
+IGNORABLE_HOME="$TEST_HOME/teagram-ignorable-home"
+IGNORABLE_HOME_ALIAS="$TEST_HOME/teagram-ignorable-$(printf '\342\200\213')home"
+mkdir -p "$IGNORABLE_HOME" "$IGNORABLE_HOME_ALIAS"
+run_home_spelling_probes \
+	seatbelt_ignorable_home \
+	"$IGNORABLE_HOME" "$IGNORABLE_HOME_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_ignorable_profile_home \
+	"$IGNORABLE_HOME_ALIAS" "$IGNORABLE_HOME" \
+	|| exit 1
+
 run_home_spelling_probes \
 	seatbelt_case_spelling \
 	"$TEST_HOME" "$TEST_HOME" \
