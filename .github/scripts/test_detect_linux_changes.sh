@@ -152,7 +152,9 @@ for path in \
   changelog.txt \
   .github/scripts/linux_libraries_image.sh \
   .github/scripts/test_linux_libraries_image.sh \
-  .github/workflows/linux_libraries.yml; do
+  .github/scripts/verify_built_sha.sh \
+  .github/scripts/test_verify_built_sha.sh \
+  .github/workflows/linux.yml; do
   run_detector pull_request 0 "${path}"
   if [[ "$(<"${output}")" != 'required=true' ]]; then
     fail "Changes to Linux build input ${path} should require the Linux build."
@@ -172,8 +174,8 @@ for path in \
   fi
 done
 
-# The dev push filter of the dependency image workflow must start the Linux
-# build for the same paths a pull request does. GitHub applies the last
+# The dev push filter of the Linux workflow must start the Linux build for
+# the same paths a pull request does. GitHub applies the last
 # matching pattern; a leading ! excludes.
 push_filter_includes() {
   local path="$1"
@@ -198,7 +200,7 @@ push_filter_includes() {
     /^    paths:$/ { in_paths = 1; next }
     in_paths && /^      - / { sub(/^      - /, ""); gsub(/\047/, ""); print; next }
     in_paths { exit }
-  ' "${scripts_dir}/../workflows/linux_libraries.yml")
+  ' "${scripts_dir}/../workflows/linux.yml")
   [[ "${included}" == true ]]
 }
 
@@ -212,12 +214,13 @@ for path in \
   Telegram/build/mac_isolation_test.sh \
   Telegram/build/setup.iss \
   .github/workflows/linux.yml \
-  .github/workflows/linux_libraries.yml \
   .github/workflows/mac.yml \
   .github/scripts/detect_linux_changes.sh \
   .github/scripts/test_detect_linux_changes.sh \
   .github/scripts/linux_libraries_image.sh \
   .github/scripts/test_linux_libraries_image.sh \
+  .github/scripts/verify_built_sha.sh \
+  .github/scripts/test_verify_built_sha.sh \
   .github/scripts/mac_ccache_profile.sh \
   docs/README.md \
   README.md \
@@ -233,7 +236,7 @@ for path in \
     push_result='required=false'
   fi
   if [[ "${pull_request_result}" != "${push_result}" ]]; then
-    fail "linux_libraries.yml push paths and the pull request filter disagree on ${path}: ${push_result} vs ${pull_request_result}."
+    fail "linux.yml push paths and the pull request filter disagree on ${path}: ${push_result} vs ${pull_request_result}."
   fi
 done
 

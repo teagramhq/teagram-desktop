@@ -173,7 +173,7 @@ assert '  workflow_dispatch:' in packaged_workflow
 assert '  pull_request:' not in packaged_workflow
 assert 'cancel-in-progress: false' in packaged_workflow
 assert "github.event_name == 'push' && 'release' || inputs.branch || github.ref_name" in packaged_workflow
-assert '  queue: max' in packaged_workflow
+assert 'queue: max' not in packaged_workflow
 assert 'highest_published_build' in packaged_workflow
 assert "github.event_name == 'push'" in packaged_workflow
 assert "github.ref == 'refs/heads/dev'" in packaged_workflow

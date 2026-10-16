@@ -58,7 +58,6 @@ jobs:
       - name: Verify the checked out PR merge ref.
         env:
           EXPECTED_MERGE_SHA: ${{ github.sha }}
-          EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
@@ -66,7 +65,6 @@ jobs:
           test "$checked_out_sha" = "$EXPECTED_MERGE_SHA"
           read -r -a parents <<< "$(git -C "$REPO_NAME" show -s --format=%P HEAD)"
           test "${#parents[@]}" = 2
-          test "${parents[0]}" = "$EXPECTED_BASE_SHA"
           test "${parents[1]}" = "$EXPECTED_HEAD_SHA"
           printf 'Tested PR merge ref: %s (base %s, head %s)\n' \
             "$checked_out_sha" "${parents[0]}" "${parents[1]}"

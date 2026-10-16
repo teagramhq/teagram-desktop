@@ -2,7 +2,6 @@
 set -euo pipefail
 
 linux_workflow=".github/workflows/linux.yml"
-linux_libraries_workflow=".github/workflows/linux_libraries.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 cache_threat_model=".github/ci-cache-threat-model.md"
 workflow_lint_workflow=".github/workflows/workflow_lint.yml"
@@ -27,11 +26,13 @@ reject_text() {
   fi
 }
 
-# Linux libraries. publishes the dependency image; nothing pulls centos_env:latest.
-if [[ -e .github/workflows/docker.yml ]]; then
-  printf '%s\n' '.github/workflows/docker.yml must not exist' >&2
-  exit 1
-fi
+# Linux. publishes the dependency image; nothing pulls centos_env:latest.
+for retired_workflow in .github/workflows/docker.yml .github/workflows/linux_libraries.yml; do
+  if [[ -e "$retired_workflow" ]]; then
+    printf '%s must not exist\n' "$retired_workflow" >&2
+    exit 1
+  fi
+done
 
 # The contract tests read the threat model, so editing it must lint, and a PR
 # push must lint once (pull_request), not again through an unfiltered push.
@@ -48,20 +49,88 @@ require_text "$linux_workflow" "matrix.defines || 'default'"
 reject_text "$linux_workflow" "matrix.defines || 'null'"
 require_text "$linux_workflow" "key: \${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-\${{ github.run_id }}"
 require_text "$linux_workflow" "restore-keys: \${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-"
-require_text "$linux_workflow" 'workflow_run:'
-require_text "$linux_workflow" 'workflows: ["Linux libraries."]'
+# A workflow_run build checks out its source run's commit but reports against
+# the default branch head, and cannot write the dev cache. The post-merge build
+# runs on the push, checks out GITHUB_SHA and verifies it before building.
+reject_text "$linux_workflow" 'workflow_run'
+reject_text "$linux_workflow" 'head_sha'
+reject_text "$linux_workflow" '          ref: '
 require_text "$linux_workflow" 'packages: read'
-linux_changes_guard="$(awk '
-  /^  linux-changes:$/ { in_job = 1; next }
-  in_job && /^  [^ ]/ { exit }
-  in_job && /^    steps:$/ { exit }
-  in_job && /^    if: / { sub(/^    if: /, ""); print }
-' "$linux_workflow")"
-expected_linux_changes_guard="github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == github.event.repository.default_branch && github.event.workflow_run.head_repository.full_name == github.repository)"
-if [[ "$linux_changes_guard" != "$expected_linux_changes_guard" ]]; then
-  printf '%s linux-changes job must gate workflow_run sources before checkout with: if: %s\n' "$linux_workflow" "$expected_linux_changes_guard" >&2
+linux_triggers="$(awk '
+  /^on:$/ { in_on = 1; next }
+  in_on && /^[^ #]/ { exit }
+  in_on && /^  [a-z_]+:/ { sub(/^  /, ""); sub(/:.*/, ""); print }
+' "$linux_workflow" | paste -sd ' ' -)"
+if [[ "$linux_triggers" != 'pull_request push schedule workflow_dispatch' ]]; then
+  printf '%s must trigger on pull_request, push, schedule and workflow_dispatch only, got: %s\n' "$linux_workflow" "$linux_triggers" >&2
   exit 1
 fi
+if [[ "$(awk 'previous == "  push:" { print; exit } { previous = $0 }' "$linux_workflow")" != '    branches: [dev]' ]]; then
+  printf '%s\n' "$linux_workflow must run its push build on dev only" >&2
+  exit 1
+fi
+require_text "$linux_workflow" "      - 'Telegram/build/docker/centos_env/**'"
+require_text "$linux_workflow" "cancel-in-progress: \${{ github.ref != 'refs/heads/dev' }}"
+verify_line="$(grep -nFx '        run: bash .github/scripts/verify_built_sha.sh "$GITHUB_SHA"' "$linux_workflow" | cut -d: -f1)"
+build_line="$(grep -nFx '      - name: Telegram Desktop build.' "$linux_workflow" | cut -d: -f1)"
+if [[ -z "$verify_line" || -z "$build_line" ]] || (( verify_line > build_line )); then
+  printf '%s must verify the checked-out commit is GITHUB_SHA before the build\n' "$linux_workflow" >&2
+  exit 1
+fi
+
+# Only a trusted dev run writes the Linux compiler cache.
+for step_name in 'Trim Telegram Desktop cache.' 'Save Telegram Desktop cache.'; do
+  step_guard="$(awk -v step="      - name: ${step_name}" '
+    $0 == step { in_step = 1; next }
+    in_step && /^      - / { exit }
+    in_step && /^        if: >$/ { in_if = 1; next }
+    in_if && /^          / { sub(/^ +/, ""); printf "%s ", $0; next }
+    in_if { exit }
+  ' "$linux_workflow")"
+  expected_guard="env.ONLY_CACHE == 'false' && github.event_name != 'pull_request' && github.ref == 'refs/heads/dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300 "
+  if [[ "$step_guard" != "$expected_guard" ]]; then
+    printf '%s step %s must be gated with: %s\n' "$linux_workflow" "$step_name" "$expected_guard" >&2
+    exit 1
+  fi
+done
+if [[ "$(grep -cF 'actions/cache/save@' "$linux_workflow")" != 1 ]]; then
+  printf '%s must save the Linux compiler cache from one gated step\n' "$linux_workflow" >&2
+  exit 1
+fi
+reject_text "$linux_workflow" 'actions/cache@'
+reject_text "$linux_workflow" 'cache-to:'
+
+# The dev push publishes this commit's dependency image before its build pulls
+# it. Only that job may write packages.
+linux_job() {
+  awk -v job="  $1:" '
+    $0 == job { in_job = 1; print; next }
+    in_job && /^  [^ ]/ { exit }
+    in_job { print }
+  ' "$linux_workflow"
+}
+libraries_job="$(linux_job linux-libraries)"
+build_job="$(linux_job linux-build)"
+if ! grep -Fqx "    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'" <<< "$libraries_job"; then
+  printf '%s linux-libraries must run only for dev pushes in this repository\n' "$linux_workflow" >&2
+  exit 1
+fi
+for expected in 'packages: write' 'docker/build-push-action@v7' 'push: true' "hashFiles('Telegram/build/docker/centos_env/**')"; do
+  if ! grep -Fq -- "$expected" <<< "$libraries_job"; then
+    printf '%s linux-libraries must contain: %s\n' "$linux_workflow" "$expected" >&2
+    exit 1
+  fi
+done
+if [[ "$(grep -cF 'packages: write' "$linux_workflow")" != 1 || "$(grep -cF 'push: true' "$linux_workflow")" != 1 ]]; then
+  printf '%s must publish and write packages only from linux-libraries\n' "$linux_workflow" >&2
+  exit 1
+fi
+if ! grep -Fqx '      - linux-libraries' <<< "$build_job" \
+    || ! grep -Fq "(needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')" <<< "$build_job"; then
+  printf '%s linux-build must wait for linux-libraries and stop when it fails\n' "$linux_workflow" >&2
+  exit 1
+fi
+require_text "$linux_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
 require_text "$linux_workflow" 'run: bash .github/scripts/linux_libraries_image.sh pull'
 require_text "$linux_workflow" 'name: Report Linux Libraries duration.'
 require_text "$linux_workflow" 'name: Report Actions cache total.'
@@ -70,15 +139,6 @@ reject_text "$linux_workflow" 'Linux-libs-'
 reject_text "$linux_workflow" 'buildkit-cache-dance'
 
 require_text "$linux_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
-require_text "$linux_libraries_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
-require_text "$linux_libraries_workflow" 'branches: [dev]'
-require_text "$linux_libraries_workflow" '    paths:'
-require_text "$linux_libraries_workflow" "      - 'Telegram/build/docker/centos_env/**'"
-require_text "$linux_libraries_workflow" 'packages: write'
-require_text "$linux_libraries_workflow" 'docker/build-push-action@v7'
-require_text "$linux_libraries_workflow" 'push: true'
-require_text "$linux_libraries_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
-reject_text "$linux_libraries_workflow" '  pull_request:'
 
 require_text "$cache_cleanup_workflow" '  pull_request_target:'
 require_text "$cache_cleanup_workflow" '    types: [closed]'
@@ -148,8 +208,8 @@ require_text "$cache_threat_model" '## Trusted refs and Linux dependency image p
 require_text "$cache_threat_model" 'numeric PR number, validated'
 require_text "$cache_threat_model" 'actions: write'
 require_text "$cache_threat_model" 'PR-controlled workflow runs fail the source validation'
-require_text "$cache_threat_model" '## Linux build after dependency image publication'
-require_text "$cache_threat_model" 'before any checkout or repository script'
+require_text "$cache_threat_model" '## Post-merge Linux build'
+require_text "$cache_threat_model" 'never from `workflow_run`'
 require_text "$cache_threat_model" '## Manual feedback lanes'
 require_text "$cache_threat_model" 'cache-mode: read'
 
