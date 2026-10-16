@@ -97,6 +97,22 @@ for cache_id in 100 198 201; do
   fi
 done
 
+# A nightly run on an older head can save after a later push seed. The seed
+# from the later run must survive even though it was created first.
+printf '%s\t%s\n' \
+  302 "macOS-arm64-ccache-dev-pr-compatible-${pr_hash}-1003-1" \
+  301 "macOS-arm64-ccache-dev-pr-compatible-${pr_hash}-1004-1" > "${cache_state}.order"
+grep -v $'\tmacOS-arm64-ccache-dev-pr-compatible-' "$cache_state" >> "${cache_state}.order" || true
+mv "${cache_state}.order" "$cache_state"
+env PATH="${temp_dir}/bin:${PATH}" GITHUB_REPOSITORY=teagramhq/teagram-desktop \
+  MOCK_CACHE_STATE="$cache_state" MOCK_DELETED_IDS="$deleted_ids" \
+  bash "$prune_script" > "${temp_dir}/completion-order-cleanup.log"
+grep -Fq $'301\tmacOS-arm64-ccache-dev-pr-compatible-' "$cache_state" \
+  || fail 'Cleanup must keep the seed from the newest run, not the last one saved.'
+if grep -Fq $'302\t' "$cache_state"; then
+  fail 'Cleanup must remove a seed saved later by an older run.'
+fi
+
 pr_restore_prefix="macOS-arm64-ccache-dev-$(sed -n 's/^name=//p' <<< "$pr_profile")-${pr_hash}-"
 if ! awk -F '\t' -v prefix="$pr_restore_prefix" 'index($2, prefix) == 1 { found = 1 } END { exit !found }' "$cache_state"; then
   fail 'A PR restore after dispatch cleanup must find its scheduled profile snapshot.'

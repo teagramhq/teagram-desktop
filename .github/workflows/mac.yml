@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [dev]
     types: [labeled]
+  # Seed the shared compiler cache after each merge that can change a compile.
+  push:
+    branches: [dev]
+    paths:
+      - 'Telegram/**'
+      - 'cmake'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/mac.yml'
+      - '.github/scripts/ccache_*.sh'
+      - '.github/scripts/mac_ccache_profile.sh'
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -30,8 +41,10 @@ on:
 
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || github.event_name == 'schedule' && format('schedule/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.label.name == 'macos-build' }}
+  # Nightly and push seeds share one group and never cancel each other, so
+  # only one seed writer runs at a time; a newer pending seed replaces an older one.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}
 
 jobs:
 
@@ -54,6 +67,9 @@ jobs:
       ONLY_CACHE: "false"
       CCACHE_MAXSIZE: "5G"
       CCACHE_SLOPPINESS: "pch_defines,time_macros"
+      # Match compilers by content so a runner image with the same toolchain
+      # still hits a cache saved on another image.
+      CCACHE_COMPILERCHECK: content
 
     steps:
       - name: Get repository name.
@@ -146,6 +162,7 @@ jobs:
           restore-keys: |
             macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('CCACHE_KEY.txt') }}-
             macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-
 
       - name: Verify Mac App Store variant is unsupported.
         id: store_variant_rejection
@@ -191,11 +208,10 @@ jobs:
       - name: Free up some disk space.
         run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
 
-      # Publish the shared library cache from dev. A cold PR may seed only its
-      # own scope so its next run can use an exact recipe-key hit; PR caches do
-      # not replace the shared dev entry.
+      # Only dev publishes the library cache; a PR that changes the recipe
+      # rebuilds until its merge seeds the new key.
       - name: Save libraries cache.
-        if: ${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' && (github.ref == 'refs/heads/dev' || github.event_name == 'pull_request') }}
+        if: ${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -431,7 +447,7 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
         run: |
           set -Eeuo pipefail
           regression_root="$RUNNER_TEMP/tdesktop-chat-participants"
@@ -944,13 +960,32 @@ jobs:
             echo "::warning::ccache did not record any compiler invocations for the Teagram build. The source build result remains authoritative."
           fi
 
+      - name: Check compiler cache seed is current.
+        id: seed-current
+        if: >
+          always()
+            && !cancelled()
+            && steps.ccache-stats.outputs.save == 'true'
+            && (github.event_name == 'schedule' || github.event_name == 'push')
+            && github.ref == 'refs/heads/dev'
+        run: |
+          set -Eeuo pipefail
+          if ! git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev; then
+            echo "::warning::Unable to read the dev tip; not saving the compiler cache."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash "$REPO_NAME/.github/scripts/ccache_seed_current.sh" "$REPO_NAME" "$GITHUB_SHA" FETCH_HEAD \
+            | tee -a "$GITHUB_OUTPUT"
+
       - name: Save Teagram compiler cache.
         if: >
           always()
             && !cancelled()
             && steps.ccache-stats.outputs.save == 'true'
-            && github.event_name == 'schedule'
+            && (github.event_name == 'schedule' || github.event_name == 'push')
             && github.ref == 'refs/heads/dev'
+            && steps.seed-current.outputs.current == 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/ccache
