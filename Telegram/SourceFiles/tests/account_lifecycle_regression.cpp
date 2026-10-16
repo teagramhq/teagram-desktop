@@ -1214,6 +1214,22 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 }
 
 [[nodiscard]] bool
+ResetSyntheticAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(0, 1)
+			   == Storage::ServerCacheBindingStatus::None);
+}
+
+[[nodiscard]] bool
 RestartDomain(Main::Domain &domain,
 			  LifecycleWriteCountsForRegressionTest *teardownWriteCounts
 			  = nullptr) {
@@ -6289,6 +6305,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	if (!ResetSyntheticAccountForRegression(discarded)) {
+		return FailChatParticipantsRegression(
+			"could not reset the destroyed previous-session fixture for later "
+			"account-slot reuse");
+	}
 	ReportCallRegressionCheckpoint("destroyed-session logout complete");
 	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
@@ -8170,18 +8191,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
 	}
-	restoredBlocked->mtp().stopForServerEnrollment();
-	restoredBlocked->mtp().dcOptions().constructUnenrolled();
-	if (!restoredBlocked->local().writeMtpAuthorization()
-		|| restoredBlocked->mtp().dcOptions().blocked()
-		|| !restoredBlocked->mtp().dcOptions().unenrolled()
-		|| !restoredBlocked->mtp().dcOptions().configEnumDcIds().empty()
-		|| restoredBlocked->local().mtpAuthorizationWriteFailed()
-		|| restoredBlocked->local().hasStoredCustomServer()
-		|| restoredBlocked->local().customServerPinUnknown()
-		|| !HasNoAuthorizationState(restoredBlocked)
-		|| restoredBlocked->local().checkServerCacheBinding(0, 1)
-			   != Storage::ServerCacheBindingStatus::None) {
+	if (!ResetSyntheticAccountForRegression(restoredBlocked)) {
 		return FailAccountLifecycleRegression(
 			"could not reset the synthetic account after blocked-state checks");
 	}
