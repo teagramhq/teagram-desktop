@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
@@ -135,6 +136,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QVariant>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -5207,12 +5209,22 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return true;
 }
 
-[[nodiscard]] bool
-PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+// Returns an empty string when every entry is keyboard-selectable and
+// accessible, otherwise the first sub-check that failed.
+[[nodiscard]] QString
+PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	const auto &actions = menu.actions();
-	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
-		return false;
+	if (actions.empty()) {
+		return u"no-actions"_q;
+	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
+		return u"accessibility-focus-policy"_q;
 	}
+	// The menu is never shown, so it stays wherever it was created. The first
+	// keyboard step flushes the inner menu's pending move event, and the menu
+	// re-reads the cursor position on every move, so the item under the
+	// cursor is selected by mouse before the key selects it. Keep the cursor
+	// off the menu.
+	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
 	auto hasAction = false;
@@ -5221,17 +5233,24 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 		if (action->isSeparator()) {
 			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
 				|| actions[i + 1]->isSeparator()) {
-				return false;
+				return u"separator-position index=%1"_q.arg(i);
 			}
 		} else if (action->text().isEmpty()) {
-			return false;
+			return u"empty-text index=%1"_q.arg(i);
 		} else {
 			const auto item = inner->itemForAction(action);
 			const auto accessible
 				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
-			if (!accessible || accessible->role() != QAccessible::MenuItem
-				|| accessible->text(QAccessible::Name) != action->text()) {
-				return false;
+			if (!accessible) {
+				return u"accessibility-missing action=\"%1\""_q.arg(
+					action->text());
+			} else if (accessible->role() != QAccessible::MenuItem) {
+				return u"accessibility-role role=%1 action=\"%2\""_q
+					.arg(int(accessible->role()))
+					.arg(action->text());
+			} else if (accessible->text(QAccessible::Name) != action->text()) {
+				return u"accessibility-name name=\"%1\" action=\"%2\""_q.arg(
+					accessible->text(QAccessible::Name), action->text());
 			}
 			if (item->isEnabled()) {
 				auto down
@@ -5241,15 +5260,29 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 				if (!selected || selected->action() != action
 					|| selected->lastTriggeredSource()
 						   != Ui::Menu::TriggeredSource::Keyboard) {
-					return false;
+					return u"keyboard-selection action=\"%1\" selected=\"%2\" "
+						   "source=%3"_q
+							   .arg(action->text(),
+									selected ? selected->action()->text()
+											 : u"<none>"_q)
+							   .arg(selected
+										? int(selected->lastTriggeredSource())
+										: -1);
 				}
 				hasAction = true;
 			}
 		}
 	}
 	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
-	return hasAction && accessible
-		   && (accessible->role() == QAccessible::PopupMenu);
+	if (!hasAction) {
+		return u"keyboard-no-enabled-action"_q;
+	} else if (!accessible) {
+		return u"accessibility-menu-missing"_q;
+	} else if (accessible->role() != QAccessible::PopupMenu) {
+		return u"accessibility-menu-role role=%1"_q.arg(
+			int(accessible->role()));
+	}
+	return QString();
 }
 
 [[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
@@ -5316,11 +5349,13 @@ template <typename Widget>
 	if (!historyWidget || (historyWidget->peer() != self.get())) {
 		return false;
 	}
+	// A chat section needs a replies root or a sublist to list messages.
+	// The self chat's own sublist sends into the same history.
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
 		content.get(), controller,
 		HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.sublist = session.data().savedMessages().sublist(self),
 		});
 	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
 	const auto repeat = TimeId(7 * 24 * 60 * 60);
@@ -5411,9 +5446,12 @@ template <typename Widget>
 		dividers.profile = PopupMenuDividerCount(*profileMenu);
 		const auto theme
 			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto historyFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*historyMenu);
+		const auto profileFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*profileMenu);
 		const auto menusAreNavigable
-			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
-			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+			= historyFailure.isEmpty() && profileFailure.isEmpty();
 		const auto expectedEntries
 			= supported ? (theme && hasSharingAction(*historyMenu)
 						   && hasSharingAction(*profileMenu))
@@ -5423,9 +5461,12 @@ template <typename Widget>
 			std::fprintf(
 				stderr,
 				"Chat feature menu regression failed: label=%s supported=%d "
-				"keyboard-accessible=%d entries=%d\n",
+				"keyboard-accessible=%d entries=%d history-menu=%s "
+				"profile-menu=%s\n",
 				qPrintable(label), supported, menusAreNavigable,
-				expectedEntries);
+				expectedEntries,
+				historyFailure.isEmpty() ? "ok" : qPrintable(historyFailure),
+				profileFailure.isEmpty() ? "ok" : qPrintable(profileFailure));
 			return false;
 		}
 		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
@@ -5439,14 +5480,18 @@ template <typename Widget>
 							tr::lng_scheduled_send_until_online(tr::now));
 		const auto hasSilentSend
 			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		const auto sendFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*sendMenu);
 		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
-			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| !sendFailure.isEmpty()
 			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
 			std::fprintf(stderr,
 						 "Chat feature send menu regression failed: label=%s "
-						 "supported=%d schedule=%d silent=%d\n",
+						 "supported=%d schedule=%d silent=%d send-menu=%s\n",
 						 qPrintable(label), supported, bool(hasSchedule),
-						 bool(hasSilentSend));
+						 bool(hasSilentSend),
+						 sendFailure.isEmpty() ? "ok"
+											   : qPrintable(sendFailure));
 			return false;
 		}
 		if (supported) {
