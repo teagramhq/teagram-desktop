@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <utility>
 #include <vector>
 
+#include "calls/calls_instance.h"
 #include "lang/translate_provider_selection.h"
 #include "main/session_feature_support.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
@@ -1558,6 +1559,32 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {
+	auto pinned = DcOptions(Environment::Production);
+	CHECK(pinned.setCustomServer(MakeCustomServer()));
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	const auto pinnedAllowsCallLink = Main::details::callLinkAllowed(pinned);
+	const auto stockAllowsCallLink = Main::details::callLinkAllowed(stock);
+	const auto pinnedSupportsCalls = Main::details::callsSupported(pinned);
+	const auto stockSupportsCalls = Main::details::callsSupported(stock);
+	CHECK(!pinnedAllowsCallLink);
+	CHECK(stockAllowsCallLink);
+	CHECK(!pinnedSupportsCalls);
+	CHECK(stockSupportsCalls);
+
+	auto unavailableShown = false;
+	CHECK(!Calls::details::AllowCallStart(pinnedSupportsCalls,
+										  [&] { unavailableShown = true; }));
+	CHECK(unavailableShown);
+
+	auto stockUnavailableShown = false;
+	CHECK(Calls::details::AllowCallStart(
+		stockSupportsCalls, [&] { stockUnavailableShown = true; }));
+	CHECK(!stockUnavailableShown);
 }
 
 TEST_CASE(AccountUsernameCacheRefreshRequiresEditableSession) {

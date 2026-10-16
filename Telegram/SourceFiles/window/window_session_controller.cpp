@@ -107,6 +107,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "main/session_feature_support.h"
 #include "lang/lang_keys.h"
 #include "apiwrap.h"
 #include "api/api_chat_invite.h"
@@ -619,7 +620,8 @@ void SessionNavigation::showPeerByLinkResolved(
 	};
 	params.highlight.pollOption = info.pollOption;
 	if (info.voicechatHash && peer->isChannel()) {
-		if (!peer->session().callsSupported()) {
+		if (!Main::details::callLinkAllowed(
+				peer->session().mtp().dcOptions())) {
 			crl::on_main(this, [=] {
 				showPeerHistory(peer, params, ShowAtUnreadMsgId);
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
