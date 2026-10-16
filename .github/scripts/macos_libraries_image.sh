@@ -48,7 +48,7 @@ check_manifest() {
 
   printf '%s\n' "$command_output" >&2
   if grep -Eiq \
-    'MANIFEST_UNKNOWN|manifest unknown|no such manifest|manifest .+ not found|response status code 404|: 404([[:space:]]|$)' \
+    'MANIFEST_UNKNOWN|manifest unknown|no such manifest|manifest .+ not found|response status code 404|: 404([[:space:]]|$)|: not found([[:space:]]|$)' \
     <<< "$command_output"; then
     return 1
   fi

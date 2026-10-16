@@ -172,6 +172,14 @@ env MOCK_ORAS_MANIFEST_STATUS=1 MOCK_ORAS_MANIFEST_OUTPUT='manifest unknown: 404
 grep -Fqx 'cache-hit=false' "$output" || fail 'A missing pull must request a build fallback.'
 
 : > "$output"
+env MOCK_ORAS_MANIFEST_STATUS=1 \
+  MOCK_ORAS_MANIFEST_OUTPUT='Error response from registry: failed to fetch the content of "ghcr.io/example/image:tag": ghcr.io/example/image:tag: not found' \
+  bash "$script" pull "$image" "${temp_dir}/target" "$output" \
+  > "${temp_dir}/pull-registry-miss.log" 2>&1
+grep -Fqx 'cache-hit=false' "$output" \
+  || fail 'A not-found registry response must request a build fallback.'
+
+: > "$output"
 if env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
   MOCK_ORAS_PULL_OUTPUT='missing layer: 404' \
   bash "$script" pull "$image" "${temp_dir}/target" "$output" \
