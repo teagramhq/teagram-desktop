@@ -36,6 +36,11 @@ enum class TeagramUpdateChannel {
 	Main,
 };
 
+enum class TeagramUpdateSelection {
+	Newer,
+	SwitchToMain,
+};
+
 enum class TeagramUpdateVerificationReason {
 	Eligible,
 	MissingTrustedKey,
@@ -110,7 +115,8 @@ class AuthenticatedTeagramUpdate final {
 									  const QByteArray &signature,
 									  quint64 installedBuild,
 									  TeagramUpdateChannel installedChannel,
-									  quint64 highWaterBuild);
+									  quint64 highWaterBuild,
+									  TeagramUpdateSelection selection);
 
 #ifdef TDESKTOP_UNIT_TESTS
 	friend TeagramUpdateManifestVerificationResult
@@ -118,7 +124,7 @@ class AuthenticatedTeagramUpdate final {
 		const QByteArray &manifest, const QByteArray &signature,
 		quint64 installedBuild, TeagramUpdateChannel installedChannel,
 		const std::optional<TeagramUpdatePublicKey> &trustedKey,
-		quint64 highWaterBuild);
+		quint64 highWaterBuild, TeagramUpdateSelection selection);
 #endif // TDESKTOP_UNIT_TESTS
 };
 
@@ -149,7 +155,9 @@ AuthenticateTeagramUpdateManifest(const QByteArray &manifest,
 								  const QByteArray &signature,
 								  quint64 installedBuild,
 								  TeagramUpdateChannel installedChannel,
-								  quint64 highWaterBuild = 0);
+								  quint64 highWaterBuild = 0,
+								  TeagramUpdateSelection selection
+								  = TeagramUpdateSelection::Newer);
 
 [[nodiscard]] TeagramUpdateVerificationResult
 VerifyAuthenticatedTeagramUpdateArchive(
@@ -169,7 +177,8 @@ AuthenticateTeagramUpdateManifestForTests(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey,
-	quint64 highWaterBuild = 0);
+	quint64 highWaterBuild = 0,
+	TeagramUpdateSelection selection = TeagramUpdateSelection::Newer);
 #endif // TDESKTOP_UNIT_TESTS
 
 } // namespace Core

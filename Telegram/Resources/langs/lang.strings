@@ -604,6 +604,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_note_unreachable_auto" = "Check your internet connection. With automatic updates on, Teagram will try again later.";
 "lng_teagram_update_note_unreachable_manual" = "Check your internet connection and try again.";
 "lng_teagram_update_note_available" = "Build {build} is available on your channel.";
+"lng_teagram_update_note_available_older" = "Main build {build} is older than this build ({running}). Teagram asks before it installs it.";
 "lng_teagram_update_note_downloading" = "Downloading build {build}.";
 "lng_teagram_update_note_preparing" = "Checking that build {build} is signed by Teagram before installing it.";
 "lng_teagram_update_note_ready_auto" = "Build {build} is verified. Teagram will restart by itself when you're not using it, or you can restart now.";
@@ -627,6 +628,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_update_note_recovery_required" = "Restart Teagram to let it finish recovering the app bundle. If it still can't start, keep both app copies and contact support.";
 "lng_teagram_update_note_guarantee" = "Teagram, your login and your settings are unchanged.";
 "lng_teagram_update_note_rejected_unknown" = "Update metadata didn't pass Teagram's signature and package checks, so Teagram won't install it. Reason: {code}.";
+"lng_teagram_update_note_data_copy_failed" = "Teagram couldn't keep a copy of your data folder, so it didn't install build {build}. Nothing was changed.";
+"lng_teagram_update_older_title" = "Move to an older build?";
+"lng_teagram_update_older_text" = "Main build {build} is older than this build ({running}). Teagram will download it, check its signature, install it and restart on Main.\n\nBefore installing, Teagram keeps a full copy of your data folder next to it, named {folder}, and never removes it. An older build may not read everything this build saved. If an account is missing on Main, switch back to Dev. If it is still missing there, quit Teagram, rename the tdata folder to an unused name, then rename that copy to tdata.";
+"lng_teagram_update_older_confirm" = "Install older build";
+"lng_teagram_update_shutdown_failed" = "Teagram couldn't install Main build {build}. It will reopen the current build. Your data folder was left in place.";
 "lng_teagram_update_bar_after_call" = "Update after call";
 "lng_teagram_update_bar_after_recording" = "Update after recording";
 "lng_teagram_update_bar_after_upload" = "Update after upload";

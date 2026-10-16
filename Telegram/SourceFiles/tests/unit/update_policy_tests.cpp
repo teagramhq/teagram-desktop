@@ -11,22 +11,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_policy.h"
 
 #include <limits>
+#include <map>
+#include <string>
 #include <string_view>
 #include <utility>
 
 using namespace Core;
 
 struct TeagramHighWaterSettings {
-	QByteArray encoded;
+	std::map<std::string, QByteArray> values;
 
 	template <typename Type, typename Other = Type>
-	Type readPref(std::string_view, Other &&fallback = Type()) const {
-		return encoded.isEmpty() ? std::forward<Other>(fallback)
-								 : Type(encoded);
+	Type readPref(std::string_view key, Other &&fallback = Type()) const {
+		const auto i = values.find(std::string(key));
+		return (i == values.end()) ? Type(std::forward<Other>(fallback))
+								   : Type(i->second);
 	}
 	template <typename Type, typename Other>
-	void writePref(std::string_view, Other &&value) {
-		encoded = std::forward<Other>(value);
+	void writePref(std::string_view key, Other &&value) {
+		values[std::string(key)] = std::forward<Other>(value);
 	}
 };
 
@@ -65,7 +68,8 @@ TEST_CASE(TeagramUpdateHighWaterPersistsFullUnsignedBuild) {
 	WriteTeagramUpdateHighWater(settings, maximum);
 	CHECK(ReadTeagramUpdateHighWater(settings) == maximum);
 
-	settings.encoded = QByteArrayLiteral("01");
+	settings.writePref<QByteArray>(kTeagramUpdateHighWaterPreference,
+								   QByteArrayLiteral("01"));
 	CHECK(ReadTeagramUpdateHighWater(settings) == 0);
 }
 
@@ -171,4 +175,87 @@ TEST_CASE(TeagramUpdateNoteVariantsFollowStateAndAutomaticSetting) {
 	CHECK(TeagramUpdateNoteForState(State::Ready, false) == Note::ReadyManual);
 	CHECK(TeagramUpdateNoteForState(State::RecoveryRequired, false)
 		  == Note::RecoveryRequired);
+}
+
+TEST_CASE(TeagramUpdateOlderMainIsEligibleOnlyOnExplicitSwitch) {
+	using Channel = TeagramUpdateChannel;
+	using Selection = TeagramUpdateSelection;
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Main, false)
+		  == Selection::SwitchToMain);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Main, true)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Dev, Channel::Dev, false)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Main, Channel::Main, false)
+		  == Selection::Newer);
+	CHECK(TeagramUpdateSelectionForCheck(Channel::Main, Channel::Dev, false)
+		  == Selection::Newer);
+
+	CHECK(!TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+										Channel::Main));
+	CHECK(TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+									   Channel::Main, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(
+		271, 271, Channel::Main, 271, Channel::Main, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(271, 271, Channel::Main, 250,
+										Channel::Dev, Selection::SwitchToMain));
+	CHECK(!TeagramUpdateBuildIsEligible(
+		271, 271, Channel::Dev, 250, Channel::Main, Selection::SwitchToMain));
+}
+
+TEST_CASE(TeagramUpdateOlderMainResetsHighWaterAndNeedsConfirmation) {
+	CHECK(TeagramUpdateCommittedHighWater(271, 250, true, true)
+		  == std::optional<quint64>(250));
+	CHECK(TeagramUpdateCommittedHighWater(271, 250, true)
+		  == std::optional<quint64>(271));
+	CHECK(!TeagramUpdateCommittedHighWater(271, 250, false, true));
+
+	using State = TeagramUpdateUiState;
+	using Note = TeagramUpdateNoteVariant;
+	CHECK(TeagramUpdateChatListActionForState(State::Available, true)
+		  == TeagramUpdateChatListAction::Hidden);
+	CHECK(TeagramUpdateChatListActionForState(State::Available)
+		  == TeagramUpdateChatListAction::DownloadAndInstall);
+	CHECK(TeagramUpdateNoteForState(State::Available, true, true)
+		  == Note::AvailableOlder);
+	CHECK(TeagramUpdateNoteForState(State::Ready, true, true)
+		  == Note::ReadyManual);
+}
+
+TEST_CASE(TeagramUpdateMainSwitchCommitsOnlyOnMatchingMainStartup) {
+	using Channel = TeagramUpdateChannel;
+	struct Scenario {
+		QByteArray intent;
+		quint64 running;
+		Channel compiled;
+		bool committed;
+		quint64 highWater;
+	};
+	for (const auto &scenario : {
+			 Scenario{"90", 90, Channel::Main, true, 90},
+			 Scenario{"90", 100, Channel::Dev, false, 100},
+			 Scenario{"90", 90, Channel::Dev, false, 100},
+			 Scenario{"90", 91, Channel::Main, false, 100},
+			 Scenario{"090", 90, Channel::Main, false, 100},
+			 Scenario{"invalid", 90, Channel::Main, false, 100},
+			 Scenario{"0", 0, Channel::Main, false, 100},
+			 Scenario{QByteArray(), 90, Channel::Main, false, 100},
+		 }) {
+		auto settings = TeagramHighWaterSettings();
+		WriteTeagramUpdateHighWater(settings, 100);
+		settings.writePref<QByteArray>(
+			kTeagramUpdatePendingMainSwitchPreference, scenario.intent);
+		CHECK(CommitTeagramUpdatePendingMainSwitch(settings, scenario.running,
+												   scenario.compiled)
+			  == scenario.committed);
+		CHECK_EQ(ReadTeagramUpdateHighWater(settings), scenario.highWater);
+		CHECK(
+			settings
+				.readPref<QByteArray>(kTeagramUpdatePendingMainSwitchPreference)
+				.isEmpty());
+		WriteTeagramUpdateHighWater(settings, 200);
+		CHECK(!CommitTeagramUpdatePendingMainSwitch(settings, scenario.running,
+													scenario.compiled));
+		CHECK_EQ(ReadTeagramUpdateHighWater(settings), quint64(200));
+	}
 }

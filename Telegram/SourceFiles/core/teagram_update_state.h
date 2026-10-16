@@ -22,6 +22,8 @@ inline constexpr auto kTeagramUpdateChannelPreference
 	= std::string_view("teagram-update-channel");
 inline constexpr auto kTeagramUpdateHighWaterPreference
 	= std::string_view("teagram-update-high-water");
+inline constexpr auto kTeagramUpdatePendingMainSwitchPreference
+	= std::string_view("teagram-update-pending-main-switch");
 inline constexpr auto kTeagramUpdateToastPreference
 	= std::string_view("teagram-update-pending-toast");
 
@@ -77,6 +79,7 @@ struct TeagramUpdateSnapshot {
 	TeagramUpdateActiveWork blockers;
 	bool automatic = true;
 	bool previousBundleAvailable = false;
+	bool candidateOlder = false;
 };
 
 enum class TeagramUpdateNoteVariant {
@@ -86,6 +89,7 @@ enum class TeagramUpdateNoteVariant {
 	UnreachableAutomatic,
 	UnreachableManual,
 	Available,
+	AvailableOlder,
 	Downloading,
 	Preparing,
 	ReadyAutomatic,
@@ -174,10 +178,12 @@ TeagramUpdateStateForNoUpdate(bool installCommittedInSession,
 }
 
 [[nodiscard]] constexpr TeagramUpdateChatListAction
-TeagramUpdateChatListActionForState(TeagramUpdateUiState state) {
+TeagramUpdateChatListActionForState(TeagramUpdateUiState state,
+									bool candidateOlder = false) {
 	switch (state) {
 	case TeagramUpdateUiState::Available:
-		return TeagramUpdateChatListAction::DownloadAndInstall;
+		return candidateOlder ? TeagramUpdateChatListAction::Hidden
+							  : TeagramUpdateChatListAction::DownloadAndInstall;
 	case TeagramUpdateUiState::Downloading:
 	case TeagramUpdateUiState::Preparing:
 		return TeagramUpdateChatListAction::Cancel;
@@ -203,7 +209,8 @@ TeagramUpdateRecordRejectedBuild(quint64 suppressedAutomaticBuild,
 }
 
 [[nodiscard]] TeagramUpdateNoteVariant
-TeagramUpdateNoteForState(TeagramUpdateUiState state, bool automatic);
+TeagramUpdateNoteForState(TeagramUpdateUiState state, bool automatic,
+						  bool candidateOlder = false);
 
 [[nodiscard]] constexpr bool TeagramUpdateUiEnabled() {
 	return kTeagramUpdateEngineActive;
@@ -249,19 +256,55 @@ void WriteTeagramUpdateHighWater(Settings &settings, quint64 build) {
 											QByteArray::number(build));
 }
 
+template <typename Settings>
+[[nodiscard]] bool
+CommitTeagramUpdatePendingMainSwitch(Settings &settings, quint64 runningBuild,
+									 TeagramUpdateChannel compiledChannel) {
+	const auto pending = settings.template readPref<QByteArray>(
+		kTeagramUpdatePendingMainSwitchPreference, QByteArray());
+	if (pending.isEmpty()) {
+		return false;
+	}
+	settings.template writePref<QByteArray>(
+		kTeagramUpdatePendingMainSwitchPreference, QByteArray());
+	auto valid = false;
+	const auto build = pending.toULongLong(&valid);
+	if (!valid || !build || QByteArray::number(build) != pending
+		|| build != runningBuild
+		|| compiledChannel != TeagramUpdateChannel::Main) {
+		return false;
+	}
+	WriteTeagramUpdateHighWater(settings, build);
+	return true;
+}
+
 [[nodiscard]] constexpr std::optional<quint64>
 TeagramUpdateCommittedHighWater(quint64 highWaterBuild, quint64 candidateBuild,
-								bool replacementCommitted) {
+								bool replacementCommitted,
+								bool candidateOlder = false) {
 	if (!replacementCommitted) {
 		return std::nullopt;
+	} else if (candidateOlder) {
+		return candidateBuild;
 	}
 	return (candidateBuild > highWaterBuild) ? candidateBuild : highWaterBuild;
+}
+
+[[nodiscard]] constexpr TeagramUpdateSelection
+TeagramUpdateSelectionForCheck(TeagramUpdateChannel compiledChannel,
+							   TeagramUpdateChannel selectedChannel,
+							   bool automatic) {
+	return (!automatic && compiledChannel == TeagramUpdateChannel::Dev
+			&& selectedChannel == TeagramUpdateChannel::Main)
+			   ? TeagramUpdateSelection::SwitchToMain
+			   : TeagramUpdateSelection::Newer;
 }
 
 [[nodiscard]] bool TeagramUpdateBuildIsEligible(
 	std::uint64_t runningBuild, std::uint64_t highWaterBuild,
 	TeagramUpdateChannel selectedChannel, std::uint64_t candidateBuild,
-	TeagramUpdateChannel candidateChannel);
+	TeagramUpdateChannel candidateChannel,
+	TeagramUpdateSelection selection = TeagramUpdateSelection::Newer);
 
 enum class TeagramUpdateRestartDecision {
 	RestartNow,

@@ -507,6 +507,60 @@ TEST_CASE(TeagramUpdateRejectsUntrustedOrIneligiblePackage) {
 	rejects(missing);
 }
 
+TEST_CASE(TeagramUpdateMainSwitchAllowsOnlyOlderSignedMain) {
+	const auto key = GenerateTestSigningKey();
+	if (!key) {
+		return;
+	}
+	const auto publicKey
+		= std::optional<TeagramUpdatePublicKey>(key->publicKey);
+	const auto authenticate
+		= [&](const QByteArray &channel, const QByteArray &build,
+			  TeagramUpdateSelection selection) {
+			  const auto manifest = Manifest(channel, build);
+			  return AuthenticateTeagramUpdateManifestForTests(
+				  manifest, SignManifest(manifest, key->privateKey.get()), 271,
+				  TeagramUpdateChannel::Main, publicKey, 271, selection);
+		  };
+	using Selection = TeagramUpdateSelection;
+	using Reason = TeagramUpdateVerificationReason;
+
+	const auto older
+		= authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("250"),
+					   Selection::SwitchToMain);
+	CHECK(older.authenticated());
+	if (older.package) {
+		CHECK_EQ(older.package->build(), quint64(250));
+		CHECK(older.package->channel() == TeagramUpdateChannel::Main);
+	}
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("280"),
+					   Selection::SwitchToMain)
+			  .authenticated());
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("250"),
+					   Selection::Newer)
+			  .reason
+		  == Reason::NotNewer);
+	CHECK(authenticate(QByteArrayLiteral("main"), QByteArrayLiteral("271"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::NotNewer);
+	CHECK(authenticate(QByteArrayLiteral("dev"), QByteArrayLiteral("250"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::IneligibleChannel);
+	CHECK(authenticate(QByteArrayLiteral("dev"), QByteArrayLiteral("280"),
+					   Selection::SwitchToMain)
+			  .reason
+		  == Reason::IneligibleChannel);
+
+	const auto manifest
+		= Manifest(QByteArrayLiteral("main"), QByteArrayLiteral("250"));
+	const auto unsignedSwitch = AuthenticateTeagramUpdateManifestForTests(
+		manifest, QByteArray(), 271, TeagramUpdateChannel::Main, publicKey, 271,
+		Selection::SwitchToMain);
+	CHECK(unsignedSwitch.reason == Reason::InvalidSignature);
+}
+
 TEST_CASE(TeagramUpdateGeneratedPackageRoundTrip) {
 	const auto key = GenerateTestSigningKey();
 	if (!key) {

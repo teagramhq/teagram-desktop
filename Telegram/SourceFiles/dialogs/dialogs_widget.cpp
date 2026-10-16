@@ -2542,9 +2542,9 @@ void Widget::checkUpdateStatus() {
 		const auto manager = &Core::TeagramUpdateManager::Instance();
 		const auto &state = manager->state();
 		using State = Core::TeagramUpdateUiState;
-		const auto visible
-			= Core::TeagramUpdateChatListActionForState(state.state)
-			  != Core::TeagramUpdateChatListAction::Hidden;
+		const auto visible = Core::TeagramUpdateChatListActionForState(
+								 state.state, state.candidateOlder)
+							 != Core::TeagramUpdateChatListAction::Hidden;
 		if (_layout != Layout::Child && visible) {
 			if (!_updateTelegram) {
 				_updateTelegram.create(
@@ -2601,7 +2601,7 @@ void Widget::checkUpdateStatus() {
 			_updateTelegram->setAccessibleName(text);
 			_updateTelegram->setClickedCallback([=] {
 				switch (Core::TeagramUpdateChatListActionForState(
-					manager->state().state)) {
+					manager->state().state, manager->state().candidateOlder)) {
 				case Core::TeagramUpdateChatListAction::DownloadAndInstall:
 					manager->downloadAndInstall();
 					break;
