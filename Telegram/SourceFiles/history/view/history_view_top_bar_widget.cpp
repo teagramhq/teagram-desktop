@@ -268,6 +268,16 @@ TopBarWidget::TopBarWidget(
 
 TopBarWidget::~TopBarWidget() = default;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool TopBarWidget::callButtonHiddenForRegressionTest() const {
+	return _call->isHidden();
+}
+
+bool TopBarWidget::groupCallButtonHiddenForRegressionTest() const {
+	return _groupCall->isHidden();
+}
+#endif
+
 Main::Session &TopBarWidget::session() const {
 	return _controller->session();
 }
@@ -1382,6 +1392,7 @@ void TopBarWidget::updateControlsVisibility() {
 		return false;
 	}();
 	_call->setVisible(historyMode
+		&& _controller->session().callsSupported()
 		&& callsEnabled
 		&& !_chooseForReportReason);
 	const auto groupCallsEnabled = [&] {
@@ -1396,6 +1407,7 @@ void TopBarWidget::updateControlsVisibility() {
 		return false;
 	}();
 	_groupCall->setVisible(historyMode
+		&& _controller->session().callsSupported()
 		&& groupCallsEnabled
 		&& !_chooseForReportReason);
 

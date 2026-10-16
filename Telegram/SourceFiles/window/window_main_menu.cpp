@@ -775,12 +775,17 @@ void MainMenu::setupMenu() {
 		)->setClickedCallback([=] {
 			controller->show(PrepareContactsBox(controller));
 		});
-		addAction(
-			tr::lng_menu_calls(),
-			{ &st::menuIconPhone }
-		)->setClickedCallback([=] {
-			::Calls::ShowCallsBox(controller);
-		});
+		if (controller->session().callsSupported()) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			_callsRowPresentForRegressionTest = true;
+#endif
+			addAction(
+				tr::lng_menu_calls(),
+				{ &st::menuIconPhone }
+			)->setClickedCallback([=] {
+				::Calls::ShowCallsBox(controller);
+			});
+		}
 		addAction(
 			tr::lng_saved_messages(),
 			{ &st::menuIconSavedMessages }
