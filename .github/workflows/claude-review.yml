@@ -19,6 +19,8 @@ on:
       - 'Telegram/SourceFiles/mtproto/**'
       - 'Telegram/SourceFiles/storage/details/storage_file_utilities.*'
       - 'Telegram/SourceFiles/storage/storage_domain.*'
+      - 'Telegram/SourceFiles/storage/storage_account*'
+      - 'Telegram/SourceFiles/storage/localstorage.*'
       - 'Telegram/SourceFiles/core/launcher.*'
       - 'Telegram/SourceFiles/platform/*/launcher_*'
       - 'Telegram/SourceFiles/core/mac_protected_path_*'

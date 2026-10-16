@@ -17,6 +17,20 @@ WORKFLOW = ROOT / ".github/workflows/claude-review.yml"
 VERDICT = ROOT / ".github/scripts/claude_review_verdict.py"
 SAME_REPO = "github.event.pull_request.head.repo.full_name == github.repository"
 ENABLED = "vars.CLAUDE_REVIEW_ENABLED == 'true'"
+# Risky areas the review must keep covering; narrowing one is a deliberate change here.
+REQUIRED_PATHS = [
+    ".github/workflows/**",
+    "Telegram/SourceFiles/core/teagram_update_*",
+    "Telegram/SourceFiles/core/update_checker.*",
+    "Telegram/SourceFiles/_other/updater*",
+    "Telegram/SourceFiles/mtproto/**",
+    "Telegram/SourceFiles/storage/details/storage_file_utilities.*",
+    "Telegram/SourceFiles/storage/storage_domain.*",
+    "Telegram/SourceFiles/storage/storage_account*",
+    "Telegram/SourceFiles/storage/localstorage.*",
+    "Telegram/SourceFiles/core/launcher.*",
+    "Telegram/SourceFiles/core/mac_protected_path_*",
+]
 ACTION_PIN = re.compile(r"^\s*(?:-\s+)?uses:\s*anthropics/claude-code-action@[0-9a-f]{40}(\s|$)")
 
 
@@ -42,8 +56,10 @@ def contract_errors(text: str) -> list[str]:
     trigger = block(block(lines, "on"), "pull_request")
     if not trigger:
         errors.append("must trigger on pull_request")
-    if not any(line.strip().startswith("- ") for line in block(trigger, "paths")):
+    paths = [line.strip()[2:].strip("'\"") for line in block(trigger, "paths") if line.strip().startswith("- ")]
+    if not paths:
         errors.append("pull_request trigger must keep a paths filter")
+    errors.extend(f"paths filter must cover {path}" for path in REQUIRED_PATHS if path not in paths)
     conditions = [line for line in lines if line.strip().startswith("if:")]
     if not any(SAME_REPO in line and "!github.event.pull_request.draft" in line for line in conditions):
         errors.append("job must skip fork and draft pull requests")
@@ -89,6 +105,11 @@ class WorkflowContractTest(unittest.TestCase):
     def test_rejects_missing_enabled_switch(self) -> None:
         self.assert_breaks(self.text.replace(ENABLED + " && ", ""))
         self.assert_breaks(self.text.replace(ENABLED, "vars.CLAUDE_REVIEW_ENABLED != 'false'"))
+
+    def test_rejects_dropped_storage_paths(self) -> None:
+        for path in ("Telegram/SourceFiles/storage/storage_account*", "Telegram/SourceFiles/storage/localstorage.*"):
+            with self.subTest(path=path):
+                self.assert_breaks(self.text.replace(f"      - '{path}'\n", ""))
 
     def test_rejects_missing_path_filter(self) -> None:
         self.assert_breaks(re.sub(r"    paths:\n(      - .*\n)+", "", self.text))
