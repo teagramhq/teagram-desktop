@@ -104,7 +104,7 @@ jobs:
 
       - name: Restore macOS libraries artifact.
         id: cache-libs
-        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME" "$GITHUB_OUTPUT"
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"
 
       - name: Restore legacy macOS libraries cache.
         id: legacy-cache-libs

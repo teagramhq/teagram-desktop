@@ -120,7 +120,7 @@ jobs:
 
       - name: Publish macOS dependency artifact.
         if: steps.image-cache.outputs.cache-hit != 'true' && (steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true')
-        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" push "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME"
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" push "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE"
 
       - name: Prune legacy macOS library caches.
         env:
@@ -287,7 +287,7 @@ jobs:
 
       - name: Restore macOS libraries artifact.
         id: cache-libs
-        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME" "$GITHUB_OUTPUT"
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"
 
       - name: Restore legacy macOS libraries cache.
         id: legacy-cache-libs

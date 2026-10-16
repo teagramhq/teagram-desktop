@@ -139,6 +139,8 @@ require_step_field "$mac_workflow" macos-libraries 'Publish macOS dependency art
   "steps.image-cache.outputs.cache-hit != 'true' && (steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true')"
 require_step_script "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' \
   "$macos_libraries_image_script\" push"
+require_step_field "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" push \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\""
 require_step_script "$mac_workflow" macos-libraries 'Prune legacy macOS library caches.' \
   "$macos_libraries_image_script\" prune-legacy-cache"
 require_job_field "$mac_workflow" macos '.needs' 'macos-libraries'
@@ -152,7 +154,7 @@ require_step_field "$mac_workflow" macos 'Set macOS dependency image tag.' \
 require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.' \
   'oras login ghcr.io' '--password-stdin'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
 require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
@@ -440,7 +442,7 @@ require_step_script "$mac_workflow" macos 'Report MacOS job wall time.' \
 reject_step_script "$mac_workflow" macos 'Report MacOS job wall time.' '::error::' 'exit 1'
 reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
@@ -724,7 +726,7 @@ require_step_field "$packaged_workflow" macos 'Set macOS dependency image tag.' 
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$packaged_workflow" macos 'Restore macOS libraries artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
 require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
@@ -774,7 +776,7 @@ require_step_field "$unit_workflow" unit 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$unit_workflow" unit 'Restore macOS libraries artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
 require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
@@ -824,7 +826,7 @@ require_step_field "$updater_workflow" updater-fixtures 'Set macOS dependency im
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_field "$updater_workflow" updater-fixtures 'Restore macOS libraries artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE/\$REPO_NAME\" \"\$GITHUB_OUTPUT\""
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
 require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.if' \

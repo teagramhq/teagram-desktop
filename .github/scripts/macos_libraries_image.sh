@@ -3,7 +3,7 @@ set -euo pipefail
 
 operation="${1:-}"
 image="${2:-}"
-repo_dir="${3:-}"
+workspace_dir="${3:-}"
 output_file="${4:-}"
 artifact_type='application/vnd.teagram.macos-libraries.v1'
 layer_type='application/vnd.teagram.macos-libraries.tar+zstd'
@@ -78,7 +78,7 @@ case "$operation" in
     ;;
   pull)
     validate_image
-    [[ -n "$repo_dir" && -d "$repo_dir" ]] || fail 'A checked-out repository directory is required for artifact pull.'
+    [[ -n "$workspace_dir" && -d "$workspace_dir" ]] || fail 'A workspace directory is required for artifact pull.'
     [[ -n "$output_file" ]] || fail 'An output file is required for artifact pull.'
     if ! check_manifest; then
       write_cache_result false
@@ -104,17 +104,17 @@ case "$operation" in
         */../*|*/./*) fail "Unsafe path in macOS dependency artifact: ${member}" ;;
       esac
     done <<< "$members"
-    zstd -dc "$archive" | tar -xf - -C "$repo_dir"
+    zstd -dc "$archive" | tar -xf - -C "$workspace_dir"
     write_cache_result true
     ;;
   push)
     validate_image
-    [[ -n "$repo_dir" && -d "$repo_dir/Libraries" && -d "$repo_dir/ThirdParty" ]] \
+    [[ -n "$workspace_dir" && -d "$workspace_dir/Libraries" && -d "$workspace_dir/ThirdParty" ]] \
       || fail 'Built Libraries and ThirdParty directories are required for artifact publish.'
     temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/teagram-macos-libraries.XXXXXX")"
     trap 'rm -rf "$temp_dir"' EXIT
     archive="${temp_dir}/${archive_name}"
-    tar -cf - -C "$repo_dir" Libraries ThirdParty | zstd -T0 -3 -o "$archive"
+    tar -cf - -C "$workspace_dir" Libraries ThirdParty | zstd -T0 -3 -o "$archive"
     [[ -s "$archive" ]] || fail 'The macOS dependency artifact archive is empty.'
     oras push "$image" \
       --artifact-type "$artifact_type" \
@@ -132,6 +132,6 @@ case "$operation" in
     done <<< "$cache_ids"
     ;;
   *)
-    fail "Usage: $0 <set-image|inspect|pull|push|prune-legacy-cache> [image] [repo-dir] [output-file]"
+    fail "Usage: $0 <set-image|inspect|pull|push|prune-legacy-cache> [image] [workspace-dir] [output-file]"
     ;;
 esac

@@ -6,10 +6,12 @@ script="${scripts_dir}/macos_libraries_image.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
-mkdir -p "${temp_dir}/bin" "${temp_dir}/source/Libraries/lib" \
-  "${temp_dir}/source/ThirdParty/include" "${temp_dir}/target"
-printf 'library fixture\n' > "${temp_dir}/source/Libraries/lib/example.a"
-printf 'header fixture\n' > "${temp_dir}/source/ThirdParty/include/example.h"
+workspace="${temp_dir}/workspace"
+checkout="${workspace}/teagram-desktop"
+mkdir -p "${temp_dir}/bin" "${workspace}/Libraries/lib" \
+  "${workspace}/ThirdParty/include" "${checkout}/Telegram"
+printf 'library fixture\n' > "${workspace}/Libraries/lib/example.a"
+printf 'header fixture\n' > "${workspace}/ThirdParty/include/example.h"
 
 cat > "${temp_dir}/bin/oras" <<'MOCK_ORAS'
 #!/usr/bin/env bash
@@ -155,26 +157,29 @@ if env MOCK_ORAS_MANIFEST_STATUS=1 \
 fi
 [[ ! -s "$output" ]] || fail 'An authorization error must not report a cache result.'
 
-tar -cf - -C "${temp_dir}/source" Libraries ThirdParty | gzip -1c > "$archive"
+tar -cf - -C "$workspace" Libraries ThirdParty | gzip -1c > "$archive"
+rm -rf "$workspace/Libraries" "$workspace/ThirdParty"
 : > "$output"
-env MOCK_ORAS_MANIFEST_STATUS=0 bash "$script" pull "$image" "${temp_dir}/target" "$output" \
+env MOCK_ORAS_MANIFEST_STATUS=0 bash "$script" pull "$image" "$workspace" "$output" \
   > "${temp_dir}/pull-hit.log"
 grep -Fqx 'cache-hit=true' "$output" || fail 'A successful pull must report a hit.'
-grep -Fq 'library fixture' "${temp_dir}/target/Libraries/lib/example.a" \
-  || fail 'A successful pull must extract Libraries.'
-grep -Fq 'header fixture' "${temp_dir}/target/ThirdParty/include/example.h" \
-  || fail 'A successful pull must extract ThirdParty.'
+grep -Fq 'library fixture' "$workspace/Libraries/lib/example.a" \
+  || fail 'A successful pull must extract Libraries into the workspace.'
+grep -Fq 'header fixture' "$workspace/ThirdParty/include/example.h" \
+  || fail 'A successful pull must extract ThirdParty into the workspace.'
+[[ ! -e "$checkout/Libraries" && ! -e "$checkout/ThirdParty" ]] \
+  || fail 'A successful pull must not put dependencies inside the checkout.'
 
 : > "$output"
 env MOCK_ORAS_MANIFEST_STATUS=1 MOCK_ORAS_MANIFEST_OUTPUT='manifest unknown: 404' \
-  bash "$script" pull "$image" "${temp_dir}/target" "$output" \
+  bash "$script" pull "$image" "$workspace" "$output" \
   > "${temp_dir}/pull-miss.log" 2>&1
 grep -Fqx 'cache-hit=false' "$output" || fail 'A missing pull must request a build fallback.'
 
 : > "$output"
 env MOCK_ORAS_MANIFEST_STATUS=1 \
   MOCK_ORAS_MANIFEST_OUTPUT='Error response from registry: failed to fetch the content of "ghcr.io/example/image:tag": ghcr.io/example/image:tag: not found' \
-  bash "$script" pull "$image" "${temp_dir}/target" "$output" \
+  bash "$script" pull "$image" "$workspace" "$output" \
   > "${temp_dir}/pull-registry-miss.log" 2>&1
 grep -Fqx 'cache-hit=false' "$output" \
   || fail 'A not-found registry response must request a build fallback.'
@@ -182,13 +187,13 @@ grep -Fqx 'cache-hit=false' "$output" \
 : > "$output"
 if env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
   MOCK_ORAS_PULL_OUTPUT='missing layer: 404' \
-  bash "$script" pull "$image" "${temp_dir}/target" "$output" \
+  bash "$script" pull "$image" "$workspace" "$output" \
   > "${temp_dir}/pull-layer-error.log" 2>&1; then
   fail 'A missing layer must fail instead of using an incomplete artifact.'
 fi
 [[ ! -s "$output" ]] || fail 'A failed layer pull must not report a cache result.'
 
-bash "$script" push "$image" "${temp_dir}/source" > "${temp_dir}/push.log"
+bash "$script" push "$image" "$workspace" > "${temp_dir}/push.log"
 grep -Fq "push $image --artifact-type application/vnd.teagram.macos-libraries.v1" \
   "$MOCK_ORAS_LOG" || fail 'Publishing must use the recipe-hash tag and artifact type.'
 gzip -dc "$push_archive" | tar -tf - | grep -Fqx 'Libraries/lib/example.a' \

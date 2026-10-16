@@ -290,7 +290,7 @@ unit: inherit'
 require_step_script "$macos_unit_feedback_workflow" unit 'First set up.' \
   'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
 require_step_field "$macos_unit_feedback_workflow" unit 'Restore macOS libraries artifact.' '.run' \
-  'bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE/$REPO_NAME" "$GITHUB_OUTPUT"'
+  'bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"'
 require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
 require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
