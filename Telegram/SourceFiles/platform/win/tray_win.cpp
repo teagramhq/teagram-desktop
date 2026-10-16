@@ -93,8 +93,7 @@ bool DarkTasbarValueValid/* = false*/;
 	p.setPen(Qt::NoPen);
 	p.setCompositionMode(QPainter::CompositionMode_Clear);
 	p.setBrush(Qt::black);
-	p.drawEllipse(QRectF( // cx=3.9, cy=12.7, r=3.1
-		0.8 * xm, 9.6 * ym, 6.2 * xm, 6.2 * ym));
+	p.drawEllipse(QRectF(0.8 * xm, 9.6 * ym, 6.2 * xm, 6.2 * ym));
 	p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 	p.setBrush(color);
 	p.drawEllipse(QRectF( // cx=3.9, cy=12.7, r=2.2
