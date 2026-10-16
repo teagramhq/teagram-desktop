@@ -18,6 +18,7 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
@@ -32,6 +33,7 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   pull_request:
     paths:
@@ -47,6 +49,7 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
@@ -61,6 +64,7 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:
 

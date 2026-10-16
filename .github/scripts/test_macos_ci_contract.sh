@@ -411,6 +411,54 @@ require_text "$packaged_workflow" 'Teagram-macOS-arm64-QA'
 reject_text "$packaged_workflow" 'CCACHE_DISABLE=1 cmake --build'
 reject_text "$packaged_workflow" 'name: Full chat info session regression.'
 
+prepare_libraries='./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent'
+require_text "$mac_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" "$prepare_libraries"
+require_text "$packaged_workflow" './configure.sh \'
+mac_libs_keys="$(grep -E '^ +key: macOS-libs-' "$mac_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+packaged_libs_keys="$(grep -E '^ +key: macOS-libs-' "$packaged_workflow" | sed 's/^ *//' | LC_ALL=C sort -u)"
+if [[ -z "$mac_libs_keys" || "$mac_libs_keys" != "$packaged_libs_keys" ]]; then
+  printf 'MacOS Packaged. must restore the same Libraries cache key as MacOS.\n' >&2
+  exit 1
+fi
+build_tools_script=".github/scripts/install_macos_build_tools.sh"
+reject_text "$packaged_workflow" 'brew '
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$tools" client'
+require_text "$packaged_workflow" 'install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries'
+tool_entries="$(grep -E '^  "[a-z0-9]+\|' "$build_tools_script" || true)"
+if [[ -z "$tool_entries" ]]; then
+  printf '%s must list its pinned tools.\n' "$build_tools_script" >&2
+  exit 1
+fi
+floating_tools="$(grep -vE '^  "[a-z0-9]+\|https://[^|]*[0-9][^|]*\|[0-9a-f]{64}"$' <<< "$tool_entries" || true)"
+if [[ -n "$floating_tools" ]]; then
+  printf '%s must pin every tool to a versioned URL and SHA-256:\n%s\n' \
+    "$build_tools_script" "$floating_tools" >&2
+  exit 1
+fi
+reject_text "$build_tools_script" 'brew '
+require_text "$build_tools_script" 'ln -sf glibtoolize "$prefix/bin/libtoolize"'
+reject_text "$packaged_workflow" 'refs/heads/master'
+reject_text "$packaged_workflow" 'git clone'
+reject_text "$packaged_workflow" '/opt/homebrew/opt/'
+reject_text "$packaged_workflow" '/opt/homebrew/Cellar/'
+reject_text "$packaged_workflow" 'CMAKE_PREFIX_PATH'
+reject_text "$packaged_workflow" 'macdeployqt'
+prepare_recipe="Telegram/build/prepare/prepare.py"
+mutable_checkouts="$(grep -nE '^ *git checkout ' "$prepare_recipe" \
+  | grep -vE 'git checkout ([0-9a-f]{7,40}|v[0-9]+(\.[0-9]+)+)$' || true)"
+if [[ -n "$mutable_checkouts" ]]; then
+  printf '%s must check out a commit SHA or a version tag:\n%s\n' \
+    "$prepare_recipe" "$mutable_checkouts" >&2
+  exit 1
+fi
+mutable_clones="$(grep -nE '^ *git clone .*-b (master|main|dev)( |$)' "$prepare_recipe" || true)"
+if [[ -n "$mutable_clones" ]]; then
+  printf '%s must not clone a moving branch:\n%s\n' \
+    "$prepare_recipe" "$mutable_clones" >&2
+  exit 1
+fi
+
 require_text "$unit_workflow" '  workflow_dispatch:'
 reject_text "$unit_workflow" '  pull_request:'
 require_text "$unit_workflow" 'concurrency:'
