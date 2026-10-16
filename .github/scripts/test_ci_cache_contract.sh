@@ -32,7 +32,7 @@ done
 require_workflow_field "$workflow_lint_workflow" '.on.push.branches | join(",")' 'dev'
 lint_scripts="$(job_field "$workflow_lint_workflow" actionlint \
   '.steps[].run // "" | capture("(?P<path>\.github/scripts/[A-Za-z0-9_.]+)") | .path')"
-lint_scripts+=$'\n.github/scripts/workflow_contract.sh'
+lint_scripts+=$'\n.github/scripts/workflow_contract.sh\n.github/scripts/workflow_python_heredocs.py'
 for event in push pull_request; do
   lint_paths="$(workflow_field "$workflow_lint_workflow" ".on.$event.paths[]")"
   while IFS= read -r lint_script; do

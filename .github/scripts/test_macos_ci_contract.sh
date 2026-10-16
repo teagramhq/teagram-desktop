@@ -426,6 +426,36 @@ if (require_step_python "$cleanup_mutation" macos "$regression_step" \
     "signal_pid(app_pid, 'Teagram', cleanup_signal)") > /dev/null 2>&1; then
   contract_fail 'A commented-out signal_pid call must fail the regression step contract.'
 fi
+# Only a heredoc that is the stdin program of a python3 command counts; the
+# same Python handed to any other command is inert data.
+inert_mutation="$temp_dir/mac-inert-python.yml"
+sed 's/^\( *\)python3 - "$executable"/\1echo python3 - "$executable"/' "$mac_workflow" > "$inert_mutation"
+if cmp -s "$mac_workflow" "$inert_mutation"; then
+  contract_fail 'The inert-heredoc mutation must change the regression step.'
+fi
+if (require_step_python "$inert_mutation" macos "$regression_step" \
+    "signal_pid(app_pid, 'Teagram', cleanup_signal)") > /dev/null 2>&1; then
+  contract_fail 'Python in a heredoc that python3 does not run must fail the regression step contract.'
+fi
+python_heredoc_parser=".github/scripts/workflow_python_heredocs.py"
+for python_command in \
+  "python3 - <<'PY'" \
+  "env HOME=x A=1 python3 - \"\$a\" > f 2>&1 <<'PY'" \
+  "if ! python3 - \"\$r\" > \"\$d/x\" 2>&1 <<'PY'" \
+  "python3 -I <<'PY'"; do
+  printf '%s\nprobe = 1\nPY\n' "$python_command" | python3 -I "$python_heredoc_parser" | grep -Fxq 'probe = 1' \
+    || contract_fail "A heredoc read by python3 must count: $python_command"
+done
+for inert_command in \
+  "echo python3 - <<'PY'" \
+  ": python3 <<'PY'" \
+  "python3 -c 'pass' <<'PY'" \
+  "python3 script.py <<'PY'" \
+  "cat <<'PY' | python3 -"; do
+  if printf '%s\nprobe = 1\nPY\n' "$inert_command" | python3 -I "$python_heredoc_parser" | grep -Fxq 'probe = 1'; then
+    contract_fail "A heredoc that python3 does not run as its program must not count: $inert_command"
+  fi
+done
 reject_value "$mac_workflow" \
   'out/Debug/CMakeCache.txt' \
   'out/Debug/compile_commands.json' \

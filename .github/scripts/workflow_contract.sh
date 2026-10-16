@@ -233,38 +233,12 @@ require_contract_tests_in_lint() {
   require_triggers "$lint" 'pull_request,push,workflow_dispatch'
 }
 
-# Prints the Python that a step feeds to `python3` through quoted heredocs, as
-# Python parses it: one `ast.unparse` line per call and per assignment, so
-# commented-out or deleted code is absent. Fails when a heredoc is not valid
-# Python.
+# Prints the Python that a step feeds as stdin to `python3` through quoted
+# heredocs, as Python parses it: one line per call and per assignment (see
+# workflow_python_heredocs.py). Fails when that Python does not parse.
 step_python_statements() {
-  step_field "$1" "$2" "$3" '.run' | python3 -I -c '
-import ast
-import re
-import sys
-
-lines = sys.stdin.read().split("\n")
-index = 0
-while index < len(lines):
-    match = re.search(r"<<-?\x27(\w+)\x27\s*$", lines[index])
-    if not match:
-        index += 1
-        continue
-    command = lines[index]
-    start = index
-    while start > 0 and lines[start - 1].endswith("\\"):
-        start -= 1
-        command = lines[start] + command
-    end = index + 1
-    while end < len(lines) and lines[end].strip() != match.group(1):
-        end += 1
-    if re.search(r"(^|\s)python3(\s|$)", command):
-        source = "\n".join(lines[index + 1:end])
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, (ast.Call, ast.Assign)):
-                print(ast.unparse(node))
-    index = end + 1
-'
+  step_field "$1" "$2" "$3" '.run' \
+    | python3 -I "$(dirname -- "${BASH_SOURCE[0]}")/workflow_python_heredocs.py"
 }
 
 require_step_python() {
