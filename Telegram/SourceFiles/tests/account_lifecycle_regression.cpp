@@ -4599,24 +4599,66 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
-	if (!customLanguageBox
-		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
-			   != customHasProvider
-		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
-			   != customHasProvider
-		|| customLanguageBox->platformTranslationRowPresentForRegressionTest()
-		|| customLanguageBox->translationAboutPresentForRegressionTest()
-			   != customHasProvider
-		|| customLanguageBox->platformPackNotePresentForRegressionTest()
-			   != (customProviderWithPlatformOff
-					   == Ui::details::TranslateProviderChoice::Platform
-				   && Platform::IsMac())
-		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
-		|| !customController->highlightControlId().isEmpty()) {
+	if (!customLanguageBox) {
 		std::fprintf(stderr,
-					 "Translation controls regression failed: custom "
-					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending.\n");
+					 "Translation controls custom Language subcheck failed: "
+					 "LanguageBox did not open.\n");
+		return false;
+	}
+	const auto customHighlightConsumed = WaitForRegressionCondition(
+		[&] { return customController->highlightControlId().isEmpty(); });
+	auto customLanguageChecksPassed = true;
+	const auto checkCustomLanguageRow
+		= [&](const char *name, bool actual, bool expected) {
+			  if (actual != expected) {
+				  std::fprintf(
+					  stderr,
+					  "Translation controls custom Language subcheck failed: "
+					  "%s row present=%d expected=%d.\n",
+					  name, actual, expected);
+				  customLanguageChecksPassed = false;
+			  }
+		  };
+	checkCustomLanguageRow(
+		"translate-button",
+		customLanguageBox->translateButtonRowPresentForRegressionTest(),
+		customHasProvider);
+	checkCustomLanguageRow(
+		"do-not-translate",
+		customLanguageBox->doNotTranslateRowPresentForRegressionTest(),
+		customHasProvider);
+	checkCustomLanguageRow(
+		"platform-translation",
+		customLanguageBox->platformTranslationRowPresentForRegressionTest(),
+		false);
+	checkCustomLanguageRow(
+		"translation-about",
+		customLanguageBox->translationAboutPresentForRegressionTest(),
+		customHasProvider);
+	checkCustomLanguageRow(
+		"platform-pack-note",
+		customLanguageBox->platformPackNotePresentForRegressionTest(),
+		(customProviderWithPlatformOff
+		 == Ui::details::TranslateProviderChoice::Platform)
+			&& Platform::IsMac());
+	checkCustomLanguageRow(
+		"translate-chats",
+		customLanguageBox->translateChatsRowPresentForRegressionTest(), false);
+	const auto pendingLanguageHighlight
+		= customController->highlightControlId();
+	if (!customHighlightConsumed) {
+		const auto pendingLanguageHighlightUtf8
+			= pendingLanguageHighlight.toUtf8();
+		std::fprintf(stderr,
+					 "Translation controls custom Language subcheck failed: "
+					 "highlight was not consumed within 5000 ms id=%s.\n",
+					 pendingLanguageHighlightUtf8.constData());
+		customLanguageChecksPassed = false;
+	}
+	if (!customLanguageChecksPassed) {
+		std::fprintf(stderr,
+					 "Translation controls regression failed: custom Language "
+					 "settings did not match supported controls.\n");
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
@@ -4624,11 +4666,26 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		 {u"language/show-button"_q, u"language/translate-chats"_q,
 		  u"language/do-not-translate"_q}) {
 		auto linkBox = openLanguageBox(customController, link);
-		QCoreApplication::processEvents();
-		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+		if (!linkBox) {
+			const auto linkUtf8 = link.toUtf8();
+			std::fprintf(stderr,
+						 "Translation controls Language link subcheck failed: "
+						 "LanguageBox did not open for id=%s.\n",
+						 linkUtf8.constData());
+			return false;
+		}
+		const auto highlightConsumed = WaitForRegressionCondition(
+			[&] { return customController->highlightControlId().isEmpty(); });
+		if (!highlightConsumed) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
-						"left an unsupported highlight pending.\n");
+						"did not consume its highlight.\n");
+			const auto pendingLanguageHighlightUtf8
+				= customController->highlightControlId().toUtf8();
+			std::fprintf(stderr,
+						 "Translation controls Language link subcheck failed: "
+						 "highlight was not consumed within 5000 ms id=%s.\n",
+						 pendingLanguageHighlightUtf8.constData());
 			return false;
 		}
 		customController->hideLayer(anim::type::instant);
