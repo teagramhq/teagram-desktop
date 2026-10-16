@@ -392,6 +392,17 @@ if ! grep -Fq "(github.event_name == 'schedule' || github.event_name == 'push')"
   printf 'Dev push and scheduled runs must seed the shared macOS compiler cache.\n' >&2
   exit 1
 fi
+if ! grep -Fq "steps.seed-current.outputs.current == 'true'" <<< "$save_cache_step"; then
+  printf 'A seed from a superseded dev head must not save the shared macOS compiler cache.\n' >&2
+  exit 1
+fi
+require_text "$mac_workflow" 'bash "$REPO_NAME/.github/scripts/ccache_seed_current.sh" "$REPO_NAME" "$GITHUB_SHA" FETCH_HEAD'
+seed_current_line="$(grep -nF 'id: seed-current' "$mac_workflow" | cut -d: -f1)"
+save_cache_line="$(grep -nF 'name: Save Teagram compiler cache.' "$mac_workflow" | cut -d: -f1)"
+if [[ -z "$seed_current_line" || -z "$save_cache_line" ]] || ((seed_current_line >= save_cache_line)); then
+  printf 'The seed currency check must run before the compiler cache save.\n' >&2
+  exit 1
+fi
 save_libraries_step="$(awk '
   /^      - name: Save libraries cache\.$/ { in_step = 1; next }
   in_step && /^      - name:/ { exit }

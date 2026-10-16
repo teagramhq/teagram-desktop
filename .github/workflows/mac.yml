@@ -958,6 +958,24 @@ jobs:
             echo "::warning::ccache did not record any compiler invocations for the Teagram build. The source build result remains authoritative."
           fi
 
+      - name: Check compiler cache seed is current.
+        id: seed-current
+        if: >
+          always()
+            && !cancelled()
+            && steps.ccache-stats.outputs.save == 'true'
+            && (github.event_name == 'schedule' || github.event_name == 'push')
+            && github.ref == 'refs/heads/dev'
+        run: |
+          set -Eeuo pipefail
+          if ! git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev; then
+            echo "::warning::Unable to read the dev tip; not saving the compiler cache."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash "$REPO_NAME/.github/scripts/ccache_seed_current.sh" "$REPO_NAME" "$GITHUB_SHA" FETCH_HEAD \
+            | tee -a "$GITHUB_OUTPUT"
+
       - name: Save Teagram compiler cache.
         if: >
           always()
@@ -965,6 +983,7 @@ jobs:
             && steps.ccache-stats.outputs.save == 'true'
             && (github.event_name == 'schedule' || github.event_name == 'push')
             && github.ref == 'refs/heads/dev'
+            && steps.seed-current.outputs.current == 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/ccache
