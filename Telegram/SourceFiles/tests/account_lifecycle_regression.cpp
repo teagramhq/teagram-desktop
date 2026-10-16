@@ -4681,10 +4681,11 @@ PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
 		return u"accessibility-focus-policy"_q;
 	}
-	// The menu is never shown, so it stays wherever it was created. A
-	// keyboard step that scrolls it sends a synthetic mouse move at the real
-	// cursor position, which selects the item under the cursor by mouse
-	// before the key selects it. Keep the cursor off the menu.
+	// The menu is never shown, so it stays wherever it was created. The first
+	// keyboard step flushes the inner menu's pending move event, and the menu
+	// re-reads the cursor position on every move, so the item under the
+	// cursor is selected by mouse before the key selects it. Keep the cursor
+	// off the menu.
 	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
