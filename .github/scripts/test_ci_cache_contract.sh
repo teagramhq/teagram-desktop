@@ -1,217 +1,279 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=workflow_contract.sh
+source "$scripts_dir/workflow_contract.sh"
+
 linux_workflow=".github/workflows/linux.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
-cache_threat_model=".github/ci-cache-threat-model.md"
 workflow_lint_workflow=".github/workflows/workflow_lint.yml"
 unit_feedback_workflow="${UNIT_FEEDBACK_WORKFLOW:-.github/workflows/unit_feedback.yml}"
 macos_unit_feedback_workflow="${MACOS_UNIT_FEEDBACK_WORKFLOW:-.github/workflows/macos_unit_feedback.yml}"
 
-require_text() {
-  local file="$1"
-  local expected="$2"
-  if ! grep -Fq -- "$expected" "$file"; then
-    printf '%s must contain: %s\n' "$file" "$expected" >&2
-    exit 1
-  fi
-}
+temp_dir="$(mktemp -d)"
+trap 'rm -rf "$temp_dir"' EXIT
 
-reject_text() {
-  local file="$1"
-  local unexpected="$2"
-  if grep -Fq -- "$unexpected" "$file"; then
-    printf '%s must not contain: %s\n' "$file" "$unexpected" >&2
-    exit 1
-  fi
-}
+require_contract_tests_in_lint
+
+dependency_hash="\${{ hashFiles('Telegram/build/docker/centos_env/**') }}"
+libraries_image='ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
 
 # Linux. publishes the dependency image; nothing pulls centos_env:latest.
 for retired_workflow in .github/workflows/docker.yml .github/workflows/linux_libraries.yml; do
   if [[ -e "$retired_workflow" ]]; then
-    printf '%s must not exist\n' "$retired_workflow" >&2
-    exit 1
+    contract_fail "$retired_workflow must not exist"
   fi
 done
 
-# The contract tests read the threat model, so editing it must lint, and a PR
-# push must lint once (pull_request), not again through an unfiltered push.
-if [[ "$(grep -Fxc -- "      - '.github/ci-cache-threat-model.md'" "$workflow_lint_workflow")" != 2 ]]; then
-  printf '%s\n' "$workflow_lint_workflow must list .github/ci-cache-threat-model.md under push and pull_request" >&2
-  exit 1
-fi
-if [[ "$(awk 'previous == "  push:" { print; exit } { previous = $0 }' "$workflow_lint_workflow")" != '    branches: [dev]' ]]; then
-  printf '%s\n' "$workflow_lint_workflow must run push lint on dev only" >&2
-  exit 1
-fi
+# Workflow lint. runs on dev pushes and PRs, and every script it runs (plus the
+# helper the contract tests source) is in its path filters, so editing a
+# contract test lints it.
+require_workflow_field "$workflow_lint_workflow" '.on.push.branches | join(",")' 'dev'
+lint_scripts="$(job_field "$workflow_lint_workflow" actionlint \
+  '.steps[].run // "" | capture("(?P<path>\.github/scripts/[A-Za-z0-9_.]+)") | .path')"
+lint_scripts+=$'\n.github/scripts/workflow_contract.sh'
+for event in push pull_request; do
+  lint_paths="$(workflow_field "$workflow_lint_workflow" ".on.$event.paths[]")"
+  while IFS= read -r lint_script; do
+    if ! grep -Fxq -- "$lint_script" <<< "$lint_paths"; then
+      contract_fail "$workflow_lint_workflow on.$event.paths must list $lint_script"
+    fi
+  done <<< "$lint_scripts"
+done
 
-require_text "$linux_workflow" "matrix.defines || 'default'"
-reject_text "$linux_workflow" "matrix.defines || 'null'"
-require_text "$linux_workflow" "key: \${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-\${{ github.run_id }}"
-require_text "$linux_workflow" "restore-keys: \${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-"
-# A workflow_run build checks out its source run's commit but reports against
-# the default branch head, and cannot write the dev cache. The post-merge build
-# runs on the push, checks out GITHUB_SHA and verifies it before building.
-reject_text "$linux_workflow" 'workflow_run'
-reject_text "$linux_workflow" 'head_sha'
-reject_text "$linux_workflow" '          ref: '
-require_text "$linux_workflow" 'packages: read'
-linux_triggers="$(awk '
-  /^on:$/ { in_on = 1; next }
-  in_on && /^[^ #]/ { exit }
-  in_on && /^  [a-z_]+:/ { sub(/^  /, ""); sub(/:.*/, ""); print }
-' "$linux_workflow" | paste -sd ' ' -)"
-if [[ "$linux_triggers" != 'pull_request push schedule workflow_dispatch' ]]; then
-  printf '%s must trigger on pull_request, push, schedule and workflow_dispatch only, got: %s\n' "$linux_workflow" "$linux_triggers" >&2
-  exit 1
-fi
-if [[ "$(awk 'previous == "  push:" { print; exit } { previous = $0 }' "$linux_workflow")" != '    branches: [dev]' ]]; then
-  printf '%s\n' "$linux_workflow must run its push build on dev only" >&2
-  exit 1
-fi
-require_text "$linux_workflow" "      - 'Telegram/build/docker/centos_env/**'"
-require_text "$linux_workflow" "cancel-in-progress: \${{ github.ref != 'refs/heads/dev' }}"
-verify_line="$(grep -nFx '        run: bash .github/scripts/verify_built_sha.sh "$GITHUB_SHA"' "$linux_workflow" | cut -d: -f1)"
-build_line="$(grep -nFx '      - name: Telegram Desktop build.' "$linux_workflow" | cut -d: -f1)"
-if [[ -z "$verify_line" || -z "$build_line" ]] || (( verify_line > build_line )); then
-  printf '%s must verify the checked-out commit is GITHUB_SHA before the build\n' "$linux_workflow" >&2
-  exit 1
-fi
+# Linux. builds the pushed dev commit itself (never from workflow_run), with a
+# read-only build token, and only a dev push or schedule saves the compiler
+# cache.
+require_triggers "$linux_workflow" 'pull_request,push,schedule,workflow_dispatch'
+require_workflow_field "$linux_workflow" '.on.push.branches | join(",")' 'dev'
+require_workflow_field "$linux_workflow" \
+  '.on.push.paths[] | select(. == "Telegram/build/docker/centos_env/**")' \
+  'Telegram/build/docker/centos_env/**'
+require_workflow_field "$linux_workflow" '.concurrency["cancel-in-progress"]' \
+  "\${{ github.ref != 'refs/heads/dev' }}"
+reject_value "$linux_workflow" 'workflow_run' 'head_sha'
+expect_equal "$linux_workflow checkouts that override the ref" \
+  "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with.ref != null) | .name' "$linux_workflow")" ''
+require_permission_map "$linux_workflow" 'workflow: contents=read
+linux-changes: inherit
+linux-libraries: contents=read,packages=write
+linux-build: actions=read,contents=read,packages=read
+linux: inherit'
 
-# Only a trusted dev run writes the Linux compiler cache.
+# The build verifies it checked out GITHUB_SHA before compiling.
+verify_index="$(job_field "$linux_workflow" linux-build \
+  '.steps | to_entries[] | select(.value.name == "Verify the checked-out commit.") | .key')"
+build_index="$(job_field "$linux_workflow" linux-build \
+  '.steps | to_entries[] | select(.value.name == "Telegram Desktop build.") | .key')"
+if [[ -z "$verify_index" || -z "$build_index" ]] || ((verify_index > build_index)); then
+  contract_fail "$linux_workflow job linux-build must verify the checked-out commit before 'Telegram Desktop build.'"
+fi
+require_step_field "$linux_workflow" linux-build 'Verify the checked-out commit.' '.run' \
+  'bash .github/scripts/verify_built_sha.sh "$GITHUB_SHA"'
+
+require_step_field "$linux_workflow" linux-build 'Set Linux dependency image tag.' \
+  '.env.DEPENDENCY_HASH' "$dependency_hash"
+require_step_script "$linux_workflow" linux-build 'Set Linux dependency image tag.' \
+  "LINUX_LIBRARIES_IMAGE=$libraries_image"
+require_step_field "$linux_workflow" linux-build 'Pull shared Linux dependency image.' '.run' \
+  'bash .github/scripts/linux_libraries_image.sh pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
+require_step_field "$linux_workflow" linux-build 'Restore Telegram Desktop cache.' '.with.key' \
+  "\${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-\${{ github.run_id }}"
+require_step_field "$linux_workflow" linux-build 'Restore Telegram Desktop cache.' '.with["restore-keys"]' \
+  "\${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-"
+require_step_field "$linux_workflow" linux-build 'Save Telegram Desktop cache.' '.with.key' \
+  '${{ steps.cache-tdesktop.outputs.cache-primary-key }}'
 for step_name in 'Trim Telegram Desktop cache.' 'Save Telegram Desktop cache.'; do
-  step_guard="$(awk -v step="      - name: ${step_name}" '
-    $0 == step { in_step = 1; next }
-    in_step && /^      - / { exit }
-    in_step && /^        if: >$/ { in_if = 1; next }
-    in_if && /^          / { sub(/^ +/, ""); printf "%s ", $0; next }
-    in_if { exit }
-  ' "$linux_workflow")"
-  expected_guard="env.ONLY_CACHE == 'false' && github.event_name != 'pull_request' && github.ref == 'refs/heads/dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300 "
-  if [[ "$step_guard" != "$expected_guard" ]]; then
-    printf '%s step %s must be gated with: %s\n' "$linux_workflow" "$step_name" "$expected_guard" >&2
-    exit 1
-  fi
+  expect_equal "$linux_workflow job linux-build step '$step_name' if" \
+    "$(contract_squash "$(step_field "$linux_workflow" linux-build "$step_name" '.if')")" \
+    "env.ONLY_CACHE == 'false' && github.event_name != 'pull_request' && github.ref == 'refs/heads/dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300"
 done
-if [[ "$(grep -cF 'actions/cache/save@' "$linux_workflow")" != 1 ]]; then
-  printf '%s must save the Linux compiler cache from one gated step\n' "$linux_workflow" >&2
-  exit 1
-fi
-reject_text "$linux_workflow" 'actions/cache@'
-reject_text "$linux_workflow" 'cache-to:'
+expect_equal "$linux_workflow cache writers" "$(cache_writers "$linux_workflow")" \
+  'linux-build / Save Telegram Desktop cache.'
+expect_equal "$linux_workflow steps that export a build cache" \
+  "$(yq -r '.jobs[].steps[] | select(.with["cache-to"] != null) | .name' "$linux_workflow")" ''
+require_step_field "$linux_workflow" linux-build 'Report Linux Libraries duration.' '.if' 'always()'
+require_step_field "$linux_workflow" linux-build 'Report Actions cache total.' '.if' 'always()'
+require_step_script "$linux_workflow" linux-build 'Report Actions cache total.' \
+  '(( total_bytes >= 9000000000 ))'
+reject_value "$linux_workflow" 'Linux-libs-' 'buildkit-cache-dance'
 
-# The dev push publishes this commit's dependency image before its build pulls
-# it. Only that job may write packages.
-linux_job() {
-  awk -v job="  $1:" '
-    $0 == job { in_job = 1; print; next }
-    in_job && /^  [^ ]/ { exit }
-    in_job { print }
-  ' "$linux_workflow"
+# The linux-libraries job is the only GHCR writer, only for dev pushes in this
+# repository, and the build waits for it and stops when it fails.
+require_job_field "$linux_workflow" linux-libraries '.if' \
+  "github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'"
+require_step_field "$linux_workflow" linux-libraries 'Set Linux dependency image tag.' \
+  '.env.DEPENDENCY_HASH' "$dependency_hash"
+require_step_script "$linux_workflow" linux-libraries 'Set Linux dependency image tag.' \
+  "image=\"$libraries_image\""
+require_step_field "$linux_workflow" linux-libraries 'Build and publish Linux dependency image.' \
+  '.uses | sub("@.*", "")' 'docker/build-push-action'
+expect_equal "$linux_workflow steps that push an image" \
+  "$(yq -r '.jobs | to_entries[] | .key as $job | .value.steps[] | select(.with.push == true) | $job + " / " + .name' "$linux_workflow")" \
+  'linux-libraries / Build and publish Linux dependency image.'
+require_job_field "$linux_workflow" linux-build '.needs | join(",")' 'linux-changes,linux-libraries'
+expect_contains "$linux_workflow job linux-build if" \
+  "$(job_field "$linux_workflow" linux-build '.if')" \
+  "(needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')" \
+  "needs.linux-changes.outputs.required == 'true'"
+
+# Prune pull request caches. runs with only actions: write, never checks out
+# code, and acts only on a numeric PR number or a trusted dev source run.
+require_triggers "$cache_cleanup_workflow" 'pull_request_target,workflow_run'
+require_workflow_field "$cache_cleanup_workflow" '.on.pull_request_target.types | join(",")' 'closed'
+require_workflow_field "$cache_cleanup_workflow" '.on.workflow_run.workflows | join(",")' 'MacOS.,MacOS Packaged.,Linux.'
+require_workflow_field "$cache_cleanup_workflow" '.on.workflow_run.branches | join(",")' 'dev'
+require_permission_map "$cache_cleanup_workflow" 'workflow: 
+prune: actions=write
+prune-old-dev-macos-ccache: actions=write
+prune-old-dev-linux-ccache: actions=write'
+expect_equal "$cache_cleanup_workflow checkout steps" \
+  "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | .name' "$cache_cleanup_workflow")" ''
+require_job_field "$cache_cleanup_workflow" prune '.if' "github.event_name == 'pull_request_target'"
+require_job_field "$cache_cleanup_workflow" prune-old-dev-macos-ccache '.if' \
+  "github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'"
+require_job_field "$cache_cleanup_workflow" prune-old-dev-linux-ccache '.if' \
+  "github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
+
+mkdir -p "$temp_dir/bin"
+cat > "$temp_dir/bin/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_GH_CALLS"
+MOCK_GH
+chmod +x "$temp_dir/bin/gh"
+gh_calls="$temp_dir/gh-calls.txt"
+
+prune_pr_script="$temp_dir/prune-pr.sh"
+step_field "$cache_cleanup_workflow" prune 'Delete pull request cache scope.' '.run' > "$prune_pr_script"
+require_step_field "$cache_cleanup_workflow" prune 'Delete pull request cache scope.' \
+  '.env.PR_NUMBER' '${{ github.event.pull_request.number }}'
+run_prune_pr() {
+  : > "$gh_calls"
+  env PATH="$temp_dir/bin:$PATH" MOCK_GH_CALLS="$gh_calls" \
+    GITHUB_REPOSITORY=teagramhq/teagram-desktop PR_NUMBER="$1" \
+    bash "$prune_pr_script" > /dev/null 2>&1
 }
-libraries_job="$(linux_job linux-libraries)"
-build_job="$(linux_job linux-build)"
-if ! grep -Fqx "    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'" <<< "$libraries_job"; then
-  printf '%s linux-libraries must run only for dev pushes in this repository\n' "$linux_workflow" >&2
-  exit 1
+run_prune_pr 42 || contract_fail 'Pruning a numeric PR cache scope must succeed.'
+expect_equal 'PR cache prune gh calls' "$(cat "$gh_calls")" \
+  'cache delete --all --succeed-on-no-caches --ref refs/pull/42/merge --repo teagramhq/teagram-desktop'
+for malformed in '' '42/head' '42 --ref refs/heads/dev' '-1'; do
+  if run_prune_pr "$malformed"; then
+    contract_fail "Pruning must refuse PR number '$malformed'."
+  fi
+  [[ ! -s "$gh_calls" ]] || contract_fail "A malformed PR number '$malformed' must not reach gh."
+done
+
+# Every job a workflow_run can start, in any workflow, first verifies that the
+# source run is a dev run from this repository. A job is exempt only when its
+# `if` pins another event.
+trust_step='Verify the source run is trusted.'
+# Prints how many jobs in DIR's workflows (.yml and .yaml) a workflow_run can
+# start; each must pass the trust checks.
+count_verified_workflow_run_jobs() {
+  local workflow_dir="$1" workflow job job_if trust_script workflow_run_jobs=0
+  for workflow in "$workflow_dir"/*.yml "$workflow_dir"/*.yaml; do
+    [[ -f "$workflow" ]] || continue
+    [[ "$(yq -r '.on | has("workflow_run")' "$workflow")" == true ]] || continue
+    while IFS= read -r job; do
+      job_if="$(job_field "$workflow" "$job" '.if // ""')"
+      if [[ "$job_if" =~ ^github\.event_name\ ==\ \'([a-z_]+)\'$ \
+          && "${BASH_REMATCH[1]}" != workflow_run ]]; then
+        continue
+      fi
+      workflow_run_jobs=$((workflow_run_jobs + 1))
+      require_job_field "$workflow" "$job" '.steps[0].name' "$trust_step"
+      # The trust step always runs, and its failure stops every later step.
+      require_job_field "$workflow" "$job" '.["continue-on-error"]' 'null'
+      expect_equal "$workflow job $job steps with if or continue-on-error" \
+        "$(job_field "$workflow" "$job" \
+          '.steps[] | select(.if != null or .["continue-on-error"] != null) | .name')" ''
+      require_step_field "$workflow" "$job" "$trust_step" '.env.SOURCE_BRANCH' \
+        '${{ github.event.workflow_run.head_branch }}'
+      require_step_field "$workflow" "$job" "$trust_step" '.env.SOURCE_REPOSITORY' \
+        '${{ github.event.workflow_run.head_repository.full_name }}'
+      trust_script="$temp_dir/$job-trust.sh"
+      step_field "$workflow" "$job" "$trust_step" '.run' > "$trust_script"
+      run_trust() {
+        env GITHUB_REPOSITORY=teagramhq/teagram-desktop SOURCE_BRANCH="$1" SOURCE_REPOSITORY="$2" \
+          bash "$trust_script" > /dev/null 2>&1
+      }
+      run_trust dev teagramhq/teagram-desktop \
+        || contract_fail "$workflow job $job must accept a dev run from this repository."
+      if run_trust feature teagramhq/teagram-desktop; then
+        contract_fail "$workflow job $job must refuse a non-dev source run."
+      fi
+      if run_trust dev steward/tdesktop; then
+        contract_fail "$workflow job $job must refuse a fork source run."
+      fi
+    done < <(yq -r '.jobs | keys | .[]' "$workflow")
+  done
+  printf '%s\n' "$workflow_run_jobs"
+}
+expect_equal 'Jobs started by workflow_run with a verified source' \
+  "$(count_verified_workflow_run_jobs .github/workflows)" '2'
+mkdir -p "$temp_dir/yaml-workflows"
+cat > "$temp_dir/yaml-workflows/untrusted.yaml" <<'UNTRUSTED'
+on:
+  workflow_run:
+    workflows: ["Linux."]
+    types: [completed]
+jobs:
+  act:
+    runs-on: ubuntu-26.04
+    steps:
+      - run: true
+UNTRUSTED
+if (count_verified_workflow_run_jobs "$temp_dir/yaml-workflows") > /dev/null 2>&1; then
+  contract_fail 'An unguarded workflow_run job in a .yaml workflow must fail the trust checks.'
 fi
-for expected in 'packages: write' 'docker/build-push-action@v7' 'push: true' "hashFiles('Telegram/build/docker/centos_env/**')"; do
-  if ! grep -Fq -- "$expected" <<< "$libraries_job"; then
-    printf '%s linux-libraries must contain: %s\n' "$linux_workflow" "$expected" >&2
-    exit 1
+for bypass in 'if: false' 'continue-on-error: true'; do
+  bypass_dir="$temp_dir/trust-bypass-${bypass%%:*}"
+  mkdir -p "$bypass_dir"
+  BYPASS="$bypass" awk '
+    { print }
+    /^      - name: Verify the source run is trusted\.$/ { print "        " ENVIRON["BYPASS"] }
+  ' "$cache_cleanup_workflow" > "$bypass_dir/pr_cache_cleanup.yml"
+  if (count_verified_workflow_run_jobs "$bypass_dir") > /dev/null 2>&1; then
+    contract_fail "A source-trust step with '$bypass' must fail the trust checks."
   fi
 done
-if [[ "$(grep -cF 'packages: write' "$linux_workflow")" != 1 || "$(grep -cF 'push: true' "$linux_workflow")" != 1 ]]; then
-  printf '%s must publish and write packages only from linux-libraries\n' "$linux_workflow" >&2
-  exit 1
-fi
-if ! grep -Fqx '      - linux-libraries' <<< "$build_job" \
-    || ! grep -Fq "(needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')" <<< "$build_job"; then
-  printf '%s linux-build must wait for linux-libraries and stop when it fails\n' "$linux_workflow" >&2
-  exit 1
-fi
-require_text "$linux_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
-require_text "$linux_workflow" 'run: bash .github/scripts/linux_libraries_image.sh pull'
-require_text "$linux_workflow" 'name: Report Linux Libraries duration.'
-require_text "$linux_workflow" 'name: Report Actions cache total.'
-require_text "$linux_workflow" 'under 9000000000 bytes (9 GB)'
-reject_text "$linux_workflow" 'Linux-libs-'
-reject_text "$linux_workflow" 'buildkit-cache-dance'
+require_step_script "$cache_cleanup_workflow" prune-old-dev-macos-ccache \
+  'Keep the newest compiler cache per profile.' \
+  "cache_prefix='macOS-arm64-ccache-dev-'" '--ref refs/heads/dev'
+reject_value "$cache_cleanup_workflow" 'macOS-arm64-ccache-pr-'
 
-require_text "$linux_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
-
-require_text "$cache_cleanup_workflow" '  pull_request_target:'
-require_text "$cache_cleanup_workflow" '    types: [closed]'
-reject_text "$cache_cleanup_workflow" '  push:'
-require_text "$cache_cleanup_workflow" 'branches: [dev]'
-require_text "$cache_cleanup_workflow" '  workflow_run:'
-require_text "$cache_cleanup_workflow" 'workflows: ["MacOS.", "MacOS Packaged.", "Linux."]'
-require_text "$cache_cleanup_workflow" 'Trust boundary and token scope: see .github/ci-cache-threat-model.md.'
-require_text "$cache_cleanup_workflow" '      actions: write'
-require_text "$cache_cleanup_workflow" '[[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]'
-require_text "$cache_cleanup_workflow" 'gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"'
-reject_text "$cache_cleanup_workflow" 'macOS-arm64-ccache-pr-'
-require_text "$cache_cleanup_workflow" 'gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"'
-require_text "$cache_cleanup_workflow" 'SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}'
-require_text "$cache_cleanup_workflow" 'SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}'
-require_text "$cache_cleanup_workflow" '[[ "$SOURCE_BRANCH" != "dev" || "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]'
-require_text "$cache_cleanup_workflow" "cache_prefix='macOS-arm64-ccache-dev-'"
-require_text "$cache_cleanup_workflow" '--ref refs/heads/dev'
-require_text "$cache_cleanup_workflow" 'pr-compatible'
-require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'"
-require_text "$cache_cleanup_workflow" "if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
-require_text "$cache_cleanup_workflow" "cache_prefix='Linux-tdesktop-default-'"
-reject_text "$cache_cleanup_workflow" 'actions/checkout@'
 # Feedback lanes run on dev against a selected feature ref, so they carry the
 # dev cache scope. The cache service, not skipped steps, keeps them read-only.
 for feedback_workflow in "$unit_feedback_workflow" "$macos_unit_feedback_workflow"; do
-  if ! grep -Eq '^cache-mode: read$' "$feedback_workflow"; then
-    printf '%s must set workflow-level cache-mode: read\n' "$feedback_workflow" >&2
-    exit 1
-  fi
-  if grep -E '^[[:space:]]*cache-mode:' "$feedback_workflow" \
-      | grep -Evq '^[[:space:]]*cache-mode:[[:space:]]*(read|none)[[:space:]]*$'; then
-    printf '%s must not grant a job cache write access.\n' "$feedback_workflow" >&2
-    exit 1
-  fi
-  reject_text "$feedback_workflow" 'actions/cache@'
-  reject_text "$feedback_workflow" 'actions/cache/save@'
-  reject_text "$feedback_workflow" 'cache-to:'
-  reject_text "$feedback_workflow" 'type=gha'
+  require_triggers "$feedback_workflow" 'workflow_dispatch'
+  require_workflow_field "$feedback_workflow" '.["cache-mode"]' 'read'
+  expect_equal "$feedback_workflow job cache-mode values" \
+    "$(yq -r '.jobs[]["cache-mode"] // "read" | select(. != "read" and . != "none")' "$feedback_workflow")" ''
+  expect_equal "$feedback_workflow cache writers" "$(cache_writers "$feedback_workflow")" ''
+  expect_equal "$feedback_workflow steps that export a build cache" \
+    "$(yq -r '.jobs[].steps[] | select(.with["cache-to"] != null) | .name' "$feedback_workflow")" ''
+  reject_value "$feedback_workflow" 'type=gha'
 done
 
-require_text "$unit_feedback_workflow" 'packages: read'
-reject_text "$unit_feedback_workflow" 'packages: write'
-reject_text "$unit_feedback_workflow" 'push: true'
-require_text "$unit_feedback_workflow" "hashFiles('Telegram/build/docker/centos_env/**')"
-require_text "$unit_feedback_workflow" 'LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
-require_text "$linux_workflow" 'LINUX_LIBRARIES_IMAGE=ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
-require_text "$unit_feedback_workflow" 'run: bash "$RUNNER_TEMP/linux_libraries_image.sh" pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
-unit_libraries_guard="$(awk '
-  /^      - name: Libraries\.$/ { in_step = 1; next }
-  in_step && /^      - / { exit }
-  in_step && /^        if: / { sub(/^        if: /, ""); print }
-' "$unit_feedback_workflow")"
-if [[ "$unit_libraries_guard" != "steps.pull-libraries.outputs.cache-hit != 'true'" ]]; then
-  printf '%s must build Libraries only when the GHCR image is missing.\n' "$unit_feedback_workflow" >&2
-  exit 1
-fi
+require_permission_map "$unit_feedback_workflow" 'workflow: contents=read,packages=read
+unit: inherit'
+expect_equal "$unit_feedback_workflow steps that push an image" \
+  "$(yq -r '.jobs[].steps[] | select(.with.push == true) | .name' "$unit_feedback_workflow")" ''
+require_step_field "$unit_feedback_workflow" unit 'Set Linux dependency image tag.' \
+  '.env.DEPENDENCY_HASH' "$dependency_hash"
+require_step_script "$unit_feedback_workflow" unit 'Set Linux dependency image tag.' \
+  "LINUX_LIBRARIES_IMAGE=$libraries_image"
+require_step_field "$unit_feedback_workflow" unit 'Pull shared Linux dependency image.' '.run' \
+  'bash "$RUNNER_TEMP/linux_libraries_image.sh" pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
+require_step_field "$unit_feedback_workflow" unit 'Libraries.' '.if' \
+  "steps.pull-libraries.outputs.cache-hit != 'true'"
 
-reject_text "$macos_unit_feedback_workflow" 'brew upgrade'
-reject_text "$macos_unit_feedback_workflow" 'brew update'
-reject_text "$macos_unit_feedback_workflow" '|| true'
-reject_text "$macos_unit_feedback_workflow" 'sed -i'
-require_text "$macos_unit_feedback_workflow" 'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
-
-require_text "$cache_threat_model" 'Pull request workflows cannot invoke its write'
-require_text "$cache_threat_model" '## Trusted refs and Linux dependency image publisher'
-require_text "$cache_threat_model" 'numeric PR number, validated'
-require_text "$cache_threat_model" 'actions: write'
-require_text "$cache_threat_model" 'PR-controlled workflow runs fail the source validation'
-require_text "$cache_threat_model" '## Post-merge Linux build'
-require_text "$cache_threat_model" 'never from `workflow_run`'
-require_text "$cache_threat_model" '## Manual feedback lanes'
-require_text "$cache_threat_model" 'cache-mode: read'
+require_permission_map "$macos_unit_feedback_workflow" 'workflow: contents=read
+unit: inherit'
+require_step_script "$macos_unit_feedback_workflow" unit 'First set up.' \
+  'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
+reject_value "$macos_unit_feedback_workflow" 'brew upgrade' 'brew update' '|| true' 'sed -i'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
 bash .github/scripts/test_prune_linux_dev_ccache.sh
