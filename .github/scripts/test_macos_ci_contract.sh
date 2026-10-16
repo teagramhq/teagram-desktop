@@ -122,6 +122,24 @@ require_step_field "$mac_workflow" macos-libraries 'Set macOS dependency image t
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
   "$macos_libraries_image_script\" set-image"
+require_step_field "$mac_workflow" macos-libraries 'Set up dependency build tools.' '.if' \
+  "steps.image-cache.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+require_step_script "$mac_workflow" macos-libraries 'Set up dependency build tools.' \
+  'bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" libraries' \
+  'echo "$tools/bin" >> "$GITHUB_PATH"'
+dependency_tools_step_index=-1
+libraries_setup_step_index=-1
+step_index=0
+while IFS= read -r step_name; do
+  case "$step_name" in
+    'Set up dependency build tools.') dependency_tools_step_index="$step_index" ;;
+    'Libraries.') libraries_setup_step_index="$step_index" ;;
+  esac
+  ((step_index += 1))
+done < <(JOB=macos-libraries yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
+if ((dependency_tools_step_index < 0 || dependency_tools_step_index >= libraries_setup_step_index)); then
+  contract_fail "$mac_workflow must install dependency build tools before the cold Libraries build."
+fi
 require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.uses' \

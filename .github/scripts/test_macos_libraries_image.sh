@@ -51,6 +51,14 @@ case "$operation" in
         archive="${argument%%:*}"
       fi
     done
+    [[ "$archive" != /* ]] || {
+      printf 'oras push must receive a relative archive path.\n' >&2
+      exit 1
+    }
+    [[ "$archive" == 'macos-libraries.tar.zst' ]] || {
+      printf 'oras push must receive the archive basename.\n' >&2
+      exit 1
+    }
     [[ -n "$archive" && -f "$archive" ]] || {
       printf 'oras push did not receive the macOS library archive.\n' >&2
       exit 1

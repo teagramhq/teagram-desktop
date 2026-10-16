@@ -116,9 +116,12 @@ case "$operation" in
     archive="${temp_dir}/${archive_name}"
     tar -cf - -C "$workspace_dir" Libraries ThirdParty | zstd -T0 -3 -o "$archive"
     [[ -s "$archive" ]] || fail 'The macOS dependency artifact archive is empty.'
-    oras push "$image" \
-      --artifact-type "$artifact_type" \
-      "${archive}:${layer_type}"
+    (
+      cd "$temp_dir"
+      oras push "$image" \
+        --artifact-type "$artifact_type" \
+        "${archive_name}:${layer_type}"
+    )
     report_registry_result published
     ;;
   prune-legacy-cache)
