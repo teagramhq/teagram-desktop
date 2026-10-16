@@ -138,8 +138,8 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		for (const auto &line : profile.split('\n')) {
 			CHECK(line.size() < 900);
 		}
-		CHECK(profile.count("(deny file*") >= 16);
-		CHECK(profile.count("(regex\n") >= 16);
+		CHECK(profile.count("(deny file*") >= 1);
+		CHECK(profile.count("(regex\n") >= 1);
 		const auto ignoredSequence
 			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
@@ -149,7 +149,7 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
-		CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+		CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
@@ -341,11 +341,8 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
-	CHECK(joinedProfileStrings.contains(
-		"/" + ignoredSequence + "[Aa]" + ignoredSequence + "[Pp]"
-		+ ignoredSequence + "[Pp]" + ignoredSequence + "[Ll]"));
-	CHECK(!joinedProfileStrings.contains("^/Users/alice"));
+	CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
+	CHECK(!joinedProfileStrings.contains("^(/Users/alice"));
 	const auto unrelated
 		= u"/Users/alice.test/Library/Application Support/OtherApp/telegram/cache\u200B"_q;
 	CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
@@ -385,7 +382,37 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+	CHECK(joinedProfileStrings.contains("^(/" + ignoredSequence + "[Uu]"));
+}
+
+TEST_CASE(SeatbeltProfileStaysWithinSandboxSizeLimit) {
+	auto fs = FakeFileSystem();
+	const auto longHome
+		= "/Users/" + QByteArray(128, 'q') + "/" + QByteArray(128, 'r');
+	AddDirectoryHierarchy(fs, longHome);
+	const auto policy
+		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
+												  .environment = longHome,
+												  .foundation = longHome},
+										fs.operations());
+	CHECK(policy.valid());
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(!profile.isEmpty());
+	CHECK(profile.size() < 60 * 1024);
+}
+
+TEST_CASE(SeatbeltProfileRejectsOversizedExpandedHomePolicy) {
+	auto fs = FakeFileSystem();
+	const auto longHome
+		= "/Users/" + QByteArray(430, 'q') + "/" + QByteArray(430, 'r');
+	AddDirectoryHierarchy(fs, longHome);
+	const auto policy
+		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
+												  .environment = longHome,
+												  .foundation = longHome},
+										fs.operations());
+	CHECK(policy.valid());
+	CHECK(policy.SeatbeltProfile().isEmpty());
 }
 
 TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
@@ -460,10 +487,54 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 				   .match((alias + u"-other/Library/"_q)
 							  .normalized(QString::NormalizationForm_D))
 				   .hasMatch());
-		CHECK(
-			policy.Classify(
-				(alias + u"/Library/Application Support/Teagram/x"_q).toUtf8())
-			== ProtectedClass::None);
+		auto protectedSuffixes = std::vector<QString>{
+			u"/Library/Containers/org.telegram.desktop/x"_q,
+			u"/Library/Containers/ru.keepcoder.telegram/x"_q,
+			u"/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/x"_q,
+		};
+		for (const auto &parent :
+			 {u"Preferences"_q, u"Caches"_q, u"HTTPStorages"_q, u"WebKit"_q,
+			  u"Saved Application State"_q}) {
+			for (const auto &key : {u"com.tdesktop.telegram.fixture"_q,
+									u"org.telegram.desktop.fixture"_q,
+									u"ru.keepcoder.telegram.fixture"_q}) {
+				protectedSuffixes.push_back(u"/Library/"_q + parent + u"/"_q
+											+ key + u"/x"_q);
+			}
+		}
+		for (const auto &suffix : protectedSuffixes) {
+			const auto path = alias + suffix;
+			CHECK(policy.Classify(path.toUtf8()) != ProtectedClass::None);
+			CHECK(regex.match(path.normalized(QString::NormalizationForm_D))
+					  .hasMatch());
+		}
+		const auto ignoredApplicationSupport
+			= alias
+			  + u"/Library/Application Supp\u200Bort/Telegram Desktop/x"_q;
+		CHECK(policy.Classify(ignoredApplicationSupport.toUtf8())
+			  == ProtectedClass::ApplicationSupport);
+		CHECK(regex
+				  .match(ignoredApplicationSupport.normalized(
+					  QString::NormalizationForm_D))
+				  .hasMatch());
+		const auto ignoredBundleKey
+			= alias
+			  + u"/Library/Saved Application St\u200Bate/"
+				"org.telegr\u200Bam.desktop.fixture/x"_q;
+		CHECK(policy.Classify(ignoredBundleKey.toUtf8())
+			  == ProtectedClass::BundleKeyed);
+		CHECK(regex
+				  .match(
+					  ignoredBundleKey.normalized(QString::NormalizationForm_D))
+				  .hasMatch());
+		const auto allowedTeagram
+			= alias + u"/Library/Application Support/Teagram/x"_q;
+		CHECK(policy.Classify(allowedTeagram.toUtf8()) == ProtectedClass::None);
+		CHECK(!regex.match(allowedTeagram).hasMatch());
+		const auto unrelated
+			= alias + u"/Library/Application Support/OtherApp/telegram/cache"_q;
+		CHECK(policy.Classify(unrelated.toUtf8()) == ProtectedClass::None);
+		CHECK(!regex.match(unrelated).hasMatch());
 	}
 }
 

@@ -22,6 +22,8 @@ constexpr auto kSymlinkHopLimit = 32;
 constexpr auto kRefusalInterval = qint64(60);
 // Leave headroom below the SBPL parser's 1025-byte string-token limit.
 constexpr auto kMaxSbplStringBytes = qsizetype(900);
+// Keep headroom below the Seatbelt profile-size limit as well.
+constexpr auto kMaxSbplProfileBytes = qsizetype(60 * 1024);
 
 struct ParsedPath {
 	bool absolute = false;
@@ -799,44 +801,52 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
-	struct ProtectedPrefix final {
-		QByteArray parent;
-		QByteArray key;
-	};
 	const auto component = [&](const QByteArray &value) {
 		return ProfileComponentRegex(value, ignoredSequence);
 	};
 	const auto foldedTelegram = component("telegram");
 	const auto foldedDesktop = component("desktop");
-	auto protectedPrefixes = std::vector<ProtectedPrefix>{
-		{"Application Support",
-		 component("Telegram ") + foldedDesktop + "(/|$)"},
-		{"Containers", component("org") + component(".") + foldedTelegram
-						   + component(".") + foldedDesktop + "(/|$)"},
-		{"Containers", component("ru") + component(".") + component("keepcoder")
-						   + component(".") + foldedTelegram + "(/|$)"},
-		{"Group Containers", "[^/]*" + foldedTelegram + "[^/]*(/|$)"},
+	const auto alternatives = [](const std::vector<QByteArray> &values) {
+		auto result = QByteArray("(");
+		for (auto i = 0; i != int(values.size()); ++i) {
+			if (i > 0) {
+				result.append('|');
+			}
+			result.append(values[i]);
+		}
+		result.append(')');
+		return result;
 	};
-	const auto bundleParents = std::vector<QByteArray>{
-		"Preferences",
-		"Caches",
-		"HTTPStorages",
-		"WebKit",
-		"Saved Application State",
-	};
-	const auto bundlePrefixes = std::vector<QByteArray>{
+	const auto bundleParents = alternatives({
+		component("Preferences"),
+		component("Caches"),
+		component("HTTPStorages"),
+		component("WebKit"),
+		component("Saved Application State"),
+	});
+	const auto bundlePrefixes = alternatives({
 		component("com") + component(".") + component("tdesktop")
 			+ component(".") + foldedTelegram,
 		component("org") + component(".") + foldedTelegram + component(".")
 			+ foldedDesktop,
 		component("ru") + component(".") + component("keepcoder")
 			+ component(".") + foldedTelegram,
-	};
-	for (const auto &parent : bundleParents) {
-		for (const auto &prefix : bundlePrefixes) {
-			protectedPrefixes.push_back({parent, prefix + "[^/]*(/|$)"});
-		}
-	}
+	});
+	const auto protectedPathAlternatives = alternatives({
+		component("Application Support") + "/" + component("Telegram ")
+			+ foldedDesktop + "(/|$)",
+		component("Containers") + "/"
+			+ alternatives({
+				component("org") + component(".") + foldedTelegram
+					+ component(".") + foldedDesktop + "(/|$)",
+				component("ru") + component(".") + component("keepcoder")
+					+ component(".") + foldedTelegram + "(/|$)",
+			}),
+		component("Group Containers") + "/[^/]*" + foldedTelegram
+			+ "[^/]*(/|$)",
+		bundleParents + "/" + bundlePrefixes + "[^/]*(/|$)",
+	});
+	auto homeAlternatives = QByteArray("(");
 	for (auto i = 0; i != int(_profileHomePaths.size()); ++i) {
 		const auto homePath = _profileHomePaths[i];
 		const auto literalHomePath = RegexLiteral(homePath);
@@ -852,21 +862,22 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 			home.append('/');
 			home.append(component(Fold(part).toUtf8()));
 		}
-		const auto library = component("Library");
-		for (const auto &prefix : protectedPrefixes) {
-			const auto expressions = std::vector<QByteArray>{
-				"^" + home + "/" + library + "/",
-				"^" + home + "/[^/]+/" + component(prefix.parent) + "/",
-				"^" + home + "/[^/]+/[^/]+/" + prefix.key,
-			};
-			result.append("(deny file* (require-all\n");
-			for (const auto &expression : expressions) {
-				if (!AppendSbplRegex(result, expression)) {
-					return {};
-				}
-			}
-			result.append("))\n");
+		if (i > 0) {
+			homeAlternatives.append('|');
 		}
+		homeAlternatives.append(home);
+	}
+	homeAlternatives.append(')');
+	const auto library = component("Library");
+	const auto expression = "^" + homeAlternatives + "/" + library + "/"
+							+ protectedPathAlternatives;
+	result.append("(deny file*\n");
+	if (!AppendSbplRegex(result, expression)) {
+		return {};
+	}
+	result.append(")\n");
+	if (result.size() >= kMaxSbplProfileBytes) {
+		return {};
 	}
 	return result;
 }
