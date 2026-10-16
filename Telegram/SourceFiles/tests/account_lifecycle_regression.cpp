@@ -2869,8 +2869,7 @@ struct PeerMenuSnapshot final {
 	QStringList keyboardNames;
 };
 
-[[nodiscard]] PeerMenuSnapshot
-SnapshotMenuActions(Ui::PopupMenu &menu) {
+[[nodiscard]] PeerMenuSnapshot SnapshotMenuActions(Ui::PopupMenu &menu) {
 	auto result = PeerMenuSnapshot();
 	for (const auto &action : menu.actions()) {
 		if (action->isSeparator()) {
@@ -2912,14 +2911,12 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 	return SnapshotMenuActions(menu);
 }
 
-[[nodiscard]] PeerMenuSnapshot SnapshotVideoChatMenu(
-	not_null<Window::SessionController *> controller,
-	Dialogs::Key key) {
+[[nodiscard]] PeerMenuSnapshot
+SnapshotVideoChatMenu(not_null<Window::SessionController *> controller,
+					  Dialogs::Key key) {
 	auto menu = Ui::PopupMenu(nullptr);
-	Window::FillVideoChatMenu(
-		controller,
-		{ .key = key },
-		Ui::Menu::CreateAddActionCallback(&menu));
+	Window::FillVideoChatMenu(controller, {.key = key},
+							  Ui::Menu::CreateAddActionCallback(&menu));
 	return SnapshotMenuActions(menu);
 }
 
@@ -3225,15 +3222,17 @@ template <typename Predicate>
 			all |= entry.flags;
 		}
 		const auto transfer = AdminRightsForOwnershipTransfer(options);
-		return (all & Right::ManageCall)
-			&& (transfer & Right::ManageCall);
+		return (all & Right::ManageCall) && (transfer & Right::ManageCall);
 	};
 	const auto labelOptions = std::vector<Data::AdminRightsSetOptions>{
 		{.storiesSupported = supported, .callsSupported = callsSupported},
-		{.isGroup = true, .storiesSupported = supported,
+		{.isGroup = true,
+		 .storiesSupported = supported,
 		 .callsSupported = callsSupported},
-		{.isGroup = true, .isForum = true,
-		 .storiesSupported = supported, .callsSupported = callsSupported},
+		{.isGroup = true,
+		 .isForum = true,
+		 .storiesSupported = supported,
+		 .callsSupported = callsSupported},
 	};
 	for (const auto &options : labelOptions) {
 		if (supported ? !labelsHaveStories(options)
@@ -3269,11 +3268,11 @@ template <typename Predicate>
 	}
 	const auto groupHistory = session.data().history(group);
 	const auto forum = group->forum();
-	const auto topic = forum
-		? forum->applyTopicAdded(
-			MsgId(1185), u"Call controls regression topic"_q, 0,
-			DocumentId(), session.userPeerId(), 1, true)
-		: nullptr;
+	const auto topic
+		= forum ? forum->applyTopicAdded(
+					  MsgId(1185), u"Call controls regression topic"_q, 0,
+					  DocumentId(), session.userPeerId(), 1, true)
+				: nullptr;
 	const auto channelCallMenu
 		= SnapshotVideoChatMenu(controller, Dialogs::Key(history));
 	const auto groupCallMenu
@@ -3288,8 +3287,8 @@ template <typename Predicate>
 		const auto inAccessibility = contains(menu.accessibleNames, expected);
 		const auto inKeyboard = contains(menu.keyboardNames, expected);
 		return (inActions == callsSupported)
-			&& (inAccessibility == callsSupported)
-			&& (inKeyboard == callsSupported);
+			   && (inAccessibility == callsSupported)
+			   && (inKeyboard == callsSupported);
 	};
 	const auto groupCall = tr::lng_menu_start_group_call(tr::now);
 	const auto groupCallScheduled
@@ -3302,12 +3301,10 @@ template <typename Predicate>
 		= tr::lng_menu_start_group_call_with_channel(tr::now);
 	const auto videoChatOptions
 		= tr::lng_menu_start_group_call_options(tr::now);
-	const auto forumMenu = SnapshotPeerMenu(
-		controller,
-		Dialogs::Key(groupHistory),
-		Dialogs::EntryState::Section::ChatsList);
-	if (!topic
-		|| !menuEntryMatches(groupCallMenu, groupCall)
+	const auto forumMenu
+		= SnapshotPeerMenu(controller, Dialogs::Key(groupHistory),
+						   Dialogs::EntryState::Section::ChatsList);
+	if (!topic || !menuEntryMatches(groupCallMenu, groupCall)
 		|| !menuEntryMatches(groupCallMenu, groupCallScheduled)
 		|| !menuEntryMatches(groupCallMenu, groupCallWith)
 		|| !menuEntryMatches(channelCallMenu, liveStream)
@@ -3342,18 +3339,14 @@ template <typename Predicate>
 			!= callsSupported) {
 			return fail("profile_call_button");
 		}
-		HistoryView::TopBarWidget topBar(
-			controller->widget().get(), controller);
-		topBar.setActiveChat(
-			{ .key = Dialogs::Key(privateHistory) },
-			nullptr);
+		HistoryView::TopBarWidget topBar(controller->widget().get(),
+										 controller);
+		topBar.setActiveChat({.key = Dialogs::Key(privateHistory)}, nullptr);
 		topBar.updateControlsVisibility();
 		if (topBar.callButtonHiddenForRegressionTest() != !callsSupported) {
 			return fail("private_call_button");
 		}
-		topBar.setActiveChat(
-			{ .key = Dialogs::Key(groupHistory) },
-			nullptr);
+		topBar.setActiveChat({.key = Dialogs::Key(groupHistory)}, nullptr);
 		topBar.updateControlsVisibility();
 		if (topBar.groupCallButtonHiddenForRegressionTest()
 			!= !callsSupported) {

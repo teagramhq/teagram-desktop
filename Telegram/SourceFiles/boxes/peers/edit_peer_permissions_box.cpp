@@ -166,12 +166,9 @@ constexpr auto kDefaultChargeStars = 10;
 			{ Flag::AddAdmins, tr::lng_rights_add_admins(tr::now) },
 		};
 		if (!options.callsSupported) {
-			second.erase(
-				ranges::remove(
-					second,
-					Flag::ManageCall | Flag(),
-					&AdminRightLabel::flags),
-				end(second));
+			second.erase(ranges::remove(second, Flag::ManageCall | Flag(),
+										&AdminRightLabel::flags),
+						 end(second));
 		}
 		if (options.canProcessJoinRequests) {
 			second.push_back({
@@ -223,12 +220,9 @@ constexpr auto kDefaultChargeStars = 10;
 		{ Flag::BanUsers, tr::lng_rights_group_ban(tr::now) },
 	};
 	if (!options.callsSupported) {
-		second.erase(
-			ranges::remove(
-				second,
-				Flag::ManageCall | Flag(),
-				&AdminRightLabel::flags),
-			end(second));
+		second.erase(ranges::remove(second, Flag::ManageCall | Flag(),
+									&AdminRightLabel::flags),
+					 end(second));
 	}
 	if (options.canProcessJoinRequests) {
 		second.push_back({

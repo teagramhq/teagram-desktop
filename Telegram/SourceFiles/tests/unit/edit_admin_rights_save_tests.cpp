@@ -178,8 +178,7 @@ TEST_CASE(StockPromotionStillSendsTheDefaultStoryRows) {
 
 TEST_CASE(UnsupportedCallEditKeepsExistingManageCallWhenOtherRightsChange) {
 	const auto existing = ChannelVisibleRights() | Flag::Other;
-	const auto checked = existing
-		& ~Flags(Flag::ChangeInfo | Flag::ManageCall);
+	const auto checked = existing & ~Flags(Flag::ChangeInfo | Flag::ManageCall);
 	const auto saved = AdminRights::RightsToSave({
 		.checked = checked,
 		.existing = existing,

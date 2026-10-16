@@ -1012,11 +1012,8 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 	if (chechMax()) {
 		return;
 	}
-	if (!isSide
-		&& user
-		&& user->session().callsSupported()
-		&& !user->sharedMediaInfo()
-		&& !user->isInaccessible()
+	if (!isSide && user && user->session().callsSupported()
+		&& !user->sharedMediaInfo() && !user->isInaccessible()
 		&& user->callsStatus() != UserData::CallsStatus::Disabled) {
 		const auto call = Ui::CreateChild<TopBarActionButton>(
 			this,
@@ -1618,7 +1615,7 @@ bool TopBar::callActionPresentForRegressionTest() const {
 		return false;
 	}
 	const auto callName = tr::lng_profile_action_short_call(tr::now);
-	for (const auto button : _actions->findChildren<QWidget*>()) {
+	for (const auto button : _actions->findChildren<QWidget *>()) {
 		if (button->accessibleName() == callName) {
 			return true;
 		}

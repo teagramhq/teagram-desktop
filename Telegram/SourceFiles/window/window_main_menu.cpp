@@ -779,12 +779,9 @@ void MainMenu::setupMenu() {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 			_callsRowPresentForRegressionTest = true;
 #endif
-			addAction(
-				tr::lng_menu_calls(),
-				{ &st::menuIconPhone }
-			)->setClickedCallback([=] {
-				::Calls::ShowCallsBox(controller);
-			});
+			addAction(tr::lng_menu_calls(), {&st::menuIconPhone})
+				->setClickedCallback(
+					[=] { ::Calls::ShowCallsBox(controller); });
 		}
 		addAction(
 			tr::lng_saved_messages(),
