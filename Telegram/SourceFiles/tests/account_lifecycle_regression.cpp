@@ -3314,13 +3314,13 @@ template <typename Predicate>
 		return fail("video_chat_menus_accessibility_and_keyboard");
 	}
 	{
-		const auto users = session.data().processUsers(MTP_vector<MTPUser>({
-			RegressionUser(UserId(1186), false, u"1186"_q, false),
-		}));
-		if (users.empty()) {
+		const auto privateUser
+			= session.data().processUsers(MTP_vector<MTPUser>({
+				RegressionUser(UserId(1186), false, u"1186"_q, false),
+			}));
+		if (!privateUser) {
 			return fail("private_call_fixture");
 		}
-		const auto privateUser = users.front();
 		const auto privateHistory = session.data().history(privateUser);
 		if (!privateHistory) {
 			return fail("private_call_history");
@@ -3329,7 +3329,7 @@ template <typename Predicate>
 			controller->widget().get(),
 			Info::Profile::TopBar::Descriptor{
 				.controller = controller,
-				.key = Info::Key(not_null<PeerData *>(privateUser.get())),
+				.key = Info::Key(not_null<PeerData *>(privateUser)),
 				.wrap = rpl::single(Info::Wrap::Layer),
 				.backToggles = rpl::single(false),
 				.showFinished = rpl::never<>(),
@@ -3341,12 +3341,14 @@ template <typename Predicate>
 		}
 		HistoryView::TopBarWidget topBar(controller->widget().get(),
 										 controller);
-		topBar.setActiveChat({.key = Dialogs::Key(privateHistory)}, nullptr);
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(privateHistory)}, nullptr);
 		topBar.updateControlsVisibility();
 		if (topBar.callButtonHiddenForRegressionTest() != !callsSupported) {
 			return fail("private_call_button");
 		}
-		topBar.setActiveChat({.key = Dialogs::Key(groupHistory)}, nullptr);
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(groupHistory)}, nullptr);
 		topBar.updateControlsVisibility();
 		if (topBar.groupCallButtonHiddenForRegressionTest()
 			!= !callsSupported) {
