@@ -451,7 +451,15 @@ for inert_command in \
   ": python3 <<'PY'" \
   "python3 -c 'pass' <<'PY'" \
   "python3 script.py <<'PY'" \
-  "cat <<'PY' | python3 -"; do
+  "cat <<'PY' | python3 -" \
+  "python3 --version <<'PY'" \
+  "python3 --help <<'PY'" \
+  "python3 -V - <<'PY'" \
+  "python3 -X dev - <<'PY'" \
+  "env -u python3 - <<'PY'" \
+  "env -i python3 - <<'PY'" \
+  "command -v python3 - <<'PY'" \
+  "exec -a python3 echo - <<'PY'"; do
   if printf '%s\nprobe = 1\nPY\n' "$inert_command" | python3 -I "$python_heredoc_parser" | grep -Fxq 'probe = 1'; then
     contract_fail "A heredoc that python3 does not run as its program must not count: $inert_command"
   fi

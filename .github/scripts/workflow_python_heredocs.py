@@ -18,9 +18,12 @@ REDIRECTION = re.compile(
     r"\d*(?:<<-?|>>|>&|<&|&>>?|>\||<>|>|<)\s*(?:'[^']*'|\"[^\"]*\"|[^\s;&|()<>]+)"
 )
 CONTROL = {"|", "||", "&&", ";", "&", "(", ")", ";;", "|&"}
-PREFIX_WORDS = {"!", "if", "then", "else", "elif", "while", "until", "do", "time", "exec", "command"}
+PREFIX_WORDS = {"!", "if", "then", "else", "elif", "while", "until", "do"}
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-OPTIONS_WITH_VALUE = {"-W", "-X"}
+# Only flags that leave python3 reading and running its program from stdin.
+# Anything else (--version, -c, -m, a script path, an unknown flag) means the
+# heredoc is not run, so it is not counted.
+STDIN_PROGRAM_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-P", "-q", "-s", "-S", "-u"}
 
 
 def last_simple_command(command):
@@ -41,21 +44,16 @@ def runs_stdin_as_python(command):
     while words and (words[0] in PREFIX_WORDS or ASSIGNMENT.match(words[0])):
         words.pop(0)
     if words and words[0] == "env":
+        # Only `env NAME=value ... python3`; an env option may take an operand.
         words.pop(0)
-        while words and (words[0].startswith("-") or ASSIGNMENT.match(words[0])):
+        while words and ASSIGNMENT.match(words[0]):
             words.pop(0)
     if not words or words[0].rsplit("/", 1)[-1] != "python3":
         return False
     arguments = words[1:]
-    while arguments:
-        argument = arguments.pop(0)
-        if argument == "-":
-            return True
-        if argument in ("-c", "-m") or not argument.startswith("-"):
-            return False
-        if argument in OPTIONS_WITH_VALUE:
-            arguments = arguments[1:]
-    return True
+    while arguments and arguments[0] in STDIN_PROGRAM_FLAGS:
+        arguments.pop(0)
+    return not arguments or arguments[0] == "-"
 
 
 def main():
