@@ -1567,8 +1567,12 @@ TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {
 	auto stock = DcOptions(Environment::Production);
 	stock.constructFromBuiltIn();
 
+	const auto pinnedAllowsCallLink = Main::details::callLinkAllowed(pinned);
+	const auto stockAllowsCallLink = Main::details::callLinkAllowed(stock);
 	const auto pinnedSupportsCalls = Main::details::callsSupported(pinned);
 	const auto stockSupportsCalls = Main::details::callsSupported(stock);
+	CHECK(!pinnedAllowsCallLink);
+	CHECK(stockAllowsCallLink);
 	CHECK(!pinnedSupportsCalls);
 	CHECK(stockSupportsCalls);
 
