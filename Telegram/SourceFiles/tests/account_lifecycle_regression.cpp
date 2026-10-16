@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_key.h"
@@ -4811,11 +4812,13 @@ template <typename Widget>
 	if (!historyWidget || (historyWidget->peer() != self.get())) {
 		return false;
 	}
+	// A chat section needs a replies root or a sublist to list messages.
+	// The self chat's own sublist sends into the same history.
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
 		content.get(), controller,
 		HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.sublist = session.data().savedMessages().sublist(self),
 		});
 	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
 	const auto repeat = TimeId(7 * 24 * 60 * 60);
