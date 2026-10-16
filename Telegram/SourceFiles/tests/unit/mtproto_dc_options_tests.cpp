@@ -1573,15 +1573,13 @@ TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {
 	CHECK(stockSupportsCalls);
 
 	auto unavailableShown = false;
-	CHECK(!Calls::details::AllowCallStart(pinnedSupportsCalls, [&] {
-		unavailableShown = true;
-	}));
+	CHECK(!Calls::details::AllowCallStart(pinnedSupportsCalls,
+										  [&] { unavailableShown = true; }));
 	CHECK(unavailableShown);
 
 	auto stockUnavailableShown = false;
-	CHECK(Calls::details::AllowCallStart(stockSupportsCalls, [&] {
-		stockUnavailableShown = true;
-	}));
+	CHECK(Calls::details::AllowCallStart(
+		stockSupportsCalls, [&] { stockUnavailableShown = true; }));
 	CHECK(!stockUnavailableShown);
 }
 
