@@ -337,8 +337,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *evt) {
 	return Window::MainWindow::eventFilter(obj, evt);
 }
 
-MainWindow::~MainWindow() {
-}
+MainWindow::~MainWindow() { lifetime().destroy(); }
 
 int32 ScreenNameChecksum(const QString &name) {
 	return Window::DefaultScreenNameChecksum(name);
