@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_tag_control.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_chat_participant_status.h"
 #include "data/data_peer.h"
 #include "data/data_user.h"
@@ -495,8 +496,11 @@ void TagInfoBox(
 	const auto canEditSelf = isAdmin
 		|| !peer->amRestricted(ChatRestriction::EditRank);
 	const auto channel = peer->asChannel();
-	const auto inGroup = peer->isChat() || (channel && channel->amIn());
-	if (canEditSelf && inGroup) {
+	const auto chat = peer->asChat();
+	const auto inGroup = chat || (channel && channel->amIn());
+	const auto tagsSupported
+		= !chat || Data::details::BasicChatControlsOf(chat).canEditMemberTags;
+	if (tagsSupported && canEditSelf && inGroup) {
 		const auto currentRank = LookupCurrentRank(peer);
 		auto buttonText = currentRank.isEmpty()
 			? tr::lng_tag_info_add_my_tag()
@@ -513,13 +517,13 @@ void TagInfoBox(
 				Fn<void(QString)>(nullptr)));
 		});
 	} else {
-		box->addRow(
-			object_ptr<Ui::FlatLabel>(
-				box,
-				tr::lng_tag_info_admins_only(),
-				st::tagInfoAdminsOnlyLabel),
-			st::boxRowPadding + st::tagInfoAdminsOnlyPadding,
-			style::al_top);
+		if (tagsSupported) {
+			box->addRow(
+				object_ptr<Ui::FlatLabel>(box, tr::lng_tag_info_admins_only(),
+										  st::tagInfoAdminsOnlyLabel),
+				st::boxRowPadding + st::tagInfoAdminsOnlyPadding,
+				style::al_top);
+		}
 		box->addButton(
 			rpl::single(QString()),
 			[=] { box->closeBox(); }

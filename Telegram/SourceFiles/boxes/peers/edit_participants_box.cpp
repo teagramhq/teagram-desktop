@@ -57,6 +57,9 @@ constexpr auto kParticipantsPerPage = 200;
 constexpr auto kSortByOnlineDelay = crl::time(1000);
 
 [[nodiscard]] bool SupportsMemberTags(not_null<PeerData*> peer) {
+	if (const auto chat = peer->asChat()) {
+		return Data::details::BasicChatControlsOf(chat).canEditMemberTags;
+	}
 	const auto channel = peer->asChannel();
 	return !channel || (!channel->isBroadcast() && !channel->isCommunity());
 }
@@ -1913,18 +1916,17 @@ void ParticipantsBoxController::rowClicked(not_null<PeerListRow*> row) {
 		Assert(user != nullptr);
 		showAdmin(user);
 	} else if (_role == Role::Restricted
-		&& (_peer->isChat() || _peer->isMegagroup())
-		&& user) {
+			   && (_peer->isChat() || _peer->isMegagroup())
+			   && Data::details::SupportsMemberRestrictions(_peer) && user) {
 		showRestricted(user);
-	} else if (_role == Role::Members
-		&& user
-		&& (_additional.adminRights(user).has_value()
-			|| _additional.isCreator(user))
-		&& _additional.canAddOrEditAdmin(user)) {
+	} else if (_role == Role::Members && user
+			   && (_additional.adminRights(user).has_value()
+				   || _additional.isCreator(user))
+			   && _additional.canAddOrEditAdmin(user)) {
 		showAdmin(user);
-	} else if (_role == Role::Members
-		&& user
-		&& _additional.canRestrictParticipant(participant)) {
+	} else if (_role == Role::Members && user
+			   && Data::details::SupportsMemberRestrictions(_peer)
+			   && _additional.canRestrictParticipant(participant)) {
 		showRestricted(user);
 	} else {
 		Assert(_navigation != nullptr);
@@ -2125,7 +2127,8 @@ base::unique_qptr<Ui::PopupMenu> ParticipantsBoxController::rowContextMenu(
 	if (user && _additional.canRestrictParticipant(participant)) {
 		const auto canRestrictWithoutKick = [&] {
 			if (const auto chat = _peer->asChat()) {
-				return chat->amCreator();
+				return chat->amCreator()
+					   && Data::details::SupportsMemberRestrictions(_peer);
 			}
 			return _peer->isMegagroup() && !_peer->isGigagroup();
 		}();
