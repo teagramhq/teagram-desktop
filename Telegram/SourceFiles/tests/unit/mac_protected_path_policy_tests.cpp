@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
 
 #include <map>
@@ -393,6 +394,74 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithoutIgnorableExpansion) {
 		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	CHECK(!joinedProfileStrings.contains("^/" + ignoredSequence + "[Uu]"));
+}
+
+TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
+	const auto homes = std::vector<std::pair<QString, QString>>{
+		{u"/Users/\u00C9lise"_q, u"/users/\u00E9LISE"_q},
+		{u"/Users/\u00D8lise"_q, u"/users/\u00F8LISE"_q},
+		{u"/Users/\u0141ukasz"_q, u"/users/\u0142UKASZ"_q},
+		{u"/Users/\u03A3"_q, u"/users/\u03C2"_q},
+		{u"/Users/\u03C3"_q, u"/users/\u03A3"_q},
+		{u"/Users/\u0410\u043B\u0438\u0441\u0430"_q,
+		 u"/users/\u0430\u041B\u0418\u0421\u0410"_q},
+		{u"/Users/\U00010400"_q, u"/users/\U00010428"_q},
+		{u"/Users/\u1E9E"_q, u"/users/\u00DF"_q},
+		{u"/Users/\u00D8.[x]"_q, u"/users/\u00F8.[x]"_q},
+		{u"/Users/"_q + QString(120, QChar(0x00D8)) + u"/"_q
+			 + QString(120, QChar(0x0141)),
+		 u"/users/"_q + QString(120, QChar(0x00F8)) + u"/"_q
+			 + QString(120, QChar(0x0142))},
+	};
+	for (const auto &[home, alias] : homes) {
+		auto fs = FakeFileSystem();
+		AddDirectoryHierarchy(
+			fs, home.normalized(QString::NormalizationForm_D).toUtf8());
+		const auto policy = MacProtectedPathPolicy::Build(
+			HomeRoots{.accountDatabase = home.toUtf8(),
+					  .foundation = home.toUtf8()},
+			fs.operations());
+		CHECK(policy.valid());
+		const auto profile = policy.SeatbeltProfile();
+		CHECK(!profile.isEmpty());
+		for (const auto &line : profile.split('\n')) {
+			CHECK(line.size() < 900);
+		}
+		const auto start = profile.indexOf("(regex\n");
+		CHECK(start >= 0);
+		auto expression = QByteArray();
+		for (const auto &line : profile.mid(start + 7).split('\n')) {
+			if (line == ")") {
+				break;
+			}
+			if (!line.startsWith('"')) {
+				continue;
+			}
+			for (auto i = qsizetype(1); i < line.size() - 1; ++i) {
+				if (line.at(i) == '\\') {
+					++i;
+				}
+				expression.append(line.at(i));
+			}
+		}
+		const auto regex = QRegularExpression(QString::fromUtf8(expression));
+		CHECK(regex.isValid());
+		const auto protectedPath
+			= alias + u"/Library/Application Support/Telegram Desktop/x"_q;
+		CHECK(policy.Classify(protectedPath.toUtf8())
+			  == ProtectedClass::ApplicationSupport);
+		CHECK(
+			regex.match(protectedPath.normalized(QString::NormalizationForm_D))
+				.hasMatch());
+		CHECK(!regex
+				   .match((alias + u"-other/Library/"_q)
+							  .normalized(QString::NormalizationForm_D))
+				   .hasMatch());
+		CHECK(
+			policy.Classify(
+				(alias + u"/Library/Application Support/Teagram/x"_q).toUtf8())
+			== ProtectedClass::None);
+	}
 }
 
 TEST_CASE(SeatbeltProfileRejectsOverlongRegexStrings) {

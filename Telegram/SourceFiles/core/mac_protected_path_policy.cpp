@@ -316,44 +316,69 @@ struct WalkResult {
 	return result;
 }
 
+[[nodiscard]] QByteArray ProfileUnicodeCharacterRegex(char32_t codepoint) {
+	if (codepoint < 0x80) {
+		return RegexLiteral(QByteArray(1, char(codepoint)));
+	}
+	static const auto caseEquivalents = [] {
+		auto result = std::map<char32_t, std::vector<char32_t>>();
+		for (auto value = char32_t(0); value <= 0x10FFFF; ++value) {
+			if (value >= 0xD800 && value <= 0xDFFF) {
+				continue;
+			}
+			const auto folded = QChar::toCaseFolded(value);
+			if (folded == value) {
+				continue;
+			}
+			auto &equivalents = result[folded];
+			if (equivalents.empty()) {
+				equivalents.push_back(folded);
+			}
+			equivalents.push_back(value);
+		}
+		return result;
+	}();
+	const auto i = caseEquivalents.find(QChar::toCaseFolded(codepoint));
+	if (i == caseEquivalents.end()) {
+		return RegexLiteral(QString::fromUcs4(&codepoint, 1).toUtf8());
+	}
+	auto result = QByteArray("(");
+	for (const auto equivalent : i->second) {
+		if (result.size() > 1) {
+			result.append('|');
+		}
+		result.append(RegexLiteral(QString::fromUcs4(&equivalent, 1).toUtf8()));
+	}
+	result.append(')');
+	return result;
+}
+
 [[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
 											   const QByteArray &ignored = {}) {
-	const auto special = QByteArray("\\.^$|()[]{}*+?");
 	auto result = ignored;
-	for (auto i = qsizetype(0); i < component.size();) {
-		const auto byte = uchar(component.at(i));
-		const auto isKelvin = byte == 0xE2 && component.size() - i >= 3
-							  && uchar(component.at(i + 1)) == 0x84
-							  && uchar(component.at(i + 2)) == 0xAA;
-		const auto isLongS = byte == 0xC5 && component.size() - i >= 2
-							 && uchar(component.at(i + 1)) == 0xBF;
+	for (const auto scalar : QString::fromUtf8(component).toUcs4()) {
+		const auto codepoint = char32_t(scalar);
 		auto character = QByteArray();
-		auto consumed = qsizetype(1);
-		if (byte == 'k' || byte == 'K' || isKelvin) {
+		if (codepoint == 'k' || codepoint == 'K' || codepoint == 0x212A) {
 			character = u"([Kk]|\u212A)"_q.toUtf8();
-			consumed = isKelvin ? 3 : 1;
-		} else if (byte == 's' || byte == 'S' || isLongS) {
+		} else if (codepoint == 's' || codepoint == 'S'
+				   || codepoint == 0x017F) {
 			character = u"([Ss]|\u017F)"_q.toUtf8();
-			consumed = isLongS ? 2 : 1;
-		} else if (byte >= 'a' && byte <= 'z') {
+		} else if (codepoint >= 'a' && codepoint <= 'z') {
 			character.append('[');
-			character.append(char(byte - 'a' + 'A'));
-			character.append(char(byte));
+			character.append(char(codepoint - 'a' + 'A'));
+			character.append(char(codepoint));
 			character.append(']');
-		} else if (byte >= 'A' && byte <= 'Z') {
+		} else if (codepoint >= 'A' && codepoint <= 'Z') {
 			character.append('[');
-			character.append(char(byte));
-			character.append(char(byte - 'A' + 'a'));
+			character.append(char(codepoint));
+			character.append(char(codepoint - 'A' + 'a'));
 			character.append(']');
 		} else {
-			if (special.contains(char(byte))) {
-				character.append('\\');
-			}
-			character.append(char(byte));
+			character = ProfileUnicodeCharacterRegex(codepoint);
 		}
 		result.append(character);
 		result.append(ignored);
-		i += consumed;
 	}
 	return result;
 }

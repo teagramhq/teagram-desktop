@@ -620,6 +620,29 @@ else
 		|| exit 1
 fi
 
+while IFS='|' read -r UNICODE_CASE_NAME UNICODE_CANONICAL_NAME UNICODE_ALIAS_NAME; do
+	UNICODE_CASE_CANONICAL="$TEST_HOME/$UNICODE_CANONICAL_NAME"
+	UNICODE_CASE_ALIAS="$TEST_HOME/$UNICODE_ALIAS_NAME"
+	verify_casefold_directory_alias \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}_alias" \
+		"$UNICODE_CASE_CANONICAL" "$UNICODE_CASE_ALIAS" \
+		|| exit 1
+	run_home_spelling_probes \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}" \
+		"$UNICODE_CASE_CANONICAL" "$UNICODE_CASE_ALIAS" \
+		|| exit 1
+	run_home_spelling_probes \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}_reverse" \
+		"$UNICODE_CASE_ALIAS" "$UNICODE_CASE_CANONICAL" \
+		|| exit 1
+done <<'UNICODE_HOME_CASES'
+accent|teagram-Élise|teagram-élise
+stroke|teagram-Ølise|teagram-ølise
+cyrillic|teagram-АЛИСА|teagram-алиса
+sigma|teagram-Σ|teagram-ς
+deseret|teagram-𐐀|teagram-𐐨
+UNICODE_HOME_CASES
+
 run_seatbelt_mode_probe \
 	seatbelt_parent_open_denial \
 	--mac-seatbelt-parent-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
