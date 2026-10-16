@@ -5598,14 +5598,12 @@ template <typename Predicate>
 	poll.stop();
 	return condition();
 }
-
-[[nodiscard]] bool WaitForSyntheticStockBindingResetForRegression(
-	not_null<Main::Account *> account) {
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
 	return WaitForRegressionCondition([&] {
-		return account->local().checkServerCacheBinding(
-				   kSyntheticStockCacheBindingForRegression.fingerprint,
-				   kSyntheticStockCacheBindingForRegression.userId)
-			   == Storage::ServerCacheBindingStatus::None;
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
 	});
 }
 
@@ -6320,6 +6318,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
@@ -6331,7 +6331,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"main-thread queue did not drain after call-link session "
 			"destruction");
 	}
-	if (!WaitForSyntheticStockBindingResetForRegression(discarded)) {
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
 		return FailChatParticipantsRegression(
 			"previous-session logout did not clear its cache binding");
 	}

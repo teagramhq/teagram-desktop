@@ -16,6 +16,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_location.h"
 #include "webview/webview_common.h"
 
+#include <QtCore/QStringList>
+
 class History;
 
 namespace Export {
@@ -173,6 +175,7 @@ public:
 #endif
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool mtpAuthorizationDataExistsForRegressionTest() const;
+	[[nodiscard]] QStringList serverCacheBindingFilesForRegressionTest() const;
 #endif
 
 	void registerDraftSource(
