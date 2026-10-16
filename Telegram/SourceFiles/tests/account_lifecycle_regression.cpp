@@ -1214,7 +1214,7 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 }
 
 [[nodiscard]] bool
-ResetSyntheticAccountForRegression(not_null<Main::Account *> account) {
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
 	account->mtp().stopForServerEnrollment();
 	account->mtp().dcOptions().constructUnenrolled();
 	return account->local().writeMtpAuthorization()
@@ -1226,7 +1226,7 @@ ResetSyntheticAccountForRegression(not_null<Main::Account *> account) {
 		   && !account->local().customServerPinUnknown()
 		   && HasNoAuthorizationState(account)
 		   && (account->local().checkServerCacheBinding(0, 1)
-			   == Storage::ServerCacheBindingStatus::None);
+			   == Storage::ServerCacheBindingStatus::Match);
 }
 
 [[nodiscard]] bool
@@ -6305,7 +6305,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
-	if (!ResetSyntheticAccountForRegression(discarded)) {
+	if (!PrepareSyntheticStockAccountForRegression(discarded)) {
 		return FailChatParticipantsRegression(
 			"could not reset the destroyed previous-session fixture for later "
 			"account-slot reuse");
@@ -8171,9 +8171,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"blocked teardown wrote authorization data or a failure marker");
 	}
+	// CommitServerForget preserves its binding. Keep it compatible with the
+	// synthetic stock identity that will later reuse this account slot.
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			Storage::ServerCacheBinding{
+				.fingerprintKnown = true,
+				.fingerprint = 0,
+				.userIdKnown = true,
+				.userId = 1,
+			},
+			[] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
@@ -8191,7 +8199,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
 	}
-	if (!ResetSyntheticAccountForRegression(restoredBlocked)) {
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
 		return FailAccountLifecycleRegression(
 			"could not reset the synthetic account after blocked-state checks");
 	}
