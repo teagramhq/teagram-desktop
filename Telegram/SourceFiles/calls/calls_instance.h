@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/sender.h"
 
+#include <utility>
+
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 namespace Tests {
 class CallsInstanceRegressionAccess;
@@ -97,6 +99,18 @@ void ShowCallUnavailableToast(not_null<Main::Session *> session);
 	}
 	showUnavailable();
 	return false;
+}
+
+template <typename Callback>
+[[nodiscard]] inline bool RunCallStartIfAllowed(
+		bool supported,
+		Fn<void()> showUnavailable,
+		Callback &&callback) {
+	if (!AllowCallStart(supported, std::move(showUnavailable))) {
+		return false;
+	}
+	callback();
+	return true;
 }
 
 } // namespace details

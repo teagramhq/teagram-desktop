@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "window/window_session_controller.h"
 #include "styles/style_layers.h"
 #include "styles/style_media_view.h"
@@ -484,35 +485,45 @@ void MakeConferenceCall(ConferenceFactoryArgs &&args) {
 			onstack(false);
 		}
 	};
-	session->api().request(MTPphone_CreateConferenceCall(
-		MTP_flags(0),
-		MTP_int(base::RandomValue<int32>()),
-		MTPint256(), // public_key
-		MTPbytes(), // block
-		MTPDataJSON() // params
-	)).done([=](const MTPUpdates &result) {
-		auto call = session->data().sharedConferenceCallFind(result);
-		if (!call) {
-			fail(u"Call not found!"_q);
-			return;
-		}
-		session->api().applyUpdates(result);
+	const auto request = [=] {
+		session->api().request(MTPphone_CreateConferenceCall(
+			MTP_flags(0),
+			MTP_int(base::RandomValue<int32>()),
+			MTPint256(), // public_key
+			MTPbytes(), // block
+			MTPDataJSON() // params
+		)).done([=](const MTPUpdates &result) {
+			auto call = session->data().sharedConferenceCallFind(result);
+			if (!call) {
+				fail(u"Call not found!"_q);
+				return;
+			}
+			session->api().applyUpdates(result);
 
-		const auto link = call ? call->conferenceInviteLink() : QString();
-		if (link.isEmpty()) {
-			fail(u"Call link not found!"_q);
-			return;
-		}
-		Calls::Group::ShowConferenceCallLinkBox(
-			show,
-			call,
-			{ .initial = true });
+			const auto link = call ? call->conferenceInviteLink() : QString();
+			if (link.isEmpty()) {
+				fail(u"Call link not found!"_q);
+				return;
+			}
+			Calls::Group::ShowConferenceCallLinkBox(
+				show,
+				call,
+				{ .initial = true });
+			if (const auto onstack = finished) {
+				finished(true);
+			}
+		}).fail([=](const MTP::Error &error) {
+			fail(error.type());
+		}).send();
+	};
+	if (!Calls::details::RunCallStartIfAllowed(
+			Main::details::callLinkAllowed(session->mtp().dcOptions()),
+			[=] { Calls::details::ShowCallUnavailableToast(session); },
+			request)) {
 		if (const auto onstack = finished) {
-			finished(true);
+			onstack(false);
 		}
-	}).fail([=](const MTP::Error &error) {
-		fail(error.type());
-	}).send();
+	}
 }
 
 QString ExtractConferenceSlug(const QString &link) {

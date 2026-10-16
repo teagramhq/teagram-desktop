@@ -1587,6 +1587,31 @@ TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {
 	CHECK(!stockUnavailableShown);
 }
 
+TEST_CASE(ConferenceCallLinkRequestsRequireCallSupport) {
+	auto pinned = DcOptions(Environment::Production);
+	CHECK(pinned.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	const auto checkRequest = [](const DcOptions &options,
+								 bool expectedRequest) {
+		auto requests = 0;
+		auto unavailableShown = false;
+		const auto ran = Calls::details::RunCallStartIfAllowed(
+			Main::details::callLinkAllowed(options),
+			[&] { unavailableShown = true; },
+			[&] { ++requests; });
+		CHECK_EQ(ran, expectedRequest);
+		CHECK_EQ(requests, expectedRequest ? 1 : 0);
+		CHECK_EQ(unavailableShown, !expectedRequest);
+	};
+	checkRequest(pinned, false);
+	checkRequest(blocked, false);
+	checkRequest(stock, true);
+}
+
 TEST_CASE(AccountUsernameCacheRefreshRequiresEditableSession) {
 	auto stock = DcOptions(Environment::Production);
 	stock.constructFromBuiltIn();
