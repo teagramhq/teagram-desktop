@@ -8170,6 +8170,21 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
 	}
+	restoredBlocked->mtp().stopForServerEnrollment();
+	restoredBlocked->mtp().dcOptions().constructUnenrolled();
+	if (!restoredBlocked->local().writeMtpAuthorization()
+		|| restoredBlocked->mtp().dcOptions().blocked()
+		|| !restoredBlocked->mtp().dcOptions().unenrolled()
+		|| !restoredBlocked->mtp().dcOptions().configEnumDcIds().empty()
+		|| restoredBlocked->local().mtpAuthorizationWriteFailed()
+		|| restoredBlocked->local().hasStoredCustomServer()
+		|| restoredBlocked->local().customServerPinUnknown()
+		|| !HasNoAuthorizationState(restoredBlocked)
+		|| restoredBlocked->local().checkServerCacheBinding(0, 1)
+			   != Storage::ServerCacheBindingStatus::None) {
+		return FailAccountLifecycleRegression(
+			"could not reset the synthetic account after blocked-state checks");
+	}
 
 	ReportCallRegressionCheckpoint("account lifecycle setup complete");
 	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
