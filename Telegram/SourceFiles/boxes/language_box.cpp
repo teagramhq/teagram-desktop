@@ -1543,10 +1543,6 @@ void LanguageBox::showFinished() {
 	if (!_controller || _highlightId.isEmpty()) {
 		return;
 	}
-	const auto window = Core::App().findWindow(this);
-	if (!window) {
-		return;
-	}
 	auto widget = static_cast<Ui::RpWidget *>(nullptr);
 	if (_highlightId == u"language/show-button"_q) {
 		widget = _showButtonToggle.data();
@@ -1558,9 +1554,9 @@ void LanguageBox::showFinished() {
 		return;
 	}
 	if (widget && widget->isVisible()) {
-		window->checkHighlightControl(_highlightId, widget);
+		_controller->checkHighlightControl(_highlightId, widget);
 	} else {
-		static_cast<void>(window->takeHighlightControlId(_highlightId));
+		static_cast<void>(_controller->takeHighlightControlId(_highlightId));
 	}
 }
 
