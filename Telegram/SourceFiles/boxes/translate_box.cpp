@@ -428,7 +428,7 @@ void TranslateBox(
 		if (const auto item = peer->owner().message(peer->id, msgId)) {
 			if (const auto page = item->richPage()) {
 				if (!peer->session().serverTranslationSupported()) {
-					box->closeBox();
+					crl::on_main(box.get(), [=] { box->closeBox(); });
 					return;
 				}
 				if (state->provider->supportsMessageId()) {
