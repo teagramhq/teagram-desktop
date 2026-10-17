@@ -363,13 +363,14 @@ struct WalkResult {
 		auto character = QByteArray();
 		if (codepoint == 0x00DF) {
 			character = u"([Ss]"_q.toUtf8() + ignored
-				+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
+						+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
 		} else if (codepoint == 's' && i + 1 < int(scalars.size())
-			&& scalars[i + 1] == 's') {
+				   && scalars[i + 1] == 's') {
 			character = u"([Ss]"_q.toUtf8() + ignored
-				+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
+						+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
 			++i;
-		} else if (codepoint == 'k' || codepoint == 'K' || codepoint == 0x212A) {
+		} else if (codepoint == 'k' || codepoint == 'K'
+				   || codepoint == 0x212A) {
 			character = u"[Kk\u212A]"_q.toUtf8();
 		} else if (codepoint == 's' || codepoint == 'S'
 				   || codepoint == 0x017F) {
@@ -888,16 +889,15 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		node->terminal = true;
 	}
 	auto homeBranches = std::vector<QByteArray>();
-	const auto appendHomeBranches = [&](const auto &self,
-										 const HomeRegexNode &node,
-										 QByteArray prefix) -> void {
+	const auto appendHomeBranches
+		= [&](const auto &self, const HomeRegexNode &node,
+			  QByteArray prefix) -> void {
 		if (node.terminal) {
 			homeBranches.push_back(prefix);
 		}
 		for (const auto &[part, child] : node.children) {
-			auto branch = prefix.isEmpty()
-				? component(part)
-				: prefix + "/" + component(part);
+			auto branch = prefix.isEmpty() ? component(part)
+										   : prefix + "/" + component(part);
 			self(self, child, std::move(branch));
 		}
 	};
