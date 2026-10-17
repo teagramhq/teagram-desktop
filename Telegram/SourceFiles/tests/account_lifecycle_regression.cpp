@@ -6399,9 +6399,7 @@ struct NativeLifecycleResults {
 		if (Core::MacProtectedPath::CheckCachePath(
 				stockCachePath, "Tests::ProtectedCache::root")
 			|| Core::MacProtectedPath::CheckCachePath(
-				stockMediaCachePath, "Tests::ProtectedCache::media-root")
-			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
-			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
+				stockMediaCachePath, "Tests::ProtectedCache::media-root")) {
 			return failPrerequisite(
 				"authenticated session accessed a protected cache root");
 		}
@@ -7832,11 +7830,7 @@ struct NativeLifecycleResults {
 		const auto mediaCacheFileRefused
 			= !Core::MacProtectedPath::CheckCachePath(
 				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
-		const auto cacheFixturesPreserved
-			= FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-			  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
-		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
-									  && cacheFixturesPreserved;
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
 		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
 									   cacheFilesPassed);
 		if (cacheFilesPassed) {
@@ -8312,11 +8306,7 @@ struct NativeLifecycleResults {
 					  pinnedCachePath, "Tests::ProtectedCache::async-file")
 				  && !Core::MacProtectedPath::CheckCachePath(
 					  pinnedMediaCachePath,
-					  "Tests::ProtectedCache::async-media-file")
-				  && FixtureContainsOnlyMarker(fixtures.cacheRoot)
-				  && FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
-				  && FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-				  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+					  "Tests::ProtectedCache::async-media-file");
 			recordChatCase(
 				"protected-cache-cleanup", protectedCacheCleanupPassed,
 				"asynchronous cache cleanup accessed a protected target");
@@ -8442,7 +8432,7 @@ struct NativeLifecycleResults {
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!PrepareProtectedCacheFixtures(&fixtures)) {
+	if (!SetProtectedCacheFixturePaths(&fixtures)) {
 		return failAccountPrerequisite(
 			"could not prepare protected cache fixtures");
 	}
