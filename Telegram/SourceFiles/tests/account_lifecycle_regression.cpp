@@ -4943,12 +4943,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	const auto customRichRegistered
 		= (customSession.data().message(customRichItem->fullId())
 		   == customRichItem);
-	if (!stockTextRegistered || !stockRichRegistered
-		|| !customTextRegistered || !customRichRegistered) {
-		std::fprintf(
-			stderr,
-			"Translation controls regression failed: synthetic message fixtures "
-			"were not registered for message lookup.\n");
+	if (!stockTextRegistered || !stockRichRegistered || !customTextRegistered
+		|| !customRichRegistered) {
+		std::fprintf(stderr, "Translation controls regression failed: "
+							 "synthetic message fixtures "
+							 "were not registered for message lookup.\n");
 		return false;
 	}
 	auto customAdminLogProvider
