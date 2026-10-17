@@ -67,6 +67,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
+#include "info/info_layer_widget.h"
 #include "info/info_wrap_widget.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
@@ -2300,39 +2301,61 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	const auto ordinaryToastBefore
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
-		return false;
+	{
+		const auto window = pinnedController->widget();
+		const auto previousSize = window->size();
+		const auto minimumLayerWidth
+			= Info::LayerWidget::MinimalSupportedWidth();
+		const auto restoreSize = gsl::finally([=] {
+			window->resize(previousSize);
+			QCoreApplication::processEvents();
+		});
+		window->resize(minimumLayerWidth - 1, previousSize.height());
+		QCoreApplication::processEvents();
+		if (window->width() >= minimumLayerWidth) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: could not constrain "
+				"test window below Info layer width: width=%d minimum=%d.\n",
+				window->width(), minimumLayerWidth);
+			return false;
+		}
+		const auto ordinaryToastBefore
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings"_q,
+							  contextFor(pinnedController))) {
+			return false;
+		}
+		QCoreApplication::processEvents();
+		const auto ordinarySectionShown
+			= pinnedController->content()->isMainSectionShown();
+		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
+		const auto ordinaryToastUnchanged
+			= (pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   == ordinaryToastBefore);
+		const auto ordinaryWindowActive
+			= (app.activeWindow() == &pinnedController->window());
+		if (!ordinarySectionShown || !ordinaryLayerHidden
+			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression ordinary Settings checks: "
+				"section_shown=%d layer_hidden=%d toast_unchanged=%d "
+				"window_active=%d.\n",
+				ordinarySectionShown, ordinaryLayerHidden,
+				ordinaryToastUnchanged, ordinaryWindowActive);
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: ordinary Settings link "
+				"lost its section or focus behavior.\n");
+			return false;
+		}
+		pinnedController->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
+		QCoreApplication::processEvents();
 	}
-	QCoreApplication::processEvents();
-	const auto ordinarySectionShown
-		= pinnedController->content()->isMainSectionShown();
-	const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
-	const auto ordinaryToastUnchanged
-		= (pinnedController
-			   ->featureUnavailableOnServerToastCallsForRegressionTest()
-		   == ordinaryToastBefore);
-	const auto ordinaryWindowActive
-		= (app.activeWindow() == &pinnedController->window());
-	if (!ordinarySectionShown || !ordinaryLayerHidden || !ordinaryToastUnchanged
-		|| !ordinaryWindowActive) {
-		std::fprintf(stderr,
-					 "Settings deep link regression ordinary Settings checks: "
-					 "section_shown=%d layer_hidden=%d toast_unchanged=%d "
-					 "window_active=%d.\n",
-					 ordinarySectionShown, ordinaryLayerHidden,
-					 ordinaryToastUnchanged, ordinaryWindowActive);
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: ordinary Settings link "
-			"lost its section or focus behavior.\n");
-		return false;
-	}
-	pinnedController->clearSectionStack(
-		Window::SectionShow(anim::type::instant, anim::activation::background));
-	QCoreApplication::processEvents();
 
 	for (const auto &controller : {pinnedController, blockedController}) {
 		const auto toastBefore
