@@ -24,6 +24,8 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
       - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
+      - '.github/scripts/macos_libraries_image.sh'
+      - '.github/scripts/test_macos_libraries_image.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/workflow_contract.sh'
@@ -61,6 +63,8 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
       - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
+      - '.github/scripts/macos_libraries_image.sh'
+      - '.github/scripts/test_macos_libraries_image.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/workflow_contract.sh'
@@ -142,6 +146,9 @@ jobs:
 
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
+
+      - name: Test macOS dependency artifact handling.
+        run: bash .github/scripts/test_macos_libraries_image.sh
 
       - name: Test CI cache contract.
         run: bash .github/scripts/test_ci_cache_contract.sh
