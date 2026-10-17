@@ -2307,12 +2307,23 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		return false;
 	}
 	QCoreApplication::processEvents();
-	if (!pinnedController->content()->isMainSectionShown()
-		|| pinnedController->isLayerShown()
-		|| (pinnedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= ordinaryToastBefore)
-		|| (app.activeWindow() != &pinnedController->window())) {
+	const auto ordinarySectionShown
+		= pinnedController->content()->isMainSectionShown();
+	const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
+	const auto ordinaryToastUnchanged
+		= (pinnedController
+			   ->featureUnavailableOnServerToastCallsForRegressionTest()
+		   == ordinaryToastBefore);
+	const auto ordinaryWindowActive
+		= (app.activeWindow() == &pinnedController->window());
+	if (!ordinarySectionShown || !ordinaryLayerHidden || !ordinaryToastUnchanged
+		|| !ordinaryWindowActive) {
+		std::fprintf(stderr,
+					 "Settings deep link regression ordinary Settings checks: "
+					 "section_shown=%d layer_hidden=%d toast_unchanged=%d "
+					 "window_active=%d.\n",
+					 ordinarySectionShown, ordinaryLayerHidden,
+					 ordinaryToastUnchanged, ordinaryWindowActive);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: ordinary Settings link "
