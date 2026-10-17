@@ -4859,7 +4859,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			  return controller->window().show(
 				  object_ptr<LanguageBox>(controller->widget().get(),
 										  controller, highlightId),
-				  Ui::LayerOption::KeepOther, anim::type::normal);
+				  Ui::LayerOption::KeepOther, anim::type::instant);
 		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
@@ -4883,7 +4883,8 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			   != (customProviderWithPlatformOff
 					   == Ui::details::TranslateProviderChoice::Platform
 				   && Platform::IsMac())
-		|| customLanguageBox->translateChatsRowPresentForRegressionTest()) {
+		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
+		|| !customController->highlightControlId().isEmpty()) {
 		std::fprintf(
 			stderr,
 			"Translation controls regression failed: custom Language settings "
@@ -4906,8 +4907,8 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 					  ->platformTranslationRowPresentForRegressionTest()
 				: false,
 			customLanguageBox
-			? customLanguageBox->translationAboutPresentForRegressionTest()
-			: false,
+				? customLanguageBox->translationAboutPresentForRegressionTest()
+				: false,
 			customHasProvider,
 			customLanguageBox
 				? customLanguageBox->platformPackNotePresentForRegressionTest()
@@ -5060,6 +5061,25 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		std::fprintf(stderr,
 					 "Translation controls regression failed: translation "
 					 "message fixtures were not created.\n");
+		return false;
+	}
+	const auto stockTextRegistered
+		= (stockSession.data().message(stockTextItem->fullId())
+		   == stockTextItem);
+	const auto stockRichRegistered
+		= (stockSession.data().message(stockRichItem->fullId())
+		   == stockRichItem);
+	const auto customTextRegistered
+		= (customSession.data().message(customTextItem->fullId())
+		   == customTextItem);
+	const auto customRichRegistered
+		= (customSession.data().message(customRichItem->fullId())
+		   == customRichItem);
+	if (!stockTextRegistered || !stockRichRegistered || !customTextRegistered
+		|| !customRichRegistered) {
+		std::fprintf(stderr, "Translation controls regression failed: "
+							 "synthetic message fixtures "
+							 "were not registered for message lookup.\n");
 		return false;
 	}
 	auto customAdminLogProvider
