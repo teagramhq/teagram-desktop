@@ -7,6 +7,12 @@
 add_executable(Telegram WIN32 MACOSX_BUNDLE)
 init_non_host_target(Telegram)
 
+if (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(TDESKTOP_TEAGRAM TRUE)
+else()
+    set(TDESKTOP_TEAGRAM FALSE)
+endif()
+
 set(TDESKTOP_TEAGRAM_UPDATE_BUILD "0" CACHE STRING "Teagram release build identity")
 set(TDESKTOP_TEAGRAM_UPDATE_CHANNEL "dev" CACHE STRING "Teagram release channel")
 if (NOT "${TDESKTOP_TEAGRAM_UPDATE_BUILD}" MATCHES "^(0|[1-9][0-9]*)$")
@@ -1681,6 +1687,7 @@ PRIVATE
     payments/payments_non_panel_process.h
     payments/payments_reaction_process.cpp
     payments/payments_reaction_process.h
+    platform/linux/app_data_path.cpp
     platform/linux/file_utilities_linux.cpp
     platform/linux/file_utilities_linux.h
     platform/linux/launcher_linux.cpp
@@ -2366,8 +2373,12 @@ if (build_macstore)
         COMMAND rm -rf $<TARGET_FILE_DIR:Telegram>/../Frameworks/Breakpad.framework/Resources/Inspector
     )
 else()
-    if (APPLE)
-        set(bundle_identifier "io.teagram.desktop")
+    if (TDESKTOP_TEAGRAM)
+        if (APPLE)
+            set(bundle_identifier "io.teagram.desktop")
+        else()
+            set(bundle_identifier "com.tdesktop.Telegram")
+        endif()
         set(output_name "Teagram")
     elseif (CMAKE_GENERATOR STREQUAL Xcode)
         set(bundle_identifier "com.tdesktop.Telegram$<$<CONFIG:Debug>:Debug>")
@@ -2419,7 +2430,7 @@ PRIVATE
     G_LOG_DOMAIN="Telegram"
 )
 
-if (APPLE)
+if (TDESKTOP_TEAGRAM)
     target_compile_definitions(Telegram PRIVATE
         TDESKTOP_TEAGRAM
         TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
@@ -2519,7 +2530,11 @@ endif()
 
 target_prepare_qrc(Telegram)
 
-if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE AND NOT APPLE AND NOT build_macstore AND NOT build_winstore)
+if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE
+    AND NOT APPLE
+    AND NOT TDESKTOP_TEAGRAM
+    AND NOT build_macstore
+    AND NOT build_winstore)
     add_executable(Updater WIN32)
     init_non_host_target(Updater)
 
