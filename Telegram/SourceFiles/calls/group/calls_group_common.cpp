@@ -486,35 +486,35 @@ void MakeConferenceCall(ConferenceFactoryArgs &&args) {
 		}
 	};
 	const auto request = [=] {
-		session->api().request(MTPphone_CreateConferenceCall(
-			MTP_flags(0),
-			MTP_int(base::RandomValue<int32>()),
-			MTPint256(), // public_key
-			MTPbytes(), // block
-			MTPDataJSON() // params
-		)).done([=](const MTPUpdates &result) {
-			auto call = session->data().sharedConferenceCallFind(result);
-			if (!call) {
-				fail(u"Call not found!"_q);
-				return;
-			}
-			session->api().applyUpdates(result);
+		session->api()
+			.request(MTPphone_CreateConferenceCall(
+				MTP_flags(0), MTP_int(base::RandomValue<int32>()),
+				MTPint256(),  // public_key
+				MTPbytes(),	  // block
+				MTPDataJSON() // params
+				))
+			.done([=](const MTPUpdates &result) {
+				auto call = session->data().sharedConferenceCallFind(result);
+				if (!call) {
+					fail(u"Call not found!"_q);
+					return;
+				}
+				session->api().applyUpdates(result);
 
-			const auto link = call ? call->conferenceInviteLink() : QString();
-			if (link.isEmpty()) {
-				fail(u"Call link not found!"_q);
-				return;
-			}
-			Calls::Group::ShowConferenceCallLinkBox(
-				show,
-				call,
-				{ .initial = true });
-			if (const auto onstack = finished) {
-				finished(true);
-			}
-		}).fail([=](const MTP::Error &error) {
-			fail(error.type());
-		}).send();
+				const auto link
+					= call ? call->conferenceInviteLink() : QString();
+				if (link.isEmpty()) {
+					fail(u"Call link not found!"_q);
+					return;
+				}
+				Calls::Group::ShowConferenceCallLinkBox(show, call,
+														{.initial = true});
+				if (const auto onstack = finished) {
+					finished(true);
+				}
+			})
+			.fail([=](const MTP::Error &error) { fail(error.type()); })
+			.send();
 	};
 	if (!Calls::details::RunCallStartIfAllowed(
 			Main::details::callLinkAllowed(session->mtp().dcOptions()),

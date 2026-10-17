@@ -102,10 +102,9 @@ void ShowCallUnavailableToast(not_null<Main::Session *> session);
 }
 
 template <typename Callback>
-[[nodiscard]] inline bool RunCallStartIfAllowed(
-		bool supported,
-		Fn<void()> showUnavailable,
-		Callback &&callback) {
+[[nodiscard]] inline bool RunCallStartIfAllowed(bool supported,
+												Fn<void()> showUnavailable,
+												Callback &&callback) {
 	if (!AllowCallStart(supported, std::move(showUnavailable))) {
 		return false;
 	}
