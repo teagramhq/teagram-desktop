@@ -150,7 +150,17 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 			  && joinedProfileStrings.contains("/|/)("));
 		CHECK(!joinedProfileStrings.contains(")?"));
 		CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
-		CHECK(!profile.contains(u"\u200B"_q.toUtf8()));
+		// Only boundaries between two characters that can match non-ASCII,
+		// such as the "sk" in "desktop", list the ignored characters.
+		const auto exactSequence
+			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+		CHECK(joinedProfileStrings.contains(u"([Ss]|\u017F)"_q.toUtf8()
+											+ exactSequence
+											+ u"([Kk]|\u212A)"_q.toUtf8()));
+		CHECK(!joinedProfileStrings.contains(ignoredSequence + "[Ll]"
+											 + exactSequence));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
 		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
@@ -379,7 +389,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 			 u"\u202E"_q.toUtf8(), u"\u206A"_q.toUtf8(), u"\u206B"_q.toUtf8(),
 			 u"\u206C"_q.toUtf8(), u"\u206D"_q.toUtf8(), u"\u206E"_q.toUtf8(),
 			 u"\u206F"_q.toUtf8(), u"\uFEFF"_q.toUtf8()}) {
-		CHECK(!profile.contains(character));
+		CHECK(profile.contains(character));
 	}
 }
 
@@ -471,7 +481,7 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	CHECK(joinedProfileStrings.contains(
 		ignoredSequence + u"([Kk]|\u212A)"_q.toUtf8() + exactSequence
-		+ u"([Ss]|\u017F)"_q.toUtf8() + ignoredSequence + "/"));
+		+ u"([Ss]|\u017F)"_q.toUtf8() + ignoredSequence + ")/"));
 	CHECK(!joinedProfileStrings.contains(ignoredSequence + ignoredSequence));
 }
 
