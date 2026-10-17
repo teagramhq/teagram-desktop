@@ -2106,12 +2106,10 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	const auto restoredBlockedWithoutPin
 		= restoredBlockedHasNoSession && restoredBlockedConfigBlocked
 		  && restoredBlockedHasNoCustomConfig
-		  && restoredBlockedHasNoStoredCustom
-		  && restoredBlockedPinStateKnown
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
 		  && restoredBlockedAuthorizationFailed
 		  && !restoredBlockedNetworkAllowed;
-	const auto customIsPinned
-		= pinned->mtp().dcOptions().hasCustomServer();
+	const auto customIsPinned = pinned->mtp().dcOptions().hasCustomServer();
 	const auto customIsUnblocked = !pinned->mtp().dcOptions().blocked();
 	const auto blockedHasNoCustomConfig
 		= !blocked->mtp().dcOptions().hasCustomServer();
@@ -2145,26 +2143,15 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		"custom_pinned=%d custom_unblocked=%d blocked_no_custom_config=%d "
 		"blocked_config_blocked=%d blocked_no_stored_custom=%d "
 		"blocked_pin_state_known=%d controllers=%d/%d/%d.\n",
-		sameUserId,
-		stockPaidSupported,
-		customPaidUnsupported,
-		blockedPaidUnsupported,
-		restoredBlockedIsDistinct,
-		restoredBlockedHasNoSession,
-		restoredBlockedConfigBlocked,
-		restoredBlockedHasNoCustomConfig,
-		restoredBlockedHasNoStoredCustom,
-		restoredBlockedPinStateKnown,
-		restoredBlockedAuthorizationFailed,
-		restoredBlockedNetworkAllowed,
-		customIsPinned,
-		customIsUnblocked,
-		blockedHasNoCustomConfig,
-		blockedConfigBlocked,
-		blockedHasNoStoredCustom,
-		blockedPinStateKnown,
-		stockControllerOwnsSession,
-		customControllerOwnsSession,
+		sameUserId, stockPaidSupported, customPaidUnsupported,
+		blockedPaidUnsupported, restoredBlockedIsDistinct,
+		restoredBlockedHasNoSession, restoredBlockedConfigBlocked,
+		restoredBlockedHasNoCustomConfig, restoredBlockedHasNoStoredCustom,
+		restoredBlockedPinStateKnown, restoredBlockedAuthorizationFailed,
+		restoredBlockedNetworkAllowed, customIsPinned, customIsUnblocked,
+		blockedHasNoCustomConfig, blockedConfigBlocked,
+		blockedHasNoStoredCustom, blockedPinStateKnown,
+		stockControllerOwnsSession, customControllerOwnsSession,
 		blockedControllerOwnsSession);
 	if (!configured) {
 		std::fprintf(
@@ -7896,8 +7883,7 @@ struct NativeLifecycleResults {
 		= restoredBlockedInitialStateReady
 		  && restoredBlockedAuthorizationFailureWritten
 		  && restoredBlockedIsBlocked && restoredBlockedHasNoCustomConfig
-		  && restoredBlockedHasNoStoredCustom
-		  && restoredBlockedPinStateKnown
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
 		  && restoredBlockedAuthorizationFailed
 		  && !restoredBlockedNetworkAllowed;
 	if (!restoredBlockedFixtureReady) {
@@ -7906,15 +7892,14 @@ struct NativeLifecycleResults {
 					 "distinct=%d marker_written=%d no_session=%d blocked=%d "
 					 "custom=%d stored_custom=%d pin_unknown=%d "
 					 "auth_failed=%d network_allowed=%d.\n",
-			restoredBlockedIsDistinct,
-			restoredBlockedAuthorizationFailureWritten,
-			restoredBlockedHasNoSession,
-			restoredBlockedIsBlocked,
-			!restoredBlockedHasNoCustomConfig,
-			!restoredBlockedHasNoStoredCustom,
-			!restoredBlockedPinStateKnown,
-			restoredBlockedAuthorizationFailed,
-			restoredBlocked->mtp().isServerEnrollmentNetworkAllowed());
+					 restoredBlockedIsDistinct,
+					 restoredBlockedAuthorizationFailureWritten,
+					 restoredBlockedHasNoSession, restoredBlockedIsBlocked,
+					 !restoredBlockedHasNoCustomConfig,
+					 !restoredBlockedHasNoStoredCustom,
+					 !restoredBlockedPinStateKnown,
+					 restoredBlockedAuthorizationFailed,
+					 restoredBlocked->mtp().isServerEnrollmentNetworkAllowed());
 	}
 	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
 	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
