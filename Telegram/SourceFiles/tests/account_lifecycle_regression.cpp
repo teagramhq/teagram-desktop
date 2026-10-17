@@ -2313,7 +2313,7 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			blockedWindow->resize(blockedPreviousSize);
 			QCoreApplication::processEvents();
 		});
-		for (const auto window : {pinnedWindow, blockedWindow}) {
+		for (const auto &window : {pinnedWindow, blockedWindow}) {
 			window->resize(minimumLayerWidth - 1, window->height());
 		}
 		QCoreApplication::processEvents();
