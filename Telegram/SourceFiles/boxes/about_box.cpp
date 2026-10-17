@@ -45,7 +45,7 @@ rpl::producer<TextWithEntities> Text2() {
 
 } // namespace
 
-void AboutBox(not_null<Ui::GenericBox*> box) {
+void AboutBox(not_null<Ui::GenericBox *> box) {
 	box->setTitle(tr::lng_teagram_about_title());
 
 	auto layout = box->verticalLayout();
@@ -65,9 +65,10 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 			st::boxRowPadding.bottom()));
 	version->setClickedCallback([=] {
 		const auto link = currentVersionReleaseLink();
-		File::OpenUrl(link.isEmpty()
-			? u"https://github.com/teagramhq/teagram-desktop/releases"_q
-			: link);
+		File::OpenUrl(
+			link.isEmpty()
+				? u"https://github.com/teagramhq/teagram-desktop/releases"_q
+				: link);
 	});
 #ifdef TDESKTOP_TEAGRAM
 	if (currentVersionReleaseLink().isEmpty()) {

@@ -3155,25 +3155,23 @@ template <typename Predicate>
 
 [[nodiscard]] bool WaitForMainQueueBarrier();
 
-[[nodiscard]] bool RunTeagramBrandingRegression(
-	not_null<Window::SessionController *> controller,
-	const char *sessionName) {
+[[nodiscard]] bool
+RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
+							 const char *sessionName) {
 	const auto fail = [&](const char *what) {
-		std::fprintf(stderr,
-					 "Teagram branding regression failed: session=%s case=%s.\n",
-					 sessionName, what);
+		std::fprintf(
+			stderr, "Teagram branding regression failed: session=%s case=%s.\n",
+			sessionName, what);
 		return false;
 	};
 	{
 		const auto menu = std::make_unique<Window::MainMenu>(
 			controller->widget().get(), controller);
 		const auto labels = menu->findChildren<Ui::FlatLabel *>();
-		const auto hasTeagramFooter = std::any_of(
-			labels.begin(),
-			labels.end(),
-			[](const auto label) {
-				return label->accessibilityName() == u"Teagram"_q;
-			});
+		const auto hasTeagramFooter
+			= std::any_of(labels.begin(), labels.end(), [](const auto label) {
+				  return label->accessibilityName() == u"Teagram"_q;
+			  });
 		if (!hasTeagramFooter) {
 			return fail("main_menu_footer_name");
 		}
@@ -3181,8 +3179,8 @@ template <typename Predicate>
 	if (controller->isLayerShown()) {
 		controller->hideLayer(anim::type::instant);
 	}
-	const auto box = controller->show(
-		Box(AboutBox), Ui::LayerOption::KeepOther, anim::type::instant);
+	const auto box = controller->show(Box(AboutBox), Ui::LayerOption::KeepOther,
+									  anim::type::instant);
 	QCoreApplication::processEvents();
 	const auto content = box.get();
 	const auto layer = content ? content->parentWidget() : nullptr;
@@ -3202,12 +3200,9 @@ template <typename Predicate>
 		= visibleText.contains(u"Based on Telegram Desktop"_q);
 	const auto hasNoTelegramHelpLinks
 		= !visibleText.contains(u"Telegram API"_q)
-		&& !visibleText.contains(u"Telegram FAQ"_q);
-	const auto matches = hasTeagramTitle
-		&& hasLicense
-		&& hasSourceCode
-		&& hasProtocolAttribution
-		&& hasNoTelegramHelpLinks;
+		  && !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle && hasLicense && hasSourceCode
+						 && hasProtocolAttribution && hasNoTelegramHelpLinks;
 	controller->hideLayer(anim::type::instant);
 	if (!matches) {
 		return fail("about_box_copy");
@@ -3229,10 +3224,11 @@ template <typename Predicate>
 		settingsLabels.push_back(label->accessibilityName());
 	}
 	const auto settingsText = settingsLabels.join(u"\n"_q);
-	const auto hasNoTelegramHelp = !settingsText.contains(u"Telegram FAQ"_q)
-		&& !settingsText.contains(u"Telegram Features"_q)
-		&& !settingsText.contains(u"Ask a Question"_q)
-		&& !settingsText.contains(u"Telegram Support"_q);
+	const auto hasNoTelegramHelp
+		= !settingsText.contains(u"Telegram FAQ"_q)
+		  && !settingsText.contains(u"Telegram Features"_q)
+		  && !settingsText.contains(u"Ask a Question"_q)
+		  && !settingsText.contains(u"Telegram Support"_q);
 	if (!hasNoTelegramHelp) {
 		return fail("settings_telegram_help");
 	}

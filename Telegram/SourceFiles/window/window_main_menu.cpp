@@ -441,9 +441,8 @@ MainMenu::MainMenu(
 	}
 #else  // TDESKTOP_TEAGRAM
 	_version->setLink(
-		1,
-		std::make_shared<UrlClickHandler>(
-			u"https://github.com/teagramhq/teagram-desktop/releases"_q));
+		1, std::make_shared<UrlClickHandler>(
+			   u"https://github.com/teagramhq/teagram-desktop/releases"_q));
 #endif // TDESKTOP_TEAGRAM
 	_version->setLink(
 		2,
