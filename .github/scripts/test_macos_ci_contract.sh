@@ -126,7 +126,7 @@ require_step_field "$mac_workflow" macos-libraries 'Set macOS dependency image t
 require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
   "$macos_libraries_image_script\" set-image"
 require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.uses' \
-  'oras-project/setup-oras@v1'
+  'oras-project/setup-oras@v2'
 require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.with.version' '1.3.4'
 require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
@@ -143,7 +143,7 @@ expect_contains "$mac_workflow macos-libraries-build if" \
   "needs.macos-libraries.result == 'success'" \
   "needs.macos-libraries.outputs.cache-hit != 'true'"
 require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.uses' \
-  'oras-project/setup-oras@v1'
+  'oras-project/setup-oras@v2'
 require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.with.version' '1.3.4'
 require_step_field "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' '.if' \
   "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
