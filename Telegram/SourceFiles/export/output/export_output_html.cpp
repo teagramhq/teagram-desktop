@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "export/output/export_output_html.h"
+#include "export/output/export_output_string.h"
 
 #include "core/utils.h"
 #include "countries/countries_instance.h"
@@ -24,6 +25,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Export {
 namespace Output {
 namespace {
+
+using details::Html::SerializeString;
 
 constexpr auto kMessagesInFile = 1000;
 constexpr auto kPersonalUserpicSize = 90;
@@ -148,53 +151,6 @@ auto CalculateThumbSize(
 			? QSize()
 			: retinaSize;
 	};
-}
-
-QByteArray SerializeString(const QByteArray &value) {
-	const auto size = value.size();
-	const auto begin = value.data();
-	const auto end = begin + size;
-
-	auto result = QByteArray();
-	result.reserve(size * 6);
-	for (auto p = begin; p != end; ++p) {
-		const auto ch = *p;
-		if (ch == '\n') {
-			result.append("<br>", 4);
-		} else if (ch == '"') {
-			result.append("&quot;", 6);
-		} else if (ch == '&') {
-			result.append("&amp;", 5);
-		} else if (ch == '\'') {
-			result.append("&apos;", 6);
-		} else if (ch == '<') {
-			result.append("&lt;", 4);
-		} else if (ch == '>') {
-			result.append("&gt;", 4);
-		} else if (ch >= 0 && ch < 32) {
-			result.append("&#x", 3).append('0' + (ch >> 4));
-			const auto left = (ch & 0x0F);
-			if (left >= 10) {
-				result.append('A' + (left - 10));
-			} else {
-				result.append('0' + left);
-			}
-			result.append(';');
-		} else if (ch == char(0xE2)
-			&& (p + 2 < end)
-			&& *(p + 1) == char(0x80)) {
-			if (*(p + 2) == char(0xA8)) { // Line separator.
-				result.append("<br>", 4);
-			} else if (*(p + 2) == char(0xA9)) { // Paragraph separator.
-				result.append("<br>", 4);
-			} else {
-				result.append(ch);
-			}
-		} else {
-			result.append(ch);
-		}
-	}
-	return result;
 }
 
 QByteArray SerializeList(const std::vector<QByteArray> &values) {
