@@ -3566,7 +3566,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			const auto peerShown
 				= (controller->activeChatCurrent().peer() == channelPeer.get());
 			const auto noStoriesUi
-				= !controller->content()->isMainSectionShown()
+				= controller->content()->isMainSectionShown()
 				  && !ShownStoriesSection(controller);
 			const auto noStoriesRequest
 				= !storiesData.requestsPendingForRegressionTest();
