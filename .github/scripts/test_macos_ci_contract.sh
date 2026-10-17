@@ -504,7 +504,7 @@ require_native_start_before() {
   local case_name="$1"
   local invocation="$2"
   awk -v case_name="$case_name" -v invocation="$invocation" '
-    /StartChatParticipantsRegression\(Main::Domain/ { in_harness = 1 }
+    /StartChatParticipantsRegression\(/ { in_harness = 1 }
     in_harness && !start_line && index($0, "StartCase(\"" case_name "\")") {
       start_line = NR
     }
