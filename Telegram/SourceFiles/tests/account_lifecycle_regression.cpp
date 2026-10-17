@@ -4134,6 +4134,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	const auto expiredController = blankWindow->sessionController();
 	if (!expiredController
 		|| (&expiredController->session() != &blank->session())) {
+		failedNonMiniAppRegression = "Settings deep link regression failed";
 		return false;
 	}
 	const auto expiredControllerWeak = base::make_weak(expiredController);
@@ -4154,6 +4155,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	QCoreApplication::processEvents();
 	if ((app.activeWindow() != &stockController->window())
 		|| (app.activePrimaryWindow() != &stockController->window())) {
+		failedNonMiniAppRegression = "Settings deep link regression failed";
 		return false;
 	}
 	const auto expiredToastBefore
