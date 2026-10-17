@@ -7599,15 +7599,26 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto restoredBlocked
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
 	auto customSessionOpenRefusalPassed = false;
-	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned,
-										 restoredBlocked, blank, stockWindow,
-										 pinnedWindow, blankWindow,
-										 customSessionOpenRefusalPassed)) {
+	const auto miniAppRegressionPassed
+		= RunMiniAppOpenRefusalRegression(
+			app,
+			selfId,
+			stock,
+			pinned,
+			restoredBlocked,
+			blank,
+			stockWindow,
+			pinnedWindow,
+			blankWindow,
+			customSessionOpenRefusalPassed);
+	if (!miniAppRegressionPassed) {
+		if (customSessionOpenRefusalPassed) {
+			return FailChatParticipantsRegression(
+				"custom-session mini-app open refusal passed; "
+				"a later account lifecycle check failed");
+		}
 		return FailChatParticipantsRegression(
-			customSessionOpenRefusalPassed
-				? "custom-session mini-app open refusal passed; a later "
-				  "account lifecycle check failed"
-				: "mini-app open refusal was not observable on the owning session");
+			"mini-app open refusal was not observable on the owning session");
 	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	if (pinnedController->session()
