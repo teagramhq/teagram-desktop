@@ -107,6 +107,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_poll.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_community.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -652,7 +653,8 @@ void Filler::addInfo() {
 
 void Filler::addStoryArchive() {
 	const auto channel = _peer ? _peer->asChannel() : nullptr;
-	if (!channel || !channel->canEditStories()) {
+	if (!channel || !channel->canEditStories()
+		|| !_controller->session().storiesSupported()) {
 		return;
 	}
 	const auto controller = _controller;
@@ -4236,6 +4238,11 @@ void FillSenderUserpicMenu(
 			const auto isDiscussionGroup = groupChannel
 				&& groupChannel->isMegagroup()
 				&& groupChannel->discussionLink();
+			const auto groupChat = groupPeer->asChat();
+			const auto tagsSupported
+				= !groupChat
+				  || Data::details::BasicChatControlsOf(groupChat)
+						 .canEditMemberTags;
 			const auto canEditTarget = [&] {
 				if (const auto chat = groupPeer->asChat()) {
 					if (peerToUser(user->id) == chat->creator) {
@@ -4255,10 +4262,8 @@ void FillSenderUserpicMenu(
 				}
 				return false;
 			}();
-			if (!isDiscussionGroup
-				&& canEditTarget
-				&& groupPeer->canManageRanks()
-				&& !user->isSelf()) {
+			if (!isDiscussionGroup && tagsSupported && canEditTarget
+				&& groupPeer->canManageRanks() && !user->isSelf()) {
 				const auto currentRank = LookupMemberRank(
 					groupPeer,
 					user);

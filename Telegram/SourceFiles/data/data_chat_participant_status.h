@@ -110,12 +110,30 @@ struct AdminRightsSetOptions {
 	bool isCommunity : 1 = false;
 	bool anyoneCanAddMembers : 1 = false;
 	bool canProcessJoinRequests : 1 = false;
+	bool storiesSupported : 1 = true;
 };
 
 struct RestrictionsSetOptions {
 	bool isForum = false;
 	bool isUserSpecific = false;
+	bool isCustomServerChat = false;
 };
+
+// A custom server rejects these as default restrictions of a basic group.
+[[nodiscard]] inline ChatRestrictions
+UnsupportedRestrictions(RestrictionsSetOptions options) {
+	return options.isCustomServerChat
+			   ? (ChatRestriction::SendReactions | ChatRestriction::EditRank)
+			   : ChatRestrictions();
+}
+
+// A row the box does not show comes back restricted, so the ones the
+// server would reject are dropped before saving.
+[[nodiscard]] inline ChatRestrictions
+RestrictionsForSave(ChatRestrictions restrictions,
+					RestrictionsSetOptions options) {
+	return restrictions & ~UnsupportedRestrictions(options);
+}
 
 [[nodiscard]] std::vector<ChatRestrictions> ListOfRestrictions(
 	RestrictionsSetOptions options);

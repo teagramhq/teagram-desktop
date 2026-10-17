@@ -412,15 +412,9 @@ MainMenu::MainMenu(
 
 	parentResized();
 
-#ifdef TDESKTOP_TEAGRAM
 	_telegram->setMarkedText(
 		tr::link(tr::lng_teagram_about_title(tr::now),
 				 u"https://github.com/teagramhq/teagram-desktop"_q));
-#else  // TDESKTOP_TEAGRAM
-	_telegram->setMarkedText(tr::link(
-		u"Telegram Desktop"_q,
-		u"https://desktop.telegram.org"_q));
-#endif // TDESKTOP_TEAGRAM
 	_telegram->setLinksTrusted();
 #ifdef TDESKTOP_TEAGRAM
 	const auto releaseLink = currentVersionReleaseLink();
@@ -447,8 +441,8 @@ MainMenu::MainMenu(
 	}
 #else  // TDESKTOP_TEAGRAM
 	_version->setLink(
-		1,
-		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+		1, std::make_shared<UrlClickHandler>(
+			   u"https://github.com/teagramhq/teagram-desktop/releases"_q));
 #endif // TDESKTOP_TEAGRAM
 	_version->setLink(
 		2,
@@ -716,22 +710,40 @@ void MainMenu::setupMenu() {
 			std::move(descriptor));
 	};
 	if (!_controller->session().supportMode()) {
-		_menu->add(
-			CreateButtonWithIcon(
-				_menu,
-				tr::lng_menu_my_profile(),
-				st::mainMenuButton,
-				{ &st::menuIconProfile })
-		)->setClickedCallback([=] {
-			controller->showSection(
-				Info::Stories::Make(controller->session().user()));
-		});
+		if (_controller->session().storiesSupported()) {
+			_menu
+				->add(CreateButtonWithIcon(_menu, tr::lng_menu_my_profile(),
+										   st::mainMenuButton,
+										   {&st::menuIconProfile}))
+				->setClickedCallback([=] {
+					controller->showSection(
+						Info::Stories::Make(controller->session().user()));
+				});
 
-		SetupMenuBots(_menu, controller);
+			SetupMenuBots(_menu, controller);
 
-		_menu->add(
-			object_ptr<Ui::PlainShadow>(_menu),
-			{ 0, st::mainMenuSkip, 0, st::mainMenuSkip });
+			_menu->add(object_ptr<Ui::PlainShadow>(_menu),
+					   {0, st::mainMenuSkip, 0, st::mainMenuSkip});
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			_myProfileRowPresentForRegressionTest = true;
+			_topDividerShownForRegressionTest = [] { return true; };
+#endif
+		} else {
+			const auto bots = _menu->add(object_ptr<Ui::VerticalLayout>(_menu));
+			SetupMenuBots(bots, controller);
+
+			const auto divider
+				= _menu->add(object_ptr<Ui::SlideWrap<Ui::PlainShadow>>(
+					_menu, object_ptr<Ui::PlainShadow>(_menu),
+					style::margins(0, st::mainMenuSkip, 0, st::mainMenuSkip)));
+			divider->setDuration(0)->toggleOn(
+				bots->heightValue()
+				| rpl::map([](int height) { return height > 0; }));
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			_topDividerShownForRegressionTest
+				= [=] { return divider->toggled(); };
+#endif
+		}
 
 		AddMyChannelsBox(addAction(
 			tr::lng_create_group_title(),

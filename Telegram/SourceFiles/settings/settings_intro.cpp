@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_main.h"
 #include "settings/sections/settings_chat.h"
 #include "settings/settings_codes.h"
-#include "ui/basic_click_handlers.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/widgets/shadow.h"
@@ -101,17 +100,6 @@ object_ptr<Ui::RpWidget> CreateIntroSettings(
 		SetupAnimations(window, result);
 		Ui::AddSkip(result);
 	}
-
-	Ui::AddDivider(result);
-	Ui::AddSkip(result);
-
-	AddButtonWithIcon(
-		result,
-		tr::lng_settings_faq(),
-		st::settingsButtonNoIcon
-	)->addClickHandler([] {
-		OpenFaq(nullptr);
-	});
 
 	return result;
 }

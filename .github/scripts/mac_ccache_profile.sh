@@ -2,12 +2,12 @@
 set -euo pipefail
 
 if (( $# != 1 )); then
-  printf 'Usage: %s <pull_request|schedule|workflow_dispatch>\n' "${0##*/}" >&2
+  printf 'Usage: %s <pull_request|push|schedule|workflow_dispatch>\n' "${0##*/}" >&2
   exit 2
 fi
 
 case "$1" in
-  pull_request|schedule)
+  pull_request|push|schedule)
     profile=pr-compatible
     protected_path_integration=OFF
     ;;

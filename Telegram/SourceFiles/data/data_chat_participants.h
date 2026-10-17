@@ -44,6 +44,38 @@ BasicChatAdminCapabilitiesFor(bool customServer) {
 	};
 }
 
+// A custom server has no chat photos, migration, member tags or
+// per-member restrictions, so a basic group there offers none of them.
+struct BasicChatControls {
+	bool canEditPhoto = true;
+	bool canEditType = true;
+	bool canEditHistoryVisibility = true;
+	bool canRestrictMembers = true;
+	bool canEditMemberTags = true;
+};
+
+[[nodiscard]] inline constexpr BasicChatControls
+BasicChatControlsFor(bool customServer) {
+	return {
+		.canEditPhoto = !customServer,
+		.canEditType = !customServer,
+		.canEditHistoryVisibility = !customServer,
+		.canRestrictMembers = !customServer,
+		.canEditMemberTags = !customServer,
+	};
+}
+
+template <typename Chat>
+[[nodiscard]] inline BasicChatControls BasicChatControlsOf(const Chat &chat) {
+	return BasicChatControlsFor(chat->usesCustomServer());
+}
+
+template <typename Peer>
+[[nodiscard]] inline bool SupportsMemberRestrictions(const Peer &peer) {
+	const auto chat = peer->asChat();
+	return !chat || BasicChatControlsOf(chat).canRestrictMembers;
+}
+
 template <typename Rights>
 [[nodiscard]] inline constexpr bool
 BasicChatAdminRoleForSave(Rights selectedRights) {

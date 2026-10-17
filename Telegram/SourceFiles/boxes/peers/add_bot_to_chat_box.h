@@ -54,6 +54,9 @@ private:
 
 	void addBotToGroup(not_null<PeerData*> chat);
 	void requestExistingRights(not_null<ChannelData*> channel);
+	void existingRightsLoaded(not_null<ChannelData *> channel,
+							  const MTPchannels_ChannelParticipant &result);
+	void existingRightsFailed(const MTP::Error &error);
 
 	const not_null<Window::SessionController*> _controller;
 	const not_null<UserData*> _bot;

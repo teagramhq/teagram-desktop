@@ -77,6 +77,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_user.h"
 #include "data/data_media_rotation.h"
 #include "data/data_photo_media.h"
@@ -2197,7 +2198,8 @@ void OverlayWidget::fillContextMenuActions(
 			return _userPhotosData && _fullIndex && _fullCount;
 		} else if (_photo && _photo->peer && _photo->peer->userpicPhotoId() == _photo->id) {
 			if (auto chat = _photo->peer->asChat()) {
-				return chat->canEditInformation();
+				return chat->canEditInformation()
+					   && Data::details::BasicChatControlsOf(chat).canEditPhoto;
 			} else if (auto channel = _photo->peer->asChannel()) {
 				return channel->canEditInformation();
 			}
@@ -2235,7 +2237,8 @@ void OverlayWidget::fillContextMenuActions(
 		using Type = SharedMediaType;
 		if (sharedMediaType().value_or(Type::File) == Type::ChatPhoto) {
 			if (const auto chat = _peer->asChat()) {
-				if (!chat->canEditInformation()) {
+				if (!chat->canEditInformation()
+					|| !Data::details::BasicChatControlsOf(chat).canEditPhoto) {
 					return;
 				}
 			} else if (const auto channel = _peer->asChannel()) {

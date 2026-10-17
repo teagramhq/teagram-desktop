@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_document.h"
 #include "data/data_file_origin.h"
 #include "data/data_peer.h"
@@ -234,6 +235,13 @@ void PeerPhoto::upload(
 		UploadType type,
 		Fn<void()> done) {
 	peer = peer->migrateToOrMe();
+	// A custom server has no chat photos, so its basic groups never send
+	// messages.editChatPhoto.
+	if (const auto chat = peer->asChat()) {
+		if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+			return;
+		}
+	}
 	const auto mtpMarkup = PrepareMtpMarkup(_session, photo);
 
 	const auto fakeId = FullMsgId(
@@ -347,6 +355,9 @@ void PeerPhoto::clear(not_null<PhotoData*> photo) {
 			_session->updates().applyUpdates(result);
 		};
 		if (const auto chat = photo->peer->asChat()) {
+			if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+				return;
+			}
 			_api.request(MTPmessages_EditChatPhoto(
 				chat->inputChat(),
 				MTP_inputChatPhotoEmpty()
@@ -426,6 +437,9 @@ void PeerPhoto::set(not_null<PeerData*> peer, not_null<PhotoData*> photo) {
 			_session->updates().applyUpdates(result);
 		};
 		if (const auto chat = peer->asChat()) {
+			if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+				return;
+			}
 			_api.request(MTPmessages_EditChatPhoto(
 				chat->inputChat(),
 				MTP_inputChatPhoto(photo->mtpInput())

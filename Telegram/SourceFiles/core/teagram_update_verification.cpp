@@ -321,7 +321,8 @@ ParseCanonicalUnsigned(const QString &value) {
 [[nodiscard]] ManifestAuthenticationResult AuthenticatePackage(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
-	quint64 highWaterBuild, const std::optional<Ed25519PublicKey> &trustedKey) {
+	quint64 highWaterBuild, const std::optional<Ed25519PublicKey> &trustedKey,
+	TeagramUpdateSelection selection = TeagramUpdateSelection::Newer) {
 	if (!trustedKey) {
 		return RejectedManifest(Reason::MissingTrustedKey);
 	}
@@ -357,7 +358,13 @@ ParseCanonicalUnsigned(const QString &value) {
 		return RejectedManifest(parsed.reason);
 	}
 	auto package = *parsed.package;
-	if (package.build <= std::max(installedBuild, highWaterBuild)) {
+	if (selection == TeagramUpdateSelection::SwitchToMain) {
+		if (package.channel != TeagramUpdateChannel::Main) {
+			return RejectedManifest(Reason::IneligibleChannel);
+		} else if (package.build == installedBuild) {
+			return RejectedManifest(Reason::NotNewer);
+		}
+	} else if (package.build <= std::max(installedBuild, highWaterBuild)) {
 		return RejectedManifest(Reason::NotNewer);
 	}
 	switch (installedChannel) {
@@ -493,10 +500,10 @@ bool TeagramUpdateManifestVerificationResult::authenticated() const {
 TeagramUpdateManifestVerificationResult AuthenticateTeagramUpdateManifest(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
-	quint64 highWaterBuild) {
+	quint64 highWaterBuild, TeagramUpdateSelection selection) {
 	auto authenticated = AuthenticatePackage(
 		manifest, signature, installedBuild, installedChannel, highWaterBuild,
-		kProductionUpdatePublicKey);
+		kProductionUpdatePublicKey, selection);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}
@@ -536,10 +543,10 @@ AuthenticateTeagramUpdateManifestForTests(
 	const QByteArray &manifest, const QByteArray &signature,
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	const std::optional<TeagramUpdatePublicKey> &trustedKey,
-	quint64 highWaterBuild) {
-	auto authenticated
-		= AuthenticatePackage(manifest, signature, installedBuild,
-							  installedChannel, highWaterBuild, trustedKey);
+	quint64 highWaterBuild, TeagramUpdateSelection selection) {
+	auto authenticated = AuthenticatePackage(
+		manifest, signature, installedBuild, installedChannel, highWaterBuild,
+		trustedKey, selection);
 	if (!authenticated.authenticated()) {
 		return {authenticated.reason, std::nullopt};
 	}

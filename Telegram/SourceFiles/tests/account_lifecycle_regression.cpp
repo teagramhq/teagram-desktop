@@ -16,12 +16,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/about_box.h"
 #include "boxes/edit_privacy_box.h"
+#include "boxes/peers/add_bot_to_chat_box.h"
+#include "boxes/peers/edit_admin_rights_save.h"
+#include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
+#include "boxes/peers/edit_peer_permissions_box.h"
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
+#include "calls/group/calls_group_common.h"
+#include "calls/calls_call.h"
+#include "calls/calls_instance.h"
+#include "calls/calls_panel.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -41,7 +50,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
+#include "data/data_stories.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
@@ -56,6 +67,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "info/info_controller.h"
+#include "info/info_wrap_widget.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
@@ -82,6 +95,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
+#include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
@@ -97,14 +112,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
 #include "styles/style_widgets.h"
 #include "window/window_controller.h"
+#include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
+#include "window/window_session_controller_link_info.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
@@ -119,8 +137,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtCore/QVariant>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -140,6 +160,8 @@ namespace Tests {
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
+auto gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
+auto gCallStartRegressionIntercept = false;
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 BoostRequestCaptureForRegressionTest *gBoostRequestCapture = nullptr;
 
@@ -291,7 +313,152 @@ void IncrementTranslationRpcCountForRegressionTest(
 	}
 }
 
+void ReportCallRegressionCheckpoint(const char *name) {
+	std::fprintf(stderr, "Call regression checkpoint: %s\n", name);
+	std::fflush(stderr);
+}
+
 } // namespace
+
+class CallsInstanceRegressionAccess {
+  public:
+	[[nodiscard]] static Calls::Call *
+	InstallStockCall(not_null<Calls::Instance *> instance,
+					 not_null<UserData *> user) {
+		if (instance->_currentCall || instance->_currentGroupCall
+			|| instance->_startingGroupCall) {
+			return nullptr;
+		}
+		auto call = std::make_unique<Calls::Call>(
+			TestDelegate(), user, Calls::Call::Type::Outgoing, false);
+		call->_state = Calls::Call::State::Established;
+		instance->_currentCallPanel
+			= std::make_unique<Calls::Panel>(call.get());
+		instance->_currentCall = std::move(call);
+		instance->_currentCallChanges.fire_copy(instance->_currentCall.get());
+		return instance->_currentCall.get();
+	}
+
+	static void RemoveStockCall(not_null<Calls::Instance *> instance,
+								not_null<Calls::Call *> call) {
+		if (instance->_currentCall.get() == call.get()) {
+			instance->_currentCallPanel->closeBeforeDestroy();
+			instance->_currentCallPanel = nullptr;
+			auto taken = base::take(instance->_currentCall);
+			instance->_currentCallChanges.fire(nullptr);
+			taken.reset();
+		}
+	}
+
+	[[nodiscard]] static std::unique_ptr<Calls::Call>
+	CreateIncomingCallForAnswerRegression(not_null<UserData *> user,
+										  bool conferenceInvite) {
+		auto call = conferenceInvite
+						? std::make_unique<Calls::Call>(
+							  TestDelegate(), user, CallId(3053), MsgId(3053),
+							  std::vector<not_null<PeerData *>>(), false)
+						: std::make_unique<Calls::Call>(
+							  TestDelegate(), user, Calls::Call::Type::Incoming,
+							  false);
+		call->_state = Calls::Call::State::WaitingIncoming;
+		call->_id = CallId(3053);
+		call->_accessHash = 1;
+		call->_gb = bytes::vector(1, gsl::byte{});
+		return call;
+	}
+
+  private:
+	class CallDelegate final : public Calls::Call::Delegate {
+	  public:
+		Calls::DhConfig getDhConfig() const override { return {}; }
+
+		void callFinished(not_null<Calls::Call *>) override {}
+
+		void callFailed(not_null<Calls::Call *>) override {}
+
+		void callRedial(not_null<Calls::Call *>) override {}
+
+		void callPlaySound(Calls::Call::Delegate::CallSound) override {}
+
+		void callRequestPermissionsOrFail(Fn<void()> onSuccess, bool) override {
+			RecordCallPermissionRequestForRegressionTest();
+			onSuccess();
+		}
+
+		auto callGetVideoCapture(const QString &, bool)
+			-> std::shared_ptr<tgcalls::VideoCaptureInterface> override {
+			return nullptr;
+		}
+	};
+
+	[[nodiscard]] static CallDelegate *TestDelegate() {
+		static auto result = std::make_unique<CallDelegate>();
+		return result.get();
+	}
+};
+
+void ResetCallStartRegressionForTest() {
+	gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
+}
+
+void SetCallStartRegressionInterceptForTest(bool enabled) {
+	gCallStartRegressionIntercept = enabled;
+}
+
+CallStartRegressionSnapshot GetCallStartRegressionSnapshotForTest() {
+	return gCallStartRegressionSnapshot;
+}
+
+bool InterceptCallStartForRegressionTest(CallStartRegressionKind kind) {
+	if (!gCallStartRegressionIntercept) {
+		return false;
+	}
+	++gCallStartRegressionSnapshot.startPassed[static_cast<std::size_t>(kind)];
+	return true;
+}
+
+void RecordCallUnavailableToastForRegressionTest(const Main::Session *session) {
+	gCallStartRegressionSnapshot.unavailableToasts.push_back(session);
+}
+
+void RecordCallPermissionRequestForRegressionTest() {
+	++gCallStartRegressionSnapshot.permissionRequests;
+}
+
+void RecordCallRpcForRegressionTest() {
+	++gCallStartRegressionSnapshot.callRpcs;
+}
+
+bool InterceptCallRpcForRegressionTest() {
+	if (!gCallStartRegressionIntercept) {
+		return false;
+	}
+	RecordCallRpcForRegressionTest();
+	return true;
+}
+
+void RecordVoiceChatLinkJoinAttemptForRegressionTest() {
+	++gCallStartRegressionSnapshot.voiceChatLinkJoinAttempts;
+}
+
+void RecordCallActivationForRegressionTest() {
+	++gCallStartRegressionSnapshot.activations;
+}
+
+void RecordCallLeavePromptForRegressionTest() {
+	++gCallStartRegressionSnapshot.leavePrompts;
+}
+
+void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer) {
+	gCallStartRegressionSnapshot.navigationEvents.push_back(
+		SessionNavigationRegressionEvent::ChannelOpened);
+	gCallStartRegressionSnapshot.openedPeers.push_back(peer);
+}
+
+void RecordFeatureUnavailableToastForRegressionTest() {
+	gCallStartRegressionSnapshot.navigationEvents.push_back(
+		SessionNavigationRegressionEvent::FeatureUnavailableToast);
+}
 
 void RecordLifecycleWriteForRegressionTest(
 		LifecycleWriteForRegressionTest operation) {
@@ -416,6 +583,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_channels_updatePaidMessagesPrice:
 	case mtpc_messages_editChatAbout:
 	case mtpc_account_setGlobalPrivacySettings:
+	case mtpc_channels_getParticipant:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -1086,6 +1254,32 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 	return account->mtp().getKeysForWrite().empty()
 		&& !account->sessionExists()
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
+}
+
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
+[[nodiscard]] bool
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::Match);
 }
 
 [[nodiscard]] bool
@@ -1939,6 +2133,27 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return matches;
 }
 
+[[nodiscard]] bool
+ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
+						Fn<bool(const Info::Section &)> matches) {
+	const auto widgets = controller->widget()->findChildren<QWidget *>();
+	for (const auto widget : widgets) {
+		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
+		if (wrap && matches(wrap->controller()->section())) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool
+ShownStoriesSection(not_null<Window::SessionController *> controller) {
+	return ShownInfoSectionMatches(
+		controller, [](const Info::Section &section) {
+			return (section.type() == Info::Section::Type::Stories);
+		});
+}
+
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -1975,6 +2190,12 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 		u"tg://settings/edit/your-color"_q,
 		u"tg://settings/privacy/gifts"_q,
 		u"tg://settings/privacy/gifts/always"_q,
+	};
+	const auto storyRoutes = std::vector<QString>{
+		u"tg://settings/my-profile/posts"_q,
+		u"tg://settings/my-profile/posts/add-album"_q,
+		u"tg://settings/my-profile/archived-posts"_q,
+		u"tg://settings/MY-PROFILE/ARCHIVED-POSTS"_q,
 	};
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
@@ -2118,6 +2339,11 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 					  return false;
 				  }
 			  }
+			  for (const auto &url : storyRoutes) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
+					  return false;
+				  }
+			  }
 			  return true;
 		  };
 
@@ -2164,6 +2390,35 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	pinnedController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
+
+	for (const auto &controller : {pinnedController, blockedController}) {
+		const auto toastBefore
+			= controller
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+							  contextFor(controller))) {
+			return false;
+		}
+		QCoreApplication::processEvents();
+		const auto myAccountShown = ShownInfoSectionMatches(
+			controller, [](const Info::Section &section) {
+				return (section.type() == Info::Section::Type::Settings)
+					   && (section.settingsType() == Settings::InformationId());
+			});
+		if (!controller->content()->isMainSectionShown() || !myAccountShown
+			|| ShownStoriesSection(controller)
+			|| (controller
+					->featureUnavailableOnServerToastCallsForRegressionTest()
+				!= toastBefore)) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: my-profile did not "
+				"open My Account on an unsupported session.\n");
+			return false;
+		}
+		resetController(controller);
+		QCoreApplication::processEvents();
+	}
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
@@ -2247,11 +2502,11 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	stockController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
 	QCoreApplication::processEvents();
-	std::fprintf(
-		stderr,
-		"Settings deep link regression passed: 13 routes refused in custom "
-		"and blocked sessions; stock Premium and ordinary Settings routes "
-		"opened.\n");
+	std::fprintf(stderr,
+				 "Settings deep link regression passed: paid and story routes "
+				 "refused in custom and blocked sessions; my-profile opened My "
+				 "Account there; stock Premium and ordinary Settings routes "
+				 "opened.\n");
 	return true;
 }
 
@@ -3293,6 +3548,418 @@ template <typename Predicate>
 	return match;
 }
 
+[[nodiscard]] bool WaitForMainQueueBarrier();
+
+[[nodiscard]] bool
+RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
+							 const char *sessionName) {
+	const auto fail = [&](const char *what) {
+		std::fprintf(
+			stderr, "Teagram branding regression failed: session=%s case=%s.\n",
+			sessionName, what);
+		return false;
+	};
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		const auto labels = menu->findChildren<QWidget *>();
+		const auto hasTeagramFooter
+			= std::any_of(labels.begin(), labels.end(), [](const auto widget) {
+				  const auto label = dynamic_cast<Ui::FlatLabel *>(widget);
+				  return label && label->accessibilityName() == u"Teagram"_q;
+			  });
+		if (!hasTeagramFooter) {
+			return fail("main_menu_footer_name");
+		}
+	}
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	const auto box = controller->show(Box(AboutBox), Ui::LayerOption::KeepOther,
+									  anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		controller->hideLayer(anim::type::instant);
+		return fail("about_box_did_not_open");
+	}
+	auto visibleLabels = QStringList();
+	for (const auto widget : layer->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			visibleLabels.push_back(label->accessibilityName());
+		}
+	}
+	const auto visibleText = visibleLabels.join(u"\n"_q);
+	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
+	const auto hasLicense = visibleText.contains(u"GNU GPL"_q);
+	const auto hasSourceCode = visibleText.contains(u"GitHub"_q);
+	const auto hasProtocolAttribution
+		= visibleText.contains(u"Based on Telegram Desktop"_q);
+	const auto hasNoTelegramHelpLinks
+		= !visibleText.contains(u"Telegram API"_q)
+		  && !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle && hasLicense && hasSourceCode
+						 && hasProtocolAttribution && hasNoTelegramHelpLinks;
+	controller->hideLayer(anim::type::instant);
+	if (!matches) {
+		return fail("about_box_copy");
+	}
+	controller->showSettings();
+	const auto closeSettings = gsl::finally([&] {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	});
+	if (!WaitForMainQueueBarrier()) {
+		return fail("settings_did_not_open");
+	}
+	QCoreApplication::processEvents();
+	const auto settings = controller->activeLayerSection();
+	if (!settings) {
+		return fail("settings_did_not_open");
+	}
+	const auto collectSettingsNames = [](QWidget *root) {
+		auto result = QStringList();
+		for (const auto widget : root->findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				result.push_back(label->accessibilityName());
+			} else if (const auto button
+					   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+				result.push_back(button->accessibilityName());
+			}
+		}
+		return result;
+	};
+	const auto hasNoTelegramHelp = [](const QStringList &names) {
+		const auto text = names.join(u"\n"_q);
+		return !text.contains(u"Telegram FAQ"_q)
+			   && !text.contains(u"Telegram Features"_q)
+			   && !text.contains(u"Ask a Question"_q)
+			   && !text.contains(u"Telegram Support"_q);
+	};
+	for (const auto &restoredEntry : {
+			 u"Telegram FAQ"_q,
+			 u"Telegram Features"_q,
+			 u"Ask a Question"_q,
+		 }) {
+		QWidget probe;
+		const auto button = std::make_unique<Ui::SettingsButton>(
+			&probe, rpl::single(restoredEntry));
+		const auto probeNames = collectSettingsNames(&probe);
+		if (button->accessibilityName() != restoredEntry
+			|| !probeNames.contains(restoredEntry)
+			|| hasNoTelegramHelp(probeNames)) {
+			return fail("settings_help_restoration_detection");
+		}
+	}
+	if (!hasNoTelegramHelp(collectSettingsNames(settings))) {
+		return fail("settings_telegram_help");
+	}
+	return true;
+}
+
+// Stories are presentation-gated per owning session: the main menu, the
+// own-channel menus, the Edit admin box and story links all read the
+// capability from the window session that acts. The admin box checks run
+// the box's own save computation, so a checkbox-only save that drops the
+// hidden story rights fails here and in the standalone save cases.
+[[nodiscard]] bool RunStoryControlsVisibilityRegression(
+	not_null<Window::SessionController *> controller, bool supported,
+	const char *sessionName) {
+	auto &session = controller->session();
+	const auto fail = [&](const char *what) {
+		std::fprintf(stderr,
+					 "Story controls regression failed: session=%s "
+					 "supported=%d case=%s.\n",
+					 sessionName, supported, what);
+		return false;
+	};
+	if (session.storiesSupported() != supported) {
+		return fail("capability");
+	}
+
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		if (menu->myProfileRowPresentForRegressionTest() != supported
+			|| menu->topDividerShownForRegressionTest() != supported) {
+			return fail("main_menu_my_profile_and_divider");
+		}
+	}
+
+	using Right = ChatAdminRight;
+	using Rights = ChatAdminRights;
+	const auto stories = Ui::EditPeer::AdminRights::StoryRights();
+	const auto labelsHaveStories = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return ((all & stories) == stories)
+			   && ((transfer & stories) == stories);
+	};
+	const auto labelsHaveNoStories = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return !(all & stories) && !(transfer & stories);
+	};
+	const auto labelOptions = std::vector<Data::AdminRightsSetOptions>{
+		{.storiesSupported = supported},
+		{.isGroup = true, .storiesSupported = supported},
+		{.isGroup = true, .isForum = true, .storiesSupported = supported},
+	};
+	for (const auto &options : labelOptions) {
+		if (supported ? !labelsHaveStories(options)
+					  : !labelsHaveNoStories(options)) {
+			return fail("admin_right_labels_and_transfer");
+		}
+	}
+
+	using Flag = ChannelDataFlag;
+	const auto channel = session.data().channel(ChannelId(1181));
+	channel->setAccessHash(118100);
+	channel->setName(u"Story controls regression channel"_q, QString());
+	channel->setFlags(Flag::Creator | Flag::Broadcast);
+	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto channelPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*channel));
+	const auto history = session.data().history(channel);
+	const auto contains = [](const QStringList &names,
+							 const QString &expected) {
+		return std::find(names.begin(), names.end(), expected) != names.end();
+	};
+	const auto archive = tr::lng_stories_archive_button(tr::now);
+	for (const auto section : {
+			 Dialogs::EntryState::Section::History,
+			 Dialogs::EntryState::Section::Profile,
+		 }) {
+		const auto menu
+			= SnapshotPeerMenu(controller, Dialogs::Key(history), section);
+		if (contains(menu.actions, archive) != supported
+			|| contains(menu.accessibleNames, archive) != supported
+			|| contains(menu.keyboardNames, archive) != supported) {
+			return fail("own_channel_story_archive");
+		}
+	}
+
+	const auto admin = session.data().user(UserId(1182));
+	const auto openAdminBox = [&](Rights existing) {
+		auto box = Box<EditAdminBox>(channelPeer, admin,
+									 ChatAdminRightsInfo(existing), QString(),
+									 TimeId(0), nullptr);
+		box->setSaveCallback([](ChatAdminRightsInfo, ChatAdminRightsInfo,
+								const std::optional<QString> &) {});
+		auto result = controller->window().show(
+			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
+		QCoreApplication::processEvents();
+		return result;
+	};
+	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
+								| Right::EditMessages | Right::DeleteMessages
+								| Right::InviteByLinkOrAdd | Right::ManageCall
+								| Right::ManageDirect | Right::BanUsers;
+	const auto adminCase = [&](const char *name, Rights existingStories) {
+		const auto existing = visibleChannel | existingStories | Right::Other;
+		auto box = openAdminBox(existing);
+		if (!box) {
+			return fail(name);
+		}
+		const auto visible = box->visibleRightsForRegressionTest();
+		const auto checked = box->checkedRightsForRegressionTest();
+		const auto saved = box->rightsToSaveForRegressionTest(
+			checked & ~Rights(Right::PostMessages));
+		const auto expected
+			= (existing & ~Rights(Right::PostMessages)) | Right::Other;
+		const auto rowsMatch
+			= supported ? ((visible & stories) == stories)
+						: (!(visible & stories) && !(checked & stories));
+		controller->hideLayer(anim::type::instant);
+		QCoreApplication::processEvents();
+		if (!rowsMatch || (saved.value() != expected.value())) {
+			std::fprintf(stderr,
+						 "Story controls regression: case=%s visible=%d "
+						 "checked=%d saved=%d expected=%d.\n",
+						 name, int(visible.value()), int(checked.value()),
+						 int(saved.value()), int(expected.value()));
+			return fail(name);
+		}
+		return true;
+	};
+	if (!adminCase("existing_admin_all_story_rights", stories)
+		|| !adminCase("existing_admin_no_story_rights", Rights())
+		|| !adminCase("existing_admin_mixed_story_rights",
+					  Rights(Right::PostStories) | Right::DeleteStories)) {
+		return false;
+	}
+	{
+		auto box = openAdminBox(Rights());
+		if (!box) {
+			return fail("new_admin_box");
+		}
+		const auto checked = box->checkedRightsForRegressionTest();
+		const auto saved = box->rightsToSaveForRegressionTest(checked);
+		controller->hideLayer(anim::type::instant);
+		QCoreApplication::processEvents();
+		const auto savedStories = (saved & stories);
+		const auto expectedStories = supported ? stories : Rights();
+		if ((savedStories.value() != expectedStories.value())
+			|| ((saved & visibleChannel).value()
+				!= (checked & visibleChannel).value())) {
+			return fail("new_admin_story_defaults");
+		}
+	}
+	if (!supported) {
+		// Offering a bot's default rights looks up its current rights
+		// first. Closing the chooser before the reply must leave nothing
+		// to run against the destroyed controller.
+		auto capture = ChannelSaveRequestCapture{
+			.instance = &session.mtp(),
+		};
+		const auto restoreCapture = gsl::finally(
+			[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+				gChannelSaveRequestCapture = previous;
+			});
+		const auto bot = session.data().processUsers(
+			MTP_vector<MTPUser>({RegressionBotUser(UserId(1183))}));
+		if (!bot || !bot->botInfo) {
+			return fail("bot_lookup_fixture");
+		}
+		bot->botInfo->channelAdminRights = Rights(Right::ChangeInfo) | stories;
+		const auto lookup
+			= MTPchannels_GetParticipant(channel->inputChannel(), bot->input());
+		const auto reply = MTP_channels_channelParticipant(
+			MTP_channelParticipantAdmin(
+				MTP_flags(0), MTP_long(peerToUser(bot->id).bare), MTPlong(),
+				MTP_long(session.userId().bare), MTP_int(0),
+				AdminRightsToMTP(ChatAdminRightsInfo(Rights(Right::ChangeInfo)
+													 | Right::PostStories)),
+				MTPstring()),
+			MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0));
+		const auto startLookup = [&] {
+			capture.requests.clear();
+			auto chooser = std::make_unique<AddBotToGroupBoxController>(
+				controller, bot, AddBotToGroupBoxController::Scope::All,
+				QString(), ChatAdminRights());
+			auto row = PeerListRow(channelPeer);
+			chooser->rowClicked(&row);
+			return chooser;
+		};
+		const auto hideLayers = [&] {
+			if (controller->isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+			}
+			QCoreApplication::processEvents();
+		};
+		hideLayers();
+		auto chooser = startLookup();
+		if (controller->isLayerShown()
+			|| !ReplyToChannelSaveRequestForRegressionTest(capture, 0, lookup,
+														   reply)) {
+			return fail("bot_lookup_request");
+		}
+		QCoreApplication::processEvents();
+		const auto opened = controller->isLayerShown();
+		hideLayers();
+		chooser = nullptr;
+		if (!opened) {
+			return fail("bot_lookup_opens_editor");
+		}
+
+		chooser = startLookup();
+		chooser = nullptr;
+		if (!ReplyToChannelSaveRequestForRegressionTest(capture, 0, lookup,
+														reply)) {
+			return fail("bot_lookup_after_dismissal_request");
+		}
+		QCoreApplication::processEvents();
+		if (controller->isLayerShown()) {
+			hideLayers();
+			return fail("bot_lookup_after_dismissal");
+		}
+	}
+
+	const auto resetSections = [&] {
+		if (controller->isLayerShown()) {
+			controller->hideLayer(anim::type::instant);
+		}
+		controller->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
+		QCoreApplication::processEvents();
+	};
+	auto &storiesData = session.data().stories();
+	const auto linkTo = [&](QString storyParam, int albumId) {
+		auto info = Window::PeerByLinkInfo();
+		info.usernameOrId = peerToChannel(channel->id);
+		info.storyParam = storyParam;
+		info.storyAlbumId = albumId;
+		return info;
+	};
+	if (supported) {
+		resetSections();
+		const auto toastBefore
+			= controller
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		controller->showPeerByLink(linkTo(u"1"_q, 0));
+		QCoreApplication::processEvents();
+		if ((controller->featureUnavailableOnServerToastCallsForRegressionTest()
+			 != toastBefore)
+			|| (controller->activeChatCurrent().peer() == channelPeer.get())) {
+			return fail("stock_story_link_not_refused");
+		}
+		resetSections();
+	} else {
+		if (storiesData.requestsPendingForRegressionTest()) {
+			return fail("story_requests_pending_before_links");
+		}
+		const auto links
+			= std::vector<std::pair<const char *, Window::PeerByLinkInfo>>{
+				{"story_link", linkTo(u"1"_q, 0)},
+				{"story_link_in_album", linkTo(u"1"_q, 2)},
+				{"live_story_link", linkTo(u"live"_q, 0)},
+				{"album_link", linkTo(QString(), 2)},
+		};
+		for (const auto &[name, info] : links) {
+			resetSections();
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			controller->showPeerByLink(info);
+			QCoreApplication::processEvents();
+			const auto toastShown
+				= (controller
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == toastBefore + 1);
+			const auto peerShown
+				= (controller->activeChatCurrent().peer() == channelPeer.get());
+			const auto noStoriesUi
+				= !controller->content()->isMainSectionShown()
+				  && !ShownStoriesSection(controller);
+			const auto noStoriesRequest
+				= !storiesData.requestsPendingForRegressionTest();
+			if (!toastShown || !peerShown || !noStoriesUi
+				|| !noStoriesRequest) {
+				std::fprintf(stderr,
+							 "Story controls regression: case=%s toast=%d "
+							 "peer=%d no-stories-ui=%d no-request=%d.\n",
+							 name, toastShown, peerShown, noStoriesUi,
+							 noStoriesRequest);
+				return fail(name);
+			}
+		}
+		resetSections();
+	}
+
+	std::fprintf(stderr,
+				 "Story controls regression passed: session=%s supported=%d; "
+				 "main menu, own-channel menus, admin rights and story links "
+				 "match.\n",
+				 sessionName, supported);
+	return true;
+}
+
 // The accepted refusal contract, observed instead of inferred: a refused
 // mini-app open shows the shared unavailable-server toast on the owning
 // session and leaves the webview path untouched, while a stock session keeps
@@ -3628,6 +4295,10 @@ template <typename Predicate>
 			= RunBoostMenuVisibilityRegression(
 				  stockController, true, "stock with blocked account available")
 			  && RunBoostMenuVisibilityRegression(
+				  blankController, false, "blocked while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  stockController, true, "stock with blocked account available")
+			  && RunStoryControlsVisibilityRegression(
 				  blankController, false, "blocked while stock is active");
 		domain.activate(blank);
 		const auto blockedFirst
@@ -3635,6 +4306,11 @@ template <typename Predicate>
 				  blankController, false,
 				  "blocked with stock account available")
 			  && RunBoostMenuVisibilityRegression(
+				  stockController, true, "stock while blocked is active")
+			  && RunStoryControlsVisibilityRegression(
+				  blankController, false,
+				  "blocked with stock account available")
+			  && RunStoryControlsVisibilityRegression(
 				  stockController, true, "stock while blocked is active");
 		return stockFirst && blockedFirst;
 	}();
@@ -5047,12 +5723,22 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return true;
 }
 
-[[nodiscard]] bool
-PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+// Returns an empty string when every entry is keyboard-selectable and
+// accessible, otherwise the first sub-check that failed.
+[[nodiscard]] QString
+PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	const auto &actions = menu.actions();
-	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
-		return false;
+	if (actions.empty()) {
+		return u"no-actions"_q;
+	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
+		return u"accessibility-focus-policy"_q;
 	}
+	// The menu is never shown, so it stays wherever it was created. The first
+	// keyboard step flushes the inner menu's pending move event, and the menu
+	// re-reads the cursor position on every move, so the item under the
+	// cursor is selected by mouse before the key selects it. Keep the cursor
+	// off the menu.
+	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
 	auto hasAction = false;
@@ -5061,17 +5747,24 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 		if (action->isSeparator()) {
 			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
 				|| actions[i + 1]->isSeparator()) {
-				return false;
+				return u"separator-position index=%1"_q.arg(i);
 			}
 		} else if (action->text().isEmpty()) {
-			return false;
+			return u"empty-text index=%1"_q.arg(i);
 		} else {
 			const auto item = inner->itemForAction(action);
 			const auto accessible
 				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
-			if (!accessible || accessible->role() != QAccessible::MenuItem
-				|| accessible->text(QAccessible::Name) != action->text()) {
-				return false;
+			if (!accessible) {
+				return u"accessibility-missing action=\"%1\""_q.arg(
+					action->text());
+			} else if (accessible->role() != QAccessible::MenuItem) {
+				return u"accessibility-role role=%1 action=\"%2\""_q
+					.arg(int(accessible->role()))
+					.arg(action->text());
+			} else if (accessible->text(QAccessible::Name) != action->text()) {
+				return u"accessibility-name name=\"%1\" action=\"%2\""_q.arg(
+					accessible->text(QAccessible::Name), action->text());
 			}
 			if (item->isEnabled()) {
 				auto down
@@ -5081,15 +5774,29 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 				if (!selected || selected->action() != action
 					|| selected->lastTriggeredSource()
 						   != Ui::Menu::TriggeredSource::Keyboard) {
-					return false;
+					return u"keyboard-selection action=\"%1\" selected=\"%2\" "
+						   "source=%3"_q
+							   .arg(action->text(),
+									selected ? selected->action()->text()
+											 : u"<none>"_q)
+							   .arg(selected
+										? int(selected->lastTriggeredSource())
+										: -1);
 				}
 				hasAction = true;
 			}
 		}
 	}
 	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
-	return hasAction && accessible
-		   && (accessible->role() == QAccessible::PopupMenu);
+	if (!hasAction) {
+		return u"keyboard-no-enabled-action"_q;
+	} else if (!accessible) {
+		return u"accessibility-menu-missing"_q;
+	} else if (accessible->role() != QAccessible::PopupMenu) {
+		return u"accessibility-menu-role role=%1"_q.arg(
+			int(accessible->role()));
+	}
+	return QString();
 }
 
 [[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
@@ -5156,11 +5863,13 @@ template <typename Widget>
 	if (!historyWidget || (historyWidget->peer() != self.get())) {
 		return false;
 	}
+	// A chat section needs a replies root or a sublist to list messages.
+	// The self chat's own sublist sends into the same history.
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
 		content.get(), controller,
 		HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.sublist = session.data().savedMessages().sublist(self),
 		});
 	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
 	const auto repeat = TimeId(7 * 24 * 60 * 60);
@@ -5251,9 +5960,12 @@ template <typename Widget>
 		dividers.profile = PopupMenuDividerCount(*profileMenu);
 		const auto theme
 			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto historyFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*historyMenu);
+		const auto profileFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*profileMenu);
 		const auto menusAreNavigable
-			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
-			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+			= historyFailure.isEmpty() && profileFailure.isEmpty();
 		const auto expectedEntries
 			= supported ? (theme && hasSharingAction(*historyMenu)
 						   && hasSharingAction(*profileMenu))
@@ -5263,9 +5975,12 @@ template <typename Widget>
 			std::fprintf(
 				stderr,
 				"Chat feature menu regression failed: label=%s supported=%d "
-				"keyboard-accessible=%d entries=%d\n",
+				"keyboard-accessible=%d entries=%d history-menu=%s "
+				"profile-menu=%s\n",
 				qPrintable(label), supported, menusAreNavigable,
-				expectedEntries);
+				expectedEntries,
+				historyFailure.isEmpty() ? "ok" : qPrintable(historyFailure),
+				profileFailure.isEmpty() ? "ok" : qPrintable(profileFailure));
 			return false;
 		}
 		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
@@ -5279,14 +5994,18 @@ template <typename Widget>
 							tr::lng_scheduled_send_until_online(tr::now));
 		const auto hasSilentSend
 			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		const auto sendFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*sendMenu);
 		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
-			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| !sendFailure.isEmpty()
 			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
 			std::fprintf(stderr,
 						 "Chat feature send menu regression failed: label=%s "
-						 "supported=%d schedule=%d silent=%d\n",
+						 "supported=%d schedule=%d silent=%d send-menu=%s\n",
 						 qPrintable(label), supported, bool(hasSchedule),
-						 bool(hasSilentSend));
+						 bool(hasSilentSend),
+						 sendFailure.isEmpty() ? "ok"
+											   : qPrintable(sendFailure));
 			return false;
 		}
 		if (supported) {
@@ -5367,6 +6086,14 @@ template <typename Predicate>
 	poll.stop();
 	return condition();
 }
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
+	return WaitForRegressionCondition([&] {
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
+	});
+}
 
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
 													  int stockExpected,
@@ -5387,10 +6114,317 @@ template <typename Predicate>
 		   == MainQueueBarrierResult::Completed;
 }
 
+[[nodiscard]] bool
+CallStartEffectsStayedQuiet(const CallStartRegressionSnapshot &snapshot) {
+	return !snapshot.permissionRequests && !snapshot.callRpcs
+		   && !snapshot.voiceChatLinkJoinAttempts && !snapshot.activations
+		   && !snapshot.leavePrompts;
+}
+
+[[nodiscard]] bool
+RunIncomingCallAnswerRegression(not_null<Main::Account *> account,
+								bool supported) {
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	for (const auto conferenceInvite : {false, true}) {
+		ResetCallStartRegressionForTest();
+		auto call = CallsInstanceRegressionAccess::
+			CreateIncomingCallForAnswerRegression(user, conferenceInvite);
+		SetCallStartRegressionInterceptForTest(true);
+		call->answer();
+		SetCallStartRegressionInterceptForTest(false);
+		const auto snapshot = GetCallStartRegressionSnapshotForTest();
+		const auto expectedEffects = supported ? 1 : 0;
+		const auto expectedState = supported
+									   ? Calls::Call::State::ExchangingKeys
+									   : Calls::Call::State::Failed;
+		if (snapshot.permissionRequests != expectedEffects
+			|| snapshot.callRpcs != expectedEffects
+			|| snapshot.unavailableToasts.size() != (supported ? 0U : 1U)
+			|| (!supported
+				&& snapshot.unavailableToasts.front() != &account->session())
+			|| call->state() != expectedState) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void PrepareRegressionChannel(not_null<ChannelData *> channel) {
+	channel->setName(u"Regression channel"_q, QString());
+	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
+}
+
+[[nodiscard]] bool RunCallsInstanceStartRegression(
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall, bool supported) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	auto &calls = Core::App().calls();
+	const auto groupCall = calls.currentGroupCall();
+	const auto chat = account->session().data().chat(ChatId(1051));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	const auto show = controller->uiShow();
+	ResetCallStartRegressionForTest();
+	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("direct starts begin");
+	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("outgoing start returned");
+	calls.startOrJoinGroupCall(show, peer, {});
+	ReportCallRegressionCheckpoint("group start returned");
+	calls.startOrJoinConferenceCall({.show = show});
+	ReportCallRegressionCheckpoint("conference start returned");
+	calls.showStartWithRtmp(show, peer);
+	ReportCallRegressionCheckpoint("RTMP start returned");
+	SetCallStartRegressionInterceptForTest(false);
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 1, 1, 1}
+										  : std::array<int, 4>{0, 0, 0, 0};
+	const auto correctToastCount
+		= snapshot.unavailableToasts.size() == (supported ? 0U : 4U);
+	const auto allToastsBelongToAccount = std::all_of(
+		begin(snapshot.unavailableToasts), end(snapshot.unavailableToasts),
+		[&](const Main::Session *session) {
+			return session == &account->session();
+		});
+	return snapshot.startPassed == expectedPassed && correctToastCount
+		   && allToastsBelongToAccount && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == stockCall.get()
+		   && stockCall->state() == Calls::Call::State::Established
+		   && calls.currentGroupCall() == groupCall && !window->isLayerShown();
+}
+
+[[nodiscard]] bool
+RunOutgoingStartSelectionRegression(not_null<Main::Account *> account,
+									not_null<Window::Controller *> window,
+									bool supported) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	auto &calls = Core::App().calls();
+	const auto current = calls.currentCall();
+	const auto group = calls.currentGroupCall();
+	ResetCallStartRegressionForTest();
+	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("selection outgoing start begin");
+	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("selection outgoing start returned");
+	SetCallStartRegressionInterceptForTest(false);
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 0, 0, 0}
+										  : std::array<int, 4>{0, 0, 0, 0};
+	return snapshot.startPassed == expectedPassed
+		   && snapshot.unavailableToasts.size() == (supported ? 0U : 1U)
+		   && (snapshot.unavailableToasts.empty()
+			   || snapshot.unavailableToasts.front() == &account->session())
+		   && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == current
+		   && calls.currentGroupCall() == group;
+}
+
+[[nodiscard]] bool RunConferenceLinkPreservesStockCallRegression(
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()
+		|| &stockCall->user()->session() == &account->session()) {
+		return false;
+	}
+	const auto context = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = base::make_weak(controller),
+	});
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("conference link begin");
+	if (!Core::App().openLocalUrl(u"tg://call?slug=regression-conference"_q,
+								  context)) {
+		return false;
+	}
+	ReportCallRegressionCheckpoint("conference link returned");
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	return snapshot.navigationEvents == std::vector<
+		SessionNavigationRegressionEvent>{
+			SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		}
+		&& CallStartEffectsStayedQuiet(snapshot)
+		&& Core::App().calls().currentCall() == stockCall.get()
+		&& stockCall->state() == Calls::Call::State::Established
+		&& !window->isLayerShown();
+}
+
+[[nodiscard]] bool
+RunChannelCallLinkRegression(not_null<Main::Account *> account,
+							 not_null<Window::Controller *> window) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto channelId = ChannelId(2051);
+	const auto channel = account->session().data().channel(channelId);
+	PrepareRegressionChannel(channel);
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("channel call link begin");
+	controller->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = channelId,
+		.voicechatHash = u"regression-link"_q,
+	});
+	ReportCallRegressionCheckpoint("channel call link dispatched");
+	const auto drained = WaitForMainQueueBarrier();
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("channel call link events processed");
+	const auto linkEvents = GetCallStartRegressionSnapshotForTest();
+	const auto navigationMatches
+		= linkEvents.navigationEvents
+		  == std::vector<SessionNavigationRegressionEvent>{
+			  SessionNavigationRegressionEvent::ChannelOpened,
+			  SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		  };
+	if (!drained || !navigationMatches
+		|| linkEvents.openedPeers
+			   != std::vector<const PeerData *>{channel.get()}
+		|| controller->content()->peer() != channel.get()
+		|| !CallStartEffectsStayedQuiet(linkEvents) || window->isLayerShown()) {
+		std::fprintf(
+			stderr,
+			"Channel call link regression: custom=%d blocked=%d drained=%d "
+			"navigation=%d events=%zu opened=%zu peer=%d layer=%d "
+			"permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			account->local().hasStoredCustomServer(),
+			account->mtp().dcOptions().blocked(), drained, navigationMatches,
+			linkEvents.navigationEvents.size(), linkEvents.openedPeers.size(),
+			controller->content()->peer() == channel.get(),
+			window->isLayerShown(), linkEvents.permissionRequests,
+			linkEvents.callRpcs, linkEvents.voiceChatLinkJoinAttempts,
+			linkEvents.activations, linkEvents.leavePrompts);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool
+RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
+								 not_null<Window::Controller *> window) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()
+		|| !RunChannelCallLinkRegression(account, window)
+		|| !RunTeagramBrandingRegression(controller, "settings smoke")) {
+		return false;
+	}
+	const auto closeSettingsLayer = gsl::finally([&] {
+		if (window->isLayerShown()) {
+			window->hideSettingsAndLayer(anim::type::instant);
+		}
+	});
+	const auto channel = account->session().data().channel(ChannelId(2051));
+
+	const auto context = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = base::make_weak(controller),
+	});
+	const auto showsSettings = [&](Settings::Type expected) {
+		const auto wrapped = dynamic_cast<Info::WrapWidget *>(
+			controller->activeLayerSection());
+		return wrapped
+			   && (wrapped->controller()->section().type()
+				   == Info::Section::Type::Settings)
+			   && (wrapped->controller()->section().settingsType() == expected);
+	};
+	auto settingLinkNumber = 0;
+	for (const auto &url : {
+			 u"tg://settings/privacy/calls"_q,
+			 u"tg://settings/privacy/calls/never"_q,
+			 u"tg://settings/privacy/calls/always"_q,
+			 u"tg://settings/privacy/calls/p2p"_q,
+			 u"tg://settings/privacy/calls/p2p/never"_q,
+			 u"tg://settings/privacy/calls/p2p/always"_q,
+			 u"tg://settings/calls/all"_q,
+			 u"tg://settings/calls/start-call"_q,
+		 }) {
+		std::fprintf(stderr,
+					 "Call regression checkpoint: setting link %d begin\n",
+					 settingLinkNumber);
+		std::fflush(stderr);
+		ResetCallStartRegressionForTest();
+		if (!Core::App().openLocalUrl(url, context)) {
+			return false;
+		}
+		++settingLinkNumber;
+		ReportCallRegressionCheckpoint("call setting link returned");
+		const auto events = GetCallStartRegressionSnapshotForTest();
+		if (events.navigationEvents != std::vector<
+				SessionNavigationRegressionEvent>{
+					SessionNavigationRegressionEvent::FeatureUnavailableToast,
+				}
+			|| !CallStartEffectsStayedQuiet(events)
+			|| controller->content()->peer() != channel.get()
+			|| window->isLayerShown()) {
+			return false;
+		}
+	}
+
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("calls settings begin");
+	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
+		return false;
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("calls settings events processed");
+	const auto callsSettingsEvents = GetCallStartRegressionSnapshotForTest();
+	const auto callsSettingsShown = showsSettings(Settings::CallsId());
+	const auto callsSettingsQuiet
+		= callsSettingsEvents.navigationEvents.empty()
+		  && CallStartEffectsStayedQuiet(callsSettingsEvents);
+	if (!callsSettingsQuiet || !callsSettingsShown) {
+		std::fprintf(
+			stderr,
+			"Call settings link regression: quiet=%d shown=%d layer=%d "
+			"navigation=%zu permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			callsSettingsQuiet, callsSettingsShown, window->isLayerShown(),
+			callsSettingsEvents.navigationEvents.size(),
+			callsSettingsEvents.permissionRequests,
+			callsSettingsEvents.callRpcs,
+			callsSettingsEvents.voiceChatLinkJoinAttempts,
+			callsSettingsEvents.activations, callsSettingsEvents.leavePrompts);
+		return false;
+	}
+
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("device settings begin");
+	if (!Core::App().openLocalUrl(u"tg://settings/devices"_q, context)) {
+		return false;
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("device settings events processed");
+	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
+	return devicesSettingsEvents.navigationEvents.empty()
+		   && CallStartEffectsStayedQuiet(devicesSettingsEvents)
+		   && showsSettings(Settings::SessionsId());
+}
+
 [[nodiscard]] int
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
 								Fn<void(int)> done) {
+	ReportCallRegressionCheckpoint("chat participant regression begin");
 	Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
 		DeferredOnlineUpdatePhase::Setup);
 	if (Core::MacProtectedPath::IntegrationTestActive()
@@ -5549,6 +6583,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"primary window did not switch to the stock session");
 	}
+	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after the initial session switch");
@@ -5630,7 +6665,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(stockToPinnedPinnedUpdates) + 1)
 		|| !stockToPinnedDeferredObserved || !stockToPinnedDeferredMatches) {
 		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update each session exactly once");
+			"stock-to-pinned switch did not update the previous session once");
 	}
 	const auto pinnedToStockStockUpdates
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
@@ -5673,7 +6708,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(pinnedToStockPinnedUpdates) + 1)
 		|| !pinnedToStockDeferredObserved || !pinnedToStockDeferredMatches) {
 		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update each session exactly once");
+			"pinned-to-stock switch did not update the previous session once");
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
@@ -5688,6 +6723,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"previous-session teardown fixture did not share the stock user "
 			"id");
 	}
+	discarded->mtp().dcOptions().constructBlocked();
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -5754,12 +6790,43 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"queued teardown-to-stock switch missed its inline session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
+	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	const auto discardedController
+		= discardedWindow ? discardedWindow->sessionController() : nullptr;
+	if (!discardedController) {
+		return FailChatParticipantsRegression(
+			"could not create a controller for deferred call-link teardown");
+	}
+	const auto destroyedSessionChannelId = ChannelId(3051);
+	PrepareRegressionChannel(
+		discarded->session().data().channel(destroyedSessionChannelId));
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("destroyed-session link begin");
+	discardedController->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = destroyedSessionChannelId,
+		.voicechatHash = u"destroyed-session"_q,
+	});
+	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
 			"previous-session teardown fixture was not destroyed");
 	}
+	ReportCallRegressionCheckpoint("destroyed-session logout complete");
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after call-link session "
+			"destruction");
+	}
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
+		return FailChatParticipantsRegression(
+			"previous-session logout did not clear its cache binding");
+	}
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("destroyed-session events processed");
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeQueuedSwitches.switchDeferred + 1);
 	const auto queuedPinnedDeferredObserved = WaitForDeferredSwitchUpdate(
@@ -5774,6 +6841,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		"queued switch teardown deferred", stockQueuedDeferred, {1, 1},
 		pinnedQueuedDeferred, {1, 1}, &discardedAtTeardown,
 		"discarded-at-teardown", {1, 0});
+	const auto destroyedSessionEvents = GetCallStartRegressionSnapshotForTest();
+	if (!destroyedSessionEvents.navigationEvents.empty()
+		|| !destroyedSessionEvents.openedPeers.empty()) {
+		return FailChatParticipantsRegression(
+			"deferred call-link callback ran after session destruction");
+	}
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
@@ -5785,6 +6858,47 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"queued live and destroyed-session updates reached the wrong "
 			"sessions");
+	}
+	const auto stockDcOptionsBeforeDeferredLink
+		= MTP::DcOptions(MTP::Environment::Production).serialize();
+	stock->mtp().dcOptions().constructBlocked();
+	const auto replacedController = primary->sessionController();
+	if (!replacedController) {
+		return FailChatParticipantsRegression(
+			"primary stock controller disappeared before deferred link test");
+	}
+	const auto replacedControllerWeak = base::make_weak(replacedController);
+	const auto replacedSessionChannelId = ChannelId(3052);
+	PrepareRegressionChannel(
+		stock->session().data().channel(replacedSessionChannelId));
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("replaced-session link begin");
+	replacedController->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = replacedSessionChannelId,
+		.voicechatHash = u"replaced-session"_q,
+	});
+	ReportCallRegressionCheckpoint("replaced-session link dispatched");
+	primary->showAccount(pinned);
+	primary->showAccount(stock);
+	stock->mtp().dcOptions().constructUnenrolled();
+	if (!stock->mtp().dcOptions().constructFromSerialized(
+			stockDcOptionsBeforeDeferredLink)) {
+		return FailChatParticipantsRegression(
+			"could not restore stock DC options after deferred link test");
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return FailChatParticipantsRegression(
+			"main-thread queue did not drain after call-link session "
+			"replacement");
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("replaced-session events processed");
+	if (replacedControllerWeak.get()
+		|| primary->maybeSession() != &stock->session()
+		|| !GetCallStartRegressionSnapshotForTest().navigationEvents.empty()
+		|| !GetCallStartRegressionSnapshotForTest().openedPeers.empty()) {
+		return FailChatParticipantsRegression(
+			"deferred call-link callback ran after session replacement");
 	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
@@ -6263,13 +7377,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
 		const auto second = customFirst ? stock : pinned;
+		ReportCallRegressionCheckpoint("account activation begin");
 		domain.activate(first);
+		ReportCallRegressionCheckpoint("first account activated");
 		const auto firstActive = &domain.active() == first.get();
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
 		const auto firstWindows
 			= windowsMatch(customFirst ? "custom account first activation"
 									   : "stock account first activation");
+		const auto firstWindow = app.separateWindowFor(first);
+		const auto firstCallStart = firstWindow
+									&& RunOutgoingStartSelectionRegression(
+										first, firstWindow, !customFirst);
 		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto stockMenuController = stockWindow->sessionController();
 		const auto pinnedMenuController = pinnedWindow->sessionController();
@@ -6282,16 +7402,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			  && RunBoostMenuVisibilityRegression(
 				  pinnedMenuController, false,
 				  customFirst ? "custom while custom is active"
+							  : "custom while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  stockMenuController, true,
+				  customFirst ? "stock while custom is active"
+							  : "stock while stock is active")
+			  && RunStoryControlsVisibilityRegression(
+				  pinnedMenuController, false,
+				  customFirst ? "custom while custom is active"
 							  : "custom while stock is active");
 		if (!firstActive || !firstCapabilities || !firstWindows
-			|| !firstCustomWebViewRefused || !firstBoostMenusMatch) {
+			|| !firstCallStart || !firstCustomWebViewRefused
+			|| !firstBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "First activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d "
-						 "boost-menus=%d\n",
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
 						 customFirst, firstActive, firstCapabilities,
-						 firstWindows, firstCustomWebViewRefused,
-						 firstBoostMenusMatch);
+						 firstWindows, firstCallStart,
+						 firstCustomWebViewRefused, firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 								  first->session());
@@ -6452,6 +7581,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		}
 		domain.activate(second);
+		ReportCallRegressionCheckpoint("second account activated");
 		const auto secondStockMenuController = stockWindow->sessionController();
 		const auto secondPinnedMenuController
 			= pinnedWindow->sessionController();
@@ -6461,6 +7591,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto secondWindows
 			= windowsMatch(customFirst ? "stock account second activation"
 									   : "custom account second activation");
+		const auto secondWindow = app.separateWindowFor(second);
+		const auto secondCallStart = secondWindow
+									 && RunOutgoingStartSelectionRegression(
+										 second, secondWindow, customFirst);
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
 			= secondStockMenuController && secondPinnedMenuController
@@ -6471,16 +7605,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			  && RunBoostMenuVisibilityRegression(
 				  secondPinnedMenuController, false,
 				  customFirst ? "custom while stock is active"
+							  : "custom while custom is active")
+			  && RunStoryControlsVisibilityRegression(
+				  secondStockMenuController, true,
+				  customFirst ? "stock while stock is active"
+							  : "stock while custom is active")
+			  && RunStoryControlsVisibilityRegression(
+				  secondPinnedMenuController, false,
+				  customFirst ? "custom while stock is active"
 							  : "custom while custom is active");
 		if (!secondActive || !secondCapabilities || !secondWindows
-			|| !secondCustomWebViewRefused || !secondBoostMenusMatch) {
+			|| !secondCallStart || !secondCustomWebViewRefused
+			|| !secondBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "Second activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d "
-						 "boost-menus=%d\n",
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
 						 customFirst, secondActive, secondCapabilities,
-						 secondWindows, secondCustomWebViewRefused,
-						 secondBoostMenusMatch);
+						 secondWindows, secondCallStart,
+						 secondCustomWebViewRefused, secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
 											  : "pinned second",
@@ -6507,6 +7650,89 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
+	pinned->session().data().processUsers(MTP_vector<MTPUser>({
+		RegressionUser(UserId(2), false, u"2"_q),
+	}));
+	const auto stockUser = stock->session().data().userLoaded(UserId(2));
+	if (!stockUser) {
+		return FailChatParticipantsRegression(
+			"stock call-start regression user was not loaded");
+	}
+	auto &calls = app.calls();
+	const auto stockCall
+		= CallsInstanceRegressionAccess::InstallStockCall(&calls, stockUser);
+	if (!stockCall) {
+		return FailChatParticipantsRegression(
+			"could not install a live stock call for refusal regressions");
+	}
+	const auto removeStockCall = gsl::finally([&] {
+		CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	});
+	const auto stockDcOptions = stock->mtp().dcOptions().serialize();
+	const auto pinnedDcOptions = pinned->mtp().dcOptions().serialize();
+	ReportCallRegressionCheckpoint("call start fixtures ready");
+	if (!RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true)
+		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											false)) {
+		return FailChatParticipantsRegression(
+			"Calls::Instance starts crossed stock and pinned session policies");
+	}
+	if (!RunIncomingCallAnswerRegression(stock, true)
+		|| !RunIncomingCallAnswerRegression(pinned, false)) {
+		return FailChatParticipantsRegression(
+			"incoming calls bypassed the unsupported-session gate");
+	}
+	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
+	stock->mtp().dcOptions().constructBlocked();
+	if (stock->local().hasStoredCustomServer()
+		|| !stock->mtp().dcOptions().blocked()
+		|| !RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
+											false)) {
+		return FailChatParticipantsRegression(
+			"blocked unpinned session reached a Calls::Instance start path");
+	}
+	if (!RunChannelCallLinkRegression(stock, stockWindow)) {
+		return FailChatParticipantsRegression(
+			"blocked unpinned channel link bypassed the call-support gate");
+	}
+	ReportCallRegressionCheckpoint("blocked stock starts complete");
+	stock->mtp().dcOptions().constructUnenrolled();
+	if (!stock->mtp().dcOptions().constructFromSerialized(stockDcOptions)) {
+		return FailChatParticipantsRegression(
+			"could not restore stock DC options after blocked-call regression");
+	}
+	pinned->mtp().dcOptions().constructBlocked();
+	if (!pinned->local().hasStoredCustomServer()
+		|| !pinned->mtp().dcOptions().blocked()
+		|| pinned->mtp().dcOptions().hasCustomServer()
+		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											false)) {
+		return FailChatParticipantsRegression(
+			"blocked pinned session reached a Calls::Instance start path");
+	}
+	if (!RunChannelCallLinkRegression(pinned, pinnedWindow)) {
+		return FailChatParticipantsRegression(
+			"blocked pinned channel link bypassed the call-support gate");
+	}
+	ReportCallRegressionCheckpoint("blocked pinned starts complete");
+	pinned->mtp().dcOptions().constructUnenrolled();
+	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
+		|| !RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
+														  stockCall)) {
+		return FailChatParticipantsRegression(
+			"unsupported conference link replaced the stock call");
+	}
+	ReportCallRegressionCheckpoint("conference preservation complete");
+	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	const auto callLinksAndSettingsPassed
+		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
+	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
+	if (!callLinksAndSettingsPassed || !settingsLayerClosed) {
+		return FailChatParticipantsRegression(
+			"call links or settings links bypassed the pinned-session gate or "
+			"left a settings layer open");
+	}
+	ReportCallRegressionCheckpoint("call links and settings complete");
 	auto pinnedController = pinnedWindow->sessionController();
 	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
@@ -6557,6 +7783,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"unsupported pinned session sent a chatlist invite check request");
 	}
+	ReportCallRegressionCheckpoint("account activation regressions complete");
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
@@ -6894,6 +8121,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		QString error;
 	};
 	const auto migration = std::make_shared<MigrationResult>();
+	ReportCallRegressionCheckpoint("migration callback begin");
 	pinned->session().api().migrateChat(
 		pinnedActionChat,
 		[migration](not_null<ChannelData *>) { ++migration->done; },
@@ -6931,6 +8159,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		std::fprintf(stderr, "Chat participants regression passed.\n");
 		done(0);
 	});
+	ReportCallRegressionCheckpoint("migration callback scheduled");
 	return 0;
 }
 
@@ -7002,6 +8231,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= QByteArray("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
 	const auto failWrites
 		= gsl::finally([&] { qunsetenv(failureVariable.constData()); });
+	ReportCallRegressionCheckpoint("account lifecycle setup begins");
 
 	auto &domain = Core::App().domain();
 	if (!domain.started()) {
@@ -7452,7 +8682,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
@@ -7470,7 +8700,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
 	}
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
+		return FailAccountLifecycleRegression(
+			"could not reset the synthetic account after blocked-state checks");
+	}
 
+	ReportCallRegressionCheckpoint("account lifecycle setup complete");
 	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
 }
 

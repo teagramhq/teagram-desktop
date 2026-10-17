@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_access.h"
 #include "core/update_checker.h"
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
+#include "core/teagram_update_install.h"
 #include "core/teagram_update_manager.h"
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 #include "data/data_auto_download.h"
@@ -1110,8 +1111,8 @@ QString TeagramUpdateRefusalText(Core::TeagramUpdateRefusal refusal) {
 
 QString TeagramUpdateNoteText(const Core::TeagramUpdateSnapshot &state) {
 	using Note = Core::TeagramUpdateNoteVariant;
-	const auto variant
-		= Core::TeagramUpdateNoteForState(state.state, state.automatic);
+	const auto variant = Core::TeagramUpdateNoteForState(
+		state.state, state.automatic, state.candidateOlder);
 	auto result = QString();
 	auto guarantee = false;
 	switch (variant) {
@@ -1136,6 +1137,11 @@ QString TeagramUpdateNoteText(const Core::TeagramUpdateSnapshot &state) {
 	case Note::Available:
 		result = tr::lng_teagram_update_note_available(
 			tr::now, lt_build, QString::number(state.candidateBuild));
+		break;
+	case Note::AvailableOlder:
+		result = tr::lng_teagram_update_note_available_older(
+			tr::now, lt_build, QString::number(state.candidateBuild),
+			lt_running, QString::number(state.runningBuild));
 		break;
 	case Note::Downloading:
 		result = tr::lng_teagram_update_note_downloading(
@@ -1169,7 +1175,11 @@ QString TeagramUpdateNoteText(const Core::TeagramUpdateSnapshot &state) {
 		guarantee = true;
 		break;
 	case Note::Rejected:
-		result = state.candidateBuild
+		result = (state.rejectionCode == u"data-copy"_q)
+					 ? tr::lng_teagram_update_note_data_copy_failed(
+						   tr::now, lt_build,
+						   QString::number(state.candidateBuild))
+				 : state.candidateBuild
 					 ? tr::lng_teagram_update_note_rejected(
 						   tr::now, lt_build,
 						   QString::number(state.candidateBuild), lt_code,
@@ -1363,7 +1373,38 @@ void BuildTeagramUpdateSection(SectionBuilder &builder, bool atTop) {
 		.id = u"advanced/update_action"_q,
 		.title = std::move(actionTitle),
 		.st = &st::settingsButtonNoIcon,
-		.onClick = [=] { manager->performSettingsAction(); },
+		.onClick =
+			[=] {
+				const auto &state = manager->state();
+				if (state.state != Core::TeagramUpdateUiState::Available
+					|| !state.candidateOlder) {
+					manager->performSettingsAction();
+					return;
+				}
+				const auto running = QString::number(state.runningBuild);
+				const auto copyName = Core::TeagramUpdateDataCopyName(
+					cWorkingDir(), state.runningBuild);
+				if (copyName.isEmpty()) {
+					controller->show(Ui::MakeInformBox(
+						tr::lng_teagram_update_note_data_copy_failed(
+							tr::now, lt_build,
+							QString::number(state.candidateBuild))));
+					return;
+				}
+				controller->show(Ui::MakeConfirmBox({
+					.text = tr::lng_teagram_update_older_text(
+						tr::now, lt_build,
+						QString::number(state.candidateBuild), lt_running,
+						running, lt_folder, copyName),
+					.confirmed =
+						[=](Fn<void()> close) {
+							manager->downloadAndInstall(copyName);
+							close();
+						},
+					.confirmText = tr::lng_teagram_update_older_confirm(),
+					.title = tr::lng_teagram_update_older_title(),
+				}));
+			},
 		.keywords = {u"update"_q, u"install"_q, u"restart"_q},
 		.shown = std::move(actionShown),
 	});

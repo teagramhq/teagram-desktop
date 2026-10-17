@@ -44,6 +44,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/credits.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_community.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
@@ -383,6 +384,23 @@ void SaveBoostsUnrestrict(
 		key,
 		requestId,
 		std::move(onSuperseded));
+}
+
+[[nodiscard]] rpl::producer<QString>
+RestrictionsCountText(not_null<PeerData *> peer) {
+	return Info::Profile::RestrictionsCountValue(peer)
+		   | rpl::map([=](int count) {
+				 const auto total
+					 = Data::ListOfRestrictions(
+						   {
+							   .isForum = peer->isForum(),
+							   .isCustomServerChat
+							   = peer->isChat() && peer->usesCustomServer(),
+						   })
+						   .size();
+				 return QString::number(count) + QString("/")
+						+ QString::number(int(total));
+			 });
 }
 
 void ShowEditPermissions(
@@ -800,6 +818,11 @@ object_ptr<Ui::RpWidget> Controller::createPhotoAndTitleEdit() {
 
 	if (!canEditInformation()) {
 		return nullptr;
+	}
+	if (const auto chat = _peer->asChat()) {
+		if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+			return createTitleEdit();
+		}
 	}
 
 	auto result = object_ptr<Ui::RpWidget>(_wrap);
@@ -1657,9 +1680,11 @@ void Controller::fillManageSection() {
 		return;
 	}
 
-	const auto canEditType = isChannel
-		? channel->amCreator()
-		: chat->amCreator();
+	const auto chatControls = Data::details::BasicChatControlsFor(
+		!isChannel && chat->usesCustomServer());
+	const auto canEditType
+		= isChannel ? channel->amCreator()
+					: (chat->amCreator() && chatControls.canEditType);
 	const auto canEditSignatures = isChannel
 		&& channel->canEditSignatures()
 		&& !channel->isMegagroup();
@@ -1668,9 +1693,10 @@ void Controller::fillManageSection() {
 		  && Main::details::canEditChannelAutoTranslation(
 			  channel->session().serverTranslationSupported(),
 			  channel->canEditAutoTranslate());
-	const auto canEditPreHistoryHidden = isChannel
-		? channel->canEditPreHistoryHidden()
-		: chat->canEditPreHistoryHidden();
+	const auto canEditPreHistoryHidden
+		= isChannel ? channel->canEditPreHistoryHidden()
+					: (chat->canEditPreHistoryHidden()
+					   && chatControls.canEditHistoryVisibility);
 	const auto canEditForum = isChannel
 		? (channel->isMegagroup() && channel->amCreator())
 		: (chat->amCreator() && !chat->usesCustomServer());
@@ -1788,22 +1814,11 @@ void Controller::fillManageSection() {
 	}
 	if (canEditPermissions) {
 		AddButtonWithCount(
-			_controls.buttonsLayout,
-			tr::lng_manage_peer_permissions(),
-			Info::Profile::MigratedOrMeValue(
-				_peer
-			) | rpl::map([=](not_null<PeerData*> peer) {
-				return Info::Profile::RestrictionsCountValue(
-					peer
-				) | rpl::map([=](int count) {
-					return QString::number(count)
-						+ QString("/")
-						+ QString::number(int(Data::ListOfRestrictions(
-							{ .isForum = peer->isForum() }).size()));
-				});
-			}) | rpl::flatten_latest(),
+			_controls.buttonsLayout, tr::lng_manage_peer_permissions(),
+			Info::Profile::MigratedOrMeValue(_peer)
+				| rpl::map(RestrictionsCountText) | rpl::flatten_latest(),
 			[=] { ShowEditPermissions(_navigation, _peer); },
-			{ &st::menuIconPermissions });
+			{&st::menuIconPermissions});
 	}
 	if (canEditInviteLinks) {
 		auto count = Info::Profile::MigratedOrMeValue(

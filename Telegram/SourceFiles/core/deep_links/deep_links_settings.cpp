@@ -121,12 +121,6 @@ Result ShowSavedMessages(const Context &ctx) {
 	return Result::Handled;
 }
 
-Result ShowFaq(const Context &ctx) {
-	::Settings::OpenFaq(
-		ctx.controller ? base::make_weak(ctx.controller) : nullptr);
-	return Result::Handled;
-}
-
 void ShowQrBox(not_null<Window::SessionController*> controller) {
 	const auto user = controller->session().user();
 	controller->uiShow()->show(Box(
@@ -219,6 +213,9 @@ Result OpenInternalUrl(const Context &ctx, const QString &url) {
 Result ShowMyProfile(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
+	} else if (!ctx.controller->session().storiesSupported()) {
+		ctx.controller->showSettings(::Settings::InformationId());
+		return Result::Handled;
 	}
 	ctx.controller->showSection(
 		Info::Stories::Make(ctx.controller->session().user()));
@@ -373,6 +370,20 @@ Result ShowPrivacyBox(
 	return Result::Handled;
 }
 
+template <typename ControllerFactory>
+Result ShowCallsPrivacyBox(const Context &ctx, PrivacyKey key,
+						   ControllerFactory controllerFactory,
+						   const QString &highlightControl = QString()) {
+	if (!ctx.controller) {
+		return Result::NeedsAuth;
+	}
+	if (!ctx.controller->session().callsSupported()) {
+		ctx.controller->showFeatureUnavailableOnServerToast();
+		return Result::Handled;
+	}
+	return ShowPrivacyBox(ctx, key, controllerFactory, highlightControl);
+}
+
 } // namespace
 
 void RegisterSettingsHandlers(Router &router) {
@@ -397,26 +408,30 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
-		.path = u"my-profile/posts/add-album"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->setHighlightControlId(u"my-profile/posts/add-album"_q);
-			return ShowMyProfile(ctx);
-		}},
-	});
+								  .path = u"my-profile/posts/add-album"_q,
+								  .action = CodeBlock{[](const Context &ctx) {
+									  if (!ctx.controller) {
+										  return Result::NeedsAuth;
+									  }
+									  ctx.controller->setHighlightControlId(
+										  u"my-profile/posts/add-album"_q);
+									  return ShowMyProfile(ctx);
+								  }},
+								  .requiresStories = true,
+							  });
 
 	router.add(u"settings"_q, {
 		.path = u"my-profile/gifts"_q,
@@ -430,18 +445,20 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"my-profile/archived-posts"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			ctx.controller->showSection(Info::Stories::Make(
-				ctx.controller->session().user(),
-				Info::Stories::ArchiveId()));
-			return Result::Handled;
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"my-profile/archived-posts"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   if (!ctx.controller) {
+						   return Result::NeedsAuth;
+					   }
+					   ctx.controller->showSection(
+						   Info::Stories::Make(ctx.controller->session().user(),
+											   Info::Stories::ArchiveId()));
+					   return Result::Handled;
+				   }},
+				   .requiresStories = true,
+			   });
 
 	router.add(u"settings"_q,
 			   {
@@ -1064,69 +1081,87 @@ void RegisterSettingsHandlers(Router &router) {
 		}},
 	});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); });
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(ctx, PrivacyKey::Calls, [=] {
+						   return std::make_unique<
+							   ::Settings::CallsPrivacyController>();
+					   });
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/never"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
-				u"privacy/never"_q);
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls/never"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(
+						   ctx, PrivacyKey::Calls,
+						   [=] {
+							   return std::make_unique<
+								   ::Settings::CallsPrivacyController>();
+						   },
+						   u"privacy/never"_q);
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/always"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::Calls,
-				[=] { return std::make_unique<::Settings::CallsPrivacyController>(); },
-				u"privacy/always"_q);
-		}},
-	});
+	router.add(u"settings"_q,
+			   {
+				   .path = u"privacy/calls/always"_q,
+				   .action = CodeBlock{[](const Context &ctx) {
+					   return ShowCallsPrivacyBox(
+						   ctx, PrivacyKey::Calls,
+						   [=] {
+							   return std::make_unique<
+								   ::Settings::CallsPrivacyController>();
+						   },
+						   u"privacy/always"_q);
+				   }},
+			   });
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); });
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer, [=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					});
+			}},
+		});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p/never"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
-				u"privacy/never"_q);
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p/never"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer,
+					[=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					},
+					u"privacy/never"_q);
+			}},
+		});
 
-	router.add(u"settings"_q, {
-		.path = u"privacy/calls/p2p/always"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			return ShowPrivacyBox(
-				ctx,
-				PrivacyKey::CallsPeer2Peer,
-				[=] { return std::make_unique<::Settings::CallsPeer2PeerPrivacyController>(); },
-				u"privacy/always"_q);
-		}},
-	});
+	router.add(
+		u"settings"_q,
+		{
+			.path = u"privacy/calls/p2p/always"_q,
+			.action = CodeBlock{[](const Context &ctx) {
+				return ShowCallsPrivacyBox(
+					ctx, PrivacyKey::CallsPeer2Peer,
+					[=] {
+						return std::make_unique<
+							::Settings::CallsPeer2PeerPrivacyController>();
+					},
+					u"privacy/always"_q);
+			}},
+		});
 
 	router.add(u"settings"_q, {
 		.path = u"privacy/voice"_q,
@@ -1733,35 +1768,13 @@ void RegisterSettingsHandlers(Router &router) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
 			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
+			}
 			Calls::ShowCallsBox(ctx.controller);
 			return Result::Handled;
 		}},
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"faq"_q,
-		.action = CodeBlock{ ShowFaq },
-		.requiresAuth = false,
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"ask-question"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			::Settings::OpenAskQuestionConfirm(ctx.controller);
-			return Result::Handled;
-		}},
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"features"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			UrlClickHandler::Open(tr::lng_telegram_features_url(tr::now));
-			return Result::Handled;
-		}},
-		.requiresAuth = false,
 	});
 
 	router.add(u"settings"_q, {
@@ -1882,6 +1895,10 @@ void RegisterSettingsHandlers(Router &router) {
 		.action = CodeBlock{ [](const Context &ctx) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
+			}
+			if (!ctx.controller->session().callsSupported()) {
+				ctx.controller->showFeatureUnavailableOnServerToast();
+				return Result::Handled;
 			}
 			Calls::ShowCallsBox(ctx.controller, true);
 			return Result::Handled;

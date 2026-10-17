@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_call.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "apiwrap.h"
 #include "base/openssl_help.h"
 #include "base/platform/base_platform_info.h"
@@ -348,6 +352,9 @@ void Call::startOutgoing() {
 	const auto flags = _videoCapture
 		? MTPphone_RequestCall::Flag::f_video
 		: MTPphone_RequestCall::Flag(0);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_RequestCall(
 		MTP_flags(flags),
 		_user->inputUser(),
@@ -419,6 +426,11 @@ void Call::applyUserConfirmation() {
 }
 
 void Call::answer() {
+	if (!_user->session().callsSupported()) {
+		details::ShowCallUnavailableToast(&_user->session());
+		setState(State::Failed);
+		return;
+	}
 	const auto video = isSharingVideo();
 	_delegate->callRequestPermissionsOrFail(crl::guard(this, [=] {
 		actuallyAnswer();
@@ -442,6 +454,12 @@ void Call::acceptConferenceInvite() {
 	setState(State::ExchangingKeys);
 	const auto limit = 5;
 	const auto messageId = _conferenceInviteMsgId;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallRpcForRegressionTest()) {
+		return;
+	}
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_GetGroupCall(
 		MTP_inputGroupCallInviteMessage(MTP_int(messageId.bare)),
 		MTP_int(limit)
@@ -484,6 +502,12 @@ void Call::actuallyAnswer() {
 	} else {
 		_answerAfterDhConfigReceived = false;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (Tests::InterceptCallRpcForRegressionTest()) {
+		return;
+	}
+	Tests::RecordCallRpcForRegressionTest();
+#endif
 	_api.request(MTPphone_AcceptCall(
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash)),
 		MTP_bytes(_gb),

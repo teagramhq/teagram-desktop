@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_modify_requests.h"
 #include "boxes/peers/edit_peer_permissions_save.h"
+#include "data/data_chat_participant_status.h"
 
 #include <vector>
 
@@ -310,6 +311,41 @@ TEST_CASE(RegistryDoesNotSupersedeAnAnsweredRequest) {
 		cancel);
 	CHECK_EQ(superseded, 0);
 	CHECK(cancelled.empty());
+}
+
+// The custom basic group box has no Reactions or Edit own tags row, and a row
+// the box does not show comes back restricted. The server rejects both bits,
+// so a save that leaves every visible row allowed must send no restriction.
+TEST_CASE(CustomBasicGroupSaveDropsHiddenRows) {
+	const auto options = Data::RestrictionsSetOptions{
+		.isCustomServerChat = true,
+	};
+	const auto hidden
+		= ChatRestriction::SendReactions | ChatRestriction::EditRank;
+	CHECK(Data::UnsupportedRestrictions(options) == hidden);
+	CHECK(Data::RestrictionsForSave(hidden, options) == ChatRestrictions());
+}
+
+// Unchecking Add members keeps that restriction and still drops the hidden
+// rows.
+TEST_CASE(CustomBasicGroupSaveKeepsVisibleRestrictions) {
+	const auto options = Data::RestrictionsSetOptions{
+		.isCustomServerChat = true,
+	};
+	const auto saved = Data::RestrictionsForSave(
+		ChatRestriction::AddParticipants | ChatRestriction::SendReactions
+			| ChatRestriction::EditRank,
+		options);
+	CHECK(saved == ChatRestriction::AddParticipants);
+}
+
+TEST_CASE(StockSaveKeepsReactionsAndTagRestrictions) {
+	const auto options = Data::RestrictionsSetOptions();
+	const auto rights = ChatRestriction::AddParticipants
+						| ChatRestriction::SendReactions
+						| ChatRestriction::EditRank;
+	CHECK(Data::UnsupportedRestrictions(options) == ChatRestrictions());
+	CHECK(Data::RestrictionsForSave(rights, options) == rights);
 }
 
 TEST_CASE(LatePermissionsSaveSuccessCannotCompleteRetry) {

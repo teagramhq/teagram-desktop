@@ -21,6 +21,9 @@ fixtures=(
   TeagramUpdateInstallerRemovesInterruptedExtraction
   TeagramUpdateInstallerClearsUncommittedCandidateOnRestart
   TeagramUpdateStartupKeepsOlderPreviousBundle
+  TeagramUpdateDowngradeKeepsNewerPreviousAndRelaunchesIt
+  TeagramUpdateDataCopyKeepsOriginalFolder
+  TeagramUpdateShutdownInstallCopiesFinalWrites
   TeagramUpdateInstallerKeepsCustomIcon
   TeagramUpdateReplacementRetainsPreviousThroughStartup
   TeagramUpdateReplacementRestoresMissingTarget

@@ -61,6 +61,7 @@ struct RequestResult {
 struct Release {
 	QString tag;
 	quint64 taggedBuild = 0;
+	bool prerelease = false;
 	std::map<QString, int> assetNames;
 };
 
@@ -156,7 +157,8 @@ class DownloadRunner final {
 	[[nodiscard]] InternalResult run(quint64 installedBuild,
 									 TeagramUpdateChannel installedChannel,
 									 quint64 highWaterBuild,
-									 bool downloadArchive);
+									 bool downloadArchive,
+									 TeagramUpdateSelection selection);
 	[[nodiscard]] InternalResult
 	downloadArchive(const AuthenticatedTeagramUpdate &metadata);
 
@@ -314,7 +316,10 @@ DownloadRunner::DownloadRunner(TeagramUpdateTransport &transport,
 InternalResult DownloadRunner::run(quint64 installedBuild,
 								   TeagramUpdateChannel installedChannel,
 								   quint64 highWaterBuild,
-								   bool shouldDownloadArchive) {
+								   bool shouldDownloadArchive,
+								   TeagramUpdateSelection selection) {
+	const auto switchToMain
+		= (selection == TeagramUpdateSelection::SwitchToMain);
 	auto releases = std::vector<Release>();
 	auto seenTags = std::map<QString, bool>();
 	for (auto page = 1; page <= kMaximumReleasePages; ++page) {
@@ -350,8 +355,11 @@ InternalResult DownloadRunner::run(quint64 installedBuild,
 		if (isCancelled()) {
 			return Failed(Reason::Cancelled);
 		}
-		if (release.taggedBuild <= installedBuild
-			|| !HasAsset(release, kManifestAsset)
+		const auto skipped = switchToMain
+								 ? (release.taggedBuild == installedBuild
+									|| release.prerelease)
+								 : (release.taggedBuild <= installedBuild);
+		if (skipped || !HasAsset(release, kManifestAsset)
 			|| !HasAsset(release, kSignatureAsset)) {
 			continue;
 		}
@@ -531,7 +539,12 @@ DownloadRunner::parseReleasePage(const QByteArray &body,
 		if (!assets.isArray()) {
 			continue;
 		}
-		auto release = Release{tagName, *build, {}};
+		auto release = Release{
+			tagName,
+			*build,
+			fields.value(u"prerelease"_q).toBool(),
+			{},
+		};
 		for (const auto &asset : assets.toArray()) {
 			if (!asset.isObject()) {
 				continue;
@@ -623,9 +636,9 @@ DownloadRunner::downloadArchive(const AuthenticatedTeagramUpdate &metadata) {
 
 TeagramUpdateCandidate::TeagramUpdateCandidate(
 	AuthenticatedTeagramUpdate metadata, quint64 installedBuild,
-	std::unique_ptr<QTemporaryFile> archive)
+	TeagramUpdateSelection selection, std::unique_ptr<QTemporaryFile> archive)
 	: _metadata(std::move(metadata)), _installedBuild(installedBuild),
-	  _archive(std::move(archive)) {}
+	  _selection(selection), _archive(std::move(archive)) {}
 
 TeagramUpdateCandidate::~TeagramUpdateCandidate() = default;
 
@@ -635,6 +648,14 @@ const AuthenticatedTeagramUpdate &TeagramUpdateCandidate::metadata() const {
 
 quint64 TeagramUpdateCandidate::installedBuild() const {
 	return _installedBuild;
+}
+
+TeagramUpdateSelection TeagramUpdateCandidate::selection() const {
+	return _selection;
+}
+
+bool TeagramUpdateCandidate::olderThanInstalled() const {
+	return _metadata.build() < _installedBuild;
 }
 
 QString TeagramUpdateCandidate::archivePath() const {
@@ -678,7 +699,7 @@ void TeagramUpdateDownloader::cancel() {
 TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	quint64 installedBuild, TeagramUpdateChannel installedChannel,
 	TeagramUpdateProgressHandler progress, quint64 highWaterBuild,
-	bool downloadArchive) {
+	bool downloadArchive, TeagramUpdateSelection selection) {
 	if (_started.exchange(true, std::memory_order_relaxed)) {
 		return {Reason::Busy, nullptr};
 	}
@@ -691,12 +712,12 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 #ifdef TDESKTOP_UNIT_TESTS
 		if (_useTestVerifier) {
 			return AuthenticateTeagramUpdateManifestForTests(
-				manifest, signature, build, channel, _testTrustedKey,
-				highWater);
+				manifest, signature, build, channel, _testTrustedKey, highWater,
+				selection);
 		}
 #endif // TDESKTOP_UNIT_TESTS
 		return AuthenticateTeagramUpdateManifest(manifest, signature, build,
-												 channel, highWater);
+												 channel, highWater, selection);
 	};
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto stagingDirectory = _testStagingDirectory;
@@ -706,7 +727,7 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	auto runner = DownloadRunner(*_transport, _cancelled, stagingDirectory,
 								 verify, std::move(progress));
 	auto result = runner.run(installedBuild, installedChannel, highWaterBuild,
-							 downloadArchive);
+							 downloadArchive, selection);
 	if (_cancelled.load(std::memory_order_relaxed)) {
 		return {Reason::Cancelled, nullptr};
 	}
@@ -717,7 +738,7 @@ TeagramUpdateDownloadResult TeagramUpdateDownloader::checkForUpdates(
 	return {
 		Reason::Available,
 		std::unique_ptr<TeagramUpdateCandidate>(new TeagramUpdateCandidate(
-			std::move(*result.metadata), installedBuild,
+			std::move(*result.metadata), installedBuild, selection,
 			std::move(result.archive))),
 	};
 }
@@ -754,7 +775,7 @@ TeagramUpdateDownloader::download(const TeagramUpdateCandidate &available,
 		Reason::Available,
 		std::unique_ptr<TeagramUpdateCandidate>(new TeagramUpdateCandidate(
 			std::move(*result.metadata), available.installedBuild(),
-			std::move(result.archive))),
+			available.selection(), std::move(result.archive))),
 	};
 }
 

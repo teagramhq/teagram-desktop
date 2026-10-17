@@ -82,6 +82,23 @@ public:
 		UserData *by,
 		std::optional<EditAdminBotFields> addingBot = {});
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] ChatAdminRights visibleRightsForRegressionTest() const {
+		return _visibleRightsForRegressionTest;
+	}
+	[[nodiscard]] ChatAdminRights checkedRightsForRegressionTest() const {
+		return _checkedRightsForRegressionTest
+				   ? _checkedRightsForRegressionTest()
+				   : ChatAdminRights();
+	}
+	[[nodiscard]] ChatAdminRights
+	rightsToSaveForRegressionTest(ChatAdminRights checked) const {
+		return _rightsToSaveForRegressionTest
+				   ? _rightsToSaveForRegressionTest(checked)
+				   : ChatAdminRights();
+	}
+#endif
+
 	void setSaveCallback(
 			Fn<void(
 				ChatAdminRightsInfo,
@@ -125,6 +142,12 @@ private:
 	TimeId _promotedSince = 0;
 	UserData *_by = nullptr;
 	std::optional<EditAdminBotFields> _addingBot;
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	ChatAdminRights _visibleRightsForRegressionTest;
+	Fn<ChatAdminRights()> _checkedRightsForRegressionTest;
+	Fn<ChatAdminRights(ChatAdminRights)> _rightsToSaveForRegressionTest;
+#endif
 
 	std::unique_ptr<ChannelOwnershipTransfer> _ownershipTransfer;
 

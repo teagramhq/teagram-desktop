@@ -9,7 +9,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 
+#include <array>
+#include <cstddef>
 #include <vector>
+
+namespace Main {
+class Session;
+} // namespace Main
+
+class PeerData;
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 namespace MTP {
@@ -32,6 +40,48 @@ enum class MainQueueBarrierResult {
 [[nodiscard]] MainQueueBarrierResult
 WaitForMainQueueBarrierForRegressionTest(int timeoutMilliseconds = 5000,
 										 bool suppressCompletion = false);
+
+class CallsInstanceRegressionAccess;
+
+enum class CallStartRegressionKind {
+	Outgoing,
+	Group,
+	Conference,
+	Rtmp,
+};
+
+enum class SessionNavigationRegressionEvent {
+	ChannelOpened,
+	FeatureUnavailableToast,
+};
+
+struct CallStartRegressionSnapshot {
+	std::array<int, 4> startPassed{};
+	std::vector<const Main::Session *> unavailableToasts;
+	int permissionRequests = 0;
+	int callRpcs = 0;
+	int voiceChatLinkJoinAttempts = 0;
+	int activations = 0;
+	int leavePrompts = 0;
+	std::vector<SessionNavigationRegressionEvent> navigationEvents;
+	std::vector<const PeerData *> openedPeers;
+};
+
+void ResetCallStartRegressionForTest();
+void SetCallStartRegressionInterceptForTest(bool enabled);
+[[nodiscard]] CallStartRegressionSnapshot
+GetCallStartRegressionSnapshotForTest();
+[[nodiscard]] bool
+InterceptCallStartForRegressionTest(CallStartRegressionKind kind);
+[[nodiscard]] bool InterceptCallRpcForRegressionTest();
+void RecordCallUnavailableToastForRegressionTest(const Main::Session *session);
+void RecordCallPermissionRequestForRegressionTest();
+void RecordCallRpcForRegressionTest();
+void RecordVoiceChatLinkJoinAttemptForRegressionTest();
+void RecordCallActivationForRegressionTest();
+void RecordCallLeavePromptForRegressionTest();
+void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer);
+void RecordFeatureUnavailableToastForRegressionTest();
 
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,

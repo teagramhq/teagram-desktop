@@ -65,7 +65,18 @@ class Environment final : public TeagramUpdateManagerEnvironment {
 	}
 
 	quint64 readHighWater() override {
-		return ReadTeagramUpdateHighWater(Core::App().settings());
+		auto &settings = Core::App().settings();
+		const auto pending = settings.readPref<QByteArray>(
+			kTeagramUpdatePendingMainSwitchPreference);
+		if (!pending.isEmpty()) {
+			if (CommitTeagramUpdatePendingMainSwitch(settings, runningBuild(),
+													 compiledChannel())) {
+				settings.writePref<bool>(kTeagramUpdateToastPreference, true);
+			}
+			Local::writeSettings();
+			Local::sync();
+		}
+		return ReadTeagramUpdateHighWater(settings);
 	}
 
 	void writeCommittedHighWater(quint64 build) override {
@@ -146,6 +157,23 @@ class Environment final : public TeagramUpdateManagerEnvironment {
 
 	void showPreviousBundle() const override {
 		ShowPreviousTeagramUpdateBundleInFinder();
+	}
+
+	bool deferOlderBuildUntilShutdown(
+		std::shared_ptr<TeagramUpdateCandidate> candidate,
+		const QString &name) override {
+		const auto build = candidate->metadata().build();
+		const auto failure = tr::lng_teagram_update_shutdown_failed(
+			tr::now, lt_build, QString::number(build));
+		if (!ScheduleOlderTeagramUpdateAfterShutdown(
+				std::move(candidate), cWorkingDir(), name, failure)) {
+			return false;
+		}
+		Core::App().settings().writePref<QByteArray>(
+			kTeagramUpdatePendingMainSwitchPreference,
+			QByteArray::number(build));
+		Local::writeSettings();
+		return true;
 	}
 
 	std::shared_ptr<TeagramUpdateDownloader> createDownloader() override {
