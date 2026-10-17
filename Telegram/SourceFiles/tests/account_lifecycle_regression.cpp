@@ -1215,6 +1215,32 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
+[[nodiscard]] bool
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::Match);
+}
+
 [[nodiscard]] bool
 RestartDomain(Main::Domain &domain,
 			  LifecycleWriteCountsForRegressionTest *teardownWriteCounts
@@ -5683,6 +5709,14 @@ template <typename Predicate>
 	poll.stop();
 	return condition();
 }
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
+	return WaitForRegressionCondition([&] {
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
+	});
+}
 
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
 													  int stockExpected,
@@ -6396,6 +6430,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
@@ -6406,6 +6442,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after call-link session "
 			"destruction");
+	}
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
+		return FailChatParticipantsRegression(
+			"previous-session logout did not clear its cache binding");
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
@@ -8264,7 +8305,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
@@ -8281,6 +8322,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| restoredBlocked->local().customServerPinUnknown()) {
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
+	}
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
+		return FailAccountLifecycleRegression(
+			"could not reset the synthetic account after blocked-state checks");
 	}
 
 	ReportCallRegressionCheckpoint("account lifecycle setup complete");
