@@ -2285,20 +2285,35 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(pinnedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: stock window did not "
+					 "activate before the custom-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &pinnedController->window())
-		|| !dispatchMatrix(pinnedController, &pinnedController->window())) {
+	if (app.activeWindow() != &pinnedController->window()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: custom window did not "
+					 "activate before its URL matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(blockedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: stock window did not "
+					 "activate before the blocked-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(blockedController, &stockController->window())) {
 		return false;
 	}
 
@@ -2477,6 +2492,9 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: stock Premium route "
+					 "was not handled.\n");
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -2681,6 +2699,10 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  active->window().activate();
 			  QCoreApplication::processEvents();
 			  if (app.activeWindow() != &active->window()) {
+				  std::fprintf(
+					  stderr,
+					  "Paid link regression failed: active target window did not "
+					  "activate before the refusal matrix.\n");
 				  return false;
 			  }
 			  for (const auto &url : local) {
@@ -6597,6 +6619,7 @@ struct NativeLifecycleResults {
 			"session-window-lifecycle",
 			"translation-controls",
 			"manage-controls",
+			"passport-link-refusal",
 			"mini-app-open",
 			"settings-deep-link",
 			"messages-privacy",
@@ -8123,7 +8146,6 @@ struct NativeLifecycleResults {
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
 #endif
-	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
 	restoredBlocked->mtp().stopForServerEnrollment();
@@ -8183,9 +8205,6 @@ struct NativeLifecycleResults {
 		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
 	restoredBlockedFixtureReady
 		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
-	if (activeWindowBeforeBlockedFixture) {
-		activeWindowBeforeBlockedFixture->activate();
-	}
 	if (!restoredBlockedFixtureReady) {
 		std::fprintf(stderr,
 					 "Mini-app open regression: restored blocked fixture could "
@@ -8203,6 +8222,18 @@ struct NativeLifecycleResults {
 			}
 		}
 	});
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
+	}
+	nativeLifecycleResults->StartCase("passport-link-refusal");
+	const auto passportRegressionPassed
+		= blankFixtureReady
+		  && RunPassportLinkRefusalRegression(
+			  app, domain, stock, pinned, blank, stockWindow, pinnedWindow,
+			  blankWindow);
+	nativeLifecycleResults->Report("passport-link-refusal",
+								   passportRegressionPassed);
+	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady && blankFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
