@@ -178,6 +178,7 @@ run_home_spelling_probes() {
 	local path_home="$3"
 	local protected_relative="${4:-Library/Application Support/Telegram Desktop}"
 	local allowed_relative="${5:-Library/Application Support/Teagram/tdata}"
+	local unrelated_relative="${6:-}"
 	local protected_canary="$path_home/$protected_relative/synthetic-canary"
 	local allowed_canary="$path_home/$allowed_relative/synthetic-allowed-file"
 	local protected_contents="synthetic $name protected bytes"
@@ -185,6 +186,13 @@ run_home_spelling_probes() {
 	mkdir -p "$(dirname "$protected_canary")" "$(dirname "$allowed_canary")"
 	printf '%s' "$protected_contents" > "$protected_canary"
 	printf '%s' "$allowed_contents" > "$allowed_canary"
+	local unrelated_canary=""
+	local unrelated_contents="synthetic $name allowed unrelated bytes"
+	if [[ -n "$unrelated_relative" ]]; then
+		unrelated_canary="$path_home/$unrelated_relative/synthetic-allowed-file"
+		mkdir -p "$(dirname "$unrelated_canary")"
+		printf '%s' "$unrelated_contents" > "$unrelated_canary"
+	fi
 	verify_unsandboxed_canary_readable \
 		"${name}_protected_unsandboxed_control" \
 		"$protected_canary" "$protected_contents" \
@@ -201,6 +209,16 @@ run_home_spelling_probes() {
 		"${name}_allowed_teagram_file" \
 		--mac-seatbelt-cat-allow-probe "$profile_home" "$allowed_canary" \
 		|| return 1
+	if [[ -n "$unrelated_canary" ]]; then
+		verify_unsandboxed_canary_readable \
+			"${name}_unrelated_unsandboxed_control" \
+			"$unrelated_canary" "$unrelated_contents" \
+			|| return 1
+		run_seatbelt_cat_probe \
+			"${name}_allowed_unrelated_file" \
+			--mac-seatbelt-cat-allow-probe "$profile_home" "$unrelated_canary" \
+			|| return 1
+	fi
 }
 
 run_seatbelt_mode_probe() {
@@ -687,6 +705,20 @@ sigma|teagram-Σ|teagram-ς
 deseret|teagram-𐐀|teagram-𐐨
 sharp-s|teagram-Maß|teagram-Mass
 UNICODE_HOME_CASES
+
+LONG_SHARP_S_HOME="$TEST_HOME/teagram-ssssssssss"
+LONG_SHARP_S_HOME_ALIAS="$TEST_HOME/teagram-ßßßßß"
+verify_casefold_directory_alias \
+	seatbelt_long_sharp_s_home_alias \
+	"$LONG_SHARP_S_HOME" "$LONG_SHARP_S_HOME_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_long_sharp_s_home \
+	"$LONG_SHARP_S_HOME" "$LONG_SHARP_S_HOME_ALIAS" \
+	"Library/Application Support/Telegram Desktop" \
+	"Library/Application Support/Teagram/tdata" \
+	"Library/Application Support/OtherApp/ordinary-data" \
+	|| exit 1
 
 run_seatbelt_mode_probe \
 	seatbelt_parent_open_denial \

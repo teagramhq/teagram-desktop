@@ -509,17 +509,43 @@ TEST_CASE(SeatbeltProfileRejectsOversizedExpandedHomePolicy) {
 	CHECK(policy.SeatbeltProfile().isEmpty());
 }
 
-TEST_CASE(SeatbeltProfileRejectsOversizedSharpSHomeBeforeFilesystemProbe) {
+TEST_CASE(SeatbeltProfileUsesBoundedSharpSRunFallback) {
 	auto fs = FakeFileSystem();
-	const auto longHome = "/Users/" + QByteArray(10, 's');
+	const auto longHome = "/Users/teagram-" + QByteArray(10, 's');
 	AddDirectoryHierarchy(fs, longHome);
-	auto failure = RefusalRecord();
-	const auto policy = MacProtectedPathPolicy::Build(
-		HomeRoots{.accountDatabase = longHome, .foundation = longHome},
-		fs.operations(), &failure);
-	CHECK(!policy.valid());
-	CHECK(failure.protectedClass == ProtectedClass::Invalid);
-	CHECK(fs.lstatCalls.empty());
+	const auto policy
+		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,
+												  .environment = longHome,
+												  .foundation = longHome},
+										fs.operations());
+	CHECK(policy.valid());
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(!profile.isEmpty());
+	CHECK(profile.size() < 32 * 1024);
+	const auto regex = QRegularExpression(
+		QString::fromUtf8(SeatbeltRegexExpression(profile)));
+	CHECK(regex.isValid());
+	const auto protectedSuffix
+		= u"/Library/Application Support/Telegram Desktop/x"_q;
+	const auto canonicalProtected
+		= QString::fromUtf8(longHome) + protectedSuffix;
+	const auto aliasHome = u"/Users/teagram-"_q + QString(5, QChar(0x00DF));
+	const auto aliasProtected = aliasHome + protectedSuffix;
+	for (const auto &path : {canonicalProtected, aliasProtected}) {
+		CHECK(policy.Classify(path.toUtf8())
+			  == ProtectedClass::ApplicationSupport);
+		CHECK(regex.match(path).hasMatch());
+	}
+	const auto allowedTeagram
+		= aliasHome + u"/Library/Application Support/Teagram/tdata/x"_q;
+	CHECK(policy.Classify(allowedTeagram.toUtf8()) == ProtectedClass::None);
+	CHECK(!regex.match(allowedTeagram).hasMatch());
+	const auto unrelatedTelegramName
+		= aliasHome
+		  + u"/Library/Application Support/OtherApp/Telegram Desktop/x"_q;
+	CHECK(policy.Classify(unrelatedTelegramName.toUtf8())
+		  == ProtectedClass::None);
+	CHECK(!regex.match(unrelatedTelegramName).hasMatch());
 }
 
 TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {

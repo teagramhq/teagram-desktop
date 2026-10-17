@@ -379,7 +379,7 @@ struct WalkResult {
 	// Bound the serialized alternatives before allocating the spelling table.
 	for (auto i = 2; i <= length; ++i) {
 		const auto count = countPrevious + countBeforePrevious;
-		if (count >= kMaxSbplProfileBytes) {
+		if (count >= kMaxSbplStringBytes) {
 			return false;
 		}
 		const auto bytes
@@ -387,7 +387,7 @@ struct WalkResult {
 			  + bytesBeforePrevious
 			  + countBeforePrevious
 					* ((i == 2 ? 0 : ignored.size()) + sharp.size());
-		if (bytes + count + 1 > kMaxSbplProfileBytes) {
+		if (bytes + count + 1 > kMaxSbplStringBytes) {
 			return false;
 		}
 		countBeforePrevious = countPrevious;
@@ -398,33 +398,18 @@ struct WalkResult {
 	return true;
 }
 
-[[nodiscard]] bool ProfileComponentWithinLimit(const QString &folded) {
-	const auto scalars = folded.toUcs4();
-	for (auto i = 0; i + 1 < int(scalars.size()); ++i) {
-		if (scalars[i] != 's' || scalars[i + 1] != 's') {
-			continue;
-		}
-		auto length = 0;
-		while (i + length < int(scalars.size()) && scalars[i + length] == 's') {
-			++length;
-		}
-		if (!ProfileSharpSRunWithinLimit(length, ProfileIgnoredSequence())) {
-			return false;
-		}
-		i += length - 1;
-	}
-	return true;
-}
-
 // Every way to spell a run of folded 's' with each "ss" pair optionally
 // written as a sharp s, which the guard folds to "ss" as well.
 [[nodiscard]] QByteArray ProfileSharpSRunRegex(int length,
 											   const QByteArray &ignored) {
-	if (!ProfileSharpSRunWithinLimit(length, ignored)) {
-		return {};
-	}
 	const auto single = u"([Ss]|\u017F)"_q.toUtf8();
 	const auto sharp = u"(\u00DF|\u1E9E)"_q.toUtf8();
+	if (!ProfileSharpSRunWithinLimit(length, ignored)) {
+		// Exact alternatives grow like the Fibonacci sequence. A bounded
+		// grouped fallback covers every spelling without expanding the run.
+		const auto token = "(" + single + "|" + sharp + ")";
+		return "(" + token + ignored + "(" + token + ignored + ")*)";
+	}
 	auto spellings = std::vector<std::vector<QByteArray>>(length + 1);
 	spellings[0].emplace_back();
 	for (auto i = 1; i <= length; ++i) {
@@ -453,9 +438,6 @@ struct WalkResult {
 [[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
 											   const QByteArray &ignored = {}) {
 	const auto folded = Fold(component);
-	if (!ProfileComponentWithinLimit(folded)) {
-		return {};
-	}
 	const auto scalars = folded.toUcs4();
 	auto result = ignored;
 	for (auto i = 0; i != int(scalars.size()); ++i) {
@@ -821,9 +803,7 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 		auto traversal = std::move(parsed.components);
 		auto raw = CanonicalRawComponents(traversal);
 		auto folded = FoldedComponents(raw);
-		if (folded.empty()
-			|| !std::all_of(folded.begin(), folded.end(),
-							ProfileComponentWithinLimit)) {
+		if (folded.empty()) {
 			return result;
 		}
 		addHomeCandidates(raw, preflightHomes);
@@ -871,10 +851,6 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 			return result;
 		}
 		const auto physical = FoldedComponents(resolved.components);
-		if (!std::all_of(physical.begin(), physical.end(),
-						 ProfileComponentWithinLimit)) {
-			return result;
-		}
 		addProfileHomePath(candidate.raw);
 		addProfileHomePath(resolved.components);
 		addHomeCandidates(resolved.components, preflightHomes);
