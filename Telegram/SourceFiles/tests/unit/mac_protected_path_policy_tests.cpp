@@ -141,8 +141,9 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		CHECK(profile.count("(deny file*") >= 1);
 		CHECK(profile.count("(regex\n") >= 1);
 		const auto ignoredSequence
-			= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
-			  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
+			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 		auto joinedProfileStrings = profile;
 		const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
@@ -155,8 +156,8 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
-		CHECK(joinedProfileStrings.contains(u"[Kk\u212A]"_q.toUtf8()));
-		CHECK(joinedProfileStrings.contains(u"[Ss\u017F]"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains(u"([Ss]|\u017F)"_q.toUtf8()));
 		CHECK(profile.contains("[^/]*"));
 		CHECK(profile.contains("[Ss]"));
 	} else {
@@ -356,8 +357,9 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	CheckSeatbeltProfile(policy);
 	const auto profile = policy.SeatbeltProfile();
 	const auto ignoredSequence
-		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
-		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	auto joinedProfileStrings = profile;
 	const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
@@ -387,19 +389,34 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	}
 }
 
-TEST_CASE(SeatbeltProfileUsesUnicodeCharacterClassForIgnorables) {
+TEST_CASE(SeatbeltProfileKeepsNonAsciiOutOfBracketClasses) {
+	const auto home = u"/Users/\u00D8\u212Aa\u00DFs\u017F"_q.toUtf8();
 	auto fs = FakeFileSystem();
-	const auto policy = TestPolicy(fs);
-	const auto profile = policy.SeatbeltProfile();
-	const auto ignoredClass
-		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
-		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
-	const auto ignoredAlternatives
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(profile.contains(ignoredClass));
-	CHECK(!profile.contains(ignoredAlternatives));
+	AddDirectoryHierarchy(fs, home);
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = home, .foundation = home},
+		fs.operations());
+	CHECK(policy.valid());
+	const auto expression = SeatbeltRegexExpression(policy.SeatbeltProfile());
+	CHECK(expression.contains(u"(\u200B|"_q.toUtf8()));
+	CHECK(expression.contains(u"(\u00DF|\u1E9E)"_q.toUtf8()));
+	auto inClass = false;
+	auto classes = 0;
+	for (auto i = 0; i != int(expression.size()); ++i) {
+		const auto byte = uchar(expression[i]);
+		if (byte == '\\') {
+			++i;
+		} else if (!inClass && byte == '[') {
+			inClass = true;
+			++classes;
+		} else if (inClass && byte == ']') {
+			inClass = false;
+		} else if (inClass) {
+			CHECK(byte < 0x80);
+		}
+	}
+	CHECK(!inClass);
+	CHECK(classes > 0);
 }
 
 TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
@@ -418,9 +435,10 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	const auto ignoredSequence
-		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
-		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
-	CHECK(joinedProfileStrings.contains(ignoredSequence + "[Ss\u017F]"
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	CHECK(joinedProfileStrings.contains(ignoredSequence + "([Ss]|\u017F)"
 										+ ignoredSequence));
 }
 
@@ -504,6 +522,8 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 		{u"/Users/\u1E9E"_q, u"/users/\u00DF"_q},
 		{u"/Users/Ma\u00DF"_q, u"/users/mass"_q},
 		{u"/Users/Mass"_q, u"/users/ma\u00DF"_q},
+		{u"/Users/Ma\u00DFs"_q, u"/users/mas\u00DF"_q},
+		{u"/Users/Ma\u1E9E"_q, u"/users/ma\u017Fs"_q},
 		{u"/Users/\u00D8.[x]"_q, u"/users/\u00F8.[x]"_q},
 		{u"/Users/"_q + QString(60, QChar(0x00D8)) + u"/"_q
 			 + QString(60, QChar(0x0141)),

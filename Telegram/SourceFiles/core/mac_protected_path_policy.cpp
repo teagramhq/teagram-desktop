@@ -141,6 +141,7 @@ struct WalkResult {
 [[nodiscard]] QString Fold(const QByteArray &component) {
 	auto result = QString::fromUtf8(component);
 	result = result.normalized(QString::NormalizationForm_D).toCaseFolded();
+	result.replace(QChar(0x00DF), u"ss"_q);
 	for (auto i = result.size() - 1; i >= 0; --i) {
 		const auto codepoint = result.at(i).unicode();
 		if ((codepoint >= 0x200B && codepoint <= 0x200F)
@@ -345,11 +346,45 @@ struct WalkResult {
 	if (i == caseEquivalents.end()) {
 		return RegexLiteral(QString::fromUcs4(&codepoint, 1).toUtf8());
 	}
-	auto result = QByteArray("[");
+	auto result = QByteArray("(");
 	for (const auto equivalent : i->second) {
-		result.append(QString::fromUcs4(&equivalent, 1).toUtf8());
+		if (result.size() > 1) {
+			result.append('|');
+		}
+		result.append(RegexLiteral(QString::fromUcs4(&equivalent, 1).toUtf8()));
 	}
-	result.append(']');
+	result.append(')');
+	return result;
+}
+
+// Every way to spell a run of folded 's' with each "ss" pair optionally
+// written as a sharp s, which the guard folds to "ss" as well.
+[[nodiscard]] QByteArray ProfileSharpSRunRegex(int length,
+											   const QByteArray &ignored) {
+	const auto single = u"([Ss]|\u017F)"_q.toUtf8();
+	const auto sharp = u"(\u00DF|\u1E9E)"_q.toUtf8();
+	auto spellings = std::vector<std::vector<QByteArray>>(length + 1);
+	spellings[0].emplace_back();
+	for (auto i = 1; i <= length; ++i) {
+		for (const auto &prefix : spellings[i - 1]) {
+			spellings[i].push_back(
+				prefix.isEmpty() ? single : prefix + ignored + single);
+		}
+		if (i >= 2) {
+			for (const auto &prefix : spellings[i - 2]) {
+				spellings[i].push_back(
+					prefix.isEmpty() ? sharp : prefix + ignored + sharp);
+			}
+		}
+	}
+	auto result = QByteArray("(");
+	for (const auto &spelling : spellings[length]) {
+		if (result.size() > 1) {
+			result.append('|');
+		}
+		result.append(spelling);
+	}
+	result.append(')');
 	return result;
 }
 
@@ -361,20 +396,19 @@ struct WalkResult {
 	for (auto i = 0; i != int(scalars.size()); ++i) {
 		const auto codepoint = char32_t(scalars[i]);
 		auto character = QByteArray();
-		if (codepoint == 0x00DF) {
-			character = u"([Ss]"_q.toUtf8() + ignored
-						+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
-		} else if (codepoint == 's' && i + 1 < int(scalars.size())
-				   && scalars[i + 1] == 's') {
-			character = u"([Ss]"_q.toUtf8() + ignored
-						+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
-			++i;
-		} else if (codepoint == 'k' || codepoint == 'K'
-				   || codepoint == 0x212A) {
-			character = u"[Kk\u212A]"_q.toUtf8();
-		} else if (codepoint == 's' || codepoint == 'S'
-				   || codepoint == 0x017F) {
-			character = u"[Ss\u017F]"_q.toUtf8();
+		if (codepoint == 's' && i + 1 < int(scalars.size())
+			&& scalars[i + 1] == 's') {
+			auto length = 0;
+			while (i + length < int(scalars.size())
+				   && scalars[i + length] == 's') {
+				++length;
+			}
+			character = ProfileSharpSRunRegex(length, ignored);
+			i += length - 1;
+		} else if (codepoint == 'k') {
+			character = u"([Kk]|\u212A)"_q.toUtf8();
+		} else if (codepoint == 's') {
+			character = u"([Ss]|\u017F)"_q.toUtf8();
 		} else if (codepoint >= 'a' && codepoint <= 'z') {
 			character.append('[');
 			character.append(char(codepoint - 'a' + 'A'));
@@ -806,8 +840,9 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		return {};
 	}
 	const auto ignoredSequence
-		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
-		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	const auto component = [&](const QByteArray &value) {
 		return ProfileComponentRegex(value, ignoredSequence);
