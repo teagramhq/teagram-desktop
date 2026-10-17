@@ -4148,7 +4148,16 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		if (!pinnedServerRestored) {
 			const auto restored
 				= ConfigurePinnedServer(pinned, RegressionServerKey());
-			Expects(restored);
+			if (!restored || !pinned->mtp().dcOptions().hasCustomServer()
+				|| pinned->mtp().dcOptions().blocked()) {
+				std::fprintf(stderr,
+							 "Mini-app open regression: scope-exit could not "
+							 "restore the "
+							 "custom pin: configured=%d custom=%d blocked=%d\n",
+							 restored,
+							 pinned->mtp().dcOptions().hasCustomServer(),
+							 pinned->mtp().dcOptions().blocked());
+			}
 		}
 	});
 	pinned->local().writeCustomServerBlocked(false);
@@ -4195,8 +4204,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								 kRegressionEntryClassCount + 1, 0, 0, 0, 0)) {
 		return false;
 	}
-	if (!ConfigurePinnedServer(pinned, RegressionServerKey())
-		|| !pinned->mtp().dcOptions().hasCustomServer()
+	const auto customPinConfigured
+		= ConfigurePinnedServer(pinned, RegressionServerKey());
+	pinnedServerRestored = true;
+	if (!customPinConfigured || !pinned->mtp().dcOptions().hasCustomServer()
 		|| pinned->mtp().dcOptions().blocked()) {
 		std::fprintf(
 			stderr,
@@ -4206,7 +4217,6 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			pinned->mtp().dcOptions().blocked());
 		return false;
 	}
-	pinnedServerRestored = true;
 
 	// Deferred resolution, completed on demand. The seam runs the production
 	// completion with its real guards: it opens for a live window of the

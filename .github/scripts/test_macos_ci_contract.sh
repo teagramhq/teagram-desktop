@@ -583,7 +583,10 @@ awk '
   /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
   in_mini_app && /restorePinnedServerOnExit = gsl::finally/ {
     cleanup_guard = NR
+    in_cleanup = 1
   }
+  in_cleanup && /std::fprintf/ { cleanup_diagnostic = NR }
+  in_cleanup && /Expects\(/ { fatal_cleanup = 1 }
   in_mini_app && /ConfigurePinnedServer\(pinned, RegressionServerKey\(\)\)/ {
     if (cleanup_guard && !blocked_setup && NR > cleanup_guard) {
       cleanup_restore = NR
@@ -595,12 +598,15 @@ awk '
   in_mini_app && /pinned->mtp\(\)\.dcOptions\(\)\.constructBlocked\(\)/ {
     blocked_setup = NR
   }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /pinnedServerRestored = true/ { normal_restore_attempted = NR }
+  in_mini_app && /if \(!customPinConfigured/ { normal_restore_check = NR }
   in_mini_app && /FailChatParticipantsRegression\(/ { exit }
   END {
-    exit !(cleanup_guard && cleanup_restore < blocked_setup && normal_restore)
+    exit !(cleanup_guard && cleanup_restore < blocked_setup && normal_restore && cleanup_diagnostic && !fatal_cleanup && normal_restore < normal_restore_attempted && normal_restore_attempted < normal_restore_check)
   }
 ' "$native_harness" \
-  || contract_fail 'The custom-plus-blocked mini-app fixture must restore the pinned server on early return.'
+  || contract_fail 'The custom-plus-blocked mini-app cleanup must report restore failures without aborting or retrying a normal restore.'
 awk '
   /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
   in_mini_app && /cleanupStockWebViewOnExit = gsl::finally/ {
