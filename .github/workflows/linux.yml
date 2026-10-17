@@ -1,5 +1,7 @@
 name: Linux.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
+
 on:
   pull_request:
   # The post-merge build runs on the push itself, so its check is attached to
@@ -42,6 +44,12 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -365,9 +373,9 @@ jobs:
           if [ -n "${{ matrix.defines }}" ]; then
             DEFINE="-D ${{ matrix.defines }}=ON"
             echo Define from matrix: $DEFINE
-            echo "ARTIFACT_NAME=Telegram ${{ matrix.defines }}" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=Teagram ${{ matrix.defines }}" >> $GITHUB_ENV
           else
-            echo "ARTIFACT_NAME=Telegram" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=Teagram" >> $GITHUB_ENV
           fi
 
           ccache -z
@@ -385,7 +393,7 @@ jobs:
           -D CMAKE_CXX_FLAGS_DEBUG="-O0 -fpch-preprocess" \
           -D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
           -D TDESKTOP_API_TEST=ON \
-          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF \
           $DEFINE
 
@@ -420,7 +428,7 @@ jobs:
       - name: Check.
         if: env.ONLY_CACHE == 'false'
         run: |
-          filePath="out/Debug/Telegram"
+          filePath="out/Debug/Teagram"
           if test -f "$filePath"; then
             echo "Build successfully done! :)"
 
@@ -430,14 +438,18 @@ jobs:
             echo "Build error, output file does not exist."
             exit 1
           fi
+          if test -e out/Debug/Updater; then
+            echo "Linux Teagram build unexpectedly contains an updater."
+            exit 1
+          fi
 
       # Runs in the same image the client was built in, so the test binary
       # links against the libraries it was compiled against. The build above
       # already produced it, so this only executes it: seconds, not a second
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
-      # Teagram ships for macOS, so Linux CI gates the standalone unit cases
-      # without running the desktop GUI regression under Xvfb.
+      # Linux ships Teagram without an updater, so CI gates the standalone
+      # unit cases without running the desktop GUI regression under Xvfb.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -489,6 +501,23 @@ jobs:
               echo "Unknown --case selection did not report zero cases."
               exit 1
             fi
+
+            if selected_output=$("$test_unit" --case LinuxTeagramDataPathAvoidsTelegramFolders 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  LinuxTeagramDataPathAvoidsTelegramFolders"; then
+              echo "--case did not run exactly LinuxTeagramDataPathAvoidsTelegramFolders."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Linux Teagram data path case did not report one passing case."
+              exit 1
+            fi
           '
 
       - name: Move artifact.
@@ -496,7 +525,7 @@ jobs:
         run: |
           cd out/Debug
           mkdir artifact
-          mv {Telegram,Updater} artifact/
+          mv Teagram artifact/
       - uses: actions/upload-artifact@v7
         if: env.UPLOAD_ARTIFACT == 'true'
         name: Upload artifact.

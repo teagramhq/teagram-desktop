@@ -97,6 +97,7 @@ PRIVATE
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
+    tests/unit/export_output_string_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
@@ -171,8 +172,18 @@ PRIVATE
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(test_unit PRIVATE
+        TDESKTOP_TEAGRAM
+        TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
+        "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
+    )
+
+    target_compile_options(test_unit PRIVATE -funsigned-char)
+
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
+        platform/linux/app_data_path.cpp
+        tests/unit/linux_data_path_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )

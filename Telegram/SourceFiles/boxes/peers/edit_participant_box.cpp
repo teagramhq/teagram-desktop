@@ -591,6 +591,7 @@ void EditAdminBox::prepare() {
 		? chat->anyoneCanAddMembers()
 		: channel->anyoneCanAddMembers();
 	const auto storiesSupported = peer()->session().storiesSupported();
+	const auto callsSupported = peer()->session().callsSupported();
 	const auto options = Data::AdminRightsSetOptions{
 		.isGroup = isGroup,
 		.isForum = peer()->isForum(),
@@ -598,6 +599,7 @@ void EditAdminBox::prepare() {
 		.anyoneCanAddMembers = anyoneCanAddMembers,
 		.canProcessJoinRequests = canProcessJoinRequests,
 		.storiesSupported = storiesSupported,
+		.callsSupported = callsSupported,
 	};
 	Ui::AddSubsectionTitle(inner, tr::lng_rights_edit_admin_header());
 	auto [checkboxes, getChecked, changes, highlightWidget] = CreateEditAdminRights(
@@ -755,6 +757,7 @@ void EditAdminBox::prepare() {
 				.existing = existingRights,
 				.actorLimit = actorLimit,
 				.storiesSupported = storiesSupported,
+				.callsSupported = callsSupported,
 			});
 		};
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION

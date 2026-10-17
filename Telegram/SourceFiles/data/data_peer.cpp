@@ -1880,6 +1880,9 @@ int PeerData::slowmodeSecondsLeft() const {
 }
 
 bool PeerData::canManageGroupCall() const {
+	if (!session().callsSupported()) {
+		return false;
+	}
 	if (const auto user = asUser()) {
 		return user->isSelf();
 	} else if (const auto chat = asChat()) {

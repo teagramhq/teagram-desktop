@@ -73,6 +73,10 @@ public:
 	void finishAnimating();
 	void showSelected(SelectedState state);
 	[[nodiscard]] bool showSelectedState() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool callButtonHiddenForRegressionTest() const;
+	[[nodiscard]] bool groupCallButtonHiddenForRegressionTest() const;
+#endif
 	rpl::producer<bool> membersShowAreaActive() const {
 		return _membersShowAreaActive.events();
 	}

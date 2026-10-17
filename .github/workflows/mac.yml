@@ -1,5 +1,7 @@
 name: MacOS.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
+
 on:
   # The PR build runs once the approved head is labeled macos-build; a later push
   # cancels it and clears the label in mac_pr_approval.yml.
@@ -38,6 +40,11 @@ on:
         description: PR source branch to share its repository-qualified concurrency group with the automatic PR run.
         required: false
         type: string
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.
@@ -431,21 +438,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$test_status"
 
-      - name: Summarize on-demand validation.
-        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+      - name: Report skipped profile and IPC integration tests.
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}
         env:
-          STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
-          ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
-          PROFILE_IPC_OUTCOME: ${{ steps.profile-ipc.outcome }}
         run: |
           set -Eeuo pipefail
-          {
-            printf '### macOS Teagram validation: %s\n\n' "$BUILD_VARIANT"
-            printf -- '- Tested SHA: `%s`\n' "$GITHUB_SHA"
-            printf -- '- Mac App Store rejection check: `%s`\n- Build: `%s`\n- Artifact verification: `%s`\n- Profile/IPC harness: `%s`\n' \
-              "$STORE_REJECTION_OUTCOME" "$BUILD_OUTCOME" "$ARTIFACT_OUTCOME" "$PROFILE_IPC_OUTCOME"
-          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'Profile and IPC cases skipped: Teagram build did not succeed (build=%s).\n' \
+            "$BUILD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve on-demand failure logs.
         if: ${{ always() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'failure' }}
@@ -460,9 +460,19 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
-        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
+          report_lifecycle_failure() {
+            local status=$?
+            if [ "$status" -ne 0 ]; then
+              printf 'full_chat_info_session_regression=FAIL tested_sha=%s exit_status=%s\n' \
+                "$GITHUB_SHA" "$status" >&2
+              printf 'Full chat info session regression failed on %s (exit status %s).\n' \
+                "$GITHUB_SHA" "$status" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          trap report_lifecycle_failure EXIT
           regression_root="$RUNNER_TEMP/tdesktop-chat-participants"
           regression_home="$regression_root/home"
           regression_work="$regression_root/work"
@@ -835,8 +845,36 @@ jobs:
               print duplicated_result
             }
           ' "$diagnostics/stderr.log" >> "$mutation_evidence"
-          echo "Full chat info session regression passed on $GITHUB_SHA."
-          echo "Full chat info session regression passed on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          printf 'full_chat_info_session_regression=PASS tested_sha=%s\n' "$GITHUB_SHA"
+          printf 'Full chat info session regression passed on %s.\n' \
+            "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report skipped full chat info session regression.
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -Eeuo pipefail
+          printf 'Full chat info session regression skipped: Teagram build did not succeed (build=%s).\n' \
+            "$BUILD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize on-demand validation.
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+        env:
+          STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
+          PROFILE_IPC_OUTCOME: ${{ steps.profile-ipc.outcome }}
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle-regression.outcome }}
+        run: |
+          set -Eeuo pipefail
+          {
+            printf '### macOS Teagram validation: %s\n\n' "$BUILD_VARIANT"
+            printf -- '- Tested SHA: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Mac App Store rejection check: `%s`\n- Build: `%s`\n- Artifact verification: `%s`\n- Profile/IPC harness: `%s`\n- Full chat info session regression: `%s`\n' \
+              "$STORE_REJECTION_OUTCOME" "$BUILD_OUTCOME" "$ARTIFACT_OUTCOME" \
+              "$PROFILE_IPC_OUTCOME" "$LIFECYCLE_OUTCOME"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload deferred switch mutation evidence.
         if: ${{ always() && steps.lifecycle-regression.outcome == 'success' }}
@@ -903,6 +941,7 @@ jobs:
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
           LAUNCH_OUTCOME: ${{ steps.launch-smoke.outcome }}
           PROFILE_IPC_OUTCOME: ${{ steps.profile-ipc.outcome }}
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle-regression.outcome }}
         run: |
           set -Eeuo pipefail
           failed=false
@@ -911,7 +950,8 @@ jobs:
             "build=$BUILD_OUTCOME" \
             "artifact verification=$ARTIFACT_OUTCOME" \
             "launch smoke=$LAUNCH_OUTCOME" \
-            "profile/IPC harness=$PROFILE_IPC_OUTCOME"; do
+            "profile/IPC harness=$PROFILE_IPC_OUTCOME" \
+            "full chat info session regression=$LIFECYCLE_OUTCOME"; do
             printf '%s\n' "$check"
             case "$check" in
               *'=success') ;;

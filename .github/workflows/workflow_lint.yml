@@ -1,5 +1,7 @@
 name: Workflow lint.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
+
 on:
   # Most macOS feedback lanes are manual/nightly, so lint the whole directory
   # whenever a workflow or an asserted CI contract changes.
@@ -20,8 +22,12 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - 'Telegram/build/run_mac_lifecycle_cases.sh'
+      - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/workflow_contract.sh'
+      - '.github/scripts/workflow_python_heredocs.py'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
       - '.github/scripts/test_prune_linux_dev_ccache.sh'
@@ -53,8 +59,12 @@ on:
       - '.github/scripts/ccache_launcher.sh'
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
+      - 'Telegram/build/run_mac_lifecycle_cases.sh'
+      - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
+      - '.github/scripts/workflow_contract.sh'
+      - '.github/scripts/workflow_python_heredocs.py'
       - '.github/scripts/mac_ccache_profile.sh'
       - '.github/scripts/test_prune_macos_dev_ccache.sh'
       - '.github/scripts/test_prune_linux_dev_ccache.sh'
@@ -71,6 +81,12 @@ on:
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

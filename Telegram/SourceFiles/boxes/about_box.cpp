@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/about_box.h"
 
 #include "base/platform/base_platform_info.h"
-#include "core/application.h"
 #include "core/file_utilities.h"
 #include "core/update_checker.h"
 #include "core/version.h"
@@ -16,7 +15,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/teagram_update_verification.h"
 #endif // TDESKTOP_TEAGRAM
 #include "lang/lang_keys.h"
-#include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/text/text_utilities.h"
@@ -32,52 +30,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_premium.h"
 #include "styles/style_settings.h"
 
-#include <QtGui/QGuiApplication>
-#include <QtGui/QClipboard>
-
 namespace {
 
-#ifndef TDESKTOP_TEAGRAM
-rpl::producer<TextWithEntities> Text1() {
-	return tr::lng_about_text1(
-		lt_api_link,
-		tr::lng_about_text1_api(tr::url(u"https://core.telegram.org/api"_q)),
-		tr::marked);
-}
-#endif // TDESKTOP_TEAGRAM
-
 rpl::producer<TextWithEntities> Text2() {
-#ifdef TDESKTOP_TEAGRAM
 	constexpr auto repository = "https://github.com/teagramhq/teagram-desktop";
-#else  // TDESKTOP_TEAGRAM
-	constexpr auto repository = "https://github.com/telegramdesktop/tdesktop";
-#endif // TDESKTOP_TEAGRAM
 	return tr::lng_about_text2(
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE")),
+			"https://github.com/teagramhq/teagram-desktop/blob/dev/LICENSE")),
 		lt_github_link, rpl::single(tr::link("GitHub", repository)),
 		tr::marked);
 }
 
-#ifndef TDESKTOP_TEAGRAM
-rpl::producer<TextWithEntities> Text3() {
-	return tr::lng_about_text3(
-		lt_faq_link,
-		tr::lng_about_text3_faq(tr::url(telegramFaqLink())),
-		tr::marked);
-}
-#endif // TDESKTOP_TEAGRAM
-
 } // namespace
 
-void AboutBox(not_null<Ui::GenericBox*> box) {
-#ifdef TDESKTOP_TEAGRAM
+void AboutBox(not_null<Ui::GenericBox *> box) {
 	box->setTitle(tr::lng_teagram_about_title());
-#else  // TDESKTOP_TEAGRAM
-	box->setTitle(u"Telegram Desktop"_q);
-#endif // TDESKTOP_TEAGRAM
 
 	auto layout = box->verticalLayout();
 
@@ -95,42 +64,11 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 			st::boxRowPadding.right(),
 			st::boxRowPadding.bottom()));
 	version->setClickedCallback([=] {
-#ifdef TDESKTOP_TEAGRAM
 		const auto link = currentVersionReleaseLink();
-		if (!link.isEmpty()) {
-			File::OpenUrl(link);
-		}
-#else  // TDESKTOP_TEAGRAM
-		if (cRealAlphaVersion()) {
-			auto url = u"https://tdesktop.com/"_q;
-			if (Platform::IsWindows32Bit()) {
-				url += u"win/%1.zip"_q;
-			} else if (Platform::IsWindows64Bit()) {
-				url += u"win64/%1.zip"_q;
-			} else if (Platform::IsWindowsARM64()) {
-				url += u"winarm/%1.zip"_q;
-			} else if (Platform::IsMac()) {
-				url += u"mac/%1.zip"_q;
-			} else if (Platform::IsLinux()) {
-				url += u"linux/%1.tar.xz"_q;
-			} else {
-				Unexpected("Platform value.");
-			}
-			url = url.arg(u"talpha%1_%2"_q
-				.arg(cRealAlphaVersion())
-				.arg(Core::countAlphaVersionSignature(cRealAlphaVersion())));
-
-			QGuiApplication::clipboard()->setText(url);
-
-			box->getDelegate()->show(
-				Ui::MakeInformBox(
-					"The link to the current private alpha "
-					"version of Telegram Desktop was copied "
-					"to the clipboard."));
-		} else {
-			File::OpenUrl(Core::App().changelogLink());
-		}
-#endif // TDESKTOP_TEAGRAM
+		File::OpenUrl(
+			link.isEmpty()
+				? u"https://github.com/teagramhq/teagram-desktop/releases"_q
+				: link);
 	});
 #ifdef TDESKTOP_TEAGRAM
 	if (currentVersionReleaseLink().isEmpty()) {
@@ -148,38 +86,15 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		Ui::AddSkip(layout, st::aboutSkip);
 	};
 
-#ifdef TDESKTOP_TEAGRAM
 	addText(Text2());
 	addText(tr::lng_teagram_about_based_on(
 		lt_version,
 		rpl::single(TextWithEntities(QString::fromLatin1(AppVersionStr))),
 		tr::marked));
-#else  // TDESKTOP_TEAGRAM
-	addText(Text1());
-	addText(Text2());
-	addText(Text3());
-#endif // TDESKTOP_TEAGRAM
 
 	box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 
 	box->setWidth(st::aboutWidth);
-}
-
-QString telegramFaqLink() {
-	const auto result = u"https://telegram.org/faq"_q;
-	const auto langpacked = [&](const char *language) {
-		return result + '/' + language;
-	};
-	const auto current = Lang::Id();
-	for (const auto language : { "de", "es", "it", "ko" }) {
-		if (current.startsWith(QLatin1String(language))) {
-			return langpacked(language);
-		}
-	}
-	if (current.startsWith(u"pt-br"_q)) {
-		return langpacked("br");
-	}
-	return result;
 }
 
 QString currentVersionText() {

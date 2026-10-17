@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/about_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
@@ -25,6 +26,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
+#include "calls/group/calls_group_common.h"
+#include "calls/calls_call.h"
+#include "calls/calls_instance.h"
+#include "calls/calls_panel.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -43,6 +48,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
@@ -56,11 +62,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_widget.h"
 #include "history/view/history_view_chat_section.h"
+#include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
 #include "info/info_wrap_widget.h"
+#include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
@@ -87,6 +95,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
+#include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
@@ -102,6 +112,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -126,8 +137,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtCore/QVariant>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -135,6 +148,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <future>
 #include <memory>
 #include <optional>
@@ -147,6 +161,8 @@ namespace Tests {
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
+auto gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
+auto gCallStartRegressionIntercept = false;
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 
 enum class TranslationRpcRoleForRegressionTest {
@@ -297,7 +313,152 @@ void IncrementTranslationRpcCountForRegressionTest(
 	}
 }
 
+void ReportCallRegressionCheckpoint(const char *name) {
+	std::fprintf(stderr, "Call regression checkpoint: %s\n", name);
+	std::fflush(stderr);
+}
+
 } // namespace
+
+class CallsInstanceRegressionAccess {
+  public:
+	[[nodiscard]] static Calls::Call *
+	InstallStockCall(not_null<Calls::Instance *> instance,
+					 not_null<UserData *> user) {
+		if (instance->_currentCall || instance->_currentGroupCall
+			|| instance->_startingGroupCall) {
+			return nullptr;
+		}
+		auto call = std::make_unique<Calls::Call>(
+			TestDelegate(), user, Calls::Call::Type::Outgoing, false);
+		call->_state = Calls::Call::State::Established;
+		instance->_currentCallPanel
+			= std::make_unique<Calls::Panel>(call.get());
+		instance->_currentCall = std::move(call);
+		instance->_currentCallChanges.fire_copy(instance->_currentCall.get());
+		return instance->_currentCall.get();
+	}
+
+	static void RemoveStockCall(not_null<Calls::Instance *> instance,
+								not_null<Calls::Call *> call) {
+		if (instance->_currentCall.get() == call.get()) {
+			instance->_currentCallPanel->closeBeforeDestroy();
+			instance->_currentCallPanel = nullptr;
+			auto taken = base::take(instance->_currentCall);
+			instance->_currentCallChanges.fire(nullptr);
+			taken.reset();
+		}
+	}
+
+	[[nodiscard]] static std::unique_ptr<Calls::Call>
+	CreateIncomingCallForAnswerRegression(not_null<UserData *> user,
+										  bool conferenceInvite) {
+		auto call = conferenceInvite
+						? std::make_unique<Calls::Call>(
+							  TestDelegate(), user, CallId(3053), MsgId(3053),
+							  std::vector<not_null<PeerData *>>(), false)
+						: std::make_unique<Calls::Call>(
+							  TestDelegate(), user, Calls::Call::Type::Incoming,
+							  false);
+		call->_state = Calls::Call::State::WaitingIncoming;
+		call->_id = CallId(3053);
+		call->_accessHash = 1;
+		call->_gb = bytes::vector(1, gsl::byte{});
+		return call;
+	}
+
+  private:
+	class CallDelegate final : public Calls::Call::Delegate {
+	  public:
+		Calls::DhConfig getDhConfig() const override { return {}; }
+
+		void callFinished(not_null<Calls::Call *>) override {}
+
+		void callFailed(not_null<Calls::Call *>) override {}
+
+		void callRedial(not_null<Calls::Call *>) override {}
+
+		void callPlaySound(Calls::Call::Delegate::CallSound) override {}
+
+		void callRequestPermissionsOrFail(Fn<void()> onSuccess, bool) override {
+			RecordCallPermissionRequestForRegressionTest();
+			onSuccess();
+		}
+
+		auto callGetVideoCapture(const QString &, bool)
+			-> std::shared_ptr<tgcalls::VideoCaptureInterface> override {
+			return nullptr;
+		}
+	};
+
+	[[nodiscard]] static CallDelegate *TestDelegate() {
+		static auto result = std::make_unique<CallDelegate>();
+		return result.get();
+	}
+};
+
+void ResetCallStartRegressionForTest() {
+	gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
+}
+
+void SetCallStartRegressionInterceptForTest(bool enabled) {
+	gCallStartRegressionIntercept = enabled;
+}
+
+CallStartRegressionSnapshot GetCallStartRegressionSnapshotForTest() {
+	return gCallStartRegressionSnapshot;
+}
+
+bool InterceptCallStartForRegressionTest(CallStartRegressionKind kind) {
+	if (!gCallStartRegressionIntercept) {
+		return false;
+	}
+	++gCallStartRegressionSnapshot.startPassed[static_cast<std::size_t>(kind)];
+	return true;
+}
+
+void RecordCallUnavailableToastForRegressionTest(const Main::Session *session) {
+	gCallStartRegressionSnapshot.unavailableToasts.push_back(session);
+}
+
+void RecordCallPermissionRequestForRegressionTest() {
+	++gCallStartRegressionSnapshot.permissionRequests;
+}
+
+void RecordCallRpcForRegressionTest() {
+	++gCallStartRegressionSnapshot.callRpcs;
+}
+
+bool InterceptCallRpcForRegressionTest() {
+	if (!gCallStartRegressionIntercept) {
+		return false;
+	}
+	RecordCallRpcForRegressionTest();
+	return true;
+}
+
+void RecordVoiceChatLinkJoinAttemptForRegressionTest() {
+	++gCallStartRegressionSnapshot.voiceChatLinkJoinAttempts;
+}
+
+void RecordCallActivationForRegressionTest() {
+	++gCallStartRegressionSnapshot.activations;
+}
+
+void RecordCallLeavePromptForRegressionTest() {
+	++gCallStartRegressionSnapshot.leavePrompts;
+}
+
+void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer) {
+	gCallStartRegressionSnapshot.navigationEvents.push_back(
+		SessionNavigationRegressionEvent::ChannelOpened);
+	gCallStartRegressionSnapshot.openedPeers.push_back(peer);
+}
+
+void RecordFeatureUnavailableToastForRegressionTest() {
+	gCallStartRegressionSnapshot.navigationEvents.push_back(
+		SessionNavigationRegressionEvent::FeatureUnavailableToast);
+}
 
 void RecordLifecycleWriteForRegressionTest(
 		LifecycleWriteForRegressionTest operation) {
@@ -1012,6 +1173,32 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
+[[nodiscard]] bool
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::Match);
+}
+
 [[nodiscard]] bool
 RestartDomain(Main::Domain &domain,
 			  LifecycleWriteCountsForRegressionTest *teardownWriteCounts
@@ -1056,11 +1243,6 @@ RestartDomain(Main::Domain &domain,
 		primary->showAccount(active);
 	}
 	return &primary->account() == active;
-}
-
-[[nodiscard]] int FailAccountLifecycleRegression(const char *reason) {
-	std::fprintf(stderr, "Account lifecycle regression failed: %s\n", reason);
-	return 1;
 }
 
 [[nodiscard]] bool TeagramIconChoicePersistsAcrossSettingsReload() {
@@ -2637,17 +2819,7 @@ struct PeerMenuSnapshot final {
 	QStringList keyboardNames;
 };
 
-[[nodiscard]] PeerMenuSnapshot
-SnapshotPeerMenu(not_null<Window::SessionController *> controller,
-				 Dialogs::Key key, Dialogs::EntryState::Section section) {
-	auto menu = Ui::PopupMenu(nullptr);
-	const auto addAction = Ui::Menu::CreateAddActionCallback(&menu);
-	Window::FillDialogsEntryMenu(controller,
-								 Dialogs::EntryState{
-									 .key = key,
-									 .section = section,
-								 },
-								 addAction);
+[[nodiscard]] PeerMenuSnapshot SnapshotMenuActions(Ui::PopupMenu &menu) {
 	auto result = PeerMenuSnapshot();
 	for (const auto &action : menu.actions()) {
 		if (action->isSeparator()) {
@@ -2673,6 +2845,29 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 	}
 	return result;
+}
+
+[[nodiscard]] PeerMenuSnapshot
+SnapshotPeerMenu(not_null<Window::SessionController *> controller,
+				 Dialogs::Key key, Dialogs::EntryState::Section section) {
+	auto menu = Ui::PopupMenu(nullptr);
+	const auto addAction = Ui::Menu::CreateAddActionCallback(&menu);
+	Window::FillDialogsEntryMenu(controller,
+								 Dialogs::EntryState{
+									 .key = key,
+									 .section = section,
+								 },
+								 addAction);
+	return SnapshotMenuActions(menu);
+}
+
+[[nodiscard]] PeerMenuSnapshot
+SnapshotVideoChatMenu(not_null<Window::SessionController *> controller,
+					  Dialogs::Key key) {
+	auto menu = Ui::PopupMenu(nullptr);
+	Window::FillVideoChatMenu(controller, {.key = key},
+							  Ui::Menu::CreateAddActionCallback(&menu));
+	return SnapshotMenuActions(menu);
 }
 
 template <typename Predicate>
@@ -2919,18 +3114,125 @@ template <typename Predicate>
 	return match;
 }
 
-// Stories are presentation-gated per owning session: the main menu, the
-// own-channel menus, the Edit admin box and story links all read the
-// capability from the window session that acts. The admin box checks run
-// the box's own save computation, so a checkbox-only save that drops the
-// hidden story rights fails here and in the standalone save cases.
+[[nodiscard]] bool WaitForMainQueueBarrier();
+
+[[nodiscard]] bool
+RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
+							 const char *sessionName) {
+	const auto fail = [&](const char *what) {
+		std::fprintf(
+			stderr, "Teagram branding regression failed: session=%s case=%s.\n",
+			sessionName, what);
+		return false;
+	};
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		const auto labels = menu->findChildren<QWidget *>();
+		const auto hasTeagramFooter
+			= std::any_of(labels.begin(), labels.end(), [](const auto widget) {
+				  const auto label = dynamic_cast<Ui::FlatLabel *>(widget);
+				  return label && label->accessibilityName() == u"Teagram"_q;
+			  });
+		if (!hasTeagramFooter) {
+			return fail("main_menu_footer_name");
+		}
+	}
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	const auto box = controller->show(Box(AboutBox), Ui::LayerOption::KeepOther,
+									  anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		controller->hideLayer(anim::type::instant);
+		return fail("about_box_did_not_open");
+	}
+	auto visibleLabels = QStringList();
+	for (const auto widget : layer->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			visibleLabels.push_back(label->accessibilityName());
+		}
+	}
+	const auto visibleText = visibleLabels.join(u"\n"_q);
+	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
+	const auto hasLicense = visibleText.contains(u"GNU GPL"_q);
+	const auto hasSourceCode = visibleText.contains(u"GitHub"_q);
+	const auto hasProtocolAttribution
+		= visibleText.contains(u"Based on Telegram Desktop"_q);
+	const auto hasNoTelegramHelpLinks
+		= !visibleText.contains(u"Telegram API"_q)
+		  && !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle && hasLicense && hasSourceCode
+						 && hasProtocolAttribution && hasNoTelegramHelpLinks;
+	controller->hideLayer(anim::type::instant);
+	if (!matches) {
+		return fail("about_box_copy");
+	}
+	controller->showSettings();
+	const auto closeSettings = gsl::finally([&] {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	});
+	if (!WaitForMainQueueBarrier()) {
+		return fail("settings_did_not_open");
+	}
+	QCoreApplication::processEvents();
+	const auto settings = controller->activeLayerSection();
+	if (!settings) {
+		return fail("settings_did_not_open");
+	}
+	const auto collectSettingsNames = [](QWidget *root) {
+		auto result = QStringList();
+		for (const auto widget : root->findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				result.push_back(label->accessibilityName());
+			} else if (const auto button
+					   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+				result.push_back(button->accessibilityName());
+			}
+		}
+		return result;
+	};
+	const auto hasNoTelegramHelp = [](const QStringList &names) {
+		const auto text = names.join(u"\n"_q);
+		return !text.contains(u"Telegram FAQ"_q)
+			   && !text.contains(u"Telegram Features"_q)
+			   && !text.contains(u"Ask a Question"_q)
+			   && !text.contains(u"Telegram Support"_q);
+	};
+	for (const auto &restoredEntry : {
+			 u"Telegram FAQ"_q,
+			 u"Telegram Features"_q,
+			 u"Ask a Question"_q,
+		 }) {
+		QWidget probe;
+		const auto button = std::make_unique<Ui::SettingsButton>(
+			&probe, rpl::single(restoredEntry));
+		const auto probeNames = collectSettingsNames(&probe);
+		if (button->accessibilityName() != restoredEntry
+			|| !probeNames.contains(restoredEntry)
+			|| hasNoTelegramHelp(probeNames)) {
+			return fail("settings_help_restoration_detection");
+		}
+	}
+	if (!hasNoTelegramHelp(collectSettingsNames(settings))) {
+		return fail("settings_telegram_help");
+	}
+	return true;
+}
+
+// Stories and call controls are presentation-gated per owning session. The
+// admin box checks run their own save computation, so checkbox-only saves
+// that drop hidden rights fail here and in the standalone save cases.
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
 	const char *sessionName) {
 	auto &session = controller->session();
 	const auto fail = [&](const char *what) {
 		std::fprintf(stderr,
-					 "Story controls regression failed: session=%s "
+					 "Session controls regression failed: session=%s "
 					 "supported=%d case=%s.\n",
 					 sessionName, supported, what);
 		return false;
@@ -2938,13 +3240,18 @@ template <typename Predicate>
 	if (session.storiesSupported() != supported) {
 		return fail("capability");
 	}
+	const auto callsSupported = session.callsSupported();
+	if (callsSupported != supported) {
+		return fail("call_capability");
+	}
 
 	{
 		const auto menu = std::make_unique<Window::MainMenu>(
 			controller->widget().get(), controller);
 		if (menu->myProfileRowPresentForRegressionTest() != supported
-			|| menu->topDividerShownForRegressionTest() != supported) {
-			return fail("main_menu_my_profile_and_divider");
+			|| menu->topDividerShownForRegressionTest() != supported
+			|| menu->callsRowPresentForRegressionTest() != callsSupported) {
+			return fail("main_menu_feature_rows");
 		}
 	}
 
@@ -2968,15 +3275,31 @@ template <typename Predicate>
 		const auto transfer = AdminRightsForOwnershipTransfer(options);
 		return !(all & stories) && !(transfer & stories);
 	};
+	const auto labelsHaveManageCall = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return (all & Right::ManageCall) && (transfer & Right::ManageCall);
+	};
 	const auto labelOptions = std::vector<Data::AdminRightsSetOptions>{
-		{.storiesSupported = supported},
-		{.isGroup = true, .storiesSupported = supported},
-		{.isGroup = true, .isForum = true, .storiesSupported = supported},
+		{.storiesSupported = supported, .callsSupported = callsSupported},
+		{.isGroup = true,
+		 .storiesSupported = supported,
+		 .callsSupported = callsSupported},
+		{.isGroup = true,
+		 .isForum = true,
+		 .storiesSupported = supported,
+		 .callsSupported = callsSupported},
 	};
 	for (const auto &options : labelOptions) {
 		if (supported ? !labelsHaveStories(options)
 					  : !labelsHaveNoStories(options)) {
 			return fail("admin_right_labels_and_transfer");
+		}
+		if (labelsHaveManageCall(options) != callsSupported) {
+			return fail("admin_right_manage_call_label");
 		}
 	}
 
@@ -2988,11 +3311,109 @@ template <typename Predicate>
 	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
 	const auto channelPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*channel));
+	if (channelPeer->canManageGroupCall() != callsSupported) {
+		return fail("group_call_permission");
+	}
 	const auto history = session.data().history(channel);
+	const auto group = session.data().channel(ChannelId(1184));
+	group->setAccessHash(118400);
+	group->setName(u"Call controls regression group"_q, QString());
+	group->setFlags(Flag::Creator | Flag::Forum);
+	group->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto groupPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*group));
+	if (groupPeer->canManageGroupCall() != callsSupported) {
+		return fail("group_call_permission");
+	}
+	const auto groupHistory = session.data().history(group);
+	const auto forum = group->forum();
+	const auto topic
+		= forum ? forum->applyTopicAdded(
+					  MsgId(1185), u"Call controls regression topic"_q, 0,
+					  DocumentId(), session.userPeerId(), 1, true)
+				: nullptr;
+	const auto channelCallMenu
+		= SnapshotVideoChatMenu(controller, Dialogs::Key(history));
+	const auto groupCallMenu
+		= SnapshotVideoChatMenu(controller, Dialogs::Key(groupHistory));
 	const auto contains = [](const QStringList &names,
 							 const QString &expected) {
 		return std::find(names.begin(), names.end(), expected) != names.end();
 	};
+	const auto menuEntryMatches = [&](const PeerMenuSnapshot &menu,
+									  const QString &expected) {
+		const auto inActions = contains(menu.actions, expected);
+		const auto inAccessibility = contains(menu.accessibleNames, expected);
+		const auto inKeyboard = contains(menu.keyboardNames, expected);
+		return (inActions == callsSupported)
+			   && (inAccessibility == callsSupported)
+			   && (inKeyboard == callsSupported);
+	};
+	const auto groupCall = tr::lng_menu_start_group_call(tr::now);
+	const auto groupCallScheduled
+		= tr::lng_menu_start_group_call_scheduled(tr::now);
+	const auto groupCallWith = tr::lng_menu_start_group_call_with(tr::now);
+	const auto liveStream = tr::lng_menu_start_group_call_channel(tr::now);
+	const auto liveStreamScheduled
+		= tr::lng_menu_start_group_call_scheduled_channel(tr::now);
+	const auto liveStreamWith
+		= tr::lng_menu_start_group_call_with_channel(tr::now);
+	const auto videoChatOptions
+		= tr::lng_menu_start_group_call_options(tr::now);
+	const auto forumMenu
+		= SnapshotPeerMenu(controller, Dialogs::Key(groupHistory),
+						   Dialogs::EntryState::Section::ChatsList);
+	if (!topic || !menuEntryMatches(groupCallMenu, groupCall)
+		|| !menuEntryMatches(groupCallMenu, groupCallScheduled)
+		|| !menuEntryMatches(groupCallMenu, groupCallWith)
+		|| !menuEntryMatches(channelCallMenu, liveStream)
+		|| !menuEntryMatches(channelCallMenu, liveStreamScheduled)
+		|| !menuEntryMatches(channelCallMenu, liveStreamWith)
+		|| !menuEntryMatches(forumMenu, videoChatOptions)) {
+		return fail("video_chat_menus_accessibility_and_keyboard");
+	}
+	{
+		const auto privateUser
+			= session.data().processUsers(MTP_vector<MTPUser>({
+				RegressionUser(UserId(1186), false, u"1186"_q, false),
+			}));
+		if (!privateUser) {
+			return fail("private_call_fixture");
+		}
+		const auto privateHistory = session.data().history(privateUser);
+		if (!privateHistory) {
+			return fail("private_call_history");
+		}
+		Info::Profile::TopBar profileTopBar(
+			controller->widget().get(),
+			Info::Profile::TopBar::Descriptor{
+				.controller = controller,
+				.key = Info::Key(not_null<PeerData *>(privateUser)),
+				.wrap = rpl::single(Info::Wrap::Layer),
+				.backToggles = rpl::single(false),
+				.showFinished = rpl::never<>(),
+				.customStatus = rpl::never<TextWithEntities>(),
+			});
+		if (profileTopBar.callActionPresentForRegressionTest()
+			!= callsSupported) {
+			return fail("profile_call_button");
+		}
+		HistoryView::TopBarWidget topBar(controller->widget().get(),
+										 controller);
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(privateHistory)}, nullptr);
+		topBar.updateControlsVisibility();
+		if (topBar.callButtonHiddenForRegressionTest() != !callsSupported) {
+			return fail("private_call_button");
+		}
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(groupHistory)}, nullptr);
+		topBar.updateControlsVisibility();
+		if (topBar.groupCallButtonHiddenForRegressionTest()
+			!= !callsSupported) {
+			return fail("group_call_button");
+		}
+	}
 	const auto archive = tr::lng_stories_archive_button(tr::now);
 	for (const auto section : {
 			 Dialogs::EntryState::Section::History,
@@ -3038,9 +3459,12 @@ template <typename Predicate>
 		const auto rowsMatch
 			= supported ? ((visible & stories) == stories)
 						: (!(visible & stories) && !(checked & stories));
+		const auto callRowMatches
+			= bool(visible & Right::ManageCall) == callsSupported;
 		controller->hideLayer(anim::type::instant);
 		QCoreApplication::processEvents();
-		if (!rowsMatch || (saved.value() != expected.value())) {
+		if (!rowsMatch || !callRowMatches
+			|| (saved.value() != expected.value())) {
 			std::fprintf(stderr,
 						 "Story controls regression: case=%s visible=%d "
 						 "checked=%d saved=%d expected=%d.\n",
@@ -3068,6 +3492,7 @@ template <typename Predicate>
 		const auto savedStories = (saved & stories);
 		const auto expectedStories = supported ? stories : Rights();
 		if ((savedStories.value() != expectedStories.value())
+			|| (!callsSupported && (saved & Right::ManageCall))
 			|| ((saved & visibleChannel).value()
 				!= (checked & visibleChannel).value())) {
 			return fail("new_admin_story_defaults");
@@ -3196,9 +3621,8 @@ template <typename Predicate>
 				   == toastBefore + 1);
 			const auto peerShown
 				= (controller->activeChatCurrent().peer() == channelPeer.get());
-			const auto noStoriesUi
-				= !controller->content()->isMainSectionShown()
-				  && !ShownStoriesSection(controller);
+			const auto noStoriesUi = controller->content()->isMainSectionShown()
+									 && !ShownStoriesSection(controller);
 			const auto noStoriesRequest
 				= !storiesData.requestsPendingForRegressionTest();
 			if (!toastShown || !peerShown || !noStoriesUi
@@ -4359,7 +4783,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			  return controller->window().show(
 				  object_ptr<LanguageBox>(controller->widget().get(),
 										  controller, highlightId),
-				  Ui::LayerOption::KeepOther, anim::type::normal);
+				  Ui::LayerOption::KeepOther, anim::type::instant);
 		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
@@ -4367,7 +4791,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
-	if (!customLanguageBox
+	const auto customHighlightConsumed
+		= customLanguageBox && WaitForRegressionCondition([&] {
+			  return customController->highlightControlId().isEmpty();
+		  });
+	if (!customLanguageBox || !customHighlightConsumed
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
 		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
@@ -4381,10 +4809,40 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 				   && Platform::IsMac())
 		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
 		|| !customController->highlightControlId().isEmpty()) {
-		std::fprintf(stderr,
-					 "Translation controls regression failed: custom "
-					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending.\n");
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom Language settings "
+			"box=%d highlight_consumed=%d highlight_pending=%d "
+			"button=%d/%d skip=%d/%d platform=%d about=%d/%d "
+			"pack_note=%d/%d chats=%d.\n",
+			bool(customLanguageBox), customHighlightConsumed,
+			!customController->highlightControlId().isEmpty(),
+			customLanguageBox
+				? customLanguageBox
+					  ->translateButtonRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->doNotTranslateRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox
+					  ->platformTranslationRowPresentForRegressionTest()
+				: false,
+			customLanguageBox
+				? customLanguageBox->translationAboutPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->platformPackNotePresentForRegressionTest()
+				: false,
+			(customProviderWithPlatformOff
+				 == Ui::details::TranslateProviderChoice::Platform
+			 && Platform::IsMac()),
+			customLanguageBox
+				? customLanguageBox->translateChatsRowPresentForRegressionTest()
+				: false);
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
@@ -4393,7 +4851,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		  u"language/do-not-translate"_q}) {
 		auto linkBox = openLanguageBox(customController, link);
 		QCoreApplication::processEvents();
-		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+		const auto highlightConsumed
+			= linkBox && WaitForRegressionCondition([&] {
+				  return customController->highlightControlId().isEmpty();
+			  });
+		if (!linkBox || !highlightConsumed) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
 						"left an unsupported highlight pending.\n");
@@ -4523,6 +4985,25 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		std::fprintf(stderr,
 					 "Translation controls regression failed: translation "
 					 "message fixtures were not created.\n");
+		return false;
+	}
+	const auto stockTextRegistered
+		= (stockSession.data().message(stockTextItem->fullId())
+		   == stockTextItem);
+	const auto stockRichRegistered
+		= (stockSession.data().message(stockRichItem->fullId())
+		   == stockRichItem);
+	const auto customTextRegistered
+		= (customSession.data().message(customTextItem->fullId())
+		   == customTextItem);
+	const auto customRichRegistered
+		= (customSession.data().message(customRichItem->fullId())
+		   == customRichItem);
+	if (!stockTextRegistered || !stockRichRegistered || !customTextRegistered
+		|| !customRichRegistered) {
+		std::fprintf(stderr, "Translation controls regression failed: "
+							 "synthetic message fixtures "
+							 "were not registered for message lookup.\n");
 		return false;
 	}
 	auto customAdminLogProvider
@@ -4977,12 +5458,22 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return true;
 }
 
-[[nodiscard]] bool
-PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+// Returns an empty string when every entry is keyboard-selectable and
+// accessible, otherwise the first sub-check that failed.
+[[nodiscard]] QString
+PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	const auto &actions = menu.actions();
-	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
-		return false;
+	if (actions.empty()) {
+		return u"no-actions"_q;
+	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
+		return u"accessibility-focus-policy"_q;
 	}
+	// The menu is never shown, so it stays wherever it was created. The first
+	// keyboard step flushes the inner menu's pending move event, and the menu
+	// re-reads the cursor position on every move, so the item under the
+	// cursor is selected by mouse before the key selects it. Keep the cursor
+	// off the menu.
+	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
 	auto hasAction = false;
@@ -4991,17 +5482,24 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 		if (action->isSeparator()) {
 			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
 				|| actions[i + 1]->isSeparator()) {
-				return false;
+				return u"separator-position index=%1"_q.arg(i);
 			}
 		} else if (action->text().isEmpty()) {
-			return false;
+			return u"empty-text index=%1"_q.arg(i);
 		} else {
 			const auto item = inner->itemForAction(action);
 			const auto accessible
 				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
-			if (!accessible || accessible->role() != QAccessible::MenuItem
-				|| accessible->text(QAccessible::Name) != action->text()) {
-				return false;
+			if (!accessible) {
+				return u"accessibility-missing action=\"%1\""_q.arg(
+					action->text());
+			} else if (accessible->role() != QAccessible::MenuItem) {
+				return u"accessibility-role role=%1 action=\"%2\""_q
+					.arg(int(accessible->role()))
+					.arg(action->text());
+			} else if (accessible->text(QAccessible::Name) != action->text()) {
+				return u"accessibility-name name=\"%1\" action=\"%2\""_q.arg(
+					accessible->text(QAccessible::Name), action->text());
 			}
 			if (item->isEnabled()) {
 				auto down
@@ -5011,15 +5509,29 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 				if (!selected || selected->action() != action
 					|| selected->lastTriggeredSource()
 						   != Ui::Menu::TriggeredSource::Keyboard) {
-					return false;
+					return u"keyboard-selection action=\"%1\" selected=\"%2\" "
+						   "source=%3"_q
+							   .arg(action->text(),
+									selected ? selected->action()->text()
+											 : u"<none>"_q)
+							   .arg(selected
+										? int(selected->lastTriggeredSource())
+										: -1);
 				}
 				hasAction = true;
 			}
 		}
 	}
 	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
-	return hasAction && accessible
-		   && (accessible->role() == QAccessible::PopupMenu);
+	if (!hasAction) {
+		return u"keyboard-no-enabled-action"_q;
+	} else if (!accessible) {
+		return u"accessibility-menu-missing"_q;
+	} else if (accessible->role() != QAccessible::PopupMenu) {
+		return u"accessibility-menu-role role=%1"_q.arg(
+			int(accessible->role()));
+	}
+	return QString();
 }
 
 [[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
@@ -5086,11 +5598,13 @@ template <typename Widget>
 	if (!historyWidget || (historyWidget->peer() != self.get())) {
 		return false;
 	}
+	// A chat section needs a replies root or a sublist to list messages.
+	// The self chat's own sublist sends into the same history.
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
 		content.get(), controller,
 		HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.sublist = session.data().savedMessages().sublist(self),
 		});
 	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
 	const auto repeat = TimeId(7 * 24 * 60 * 60);
@@ -5181,9 +5695,12 @@ template <typename Widget>
 		dividers.profile = PopupMenuDividerCount(*profileMenu);
 		const auto theme
 			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto historyFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*historyMenu);
+		const auto profileFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*profileMenu);
 		const auto menusAreNavigable
-			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
-			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+			= historyFailure.isEmpty() && profileFailure.isEmpty();
 		const auto expectedEntries
 			= supported ? (theme && hasSharingAction(*historyMenu)
 						   && hasSharingAction(*profileMenu))
@@ -5193,9 +5710,12 @@ template <typename Widget>
 			std::fprintf(
 				stderr,
 				"Chat feature menu regression failed: label=%s supported=%d "
-				"keyboard-accessible=%d entries=%d\n",
+				"keyboard-accessible=%d entries=%d history-menu=%s "
+				"profile-menu=%s\n",
 				qPrintable(label), supported, menusAreNavigable,
-				expectedEntries);
+				expectedEntries,
+				historyFailure.isEmpty() ? "ok" : qPrintable(historyFailure),
+				profileFailure.isEmpty() ? "ok" : qPrintable(profileFailure));
 			return false;
 		}
 		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
@@ -5209,14 +5729,18 @@ template <typename Widget>
 							tr::lng_scheduled_send_until_online(tr::now));
 		const auto hasSilentSend
 			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		const auto sendFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*sendMenu);
 		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
-			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| !sendFailure.isEmpty()
 			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
 			std::fprintf(stderr,
 						 "Chat feature send menu regression failed: label=%s "
-						 "supported=%d schedule=%d silent=%d\n",
+						 "supported=%d schedule=%d silent=%d send-menu=%s\n",
 						 qPrintable(label), supported, bool(hasSchedule),
-						 bool(hasSilentSend));
+						 bool(hasSilentSend),
+						 sendFailure.isEmpty() ? "ok"
+											   : qPrintable(sendFailure));
 			return false;
 		}
 		if (supported) {
@@ -5297,6 +5821,14 @@ template <typename Predicate>
 	poll.stop();
 	return condition();
 }
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
+	return WaitForRegressionCondition([&] {
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
+	});
+}
 
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
 													  int stockExpected,
@@ -5317,23 +5849,507 @@ template <typename Predicate>
 		   == MainQueueBarrierResult::Completed;
 }
 
-[[nodiscard]] int
-StartChatParticipantsRegression(Main::Domain &domain,
-								const ProtectedCacheFixtures &fixtures,
-								Fn<void(int)> done) {
+[[nodiscard]] bool
+CallStartEffectsStayedQuiet(const CallStartRegressionSnapshot &snapshot) {
+	return !snapshot.permissionRequests && !snapshot.callRpcs
+		   && !snapshot.voiceChatLinkJoinAttempts && !snapshot.activations
+		   && !snapshot.leavePrompts;
+}
+
+[[nodiscard]] bool
+RunIncomingCallAnswerRegression(not_null<Main::Account *> account,
+								bool supported) {
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	for (const auto conferenceInvite : {false, true}) {
+		ResetCallStartRegressionForTest();
+		auto call = CallsInstanceRegressionAccess::
+			CreateIncomingCallForAnswerRegression(user, conferenceInvite);
+		SetCallStartRegressionInterceptForTest(true);
+		call->answer();
+		SetCallStartRegressionInterceptForTest(false);
+		const auto snapshot = GetCallStartRegressionSnapshotForTest();
+		const auto expectedEffects = supported ? 1 : 0;
+		const auto expectedState = supported
+									   ? Calls::Call::State::ExchangingKeys
+									   : Calls::Call::State::Failed;
+		if (snapshot.permissionRequests != expectedEffects
+			|| snapshot.callRpcs != expectedEffects
+			|| snapshot.unavailableToasts.size() != (supported ? 0U : 1U)
+			|| (!supported
+				&& snapshot.unavailableToasts.front() != &account->session())
+			|| call->state() != expectedState) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void PrepareRegressionChannel(not_null<ChannelData *> channel) {
+	channel->setName(u"Regression channel"_q, QString());
+	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
+}
+
+[[nodiscard]] bool RunCallsInstanceStartRegression(
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall, bool supported) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	auto &calls = Core::App().calls();
+	const auto groupCall = calls.currentGroupCall();
+	const auto chat = account->session().data().chat(ChatId(1051));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	const auto show = controller->uiShow();
+	ResetCallStartRegressionForTest();
+	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("direct starts begin");
+	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("outgoing start returned");
+	calls.startOrJoinGroupCall(show, peer, {});
+	ReportCallRegressionCheckpoint("group start returned");
+	calls.startOrJoinConferenceCall({.show = show});
+	ReportCallRegressionCheckpoint("conference start returned");
+	calls.showStartWithRtmp(show, peer);
+	ReportCallRegressionCheckpoint("RTMP start returned");
+	SetCallStartRegressionInterceptForTest(false);
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 1, 1, 1}
+										  : std::array<int, 4>{0, 0, 0, 0};
+	const auto correctToastCount
+		= snapshot.unavailableToasts.size() == (supported ? 0U : 4U);
+	const auto allToastsBelongToAccount = std::all_of(
+		begin(snapshot.unavailableToasts), end(snapshot.unavailableToasts),
+		[&](const Main::Session *session) {
+			return session == &account->session();
+		});
+	return snapshot.startPassed == expectedPassed && correctToastCount
+		   && allToastsBelongToAccount && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == stockCall.get()
+		   && stockCall->state() == Calls::Call::State::Established
+		   && calls.currentGroupCall() == groupCall && !window->isLayerShown();
+}
+
+[[nodiscard]] bool
+RunOutgoingStartSelectionRegression(not_null<Main::Account *> account,
+									not_null<Window::Controller *> window,
+									bool supported) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto user = account->session().data().userLoaded(UserId(2));
+	if (!user) {
+		return false;
+	}
+	auto &calls = Core::App().calls();
+	const auto current = calls.currentCall();
+	const auto group = calls.currentGroupCall();
+	ResetCallStartRegressionForTest();
+	SetCallStartRegressionInterceptForTest(true);
+	ReportCallRegressionCheckpoint("selection outgoing start begin");
+	calls.startOutgoingCall(user, {});
+	ReportCallRegressionCheckpoint("selection outgoing start returned");
+	SetCallStartRegressionInterceptForTest(false);
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	const auto expectedPassed = supported ? std::array<int, 4>{1, 0, 0, 0}
+										  : std::array<int, 4>{0, 0, 0, 0};
+	return snapshot.startPassed == expectedPassed
+		   && snapshot.unavailableToasts.size() == (supported ? 0U : 1U)
+		   && (snapshot.unavailableToasts.empty()
+			   || snapshot.unavailableToasts.front() == &account->session())
+		   && CallStartEffectsStayedQuiet(snapshot)
+		   && calls.currentCall() == current
+		   && calls.currentGroupCall() == group;
+}
+
+[[nodiscard]] bool RunConferenceLinkPreservesStockCallRegression(
+	not_null<Main::Account *> account, not_null<Window::Controller *> window,
+	not_null<Calls::Call *> stockCall) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()
+		|| &stockCall->user()->session() == &account->session()) {
+		return false;
+	}
+	const auto context = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = base::make_weak(controller),
+	});
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("conference link begin");
+	if (!Core::App().openLocalUrl(u"tg://call?slug=regression-conference"_q,
+								  context)) {
+		return false;
+	}
+	ReportCallRegressionCheckpoint("conference link returned");
+	const auto snapshot = GetCallStartRegressionSnapshotForTest();
+	return snapshot.navigationEvents == std::vector<
+		SessionNavigationRegressionEvent>{
+			SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		}
+		&& CallStartEffectsStayedQuiet(snapshot)
+		&& Core::App().calls().currentCall() == stockCall.get()
+		&& stockCall->state() == Calls::Call::State::Established
+		&& !window->isLayerShown();
+}
+
+[[nodiscard]] bool
+RunChannelCallLinkRegression(not_null<Main::Account *> account,
+							 not_null<Window::Controller *> window) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()) {
+		return false;
+	}
+	const auto channelId = ChannelId(2051);
+	const auto channel = account->session().data().channel(channelId);
+	PrepareRegressionChannel(channel);
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("channel call link begin");
+	controller->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = channelId,
+		.voicechatHash = u"regression-link"_q,
+	});
+	ReportCallRegressionCheckpoint("channel call link dispatched");
+	const auto drained = WaitForMainQueueBarrier();
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("channel call link events processed");
+	const auto linkEvents = GetCallStartRegressionSnapshotForTest();
+	const auto navigationMatches
+		= linkEvents.navigationEvents
+		  == std::vector<SessionNavigationRegressionEvent>{
+			  SessionNavigationRegressionEvent::ChannelOpened,
+			  SessionNavigationRegressionEvent::FeatureUnavailableToast,
+		  };
+	if (!drained || !navigationMatches
+		|| linkEvents.openedPeers
+			   != std::vector<const PeerData *>{channel.get()}
+		|| controller->content()->peer() != channel.get()
+		|| !CallStartEffectsStayedQuiet(linkEvents) || window->isLayerShown()) {
+		std::fprintf(
+			stderr,
+			"Channel call link regression: custom=%d blocked=%d drained=%d "
+			"navigation=%d events=%zu opened=%zu peer=%d layer=%d "
+			"permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			account->local().hasStoredCustomServer(),
+			account->mtp().dcOptions().blocked(), drained, navigationMatches,
+			linkEvents.navigationEvents.size(), linkEvents.openedPeers.size(),
+			controller->content()->peer() == channel.get(),
+			window->isLayerShown(), linkEvents.permissionRequests,
+			linkEvents.callRpcs, linkEvents.voiceChatLinkJoinAttempts,
+			linkEvents.activations, linkEvents.leavePrompts);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool
+RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
+								 not_null<Window::Controller *> window) {
+	const auto controller = window->sessionController();
+	if (!controller || &controller->session() != &account->session()
+		|| !RunChannelCallLinkRegression(account, window)
+		|| !RunTeagramBrandingRegression(controller, "settings smoke")) {
+		return false;
+	}
+	const auto closeSettingsLayer = gsl::finally([&] {
+		if (window->isLayerShown()) {
+			window->hideSettingsAndLayer(anim::type::instant);
+		}
+	});
+	const auto channel = account->session().data().channel(ChannelId(2051));
+
+	const auto context = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = base::make_weak(controller),
+	});
+	const auto showsSettings = [&](Settings::Type expected) {
+		const auto wrapped = dynamic_cast<Info::WrapWidget *>(
+			controller->activeLayerSection());
+		return wrapped
+			   && (wrapped->controller()->section().type()
+				   == Info::Section::Type::Settings)
+			   && (wrapped->controller()->section().settingsType() == expected);
+	};
+	auto settingLinkNumber = 0;
+	for (const auto &url : {
+			 u"tg://settings/privacy/calls"_q,
+			 u"tg://settings/privacy/calls/never"_q,
+			 u"tg://settings/privacy/calls/always"_q,
+			 u"tg://settings/privacy/calls/p2p"_q,
+			 u"tg://settings/privacy/calls/p2p/never"_q,
+			 u"tg://settings/privacy/calls/p2p/always"_q,
+			 u"tg://settings/calls/all"_q,
+			 u"tg://settings/calls/start-call"_q,
+		 }) {
+		std::fprintf(stderr,
+					 "Call regression checkpoint: setting link %d begin\n",
+					 settingLinkNumber);
+		std::fflush(stderr);
+		ResetCallStartRegressionForTest();
+		if (!Core::App().openLocalUrl(url, context)) {
+			return false;
+		}
+		++settingLinkNumber;
+		ReportCallRegressionCheckpoint("call setting link returned");
+		const auto events = GetCallStartRegressionSnapshotForTest();
+		if (events.navigationEvents != std::vector<
+				SessionNavigationRegressionEvent>{
+					SessionNavigationRegressionEvent::FeatureUnavailableToast,
+				}
+			|| !CallStartEffectsStayedQuiet(events)
+			|| controller->content()->peer() != channel.get()
+			|| window->isLayerShown()) {
+			return false;
+		}
+	}
+
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("calls settings begin");
+	if (!Core::App().openLocalUrl(u"tg://settings/calls"_q, context)) {
+		return false;
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("calls settings events processed");
+	const auto callsSettingsEvents = GetCallStartRegressionSnapshotForTest();
+	const auto callsSettingsShown = showsSettings(Settings::CallsId());
+	const auto callsSettingsQuiet
+		= callsSettingsEvents.navigationEvents.empty()
+		  && CallStartEffectsStayedQuiet(callsSettingsEvents);
+	if (!callsSettingsQuiet || !callsSettingsShown) {
+		std::fprintf(
+			stderr,
+			"Call settings link regression: quiet=%d shown=%d layer=%d "
+			"navigation=%zu permissions=%d calls=%d joins=%d activations=%d "
+			"leave-prompts=%d\n",
+			callsSettingsQuiet, callsSettingsShown, window->isLayerShown(),
+			callsSettingsEvents.navigationEvents.size(),
+			callsSettingsEvents.permissionRequests,
+			callsSettingsEvents.callRpcs,
+			callsSettingsEvents.voiceChatLinkJoinAttempts,
+			callsSettingsEvents.activations, callsSettingsEvents.leavePrompts);
+		return false;
+	}
+
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("device settings begin");
+	if (!Core::App().openLocalUrl(u"tg://settings/devices"_q, context)) {
+		return false;
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("device settings events processed");
+	const auto devicesSettingsEvents = GetCallStartRegressionSnapshotForTest();
+	return devicesSettingsEvents.navigationEvents.empty()
+		   && CallStartEffectsStayedQuiet(devicesSettingsEvents)
+		   && showsSettings(Settings::SessionsId());
+}
+
+struct NativeLifecycleResults {
+	std::vector<const char *> failures;
+	QStringList reported;
+	const char *activeCase = nullptr;
+	bool summaryReported = false;
+	bool asyncPending = false;
+	bool finalized = false;
+	bool prerequisitesPassed = false;
+
+	void StopActiveCase() {
+		if (!activeCase) {
+			return;
+		}
+		std::fprintf(stderr, "native_lifecycle_case=%s result=STOPPED\n",
+					 activeCase);
+		std::fflush(stderr);
+		reported.push_back(QString::fromLatin1(activeCase));
+		failures.push_back(activeCase);
+		if (std::strcmp(activeCase, "chat-participants-prerequisites") == 0) {
+			prerequisitesPassed = false;
+		}
+		activeCase = nullptr;
+	}
+
+	void StartCase(const char *name) {
+		if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+			return;
+		}
+		StopActiveCase();
+		activeCase = name;
+		std::fprintf(stderr, "native_lifecycle_case=%s status=START\n", name);
+		std::fflush(stderr);
+	}
+
+	void Report(const char *name, bool passed) {
+		if (activeCase && (std::strcmp(activeCase, name) != 0)) {
+			StopActiveCase();
+		}
+		if (activeCase) {
+			activeCase = nullptr;
+		}
+		std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
+					 passed ? "PASS" : "FAIL");
+		reported.push_back(QString::fromLatin1(name));
+		if (!passed) {
+			failures.push_back(name);
+		}
+		if (std::strcmp(name, "chat-participants-prerequisites") == 0) {
+			prerequisitesPassed = passed;
+		}
+	}
+
+	void Skip(const char *name, const char *reason) {
+		if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+			activeCase = nullptr;
+		}
+		std::fprintf(stderr, "native_lifecycle_case=%s result=SKIP reason=%s\n",
+					 name, reason);
+		reported.push_back(QString::fromLatin1(name));
+	}
+
+	void SkipUnreported(const char *reason) {
+		static constexpr const char *kCases[] = {
+			"username-input",
+			"teagram-icon-persistence",
+			"account-lifecycle-prerequisites",
+			"legacy-cleanup-symlink",
+			"cache-callback-timeout",
+			"account-authorization-lifecycle",
+			"chat-participants-prerequisites",
+			"cache-concurrent-deletion",
+			"calls-instance-start",
+			"stock-incoming-call-answer",
+			"pinned-incoming-call-answer",
+			"stock-blocked-call-policy",
+			"pinned-blocked-call-policy",
+			"conference-link-call-preservation",
+			"call-links-and-settings",
+			"call-session-fixtures",
+			"admin-window-fixtures",
+			"settings-search",
+			"session-window-lifecycle",
+			"translation-controls",
+			"manage-controls",
+			"mini-app-open",
+			"chatlist-invite-check",
+			"authenticated-cache-file-symlinks",
+			"post-open-cache",
+			"post-open-media-cache",
+			"pinned-chat-participants",
+			"folder-crud",
+			"bio-editor-target",
+			"admin-session-identities",
+			"stock-basic-group-creator",
+			"pinned-basic-group-creator",
+			"stock-full-list-admin",
+			"stock-full-list-demotion",
+			"custom-full-list-admin",
+			"stock-live-admin-promotion",
+			"stock-live-admin-demotion",
+			"custom-live-admin-promotion",
+			"custom-live-admin-demotion",
+			"pinned-migration-fixture",
+			"post-close-window-lifecycle",
+			"chat-migration",
+			"protected-cache-cleanup",
+		};
+		for (const auto name : kCases) {
+			if (!reported.contains(QString::fromLatin1(name))) {
+				Skip(name, reason);
+			}
+		}
+	}
+
+	[[nodiscard]] bool Passed() const { return failures.empty(); }
+
+	void ReportSummary() {
+		if (summaryReported) {
+			return;
+		}
+		summaryReported = true;
+		std::fprintf(stderr, "native_lifecycle_cases_failed=");
+		if (failures.empty()) {
+			std::fprintf(stderr, "none\n");
+			return;
+		}
+		for (auto i = 0; i != int(failures.size()); ++i) {
+			std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
+		}
+		std::fprintf(stderr, "\n");
+	}
+
+	~NativeLifecycleResults() {
+		StopActiveCase();
+		if (!asyncPending && !finalized) {
+			if (!prerequisitesPassed) {
+				if (!reported.contains(QString::fromLatin1(
+						"chat-participants-prerequisites"))) {
+					Report("chat-participants-prerequisites", false);
+				}
+				SkipUnreported("dependency-chat-participants-prerequisites");
+			} else {
+				SkipUnreported("dependency-native-lifecycle-incomplete");
+			}
+		}
+		ReportSummary();
+	}
+};
+
+[[nodiscard]] int StartChatParticipantsRegression(
+	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
+	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults,
+	Fn<void(int)> done) {
+	const auto injectedFailCases
+		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
+			  .split(',', Qt::SkipEmptyParts);
+	const auto shouldInjectFailure = [&](const char *name) {
+		return injectedFailCases.contains(QString::fromLatin1(name));
+	};
+	const auto recordChatCase = [nativeLifecycleResults](const char *name,
+														 bool passed,
+														 const char *reason) {
+		nativeLifecycleResults->Report(name, passed);
+		if (!passed) {
+			std::fprintf(stderr, "Chat participants regression failed: %s\n",
+						 reason);
+		}
+	};
+	const auto failPrerequisite = [&](const char *reason) {
+		nativeLifecycleResults->StartCase("chat-participants-prerequisites");
+		nativeLifecycleResults->Report("chat-participants-prerequisites",
+									   false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-chat-participants-prerequisites");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(reason);
+	};
+	ReportCallRegressionCheckpoint("chat participant regression begin");
 	Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
 		DeferredOnlineUpdatePhase::Setup);
-	if (Core::MacProtectedPath::IntegrationTestActive()
-		&& !RunCacheConcurrentDeletionRegression()) {
-		return FailChatParticipantsRegression(
-			"cache scan rejected an entry removed after enumeration");
-	}
-	const auto requiredAccounts
-		= Core::MacProtectedPath::IntegrationTestActive() ? 3 : 2;
+	nativeLifecycleResults->StartCase("cache-concurrent-deletion");
+	const auto cacheConcurrentDeletionPassed
+		= (!Core::MacProtectedPath::IntegrationTestActive()
+		   || RunCacheConcurrentDeletionRegression())
+		  && !shouldInjectFailure("cache-concurrent-deletion");
+	nativeLifecycleResults->Report("cache-concurrent-deletion",
+								   cacheConcurrentDeletionPassed);
+	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
+	// Stock, pinned, blank and restored blocked accounts coexist in this test.
+	constexpr auto requiredAccounts = 4;
 	if (domain.accounts().size()
 		> Main::Domain::kPremiumMaxAccounts - requiredAccounts) {
-		return FailChatParticipantsRegression(
-			"not enough account slots for isolated cache regression sessions");
+		return failPrerequisite(
+			"not enough account slots for isolated lifecycle fixtures");
 	}
 	const auto selfId = UserId(1);
 	const auto chatId = ChatId(1051);
@@ -5345,7 +6361,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto refusedDownload = FullMsgId(peerFromUser(selfId), MsgId(12345));
 	if (!StoreRefusedDownloadHistory(stock, fixtures.cacheRoot + "/marker",
 									 refusedDownload)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not persist the refused download-history fixture");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()
@@ -5353,13 +6369,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !QDir().mkpath(QFileInfo(stockMediaCachePath).absolutePath())
 			|| !QFile::link(fixtures.cacheRoot, stockCachePath)
 			|| !QFile::link(fixtures.mediaCacheRoot, stockMediaCachePath))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create protected cache-root symlink fixtures");
 	}
 	if (!stock->createSession(RegressionUser(selfId, true, QString()),
 							  std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
-			"could not create the stock test session");
+		return failPrerequisite("could not create the stock test session");
 	}
 	const auto stockWasPremium = stock->session().premium();
 	const auto restoreStockPremium = gsl::finally([&] {
@@ -5367,13 +6382,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											stockWasPremium));
 	});
 	if (!SetRegressionSessionPremium(&stock->session(), selfId, true)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not enable Premium for stock Settings search checks");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		if (!RunRefusedDownloadHistoryRegression(&stock->session(),
 												 refusedDownload)) {
-			return FailChatParticipantsRegression(
+			return failPrerequisite(
 				"refused persisted download history was published");
 		}
 		std::fprintf(
@@ -5384,8 +6399,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		if (Core::MacProtectedPath::CheckCachePath(
 				stockCachePath, "Tests::ProtectedCache::root")
 			|| Core::MacProtectedPath::CheckCachePath(
-				stockMediaCachePath, "Tests::ProtectedCache::media-root")) {
-			return FailChatParticipantsRegression(
+				stockMediaCachePath, "Tests::ProtectedCache::media-root")
+			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
+			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
+			return failPrerequisite(
 				"authenticated session accessed a protected cache root");
 		}
 	}
@@ -5397,7 +6414,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
 	if (stock->session().user()->isLoaded()
 		|| !stockChat->participants.empty()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock session accepted phone-free self in full chat info");
 	}
 	stock->session().api().processFullPeer(
@@ -5405,15 +6422,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
 	if (!stock->session().user()->isLoaded()
 		|| !HasExpectedParticipants(stockChat, UserId(2))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock session with phone did not load creator and members");
 	}
 
 	const auto pinned = domain.add(MTP::Environment::Production);
 	pinned->mtp().stopForServerEnrollment();
 	if (!ConfigurePinnedServer(pinned, RegressionServerKey())) {
-		return FailChatParticipantsRegression(
-			"could not pin the custom test server");
+		return failPrerequisite("could not pin the custom test server");
 	}
 	pinned->setSessionUserId(selfId);
 	const auto pinnedCachePath = pinned->local().cachePath();
@@ -5428,16 +6444,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 							pinnedMediaCachePath + "/0")
 			|| !QFile::link(fixtures.mediaCacheLeaf + "/marker",
 							pinnedMediaCachePath + "/version"))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create protected cache-file symlink fixtures");
 	}
 	if (!pinned->createSession(RegressionUser(selfId, true, QString()),
 							   std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
-			"could not create the pinned test session");
+		return failPrerequisite("could not create the pinned test session");
 	}
 	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
 	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
@@ -5468,17 +6483,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
 	if (!primary || !primary->isPrimary()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary window disappeared before online-update lifetime "
 			"regression");
 	}
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary window did not switch to the stock session");
 	}
+	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"main-thread queue did not drain after the initial session switch");
 	}
 	QCoreApplication::processEvents();
@@ -5486,7 +6502,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			*primary, *stock, *pinned, DeferredOnlineUpdateMutation::Remove,
 			"remove-dispatch", "mutation-remove-deferred",
 			SwitchUpdateClassification::MissingDeferred)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"switch fixture did not reject the removed deferred dispatch");
 	}
 	const auto pinnedBeforeRestoreRemoval
@@ -5496,14 +6512,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session()
 		|| !WaitForDeferredSwitchUpdate(
 			pinned->session(), pinnedBeforeRestoreRemoval.switchDeferred + 1)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock after the removed-dispatch mutation");
 	}
 	if (!RunDeferredSwitchMutationRegression(
 			*primary, *stock, *pinned, DeferredOnlineUpdateMutation::Duplicate,
 			"duplicate-dispatch", "mutation-duplicate-deferred",
 			SwitchUpdateClassification::ExtraDeferred)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"switch fixture did not reject the duplicated deferred dispatch");
 	}
 	const auto pinnedBeforeRestoreDuplicate
@@ -5514,7 +6530,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !WaitForDeferredSwitchUpdate(
 			pinned->session(),
 			pinnedBeforeRestoreDuplicate.switchDeferred + 1)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock after the duplicated-dispatch mutation");
 	}
 	const auto stockToPinnedStockUpdates
@@ -5534,7 +6550,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session()
 		|| !stockToPinnedInlineMatches || stockToPinnedInlineStock.total != 0
 		|| stockToPinnedInlinePinned.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock-to-pinned switch did not update only the shown session "
 			"inline");
 	}
@@ -5557,8 +6573,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			pinned->session(),
 			SessionSwitchUpdateCountForTest(stockToPinnedPinnedUpdates) + 1)
 		|| !stockToPinnedDeferredObserved || !stockToPinnedDeferredMatches) {
-		return FailChatParticipantsRegression(
-			"stock-to-pinned switch did not update each session exactly once");
+		return failPrerequisite(
+			"stock-to-pinned switch did not update the previous session once");
 	}
 	const auto pinnedToStockStockUpdates
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
@@ -5577,7 +6593,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session()
 		|| !pinnedToStockInlineMatches || pinnedToStockInlineStock.total != 1
 		|| pinnedToStockInlinePinned.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned-to-stock switch did not update only the shown session "
 			"inline");
 	}
@@ -5600,22 +6616,23 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			pinned->session(),
 			SessionSwitchUpdateCountForTest(pinnedToStockPinnedUpdates) + 1)
 		|| !pinnedToStockDeferredObserved || !pinnedToStockDeferredMatches) {
-		return FailChatParticipantsRegression(
-			"pinned-to-stock switch did not update each session exactly once");
+		return failPrerequisite(
+			"pinned-to-stock switch did not update the previous session once");
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
 	discarded->setSessionUserId(selfId);
 	if (!discarded->createSession(RegressionUser(selfId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create the previous-session teardown fixture");
 	}
 	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"previous-session teardown fixture did not share the stock user "
 			"id");
 	}
+	discarded->mtp().dcOptions().constructBlocked();
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -5638,7 +6655,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session() || !queuedFirstMatches
 		|| stockQueuedFirst.total != 0 || pinnedQueuedFirst.total != 1
 		|| discardedQueuedFirst.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued stock-to-pinned switch missed its inline session update");
 	}
 	primary->showAccount(discarded);
@@ -5658,7 +6675,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &discarded->session() || !queuedSecondMatches
 		|| stockQueuedSecond.total != 0 || pinnedQueuedSecond.total != 1
 		|| discardedQueuedSecond.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued pinned-to-teardown switch missed its inline session "
 			"update");
 	}
@@ -5678,16 +6695,52 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session() || !queuedThirdMatches
 		|| stockQueuedThird.total != 1 || pinnedQueuedThird.total != 1
 		|| discardedQueuedThird.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
+	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	const auto discardedController
+		= discardedWindow ? discardedWindow->sessionController() : nullptr;
+	if (!discardedController) {
+		return failPrerequisite(
+			"could not create a controller for deferred call-link teardown");
+	}
+	const auto destroyedSessionChannelId = ChannelId(3051);
+	PrepareRegressionChannel(
+		discarded->session().data().channel(destroyedSessionChannelId));
+	const auto discardedLifetime = base::make_weak(discarded.get());
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("destroyed-session link begin");
+	discardedController->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = destroyedSessionChannelId,
+		.voicechatHash = u"destroyed-session"_q,
+	});
+	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"previous-session teardown fixture was not destroyed");
 	}
+	ReportCallRegressionCheckpoint("destroyed-session logout complete");
+	if (!WaitForMainQueueBarrier()) {
+		return failPrerequisite(
+			"main-thread queue did not drain after call-link session "
+			"destruction");
+	}
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
+		return failPrerequisite(
+			"previous-session logout did not clear its cache binding");
+	}
 	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("destroyed-session events processed");
+	if (!discardedLifetime.empty()) {
+		return failPrerequisite(
+			"previous-session account survived after its window closed");
+	}
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeQueuedSwitches.switchDeferred + 1);
 	const auto queuedPinnedDeferredObserved = WaitForDeferredSwitchUpdate(
@@ -5702,6 +6755,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		"queued switch teardown deferred", stockQueuedDeferred, {1, 1},
 		pinnedQueuedDeferred, {1, 1}, &discardedAtTeardown,
 		"discarded-at-teardown", {1, 0});
+	const auto destroyedSessionEvents = GetCallStartRegressionSnapshotForTest();
+	if (!destroyedSessionEvents.navigationEvents.empty()
+		|| !destroyedSessionEvents.openedPeers.empty()) {
+		return failPrerequisite(
+			"deferred call-link callback ran after session destruction");
+	}
 	if (!WaitForMainQueueBarrier()
 		|| !WaitForSessionSwitchUpdatesForTest(
 			stock->session(),
@@ -5710,17 +6769,58 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2)
 		|| !queuedStockDeferredObserved || !queuedPinnedDeferredObserved
 		|| !queuedDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued live and destroyed-session updates reached the wrong "
 			"sessions");
 	}
+	const auto stockDcOptionsBeforeDeferredLink
+		= MTP::DcOptions(MTP::Environment::Production).serialize();
+	stock->mtp().dcOptions().constructBlocked();
+	const auto replacedController = primary->sessionController();
+	if (!replacedController) {
+		return failPrerequisite(
+			"primary stock controller disappeared before deferred link test");
+	}
+	const auto replacedControllerWeak = base::make_weak(replacedController);
+	const auto replacedSessionChannelId = ChannelId(3052);
+	PrepareRegressionChannel(
+		stock->session().data().channel(replacedSessionChannelId));
+	ResetCallStartRegressionForTest();
+	ReportCallRegressionCheckpoint("replaced-session link begin");
+	replacedController->showPeerByLink(Window::PeerByLinkInfo{
+		.usernameOrId = replacedSessionChannelId,
+		.voicechatHash = u"replaced-session"_q,
+	});
+	ReportCallRegressionCheckpoint("replaced-session link dispatched");
+	primary->showAccount(pinned);
+	primary->showAccount(stock);
+	stock->mtp().dcOptions().constructUnenrolled();
+	if (!stock->mtp().dcOptions().constructFromSerialized(
+			stockDcOptionsBeforeDeferredLink)) {
+		return failPrerequisite(
+			"could not restore stock DC options after deferred link test");
+	}
+	if (!WaitForMainQueueBarrier()) {
+		return failPrerequisite(
+			"main-thread queue did not drain after call-link session "
+			"replacement");
+	}
+	QCoreApplication::processEvents();
+	ReportCallRegressionCheckpoint("replaced-session events processed");
+	if (replacedControllerWeak.get()
+		|| primary->maybeSession() != &stock->session()
+		|| !GetCallStartRegressionSnapshotForTest().navigationEvents.empty()
+		|| !GetCallStartRegressionSnapshotForTest().openedPeers.empty()) {
+		return failPrerequisite(
+			"deferred call-link callback ran after session replacement");
+	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned window was not mapped before the primary closed");
 	}
 	if (!stock->sessionExists() || !pinned->sessionExists()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"live previous-session fixtures disappeared before primary close");
 	}
 	// The pinned account owns a window, so the pinned id is taken. Switching
@@ -5755,7 +6855,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
 		|| !collisionInlineMatches || stockCollisionInline.total != 0
 		|| pinnedCollisionInline.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary switch to an account owning a window left an account "
 			"lookup on a window bound to another account");
 	}
@@ -5775,7 +6875,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		{0, 0});
 	// clang-format on
 	if (!collisionDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"window collision produced a switch-caused online update");
 	}
 	// Free the pinned id, then run the queued-switch teardown on a switch that
@@ -5787,7 +6887,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != primary
 		|| app.activePrimaryWindow() != primary) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"closed account window stayed mapped to the pinned account");
 	}
 	// A window for a brand-new account, which has no session, keeps one window
@@ -5807,12 +6907,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			app.separateWindowFor(blank) == blankWindow,
 			static_cast<void *>(blankWindow->sessionController()));
 		// clang-format on
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blank window fixture was not mapped before the close");
 	}
 	domain.activate(blank.get());
 	if (&domain.active() != blank.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blank account was not active before the primary close");
 	}
 	const auto stockSetupBeforeCompletion
@@ -5898,7 +6998,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 						 "Setup callback update deltas did not match the "
 						 "deferred dispatch counts.\n");
 		}
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"setup deferred switch callbacks remained outstanding at close "
 			"baseline");
 	}
@@ -5956,7 +7056,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session()
 		|| !closeSwitchInlineMatches || stockCloseSwitchInline.total != 0
 		|| pinnedCloseSwitchInline.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock-to-pinned close switch missed its inline session update");
 	}
 	// The switch is registered under the pinned id, not the stock one it came
@@ -5965,7 +7065,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(stock) != nullptr
 		|| app.separateWindowFor(primary->id()) != primary
 		|| &primary->account() != pinned.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"allowed primary switch kept the window keyed to its old account");
 	}
 	// The close is synchronous, before any dispatch of the queued update.
@@ -5973,7 +7073,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != nullptr
 		|| app.separateWindowFor(blank) != blankWindow) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"closed primary window remained mapped to an account");
 	}
 	// clang-format off
@@ -5984,7 +7084,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// clang-format on
 	phase.restore();
 	if (&domain.active() != blank.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary close changed the active blank account");
 	}
 	const auto stockCloseSwitchDispatches = DeferredOnlineUpdateDispatchDelta(
@@ -6057,18 +7157,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!closeDispatchesSettled || !closeSwitchEnqueuesMatch
 		|| !closeCompletionDispatchCountsMatch || !closeDispatchCountsMatch
 		|| !closeSwitchDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"deferred primary-close update was not delivered once "
 			"to the previous session with no pinned-session dispatch");
 	}
 	pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow
 		|| &pinnedWindow->account() != pinned.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned window was not remapped after the primary closed");
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
+	Window::Controller *restoredBlockedWindow = nullptr;
 	const auto closeWindows = gsl::finally([&] {
 		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
 			app.closeWindow(stockWindow);
@@ -6078,6 +7179,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 		if (blankWindow && app.separateWindowFor(blank) == blankWindow) {
 			app.closeWindow(blankWindow);
+		}
+		if (restoredBlockedWindow
+			&& app.separateWindowFor(restoredBlockedWindow->id())
+				   == restoredBlockedWindow) {
+			app.closeWindow(restoredBlockedWindow);
 		}
 		domain.activate(stock);
 	});
@@ -6191,13 +7297,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto activateAndCheck = [&](bool customFirst) {
 		const auto first = customFirst ? pinned : stock;
 		const auto second = customFirst ? stock : pinned;
+		ReportCallRegressionCheckpoint("account activation begin");
 		domain.activate(first);
+		ReportCallRegressionCheckpoint("first account activated");
 		const auto firstActive = &domain.active() == first.get();
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
 		const auto firstWindows
 			= windowsMatch(customFirst ? "custom account first activation"
 									   : "stock account first activation");
+		const auto firstWindow = app.separateWindowFor(first);
+		const auto firstCallStart = firstWindow
+									&& RunOutgoingStartSelectionRegression(
+										first, firstWindow, !customFirst);
 		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto stockMenuController = stockWindow->sessionController();
 		const auto pinnedMenuController = pinnedWindow->sessionController();
@@ -6220,14 +7332,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  customFirst ? "custom while custom is active"
 							  : "custom while stock is active");
 		if (!firstActive || !firstCapabilities || !firstWindows
-			|| !firstCustomWebViewRefused || !firstBoostMenusMatch) {
+			|| !firstCallStart || !firstCustomWebViewRefused
+			|| !firstBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "First activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d "
-						 "boost-menus=%d\n",
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
 						 customFirst, firstActive, firstCapabilities,
-						 firstWindows, firstCustomWebViewRefused,
-						 firstBoostMenusMatch);
+						 firstWindows, firstCallStart,
+						 firstCustomWebViewRefused, firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
 								  first->session());
@@ -6388,6 +7501,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			}
 		}
 		domain.activate(second);
+		ReportCallRegressionCheckpoint("second account activated");
 		const auto secondStockMenuController = stockWindow->sessionController();
 		const auto secondPinnedMenuController
 			= pinnedWindow->sessionController();
@@ -6397,6 +7511,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		const auto secondWindows
 			= windowsMatch(customFirst ? "stock account second activation"
 									   : "custom account second activation");
+		const auto secondWindow = app.separateWindowFor(second);
+		const auto secondCallStart = secondWindow
+									 && RunOutgoingStartSelectionRegression(
+										 second, secondWindow, customFirst);
 		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
 			= secondStockMenuController && secondPinnedMenuController
@@ -6417,14 +7535,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  customFirst ? "custom while stock is active"
 							  : "custom while custom is active");
 		if (!secondActive || !secondCapabilities || !secondWindows
-			|| !secondCustomWebViewRefused || !secondBoostMenusMatch) {
+			|| !secondCallStart || !secondCustomWebViewRefused
+			|| !secondBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "Second activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d webview-refused=%d "
-						 "boost-menus=%d\n",
+						 "capabilities=%d windows=%d call-start=%d "
+						 "webview-refused=%d boost-menus=%d\n",
 						 customFirst, secondActive, secondCapabilities,
-						 secondWindows, secondCustomWebViewRefused,
-						 secondBoostMenusMatch);
+						 secondWindows, secondCallStart,
+						 secondCustomWebViewRefused, secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
 											  : "pinned second",
@@ -6447,85 +7566,304 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stderr, "Separate window construction failed: stock=%p pinned=%p\n",
 			static_cast<const void *>(stockWindow),
 			static_cast<const void *>(pinnedWindow));
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
+	pinned->session().data().processUsers(MTP_vector<MTPUser>({
+		RegressionUser(UserId(2), false, u"2"_q),
+	}));
+	const auto stockUser = stock->session().data().userLoaded(UserId(2));
+	if (!stockUser) {
+		return failPrerequisite(
+			"stock call-start regression user was not loaded");
+	}
+	auto &calls = app.calls();
+	const auto stockCall
+		= CallsInstanceRegressionAccess::InstallStockCall(&calls, stockUser);
+	if (!stockCall) {
+		return failPrerequisite(
+			"could not install a live stock call for refusal regressions");
+	}
+	const auto removeStockCall = gsl::finally([&] {
+		CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	});
+	const auto stockDcOptions = stock->mtp().dcOptions().serialize();
+	const auto pinnedDcOptions = pinned->mtp().dcOptions().serialize();
 	auto pinnedController = pinnedWindow->sessionController();
 	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"test windows lost their owning sessions before folder smoke "
 			"tests");
 	}
-	if (!windowsMatch("initial separate windows") || !activateAndCheck(false)
-		|| !activateAndCheck(true)) {
+	ReportCallRegressionCheckpoint("call start fixtures ready");
+	nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+	nativeLifecycleResults->StartCase("call-session-fixtures");
+	nativeLifecycleResults->Report("call-session-fixtures", true);
+	nativeLifecycleResults->StartCase("calls-instance-start");
+	const auto stockCallStartPassed
+		= RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true);
+	const auto pinnedCallStartPassed = RunCallsInstanceStartRegression(
+		pinned, pinnedWindow, stockCall, false);
+	const auto callsInstanceStartPassed
+		= stockCallStartPassed && pinnedCallStartPassed
+		  && !shouldInjectFailure("calls-instance-start");
+	nativeLifecycleResults->Report("calls-instance-start",
+								   callsInstanceStartPassed);
+	nativeLifecycleResults->StartCase("stock-incoming-call-answer");
+	const auto stockIncomingCallAnswerPassed
+		= RunIncomingCallAnswerRegression(stock, true)
+		  && !shouldInjectFailure("stock-incoming-call-answer");
+	nativeLifecycleResults->Report("stock-incoming-call-answer",
+								   stockIncomingCallAnswerPassed);
+	nativeLifecycleResults->StartCase("pinned-incoming-call-answer");
+	const auto pinnedIncomingCallAnswerPassed
+		= RunIncomingCallAnswerRegression(pinned, false)
+		  && !shouldInjectFailure("pinned-incoming-call-answer");
+	nativeLifecycleResults->Report("pinned-incoming-call-answer",
+								   pinnedIncomingCallAnswerPassed);
+	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
+	nativeLifecycleResults->StartCase("stock-blocked-call-policy");
+	stock->mtp().dcOptions().constructBlocked();
+	const auto stockBlockedCallStartPassed
+		= !stock->local().hasStoredCustomServer()
+		  && stock->mtp().dcOptions().blocked()
+		  && RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
+											 false);
+	const auto stockBlockedChannelLinkPassed
+		= RunChannelCallLinkRegression(stock, stockWindow);
+	ReportCallRegressionCheckpoint("blocked stock starts complete");
+	stock->mtp().dcOptions().constructUnenrolled();
+	const auto stockOptionsRestored
+		= stock->mtp().dcOptions().constructFromSerialized(stockDcOptions);
+	nativeLifecycleResults->Report(
+		"stock-blocked-call-policy",
+		stockBlockedCallStartPassed && stockBlockedChannelLinkPassed
+			&& stockOptionsRestored
+			&& !shouldInjectFailure("stock-blocked-call-policy"));
+	if (!stockOptionsRestored) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-stock-blocked-call-policy");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
 		return FailChatParticipantsRegression(
-			"session feature capabilities crossed account or window "
-			"boundaries");
+			"could not restore stock DC options after blocked-call regression");
+	}
+	nativeLifecycleResults->StartCase("pinned-blocked-call-policy");
+	pinned->mtp().dcOptions().constructBlocked();
+	const auto pinnedBlockedCallStartPassed
+		= pinned->local().hasStoredCustomServer()
+		  && pinned->mtp().dcOptions().blocked()
+		  && !pinned->mtp().dcOptions().hasCustomServer()
+		  && RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											 false);
+	const auto pinnedBlockedChannelLinkPassed
+		= RunChannelCallLinkRegression(pinned, pinnedWindow);
+	ReportCallRegressionCheckpoint("blocked pinned starts complete");
+	pinned->mtp().dcOptions().constructUnenrolled();
+	const auto pinnedOptionsRestored
+		= pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions);
+	nativeLifecycleResults->Report(
+		"pinned-blocked-call-policy",
+		pinnedBlockedCallStartPassed && pinnedBlockedChannelLinkPassed
+			&& pinnedOptionsRestored
+			&& !shouldInjectFailure("pinned-blocked-call-policy"));
+	if (!pinnedOptionsRestored) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-pinned-blocked-call-policy");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(
+			"could not restore pinned DC options after blocked-call "
+			"regression");
+	}
+	nativeLifecycleResults->StartCase("conference-link-call-preservation");
+	const auto conferenceLinkCallPreserved
+		= RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
+														stockCall)
+		  && !shouldInjectFailure("conference-link-call-preservation");
+	nativeLifecycleResults->Report("conference-link-call-preservation",
+								   conferenceLinkCallPreserved);
+	ReportCallRegressionCheckpoint("conference preservation complete");
+	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	nativeLifecycleResults->StartCase("call-links-and-settings");
+	const auto callLinksAndSettingsPassed
+		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
+	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
+	nativeLifecycleResults->Report(
+		"call-links-and-settings",
+		callLinksAndSettingsPassed && settingsLayerClosed
+			&& !shouldInjectFailure("call-links-and-settings"));
+	ReportCallRegressionCheckpoint("call links and settings complete");
+	nativeLifecycleResults->StartCase("settings-search");
+	const auto settingsSearchMatches
+		= SettingsSearchMatchesExpected(&stock->session(), true, true, true)
+		  && SettingsSearchMatchesExpected(&pinned->session(), false, false,
+										   false)
+		  && SettingsSearchMatchesExpected(&stock->session(), true, true, true)
+		  && !shouldInjectFailure("settings-search");
+	nativeLifecycleResults->Report("settings-search", settingsSearchMatches);
+	nativeLifecycleResults->StartCase("session-window-lifecycle");
+	const auto initialWindowsMatch = windowsMatch("initial separate windows");
+	const auto stockFirstActivationPassed = activateAndCheck(false);
+	const auto pinnedFirstActivationPassed = activateAndCheck(true);
+	const auto windowLifecyclePassed = initialWindowsMatch
+									   && stockFirstActivationPassed
+									   && pinnedFirstActivationPassed;
+	nativeLifecycleResults->Report("session-window-lifecycle",
+								   windowLifecyclePassed);
+	if (!windowLifecyclePassed) {
+		std::fprintf(stderr,
+					 "Chat participants regression failed: session feature "
+					 "capabilities crossed account or window boundaries\n");
 	}
 	pinnedController = pinnedWindow->sessionController();
 	stockController = stockWindow->sessionController();
-	if (!pinnedController || !stockController
-		|| (&pinnedController->session() != &pinned->session())
-		|| (&stockController->session() != &stock->session())) {
+	nativeLifecycleResults->StartCase("admin-window-fixtures");
+	const auto adminWindowFixturesPassed
+		= pinnedController && stockController
+		  && (&pinnedController->session() == &pinned->session())
+		  && (&stockController->session() == &stock->session());
+	nativeLifecycleResults->Report("admin-window-fixtures",
+								   adminWindowFixturesPassed);
+	if (!adminWindowFixturesPassed) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-admin-window-fixtures");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
 		return FailChatParticipantsRegression(
 			"test windows lost their owning sessions after activation checks");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	if (!RunTranslationControlsLifecycleRegression(stockController,
-												   pinnedController)) {
-		return FailChatParticipantsRegression(
-			"translation controls crossed stock and custom sessions");
-	}
-	if (!RunManageControlsLifecycleRegression(stockController,
-											  pinnedController)) {
-		return FailChatParticipantsRegression(
-			"Manage controls crossed stock and custom sessions");
-	}
+	nativeLifecycleResults->StartCase("translation-controls");
+	const auto translationControlsPassed
+		= !shouldInjectFailure("translation-controls")
+		  && RunTranslationControlsLifecycleRegression(stockController,
+													   pinnedController);
+	nativeLifecycleResults->Report("translation-controls",
+								   translationControlsPassed);
+	stockController->hideLayer(anim::type::instant);
+	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("manage-controls");
+	const auto manageControlsPassed = RunManageControlsLifecycleRegression(
+		stockController, pinnedController);
+	nativeLifecycleResults->Report("manage-controls", manageControlsPassed);
+	stockController->hideLayer(anim::type::instant);
+	pinnedController->hideLayer(anim::type::instant);
 #endif
-	const auto restoredBlocked
-		= not_null<Main::Account *>(domain.accounts().front().account.get());
-	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned,
-										 restoredBlocked, blank, stockWindow,
-										 pinnedWindow, blankWindow)) {
-		return FailChatParticipantsRegression(
-			"mini-app open refusal was not observable on the owning session");
+	nativeLifecycleResults->StartCase("mini-app-open");
+	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
+	const auto restoredBlocked = domain.add(MTP::Environment::Production);
+	restoredBlocked->mtp().stopForServerEnrollment();
+	auto restoredBlockedFixtureReady
+		= !restoredBlocked->sessionExists()
+		  && !restoredBlocked->local().hasStoredCustomServer()
+		  && !restoredBlocked->local().customServerPinUnknown();
+	if (restoredBlockedFixtureReady) {
+		restoredBlocked->mtp().dcOptions().constructBlocked();
+		restoredBlockedFixtureReady
+			= restoredBlocked->local().writeMtpAuthorizationFailure()
+			  && restoredBlocked->mtp().config().blocked()
+			  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
+			  && !restoredBlocked->local().hasStoredCustomServer()
+			  && !restoredBlocked->local().customServerPinUnknown();
 	}
-	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
-	if (pinnedController->session()
-			.api()
-			.checkFilterInviteRequestPendingForRegressionTest()) {
-		return FailChatParticipantsRegression(
-			"unsupported pinned session sent a chatlist invite check request");
+	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
+	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
+	const auto restoredBlockedWindowReady
+		= restoredBlockedWindow
+		  && app.separateWindowFor(restoredBlocked) == restoredBlockedWindow
+		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
+	restoredBlockedFixtureReady
+		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
 	}
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		pinned->session().data().cache().sync();
-		pinned->session().data().cacheBigFile().sync();
-		if (Core::MacProtectedPath::CheckCachePath(
-				pinnedCachePath, "Tests::ProtectedCache::file")
-			|| Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")) {
-			return FailChatParticipantsRegression(
-				"authenticated session accessed a protected cache-file target");
-		}
+	if (!restoredBlockedFixtureReady) {
+		std::fprintf(stderr,
+					 "Mini-app open regression: restored blocked fixture could "
+					 "not be prepared: window=%d.\n",
+					 restoredBlockedWindowReady);
+	}
+	const auto miniAppRegressionPassed
+		= restoredBlockedFixtureReady
+		  && RunMiniAppOpenRefusalRegression(
+			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+			  pinnedWindow, blankWindow);
+	const auto restoredBlockedLifetimeAlive
+		= restoredBlockedLifetime.get() == restoredBlocked.get();
+	const auto restoredBlockedWindowMapped
+		= restoredBlockedLifetimeAlive
+		  && app.separateWindowFor(restoredBlocked) == restoredBlockedWindow;
+	if (!restoredBlockedLifetimeAlive || !restoredBlockedWindowMapped) {
 		std::fprintf(
 			stderr,
-			"Authenticated cache regression passed: root, directory, and file "
-			"symlinks refused for cache and media_cache.\n");
+			"Mini-app open regression: restored blocked fixture lifetime "
+			"failed: alive=%d window=%d.\n",
+			restoredBlockedLifetimeAlive, restoredBlockedWindowMapped);
+	}
+	const auto miniAppPassed = miniAppRegressionPassed
+							   && restoredBlockedLifetimeAlive
+							   && restoredBlockedWindowMapped;
+	if (restoredBlockedWindow
+		&& app.separateWindowFor(restoredBlockedWindow->id())
+			   == restoredBlockedWindow) {
+		app.closeWindow(restoredBlockedWindow);
+		restoredBlockedWindow = nullptr;
+	}
+	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
+	nativeLifecycleResults->StartCase("chatlist-invite-check");
+	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
+	const auto inviteCheckRefused
+		= !pinnedController->session()
+			   .api()
+			   .checkFilterInviteRequestPendingForRegressionTest();
+	nativeLifecycleResults->Report("chatlist-invite-check", inviteCheckRefused);
+	ReportCallRegressionCheckpoint("account activation regressions complete");
+	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
+		pinned->session().data().cache().sync();
+		pinned->session().data().cacheBigFile().sync();
+		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
+			pinnedCachePath, "Tests::ProtectedCache::file");
+		const auto mediaCacheFileRefused
+			= !Core::MacProtectedPath::CheckCachePath(
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
+		const auto cacheFixturesPreserved
+			= FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+			  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
+									  && cacheFixturesPreserved;
+		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
+									   cacheFilesPassed);
+		if (cacheFilesPassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache regression passed: root, "
+						 "directory, and file "
+						 "symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
+									 "protected-path-integration-disabled");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		auto postOpenCachePassed = false;
+		auto postOpenMediaCachePassed = false;
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
-				return FailChatParticipantsRegression(
-					"could not create the post-open cache test session");
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
 			}
 			const auto cacheGetter
 				= [guarded, mediaCache]() -> Storage::Cache::Database & {
@@ -6538,71 +7876,123 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				data.cache().sync();
 				data.cacheBigFile().sync();
 			};
-			if (!RunPostOpenCacheSymlinkRegression(
-					mediaCache ? guarded->local().cacheBigFilePath()
-							   : guarded->local().cachePath(),
-					mediaCache ? fixtures.openedMediaCache
-							   : fixtures.openedCache,
-					cacheGetter, clearCaches, [guarded, mediaCache] {
-						return RunRefusedCacheReaderRegressions(guarded,
-																mediaCache);
-					})) {
-				return FailChatParticipantsRegression(
-					"post-open cache get or put accessed a protected alias");
+			const auto passed = RunPostOpenCacheSymlinkRegression(
+				mediaCache ? guarded->local().cacheBigFilePath()
+						   : guarded->local().cachePath(),
+				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
+				cacheGetter, clearCaches, [guarded, mediaCache] {
+					return RunRefusedCacheReaderRegressions(guarded,
+															mediaCache);
+				});
+			nativeLifecycleResults->Report(caseName, passed);
+			if (mediaCache) {
+				postOpenMediaCachePassed = passed;
+			} else {
+				postOpenCachePassed = passed;
 			}
 		}
-		std::fprintf(
-			stderr,
-			"Authenticated cache post-open regression passed: get, put, and "
-			"clear "
-			"symlinks refused for cache and media_cache.\n");
+		if (postOpenCachePassed && postOpenMediaCachePassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache post-open regression passed: "
+						 "get, put, and "
+						 "clear symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
 	}
+	nativeLifecycleResults->StartCase("pinned-chat-participants");
 	const auto pinnedChat = pinned->session().data().chat(chatId);
 	const auto pinnedPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*pinnedChat));
 	pinned->session().api().processFullPeer(
 		pinnedPeer, RegressionChatFullReply(chatId, 1, QString(), UserId(2)));
-	if (!pinned->session().user()->isLoaded()
-		|| !HasExpectedParticipants(pinnedChat, UserId(2))) {
-		return FailChatParticipantsRegression(
-			"pinned phone-free self did not retain creator and members");
-	}
-	if (!Settings::RunFoldersCrudRegressionForTest(
+	const auto pinnedParticipantsPassed
+		= pinned->session().user()->isLoaded()
+		  && HasExpectedParticipants(pinnedChat, UserId(2));
+	nativeLifecycleResults->Report("pinned-chat-participants",
+								   pinnedParticipantsPassed);
+	nativeLifecycleResults->StartCase("folder-crud");
+	const auto stockFolderCrudPassed
+		= Settings::RunFoldersCrudRegressionForTest(
 			stockController, pinnedController,
 			stock->session().data().history(stockPeer),
-			Settings::FolderCrudRegressionSide::Stock)
-		|| !Settings::RunFoldersCrudRegressionForTest(
+			Settings::FolderCrudRegressionSide::Stock);
+	const auto pinnedFolderCrudPassed
+		= Settings::RunFoldersCrudRegressionForTest(
 			pinnedController, stockController,
 			pinned->session().data().history(pinnedPeer),
-			Settings::FolderCrudRegressionSide::Pinned)) {
-		return FailChatParticipantsRegression(
-			"ordinary folder create, rename, save, or remove did not stay "
-			"in its owning session");
+			Settings::FolderCrudRegressionSide::Pinned);
+	const auto folderCrudPassed = stockFolderCrudPassed
+								  && pinnedFolderCrudPassed
+								  && !shouldInjectFailure("folder-crud");
+	nativeLifecycleResults->Report("folder-crud", folderCrudPassed);
+	if (!folderCrudPassed) {
+		std::fprintf(
+			stderr,
+			"Chat participants regression failed: ordinary folder "
+			"create, rename, save, or remove did not stay in its owning "
+			"session\n");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	nativeLifecycleResults->StartCase("bio-editor-target");
 	const auto stockBioEditorTarget
 		= Settings::InformationBioEditorTargetPresentForRegressionTest(
 			stockController);
 	const auto pinnedBioEditorTarget
 		= Settings::InformationBioEditorTargetPresentForRegressionTest(
 			pinnedController);
-	if (!stockBioEditorTarget || pinnedBioEditorTarget) {
-		std::fprintf(stderr, "Bio editor target mismatch: stock=%d pinned=%d\n",
-					 stockBioEditorTarget, pinnedBioEditorTarget);
-		return FailChatParticipantsRegression(
-			"bio editor target did not follow account support");
-	}
+	const auto bioEditorTargetPassed
+		= stockBioEditorTarget && !pinnedBioEditorTarget;
+	recordChatCase("bio-editor-target", bioEditorTargetPassed,
+				   "bio editor target did not follow account support");
+#else
+	nativeLifecycleResults->Skip("bio-editor-target",
+								 "lifecycle-regression-disabled");
 #endif
+	nativeLifecycleResults->StartCase("admin-session-identities");
 	const auto stockSelf = stock->session().user();
 	const auto customSelf = pinned->session().user();
-	if (stockSelf == customSelf || stockSelf->id != customSelf->id
-		|| &stockSelf->session() != &stock->session()
-		|| &customSelf->session() != &pinned->session()) {
-		return FailChatParticipantsRegression(
-			"basic-group admin fixture identities are not distinct "
-			"session-owned objects with the same user id");
+	const auto adminIdentityFailureInjected
+		= shouldInjectFailure("admin-session-identities");
+	const auto adminSessionIdentitiesMatch
+		= stockSelf != customSelf && stockSelf->id == customSelf->id
+		  && &stockSelf->session() == &stock->session()
+		  && &customSelf->session() == &pinned->session()
+		  && !adminIdentityFailureInjected;
+	recordChatCase(
+		"admin-session-identities", adminSessionIdentitiesMatch,
+		adminIdentityFailureInjected
+			? "injected admin-session identity failure"
+			: "basic-group admin fixture identities are not distinct "
+			  "session-owned objects with the same user id");
+	if (!adminSessionIdentitiesMatch && !adminIdentityFailureInjected) {
+		std::fprintf(stderr,
+					 "basic-group admin fixture identities are not distinct "
+					 "session-owned objects with the same user id\n");
 	}
 	const auto actionChatId = ChatId(1052);
+	nativeLifecycleResults->StartCase("pinned-migration-fixture");
+	const auto pinnedActionChatData
+		= pinned->session().data().chat(actionChatId);
+	ChatData *const pinnedActionChat = &*pinnedActionChatData;
+	const auto pinnedActionPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(pinnedActionChat));
+	pinned->session().api().processFullPeer(
+		pinnedActionPeer,
+		RegressionChatFullReply(actionChatId, 1, QString(), selfId));
+	pinnedActionChat->setFlags(ChatDataFlag::Creator);
+	const auto pinnedMigrationFixturePassed
+		= pinnedActionChat->usesCustomServer()
+		  && !pinnedActionChat->isDeactivated()
+		  && !pinnedActionChat->migrateTo()
+		  && !shouldInjectFailure("pinned-migration-fixture");
+	recordChatCase(
+		"pinned-migration-fixture", pinnedMigrationFixturePassed,
+		"pinned migration fixture is not an active custom-server group");
+	nativeLifecycleResults->StartCase("stock-basic-group-creator");
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
 	const auto stockActionPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
@@ -6610,225 +8000,264 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		stockActionPeer, RegressionStockChatFullReply(
 							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
-	if (!HasExpectedParticipants(stockActionChat, selfId)
-		|| !stockActionChat->canEditInformation()
-		|| !stockActionChat->canAddMembers() || !stockActionChat->canAddAdmins()
-		|| !stockActionChat->canBanMembers()) {
-		return FailChatParticipantsRegression(
-			"stock creator lost a supported basic-group action");
-	}
-
-	const auto pinnedActionChat = pinned->session().data().chat(actionChatId);
-	const auto pinnedActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*pinnedActionChat));
-	pinned->session().api().processFullPeer(
-		pinnedActionPeer,
-		RegressionChatFullReply(actionChatId, 1, QString(), selfId));
-	pinnedActionChat->setFlags(ChatDataFlag::Creator);
-	if (!HasExpectedParticipants(pinnedActionChat, selfId)
-		|| !pinnedActionChat->canEditInformation()
-		|| !pinnedActionChat->canAddMembers()
-		|| !pinnedActionChat->canAddAdmins()
-		|| !pinnedActionChat->canBanMembers()) {
-		return FailChatParticipantsRegression(
+	const auto stockCreatorPassed
+		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockActionChat->canEditInformation()
+		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
+		  && stockActionChat->canBanMembers();
+	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
+				   "stock creator lost a supported basic-group action");
+	if (pinnedMigrationFixturePassed) {
+		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
+		const auto pinnedCreatorPassed
+			= HasExpectedParticipants(pinnedActionChat, selfId)
+			  && pinnedActionChat->canEditInformation()
+			  && pinnedActionChat->canAddMembers()
+			  && pinnedActionChat->canAddAdmins()
+			  && pinnedActionChat->canBanMembers();
+		recordChatCase(
+			"pinned-basic-group-creator", pinnedCreatorPassed,
 			"pinned creator lost a supported basic-group admin action");
+	} else {
+		nativeLifecycleResults->Skip("pinned-basic-group-creator",
+									 "dependency-pinned-migration-fixture");
 	}
+	if (adminSessionIdentitiesMatch) {
+		nativeLifecycleResults->StartCase("stock-full-list-admin");
+		const auto memberActionChatId = ChatId(1053);
+		const auto memberActionChat
+			= stock->session().data().chat(memberActionChatId);
+		const auto memberActionPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
+		stock->session().api().processFullPeer(
+			memberActionPeer,
+			RegressionStockChatFullReply(memberActionChatId, 1,
+										 u"+10000000001"_q, UserId(2)));
 
-	const auto memberActionChatId = ChatId(1053);
-	const auto memberActionChat
-		= stock->session().data().chat(memberActionChatId);
-	const auto memberActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
-	stock->session().api().processFullPeer(
-		memberActionPeer,
-		RegressionStockChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
-									 UserId(2)));
-
-	const auto adminActionChatId = ChatId(1054);
-	const auto adminActionChat
-		= stock->session().data().chat(adminActionChatId);
-	const auto adminActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
-	stock->session().api().processFullPeer(
-		adminActionPeer,
-		RegressionStockChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-									 UserId(2), true));
-	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
-		adminActionChat, "stock full-list promotion", true);
-	if (!HasExpectedParticipants(adminActionChat, UserId(2))
-		|| !adminActionChat->admins.contains(stockSelf)
-		|| !fullListAdminRightsMatch) {
-		return FailChatParticipantsRegression(
+		const auto adminActionChatId = ChatId(1054);
+		const auto adminActionChat
+			= stock->session().data().chat(adminActionChatId);
+		const auto adminActionPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
+		stock->session().api().processFullPeer(
+			adminActionPeer,
+			RegressionStockChatFullReply(adminActionChatId, 1,
+										 u"+10000000001"_q, UserId(2), true));
+		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
+			adminActionChat, "stock full-list promotion", true);
+		const auto stockFullListAdminPassed
+			= HasExpectedParticipants(adminActionChat, UserId(2))
+			  && adminActionChat->admins.contains(stockSelf)
+			  && fullListAdminRightsMatch;
+		recordChatCase(
+			"stock-full-list-admin", stockFullListAdminPassed,
 			"official basic-group admin lost its moderation rights or gained "
 			"creator-only powers");
-	}
 
-	const auto fullListDemotionChatId = ChatId(1057);
-	const auto fullListDemotionChat
-		= stock->session().data().chat(fullListDemotionChatId);
-	const auto fullListDemotionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*fullListDemotionChat));
-	stock->session().api().processFullPeer(
-		fullListDemotionPeer,
-		RegressionStockChatFullReply(fullListDemotionChatId, 1,
-									 u"+10000000001"_q, UserId(2), true));
-	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
-		fullListDemotionChat, "stock full-list demotion seed", true);
-	if (!fullListDemotionChat->admins.contains(stockSelf)
-		|| !fullListDemotionSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"full-list demotion fixture did not start with admin moderation "
-			"rights");
-	}
-	Data::ApplyChatUpdate(
-		fullListDemotionChat,
-		MTP_chatParticipants(
-			MTP_long(fullListDemotionChatId.bare),
-			MTP_vector<MTPChatParticipant>({
-				MTP_chatParticipantCreator(
-					MTP_flags(MTPDchatParticipantCreator::Flags()),
-					MTP_long(UserId(2).bare), MTP_string(QString())),
-				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
-									MTP_long(selfId.bare),
-									MTP_long(UserId(2).bare), MTP_int(0),
-									MTP_string(QString())),
-				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
-									MTP_long(UserId(9).bare),
-									MTP_long(selfId.bare), MTP_int(0),
-									MTP_string(QString())),
-			}),
-			MTP_int(2)));
-	const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		fullListDemotionChat, "stock full-list demotion", false);
-	if (!HasExpectedParticipants(fullListDemotionChat, UserId(2))
-		|| fullListDemotionChat->admins.contains(stockSelf)
-		|| fullListDemotionChat->adminRights() != ChatAdminRights()
-		|| !fullListDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
+		nativeLifecycleResults->StartCase("stock-full-list-demotion");
+		const auto fullListDemotionChatId = ChatId(1057);
+		const auto fullListDemotionChat
+			= stock->session().data().chat(fullListDemotionChatId);
+		const auto fullListDemotionPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*fullListDemotionChat));
+		stock->session().api().processFullPeer(
+			fullListDemotionPeer,
+			RegressionStockChatFullReply(fullListDemotionChatId, 1,
+										 u"+10000000001"_q, UserId(2), true));
+		const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
+			fullListDemotionChat, "stock full-list demotion seed", true);
+		const auto fullListDemotionSeedPassed
+			= fullListDemotionChat->admins.contains(stockSelf)
+			  && fullListDemotionSeedRightsMatch;
+		Data::ApplyChatUpdate(
+			fullListDemotionChat,
+			MTP_chatParticipants(
+				MTP_long(fullListDemotionChatId.bare),
+				MTP_vector<MTPChatParticipant>({
+					MTP_chatParticipantCreator(
+						MTP_flags(MTPDchatParticipantCreator::Flags()),
+						MTP_long(UserId(2).bare), MTP_string(QString())),
+					MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+										MTP_long(selfId.bare),
+										MTP_long(UserId(2).bare), MTP_int(0),
+										MTP_string(QString())),
+					MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+										MTP_long(UserId(9).bare),
+										MTP_long(selfId.bare), MTP_int(0),
+										MTP_string(QString())),
+				}),
+				MTP_int(2)));
+		const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
+			fullListDemotionChat, "stock full-list demotion", false);
+		const auto fullListDemotionPassed
+			= fullListDemotionSeedPassed
+			  && HasExpectedParticipants(fullListDemotionChat, UserId(2))
+			  && !fullListDemotionChat->admins.contains(stockSelf)
+			  && fullListDemotionChat->adminRights() == ChatAdminRights()
+			  && fullListDemotionRightsMatch;
+		recordChatCase(
+			"stock-full-list-demotion", fullListDemotionPassed,
 			"normal-server full-list demotion retained admin rights or "
 			"moderation controls");
-	}
 
-	const auto customAdminActionChat
-		= pinned->session().data().chat(adminActionChatId);
-	const auto customAdminActionPeer = not_null<PeerData *>(
-		static_cast<PeerData *>(&*customAdminActionChat));
-	customAdminActionChat->setAdminRights(
-		customAdminActionChat->defaultAdminRights(customSelf).flags);
-	const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
-		customAdminActionChat, "custom full-list promotion seed", true);
-	if (customAdminActionChat->adminRights() == ChatAdminRights()
-		|| !customFullListSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"custom full-list promotion fixture did not seed admin rights");
-	}
-	pinned->session().api().processFullPeer(
-		customAdminActionPeer,
-		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
-	const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
-		customAdminActionChat, "custom full-list promotion", false);
-	if (!HasExpectedParticipants(customAdminActionChat, UserId(2))
-		|| !customAdminActionChat->admins.contains(customSelf)
-		|| customAdminActionChat->admins.contains(stockSelf)
-		|| customAdminActionChat->adminRights() != ChatAdminRights()
-		|| !customAdminRightsMatch) {
-		return FailChatParticipantsRegression(
+		nativeLifecycleResults->StartCase("custom-full-list-admin");
+		const auto customAdminActionChat
+			= pinned->session().data().chat(adminActionChatId);
+		const auto customAdminActionPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*customAdminActionChat));
+		customAdminActionChat->setAdminRights(
+			customAdminActionChat->defaultAdminRights(customSelf).flags);
+		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
+			customAdminActionChat, "custom full-list promotion seed", true);
+		const auto customFullListSeedPassed
+			= customAdminActionChat->adminRights() != ChatAdminRights()
+			  && customFullListSeedRightsMatch;
+		pinned->session().api().processFullPeer(
+			customAdminActionPeer,
+			RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+									UserId(2), true));
+		const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
+			customAdminActionChat, "custom full-list promotion", false);
+		const auto customFullListAdminPassed
+			= customFullListSeedPassed
+			  && HasExpectedParticipants(customAdminActionChat, UserId(2))
+			  && customAdminActionChat->admins.contains(customSelf)
+			  && !customAdminActionChat->admins.contains(stockSelf)
+			  && customAdminActionChat->adminRights() == ChatAdminRights()
+			  && customAdminRightsMatch;
+		recordChatCase(
+			"custom-full-list-admin", customFullListAdminPassed,
 			"custom-server basic-group admin gained rights or creator-only "
 			"powers");
-	}
 
-	const auto liveAdminChatId = ChatId(1055);
-	const auto liveAdminChat = stock->session().data().chat(liveAdminChatId);
-	const auto liveAdminPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
-	stock->session().api().processFullPeer(
-		liveAdminPeer, RegressionStockChatFullReply(
-						   liveAdminChatId, 1, u"+10000000001"_q, UserId(2)));
-	Data::ApplyChatUpdate(liveAdminChat,
-						  MTP_updateChatParticipantAdmin(
-							  MTP_long(liveAdminChatId.bare),
-							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
-							  .c_updateChatParticipantAdmin());
-	const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
-		liveAdminChat, "stock incremental promotion", true);
-	if (!liveAdminChat->admins.contains(stockSelf)
-		|| !livePromotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental official basic-group promotion lost admin rights or "
-			"granted creator-only powers");
-	}
-	Data::ApplyChatUpdate(liveAdminChat, MTP_updateChatParticipantAdmin(
-											 MTP_long(liveAdminChatId.bare),
-											 MTP_long(selfId.bare),
-											 MTP_boolFalse(), MTP_int(3))
-											 .c_updateChatParticipantAdmin());
-	const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		liveAdminChat, "stock incremental demotion", false);
-	if (liveAdminChat->admins.contains(stockSelf) || !liveDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental basic-group demotion did not clear admin display "
-			"state");
-	}
+		nativeLifecycleResults->StartCase("stock-live-admin-promotion");
+		const auto liveAdminChatId = ChatId(1055);
+		const auto liveAdminChat
+			= stock->session().data().chat(liveAdminChatId);
+		const auto liveAdminPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
+		stock->session().api().processFullPeer(
+			liveAdminPeer,
+			RegressionStockChatFullReply(liveAdminChatId, 1, u"+10000000001"_q,
+										 UserId(2)));
+		Data::ApplyChatUpdate(
+			liveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(liveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolTrue(), MTP_int(2))
+				.c_updateChatParticipantAdmin());
+		const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
+			liveAdminChat, "stock incremental promotion", true);
+		const auto stockLivePromotionPassed
+			= liveAdminChat->admins.contains(stockSelf)
+			  && livePromotionRightsMatch
+			  && !shouldInjectFailure("stock-live-admin-promotion");
+		recordChatCase(
+			"stock-live-admin-promotion", stockLivePromotionPassed,
+			"incremental official basic-group promotion lost admin rights "
+			"or granted creator-only powers");
+		if (stockLivePromotionPassed) {
+			nativeLifecycleResults->StartCase("stock-live-admin-demotion");
+			Data::ApplyChatUpdate(
+				liveAdminChat,
+				MTP_updateChatParticipantAdmin(MTP_long(liveAdminChatId.bare),
+											   MTP_long(selfId.bare),
+											   MTP_boolFalse(), MTP_int(3))
+					.c_updateChatParticipantAdmin());
+			const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
+				liveAdminChat, "stock incremental demotion", false);
+			const auto stockLiveDemotionPassed
+				= !liveAdminChat->admins.contains(stockSelf)
+				  && liveDemotionRightsMatch;
+			recordChatCase(
+				"stock-live-admin-demotion", stockLiveDemotionPassed,
+				"incremental basic-group demotion did not clear admin display "
+				"state");
+		} else {
+			nativeLifecycleResults->Skip(
+				"stock-live-admin-demotion",
+				"dependency-stock-live-admin-promotion");
+		}
 
-	const auto customLiveAdminChatId = ChatId(1056);
-	const auto customLiveAdminChat
-		= pinned->session().data().chat(customLiveAdminChatId);
-	const auto customLiveAdminPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*customLiveAdminChat));
-	pinned->session().api().processFullPeer(
-		customLiveAdminPeer,
-		RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
-								UserId(2)));
-	customLiveAdminChat->setAdminRights(
-		customLiveAdminChat->defaultAdminRights(customSelf).flags);
-	const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental promotion seed", true);
-	if (customLiveAdminChat->adminRights() == ChatAdminRights()
-		|| !customLiveSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"custom incremental promotion fixture did not seed admin rights");
-	}
-	Data::ApplyChatUpdate(customLiveAdminChat,
-						  MTP_updateChatParticipantAdmin(
-							  MTP_long(customLiveAdminChatId.bare),
-							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
-							  .c_updateChatParticipantAdmin());
-	const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental promotion", false);
-	if (!customLiveAdminChat->admins.contains(customSelf)
-		|| customLiveAdminChat->admins.contains(stockSelf)
-		|| customLiveAdminChat->adminRights() != ChatAdminRights()
-		|| !customPromotionRightsMatch) {
-		return FailChatParticipantsRegression(
+		nativeLifecycleResults->StartCase("custom-live-admin-promotion");
+		const auto customLiveAdminChatId = ChatId(1056);
+		const auto customLiveAdminChat
+			= pinned->session().data().chat(customLiveAdminChatId);
+		const auto customLiveAdminPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*customLiveAdminChat));
+		pinned->session().api().processFullPeer(
+			customLiveAdminPeer,
+			RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
+									UserId(2)));
+		customLiveAdminChat->setAdminRights(
+			customLiveAdminChat->defaultAdminRights(customSelf).flags);
+		const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
+			customLiveAdminChat, "custom incremental promotion seed", true);
+		const auto customLiveSeedPassed
+			= customLiveAdminChat->adminRights() != ChatAdminRights()
+			  && customLiveSeedRightsMatch;
+		Data::ApplyChatUpdate(
+			customLiveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolTrue(), MTP_int(2))
+				.c_updateChatParticipantAdmin());
+		const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
+			customLiveAdminChat, "custom incremental promotion", false);
+		const auto customLivePromotionPassed
+			= customLiveSeedPassed
+			  && customLiveAdminChat->admins.contains(customSelf)
+			  && !customLiveAdminChat->admins.contains(stockSelf)
+			  && customLiveAdminChat->adminRights() == ChatAdminRights()
+			  && customPromotionRightsMatch
+			  && !shouldInjectFailure("custom-live-admin-promotion");
+		recordChatCase(
+			"custom-live-admin-promotion", customLivePromotionPassed,
 			"incremental custom-server promotion gained admin rights or "
 			"creator-only powers");
+		if (customLivePromotionPassed) {
+			nativeLifecycleResults->StartCase("custom-live-admin-demotion");
+			Data::ApplyChatUpdate(customLiveAdminChat,
+								  MTP_updateChatParticipantAdmin(
+									  MTP_long(customLiveAdminChatId.bare),
+									  MTP_long(selfId.bare), MTP_boolFalse(),
+									  MTP_int(3))
+									  .c_updateChatParticipantAdmin());
+			const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
+				customLiveAdminChat, "custom incremental demotion", false);
+			const auto customLiveDemotionPassed
+				= !customLiveAdminChat->admins.contains(customSelf)
+				  && !customLiveAdminChat->admins.contains(stockSelf)
+				  && customLiveAdminChat->adminRights() == ChatAdminRights()
+				  && customDemotionRightsMatch;
+			recordChatCase("custom-live-admin-demotion",
+						   customLiveDemotionPassed,
+						   "incremental custom-server demotion did not clear "
+						   "admin display "
+						   "state");
+		} else {
+			nativeLifecycleResults->Skip(
+				"custom-live-admin-demotion",
+				"dependency-custom-live-admin-promotion");
+		}
+	} else {
+		for (const auto name : {
+				 "stock-full-list-admin",
+				 "stock-full-list-demotion",
+				 "custom-full-list-admin",
+				 "stock-live-admin-promotion",
+				 "stock-live-admin-demotion",
+				 "custom-live-admin-promotion",
+				 "custom-live-admin-demotion",
+			 }) {
+			nativeLifecycleResults->Skip(name,
+										 "dependency-admin-session-identities");
+		}
 	}
-	Data::ApplyChatUpdate(
-		customLiveAdminChat,
-		MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
-									   MTP_long(selfId.bare), MTP_boolFalse(),
-									   MTP_int(3))
-			.c_updateChatParticipantAdmin());
-	const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental demotion", false);
-	if (customLiveAdminChat->admins.contains(customSelf)
-		|| customLiveAdminChat->admins.contains(stockSelf)
-		|| customLiveAdminChat->adminRights() != ChatAdminRights()
-		|| !customDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental custom-server demotion did not clear admin display "
-			"state");
-	}
-	if (!pinnedActionChat->usesCustomServer()
-		|| pinnedActionChat->isDeactivated() || pinnedActionChat->migrateTo()) {
-		return FailChatParticipantsRegression(
-			"pinned migration fixture is not an active custom-server group");
-	}
-	if (!windowsMatch("after primary close")) {
-		return FailChatParticipantsRegression(
-			"primary close changed the separate session windows");
-	}
+	nativeLifecycleResults->StartCase("post-close-window-lifecycle");
+	const auto postCloseWindowPassed = windowsMatch("after primary close");
+	recordChatCase("post-close-window-lifecycle", postCloseWindowPassed,
+				   "primary close changed the separate session windows");
 
 	struct MigrationResult {
 		int done = 0;
@@ -6836,49 +8265,76 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		QString error;
 	};
 	const auto migration = std::make_shared<MigrationResult>();
-	pinned->session().api().migrateChat(
-		pinnedActionChat,
-		[migration](not_null<ChannelData *>) { ++migration->done; },
-		[migration](const QString &error) {
-			++migration->failed;
-			migration->error = error;
-		});
+	ReportCallRegressionCheckpoint("migration callback begin");
+	if (pinnedMigrationFixturePassed) {
+		nativeLifecycleResults->StartCase("chat-migration");
+		pinned->session().api().migrateChat(
+			not_null<ChatData *>(pinnedActionChat),
+			[migration](not_null<ChannelData *>) { ++migration->done; },
+			[migration](const QString &error) {
+				++migration->failed;
+				migration->error = error;
+			});
+	} else {
+		nativeLifecycleResults->Skip("chat-migration",
+									 "dependency-pinned-migration-fixture");
+	}
+	nativeLifecycleResults->asyncPending = true;
 	crl::on_main([=] {
-		std::fprintf(
-			stderr, "Pinned migration regression: done=%d failed=%d error=%s\n",
-			migration->done, migration->failed,
-			migration->error.toUtf8().constData());
-		if (migration->done != 0 || migration->failed != 1
-			|| migration->error != u"CLIENT_BAD_MIGRATION"_q) {
-			done(FailChatParticipantsRegression(
-				"pinned basic-group migration was not rejected locally"));
-			return;
+		if (pinnedMigrationFixturePassed) {
+			std::fprintf(
+				stderr,
+				"Pinned migration regression: done=%d failed=%d error=%s\n",
+				migration->done, migration->failed,
+				migration->error.toUtf8().constData());
+			const auto migrationPassed
+				= migration->done == 0 && migration->failed == 1
+				  && migration->error == u"CLIENT_BAD_MIGRATION"_q;
+			recordChatCase(
+				"chat-migration", migrationPassed,
+				"pinned basic-group migration was not rejected locally");
 		}
 		if (Core::MacProtectedPath::IntegrationTestActive()) {
+			nativeLifecycleResults->StartCase("protected-cache-cleanup");
 			stock->session().data().clearLocalStorage();
 			pinned->session().data().clearLocalStorage();
 			stock->session().data().cache().sync();
 			stock->session().data().cacheBigFile().sync();
 			pinned->session().data().cache().sync();
 			pinned->session().data().cacheBigFile().sync();
-			if (Core::MacProtectedPath::CheckCachePath(
+			const auto protectedCacheCleanupPassed
+				= !Core::MacProtectedPath::CheckCachePath(
 					stockCachePath, "Tests::ProtectedCache::async-root")
-				|| Core::MacProtectedPath::CheckCachePath(
-					stockMediaCachePath,
-					"Tests::ProtectedCache::async-media-root")
-				|| Core::MacProtectedPath::CheckCachePath(
-					pinnedCachePath, "Tests::ProtectedCache::async-file")
-				|| Core::MacProtectedPath::CheckCachePath(
-					pinnedMediaCachePath,
-					"Tests::ProtectedCache::async-media-file")) {
-				done(FailChatParticipantsRegression(
-					"asynchronous cache cleanup accessed a protected target"));
-				return;
-			}
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  stockMediaCachePath,
+					  "Tests::ProtectedCache::async-media-root")
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  pinnedCachePath, "Tests::ProtectedCache::async-file")
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  pinnedMediaCachePath,
+					  "Tests::ProtectedCache::async-media-file")
+				  && FixtureContainsOnlyMarker(fixtures.cacheRoot)
+				  && FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
+				  && FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+				  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+			recordChatCase(
+				"protected-cache-cleanup", protectedCacheCleanupPassed,
+				"asynchronous cache cleanup accessed a protected target");
+		} else {
+			nativeLifecycleResults->Skip("protected-cache-cleanup",
+										 "protected-path-integration-disabled");
+		}
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		if (!nativeLifecycleResults->Passed()) {
+			done(FailChatParticipantsRegression(
+				"one or more named native lifecycle cases failed"));
+			return;
 		}
 		std::fprintf(stderr, "Chat participants regression passed.\n");
 		done(0);
 	});
+	ReportCallRegressionCheckpoint("migration callback scheduled");
 	return 0;
 }
 
@@ -6938,41 +8394,70 @@ StartChatParticipantsRegression(Main::Domain &domain,
 }
 
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
-	if (!ReadOnlyUsernameInputRejectsWordDeletion()) {
-		return FailAccountLifecycleRegression(
-			"read-only username word deletion changed the handle or requests");
-	}
-	if (!TeagramIconChoicePersistsAcrossSettingsReload()) {
-		return FailAccountLifecycleRegression(
-			"Teagram icon choice did not survive settings serialization");
-	}
+	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
+	const auto injectedFailCases
+		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
+			  .split(',', Qt::SkipEmptyParts);
+	const auto shouldInjectFailure = [&](const char *name) {
+		return injectedFailCases.contains(QString::fromLatin1(name));
+	};
+	nativeLifecycleResults->StartCase("username-input");
+	const auto usernameInputPassed = ReadOnlyUsernameInputRejectsWordDeletion()
+									 && !shouldInjectFailure("username-input");
+	nativeLifecycleResults->Report("username-input", usernameInputPassed);
+	nativeLifecycleResults->StartCase("teagram-icon-persistence");
+	const auto teagramIconPersistencePassed
+		= TeagramIconChoicePersistsAcrossSettingsReload()
+		  && !shouldInjectFailure("teagram-icon-persistence");
+	nativeLifecycleResults->Report("teagram-icon-persistence",
+								   teagramIconPersistencePassed);
+	nativeLifecycleResults->StartCase("account-lifecycle-prerequisites");
+	const auto failAccountPrerequisite = [&](const char *reason) {
+		std::fprintf(stderr, "Account lifecycle fixture failed: %s\n", reason);
+		nativeLifecycleResults->Report("account-lifecycle-prerequisites",
+									   false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-account-lifecycle-prerequisites");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return 1;
+	};
 	const auto failureVariable
 		= QByteArray("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
 	const auto failWrites
 		= gsl::finally([&] { qunsetenv(failureVariable.constData()); });
+	ReportCallRegressionCheckpoint("account lifecycle setup begins");
 
 	auto &domain = Core::App().domain();
 	if (!domain.started()) {
-		return FailAccountLifecycleRegression(
-			"application domain did not start");
+		return failAccountPrerequisite("application domain did not start");
 	}
 	if (!Core::App().activePrimaryWindow()) {
-		return FailAccountLifecycleRegression(
+		return failAccountPrerequisite(
 			"application did not create the primary window fixture");
 	}
 	if (domain.accounts().size() != 1
 		|| domain.accounts().front().account->sessionExists()) {
-		return FailAccountLifecycleRegression(
+		return failAccountPrerequisite(
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!SetProtectedCacheFixturePaths(&fixtures)
-		|| !RunLegacyCleanupSymlinkRegression(fixtures)) {
+	if (!PrepareProtectedCacheFixtures(&fixtures)) {
+		return failAccountPrerequisite(
+			"could not prepare protected cache fixtures");
+	}
+	nativeLifecycleResults->Report("account-lifecycle-prerequisites", true);
+	nativeLifecycleResults->StartCase("legacy-cleanup-symlink");
+	const auto legacyCleanupPassed
+		= RunLegacyCleanupSymlinkRegression(fixtures)
+		  && !shouldInjectFailure("legacy-cleanup-symlink");
+	nativeLifecycleResults->Report("legacy-cleanup-symlink",
+								   legacyCleanupPassed);
+	if (!legacyCleanupPassed) {
 		std::fprintf(
 			stderr,
 			"Protected storage regression failed: legacy cleanup followed "
 			"a protected account-directory symlink.\n");
-		return 1;
 	}
 
 	// This is the production post-auth caller. It must keep the session
@@ -6984,13 +8469,26 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		0x4341434845504159ULL,
 	};
 	const auto cachePayload = QByteArray("main-1062-cache-regression-payload");
-	if (!CacheCallbackTimeoutIsSafe()) {
-		return FailAccountLifecycleRegression(
-			"cache callback wait mishandled failure or late completion");
-	}
+	nativeLifecycleResults->StartCase("cache-callback-timeout");
+	const auto cacheCallbackTimeoutPassed
+		= CacheCallbackTimeoutIsSafe()
+		  && !shouldInjectFailure("cache-callback-timeout");
+	nativeLifecycleResults->Report("cache-callback-timeout",
+								   cacheCallbackTimeoutPassed);
+	nativeLifecycleResults->StartCase("account-authorization-lifecycle");
+	const auto failAccountLifecycle = [&](const char *reason) {
+		std::fprintf(stderr, "Account lifecycle regression failed: %s\n",
+					 reason);
+		nativeLifecycleResults->Report("account-authorization-lifecycle",
+									   false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-account-authorization-lifecycle");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return 1;
+	};
 	if (!WriteCachePayload(account, cacheKey, cachePayload)) {
-		return FailAccountLifecycleRegression(
-			"could not seed the cache payload");
+		return failAccountLifecycle("could not seed the cache payload");
 	}
 	if (!account->sessionExists()
 		&& !account->mtp().dcOptions().hasCustomServer()
@@ -6998,7 +8496,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !account->mtp().dcOptions().configEnumDcIds().empty())) {
 		// A fresh account is allowed to show enrollment, but it must not
 		// carry the built-in production table while it waits there.
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"fresh account retained production endpoints before enrollment");
 	}
 	// Sender destruction must cancel a refused request before queued delivery.
@@ -7011,13 +8509,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  .fail([&](const MTP::Error &) { ++cancelledFailures; })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"stopped sender did not retain its request");
 		}
 	}
 	QCoreApplication::processEvents();
 	if (cancelledFailures) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"destroyed sender delivered a cancelled request");
 	}
 	auto liveFailures = 0;
@@ -7032,19 +8530,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"paused sender did not retain its request");
 		}
 		QCoreApplication::processEvents();
 		if (sender.pending(requestId) || liveFailures != 1) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"paused request was not rejected locally");
 		}
 	}
 	const auto originalKey = RegressionServerKey();
 	const auto originalFingerprint = originalKey->fingerprint();
 	if (!ConfigurePinnedServer(account, originalKey)) {
-		return FailAccountLifecycleRegression("could not pin the test server");
+		return failAccountLifecycle("could not pin the test server");
 	}
 	account->setSessionUserId(UserId(4242));
 	qputenv(failureVariable.constData(), "1");
@@ -7054,7 +8552,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (published || account->sessionExists()
 		|| account->willHaveSessionUniqueId(nullptr) == 0
 		|| !account->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"post-auth write failure published a session or lost its marker");
 	}
 	qunsetenv(failureVariable.constData());
@@ -7062,22 +8560,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// The failed post-auth write already persisted the block marker; leaving
 	// it in place verifies startup restores that durable block.
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after the post-auth write failure");
 	}
 
 	const auto blocked = FindAuthorizationBlockedAccount(domain);
 	if (!blocked || !blocked->mtp().config().blocked()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"post-auth failure did not restore a blocked account");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after blocked account teardown");
 	}
 	const auto stillBlocked = FindAuthorizationBlockedAccount(domain);
 	if (!stillBlocked || !stillBlocked->mtp().config().blocked()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown cleared the durable authorization failure");
 	}
 	const auto restarted = Main::details::CommitServerForget(
@@ -7091,17 +8589,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		[] {});
 	if (!restarted || stillBlocked->local().hasStoredCustomServer()
 		|| stillBlocked->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not durably clear the blocked server state");
 	}
 	if (stillBlocked->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget left the persisted authorization snapshot before restart");
 	}
 
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
-			"could not restart after Forget");
+		return failAccountLifecycle("could not restart after Forget");
 	}
 	const auto forgotten
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
@@ -7112,7 +8609,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| forgotten->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(forgotten)
 		|| !forgotten->mtp().dcOptions().configEnumDcIds().empty()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not restart unenrolled without auth data or endpoints");
 	}
 	auto pausedFailures = 0;
@@ -7127,12 +8624,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"unenrolled sender did not retain its request");
 		}
 		QCoreApplication::processEvents();
 		if (sender.pending(requestId) || pausedFailures != 1) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"unenrolled request was not rejected locally");
 		}
 	}
@@ -7140,7 +8637,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto initialKey = RegressionAuthKey(0x11);
 	forgotten->mtp().dcPersistentKeyChanged(2, initialKey);
 	if (!ConfigurePinnedServer(forgotten, originalKey)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
@@ -7156,22 +8653,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			forgotten->session().data().cache(),
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
-			"matching server and user identity did not reuse the retained cache payload");
+		return failAccountLifecycle("matching server and user identity did not "
+									"reuse the retained cache payload");
 	}
 	forgotten->mtp().resume();
 	const auto finalKey = RegressionAuthKey(0x22);
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after active account teardown");
 	}
 	auto active = not_null<Main::Account*>(
 		domain.accounts().front().account.get());
 	if (!active->sessionExists() || !HasAuthKey(active, finalKeyId)
 		|| !active->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"active teardown did not persist its final authorization snapshot");
 	}
 
@@ -7179,7 +8676,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	active->mtp().dcPersistentKeyChanged(2, teardownFailureKey);
 	qputenv(failureVariable.constData(), "1");
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after teardown-only authorization failure");
 	}
 	qunsetenv(failureVariable.constData());
@@ -7187,42 +8684,41 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!failedTeardown
 		|| !failedTeardown->mtp().config().blocked()
 		|| !failedTeardown->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"active teardown-only failure did not block the next startup");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	if (!failedTeardown->local().writeMtpAuthorizationFailure()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not rewrite the retained authorization failure marker");
 	}
 	const auto markerRewriteAttempts = GetLifecycleWriteCountsForRegressionTest();
 	if (markerRewriteAttempts.authorizationSnapshot != 0
 		|| markerRewriteAttempts.authorizationFailureMarker != 1
 		|| markerRewriteAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
-			"authorization failure marker observer missed an identical-value rewrite");
+		return failAccountLifecycle("authorization failure marker observer "
+									"missed an identical-value rewrite");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	auto blockedTeardownAttempts = LifecycleWriteCountsForRegressionTest();
 	if (!RestartDomain(domain, &blockedTeardownAttempts)) {
-		return FailAccountLifecycleRegression(
-			"could not restart after blocked teardown");
+		return failAccountLifecycle("could not restart after blocked teardown");
 	}
 	if (blockedTeardownAttempts.authorizationSnapshot != 0
 		|| blockedTeardownAttempts.authorizationFailureMarker != 0
 		|| blockedTeardownAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked account teardown attempted an authorization or marker "
 			"write");
 	}
 	failedTeardown = FindAuthorizationBlockedAccount(domain);
 	if (!failedTeardown || !failedTeardown->mtp().config().blocked()
 		|| !failedTeardown->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown changed its durable authorization state");
 	}
 	if (!failedTeardown->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown lost the prior authorization snapshot");
 	}
 	if (!Main::details::CommitServerForget(
@@ -7234,15 +8730,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				.userId = 4242,
 			},
 			[] {})) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not Forget the blocked account after teardown");
 	}
 	if (failedTeardown->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget left the prior authorization snapshot before restart");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not return to enrollment after teardown block");
 	}
 	auto unenrolled = not_null<Main::Account*>(
@@ -7253,11 +8749,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| unenrolled->local().checkServerCacheBinding(originalFingerprint,
 													   4242)
 			   != Storage::ServerCacheBindingStatus::Match) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not retain only the cache identity binding");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"paused teardown did not complete its restart");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -7265,7 +8761,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!unenrolled->mtp().dcOptions().unenrolled()
 		|| unenrolled->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(unenrolled)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"paused teardown wrote authorization data or a failure marker");
 	}
 
@@ -7275,14 +8771,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			UserId(4242),
 			originalFingerprint,
 			4242)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"changed server fingerprint bypassed cache confirmation");
 	}
 	if (!PersistedCachePayloadMatches(
 			unenrolled,
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"declined fingerprint change damaged the cached payload");
 	}
 	if (!Main::details::CommitServerForget(
@@ -7295,7 +8791,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			},
 			[] {})
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not reset the declined fingerprint change");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -7306,14 +8802,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			UserId(5252),
 			originalFingerprint,
 			4242)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"changed user id bypassed cache confirmation");
 	}
 	if (!PersistedCachePayloadMatches(
 			unenrolled,
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"declined user-id change damaged the cached payload");
 	}
 	if (!unenrolled->beginServerReenrollment(
@@ -7321,7 +8817,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			true)
 		|| !unenrolled->local().serverReenrollmentPending()
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"confirmed identity change did not schedule destructive cleanup");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -7334,13 +8830,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| unenrolled->local().checkServerCacheBinding(
 			originalFingerprint,
 			4242) != Storage::ServerCacheBindingStatus::None) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"confirmed identity change did not discard the old cache binding");
 	}
 
 	unenrolled->local().writeCustomServerBlocked(false);
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart the synthetic blocked account");
 	}
 	auto blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
@@ -7350,8 +8846,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)
 		|| !blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()) {
-		return FailAccountLifecycleRegression(
-			"blocked startup did not retain its existing marker and empty auth state");
+		return failAccountLifecycle("blocked startup did not retain its "
+									"existing marker and empty auth state");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	qputenv(failureVariable.constData(), "1");
@@ -7365,7 +8861,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| authorizationAttempts.customServerBlockMarker != 0
 		|| blockedWithoutAuthorizationFailure->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"authorization snapshot observer missed an isolated write attempt");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
@@ -7375,38 +8871,38 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| markerAttempts.authorizationFailureMarker != 0
 		|| markerAttempts.customServerBlockMarker != 1
 		|| !blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"block marker observer missed an identical-value rewrite");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	auto teardownAttempts = LifecycleWriteCountsForRegressionTest();
 	if (!RestartDomain(domain, &teardownAttempts)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown did not complete its restart");
 	}
 	if (teardownAttempts.authorizationSnapshot != 0
 		|| teardownAttempts.authorizationFailureMarker != 0
 		|| teardownAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
-			"blocked account teardown attempted an authorization or marker write");
+		return failAccountLifecycle("blocked account teardown attempted an "
+									"authorization or marker write");
 	}
 	blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
 		domain.accounts().front().account.get());
 	if (!blockedWithoutAuthorizationFailure->mtp().config().blocked()
 		|| blockedWithoutAuthorizationFailure->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown wrote authorization data or a failure marker");
 	}
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
 				.writeMtpAuthorizationFailure()
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restore a blocked account without custom-pin metadata");
 	}
 	const auto restoredBlocked = FindAuthorizationBlockedAccount(domain);
@@ -7415,11 +8911,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !restoredBlocked->local().mtpAuthorizationWriteFailed()
 		|| restoredBlocked->local().hasStoredCustomServer()
 		|| restoredBlocked->local().customServerPinUnknown()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"restored blocked account retained custom-pin metadata");
 	}
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
+		return failAccountLifecycle(
+			"could not reset the synthetic account after blocked-state checks");
+	}
 
-	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
+	nativeLifecycleResults->Report("account-authorization-lifecycle", true);
+	ReportCallRegressionCheckpoint("account lifecycle setup complete");
+	return StartChatParticipantsRegression(
+		domain, fixtures, std::move(nativeLifecycleResults), std::move(done));
 }
 
 } // namespace

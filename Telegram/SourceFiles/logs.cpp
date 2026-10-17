@@ -479,7 +479,10 @@ void start() {
 		MoveOldDataFiles(psAppDataPathOld());
 	}
 #elif !defined Q_OS_MAC && !defined _DEBUG // fix first version
-	MoveOldDataFiles(launcher.initialWorkingDir());
+	if (Platform::LinuxShouldMigrateLegacyDataFiles(
+			launcher.initialWorkingDir())) {
+		MoveOldDataFiles(launcher.initialWorkingDir());
+	}
 #endif
 
 	if (LogsInMemory) {

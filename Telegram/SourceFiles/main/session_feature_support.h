@@ -9,6 +9,10 @@ namespace Main::details {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool callLinkAllowed(const MTP::DcOptions &options) {
+	return callsSupported(options);
+}
+
 [[nodiscard]] inline bool botAppsSupported(
 		const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());

@@ -147,8 +147,11 @@ public:
 		bool shouldUseColored);
 
 	rpl::producer<std::optional<QColor>> edgeColor() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool callActionPresentForRegressionTest() const;
+#endif
 
-protected:
+  protected:
 	void resizeEvent(QResizeEvent *e) override;
 	void paintEvent(QPaintEvent *e) override;
 

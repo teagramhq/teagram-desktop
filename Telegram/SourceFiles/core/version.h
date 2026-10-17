@@ -22,9 +22,11 @@ constexpr auto AppId = "{53F49750-6209-4FBF-9CA8-7A333C87D1ED}"_cs;
 constexpr auto AppNameOld = "Telegram Win (Unofficial)"_cs;
 #ifdef TDESKTOP_TEAGRAM
 constexpr auto AppName = "Teagram"_cs;
+constexpr auto AppNameQt = "Teagram"_cs;
 constexpr auto AppFile = "Teagram"_cs;
-#else  // TDESKTOP_TEAGRAM
+#else // TDESKTOP_TEAGRAM
 constexpr auto AppName = "Telegram Desktop"_cs;
+constexpr auto AppNameQt = "TelegramDesktop"_cs;
 constexpr auto AppFile = "Telegram"_cs;
 #endif // TDESKTOP_TEAGRAM
 #ifdef TDESKTOP_TEAGRAM

@@ -239,6 +239,7 @@ void ComputeInstallationTag() {
 	}
 }
 
+#ifndef TDESKTOP_TEAGRAM
 bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {
 	const auto was = cExeDir() + folder;
 	const auto now = cExeDir() + u"TelegramForcePortable"_q;
@@ -323,6 +324,7 @@ bool CheckPortableVersionFolder() {
 	cSetRealAlphaVersion(v);
 	return true;
 }
+#endif // !TDESKTOP_TEAGRAM
 
 base::options::toggle OptionFractionalScalingEnabled({
 	.id = kOptionFractionalScalingEnabled,
@@ -363,11 +365,7 @@ void Launcher::init() {
 	prepareSettings();
 	initQtMessageLogging();
 
-#ifdef TDESKTOP_TEAGRAM
-	QApplication::setApplicationName(u"Teagram"_q);
-#else  // TDESKTOP_TEAGRAM
-	QApplication::setApplicationName(u"TelegramDesktop"_q);
-#endif // TDESKTOP_TEAGRAM
+	QApplication::setApplicationName(AppNameQt.utf16());
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 	// fallback session management is useless for tdesktop since it doesn't have
@@ -658,9 +656,9 @@ void Launcher::processArguments() {
 	gStartInTray = parseResult.contains("-startintray");
 	gQuit = parseResult.contains("-quit");
 	_customWorkingDir = parseResult.value("-workdir", {}).join(QString());
-#ifdef TDESKTOP_TEAGRAM
+#if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 	_customWorkingDir.clear();
-#endif // TDESKTOP_TEAGRAM
+#endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 	if (!_customWorkingDir.isEmpty()) {
 		_customWorkingDir = QDir(_customWorkingDir).absolutePath() + '/';
 	}
