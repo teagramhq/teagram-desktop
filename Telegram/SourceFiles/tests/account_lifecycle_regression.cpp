@@ -2302,22 +2302,30 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
 	{
-		const auto window = pinnedController->widget();
-		const auto previousSize = window->size();
+		const auto pinnedWindow = pinnedController->widget();
+		const auto blockedWindow = blockedController->widget();
+		const auto pinnedPreviousSize = pinnedWindow->size();
+		const auto blockedPreviousSize = blockedWindow->size();
 		const auto minimumLayerWidth
 			= Info::LayerWidget::MinimalSupportedWidth();
-		const auto restoreSize = gsl::finally([=] {
-			window->resize(previousSize);
+		const auto restoreSizes = gsl::finally([=] {
+			pinnedWindow->resize(pinnedPreviousSize);
+			blockedWindow->resize(blockedPreviousSize);
 			QCoreApplication::processEvents();
 		});
-		window->resize(minimumLayerWidth - 1, previousSize.height());
+		for (const auto window : {pinnedWindow, blockedWindow}) {
+			window->resize(minimumLayerWidth - 1, window->height());
+		}
 		QCoreApplication::processEvents();
-		if (window->width() >= minimumLayerWidth) {
+		if (pinnedWindow->width() >= minimumLayerWidth
+			|| blockedWindow->width() >= minimumLayerWidth) {
 			std::fprintf(
 				stderr,
 				"Settings deep link regression failed: could not constrain "
-				"test window below Info layer width: width=%d minimum=%d.\n",
-				window->width(), minimumLayerWidth);
+				"unsupported test windows below Info layer width: "
+				"pinned_width=%d blocked_width=%d minimum=%d.\n",
+				pinnedWindow->width(), blockedWindow->width(),
+				minimumLayerWidth);
 			return false;
 		}
 		const auto ordinaryToastBefore
@@ -2355,35 +2363,36 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
 		QCoreApplication::processEvents();
-	}
 
-	for (const auto &controller : {pinnedController, blockedController}) {
-		const auto toastBefore
-			= controller
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
-							  contextFor(controller))) {
-			return false;
+		for (const auto &controller : {pinnedController, blockedController}) {
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+								  contextFor(controller))) {
+				return false;
+			}
+			QCoreApplication::processEvents();
+			const auto myAccountShown = ShownInfoSectionMatches(
+				controller, [](const Info::Section &section) {
+					return (section.type() == Info::Section::Type::Settings)
+						   && (section.settingsType()
+							   == Settings::InformationId());
+				});
+			if (!controller->content()->isMainSectionShown() || !myAccountShown
+				|| ShownStoriesSection(controller)
+				|| (controller
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+					!= toastBefore)) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: my-profile did not "
+					"open My Account on an unsupported session.\n");
+				return false;
+			}
+			resetController(controller);
+			QCoreApplication::processEvents();
 		}
-		QCoreApplication::processEvents();
-		const auto myAccountShown = ShownInfoSectionMatches(
-			controller, [](const Info::Section &section) {
-				return (section.type() == Info::Section::Type::Settings)
-					   && (section.settingsType() == Settings::InformationId());
-			});
-		if (!controller->content()->isMainSectionShown() || !myAccountShown
-			|| ShownStoriesSection(controller)
-			|| (controller
-					->featureUnavailableOnServerToastCallsForRegressionTest()
-				!= toastBefore)) {
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: my-profile did not "
-				"open My Account on an unsupported session.\n");
-			return false;
-		}
-		resetController(controller);
-		QCoreApplication::processEvents();
 	}
 
 	stockController->window().activate();
