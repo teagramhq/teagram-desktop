@@ -141,22 +141,22 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		CHECK(profile.count("(deny file*") >= 1);
 		CHECK(profile.count("(regex\n") >= 1);
 		const auto ignoredSequence
-			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+			= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
+			  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
 		auto joinedProfileStrings = profile;
 		const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 			joinedProfileStrings.replace(adjacentStringBoundary, "");
 		}
 		CHECK(joinedProfileStrings.contains("^(")
-			  && joinedProfileStrings.contains(")?/("));
+			  && joinedProfileStrings.contains("/|/)("));
+		CHECK(!joinedProfileStrings.contains(")?"));
 		CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
 		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
-		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
-		CHECK(joinedProfileStrings.contains(u"([Ss]|\u017F)"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains(u"[Kk\u212A]"_q.toUtf8()));
+		CHECK(joinedProfileStrings.contains(u"[Ss\u017F]"_q.toUtf8()));
 		CHECK(profile.contains("[^/]*"));
 		CHECK(profile.contains("[Ss]"));
 	} else {
@@ -356,16 +356,15 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	CheckSeatbeltProfile(policy);
 	const auto profile = policy.SeatbeltProfile();
 	const auto ignoredSequence
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
+		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
 	auto joinedProfileStrings = profile;
 	const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	CHECK(joinedProfileStrings.contains("^(")
-		  && joinedProfileStrings.contains(")?/("));
+		  && joinedProfileStrings.contains("/|/)("));
 	CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
 	CHECK(!joinedProfileStrings.contains("^(/Users/alice"));
 	const auto unrelated
@@ -388,6 +387,21 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	}
 }
 
+TEST_CASE(SeatbeltProfileUsesUnicodeCharacterClassForIgnorables) {
+	auto fs = FakeFileSystem();
+	const auto policy = TestPolicy(fs);
+	const auto profile = policy.SeatbeltProfile();
+	const auto ignoredClass
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
+		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
+	const auto ignoredAlternatives
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	CHECK(profile.contains(ignoredClass));
+	CHECK(!profile.contains(ignoredAlternatives));
+}
+
 TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 	auto fs = FakeFileSystem();
 	AddDirectoryHierarchy(fs, u"/Users/k\u017F"_q.toUtf8());
@@ -404,10 +418,9 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	const auto ignoredSequence
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
-	CHECK(joinedProfileStrings.contains(ignoredSequence + "([Ss]|\u017F)"
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
+		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
+	CHECK(joinedProfileStrings.contains(ignoredSequence + "[Ss\u017F]"
 										+ ignoredSequence));
 }
 
@@ -489,6 +502,8 @@ TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 		 u"/users/\u0430\u041B\u0418\u0421\u0410"_q},
 		{u"/Users/\U00010400"_q, u"/users/\U00010428"_q},
 		{u"/Users/\u1E9E"_q, u"/users/\u00DF"_q},
+		{u"/Users/Ma\u00DF"_q, u"/users/mass"_q},
+		{u"/Users/Mass"_q, u"/users/ma\u00DF"_q},
 		{u"/Users/\u00D8.[x]"_q, u"/users/\u00F8.[x]"_q},
 		{u"/Users/"_q + QString(60, QChar(0x00D8)) + u"/"_q
 			 + QString(60, QChar(0x0141)),

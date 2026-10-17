@@ -33,6 +33,7 @@ IPC_SEARCH_DIRECTORY="$(cd "$IPC_DIRECTORY" 2>/dev/null && pwd -P || printf '%s'
 PROFILE="$TEST_HOME/Library/Application Support/Teagram"
 HOSTILE_HOME="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"
 START_LOG="$TEST_HOME/start.log"
+PROFILE_ARTIFACT="${TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT:-}"
 LOCK_SUFFIX="$(printf '%s' "$APP_BUNDLE" | md5 -q | cut -c1-16)"
 SOCKET_SUFFIX="$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
 LOCK_NAME="Teagram-lock-$LOCK_SUFFIX"
@@ -110,6 +111,16 @@ run_seatbelt_cat_probe() {
 		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
 		echo "$name failed: path=$path status=$status" >&2
 		printf '%s\n' "$output" >&2
+		if [[ "$output" == *"stage=seatbelt"* ]]; then
+			if [[ -n "$PROFILE_ARTIFACT" && -s "$PROFILE_ARTIFACT" ]]; then
+				local profile_bytes
+				profile_bytes="$(wc -c < "$PROFILE_ARTIFACT" | tr -d '[:space:]')"
+				printf 'seatbelt_generated_profile_artifact=PASS path=%s bytes=%s\n' \
+					"$PROFILE_ARTIFACT" "$profile_bytes" >&2
+			else
+				echo "Seatbelt compilation failed without a generated-profile artifact." >&2
+			fi
+		fi
 		return 1
 	fi
 	printf '%s=PASS mode=posix_spawn child=/bin/cat errno=%s path=%s\n' \
@@ -465,10 +476,13 @@ printf 'protected_home_refusal=PASS status=%s silent=1 profile_and_ipc_absent=1\
 
 COMPILE_FAILURE_HOME="$TEST_HOME/compile-failure-home"
 COMPILE_FAILURE_PROFILE="$COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+COMPILE_FAILURE_PROFILE_ARTIFACT="$COMPILE_FAILURE_HOME/generated-profile.sb"
 mkdir -p "$COMPILE_FAILURE_HOME"
 set +e
 COMPILE_FAILURE_OUTPUT="$(env HOME="$COMPILE_FAILURE_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+	TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$COMPILE_FAILURE_PROFILE_ARTIFACT" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
 COMPILE_FAILURE_STATUS=$?
@@ -478,9 +492,16 @@ if [[ "$COMPILE_FAILURE_STATUS" -eq 0 ]]; then
 	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
 	exit 1
 fi
-if [[ -n "$COMPILE_FAILURE_OUTPUT" ]]; then
-	echo "Seatbelt compilation failure emitted output before activation." >&2
+if [[ "$COMPILE_FAILURE_OUTPUT" != *"stage=seatbelt"* \
+	|| "$COMPILE_FAILURE_OUTPUT" != *"Mac profile artifact saved:"* ]]; then
+	echo "Seatbelt compilation failure diagnostics or profile artifact status is missing." >&2
 	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ ! -s "$COMPILE_FAILURE_PROFILE_ARTIFACT" ]] \
+		|| [[ "$(tail -c 2 "$COMPILE_FAILURE_PROFILE_ARTIFACT" \
+			| od -An -t x1 | tr -d '[:space:]')" != 280a ]]; then
+	echo "Seatbelt compilation failure did not retain the generated profile text." >&2
 	exit 1
 fi
 if [[ -e "$COMPILE_FAILURE_PROFILE" \
@@ -489,7 +510,7 @@ if [[ -e "$COMPILE_FAILURE_PROFILE" \
 	echo "Seatbelt compilation failure created a profile or log." >&2
 	exit 1
 fi
-printf 'seatbelt_compile_failure=PASS status=%s silent=1 profile_and_logs_absent=1\n' \
+printf 'seatbelt_compile_failure=PASS status=%s profile_artifact=PASS profile_and_logs_absent=1\n' \
 	"$COMPILE_FAILURE_STATUS"
 
 ACCOUNT_STATE="$PROFILE/tdata/teagram-activation-account-state.fixture"
@@ -523,6 +544,7 @@ if [[ "$CANARY_STATUS" -ne 0 \
 	printf '%s\n' "$CANARY_OUTPUT" | python3 \
 		"$(dirname "$0")/diagnose_mac_seatbelt.py" \
 		"$TEST_HOME" "$SEATBELT_CANARY" "$ACCOUNT_STATE" \
+		"$PROFILE_ARTIFACT" \
 		|| echo "Seatbelt diagnostic controls failed; see matrix above." >&2
 	exit 1
 fi
@@ -663,6 +685,7 @@ stroke|teagram-Ølise|teagram-ølise
 cyrillic|teagram-АЛИСА|teagram-алиса
 sigma|teagram-Σ|teagram-ς
 deseret|teagram-𐐀|teagram-𐐨
+sharp-s|teagram-Maß|teagram-Mass
 UNICODE_HOME_CASES
 
 run_seatbelt_mode_probe \

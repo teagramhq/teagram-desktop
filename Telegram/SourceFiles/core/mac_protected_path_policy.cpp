@@ -345,28 +345,35 @@ struct WalkResult {
 	if (i == caseEquivalents.end()) {
 		return RegexLiteral(QString::fromUcs4(&codepoint, 1).toUtf8());
 	}
-	auto result = QByteArray("(");
+	auto result = QByteArray("[");
 	for (const auto equivalent : i->second) {
-		if (result.size() > 1) {
-			result.append('|');
-		}
-		result.append(RegexLiteral(QString::fromUcs4(&equivalent, 1).toUtf8()));
+		result.append(QString::fromUcs4(&equivalent, 1).toUtf8());
 	}
-	result.append(')');
+	result.append(']');
 	return result;
 }
 
 [[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
 											   const QByteArray &ignored = {}) {
+	const auto folded = Fold(component);
+	const auto scalars = folded.toUcs4();
 	auto result = ignored;
-	for (const auto scalar : QString::fromUtf8(component).toUcs4()) {
-		const auto codepoint = char32_t(scalar);
+	for (auto i = 0; i != int(scalars.size()); ++i) {
+		const auto codepoint = char32_t(scalars[i]);
 		auto character = QByteArray();
-		if (codepoint == 'k' || codepoint == 'K' || codepoint == 0x212A) {
-			character = u"([Kk]|\u212A)"_q.toUtf8();
+		if (codepoint == 0x00DF) {
+			character = u"([Ss]"_q.toUtf8() + ignored
+				+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
+		} else if (codepoint == 's' && i + 1 < int(scalars.size())
+			&& scalars[i + 1] == 's') {
+			character = u"([Ss]"_q.toUtf8() + ignored
+				+ u"[Ss]|[\u00DF\u1E9E])"_q.toUtf8();
+			++i;
+		} else if (codepoint == 'k' || codepoint == 'K' || codepoint == 0x212A) {
+			character = u"[Kk\u212A]"_q.toUtf8();
 		} else if (codepoint == 's' || codepoint == 'S'
 				   || codepoint == 0x017F) {
-			character = u"([Ss]|\u017F)"_q.toUtf8();
+			character = u"[Ss\u017F]"_q.toUtf8();
 		} else if (codepoint >= 'a' && codepoint <= 'z') {
 			character.append('[');
 			character.append(char(codepoint - 'a' + 'A'));
@@ -798,9 +805,8 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		return {};
 	}
 	const auto ignoredSequence
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+		= u"[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E"
+		  "\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF]*"_q.toUtf8();
 	auto result = QByteArray("(version 1)\n(allow default)\n");
 	const auto component = [&](const QByteArray &value) {
 		return ProfileComponentRegex(value, ignoredSequence);
@@ -881,24 +887,25 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 		}
 		node->terminal = true;
 	}
-	const auto homeAlternatives
-		= [&](const auto &self, const HomeRegexNode &node) -> QByteArray {
-		auto branches = std::vector<QByteArray>();
-		for (const auto &[part, child] : node.children) {
-			auto branch = component(part);
-			if (!child.children.empty()) {
-				const auto suffix = "/" + self(self, child);
-				branch.append(child.terminal ? "(" + suffix + ")?" : suffix);
-			}
-			branches.push_back(std::move(branch));
+	auto homeBranches = std::vector<QByteArray>();
+	const auto appendHomeBranches = [&](const auto &self,
+										 const HomeRegexNode &node,
+										 QByteArray prefix) -> void {
+		if (node.terminal) {
+			homeBranches.push_back(prefix);
 		}
-		return alternatives(branches);
+		for (const auto &[part, child] : node.children) {
+			auto branch = prefix.isEmpty()
+				? component(part)
+				: prefix + "/" + component(part);
+			self(self, child, std::move(branch));
+		}
 	};
+	appendHomeBranches(appendHomeBranches, homeRoot, {});
 	const auto library = component("Library");
 	const auto expression = "^(/" + component("System") + "/"
 							+ component("Volumes") + "/" + component("Data")
-							+ ")?/"
-							+ homeAlternatives(homeAlternatives, homeRoot) + "/"
+							+ "/|/)" + alternatives(homeBranches) + "/"
 							+ library + "/" + protectedPathAlternatives;
 	result.append("(deny file*\n");
 	if (!AppendSbplRegex(result, expression)) {

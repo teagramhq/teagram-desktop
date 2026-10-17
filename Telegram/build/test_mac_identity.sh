@@ -44,6 +44,7 @@ main = (root / 'Telegram/SourceFiles/main.cpp').read_text(encoding='utf-8')
 runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').read_text(encoding='utf-8')
 runtime_header = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.h').read_text(encoding='utf-8')
 profile_test = (root / 'Telegram/build/test_mac_profile_guard.sh').read_text(encoding='utf-8')
+workflow = (root / '.github/workflows/mac.yml').read_text(encoding='utf-8')
 diagnose = (root / 'Telegram/build/diagnose_mac_seatbelt.py').read_text(encoding='utf-8')
 policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
 root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
@@ -96,7 +97,9 @@ assert 'RunSeatbeltOpenProbe' in runtime
 assert 'RunSeatbeltCatProbe' in runtime
 assert 'RunSeatbeltForkExecCatProbe' in runtime_header
 assert 'RunSeatbeltForkExecCatProbe' in runtime
-assert 'generated_without_ignored_alternatives' in diagnose
+assert 'generated_without_ignored_class' in diagnose
+assert 'TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT' in runtime
+assert 'seatbelt-profile-${BUILD_VARIANT}.sb' in workflow
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy

@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMutexLocker>
+#include <QtCore/QSaveFile>
 
 #include <Cocoa/Cocoa.h>
 #include <sandbox.h>
@@ -342,6 +343,25 @@ bool InitializeProfile() {
 					"Mac profile integration initialization failed: "
 					"stage=seatbelt status=%d error=%s\n",
 					sandboxStatus, error ? error : "unavailable");
+			const auto artifact
+				= std::getenv("TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT");
+			if (artifact && *artifact) {
+				auto file = QSaveFile(QString::fromUtf8(artifact));
+				if (file.open(QIODevice::WriteOnly)
+					&& file.write(profileText) == profileText.size()
+					&& file.commit()) {
+					fprintf(stderr,
+							"Mac profile artifact saved: path=%s bytes=%lld\n",
+							artifact,
+							static_cast<long long>(profileText.size()));
+				} else {
+					const auto message = file.errorString().toUtf8();
+					fprintf(stderr,
+							"Mac profile artifact save failed: path=%s "
+							"error=%s\n",
+							artifact, message.constData());
+				}
+			}
 		}
 #endif
 	}
