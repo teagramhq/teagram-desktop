@@ -7599,18 +7599,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto restoredBlocked
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
 	auto customSessionOpenRefusalPassed = false;
-	const auto miniAppRegressionPassed
-		= RunMiniAppOpenRefusalRegression(
-			app,
-			selfId,
-			stock,
-			pinned,
-			restoredBlocked,
-			blank,
-			stockWindow,
-			pinnedWindow,
-			blankWindow,
-			customSessionOpenRefusalPassed);
+	const auto miniAppRegressionPassed = RunMiniAppOpenRefusalRegression(
+		app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+		pinnedWindow, blankWindow, customSessionOpenRefusalPassed);
 	if (!miniAppRegressionPassed) {
 		if (customSessionOpenRefusalPassed) {
 			return FailChatParticipantsRegression(
