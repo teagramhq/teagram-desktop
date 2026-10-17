@@ -140,10 +140,7 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 		}
 		CHECK(profile.count("(deny file*") >= 1);
 		CHECK(profile.count("(regex\n") >= 1);
-		const auto ignoredSequence
-			= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-			  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-			  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+		const auto ignoredSequence = QByteArray("[^ -~]*");
 		auto joinedProfileStrings = profile;
 		const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 		while (joinedProfileStrings.contains(adjacentStringBoundary)) {
@@ -153,7 +150,7 @@ template <typename Policy> void CheckSeatbeltProfile(const Policy &policy) {
 			  && joinedProfileStrings.contains("/|/)("));
 		CHECK(!joinedProfileStrings.contains(")?"));
 		CHECK(joinedProfileStrings.contains(ignoredSequence + "[Uu]"));
-		CHECK(profile.contains(u"\u200B"_q.toUtf8()));
+		CHECK(!profile.contains(u"\u200B"_q.toUtf8()));
 		CHECK(profile.contains("[Ll]"));
 		CHECK(profile.contains("[Gg]"));
 		CHECK(joinedProfileStrings.contains(u"([Kk]|\u212A)"_q.toUtf8()));
@@ -356,10 +353,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 	CHECK(policy.valid());
 	CheckSeatbeltProfile(policy);
 	const auto profile = policy.SeatbeltProfile();
-	const auto ignoredSequence
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	const auto ignoredSequence = QByteArray("[^ -~]*");
 	auto joinedProfileStrings = profile;
 	const auto adjacentStringBoundary = QByteArray(1, '"') + char(10) + '"';
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
@@ -385,7 +379,7 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 			 u"\u202E"_q.toUtf8(), u"\u206A"_q.toUtf8(), u"\u206B"_q.toUtf8(),
 			 u"\u206C"_q.toUtf8(), u"\u206D"_q.toUtf8(), u"\u206E"_q.toUtf8(),
 			 u"\u206F"_q.toUtf8(), u"\uFEFF"_q.toUtf8()}) {
-		CHECK(profile.contains(character));
+		CHECK(!profile.contains(character));
 	}
 }
 
@@ -400,7 +394,7 @@ TEST_CASE(SeatbeltProfileKeepsNonAsciiOutOfBracketClasses) {
 		fs.operations());
 	CHECK(policy.valid());
 	const auto expression = SeatbeltRegexExpression(policy.SeatbeltProfile());
-	CHECK(expression.contains(u"(\u200B|"_q.toUtf8()));
+	CHECK(expression.contains("[^ -~]*"));
 	CHECK(expression.contains(u"(\u00DF|\u1E9E)"_q.toUtf8()));
 	auto inClass = false;
 	auto classes = 0;
@@ -421,6 +415,40 @@ TEST_CASE(SeatbeltProfileKeepsNonAsciiOutOfBracketClasses) {
 	CHECK(classes > 0);
 }
 
+TEST_CASE(SeatbeltProfileKeepsIgnoredCharacterGroupsCompact) {
+	// The integration runner home whose 28,870-byte profile Seatbelt
+	// rejected with EINVAL while it spelled out every ignored character.
+	const auto home = QByteArray(
+		"/Users/runner/work/_temp/teagram-profile-ipc-non-store.ZvCHNW/tmp/"
+		"teagram-profile-test.2GWKTN");
+	auto fs = FakeFileSystem();
+	AddDirectoryHierarchy(fs, home);
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = home, .foundation = home},
+		fs.operations());
+	CHECK(policy.valid());
+	const auto profile = policy.SeatbeltProfile();
+	CHECK(!profile.isEmpty());
+	CHECK(profile.size() < 8 * 1024);
+	const auto regex = QRegularExpression(
+		QString::fromUtf8(SeatbeltRegexExpression(profile)));
+	CHECK(regex.isValid());
+	const auto root = QString::fromUtf8(home) + u"/Library/"_q;
+	for (const auto codepoint : {0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x202A,
+								 0x202B, 0x202C, 0x202D, 0x202E, 0x206A, 0x206B,
+								 0x206C, 0x206D, 0x206E, 0x206F, 0xFEFF}) {
+		CHECK(regex
+				  .match(root + u"Application Supp"_q + QChar(codepoint)
+						 + u"ort/Telegram Desktop/x"_q)
+				  .hasMatch());
+	}
+	CHECK(!regex.match(root + u"Application Suppxort/Telegram Desktop/x"_q)
+			   .hasMatch());
+	CHECK(!regex.match(root + u"Application Supp/ort/Telegram Desktop/x"_q)
+			   .hasMatch());
+	CHECK(!regex.match(root + u"Application Support/Teagram/x"_q).hasMatch());
+}
+
 TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 	auto fs = FakeFileSystem();
 	AddDirectoryHierarchy(fs, u"/Users/k\u017F"_q.toUtf8());
@@ -436,10 +464,7 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 	while (joinedProfileStrings.contains(adjacentStringBoundary)) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
-	const auto ignoredSequence
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	const auto ignoredSequence = QByteArray("[^ -~]*");
 	CHECK(joinedProfileStrings.contains(ignoredSequence + "([Ss]|\u017F)"
 										+ ignoredSequence));
 }

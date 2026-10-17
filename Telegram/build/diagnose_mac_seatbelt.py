@@ -20,6 +20,7 @@ IGNORED_CHARACTER_CLASS = '[' + ''.join(IGNORABLE_CHARACTERS) + ']*'
 IGNORED_CHARACTER_ALTERNATION = (
     '(' + '|'.join(re.escape(value) for value in IGNORABLE_CHARACTERS) + ')*'
 )
+IGNORED_NON_ASCII_CLASS = '[^ -~]*'
 BASE_PROFILE = '(version 1)\n(allow default)\n'
 PROTECTED_RELATIVE = (
     'Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/'
@@ -31,7 +32,8 @@ ALLOWED_RELATIVE = (
 
 
 def generated_without_ignored_characters(generated):
-    patterns = (IGNORED_CHARACTER_CLASS, IGNORED_CHARACTER_ALTERNATION)
+    patterns = (IGNORED_CHARACTER_CLASS, IGNORED_CHARACTER_ALTERNATION,
+                IGNORED_NON_ASCII_CLASS)
     result = generated
     removed = False
     for pattern in patterns:
@@ -107,40 +109,55 @@ def diagnostic_home_controls(home):
         regex_literal(os.path.dirname(ascii_profile_home)) + '/'
         + ascii_case_pattern(os.path.basename(ascii_profile_home)))
 
-    kelvin_profile_home = os.path.join(root, 'kelvin-K-home')
-    kelvin_path_home = os.path.join(root, 'kelvin-K-home')
-    add('home_kelvin_class', kelvin_path_home,
-        regex_literal(os.path.dirname(kelvin_profile_home))
-        + '/kelvin-[KkK]-home')
+    parent = regex_literal(root)
+    add('home_kelvin_group', os.path.join(root, 'kelvin-\u212A-home'),
+        parent + '/kelvin-([Kk]|\u212A)-home')
+    add('home_long_s_group', os.path.join(root, 'long-\u017F-home'),
+        parent + '/long-([Ss]|\u017F)-home')
+    add('home_unicode_case_group', os.path.join(root, 'sigma-\u03C2-home'),
+        parent + '/sigma-(\u03C3|\u03C2|\u03A3)-home')
+    single_s = '([Ss]|\u017F)'
+    sharp_s = '(\u00DF|\u1E9E)'
+    add('home_sharp_s_group', os.path.join(root, 'sharp-Ma\u00DF-home'),
+        parent + '/sharp-Ma(' + single_s + IGNORED_NON_ASCII_CLASS + single_s
+        + '|' + sharp_s + ')-home')
+    s_token = '(' + single_s + '|' + sharp_s + ')'
+    add('home_sharp_s_fallback',
+        os.path.join(root, 'run-\u017F\u00DFs\u1E9E-home'),
+        parent + '/run-(' + s_token + IGNORED_NON_ASCII_CLASS + '('
+        + s_token + IGNORED_NON_ASCII_CLASS + ')*)-home')
 
-    long_s_profile_home = os.path.join(root, 'long-S-home')
-    long_s_path_home = os.path.join(root, 'long-ſ-home')
-    add('home_long_s_class', long_s_path_home,
-        regex_literal(os.path.dirname(long_s_profile_home))
-        + '/long-[Ssſ]-home')
+    ignored_pattern = (
+        parent + '/ignored-al' + IGNORED_NON_ASCII_CLASS + 'ice-home')
+    for index, character in enumerate(IGNORABLE_CHARACTERS):
+        add('home_ignored_non_ascii_class_' + format(ord(character), '04X'),
+            os.path.join(root, 'ignored-al' + character * (index % 2 + 1)
+                         + 'ice-home'),
+            ignored_pattern)
+    # The class must not stretch over ASCII or across a separator.
+    ascii_home = os.path.join(root, 'ignored-al\u200Bice-home')
+    expression = '^' + ignored_pattern + '/' + regex_literal(
+        PROTECTED_RELATIVE) + '$'
+    cases.append(('home_ignored_non_ascii_class_rejects_ascii',
+                  diagnostic_profile(expression),
+                  os.path.join(ascii_home, PROTECTED_RELATIVE),
+                  os.path.join(root, 'ignored-alxice-home',
+                               PROTECTED_RELATIVE),
+                  'deny', expression))
 
-    sigma_profile_home = os.path.join(root, 'sigma-Σ-home')
-    sigma_path_home = os.path.join(root, 'sigma-ς-home')
-    add('home_unicode_case_class', sigma_path_home,
-        regex_literal(os.path.dirname(sigma_profile_home))
-        + '/sigma-[σςΣ]-home')
-
-    sharp_s_profile_home = os.path.join(root, 'sharp-Maß-home')
-    sharp_s_path_home = os.path.join(root, 'sharp-Mass-home')
-    add('home_sharp_s_full_fold', sharp_s_path_home,
-        regex_literal(os.path.dirname(sharp_s_profile_home))
-        + '/sharp-Ma([Ss][Ss]|[ßẞ])-home')
-
-    ignored_profile_home = os.path.join(root, 'ignored-alice-home')
-    ignored_path_home = os.path.join(root, 'ignored-al\u200Bice-home')
-    add('home_ignored_character_class', ignored_path_home,
-        regex_literal(os.path.dirname(ignored_profile_home))
-        + '/ignored-al' + IGNORED_CHARACTER_CLASS
-        + 'ice-home')
-    add('home_ignored_character_alternation', ignored_path_home,
-        regex_literal(os.path.dirname(ignored_profile_home))
-        + '/ignored-al' + IGNORED_CHARACTER_ALTERNATION
-        + 'ice-home')
+    composed_leaf = unicodedata.normalize(
+        'NFD', 'composed-\u200B\u212A\u017F\u03C2\u00DF\u00E9\uFEFF-home')
+    composed_pattern = (
+        '(/System/Volumes/Data/|/)' + regex_literal(root.lstrip('/'))
+        + '/composed-' + IGNORED_NON_ASCII_CLASS + '([Kk]|\u212A)'
+        + IGNORED_NON_ASCII_CLASS + single_s + IGNORED_NON_ASCII_CLASS
+        + '(\u03C3|\u03C2|\u03A3)' + IGNORED_NON_ASCII_CLASS + '('
+        + single_s + IGNORED_NON_ASCII_CLASS + single_s + '|' + sharp_s + ')'
+        + IGNORED_NON_ASCII_CLASS + '[Ee]' + IGNORED_NON_ASCII_CLASS
+        + '\u0301' + IGNORED_NON_ASCII_CLASS + '-home')
+    add('home_composed_production_forms',
+        '/System/Volumes/Data' + os.path.join(root, composed_leaf),
+        composed_pattern)
 
     nfc_leaf = unicodedata.normalize('NFC', 'nfd-café-home')
     nfd_leaf = unicodedata.normalize('NFD', nfc_leaf)
@@ -187,7 +204,7 @@ def self_test():
     if without_ignored == generated or IGNORED_CHARACTER_CLASS in without_ignored:
         raise AssertionError('diagnostic profile variant did not change')
     current_generated = (
-        '(regex "^/home/Library/' + IGNORED_CHARACTER_ALTERNATION
+        '(regex "^/home/Library/' + IGNORED_NON_ASCII_CLASS
         + 'Telegram$")')
     try:
         current_profiles = generated_profile_variants(
@@ -197,7 +214,7 @@ def self_test():
         raise AssertionError(
             'diagnostic profile list rejected the current generated format') from error
     if (current_profiles[1][1] == current_generated
-            or IGNORED_CHARACTER_ALTERNATION in current_profiles[1][1]):
+            or IGNORED_NON_ASCII_CLASS in current_profiles[1][1]):
         raise AssertionError(
             'current generated profile variant retained ignored characters')
     try:
@@ -210,16 +227,20 @@ def self_test():
         controls = diagnostic_home_controls(home)
     expected_controls = {
         'home_ascii_case_classes',
-        'home_kelvin_class',
-        'home_long_s_class',
-        'home_unicode_case_class',
-        'home_sharp_s_full_fold',
-        'home_ignored_character_class',
-        'home_ignored_character_alternation',
+        'home_kelvin_group',
+        'home_long_s_group',
+        'home_unicode_case_group',
+        'home_sharp_s_group',
+        'home_sharp_s_fallback',
+        'home_ignored_non_ascii_class_rejects_ascii',
+        'home_composed_production_forms',
         'home_nfd_normalization',
         'home_root_alternation',
         'home_optional_firmlink_prefix',
         'home_string_append_chunks',
+    } | {
+        'home_ignored_non_ascii_class_' + format(ord(character), '04X')
+        for character in IGNORABLE_CHARACTERS
     }
     if {case[0] for case in controls} != expected_controls:
         raise AssertionError('home-pattern diagnostic controls are incomplete')

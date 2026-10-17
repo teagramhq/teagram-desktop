@@ -357,11 +357,15 @@ struct WalkResult {
 	return result;
 }
 
+// Every ignored character lies outside printable ASCII, so this class
+// matches any run of them whether Seatbelt reads it per byte or per
+// character. It lists only ASCII members: a class holding multi-byte members
+// compiles but never matches them. The 17-way alternation it replaces put a
+// 70-byte group at every character boundary, and Seatbelt rejected the
+// resulting profile with EINVAL. Accepting other non-ASCII characters there
+// only widens the protected names, never an allowed path.
 [[nodiscard]] const QByteArray &ProfileIgnoredSequence() {
-	static const auto result
-		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
-		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
-		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	static const auto result = QByteArray("[^ -~]*");
 	return result;
 }
 
