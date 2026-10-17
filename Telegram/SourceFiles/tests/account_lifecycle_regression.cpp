@@ -4481,13 +4481,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 [[nodiscard]] ChatAdminRights OverbroadBasicGroupAdminRightsForRegression() {
 	using Flag = ChatAdminRight;
-	return Flag::Other
-		| Flag::ChangeInfo
-		| Flag::DeleteMessages
-		| Flag::BanUsers
-		| Flag::InviteByLinkOrAdd
-		| Flag::PinMessages
-		| Flag::ManageCall;
+	return Flag::Other | Flag::ChangeInfo | Flag::DeleteMessages
+		   | Flag::BanUsers | Flag::InviteByLinkOrAdd | Flag::PinMessages
+		   | Flag::ManageCall;
 }
 
 [[nodiscard]] HistoryItem *
@@ -8142,12 +8138,13 @@ struct NativeLifecycleResults {
 			static_cast<PeerData *>(&*customAdminActionChat));
 		const auto customDisplayRights
 			= customAdminActionChat->defaultAdminRights(customSelf).flags;
-		const auto customDefaultRightsAreRoleOnly = customDisplayRights
-			== ChatAdminRightsInfo(ChatAdminRight::Other).flags;
-		recordChatCase(
-			"custom-admin-default-rights",
-			customDefaultRightsAreRoleOnly,
-			"custom-server basic-group admin defaults include privileged rights");
+		const auto customDefaultRightsAreRoleOnly
+			= customDisplayRights
+			  == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
+		recordChatCase("custom-admin-default-rights",
+					   customDefaultRightsAreRoleOnly,
+					   "custom-server basic-group admin defaults include "
+					   "privileged rights");
 		customAdminActionChat->setAdminRights(
 			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(

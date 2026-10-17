@@ -122,17 +122,13 @@ TEST_CASE(CustomServerAdminSaveUsesSelectedRights) {
 TEST_CASE(CustomServerBasicGroupAdminDefaultsKeepRoleWithoutPermissions) {
 	constexpr auto defaultRights = 0x7Fu;
 	constexpr auto roleOnlyRights = 0x1000u;
-	const auto customRights = BasicChatAdminDefaultRightsFor(
-		true,
-		defaultRights,
-		roleOnlyRights);
+	const auto customRights
+		= BasicChatAdminDefaultRightsFor(true, defaultRights, roleOnlyRights);
 	CHECK(customRights == roleOnlyRights);
 	CHECK(BasicChatAdminRoleForSave(customRights));
 	CHECK(BasicChatAdminRightsFor(true, true, customRights) == 0u);
-	CHECK(BasicChatAdminDefaultRightsFor(
-		false,
-		defaultRights,
-		roleOnlyRights) == defaultRights);
+	CHECK(BasicChatAdminDefaultRightsFor(false, defaultRights, roleOnlyRights)
+		  == defaultRights);
 }
 
 TEST_CASE(BasicGroupAdminRightsMapOnlyForOfficialServer) {
