@@ -2452,6 +2452,23 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
+	const auto stockWindow = stockController->widget();
+	const auto stockPreviousSize = stockWindow->size();
+	const auto minimumLayerWidth = Info::LayerWidget::MinimalSupportedWidth();
+	const auto restoreStockSize = gsl::finally([=] {
+		stockWindow->resize(stockPreviousSize);
+		QCoreApplication::processEvents();
+	});
+	stockWindow->resize(minimumLayerWidth - 1, stockPreviousSize.height());
+	QCoreApplication::processEvents();
+	if (stockWindow->width() >= minimumLayerWidth) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not constrain stock "
+			"test window below Info layer width: width=%d minimum=%d.\n",
+			stockWindow->width(), minimumLayerWidth);
+		return false;
+	}
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
