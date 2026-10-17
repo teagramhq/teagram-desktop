@@ -2286,9 +2286,10 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	stockController->window().activate();
 	QCoreApplication::processEvents();
 	if (app.activeWindow() != &stockController->window()) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: stock window did not "
-					 "activate before the custom-session matrix.\n");
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom-session matrix.\n");
 		return false;
 	}
 	if (!dispatchMatrix(pinnedController, &stockController->window())) {
@@ -2297,9 +2298,10 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
 	if (app.activeWindow() != &pinnedController->window()) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: custom window did not "
-					 "activate before its URL matrix.\n");
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its URL matrix.\n");
 		return false;
 	}
 	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
@@ -2308,9 +2310,10 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	stockController->window().activate();
 	QCoreApplication::processEvents();
 	if (app.activeWindow() != &stockController->window()) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: stock window did not "
-					 "activate before the blocked-session matrix.\n");
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the blocked-session matrix.\n");
 		return false;
 	}
 	if (!dispatchMatrix(blockedController, &stockController->window())) {
@@ -2492,9 +2495,9 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: stock Premium route "
-					 "was not handled.\n");
+		std::fprintf(
+			stderr, "Settings deep link regression failed: stock Premium route "
+					"was not handled.\n");
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -2699,10 +2702,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  active->window().activate();
 			  QCoreApplication::processEvents();
 			  if (app.activeWindow() != &active->window()) {
-				  std::fprintf(
-					  stderr,
-					  "Paid link regression failed: active target window did not "
-					  "activate before the refusal matrix.\n");
+				  std::fprintf(stderr, "Paid link regression failed: active "
+									   "target window did not "
+									   "activate before the refusal matrix.\n");
 				  return false;
 			  }
 			  for (const auto &url : local) {
