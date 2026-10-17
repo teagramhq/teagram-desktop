@@ -465,8 +465,14 @@ TEST_CASE(SeatbeltProfileFoldsHomeNamesWithIgnorableEquivalence) {
 		joinedProfileStrings.replace(adjacentStringBoundary, "");
 	}
 	const auto ignoredSequence = QByteArray("[^ -~]*");
-	CHECK(joinedProfileStrings.contains(ignoredSequence + "([Ss]|\u017F)"
-										+ ignoredSequence));
+	const auto exactSequence
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	CHECK(joinedProfileStrings.contains(
+		ignoredSequence + u"([Kk]|\u212A)"_q.toUtf8() + exactSequence
+		+ u"([Ss]|\u017F)"_q.toUtf8() + ignoredSequence + "/"));
+	CHECK(!joinedProfileStrings.contains(ignoredSequence + ignoredSequence));
 }
 
 TEST_CASE(SeatbeltProfileStaysWithinSandboxSizeLimit) {
@@ -522,8 +528,11 @@ TEST_CASE(SeatbeltProfileFitsForAccountAndTemporaryHomes) {
 
 TEST_CASE(SeatbeltProfileRejectsOversizedExpandedHomePolicy) {
 	auto fs = FakeFileSystem();
-	const auto longHome
-		= "/Users/" + QByteArray(430, 'q') + "/" + QByteArray(430, 'r');
+	// Adjacent non-ASCII letters keep the exact ignored-character groups,
+	// so this home expands past the profile bound.
+	const auto longHome = (u"/Users/"_q + QString(220, QChar(0x00D8)) + u"/"_q
+						   + QString(220, QChar(0x0141)))
+							  .toUtf8();
 	AddDirectoryHierarchy(fs, longHome);
 	const auto policy
 		= MacProtectedPathPolicy::Build(HomeRoots{.accountDatabase = longHome,

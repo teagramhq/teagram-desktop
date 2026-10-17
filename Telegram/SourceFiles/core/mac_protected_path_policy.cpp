@@ -369,6 +369,17 @@ struct WalkResult {
 	return result;
 }
 
+// Between two characters that can both match non-ASCII input, the class
+// above would make the split ambiguous and matching exponential in the run
+// length, so those boundaries list the ignored characters exactly.
+[[nodiscard]] const QByteArray &ProfileExactIgnoredSequence() {
+	static const auto result
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	return result;
+}
+
 [[nodiscard]] bool ProfileSharpSRunWithinLimit(int length,
 											   const QByteArray &ignored) {
 	if (length <= 1) {
@@ -443,7 +454,10 @@ struct WalkResult {
 											   const QByteArray &ignored = {}) {
 	const auto folded = Fold(component);
 	const auto scalars = folded.toUcs4();
+	const auto exact
+		= ignored.isEmpty() ? ignored : ProfileExactIgnoredSequence();
 	auto result = ignored;
+	auto previousMatchesNonAscii = false;
 	for (auto i = 0; i != int(scalars.size()); ++i) {
 		const auto codepoint = char32_t(scalars[i]);
 		auto character = QByteArray();
@@ -454,7 +468,7 @@ struct WalkResult {
 				   && scalars[i + length] == 's') {
 				++length;
 			}
-			character = ProfileSharpSRunRegex(length, ignored);
+			character = ProfileSharpSRunRegex(length, exact);
 			i += length - 1;
 		} else if (codepoint == 'k') {
 			character = u"([Kk]|\u212A)"_q.toUtf8();
@@ -473,8 +487,15 @@ struct WalkResult {
 		} else {
 			character = ProfileUnicodeCharacterRegex(codepoint);
 		}
+		const auto matchesNonAscii
+			= codepoint == 'k' || codepoint == 's' || codepoint >= 0x80;
+		if (previousMatchesNonAscii && matchesNonAscii) {
+			result.chop(ignored.size());
+			result.append(exact);
+		}
 		result.append(character);
 		result.append(ignored);
+		previousMatchesNonAscii = matchesNonAscii;
 	}
 	return result;
 }
@@ -991,10 +1012,15 @@ QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
 	};
 	appendHomeBranches(appendHomeBranches, homeRoot, {});
 	const auto library = component("Library");
-	const auto expression = "^(/" + component("System") + "/"
-							+ component("Volumes") + "/" + component("Data")
-							+ "/|/)" + alternatives(homeBranches) + "/"
-							+ library + "/" + protectedPathAlternatives;
+	auto expression = "^(/" + component("System") + "/" + component("Volumes")
+					  + "/" + component("Data") + "/|/)"
+					  + alternatives(homeBranches) + "/" + library + "/"
+					  + protectedPathAlternatives;
+	// Adjacent components each bring their own ignored-character class.
+	const auto doubled = ignoredSequence + ignoredSequence;
+	while (expression.contains(doubled)) {
+		expression.replace(doubled, ignoredSequence);
+	}
 	if (!supportedComponents) {
 		return {};
 	}
