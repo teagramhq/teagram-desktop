@@ -402,11 +402,12 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.ou
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
-  "github.event_name != 'pull_request' && github.event_name != 'push'"
+  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
+  'full_chat_info_session_regression=FAIL' \
   'ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
@@ -416,6 +417,165 @@ require_step_python "$mac_workflow" macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+regression_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
+summary_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Summarize on-demand validation.") | .key')"
+((summary_step_index > regression_step_index)) \
+  || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
+profile_step='Run protected profile and IPC integration tests.'
+require_step_field "$mac_workflow" macos "$profile_step" '.if' \
+  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}"
+require_step_script "$mac_workflow" macos "$profile_step" \
+  'test_mac_profile_guard.sh'
+profile_harness='Telegram/build/test_mac_profile_guard.sh'
+grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
+  || contract_fail "$profile_harness must use the case runner."
+for case_name in \
+  profile-ipc \
+  spoiler-cache-emoji \
+  spoiler-cache-spoiler \
+  spoiler-cache-text \
+  spoiler-cache-image \
+  authenticated-cache \
+  native-failure-continuation \
+  folder-fault-barrier-timeout \
+  folder-fault-cross-session-presence; do
+  grep -Fq "$case_name" "$profile_harness" \
+    || contract_fail "$profile_harness must include lifecycle case $case_name."
+done
+grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
+  Telegram/build/test_mac_lifecycle_case_runner.sh \
+  || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
+native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+for native_case in \
+  settings-search \
+  session-window-lifecycle \
+  translation-controls \
+  manage-controls \
+  mini-app-open \
+  folder-crud \
+  stock-basic-group-creator \
+  pinned-basic-group-creator \
+  authenticated-cache-file-symlinks \
+  post-open-cache \
+  post-open-media-cache; do
+  grep -Fq "\"$native_case\"" "$native_harness" \
+    || contract_fail "$native_harness must report native lifecycle case $native_case."
+done
+grep -Fq 'status=START' "$native_harness" \
+  || contract_fail "$native_harness must print active native cases before running them."
+for active_case in \
+  settings-search \
+  session-window-lifecycle \
+  translation-controls \
+  manage-controls \
+  mini-app-open \
+  chatlist-invite-check \
+  pinned-chat-participants \
+  folder-crud \
+  bio-editor-target \
+  admin-session-identities \
+  stock-basic-group-creator \
+  pinned-basic-group-creator \
+  stock-full-list-admin \
+  stock-full-list-demotion \
+  custom-full-list-admin \
+  stock-live-admin-promotion \
+  stock-live-admin-demotion \
+  custom-live-admin-promotion \
+  custom-live-admin-demotion \
+  pinned-migration-fixture \
+  post-close-window-lifecycle \
+  chat-migration \
+  protected-cache-cleanup; do
+  grep -Fq "StartCase(\"$active_case\")" "$native_harness" \
+    || contract_fail "$native_harness must start named case $active_case before its checks."
+done
+awk '
+/nativeLifecycleResults->StartCase\(/ && index($0, "authenticated-cache-file-symlinks") { found = 1 }
+/nativeLifecycleResults->StartCase\(/ { call = 1; next }
+call && index($0, "authenticated-cache-file-symlinks") { found = 1 }
+call { call = 0 }
+END { exit !found }
+' "$native_harness" \
+  || contract_fail "$native_harness must start authenticated cache checks before running them."
+require_native_start_before() {
+  local case_name="$1"
+  local invocation="$2"
+  awk -v case_name="$case_name" -v invocation="$invocation" '
+    /StartChatParticipantsRegression\(/ { in_harness = 1 }
+    in_harness && !start_line && index($0, "StartCase(\"" case_name "\")") {
+      start_line = NR
+    }
+    in_harness && start_line && !invocation_line && NR > start_line \
+      && index($0, invocation) {
+      invocation_line = NR
+    }
+    in_harness && /ReadOnlyUsernameInputRejectsWordDeletion\(\)/ { exit }
+    END { exit !(start_line && invocation_line && start_line < invocation_line) }
+  ' "$native_harness" \
+    || contract_fail "$native_harness must start $case_name before $invocation."
+}
+require_native_start_before settings-search \
+  'SettingsSearchMatchesExpected(&stock->session()'
+require_native_start_before session-window-lifecycle \
+  'windowsMatch("initial separate windows")'
+require_native_start_before translation-controls \
+  'RunTranslationControlsLifecycleRegression('
+require_native_start_before manage-controls \
+  'RunManageControlsLifecycleRegression('
+require_native_start_before mini-app-open \
+  'RunMiniAppOpenRefusalRegression('
+require_native_start_before chatlist-invite-check \
+  'Api::CheckFilterInvite('
+require_native_start_before folder-crud \
+  'Settings::RunFoldersCrudRegressionForTest('
+require_native_start_before admin-session-identities \
+  'const auto stockSelf = stock->session().user();'
+require_native_start_before stock-basic-group-creator \
+  'RegressionStockChatFullReply('
+require_native_start_before post-close-window-lifecycle \
+  'windowsMatch("after primary close")'
+grep -Fq 'StartCase(caseName)' "$native_harness" \
+  || contract_fail "$native_harness must start each post-open cache case before setup."
+grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must support a deliberate early-case failure.'
+grep -Fq 'native_lifecycle_cases_failed=' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must summarize failed case names.'
+grep -Fq 'dependency-chat-participants-prerequisites' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must name skipped prerequisite-dependent cases.'
+grep -Fq 'dependency-pinned-migration-fixture' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must name migration skips when its fixture fails.'
+grep -Fq 'dependency-admin-session-identities' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must skip admin cases when session identities fail.'
+grep -Fq 'native_lifecycle_case=settings-search result=FAIL' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must verify the injected native failure.'
+grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must verify a later native cache result.'
+grep -Fq 'username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must inject early native failures.'
+grep -Fq 'failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=' \
+  "$profile_harness" \
+  || contract_fail 'The continuation summary must list every injected native failure.'
+grep -Fq 'stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must inject failures before and after the collected native checks.'
+grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
+  || contract_fail 'The profile harness must verify that a folder failure is collected.'
+grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
+  || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
+require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
+  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}"
+require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
+  'Profile and IPC cases skipped: Teagram build did not succeed'
+require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
+  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}"
+require_step_script "$mac_workflow" macos 'Report skipped full chat info session regression.' \
+  'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"
 sed 's/^\( *\)signal_pid(app_pid, "Teagram", cleanup_signal)$/\1# signal_pid(app_pid, "Teagram", cleanup_signal)\n\1pass/' \
   "$mac_workflow" > "$cleanup_mutation"
@@ -719,6 +879,8 @@ fi
 grep -Fxq 'TeagramUpdateInstallerKeepsCustomIcon result=failed exit=1 timeout_seconds=300 log_bytes<=65536' \
   "$temp_dir/fixture-logs/results.txt" \
   || contract_fail 'The updater fixture runner must record the failing case.'
+
+bash Telegram/build/test_mac_lifecycle_case_runner.sh
 
 # A case that outlives its timeout is stopped and reported as exit 124.
 fixture_launcher="$temp_dir/run_fixture.py"
