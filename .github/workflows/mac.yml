@@ -15,6 +15,7 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - '.github/workflows/mac.yml'
+      - '.github/scripts/macos_libraries_image.sh'
       - '.github/scripts/ccache_*.sh'
       - '.github/scripts/mac_ccache_profile.sh'
   schedule:
@@ -48,11 +49,159 @@ concurrency:
 
 jobs:
 
-  macos:
-    name: MacOS
-    if: ${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}
+  macos-libraries:
+    name: Inspect macOS dependency artifact
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'schedule')
+        && github.ref == 'refs/heads/dev'
+        && github.repository == 'teagramhq/teagram-desktop'
+    runs-on: ubuntu-latest
+    outputs:
+      cache-hit: ${{ steps.image-cache.outputs.cache-hit }}
     permissions:
       contents: read
+      packages: read
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          path: ${{ env.REPO_NAME }}
+
+      - name: Set macOS dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" set-image
+
+      - name: Set up ORAS.
+        uses: oras-project/setup-oras@v1
+        with:
+          version: 1.3.4
+
+      - name: Log in to GitHub Container Registry.
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Check for an existing dependency artifact.
+        id: image-cache
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" inspect "$MACOS_LIBRARIES_IMAGE" "$GITHUB_OUTPUT"
+
+  macos-libraries-build:
+    name: Build and publish macOS dependency artifact
+    needs: macos-libraries
+    if: >-
+      !cancelled()
+        && (github.event_name == 'push' || github.event_name == 'schedule')
+        && github.ref == 'refs/heads/dev'
+        && github.repository == 'teagramhq/teagram-desktop'
+        && needs.macos-libraries.result == 'success'
+        && needs.macos-libraries.outputs.cache-hit != 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          path: ${{ env.REPO_NAME }}
+
+      - name: Set macOS dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" set-image
+
+      - name: Set up ORAS.
+        uses: oras-project/setup-oras@v1
+        with:
+          version: 1.3.4
+
+      - name: Set up zstd.
+        run: |
+          if ! brew list --formula zstd >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
+          fi
+
+      - name: Log in to GitHub Container Registry.
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Restore legacy macOS libraries cache.
+        id: legacy-cache-libs
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+
+      - name: Set up dependency build tools.
+        if: steps.legacy-cache-libs.outputs.cache-hit != 'true'
+        run: |
+          tools="$RUNNER_TEMP/build-tools"
+          bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" libraries
+          echo "$tools/bin" >> "$GITHUB_PATH"
+
+      - name: Libraries.
+        id: libraries
+        if: steps.legacy-cache-libs.outputs.cache-hit != 'true'
+        run: ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
+
+      - name: Free up some disk space.
+        if: steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'
+        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+
+      - name: Publish macOS dependency artifact.
+        if: steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" push "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE"
+
+  macos-libraries-prune:
+    name: Prune legacy macOS library caches
+    needs: [macos-libraries, macos-libraries-build]
+    if: >-
+      !cancelled()
+        && needs.macos-libraries.result == 'success'
+        && (needs.macos-libraries.outputs.cache-hit == 'true' || needs.macos-libraries-build.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+
+      - name: Prune legacy macOS library caches.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/macos_libraries_image.sh prune-legacy-cache
+
+  macos:
+    name: MacOS
+    needs: [macos-libraries, macos-libraries-build, macos-libraries-prune]
+    if: >-
+      !cancelled()
+        && !inputs.libiconv_only
+        && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build')
+        && (needs.macos-libraries.result == 'success' || needs.macos-libraries.result == 'skipped')
+        && (needs.macos-libraries-build.result == 'success' || needs.macos-libraries-build.result == 'skipped')
+        && (needs.macos-libraries-prune.result == 'success' || needs.macos-libraries-prune.result == 'skipped')
+    permissions:
+      contents: read
+      packages: read
     # GitHub-hosted macos-latest is Apple Silicon, which is what we ship.
     runs-on: macos-latest
     timeout-minutes: 240
@@ -94,6 +243,11 @@ jobs:
           fetch-depth: 0
           path: ${{ env.REPO_NAME }}
 
+      - name: Set macOS dependency image tag.
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" set-image
+
       - name: Select compiler cache profile.
         id: ccache-profile
         run: bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"
@@ -127,7 +281,7 @@ jobs:
           set -Eeo pipefail
           sudo chown -R `whoami`:admin /usr/local/share
 
-          packages=(automake libtool meson nasm ninja pkg-config ccache)
+          packages=(automake libtool meson nasm ninja pkg-config ccache oras zstd)
           missing=()
           for package in "${packages[@]}"; do
             if ! brew list --versions "$package" >/dev/null 2>&1; then
@@ -190,8 +344,18 @@ jobs:
             "$GITHUB_SHA" "$rejection_status" \
             > "$evidence/macstore-rejection-status.txt"
 
-      - name: Libraries cache.
+      - name: Log in to GitHub Container Registry.
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Restore macOS libraries artifact.
         id: cache-libs
+        run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"
+
+      - name: Restore legacy macOS libraries cache.
+        id: legacy-cache-libs
+        if: steps.cache-libs.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v6
         with:
           path: |
@@ -201,23 +365,12 @@ jobs:
 
       - name: Libraries.
         id: libraries
-        if: steps.cache-libs.outputs.cache-hit != 'true'
+        if: steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'
         run: |
           ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
 
       - name: Free up some disk space.
         run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
-
-      # Only dev publishes the library cache; a PR that changes the recipe
-      # rebuilds until its merge seeds the new key.
-      - name: Save libraries cache.
-        if: ${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' }}
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            Libraries
-            ThirdParty
-          key: macOS-libs-${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}
 
       - name: Teagram build.
         id: build

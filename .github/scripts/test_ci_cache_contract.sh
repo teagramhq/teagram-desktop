@@ -285,10 +285,16 @@ require_step_field "$unit_feedback_workflow" unit 'Pull shared Linux dependency 
 require_step_field "$unit_feedback_workflow" unit 'Libraries.' '.if' \
   "steps.pull-libraries.outputs.cache-hit != 'true'"
 
-require_permission_map "$macos_unit_feedback_workflow" 'workflow: contents=read
+require_permission_map "$macos_unit_feedback_workflow" 'workflow: contents=read,packages=read
 unit: inherit'
 require_step_script "$macos_unit_feedback_workflow" unit 'First set up.' \
   'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
+require_step_field "$macos_unit_feedback_workflow" unit 'Restore macOS libraries artifact.' '.run' \
+  'bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"'
+require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
 reject_value "$macos_unit_feedback_workflow" 'brew upgrade' 'brew update' '|| true' 'sed -i'
 
 bash .github/scripts/test_prune_macos_dev_ccache.sh
