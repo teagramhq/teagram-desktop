@@ -4867,7 +4867,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
-	if (!customLanguageBox
+	const auto customHighlightConsumed
+		= customLanguageBox && WaitForRegressionCondition([&] {
+			  return customController->highlightControlId().isEmpty();
+		  });
+	if (!customLanguageBox || !customHighlightConsumed
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
 		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
@@ -4879,12 +4883,41 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			   != (customProviderWithPlatformOff
 					   == Ui::details::TranslateProviderChoice::Platform
 				   && Platform::IsMac())
-		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
-		|| !customController->highlightControlId().isEmpty()) {
-		std::fprintf(stderr,
-					 "Translation controls regression failed: custom "
-					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending.\n");
+		|| customLanguageBox->translateChatsRowPresentForRegressionTest()) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom Language settings "
+			"box=%d highlight_consumed=%d highlight_pending=%d "
+			"button=%d/%d skip=%d/%d platform=%d about=%d/%d "
+			"pack_note=%d/%d chats=%d.\n",
+			bool(customLanguageBox), customHighlightConsumed,
+			!customController->highlightControlId().isEmpty(),
+			customLanguageBox
+				? customLanguageBox
+					  ->translateButtonRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->doNotTranslateRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox
+					  ->platformTranslationRowPresentForRegressionTest()
+				: false,
+			customLanguageBox
+			? customLanguageBox->translationAboutPresentForRegressionTest()
+			: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->platformPackNotePresentForRegressionTest()
+				: false,
+			(customProviderWithPlatformOff
+				 == Ui::details::TranslateProviderChoice::Platform
+			 && Platform::IsMac()),
+			customLanguageBox
+				? customLanguageBox->translateChatsRowPresentForRegressionTest()
+				: false);
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
@@ -4893,7 +4926,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		  u"language/do-not-translate"_q}) {
 		auto linkBox = openLanguageBox(customController, link);
 		QCoreApplication::processEvents();
-		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+		const auto highlightConsumed
+			= linkBox && WaitForRegressionCondition([&] {
+				  return customController->highlightControlId().isEmpty();
+			  });
+		if (!linkBox || !highlightConsumed) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
 						"left an unsupported highlight pending.\n");
@@ -7762,12 +7799,30 @@ struct NativeLifecycleResults {
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
 #endif
-	const auto restoredBlocked
-		= not_null<Main::Account *>(domain.accounts().front().account.get());
 	nativeLifecycleResults->StartCase("mini-app-open");
-	const auto miniAppPassed = RunMiniAppOpenRefusalRegression(
-		app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
-		pinnedWindow, blankWindow);
+	const auto restoredBlocked = discarded;
+	auto restoredBlockedFixtureReady
+		= !restoredBlocked->sessionExists()
+		  && !restoredBlocked->local().hasStoredCustomServer()
+		  && !restoredBlocked->local().customServerPinUnknown();
+	if (restoredBlockedFixtureReady) {
+		restoredBlocked->mtp().dcOptions().constructBlocked();
+		restoredBlockedFixtureReady
+			= restoredBlocked->local().writeMtpAuthorizationFailure()
+			  && restoredBlocked->mtp().config().blocked()
+			  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
+			  && !restoredBlocked->local().hasStoredCustomServer()
+			  && !restoredBlocked->local().customServerPinUnknown();
+	}
+	if (!restoredBlockedFixtureReady) {
+		std::fprintf(stderr,
+					 "Mini-app open regression: restored blocked fixture could "
+					 "not be prepared.\n");
+	}
+	const auto miniAppPassed = restoredBlockedFixtureReady
+		&& RunMiniAppOpenRefusalRegression(
+			app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+			pinnedWindow, blankWindow);
 	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
 	nativeLifecycleResults->StartCase("chatlist-invite-check");
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
