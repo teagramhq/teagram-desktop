@@ -7376,21 +7376,29 @@ struct NativeLifecycleResults {
 		ReportCallRegressionCheckpoint("account activation begin");
 		domain.activate(first);
 		ReportCallRegressionCheckpoint("first account activated");
+		const auto firstWindow = app.separateWindowFor(first);
+		const auto firstWindowActivated
+			= firstWindow && WaitForRegressionCondition([&] {
+				  return (&domain.active() == first.get())
+						 && (app.activeWindow() == firstWindow);
+			  });
 		const auto firstActive = &domain.active() == first.get();
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
 		const auto firstWindows
-			= windowsMatch(customFirst ? "custom account first activation"
-									   : "stock account first activation");
-		const auto firstWindow = app.separateWindowFor(first);
-		const auto firstCallStart = firstWindow
+			= firstWindowActivated
+			  && windowsMatch(customFirst ? "custom account first activation"
+										  : "stock account first activation");
+		const auto firstCallStart = firstWindowActivated
 									&& RunOutgoingStartSelectionRegression(
 										first, firstWindow, !customFirst);
-		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto firstCustomWebViewRefused
+			= firstWindowActivated && customWebViewOpenIsRefused();
 		const auto stockMenuController = stockWindow->sessionController();
 		const auto pinnedMenuController = pinnedWindow->sessionController();
 		const auto firstBoostMenusMatch
-			= stockMenuController && pinnedMenuController
+			= firstWindowActivated && stockMenuController
+			  && pinnedMenuController
 			  && RunBoostMenuVisibilityRegression(
 				  stockMenuController, true,
 				  customFirst ? "stock while custom is active"
@@ -7412,10 +7420,11 @@ struct NativeLifecycleResults {
 			|| !firstBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "First activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d call-start=%d "
+						 "window-active=%d capabilities=%d windows=%d "
+						 "call-start=%d "
 						 "webview-refused=%d boost-menus=%d\n",
-						 customFirst, firstActive, firstCapabilities,
-						 firstWindows, firstCallStart,
+						 customFirst, firstActive, firstWindowActivated,
+						 firstCapabilities, firstWindows, firstCallStart,
 						 firstCustomWebViewRefused, firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
@@ -7578,6 +7587,12 @@ struct NativeLifecycleResults {
 		}
 		domain.activate(second);
 		ReportCallRegressionCheckpoint("second account activated");
+		const auto secondWindow = app.separateWindowFor(second);
+		const auto secondWindowActivated
+			= secondWindow && WaitForRegressionCondition([&] {
+				  return (&domain.active() == second.get())
+						 && (app.activeWindow() == secondWindow);
+			  });
 		const auto secondStockMenuController = stockWindow->sessionController();
 		const auto secondPinnedMenuController
 			= pinnedWindow->sessionController();
@@ -7585,15 +7600,17 @@ struct NativeLifecycleResults {
 		const auto secondCapabilities
 			= capabilitiesMatch(second->session(), customFirst);
 		const auto secondWindows
-			= windowsMatch(customFirst ? "stock account second activation"
-									   : "custom account second activation");
-		const auto secondWindow = app.separateWindowFor(second);
-		const auto secondCallStart = secondWindow
+			= secondWindowActivated
+			  && windowsMatch(customFirst ? "stock account second activation"
+										  : "custom account second activation");
+		const auto secondCallStart = secondWindowActivated
 									 && RunOutgoingStartSelectionRegression(
 										 second, secondWindow, customFirst);
-		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto secondCustomWebViewRefused
+			= secondWindowActivated && customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
-			= secondStockMenuController && secondPinnedMenuController
+			= secondWindowActivated && secondStockMenuController
+			  && secondPinnedMenuController
 			  && RunBoostMenuVisibilityRegression(
 				  secondStockMenuController, true,
 				  customFirst ? "stock while stock is active"
@@ -7615,10 +7632,11 @@ struct NativeLifecycleResults {
 			|| !secondBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "Second activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d call-start=%d "
+						 "window-active=%d capabilities=%d windows=%d "
+						 "call-start=%d "
 						 "webview-refused=%d boost-menus=%d\n",
-						 customFirst, secondActive, secondCapabilities,
-						 secondWindows, secondCallStart,
+						 customFirst, secondActive, secondWindowActivated,
+						 secondCapabilities, secondWindows, secondCallStart,
 						 secondCustomWebViewRefused, secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
