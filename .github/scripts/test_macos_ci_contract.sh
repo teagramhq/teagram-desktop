@@ -454,6 +454,10 @@ for native_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   folder-crud \
   stock-basic-group-creator \
   pinned-basic-group-creator \
@@ -463,6 +467,19 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+for native_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$native_case" '
+    /nativeLifecycleResults->Report\(/ { remaining = 4 }
+    remaining > 0 && index($0, "\"" case_name "\"") { found = 1 }
+    remaining > 0 { remaining-- }
+    END { exit !found }
+  ' "$native_harness" \
+    || contract_fail "$native_harness must report $native_case independently."
+done
 grep -Fq 'status=START' "$native_harness" \
   || contract_fail "$native_harness must print active native cases before running them."
 for active_case in \
@@ -471,6 +488,10 @@ for active_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   chatlist-invite-check \
   pinned-chat-participants \
   folder-crud \
@@ -527,6 +548,14 @@ require_native_start_before manage-controls \
   'RunManageControlsLifecycleRegression('
 require_native_start_before mini-app-open \
   'RunMiniAppOpenRefusalRegression('
+require_native_start_before settings-deep-link \
+  'RunSettingsDeepLinkRefusalRegression('
+require_native_start_before messages-privacy \
+  'RunMessagesPrivacyBoxRegression('
+require_native_start_before paid-link \
+  'RunPaidLinkRefusalRegression('
+require_native_start_before boost-story-menus \
+  'RunBoostMenuVisibilityRegression('
 require_native_start_before chatlist-invite-check \
   'Api::CheckFilterInvite('
 require_native_start_before folder-crud \
@@ -537,6 +566,19 @@ require_native_start_before stock-basic-group-creator \
   'RegressionStockChatFullReply('
 require_native_start_before post-close-window-lifecycle \
   'windowsMatch("after primary close")'
+for independent_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$independent_case" '
+    /nativeLifecycleResults->Report\("mini-app-open"/ { mini_app_line = NR }
+    /nativeLifecycleResults->StartCase\(/ &&
+      index($0, "\"" case_name "\"") { case_line = NR }
+    END { exit !(mini_app_line && case_line && mini_app_line < case_line) }
+  ' "$native_harness" \
+    || contract_fail "$independent_case must run after mini-app-open completes."
+done
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
