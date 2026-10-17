@@ -5248,6 +5248,10 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
+	const auto customHighlightCleared = customLanguageBox
+		&& WaitForRegressionCondition([&] {
+			return customController->highlightControlId().isEmpty();
+		});
 	if (!customLanguageBox
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
@@ -5261,11 +5265,12 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 					   == Ui::details::TranslateProviderChoice::Platform
 				   && Platform::IsMac())
 		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
-		|| !customController->highlightControlId().isEmpty()) {
+		|| !customHighlightCleared) {
 		std::fprintf(stderr,
 					 "Translation controls regression failed: custom "
 					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending.\n");
+					 "highlight pending (cleared=%d).\n",
+					 customHighlightCleared);
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
