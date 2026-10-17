@@ -853,9 +853,27 @@ NARROW_NO_BREAK_SPACE="$(printf '\342\200\257')"
 NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Supp${NARROW_NO_BREAK_SPACE}ort/Telegram Desktop/synthetic-canary"
 mkdir -p "$(dirname "$NEAR_MATCH_CANARY")"
 printf '%s' 'synthetic non-ignorable near-match bytes' > "$NEAR_MATCH_CANARY"
+# The ignored-character class accepts any non-ASCII character, so a
+# non-ignorable one inside a protected name is denied as well.
 run_seatbelt_cat_probe \
-	seatbelt_non_ignorable_application_support_near_match_allowed \
-	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$NEAR_MATCH_CANARY" \
+	seatbelt_non_ignorable_application_support_near_match_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$NEAR_MATCH_CANARY" \
+	|| exit 1
+
+ASCII_NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Suppxort/Telegram Desktop/synthetic-allowed-file"
+mkdir -p "$(dirname "$ASCII_NEAR_MATCH_CANARY")"
+printf '%s' 'synthetic ASCII near-match bytes' > "$ASCII_NEAR_MATCH_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_ascii_application_support_near_match_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ASCII_NEAR_MATCH_CANARY" \
+	|| exit 1
+
+OTHER_APP_TELEGRAM_CANARY="$TEST_HOME/Library/Application Support/OtherApp/Telegram Desktop/synthetic-allowed-file"
+mkdir -p "$(dirname "$OTHER_APP_TELEGRAM_CANARY")"
+printf '%s' 'synthetic nested Telegram name bytes' > "$OTHER_APP_TELEGRAM_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_nested_telegram_desktop_name_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$OTHER_APP_TELEGRAM_CANARY" \
 	|| exit 1
 
 CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
