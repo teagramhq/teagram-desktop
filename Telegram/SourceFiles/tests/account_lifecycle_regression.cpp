@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/about_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
@@ -47,6 +48,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
@@ -110,6 +112,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -137,6 +140,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QVariant>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -1211,6 +1215,32 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 	return account->mtp().getKeysForWrite().empty()
 		&& !account->sessionExists()
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
+}
+
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
+[[nodiscard]] bool
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::Match);
 }
 
 [[nodiscard]] bool
@@ -3164,9 +3194,118 @@ template <typename Predicate>
 	return match;
 }
 
+[[nodiscard]] bool WaitForMainQueueBarrier();
+
+[[nodiscard]] bool
+RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
+							 const char *sessionName) {
+	const auto fail = [&](const char *what) {
+		std::fprintf(
+			stderr, "Teagram branding regression failed: session=%s case=%s.\n",
+			sessionName, what);
+		return false;
+	};
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		const auto labels = menu->findChildren<QWidget *>();
+		const auto hasTeagramFooter
+			= std::any_of(labels.begin(), labels.end(), [](const auto widget) {
+				  const auto label = dynamic_cast<Ui::FlatLabel *>(widget);
+				  return label && label->accessibilityName() == u"Teagram"_q;
+			  });
+		if (!hasTeagramFooter) {
+			return fail("main_menu_footer_name");
+		}
+	}
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	const auto box = controller->show(Box(AboutBox), Ui::LayerOption::KeepOther,
+									  anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		controller->hideLayer(anim::type::instant);
+		return fail("about_box_did_not_open");
+	}
+	auto visibleLabels = QStringList();
+	for (const auto widget : layer->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			visibleLabels.push_back(label->accessibilityName());
+		}
+	}
+	const auto visibleText = visibleLabels.join(u"\n"_q);
+	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
+	const auto hasLicense = visibleText.contains(u"GNU GPL"_q);
+	const auto hasSourceCode = visibleText.contains(u"GitHub"_q);
+	const auto hasProtocolAttribution
+		= visibleText.contains(u"Based on Telegram Desktop"_q);
+	const auto hasNoTelegramHelpLinks
+		= !visibleText.contains(u"Telegram API"_q)
+		  && !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle && hasLicense && hasSourceCode
+						 && hasProtocolAttribution && hasNoTelegramHelpLinks;
+	controller->hideLayer(anim::type::instant);
+	if (!matches) {
+		return fail("about_box_copy");
+	}
+	controller->showSettings();
+	const auto closeSettings = gsl::finally([&] {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	});
+	if (!WaitForMainQueueBarrier()) {
+		return fail("settings_did_not_open");
+	}
+	QCoreApplication::processEvents();
+	const auto settings = controller->activeLayerSection();
+	if (!settings) {
+		return fail("settings_did_not_open");
+	}
+	const auto collectSettingsNames = [](QWidget *root) {
+		auto result = QStringList();
+		for (const auto widget : root->findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				result.push_back(label->accessibilityName());
+			} else if (const auto button
+					   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+				result.push_back(button->accessibilityName());
+			}
+		}
+		return result;
+	};
+	const auto hasNoTelegramHelp = [](const QStringList &names) {
+		const auto text = names.join(u"\n"_q);
+		return !text.contains(u"Telegram FAQ"_q)
+			   && !text.contains(u"Telegram Features"_q)
+			   && !text.contains(u"Ask a Question"_q)
+			   && !text.contains(u"Telegram Support"_q);
+	};
+	for (const auto &restoredEntry : {
+			 u"Telegram FAQ"_q,
+			 u"Telegram Features"_q,
+			 u"Ask a Question"_q,
+		 }) {
+		QWidget probe;
+		const auto button = std::make_unique<Ui::SettingsButton>(
+			&probe, rpl::single(restoredEntry));
+		const auto probeNames = collectSettingsNames(&probe);
+		if (button->accessibilityName() != restoredEntry
+			|| !probeNames.contains(restoredEntry)
+			|| hasNoTelegramHelp(probeNames)) {
+			return fail("settings_help_restoration_detection");
+		}
+	}
+	if (!hasNoTelegramHelp(collectSettingsNames(settings))) {
+		return fail("settings_telegram_help");
+	}
+	return true;
+}
+
 // Stories and call controls are presentation-gated per owning session. The
-// admin box runs its own save computation, so checkbox-only saves that lose
-// hidden rights fail here and in the standalone save cases.
+// admin box checks run their own save computation, so checkbox-only saves
+// that drop hidden rights fail here and in the standalone save cases.
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
 	const char *sessionName) {
@@ -5343,12 +5482,22 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	return true;
 }
 
-[[nodiscard]] bool
-PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
+// Returns an empty string when every entry is keyboard-selectable and
+// accessible, otherwise the first sub-check that failed.
+[[nodiscard]] QString
+PopupMenuKeyboardAndAccessibilityFailure(Ui::PopupMenu &menu) {
 	const auto &actions = menu.actions();
-	if (actions.empty() || menu.accessibilityFocusPolicy() == Qt::NoFocus) {
-		return false;
+	if (actions.empty()) {
+		return u"no-actions"_q;
+	} else if (menu.accessibilityFocusPolicy() == Qt::NoFocus) {
+		return u"accessibility-focus-policy"_q;
 	}
+	// The menu is never shown, so it stays wherever it was created. The first
+	// keyboard step flushes the inner menu's pending move event, and the menu
+	// re-reads the cursor position on every move, so the item under the
+	// cursor is selected by mouse before the key selects it. Keep the cursor
+	// off the menu.
+	menu.move(QCursor::pos() + QPoint(1, 1));
 	const auto inner = menu.menu();
 	inner->clearSelection();
 	auto hasAction = false;
@@ -5357,17 +5506,24 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 		if (action->isSeparator()) {
 			if (!i || (i + 1 == actions.size()) || actions[i - 1]->isSeparator()
 				|| actions[i + 1]->isSeparator()) {
-				return false;
+				return u"separator-position index=%1"_q.arg(i);
 			}
 		} else if (action->text().isEmpty()) {
-			return false;
+			return u"empty-text index=%1"_q.arg(i);
 		} else {
 			const auto item = inner->itemForAction(action);
 			const auto accessible
 				= item ? QAccessible::queryAccessibleInterface(item) : nullptr;
-			if (!accessible || accessible->role() != QAccessible::MenuItem
-				|| accessible->text(QAccessible::Name) != action->text()) {
-				return false;
+			if (!accessible) {
+				return u"accessibility-missing action=\"%1\""_q.arg(
+					action->text());
+			} else if (accessible->role() != QAccessible::MenuItem) {
+				return u"accessibility-role role=%1 action=\"%2\""_q
+					.arg(int(accessible->role()))
+					.arg(action->text());
+			} else if (accessible->text(QAccessible::Name) != action->text()) {
+				return u"accessibility-name name=\"%1\" action=\"%2\""_q.arg(
+					accessible->text(QAccessible::Name), action->text());
 			}
 			if (item->isEnabled()) {
 				auto down
@@ -5377,15 +5533,29 @@ PopupMenuHasKeyboardAndAccessibilityEntries(Ui::PopupMenu &menu) {
 				if (!selected || selected->action() != action
 					|| selected->lastTriggeredSource()
 						   != Ui::Menu::TriggeredSource::Keyboard) {
-					return false;
+					return u"keyboard-selection action=\"%1\" selected=\"%2\" "
+						   "source=%3"_q
+							   .arg(action->text(),
+									selected ? selected->action()->text()
+											 : u"<none>"_q)
+							   .arg(selected
+										? int(selected->lastTriggeredSource())
+										: -1);
 				}
 				hasAction = true;
 			}
 		}
 	}
 	const auto accessible = QAccessible::queryAccessibleInterface(&menu);
-	return hasAction && accessible
-		   && (accessible->role() == QAccessible::PopupMenu);
+	if (!hasAction) {
+		return u"keyboard-no-enabled-action"_q;
+	} else if (!accessible) {
+		return u"accessibility-menu-missing"_q;
+	} else if (accessible->role() != QAccessible::PopupMenu) {
+		return u"accessibility-menu-role role=%1"_q.arg(
+			int(accessible->role()));
+	}
+	return QString();
 }
 
 [[nodiscard]] int PopupMenuDividerCount(const Ui::PopupMenu &menu) {
@@ -5452,11 +5622,13 @@ template <typename Widget>
 	if (!historyWidget || (historyWidget->peer() != self.get())) {
 		return false;
 	}
+	// A chat section needs a replies root or a sublist to list messages.
+	// The self chat's own sublist sends into the same history.
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
 		content.get(), controller,
 		HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.sublist = session.data().savedMessages().sublist(self),
 		});
 	const auto tomorrow = base::unixtime::now() + 24 * 60 * 60;
 	const auto repeat = TimeId(7 * 24 * 60 * 60);
@@ -5547,9 +5719,12 @@ template <typename Widget>
 		dividers.profile = PopupMenuDividerCount(*profileMenu);
 		const auto theme
 			= findAction(*historyMenu, tr::lng_chat_theme_wallpaper(tr::now));
+		const auto historyFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*historyMenu);
+		const auto profileFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*profileMenu);
 		const auto menusAreNavigable
-			= PopupMenuHasKeyboardAndAccessibilityEntries(*historyMenu)
-			  && PopupMenuHasKeyboardAndAccessibilityEntries(*profileMenu);
+			= historyFailure.isEmpty() && profileFailure.isEmpty();
 		const auto expectedEntries
 			= supported ? (theme && hasSharingAction(*historyMenu)
 						   && hasSharingAction(*profileMenu))
@@ -5559,9 +5734,12 @@ template <typename Widget>
 			std::fprintf(
 				stderr,
 				"Chat feature menu regression failed: label=%s supported=%d "
-				"keyboard-accessible=%d entries=%d\n",
+				"keyboard-accessible=%d entries=%d history-menu=%s "
+				"profile-menu=%s\n",
 				qPrintable(label), supported, menusAreNavigable,
-				expectedEntries);
+				expectedEntries,
+				historyFailure.isEmpty() ? "ok" : qPrintable(historyFailure),
+				profileFailure.isEmpty() ? "ok" : qPrintable(profileFailure));
 			return false;
 		}
 		auto sendMenu = std::make_unique<Ui::PopupMenu>(nullptr);
@@ -5575,14 +5753,18 @@ template <typename Widget>
 							tr::lng_scheduled_send_until_online(tr::now));
 		const auto hasSilentSend
 			= findAction(*sendMenu, tr::lng_send_silent_message(tr::now));
+		const auto sendFailure
+			= PopupMenuKeyboardAndAccessibilityFailure(*sendMenu);
 		if ((sendMenuResult != SendMenu::FillMenuResult::Prepared)
-			|| !PopupMenuHasKeyboardAndAccessibilityEntries(*sendMenu)
+			|| !sendFailure.isEmpty()
 			|| (supported ? !hasSchedule : (hasSchedule || !hasSilentSend))) {
 			std::fprintf(stderr,
 						 "Chat feature send menu regression failed: label=%s "
-						 "supported=%d schedule=%d silent=%d\n",
+						 "supported=%d schedule=%d silent=%d send-menu=%s\n",
 						 qPrintable(label), supported, bool(hasSchedule),
-						 bool(hasSilentSend));
+						 bool(hasSilentSend),
+						 sendFailure.isEmpty() ? "ok"
+											   : qPrintable(sendFailure));
 			return false;
 		}
 		if (supported) {
@@ -5662,6 +5844,14 @@ template <typename Predicate>
 	loop.exec();
 	poll.stop();
 	return condition();
+}
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
+	return WaitForRegressionCondition([&] {
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
+	});
 }
 
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
@@ -5888,7 +6078,8 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 								 not_null<Window::Controller *> window) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()
-		|| !RunChannelCallLinkRegression(account, window)) {
+		|| !RunChannelCallLinkRegression(account, window)
+		|| !RunTeagramBrandingRegression(controller, "settings smoke")) {
 		return false;
 	}
 	const auto closeSettingsLayer = gsl::finally([&] {
@@ -6375,6 +6566,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
@@ -6385,6 +6578,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after call-link session "
 			"destruction");
+	}
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
+		return FailChatParticipantsRegression(
+			"previous-session logout did not clear its cache binding");
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
@@ -8243,7 +8441,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
@@ -8260,6 +8458,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| restoredBlocked->local().customServerPinUnknown()) {
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
+	}
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
+		return FailAccountLifecycleRegression(
+			"could not reset the synthetic account after blocked-state checks");
 	}
 
 	ReportCallRegressionCheckpoint("account lifecycle setup complete");

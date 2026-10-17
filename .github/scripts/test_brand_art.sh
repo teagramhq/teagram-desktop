@@ -29,6 +29,22 @@ upstream_hashes=(
   "icons/mac_tray_icon.png fdd45401382301b3495398a7e40919e5717c2b7239240a843d01ef15ebc54a1c"
   "icons/mac_tray_icon@2x.png ccadde7f1b72e1aec15dc1054be5f36191357df847f883bc0f7d54b439f3b369"
   "icons/mac_tray_icon@3x.png 334731eed269374c2c3cb5836aa70a932fbf2697715bd2574ba4b2c5b4291eb5"
+  "icons/tray_monochrome.svg a93380f2c7e6aae4d5fde8940020bd966e97ad8c4880f45c016edfef3f5193e1"
+  "icons/tray_monochrome_attention.svg 2b67ee19839dbbb9f57f2d7433fd6dc1059634d6d081c5e4c422c14f53fcfcc7"
+  "icons/tray_monochrome_mute.svg efa1439bd60b58db7b755f5d21be854ea686a0e1e2f1aa6e43bf35c083ee72fc"
+  "icons/plane_white.svg 03c4d53763861ff93e08314a3f5bf710059cb89aadfffc44c6be24dba29e57cb"
+  "icons/intro_qr_plane.png 7a3f2aadcb125f33757729cf707afc987a4ca1b8f288b2b49dec86a34402238d"
+  "icons/intro_qr_plane@2x.png 482b4caa7daa25fa31bd3dd56b853df4506e4cfd241cb24a518344c7a5474ab5"
+  "icons/intro_qr_plane@3x.png 1f4a91ceda3f74a9b544c810c54383c7d2ee7fc6056b04f19a71e5f24c21b267"
+  "icons/intro_plane_inner.png 4a7592dd9a7436cc0f5cb9f1f5676e69d3d1f97831f521204ba2f1675b7c33ea"
+  "icons/intro_plane_inner@2x.png 25b9ad6b0176fbb787aa63947229e4d7bfb2b3de54be402cc50936a8a953da3f"
+  "icons/intro_plane_inner@3x.png 6b4af679260bdf4585b825342f7cbc62ea61794c21ee5caa3b55cf59283ba5e4"
+  "icons/intro_plane_top.png b2debf476ba94567633411b3786c30e3e4a2ea234f913756bd2ea04537fe2ab7"
+  "icons/intro_plane_top@2x.png ffe198e9f246c686782e4edfa242c0c7522f6b451ccddd76752bd3f5bce4e4f3"
+  "icons/intro_plane_top@3x.png a51803e3a345802577e0ad9e1d50560abfe347fcadc798415c109298151d2285"
+  "icons/intro_plane_trace.png e27a03292893b813ba89175f4667020280dc9bf980007a8a3216b071b23318f3"
+  "icons/intro_plane_trace@2x.png bfd4f363c9142f91b9bcc2186420a5d539581ab8557c88dc6adca4b52da9c15c"
+  "icons/intro_plane_trace@3x.png dcb075d5ac7a8b84113307cca7351b3aa21f517ea32b70db67dea73ee3bcdfb8"
 )
 
 failed=0

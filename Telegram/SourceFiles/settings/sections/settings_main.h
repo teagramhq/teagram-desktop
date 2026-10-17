@@ -40,7 +40,4 @@ void SetupValidatePasswordSuggestion(
 	not_null<Ui::VerticalLayout*> container,
 	Fn<void(Type)> showOther);
 
-void OpenFaq(base::weak_ptr<Window::SessionController> weak);
-void OpenAskQuestionConfirm(not_null<Window::SessionController*> window);
-
 } // namespace Settings
