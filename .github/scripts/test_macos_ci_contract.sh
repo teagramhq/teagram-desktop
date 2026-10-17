@@ -558,6 +558,9 @@ grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
 grep -Fq 'username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion' \
   "$profile_harness" \
   || contract_fail 'The profile harness must inject early native failures.'
+grep -Fq 'failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=' \
+  "$profile_harness" \
+  || contract_fail 'The continuation summary must list every injected native failure.'
 grep -Fq 'stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities' \
   "$profile_harness" \
   || contract_fail 'The profile harness must inject failures before and after the collected native checks.'

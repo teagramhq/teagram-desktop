@@ -807,7 +807,7 @@ END { exit step != 43 }
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
 	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \
