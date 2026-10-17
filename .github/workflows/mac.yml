@@ -323,6 +323,7 @@ jobs:
       - name: Launch app smoke test.
         id: launch-smoke
         if: env.ONLY_CACHE == 'false'
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -331,6 +332,13 @@ jobs:
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           test -x "$executable"
           launch_pid=""
+          record_launch_status() {
+            printf 'tested_sha=%s\nvariant=%s\nexit_status=%s\n' \
+              "$GITHUB_SHA" "$BUILD_VARIANT" "$launch_status" \
+              > "$evidence/launch-smoke-status.txt"
+            printf 'Teagram launch child exit status: %s\n' "$launch_status" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          }
           cleanup_launch() {
             if [ -n "$launch_pid" ] && kill -0 "$launch_pid" 2>/dev/null; then
               kill -TERM "$launch_pid" 2>/dev/null || true
@@ -351,7 +359,10 @@ jobs:
             launch_state="$(ps -p "$launch_pid" -o state= 2>/dev/null | tr -d '[:space:]' || true)"
             case "$launch_state" in
               ""|Z*)
-                wait "$launch_pid" || true
+                launch_status=0
+                wait "$launch_pid" || launch_status=$?
+                launch_pid=""
+                record_launch_status
                 cat "$evidence/launch-smoke.stdout.log" "$evidence/launch-smoke.stderr.log"
                 echo "Teagram did not remain launchable for the smoke-test window."
                 exit 1
@@ -363,6 +374,7 @@ jobs:
           launch_status=0
           wait "$launch_pid" || launch_status=$?
           launch_pid=""
+          record_launch_status
           if [ "$launch_status" -ne 0 ] && [ "$launch_status" -ne 143 ]; then
             cat "$evidence/launch-smoke.stdout.log" "$evidence/launch-smoke.stderr.log"
             echo "Teagram exited with status $launch_status after launch."
@@ -383,7 +395,7 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.artifact-verification.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -394,6 +406,7 @@ jobs:
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$evidence/seatbelt-profile-${BUILD_VARIANT}.sb" \
             TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$evidence/profile-ipc-${BUILD_VARIANT}-authenticated-app.log" \
             bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
               "$executable" \
@@ -888,6 +901,7 @@ jobs:
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
+          LAUNCH_OUTCOME: ${{ steps.launch-smoke.outcome }}
           PROFILE_IPC_OUTCOME: ${{ steps.profile-ipc.outcome }}
         run: |
           set -Eeuo pipefail
@@ -896,6 +910,7 @@ jobs:
             "Mac App Store rejection=$STORE_REJECTION_OUTCOME" \
             "build=$BUILD_OUTCOME" \
             "artifact verification=$ARTIFACT_OUTCOME" \
+            "launch smoke=$LAUNCH_OUTCOME" \
             "profile/IPC harness=$PROFILE_IPC_OUTCOME"; do
             printf '%s\n' "$check"
             case "$check" in

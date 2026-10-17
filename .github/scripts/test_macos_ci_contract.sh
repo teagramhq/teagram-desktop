@@ -734,4 +734,7 @@ launcher_status=$?
 set -e
 expect_equal 'Updater fixture launcher status for a timed-out case' "$launcher_status" '124'
 
+python3 .github/scripts/test_macos_launch_smoke.py
+python3 .github/scripts/test_mac_profile_fixture.py
+
 printf 'macOS CI contract tests passed.\n'
