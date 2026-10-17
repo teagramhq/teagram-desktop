@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/linux/specific_linux.h"
 #include "tests/unit/unit_test.h"
 
+#include <QtCore/QByteArray>
+#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -20,6 +22,38 @@ bool WriteSettingsFile(const QString &path) {
 	return QDir().mkpath(QFileInfo(path).absolutePath())
 		   && QFile(path).open(QIODevice::WriteOnly);
 }
+
+class ScopedEnvironmentVariable final {
+  public:
+	ScopedEnvironmentVariable(const char *name, const QByteArray &value)
+		: _name(name), _wasSet(qEnvironmentVariableIsSet(name)),
+		  _oldValue(qgetenv(name)) {
+		qputenv(_name, value);
+	}
+
+	~ScopedEnvironmentVariable() {
+		if (_wasSet) {
+			qputenv(_name, _oldValue);
+		} else {
+			qunsetenv(_name);
+		}
+	}
+
+  private:
+	const char *_name = nullptr;
+	const bool _wasSet = false;
+	const QByteArray _oldValue;
+};
+
+class ScopedApplicationName final {
+  public:
+	ScopedApplicationName() : _oldName(QCoreApplication::applicationName()) {}
+
+	~ScopedApplicationName() { QCoreApplication::setApplicationName(_oldName); }
+
+  private:
+	const QString _oldName;
+};
 
 } // namespace
 
@@ -45,9 +79,15 @@ TEST_CASE(LinuxTeagramDataPathAvoidsTelegramFolders) {
 		return;
 	}
 
-	const auto resolved = Platform::LinuxAppDataPath(home, teagram);
+	const auto oldApplicationName = ScopedApplicationName();
+	const auto oldHome = ScopedEnvironmentVariable("HOME", home.toUtf8());
+	const auto oldDataHome
+		= ScopedEnvironmentVariable("XDG_DATA_HOME", dataHome.toUtf8());
+	QCoreApplication::setApplicationName(AppNameQt.utf16());
 
-	CHECK_EQ(AppName.utf16(), u"Teagram"_q);
+	const auto resolved = psAppDataPath();
+
+	CHECK_EQ(AppNameQt.utf16(), u"Teagram"_q);
 	CHECK_EQ(resolved, teagram + '/');
 	CHECK(resolved != oldTelegram + '/');
 	CHECK(resolved != xdgTelegram + '/');
