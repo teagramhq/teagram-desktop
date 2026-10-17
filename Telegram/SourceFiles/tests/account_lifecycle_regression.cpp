@@ -155,6 +155,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 #include <set>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace Tests {
@@ -5234,24 +5235,28 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	const auto openLanguageBox
 		= [](not_null<Window::SessionController *> controller,
 			 const QString &highlightId) {
-			  if (!highlightId.isEmpty()) {
+			  const auto hasHighlight = !highlightId.isEmpty();
+			  if (hasHighlight) {
 				  controller->setHighlightControlId(highlightId);
 			  }
-			  return controller->window().show(
+			  auto box = controller->window().show(
 				  object_ptr<LanguageBox>(controller->widget().get(),
 										  controller, highlightId),
 				  Ui::LayerOption::KeepOther, anim::type::normal);
+			  QCoreApplication::processEvents();
+			  auto highlightCleared = !hasHighlight;
+			  if (box && hasHighlight) {
+				  highlightCleared = WaitForRegressionCondition([&] {
+					  return controller->highlightControlId().isEmpty();
+				  });
+			  }
+			  return std::pair(std::move(box), highlightCleared);
 		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
 	const auto settingsSkipLanguages = settings.skipTranslationLanguages();
-	auto customLanguageBox
+	auto [customLanguageBox, customHighlightCleared]
 		= openLanguageBox(customController, u"language/show-button"_q);
-	QCoreApplication::processEvents();
-	const auto customHighlightCleared
-		= customLanguageBox && WaitForRegressionCondition([&] {
-			  return customController->highlightControlId().isEmpty();
-		  });
 	if (!customLanguageBox
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
@@ -5277,9 +5282,9 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	for (const auto &link :
 		 {u"language/show-button"_q, u"language/translate-chats"_q,
 		  u"language/do-not-translate"_q}) {
-		auto linkBox = openLanguageBox(customController, link);
-		QCoreApplication::processEvents();
-		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+		auto [linkBox, linkHighlightCleared]
+			= openLanguageBox(customController, link);
+		if (!linkBox || !linkHighlightCleared) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
 						"left an unsupported highlight pending.\n");
@@ -5287,9 +5292,9 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		}
 		customController->hideLayer(anim::type::instant);
 	}
-	auto stockLanguageBox = openLanguageBox(stockController, QString());
-	QCoreApplication::processEvents();
-	if (!stockLanguageBox
+	auto [stockLanguageBox, stockHighlightCleared]
+		= openLanguageBox(stockController, QString());
+	if (!stockLanguageBox || !stockHighlightCleared
 		|| !stockLanguageBox->translateButtonRowPresentForRegressionTest()
 		|| !stockLanguageBox->doNotTranslateRowPresentForRegressionTest()
 		|| !stockLanguageBox->translationAboutPresentForRegressionTest()
