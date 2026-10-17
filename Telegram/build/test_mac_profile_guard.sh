@@ -588,6 +588,21 @@ END { exit step != 6 }
 	echo "translation controls regression evidence was out of order." >&2
 	exit 1
 fi
+for native_evidence in \
+	'native_lifecycle_case=translation-controls result=PASS' \
+	'native_lifecycle_case=manage-controls result=PASS' \
+	'native_lifecycle_case=mini-app-open result=PASS' \
+	'native_lifecycle_case=chatlist-invite-check result=PASS' \
+	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
+	'native_lifecycle_case=post-open-cache result=PASS' \
+	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_cases_failed=none'; do
+	if ! grep -F -q "$native_evidence" "$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'native lifecycle case result missing: %s\n' "$native_evidence" >&2
+		exit 1
+	fi
+done
 if ! grep -F -q \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
 	"$AUTH_LOG"; then
@@ -648,6 +663,61 @@ fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
 }
 
+run_native_failure_continuation_case() {
+	local case_home="$TEST_HOME/native-failure-continuation"
+	local case_log="$case_home.log"
+	local exit_status=0
+	mkdir -p "$case_home"
+	if env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=translation-controls \
+		"$APP" -noupdate -debug >"$case_log" 2>&1; then
+		exit_status=0
+	else
+		exit_status=$?
+	fi
+	if (( exit_status == 0 )); then
+		cat "$case_log" >&2
+		echo "native lifecycle failure injection unexpectedly passed." >&2
+		return 1
+	fi
+	for evidence in \
+		'native_lifecycle_case=translation-controls result=FAIL' \
+		'native_lifecycle_case=manage-controls result=' \
+		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
+		'native_lifecycle_case=post-open-cache result=' \
+		'native_lifecycle_case=post-open-media-cache result='; do
+		if ! grep -F -q "$evidence" "$case_log"; then
+			cat "$case_log" >&2
+			printf 'native lifecycle failure injection missed: %s\n' \
+				"$evidence" >&2
+			return 1
+		fi
+	done
+	if ! grep -E -q \
+		'^native_lifecycle_cases_failed=.*translation-controls' "$case_log"; then
+		cat "$case_log" >&2
+		echo "native lifecycle failure summary missed translation-controls." >&2
+		return 1
+	fi
+	if ! awk '
+/native_lifecycle_case=translation-controls result=FAIL/ && step == 0 { step = 1; next }
+/native_lifecycle_case=manage-controls result=/ && step == 1 { step = 2; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 2 { step = 3; next }
+/native_lifecycle_case=post-open-cache result=/ && step == 3 { step = 4; next }
+/native_lifecycle_case=post-open-media-cache result=/ && step == 4 { step = 5; next }
+END { exit step != 5 }
+' "$case_log"; then
+		cat "$case_log" >&2
+		echo "native lifecycle cases did not continue in order after translation failure." >&2
+		return 1
+	fi
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_case=translation-controls later_cases=manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache\n' \
+		"$TESTED_REVISION" "$exit_status"
+}
+
 run_authenticated_folder_fault_case() {
 	local fault_mode="$1"
 	local reason="$2"
@@ -688,7 +758,7 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
-	bash "$ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
+	bash "$REPO_ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
 		"$TEST_HOME/cases" \
 		profile-ipc \
 		spoiler-cache-emoji \
@@ -696,6 +766,7 @@ all)
 		spoiler-cache-text \
 		spoiler-cache-image \
 		authenticated-cache \
+		native-failure-continuation \
 		folder-fault-barrier-timeout \
 		folder-fault-cross-session-presence
 	;;
@@ -716,6 +787,9 @@ spoiler-cache-image)
 	;;
 authenticated-cache)
 	run_authenticated_cache_regression
+	;;
+native-failure-continuation)
+	run_native_failure_continuation_case
 	;;
 folder-fault-barrier-timeout)
 	run_authenticated_folder_fault_case barrier_timeout barrier_timeout 0

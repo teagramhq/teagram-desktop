@@ -438,11 +438,36 @@ for case_name in \
   spoiler-cache-text \
   spoiler-cache-image \
   authenticated-cache \
+  native-failure-continuation \
   folder-fault-barrier-timeout \
   folder-fault-cross-session-presence; do
   grep -Fq "$case_name" "$profile_harness" \
     || contract_fail "$profile_harness must include lifecycle case $case_name."
 done
+grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
+  Telegram/build/test_mac_lifecycle_case_runner.sh \
+  || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
+native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+for native_case in \
+  translation-controls \
+  manage-controls \
+  mini-app-open \
+  authenticated-cache-file-symlinks \
+  post-open-cache \
+  post-open-media-cache; do
+  grep -Fq "\"$native_case\"" "$native_harness" \
+    || contract_fail "$native_harness must report native lifecycle case $native_case."
+done
+grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must support a deliberate early-case failure.'
+grep -Fq 'native_lifecycle_cases_failed=' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must summarize failed case names.'
+grep -Fq 'native_lifecycle_case=translation-controls result=FAIL' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must verify the injected native failure.'
+grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must verify a later native cache result.'
 require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
   "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success'"
 require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \

@@ -7514,61 +7514,116 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"test windows lost their owning sessions after activation checks");
 	}
+	struct NativeLifecycleResults {
+		std::vector<const char *> failures;
+		bool summaryReported = false;
+
+		void Report(const char *name, bool passed) {
+			std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
+						 passed ? "PASS" : "FAIL");
+			if (!passed) {
+				failures.push_back(name);
+			}
+		}
+
+		void Skip(const char *name, const char *reason) {
+			std::fprintf(stderr,
+						 "native_lifecycle_case=%s result=SKIP reason=%s\n",
+						 name, reason);
+		}
+
+		[[nodiscard]] bool Passed() const { return failures.empty(); }
+
+		void ReportSummary() {
+			if (summaryReported) {
+				return;
+			}
+			summaryReported = true;
+			std::fprintf(stderr, "native_lifecycle_cases_failed=");
+			if (failures.empty()) {
+				std::fprintf(stderr, "none\n");
+				return;
+			}
+			for (auto i = 0; i != int(failures.size()); ++i) {
+				std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
+			}
+			std::fprintf(stderr, "\n");
+		}
+
+		~NativeLifecycleResults() { ReportSummary(); }
+	};
+	const auto nativeLifecycleResults
+		= std::make_shared<NativeLifecycleResults>();
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	if (!RunTranslationControlsLifecycleRegression(stockController,
-												   pinnedController)) {
-		return FailChatParticipantsRegression(
-			"translation controls crossed stock and custom sessions");
-	}
-	if (!RunManageControlsLifecycleRegression(stockController,
-											  pinnedController)) {
-		return FailChatParticipantsRegression(
-			"Manage controls crossed stock and custom sessions");
-	}
+	const auto failTranslationControls
+		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
+		  == u"translation-controls"_q;
+	const auto translationControlsPassed
+		= !failTranslationControls
+		  && RunTranslationControlsLifecycleRegression(stockController,
+													   pinnedController);
+	nativeLifecycleResults->Report("translation-controls",
+								   translationControlsPassed);
+	stockController->hideLayer(anim::type::instant);
+	pinnedController->hideLayer(anim::type::instant);
+	const auto manageControlsPassed = RunManageControlsLifecycleRegression(
+		stockController, pinnedController);
+	nativeLifecycleResults->Report("manage-controls", manageControlsPassed);
+	stockController->hideLayer(anim::type::instant);
+	pinnedController->hideLayer(anim::type::instant);
 #endif
 	const auto restoredBlocked
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
-	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned,
-										 restoredBlocked, blank, stockWindow,
-										 pinnedWindow, blankWindow)) {
-		return FailChatParticipantsRegression(
-			"mini-app open refusal was not observable on the owning session");
-	}
+	const auto miniAppPassed = RunMiniAppOpenRefusalRegression(
+		app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+		pinnedWindow, blankWindow);
+	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
-	if (pinnedController->session()
-			.api()
-			.checkFilterInviteRequestPendingForRegressionTest()) {
-		return FailChatParticipantsRegression(
-			"unsupported pinned session sent a chatlist invite check request");
-	}
+	const auto inviteCheckRefused
+		= !pinnedController->session()
+			   .api()
+			   .checkFilterInviteRequestPendingForRegressionTest();
+	nativeLifecycleResults->Report("chatlist-invite-check", inviteCheckRefused);
 	ReportCallRegressionCheckpoint("account activation regressions complete");
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
-		if (Core::MacProtectedPath::CheckCachePath(
-				pinnedCachePath, "Tests::ProtectedCache::file")
-			|| Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file")
-			|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
-			return FailChatParticipantsRegression(
-				"authenticated session accessed a protected cache-file target");
+		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
+			pinnedCachePath, "Tests::ProtectedCache::file");
+		const auto mediaCacheFileRefused
+			= !Core::MacProtectedPath::CheckCachePath(
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
+		const auto cacheFixturesPreserved
+			= FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+			  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
+									  && cacheFixturesPreserved;
+		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
+									   cacheFilesPassed);
+		if (cacheFilesPassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache regression passed: root, "
+						 "directory, and file "
+						 "symlinks refused for cache and media_cache.\n");
 		}
-		std::fprintf(
-			stderr,
-			"Authenticated cache regression passed: root, directory, and file "
-			"symlinks refused for cache and media_cache.\n");
+	} else {
+		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
+									 "protected-path-integration-disabled");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		auto postOpenCachePassed = false;
+		auto postOpenMediaCachePassed = false;
 		for (const auto mediaCache : {false, true}) {
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
-				return FailChatParticipantsRegression(
-					"could not create the post-open cache test session");
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
 			}
 			const auto cacheGetter
 				= [guarded, mediaCache]() -> Storage::Cache::Database & {
@@ -7581,24 +7636,32 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				data.cache().sync();
 				data.cacheBigFile().sync();
 			};
-			if (!RunPostOpenCacheSymlinkRegression(
-					mediaCache ? guarded->local().cacheBigFilePath()
-							   : guarded->local().cachePath(),
-					mediaCache ? fixtures.openedMediaCache
-							   : fixtures.openedCache,
-					cacheGetter, clearCaches, [guarded, mediaCache] {
-						return RunRefusedCacheReaderRegressions(guarded,
-																mediaCache);
-					})) {
-				return FailChatParticipantsRegression(
-					"post-open cache get or put accessed a protected alias");
+			const auto passed = RunPostOpenCacheSymlinkRegression(
+				mediaCache ? guarded->local().cacheBigFilePath()
+						   : guarded->local().cachePath(),
+				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
+				cacheGetter, clearCaches, [guarded, mediaCache] {
+					return RunRefusedCacheReaderRegressions(guarded,
+															mediaCache);
+				});
+			nativeLifecycleResults->Report(caseName, passed);
+			if (mediaCache) {
+				postOpenMediaCachePassed = passed;
+			} else {
+				postOpenCachePassed = passed;
 			}
 		}
-		std::fprintf(
-			stderr,
-			"Authenticated cache post-open regression passed: get, put, and "
-			"clear "
-			"symlinks refused for cache and media_cache.\n");
+		if (postOpenCachePassed && postOpenMediaCachePassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache post-open regression passed: "
+						 "get, put, and "
+						 "clear symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
 	}
 	const auto pinnedChat = pinned->session().data().chat(chatId);
 	const auto pinnedPeer
@@ -7894,6 +7957,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			migration->error.toUtf8().constData());
 		if (migration->done != 0 || migration->failed != 1
 			|| migration->error != u"CLIENT_BAD_MIGRATION"_q) {
+			nativeLifecycleResults->ReportSummary();
 			done(FailChatParticipantsRegression(
 				"pinned basic-group migration was not rejected locally"));
 			return;
@@ -7909,10 +7973,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
 				|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
 				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
+				nativeLifecycleResults->ReportSummary();
 				done(FailChatParticipantsRegression(
 					"asynchronous cache cleanup accessed a protected target"));
 				return;
 			}
+		}
+		nativeLifecycleResults->ReportSummary();
+		if (!nativeLifecycleResults->Passed()) {
+			done(FailChatParticipantsRegression(
+				"one or more named native lifecycle cases failed"));
+			return;
 		}
 		std::fprintf(stderr, "Chat participants regression passed.\n");
 		done(0);
