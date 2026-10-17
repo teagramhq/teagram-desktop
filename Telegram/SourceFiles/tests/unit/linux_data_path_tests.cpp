@@ -52,3 +52,14 @@ TEST_CASE(LinuxTeagramDataPathAvoidsTelegramFolders) {
 	CHECK(resolved != oldTelegram + '/');
 	CHECK(resolved != xdgTelegram + '/');
 }
+
+TEST_CASE(LinuxTeagramSkipsLegacyDataMigrationFromTelegramFolders) {
+	const auto home = u"/home/teagram-test"_q;
+	const auto oldWorkingDirs = {
+		QDir(home).filePath(u".TelegramDesktop"_q),
+		QDir(home).filePath(u".local/share/TelegramDesktop"_q),
+	};
+	for (const auto &workingDir : oldWorkingDirs) {
+		CHECK(!Platform::LinuxShouldMigrateLegacyDataFiles(workingDir));
+	}
+}

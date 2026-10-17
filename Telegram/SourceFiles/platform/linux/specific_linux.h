@@ -40,6 +40,8 @@ inline bool WaitForProcessExit(uint64 processId, crl::time timeout) {
 
 [[nodiscard]] QString LinuxAppDataPath(const QString &home,
 									   const QString &standardPath);
+[[nodiscard]] bool
+LinuxShouldMigrateLegacyDataFiles(const QString &initialWorkingDir);
 
 } // namespace Platform
 

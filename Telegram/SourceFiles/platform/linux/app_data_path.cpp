@@ -28,6 +28,15 @@ QString Platform::LinuxAppDataPath(const QString &home,
 	return standardPath + '/';
 }
 
+bool Platform::LinuxShouldMigrateLegacyDataFiles(
+	const QString &initialWorkingDir) {
+#ifdef TDESKTOP_TEAGRAM
+	return false;
+#else  // TDESKTOP_TEAGRAM
+	return !initialWorkingDir.isEmpty();
+#endif // TDESKTOP_TEAGRAM
+}
+
 QString psAppDataPath() {
 	return Platform::LinuxAppDataPath(
 		QDir::homePath(),
