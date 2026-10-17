@@ -390,11 +390,13 @@ TEST_CASE(SeatbeltProfileCoversAcceptedHomesAndProtectedClasses) {
 }
 
 TEST_CASE(SeatbeltProfileKeepsNonAsciiOutOfBracketClasses) {
-	const auto home = u"/Users/\u00D8\u212Aa\u00DFs\u017F"_q.toUtf8();
+	const auto home = u"/Users/\u00D8\u212Aa\u00DFs\u017F"_q;
 	auto fs = FakeFileSystem();
-	AddDirectoryHierarchy(fs, home);
+	AddDirectoryHierarchy(
+		fs, home.normalized(QString::NormalizationForm_D).toUtf8());
 	const auto policy = MacProtectedPathPolicy::Build(
-		HomeRoots{.accountDatabase = home, .foundation = home},
+		HomeRoots{.accountDatabase = home.toUtf8(),
+				  .foundation = home.toUtf8()},
 		fs.operations());
 	CHECK(policy.valid());
 	const auto expression = SeatbeltRegexExpression(policy.SeatbeltProfile());
