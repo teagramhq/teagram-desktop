@@ -4727,7 +4727,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			  return controller->window().show(
 				  object_ptr<LanguageBox>(controller->widget().get(),
 										  controller, highlightId),
-				  Ui::LayerOption::KeepOther, anim::type::normal);
+				  Ui::LayerOption::KeepOther, anim::type::instant);
 		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
