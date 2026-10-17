@@ -6790,8 +6790,8 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->Report("cache-concurrent-deletion",
 								   cacheConcurrentDeletionPassed);
 	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
-	// Stock, pinned, blank and restored blocked accounts coexist in this test.
-	constexpr auto requiredAccounts = 4;
+	// Stock, pinned, blank, boost and restored blocked accounts coexist here.
+	constexpr auto requiredAccounts = 5;
 	if (domain.accounts().size()
 		> Main::Domain::kPremiumMaxAccounts - requiredAccounts) {
 		return failPrerequisite(
@@ -8200,29 +8200,41 @@ struct NativeLifecycleResults {
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
 	nativeLifecycleResults->StartCase("boost-entry-paths");
-	blank->mtp().stopForServerEnrollment();
-	blank->setSessionUserId(selfId);
+	const auto activeWindowBeforeBoost = app.activeWindow();
+	const auto boostBlocked = domain.add(MTP::Environment::Production);
+	boostBlocked->mtp().stopForServerEnrollment();
+	const auto boostWindow = app.ensureSeparateWindowFor(boostBlocked);
+	boostBlocked->setSessionUserId(selfId);
 	auto boostEntryPassed = false;
-	if (blank->createSession(RegressionUser(selfId, true, QString()),
-							 std::make_unique<Main::SessionSettings>())) {
-		blank->mtp().dcOptions().constructBlocked();
-		const auto boostController = blankWindow->sessionController()
-										 ? blankWindow->sessionController()
-										 : blank->session().tryResolveWindow();
-		if (boostController && blank->mtp().dcOptions().blocked()
-			&& !blank->mtp().dcOptions().hasCustomServer()) {
+	if (boostWindow && app.separateWindowFor(boostBlocked) == boostWindow
+		&& boostBlocked->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		boostBlocked->mtp().dcOptions().constructBlocked();
+		const auto boostController
+			= boostWindow->sessionController()
+				  ? boostWindow->sessionController()
+				  : boostBlocked->session().tryResolveWindow();
+		if (boostController && boostBlocked->mtp().dcOptions().blocked()
+			&& !boostBlocked->mtp().dcOptions().hasCustomServer()) {
 			boostEntryPassed = RunBoostEntryPathRefusalRegression(
-				app, stock, pinned, blank, stockController, pinnedController,
-				boostController);
+				app, stock, pinned, boostBlocked, stockController,
+				pinnedController, boostController);
 		} else {
 			std::fprintf(stderr, "Boost entry regression: blocked fixture "
 								 "could not be prepared.\n");
 		}
-		blank->forcedLogOut();
+		boostBlocked->forcedLogOut();
 	} else {
 		std::fprintf(
 			stderr,
 			"Boost entry regression: could not create the blocked fixture.\n");
+		if (boostWindow && app.separateWindowFor(boostBlocked) == boostWindow) {
+			app.closeWindow(boostWindow);
+		}
+	}
+	if (activeWindowBeforeBoost) {
+		activeWindowBeforeBoost->activate();
 	}
 	nativeLifecycleResults->Report(
 		"boost-entry-paths",
