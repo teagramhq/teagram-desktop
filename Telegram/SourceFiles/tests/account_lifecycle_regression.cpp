@@ -4735,7 +4735,12 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
+	const auto customHighlightConsumed = customLanguageBox
+		&& WaitForRegressionCondition([&] {
+			return customController->highlightControlId().isEmpty();
+		});
 	if (!customLanguageBox
+		|| !customHighlightConsumed
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
 		|| customLanguageBox->doNotTranslateRowPresentForRegressionTest()
@@ -4761,7 +4766,11 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		  u"language/do-not-translate"_q}) {
 		auto linkBox = openLanguageBox(customController, link);
 		QCoreApplication::processEvents();
-		if (!linkBox || !customController->highlightControlId().isEmpty()) {
+		const auto highlightConsumed = linkBox
+			&& WaitForRegressionCondition([&] {
+				return customController->highlightControlId().isEmpty();
+			});
+		if (!linkBox || !highlightConsumed) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
 						"left an unsupported highlight pending.\n");
