@@ -677,7 +677,7 @@ run_native_failure_continuation_case() {
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud,admin-session-identities \
 		"$APP" -noupdate -debug >"$case_log" 2>&1; then
 		exit_status=0
 	else
@@ -689,16 +689,37 @@ run_native_failure_continuation_case() {
 		return 1
 	fi
 	for evidence in \
+		'native_lifecycle_case=settings-search status=START' \
 		'native_lifecycle_case=settings-search result=FAIL' \
+		'native_lifecycle_case=session-window-lifecycle status=START' \
 		'native_lifecycle_case=session-window-lifecycle result=' \
+		'native_lifecycle_case=translation-controls status=START' \
 		'native_lifecycle_case=translation-controls result=' \
+		'native_lifecycle_case=manage-controls status=START' \
 		'native_lifecycle_case=manage-controls result=' \
+		'native_lifecycle_case=authenticated-cache-file-symlinks status=START' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
+		'native_lifecycle_case=post-open-cache status=START' \
 		'native_lifecycle_case=post-open-cache result=' \
+		'native_lifecycle_case=post-open-media-cache status=START' \
 		'native_lifecycle_case=post-open-media-cache result=' \
+		'native_lifecycle_case=folder-crud status=START' \
 		'native_lifecycle_case=folder-crud result=FAIL' \
-		'native_lifecycle_case=stock-basic-group-creator result=' \
-		'native_lifecycle_case=pinned-basic-group-creator result='; do
+		'native_lifecycle_case=admin-session-identities status=START' \
+		'native_lifecycle_case=admin-session-identities result=FAIL' \
+		'native_lifecycle_case=stock-basic-group-creator result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=pinned-basic-group-creator result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=stock-full-list-admin result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=stock-full-list-demotion result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=custom-full-list-admin result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=stock-live-admin-promotion result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=stock-live-admin-demotion result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=custom-live-admin-promotion result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=custom-live-admin-demotion result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=pinned-migration-fixture status=START' \
+		'native_lifecycle_case=pinned-migration-fixture result=PASS' \
+		'native_lifecycle_case=chat-migration result=PASS' \
+		'native_lifecycle_case=post-close-window-lifecycle result='; do
 		if ! grep -F -q "$evidence" "$case_log"; then
 			cat "$case_log" >&2
 			printf 'native lifecycle failure injection missed: %s\n' \
@@ -707,29 +728,41 @@ run_native_failure_continuation_case() {
 		fi
 	done
 	if ! grep -E -q \
-		'^native_lifecycle_cases_failed=.*settings-search.*folder-crud' "$case_log"; then
+		'^native_lifecycle_cases_failed=.*settings-search.*folder-crud.*admin-session-identities' "$case_log"; then
 		cat "$case_log" >&2
-		echo "native lifecycle failure summary missed the early and late cases." >&2
+		echo "native lifecycle failure summary missed the early, late, and identity cases." >&2
 		return 1
 	fi
 	if ! awk '
-/native_lifecycle_case=settings-search result=FAIL/ && step == 0 { step = 1; next }
-/native_lifecycle_case=session-window-lifecycle result=/ && step == 1 { step = 2; next }
-/native_lifecycle_case=translation-controls result=/ && step == 2 { step = 3; next }
-/native_lifecycle_case=manage-controls result=/ && step == 3 { step = 4; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 4 { step = 5; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 5 { step = 6; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 6 { step = 7; next }
-/native_lifecycle_case=folder-crud result=FAIL/ && step == 7 { step = 8; next }
-/native_lifecycle_case=stock-basic-group-creator result=/ && step == 8 { step = 9; next }
-/native_lifecycle_case=pinned-basic-group-creator result=/ && step == 9 { step = 10; next }
-END { exit step != 10 }
+/native_lifecycle_case=settings-search status=START/ && step == 0 { step = 1; next }
+/native_lifecycle_case=settings-search result=FAIL/ && step == 1 { step = 2; next }
+/native_lifecycle_case=session-window-lifecycle status=START/ && step == 2 { step = 3; next }
+/native_lifecycle_case=session-window-lifecycle result=/ && step == 3 { step = 4; next }
+/native_lifecycle_case=translation-controls status=START/ && step == 4 { step = 5; next }
+/native_lifecycle_case=translation-controls result=/ && step == 5 { step = 6; next }
+/native_lifecycle_case=manage-controls status=START/ && step == 6 { step = 7; next }
+/native_lifecycle_case=manage-controls result=/ && step == 7 { step = 8; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 8 { step = 9; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 9 { step = 10; next }
+/native_lifecycle_case=post-open-cache status=START/ && step == 10 { step = 11; next }
+/native_lifecycle_case=post-open-cache result=/ && step == 11 { step = 12; next }
+/native_lifecycle_case=post-open-media-cache status=START/ && step == 12 { step = 13; next }
+/native_lifecycle_case=post-open-media-cache result=/ && step == 13 { step = 14; next }
+/native_lifecycle_case=folder-crud status=START/ && step == 14 { step = 15; next }
+/native_lifecycle_case=folder-crud result=FAIL/ && step == 15 { step = 16; next }
+/native_lifecycle_case=admin-session-identities status=START/ && step == 16 { step = 17; next }
+/native_lifecycle_case=admin-session-identities result=FAIL/ && step == 17 { step = 18; next }
+/native_lifecycle_case=pinned-migration-fixture status=START/ && step == 18 { step = 19; next }
+/native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 19 { step = 20; next }
+/native_lifecycle_case=stock-basic-group-creator result=SKIP reason=dependency-admin-session-identities/ && step == 20 { step = 21; next }
+/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 21 { step = 22; next }
+END { exit step != 22 }
 ' "$case_log"; then
 		cat "$case_log" >&2
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,stock-basic-group-creator,pinned-basic-group-creator\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,admin-session-identities-skips,pinned-migration-fixture,chat-migration,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 }
 

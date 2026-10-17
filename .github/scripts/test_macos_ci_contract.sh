@@ -463,6 +463,82 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+grep -Fq 'status=START' "$native_harness" \
+  || contract_fail "$native_harness must print active native cases before running them."
+for active_case in \
+  settings-search \
+  session-window-lifecycle \
+  translation-controls \
+  manage-controls \
+  mini-app-open \
+  chatlist-invite-check \
+  pinned-chat-participants \
+  folder-crud \
+  bio-editor-target \
+  admin-session-identities \
+  stock-basic-group-creator \
+  pinned-basic-group-creator \
+  stock-full-list-admin \
+  stock-full-list-demotion \
+  custom-full-list-admin \
+  stock-live-admin-promotion \
+  stock-live-admin-demotion \
+  custom-live-admin-promotion \
+  custom-live-admin-demotion \
+  pinned-migration-fixture \
+  post-close-window-lifecycle \
+  chat-migration \
+  protected-cache-cleanup; do
+  grep -Fq "StartCase(\"$active_case\")" "$native_harness" \
+    || contract_fail "$native_harness must start named case $active_case before its checks."
+done
+awk '
+/nativeLifecycleResults->StartCase\(/ && index($0, "authenticated-cache-file-symlinks") { found = 1 }
+/nativeLifecycleResults->StartCase\(/ { call = 1; next }
+call && index($0, "authenticated-cache-file-symlinks") { found = 1 }
+call { call = 0 }
+END { exit !found }
+' "$native_harness" \
+  || contract_fail "$native_harness must start authenticated cache checks before running them."
+require_native_start_before() {
+  local case_name="$1"
+  local invocation="$2"
+  awk -v case_name="$case_name" -v invocation="$invocation" '
+    /StartChatParticipantsRegression\(Main::Domain/ { in_harness = 1 }
+    in_harness && !start_line && index($0, "StartCase(\"" case_name "\")") {
+      start_line = NR
+    }
+    in_harness && start_line && !invocation_line && NR > start_line \
+      && index($0, invocation) {
+      invocation_line = NR
+    }
+    in_harness && /ReadOnlyUsernameInputRejectsWordDeletion\(\)/ { exit }
+    END { exit !(start_line && invocation_line && start_line < invocation_line) }
+  ' "$native_harness" \
+    || contract_fail "$native_harness must start $case_name before $invocation."
+}
+require_native_start_before settings-search \
+  'SettingsSearchMatchesExpected(&stock->session()'
+require_native_start_before session-window-lifecycle \
+  'windowsMatch("initial separate windows")'
+require_native_start_before translation-controls \
+  'RunTranslationControlsLifecycleRegression('
+require_native_start_before manage-controls \
+  'RunManageControlsLifecycleRegression('
+require_native_start_before mini-app-open \
+  'RunMiniAppOpenRefusalRegression('
+require_native_start_before chatlist-invite-check \
+  'Api::CheckFilterInvite('
+require_native_start_before folder-crud \
+  'Settings::RunFoldersCrudRegressionForTest('
+require_native_start_before admin-session-identities \
+  'const auto stockSelf = stock->session().user();'
+require_native_start_before stock-basic-group-creator \
+  'RegressionStockChatFullReply('
+require_native_start_before post-close-window-lifecycle \
+  'windowsMatch("after primary close")'
+grep -Fq 'StartCase(caseName)' "$native_harness" \
+  || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
   || contract_fail 'The native lifecycle harness must support a deliberate early-case failure.'
 grep -Fq 'native_lifecycle_cases_failed=' "$native_harness" \
@@ -471,13 +547,15 @@ grep -Fq 'dependency-chat-participants-prerequisites' "$native_harness" \
   || contract_fail 'The native lifecycle harness must name skipped prerequisite-dependent cases.'
 grep -Fq 'dependency-pinned-migration-fixture' "$native_harness" \
   || contract_fail 'The native lifecycle harness must name migration skips when its fixture fails.'
+grep -Fq 'dependency-admin-session-identities' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must skip admin cases when session identities fail.'
 grep -Fq 'native_lifecycle_case=settings-search result=FAIL' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify the injected native failure.'
 grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify a later native cache result.'
-grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud' \
+grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud,admin-session-identities' \
   "$profile_harness" \
   || contract_fail 'The profile harness must inject failures before and after the collected native checks.'
 grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \

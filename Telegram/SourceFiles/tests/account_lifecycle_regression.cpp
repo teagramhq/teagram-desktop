@@ -148,6 +148,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <future>
 #include <memory>
 #include <optional>
@@ -6185,20 +6186,61 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	struct NativeLifecycleResults {
 		std::vector<const char *> failures;
 		QStringList reported;
+		const char *activeCase = nullptr;
 		bool summaryReported = false;
 		bool asyncPending = false;
 		bool finalized = false;
+		bool prerequisitesPassed = false;
+
+		void StopActiveCase() {
+			if (!activeCase) {
+				return;
+			}
+			std::fprintf(stderr, "native_lifecycle_case=%s result=STOPPED\n",
+						 activeCase);
+			std::fflush(stderr);
+			reported.push_back(QString::fromLatin1(activeCase));
+			failures.push_back(activeCase);
+			if (std::strcmp(activeCase, "chat-participants-prerequisites")
+				== 0) {
+				prerequisitesPassed = false;
+			}
+			activeCase = nullptr;
+		}
+
+		void StartCase(const char *name) {
+			if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+				return;
+			}
+			StopActiveCase();
+			activeCase = name;
+			std::fprintf(stderr, "native_lifecycle_case=%s status=START\n",
+						 name);
+			std::fflush(stderr);
+		}
 
 		void Report(const char *name, bool passed) {
+			if (activeCase && (std::strcmp(activeCase, name) != 0)) {
+				StopActiveCase();
+			}
+			if (activeCase) {
+				activeCase = nullptr;
+			}
 			std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
 						 passed ? "PASS" : "FAIL");
 			reported.push_back(QString::fromLatin1(name));
 			if (!passed) {
 				failures.push_back(name);
 			}
+			if (std::strcmp(name, "chat-participants-prerequisites") == 0) {
+				prerequisitesPassed = passed;
+			}
 		}
 
 		void Skip(const char *name, const char *reason) {
+			if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+				activeCase = nullptr;
+			}
 			std::fprintf(stderr,
 						 "native_lifecycle_case=%s result=SKIP reason=%s\n",
 						 name, reason);
@@ -6260,15 +6302,25 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 
 		~NativeLifecycleResults() {
+			StopActiveCase();
 			if (!asyncPending && !finalized) {
-				Report("chat-participants-prerequisites", false);
-				SkipUnreported("dependency-chat-participants-prerequisites");
+				if (!prerequisitesPassed) {
+					if (!reported.contains(QString::fromLatin1(
+							"chat-participants-prerequisites"))) {
+						Report("chat-participants-prerequisites", false);
+					}
+					SkipUnreported(
+						"dependency-chat-participants-prerequisites");
+				} else {
+					SkipUnreported("dependency-native-lifecycle-incomplete");
+				}
 			}
 			ReportSummary();
 		}
 	};
 	const auto nativeLifecycleResults
 		= std::make_shared<NativeLifecycleResults>();
+	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
 			  .split(',', Qt::SkipEmptyParts);
@@ -6285,6 +6337,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		}
 	};
 	const auto failPrerequisite = [&](const char *reason) {
+		nativeLifecycleResults->StartCase("chat-participants-prerequisites");
 		nativeLifecycleResults->Report("chat-participants-prerequisites",
 									   false);
 		nativeLifecycleResults->SkipUnreported(
@@ -7608,6 +7661,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"test windows lost their owning sessions before folder smoke "
 			"tests");
 	}
+	nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+	nativeLifecycleResults->StartCase("settings-search");
 	const auto settingsSearchMatches
 		= SettingsSearchMatchesExpected(&stock->session(), true, true, true)
 		  && SettingsSearchMatchesExpected(&pinned->session(), false, false,
@@ -7615,6 +7670,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		  && SettingsSearchMatchesExpected(&stock->session(), true, true, true)
 		  && !shouldInjectFailure("settings-search");
 	nativeLifecycleResults->Report("settings-search", settingsSearchMatches);
+	nativeLifecycleResults->StartCase("session-window-lifecycle");
 	const auto initialWindowsMatch = windowsMatch("initial separate windows");
 	const auto stockFirstActivationPassed = activateAndCheck(false);
 	const auto pinnedFirstActivationPassed = activateAndCheck(true);
@@ -7637,6 +7693,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"test windows lost their owning sessions after activation checks");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	nativeLifecycleResults->StartCase("translation-controls");
 	const auto translationControlsPassed
 		= !shouldInjectFailure("translation-controls")
 		  && RunTranslationControlsLifecycleRegression(stockController,
@@ -7645,6 +7702,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 								   translationControlsPassed);
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("manage-controls");
 	const auto manageControlsPassed = RunManageControlsLifecycleRegression(
 		stockController, pinnedController);
 	nativeLifecycleResults->Report("manage-controls", manageControlsPassed);
@@ -7653,10 +7711,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 #endif
 	const auto restoredBlocked
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
+	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto miniAppPassed = RunMiniAppOpenRefusalRegression(
 		app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
 		pinnedWindow, blankWindow);
 	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
+	nativeLifecycleResults->StartCase("chatlist-invite-check");
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	const auto inviteCheckRefused
 		= !pinnedController->session()
@@ -7665,6 +7725,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	nativeLifecycleResults->Report("chatlist-invite-check", inviteCheckRefused);
 	ReportCallRegressionCheckpoint("account activation regressions complete");
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
 		pinned->session().data().cache().sync();
 		pinned->session().data().cacheBigFile().sync();
 		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
@@ -7693,11 +7754,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		auto postOpenCachePassed = false;
 		auto postOpenMediaCachePassed = false;
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
-			const auto caseName
-				= mediaCache ? "post-open-media-cache" : "post-open-cache";
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
@@ -7742,6 +7804,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		nativeLifecycleResults->Skip("post-open-media-cache",
 									 "protected-path-integration-disabled");
 	}
+	nativeLifecycleResults->StartCase("pinned-chat-participants");
 	const auto pinnedChat = pinned->session().data().chat(chatId);
 	const auto pinnedPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*pinnedChat));
@@ -7752,6 +7815,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		  && HasExpectedParticipants(pinnedChat, UserId(2));
 	nativeLifecycleResults->Report("pinned-chat-participants",
 								   pinnedParticipantsPassed);
+	nativeLifecycleResults->StartCase("folder-crud");
 	const auto stockFolderCrudPassed
 		= Settings::RunFoldersCrudRegressionForTest(
 			stockController, pinnedController,
@@ -7774,6 +7838,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"session\n");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	nativeLifecycleResults->StartCase("bio-editor-target");
 	const auto stockBioEditorTarget
 		= Settings::InformationBioEditorTargetPresentForRegressionTest(
 			stockController);
@@ -7788,241 +7853,38 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	nativeLifecycleResults->Skip("bio-editor-target",
 								 "lifecycle-regression-disabled");
 #endif
+	nativeLifecycleResults->StartCase("admin-session-identities");
 	const auto stockSelf = stock->session().user();
 	const auto customSelf = pinned->session().user();
+	const auto adminIdentityFailureInjected
+		= shouldInjectFailure("admin-session-identities");
 	const auto adminSessionIdentitiesMatch
 		= stockSelf != customSelf && stockSelf->id == customSelf->id
 		  && &stockSelf->session() == &stock->session()
-		  && &customSelf->session() == &pinned->session();
-	recordChatCase("admin-session-identities", adminSessionIdentitiesMatch,
-				   "basic-group admin fixture identities are not distinct "
-				   "session-owned "
-				   "objects with the same user id");
-	if (stockSelf == customSelf || stockSelf->id != customSelf->id
-		|| &stockSelf->session() != &stock->session()
-		|| &customSelf->session() != &pinned->session()) {
+		  && &customSelf->session() == &pinned->session()
+		  && !adminIdentityFailureInjected;
+	recordChatCase(
+		"admin-session-identities", adminSessionIdentitiesMatch,
+		adminIdentityFailureInjected
+			? "injected admin-session identity failure"
+			: "basic-group admin fixture identities are not distinct "
+			  "session-owned objects with the same user id");
+	if (!adminSessionIdentitiesMatch && !adminIdentityFailureInjected) {
 		std::fprintf(stderr,
 					 "basic-group admin fixture identities are not distinct "
 					 "session-owned objects with the same user id\n");
 	}
 	const auto actionChatId = ChatId(1052);
-	const auto stockActionChat = stock->session().data().chat(actionChatId);
-	const auto stockActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
-	stock->session().api().processFullPeer(
-		stockActionPeer, RegressionStockChatFullReply(
-							 actionChatId, 1, u"+10000000001"_q, selfId));
-	stockActionChat->setFlags(ChatDataFlag::Creator);
-	const auto stockCreatorPassed
-		= HasExpectedParticipants(stockActionChat, selfId)
-		  && stockActionChat->canEditInformation()
-		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
-		  && stockActionChat->canBanMembers();
-	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
-				   "stock creator lost a supported basic-group action");
-
-	const auto pinnedActionChat = pinned->session().data().chat(actionChatId);
+	nativeLifecycleResults->StartCase("pinned-migration-fixture");
+	const auto pinnedActionChatData
+		= pinned->session().data().chat(actionChatId);
+	ChatData *const pinnedActionChat = &*pinnedActionChatData;
 	const auto pinnedActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*pinnedActionChat));
+		= not_null<PeerData *>(static_cast<PeerData *>(pinnedActionChat));
 	pinned->session().api().processFullPeer(
 		pinnedActionPeer,
 		RegressionChatFullReply(actionChatId, 1, QString(), selfId));
 	pinnedActionChat->setFlags(ChatDataFlag::Creator);
-	const auto pinnedCreatorPassed
-		= HasExpectedParticipants(pinnedActionChat, selfId)
-		  && pinnedActionChat->canEditInformation()
-		  && pinnedActionChat->canAddMembers()
-		  && pinnedActionChat->canAddAdmins()
-		  && pinnedActionChat->canBanMembers();
-	recordChatCase("pinned-basic-group-creator", pinnedCreatorPassed,
-				   "pinned creator lost a supported basic-group admin action");
-
-	const auto memberActionChatId = ChatId(1053);
-	const auto memberActionChat
-		= stock->session().data().chat(memberActionChatId);
-	const auto memberActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
-	stock->session().api().processFullPeer(
-		memberActionPeer,
-		RegressionStockChatFullReply(memberActionChatId, 1, u"+10000000001"_q,
-									 UserId(2)));
-
-	const auto adminActionChatId = ChatId(1054);
-	const auto adminActionChat
-		= stock->session().data().chat(adminActionChatId);
-	const auto adminActionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
-	stock->session().api().processFullPeer(
-		adminActionPeer,
-		RegressionStockChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-									 UserId(2), true));
-	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
-		adminActionChat, "stock full-list promotion", true);
-	const auto stockFullListAdminPassed
-		= HasExpectedParticipants(adminActionChat, UserId(2))
-		  && adminActionChat->admins.contains(stockSelf)
-		  && fullListAdminRightsMatch;
-	recordChatCase(
-		"stock-full-list-admin", stockFullListAdminPassed,
-		"official basic-group admin lost its moderation rights or gained "
-		"creator-only powers");
-
-	const auto fullListDemotionChatId = ChatId(1057);
-	const auto fullListDemotionChat
-		= stock->session().data().chat(fullListDemotionChatId);
-	const auto fullListDemotionPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*fullListDemotionChat));
-	stock->session().api().processFullPeer(
-		fullListDemotionPeer,
-		RegressionStockChatFullReply(fullListDemotionChatId, 1,
-									 u"+10000000001"_q, UserId(2), true));
-	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
-		fullListDemotionChat, "stock full-list demotion seed", true);
-	const auto fullListDemotionSeedPassed
-		= fullListDemotionChat->admins.contains(stockSelf)
-		  && fullListDemotionSeedRightsMatch;
-	Data::ApplyChatUpdate(
-		fullListDemotionChat,
-		MTP_chatParticipants(
-			MTP_long(fullListDemotionChatId.bare),
-			MTP_vector<MTPChatParticipant>({
-				MTP_chatParticipantCreator(
-					MTP_flags(MTPDchatParticipantCreator::Flags()),
-					MTP_long(UserId(2).bare), MTP_string(QString())),
-				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
-									MTP_long(selfId.bare),
-									MTP_long(UserId(2).bare), MTP_int(0),
-									MTP_string(QString())),
-				MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
-									MTP_long(UserId(9).bare),
-									MTP_long(selfId.bare), MTP_int(0),
-									MTP_string(QString())),
-			}),
-			MTP_int(2)));
-	const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		fullListDemotionChat, "stock full-list demotion", false);
-	const auto fullListDemotionPassed
-		= fullListDemotionSeedPassed
-		  && HasExpectedParticipants(fullListDemotionChat, UserId(2))
-		  && !fullListDemotionChat->admins.contains(stockSelf)
-		  && fullListDemotionChat->adminRights() == ChatAdminRights()
-		  && fullListDemotionRightsMatch;
-	recordChatCase("stock-full-list-demotion", fullListDemotionPassed,
-				   "normal-server full-list demotion retained admin rights or "
-				   "moderation controls");
-
-	const auto customAdminActionChat
-		= pinned->session().data().chat(adminActionChatId);
-	const auto customAdminActionPeer = not_null<PeerData *>(
-		static_cast<PeerData *>(&*customAdminActionChat));
-	customAdminActionChat->setAdminRights(
-		customAdminActionChat->defaultAdminRights(customSelf).flags);
-	const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
-		customAdminActionChat, "custom full-list promotion seed", true);
-	const auto customFullListSeedPassed
-		= customAdminActionChat->adminRights() != ChatAdminRights()
-		  && customFullListSeedRightsMatch;
-	pinned->session().api().processFullPeer(
-		customAdminActionPeer,
-		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
-								UserId(2), true));
-	const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
-		customAdminActionChat, "custom full-list promotion", false);
-	const auto customFullListAdminPassed
-		= customFullListSeedPassed
-		  && HasExpectedParticipants(customAdminActionChat, UserId(2))
-		  && customAdminActionChat->admins.contains(customSelf)
-		  && !customAdminActionChat->admins.contains(stockSelf)
-		  && customAdminActionChat->adminRights() == ChatAdminRights()
-		  && customAdminRightsMatch;
-	recordChatCase(
-		"custom-full-list-admin", customFullListAdminPassed,
-		"custom-server basic-group admin gained rights or creator-only "
-		"powers");
-
-	const auto liveAdminChatId = ChatId(1055);
-	const auto liveAdminChat = stock->session().data().chat(liveAdminChatId);
-	const auto liveAdminPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
-	stock->session().api().processFullPeer(
-		liveAdminPeer, RegressionStockChatFullReply(
-						   liveAdminChatId, 1, u"+10000000001"_q, UserId(2)));
-	Data::ApplyChatUpdate(liveAdminChat,
-						  MTP_updateChatParticipantAdmin(
-							  MTP_long(liveAdminChatId.bare),
-							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
-							  .c_updateChatParticipantAdmin());
-	const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
-		liveAdminChat, "stock incremental promotion", true);
-	const auto stockLivePromotionPassed
-		= liveAdminChat->admins.contains(stockSelf) && livePromotionRightsMatch;
-	Data::ApplyChatUpdate(liveAdminChat, MTP_updateChatParticipantAdmin(
-											 MTP_long(liveAdminChatId.bare),
-											 MTP_long(selfId.bare),
-											 MTP_boolFalse(), MTP_int(3))
-											 .c_updateChatParticipantAdmin());
-	const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		liveAdminChat, "stock incremental demotion", false);
-	const auto stockLiveDemotionPassed
-		= !liveAdminChat->admins.contains(stockSelf) && liveDemotionRightsMatch;
-	recordChatCase(
-		"stock-live-admin-promotion", stockLivePromotionPassed,
-		"incremental official basic-group promotion lost admin rights "
-		"or granted creator-only powers");
-	recordChatCase(
-		"stock-live-admin-demotion", stockLiveDemotionPassed,
-		"incremental basic-group demotion did not clear admin display "
-		"state");
-
-	const auto customLiveAdminChatId = ChatId(1056);
-	const auto customLiveAdminChat
-		= pinned->session().data().chat(customLiveAdminChatId);
-	const auto customLiveAdminPeer
-		= not_null<PeerData *>(static_cast<PeerData *>(&*customLiveAdminChat));
-	pinned->session().api().processFullPeer(
-		customLiveAdminPeer,
-		RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
-								UserId(2)));
-	customLiveAdminChat->setAdminRights(
-		customLiveAdminChat->defaultAdminRights(customSelf).flags);
-	const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental promotion seed", true);
-	const auto customLiveSeedPassed
-		= customLiveAdminChat->adminRights() != ChatAdminRights()
-		  && customLiveSeedRightsMatch;
-	Data::ApplyChatUpdate(customLiveAdminChat,
-						  MTP_updateChatParticipantAdmin(
-							  MTP_long(customLiveAdminChatId.bare),
-							  MTP_long(selfId.bare), MTP_boolTrue(), MTP_int(2))
-							  .c_updateChatParticipantAdmin());
-	const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental promotion", false);
-	const auto customLivePromotionPassed
-		= customLiveSeedPassed
-		  && customLiveAdminChat->admins.contains(customSelf)
-		  && !customLiveAdminChat->admins.contains(stockSelf)
-		  && customLiveAdminChat->adminRights() == ChatAdminRights()
-		  && customPromotionRightsMatch;
-	Data::ApplyChatUpdate(
-		customLiveAdminChat,
-		MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
-									   MTP_long(selfId.bare), MTP_boolFalse(),
-									   MTP_int(3))
-			.c_updateChatParticipantAdmin());
-	const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
-		customLiveAdminChat, "custom incremental demotion", false);
-	const auto customLiveDemotionPassed
-		= !customLiveAdminChat->admins.contains(customSelf)
-		  && !customLiveAdminChat->admins.contains(stockSelf)
-		  && customLiveAdminChat->adminRights() == ChatAdminRights()
-		  && customDemotionRightsMatch;
-	recordChatCase("custom-live-admin-promotion", customLivePromotionPassed,
-				   "incremental custom-server promotion gained admin rights or "
-				   "creator-only powers");
-	recordChatCase(
-		"custom-live-admin-demotion", customLiveDemotionPassed,
-		"incremental custom-server demotion did not clear admin display "
-		"state");
 	const auto pinnedMigrationFixturePassed
 		= pinnedActionChat->usesCustomServer()
 		  && !pinnedActionChat->isDeactivated()
@@ -8030,6 +7892,254 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	recordChatCase(
 		"pinned-migration-fixture", pinnedMigrationFixturePassed,
 		"pinned migration fixture is not an active custom-server group");
+	if (adminSessionIdentitiesMatch) {
+		nativeLifecycleResults->StartCase("stock-basic-group-creator");
+		const auto stockActionChat = stock->session().data().chat(actionChatId);
+		const auto stockActionPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
+		stock->session().api().processFullPeer(
+			stockActionPeer, RegressionStockChatFullReply(
+								 actionChatId, 1, u"+10000000001"_q, selfId));
+		stockActionChat->setFlags(ChatDataFlag::Creator);
+		const auto stockCreatorPassed
+			= HasExpectedParticipants(stockActionChat, selfId)
+			  && stockActionChat->canEditInformation()
+			  && stockActionChat->canAddMembers()
+			  && stockActionChat->canAddAdmins()
+			  && stockActionChat->canBanMembers();
+		recordChatCase("stock-basic-group-creator", stockCreatorPassed,
+					   "stock creator lost a supported basic-group action");
+
+		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
+		const auto pinnedCreatorPassed
+			= HasExpectedParticipants(pinnedActionChat, selfId)
+			  && pinnedActionChat->canEditInformation()
+			  && pinnedActionChat->canAddMembers()
+			  && pinnedActionChat->canAddAdmins()
+			  && pinnedActionChat->canBanMembers();
+		recordChatCase(
+			"pinned-basic-group-creator", pinnedCreatorPassed,
+			"pinned creator lost a supported basic-group admin action");
+
+		nativeLifecycleResults->StartCase("stock-full-list-admin");
+		const auto memberActionChatId = ChatId(1053);
+		const auto memberActionChat
+			= stock->session().data().chat(memberActionChatId);
+		const auto memberActionPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*memberActionChat));
+		stock->session().api().processFullPeer(
+			memberActionPeer,
+			RegressionStockChatFullReply(memberActionChatId, 1,
+										 u"+10000000001"_q, UserId(2)));
+
+		const auto adminActionChatId = ChatId(1054);
+		const auto adminActionChat
+			= stock->session().data().chat(adminActionChatId);
+		const auto adminActionPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*adminActionChat));
+		stock->session().api().processFullPeer(
+			adminActionPeer,
+			RegressionStockChatFullReply(adminActionChatId, 1,
+										 u"+10000000001"_q, UserId(2), true));
+		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
+			adminActionChat, "stock full-list promotion", true);
+		const auto stockFullListAdminPassed
+			= HasExpectedParticipants(adminActionChat, UserId(2))
+			  && adminActionChat->admins.contains(stockSelf)
+			  && fullListAdminRightsMatch;
+		recordChatCase(
+			"stock-full-list-admin", stockFullListAdminPassed,
+			"official basic-group admin lost its moderation rights or gained "
+			"creator-only powers");
+
+		nativeLifecycleResults->StartCase("stock-full-list-demotion");
+		const auto fullListDemotionChatId = ChatId(1057);
+		const auto fullListDemotionChat
+			= stock->session().data().chat(fullListDemotionChatId);
+		const auto fullListDemotionPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*fullListDemotionChat));
+		stock->session().api().processFullPeer(
+			fullListDemotionPeer,
+			RegressionStockChatFullReply(fullListDemotionChatId, 1,
+										 u"+10000000001"_q, UserId(2), true));
+		const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
+			fullListDemotionChat, "stock full-list demotion seed", true);
+		const auto fullListDemotionSeedPassed
+			= fullListDemotionChat->admins.contains(stockSelf)
+			  && fullListDemotionSeedRightsMatch;
+		Data::ApplyChatUpdate(
+			fullListDemotionChat,
+			MTP_chatParticipants(
+				MTP_long(fullListDemotionChatId.bare),
+				MTP_vector<MTPChatParticipant>({
+					MTP_chatParticipantCreator(
+						MTP_flags(MTPDchatParticipantCreator::Flags()),
+						MTP_long(UserId(2).bare), MTP_string(QString())),
+					MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+										MTP_long(selfId.bare),
+										MTP_long(UserId(2).bare), MTP_int(0),
+										MTP_string(QString())),
+					MTP_chatParticipant(MTP_flags(MTPDchatParticipant::Flags()),
+										MTP_long(UserId(9).bare),
+										MTP_long(selfId.bare), MTP_int(0),
+										MTP_string(QString())),
+				}),
+				MTP_int(2)));
+		const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
+			fullListDemotionChat, "stock full-list demotion", false);
+		const auto fullListDemotionPassed
+			= fullListDemotionSeedPassed
+			  && HasExpectedParticipants(fullListDemotionChat, UserId(2))
+			  && !fullListDemotionChat->admins.contains(stockSelf)
+			  && fullListDemotionChat->adminRights() == ChatAdminRights()
+			  && fullListDemotionRightsMatch;
+		recordChatCase(
+			"stock-full-list-demotion", fullListDemotionPassed,
+			"normal-server full-list demotion retained admin rights or "
+			"moderation controls");
+
+		nativeLifecycleResults->StartCase("custom-full-list-admin");
+		const auto customAdminActionChat
+			= pinned->session().data().chat(adminActionChatId);
+		const auto customAdminActionPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*customAdminActionChat));
+		customAdminActionChat->setAdminRights(
+			customAdminActionChat->defaultAdminRights(customSelf).flags);
+		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
+			customAdminActionChat, "custom full-list promotion seed", true);
+		const auto customFullListSeedPassed
+			= customAdminActionChat->adminRights() != ChatAdminRights()
+			  && customFullListSeedRightsMatch;
+		pinned->session().api().processFullPeer(
+			customAdminActionPeer,
+			RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
+									UserId(2), true));
+		const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
+			customAdminActionChat, "custom full-list promotion", false);
+		const auto customFullListAdminPassed
+			= customFullListSeedPassed
+			  && HasExpectedParticipants(customAdminActionChat, UserId(2))
+			  && customAdminActionChat->admins.contains(customSelf)
+			  && !customAdminActionChat->admins.contains(stockSelf)
+			  && customAdminActionChat->adminRights() == ChatAdminRights()
+			  && customAdminRightsMatch;
+		recordChatCase(
+			"custom-full-list-admin", customFullListAdminPassed,
+			"custom-server basic-group admin gained rights or creator-only "
+			"powers");
+
+		nativeLifecycleResults->StartCase("stock-live-admin-promotion");
+		const auto liveAdminChatId = ChatId(1055);
+		const auto liveAdminChat
+			= stock->session().data().chat(liveAdminChatId);
+		const auto liveAdminPeer
+			= not_null<PeerData *>(static_cast<PeerData *>(&*liveAdminChat));
+		stock->session().api().processFullPeer(
+			liveAdminPeer,
+			RegressionStockChatFullReply(liveAdminChatId, 1, u"+10000000001"_q,
+										 UserId(2)));
+		Data::ApplyChatUpdate(
+			liveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(liveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolTrue(), MTP_int(2))
+				.c_updateChatParticipantAdmin());
+		const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
+			liveAdminChat, "stock incremental promotion", true);
+		const auto stockLivePromotionPassed
+			= liveAdminChat->admins.contains(stockSelf)
+			  && livePromotionRightsMatch;
+		recordChatCase(
+			"stock-live-admin-promotion", stockLivePromotionPassed,
+			"incremental official basic-group promotion lost admin rights "
+			"or granted creator-only powers");
+		nativeLifecycleResults->StartCase("stock-live-admin-demotion");
+		Data::ApplyChatUpdate(
+			liveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(liveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolFalse(), MTP_int(3))
+				.c_updateChatParticipantAdmin());
+		const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
+			liveAdminChat, "stock incremental demotion", false);
+		const auto stockLiveDemotionPassed
+			= !liveAdminChat->admins.contains(stockSelf)
+			  && liveDemotionRightsMatch;
+		recordChatCase(
+			"stock-live-admin-demotion", stockLiveDemotionPassed,
+			"incremental basic-group demotion did not clear admin display "
+			"state");
+
+		nativeLifecycleResults->StartCase("custom-live-admin-promotion");
+		const auto customLiveAdminChatId = ChatId(1056);
+		const auto customLiveAdminChat
+			= pinned->session().data().chat(customLiveAdminChatId);
+		const auto customLiveAdminPeer = not_null<PeerData *>(
+			static_cast<PeerData *>(&*customLiveAdminChat));
+		pinned->session().api().processFullPeer(
+			customLiveAdminPeer,
+			RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
+									UserId(2)));
+		customLiveAdminChat->setAdminRights(
+			customLiveAdminChat->defaultAdminRights(customSelf).flags);
+		const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
+			customLiveAdminChat, "custom incremental promotion seed", true);
+		const auto customLiveSeedPassed
+			= customLiveAdminChat->adminRights() != ChatAdminRights()
+			  && customLiveSeedRightsMatch;
+		Data::ApplyChatUpdate(
+			customLiveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolTrue(), MTP_int(2))
+				.c_updateChatParticipantAdmin());
+		const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
+			customLiveAdminChat, "custom incremental promotion", false);
+		const auto customLivePromotionPassed
+			= customLiveSeedPassed
+			  && customLiveAdminChat->admins.contains(customSelf)
+			  && !customLiveAdminChat->admins.contains(stockSelf)
+			  && customLiveAdminChat->adminRights() == ChatAdminRights()
+			  && customPromotionRightsMatch;
+		recordChatCase(
+			"custom-live-admin-promotion", customLivePromotionPassed,
+			"incremental custom-server promotion gained admin rights or "
+			"creator-only powers");
+		nativeLifecycleResults->StartCase("custom-live-admin-demotion");
+		Data::ApplyChatUpdate(
+			customLiveAdminChat,
+			MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
+										   MTP_long(selfId.bare),
+										   MTP_boolFalse(), MTP_int(3))
+				.c_updateChatParticipantAdmin());
+		const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
+			customLiveAdminChat, "custom incremental demotion", false);
+		const auto customLiveDemotionPassed
+			= !customLiveAdminChat->admins.contains(customSelf)
+			  && !customLiveAdminChat->admins.contains(stockSelf)
+			  && customLiveAdminChat->adminRights() == ChatAdminRights()
+			  && customDemotionRightsMatch;
+		recordChatCase(
+			"custom-live-admin-demotion", customLiveDemotionPassed,
+			"incremental custom-server demotion did not clear admin display "
+			"state");
+	} else {
+		for (const auto name : {
+				 "stock-basic-group-creator",
+				 "pinned-basic-group-creator",
+				 "stock-full-list-admin",
+				 "stock-full-list-demotion",
+				 "custom-full-list-admin",
+				 "stock-live-admin-promotion",
+				 "stock-live-admin-demotion",
+				 "custom-live-admin-promotion",
+				 "custom-live-admin-demotion",
+			 }) {
+			nativeLifecycleResults->Skip(name,
+										 "dependency-admin-session-identities");
+		}
+	}
+	nativeLifecycleResults->StartCase("post-close-window-lifecycle");
 	const auto postCloseWindowPassed = windowsMatch("after primary close");
 	recordChatCase("post-close-window-lifecycle", postCloseWindowPassed,
 				   "primary close changed the separate session windows");
@@ -8042,16 +8152,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto migration = std::make_shared<MigrationResult>();
 	ReportCallRegressionCheckpoint("migration callback begin");
 	if (pinnedMigrationFixturePassed) {
+		nativeLifecycleResults->StartCase("chat-migration");
 		pinned->session().api().migrateChat(
-			pinnedActionChat,
+			not_null<ChatData *>(pinnedActionChat),
 			[migration](not_null<ChannelData *>) { ++migration->done; },
 			[migration](const QString &error) {
 				++migration->failed;
 				migration->error = error;
 			});
 	} else {
-		nativeLifecycleResults->Skip("chat-migration",
-									 "dependency-pinned-migration-fixture");
+		nativeLifecycleResults->Skip(
+			"chat-migration", adminSessionIdentitiesMatch
+								  ? "dependency-pinned-migration-fixture"
+								  : "dependency-admin-session-identities");
 	}
 	nativeLifecycleResults->asyncPending = true;
 	crl::on_main([=] {
@@ -8069,6 +8182,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				"pinned basic-group migration was not rejected locally");
 		}
 		if (Core::MacProtectedPath::IntegrationTestActive()) {
+			nativeLifecycleResults->StartCase("protected-cache-cleanup");
 			stock->session().data().clearLocalStorage();
 			pinned->session().data().clearLocalStorage();
 			stock->session().data().cache().sync();
