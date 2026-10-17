@@ -3222,19 +3222,41 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	if (!settings) {
 		return fail("settings_did_not_open");
 	}
-	auto settingsLabels = QStringList();
-	for (const auto widget : settings->findChildren<QWidget *>()) {
-		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
-			settingsLabels.push_back(label->accessibilityName());
+	const auto collectSettingsNames = [](QWidget *root) {
+		auto result = QStringList();
+		for (const auto widget : root->findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				result.push_back(label->accessibilityName());
+			} else if (const auto button
+					   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+				result.push_back(button->accessibilityName());
+			}
+		}
+		return result;
+	};
+	const auto hasNoTelegramHelp = [](const QStringList &names) {
+		const auto text = names.join(u"\n"_q);
+		return !text.contains(u"Telegram FAQ"_q)
+			   && !text.contains(u"Telegram Features"_q)
+			   && !text.contains(u"Ask a Question"_q)
+			   && !text.contains(u"Telegram Support"_q);
+	};
+	for (const auto &restoredEntry : {
+			 u"Telegram FAQ"_q,
+			 u"Telegram Features"_q,
+			 u"Ask a Question"_q,
+		 }) {
+		QWidget probe;
+		const auto button = std::make_unique<Ui::SettingsButton>(
+			&probe, rpl::single(restoredEntry));
+		const auto probeNames = collectSettingsNames(&probe);
+		if (button->accessibilityName() != restoredEntry
+			|| !probeNames.contains(restoredEntry)
+			|| hasNoTelegramHelp(probeNames)) {
+			return fail("settings_help_restoration_detection");
 		}
 	}
-	const auto settingsText = settingsLabels.join(u"\n"_q);
-	const auto hasNoTelegramHelp
-		= !settingsText.contains(u"Telegram FAQ"_q)
-		  && !settingsText.contains(u"Telegram Features"_q)
-		  && !settingsText.contains(u"Ask a Question"_q)
-		  && !settingsText.contains(u"Telegram Support"_q);
-	if (!hasNoTelegramHelp) {
+	if (!hasNoTelegramHelp(collectSettingsNames(settings))) {
 		return fail("settings_telegram_help");
 	}
 	return true;
