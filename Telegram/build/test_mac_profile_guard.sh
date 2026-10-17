@@ -2,10 +2,12 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-	echo "usage: $0 <Teagram executable>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+	echo "usage: $0 <Teagram executable> [case]" >&2
 	exit 2
 fi
+
+CASE_NAME="${2:-all}"
 
 if [[ "$(uname -s)" != Darwin ]]; then
 	echo "macOS profile integration test requires Darwin." >&2
@@ -259,6 +261,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+run_protected_profile_ipc_case() {
 if (( SOCKET_PATH_BYTES > MAC_SOCKET_PATH_LIMIT )); then
 	echo "socket path is $SOCKET_PATH_BYTES bytes; macOS sun_path limit is $MAC_SOCKET_PATH_LIMIT: $SOCKET_PATH" >&2
 	exit 1
@@ -539,12 +542,9 @@ report_result spoiler_cache_location "$([[ -f "$CACHE_TEXT" && "$CACHE_TEXT_FILE
 if (( FAILURES > 0 )); then
 	exit 1
 fi
+}
 
-run_spoiler_cache_symlink_case emoji-cache-symlink emoji
-run_spoiler_cache_symlink_case spoiler-cache-symlink spoiler
-run_spoiler_cache_symlink_case text-cache-leaf-symlink text
-run_spoiler_cache_symlink_case image-cache-leaf-symlink image
-
+run_authenticated_cache_regression() {
 AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
@@ -646,6 +646,7 @@ if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 		"$AUTH_EVIDENCE_LOG"
 fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
+}
 
 run_authenticated_folder_fault_case() {
 	local fault_mode="$1"
@@ -685,6 +686,45 @@ run_authenticated_folder_fault_case() {
 		"$fault_mode" "$TESTED_REVISION" "$exit_status" "$diagnostic"
 }
 
-run_authenticated_folder_fault_case barrier_timeout barrier_timeout 0
-run_authenticated_folder_fault_case cross_session_presence cross_session_presence 1
-echo "profile, spoiler-cache, and non-store single-instance checks passed."
+case "$CASE_NAME" in
+all)
+	bash "$ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
+		"$TEST_HOME/cases" \
+		profile-ipc \
+		spoiler-cache-emoji \
+		spoiler-cache-spoiler \
+		spoiler-cache-text \
+		spoiler-cache-image \
+		authenticated-cache \
+		folder-fault-barrier-timeout \
+		folder-fault-cross-session-presence
+	;;
+profile-ipc)
+	run_protected_profile_ipc_case
+	;;
+spoiler-cache-emoji)
+	run_spoiler_cache_symlink_case emoji-cache-symlink emoji
+	;;
+spoiler-cache-spoiler)
+	run_spoiler_cache_symlink_case spoiler-cache-symlink spoiler
+	;;
+spoiler-cache-text)
+	run_spoiler_cache_symlink_case text-cache-leaf-symlink text
+	;;
+spoiler-cache-image)
+	run_spoiler_cache_symlink_case image-cache-leaf-symlink image
+	;;
+authenticated-cache)
+	run_authenticated_cache_regression
+	;;
+folder-fault-barrier-timeout)
+	run_authenticated_folder_fault_case barrier_timeout barrier_timeout 0
+	;;
+folder-fault-cross-session-presence)
+	run_authenticated_folder_fault_case cross_session_presence cross_session_presence 1
+	;;
+*)
+	echo "unknown protected profile and IPC case: $CASE_NAME" >&2
+	exit 2
+	;;
+esac

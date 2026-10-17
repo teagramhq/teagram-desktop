@@ -402,11 +402,12 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.ou
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
-  "github.event_name != 'pull_request' && github.event_name != 'push'"
+  "always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success'"
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
+  'full_chat_info_session_regression=FAIL' \
   'ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
@@ -416,6 +417,40 @@ require_step_python "$mac_workflow" macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+regression_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
+summary_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Summarize on-demand validation.") | .key')"
+((summary_step_index > regression_step_index)) \
+  || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
+profile_step='Run protected profile and IPC integration tests.'
+require_step_field "$mac_workflow" macos "$profile_step" '.if' \
+  "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success'"
+require_step_script "$mac_workflow" macos "$profile_step" \
+  'test_mac_profile_guard.sh'
+profile_harness='Telegram/build/test_mac_profile_guard.sh'
+grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
+  || contract_fail "$profile_harness must use the case runner."
+for case_name in \
+  profile-ipc \
+  spoiler-cache-emoji \
+  spoiler-cache-spoiler \
+  spoiler-cache-text \
+  spoiler-cache-image \
+  authenticated-cache \
+  folder-fault-barrier-timeout \
+  folder-fault-cross-session-presence; do
+  grep -Fq "$case_name" "$profile_harness" \
+    || contract_fail "$profile_harness must include lifecycle case $case_name."
+done
+require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
+  "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success'"
+require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
+  'Profile and IPC cases skipped: Teagram build did not succeed'
+require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
+  "always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success'"
+require_step_script "$mac_workflow" macos 'Report skipped full chat info session regression.' \
+  'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"
 sed 's/^\( *\)signal_pid(app_pid, "Teagram", cleanup_signal)$/\1# signal_pid(app_pid, "Teagram", cleanup_signal)\n\1pass/' \
   "$mac_workflow" > "$cleanup_mutation"
@@ -719,6 +754,8 @@ fi
 grep -Fxq 'TeagramUpdateInstallerKeepsCustomIcon result=failed exit=1 timeout_seconds=300 log_bytes<=65536' \
   "$temp_dir/fixture-logs/results.txt" \
   || contract_fail 'The updater fixture runner must record the failing case.'
+
+bash Telegram/build/test_mac_lifecycle_case_runner.sh
 
 # A case that outlives its timeout is stopped and reported as exit 124.
 fixture_launcher="$temp_dir/run_fixture.py"
