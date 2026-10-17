@@ -1,6 +1,6 @@
 name: Workflow lint.
 
-run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || github.workflow }}
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
 
 on:
   # Most macOS feedback lanes are manual/nightly, so lint the whole directory

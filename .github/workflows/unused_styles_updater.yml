@@ -1,6 +1,6 @@
 name: Unused styles updater.
 
-run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || github.workflow }}
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
 
 on:
   repository_dispatch:
