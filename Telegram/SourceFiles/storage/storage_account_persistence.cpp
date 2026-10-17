@@ -362,6 +362,11 @@ bool Account::mtpAuthorizationDataExistsForRegressionTest() const {
 		|| QFileInfo::exists(base + '0')
 		|| QFileInfo::exists(base + '1');
 }
+
+QStringList Account::serverCacheBindingFilesForRegressionTest() const {
+	const auto base = _basePath + kServerCacheBindingFile;
+	return {base + 's', base + '0', base + '1'};
+}
 #endif
 
 std::optional<ServerCacheBinding> Account::readServerCacheBinding() const {

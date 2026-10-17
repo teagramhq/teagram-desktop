@@ -1012,10 +1012,8 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 	if (chechMax()) {
 		return;
 	}
-	if (!isSide
-		&& user
-		&& !user->sharedMediaInfo()
-		&& !user->isInaccessible()
+	if (!isSide && user && user->session().callsSupported()
+		&& !user->sharedMediaInfo() && !user->isInaccessible()
 		&& user->callsStatus() != UserData::CallsStatus::Disabled) {
 		const auto call = Ui::CreateChild<TopBarActionButton>(
 			this,
@@ -1078,8 +1076,9 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 	if (chechMax()) {
 		return;
 	}
-	if (peer->groupCall()
-		|| (!peer->isUser() && peer->canManageGroupCall())) {
+	if (peer->session().callsSupported()
+		&& (peer->groupCall()
+			|| (!peer->isUser() && peer->canManageGroupCall()))) {
 		const auto broadcast = peer->isBroadcast();
 		const auto text = broadcast
 			? tr::lng_profile_action_short_live_stream(tr::now)
@@ -1609,6 +1608,21 @@ TopBar::~TopBar() {
 	base::take(_badgeTooltip);
 	base::take(_badgeOldTooltips);
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool TopBar::callActionPresentForRegressionTest() const {
+	if (!_actions) {
+		return false;
+	}
+	const auto callName = tr::lng_profile_action_short_call(tr::now);
+	for (const auto button : _actions->findChildren<QWidget *>()) {
+		if (button->accessibleName() == callName) {
+			return true;
+		}
+	}
+	return false;
+}
+#endif
 
 rpl::producer<> TopBar::backRequest() const {
 	return _backClicks.events();

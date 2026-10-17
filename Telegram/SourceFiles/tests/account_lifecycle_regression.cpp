@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/about_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
@@ -61,11 +62,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_widget.h"
 #include "history/view/history_view_chat_section.h"
+#include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
 #include "info/info_wrap_widget.h"
+#include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
@@ -109,6 +112,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -1211,6 +1215,32 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 	return account->mtp().getKeysForWrite().empty()
 		&& !account->sessionExists()
 		&& (account->willHaveSessionUniqueId(nullptr) == 0);
+}
+
+constexpr auto kSyntheticStockCacheBindingForRegression
+	= Storage::ServerCacheBinding{
+		.fingerprintKnown = true,
+		.fingerprint = 0,
+		.userIdKnown = true,
+		.userId = 1,
+};
+
+[[nodiscard]] bool
+PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
+	account->mtp().stopForServerEnrollment();
+	account->mtp().dcOptions().constructUnenrolled();
+	return account->local().writeMtpAuthorization()
+		   && !account->mtp().dcOptions().blocked()
+		   && account->mtp().dcOptions().unenrolled()
+		   && account->mtp().dcOptions().configEnumDcIds().empty()
+		   && !account->local().mtpAuthorizationWriteFailed()
+		   && !account->local().hasStoredCustomServer()
+		   && !account->local().customServerPinUnknown()
+		   && HasNoAuthorizationState(account)
+		   && (account->local().checkServerCacheBinding(
+				   kSyntheticStockCacheBindingForRegression.fingerprint,
+				   kSyntheticStockCacheBindingForRegression.userId)
+			   == Storage::ServerCacheBindingStatus::Match);
 }
 
 [[nodiscard]] bool
@@ -2869,17 +2899,7 @@ struct PeerMenuSnapshot final {
 	QStringList keyboardNames;
 };
 
-[[nodiscard]] PeerMenuSnapshot
-SnapshotPeerMenu(not_null<Window::SessionController *> controller,
-				 Dialogs::Key key, Dialogs::EntryState::Section section) {
-	auto menu = Ui::PopupMenu(nullptr);
-	const auto addAction = Ui::Menu::CreateAddActionCallback(&menu);
-	Window::FillDialogsEntryMenu(controller,
-								 Dialogs::EntryState{
-									 .key = key,
-									 .section = section,
-								 },
-								 addAction);
+[[nodiscard]] PeerMenuSnapshot SnapshotMenuActions(Ui::PopupMenu &menu) {
 	auto result = PeerMenuSnapshot();
 	for (const auto &action : menu.actions()) {
 		if (action->isSeparator()) {
@@ -2905,6 +2925,29 @@ SnapshotPeerMenu(not_null<Window::SessionController *> controller,
 		}
 	}
 	return result;
+}
+
+[[nodiscard]] PeerMenuSnapshot
+SnapshotPeerMenu(not_null<Window::SessionController *> controller,
+				 Dialogs::Key key, Dialogs::EntryState::Section section) {
+	auto menu = Ui::PopupMenu(nullptr);
+	const auto addAction = Ui::Menu::CreateAddActionCallback(&menu);
+	Window::FillDialogsEntryMenu(controller,
+								 Dialogs::EntryState{
+									 .key = key,
+									 .section = section,
+								 },
+								 addAction);
+	return SnapshotMenuActions(menu);
+}
+
+[[nodiscard]] PeerMenuSnapshot
+SnapshotVideoChatMenu(not_null<Window::SessionController *> controller,
+					  Dialogs::Key key) {
+	auto menu = Ui::PopupMenu(nullptr);
+	Window::FillVideoChatMenu(controller, {.key = key},
+							  Ui::Menu::CreateAddActionCallback(&menu));
+	return SnapshotMenuActions(menu);
 }
 
 template <typename Predicate>
@@ -3151,18 +3194,125 @@ template <typename Predicate>
 	return match;
 }
 
-// Stories are presentation-gated per owning session: the main menu, the
-// own-channel menus, the Edit admin box and story links all read the
-// capability from the window session that acts. The admin box checks run
-// the box's own save computation, so a checkbox-only save that drops the
-// hidden story rights fails here and in the standalone save cases.
+[[nodiscard]] bool WaitForMainQueueBarrier();
+
+[[nodiscard]] bool
+RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
+							 const char *sessionName) {
+	const auto fail = [&](const char *what) {
+		std::fprintf(
+			stderr, "Teagram branding regression failed: session=%s case=%s.\n",
+			sessionName, what);
+		return false;
+	};
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		const auto labels = menu->findChildren<QWidget *>();
+		const auto hasTeagramFooter
+			= std::any_of(labels.begin(), labels.end(), [](const auto widget) {
+				  const auto label = dynamic_cast<Ui::FlatLabel *>(widget);
+				  return label && label->accessibilityName() == u"Teagram"_q;
+			  });
+		if (!hasTeagramFooter) {
+			return fail("main_menu_footer_name");
+		}
+	}
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	const auto box = controller->show(Box(AboutBox), Ui::LayerOption::KeepOther,
+									  anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		controller->hideLayer(anim::type::instant);
+		return fail("about_box_did_not_open");
+	}
+	auto visibleLabels = QStringList();
+	for (const auto widget : layer->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			visibleLabels.push_back(label->accessibilityName());
+		}
+	}
+	const auto visibleText = visibleLabels.join(u"\n"_q);
+	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
+	const auto hasLicense = visibleText.contains(u"GNU GPL"_q);
+	const auto hasSourceCode = visibleText.contains(u"GitHub"_q);
+	const auto hasProtocolAttribution
+		= visibleText.contains(u"Based on Telegram Desktop"_q);
+	const auto hasNoTelegramHelpLinks
+		= !visibleText.contains(u"Telegram API"_q)
+		  && !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle && hasLicense && hasSourceCode
+						 && hasProtocolAttribution && hasNoTelegramHelpLinks;
+	controller->hideLayer(anim::type::instant);
+	if (!matches) {
+		return fail("about_box_copy");
+	}
+	controller->showSettings();
+	const auto closeSettings = gsl::finally([&] {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	});
+	if (!WaitForMainQueueBarrier()) {
+		return fail("settings_did_not_open");
+	}
+	QCoreApplication::processEvents();
+	const auto settings = controller->activeLayerSection();
+	if (!settings) {
+		return fail("settings_did_not_open");
+	}
+	const auto collectSettingsNames = [](QWidget *root) {
+		auto result = QStringList();
+		for (const auto widget : root->findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				result.push_back(label->accessibilityName());
+			} else if (const auto button
+					   = dynamic_cast<Ui::SettingsButton *>(widget)) {
+				result.push_back(button->accessibilityName());
+			}
+		}
+		return result;
+	};
+	const auto hasNoTelegramHelp = [](const QStringList &names) {
+		const auto text = names.join(u"\n"_q);
+		return !text.contains(u"Telegram FAQ"_q)
+			   && !text.contains(u"Telegram Features"_q)
+			   && !text.contains(u"Ask a Question"_q)
+			   && !text.contains(u"Telegram Support"_q);
+	};
+	for (const auto &restoredEntry : {
+			 u"Telegram FAQ"_q,
+			 u"Telegram Features"_q,
+			 u"Ask a Question"_q,
+		 }) {
+		QWidget probe;
+		const auto button = std::make_unique<Ui::SettingsButton>(
+			&probe, rpl::single(restoredEntry));
+		const auto probeNames = collectSettingsNames(&probe);
+		if (button->accessibilityName() != restoredEntry
+			|| !probeNames.contains(restoredEntry)
+			|| hasNoTelegramHelp(probeNames)) {
+			return fail("settings_help_restoration_detection");
+		}
+	}
+	if (!hasNoTelegramHelp(collectSettingsNames(settings))) {
+		return fail("settings_telegram_help");
+	}
+	return true;
+}
+
+// Stories and call controls are presentation-gated per owning session. The
+// admin box checks run their own save computation, so checkbox-only saves
+// that drop hidden rights fail here and in the standalone save cases.
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
 	const char *sessionName) {
 	auto &session = controller->session();
 	const auto fail = [&](const char *what) {
 		std::fprintf(stderr,
-					 "Story controls regression failed: session=%s "
+					 "Session controls regression failed: session=%s "
 					 "supported=%d case=%s.\n",
 					 sessionName, supported, what);
 		return false;
@@ -3170,13 +3320,18 @@ template <typename Predicate>
 	if (session.storiesSupported() != supported) {
 		return fail("capability");
 	}
+	const auto callsSupported = session.callsSupported();
+	if (callsSupported != supported) {
+		return fail("call_capability");
+	}
 
 	{
 		const auto menu = std::make_unique<Window::MainMenu>(
 			controller->widget().get(), controller);
 		if (menu->myProfileRowPresentForRegressionTest() != supported
-			|| menu->topDividerShownForRegressionTest() != supported) {
-			return fail("main_menu_my_profile_and_divider");
+			|| menu->topDividerShownForRegressionTest() != supported
+			|| menu->callsRowPresentForRegressionTest() != callsSupported) {
+			return fail("main_menu_feature_rows");
 		}
 	}
 
@@ -3200,15 +3355,31 @@ template <typename Predicate>
 		const auto transfer = AdminRightsForOwnershipTransfer(options);
 		return !(all & stories) && !(transfer & stories);
 	};
+	const auto labelsHaveManageCall = [&](Data::AdminRightsSetOptions options) {
+		auto all = Rights();
+		for (const auto &entry : AdminRightLabels(options)) {
+			all |= entry.flags;
+		}
+		const auto transfer = AdminRightsForOwnershipTransfer(options);
+		return (all & Right::ManageCall) && (transfer & Right::ManageCall);
+	};
 	const auto labelOptions = std::vector<Data::AdminRightsSetOptions>{
-		{.storiesSupported = supported},
-		{.isGroup = true, .storiesSupported = supported},
-		{.isGroup = true, .isForum = true, .storiesSupported = supported},
+		{.storiesSupported = supported, .callsSupported = callsSupported},
+		{.isGroup = true,
+		 .storiesSupported = supported,
+		 .callsSupported = callsSupported},
+		{.isGroup = true,
+		 .isForum = true,
+		 .storiesSupported = supported,
+		 .callsSupported = callsSupported},
 	};
 	for (const auto &options : labelOptions) {
 		if (supported ? !labelsHaveStories(options)
 					  : !labelsHaveNoStories(options)) {
 			return fail("admin_right_labels_and_transfer");
+		}
+		if (labelsHaveManageCall(options) != callsSupported) {
+			return fail("admin_right_manage_call_label");
 		}
 	}
 
@@ -3220,11 +3391,109 @@ template <typename Predicate>
 	channel->setLoadedStatus(PeerData::LoadedStatus::Normal);
 	const auto channelPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*channel));
+	if (channelPeer->canManageGroupCall() != callsSupported) {
+		return fail("group_call_permission");
+	}
 	const auto history = session.data().history(channel);
+	const auto group = session.data().channel(ChannelId(1184));
+	group->setAccessHash(118400);
+	group->setName(u"Call controls regression group"_q, QString());
+	group->setFlags(Flag::Creator | Flag::Forum);
+	group->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto groupPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*group));
+	if (groupPeer->canManageGroupCall() != callsSupported) {
+		return fail("group_call_permission");
+	}
+	const auto groupHistory = session.data().history(group);
+	const auto forum = group->forum();
+	const auto topic
+		= forum ? forum->applyTopicAdded(
+					  MsgId(1185), u"Call controls regression topic"_q, 0,
+					  DocumentId(), session.userPeerId(), 1, true)
+				: nullptr;
+	const auto channelCallMenu
+		= SnapshotVideoChatMenu(controller, Dialogs::Key(history));
+	const auto groupCallMenu
+		= SnapshotVideoChatMenu(controller, Dialogs::Key(groupHistory));
 	const auto contains = [](const QStringList &names,
 							 const QString &expected) {
 		return std::find(names.begin(), names.end(), expected) != names.end();
 	};
+	const auto menuEntryMatches = [&](const PeerMenuSnapshot &menu,
+									  const QString &expected) {
+		const auto inActions = contains(menu.actions, expected);
+		const auto inAccessibility = contains(menu.accessibleNames, expected);
+		const auto inKeyboard = contains(menu.keyboardNames, expected);
+		return (inActions == callsSupported)
+			   && (inAccessibility == callsSupported)
+			   && (inKeyboard == callsSupported);
+	};
+	const auto groupCall = tr::lng_menu_start_group_call(tr::now);
+	const auto groupCallScheduled
+		= tr::lng_menu_start_group_call_scheduled(tr::now);
+	const auto groupCallWith = tr::lng_menu_start_group_call_with(tr::now);
+	const auto liveStream = tr::lng_menu_start_group_call_channel(tr::now);
+	const auto liveStreamScheduled
+		= tr::lng_menu_start_group_call_scheduled_channel(tr::now);
+	const auto liveStreamWith
+		= tr::lng_menu_start_group_call_with_channel(tr::now);
+	const auto videoChatOptions
+		= tr::lng_menu_start_group_call_options(tr::now);
+	const auto forumMenu
+		= SnapshotPeerMenu(controller, Dialogs::Key(groupHistory),
+						   Dialogs::EntryState::Section::ChatsList);
+	if (!topic || !menuEntryMatches(groupCallMenu, groupCall)
+		|| !menuEntryMatches(groupCallMenu, groupCallScheduled)
+		|| !menuEntryMatches(groupCallMenu, groupCallWith)
+		|| !menuEntryMatches(channelCallMenu, liveStream)
+		|| !menuEntryMatches(channelCallMenu, liveStreamScheduled)
+		|| !menuEntryMatches(channelCallMenu, liveStreamWith)
+		|| !menuEntryMatches(forumMenu, videoChatOptions)) {
+		return fail("video_chat_menus_accessibility_and_keyboard");
+	}
+	{
+		const auto privateUser
+			= session.data().processUsers(MTP_vector<MTPUser>({
+				RegressionUser(UserId(1186), false, u"1186"_q, false),
+			}));
+		if (!privateUser) {
+			return fail("private_call_fixture");
+		}
+		const auto privateHistory = session.data().history(privateUser);
+		if (!privateHistory) {
+			return fail("private_call_history");
+		}
+		Info::Profile::TopBar profileTopBar(
+			controller->widget().get(),
+			Info::Profile::TopBar::Descriptor{
+				.controller = controller,
+				.key = Info::Key(not_null<PeerData *>(privateUser)),
+				.wrap = rpl::single(Info::Wrap::Layer),
+				.backToggles = rpl::single(false),
+				.showFinished = rpl::never<>(),
+				.customStatus = rpl::never<TextWithEntities>(),
+			});
+		if (profileTopBar.callActionPresentForRegressionTest()
+			!= callsSupported) {
+			return fail("profile_call_button");
+		}
+		HistoryView::TopBarWidget topBar(controller->widget().get(),
+										 controller);
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(privateHistory)}, nullptr);
+		topBar.updateControlsVisibility();
+		if (topBar.callButtonHiddenForRegressionTest() != !callsSupported) {
+			return fail("private_call_button");
+		}
+		topBar.setActiveChat(
+			Dialogs::EntryState{.key = Dialogs::Key(groupHistory)}, nullptr);
+		topBar.updateControlsVisibility();
+		if (topBar.groupCallButtonHiddenForRegressionTest()
+			!= !callsSupported) {
+			return fail("group_call_button");
+		}
+	}
 	const auto archive = tr::lng_stories_archive_button(tr::now);
 	for (const auto section : {
 			 Dialogs::EntryState::Section::History,
@@ -3270,9 +3539,12 @@ template <typename Predicate>
 		const auto rowsMatch
 			= supported ? ((visible & stories) == stories)
 						: (!(visible & stories) && !(checked & stories));
+		const auto callRowMatches
+			= bool(visible & Right::ManageCall) == callsSupported;
 		controller->hideLayer(anim::type::instant);
 		QCoreApplication::processEvents();
-		if (!rowsMatch || (saved.value() != expected.value())) {
+		if (!rowsMatch || !callRowMatches
+			|| (saved.value() != expected.value())) {
 			std::fprintf(stderr,
 						 "Story controls regression: case=%s visible=%d "
 						 "checked=%d saved=%d expected=%d.\n",
@@ -3300,6 +3572,7 @@ template <typename Predicate>
 		const auto savedStories = (saved & stories);
 		const auto expectedStories = supported ? stories : Rights();
 		if ((savedStories.value() != expectedStories.value())
+			|| (!callsSupported && (saved & Right::ManageCall))
 			|| ((saved & visibleChannel).value()
 				!= (checked & visibleChannel).value())) {
 			return fail("new_admin_story_defaults");
@@ -3428,9 +3701,8 @@ template <typename Predicate>
 				   == toastBefore + 1);
 			const auto peerShown
 				= (controller->activeChatCurrent().peer() == channelPeer.get());
-			const auto noStoriesUi
-				= !controller->content()->isMainSectionShown()
-				  && !ShownStoriesSection(controller);
+			const auto noStoriesUi = controller->content()->isMainSectionShown()
+									 && !ShownStoriesSection(controller);
 			const auto noStoriesRequest
 				= !storiesData.requestsPendingForRegressionTest();
 			if (!toastShown || !peerShown || !noStoriesUi
@@ -5629,6 +5901,14 @@ template <typename Predicate>
 	poll.stop();
 	return condition();
 }
+[[nodiscard]] bool
+WaitForBindingFilesRemovedForRegression(const QStringList &files) {
+	return WaitForRegressionCondition([&] {
+		return std::none_of(files.begin(), files.end(), [](const auto &path) {
+			return QFileInfo::exists(path);
+		});
+	});
+}
 
 [[nodiscard]] bool WaitForSessionSwitchUpdatesForTest(Main::Session &stock,
 													  int stockExpected,
@@ -5854,7 +6134,8 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 								 not_null<Window::Controller *> window) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()
-		|| !RunChannelCallLinkRegression(account, window)) {
+		|| !RunChannelCallLinkRegression(account, window)
+		|| !RunTeagramBrandingRegression(controller, "settings smoke")) {
 		return false;
 	}
 	const auto closeSettingsLayer = gsl::finally([&] {
@@ -6341,6 +6622,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	const auto discardedServerCacheBindingFiles
+		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
 		return FailChatParticipantsRegression(
@@ -6351,6 +6634,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		return FailChatParticipantsRegression(
 			"main-thread queue did not drain after call-link session "
 			"destruction");
+	}
+	if (!WaitForBindingFilesRemovedForRegression(
+			discardedServerCacheBindingFiles)) {
+		return FailChatParticipantsRegression(
+			"previous-session logout did not clear its cache binding");
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
@@ -8209,7 +8497,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	if (!Main::details::CommitServerForget(
 			&blockedWithoutAuthorizationFailure->local(),
-			Storage::ServerCacheBinding{}, [] {})
+			kSyntheticStockCacheBindingForRegression, [] {})
 		|| blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()
 		|| !blockedWithoutAuthorizationFailure->local()
@@ -8226,6 +8514,10 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| restoredBlocked->local().customServerPinUnknown()) {
 		return FailAccountLifecycleRegression(
 			"restored blocked account retained custom-pin metadata");
+	}
+	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
+		return FailAccountLifecycleRegression(
+			"could not reset the synthetic account after blocked-state checks");
 	}
 
 	ReportCallRegressionCheckpoint("account lifecycle setup complete");
