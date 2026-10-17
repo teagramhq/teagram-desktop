@@ -176,6 +176,19 @@ TEST_CASE(StockPromotionStillSendsTheDefaultStoryRows) {
 			 Bits(AdminRights::StoryRights()));
 }
 
+TEST_CASE(UnsupportedCallEditKeepsExistingManageCallWhenOtherRightsChange) {
+	const auto existing = ChannelVisibleRights() | Flag::Other;
+	const auto checked = existing & ~Flags(Flag::ChangeInfo | Flag::ManageCall);
+	const auto saved = AdminRights::RightsToSave({
+		.checked = checked,
+		.existing = existing,
+		.callsSupported = false,
+	});
+	CHECK_EQ(Bits(saved), Bits(existing & ~Flags(Flag::ChangeInfo)));
+	CHECK(saved & Flag::ManageCall);
+	CHECK(!(saved & Flag::ChangeInfo));
+}
+
 TEST_CASE(UnsupportedBotLookupFailureBlocksTheEditor) {
 	CHECK(!AdminRights::CanEditAfterExistingRightsFailure(u"FLOOD_WAIT_5"_q,
 														  false));
