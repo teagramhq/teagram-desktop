@@ -48,7 +48,7 @@ for launch_outcome in ('success', 'failure'):
     environment = dict(os.environ, FORMAT_OUTCOME='success',
                        STORE_REJECTION_OUTCOME='success', BUILD_OUTCOME='success',
                        ARTIFACT_OUTCOME='success', PROFILE_IPC_OUTCOME='success',
-                       LAUNCH_OUTCOME=launch_outcome)
+                       LAUNCH_OUTCOME=launch_outcome, LIFECYCLE_OUTCOME='success')
     result = subprocess.run(['bash', '-c', validation_script], env=environment,
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == (0 if launch_outcome == 'success' else 1), result

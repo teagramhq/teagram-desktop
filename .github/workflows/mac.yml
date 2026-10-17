@@ -402,7 +402,7 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.artifact-verification.outcome == 'success' }}
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"

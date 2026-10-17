@@ -8304,7 +8304,7 @@ struct NativeLifecycleResults {
 			pinned->session().data().cacheBigFile().sync();
 			const auto protectedCacheCleanupPassed
 				= !Core::MacProtectedPath::CheckCachePath(
-					stockCachePath, "Tests::ProtectedCache::async-root")
+					  stockCachePath, "Tests::ProtectedCache::async-root")
 				  && !Core::MacProtectedPath::CheckCachePath(
 					  stockMediaCachePath,
 					  "Tests::ProtectedCache::async-media-root")
