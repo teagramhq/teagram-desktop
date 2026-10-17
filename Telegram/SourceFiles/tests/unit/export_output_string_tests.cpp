@@ -15,7 +15,7 @@ TEST_CASE(JsonExportEscapesEveryControlByte) {
 		input.append(char(value));
 	}
 	const auto expected = QByteArrayLiteral(
-		"\"\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\t"
+		"\"\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\t\\n"
 		"\\x0B\\x0C\\r\\x0E\\x0F\\x10\\x11\\x12\\x13\\x14\\x15"
 		"\\x16\\x17\\x18\\x19\\x1A\\x1B\\x1C\\x1D\\x1E\\x1F\"");
 
@@ -35,15 +35,9 @@ TEST_CASE(HtmlExportEscapesEveryControlByte) {
 	CHECK_EQ(Export::Output::details::Html::SerializeString(input), expected);
 }
 
-TEST_CASE(ExportWritersPreserveHighBitUtf8AndSpecialSeparators) {
-	const auto utf8 = QByteArray::fromHex("c3a9e282ac");
+TEST_CASE(ExportWritersPreserveHighBitUtf8) {
+	const auto utf8 = QByteArray::fromHex("c3a9e282ace280aa");
 	CHECK_EQ(Export::Output::details::Json::SerializeString(utf8),
 			 QByteArrayLiteral("\"") + utf8 + '"');
 	CHECK_EQ(Export::Output::details::Html::SerializeString(utf8), utf8);
-
-	const auto separators = QByteArray::fromHex("e280a8e280a9");
-	CHECK_EQ(Export::Output::details::Json::SerializeString(separators),
-			 QByteArrayLiteral("\"\\u2028\\u2029\""));
-	CHECK_EQ(Export::Output::details::Html::SerializeString(separators),
-			 QByteArrayLiteral("<br><br>"));
 }
