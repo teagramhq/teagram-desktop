@@ -1,0 +1,173 @@
+name: Linux arm64 build.
+
+run-name: Linux arm64 build (${{ github.sha }})
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-arm64:
+    name: Linux arm64 build
+    runs-on: ubuntu-24.04-arm
+    env:
+      MIN_FREE_SPACE_GIB: "30"
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Verify build ref and runner architecture.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "::error::Dispatch this workflow against dev; selected ref: ${GITHUB_REF}."
+            exit 1
+          fi
+
+          bash .github/scripts/verify_built_sha.sh "${GITHUB_SHA}"
+          if [[ "$(uname -m)" != "aarch64" ]]; then
+            echo "::error::Expected an aarch64 runner; found $(uname -m)."
+            exit 1
+          fi
+
+          printf '### Linux arm64 build\n\n- Commit: `%s`\n- Architecture: `aarch64`\n\n' \
+            "${GITHUB_SHA}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check free disk space before dependency image build.
+        id: disk-space-before
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${MIN_FREE_SPACE_GIB}" =~ ^[0-9]+$ ]]; then
+            echo "::error::MIN_FREE_SPACE_GIB is not a non-negative integer: ${MIN_FREE_SPACE_GIB}"
+            exit 1
+          fi
+          minimum_kib=$((MIN_FREE_SPACE_GIB * 1024 * 1024))
+
+          if ! free_kib=$(df -Pk / | awk 'NR == 2 { print $4; exit }'); then
+            echo "::error::Unable to measure free disk space on the runner."
+            exit 1
+          fi
+          if [[ ! "${free_kib}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Free disk space measurement was unavailable: '${free_kib}'"
+            exit 1
+          fi
+
+          free_gib=$((free_kib / 1024 / 1024))
+          echo "Free disk space before dependency image build: ${free_gib} GiB (${free_kib} KiB). Minimum: ${MIN_FREE_SPACE_GIB} GiB (${minimum_kib} KiB)."
+          echo "free_kib=${free_kib}" >> "${GITHUB_OUTPUT}"
+          if (( free_kib < minimum_kib )); then
+            echo "cleanup_required=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Disk cleanup required: ${free_gib} GiB is below the ${MIN_FREE_SPACE_GIB} GiB minimum."
+          else
+            echo "cleanup_required=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Disk cleanup skipped: ${free_gib} GiB is at or above the ${MIN_FREE_SPACE_GIB} GiB minimum."
+          fi
+
+      - name: Free up disk space when needed.
+        if: steps.disk-space-before.outputs.cleanup_required == 'true'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: true
+
+      - name: Verify free disk space after cleanup.
+        if: steps.disk-space-before.outputs.cleanup_required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          minimum_kib=$((MIN_FREE_SPACE_GIB * 1024 * 1024))
+          if ! free_kib=$(df -Pk / | awk 'NR == 2 { print $4; exit }'); then
+            echo "::error::Unable to measure free disk space after cleanup."
+            exit 1
+          fi
+          if [[ ! "${free_kib}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Free disk space measurement after cleanup was unavailable: '${free_kib}'"
+            exit 1
+          fi
+
+          free_gib=$((free_kib / 1024 / 1024))
+          echo "Free disk space after cleanup: ${free_gib} GiB (${free_kib} KiB). Minimum: ${MIN_FREE_SPACE_GIB} GiB (${minimum_kib} KiB)."
+          if (( free_kib < minimum_kib )); then
+            echo "::error::Free disk space remains below the ${MIN_FREE_SPACE_GIB} GiB minimum after cleanup."
+            exit 1
+          fi
+
+      - name: Generate Linux dependency image.
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSL https://install.python-poetry.org | python3 -
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
+
+      - name: Set up Docker Buildx.
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Linux dependency image.
+        uses: docker/build-push-action@v7
+        with:
+          context: Telegram/build/docker/centos_env
+          tags: tdesktop:centos_env
+          load: true
+
+      - name: Build Telegram executable.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/tdesktop-ccache"
+
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${PWD}:/usr/src/tdesktop" \
+            -v "${RUNNER_TEMP}/tdesktop-ccache:/var/cache/ccache" \
+            -e CONFIG=Debug \
+            -e CCACHE_SLOPPINESS=pch_defines,time_macros \
+            tdesktop:centos_env \
+            env -u CCACHE_DISABLE /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+            -D CMAKE_CONFIGURATION_TYPES=Debug \
+            -D CMAKE_C_FLAGS_DEBUG="-O0 -fpch-preprocess" \
+            -D CMAKE_CXX_FLAGS_DEBUG="-O0 -fpch-preprocess" \
+            -D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -D TDESKTOP_API_TEST=ON \
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF
+
+      - name: Verify and stage ELF64 aarch64 executable.
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable="out/Debug/Telegram"
+          if [[ ! -f "${executable}" ]]; then
+            echo "::error::Telegram executable was not produced."
+            exit 1
+          fi
+
+          description="$(file --brief "${executable}")"
+          printf '%s\n' "${description}"
+          if [[ "${description}" != *"ELF 64-bit"* || "${description}" != *"ARM aarch64"* ]]; then
+            echo "::error::Expected an ELF64 ARM aarch64 executable."
+            exit 1
+          fi
+
+          mkdir -p artifact
+          cp "${executable}" artifact/Telegram
+          printf 'commit=%s\narchitecture=aarch64\n' "${GITHUB_SHA}" > artifact/build-info.txt
+
+      - name: Upload artifact.
+        uses: actions/upload-artifact@v7
+        with:
+          name: Telegram-Linux-arm64-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error

@@ -6,6 +6,7 @@ scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$scripts_dir/workflow_contract.sh"
 
 linux_workflow=".github/workflows/linux.yml"
+linux_arm64_workflow=".github/workflows/linux-arm64.yml"
 cache_cleanup_workflow=".github/workflows/pr_cache_cleanup.yml"
 workflow_lint_workflow=".github/workflows/workflow_lint.yml"
 unit_feedback_workflow="${UNIT_FEEDBACK_WORKFLOW:-.github/workflows/unit_feedback.yml}"
@@ -98,6 +99,11 @@ require_step_field "$linux_workflow" linux-build 'Report Actions cache total.' '
 require_step_script "$linux_workflow" linux-build 'Report Actions cache total.' \
   '(( total_bytes >= 9000000000 ))'
 reject_value "$linux_workflow" 'Linux-libs-' 'buildkit-cache-dance'
+
+require_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependency image.' \
+  $'DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile);\necho "$DOCKERFILE" > Dockerfile'
+reject_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependency image.' \
+  'DEBUG= LTO= poetry run gen_dockerfile > Dockerfile'
 
 # The linux-libraries job is the only GHCR writer, only for dev pushes in this
 # repository, and the build waits for it and stops when it fails.
