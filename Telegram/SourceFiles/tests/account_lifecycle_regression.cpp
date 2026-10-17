@@ -1290,11 +1290,6 @@ RestartDomain(Main::Domain &domain,
 	return &primary->account() == active;
 }
 
-[[nodiscard]] int FailAccountLifecycleRegression(const char *reason) {
-	std::fprintf(stderr, "Account lifecycle regression failed: %s\n", reason);
-	return 1;
-}
-
 [[nodiscard]] bool TeagramIconChoicePersistsAcrossSettingsReload() {
 	auto settings = Core::Settings();
 	if (Core::ReadTeagramIconChoice(settings)
@@ -6179,148 +6174,165 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 		   && showsSettings(Settings::SessionsId());
 }
 
+struct NativeLifecycleResults {
+	std::vector<const char *> failures;
+	QStringList reported;
+	const char *activeCase = nullptr;
+	bool summaryReported = false;
+	bool asyncPending = false;
+	bool finalized = false;
+	bool prerequisitesPassed = false;
+
+	void StopActiveCase() {
+		if (!activeCase) {
+			return;
+		}
+		std::fprintf(stderr, "native_lifecycle_case=%s result=STOPPED\n",
+					 activeCase);
+		std::fflush(stderr);
+		reported.push_back(QString::fromLatin1(activeCase));
+		failures.push_back(activeCase);
+		if (std::strcmp(activeCase, "chat-participants-prerequisites")
+			== 0) {
+			prerequisitesPassed = false;
+		}
+		activeCase = nullptr;
+	}
+
+	void StartCase(const char *name) {
+		if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+			return;
+		}
+		StopActiveCase();
+		activeCase = name;
+		std::fprintf(stderr, "native_lifecycle_case=%s status=START\n",
+					 name);
+		std::fflush(stderr);
+	}
+
+	void Report(const char *name, bool passed) {
+		if (activeCase && (std::strcmp(activeCase, name) != 0)) {
+			StopActiveCase();
+		}
+		if (activeCase) {
+			activeCase = nullptr;
+		}
+		std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
+					 passed ? "PASS" : "FAIL");
+		reported.push_back(QString::fromLatin1(name));
+		if (!passed) {
+			failures.push_back(name);
+		}
+		if (std::strcmp(name, "chat-participants-prerequisites") == 0) {
+			prerequisitesPassed = passed;
+		}
+	}
+
+	void Skip(const char *name, const char *reason) {
+		if (activeCase && (std::strcmp(activeCase, name) == 0)) {
+			activeCase = nullptr;
+		}
+		std::fprintf(stderr,
+					 "native_lifecycle_case=%s result=SKIP reason=%s\n",
+					 name, reason);
+		reported.push_back(QString::fromLatin1(name));
+	}
+
+	void SkipUnreported(const char *reason) {
+		static constexpr const char *kCases[] = {
+			"username-input",
+			"teagram-icon-persistence",
+			"account-lifecycle-prerequisites",
+			"legacy-cleanup-symlink",
+			"cache-callback-timeout",
+			"account-authorization-lifecycle",
+			"chat-participants-prerequisites",
+			"cache-concurrent-deletion",
+			"calls-instance-start",
+			"stock-incoming-call-answer",
+			"pinned-incoming-call-answer",
+			"stock-blocked-call-policy",
+			"pinned-blocked-call-policy",
+			"conference-link-call-preservation",
+			"call-links-and-settings",
+			"call-session-fixtures",
+			"admin-window-fixtures",
+			"settings-search",
+			"session-window-lifecycle",
+			"translation-controls",
+			"manage-controls",
+			"mini-app-open",
+			"chatlist-invite-check",
+			"authenticated-cache-file-symlinks",
+			"post-open-cache",
+			"post-open-media-cache",
+			"pinned-chat-participants",
+			"folder-crud",
+			"bio-editor-target",
+			"admin-session-identities",
+			"stock-basic-group-creator",
+			"pinned-basic-group-creator",
+			"stock-full-list-admin",
+			"stock-full-list-demotion",
+			"custom-full-list-admin",
+			"stock-live-admin-promotion",
+			"stock-live-admin-demotion",
+			"custom-live-admin-promotion",
+			"custom-live-admin-demotion",
+			"pinned-migration-fixture",
+			"post-close-window-lifecycle",
+			"chat-migration",
+			"protected-cache-cleanup",
+		};
+		for (const auto name : kCases) {
+			if (!reported.contains(QString::fromLatin1(name))) {
+				Skip(name, reason);
+			}
+		}
+	}
+
+	[[nodiscard]] bool Passed() const { return failures.empty(); }
+
+	void ReportSummary() {
+		if (summaryReported) {
+			return;
+		}
+		summaryReported = true;
+		std::fprintf(stderr, "native_lifecycle_cases_failed=");
+		if (failures.empty()) {
+			std::fprintf(stderr, "none\n");
+			return;
+		}
+		for (auto i = 0; i != int(failures.size()); ++i) {
+			std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
+		}
+		std::fprintf(stderr, "\n");
+	}
+
+	~NativeLifecycleResults() {
+		StopActiveCase();
+		if (!asyncPending && !finalized) {
+			if (!prerequisitesPassed) {
+				if (!reported.contains(QString::fromLatin1(
+						"chat-participants-prerequisites"))) {
+					Report("chat-participants-prerequisites", false);
+				}
+				SkipUnreported(
+					"dependency-chat-participants-prerequisites");
+			} else {
+				SkipUnreported("dependency-native-lifecycle-incomplete");
+			}
+		}
+		ReportSummary();
+	}
+};
+
 [[nodiscard]] int
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
+								std::shared_ptr<NativeLifecycleResults>
+									nativeLifecycleResults,
 								Fn<void(int)> done) {
-	struct NativeLifecycleResults {
-		std::vector<const char *> failures;
-		QStringList reported;
-		const char *activeCase = nullptr;
-		bool summaryReported = false;
-		bool asyncPending = false;
-		bool finalized = false;
-		bool prerequisitesPassed = false;
-
-		void StopActiveCase() {
-			if (!activeCase) {
-				return;
-			}
-			std::fprintf(stderr, "native_lifecycle_case=%s result=STOPPED\n",
-						 activeCase);
-			std::fflush(stderr);
-			reported.push_back(QString::fromLatin1(activeCase));
-			failures.push_back(activeCase);
-			if (std::strcmp(activeCase, "chat-participants-prerequisites")
-				== 0) {
-				prerequisitesPassed = false;
-			}
-			activeCase = nullptr;
-		}
-
-		void StartCase(const char *name) {
-			if (activeCase && (std::strcmp(activeCase, name) == 0)) {
-				return;
-			}
-			StopActiveCase();
-			activeCase = name;
-			std::fprintf(stderr, "native_lifecycle_case=%s status=START\n",
-						 name);
-			std::fflush(stderr);
-		}
-
-		void Report(const char *name, bool passed) {
-			if (activeCase && (std::strcmp(activeCase, name) != 0)) {
-				StopActiveCase();
-			}
-			if (activeCase) {
-				activeCase = nullptr;
-			}
-			std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
-						 passed ? "PASS" : "FAIL");
-			reported.push_back(QString::fromLatin1(name));
-			if (!passed) {
-				failures.push_back(name);
-			}
-			if (std::strcmp(name, "chat-participants-prerequisites") == 0) {
-				prerequisitesPassed = passed;
-			}
-		}
-
-		void Skip(const char *name, const char *reason) {
-			if (activeCase && (std::strcmp(activeCase, name) == 0)) {
-				activeCase = nullptr;
-			}
-			std::fprintf(stderr,
-						 "native_lifecycle_case=%s result=SKIP reason=%s\n",
-						 name, reason);
-			reported.push_back(QString::fromLatin1(name));
-		}
-
-		void SkipUnreported(const char *reason) {
-			static constexpr const char *kCases[] = {
-				"settings-search",
-				"session-window-lifecycle",
-				"translation-controls",
-				"manage-controls",
-				"mini-app-open",
-				"chatlist-invite-check",
-				"authenticated-cache-file-symlinks",
-				"post-open-cache",
-				"post-open-media-cache",
-				"pinned-chat-participants",
-				"folder-crud",
-				"bio-editor-target",
-				"admin-session-identities",
-				"stock-basic-group-creator",
-				"pinned-basic-group-creator",
-				"stock-full-list-admin",
-				"stock-full-list-demotion",
-				"custom-full-list-admin",
-				"stock-live-admin-promotion",
-				"stock-live-admin-demotion",
-				"custom-live-admin-promotion",
-				"custom-live-admin-demotion",
-				"pinned-migration-fixture",
-				"post-close-window-lifecycle",
-				"chat-migration",
-				"protected-cache-cleanup",
-			};
-			for (const auto name : kCases) {
-				if (!reported.contains(QString::fromLatin1(name))) {
-					Skip(name, reason);
-				}
-			}
-		}
-
-		[[nodiscard]] bool Passed() const { return failures.empty(); }
-
-		void ReportSummary() {
-			if (summaryReported) {
-				return;
-			}
-			summaryReported = true;
-			std::fprintf(stderr, "native_lifecycle_cases_failed=");
-			if (failures.empty()) {
-				std::fprintf(stderr, "none\n");
-				return;
-			}
-			for (auto i = 0; i != int(failures.size()); ++i) {
-				std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
-			}
-			std::fprintf(stderr, "\n");
-		}
-
-		~NativeLifecycleResults() {
-			StopActiveCase();
-			if (!asyncPending && !finalized) {
-				if (!prerequisitesPassed) {
-					if (!reported.contains(QString::fromLatin1(
-							"chat-participants-prerequisites"))) {
-						Report("chat-participants-prerequisites", false);
-					}
-					SkipUnreported(
-						"dependency-chat-participants-prerequisites");
-				} else {
-					SkipUnreported("dependency-native-lifecycle-incomplete");
-				}
-			}
-			ReportSummary();
-		}
-	};
-	const auto nativeLifecycleResults
-		= std::make_shared<NativeLifecycleResults>();
-	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
 			  .split(',', Qt::SkipEmptyParts);
@@ -6349,11 +6361,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	ReportCallRegressionCheckpoint("chat participant regression begin");
 	Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
 		DeferredOnlineUpdatePhase::Setup);
-	if (Core::MacProtectedPath::IntegrationTestActive()
-		&& !RunCacheConcurrentDeletionRegression()) {
-		return failPrerequisite(
-			"cache scan rejected an entry removed after enumeration");
-	}
+	nativeLifecycleResults->StartCase("cache-concurrent-deletion");
+	const auto cacheConcurrentDeletionPassed
+		= (!Core::MacProtectedPath::IntegrationTestActive()
+			|| RunCacheConcurrentDeletionRegression())
+		  && !shouldInjectFailure("cache-concurrent-deletion");
+	nativeLifecycleResults->Report("cache-concurrent-deletion",
+								   cacheConcurrentDeletionPassed);
+	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
 	const auto requiredAccounts
 		= Core::MacProtectedPath::IntegrationTestActive() ? 3 : 2;
 	if (domain.accounts().size()
@@ -7589,69 +7604,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	});
 	const auto stockDcOptions = stock->mtp().dcOptions().serialize();
 	const auto pinnedDcOptions = pinned->mtp().dcOptions().serialize();
-	ReportCallRegressionCheckpoint("call start fixtures ready");
-	if (!RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true)
-		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
-											false)) {
-		return failPrerequisite(
-			"Calls::Instance starts crossed stock and pinned session policies");
-	}
-	if (!RunIncomingCallAnswerRegression(stock, true)
-		|| !RunIncomingCallAnswerRegression(pinned, false)) {
-		return failPrerequisite(
-			"incoming calls bypassed the unsupported-session gate");
-	}
-	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
-	stock->mtp().dcOptions().constructBlocked();
-	if (stock->local().hasStoredCustomServer()
-		|| !stock->mtp().dcOptions().blocked()
-		|| !RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
-											false)) {
-		return failPrerequisite(
-			"blocked unpinned session reached a Calls::Instance start path");
-	}
-	if (!RunChannelCallLinkRegression(stock, stockWindow)) {
-		return failPrerequisite(
-			"blocked unpinned channel link bypassed the call-support gate");
-	}
-	ReportCallRegressionCheckpoint("blocked stock starts complete");
-	stock->mtp().dcOptions().constructUnenrolled();
-	if (!stock->mtp().dcOptions().constructFromSerialized(stockDcOptions)) {
-		return failPrerequisite(
-			"could not restore stock DC options after blocked-call regression");
-	}
-	pinned->mtp().dcOptions().constructBlocked();
-	if (!pinned->local().hasStoredCustomServer()
-		|| !pinned->mtp().dcOptions().blocked()
-		|| pinned->mtp().dcOptions().hasCustomServer()
-		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
-											false)) {
-		return failPrerequisite(
-			"blocked pinned session reached a Calls::Instance start path");
-	}
-	if (!RunChannelCallLinkRegression(pinned, pinnedWindow)) {
-		return failPrerequisite(
-			"blocked pinned channel link bypassed the call-support gate");
-	}
-	ReportCallRegressionCheckpoint("blocked pinned starts complete");
-	pinned->mtp().dcOptions().constructUnenrolled();
-	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
-		|| !RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
-														  stockCall)) {
-		return failPrerequisite(
-			"unsupported conference link replaced the stock call");
-	}
-	ReportCallRegressionCheckpoint("conference preservation complete");
-	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
-	const auto callLinksAndSettingsPassed
-		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
-	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
-	if (!callLinksAndSettingsPassed || !settingsLayerClosed) {
-		return failPrerequisite(
-			"call links or settings links bypassed the pinned-session gate or "
-			"left a settings layer open");
-	}
-	ReportCallRegressionCheckpoint("call links and settings complete");
 	auto pinnedController = pinnedWindow->sessionController();
 	auto stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
@@ -7661,7 +7613,104 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"test windows lost their owning sessions before folder smoke "
 			"tests");
 	}
+	ReportCallRegressionCheckpoint("call start fixtures ready");
 	nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+	nativeLifecycleResults->StartCase("call-session-fixtures");
+	nativeLifecycleResults->Report("call-session-fixtures", true);
+	nativeLifecycleResults->StartCase("calls-instance-start");
+	const auto stockCallStartPassed
+		= RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true);
+	const auto pinnedCallStartPassed
+		= RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall, false);
+	const auto callsInstanceStartPassed
+		= stockCallStartPassed && pinnedCallStartPassed
+		  && !shouldInjectFailure("calls-instance-start");
+	nativeLifecycleResults->Report("calls-instance-start",
+								   callsInstanceStartPassed);
+	nativeLifecycleResults->StartCase("stock-incoming-call-answer");
+	const auto stockIncomingCallAnswerPassed
+		= RunIncomingCallAnswerRegression(stock, true)
+		  && !shouldInjectFailure("stock-incoming-call-answer");
+	nativeLifecycleResults->Report("stock-incoming-call-answer",
+								   stockIncomingCallAnswerPassed);
+	nativeLifecycleResults->StartCase("pinned-incoming-call-answer");
+	const auto pinnedIncomingCallAnswerPassed
+		= RunIncomingCallAnswerRegression(pinned, false)
+		  && !shouldInjectFailure("pinned-incoming-call-answer");
+	nativeLifecycleResults->Report("pinned-incoming-call-answer",
+								   pinnedIncomingCallAnswerPassed);
+	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
+	nativeLifecycleResults->StartCase("stock-blocked-call-policy");
+	stock->mtp().dcOptions().constructBlocked();
+	const auto stockBlockedCallStartPassed
+		= !stock->local().hasStoredCustomServer()
+		  && stock->mtp().dcOptions().blocked()
+		  && RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
+											 false);
+	const auto stockBlockedChannelLinkPassed
+		= RunChannelCallLinkRegression(stock, stockWindow);
+	ReportCallRegressionCheckpoint("blocked stock starts complete");
+	stock->mtp().dcOptions().constructUnenrolled();
+	const auto stockOptionsRestored
+		= stock->mtp().dcOptions().constructFromSerialized(stockDcOptions);
+	nativeLifecycleResults->Report(
+		"stock-blocked-call-policy",
+		stockBlockedCallStartPassed && stockBlockedChannelLinkPassed
+			&& stockOptionsRestored
+			&& !shouldInjectFailure("stock-blocked-call-policy"));
+	if (!stockOptionsRestored) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-stock-blocked-call-policy");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(
+			"could not restore stock DC options after blocked-call regression");
+	}
+	nativeLifecycleResults->StartCase("pinned-blocked-call-policy");
+	pinned->mtp().dcOptions().constructBlocked();
+	const auto pinnedBlockedCallStartPassed
+		= pinned->local().hasStoredCustomServer()
+		  && pinned->mtp().dcOptions().blocked()
+		  && !pinned->mtp().dcOptions().hasCustomServer()
+		  && RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
+											 false);
+	const auto pinnedBlockedChannelLinkPassed
+		= RunChannelCallLinkRegression(pinned, pinnedWindow);
+	ReportCallRegressionCheckpoint("blocked pinned starts complete");
+	pinned->mtp().dcOptions().constructUnenrolled();
+	const auto pinnedOptionsRestored
+		= pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions);
+	nativeLifecycleResults->Report(
+		"pinned-blocked-call-policy",
+		pinnedBlockedCallStartPassed && pinnedBlockedChannelLinkPassed
+			&& pinnedOptionsRestored
+			&& !shouldInjectFailure("pinned-blocked-call-policy"));
+	if (!pinnedOptionsRestored) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-pinned-blocked-call-policy");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(
+			"could not restore pinned DC options after blocked-call regression");
+	}
+	nativeLifecycleResults->StartCase("conference-link-call-preservation");
+	const auto conferenceLinkCallPreserved
+		= RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
+													stockCall)
+		  && !shouldInjectFailure("conference-link-call-preservation");
+	nativeLifecycleResults->Report("conference-link-call-preservation",
+								   conferenceLinkCallPreserved);
+	ReportCallRegressionCheckpoint("conference preservation complete");
+	CallsInstanceRegressionAccess::RemoveStockCall(&calls, stockCall);
+	nativeLifecycleResults->StartCase("call-links-and-settings");
+	const auto callLinksAndSettingsPassed
+		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
+	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
+	nativeLifecycleResults->Report(
+		"call-links-and-settings",
+		callLinksAndSettingsPassed && settingsLayerClosed
+			&& !shouldInjectFailure("call-links-and-settings"));
+	ReportCallRegressionCheckpoint("call links and settings complete");
 	nativeLifecycleResults->StartCase("settings-search");
 	const auto settingsSearchMatches
 		= SettingsSearchMatchesExpected(&stock->session(), true, true, true)
@@ -7686,10 +7735,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}
 	pinnedController = pinnedWindow->sessionController();
 	stockController = stockWindow->sessionController();
-	if (!pinnedController || !stockController
-		|| (&pinnedController->session() != &pinned->session())
-		|| (&stockController->session() != &stock->session())) {
-		return failPrerequisite(
+	nativeLifecycleResults->StartCase("admin-window-fixtures");
+	const auto adminWindowFixturesPassed
+		= pinnedController && stockController
+		  && (&pinnedController->session() == &pinned->session())
+		  && (&stockController->session() == &stock->session());
+	nativeLifecycleResults->Report("admin-window-fixtures",
+								   adminWindowFixturesPassed);
+	if (!adminWindowFixturesPassed) {
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-admin-window-fixtures");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(
 			"test windows lost their owning sessions after activation checks");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -8051,27 +8109,34 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			liveAdminChat, "stock incremental promotion", true);
 		const auto stockLivePromotionPassed
 			= liveAdminChat->admins.contains(stockSelf)
-			  && livePromotionRightsMatch;
+			  && livePromotionRightsMatch
+			  && !shouldInjectFailure("stock-live-admin-promotion");
 		recordChatCase(
 			"stock-live-admin-promotion", stockLivePromotionPassed,
 			"incremental official basic-group promotion lost admin rights "
 			"or granted creator-only powers");
-		nativeLifecycleResults->StartCase("stock-live-admin-demotion");
-		Data::ApplyChatUpdate(
-			liveAdminChat,
-			MTP_updateChatParticipantAdmin(MTP_long(liveAdminChatId.bare),
-										   MTP_long(selfId.bare),
-										   MTP_boolFalse(), MTP_int(3))
-				.c_updateChatParticipantAdmin());
-		const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
-			liveAdminChat, "stock incremental demotion", false);
-		const auto stockLiveDemotionPassed
-			= !liveAdminChat->admins.contains(stockSelf)
-			  && liveDemotionRightsMatch;
-		recordChatCase(
-			"stock-live-admin-demotion", stockLiveDemotionPassed,
-			"incremental basic-group demotion did not clear admin display "
-			"state");
+		if (stockLivePromotionPassed) {
+			nativeLifecycleResults->StartCase("stock-live-admin-demotion");
+			Data::ApplyChatUpdate(
+				liveAdminChat,
+				MTP_updateChatParticipantAdmin(
+					MTP_long(liveAdminChatId.bare), MTP_long(selfId.bare),
+					MTP_boolFalse(), MTP_int(3))
+					.c_updateChatParticipantAdmin());
+			const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
+				liveAdminChat, "stock incremental demotion", false);
+			const auto stockLiveDemotionPassed
+				= !liveAdminChat->admins.contains(stockSelf)
+				  && liveDemotionRightsMatch;
+			recordChatCase(
+				"stock-live-admin-demotion", stockLiveDemotionPassed,
+				"incremental basic-group demotion did not clear admin display "
+				"state");
+		} else {
+			nativeLifecycleResults->Skip(
+				"stock-live-admin-demotion",
+				"dependency-stock-live-admin-promotion");
+		}
 
 		nativeLifecycleResults->StartCase("custom-live-admin-promotion");
 		const auto customLiveAdminChatId = ChatId(1056);
@@ -8103,29 +8168,36 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			  && customLiveAdminChat->admins.contains(customSelf)
 			  && !customLiveAdminChat->admins.contains(stockSelf)
 			  && customLiveAdminChat->adminRights() == ChatAdminRights()
-			  && customPromotionRightsMatch;
+			  && customPromotionRightsMatch
+			  && !shouldInjectFailure("custom-live-admin-promotion");
 		recordChatCase(
 			"custom-live-admin-promotion", customLivePromotionPassed,
 			"incremental custom-server promotion gained admin rights or "
 			"creator-only powers");
-		nativeLifecycleResults->StartCase("custom-live-admin-demotion");
-		Data::ApplyChatUpdate(
-			customLiveAdminChat,
-			MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
-										   MTP_long(selfId.bare),
-										   MTP_boolFalse(), MTP_int(3))
-				.c_updateChatParticipantAdmin());
-		const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
-			customLiveAdminChat, "custom incremental demotion", false);
-		const auto customLiveDemotionPassed
-			= !customLiveAdminChat->admins.contains(customSelf)
-			  && !customLiveAdminChat->admins.contains(stockSelf)
-			  && customLiveAdminChat->adminRights() == ChatAdminRights()
-			  && customDemotionRightsMatch;
-		recordChatCase(
-			"custom-live-admin-demotion", customLiveDemotionPassed,
-			"incremental custom-server demotion did not clear admin display "
-			"state");
+		if (customLivePromotionPassed) {
+			nativeLifecycleResults->StartCase("custom-live-admin-demotion");
+			Data::ApplyChatUpdate(
+				customLiveAdminChat,
+				MTP_updateChatParticipantAdmin(
+					MTP_long(customLiveAdminChatId.bare), MTP_long(selfId.bare),
+					MTP_boolFalse(), MTP_int(3))
+					.c_updateChatParticipantAdmin());
+			const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
+				customLiveAdminChat, "custom incremental demotion", false);
+			const auto customLiveDemotionPassed
+				= !customLiveAdminChat->admins.contains(customSelf)
+				  && !customLiveAdminChat->admins.contains(stockSelf)
+				  && customLiveAdminChat->adminRights() == ChatAdminRights()
+				  && customDemotionRightsMatch;
+			recordChatCase(
+				"custom-live-admin-demotion", customLiveDemotionPassed,
+				"incremental custom-server demotion did not clear admin display "
+				"state");
+		} else {
+			nativeLifecycleResults->Skip(
+				"custom-live-admin-demotion",
+				"dependency-custom-live-admin-promotion");
+		}
 	} else {
 		for (const auto name : {
 				 "stock-full-list-admin",
@@ -8270,14 +8342,34 @@ StartChatParticipantsRegression(Main::Domain &domain,
 }
 
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
-	if (!ReadOnlyUsernameInputRejectsWordDeletion()) {
-		return FailAccountLifecycleRegression(
-			"read-only username word deletion changed the handle or requests");
-	}
-	if (!TeagramIconChoicePersistsAcrossSettingsReload()) {
-		return FailAccountLifecycleRegression(
-			"Teagram icon choice did not survive settings serialization");
-	}
+	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
+	const auto injectedFailCases
+		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
+			  .split(',', Qt::SkipEmptyParts);
+	const auto shouldInjectFailure = [&](const char *name) {
+		return injectedFailCases.contains(QString::fromLatin1(name));
+	};
+	nativeLifecycleResults->StartCase("username-input");
+	const auto usernameInputPassed
+		= ReadOnlyUsernameInputRejectsWordDeletion()
+		  && !shouldInjectFailure("username-input");
+	nativeLifecycleResults->Report("username-input", usernameInputPassed);
+	nativeLifecycleResults->StartCase("teagram-icon-persistence");
+	const auto teagramIconPersistencePassed
+		= TeagramIconChoicePersistsAcrossSettingsReload()
+		  && !shouldInjectFailure("teagram-icon-persistence");
+	nativeLifecycleResults->Report("teagram-icon-persistence",
+								   teagramIconPersistencePassed);
+	nativeLifecycleResults->StartCase("account-lifecycle-prerequisites");
+	const auto failAccountPrerequisite = [&](const char *reason) {
+		std::fprintf(stderr, "Account lifecycle fixture failed: %s\n", reason);
+		nativeLifecycleResults->Report("account-lifecycle-prerequisites", false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-account-lifecycle-prerequisites");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return 1;
+	};
 	const auto failureVariable
 		= QByteArray("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
 	const auto failWrites
@@ -8286,26 +8378,35 @@ StartChatParticipantsRegression(Main::Domain &domain,
 
 	auto &domain = Core::App().domain();
 	if (!domain.started()) {
-		return FailAccountLifecycleRegression(
+		return failAccountPrerequisite(
 			"application domain did not start");
 	}
 	if (!Core::App().activePrimaryWindow()) {
-		return FailAccountLifecycleRegression(
+		return failAccountPrerequisite(
 			"application did not create the primary window fixture");
 	}
 	if (domain.accounts().size() != 1
 		|| domain.accounts().front().account->sessionExists()) {
-		return FailAccountLifecycleRegression(
+		return failAccountPrerequisite(
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!PrepareProtectedCacheFixtures(&fixtures)
-		|| !RunLegacyCleanupSymlinkRegression(fixtures)) {
+	if (!PrepareProtectedCacheFixtures(&fixtures)) {
+		return failAccountPrerequisite(
+			"could not prepare protected cache fixtures");
+	}
+	nativeLifecycleResults->Report("account-lifecycle-prerequisites", true);
+	nativeLifecycleResults->StartCase("legacy-cleanup-symlink");
+	const auto legacyCleanupPassed
+		= RunLegacyCleanupSymlinkRegression(fixtures)
+		  && !shouldInjectFailure("legacy-cleanup-symlink");
+	nativeLifecycleResults->Report("legacy-cleanup-symlink",
+								   legacyCleanupPassed);
+	if (!legacyCleanupPassed) {
 		std::fprintf(
 			stderr,
 			"Protected storage regression failed: legacy cleanup followed "
 			"a protected account-directory symlink.\n");
-		return 1;
 	}
 
 	// This is the production post-auth caller. It must keep the session
@@ -8317,12 +8418,24 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		0x4341434845504159ULL,
 	};
 	const auto cachePayload = QByteArray("main-1062-cache-regression-payload");
-	if (!CacheCallbackTimeoutIsSafe()) {
-		return FailAccountLifecycleRegression(
-			"cache callback wait mishandled failure or late completion");
-	}
+	nativeLifecycleResults->StartCase("cache-callback-timeout");
+	const auto cacheCallbackTimeoutPassed
+		= CacheCallbackTimeoutIsSafe()
+		  && !shouldInjectFailure("cache-callback-timeout");
+	nativeLifecycleResults->Report("cache-callback-timeout",
+								   cacheCallbackTimeoutPassed);
+	nativeLifecycleResults->StartCase("account-authorization-lifecycle");
+	const auto failAccountLifecycle = [&](const char *reason) {
+		std::fprintf(stderr, "Account lifecycle regression failed: %s\n", reason);
+		nativeLifecycleResults->Report("account-authorization-lifecycle", false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-account-authorization-lifecycle");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return 1;
+	};
 	if (!WriteCachePayload(account, cacheKey, cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not seed the cache payload");
 	}
 	if (!account->sessionExists()
@@ -8331,7 +8444,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !account->mtp().dcOptions().configEnumDcIds().empty())) {
 		// A fresh account is allowed to show enrollment, but it must not
 		// carry the built-in production table while it waits there.
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"fresh account retained production endpoints before enrollment");
 	}
 	// Sender destruction must cancel a refused request before queued delivery.
@@ -8344,13 +8457,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  .fail([&](const MTP::Error &) { ++cancelledFailures; })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"stopped sender did not retain its request");
 		}
 	}
 	QCoreApplication::processEvents();
 	if (cancelledFailures) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"destroyed sender delivered a cancelled request");
 	}
 	auto liveFailures = 0;
@@ -8365,19 +8478,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"paused sender did not retain its request");
 		}
 		QCoreApplication::processEvents();
 		if (sender.pending(requestId) || liveFailures != 1) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"paused request was not rejected locally");
 		}
 	}
 	const auto originalKey = RegressionServerKey();
 	const auto originalFingerprint = originalKey->fingerprint();
 	if (!ConfigurePinnedServer(account, originalKey)) {
-		return FailAccountLifecycleRegression("could not pin the test server");
+		return failAccountLifecycle("could not pin the test server");
 	}
 	account->setSessionUserId(UserId(4242));
 	qputenv(failureVariable.constData(), "1");
@@ -8387,7 +8500,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (published || account->sessionExists()
 		|| account->willHaveSessionUniqueId(nullptr) == 0
 		|| !account->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"post-auth write failure published a session or lost its marker");
 	}
 	qunsetenv(failureVariable.constData());
@@ -8395,22 +8508,22 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// The failed post-auth write already persisted the block marker; leaving
 	// it in place verifies startup restores that durable block.
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after the post-auth write failure");
 	}
 
 	const auto blocked = FindAuthorizationBlockedAccount(domain);
 	if (!blocked || !blocked->mtp().config().blocked()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"post-auth failure did not restore a blocked account");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after blocked account teardown");
 	}
 	const auto stillBlocked = FindAuthorizationBlockedAccount(domain);
 	if (!stillBlocked || !stillBlocked->mtp().config().blocked()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown cleared the durable authorization failure");
 	}
 	const auto restarted = Main::details::CommitServerForget(
@@ -8424,16 +8537,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		[] {});
 	if (!restarted || stillBlocked->local().hasStoredCustomServer()
 		|| stillBlocked->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not durably clear the blocked server state");
 	}
 	if (stillBlocked->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget left the persisted authorization snapshot before restart");
 	}
 
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after Forget");
 	}
 	const auto forgotten
@@ -8445,7 +8558,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| forgotten->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(forgotten)
 		|| !forgotten->mtp().dcOptions().configEnumDcIds().empty()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not restart unenrolled without auth data or endpoints");
 	}
 	auto pausedFailures = 0;
@@ -8460,12 +8573,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				  })
 				  .send();
 		if (!sender.pending(requestId)) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"unenrolled sender did not retain its request");
 		}
 		QCoreApplication::processEvents();
 		if (sender.pending(requestId) || pausedFailures != 1) {
-			return FailAccountLifecycleRegression(
+			return failAccountLifecycle(
 				"unenrolled request was not rejected locally");
 		}
 	}
@@ -8473,7 +8586,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto initialKey = RegressionAuthKey(0x11);
 	forgotten->mtp().dcPersistentKeyChanged(2, initialKey);
 	if (!ConfigurePinnedServer(forgotten, originalKey)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
@@ -8489,7 +8602,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			forgotten->session().data().cache(),
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"matching server and user identity did not reuse the retained cache payload");
 	}
 	forgotten->mtp().resume();
@@ -8497,14 +8610,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after active account teardown");
 	}
 	auto active = not_null<Main::Account*>(
 		domain.accounts().front().account.get());
 	if (!active->sessionExists() || !HasAuthKey(active, finalKeyId)
 		|| !active->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"active teardown did not persist its final authorization snapshot");
 	}
 
@@ -8512,7 +8625,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	active->mtp().dcPersistentKeyChanged(2, teardownFailureKey);
 	qputenv(failureVariable.constData(), "1");
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after teardown-only authorization failure");
 	}
 	qunsetenv(failureVariable.constData());
@@ -8520,42 +8633,42 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!failedTeardown
 		|| !failedTeardown->mtp().config().blocked()
 		|| !failedTeardown->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"active teardown-only failure did not block the next startup");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	if (!failedTeardown->local().writeMtpAuthorizationFailure()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not rewrite the retained authorization failure marker");
 	}
 	const auto markerRewriteAttempts = GetLifecycleWriteCountsForRegressionTest();
 	if (markerRewriteAttempts.authorizationSnapshot != 0
 		|| markerRewriteAttempts.authorizationFailureMarker != 1
 		|| markerRewriteAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"authorization failure marker observer missed an identical-value rewrite");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	auto blockedTeardownAttempts = LifecycleWriteCountsForRegressionTest();
 	if (!RestartDomain(domain, &blockedTeardownAttempts)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart after blocked teardown");
 	}
 	if (blockedTeardownAttempts.authorizationSnapshot != 0
 		|| blockedTeardownAttempts.authorizationFailureMarker != 0
 		|| blockedTeardownAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked account teardown attempted an authorization or marker "
 			"write");
 	}
 	failedTeardown = FindAuthorizationBlockedAccount(domain);
 	if (!failedTeardown || !failedTeardown->mtp().config().blocked()
 		|| !failedTeardown->local().mtpAuthorizationWriteFailed()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown changed its durable authorization state");
 	}
 	if (!failedTeardown->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown lost the prior authorization snapshot");
 	}
 	if (!Main::details::CommitServerForget(
@@ -8567,15 +8680,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				.userId = 4242,
 			},
 			[] {})) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not Forget the blocked account after teardown");
 	}
 	if (failedTeardown->local().mtpAuthorizationDataExistsForRegressionTest()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget left the prior authorization snapshot before restart");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not return to enrollment after teardown block");
 	}
 	auto unenrolled = not_null<Main::Account*>(
@@ -8586,11 +8699,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| unenrolled->local().checkServerCacheBinding(originalFingerprint,
 													   4242)
 			   != Storage::ServerCacheBindingStatus::Match) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"Forget did not retain only the cache identity binding");
 	}
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"paused teardown did not complete its restart");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -8598,7 +8711,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!unenrolled->mtp().dcOptions().unenrolled()
 		|| unenrolled->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(unenrolled)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"paused teardown wrote authorization data or a failure marker");
 	}
 
@@ -8608,14 +8721,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			UserId(4242),
 			originalFingerprint,
 			4242)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"changed server fingerprint bypassed cache confirmation");
 	}
 	if (!PersistedCachePayloadMatches(
 			unenrolled,
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"declined fingerprint change damaged the cached payload");
 	}
 	if (!Main::details::CommitServerForget(
@@ -8628,7 +8741,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			},
 			[] {})
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not reset the declined fingerprint change");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -8639,14 +8752,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			UserId(5252),
 			originalFingerprint,
 			4242)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"changed user id bypassed cache confirmation");
 	}
 	if (!PersistedCachePayloadMatches(
 			unenrolled,
 			cacheKey,
 			cachePayload)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"declined user-id change damaged the cached payload");
 	}
 	if (!unenrolled->beginServerReenrollment(
@@ -8654,7 +8767,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			true)
 		|| !unenrolled->local().serverReenrollmentPending()
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"confirmed identity change did not schedule destructive cleanup");
 	}
 	unenrolled = not_null<Main::Account*>(
@@ -8667,13 +8780,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| unenrolled->local().checkServerCacheBinding(
 			originalFingerprint,
 			4242) != Storage::ServerCacheBindingStatus::None) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"confirmed identity change did not discard the old cache binding");
 	}
 
 	unenrolled->local().writeCustomServerBlocked(false);
 	if (!RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restart the synthetic blocked account");
 	}
 	auto blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
@@ -8683,7 +8796,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)
 		|| !blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()
 		|| blockedWithoutAuthorizationFailure->local().customServerPinUnknown()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked startup did not retain its existing marker and empty auth state");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
@@ -8698,7 +8811,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| authorizationAttempts.customServerBlockMarker != 0
 		|| blockedWithoutAuthorizationFailure->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"authorization snapshot observer missed an isolated write attempt");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
@@ -8708,19 +8821,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| markerAttempts.authorizationFailureMarker != 0
 		|| markerAttempts.customServerBlockMarker != 1
 		|| !blockedWithoutAuthorizationFailure->local().hasStoredCustomServer()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"block marker observer missed an identical-value rewrite");
 	}
 	ResetLifecycleWriteCountsForRegressionTest();
 	auto teardownAttempts = LifecycleWriteCountsForRegressionTest();
 	if (!RestartDomain(domain, &teardownAttempts)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown did not complete its restart");
 	}
 	if (teardownAttempts.authorizationSnapshot != 0
 		|| teardownAttempts.authorizationFailureMarker != 0
 		|| teardownAttempts.customServerBlockMarker != 0) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked account teardown attempted an authorization or marker write");
 	}
 	blockedWithoutAuthorizationFailure = not_null<Main::Account*>(
@@ -8728,7 +8841,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!blockedWithoutAuthorizationFailure->mtp().config().blocked()
 		|| blockedWithoutAuthorizationFailure->local().mtpAuthorizationWriteFailed()
 		|| !HasNoAuthorizationState(blockedWithoutAuthorizationFailure)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"blocked teardown wrote authorization data or a failure marker");
 	}
 	if (!Main::details::CommitServerForget(
@@ -8739,7 +8852,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !blockedWithoutAuthorizationFailure->local()
 				.writeMtpAuthorizationFailure()
 		|| !RestartDomain(domain)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not restore a blocked account without custom-pin metadata");
 	}
 	const auto restoredBlocked = FindAuthorizationBlockedAccount(domain);
@@ -8748,16 +8861,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !restoredBlocked->local().mtpAuthorizationWriteFailed()
 		|| restoredBlocked->local().hasStoredCustomServer()
 		|| restoredBlocked->local().customServerPinUnknown()) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"restored blocked account retained custom-pin metadata");
 	}
 	if (!PrepareSyntheticStockAccountForRegression(restoredBlocked)) {
-		return FailAccountLifecycleRegression(
+		return failAccountLifecycle(
 			"could not reset the synthetic account after blocked-state checks");
 	}
 
+	nativeLifecycleResults->Report("account-authorization-lifecycle", true);
 	ReportCallRegressionCheckpoint("account lifecycle setup complete");
-	return StartChatParticipantsRegression(domain, fixtures, std::move(done));
+	return StartChatParticipantsRegression(
+		domain, fixtures, std::move(nativeLifecycleResults), std::move(done));
 }
 
 } // namespace

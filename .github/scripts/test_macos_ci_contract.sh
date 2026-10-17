@@ -555,7 +555,10 @@ grep -Fq 'native_lifecycle_case=settings-search result=FAIL' \
 grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify a later native cache result.'
-grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud,admin-session-identities' \
+grep -Fq 'username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must inject early native failures.'
+grep -Fq 'stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities' \
   "$profile_harness" \
   || contract_fail 'The profile harness must inject failures before and after the collected native checks.'
 grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
