@@ -7866,9 +7866,12 @@ struct NativeLifecycleResults {
 	auto blankController
 		= PrepareBlockedWithoutPinMiniAppFixture(blank, selfId, blankWindow);
 	const auto blankFixtureReady = (blankController != nullptr);
-	const auto cleanupBlank = gsl::finally([&] {
-		if (blank->sessionExists()) {
-			blank->forcedLogOut();
+	const auto blankLifetime = base::make_weak(blank.get());
+	const auto cleanupBlank = gsl::finally([blankLifetime] {
+		if (const auto strong = blankLifetime.get()) {
+			if (strong->sessionExists()) {
+				strong->forcedLogOut();
+			}
 		}
 	});
 	const auto miniAppRegressionPassed

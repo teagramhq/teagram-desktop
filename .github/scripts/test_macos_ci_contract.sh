@@ -624,6 +624,26 @@ awk '
   }
 ' "$native_harness" \
   || contract_fail 'The mini-app case must cancel and close stock webviews on every exit after its first open.'
+awk '
+  /const auto blankFixtureReady = \(blankController != nullptr\)/ {
+    in_blank_fixture_cleanup = 1
+  }
+  in_blank_fixture_cleanup && /const auto blankLifetime = base::make_weak\(blank.get\(\)\)/ {
+    weak_account = NR
+  }
+  in_blank_fixture_cleanup && /cleanupBlank = gsl::finally\(\[blankLifetime\]/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /blankLifetime\.get\(\)/ { weak_check = NR }
+  in_cleanup && /blank->(sessionExists|forcedLogOut)\(\)/ { raw_account_use = 1 }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_blank_fixture_cleanup && /nativeLifecycleResults->StartCase\("settings-deep-link"\)/ { exit }
+  END {
+    exit !(weak_account && cleanup_guard > weak_account && weak_check && !raw_account_use)
+  }
+' "$native_harness" \
+  || contract_fail 'The blocked mini-app cleanup must check a weak account reference before logout.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
