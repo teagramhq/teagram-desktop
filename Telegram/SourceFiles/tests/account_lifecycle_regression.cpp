@@ -2020,7 +2020,7 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
 	for (const auto widget : widgets) {
 		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && wrap->isVisible()
+		if (wrap && !wrap->isHidden()
 			&& matches(wrap->controller()->section())) {
 			return true;
 		}
