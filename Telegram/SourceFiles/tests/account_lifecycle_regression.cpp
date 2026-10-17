@@ -5248,10 +5248,10 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
 	QCoreApplication::processEvents();
-	const auto customHighlightCleared = customLanguageBox
-		&& WaitForRegressionCondition([&] {
-			return customController->highlightControlId().isEmpty();
-		});
+	const auto customHighlightCleared
+		= customLanguageBox && WaitForRegressionCondition([&] {
+			  return customController->highlightControlId().isEmpty();
+		  });
 	if (!customLanguageBox
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
