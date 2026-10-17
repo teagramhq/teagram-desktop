@@ -4753,10 +4753,40 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 				   && Platform::IsMac())
 		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
 		|| !customController->highlightControlId().isEmpty()) {
-		std::fprintf(stderr,
-					 "Translation controls regression failed: custom "
-					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending.\n");
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: custom Language settings "
+			"box=%d highlight_consumed=%d highlight_pending=%d "
+			"button=%d/%d skip=%d/%d platform=%d about=%d/%d "
+			"pack_note=%d/%d chats=%d.\n",
+			bool(customLanguageBox), customHighlightConsumed,
+			!customController->highlightControlId().isEmpty(),
+			customLanguageBox
+				? customLanguageBox
+					  ->translateButtonRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->doNotTranslateRowPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox
+					  ->platformTranslationRowPresentForRegressionTest()
+				: false,
+			customLanguageBox
+				? customLanguageBox->translationAboutPresentForRegressionTest()
+				: false,
+			customHasProvider,
+			customLanguageBox
+				? customLanguageBox->platformPackNotePresentForRegressionTest()
+				: false,
+			(customProviderWithPlatformOff
+				 == Ui::details::TranslateProviderChoice::Platform
+			 && Platform::IsMac()),
+			customLanguageBox
+				? customLanguageBox->translateChatsRowPresentForRegressionTest()
+				: false);
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
