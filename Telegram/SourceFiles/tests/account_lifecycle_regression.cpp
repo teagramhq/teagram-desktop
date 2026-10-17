@@ -4139,6 +4139,14 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 
 	// A previously custom-pinned account can be restored into a blocked
 	// config when its stored pin is unreadable; the durable marker retains it.
+	auto pinnedServerRestored = false;
+	const auto restorePinnedServerOnExit = gsl::finally([&] {
+		if (!pinnedServerRestored) {
+			const auto restored
+				= ConfigurePinnedServer(pinned, RegressionServerKey());
+			Expects(restored);
+		}
+	});
 	pinned->local().writeCustomServerBlocked(false);
 	pinned->mtp().dcOptions().constructBlocked();
 	if (!pinned->mtp().config().blocked()
@@ -4194,6 +4202,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			pinned->mtp().dcOptions().blocked());
 		return false;
 	}
+	pinnedServerRestored = true;
 
 	// Deferred resolution, completed on demand. The seam runs the production
 	// completion with its real guards: it opens for a live window of the

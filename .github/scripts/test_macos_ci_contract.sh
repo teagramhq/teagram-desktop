@@ -579,6 +579,28 @@ for independent_case in \
   ' "$native_harness" \
     || contract_fail "$independent_case must run after mini-app-open completes."
 done
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /restorePinnedServerOnExit = gsl::finally/ {
+    cleanup_guard = NR
+  }
+  in_mini_app && /ConfigurePinnedServer\(pinned, RegressionServerKey\(\)\)/ {
+    if (cleanup_guard && !blocked_setup && NR > cleanup_guard) {
+      cleanup_restore = NR
+    }
+    if (blocked_setup && NR > blocked_setup) {
+      normal_restore = NR
+    }
+  }
+  in_mini_app && /pinned->mtp\(\)\.dcOptions\(\)\.constructBlocked\(\)/ {
+    blocked_setup = NR
+  }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cleanup_restore < blocked_setup && normal_restore)
+  }
+' "$native_harness" \
+  || contract_fail 'The custom-plus-blocked mini-app fixture must restore the pinned server on early return.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
