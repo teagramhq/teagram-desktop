@@ -7839,10 +7839,11 @@ struct NativeLifecycleResults {
 					 "Mini-app open regression: restored blocked fixture could "
 					 "not be prepared.\n");
 	}
-	const auto miniAppPassed = restoredBlockedFixtureReady
-		&& RunMiniAppOpenRefusalRegression(
-			app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
-			pinnedWindow, blankWindow);
+	const auto miniAppPassed
+		= restoredBlockedFixtureReady
+		  && RunMiniAppOpenRefusalRegression(
+			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+			  pinnedWindow, blankWindow);
 	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
 	nativeLifecycleResults->StartCase("chatlist-invite-check");
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
