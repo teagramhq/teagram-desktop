@@ -449,9 +449,14 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
 for native_case in \
+  settings-search \
+  session-window-lifecycle \
   translation-controls \
   manage-controls \
   mini-app-open \
+  folder-crud \
+  stock-basic-group-creator \
+  pinned-basic-group-creator \
   authenticated-cache-file-symlinks \
   post-open-cache \
   post-open-media-cache; do
@@ -462,12 +467,23 @@ grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
   || contract_fail 'The native lifecycle harness must support a deliberate early-case failure.'
 grep -Fq 'native_lifecycle_cases_failed=' "$native_harness" \
   || contract_fail 'The native lifecycle harness must summarize failed case names.'
-grep -Fq 'native_lifecycle_case=translation-controls result=FAIL' \
+grep -Fq 'dependency-chat-participants-prerequisites' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must name skipped prerequisite-dependent cases.'
+grep -Fq 'dependency-pinned-migration-fixture' "$native_harness" \
+  || contract_fail 'The native lifecycle harness must name migration skips when its fixture fails.'
+grep -Fq 'native_lifecycle_case=settings-search result=FAIL' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify the injected native failure.'
 grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify a later native cache result.'
+grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud' \
+  "$profile_harness" \
+  || contract_fail 'The profile harness must inject failures before and after the collected native checks.'
+grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
+  || contract_fail 'The profile harness must verify that a folder failure is collected.'
+grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
+  || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
 require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
   "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success'"
 require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \

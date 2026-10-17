@@ -6182,19 +6182,130 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 StartChatParticipantsRegression(Main::Domain &domain,
 								const ProtectedCacheFixtures &fixtures,
 								Fn<void(int)> done) {
+	struct NativeLifecycleResults {
+		std::vector<const char *> failures;
+		QStringList reported;
+		bool summaryReported = false;
+		bool asyncPending = false;
+		bool finalized = false;
+
+		void Report(const char *name, bool passed) {
+			std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
+						 passed ? "PASS" : "FAIL");
+			reported.push_back(QString::fromLatin1(name));
+			if (!passed) {
+				failures.push_back(name);
+			}
+		}
+
+		void Skip(const char *name, const char *reason) {
+			std::fprintf(stderr,
+						 "native_lifecycle_case=%s result=SKIP reason=%s\n",
+						 name, reason);
+			reported.push_back(QString::fromLatin1(name));
+		}
+
+		void SkipUnreported(const char *reason) {
+			static constexpr const char *kCases[] = {
+				"settings-search",
+				"session-window-lifecycle",
+				"translation-controls",
+				"manage-controls",
+				"mini-app-open",
+				"chatlist-invite-check",
+				"authenticated-cache-file-symlinks",
+				"post-open-cache",
+				"post-open-media-cache",
+				"pinned-chat-participants",
+				"folder-crud",
+				"bio-editor-target",
+				"admin-session-identities",
+				"stock-basic-group-creator",
+				"pinned-basic-group-creator",
+				"stock-full-list-admin",
+				"stock-full-list-demotion",
+				"custom-full-list-admin",
+				"stock-live-admin-promotion",
+				"stock-live-admin-demotion",
+				"custom-live-admin-promotion",
+				"custom-live-admin-demotion",
+				"pinned-migration-fixture",
+				"post-close-window-lifecycle",
+				"chat-migration",
+				"protected-cache-cleanup",
+			};
+			for (const auto name : kCases) {
+				if (!reported.contains(QString::fromLatin1(name))) {
+					Skip(name, reason);
+				}
+			}
+		}
+
+		[[nodiscard]] bool Passed() const { return failures.empty(); }
+
+		void ReportSummary() {
+			if (summaryReported) {
+				return;
+			}
+			summaryReported = true;
+			std::fprintf(stderr, "native_lifecycle_cases_failed=");
+			if (failures.empty()) {
+				std::fprintf(stderr, "none\n");
+				return;
+			}
+			for (auto i = 0; i != int(failures.size()); ++i) {
+				std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
+			}
+			std::fprintf(stderr, "\n");
+		}
+
+		~NativeLifecycleResults() {
+			if (!asyncPending && !finalized) {
+				Report("chat-participants-prerequisites", false);
+				SkipUnreported("dependency-chat-participants-prerequisites");
+			}
+			ReportSummary();
+		}
+	};
+	const auto nativeLifecycleResults
+		= std::make_shared<NativeLifecycleResults>();
+	const auto injectedFailCases
+		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
+			  .split(',', Qt::SkipEmptyParts);
+	const auto shouldInjectFailure = [&](const char *name) {
+		return injectedFailCases.contains(QString::fromLatin1(name));
+	};
+	const auto recordChatCase = [nativeLifecycleResults](const char *name,
+														 bool passed,
+														 const char *reason) {
+		nativeLifecycleResults->Report(name, passed);
+		if (!passed) {
+			std::fprintf(stderr, "Chat participants regression failed: %s\n",
+						 reason);
+		}
+	};
+	const auto failPrerequisite = [&](const char *reason) {
+		nativeLifecycleResults->Report("chat-participants-prerequisites",
+									   false);
+		nativeLifecycleResults->SkipUnreported(
+			"dependency-chat-participants-prerequisites");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		return FailChatParticipantsRegression(reason);
+	};
 	ReportCallRegressionCheckpoint("chat participant regression begin");
 	Api::Updates::setDeferredOnlineUpdatePhaseForRegressionTest(
 		DeferredOnlineUpdatePhase::Setup);
 	if (Core::MacProtectedPath::IntegrationTestActive()
 		&& !RunCacheConcurrentDeletionRegression()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"cache scan rejected an entry removed after enumeration");
 	}
 	const auto requiredAccounts
 		= Core::MacProtectedPath::IntegrationTestActive() ? 3 : 2;
 	if (domain.accounts().size()
 		> Main::Domain::kPremiumMaxAccounts - requiredAccounts) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"not enough account slots for isolated cache regression sessions");
 	}
 	const auto selfId = UserId(1);
@@ -6207,7 +6318,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto refusedDownload = FullMsgId(peerFromUser(selfId), MsgId(12345));
 	if (!StoreRefusedDownloadHistory(stock, fixtures.cacheRoot + "/marker",
 									 refusedDownload)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not persist the refused download-history fixture");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()
@@ -6215,13 +6326,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			|| !QDir().mkpath(QFileInfo(stockMediaCachePath).absolutePath())
 			|| !QFile::link(fixtures.cacheRoot, stockCachePath)
 			|| !QFile::link(fixtures.mediaCacheRoot, stockMediaCachePath))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create protected cache-root symlink fixtures");
 	}
 	if (!stock->createSession(RegressionUser(selfId, true, QString()),
 							  std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
-			"could not create the stock test session");
+		return failPrerequisite("could not create the stock test session");
 	}
 	const auto stockWasPremium = stock->session().premium();
 	const auto restoreStockPremium = gsl::finally([&] {
@@ -6229,13 +6339,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											stockWasPremium));
 	});
 	if (!SetRegressionSessionPremium(&stock->session(), selfId, true)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not enable Premium for stock Settings search checks");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		if (!RunRefusedDownloadHistoryRegression(&stock->session(),
 												 refusedDownload)) {
-			return FailChatParticipantsRegression(
+			return failPrerequisite(
 				"refused persisted download history was published");
 		}
 		std::fprintf(
@@ -6249,7 +6359,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				stockMediaCachePath, "Tests::ProtectedCache::media-root")
 			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
 			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
-			return FailChatParticipantsRegression(
+			return failPrerequisite(
 				"authenticated session accessed a protected cache root");
 		}
 	}
@@ -6261,7 +6371,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
 	if (stock->session().user()->isLoaded()
 		|| !stockChat->participants.empty()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock session accepted phone-free self in full chat info");
 	}
 	stock->session().api().processFullPeer(
@@ -6269,15 +6379,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
 	if (!stock->session().user()->isLoaded()
 		|| !HasExpectedParticipants(stockChat, UserId(2))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock session with phone did not load creator and members");
 	}
 
 	const auto pinned = domain.add(MTP::Environment::Production);
 	pinned->mtp().stopForServerEnrollment();
 	if (!ConfigurePinnedServer(pinned, RegressionServerKey())) {
-		return FailChatParticipantsRegression(
-			"could not pin the custom test server");
+		return failPrerequisite("could not pin the custom test server");
 	}
 	pinned->setSessionUserId(selfId);
 	const auto pinnedCachePath = pinned->local().cachePath();
@@ -6292,16 +6401,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 							pinnedMediaCachePath + "/0")
 			|| !QFile::link(fixtures.mediaCacheLeaf + "/marker",
 							pinnedMediaCachePath + "/version"))) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create protected cache-file symlink fixtures");
 	}
 	if (!pinned->createSession(RegressionUser(selfId, true, QString()),
 							   std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
-			"could not create the pinned test session");
+		return failPrerequisite("could not create the pinned test session");
 	}
 	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
 	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
@@ -6332,18 +6440,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	pinned->mtp().stopForServerEnrollment();
 	const auto primary = app.activePrimaryWindow();
 	if (!primary || !primary->isPrimary()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary window disappeared before online-update lifetime "
 			"regression");
 	}
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary window did not switch to the stock session");
 	}
 	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"main-thread queue did not drain after the initial session switch");
 	}
 	QCoreApplication::processEvents();
@@ -6351,7 +6459,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			*primary, *stock, *pinned, DeferredOnlineUpdateMutation::Remove,
 			"remove-dispatch", "mutation-remove-deferred",
 			SwitchUpdateClassification::MissingDeferred)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"switch fixture did not reject the removed deferred dispatch");
 	}
 	const auto pinnedBeforeRestoreRemoval
@@ -6361,14 +6469,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session()
 		|| !WaitForDeferredSwitchUpdate(
 			pinned->session(), pinnedBeforeRestoreRemoval.switchDeferred + 1)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock after the removed-dispatch mutation");
 	}
 	if (!RunDeferredSwitchMutationRegression(
 			*primary, *stock, *pinned, DeferredOnlineUpdateMutation::Duplicate,
 			"duplicate-dispatch", "mutation-duplicate-deferred",
 			SwitchUpdateClassification::ExtraDeferred)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"switch fixture did not reject the duplicated deferred dispatch");
 	}
 	const auto pinnedBeforeRestoreDuplicate
@@ -6379,7 +6487,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !WaitForDeferredSwitchUpdate(
 			pinned->session(),
 			pinnedBeforeRestoreDuplicate.switchDeferred + 1)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock after the duplicated-dispatch mutation");
 	}
 	const auto stockToPinnedStockUpdates
@@ -6399,7 +6507,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session()
 		|| !stockToPinnedInlineMatches || stockToPinnedInlineStock.total != 0
 		|| stockToPinnedInlinePinned.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock-to-pinned switch did not update only the shown session "
 			"inline");
 	}
@@ -6422,7 +6530,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			pinned->session(),
 			SessionSwitchUpdateCountForTest(stockToPinnedPinnedUpdates) + 1)
 		|| !stockToPinnedDeferredObserved || !stockToPinnedDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock-to-pinned switch did not update the previous session once");
 	}
 	const auto pinnedToStockStockUpdates
@@ -6442,7 +6550,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session()
 		|| !pinnedToStockInlineMatches || pinnedToStockInlineStock.total != 1
 		|| pinnedToStockInlinePinned.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned-to-stock switch did not update only the shown session "
 			"inline");
 	}
@@ -6465,7 +6573,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			pinned->session(),
 			SessionSwitchUpdateCountForTest(pinnedToStockPinnedUpdates) + 1)
 		|| !pinnedToStockDeferredObserved || !pinnedToStockDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned-to-stock switch did not update the previous session once");
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
@@ -6473,11 +6581,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	discarded->setSessionUserId(selfId);
 	if (!discarded->createSession(RegressionUser(selfId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create the previous-session teardown fixture");
 	}
 	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"previous-session teardown fixture did not share the stock user "
 			"id");
 	}
@@ -6504,7 +6612,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session() || !queuedFirstMatches
 		|| stockQueuedFirst.total != 0 || pinnedQueuedFirst.total != 1
 		|| discardedQueuedFirst.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued stock-to-pinned switch missed its inline session update");
 	}
 	primary->showAccount(discarded);
@@ -6524,7 +6632,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &discarded->session() || !queuedSecondMatches
 		|| stockQueuedSecond.total != 0 || pinnedQueuedSecond.total != 1
 		|| discardedQueuedSecond.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued pinned-to-teardown switch missed its inline session "
 			"update");
 	}
@@ -6544,7 +6652,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &stock->session() || !queuedThirdMatches
 		|| stockQueuedThird.total != 1 || pinnedQueuedThird.total != 1
 		|| discardedQueuedThird.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
@@ -6552,7 +6660,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
 	if (!discardedController) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not create a controller for deferred call-link teardown");
 	}
 	const auto destroyedSessionChannelId = ChannelId(3051);
@@ -6569,18 +6677,18 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
 	if (discarded->sessionExists()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"previous-session teardown fixture was not destroyed");
 	}
 	ReportCallRegressionCheckpoint("destroyed-session logout complete");
 	if (!WaitForMainQueueBarrier()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"main-thread queue did not drain after call-link session "
 			"destruction");
 	}
 	if (!WaitForBindingFilesRemovedForRegression(
 			discardedServerCacheBindingFiles)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"previous-session logout did not clear its cache binding");
 	}
 	QCoreApplication::processEvents();
@@ -6602,7 +6710,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto destroyedSessionEvents = GetCallStartRegressionSnapshotForTest();
 	if (!destroyedSessionEvents.navigationEvents.empty()
 		|| !destroyedSessionEvents.openedPeers.empty()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"deferred call-link callback ran after session destruction");
 	}
 	if (!WaitForMainQueueBarrier()
@@ -6613,7 +6721,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2)
 		|| !queuedStockDeferredObserved || !queuedPinnedDeferredObserved
 		|| !queuedDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"queued live and destroyed-session updates reached the wrong "
 			"sessions");
 	}
@@ -6622,7 +6730,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	stock->mtp().dcOptions().constructBlocked();
 	const auto replacedController = primary->sessionController();
 	if (!replacedController) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary stock controller disappeared before deferred link test");
 	}
 	const auto replacedControllerWeak = base::make_weak(replacedController);
@@ -6641,11 +6749,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	stock->mtp().dcOptions().constructUnenrolled();
 	if (!stock->mtp().dcOptions().constructFromSerialized(
 			stockDcOptionsBeforeDeferredLink)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock DC options after deferred link test");
 	}
 	if (!WaitForMainQueueBarrier()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"main-thread queue did not drain after call-link session "
 			"replacement");
 	}
@@ -6655,16 +6763,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| primary->maybeSession() != &stock->session()
 		|| !GetCallStartRegressionSnapshotForTest().navigationEvents.empty()
 		|| !GetCallStartRegressionSnapshotForTest().openedPeers.empty()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"deferred call-link callback ran after session replacement");
 	}
 	auto pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned window was not mapped before the primary closed");
 	}
 	if (!stock->sessionExists() || !pinned->sessionExists()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"live previous-session fixtures disappeared before primary close");
 	}
 	// The pinned account owns a window, so the pinned id is taken. Switching
@@ -6699,7 +6807,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(pinnedWindow->id()) != pinnedWindow
 		|| !collisionInlineMatches || stockCollisionInline.total != 0
 		|| pinnedCollisionInline.total != 0) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary switch to an account owning a window left an account "
 			"lookup on a window bound to another account");
 	}
@@ -6719,7 +6827,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		{0, 0});
 	// clang-format on
 	if (!collisionDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"window collision produced a switch-caused online update");
 	}
 	// Free the pinned id, then run the queued-switch teardown on a switch that
@@ -6731,7 +6839,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != primary
 		|| app.activePrimaryWindow() != primary) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"closed account window stayed mapped to the pinned account");
 	}
 	// A window for a brand-new account, which has no session, keeps one window
@@ -6751,12 +6859,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			app.separateWindowFor(blank) == blankWindow,
 			static_cast<void *>(blankWindow->sessionController()));
 		// clang-format on
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blank window fixture was not mapped before the close");
 	}
 	domain.activate(blank.get());
 	if (&domain.active() != blank.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blank account was not active before the primary close");
 	}
 	const auto stockSetupBeforeCompletion
@@ -6842,7 +6950,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 						 "Setup callback update deltas did not match the "
 						 "deferred dispatch counts.\n");
 		}
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"setup deferred switch callbacks remained outstanding at close "
 			"baseline");
 	}
@@ -6900,7 +7008,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (primary->maybeSession() != &pinned->session()
 		|| !closeSwitchInlineMatches || stockCloseSwitchInline.total != 0
 		|| pinnedCloseSwitchInline.total != 1) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock-to-pinned close switch missed its inline session update");
 	}
 	// The switch is registered under the pinned id, not the stock one it came
@@ -6909,7 +7017,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| app.separateWindowFor(stock) != nullptr
 		|| app.separateWindowFor(primary->id()) != primary
 		|| &primary->account() != pinned.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"allowed primary switch kept the window keyed to its old account");
 	}
 	// The close is synchronous, before any dispatch of the queued update.
@@ -6917,7 +7025,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (app.separateWindowFor(pinned) != nullptr
 		|| app.separateWindowFor(stock) != nullptr
 		|| app.separateWindowFor(blank) != blankWindow) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"closed primary window remained mapped to an account");
 	}
 	// clang-format off
@@ -6928,7 +7036,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	// clang-format on
 	phase.restore();
 	if (&domain.active() != blank.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"primary close changed the active blank account");
 	}
 	const auto stockCloseSwitchDispatches = DeferredOnlineUpdateDispatchDelta(
@@ -7001,14 +7109,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!closeDispatchesSettled || !closeSwitchEnqueuesMatch
 		|| !closeCompletionDispatchCountsMatch || !closeDispatchCountsMatch
 		|| !closeSwitchDeferredMatches) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"deferred primary-close update was not delivered once "
 			"to the previous session with no pinned-session dispatch");
 	}
 	pinnedWindow = app.ensureSeparateWindowFor(pinned);
 	if (app.separateWindowFor(pinned) != pinnedWindow
 		|| &pinnedWindow->account() != pinned.get()) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"pinned window was not remapped after the primary closed");
 	}
 
@@ -7404,7 +7512,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stderr, "Separate window construction failed: stock=%p pinned=%p\n",
 			static_cast<const void *>(stockWindow),
 			static_cast<const void *>(pinnedWindow));
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"session feature capabilities crossed account or window "
 			"boundaries");
 	}
@@ -7413,14 +7521,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	}));
 	const auto stockUser = stock->session().data().userLoaded(UserId(2));
 	if (!stockUser) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"stock call-start regression user was not loaded");
 	}
 	auto &calls = app.calls();
 	const auto stockCall
 		= CallsInstanceRegressionAccess::InstallStockCall(&calls, stockUser);
 	if (!stockCall) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not install a live stock call for refusal regressions");
 	}
 	const auto removeStockCall = gsl::finally([&] {
@@ -7432,12 +7540,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!RunCallsInstanceStartRegression(stock, stockWindow, stockCall, true)
 		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
 											false)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"Calls::Instance starts crossed stock and pinned session policies");
 	}
 	if (!RunIncomingCallAnswerRegression(stock, true)
 		|| !RunIncomingCallAnswerRegression(pinned, false)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"incoming calls bypassed the unsupported-session gate");
 	}
 	ReportCallRegressionCheckpoint("stock and pinned call starts complete");
@@ -7446,17 +7554,17 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| !stock->mtp().dcOptions().blocked()
 		|| !RunCallsInstanceStartRegression(stock, stockWindow, stockCall,
 											false)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blocked unpinned session reached a Calls::Instance start path");
 	}
 	if (!RunChannelCallLinkRegression(stock, stockWindow)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blocked unpinned channel link bypassed the call-support gate");
 	}
 	ReportCallRegressionCheckpoint("blocked stock starts complete");
 	stock->mtp().dcOptions().constructUnenrolled();
 	if (!stock->mtp().dcOptions().constructFromSerialized(stockDcOptions)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"could not restore stock DC options after blocked-call regression");
 	}
 	pinned->mtp().dcOptions().constructBlocked();
@@ -7465,11 +7573,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		|| pinned->mtp().dcOptions().hasCustomServer()
 		|| !RunCallsInstanceStartRegression(pinned, pinnedWindow, stockCall,
 											false)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blocked pinned session reached a Calls::Instance start path");
 	}
 	if (!RunChannelCallLinkRegression(pinned, pinnedWindow)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"blocked pinned channel link bypassed the call-support gate");
 	}
 	ReportCallRegressionCheckpoint("blocked pinned starts complete");
@@ -7477,7 +7585,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!pinned->mtp().dcOptions().constructFromSerialized(pinnedDcOptions)
 		|| !RunConferenceLinkPreservesStockCallRegression(pinned, pinnedWindow,
 														  stockCall)) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"unsupported conference link replaced the stock call");
 	}
 	ReportCallRegressionCheckpoint("conference preservation complete");
@@ -7486,7 +7594,7 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= RunCallLinkAndSettingsRegression(pinned, pinnedWindow);
 	const auto settingsLayerClosed = !pinnedWindow->isLayerShown();
 	if (!callLinksAndSettingsPassed || !settingsLayerClosed) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"call links or settings links bypassed the pinned-session gate or "
 			"left a settings layer open");
 	}
@@ -7496,70 +7604,41 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"test windows lost their owning sessions before folder smoke "
 			"tests");
 	}
-	if (!windowsMatch("initial separate windows") || !activateAndCheck(false)
-		|| !activateAndCheck(true)) {
-		return FailChatParticipantsRegression(
-			"session feature capabilities crossed account or window "
-			"boundaries");
+	const auto settingsSearchMatches
+		= SettingsSearchMatchesExpected(&stock->session(), true, true, true)
+		  && SettingsSearchMatchesExpected(&pinned->session(), false, false,
+										   false)
+		  && SettingsSearchMatchesExpected(&stock->session(), true, true, true)
+		  && !shouldInjectFailure("settings-search");
+	nativeLifecycleResults->Report("settings-search", settingsSearchMatches);
+	const auto initialWindowsMatch = windowsMatch("initial separate windows");
+	const auto stockFirstActivationPassed = activateAndCheck(false);
+	const auto pinnedFirstActivationPassed = activateAndCheck(true);
+	const auto windowLifecyclePassed = initialWindowsMatch
+									   && stockFirstActivationPassed
+									   && pinnedFirstActivationPassed;
+	nativeLifecycleResults->Report("session-window-lifecycle",
+								   windowLifecyclePassed);
+	if (!windowLifecyclePassed) {
+		std::fprintf(stderr,
+					 "Chat participants regression failed: session feature "
+					 "capabilities crossed account or window boundaries\n");
 	}
 	pinnedController = pinnedWindow->sessionController();
 	stockController = stockWindow->sessionController();
 	if (!pinnedController || !stockController
 		|| (&pinnedController->session() != &pinned->session())
 		|| (&stockController->session() != &stock->session())) {
-		return FailChatParticipantsRegression(
+		return failPrerequisite(
 			"test windows lost their owning sessions after activation checks");
 	}
-	struct NativeLifecycleResults {
-		std::vector<const char *> failures;
-		bool summaryReported = false;
-
-		void Report(const char *name, bool passed) {
-			std::fprintf(stderr, "native_lifecycle_case=%s result=%s\n", name,
-						 passed ? "PASS" : "FAIL");
-			if (!passed) {
-				failures.push_back(name);
-			}
-		}
-
-		void Skip(const char *name, const char *reason) {
-			std::fprintf(stderr,
-						 "native_lifecycle_case=%s result=SKIP reason=%s\n",
-						 name, reason);
-		}
-
-		[[nodiscard]] bool Passed() const { return failures.empty(); }
-
-		void ReportSummary() {
-			if (summaryReported) {
-				return;
-			}
-			summaryReported = true;
-			std::fprintf(stderr, "native_lifecycle_cases_failed=");
-			if (failures.empty()) {
-				std::fprintf(stderr, "none\n");
-				return;
-			}
-			for (auto i = 0; i != int(failures.size()); ++i) {
-				std::fprintf(stderr, "%s%s", (i == 0) ? "" : ",", failures[i]);
-			}
-			std::fprintf(stderr, "\n");
-		}
-
-		~NativeLifecycleResults() { ReportSummary(); }
-	};
-	const auto nativeLifecycleResults
-		= std::make_shared<NativeLifecycleResults>();
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	const auto failTranslationControls
-		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
-		  == u"translation-controls"_q;
 	const auto translationControlsPassed
-		= !failTranslationControls
+		= !shouldInjectFailure("translation-controls")
 		  && RunTranslationControlsLifecycleRegression(stockController,
 													   pinnedController);
 	nativeLifecycleResults->Report("translation-controls",
@@ -7668,22 +7747,31 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		= not_null<PeerData *>(static_cast<PeerData *>(&*pinnedChat));
 	pinned->session().api().processFullPeer(
 		pinnedPeer, RegressionChatFullReply(chatId, 1, QString(), UserId(2)));
-	if (!pinned->session().user()->isLoaded()
-		|| !HasExpectedParticipants(pinnedChat, UserId(2))) {
-		return FailChatParticipantsRegression(
-			"pinned phone-free self did not retain creator and members");
-	}
-	if (!Settings::RunFoldersCrudRegressionForTest(
+	const auto pinnedParticipantsPassed
+		= pinned->session().user()->isLoaded()
+		  && HasExpectedParticipants(pinnedChat, UserId(2));
+	nativeLifecycleResults->Report("pinned-chat-participants",
+								   pinnedParticipantsPassed);
+	const auto stockFolderCrudPassed
+		= Settings::RunFoldersCrudRegressionForTest(
 			stockController, pinnedController,
 			stock->session().data().history(stockPeer),
-			Settings::FolderCrudRegressionSide::Stock)
-		|| !Settings::RunFoldersCrudRegressionForTest(
+			Settings::FolderCrudRegressionSide::Stock);
+	const auto pinnedFolderCrudPassed
+		= Settings::RunFoldersCrudRegressionForTest(
 			pinnedController, stockController,
 			pinned->session().data().history(pinnedPeer),
-			Settings::FolderCrudRegressionSide::Pinned)) {
-		return FailChatParticipantsRegression(
-			"ordinary folder create, rename, save, or remove did not stay "
-			"in its owning session");
+			Settings::FolderCrudRegressionSide::Pinned);
+	const auto folderCrudPassed = stockFolderCrudPassed
+								  && pinnedFolderCrudPassed
+								  && !shouldInjectFailure("folder-crud");
+	nativeLifecycleResults->Report("folder-crud", folderCrudPassed);
+	if (!folderCrudPassed) {
+		std::fprintf(
+			stderr,
+			"Chat participants regression failed: ordinary folder "
+			"create, rename, save, or remove did not stay in its owning "
+			"session\n");
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	const auto stockBioEditorTarget
@@ -7692,21 +7780,30 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto pinnedBioEditorTarget
 		= Settings::InformationBioEditorTargetPresentForRegressionTest(
 			pinnedController);
-	if (!stockBioEditorTarget || pinnedBioEditorTarget) {
-		std::fprintf(stderr, "Bio editor target mismatch: stock=%d pinned=%d\n",
-					 stockBioEditorTarget, pinnedBioEditorTarget);
-		return FailChatParticipantsRegression(
-			"bio editor target did not follow account support");
-	}
+	const auto bioEditorTargetPassed
+		= stockBioEditorTarget && !pinnedBioEditorTarget;
+	recordChatCase("bio-editor-target", bioEditorTargetPassed,
+				   "bio editor target did not follow account support");
+#else
+	nativeLifecycleResults->Skip("bio-editor-target",
+								 "lifecycle-regression-disabled");
 #endif
 	const auto stockSelf = stock->session().user();
 	const auto customSelf = pinned->session().user();
+	const auto adminSessionIdentitiesMatch
+		= stockSelf != customSelf && stockSelf->id == customSelf->id
+		  && &stockSelf->session() == &stock->session()
+		  && &customSelf->session() == &pinned->session();
+	recordChatCase("admin-session-identities", adminSessionIdentitiesMatch,
+				   "basic-group admin fixture identities are not distinct "
+				   "session-owned "
+				   "objects with the same user id");
 	if (stockSelf == customSelf || stockSelf->id != customSelf->id
 		|| &stockSelf->session() != &stock->session()
 		|| &customSelf->session() != &pinned->session()) {
-		return FailChatParticipantsRegression(
-			"basic-group admin fixture identities are not distinct "
-			"session-owned objects with the same user id");
+		std::fprintf(stderr,
+					 "basic-group admin fixture identities are not distinct "
+					 "session-owned objects with the same user id\n");
 	}
 	const auto actionChatId = ChatId(1052);
 	const auto stockActionChat = stock->session().data().chat(actionChatId);
@@ -7716,13 +7813,13 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		stockActionPeer, RegressionStockChatFullReply(
 							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
-	if (!HasExpectedParticipants(stockActionChat, selfId)
-		|| !stockActionChat->canEditInformation()
-		|| !stockActionChat->canAddMembers() || !stockActionChat->canAddAdmins()
-		|| !stockActionChat->canBanMembers()) {
-		return FailChatParticipantsRegression(
-			"stock creator lost a supported basic-group action");
-	}
+	const auto stockCreatorPassed
+		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockActionChat->canEditInformation()
+		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
+		  && stockActionChat->canBanMembers();
+	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
+				   "stock creator lost a supported basic-group action");
 
 	const auto pinnedActionChat = pinned->session().data().chat(actionChatId);
 	const auto pinnedActionPeer
@@ -7731,14 +7828,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		pinnedActionPeer,
 		RegressionChatFullReply(actionChatId, 1, QString(), selfId));
 	pinnedActionChat->setFlags(ChatDataFlag::Creator);
-	if (!HasExpectedParticipants(pinnedActionChat, selfId)
-		|| !pinnedActionChat->canEditInformation()
-		|| !pinnedActionChat->canAddMembers()
-		|| !pinnedActionChat->canAddAdmins()
-		|| !pinnedActionChat->canBanMembers()) {
-		return FailChatParticipantsRegression(
-			"pinned creator lost a supported basic-group admin action");
-	}
+	const auto pinnedCreatorPassed
+		= HasExpectedParticipants(pinnedActionChat, selfId)
+		  && pinnedActionChat->canEditInformation()
+		  && pinnedActionChat->canAddMembers()
+		  && pinnedActionChat->canAddAdmins()
+		  && pinnedActionChat->canBanMembers();
+	recordChatCase("pinned-basic-group-creator", pinnedCreatorPassed,
+				   "pinned creator lost a supported basic-group admin action");
 
 	const auto memberActionChatId = ChatId(1053);
 	const auto memberActionChat
@@ -7761,13 +7858,14 @@ StartChatParticipantsRegression(Main::Domain &domain,
 									 UserId(2), true));
 	const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 		adminActionChat, "stock full-list promotion", true);
-	if (!HasExpectedParticipants(adminActionChat, UserId(2))
-		|| !adminActionChat->admins.contains(stockSelf)
-		|| !fullListAdminRightsMatch) {
-		return FailChatParticipantsRegression(
-			"official basic-group admin lost its moderation rights or gained "
-			"creator-only powers");
-	}
+	const auto stockFullListAdminPassed
+		= HasExpectedParticipants(adminActionChat, UserId(2))
+		  && adminActionChat->admins.contains(stockSelf)
+		  && fullListAdminRightsMatch;
+	recordChatCase(
+		"stock-full-list-admin", stockFullListAdminPassed,
+		"official basic-group admin lost its moderation rights or gained "
+		"creator-only powers");
 
 	const auto fullListDemotionChatId = ChatId(1057);
 	const auto fullListDemotionChat
@@ -7780,12 +7878,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 									 u"+10000000001"_q, UserId(2), true));
 	const auto fullListDemotionSeedRightsMatch = BasicGroupAdminRightsMatch(
 		fullListDemotionChat, "stock full-list demotion seed", true);
-	if (!fullListDemotionChat->admins.contains(stockSelf)
-		|| !fullListDemotionSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"full-list demotion fixture did not start with admin moderation "
-			"rights");
-	}
+	const auto fullListDemotionSeedPassed
+		= fullListDemotionChat->admins.contains(stockSelf)
+		  && fullListDemotionSeedRightsMatch;
 	Data::ApplyChatUpdate(
 		fullListDemotionChat,
 		MTP_chatParticipants(
@@ -7806,14 +7901,15 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			MTP_int(2)));
 	const auto fullListDemotionRightsMatch = BasicGroupAdminRightsMatch(
 		fullListDemotionChat, "stock full-list demotion", false);
-	if (!HasExpectedParticipants(fullListDemotionChat, UserId(2))
-		|| fullListDemotionChat->admins.contains(stockSelf)
-		|| fullListDemotionChat->adminRights() != ChatAdminRights()
-		|| !fullListDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"normal-server full-list demotion retained admin rights or "
-			"moderation controls");
-	}
+	const auto fullListDemotionPassed
+		= fullListDemotionSeedPassed
+		  && HasExpectedParticipants(fullListDemotionChat, UserId(2))
+		  && !fullListDemotionChat->admins.contains(stockSelf)
+		  && fullListDemotionChat->adminRights() == ChatAdminRights()
+		  && fullListDemotionRightsMatch;
+	recordChatCase("stock-full-list-demotion", fullListDemotionPassed,
+				   "normal-server full-list demotion retained admin rights or "
+				   "moderation controls");
 
 	const auto customAdminActionChat
 		= pinned->session().data().chat(adminActionChatId);
@@ -7823,26 +7919,26 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		customAdminActionChat->defaultAdminRights(customSelf).flags);
 	const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
 		customAdminActionChat, "custom full-list promotion seed", true);
-	if (customAdminActionChat->adminRights() == ChatAdminRights()
-		|| !customFullListSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"custom full-list promotion fixture did not seed admin rights");
-	}
+	const auto customFullListSeedPassed
+		= customAdminActionChat->adminRights() != ChatAdminRights()
+		  && customFullListSeedRightsMatch;
 	pinned->session().api().processFullPeer(
 		customAdminActionPeer,
 		RegressionChatFullReply(adminActionChatId, 1, u"+10000000001"_q,
 								UserId(2), true));
 	const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
 		customAdminActionChat, "custom full-list promotion", false);
-	if (!HasExpectedParticipants(customAdminActionChat, UserId(2))
-		|| !customAdminActionChat->admins.contains(customSelf)
-		|| customAdminActionChat->admins.contains(stockSelf)
-		|| customAdminActionChat->adminRights() != ChatAdminRights()
-		|| !customAdminRightsMatch) {
-		return FailChatParticipantsRegression(
-			"custom-server basic-group admin gained rights or creator-only "
-			"powers");
-	}
+	const auto customFullListAdminPassed
+		= customFullListSeedPassed
+		  && HasExpectedParticipants(customAdminActionChat, UserId(2))
+		  && customAdminActionChat->admins.contains(customSelf)
+		  && !customAdminActionChat->admins.contains(stockSelf)
+		  && customAdminActionChat->adminRights() == ChatAdminRights()
+		  && customAdminRightsMatch;
+	recordChatCase(
+		"custom-full-list-admin", customFullListAdminPassed,
+		"custom-server basic-group admin gained rights or creator-only "
+		"powers");
 
 	const auto liveAdminChatId = ChatId(1055);
 	const auto liveAdminChat = stock->session().data().chat(liveAdminChatId);
@@ -7858,12 +7954,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 							  .c_updateChatParticipantAdmin());
 	const auto livePromotionRightsMatch = BasicGroupAdminRightsMatch(
 		liveAdminChat, "stock incremental promotion", true);
-	if (!liveAdminChat->admins.contains(stockSelf)
-		|| !livePromotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental official basic-group promotion lost admin rights or "
-			"granted creator-only powers");
-	}
+	const auto stockLivePromotionPassed
+		= liveAdminChat->admins.contains(stockSelf) && livePromotionRightsMatch;
 	Data::ApplyChatUpdate(liveAdminChat, MTP_updateChatParticipantAdmin(
 											 MTP_long(liveAdminChatId.bare),
 											 MTP_long(selfId.bare),
@@ -7871,11 +7963,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 											 .c_updateChatParticipantAdmin());
 	const auto liveDemotionRightsMatch = BasicGroupAdminRightsMatch(
 		liveAdminChat, "stock incremental demotion", false);
-	if (liveAdminChat->admins.contains(stockSelf) || !liveDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental basic-group demotion did not clear admin display "
-			"state");
-	}
+	const auto stockLiveDemotionPassed
+		= !liveAdminChat->admins.contains(stockSelf) && liveDemotionRightsMatch;
+	recordChatCase(
+		"stock-live-admin-promotion", stockLivePromotionPassed,
+		"incremental official basic-group promotion lost admin rights "
+		"or granted creator-only powers");
+	recordChatCase(
+		"stock-live-admin-demotion", stockLiveDemotionPassed,
+		"incremental basic-group demotion did not clear admin display "
+		"state");
 
 	const auto customLiveAdminChatId = ChatId(1056);
 	const auto customLiveAdminChat
@@ -7890,11 +7987,9 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		customLiveAdminChat->defaultAdminRights(customSelf).flags);
 	const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
 		customLiveAdminChat, "custom incremental promotion seed", true);
-	if (customLiveAdminChat->adminRights() == ChatAdminRights()
-		|| !customLiveSeedRightsMatch) {
-		return FailChatParticipantsRegression(
-			"custom incremental promotion fixture did not seed admin rights");
-	}
+	const auto customLiveSeedPassed
+		= customLiveAdminChat->adminRights() != ChatAdminRights()
+		  && customLiveSeedRightsMatch;
 	Data::ApplyChatUpdate(customLiveAdminChat,
 						  MTP_updateChatParticipantAdmin(
 							  MTP_long(customLiveAdminChatId.bare),
@@ -7902,14 +7997,12 @@ StartChatParticipantsRegression(Main::Domain &domain,
 							  .c_updateChatParticipantAdmin());
 	const auto customPromotionRightsMatch = BasicGroupAdminRightsMatch(
 		customLiveAdminChat, "custom incremental promotion", false);
-	if (!customLiveAdminChat->admins.contains(customSelf)
-		|| customLiveAdminChat->admins.contains(stockSelf)
-		|| customLiveAdminChat->adminRights() != ChatAdminRights()
-		|| !customPromotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental custom-server promotion gained admin rights or "
-			"creator-only powers");
-	}
+	const auto customLivePromotionPassed
+		= customLiveSeedPassed
+		  && customLiveAdminChat->admins.contains(customSelf)
+		  && !customLiveAdminChat->admins.contains(stockSelf)
+		  && customLiveAdminChat->adminRights() == ChatAdminRights()
+		  && customPromotionRightsMatch;
 	Data::ApplyChatUpdate(
 		customLiveAdminChat,
 		MTP_updateChatParticipantAdmin(MTP_long(customLiveAdminChatId.bare),
@@ -7918,23 +8011,28 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			.c_updateChatParticipantAdmin());
 	const auto customDemotionRightsMatch = BasicGroupAdminRightsMatch(
 		customLiveAdminChat, "custom incremental demotion", false);
-	if (customLiveAdminChat->admins.contains(customSelf)
-		|| customLiveAdminChat->admins.contains(stockSelf)
-		|| customLiveAdminChat->adminRights() != ChatAdminRights()
-		|| !customDemotionRightsMatch) {
-		return FailChatParticipantsRegression(
-			"incremental custom-server demotion did not clear admin display "
-			"state");
-	}
-	if (!pinnedActionChat->usesCustomServer()
-		|| pinnedActionChat->isDeactivated() || pinnedActionChat->migrateTo()) {
-		return FailChatParticipantsRegression(
-			"pinned migration fixture is not an active custom-server group");
-	}
-	if (!windowsMatch("after primary close")) {
-		return FailChatParticipantsRegression(
-			"primary close changed the separate session windows");
-	}
+	const auto customLiveDemotionPassed
+		= !customLiveAdminChat->admins.contains(customSelf)
+		  && !customLiveAdminChat->admins.contains(stockSelf)
+		  && customLiveAdminChat->adminRights() == ChatAdminRights()
+		  && customDemotionRightsMatch;
+	recordChatCase("custom-live-admin-promotion", customLivePromotionPassed,
+				   "incremental custom-server promotion gained admin rights or "
+				   "creator-only powers");
+	recordChatCase(
+		"custom-live-admin-demotion", customLiveDemotionPassed,
+		"incremental custom-server demotion did not clear admin display "
+		"state");
+	const auto pinnedMigrationFixturePassed
+		= pinnedActionChat->usesCustomServer()
+		  && !pinnedActionChat->isDeactivated()
+		  && !pinnedActionChat->migrateTo();
+	recordChatCase(
+		"pinned-migration-fixture", pinnedMigrationFixturePassed,
+		"pinned migration fixture is not an active custom-server group");
+	const auto postCloseWindowPassed = windowsMatch("after primary close");
+	recordChatCase("post-close-window-lifecycle", postCloseWindowPassed,
+				   "primary close changed the separate session windows");
 
 	struct MigrationResult {
 		int done = 0;
@@ -7943,24 +8041,32 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	};
 	const auto migration = std::make_shared<MigrationResult>();
 	ReportCallRegressionCheckpoint("migration callback begin");
-	pinned->session().api().migrateChat(
-		pinnedActionChat,
-		[migration](not_null<ChannelData *>) { ++migration->done; },
-		[migration](const QString &error) {
-			++migration->failed;
-			migration->error = error;
-		});
+	if (pinnedMigrationFixturePassed) {
+		pinned->session().api().migrateChat(
+			pinnedActionChat,
+			[migration](not_null<ChannelData *>) { ++migration->done; },
+			[migration](const QString &error) {
+				++migration->failed;
+				migration->error = error;
+			});
+	} else {
+		nativeLifecycleResults->Skip("chat-migration",
+									 "dependency-pinned-migration-fixture");
+	}
+	nativeLifecycleResults->asyncPending = true;
 	crl::on_main([=] {
-		std::fprintf(
-			stderr, "Pinned migration regression: done=%d failed=%d error=%s\n",
-			migration->done, migration->failed,
-			migration->error.toUtf8().constData());
-		if (migration->done != 0 || migration->failed != 1
-			|| migration->error != u"CLIENT_BAD_MIGRATION"_q) {
-			nativeLifecycleResults->ReportSummary();
-			done(FailChatParticipantsRegression(
-				"pinned basic-group migration was not rejected locally"));
-			return;
+		if (pinnedMigrationFixturePassed) {
+			std::fprintf(
+				stderr,
+				"Pinned migration regression: done=%d failed=%d error=%s\n",
+				migration->done, migration->failed,
+				migration->error.toUtf8().constData());
+			const auto migrationPassed
+				= migration->done == 0 && migration->failed == 1
+				  && migration->error == u"CLIENT_BAD_MIGRATION"_q;
+			recordChatCase(
+				"chat-migration", migrationPassed,
+				"pinned basic-group migration was not rejected locally");
 		}
 		if (Core::MacProtectedPath::IntegrationTestActive()) {
 			stock->session().data().clearLocalStorage();
@@ -7969,16 +8075,19 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			stock->session().data().cacheBigFile().sync();
 			pinned->session().data().cache().sync();
 			pinned->session().data().cacheBigFile().sync();
-			if (!FixtureContainsOnlyMarker(fixtures.cacheRoot)
-				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
-				|| !FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-				|| !FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf)) {
-				nativeLifecycleResults->ReportSummary();
-				done(FailChatParticipantsRegression(
-					"asynchronous cache cleanup accessed a protected target"));
-				return;
-			}
+			const auto protectedCacheCleanupPassed
+				= FixtureContainsOnlyMarker(fixtures.cacheRoot)
+				  && FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
+				  && FixtureContainsOnlyMarker(fixtures.cacheLeaf)
+				  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+			recordChatCase(
+				"protected-cache-cleanup", protectedCacheCleanupPassed,
+				"asynchronous cache cleanup accessed a protected target");
+		} else {
+			nativeLifecycleResults->Skip("protected-cache-cleanup",
+										 "protected-path-integration-disabled");
 		}
+		nativeLifecycleResults->finalized = true;
 		nativeLifecycleResults->ReportSummary();
 		if (!nativeLifecycleResults->Passed()) {
 			done(FailChatParticipantsRegression(

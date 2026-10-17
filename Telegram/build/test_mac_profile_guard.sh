@@ -589,6 +589,8 @@ END { exit step != 6 }
 	exit 1
 fi
 for native_evidence in \
+	'native_lifecycle_case=settings-search result=PASS' \
+	'native_lifecycle_case=session-window-lifecycle result=PASS' \
 	'native_lifecycle_case=translation-controls result=PASS' \
 	'native_lifecycle_case=manage-controls result=PASS' \
 	'native_lifecycle_case=mini-app-open result=PASS' \
@@ -596,6 +598,9 @@ for native_evidence in \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=folder-crud result=PASS' \
+	'native_lifecycle_case=stock-basic-group-creator result=PASS' \
+	'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
 	'native_lifecycle_cases_failed=none'; do
 	if ! grep -F -q "$native_evidence" "$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
@@ -672,7 +677,7 @@ run_native_failure_continuation_case() {
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=translation-controls \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=settings-search,folder-crud \
 		"$APP" -noupdate -debug >"$case_log" 2>&1; then
 		exit_status=0
 	else
@@ -684,11 +689,16 @@ run_native_failure_continuation_case() {
 		return 1
 	fi
 	for evidence in \
-		'native_lifecycle_case=translation-controls result=FAIL' \
+		'native_lifecycle_case=settings-search result=FAIL' \
+		'native_lifecycle_case=session-window-lifecycle result=' \
+		'native_lifecycle_case=translation-controls result=' \
 		'native_lifecycle_case=manage-controls result=' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
 		'native_lifecycle_case=post-open-cache result=' \
-		'native_lifecycle_case=post-open-media-cache result='; do
+		'native_lifecycle_case=post-open-media-cache result=' \
+		'native_lifecycle_case=folder-crud result=FAIL' \
+		'native_lifecycle_case=stock-basic-group-creator result=' \
+		'native_lifecycle_case=pinned-basic-group-creator result='; do
 		if ! grep -F -q "$evidence" "$case_log"; then
 			cat "$case_log" >&2
 			printf 'native lifecycle failure injection missed: %s\n' \
@@ -697,24 +707,29 @@ run_native_failure_continuation_case() {
 		fi
 	done
 	if ! grep -E -q \
-		'^native_lifecycle_cases_failed=.*translation-controls' "$case_log"; then
+		'^native_lifecycle_cases_failed=.*settings-search.*folder-crud' "$case_log"; then
 		cat "$case_log" >&2
-		echo "native lifecycle failure summary missed translation-controls." >&2
+		echo "native lifecycle failure summary missed the early and late cases." >&2
 		return 1
 	fi
 	if ! awk '
-/native_lifecycle_case=translation-controls result=FAIL/ && step == 0 { step = 1; next }
-/native_lifecycle_case=manage-controls result=/ && step == 1 { step = 2; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 2 { step = 3; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 3 { step = 4; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 4 { step = 5; next }
-END { exit step != 5 }
+/native_lifecycle_case=settings-search result=FAIL/ && step == 0 { step = 1; next }
+/native_lifecycle_case=session-window-lifecycle result=/ && step == 1 { step = 2; next }
+/native_lifecycle_case=translation-controls result=/ && step == 2 { step = 3; next }
+/native_lifecycle_case=manage-controls result=/ && step == 3 { step = 4; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 4 { step = 5; next }
+/native_lifecycle_case=post-open-cache result=/ && step == 5 { step = 6; next }
+/native_lifecycle_case=post-open-media-cache result=/ && step == 6 { step = 7; next }
+/native_lifecycle_case=folder-crud result=FAIL/ && step == 7 { step = 8; next }
+/native_lifecycle_case=stock-basic-group-creator result=/ && step == 8 { step = 9; next }
+/native_lifecycle_case=pinned-basic-group-creator result=/ && step == 9 { step = 10; next }
+END { exit step != 10 }
 ' "$case_log"; then
 		cat "$case_log" >&2
-		echo "native lifecycle cases did not continue in order after translation failure." >&2
+		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_case=translation-controls later_cases=manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,stock-basic-group-creator,pinned-basic-group-creator\n' \
 		"$TESTED_REVISION" "$exit_status"
 }
 
