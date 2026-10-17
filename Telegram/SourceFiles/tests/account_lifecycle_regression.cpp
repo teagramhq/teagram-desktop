@@ -3167,10 +3167,11 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	{
 		const auto menu = std::make_unique<Window::MainMenu>(
 			controller->widget().get(), controller);
-		const auto labels = menu->findChildren<Ui::FlatLabel *>();
+		const auto labels = menu->findChildren<QWidget *>();
 		const auto hasTeagramFooter
-			= std::any_of(labels.begin(), labels.end(), [](const auto label) {
-				  return label->accessibilityName() == u"Teagram"_q;
+			= std::any_of(labels.begin(), labels.end(), [](const auto widget) {
+				  const auto label = dynamic_cast<Ui::FlatLabel *>(widget);
+				  return label && label->accessibilityName() == u"Teagram"_q;
 			  });
 		if (!hasTeagramFooter) {
 			return fail("main_menu_footer_name");
@@ -3189,8 +3190,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return fail("about_box_did_not_open");
 	}
 	auto visibleLabels = QStringList();
-	for (const auto label : layer->findChildren<Ui::FlatLabel *>()) {
-		visibleLabels.push_back(label->accessibilityName());
+	for (const auto widget : layer->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			visibleLabels.push_back(label->accessibilityName());
+		}
 	}
 	const auto visibleText = visibleLabels.join(u"\n"_q);
 	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
@@ -3220,8 +3223,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return fail("settings_did_not_open");
 	}
 	auto settingsLabels = QStringList();
-	for (const auto label : settings->findChildren<Ui::FlatLabel *>()) {
-		settingsLabels.push_back(label->accessibilityName());
+	for (const auto widget : settings->findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+			settingsLabels.push_back(label->accessibilityName());
+		}
 	}
 	const auto settingsText = settingsLabels.join(u"\n"_q);
 	const auto hasNoTelegramHelp
