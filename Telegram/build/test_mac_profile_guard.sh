@@ -672,6 +672,9 @@ run_native_failure_continuation_case() {
 	local case_home="$TEST_HOME/native-failure-continuation"
 	local case_log="$case_home.log"
 	local exit_status=0
+	local fixture_failure_home="$TEST_HOME/native-identity-and-fixture-failure"
+	local fixture_failure_log="$fixture_failure_home.log"
+	local fixture_failure_status=0
 	mkdir -p "$case_home"
 	if env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
@@ -707,8 +710,10 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=folder-crud result=FAIL' \
 		'native_lifecycle_case=admin-session-identities status=START' \
 		'native_lifecycle_case=admin-session-identities result=FAIL' \
-		'native_lifecycle_case=stock-basic-group-creator result=SKIP reason=dependency-admin-session-identities' \
-		'native_lifecycle_case=pinned-basic-group-creator result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=stock-basic-group-creator status=START' \
+		'native_lifecycle_case=stock-basic-group-creator result=PASS' \
+		'native_lifecycle_case=pinned-basic-group-creator status=START' \
+		'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
 		'native_lifecycle_case=stock-full-list-admin result=SKIP reason=dependency-admin-session-identities' \
 		'native_lifecycle_case=stock-full-list-demotion result=SKIP reason=dependency-admin-session-identities' \
 		'native_lifecycle_case=custom-full-list-admin result=SKIP reason=dependency-admin-session-identities' \
@@ -718,8 +723,8 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=custom-live-admin-demotion result=SKIP reason=dependency-admin-session-identities' \
 		'native_lifecycle_case=pinned-migration-fixture status=START' \
 		'native_lifecycle_case=pinned-migration-fixture result=PASS' \
-		'native_lifecycle_case=chat-migration result=PASS' \
-		'native_lifecycle_case=post-close-window-lifecycle result='; do
+		'native_lifecycle_case=post-close-window-lifecycle result=' \
+		'native_lifecycle_case=chat-migration result=PASS'; do
 		if ! grep -F -q "$evidence" "$case_log"; then
 			cat "$case_log" >&2
 			printf 'native lifecycle failure injection missed: %s\n' \
@@ -730,7 +735,7 @@ run_native_failure_continuation_case() {
 	if ! grep -E -q \
 		'^native_lifecycle_cases_failed=.*settings-search.*folder-crud.*admin-session-identities' "$case_log"; then
 		cat "$case_log" >&2
-		echo "native lifecycle failure summary missed the early, late, and identity cases." >&2
+		echo "native lifecycle failure summary missed the injected failure cases." >&2
 		return 1
 	fi
 	if ! awk '
@@ -754,16 +759,58 @@ run_native_failure_continuation_case() {
 /native_lifecycle_case=admin-session-identities result=FAIL/ && step == 17 { step = 18; next }
 /native_lifecycle_case=pinned-migration-fixture status=START/ && step == 18 { step = 19; next }
 /native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 19 { step = 20; next }
-/native_lifecycle_case=stock-basic-group-creator result=SKIP reason=dependency-admin-session-identities/ && step == 20 { step = 21; next }
-/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 21 { step = 22; next }
-END { exit step != 22 }
+/native_lifecycle_case=stock-basic-group-creator status=START/ && step == 20 { step = 21; next }
+/native_lifecycle_case=stock-basic-group-creator result=PASS/ && step == 21 { step = 22; next }
+/native_lifecycle_case=pinned-basic-group-creator status=START/ && step == 22 { step = 23; next }
+/native_lifecycle_case=pinned-basic-group-creator result=PASS/ && step == 23 { step = 24; next }
+/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 24 { step = 25; next }
+/native_lifecycle_case=chat-migration result=PASS/ && step == 25 { step = 26; next }
+END { exit step != 26 }
 ' "$case_log"; then
 		cat "$case_log" >&2
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,admin-session-identities-skips,pinned-migration-fixture,chat-migration,post-close-window-lifecycle\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
+	mkdir -p "$fixture_failure_home"
+	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$fixture_failure_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=admin-session-identities,pinned-migration-fixture \
+		"$APP" -noupdate -debug >"$fixture_failure_log" 2>&1; then
+		fixture_failure_status=0
+	else
+		fixture_failure_status=$?
+	fi
+	if (( fixture_failure_status == 0 )); then
+		cat "$fixture_failure_log" >&2
+		echo "combined identity and migration fixture failures unexpectedly passed." >&2
+		return 1
+	fi
+	for evidence in \
+		'native_lifecycle_case=admin-session-identities result=FAIL' \
+		'native_lifecycle_case=stock-basic-group-creator result=PASS' \
+		'native_lifecycle_case=pinned-migration-fixture result=FAIL' \
+		'native_lifecycle_case=pinned-basic-group-creator result=SKIP reason=dependency-pinned-migration-fixture' \
+		'native_lifecycle_case=stock-full-list-admin result=SKIP reason=dependency-admin-session-identities' \
+		'native_lifecycle_case=chat-migration result=SKIP reason=dependency-pinned-migration-fixture'; do
+		if ! grep -F -q "$evidence" "$fixture_failure_log"; then
+			cat "$fixture_failure_log" >&2
+			printf 'combined native failure evidence missing: %s\n' \
+				"$evidence" >&2
+			return 1
+		fi
+	done
+	if grep -F -q \
+		'native_lifecycle_case=chat-migration result=SKIP reason=dependency-admin-session-identities' \
+		"$fixture_failure_log"; then
+		cat "$fixture_failure_log" >&2
+		echo "chat migration skip reported the wrong dependency." >&2
+		return 1
+	fi
+	printf 'native_lifecycle_dependency_reporting=PASS combined_failures=admin-session-identities,pinned-migration-fixture stock_creator=PASS admin_cases=SKIP chat_migration=SKIP:dependency-pinned-migration-fixture\n'
 }
 
 run_authenticated_folder_fault_case() {

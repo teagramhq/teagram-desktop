@@ -7888,28 +7888,27 @@ StartChatParticipantsRegression(Main::Domain &domain,
 	const auto pinnedMigrationFixturePassed
 		= pinnedActionChat->usesCustomServer()
 		  && !pinnedActionChat->isDeactivated()
-		  && !pinnedActionChat->migrateTo();
+		  && !pinnedActionChat->migrateTo()
+		  && !shouldInjectFailure("pinned-migration-fixture");
 	recordChatCase(
 		"pinned-migration-fixture", pinnedMigrationFixturePassed,
 		"pinned migration fixture is not an active custom-server group");
-	if (adminSessionIdentitiesMatch) {
-		nativeLifecycleResults->StartCase("stock-basic-group-creator");
-		const auto stockActionChat = stock->session().data().chat(actionChatId);
-		const auto stockActionPeer
-			= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
-		stock->session().api().processFullPeer(
-			stockActionPeer, RegressionStockChatFullReply(
-								 actionChatId, 1, u"+10000000001"_q, selfId));
-		stockActionChat->setFlags(ChatDataFlag::Creator);
-		const auto stockCreatorPassed
-			= HasExpectedParticipants(stockActionChat, selfId)
-			  && stockActionChat->canEditInformation()
-			  && stockActionChat->canAddMembers()
-			  && stockActionChat->canAddAdmins()
-			  && stockActionChat->canBanMembers();
-		recordChatCase("stock-basic-group-creator", stockCreatorPassed,
-					   "stock creator lost a supported basic-group action");
-
+	nativeLifecycleResults->StartCase("stock-basic-group-creator");
+	const auto stockActionChat = stock->session().data().chat(actionChatId);
+	const auto stockActionPeer
+		= not_null<PeerData *>(static_cast<PeerData *>(&*stockActionChat));
+	stock->session().api().processFullPeer(
+		stockActionPeer, RegressionStockChatFullReply(
+							 actionChatId, 1, u"+10000000001"_q, selfId));
+	stockActionChat->setFlags(ChatDataFlag::Creator);
+	const auto stockCreatorPassed
+		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockActionChat->canEditInformation()
+		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
+		  && stockActionChat->canBanMembers();
+	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
+				   "stock creator lost a supported basic-group action");
+	if (pinnedMigrationFixturePassed) {
 		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
 		const auto pinnedCreatorPassed
 			= HasExpectedParticipants(pinnedActionChat, selfId)
@@ -7920,7 +7919,11 @@ StartChatParticipantsRegression(Main::Domain &domain,
 		recordChatCase(
 			"pinned-basic-group-creator", pinnedCreatorPassed,
 			"pinned creator lost a supported basic-group admin action");
-
+	} else {
+		nativeLifecycleResults->Skip("pinned-basic-group-creator",
+									 "dependency-pinned-migration-fixture");
+	}
+	if (adminSessionIdentitiesMatch) {
 		nativeLifecycleResults->StartCase("stock-full-list-admin");
 		const auto memberActionChatId = ChatId(1053);
 		const auto memberActionChat
@@ -8125,8 +8128,6 @@ StartChatParticipantsRegression(Main::Domain &domain,
 			"state");
 	} else {
 		for (const auto name : {
-				 "stock-basic-group-creator",
-				 "pinned-basic-group-creator",
 				 "stock-full-list-admin",
 				 "stock-full-list-demotion",
 				 "custom-full-list-admin",
@@ -8161,10 +8162,8 @@ StartChatParticipantsRegression(Main::Domain &domain,
 				migration->error = error;
 			});
 	} else {
-		nativeLifecycleResults->Skip(
-			"chat-migration", adminSessionIdentitiesMatch
-								  ? "dependency-pinned-migration-fixture"
-								  : "dependency-admin-session-identities");
+		nativeLifecycleResults->Skip("chat-migration",
+									 "dependency-pinned-migration-fixture");
 	}
 	nativeLifecycleResults->asyncPending = true;
 	crl::on_main([=] {
