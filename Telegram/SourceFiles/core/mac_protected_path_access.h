@@ -124,6 +124,13 @@ PrepareExternalDirectoryIfAllowed(const QString &path, const char *callsite,
 		   && std::forward<Prepare>(prepare)();
 }
 
+[[nodiscard]] inline bool
+SameCleanPathAfterUnicodeNormalization(const QString &left,
+									   const QString &right) {
+	return QDir::cleanPath(left).normalized(QString::NormalizationForm_D)
+		   == QDir::cleanPath(right).normalized(QString::NormalizationForm_D);
+}
+
 template <typename Checker, typename IsRegularFile, typename Completion>
 [[nodiscard]] bool CompleteWebViewFileInputSelectionIfAllowed(
 	const QStringList &paths, Checker &&checker, bool requireRegularFiles,
