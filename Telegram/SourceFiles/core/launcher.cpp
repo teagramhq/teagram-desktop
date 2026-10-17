@@ -239,6 +239,7 @@ void ComputeInstallationTag() {
 	}
 }
 
+#ifndef TDESKTOP_TEAGRAM
 bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {
 	const auto was = cExeDir() + folder;
 	const auto now = cExeDir() + u"TelegramForcePortable"_q;
@@ -323,6 +324,7 @@ bool CheckPortableVersionFolder() {
 	cSetRealAlphaVersion(v);
 	return true;
 }
+#endif // !TDESKTOP_TEAGRAM
 
 base::options::toggle OptionFractionalScalingEnabled({
 	.id = kOptionFractionalScalingEnabled,

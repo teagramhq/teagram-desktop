@@ -18,7 +18,7 @@ namespace {
 
 bool WriteSettingsFile(const QString &path) {
 	return QDir().mkpath(QFileInfo(path).absolutePath())
-		&& QFile(path).open(QIODevice::WriteOnly);
+		   && QFile(path).open(QIODevice::WriteOnly);
 }
 
 } // namespace
@@ -35,10 +35,10 @@ TEST_CASE(LinuxTeagramDataPathAvoidsTelegramFolders) {
 	const auto oldTelegram = QDir(home).filePath(u".TelegramDesktop"_q);
 	const auto xdgTelegram = QDir(dataHome).filePath(u"TelegramDesktop"_q);
 	const auto teagram = QDir(dataHome).filePath(u"Teagram"_q);
-	const auto oldSettings = WriteSettingsFile(
-		QDir(oldTelegram).filePath(u"tdata/settings0"_q));
-	const auto xdgSettings = WriteSettingsFile(
-		QDir(xdgTelegram).filePath(u"tdata/settings1"_q));
+	const auto oldSettings
+		= WriteSettingsFile(QDir(oldTelegram).filePath(u"tdata/settings0"_q));
+	const auto xdgSettings
+		= WriteSettingsFile(QDir(xdgTelegram).filePath(u"tdata/settings1"_q));
 	CHECK(oldSettings);
 	CHECK(xdgSettings);
 	if (!oldSettings || !xdgSettings) {

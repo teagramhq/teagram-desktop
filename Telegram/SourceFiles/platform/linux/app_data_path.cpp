@@ -11,9 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFile>
 #include <QtCore/QStandardPaths>
 
-QString Platform::LinuxAppDataPath(
-	const QString &home,
-	const QString &standardPath) {
+QString Platform::LinuxAppDataPath(const QString &home,
+								   const QString &standardPath) {
 #ifndef TDESKTOP_TEAGRAM
 	if (!home.isEmpty()) {
 		auto oldPath = home + u"/.TelegramDesktop"_q;

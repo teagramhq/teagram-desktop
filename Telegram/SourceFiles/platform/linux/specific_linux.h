@@ -38,9 +38,8 @@ inline bool WaitForProcessExit(uint64 processId, crl::time timeout) {
 	return true;
 }
 
-[[nodiscard]] QString LinuxAppDataPath(
-	const QString &home,
-	const QString &standardPath);
+[[nodiscard]] QString LinuxAppDataPath(const QString &home,
+									   const QString &standardPath);
 
 } // namespace Platform
 
