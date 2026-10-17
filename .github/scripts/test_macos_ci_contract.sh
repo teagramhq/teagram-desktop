@@ -402,7 +402,7 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.ou
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
-  "always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success'"
+  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
@@ -425,7 +425,7 @@ summary_step_index="$(job_field "$mac_workflow" macos \
   || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
 profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" macos "$profile_step" '.if' \
-  "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success'"
+  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
@@ -569,11 +569,11 @@ grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
 grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
   || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
 require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
-  "always() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success'"
+  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}"
 require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
 require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
-  "always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success'"
+  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}"
 require_step_script "$mac_workflow" macos 'Report skipped full chat info session regression.' \
   'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"

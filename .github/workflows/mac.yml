@@ -383,7 +383,7 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        if: always() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -419,7 +419,7 @@ jobs:
           exit "$test_status"
 
       - name: Report skipped profile and IPC integration tests.
-        if: always() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success'
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}
         env:
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
@@ -440,7 +440,7 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
-        if: always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           report_lifecycle_failure() {
@@ -830,7 +830,7 @@ jobs:
             "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report skipped full chat info session regression.
-        if: always() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success'
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}
         env:
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
