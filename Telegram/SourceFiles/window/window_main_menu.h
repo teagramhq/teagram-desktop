@@ -59,6 +59,9 @@ public:
 		return _topDividerShownForRegressionTest
 			   && _topDividerShownForRegressionTest();
 	}
+	[[nodiscard]] bool callsRowPresentForRegressionTest() const {
+		return _callsRowPresentForRegressionTest;
+	}
 #endif
 
 	void parentResized() override;
@@ -122,6 +125,7 @@ private:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	bool _myProfileRowPresentForRegressionTest = false;
+	bool _callsRowPresentForRegressionTest = false;
 	Fn<bool()> _topDividerShownForRegressionTest;
 #endif
 

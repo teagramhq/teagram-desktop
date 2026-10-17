@@ -23,17 +23,23 @@ struct SaveInput final {
 	ChatAdminRights existing;
 	ChatAdminRights actorLimit = ~ChatAdminRights(0);
 	bool storiesSupported = true;
+	bool callsSupported = true;
 };
 
-// Story rights have no rows on a session without stories, so the save
-// keeps them from `existing` instead of from the checkboxes. `existing`
-// must be what the server already holds for the target: an admin's
-// current rights, a bot's current rights in the chat, or nothing for a
-// new admin. Link-requested and bot-suggested rights never reach it, so
-// hidden rows cannot grant anything. The actor limit applies last.
+// Rights without editor rows are kept from `existing` instead of from the
+// checkboxes. `existing` must be what the server already holds for the
+// target: an admin's current rights, a bot's current rights in the chat,
+// or nothing for a new admin. Link-requested and bot-suggested rights
+// never reach it, so hidden rows cannot grant anything. The actor limit
+// applies last.
 [[nodiscard]] inline ChatAdminRights RightsToSave(const SaveInput &input) {
-	const auto hidden
-		= input.storiesSupported ? ChatAdminRights() : StoryRights();
+	auto hidden = ChatAdminRights();
+	if (!input.storiesSupported) {
+		hidden |= StoryRights();
+	}
+	if (!input.callsSupported) {
+		hidden |= ChatAdminRight::ManageCall;
+	}
 	const auto visible = input.checked & ~hidden;
 	const auto preserved = input.existing & hidden;
 	return (visible | preserved | ChatAdminRight::Other) & input.actorLimit;

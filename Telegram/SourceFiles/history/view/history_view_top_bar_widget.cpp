@@ -268,6 +268,16 @@ TopBarWidget::TopBarWidget(
 
 TopBarWidget::~TopBarWidget() = default;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool TopBarWidget::callButtonHiddenForRegressionTest() const {
+	return _call->isHidden();
+}
+
+bool TopBarWidget::groupCallButtonHiddenForRegressionTest() const {
+	return _groupCall->isHidden();
+}
+#endif
+
 Main::Session &TopBarWidget::session() const {
 	return _controller->session();
 }
@@ -1381,9 +1391,8 @@ void TopBarWidget::updateControlsVisibility() {
 		}
 		return false;
 	}();
-	_call->setVisible(historyMode
-		&& callsEnabled
-		&& !_chooseForReportReason);
+	_call->setVisible(historyMode && _controller->session().callsSupported()
+					  && callsEnabled && !_chooseForReportReason);
 	const auto groupCallsEnabled = [&] {
 		if (const auto peer = _activeChat.key.peer()) {
 			if (!peer->isUser() && peer->canManageGroupCall()) {
@@ -1396,8 +1405,8 @@ void TopBarWidget::updateControlsVisibility() {
 		return false;
 	}();
 	_groupCall->setVisible(historyMode
-		&& groupCallsEnabled
-		&& !_chooseForReportReason);
+						   && _controller->session().callsSupported()
+						   && groupCallsEnabled && !_chooseForReportReason);
 
 	if (_membersShowArea) {
 		_membersShowArea->setVisible(!_chooseForReportReason);
