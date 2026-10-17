@@ -4439,7 +4439,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTPstring(), // summary_from_language
 		MTPRichMessage());
 	auto item = session->data().addNewMessage(data, MessageFlags(),
-											  NewMessageType::Existing);
+											  NewMessageType::Last);
 	if (item && rich) {
 		item->setRichPage(std::make_shared<Iv::RichPage>());
 	}
@@ -4929,6 +4929,26 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		std::fprintf(stderr,
 					 "Translation controls regression failed: translation "
 					 "message fixtures were not created.\n");
+		return false;
+	}
+	const auto stockTextRegistered
+		= (stockSession.data().message(stockTextItem->fullId())
+		   == stockTextItem);
+	const auto stockRichRegistered
+		= (stockSession.data().message(stockRichItem->fullId())
+		   == stockRichItem);
+	const auto customTextRegistered
+		= (customSession.data().message(customTextItem->fullId())
+		   == customTextItem);
+	const auto customRichRegistered
+		= (customSession.data().message(customRichItem->fullId())
+		   == customRichItem);
+	if (!stockTextRegistered || !stockRichRegistered
+		|| !customTextRegistered || !customRichRegistered) {
+		std::fprintf(
+			stderr,
+			"Translation controls regression failed: synthetic message fixtures "
+			"were not registered for message lookup.\n");
 		return false;
 	}
 	auto customAdminLogProvider
