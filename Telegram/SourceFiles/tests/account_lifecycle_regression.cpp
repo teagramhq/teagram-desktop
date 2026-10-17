@@ -4480,14 +4480,6 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		blank->forcedLogOut();
 		return false;
 	}
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	if (!RunBoostEntryPathRefusalRegression(app, stock, pinned, blank,
-											stockController, pinnedController,
-											blankController)) {
-		blank->forcedLogOut();
-		return false;
-	}
-#endif
 	const auto expiredController = blankWindow->sessionController();
 	if (!expiredController
 		|| (&expiredController->session() != &blank->session())) {
@@ -6692,6 +6684,7 @@ struct NativeLifecycleResults {
 			"session-window-lifecycle",
 			"translation-controls",
 			"manage-controls",
+			"boost-entry-paths",
 			"mini-app-open",
 			"chatlist-invite-check",
 			"authenticated-cache-file-symlinks",
@@ -8206,6 +8199,34 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->Report("manage-controls", manageControlsPassed);
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("boost-entry-paths");
+	blank->mtp().stopForServerEnrollment();
+	blank->setSessionUserId(selfId);
+	auto boostEntryPassed = false;
+	if (blank->createSession(RegressionUser(selfId, true, QString()),
+							 std::make_unique<Main::SessionSettings>())) {
+		blank->mtp().dcOptions().constructBlocked();
+		const auto boostController = blankWindow->sessionController()
+										 ? blankWindow->sessionController()
+										 : blank->session().tryResolveWindow();
+		if (boostController && blank->mtp().dcOptions().blocked()
+			&& !blank->mtp().dcOptions().hasCustomServer()) {
+			boostEntryPassed = RunBoostEntryPathRefusalRegression(
+				app, stock, pinned, blank, stockController, pinnedController,
+				boostController);
+		} else {
+			std::fprintf(stderr, "Boost entry regression: blocked fixture "
+								 "could not be prepared.\n");
+		}
+		blank->forcedLogOut();
+	} else {
+		std::fprintf(
+			stderr,
+			"Boost entry regression: could not create the blocked fixture.\n");
+	}
+	nativeLifecycleResults->Report(
+		"boost-entry-paths",
+		boostEntryPassed && !shouldInjectFailure("boost-entry-paths"));
 #endif
 	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
