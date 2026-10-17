@@ -4076,15 +4076,13 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			const auto noStoriesRequest
 				= !storiesData.requestsPendingForRegressionTest();
 			if (!toastShown || !peerShown || !mainSectionShown
-				|| !noStoriesSection
-				|| !noStoriesRequest) {
+				|| !noStoriesSection || !noStoriesRequest) {
 				std::fprintf(stderr,
 							 "Story controls regression: case=%s toast=%d "
 							 "peer=%d main-section=%d no-stories-section=%d "
 							 "no-request=%d.\n",
 							 name, toastShown, peerShown, mainSectionShown,
-							 noStoriesSection,
-							 noStoriesRequest);
+							 noStoriesSection, noStoriesRequest);
 				return fail(name);
 			}
 		}
