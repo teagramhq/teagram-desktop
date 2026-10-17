@@ -531,6 +531,41 @@ fi
 printf 'seatbelt_compile_failure=PASS status=%s profile_artifact=PASS profile_and_logs_absent=1\n' \
 	"$COMPILE_FAILURE_STATUS"
 
+SILENT_COMPILE_FAILURE_HOME="$TEST_HOME/silent-compile-failure-home"
+SILENT_COMPILE_FAILURE_PROFILE="$SILENT_COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+SILENT_COMPILE_FAILURE_ARTIFACT="$SILENT_COMPILE_FAILURE_HOME/generated-profile.sb"
+mkdir -p "$SILENT_COMPILE_FAILURE_HOME"
+set +e
+SILENT_COMPILE_FAILURE_OUTPUT="$(env HOME="$SILENT_COMPILE_FAILURE_HOME" \
+	TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$SILENT_COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=0 \
+	TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
+SILENT_COMPILE_FAILURE_STATUS=$?
+set -e
+if [[ "$SILENT_COMPILE_FAILURE_STATUS" -eq 0 ]]; then
+	echo "silent forced Seatbelt compilation failure unexpectedly started Teagram." >&2
+	printf '%s\n' "$SILENT_COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -n "$SILENT_COMPILE_FAILURE_OUTPUT" ]]; then
+	echo "production Seatbelt compilation failure emitted output." >&2
+	printf '%s\n' "$SILENT_COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -e "$SILENT_COMPILE_FAILURE_PROFILE" \
+	|| -e "$SILENT_COMPILE_FAILURE_PROFILE/log.txt" \
+	|| -e "$SILENT_COMPILE_FAILURE_HOME/start.log" \
+	|| -e "$SILENT_COMPILE_FAILURE_HOME/refusal.log" \
+	|| -e "$SILENT_COMPILE_FAILURE_ARTIFACT" ]]; then
+	echo "silent Seatbelt compilation failure created a profile, log, or artifact." >&2
+	exit 1
+fi
+printf 'seatbelt_compile_failure_silent=PASS status=%s output_empty=1 profile_logs_and_artifacts_absent=1\n' \
+	"$SILENT_COMPILE_FAILURE_STATUS"
+
 ACCOUNT_STATE="$PROFILE/tdata/teagram-activation-account-state.fixture"
 ENDPOINT_ENROLLMENT="$PROFILE/tdata/teagram-activation-endpoint-enrollment.fixture"
 TELEGRAMD_PROFILE="$TEST_HOME/Library/Application Support/Telegramd"

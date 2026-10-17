@@ -30,13 +30,28 @@ ALLOWED_RELATIVE = (
 )
 
 
-def generated_without_ignored_class(generated):
-    if IGNORED_CHARACTER_CLASS not in generated:
-        raise ValueError('generated profile has no ignored-character class')
-    result = generated.replace(IGNORED_CHARACTER_CLASS, '')
-    if result == generated or IGNORED_CHARACTER_CLASS in result:
-        raise AssertionError('ignored-character class was not removed')
+def generated_without_ignored_characters(generated):
+    patterns = (IGNORED_CHARACTER_CLASS, IGNORED_CHARACTER_ALTERNATION)
+    result = generated
+    removed = False
+    for pattern in patterns:
+        if pattern in result:
+            result = result.replace(pattern, '')
+            removed = True
+    if not removed:
+        raise ValueError('generated profile has no ignored-character pattern')
+    if any(pattern in result for pattern in patterns):
+        raise AssertionError('ignored-character pattern was not removed')
     return result
+
+
+def generated_profile_variants(generated, denied, allowed):
+    return [
+        ('generated', generated, denied, allowed, 'deny', None),
+        ('generated_without_ignored_characters',
+         generated_without_ignored_characters(generated), denied, allowed,
+         'deny', None),
+    ]
 
 
 def regex_literal(value):
@@ -168,11 +183,25 @@ def prepare_control_fixtures(cases):
 
 def self_test():
     generated = '(regex "^/home/Library/' + IGNORED_CHARACTER_CLASS + 'Telegram$")'
-    without_ignored = generated_without_ignored_class(generated)
+    without_ignored = generated_without_ignored_characters(generated)
     if without_ignored == generated or IGNORED_CHARACTER_CLASS in without_ignored:
         raise AssertionError('diagnostic profile variant did not change')
+    current_generated = (
+        '(regex "^/home/Library/' + IGNORED_CHARACTER_ALTERNATION
+        + 'Telegram$")')
     try:
-        generated_without_ignored_class('(allow default)')
+        current_profiles = generated_profile_variants(
+            current_generated, '/home/Library/Telegram/protected',
+            '/home/Library/Application Support/Teagram/tdata/allowed')
+    except ValueError as error:
+        raise AssertionError(
+            'diagnostic profile list rejected the current generated format') from error
+    if (current_profiles[1][1] == current_generated
+            or IGNORED_CHARACTER_ALTERNATION in current_profiles[1][1]):
+        raise AssertionError(
+            'current generated profile variant retained ignored characters')
+    try:
+        generated_without_ignored_characters('(allow default)')
     except ValueError:
         pass
     else:
@@ -335,10 +364,7 @@ def main():
          allowed, 'deny', None),
         ('ascii_regex', base + '(deny file* (regex ' + ascii_regex + '))',
          denied, allowed, 'deny', None),
-        ('generated', generated, denied, allowed, 'deny', None),
-        ('generated_without_ignored_class',
-         generated_without_ignored_class(generated), denied, allowed, 'deny',
-         None),
+        *generated_profile_variants(generated, denied, allowed),
         ('invalid', base + '(', denied, allowed, 'invalid', None),
     ]
     profiles.extend(diagnostic_home_controls(home))

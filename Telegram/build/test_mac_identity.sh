@@ -97,8 +97,11 @@ assert 'RunSeatbeltOpenProbe' in runtime
 assert 'RunSeatbeltCatProbe' in runtime
 assert 'RunSeatbeltForkExecCatProbe' in runtime_header
 assert 'RunSeatbeltForkExecCatProbe' in runtime
-assert 'generated_without_ignored_class' in diagnose
+assert 'generated_without_ignored_characters' in diagnose
+assert 'generated_profile_variants' in diagnose
 assert 'TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT' in runtime
+assert 'TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=0' in profile_test
+assert 'seatbelt_compile_failure_silent=PASS' in profile_test
 assert 'seatbelt-profile-${BUILD_VARIANT}.sb' in workflow
 assert '(allow default)' in policy
 assert '(deny file*' in policy
