@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "boxes/about_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
@@ -109,6 +110,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
@@ -3151,6 +3153,92 @@ template <typename Predicate>
 	return match;
 }
 
+[[nodiscard]] bool WaitForMainQueueBarrier();
+
+[[nodiscard]] bool RunTeagramBrandingRegression(
+	not_null<Window::SessionController *> controller,
+	const char *sessionName) {
+	const auto fail = [&](const char *what) {
+		std::fprintf(stderr,
+					 "Teagram branding regression failed: session=%s case=%s.\n",
+					 sessionName, what);
+		return false;
+	};
+	{
+		const auto menu = std::make_unique<Window::MainMenu>(
+			controller->widget().get(), controller);
+		const auto labels = menu->findChildren<Ui::FlatLabel *>();
+		const auto hasTeagramFooter = std::any_of(
+			labels.begin(),
+			labels.end(),
+			[](const auto label) {
+				return label->accessibilityName() == u"Teagram"_q;
+			});
+		if (!hasTeagramFooter) {
+			return fail("main_menu_footer_name");
+		}
+	}
+	if (controller->isLayerShown()) {
+		controller->hideLayer(anim::type::instant);
+	}
+	const auto box = controller->show(
+		Box(AboutBox), Ui::LayerOption::KeepOther, anim::type::instant);
+	QCoreApplication::processEvents();
+	const auto content = box.get();
+	const auto layer = content ? content->parentWidget() : nullptr;
+	if (!layer) {
+		controller->hideLayer(anim::type::instant);
+		return fail("about_box_did_not_open");
+	}
+	auto visibleLabels = QStringList();
+	for (const auto label : layer->findChildren<Ui::FlatLabel *>()) {
+		visibleLabels.push_back(label->accessibilityName());
+	}
+	const auto visibleText = visibleLabels.join(u"\n"_q);
+	const auto hasTeagramTitle = visibleLabels.contains(u"Teagram"_q);
+	const auto hasLicense = visibleText.contains(u"GNU GPL"_q);
+	const auto hasSourceCode = visibleText.contains(u"GitHub"_q);
+	const auto hasProtocolAttribution
+		= visibleText.contains(u"Based on Telegram Desktop"_q);
+	const auto hasNoTelegramHelpLinks
+		= !visibleText.contains(u"Telegram API"_q)
+		&& !visibleText.contains(u"Telegram FAQ"_q);
+	const auto matches = hasTeagramTitle
+		&& hasLicense
+		&& hasSourceCode
+		&& hasProtocolAttribution
+		&& hasNoTelegramHelpLinks;
+	controller->hideLayer(anim::type::instant);
+	if (!matches) {
+		return fail("about_box_copy");
+	}
+	controller->showSettings();
+	const auto closeSettings = gsl::finally([&] {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	});
+	if (!WaitForMainQueueBarrier()) {
+		return fail("settings_did_not_open");
+	}
+	QCoreApplication::processEvents();
+	const auto settings = controller->activeLayerSection();
+	if (!settings) {
+		return fail("settings_did_not_open");
+	}
+	auto settingsLabels = QStringList();
+	for (const auto label : settings->findChildren<Ui::FlatLabel *>()) {
+		settingsLabels.push_back(label->accessibilityName());
+	}
+	const auto settingsText = settingsLabels.join(u"\n"_q);
+	const auto hasNoTelegramHelp = !settingsText.contains(u"Telegram FAQ"_q)
+		&& !settingsText.contains(u"Telegram Features"_q)
+		&& !settingsText.contains(u"Ask a Question"_q)
+		&& !settingsText.contains(u"Telegram Support"_q);
+	if (!hasNoTelegramHelp) {
+		return fail("settings_telegram_help");
+	}
+	return true;
+}
+
 // Stories are presentation-gated per owning session: the main menu, the
 // own-channel menus, the Edit admin box and story links all read the
 // capability from the window session that acts. The admin box checks run
@@ -5797,7 +5885,8 @@ RunCallLinkAndSettingsRegression(not_null<Main::Account *> account,
 								 not_null<Window::Controller *> window) {
 	const auto controller = window->sessionController();
 	if (!controller || &controller->session() != &account->session()
-		|| !RunChannelCallLinkRegression(account, window)) {
+		|| !RunChannelCallLinkRegression(account, window)
+		|| !RunTeagramBrandingRegression(controller, "settings smoke")) {
 		return false;
 	}
 	const auto closeSettingsLayer = gsl::finally([&] {

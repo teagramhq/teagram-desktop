@@ -50,7 +50,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_chat.h"
 #include "settings/settings_codes.h"
-#include "settings/settings_faq_suggestions.h"
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
@@ -579,40 +578,6 @@ void BuildPremiumSection(SectionBuilder &builder) {
 	builder.addSkip();
 }
 
-void BuildHelpSection(SectionBuilder &builder) {
-	builder.addDivider();
-	builder.addSkip();
-
-	const auto controller = builder.controller();
-	builder.addButton({
-		.id = u"main/faq"_q,
-		.title = tr::lng_settings_faq(),
-		.icon = { &st::menuIconFaq },
-		.onClick = [=] { OpenFaq(controller); },
-		.keywords = { u"help"_q, u"support"_q, u"questions"_q },
-	});
-
-	builder.addButton({
-		.id = u"main/features"_q,
-		.title = tr::lng_settings_features(),
-		.icon = { &st::menuIconEmojiObjects },
-		.onClick = [] {
-			UrlClickHandler::Open(tr::lng_telegram_features_url(tr::now));
-		},
-		.keywords = { u"tips"_q, u"tutorial"_q },
-	});
-
-	builder.addButton({
-		.id = u"main/ask-question"_q,
-		.title = tr::lng_settings_ask_question(),
-		.icon = { &st::menuIconDiscussion },
-		.onClick = [=] { OpenAskQuestionConfirm(controller); },
-		.keywords = { u"contact"_q, u"feedback"_q },
-	});
-
-	builder.addSkip();
-}
-
 void BuildValidationSuggestions(SectionBuilder &builder) {
 	builder.add([](const WidgetContext &ctx) {
 		const auto controller = ctx.controller.get();
@@ -727,7 +692,6 @@ void Main::setupContent() {
 		builder.addSkip();
 		BuildInterfaceScale(builder);
 		BuildPremiumSection(builder);
-		BuildHelpSection(builder);
 
 		std::move(showFinished) | rpl::on_next([=] {
 			for (const auto &[id, entry] : *highlights) {
@@ -750,7 +714,6 @@ void Main::setupContent() {
 	session->api().globalPrivacy().reload();
 	session->api().premium().reload();
 	session->data().cloudThemes().refresh();
-	session->faqSuggestions().request();
 }
 
 void Main::showFinished() {
@@ -802,7 +765,6 @@ const auto kMeta = BuildHelper({
 
 	BuildInterfaceScale(builder);
 	BuildPremiumSection(builder);
-	BuildHelpSection(builder);
 });
 
 } // namespace
@@ -1178,49 +1140,6 @@ void SetupInterfaceScale(
 
 Type MainId() {
 	return Main::Id();
-}
-
-void OpenFaq(base::weak_ptr<Window::SessionController> weak) {
-	UrlClickHandler::Open(
-		tr::lng_settings_faq_link(tr::now),
-		QVariant::fromValue(ClickHandlerContext{
-			.sessionWindow = weak,
-		}));
-}
-
-void OpenAskQuestionConfirm(not_null<Window::SessionController*> window) {
-	const auto requestId = std::make_shared<mtpRequestId>();
-	const auto sure = [=](Fn<void()> close) {
-		if (*requestId) {
-			return;
-		}
-		*requestId = window->session().api().request(
-			MTPhelp_GetSupport()
-		).done(crl::guard(window, [=](const MTPhelp_Support &result) {
-			*requestId = 0;
-			result.match([&](const MTPDhelp_support &data) {
-				auto &owner = window->session().data();
-				if (const auto user = owner.processUser(data.vuser())) {
-					window->showPeerHistory(user);
-				}
-			});
-			close();
-		})).fail([=] {
-			*requestId = 0;
-			close();
-		}).send();
-	};
-	window->show(Ui::MakeConfirmBox({
-		.text = tr::lng_settings_ask_sure(),
-		.confirmed = sure,
-		.cancelled = [=](Fn<void()> close) {
-			OpenFaq(window);
-			close();
-		},
-		.confirmText = tr::lng_settings_ask_ok(),
-		.cancelText = tr::lng_settings_faq_button(),
-		.strictCancel = true,
-	}));
 }
 
 } // namespace Settings
