@@ -1,5 +1,7 @@
 name: MacOS Packaged.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
+
 on:
   push:
     branches: [dev, main]
@@ -9,6 +11,11 @@ on:
         description: Branch name to group by when dispatching a commit SHA.
         required: false
         type: string
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 env:
   TEAGRAM_UPDATE_BUILD: ${{ github.run_number }}
