@@ -601,6 +601,29 @@ awk '
   }
 ' "$native_harness" \
   || contract_fail 'The custom-plus-blocked mini-app fixture must restore the pinned server on early return.'
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /cleanupStockWebViewOnExit = gsl::finally/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.cancel\(\)/ {
+    cancel = NR
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.closeAll\(\)/ {
+    close_all = NR
+  }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /stock->session\(\)\.attachWebView\(\)\.open\(\{/ {
+    first_stock_open = NR
+    exit
+  }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cancel > cleanup_guard && close_all > cancel && first_stock_open > close_all)
+  }
+' "$native_harness" \
+  || contract_fail 'The mini-app case must cancel and close stock webviews on every exit after its first open.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \

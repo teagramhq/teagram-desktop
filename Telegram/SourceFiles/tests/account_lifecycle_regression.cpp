@@ -3937,6 +3937,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 
 	// A stock session accepts the app open: that is the app the refusal on the
 	// custom session must not touch.
+	const auto cleanupStockWebViewOnExit = gsl::finally([&] {
+		stock->session().attachWebView().cancel();
+		stock->session().attachWebView().closeAll();
+	});
 	const auto stockBefore = ReadWebViewOpenCounters(&stock->session());
 	if (!stock->session().attachWebView().open({
           .bot = stockBot,
