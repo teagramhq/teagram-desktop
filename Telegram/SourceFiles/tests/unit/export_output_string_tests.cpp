@@ -37,16 +37,13 @@ TEST_CASE(HtmlExportEscapesEveryControlByte) {
 
 TEST_CASE(ExportWritersPreserveHighBitUtf8AndSpecialSeparators) {
 	const auto utf8 = QByteArray::fromHex("c3a9e282ac");
-	CHECK_EQ(
-		Export::Output::details::Json::SerializeString(utf8),
-		QByteArrayLiteral("\"") + utf8 + '"');
+	CHECK_EQ(Export::Output::details::Json::SerializeString(utf8),
+			 QByteArrayLiteral("\"") + utf8 + '"');
 	CHECK_EQ(Export::Output::details::Html::SerializeString(utf8), utf8);
 
 	const auto separators = QByteArray::fromHex("e280a8e280a9");
-	CHECK_EQ(
-		Export::Output::details::Json::SerializeString(separators),
-		QByteArrayLiteral("\"\\u2028\\u2029\""));
-	CHECK_EQ(
-		Export::Output::details::Html::SerializeString(separators),
-		QByteArrayLiteral("<br><br>"));
+	CHECK_EQ(Export::Output::details::Json::SerializeString(separators),
+			 QByteArrayLiteral("\"\\u2028\\u2029\""));
+	CHECK_EQ(Export::Output::details::Html::SerializeString(separators),
+			 QByteArrayLiteral("<br><br>"));
 }

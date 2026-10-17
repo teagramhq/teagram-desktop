@@ -40,9 +40,8 @@ inline QByteArray SerializeString(const QByteArray &value) {
 			} else {
 				result.append('0' + left);
 			}
-		} else if (byte == 0xE2
-			&& (p + 2 < end)
-			&& static_cast<unsigned char>(*(p + 1)) == 0x80) {
+		} else if (byte == 0xE2 && (p + 2 < end)
+				   && static_cast<unsigned char>(*(p + 1)) == 0x80) {
 			if (static_cast<unsigned char>(*(p + 2)) == 0xA8) {
 				result.append("\\u2028", 6);
 			} else if (static_cast<unsigned char>(*(p + 2)) == 0xA9) {
@@ -93,9 +92,8 @@ inline QByteArray SerializeString(const QByteArray &value) {
 				result.append('0' + left);
 			}
 			result.append(';');
-		} else if (byte == 0xE2
-			&& (p + 2 < end)
-			&& static_cast<unsigned char>(*(p + 1)) == 0x80) {
+		} else if (byte == 0xE2 && (p + 2 < end)
+				   && static_cast<unsigned char>(*(p + 1)) == 0x80) {
 			if (static_cast<unsigned char>(*(p + 2)) == 0xA8) {
 				result.append("<br>", 4);
 			} else if (static_cast<unsigned char>(*(p + 2)) == 0xA9) {
