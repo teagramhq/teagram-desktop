@@ -26,20 +26,24 @@ trusted `dev` code. Pull request builds restore that cache and never save.
 
 ## macOS dependency artifact publisher
 
-The `macos-libraries` job runs only on a push or schedule for `dev` in
-`teagramhq/teagram-desktop`. It checks out that trusted ref and tags the GHCR
-artifact with the hash of the tracked macOS dependency recipe. It is the only
-job with `packages: write`; the macOS build, packaged build, updater fixtures,
-and manual unit-feedback jobs receive `packages: read` only. Pull request
-builds cannot publish a package. If a recipe hash has no published artifact,
-the consumer tries its read-only legacy cache and builds locally on a miss.
+The `macos-libraries` inspection job runs on `ubuntu-latest` only for a push or
+schedule on `dev` in `teagramhq/teagram-desktop`. It checks out that trusted ref,
+tags the GHCR artifact with the hash of the tracked macOS dependency recipe,
+and reports whether the tag already exists. It receives `packages: read` only.
 
-After an artifact is present, this publisher uses `actions: write` only to
-delete legacy `macOS-libs-` Actions cache entries. Those caches are no longer
-written by any macOS workflow. Consumers read a matching legacy cache only
-when the GHCR artifact is missing. The publisher can use the old cache to seed
-the first artifact, then deletes every legacy entry. It skips an existing
-recipe-hash tag; only trusted dev runs can publish package contents.
+The `macos-libraries-build` job runs on macOS only when the inspection reports a
+missing tag. It is the only job with `packages: write`; it restores the matching
+legacy cache or builds the macOS dependencies, then publishes the artifact.
+Pull request builds cannot publish a package. The macOS build, packaged build,
+updater fixtures, and manual unit-feedback jobs receive `packages: read` only.
+
+The `macos-libraries-prune` job runs on `ubuntu-latest` after an artifact hit or
+a successful publish. Its `actions: write` token is used only to delete legacy
+`macOS-libs-` Actions cache entries. Those caches are no longer written by any
+macOS workflow. Consumers read a matching legacy cache only when the GHCR
+artifact is missing. The publisher can use the old cache to seed the first
+artifact, then the prune job deletes every legacy entry. Only trusted dev runs
+can publish package contents.
 
 ## Manual feedback lanes
 

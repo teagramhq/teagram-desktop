@@ -108,10 +108,13 @@ if [[ "$push_group" != "$schedule_group" ]]; then
 fi
 
 require_permission_map "$mac_workflow" 'workflow: inherit
-macos-libraries: actions=write,contents=read,packages=write
+macos-libraries: contents=read,packages=read
+macos-libraries-build: contents=read,packages=write
+macos-libraries-prune: actions=write,contents=read
 macos: contents=read,packages=read
 libiconv: contents=read'
 
+require_job_field "$mac_workflow" macos-libraries '.["runs-on"]' 'ubuntu-latest'
 expect_contains "$mac_workflow macos-libraries if" \
   "$(job_field "$mac_workflow" macos-libraries '.if')" \
   "github.event_name == 'push' || github.event_name == 'schedule'" \
@@ -122,9 +125,29 @@ require_step_field "$mac_workflow" macos-libraries 'Set macOS dependency image t
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
   "$macos_libraries_image_script\" set-image"
-require_step_field "$mac_workflow" macos-libraries 'Set up dependency build tools.' '.if' \
-  "steps.image-cache.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
-require_step_script "$mac_workflow" macos-libraries 'Set up dependency build tools.' \
+require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.uses' \
+  'oras-project/setup-oras@v1'
+require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
+require_job_field "$mac_workflow" macos-libraries '.outputs["cache-hit"]' "\${{ steps.image-cache.outputs.cache-hit }}"
+
+require_job_field "$mac_workflow" macos-libraries-build '.needs' 'macos-libraries'
+require_job_field "$mac_workflow" macos-libraries-build '.["runs-on"]' 'macos-latest'
+expect_contains "$mac_workflow macos-libraries-build if" \
+  "$(job_field "$mac_workflow" macos-libraries-build '.if')" \
+  '!cancelled()' \
+  "github.event_name == 'push' || github.event_name == 'schedule'" \
+  "github.ref == 'refs/heads/dev'" \
+  "github.repository == 'teagramhq/teagram-desktop'" \
+  "needs.macos-libraries.result == 'success'" \
+  "needs.macos-libraries.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.uses' \
+  'oras-project/setup-oras@v1'
+require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' '.if' \
+  "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+require_step_script "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' \
   'bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" libraries' \
   'echo "$tools/bin" >> "$GITHUB_PATH"'
 dependency_tools_step_index=-1
@@ -136,36 +159,50 @@ while IFS= read -r step_name; do
     'Libraries.') libraries_setup_step_index="$step_index" ;;
   esac
   ((step_index += 1))
-done < <(JOB=macos-libraries yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
+done < <(JOB=macos-libraries-build yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
 if ((dependency_tools_step_index < 0 || dependency_tools_step_index >= libraries_setup_step_index)); then
   contract_fail "$mac_workflow must install dependency build tools before the cold Libraries build."
 fi
-require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
-  "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.if' \
-  "steps.image-cache.outputs.cache-hit != 'true'"
-require_step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key' \
+expect_equal "$mac_workflow macos-libraries-build legacy cache restore if" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.if')" 'null'
+require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key' \
   "macOS-libs-\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 expect_equal "$mac_workflow legacy cache key" \
-  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')" \
   "$(step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')"
-require_step_field "$mac_workflow" macos-libraries 'Libraries.' '.if' \
-  "steps.image-cache.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
-require_step_field "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' '.if' \
-  "steps.image-cache.outputs.cache-hit != 'true' && (steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true')"
-require_step_script "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' \
+require_step_field "$mac_workflow" macos-libraries-build 'Libraries.' '.if' \
+  "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.if' \
+  "steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'"
+require_step_script "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' \
   "$macos_libraries_image_script\" push"
-require_step_field "$mac_workflow" macos-libraries 'Publish macOS dependency artifact.' '.run' \
+require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" push \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\""
-require_step_script "$mac_workflow" macos-libraries 'Prune legacy macOS library caches.' \
-  "$macos_libraries_image_script\" prune-legacy-cache"
-require_job_field "$mac_workflow" macos '.needs' 'macos-libraries'
-expect_contains "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" \
-  'always()' \
+
+require_job_field "$mac_workflow" macos-libraries-prune '.["runs-on"]' 'ubuntu-latest'
+require_job_field "$mac_workflow" macos-libraries-prune '.needs | join(",")' \
+  'macos-libraries,macos-libraries-build'
+expect_contains "$mac_workflow macos-libraries-prune if" \
+  "$(job_field "$mac_workflow" macos-libraries-prune '.if')" \
+  '!cancelled()' \
   "needs.macos-libraries.result == 'success'" \
-  "needs.macos-libraries.result == 'skipped'"
+  "needs.macos-libraries.outputs.cache-hit == 'true'" \
+  "needs.macos-libraries-build.result == 'success'"
+require_step_field "$mac_workflow" macos-libraries-prune 'Prune legacy macOS library caches.' '.run' \
+  "bash $macos_libraries_image_script prune-legacy-cache"
+require_job_field "$mac_workflow" macos '.needs | join(",")' \
+  'macos-libraries,macos-libraries-build,macos-libraries-prune'
+expect_contains "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" \
+  '!cancelled()' \
+  "needs.macos-libraries.result == 'success'" \
+  "needs.macos-libraries.result == 'skipped'" \
+  "needs.macos-libraries-build.result == 'success'" \
+  "needs.macos-libraries-build.result == 'skipped'" \
+  "needs.macos-libraries-prune.result == 'success'" \
+  "needs.macos-libraries-prune.result == 'skipped'"
+expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" 'always()'
 require_step_field "$mac_workflow" macos 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
@@ -751,7 +788,7 @@ require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries ca
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$packaged_workflow legacy cache key" \
   "$(step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
 require_step_field "$packaged_workflow" macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 reject_value "$packaged_workflow" \
@@ -772,6 +809,10 @@ build_tools_body="$(strip_shell_comments < "$build_tools_script")" \
   || contract_fail "$build_tools_script does not parse as bash."
 expect_script_lacks "$build_tools_script" "$build_tools_body" 'brew '
 expect_script_contains "$build_tools_script" "$build_tools_body" 'ln -sf glibtoolize "$prefix/bin/libtoolize"'
+grep -Fq '"meson|' <<< "$tool_entries" \
+  || contract_fail "$build_tools_script must install pinned Meson for a cold dependency publisher."
+expect_script_contains "$build_tools_script" "$build_tools_body" \
+  'for command in m4 autoconf automake autoreconf libtoolize glibtool nasm meson; do'
 prepare_recipe="Telegram/build/prepare/prepare.py"
 mutable_checkouts="$(grep -nE '^ *git checkout ' "$prepare_recipe" \
   | grep -vE 'git checkout ([0-9a-f]{7,40}|v[0-9]+(\.[0-9]+)+)$' || true)"
@@ -801,7 +842,7 @@ require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.'
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$unit_workflow legacy cache key" \
   "$(step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
 require_step_field "$unit_workflow" unit 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
@@ -851,7 +892,7 @@ require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS li
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$updater_workflow legacy cache key" \
   "$(step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries 'Restore legacy macOS libraries cache.' '.with.key')"
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
 require_step_field "$updater_workflow" updater-fixtures 'Prepare libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 for libraries_cache_workflow in "$mac_workflow" "$packaged_workflow" "$unit_workflow" "$updater_workflow"; do
