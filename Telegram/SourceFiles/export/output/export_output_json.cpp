@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "export/output/export_output_json.h"
+#include "export/output/export_output_string.h"
 
 #include "export/output/export_output_result.h"
 #include "export/data/export_data_types.h"
@@ -22,57 +23,12 @@ namespace Output {
 namespace {
 
 using Context = details::JsonContext;
+using details::Json::SerializeString;
 
 struct RichSerializeContext {
 	Context &json;
 	const Data::RichMessage &message;
 };
-
-QByteArray SerializeString(const QByteArray &value) {
-	const auto size = value.size();
-	const auto begin = value.data();
-	const auto end = begin + size;
-
-	auto result = QByteArray();
-	result.reserve(2 + size * 4);
-	result.append('"');
-	for (auto p = begin; p != end; ++p) {
-		const auto ch = *p;
-		if (ch == '\n') {
-			result.append("\\n", 2);
-		} else if (ch == '\r') {
-			result.append("\\r", 2);
-		} else if (ch == '\t') {
-			result.append("\\t", 2);
-		} else if (ch == '"') {
-			result.append("\\\"", 2);
-		} else if (ch == '\\') {
-			result.append("\\\\", 2);
-		} else if (ch >= 0 && ch < 32) {
-			result.append("\\x", 2).append('0' + (ch >> 4));
-			const auto left = (ch & 0x0F);
-			if (left >= 10) {
-				result.append('A' + (left - 10));
-			} else {
-				result.append('0' + left);
-			}
-		} else if (ch == char(0xE2)
-			&& (p + 2 < end)
-			&& *(p + 1) == char(0x80)) {
-			if (*(p + 2) == char(0xA8)) { // Line separator.
-				result.append("\\u2028", 6);
-			} else if (*(p + 2) == char(0xA9)) { // Paragraph separator.
-				result.append("\\u2029", 6);
-			} else {
-				result.append(ch);
-			}
-		} else {
-			result.append(ch);
-		}
-	}
-	result.append('"');
-	return result;
-}
 
 QByteArray SerializeDate(TimeId date) {
 	return SerializeString(
