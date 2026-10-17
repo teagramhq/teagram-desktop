@@ -7881,8 +7881,16 @@ struct NativeLifecycleResults {
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
-			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
-			  pinnedWindow, blankWindow, customSessionOpenRefusalPassed);
+				app,
+				selfId,
+				stock,
+				pinned,
+				restoredBlocked,
+				blank,
+				stockWindow,
+				pinnedWindow,
+				blankWindow,
+				customSessionOpenRefusalPassed);
 	if (!miniAppRegressionPassed) {
 		std::fprintf(
 			stderr,
