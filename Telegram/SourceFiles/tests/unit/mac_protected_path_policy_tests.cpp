@@ -509,6 +509,19 @@ TEST_CASE(SeatbeltProfileRejectsOversizedExpandedHomePolicy) {
 	CHECK(policy.SeatbeltProfile().isEmpty());
 }
 
+TEST_CASE(SeatbeltProfileRejectsOversizedSharpSHomeBeforeFilesystemProbe) {
+	auto fs = FakeFileSystem();
+	const auto longHome = "/Users/" + QByteArray(10, 's');
+	AddDirectoryHierarchy(fs, longHome);
+	auto failure = RefusalRecord();
+	const auto policy = MacProtectedPathPolicy::Build(
+		HomeRoots{.accountDatabase = longHome, .foundation = longHome},
+		fs.operations(), &failure);
+	CHECK(!policy.valid());
+	CHECK(failure.protectedClass == ProtectedClass::Invalid);
+	CHECK(fs.lstatCalls.empty());
+}
+
 TEST_CASE(SeatbeltHomeRegexMatchesUnicodeCaseAliases) {
 	auto homes = std::vector<std::pair<QString, QString>>{
 		{u"/Users/alice"_q, u"/U\u200Bsers/al\u200Bice"_q},
