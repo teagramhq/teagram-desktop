@@ -121,12 +121,6 @@ Result ShowSavedMessages(const Context &ctx) {
 	return Result::Handled;
 }
 
-Result ShowFaq(const Context &ctx) {
-	::Settings::OpenFaq(
-		ctx.controller ? base::make_weak(ctx.controller) : nullptr);
-	return Result::Handled;
-}
-
 void ShowQrBox(not_null<Window::SessionController*> controller) {
 	const auto user = controller->session().user();
 	controller->uiShow()->show(Box(
@@ -1781,32 +1775,6 @@ void RegisterSettingsHandlers(Router &router) {
 			Calls::ShowCallsBox(ctx.controller);
 			return Result::Handled;
 		}},
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"faq"_q,
-		.action = CodeBlock{ ShowFaq },
-		.requiresAuth = false,
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"ask-question"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			if (!ctx.controller) {
-				return Result::NeedsAuth;
-			}
-			::Settings::OpenAskQuestionConfirm(ctx.controller);
-			return Result::Handled;
-		}},
-	});
-
-	router.add(u"settings"_q, {
-		.path = u"features"_q,
-		.action = CodeBlock{ [](const Context &ctx) {
-			UrlClickHandler::Open(tr::lng_telegram_features_url(tr::now));
-			return Result::Handled;
-		}},
-		.requiresAuth = false,
 	});
 
 	router.add(u"settings"_q, {

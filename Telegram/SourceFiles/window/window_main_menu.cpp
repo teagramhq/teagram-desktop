@@ -412,15 +412,9 @@ MainMenu::MainMenu(
 
 	parentResized();
 
-#ifdef TDESKTOP_TEAGRAM
 	_telegram->setMarkedText(
 		tr::link(tr::lng_teagram_about_title(tr::now),
 				 u"https://github.com/teagramhq/teagram-desktop"_q));
-#else  // TDESKTOP_TEAGRAM
-	_telegram->setMarkedText(tr::link(
-		u"Telegram Desktop"_q,
-		u"https://desktop.telegram.org"_q));
-#endif // TDESKTOP_TEAGRAM
 	_telegram->setLinksTrusted();
 #ifdef TDESKTOP_TEAGRAM
 	const auto releaseLink = currentVersionReleaseLink();
@@ -447,8 +441,8 @@ MainMenu::MainMenu(
 	}
 #else  // TDESKTOP_TEAGRAM
 	_version->setLink(
-		1,
-		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+		1, std::make_shared<UrlClickHandler>(
+			   u"https://github.com/teagramhq/teagram-desktop/releases"_q));
 #endif // TDESKTOP_TEAGRAM
 	_version->setLink(
 		2,
