@@ -7888,23 +7888,14 @@ struct NativeLifecycleResults {
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
-				app,
-				selfId,
-				stock,
-				pinned,
-				restoredBlocked,
-				blank,
-				stockWindow,
-				pinnedWindow,
-				blankWindow,
-				failedNonMiniAppRegression);
+			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
+			  pinnedWindow, blankWindow, failedNonMiniAppRegression);
 	if (!miniAppRegressionPassed) {
-		std::fprintf(
-			stderr,
-			"Chat participants regression failed: %s\n",
-			failedNonMiniAppRegression
-				? failedNonMiniAppRegression
-				: "mini-app open refusal was not observable on the owning session");
+		std::fprintf(stderr, "Chat participants regression failed: %s\n",
+					 failedNonMiniAppRegression
+						 ? failedNonMiniAppRegression
+						 : "mini-app open refusal was not observable on the "
+						   "owning session");
 	}
 	const auto restoredBlockedLifetimeAlive
 		= restoredBlockedLifetime.get() == restoredBlocked.get();
