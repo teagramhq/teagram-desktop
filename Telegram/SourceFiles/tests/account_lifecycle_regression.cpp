@@ -3737,7 +3737,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> restoredBlocked,
 	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
 	not_null<Window::Controller *> pinnedWindow,
-	not_null<Window::Controller *> blankWindow) {
+	not_null<Window::Controller *> blankWindow,
+	bool &customSessionOpenRefusalPassed) {
+	customSessionOpenRefusalPassed = false;
 	const auto stockController = stockWindow->sessionController();
 	const auto pinnedController = pinnedWindow->sessionController();
 	if (!stockController || !pinnedController) {
@@ -3886,6 +3888,17 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								 pinnedUsername, 1, 0, 0, 0, 0)) {
 		return false;
 	}
+	std::fprintf(
+		stderr,
+		"Mini-app open refusal passed: custom-session toasts=%d/%d "
+		"requests=%d/0 activations=%d/0 resolves=%d/0 instances=%d/0.\n",
+		pinnedUsername.toasts - pinnedBefore.toasts,
+		kRegressionEntryClassCount + 1,
+		pinnedUsername.requests - pinnedBefore.requests,
+		pinnedUsername.activations - pinnedBefore.activations,
+		pinnedUsername.resolves - pinnedBefore.resolves,
+		pinnedUsername.instances - pinnedBefore.instances);
+	customSessionOpenRefusalPassed = true;
 
 	// An open whose window belongs to another account is refused without
 	// a toast and without any webview side effect: no active-account
@@ -7585,11 +7598,16 @@ StartChatParticipantsRegression(Main::Domain &domain,
 #endif
 	const auto restoredBlocked
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
+	auto customSessionOpenRefusalPassed = false;
 	if (!RunMiniAppOpenRefusalRegression(app, selfId, stock, pinned,
 										 restoredBlocked, blank, stockWindow,
-										 pinnedWindow, blankWindow)) {
+										 pinnedWindow, blankWindow,
+										 customSessionOpenRefusalPassed)) {
 		return FailChatParticipantsRegression(
-			"mini-app open refusal was not observable on the owning session");
+			customSessionOpenRefusalPassed
+				? "custom-session mini-app open refusal passed; a later "
+				  "account lifecycle check failed"
+				: "mini-app open refusal was not observable on the owning session");
 	}
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	if (pinnedController->session()
