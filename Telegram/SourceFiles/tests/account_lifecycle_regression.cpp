@@ -4439,7 +4439,7 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		MTPstring(), // summary_from_language
 		MTPRichMessage());
 	auto item = session->data().addNewMessage(data, MessageFlags(),
-											  NewMessageType::Last);
+											  NewMessageType::Existing);
 	if (item && rich) {
 		item->setRichPage(std::make_shared<Iv::RichPage>());
 	}
