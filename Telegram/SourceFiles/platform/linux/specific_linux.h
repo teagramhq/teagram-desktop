@@ -38,6 +38,11 @@ inline bool WaitForProcessExit(uint64 processId, crl::time timeout) {
 	return true;
 }
 
+[[nodiscard]] QString LinuxAppDataPath(const QString &home,
+									   const QString &standardPath);
+[[nodiscard]] bool
+LinuxShouldMigrateLegacyDataFiles(const QString &initialWorkingDir);
+
 } // namespace Platform
 
 inline void psCheckLocalSocket(const QString &serverName) {
