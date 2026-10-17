@@ -3734,8 +3734,8 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
 	not_null<Window::Controller *> pinnedWindow,
 	not_null<Window::Controller *> blankWindow,
-	bool &customSessionOpenRefusalPassed) {
-	customSessionOpenRefusalPassed = false;
+	const char *&failedNonMiniAppRegression) {
+	failedNonMiniAppRegression = nullptr;
 	const auto stockController = stockWindow->sessionController();
 	const auto pinnedController = pinnedWindow->sessionController();
 	if (!stockController || !pinnedController) {
@@ -3894,7 +3894,6 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		pinnedUsername.activations - pinnedBefore.activations,
 		pinnedUsername.resolves - pinnedBefore.resolves,
 		pinnedUsername.instances - pinnedBefore.instances);
-	customSessionOpenRefusalPassed = true;
 
 	// An open whose window belongs to another account is refused without
 	// a toast and without any webview side effect: no active-account
@@ -4041,6 +4040,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			app, stock, pinned, blank, restoredBlocked, stockController,
 			pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
+		failedNonMiniAppRegression = "Settings deep link regression failed";
 		blank->forcedLogOut();
 		return false;
 	}
@@ -4051,12 +4051,14 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 											"blocked")
 		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
 											"stock after custom")) {
+		failedNonMiniAppRegression = "Messages privacy regression failed";
 		blank->forcedLogOut();
 		return false;
 	}
 	if (!RunPaidLinkRefusalRegression(
 			app, stockController, pinnedController,
 			not_null<Window::SessionController *>(blankController))) {
+		failedNonMiniAppRegression = "Paid link regression failed";
 		blank->forcedLogOut();
 		return false;
 	}
@@ -4090,6 +4092,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return stockFirst && blockedFirst;
 	}();
 	if (!blockedMenuOrdersMatch) {
+		failedNonMiniAppRegression = "Boost/Story menus regression failed";
 		return false;
 	}
 	const auto blankBot = blank->session()
@@ -4136,6 +4139,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	app.closeWindow(blankWindow.get());
 	QCoreApplication::processEvents();
 	if (!expiredControllerWeak.empty()) {
+		failedNonMiniAppRegression = "Settings deep link regression failed";
 		std::fprintf(stderr,
 					 "Settings deep link regression failed: closed controller "
 					 "did not expire.\n");
@@ -4161,6 +4165,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 				->featureUnavailableOnServerToastCallsForRegressionTest()
 			!= expiredToastBefore)
 		|| (app.activeWindow() != expiredActiveBefore)) {
+		failedNonMiniAppRegression = "Settings deep link regression failed";
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: expired target fell back "
@@ -7877,7 +7882,7 @@ struct NativeLifecycleResults {
 					 "not be prepared: window=%d.\n",
 					 restoredBlockedWindowReady);
 	}
-	auto customSessionOpenRefusalPassed = false;
+	const char *failedNonMiniAppRegression = nullptr;
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
@@ -7890,14 +7895,13 @@ struct NativeLifecycleResults {
 				stockWindow,
 				pinnedWindow,
 				blankWindow,
-				customSessionOpenRefusalPassed);
+				failedNonMiniAppRegression);
 	if (!miniAppRegressionPassed) {
 		std::fprintf(
 			stderr,
 			"Chat participants regression failed: %s\n",
-			customSessionOpenRefusalPassed
-				? "custom-session mini-app open refusal passed; a later account "
-				  "lifecycle check failed"
+			failedNonMiniAppRegression
+				? failedNonMiniAppRegression
 				: "mini-app open refusal was not observable on the owning session");
 	}
 	const auto restoredBlockedLifetimeAlive
