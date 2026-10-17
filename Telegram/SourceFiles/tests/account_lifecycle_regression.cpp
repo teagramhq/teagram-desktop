@@ -4479,6 +4479,17 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] ChatAdminRights OverbroadBasicGroupAdminRightsForRegression() {
+	using Flag = ChatAdminRight;
+	return Flag::Other
+		| Flag::ChangeInfo
+		| Flag::DeleteMessages
+		| Flag::BanUsers
+		| Flag::InviteByLinkOrAdd
+		| Flag::PinMessages
+		| Flag::ManageCall;
+}
+
 [[nodiscard]] HistoryItem *
 AddTranslationRegressionMessage(not_null<Main::Session *> session,
 								not_null<ChannelData *> channel, MsgId id,
@@ -8129,8 +8140,16 @@ struct NativeLifecycleResults {
 			= pinned->session().data().chat(adminActionChatId);
 		const auto customAdminActionPeer = not_null<PeerData *>(
 			static_cast<PeerData *>(&*customAdminActionChat));
+		const auto customDisplayRights
+			= customAdminActionChat->defaultAdminRights(customSelf).flags;
+		const auto customDefaultRightsAreRoleOnly = customDisplayRights
+			== ChatAdminRightsInfo(ChatAdminRight::Other).flags;
+		recordChatCase(
+			"custom-admin-default-rights",
+			customDefaultRightsAreRoleOnly,
+			"custom-server basic-group admin defaults include privileged rights");
 		customAdminActionChat->setAdminRights(
-			customAdminActionChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion seed", true);
 		const auto customFullListSeedPassed
@@ -8214,7 +8233,7 @@ struct NativeLifecycleResults {
 			RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
 									UserId(2)));
 		customLiveAdminChat->setAdminRights(
-			customLiveAdminChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customLiveAdminChat, "custom incremental promotion seed", true);
 		const auto customLiveSeedPassed

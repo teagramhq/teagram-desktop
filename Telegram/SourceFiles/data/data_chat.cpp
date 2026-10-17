@@ -54,14 +54,18 @@ ChatAdminRightsInfo ChatData::defaultAdminRights(not_null<UserData*> user) {
 	const auto isCreator = (creator == peerToUser(user->id))
 		|| (user->isSelf() && amCreator());
 	using Flag = ChatAdminRight;
-	return ChatAdminRightsInfo(Flag::Other
+	const auto defaultRights = Flag::Other
 		| Flag::ChangeInfo
 		| Flag::DeleteMessages
 		| Flag::BanUsers
 		| Flag::InviteByLinkOrAdd
 		| Flag::PinMessages
 		| Flag::ManageCall
-		| (isCreator ? Flag::AddAdmins : Flag(0)));
+		| (isCreator ? Flag::AddAdmins : Flag(0));
+	return ChatAdminRightsInfo(Data::details::BasicChatAdminDefaultRightsFor(
+		usesCustomServer(),
+		defaultRights,
+		ChatAdminRightsInfo(Flag::Other).flags));
 }
 
 bool ChatData::allowsForwarding() const {
