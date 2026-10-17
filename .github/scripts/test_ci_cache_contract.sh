@@ -104,6 +104,16 @@ require_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependen
   $'DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile);\necho "$DOCKERFILE" > Dockerfile'
 reject_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependency image.' \
   'DEBUG= LTO= poetry run gen_dockerfile > Dockerfile'
+require_step_script "$linux_arm64_workflow" linux-arm64 \
+  'Verify and stage ELF64 aarch64 Teagram executable.' \
+  'executable="out/Debug/Teagram"' \
+  'echo "::error::Teagram executable was not produced."' \
+  'cp "${executable}" artifact/Teagram'
+reject_step_script "$linux_arm64_workflow" linux-arm64 \
+  'Verify and stage ELF64 aarch64 Teagram executable.' \
+  'out/Debug/Telegram' 'artifact/Telegram'
+require_step_field "$linux_arm64_workflow" linux-arm64 'Upload artifact.' '.with.name' \
+  'Teagram-Linux-arm64-${{ github.sha }}'
 
 # The linux-libraries job is the only GHCR writer, only for dev pushes in this
 # repository, and the build waits for it and stops when it fails.
