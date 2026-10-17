@@ -1,5 +1,7 @@
 name: MacOS.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || github.workflow }}
+
 on:
   # The PR build runs once the approved head is labeled macos-build; a later push
   # cancels it and clears the label in mac_pr_approval.yml.
@@ -38,6 +40,11 @@ on:
         description: PR source branch to share its repository-qualified concurrency group with the automatic PR run.
         required: false
         type: string
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # Qualify PR groups by source repository; set both PR inputs for matching dispatches.

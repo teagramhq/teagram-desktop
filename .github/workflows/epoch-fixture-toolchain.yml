@@ -1,11 +1,19 @@
 name: Epoch fixture conformance
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || github.workflow }}
+
 on:
   pull_request:
     paths:
       - "tests/epoch-fixtures/**"
       - ".github/workflows/epoch-fixture-toolchain.yml"
   workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
