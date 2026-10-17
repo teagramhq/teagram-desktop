@@ -155,7 +155,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 #include <set>
 #include <thread>
-#include <utility>
 #include <vector>
 
 namespace Tests {
@@ -5235,28 +5234,20 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 	const auto openLanguageBox
 		= [](not_null<Window::SessionController *> controller,
 			 const QString &highlightId) {
-			  const auto hasHighlight = !highlightId.isEmpty();
-			  if (hasHighlight) {
+			  if (!highlightId.isEmpty()) {
 				  controller->setHighlightControlId(highlightId);
 			  }
-			  auto box = controller->window().show(
+			  return controller->window().show(
 				  object_ptr<LanguageBox>(controller->widget().get(),
 										  controller, highlightId),
 				  Ui::LayerOption::KeepOther, anim::type::normal);
-			  QCoreApplication::processEvents();
-			  auto highlightCleared = !hasHighlight;
-			  if (box && hasHighlight) {
-				  highlightCleared = WaitForRegressionCondition([&] {
-					  return controller->highlightControlId().isEmpty();
-				  });
-			  }
-			  return std::pair(std::move(box), highlightCleared);
 		  };
 	const auto stockHasPlatformProvider
 		= Platform::IsTranslateProviderAvailable();
 	const auto settingsSkipLanguages = settings.skipTranslationLanguages();
-	auto [customLanguageBox, customHighlightCleared]
+	auto customLanguageBox
 		= openLanguageBox(customController, u"language/show-button"_q);
+	QCoreApplication::processEvents();
 	if (!customLanguageBox
 		|| customLanguageBox->translateButtonRowPresentForRegressionTest()
 			   != customHasProvider
@@ -5270,21 +5261,20 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 					   == Ui::details::TranslateProviderChoice::Platform
 				   && Platform::IsMac())
 		|| customLanguageBox->translateChatsRowPresentForRegressionTest()
-		|| !customHighlightCleared) {
+		|| !customController->highlightControlId().isEmpty()) {
 		std::fprintf(stderr,
 					 "Translation controls regression failed: custom "
 					 "Language settings exposed unsupported rows or left a "
-					 "highlight pending (cleared=%d).\n",
-					 customHighlightCleared);
+					 "highlight pending.\n");
 		return false;
 	}
 	customController->hideLayer(anim::type::instant);
 	for (const auto &link :
 		 {u"language/show-button"_q, u"language/translate-chats"_q,
 		  u"language/do-not-translate"_q}) {
-		auto [linkBox, linkHighlightCleared]
-			= openLanguageBox(customController, link);
-		if (!linkBox || !linkHighlightCleared) {
+		auto linkBox = openLanguageBox(customController, link);
+		QCoreApplication::processEvents();
+		if (!linkBox || !customController->highlightControlId().isEmpty()) {
 			std::fprintf(
 				stderr, "Translation controls regression failed: Language link "
 						"left an unsupported highlight pending.\n");
@@ -5292,9 +5282,9 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		}
 		customController->hideLayer(anim::type::instant);
 	}
-	auto [stockLanguageBox, stockHighlightCleared]
-		= openLanguageBox(stockController, QString());
-	if (!stockLanguageBox || !stockHighlightCleared
+	auto stockLanguageBox = openLanguageBox(stockController, QString());
+	QCoreApplication::processEvents();
+	if (!stockLanguageBox
 		|| !stockLanguageBox->translateButtonRowPresentForRegressionTest()
 		|| !stockLanguageBox->doNotTranslateRowPresentForRegressionTest()
 		|| !stockLanguageBox->translationAboutPresentForRegressionTest()
