@@ -6420,12 +6420,12 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->Report("cache-concurrent-deletion",
 								   cacheConcurrentDeletionPassed);
 	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
-	const auto requiredAccounts
-		= Core::MacProtectedPath::IntegrationTestActive() ? 3 : 2;
+	// Stock, pinned, blank and restored blocked accounts coexist in this test.
+	constexpr auto requiredAccounts = 4;
 	if (domain.accounts().size()
 		> Main::Domain::kPremiumMaxAccounts - requiredAccounts) {
 		return failPrerequisite(
-			"not enough account slots for isolated cache regression sessions");
+			"not enough account slots for isolated lifecycle fixtures");
 	}
 	const auto selfId = UserId(1);
 	const auto chatId = ChatId(1051);
@@ -6785,6 +6785,7 @@ struct NativeLifecycleResults {
 	const auto destroyedSessionChannelId = ChannelId(3051);
 	PrepareRegressionChannel(
 		discarded->session().data().channel(destroyedSessionChannelId));
+	const auto discardedLifetime = base::make_weak(discarded.get());
 	ResetCallStartRegressionForTest();
 	ReportCallRegressionCheckpoint("destroyed-session link begin");
 	discardedController->showPeerByLink(Window::PeerByLinkInfo{
@@ -6812,6 +6813,10 @@ struct NativeLifecycleResults {
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
+	if (!discardedLifetime.empty()) {
+		return failPrerequisite(
+			"previous-session account survived after its window closed");
+	}
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeQueuedSwitches.switchDeferred + 1);
 	const auto queuedPinnedDeferredObserved = WaitForDeferredSwitchUpdate(
@@ -7240,6 +7245,7 @@ struct NativeLifecycleResults {
 	}
 
 	const auto stockWindow = app.ensureSeparateWindowFor(stock);
+	Window::Controller *restoredBlockedWindow = nullptr;
 	const auto closeWindows = gsl::finally([&] {
 		if (stockWindow && app.separateWindowFor(stock) == stockWindow) {
 			app.closeWindow(stockWindow);
@@ -7249,6 +7255,11 @@ struct NativeLifecycleResults {
 		}
 		if (blankWindow && app.separateWindowFor(blank) == blankWindow) {
 			app.closeWindow(blankWindow);
+		}
+		if (restoredBlockedWindow
+			&& app.separateWindowFor(restoredBlockedWindow->id())
+				   == restoredBlockedWindow) {
+			app.closeWindow(restoredBlockedWindow);
 		}
 		domain.activate(stock);
 	});
@@ -7820,7 +7831,9 @@ struct NativeLifecycleResults {
 	pinnedController->hideLayer(anim::type::instant);
 #endif
 	nativeLifecycleResults->StartCase("mini-app-open");
-	const auto restoredBlocked = discarded;
+	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
+	const auto restoredBlocked = domain.add(MTP::Environment::Production);
+	restoredBlocked->mtp().stopForServerEnrollment();
 	auto restoredBlockedFixtureReady
 		= !restoredBlocked->sessionExists()
 		  && !restoredBlocked->local().hasStoredCustomServer()
@@ -7834,16 +7847,49 @@ struct NativeLifecycleResults {
 			  && !restoredBlocked->local().hasStoredCustomServer()
 			  && !restoredBlocked->local().customServerPinUnknown();
 	}
+	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
+	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
+	const auto restoredBlockedWindowReady
+		= restoredBlockedWindow
+		  && app.separateWindowFor(restoredBlocked) == restoredBlockedWindow
+		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
+	restoredBlockedFixtureReady
+		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
+	}
 	if (!restoredBlockedFixtureReady) {
 		std::fprintf(stderr,
 					 "Mini-app open regression: restored blocked fixture could "
-					 "not be prepared.\n");
+					 "not be prepared: window=%d.\n",
+					 restoredBlockedWindowReady);
 	}
-	const auto miniAppPassed
+	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
 			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
 			  pinnedWindow, blankWindow);
+	const auto restoredBlockedLifetimeAlive
+		= restoredBlockedLifetime.get() == restoredBlocked.get();
+	const auto restoredBlockedWindowMapped
+		= restoredBlockedLifetimeAlive
+		  && app.separateWindowFor(restoredBlocked) == restoredBlockedWindow;
+	if (!restoredBlockedLifetimeAlive || !restoredBlockedWindowMapped) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: restored blocked fixture lifetime "
+			"failed: alive=%d window=%d.\n",
+			restoredBlockedLifetimeAlive, restoredBlockedWindowMapped);
+	}
+	const auto miniAppPassed = miniAppRegressionPassed
+							   && restoredBlockedLifetimeAlive
+							   && restoredBlockedWindowMapped;
+	if (restoredBlockedWindow
+		&& app.separateWindowFor(restoredBlockedWindow->id())
+			   == restoredBlockedWindow) {
+		app.closeWindow(restoredBlockedWindow);
+		restoredBlockedWindow = nullptr;
+	}
 	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
 	nativeLifecycleResults->StartCase("chatlist-invite-check");
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
