@@ -47,7 +47,7 @@ TEST_CASE(LinuxTeagramDataPathAvoidsTelegramFolders) {
 
 	const auto resolved = Platform::LinuxAppDataPath(home, teagram);
 
-	CHECK_EQ(QString::fromUtf16(AppName.utf16()), u"Teagram"_q);
+	CHECK_EQ(AppName.utf16(), u"Teagram"_q);
 	CHECK_EQ(resolved, teagram + '/');
 	CHECK(resolved != oldTelegram + '/');
 	CHECK(resolved != xdgTelegram + '/');
