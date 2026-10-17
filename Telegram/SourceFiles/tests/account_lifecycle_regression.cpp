@@ -4070,19 +4070,17 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 				   == toastBefore + 1);
 			const auto peerShown
 				= (controller->activeChatCurrent().peer() == channelPeer.get());
-			const auto mainSectionShown
-				= controller->content()->isMainSectionShown();
-			const auto noStoriesSection = !ShownStoriesSection(controller);
+			const auto noStoriesUi = controller->content()->isMainSectionShown()
+									 && !ShownStoriesSection(controller);
 			const auto noStoriesRequest
 				= !storiesData.requestsPendingForRegressionTest();
-			if (!toastShown || !peerShown || !mainSectionShown
-				|| !noStoriesSection || !noStoriesRequest) {
+			if (!toastShown || !peerShown || !noStoriesUi
+				|| !noStoriesRequest) {
 				std::fprintf(stderr,
 							 "Story controls regression: case=%s toast=%d "
-							 "peer=%d main-section=%d no-stories-section=%d "
-							 "no-request=%d.\n",
-							 name, toastShown, peerShown, mainSectionShown,
-							 noStoriesSection, noStoriesRequest);
+							 "peer=%d no-stories-ui=%d no-request=%d.\n",
+							 name, toastShown, peerShown, noStoriesUi,
+							 noStoriesRequest);
 				return fail(name);
 			}
 		}
