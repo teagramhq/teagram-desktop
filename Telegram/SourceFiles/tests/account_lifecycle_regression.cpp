@@ -2439,6 +2439,29 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 																: nullptr;
 }
 
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+	if (condition()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	auto poll = QTimer();
+	timeout.setSingleShot(true);
+	poll.setInterval(10);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (condition()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	timeout.start(5000);
+	loop.exec();
+	poll.stop();
+	return condition();
+}
+
 [[nodiscard]] bool RunPaidLinkRefusalRegression(
 	Core::Application &app,
 	not_null<Window::SessionController *> stockController,
@@ -2533,6 +2556,14 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				   ? app.openInternalUrl(url, context)
 				   : app.openLocalUrl(url, context);
 	};
+	const auto controllerIndex = [&](const auto *controller) {
+		for (auto i = 0; i != int(controllers.size()); ++i) {
+			if (controllers[i].get() == controller) {
+				return i;
+			}
+		}
+		return -1;
+	};
 	const auto dispatchRefused = [&](const QString &url,
 									 Window::SessionController *target) {
 		const auto activeBefore = app.activeWindow();
@@ -2566,7 +2597,21 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  not_null<Window::SessionController *> active) {
 			  active->window().activate();
 			  QCoreApplication::processEvents();
-			  if (app.activeWindow() != &active->window()) {
+			  const auto activeWindow = app.activeWindow();
+			  const auto activeWindowMatchesImmediately
+				  = (activeWindow == &active->window());
+			  const auto activeWindowMatches
+				  = activeWindowMatchesImmediately
+					|| WaitForRegressionCondition([&] {
+						   return app.activeWindow() == &active->window();
+					   });
+			  std::fprintf(
+				  stderr,
+				  "Paid link regression activation: target=%d active=%d "
+				  "immediate-match=%d settled-match=%d.\n",
+				  controllerIndex(target), controllerIndex(active.get()),
+				  activeWindowMatchesImmediately, activeWindowMatches);
+			  if (!activeWindowMatches) {
 				  return false;
 			  }
 			  for (const auto &url : local) {
@@ -5832,28 +5877,6 @@ template <typename Widget>
 }
 #endif
 
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
-	if (condition()) {
-		return true;
-	}
-	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	auto poll = QTimer();
-	timeout.setSingleShot(true);
-	poll.setInterval(10);
-	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-		if (condition()) {
-			loop.quit();
-		}
-	});
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	poll.start();
-	timeout.start(5000);
-	loop.exec();
-	poll.stop();
-	return condition();
-}
 [[nodiscard]] bool
 WaitForBindingFilesRemovedForRegression(const QStringList &files) {
 	return WaitForRegressionCondition([&] {
