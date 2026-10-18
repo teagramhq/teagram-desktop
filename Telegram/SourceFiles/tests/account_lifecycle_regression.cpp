@@ -4146,6 +4146,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			static_cast<const void *>(pinnedController));
 		return false;
 	}
+	const auto stockControllerLifetime = base::make_weak(stockController);
+	const auto pinnedControllerLifetime = base::make_weak(pinnedController);
+	const auto blankControllerLifetime
+		= base::make_weak(blankController.get());
 	if (stock->mtp().dcOptions().hasCustomServer()
 		|| stock->mtp().dcOptions().blocked()
 		|| !pinned->mtp().dcOptions().hasCustomServer()
@@ -4700,12 +4704,23 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	const auto stockWasPremium = stock->session().premium();
 	const auto pinnedWasPremium = pinned->session().premium();
 	const auto blankWasPremium = blank->session().premium();
-	const auto restoreAccountLimitFixture = gsl::finally([&] {
+	auto accountLimitFixtureRestored = false;
+	base::weak_ptr<Window::Controller> disposablePrimaryWindowLifetime;
+	const auto restoreAccountLimitFixture = [&] {
+		if (accountLimitFixtureRestored) {
+			return;
+		}
+		accountLimitFixtureRestored = true;
 		if (const auto strong = replacementLifetime.get()) {
 			if (strong->sessionExists()) {
 				strong->forcedLogOut();
 			}
 			if (const auto window = app.separateWindowFor(not_null(strong))) {
+				app.closeWindow(window);
+			}
+		}
+		if (const auto window = disposablePrimaryWindowLifetime.get()) {
+			if (app.separateWindowFor(window->id()) == window) {
 				app.closeWindow(window);
 			}
 		}
@@ -4721,7 +4736,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		const auto blankRestored = SetRegressionSessionPremium(
 			&blank->session(), selfId, blankWasPremium);
 		Expects(stockRestored && pinnedRestored && blankRestored);
-	});
+	};
+	const auto restoreAccountLimitFixtureOnExit
+		= gsl::finally(restoreAccountLimitFixture);
 	if (!replacement->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
@@ -4731,19 +4748,26 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			"session.\n");
 		return false;
 	}
-	const auto thirdWindow = app.ensureSeparateWindowFor(replacement);
+	const auto disposablePrimaryWindow
+		= app.ensureSeparateWindowFor(replacement);
+	if (disposablePrimaryWindow) {
+		disposablePrimaryWindowLifetime
+			= base::make_weak(disposablePrimaryWindow);
+	}
 	QCoreApplication::processEvents();
 	QCoreApplication::processEvents();
-	const auto thirdController
-		= thirdWindow ? thirdWindow->sessionController() : nullptr;
+	const auto replacementController = disposablePrimaryWindow
+		? disposablePrimaryWindow->sessionController()
+		: nullptr;
 	// The replacement is a live session of this account with its own window
 	// registered, established without comparing any destroyed address.
 	const auto secondRegistration = replacement->session().windows();
-	if (!thirdController || (secondRegistration.size() != 1)
+	if (!disposablePrimaryWindow || !replacementController
+		|| (secondRegistration.size() != 1)
 		|| (*secondRegistration.begin()
-			!= not_null<Window::SessionController *>(thirdController))
-		|| (app.separateWindowFor(replacement) != thirdWindow)
-		|| (&thirdController->session() != &replacement->session())) {
+			!= not_null<Window::SessionController *>(replacementController))
+		|| (app.separateWindowFor(replacement) != disposablePrimaryWindow)
+		|| (&replacementController->session() != &replacement->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session did not take "
@@ -4789,7 +4813,8 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	// Positive control: the same seam opens on the replacement session,
 	// so the zeros above are a refusal and not an inert webview.
-	if (!OpenMiniAppByUsername(&replacement->session(), thirdController)) {
+	if (!OpenMiniAppByUsername(
+			&replacement->session(), replacementController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session refused a "
@@ -4850,6 +4875,15 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			app.separateWindowFor(overflowAccount) != nullptr);
 		return false;
 	}
+	disposablePrimaryWindow->activate();
+	QCoreApplication::processEvents();
+	if (app.activePrimaryWindow() != disposablePrimaryWindow) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: disposable primary window did not become "
+			"the active primary window.\n");
+		return false;
+	}
 	app.domain().activate(overflowAccount);
 	if (&app.domain().active() != overflowAccount.get()) {
 		std::fprintf(
@@ -4859,6 +4893,21 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	replacement->forcedLogOut();
+	restoreAccountLimitFixture();
+	const auto fixtureControllersSurvived
+		= !stockControllerLifetime.empty()
+		  && !pinnedControllerLifetime.empty()
+		  && !blankControllerLifetime.empty();
+	if (!fixtureControllersSurvived) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit cleanup destroyed an "
+			"existing fixture controller: stock=%d pinned=%d blocked=%d.\n",
+			!stockControllerLifetime.empty(),
+			!pinnedControllerLifetime.empty(),
+			!blankControllerLifetime.empty());
+		return false;
+	}
 	std::fprintf(
 		stderr,
 		"Mini-app open regression passed: %d entry classes refused on "
