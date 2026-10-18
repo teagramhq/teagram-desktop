@@ -2814,6 +2814,14 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				.mine = true,
 			});
 		QCoreApplication::processEvents();
+		if (WaitForMainQueueBarrierForRegressionTest()
+			!= MainQueueBarrierResult::Completed) {
+			std::fprintf(
+				stderr,
+				"Paid link regression failed: checkout cancellation callbacks "
+				"did not reach the main queue.\n");
+			return false;
+		}
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
 			expected[i] += (controllers[i] == target) ? 11 : 0;
