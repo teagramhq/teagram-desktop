@@ -1247,26 +1247,24 @@ if (( FAILURES > 0 )); then
 fi
 }
 
-run_authenticated_cache_regression() {
-AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
-AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
-AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
-mkdir -p "$AUTH_HOME"
-STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
-for fixture in \
-	cache-root \
-	media-cache-root \
-	cache-leaf \
-	media-cache-leaf \
-	opened-cache \
-	opened-media-cache \
-	legacy-cleanup; do
-	mkdir -p "$STORAGE_FIXTURE_ROOT/$fixture"
-	printf '%s' 'synthetic protected fixture' \
-		> "$STORAGE_FIXTURE_ROOT/$fixture/marker"
-done
-printf '%s' 'legacy bytes' \
-	> "$STORAGE_FIXTURE_ROOT/legacy-cleanup/unrecognized-legacy-file"
+prepare_authenticated_storage_fixtures() {
+	local storage_fixture_root="$1"
+	local fixture
+	for fixture in \
+		cache-root \
+		media-cache-root \
+		cache-leaf \
+		media-cache-leaf \
+		opened-cache \
+		opened-media-cache \
+		legacy-cleanup; do
+		mkdir -p "$storage_fixture_root/$fixture"
+		printf '%s' 'synthetic protected fixture' \
+			> "$storage_fixture_root/$fixture/marker"
+	done
+	printf '%s' 'legacy bytes' \
+		> "$storage_fixture_root/legacy-cleanup/unrecognized-legacy-file"
+}
 
 verify_storage_fixture() {
 	local directory="$1"
@@ -1277,6 +1275,7 @@ verify_storage_fixture() {
 }
 
 verify_protected_storage_fixtures() {
+	local storage_fixture_root="$1"
 	local fixture
 	for fixture in \
 		cache-root \
@@ -1285,12 +1284,12 @@ verify_protected_storage_fixtures() {
 		media-cache-leaf \
 		opened-cache \
 		opened-media-cache; do
-		if ! verify_storage_fixture "$STORAGE_FIXTURE_ROOT/$fixture"; then
+		if ! verify_storage_fixture "$storage_fixture_root/$fixture"; then
 			echo "protected_storage_fixture=FAIL fixture=$fixture"
 			return 1
 		fi
 	done
-	local cleanup="$STORAGE_FIXTURE_ROOT/legacy-cleanup"
+	local cleanup="$storage_fixture_root/legacy-cleanup"
 	local expected="$(printf '%s\n%s\n' \
 		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
 	local entries="$(find "$cleanup" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
@@ -1303,18 +1302,26 @@ verify_protected_storage_fixtures() {
 	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
 }
 
+run_authenticated_cache_regression() {
+local AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
+local AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
+local AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
+local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+mkdir -p "$AUTH_HOME"
+prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
-	verify_protected_storage_fixtures || true
+	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
-verify_protected_storage_fixtures
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 for native_evidence in \
 	'native_lifecycle_case=account-lifecycle-prerequisites result=PASS' \
 	'native_lifecycle_case=legacy-cleanup-symlink result=PASS' \
@@ -1377,6 +1384,92 @@ if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 		"$AUTH_EVIDENCE_LOG"
 fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
+}
+
+run_authenticated_lifecycle_regression() {
+local AUTH_HOME="$TEST_HOME/authenticated-lifecycle-regression"
+local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
+local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+mkdir -p "$AUTH_HOME"
+prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+
+if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
+	cat "$AUTH_LOG" >&2
+	echo "authenticated lifecycle regression failed." >&2
+	exit 1
+fi
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+if ! grep -E -q \
+	'^Translation action routing: custom_provider=[0-3] custom_hidden=[01] custom_rich_hidden=1 local_failure=[01] stock_provider=[1-3] stock_hidden=0\.$' \
+	"$AUTH_LOG"; then
+	echo "translation action routing evidence missing or invalid." >&2
+	cat "$AUTH_LOG" >&2
+	exit 1
+fi
+for translation_evidence in \
+	"Translation controls precondition: stock loaded=1 server_supported=1 network_allowed=0 creator=1 broadcast=1 auto_translation=1 translation_enabled=1; custom loaded=1 server_supported=0 network_allowed=0 creator=1 broadcast=1 auto_translation=1 translation_enabled=1." \
+	"Translation controls custom requests: text=0 rich=0." \
+	"Translation controls stock requests: text=1 rich=1." \
+	"Translation controls counts unchanged after 1000 ms main-queue barrier: custom text=0 rich=0; stock text=1 rich=1; network_allowed stock=0 custom=0." \
+	"Translation controls regression passed: custom action gates followed session provider availability, rich actions stayed hidden, stale actions failed locally, Language links skipped absent rows without writing preferences, automatic chat translation stayed off, and stock controls and RPCs remained enabled."; do
+	if ! grep -F -q "$translation_evidence" "$AUTH_LOG"; then
+		echo "translation controls regression evidence missing: $translation_evidence" >&2
+		cat "$AUTH_LOG" >&2
+		exit 1
+	fi
+done
+if ! awk '
+/Translation action routing: / && step == 0 { step = 1; next }
+/Translation controls precondition: / && step == 1 { step = 2; next }
+/Translation controls custom requests: / && step == 2 { step = 3; next }
+/Translation controls stock requests: / && step == 3 { step = 4; next }
+/Translation controls counts unchanged after 1000 ms main-queue barrier: / && step == 4 { step = 5; next }
+/Translation controls regression passed: / && step == 5 { step = 6; next }
+END { exit step != 6 }
+' "$AUTH_LOG"; then
+	echo "translation controls regression evidence was out of order." >&2
+	exit 1
+fi
+for native_evidence in \
+	'native_lifecycle_case=settings-search result=PASS' \
+	'native_lifecycle_case=session-window-lifecycle result=PASS' \
+	'native_lifecycle_case=translation-controls result=PASS' \
+	'native_lifecycle_case=manage-controls result=PASS' \
+	'native_lifecycle_case=mini-app-open result=PASS' \
+	'native_lifecycle_case=chatlist-invite-check result=PASS' \
+	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
+	'native_lifecycle_case=post-open-cache result=PASS' \
+	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=folder-crud result=PASS' \
+	'native_lifecycle_case=stock-basic-group-creator result=PASS' \
+	'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
+	'native_lifecycle_cases_failed=none'; do
+	if ! grep -F -q "$native_evidence" "$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'native lifecycle case result missing: %s\n' "$native_evidence" >&2
+		exit 1
+	fi
+done
+for cache_evidence in \
+	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
+	"Authenticated cache post-open regression passed: get, put, and clear symlinks refused for cache and media_cache." \
+	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
+	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
+	"Chat participants regression passed." \
+	"Settings deep link regression passed: 13 routes refused in custom and blocked sessions;" \
+	"Paid link regression passed: 16 paid links refused in custom and blocked sessions"; do
+	if ! grep -F -q "$cache_evidence" "$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'authenticated lifecycle evidence missing: %s\n' "$cache_evidence" >&2
+		exit 1
+	fi
+done
+printf 'authenticated_lifecycle_regression=PASS full_suite=PASS cache=PASS\n'
 }
 
 run_native_failure_continuation_case() {
@@ -1645,6 +1738,7 @@ all)
 		spoiler-cache-spoiler \
 		spoiler-cache-text \
 		spoiler-cache-image \
+		authenticated-lifecycle \
 		authenticated-cache \
 		native-failure-continuation \
 		folder-fault-barrier-timeout \
@@ -1667,6 +1761,9 @@ spoiler-cache-image)
 	;;
 authenticated-cache)
 	run_authenticated_cache_regression
+	;;
+authenticated-lifecycle)
+	run_authenticated_lifecycle_regression
 	;;
 native-failure-continuation)
 	run_native_failure_continuation_case

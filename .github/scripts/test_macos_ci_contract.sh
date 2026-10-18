@@ -539,6 +539,7 @@ for case_name in \
   spoiler-cache-spoiler \
   spoiler-cache-text \
   spoiler-cache-image \
+  authenticated-lifecycle \
   authenticated-cache \
   native-failure-continuation \
   folder-fault-barrier-timeout \
