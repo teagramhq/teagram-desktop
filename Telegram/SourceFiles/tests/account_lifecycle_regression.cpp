@@ -2886,12 +2886,16 @@ template <typename Predicate>
 				.mine = true,
 			});
 		QCoreApplication::processEvents();
+		const auto callbacksSettled = WaitForRegressionCondition([&] {
+			return results->size() >= 10;
+		});
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
 			expected[i] += (controllers[i] == target) ? 11 : 0;
 		}
 		const auto refused
-			= (*results
+			= callbacksSettled
+			  && (*results
 			   == std::vector<Payments::CheckoutResult>(
 				   10, Payments::CheckoutResult::Cancelled))
 			  && captureObserved && payments.constructors.empty()
