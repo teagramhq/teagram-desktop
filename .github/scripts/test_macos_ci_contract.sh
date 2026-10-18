@@ -556,6 +556,10 @@ for native_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   folder-crud \
   stock-basic-group-creator \
   pinned-basic-group-creator \
@@ -565,6 +569,19 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+for native_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$native_case" '
+    /nativeLifecycleResults->Report\(/ { remaining = 4 }
+    remaining > 0 && index($0, "\"" case_name "\"") { found = 1 }
+    remaining > 0 { remaining-- }
+    END { exit !found }
+  ' "$native_harness" \
+    || contract_fail "$native_harness must report $native_case independently."
+done
 grep -Fq 'status=START' "$native_harness" \
   || contract_fail "$native_harness must print active native cases before running them."
 for active_case in \
@@ -573,6 +590,10 @@ for active_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   chatlist-invite-check \
   pinned-chat-participants \
   folder-crud \
@@ -629,6 +650,14 @@ require_native_start_before manage-controls \
   'RunManageControlsLifecycleRegression('
 require_native_start_before mini-app-open \
   'RunMiniAppOpenRefusalRegression('
+require_native_start_before settings-deep-link \
+  'RunSettingsDeepLinkRefusalRegression('
+require_native_start_before messages-privacy \
+  'RunMessagesPrivacyBoxRegression('
+require_native_start_before paid-link \
+  'RunPaidLinkRefusalRegression('
+require_native_start_before boost-story-menus \
+  'RunBoostMenuVisibilityRegression('
 require_native_start_before chatlist-invite-check \
   'Api::CheckFilterInvite('
 require_native_start_before folder-crud \
@@ -639,6 +668,90 @@ require_native_start_before stock-basic-group-creator \
   'RegressionStockChatFullReply('
 require_native_start_before post-close-window-lifecycle \
   'windowsMatch("after primary close")'
+for independent_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$independent_case" '
+    /nativeLifecycleResults->Report\("mini-app-open"/ { mini_app_line = NR }
+    /nativeLifecycleResults->StartCase\(/ &&
+      index($0, "\"" case_name "\"") { case_line = NR }
+    END { exit !(mini_app_line && case_line && mini_app_line < case_line) }
+  ' "$native_harness" \
+    || contract_fail "$independent_case must run after mini-app-open completes."
+done
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /restorePinnedServerOnExit = gsl::finally/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /std::fprintf/ { cleanup_diagnostic = NR }
+  in_cleanup && /Expects\(/ { fatal_cleanup = 1 }
+  in_mini_app && /ConfigurePinnedServer\(pinned, RegressionServerKey\(\)\)/ {
+    if (cleanup_guard && !blocked_setup && NR > cleanup_guard) {
+      cleanup_restore = NR
+    }
+    if (blocked_setup && NR > blocked_setup) {
+      normal_restore = NR
+    }
+  }
+  in_mini_app && /pinned->mtp\(\)\.dcOptions\(\)\.constructBlocked\(\)/ {
+    blocked_setup = NR
+  }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /pinnedServerRestored = true/ { normal_restore_attempted = NR }
+  in_mini_app && /if \(!customPinConfigured/ { normal_restore_check = NR }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cleanup_restore < blocked_setup && normal_restore && cleanup_diagnostic && !fatal_cleanup && normal_restore < normal_restore_attempted && normal_restore_attempted < normal_restore_check)
+  }
+' "$native_harness" \
+  || contract_fail 'The custom-plus-blocked mini-app cleanup must report restore failures without aborting or retrying a normal restore.'
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /cleanupStockWebViewOnExit = gsl::finally/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.cancel\(\)/ {
+    cancel = NR
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.closeAll\(\)/ {
+    close_all = NR
+  }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /stock->session\(\)\.attachWebView\(\)\.open\(\{/ {
+    first_stock_open = NR
+    exit
+  }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cancel > cleanup_guard && close_all > cancel && first_stock_open > close_all)
+  }
+' "$native_harness" \
+  || contract_fail 'The mini-app case must cancel and close stock webviews on every exit after its first open.'
+awk '
+  /const auto blankFixtureReady = \(blankController != nullptr\)/ {
+    in_blank_fixture_cleanup = 1
+  }
+  in_blank_fixture_cleanup && /const auto blankLifetime = base::make_weak\(blank.get\(\)\)/ {
+    weak_account = NR
+  }
+  in_blank_fixture_cleanup && /cleanupBlank = gsl::finally\(\[blankLifetime\]/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /blankLifetime\.get\(\)/ { weak_check = NR }
+  in_cleanup && /blank->(sessionExists|forcedLogOut)\(\)/ { raw_account_use = 1 }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_blank_fixture_cleanup && /nativeLifecycleResults->StartCase\("settings-deep-link"\)/ { exit }
+  END {
+    exit !(weak_account && cleanup_guard > weak_account && weak_check && !raw_account_use)
+  }
+' "$native_harness" \
+  || contract_fail 'The blocked mini-app cleanup must check a weak account reference before logout.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
