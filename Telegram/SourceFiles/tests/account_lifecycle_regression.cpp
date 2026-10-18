@@ -2035,6 +2035,30 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		});
 }
 
+template <typename Condition>
+[[nodiscard]] bool WaitForSettingsDeepLinkCondition(Condition condition) {
+	if (condition()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto poll = QTimer();
+	auto deadline = QTimer();
+	poll.setInterval(10);
+	deadline.setSingleShot(true);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (condition()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	deadline.start(1000);
+	loop.exec();
+	poll.stop();
+	deadline.stop();
+	return condition();
+}
+
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -2255,17 +2279,37 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
 		return false;
 	}
-	QCoreApplication::processEvents();
-	if (!pinnedController->content()->isMainSectionShown()
-		|| pinnedController->isLayerShown()
-		|| (pinnedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= ordinaryToastBefore)
-		|| (app.activeWindow() != &pinnedController->window())) {
+	const auto ordinarySettingsStateRestored
+		= WaitForSettingsDeepLinkCondition([&] {
+			  return pinnedController->content()->isMainSectionShown()
+				  && !pinnedController->isLayerShown()
+				  && (pinnedController
+						  ->featureUnavailableOnServerToastCallsForRegressionTest()
+					  == ordinaryToastBefore)
+				  && (app.activeWindow() == &pinnedController->window());
+		  });
+	const auto ordinarySettingsSectionShown
+		= pinnedController->content()->isMainSectionShown();
+	const auto ordinarySettingsLayerHidden = !pinnedController->isLayerShown();
+	const auto ordinarySettingsToastUnchanged
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == ordinaryToastBefore;
+	const auto ordinarySettingsWindowActive
+		= app.activeWindow() == &pinnedController->window();
+	if (!ordinarySettingsStateRestored || !ordinarySettingsSectionShown
+		|| !ordinarySettingsLayerHidden || !ordinarySettingsToastUnchanged
+		|| !ordinarySettingsWindowActive) {
 		std::fprintf(
 			stderr,
-			"Settings deep link regression failed: ordinary Settings link "
-			"lost its section or focus behavior.\n");
+			"Settings deep link ordinary Settings counts: section=%d "
+			"layer-hidden=%d toast-unchanged=%d active-window=%d "
+			"expected=1/1/1/1.\n",
+			ordinarySettingsSectionShown, ordinarySettingsLayerHidden,
+			ordinarySettingsToastUnchanged, ordinarySettingsWindowActive);
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: ordinary Settings link "
+					 "lost its section or focus behavior.\n");
 		return false;
 	}
 	pinnedController->clearSectionStack(
@@ -3743,7 +3787,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	QCoreApplication::processEvents();
+	WaitForSettingsDeepLinkCondition([&] {
+		return (app.activeWindow() == &stockController->window())
+			&& (app.activePrimaryWindow() == &stockController->window());
+	});
 	const auto activeWindowRestored
 		= (app.activeWindow() == &stockController->window());
 	const auto activePrimaryWindowRestored
