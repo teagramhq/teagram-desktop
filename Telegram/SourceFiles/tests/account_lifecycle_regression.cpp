@@ -4786,13 +4786,11 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	replacement->session().attachWebView().closeAll();
 	replacement->forcedLogOut();
 	const auto activeAfterReplacementLogout = &app.domain().active();
-	const auto orderedAfterReplacementLogout
-		= app.domain().orderedAccounts();
+	const auto orderedAfterReplacementLogout = app.domain().orderedAccounts();
 	const auto maxAccountsAfterReplacementLogout = app.domain().maxAccounts();
 	auto activeSessionlessBeyondLimit = false;
 	for (auto i = maxAccountsAfterReplacementLogout;
-		 i < int(orderedAfterReplacementLogout.size());
-		 ++i) {
+		 i < int(orderedAfterReplacementLogout.size()); ++i) {
 		if (orderedAfterReplacementLogout[i].get()
 				== activeAfterReplacementLogout
 			&& !activeAfterReplacementLogout->sessionExists()) {
