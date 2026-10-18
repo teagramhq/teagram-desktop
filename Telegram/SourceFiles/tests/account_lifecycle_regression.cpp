@@ -8031,8 +8031,21 @@ struct NativeLifecycleResults {
 		stockActionPeer, RegressionStockChatFullReply(
 							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
+	const auto stockCreatorDefaultRightsAreUnchanged
+		= !stockActionChat->usesCustomServer()
+		  && stockActionChat->defaultAdminRights(stockSelf).flags
+				 == ChatAdminRightsInfo(ChatAdminRight::Other
+										| ChatAdminRight::ChangeInfo
+										| ChatAdminRight::DeleteMessages
+										| ChatAdminRight::BanUsers
+										| ChatAdminRight::InviteByLinkOrAdd
+										| ChatAdminRight::PinMessages
+										| ChatAdminRight::ManageCall
+										| ChatAdminRight::AddAdmins)
+						.flags;
 	const auto stockCreatorPassed
 		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockCreatorDefaultRightsAreUnchanged
 		  && stockActionChat->canEditInformation()
 		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
 		  && stockActionChat->canBanMembers();
@@ -8074,6 +8087,20 @@ struct NativeLifecycleResults {
 			adminActionPeer,
 			RegressionStockChatFullReply(adminActionChatId, 1,
 										 u"+10000000001"_q, UserId(2), true));
+		const auto stockAdminDefaultRightsAreUnchanged
+			= !adminActionChat->usesCustomServer()
+			  && adminActionChat->defaultAdminRights(stockSelf).flags
+					 == ChatAdminRightsInfo(ChatAdminRight::Other
+											| ChatAdminRight::ChangeInfo
+											| ChatAdminRight::DeleteMessages
+											| ChatAdminRight::BanUsers
+											| ChatAdminRight::InviteByLinkOrAdd
+											| ChatAdminRight::PinMessages
+											| ChatAdminRight::ManageCall)
+							.flags;
+		recordChatCase("stock-admin-default-rights",
+					   stockAdminDefaultRightsAreUnchanged,
+					   "stock basic-group administrator defaults changed");
 		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 			adminActionChat, "stock full-list promotion", true);
 		const auto stockFullListAdminPassed
@@ -8139,8 +8166,9 @@ struct NativeLifecycleResults {
 		const auto customDisplayRights
 			= customAdminActionChat->defaultAdminRights(customSelf).flags;
 		const auto customDefaultRightsAreRoleOnly
-			= customDisplayRights
-			  == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
+			= customAdminActionChat->usesCustomServer()
+			  && customDisplayRights
+					 == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
 		recordChatCase("custom-admin-default-rights",
 					   customDefaultRightsAreRoleOnly,
 					   "custom-server basic-group admin defaults include "
