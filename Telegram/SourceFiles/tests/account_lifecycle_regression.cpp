@@ -4852,6 +4852,19 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	app.domain().activate(stock);
+	const auto accountsBeforeRedundantCleanup = app.domain().accounts().size();
+	app.domain().removeRedundantAccounts();
+	const auto accountsAfterRedundantCleanup = app.domain().accounts().size();
+	if (accountsAfterRedundantCleanup >= Main::Domain::kPremiumMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture has no slot for "
+			"the overflow account: before=%d after_cleanup=%d max=%d.\n",
+			int(accountsBeforeRedundantCleanup),
+			int(accountsAfterRedundantCleanup),
+			Main::Domain::kPremiumMaxAccounts);
+		return false;
+	}
 	const auto overflowAccount = app.domain().add(MTP::Environment::Production);
 	overflowAccount->mtp().stopForServerEnrollment();
 	const auto orderedBeforeReplacementLogout = app.domain().orderedAccounts();
