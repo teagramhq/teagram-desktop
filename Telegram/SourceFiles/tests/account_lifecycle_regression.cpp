@@ -4696,6 +4696,32 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	const auto replacement = app.domain().add(MTP::Environment::Production);
 	replacement->mtp().stopForServerEnrollment();
 	replacement->setSessionUserId(selfId);
+	const auto replacementLifetime = base::make_weak(replacement.get());
+	const auto stockWasPremium = stock->session().premium();
+	const auto pinnedWasPremium = pinned->session().premium();
+	const auto blankWasPremium = blank->session().premium();
+	const auto restoreAccountLimitFixture = gsl::finally([&] {
+		if (const auto strong = replacementLifetime.get()) {
+			if (strong->sessionExists()) {
+				strong->forcedLogOut();
+			}
+			if (const auto window = app.separateWindowFor(strong)) {
+				app.closeWindow(window);
+			}
+		}
+		app.domain().activate(stock);
+		QCoreApplication::processEvents();
+		QCoreApplication::processEvents();
+		app.domain().removeRedundantAccounts();
+		QCoreApplication::processEvents();
+		const auto stockRestored = SetRegressionSessionPremium(
+			&stock->session(), selfId, stockWasPremium);
+		const auto pinnedRestored = SetRegressionSessionPremium(
+			&pinned->session(), selfId, pinnedWasPremium);
+		const auto blankRestored = SetRegressionSessionPremium(
+			&blank->session(), selfId, blankWasPremium);
+		Expects(stockRestored && pinnedRestored && blankRestored);
+	});
 	if (!replacement->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
@@ -4784,30 +4810,55 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	replacement->session().attachWebView().cancel();
 	replacement->session().attachWebView().closeAll();
-	replacement->forcedLogOut();
-	const auto activeAfterReplacementLogout = &app.domain().active();
-	const auto orderedAfterReplacementLogout = app.domain().orderedAccounts();
-	const auto maxAccountsAfterReplacementLogout = app.domain().maxAccounts();
-	auto activeSessionlessBeyondLimit = false;
-	for (auto i = maxAccountsAfterReplacementLogout;
-		 i < int(orderedAfterReplacementLogout.size()); ++i) {
-		if (orderedAfterReplacementLogout[i].get()
-				== activeAfterReplacementLogout
-			&& !activeAfterReplacementLogout->sessionExists()) {
-			activeSessionlessBeyondLimit = true;
-			break;
-		}
-	}
-	if (!activeSessionlessBeyondLimit) {
+	if (!SetRegressionSessionPremium(&stock->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&pinned->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&blank->session(), selfId, false)) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: replacement logout did not activate a "
-			"sessionless account beyond the account limit.\n");
+			"Mini-app open regression: could not set up the account-limit "
+			"fixture.\n");
 		return false;
 	}
-	if (thirdWindow && (app.separateWindowFor(replacement) == thirdWindow)) {
-		app.closeWindow(thirdWindow);
+	if (app.domain().maxAccounts() != Main::Domain::kMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture retained a "
+			"premium allowance: max=%d expected=%d.\n",
+			app.domain().maxAccounts(), Main::Domain::kMaxAccounts);
+		return false;
 	}
+	app.domain().activate(stock);
+	const auto overflowAccount = app.domain().add(MTP::Environment::Production);
+	overflowAccount->mtp().stopForServerEnrollment();
+	const auto orderedBeforeReplacementLogout = app.domain().orderedAccounts();
+	const auto overflowAccountPosition
+		= ranges::find(orderedBeforeReplacementLogout, overflowAccount);
+	const auto overflowAccountIndex = int(std::distance(
+		begin(orderedBeforeReplacementLogout), overflowAccountPosition));
+	if ((overflowAccountPosition == end(orderedBeforeReplacementLogout))
+		|| (overflowAccountIndex < app.domain().maxAccounts())
+		|| overflowAccount->sessionExists()
+		|| app.separateWindowFor(overflowAccount)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture did not place a "
+			"sessionless account beyond the limit: accounts=%d max=%d "
+			"index=%d session=%d window=%d.\n",
+			int(orderedBeforeReplacementLogout.size()),
+			app.domain().maxAccounts(), overflowAccountIndex,
+			overflowAccount->sessionExists(),
+			app.separateWindowFor(overflowAccount) != nullptr);
+		return false;
+	}
+	app.domain().activate(overflowAccount);
+	if (&app.domain().active() != overflowAccount.get()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: sessionless account beyond the account "
+			"limit did not become active.\n");
+		return false;
+	}
+	replacement->forcedLogOut();
 	std::fprintf(
 		stderr,
 		"Mini-app open regression passed: %d entry classes refused on "
