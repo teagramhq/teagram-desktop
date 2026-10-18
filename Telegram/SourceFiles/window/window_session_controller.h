@@ -594,6 +594,12 @@ public:
 
 	void showPassportForm(const Passport::FormRequest &request);
 	void clearPassportForm();
+	[[nodiscard]] bool showPassportUnavailableIfUnsupported();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool passportFormExistsForRegressionTest() const {
+		return _passportForm != nullptr;
+	}
+#endif
 
 	struct MessageContext {
 		FullMsgId id;

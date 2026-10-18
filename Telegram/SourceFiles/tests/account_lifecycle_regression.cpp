@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
+#include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/about_box.h"
@@ -67,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
+#include "info/info_layer_widget.h"
 #include "info/info_wrap_widget.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
@@ -94,6 +96,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
+#include "passport/passport_form_controller.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_calls.h"
@@ -2020,7 +2023,8 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
 	for (const auto widget : widgets) {
 		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && matches(wrap->controller()->section())) {
+		if (wrap && !wrap->isHidden()
+			&& matches(wrap->controller()->section())) {
 			return true;
 		}
 	}
@@ -2105,27 +2109,78 @@ template <typename Condition>
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
 		  && pinned->session().uniqueId() == blocked->session().uniqueId();
+	const auto stockPaidSupported = stock->session().paidFeaturesSupported();
+	const auto customPaidUnsupported
+		= !pinned->session().paidFeaturesSupported();
+	const auto blockedPaidUnsupported
+		= !blocked->session().paidFeaturesSupported();
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blocked.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedConfigBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
 	const auto restoredBlockedWithoutPin
-		= !restoredBlocked->sessionExists()
-		  && restoredBlocked->mtp().config().blocked()
-		  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown()
-		  && restoredBlocked->local().mtpAuthorizationWriteFailed();
+		= restoredBlockedHasNoSession && restoredBlockedConfigBlocked
+		  && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	const auto customIsPinned = pinned->mtp().dcOptions().hasCustomServer();
+	const auto customIsUnblocked = !pinned->mtp().dcOptions().blocked();
+	const auto blockedHasNoCustomConfig
+		= !blocked->mtp().dcOptions().hasCustomServer();
+	const auto blockedConfigBlocked = blocked->mtp().dcOptions().blocked();
+	const auto blockedHasNoStoredCustom
+		= !blocked->local().hasStoredCustomServer();
+	const auto blockedPinStateKnown
+		= !blocked->local().customServerPinUnknown();
+	const auto stockControllerOwnsSession
+		= (&stockController->session() == &stock->session());
+	const auto customControllerOwnsSession
+		= (&pinnedController->session() == &pinned->session());
+	const auto blockedControllerOwnsSession
+		= (&blockedController->session() == &blocked->session());
 	const auto configured
-		= sameUserId && stock->session().paidFeaturesSupported()
-		  && !pinned->session().paidFeaturesSupported()
-		  && !blocked->session().paidFeaturesSupported()
-		  && restoredBlockedWithoutPin
-		  && pinned->mtp().dcOptions().hasCustomServer()
-		  && !pinned->mtp().dcOptions().blocked()
-		  && !blocked->mtp().dcOptions().hasCustomServer()
-		  && blocked->mtp().dcOptions().blocked()
-		  && !blocked->local().hasStoredCustomServer()
-		  && !blocked->local().customServerPinUnknown()
-		  && (&stockController->session() == &stock->session())
-		  && (&pinnedController->session() == &pinned->session())
-		  && (&blockedController->session() == &blocked->session());
+		= sameUserId && stockPaidSupported && customPaidUnsupported
+		  && blockedPaidUnsupported && restoredBlockedIsDistinct
+		  && restoredBlockedWithoutPin && customIsPinned && customIsUnblocked
+		  && blockedHasNoCustomConfig && blockedConfigBlocked
+		  && blockedHasNoStoredCustom && blockedPinStateKnown
+		  && stockControllerOwnsSession && customControllerOwnsSession
+		  && blockedControllerOwnsSession;
+	std::fprintf(
+		stderr,
+		"Settings deep link fixture checks: same_user=%d stock_paid=%d "
+		"custom_paid_unsupported=%d blocked_paid_unsupported=%d "
+		"restored_distinct=%d restored_no_session=%d restored_blocked=%d "
+		"restored_no_custom_config=%d restored_no_stored_custom=%d "
+		"restored_pin_state_known=%d restored_auth_failed=%d "
+		"restored_network_allowed=%d "
+		"custom_pinned=%d custom_unblocked=%d blocked_no_custom_config=%d "
+		"blocked_config_blocked=%d blocked_no_stored_custom=%d "
+		"blocked_pin_state_known=%d controllers=%d/%d/%d.\n",
+		sameUserId, stockPaidSupported, customPaidUnsupported,
+		blockedPaidUnsupported, restoredBlockedIsDistinct,
+		restoredBlockedHasNoSession, restoredBlockedConfigBlocked,
+		restoredBlockedHasNoCustomConfig, restoredBlockedHasNoStoredCustom,
+		restoredBlockedPinStateKnown, restoredBlockedAuthorizationFailed,
+		restoredBlockedNetworkAllowed, customIsPinned, customIsUnblocked,
+		blockedHasNoCustomConfig, blockedConfigBlocked,
+		blockedHasNoStoredCustom, blockedPinStateKnown,
+		stockControllerOwnsSession, customControllerOwnsSession,
+		blockedControllerOwnsSession);
 	if (!configured) {
 		std::fprintf(
 			stderr,
@@ -2254,95 +2309,144 @@ template <typename Condition>
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(pinnedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &pinnedController->window())
-		|| !dispatchMatrix(pinnedController, &pinnedController->window())) {
+	if (app.activeWindow() != &pinnedController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its URL matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(blockedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the blocked-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(blockedController, &stockController->window())) {
 		return false;
 	}
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	const auto ordinaryToastBefore
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
-		return false;
-	}
-	const auto ordinarySettingsStateRestored
-		= WaitForSettingsDeepLinkCondition([&] {
-			  return pinnedController->content()->isMainSectionShown()
-				  && !pinnedController->isLayerShown()
-				  && (pinnedController
-						  ->featureUnavailableOnServerToastCallsForRegressionTest()
-					  == ordinaryToastBefore)
-				  && (app.activeWindow() == &pinnedController->window());
-		  });
-	const auto ordinarySettingsSectionShown
-		= pinnedController->content()->isMainSectionShown();
-	const auto ordinarySettingsLayerHidden = !pinnedController->isLayerShown();
-	const auto ordinarySettingsToastUnchanged
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest()
-		  == ordinaryToastBefore;
-	const auto ordinarySettingsWindowActive
-		= app.activeWindow() == &pinnedController->window();
-	if (!ordinarySettingsStateRestored || !ordinarySettingsSectionShown
-		|| !ordinarySettingsLayerHidden || !ordinarySettingsToastUnchanged
-		|| !ordinarySettingsWindowActive) {
-		std::fprintf(
-			stderr,
-			"Settings deep link ordinary Settings counts: section=%d "
-			"layer-hidden=%d toast-unchanged=%d active-window=%d "
-			"expected=1/1/1/1.\n",
-			ordinarySettingsSectionShown, ordinarySettingsLayerHidden,
-			ordinarySettingsToastUnchanged, ordinarySettingsWindowActive);
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: ordinary Settings link "
-					 "lost its section or focus behavior.\n");
-		return false;
-	}
-	pinnedController->clearSectionStack(
-		Window::SectionShow(anim::type::instant, anim::activation::background));
-	QCoreApplication::processEvents();
-
-	for (const auto &controller : {pinnedController, blockedController}) {
-		const auto toastBefore
-			= controller
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
-							  contextFor(controller))) {
-			return false;
+	{
+		const auto pinnedWindow = pinnedController->widget();
+		const auto blockedWindow = blockedController->widget();
+		const auto pinnedPreviousSize = pinnedWindow->size();
+		const auto blockedPreviousSize = blockedWindow->size();
+		const auto minimumLayerWidth
+			= Info::LayerWidget::MinimalSupportedWidth();
+		const auto restoreSizes = gsl::finally([=] {
+			pinnedWindow->resize(pinnedPreviousSize);
+			blockedWindow->resize(blockedPreviousSize);
+			QCoreApplication::processEvents();
+		});
+		for (const auto &window : {pinnedWindow, blockedWindow}) {
+			window->resize(minimumLayerWidth - 1, window->height());
 		}
 		QCoreApplication::processEvents();
-		const auto myAccountShown = ShownInfoSectionMatches(
-			controller, [](const Info::Section &section) {
-				return (section.type() == Info::Section::Type::Settings)
-					   && (section.settingsType() == Settings::InformationId());
-			});
-		if (!controller->content()->isMainSectionShown() || !myAccountShown
-			|| ShownStoriesSection(controller)
-			|| (controller
-					->featureUnavailableOnServerToastCallsForRegressionTest()
-				!= toastBefore)) {
+		if (pinnedWindow->width() >= minimumLayerWidth
+			|| blockedWindow->width() >= minimumLayerWidth) {
 			std::fprintf(
 				stderr,
-				"Settings deep link regression failed: my-profile did not "
-				"open My Account on an unsupported session.\n");
+				"Settings deep link regression failed: could not constrain "
+				"unsupported test windows below Info layer width: "
+				"pinned_width=%d blocked_width=%d minimum=%d.\n",
+				pinnedWindow->width(), blockedWindow->width(),
+				minimumLayerWidth);
 			return false;
 		}
-		resetController(controller);
+		const auto ordinaryToastBefore
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings"_q,
+							  contextFor(pinnedController))) {
+			return false;
+		}
+		const auto ordinarySettingsStateRestored
+			= WaitForSettingsDeepLinkCondition([&] {
+				  return pinnedController->content()->isMainSectionShown()
+					  && !pinnedController->isLayerShown()
+					  && (pinnedController
+							  ->featureUnavailableOnServerToastCallsForRegressionTest()
+						  == ordinaryToastBefore)
+					  && (app.activeWindow() == &pinnedController->window());
+			  });
+		const auto ordinarySectionShown
+			= pinnedController->content()->isMainSectionShown();
+		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
+		const auto ordinaryToastUnchanged
+			= (pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   == ordinaryToastBefore);
+		const auto ordinaryWindowActive
+			= (app.activeWindow() == &pinnedController->window());
+		if (!ordinarySettingsStateRestored || !ordinarySectionShown
+			|| !ordinaryLayerHidden
+			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+			std::fprintf(
+				stderr,
+				"Settings deep link ordinary Settings counts: section=%d "
+				"layer-hidden=%d toast-unchanged=%d active-window=%d "
+				"expected=1/1/1/1.\n",
+				ordinarySectionShown, ordinaryLayerHidden,
+				ordinaryToastUnchanged, ordinaryWindowActive);
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: ordinary Settings link "
+				"lost its section or focus behavior.\n");
+			return false;
+		}
+		pinnedController->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
 		QCoreApplication::processEvents();
+
+		for (const auto &controller : {pinnedController, blockedController}) {
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+								  contextFor(controller))) {
+				return false;
+			}
+			QCoreApplication::processEvents();
+			const auto myAccountShown = ShownInfoSectionMatches(
+				controller, [](const Info::Section &section) {
+					return (section.type() == Info::Section::Type::Settings)
+						   && (section.settingsType()
+							   == Settings::InformationId());
+				});
+			if (!controller->content()->isMainSectionShown() || !myAccountShown
+				|| ShownStoriesSection(controller)
+				|| (controller
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+					!= toastBefore)) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: my-profile did not "
+					"open My Account on an unsupported session.\n");
+				return false;
+			}
+			resetController(controller);
+			QCoreApplication::processEvents();
+		}
 	}
 
 	stockController->window().activate();
@@ -2402,11 +2506,31 @@ template <typename Condition>
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
+	const auto stockWindow = stockController->widget();
+	const auto stockPreviousSize = stockWindow->size();
+	const auto minimumLayerWidth = Info::LayerWidget::MinimalSupportedWidth();
+	const auto restoreStockSize = gsl::finally([=] {
+		stockWindow->resize(stockPreviousSize);
+		QCoreApplication::processEvents();
+	});
+	stockWindow->resize(minimumLayerWidth - 1, stockPreviousSize.height());
+	QCoreApplication::processEvents();
+	if (stockWindow->width() >= minimumLayerWidth) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not constrain stock "
+			"test window below Info layer width: width=%d minimum=%d.\n",
+			stockWindow->width(), minimumLayerWidth);
+		return false;
+	}
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
+		std::fprintf(
+			stderr, "Settings deep link regression failed: stock Premium route "
+					"was not handled.\n");
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -2611,6 +2735,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  active->window().activate();
 			  QCoreApplication::processEvents();
 			  if (app.activeWindow() != &active->window()) {
+				  std::fprintf(stderr, "Paid link regression failed: active "
+									   "target window did not "
+									   "activate before the refusal matrix.\n");
 				  return false;
 			  }
 			  for (const auto &url : local) {
@@ -2813,6 +2940,217 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		"direct Stars and TON submit, and gift-list transfer starts refused "
 		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
+	return true;
+}
+
+[[nodiscard]] bool RunPassportLinkRefusalRegression(
+	Core::Application &app, Main::Domain &domain,
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow,
+	not_null<Window::Controller *> blankWindow) {
+	const auto stockController = stockWindow->sessionController();
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto blankController = blankWindow->sessionController();
+	if (!stockController || !pinnedController || !blankController) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: a session controller is missing.\n");
+		return false;
+	}
+	if (!stock->session().passportSupported()
+		|| pinned->session().passportSupported()
+		|| blank->session().passportSupported()
+		|| pinned->mtp().dcOptions().blocked()
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->mtp().dcOptions().hasCustomServer()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: fixture capabilities do not match "
+			"stock, custom, and blocked sessions.\n");
+		return false;
+	}
+	stockController->clearPassportForm();
+	pinnedController->clearPassportForm();
+	blankController->clearPassportForm();
+	const auto activeBefore = &domain.active();
+	const auto restore = gsl::finally([&] {
+		stockController->clearPassportForm();
+		pinnedController->clearPassportForm();
+		blankController->clearPassportForm();
+		domain.activate(activeBefore);
+	});
+	const auto orderedAccounts = domain.orderedAccounts();
+	const auto indexForAccount = [&](not_null<Main::Account *> account) {
+		for (auto i = 0; i != int(orderedAccounts.size()); ++i) {
+			if (orderedAccounts[i].get() == account.get()) {
+				return i + 1;
+			}
+		}
+		return 0;
+	};
+	const auto stockIndex = indexForAccount(stock);
+	const auto pinnedIndex = indexForAccount(pinned);
+	const auto invalidAccountIndex = int(orderedAccounts.size()) + 1;
+	if (!stockIndex || !pinnedIndex) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: account index fixture is incomplete.\n");
+		return false;
+	}
+	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
+	const auto passportUrl = [&](bool hasNonce) {
+		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
+			   + (hasNonce ? u"&nonce=y"_q : QString()) + callback;
+	};
+	const auto resolveUrl = [&](bool hasNonce, int accountIndex) {
+		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
+			   + u"&public_key=x"_q + (hasNonce ? u"&nonce=y"_q : QString())
+			   + callback
+			   + (accountIndex ? u"&acc="_q + QString::number(accountIndex)
+							   : QString());
+	};
+	const auto links = std::vector<QString>{
+		passportUrl(true),
+		resolveUrl(true, 0),
+		passportUrl(false),
+		resolveUrl(false, 0),
+		resolveUrl(true, stockIndex),
+		resolveUrl(false, invalidAccountIndex),
+	};
+	const auto queuedWithoutController = [&](const QString &url) {
+		const auto command = url.mid(u"tg://"_q.size());
+		const auto options = qthelp::RegExOption::CaseInsensitive;
+		for (const auto &[expression, handler] : Core::LocalUrlHandlers()) {
+			const auto match
+				= qthelp::regex_match(expression, command, options);
+			if (match) {
+				return !handler(nullptr, match, {});
+			}
+		}
+		return false;
+	};
+	for (const auto &url : links) {
+		if (!queuedWithoutController(url)) {
+			std::fprintf(
+				stderr, "Passport link regression: missing controller consumed "
+						"or missed a URL.\n");
+			return false;
+		}
+	}
+	const auto contextFor = [](Window::SessionController *controller) {
+		return QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = controller,
+		});
+	};
+	const auto toastCalls = [](Window::SessionController *controller) {
+		return controller
+			->featureUnavailableOnServerToastCallsForRegressionTest();
+	};
+	const auto hasPassportForm = [](Window::SessionController *controller) {
+		return controller->passportFormExistsForRegressionTest();
+	};
+	const auto refuse = [&](const char *label,
+							Window::SessionController *controller,
+							const QString &url) {
+		const auto stockToastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(controller));
+		QCoreApplication::processEvents();
+		const auto stockToastAfter = toastCalls(stockController);
+		const auto pinnedToastAfter = toastCalls(pinnedController);
+		const auto blankToastAfter = toastCalls(blankController);
+		const auto refused
+			= handled && !hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (stockToastAfter
+				  == stockToastBefore + (controller == stockController))
+			  && (pinnedToastAfter
+				  == pinnedToastBefore + (controller == pinnedController))
+			  && (blankToastAfter
+				  == blankToastBefore + (controller == blankController));
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: %s refusal mismatch for %s.\n",
+				label, url.toUtf8().constData());
+		}
+		return refused;
+	};
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("custom", pinnedController, url)) {
+			return false;
+		}
+	}
+	domain.activate(pinned);
+	if (&domain.active() != pinned.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: custom account was not active.\n");
+		return false;
+	}
+	for (const auto &url : std::vector<QString>{
+			 passportUrl(true),
+			 resolveUrl(true, 0),
+			 resolveUrl(true, pinnedIndex),
+			 resolveUrl(false, invalidAccountIndex),
+		 }) {
+		const auto toastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(stockController));
+		QCoreApplication::processEvents();
+		const auto opened
+			= handled && hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (toastCalls(stockController) == toastBefore)
+			  && (toastCalls(pinnedController) == pinnedToastBefore)
+			  && (toastCalls(blankController) == blankToastBefore);
+		stockController->clearPassportForm();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: stock behavior changed for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("blocked-without-pin", blankController, url)) {
+			return false;
+		}
+	}
+	const auto restartToastBefore = toastCalls(pinnedController);
+	pinnedController->showPassportForm(Passport::FormRequest(
+		UserId(1), u"{}"_q, u"https://example.com"_q, u"x"_q, u"y"_q));
+	if (hasPassportForm(pinnedController)
+		|| (toastCalls(pinnedController) != restartToastBefore + 1)) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: restart bypassed the session gate.\n");
+		return false;
+	}
+	std::fprintf(stderr,
+				 "Passport link regression passed: URL variants followed their "
+				 "owning stock, custom, and blocked sessions.\n");
 	return true;
 }
 
@@ -3787,15 +4125,17 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	WaitForSettingsDeepLinkCondition([&] {
-		return (app.activeWindow() == &stockController->window())
-			&& (app.activePrimaryWindow() == &stockController->window());
-	});
+	const auto stockWindowActivationRestored
+		= WaitForSettingsDeepLinkCondition([&] {
+			  return (app.activeWindow() == &stockController->window())
+				  && (app.activePrimaryWindow() == &stockController->window());
+		  });
 	const auto activeWindowRestored
-		= (app.activeWindow() == &stockController->window());
+		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
-		= (app.activePrimaryWindow() == &stockController->window());
-	if (!activeWindowRestored || !activePrimaryWindowRestored) {
+		= app.activePrimaryWindow() == &stockController->window();
+	if (!stockWindowActivationRestored || !activeWindowRestored
+		|| !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "active-primary-window=%d expected=1/1.\n",
@@ -6326,6 +6666,7 @@ struct NativeLifecycleResults {
 			"session-window-lifecycle",
 			"translation-controls",
 			"manage-controls",
+			"passport-link-refusal",
 			"mini-app-open",
 			"settings-deep-link",
 			"messages-privacy",
@@ -7852,22 +8193,56 @@ struct NativeLifecycleResults {
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
 #endif
-	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
 	restoredBlocked->mtp().stopForServerEnrollment();
-	auto restoredBlockedFixtureReady
-		= !restoredBlocked->sessionExists()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown();
-	if (restoredBlockedFixtureReady) {
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blank.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedInitialStateReady
+		= restoredBlockedIsDistinct && restoredBlockedHasNoSession
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown;
+	auto restoredBlockedAuthorizationFailureWritten = false;
+	if (restoredBlockedInitialStateReady) {
 		restoredBlocked->mtp().dcOptions().constructBlocked();
-		restoredBlockedFixtureReady
-			= restoredBlocked->local().writeMtpAuthorizationFailure()
-			  && restoredBlocked->mtp().config().blocked()
-			  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-			  && !restoredBlocked->local().hasStoredCustomServer()
-			  && !restoredBlocked->local().customServerPinUnknown();
+		restoredBlockedAuthorizationFailureWritten
+			= restoredBlocked->local().writeMtpAuthorizationFailure();
+	}
+	const auto restoredBlockedIsBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
+	auto restoredBlockedFixtureReady
+		= restoredBlockedInitialStateReady
+		  && restoredBlockedAuthorizationFailureWritten
+		  && restoredBlockedIsBlocked && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	if (!restoredBlockedFixtureReady) {
+		std::fprintf(stderr,
+					 "Settings deep link restored-blocked fixture checks: "
+					 "distinct=%d marker_written=%d no_session=%d blocked=%d "
+					 "custom=%d stored_custom=%d pin_unknown=%d "
+					 "auth_failed=%d network_allowed=%d.\n",
+					 restoredBlockedIsDistinct,
+					 restoredBlockedAuthorizationFailureWritten,
+					 restoredBlockedHasNoSession, restoredBlockedIsBlocked,
+					 !restoredBlockedHasNoCustomConfig,
+					 !restoredBlockedHasNoStoredCustom,
+					 !restoredBlockedPinStateKnown,
+					 restoredBlockedAuthorizationFailed,
+					 restoredBlocked->mtp().isServerEnrollmentNetworkAllowed());
 	}
 	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
 	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
@@ -7877,9 +8252,6 @@ struct NativeLifecycleResults {
 		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
 	restoredBlockedFixtureReady
 		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
-	if (activeWindowBeforeBlockedFixture) {
-		activeWindowBeforeBlockedFixture->activate();
-	}
 	if (!restoredBlockedFixtureReady) {
 		std::fprintf(stderr,
 					 "Mini-app open regression: restored blocked fixture could "
@@ -7897,6 +8269,18 @@ struct NativeLifecycleResults {
 			}
 		}
 	});
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
+	}
+	nativeLifecycleResults->StartCase("passport-link-refusal");
+	const auto passportRegressionPassed
+		= blankFixtureReady
+		  && RunPassportLinkRefusalRegression(app, domain, stock, pinned, blank,
+											  stockWindow, pinnedWindow,
+											  blankWindow);
+	nativeLifecycleResults->Report("passport-link-refusal",
+								   passportRegressionPassed);
+	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady && blankFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
