@@ -407,7 +407,8 @@ void Application::run() {
 		) | rpl::on_next([=](not_null<Main::Account*> account) {
 			const auto ordered = _domain->orderedAccounts();
 			const auto it = ranges::find(ordered, account);
-			if (_lastActivePrimaryWindow && it != end(ordered)) {
+			if (_lastActivePrimaryWindow && it != end(ordered)
+				&& account->sessionExists()) {
 				const auto index = std::distance(begin(ordered), it);
 				if ((index + 1) > _domain->maxAccounts()) {
 					_lastActivePrimaryWindow->show(Box(

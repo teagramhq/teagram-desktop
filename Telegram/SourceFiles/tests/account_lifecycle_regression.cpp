@@ -4785,6 +4785,28 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	replacement->session().attachWebView().cancel();
 	replacement->session().attachWebView().closeAll();
 	replacement->forcedLogOut();
+	const auto activeAfterReplacementLogout = &app.domain().active();
+	const auto orderedAfterReplacementLogout
+		= app.domain().orderedAccounts();
+	const auto maxAccountsAfterReplacementLogout = app.domain().maxAccounts();
+	auto activeSessionlessBeyondLimit = false;
+	for (auto i = maxAccountsAfterReplacementLogout;
+		 i < int(orderedAfterReplacementLogout.size());
+		 ++i) {
+		if (orderedAfterReplacementLogout[i].get()
+				== activeAfterReplacementLogout
+			&& !activeAfterReplacementLogout->sessionExists()) {
+			activeSessionlessBeyondLimit = true;
+			break;
+		}
+	}
+	if (!activeSessionlessBeyondLimit) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: replacement logout did not activate a "
+			"sessionless account beyond the account limit.\n");
+		return false;
+	}
 	if (thirdWindow && (app.separateWindowFor(replacement) == thirdWindow)) {
 		app.closeWindow(thirdWindow);
 	}
