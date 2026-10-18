@@ -2380,15 +2380,15 @@ template <typename Condition>
 							  contextFor(pinnedController))) {
 			return false;
 		}
-		const auto ordinarySettingsStateRestored
-			= WaitForSettingsDeepLinkCondition([&] {
-				  return pinnedController->content()->isMainSectionShown()
-					  && !pinnedController->isLayerShown()
-					  && (pinnedController
-							  ->featureUnavailableOnServerToastCallsForRegressionTest()
-						  == ordinaryToastBefore)
-					  && (app.activeWindow() == &pinnedController->window());
-			  });
+		const auto
+			ordinarySettingsStateRestored = WaitForSettingsDeepLinkCondition([&] {
+				return pinnedController->content()->isMainSectionShown()
+					   && !pinnedController->isLayerShown()
+					   && (pinnedController
+							   ->featureUnavailableOnServerToastCallsForRegressionTest()
+						   == ordinaryToastBefore)
+					   && (app.activeWindow() == &pinnedController->window());
+			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
 		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
@@ -2399,8 +2399,8 @@ template <typename Condition>
 		const auto ordinaryWindowActive
 			= (app.activeWindow() == &pinnedController->window());
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
-			|| !ordinaryLayerHidden
-			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
+			|| !ordinaryWindowActive) {
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
@@ -4125,11 +4125,11 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	const auto stockWindowActivationRestored
-		= WaitForSettingsDeepLinkCondition([&] {
-			  return (app.activeWindow() == &stockController->window())
-				  && (app.activePrimaryWindow() == &stockController->window());
-		  });
+	const auto stockWindowActivationRestored = WaitForSettingsDeepLinkCondition(
+		[&] {
+			return (app.activeWindow() == &stockController->window())
+				   && (app.activePrimaryWindow() == &stockController->window());
+		});
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
