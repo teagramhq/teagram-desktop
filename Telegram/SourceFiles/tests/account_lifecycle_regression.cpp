@@ -3744,8 +3744,15 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| (app.activePrimaryWindow() != &stockController->window())) {
+	const auto activeWindowRestored
+		= (app.activeWindow() == &stockController->window());
+	const auto activePrimaryWindowRestored
+		= (app.activePrimaryWindow() == &stockController->window());
+	if (!activeWindowRestored || !activePrimaryWindowRestored) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window activation "
