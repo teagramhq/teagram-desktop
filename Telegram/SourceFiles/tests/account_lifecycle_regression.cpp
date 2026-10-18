@@ -67,6 +67,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
+#include "info/info_layer_widget.h"
 #include "info/info_wrap_widget.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
@@ -2082,27 +2083,78 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
 		  && pinned->session().uniqueId() == blocked->session().uniqueId();
+	const auto stockPaidSupported = stock->session().paidFeaturesSupported();
+	const auto customPaidUnsupported
+		= !pinned->session().paidFeaturesSupported();
+	const auto blockedPaidUnsupported
+		= !blocked->session().paidFeaturesSupported();
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blocked.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedConfigBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
 	const auto restoredBlockedWithoutPin
-		= !restoredBlocked->sessionExists()
-		  && restoredBlocked->mtp().config().blocked()
-		  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown()
-		  && restoredBlocked->local().mtpAuthorizationWriteFailed();
+		= restoredBlockedHasNoSession && restoredBlockedConfigBlocked
+		  && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	const auto customIsPinned = pinned->mtp().dcOptions().hasCustomServer();
+	const auto customIsUnblocked = !pinned->mtp().dcOptions().blocked();
+	const auto blockedHasNoCustomConfig
+		= !blocked->mtp().dcOptions().hasCustomServer();
+	const auto blockedConfigBlocked = blocked->mtp().dcOptions().blocked();
+	const auto blockedHasNoStoredCustom
+		= !blocked->local().hasStoredCustomServer();
+	const auto blockedPinStateKnown
+		= !blocked->local().customServerPinUnknown();
+	const auto stockControllerOwnsSession
+		= (&stockController->session() == &stock->session());
+	const auto customControllerOwnsSession
+		= (&pinnedController->session() == &pinned->session());
+	const auto blockedControllerOwnsSession
+		= (&blockedController->session() == &blocked->session());
 	const auto configured
-		= sameUserId && stock->session().paidFeaturesSupported()
-		  && !pinned->session().paidFeaturesSupported()
-		  && !blocked->session().paidFeaturesSupported()
-		  && restoredBlockedWithoutPin
-		  && pinned->mtp().dcOptions().hasCustomServer()
-		  && !pinned->mtp().dcOptions().blocked()
-		  && !blocked->mtp().dcOptions().hasCustomServer()
-		  && blocked->mtp().dcOptions().blocked()
-		  && !blocked->local().hasStoredCustomServer()
-		  && !blocked->local().customServerPinUnknown()
-		  && (&stockController->session() == &stock->session())
-		  && (&pinnedController->session() == &pinned->session())
-		  && (&blockedController->session() == &blocked->session());
+		= sameUserId && stockPaidSupported && customPaidUnsupported
+		  && blockedPaidUnsupported && restoredBlockedIsDistinct
+		  && restoredBlockedWithoutPin && customIsPinned && customIsUnblocked
+		  && blockedHasNoCustomConfig && blockedConfigBlocked
+		  && blockedHasNoStoredCustom && blockedPinStateKnown
+		  && stockControllerOwnsSession && customControllerOwnsSession
+		  && blockedControllerOwnsSession;
+	std::fprintf(
+		stderr,
+		"Settings deep link fixture checks: same_user=%d stock_paid=%d "
+		"custom_paid_unsupported=%d blocked_paid_unsupported=%d "
+		"restored_distinct=%d restored_no_session=%d restored_blocked=%d "
+		"restored_no_custom_config=%d restored_no_stored_custom=%d "
+		"restored_pin_state_known=%d restored_auth_failed=%d "
+		"restored_network_allowed=%d "
+		"custom_pinned=%d custom_unblocked=%d blocked_no_custom_config=%d "
+		"blocked_config_blocked=%d blocked_no_stored_custom=%d "
+		"blocked_pin_state_known=%d controllers=%d/%d/%d.\n",
+		sameUserId, stockPaidSupported, customPaidUnsupported,
+		blockedPaidUnsupported, restoredBlockedIsDistinct,
+		restoredBlockedHasNoSession, restoredBlockedConfigBlocked,
+		restoredBlockedHasNoCustomConfig, restoredBlockedHasNoStoredCustom,
+		restoredBlockedPinStateKnown, restoredBlockedAuthorizationFailed,
+		restoredBlockedNetworkAllowed, customIsPinned, customIsUnblocked,
+		blockedHasNoCustomConfig, blockedConfigBlocked,
+		blockedHasNoStoredCustom, blockedPinStateKnown,
+		stockControllerOwnsSession, customControllerOwnsSession,
+		blockedControllerOwnsSession);
 	if (!configured) {
 		std::fprintf(
 			stderr,
@@ -2250,56 +2302,98 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	const auto ordinaryToastBefore
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
-		return false;
-	}
-	QCoreApplication::processEvents();
-	if (!pinnedController->content()->isMainSectionShown()
-		|| pinnedController->isLayerShown()
-		|| (pinnedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= ordinaryToastBefore)
-		|| (app.activeWindow() != &pinnedController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: ordinary Settings link "
-			"lost its section or focus behavior.\n");
-		return false;
-	}
-	pinnedController->clearSectionStack(
-		Window::SectionShow(anim::type::instant, anim::activation::background));
-	QCoreApplication::processEvents();
-
-	for (const auto &controller : {pinnedController, blockedController}) {
-		const auto toastBefore
-			= controller
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
-							  contextFor(controller))) {
-			return false;
+	{
+		const auto pinnedWindow = pinnedController->widget();
+		const auto blockedWindow = blockedController->widget();
+		const auto pinnedPreviousSize = pinnedWindow->size();
+		const auto blockedPreviousSize = blockedWindow->size();
+		const auto minimumLayerWidth
+			= Info::LayerWidget::MinimalSupportedWidth();
+		const auto restoreSizes = gsl::finally([=] {
+			pinnedWindow->resize(pinnedPreviousSize);
+			blockedWindow->resize(blockedPreviousSize);
+			QCoreApplication::processEvents();
+		});
+		for (const auto &window : {pinnedWindow, blockedWindow}) {
+			window->resize(minimumLayerWidth - 1, window->height());
 		}
 		QCoreApplication::processEvents();
-		const auto myAccountShown = ShownInfoSectionMatches(
-			controller, [](const Info::Section &section) {
-				return (section.type() == Info::Section::Type::Settings)
-					   && (section.settingsType() == Settings::InformationId());
-			});
-		if (!controller->content()->isMainSectionShown() || !myAccountShown
-			|| ShownStoriesSection(controller)
-			|| (controller
-					->featureUnavailableOnServerToastCallsForRegressionTest()
-				!= toastBefore)) {
+		if (pinnedWindow->width() >= minimumLayerWidth
+			|| blockedWindow->width() >= minimumLayerWidth) {
 			std::fprintf(
 				stderr,
-				"Settings deep link regression failed: my-profile did not "
-				"open My Account on an unsupported session.\n");
+				"Settings deep link regression failed: could not constrain "
+				"unsupported test windows below Info layer width: "
+				"pinned_width=%d blocked_width=%d minimum=%d.\n",
+				pinnedWindow->width(), blockedWindow->width(),
+				minimumLayerWidth);
 			return false;
 		}
-		resetController(controller);
+		const auto ordinaryToastBefore
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings"_q,
+							  contextFor(pinnedController))) {
+			return false;
+		}
 		QCoreApplication::processEvents();
+		const auto ordinarySectionShown
+			= pinnedController->content()->isMainSectionShown();
+		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
+		const auto ordinaryToastUnchanged
+			= (pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   == ordinaryToastBefore);
+		const auto ordinaryWindowActive
+			= (app.activeWindow() == &pinnedController->window());
+		if (!ordinarySectionShown || !ordinaryLayerHidden
+			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression ordinary Settings checks: "
+				"section_shown=%d layer_hidden=%d toast_unchanged=%d "
+				"window_active=%d.\n",
+				ordinarySectionShown, ordinaryLayerHidden,
+				ordinaryToastUnchanged, ordinaryWindowActive);
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: ordinary Settings link "
+				"lost its section or focus behavior.\n");
+			return false;
+		}
+		pinnedController->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
+		QCoreApplication::processEvents();
+
+		for (const auto &controller : {pinnedController, blockedController}) {
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+								  contextFor(controller))) {
+				return false;
+			}
+			QCoreApplication::processEvents();
+			const auto myAccountShown = ShownInfoSectionMatches(
+				controller, [](const Info::Section &section) {
+					return (section.type() == Info::Section::Type::Settings)
+						   && (section.settingsType()
+							   == Settings::InformationId());
+				});
+			if (!controller->content()->isMainSectionShown() || !myAccountShown
+				|| ShownStoriesSection(controller)
+				|| (controller
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+					!= toastBefore)) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: my-profile did not "
+					"open My Account on an unsupported session.\n");
+				return false;
+			}
+			resetController(controller);
+			QCoreApplication::processEvents();
+		}
 	}
 
 	stockController->window().activate();
@@ -2359,6 +2453,23 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
+	const auto stockWindow = stockController->widget();
+	const auto stockPreviousSize = stockWindow->size();
+	const auto minimumLayerWidth = Info::LayerWidget::MinimalSupportedWidth();
+	const auto restoreStockSize = gsl::finally([=] {
+		stockWindow->resize(stockPreviousSize);
+		QCoreApplication::processEvents();
+	});
+	stockWindow->resize(minimumLayerWidth - 1, stockPreviousSize.height());
+	QCoreApplication::processEvents();
+	if (stockWindow->width() >= minimumLayerWidth) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not constrain stock "
+			"test window below Info layer width: width=%d minimum=%d.\n",
+			stockWindow->width(), minimumLayerWidth);
+		return false;
+	}
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
@@ -7803,18 +7914,53 @@ struct NativeLifecycleResults {
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
 	restoredBlocked->mtp().stopForServerEnrollment();
-	auto restoredBlockedFixtureReady
-		= !restoredBlocked->sessionExists()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown();
-	if (restoredBlockedFixtureReady) {
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blank.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedInitialStateReady
+		= restoredBlockedIsDistinct && restoredBlockedHasNoSession
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown;
+	auto restoredBlockedAuthorizationFailureWritten = false;
+	if (restoredBlockedInitialStateReady) {
 		restoredBlocked->mtp().dcOptions().constructBlocked();
-		restoredBlockedFixtureReady
-			= restoredBlocked->local().writeMtpAuthorizationFailure()
-			  && restoredBlocked->mtp().config().blocked()
-			  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-			  && !restoredBlocked->local().hasStoredCustomServer()
-			  && !restoredBlocked->local().customServerPinUnknown();
+		restoredBlockedAuthorizationFailureWritten
+			= restoredBlocked->local().writeMtpAuthorizationFailure();
+	}
+	const auto restoredBlockedIsBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
+	auto restoredBlockedFixtureReady
+		= restoredBlockedInitialStateReady
+		  && restoredBlockedAuthorizationFailureWritten
+		  && restoredBlockedIsBlocked && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	if (!restoredBlockedFixtureReady) {
+		std::fprintf(stderr,
+					 "Settings deep link restored-blocked fixture checks: "
+					 "distinct=%d marker_written=%d no_session=%d blocked=%d "
+					 "custom=%d stored_custom=%d pin_unknown=%d "
+					 "auth_failed=%d network_allowed=%d.\n",
+					 restoredBlockedIsDistinct,
+					 restoredBlockedAuthorizationFailureWritten,
+					 restoredBlockedHasNoSession, restoredBlockedIsBlocked,
+					 !restoredBlockedHasNoCustomConfig,
+					 !restoredBlockedHasNoStoredCustom,
+					 !restoredBlockedPinStateKnown,
+					 restoredBlockedAuthorizationFailed,
+					 restoredBlocked->mtp().isServerEnrollmentNetworkAllowed());
 	}
 	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
 	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
