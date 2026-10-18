@@ -8049,8 +8049,9 @@ struct NativeLifecycleResults {
 		  && stockActionChat->canEditInformation()
 		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
 		  && stockActionChat->canBanMembers();
-	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
-				   "stock creator lost a supported basic-group action");
+	recordChatCase(
+		"stock-basic-group-creator", stockCreatorPassed,
+		"stock creator defaults or supported basic-group actions changed");
 	if (pinnedMigrationFixturePassed) {
 		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
 		const auto pinnedCreatorPassed
@@ -8098,19 +8099,17 @@ struct NativeLifecycleResults {
 											| ChatAdminRight::PinMessages
 											| ChatAdminRight::ManageCall)
 							.flags;
-		recordChatCase("stock-admin-default-rights",
-					   stockAdminDefaultRightsAreUnchanged,
-					   "stock basic-group administrator defaults changed");
 		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 			adminActionChat, "stock full-list promotion", true);
 		const auto stockFullListAdminPassed
-			= HasExpectedParticipants(adminActionChat, UserId(2))
+			= stockAdminDefaultRightsAreUnchanged
+			  && HasExpectedParticipants(adminActionChat, UserId(2))
 			  && adminActionChat->admins.contains(stockSelf)
 			  && fullListAdminRightsMatch;
 		recordChatCase(
 			"stock-full-list-admin", stockFullListAdminPassed,
-			"official basic-group admin lost its moderation rights or gained "
-			"creator-only powers");
+			"official basic-group admin defaults, moderation rights, or "
+			"creator-only powers were incorrect");
 
 		nativeLifecycleResults->StartCase("stock-full-list-demotion");
 		const auto fullListDemotionChatId = ChatId(1057);
@@ -8169,10 +8168,6 @@ struct NativeLifecycleResults {
 			= customAdminActionChat->usesCustomServer()
 			  && customDisplayRights
 					 == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
-		recordChatCase("custom-admin-default-rights",
-					   customDefaultRightsAreRoleOnly,
-					   "custom-server basic-group admin defaults include "
-					   "privileged rights");
 		customAdminActionChat->setAdminRights(
 			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
@@ -8187,7 +8182,7 @@ struct NativeLifecycleResults {
 		const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion", false);
 		const auto customFullListAdminPassed
-			= customFullListSeedPassed
+			= customDefaultRightsAreRoleOnly && customFullListSeedPassed
 			  && HasExpectedParticipants(customAdminActionChat, UserId(2))
 			  && customAdminActionChat->admins.contains(customSelf)
 			  && !customAdminActionChat->admins.contains(stockSelf)
@@ -8195,8 +8190,8 @@ struct NativeLifecycleResults {
 			  && customAdminRightsMatch;
 		recordChatCase(
 			"custom-full-list-admin", customFullListAdminPassed,
-			"custom-server basic-group admin gained rights or creator-only "
-			"powers");
+			"custom-server basic-group admin defaults or assigned rights "
+			"included privileged powers");
 
 		nativeLifecycleResults->StartCase("stock-live-admin-promotion");
 		const auto liveAdminChatId = ChatId(1055);
