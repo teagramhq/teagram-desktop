@@ -6974,14 +6974,15 @@ void RunProtectedCacheCleanupRegression(
 		nativeLifecycleResults->SkipUnreported("authenticated-cache-only");
 		nativeLifecycleResults->finalized = true;
 		nativeLifecycleResults->ReportSummary();
+		auto result = 0;
 		if (!nativeLifecycleResults->Passed()) {
-			done(FailChatParticipantsRegression(
-				"authenticated cache regression failed"));
+			result = FailChatParticipantsRegression(
+				"authenticated cache regression failed");
 		} else {
 			std::fprintf(stderr,
 						 "Authenticated cache regression cases passed.\n");
-			done(0);
 		}
+		crl::on_main([=] { done(result); });
 		return 0;
 	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
