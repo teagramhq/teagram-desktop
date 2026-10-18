@@ -1,5 +1,7 @@
 name: Workflow lint.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}
+
 on:
   # Most macOS feedback lanes are manual/nightly, so lint the whole directory
   # whenever a workflow or an asserted CI contract changes.
@@ -22,6 +24,8 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
       - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
+      - '.github/scripts/macos_libraries_image.sh'
+      - '.github/scripts/test_macos_libraries_image.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/workflow_contract.sh'
@@ -59,6 +63,8 @@ on:
       - '.github/scripts/test_macos_ci_contract.sh'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
       - 'Telegram/build/test_mac_lifecycle_case_runner.sh'
+      - '.github/scripts/macos_libraries_image.sh'
+      - '.github/scripts/test_macos_libraries_image.sh'
       - '.github/scripts/install_macos_build_tools.sh'
       - '.github/scripts/test_ci_cache_contract.sh'
       - '.github/scripts/workflow_contract.sh'
@@ -79,6 +85,12 @@ on:
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -134,6 +146,9 @@ jobs:
 
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
+
+      - name: Test macOS dependency artifact handling.
+        run: bash .github/scripts/test_macos_libraries_image.sh
 
       - name: Test CI cache contract.
         run: bash .github/scripts/test_ci_cache_contract.sh

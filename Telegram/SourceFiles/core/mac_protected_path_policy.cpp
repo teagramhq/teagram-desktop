@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <deque>
 #include <initializer_list>
+#include <map>
 #include <utility>
 
 namespace Core::MacProtectedPath {
@@ -20,6 +21,10 @@ namespace {
 
 constexpr auto kSymlinkHopLimit = 32;
 constexpr auto kRefusalInterval = qint64(60);
+// Leave headroom below the SBPL parser's 1025-byte string-token limit.
+constexpr auto kMaxSbplStringBytes = qsizetype(900);
+// Keep headroom below the Seatbelt profile-size limit as well.
+constexpr auto kMaxSbplProfileBytes = qsizetype(32 * 1024);
 
 struct ParsedPath {
 	bool absolute = false;
@@ -136,6 +141,7 @@ struct WalkResult {
 [[nodiscard]] QString Fold(const QByteArray &component) {
 	auto result = QString::fromUtf8(component);
 	result = result.normalized(QString::NormalizationForm_D).toCaseFolded();
+	result.replace(QChar(0x00DF), u"ss"_q);
 	for (auto i = result.size() - 1; i >= 0; --i) {
 		const auto codepoint = result.at(i).unicode();
 		if ((codepoint >= 0x200B && codepoint <= 0x200F)
@@ -172,7 +178,10 @@ struct WalkResult {
 		if (!ParseComponent(part)) {
 			return false;
 		}
-		result->components.push_back(part);
+		result->components.push_back(
+			QString::fromUtf8(part)
+				.normalized(QString::NormalizationForm_D)
+				.toUtf8());
 	}
 	return true;
 }
@@ -233,6 +242,260 @@ struct WalkResult {
 	MacProtectedPathPolicy::Components result;
 	for (const auto value : values) {
 		result.push_back(Fold(QByteArray(value)));
+	}
+	return result;
+}
+
+[[nodiscard]] QByteArray SbplQuoted(const QByteArray &value) {
+	auto result = QByteArray("\"");
+	for (const auto character : value) {
+		const auto byte = uchar(character);
+		if (byte < 0x20 || byte == 0x7F) {
+			return {};
+		}
+		if (character == '\\' || character == '"') {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	result.append('"');
+	return (result.size() < kMaxSbplStringBytes) ? result : QByteArray();
+}
+
+[[nodiscard]] bool AppendSbplRegex(QByteArray &profile,
+								   const QByteArray &expression) {
+	profile.append("(regex\n");
+	const auto appendString = [&](const QByteArray &value) {
+		const auto quoted = SbplQuoted(value);
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		return true;
+	};
+	if (appendString(expression)) {
+		profile.append(")\n");
+		return true;
+	}
+	profile.append("(string-append\n");
+	for (auto start = qsizetype(0); start < expression.size();) {
+		auto end = std::min(start + 512, expression.size());
+		while (end > start && end < expression.size()
+			   && IsContinuation(uchar(expression.at(end)))) {
+			--end;
+		}
+		auto quoted = QByteArray();
+		while (end > start) {
+			quoted = SbplQuoted(expression.mid(start, end - start));
+			if (!quoted.isEmpty()) {
+				break;
+			}
+			--end;
+			while (end > start && end < expression.size()
+				   && IsContinuation(uchar(expression.at(end)))) {
+				--end;
+			}
+		}
+		if (quoted.isEmpty()) {
+			return false;
+		}
+		profile.append(quoted);
+		profile.append('\n');
+		start = end;
+	}
+	profile.append(")\n)\n");
+	return true;
+}
+
+[[nodiscard]] QByteArray RegexLiteral(const QByteArray &value) {
+	const auto special = QByteArray("\\.^$|()[]{}*+?");
+	auto result = QByteArray();
+	for (const auto character : value) {
+		if (special.contains(character)) {
+			result.append('\\');
+		}
+		result.append(character);
+	}
+	return result;
+}
+
+[[nodiscard]] QByteArray ProfileUnicodeCharacterRegex(char32_t codepoint) {
+	if (codepoint < 0x80) {
+		return RegexLiteral(QByteArray(1, char(codepoint)));
+	}
+	static const auto caseEquivalents = [] {
+		auto result = std::map<char32_t, std::vector<char32_t>>();
+		for (auto value = char32_t(0); value <= 0x10FFFF; ++value) {
+			if (value >= 0xD800 && value <= 0xDFFF) {
+				continue;
+			}
+			const auto folded = QChar::toCaseFolded(value);
+			if (folded == value) {
+				continue;
+			}
+			auto &equivalents = result[folded];
+			if (equivalents.empty()) {
+				equivalents.push_back(folded);
+			}
+			equivalents.push_back(value);
+		}
+		return result;
+	}();
+	const auto i = caseEquivalents.find(QChar::toCaseFolded(codepoint));
+	if (i == caseEquivalents.end()) {
+		return RegexLiteral(QString::fromUcs4(&codepoint, 1).toUtf8());
+	}
+	auto result = QByteArray("(");
+	for (const auto equivalent : i->second) {
+		if (result.size() > 1) {
+			result.append('|');
+		}
+		result.append(RegexLiteral(QString::fromUcs4(&equivalent, 1).toUtf8()));
+	}
+	result.append(')');
+	return result;
+}
+
+// Every ignored character lies outside printable ASCII, so this class
+// matches any run of them whether Seatbelt reads it per byte or per
+// character. It lists only ASCII members: a class holding multi-byte members
+// compiles but never matches them. The 17-way alternation it replaces put a
+// 70-byte group at every character boundary, and Seatbelt rejected the
+// resulting profile with EINVAL. Accepting other non-ASCII characters there
+// only widens the protected names, never an allowed path.
+[[nodiscard]] const QByteArray &ProfileIgnoredSequence() {
+	static const auto result = QByteArray("[^ -~]*");
+	return result;
+}
+
+// Between two characters that can both match non-ASCII input, the class
+// above would make the split ambiguous and matching exponential in the run
+// length, so those boundaries list the ignored characters exactly.
+[[nodiscard]] const QByteArray &ProfileExactIgnoredSequence() {
+	static const auto result
+		= u"(\u200B|\u200C|\u200D|\u200E|\u200F|"
+		  "\u202A|\u202B|\u202C|\u202D|\u202E|\u206A|\u206B|\u206C|"
+		  "\u206D|\u206E|\u206F|\uFEFF)*"_q.toUtf8();
+	return result;
+}
+
+[[nodiscard]] bool ProfileSharpSRunWithinLimit(int length,
+											   const QByteArray &ignored) {
+	if (length <= 1) {
+		return true;
+	}
+	const auto single = u"([Ss]|\u017F)"_q.toUtf8();
+	const auto sharp = u"(\u00DF|\u1E9E)"_q.toUtf8();
+	auto countBeforePrevious = qsizetype(1);
+	auto bytesBeforePrevious = qsizetype(0);
+	auto countPrevious = qsizetype(1);
+	auto bytesPrevious = qsizetype(single.size());
+	// Bound the serialized alternatives before allocating the spelling table.
+	for (auto i = 2; i <= length; ++i) {
+		const auto count = countPrevious + countBeforePrevious;
+		if (count >= kMaxSbplStringBytes) {
+			return false;
+		}
+		const auto bytes
+			= bytesPrevious + countPrevious * (ignored.size() + single.size())
+			  + bytesBeforePrevious
+			  + countBeforePrevious
+					* ((i == 2 ? 0 : ignored.size()) + sharp.size());
+		if (bytes + count + 1 > kMaxSbplStringBytes) {
+			return false;
+		}
+		countBeforePrevious = countPrevious;
+		bytesBeforePrevious = bytesPrevious;
+		countPrevious = count;
+		bytesPrevious = bytes;
+	}
+	return true;
+}
+
+// Every way to spell a run of folded 's' with each "ss" pair optionally
+// written as a sharp s, which the guard folds to "ss" as well.
+[[nodiscard]] QByteArray ProfileSharpSRunRegex(int length,
+											   const QByteArray &ignored) {
+	const auto single = u"([Ss]|\u017F)"_q.toUtf8();
+	const auto sharp = u"(\u00DF|\u1E9E)"_q.toUtf8();
+	if (!ProfileSharpSRunWithinLimit(length, ignored)) {
+		// Exact alternatives grow like the Fibonacci sequence. A bounded
+		// grouped fallback covers every spelling without expanding the run.
+		const auto token = "(" + single + "|" + sharp + ")";
+		return "(" + token + ignored + "(" + token + ignored + ")*)";
+	}
+	auto spellings = std::vector<std::vector<QByteArray>>(length + 1);
+	spellings[0].emplace_back();
+	for (auto i = 1; i <= length; ++i) {
+		for (const auto &prefix : spellings[i - 1]) {
+			spellings[i].push_back(
+				prefix.isEmpty() ? single : prefix + ignored + single);
+		}
+		if (i >= 2) {
+			for (const auto &prefix : spellings[i - 2]) {
+				spellings[i].push_back(
+					prefix.isEmpty() ? sharp : prefix + ignored + sharp);
+			}
+		}
+	}
+	auto result = QByteArray("(");
+	for (const auto &spelling : spellings[length]) {
+		if (result.size() > 1) {
+			result.append('|');
+		}
+		result.append(spelling);
+	}
+	result.append(')');
+	return result;
+}
+
+[[nodiscard]] QByteArray ProfileComponentRegex(const QByteArray &component,
+											   const QByteArray &ignored = {}) {
+	const auto folded = Fold(component);
+	const auto scalars = folded.toUcs4();
+	const auto exact
+		= ignored.isEmpty() ? ignored : ProfileExactIgnoredSequence();
+	auto result = ignored;
+	auto previousMatchesNonAscii = false;
+	for (auto i = 0; i != int(scalars.size()); ++i) {
+		const auto codepoint = char32_t(scalars[i]);
+		auto character = QByteArray();
+		if (codepoint == 's' && i + 1 < int(scalars.size())
+			&& scalars[i + 1] == 's') {
+			auto length = 0;
+			while (i + length < int(scalars.size())
+				   && scalars[i + length] == 's') {
+				++length;
+			}
+			character = ProfileSharpSRunRegex(length, exact);
+			i += length - 1;
+		} else if (codepoint == 'k') {
+			character = u"([Kk]|\u212A)"_q.toUtf8();
+		} else if (codepoint == 's') {
+			character = u"([Ss]|\u017F)"_q.toUtf8();
+		} else if (codepoint >= 'a' && codepoint <= 'z') {
+			character.append('[');
+			character.append(char(codepoint - 'a' + 'A'));
+			character.append(char(codepoint));
+			character.append(']');
+		} else if (codepoint >= 'A' && codepoint <= 'Z') {
+			character.append('[');
+			character.append(char(codepoint));
+			character.append(char(codepoint - 'A' + 'a'));
+			character.append(']');
+		} else {
+			character = ProfileUnicodeCharacterRegex(codepoint);
+		}
+		const auto matchesNonAscii
+			= codepoint == 'k' || codepoint == 's' || codepoint >= 0x80;
+		if (previousMatchesNonAscii && matchesNonAscii) {
+			result.chop(ignored.size());
+			result.append(exact);
+		}
+		result.append(character);
+		result.append(ignored);
+		previousMatchesNonAscii = matchesNonAscii;
 	}
 	return result;
 }
@@ -522,6 +785,20 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 				roots.push_back(std::move(root));
 			}
 		};
+	const auto addProfileHomePath
+		= [&](const std::vector<QByteArray> &components) {
+			  if (components.empty()) {
+				  return;
+			  }
+			  for (const auto &path :
+				   {Join(components), Join(FirmlinkAlias(components))}) {
+				  if (std::find(result._profileHomePaths.begin(),
+								result._profileHomePaths.end(), path)
+					  == result._profileHomePaths.end()) {
+					  result._profileHomePaths.push_back(path);
+				  }
+			  }
+		  };
 	// A home beneath Library needs the prefix before Library for classification.
 	// Seed every candidate before the first filesystem probe.
 	const auto addHomeCandidates = [&](
@@ -598,9 +875,11 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 			}
 			return result;
 		}
+		const auto physical = FoldedComponents(resolved.components);
+		addProfileHomePath(candidate.raw);
+		addProfileHomePath(resolved.components);
 		addHomeCandidates(resolved.components, preflightHomes);
 
-		const auto physical = FoldedComponents(resolved.components);
 		const auto accepted = std::vector<Components>{
 			candidate.folded,
 			physical,
@@ -626,6 +905,134 @@ MacProtectedPathPolicy::Build(const HomeRoots &homes,
 
 bool MacProtectedPathPolicy::valid() const {
 	return _valid;
+}
+
+QByteArray MacProtectedPathPolicy::SeatbeltProfile() const {
+	if (!_valid || _profileHomePaths.empty()) {
+		return {};
+	}
+	const auto &ignoredSequence = ProfileIgnoredSequence();
+	auto result = QByteArray("(version 1)\n(allow default)\n");
+	auto supportedComponents = true;
+	const auto component = [&](const QByteArray &value) {
+		auto regex = ProfileComponentRegex(value, ignoredSequence);
+		if (regex.isEmpty()) {
+			supportedComponents = false;
+		}
+		return regex;
+	};
+	const auto foldedTelegram = component("telegram");
+	const auto foldedDesktop = component("desktop");
+	const auto alternatives = [](const std::vector<QByteArray> &values) {
+		auto result = QByteArray("(");
+		for (auto i = 0; i != int(values.size()); ++i) {
+			if (i > 0) {
+				result.append('|');
+			}
+			result.append(values[i]);
+		}
+		result.append(')');
+		return result;
+	};
+	const auto bundleParents = alternatives({
+		component("Preferences"),
+		component("Caches"),
+		component("HTTPStorages"),
+		component("WebKit"),
+		component("Saved Application State"),
+	});
+	const auto bundlePrefixes = alternatives({
+		component("com") + component(".") + component("tdesktop")
+			+ component(".") + foldedTelegram,
+		component("org") + component(".") + foldedTelegram + component(".")
+			+ foldedDesktop,
+		component("ru") + component(".") + component("keepcoder")
+			+ component(".") + foldedTelegram,
+	});
+	const auto protectedPathAlternatives = alternatives({
+		component("Application Support") + "/" + component("Telegram ")
+			+ foldedDesktop + "(/|$)",
+		component("Containers") + "/"
+			+ alternatives({
+				component("org") + component(".") + foldedTelegram
+					+ component(".") + foldedDesktop + "(/|$)",
+				component("ru") + component(".") + component("keepcoder")
+					+ component(".") + foldedTelegram + "(/|$)",
+			}),
+		component("Group Containers") + "/[^/]*" + foldedTelegram
+			+ "[^/]*(/|$)",
+		bundleParents + "/" + bundlePrefixes + "[^/]*(/|$)",
+	});
+	struct HomeRegexNode {
+		std::map<QByteArray, HomeRegexNode> children;
+		bool terminal = false;
+	};
+	auto homeRoot = HomeRegexNode();
+	const auto firmlink = ComponentsFromAscii({"system", "volumes", "data"});
+	for (const auto &homePath : _profileHomePaths) {
+		const auto literalHomePath = RegexLiteral(homePath);
+		if (!homePath.startsWith('/')
+			|| literalHomePath.size() >= kMaxSbplStringBytes) {
+			return {};
+		}
+		auto components = std::vector<QByteArray>();
+		for (const auto &part : homePath.split('/')) {
+			if (part.isEmpty()) {
+				continue;
+			}
+			components.push_back(Fold(part).toUtf8());
+		}
+		if (components.size() >= firmlink.size()
+			&& std::equal(firmlink.begin(), firmlink.end(),
+						  components.begin())) {
+			components.erase(components.begin(),
+							 components.begin() + firmlink.size());
+		}
+		if (components.empty()) {
+			return {};
+		}
+		auto node = &homeRoot;
+		for (const auto &part : components) {
+			node = &node->children[part];
+		}
+		node->terminal = true;
+	}
+	auto homeBranches = std::vector<QByteArray>();
+	const auto appendHomeBranches
+		= [&](const auto &self, const HomeRegexNode &node,
+			  QByteArray prefix) -> void {
+		if (node.terminal) {
+			homeBranches.push_back(prefix);
+		}
+		for (const auto &[part, child] : node.children) {
+			auto branch = prefix.isEmpty() ? component(part)
+										   : prefix + "/" + component(part);
+			self(self, child, std::move(branch));
+		}
+	};
+	appendHomeBranches(appendHomeBranches, homeRoot, {});
+	const auto library = component("Library");
+	auto expression = "^(/" + component("System") + "/" + component("Volumes")
+					  + "/" + component("Data") + "/|/)"
+					  + alternatives(homeBranches) + "/" + library + "/"
+					  + protectedPathAlternatives;
+	// Adjacent components each bring their own ignored-character class.
+	const auto doubled = ignoredSequence + ignoredSequence;
+	while (expression.contains(doubled)) {
+		expression.replace(doubled, ignoredSequence);
+	}
+	if (!supportedComponents) {
+		return {};
+	}
+	result.append("(deny file*\n");
+	if (!AppendSbplRegex(result, expression)) {
+		return {};
+	}
+	result.append(")\n");
+	if (result.size() >= kMaxSbplProfileBytes) {
+		return {};
+	}
+	return result;
 }
 
 ProtectedClass MacProtectedPathPolicy::Classify(

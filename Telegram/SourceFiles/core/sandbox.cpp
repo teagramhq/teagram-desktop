@@ -99,7 +99,7 @@ int Sandbox::start() {
 				.arg(_localServerName));
 		return 1;
 	}
-	if (MacProtectedPath::IntegrationTestActive()) {
+	if (MacProtectedPath::IsActive()) {
 		const auto socketDirectory = QFileInfo(_localServerName).absolutePath();
 		if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
 										 _localServerName, Q_FUNC_INFO)
@@ -137,11 +137,11 @@ int Sandbox::start() {
 			LOG(("Mac IPC directory is unavailable for the instance lock."));
 			return 1;
 		}
-		const auto lockPath = MacProtectedPath::IntegrationTestActive()
+		const auto lockPath = MacProtectedPath::IsActive()
 								  ? ipcDirectory + u"/Teagram-lock-"_q
 										+ QString::fromLatin1(h.left(16))
 								  : ipcDirectory + '/' + h + '-' + cGUIDStr();
-		if (MacProtectedPath::IntegrationTestActive()) {
+		if (MacProtectedPath::IsActive()) {
 			if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
 											 lockPath, Q_FUNC_INFO)
 				|| !MacProtectedPath::CheckPath(
@@ -630,7 +630,7 @@ void Sandbox::readClients() {
 					const auto url = QUrl(raw);
 #ifdef Q_OS_MAC
 					if ((url.scheme() == u"file"_q && !url.isLocalFile()
-						 && MacProtectedPath::IntegrationTestActive())
+						 && MacProtectedPath::IsActive())
 						|| (url.isLocalFile()
 							&& !MacProtectedPath::CheckExternalPath(
 								MacProtectedPath::Operation::Open,

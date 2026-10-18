@@ -13,6 +13,8 @@ if [[ "$(uname -s)" != Darwin ]]; then
 	echo "macOS profile integration test requires Darwin." >&2
 	exit 2
 fi
+printf 'macos_version=%s architecture=%s\n' \
+	"$(sw_vers -productVersion)" "$(uname -m)"
 
 APP="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
 APP_BUNDLE="$(cd "$(dirname "$APP")/../.." && pwd -P)"
@@ -23,15 +25,17 @@ if [[ ! -x "$APP" ]]; then
 	echo "Teagram executable is not executable: $APP" >&2
 	exit 2
 fi
-IPC_DIRECTORY="/tmp"
+IPC_DIRECTORY="$(mktemp -d /tmp/tg-ipc.XXXXXX)"
+IPC_DIRECTORY="$(cd "$IPC_DIRECTORY" && pwd -P)"
+export TDESKTOP_MAC_PROFILE_TEST_IPC="$IPC_DIRECTORY"
 TEST_HOME="$(mktemp -d "$TEST_TMP_BASE/teagram-profile-test.XXXXXX")"
 TEST_HOME="$(cd "$TEST_HOME" && pwd -P)"
 IPC_SEARCH_DIRECTORY="$(cd "$IPC_DIRECTORY" 2>/dev/null && pwd -P || printf '%s' "$IPC_DIRECTORY")"
 
 PROFILE="$TEST_HOME/Library/Application Support/Teagram"
 HOSTILE_HOME="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"
-REFUSAL_LOG="$TEST_HOME/refusal.log"
 START_LOG="$TEST_HOME/start.log"
+PROFILE_ARTIFACT="${TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT:-}"
 LOCK_SUFFIX="$(printf '%s' "$APP_BUNDLE" | md5 -q | cut -c1-16)"
 SOCKET_SUFFIX="$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
 LOCK_NAME="Teagram-lock-$LOCK_SUFFIX"
@@ -82,6 +86,188 @@ fixture_unchanged() {
 	fi
 }
 
+run_seatbelt_cat_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local output
+	local status
+	local expected_errno=EPERM
+	if [[ "$option" == --mac-seatbelt-cat-allow-probe ]]; then
+		expected_errno=0
+	fi
+	if [[ ! -f "$path" ]]; then
+		echo "$name fixture is missing: $path" >&2
+		return 1
+	fi
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		if [[ "$output" == *"stage=seatbelt"* ]]; then
+			if [[ -n "$PROFILE_ARTIFACT" && -s "$PROFILE_ARTIFACT" ]]; then
+				local profile_bytes
+				profile_bytes="$(wc -c < "$PROFILE_ARTIFACT" | tr -d '[:space:]')"
+				printf 'seatbelt_generated_profile_artifact=PASS path=%s bytes=%s\n' \
+					"$PROFILE_ARTIFACT" "$profile_bytes" >&2
+			else
+				echo "Seatbelt compilation failed without a generated-profile artifact." >&2
+			fi
+		fi
+		return 1
+	fi
+	printf '%s=PASS mode=posix_spawn child=/bin/cat errno=%s path=%s\n' \
+		"$name" "$expected_errno" "$path"
+}
+
+verify_unsandboxed_canary_readable() {
+	local name="$1"
+	local path="$2"
+	local expected_contents="$3"
+	local actual_contents
+	if [[ ! -f "$path" ]]; then
+		echo "$name unsandboxed fixture is missing: $path" >&2
+		return 1
+	fi
+	actual_contents="$(/bin/cat "$path")" || {
+		echo "$name unsandboxed /bin/cat could not read: $path" >&2
+		return 1
+	}
+	if [[ "$actual_contents" != "$expected_contents" ]]; then
+		echo "$name unsandboxed control read unexpected contents: $path" >&2
+		return 1
+	fi
+	printf '%s=PASS unsandboxed=/bin/cat readable=1 path=%s\n' "$name" "$path"
+}
+
+verify_casefold_directory_alias() {
+	local name="$1"
+	local canonical_path="$2"
+	local alias_path="$3"
+	local canonical_id
+	local alias_id
+	if [[ "$canonical_path" == "$alias_path" ]]; then
+		echo "$name canonical and alias paths are identical." >&2
+		return 1
+	fi
+	mkdir -p "$canonical_path" || return 1
+	if [[ ! -d "$alias_path" ]]; then
+		echo "$name alias does not resolve to a directory: $alias_path" >&2
+		return 1
+	fi
+	canonical_id="$(stat -f '%d:%i' "$canonical_path")" || return 1
+	alias_id="$(stat -f '%d:%i' "$alias_path")" || return 1
+	if [[ "$canonical_id" != "$alias_id" ]]; then
+		echo "$name alias resolved to a different directory: $alias_path" >&2
+		return 1
+	fi
+	printf '%s=PASS canonical=%s alias=%s inode=%s\n' \
+		"$name" "$canonical_path" "$alias_path" "$canonical_id"
+}
+
+run_home_spelling_probes() {
+	local name="$1"
+	local profile_home="$2"
+	local path_home="$3"
+	local protected_relative="${4:-Library/Application Support/Telegram Desktop}"
+	local allowed_relative="${5:-Library/Application Support/Teagram/tdata}"
+	local unrelated_relative="${6:-}"
+	local protected_canary="$path_home/$protected_relative/synthetic-canary"
+	local allowed_canary="$path_home/$allowed_relative/synthetic-allowed-file"
+	local protected_contents="synthetic $name protected bytes"
+	local allowed_contents="synthetic $name allowed Teagram bytes"
+	mkdir -p "$(dirname "$protected_canary")" "$(dirname "$allowed_canary")"
+	printf '%s' "$protected_contents" > "$protected_canary"
+	printf '%s' "$allowed_contents" > "$allowed_canary"
+	local unrelated_canary=""
+	local unrelated_contents="synthetic $name allowed unrelated bytes"
+	if [[ -n "$unrelated_relative" ]]; then
+		unrelated_canary="$path_home/$unrelated_relative/synthetic-allowed-file"
+		mkdir -p "$(dirname "$unrelated_canary")"
+		printf '%s' "$unrelated_contents" > "$unrelated_canary"
+	fi
+	verify_unsandboxed_canary_readable \
+		"${name}_protected_unsandboxed_control" \
+		"$protected_canary" "$protected_contents" \
+		|| return 1
+	verify_unsandboxed_canary_readable \
+		"${name}_allowed_unsandboxed_control" \
+		"$allowed_canary" "$allowed_contents" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_protected_denial" \
+		--mac-seatbelt-cat-probe "$profile_home" "$protected_canary" \
+		|| return 1
+	run_seatbelt_cat_probe \
+		"${name}_allowed_teagram_file" \
+		--mac-seatbelt-cat-allow-probe "$profile_home" "$allowed_canary" \
+		|| return 1
+	if [[ -n "$unrelated_canary" ]]; then
+		verify_unsandboxed_canary_readable \
+			"${name}_unrelated_unsandboxed_control" \
+			"$unrelated_canary" "$unrelated_contents" \
+			|| return 1
+		run_seatbelt_cat_probe \
+			"${name}_allowed_unrelated_file" \
+			--mac-seatbelt-cat-allow-probe "$profile_home" "$unrelated_canary" \
+			|| return 1
+	fi
+}
+
+run_seatbelt_mode_probe() {
+	local name="$1"
+	local option="$2"
+	local home="$3"
+	local path="$4"
+	local mode="$5"
+	local expected_errno="$6"
+	local output
+	local status
+	set +e
+	output="$(env HOME="$home" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$home" \
+		TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" "$option" "$path" 2>&1)"
+	status=$?
+	set -e
+	if [[ "$status" -ne 0 \
+		|| "$output" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+		echo "$name failed: path=$path status=$status" >&2
+		printf '%s\n' "$output" >&2
+		return 1
+	fi
+	printf '%s=PASS mode=%s errno=%s path=%s\n' \
+		"$name" "$mode" "$expected_errno" "$path"
+}
+
+run_bundle_keyed_probe() {
+	local name="$1"
+	local parent="$2"
+	local canary="$TEST_HOME/Library/$parent/org.telegram.desktop.fixture/synthetic-canary"
+	local canary_hash
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected bundle-keyed bytes' > "$canary"
+	canary_hash="$(shasum -a 256 "$canary" | awk '{print $1}')"
+	run_seatbelt_cat_probe \
+		"$name" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| return 1
+	if [[ "$(shasum -a 256 "$canary" | awk '{print $1}')" != "$canary_hash" ]]; then
+		echo "$name canary changed during the denial probe." >&2
+		return 1
+	fi
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -94,7 +280,7 @@ run_spoiler_cache_symlink_case() {
 	local quit_log="$case_home/quit.log"
 	local LOCK_NAME="$LOCK_NAME"
 	local IPC_SEARCH_DIRECTORY="$IPC_SEARCH_DIRECTORY"
-	local SOCKET_PATH="/tmp/Teagram-$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
+	local SOCKET_PATH="$IPC_DIRECTORY/Teagram-$(printf '%s' "$PROFILE" | md5 -q | cut -c1-16)"
 	local socket_bytes
 	local PROFILE_READY=false
 	local IPC_SELECTION_READY=false
@@ -245,7 +431,10 @@ cleanup() {
 	fi
 	if [[ "$status" -eq 0 ]]; then
 		rm -rf "$TEST_HOME"
+		rm -rf "$IPC_DIRECTORY"
 	else
+		cp -R "$IPC_DIRECTORY" "$TEST_TMP_BASE/teagram-profile-ipc-failure"
+		rm -rf "$IPC_DIRECTORY"
 		case "$TEST_HOME/" in
 		"$TEST_TMP_BASE/"*)
 			;;
@@ -269,30 +458,29 @@ fi
 printf 'socket_path_bytes=PASS %s/%s path=%s\n' \
 	"$SOCKET_PATH_BYTES" "$MAC_SOCKET_PATH_LIMIT" "$SOCKET_PATH"
 
+REFUSAL_LOCK_BEFORE="$(find_lock_path)"
 set +e
-env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit >"$REFUSAL_LOG" 2>&1
+REFUSAL_OUTPUT="$(env HOME="$HOSTILE_HOME" TMPDIR="$HOSTILE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 "$APP" -quit 2>&1)"
 REFUSAL_STATUS=$?
 set -e
+REFUSAL_LOCK_AFTER="$(find_lock_path)"
+printf 'protected_home_refusal_lock_baseline existed_before=%s exists_after=%s refusal_status=%s\n' \
+	"$([[ -n "$REFUSAL_LOCK_BEFORE" ]] && printf 1 || printf 0)" \
+	"$([[ -n "$REFUSAL_LOCK_AFTER" ]] && printf 1 || printf 0)" "$REFUSAL_STATUS"
 
 if [[ "$REFUSAL_STATUS" -eq 0 ]]; then
 	echo "hostile HOME unexpectedly started Teagram." >&2
-	cat "$REFUSAL_LOG" >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
-if ! grep -F -q "class=group-container callsite=profile.home" "$REFUSAL_LOG"; then
-	echo "profile refusal did not identify the protected home source." >&2
-	cat "$REFUSAL_LOG" >&2
+if [[ -n "$REFUSAL_OUTPUT" ]]; then
+	echo "home discovery failure emitted output before Seatbelt activation." >&2
+	printf '%s\n' "$REFUSAL_OUTPUT" >&2
 	exit 1
 fi
-if grep -F -q "Working dir: $PROFILE/" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC selected:" "$REFUSAL_LOG" \
-	|| grep -F -q "Connecting local socket to $SOCKET_PATH" "$REFUSAL_LOG" \
-	|| grep -F -q "Mac profile IPC ready:" "$REFUSAL_LOG"; then
-	echo "profile refusal occurred after profile or socket startup began." >&2
-	cat "$REFUSAL_LOG" >&2
-	exit 1
-fi
-if [[ -n "$(find_lock_path)" ]]; then
+if [[ -n "$REFUSAL_LOCK_BEFORE" || -n "$REFUSAL_LOCK_AFTER" ]]; then
 	echo "profile refusal created or found an IPC lock." >&2
 	exit 1
 fi
@@ -300,11 +488,514 @@ if [[ -S "$SOCKET_PATH" ]]; then
 	echo "profile refusal created an IPC socket." >&2
 	exit 1
 fi
-if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" ]]; then
+if [[ -e "$PROFILE" || -e "$HOSTILE_HOME" || -e "$START_LOG" ]]; then
 	echo "hostile profile initialization created a profile or protected path." >&2
 	exit 1
 fi
-printf 'protected_home_refusal=PASS status=%s class=group-container before_profile_and_ipc=1\n' "$REFUSAL_STATUS"
+printf 'protected_home_refusal=PASS status=%s silent=1 profile_and_ipc_absent=1\n' \
+	"$REFUSAL_STATUS"
+
+COMPILE_FAILURE_HOME="$TEST_HOME/compile-failure-home"
+COMPILE_FAILURE_PROFILE="$COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+COMPILE_FAILURE_PROFILE_ARTIFACT="$COMPILE_FAILURE_HOME/generated-profile.sb"
+mkdir -p "$COMPILE_FAILURE_HOME"
+set +e
+COMPILE_FAILURE_OUTPUT="$(env HOME="$COMPILE_FAILURE_HOME" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+	TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$COMPILE_FAILURE_PROFILE_ARTIFACT" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
+COMPILE_FAILURE_STATUS=$?
+set -e
+if [[ "$COMPILE_FAILURE_STATUS" -eq 0 ]]; then
+	echo "forced Seatbelt compilation failure unexpectedly started Teagram." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ "$COMPILE_FAILURE_OUTPUT" != *"stage=seatbelt"* \
+	|| "$COMPILE_FAILURE_OUTPUT" != *"Mac profile artifact saved:"* ]]; then
+	echo "Seatbelt compilation failure diagnostics or profile artifact status is missing." >&2
+	printf '%s\n' "$COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ ! -s "$COMPILE_FAILURE_PROFILE_ARTIFACT" ]] \
+		|| [[ "$(tail -c 2 "$COMPILE_FAILURE_PROFILE_ARTIFACT" \
+			| od -An -t x1 | tr -d '[:space:]')" != 280a ]]; then
+	echo "Seatbelt compilation failure did not retain the generated profile text." >&2
+	exit 1
+fi
+if [[ -e "$COMPILE_FAILURE_PROFILE" \
+	|| -e "$COMPILE_FAILURE_PROFILE/log.txt" \
+	|| -e "$COMPILE_FAILURE_HOME/refusal.log" ]]; then
+	echo "Seatbelt compilation failure created a profile or log." >&2
+	exit 1
+fi
+printf 'seatbelt_compile_failure=PASS status=%s profile_artifact=PASS profile_and_logs_absent=1\n' \
+	"$COMPILE_FAILURE_STATUS"
+
+SILENT_COMPILE_FAILURE_HOME="$TEST_HOME/silent-compile-failure-home"
+SILENT_COMPILE_FAILURE_PROFILE="$SILENT_COMPILE_FAILURE_HOME/Library/Application Support/Teagram"
+SILENT_COMPILE_FAILURE_ARTIFACT="$SILENT_COMPILE_FAILURE_HOME/generated-profile.sb"
+mkdir -p "$SILENT_COMPILE_FAILURE_HOME"
+set +e
+SILENT_COMPILE_FAILURE_OUTPUT="$(env HOME="$SILENT_COMPILE_FAILURE_HOME" \
+	TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$SILENT_COMPILE_FAILURE_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=0 \
+	TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE=1 "$APP" -quit 2>&1)"
+SILENT_COMPILE_FAILURE_STATUS=$?
+set -e
+if [[ "$SILENT_COMPILE_FAILURE_STATUS" -eq 0 ]]; then
+	echo "silent forced Seatbelt compilation failure unexpectedly started Teagram." >&2
+	printf '%s\n' "$SILENT_COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -n "$SILENT_COMPILE_FAILURE_OUTPUT" ]]; then
+	echo "production Seatbelt compilation failure emitted output." >&2
+	printf '%s\n' "$SILENT_COMPILE_FAILURE_OUTPUT" >&2
+	exit 1
+fi
+if [[ -e "$SILENT_COMPILE_FAILURE_PROFILE" \
+	|| -e "$SILENT_COMPILE_FAILURE_PROFILE/log.txt" \
+	|| -e "$SILENT_COMPILE_FAILURE_HOME/start.log" \
+	|| -e "$SILENT_COMPILE_FAILURE_HOME/refusal.log" \
+	|| -e "$SILENT_COMPILE_FAILURE_ARTIFACT" ]]; then
+	echo "silent Seatbelt compilation failure created a profile, log, or artifact." >&2
+	exit 1
+fi
+printf 'seatbelt_compile_failure_silent=PASS status=%s output_empty=1 profile_logs_and_artifacts_absent=1\n' \
+	"$SILENT_COMPILE_FAILURE_STATUS"
+
+ACCOUNT_STATE="$PROFILE/tdata/teagram-activation-account-state.fixture"
+ENDPOINT_ENROLLMENT="$PROFILE/tdata/teagram-activation-endpoint-enrollment.fixture"
+TELEGRAMD_PROFILE="$TEST_HOME/Library/Application Support/Telegramd"
+mkdir -p "$PROFILE/tdata"
+printf '%s' 'synthetic account state v1' > "$ACCOUNT_STATE"
+printf '%s\n%s' 'https://telegramd.example:443' 'fingerprint=1234567890' \
+	> "$ENDPOINT_ENROLLMENT"
+ACCOUNT_STATE_HASH="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+printf 'account_state_sha256_before=%s endpoint_enrollment_sha256_before=%s\n' \
+	"$ACCOUNT_STATE_HASH" "$ENDPOINT_ENROLLMENT_HASH"
+
+SEATBELT_CANARY="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$SEATBELT_CANARY")"
+printf '%s' 'synthetic protected canary' > "$SEATBELT_CANARY"
+CANARY_HASH="$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')"
+set +e
+CANARY_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=1 \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	"$APP" --mac-seatbelt-cat-probe "$SEATBELT_CANARY" 2>&1)"
+CANARY_STATUS=$?
+set -e
+if [[ "$CANARY_STATUS" -ne 0 \
+	|| "$CANARY_OUTPUT" != "Mac profile IPC selected: variant=non-store directory=$IPC_DIRECTORY" ]]; then
+	echo "spawned /bin/cat denial probe did not return the expected EPERM result." >&2
+	printf '%s\n' "$CANARY_OUTPUT" >&2
+	printf '%s\n' "$CANARY_OUTPUT" | python3 \
+		"$(dirname "$0")/diagnose_mac_seatbelt.py" \
+		"$TEST_HOME" "$SEATBELT_CANARY" "$ACCOUNT_STATE" \
+		"$PROFILE_ARTIFACT" \
+		|| echo "Seatbelt diagnostic controls failed; see matrix above." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$SEATBELT_CANARY" | awk '{print $1}')" != "$CANARY_HASH" ]]; then
+	echo "Seatbelt canary changed during the descendant denial probe." >&2
+	exit 1
+fi
+printf 'seatbelt_descendant_denial=PASS mode=posix_spawn child=/bin/cat status=%s errno=EPERM\n' \
+	"$CANARY_STATUS"
+printf 'seatbelt_posix_spawn_cat_denial=PASS mode=posix_spawn child=/bin/cat errno=EPERM path=%s\n' \
+	"$SEATBELT_CANARY"
+
+SOUND_LOOKUP_OUTPUT="$(env HOME="$TEST_HOME" TMPDIR="$TEST_TMP_BASE" LC_ALL=C \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$TEST_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	"$APP" --mac-notification-sound-probe 2>&1)" || {
+	echo "native notification sound lookup failed." >&2
+	printf '%s\n' "$SOUND_LOOKUP_OUTPUT" >&2
+	exit 1
+}
+printf 'notification_sound_lookup=PASS namespace=Teagram_ lookup=NSSound bytes=unchanged cleanup=PASS\n'
+
+IGNORABLE_HOME="$TEST_HOME/teagram-ignorable-home"
+IGNORABLE_HOME_ALIAS="$TEST_HOME/teagram-ignorable-$(printf '\342\200\213')home"
+mkdir -p "$IGNORABLE_HOME" "$IGNORABLE_HOME_ALIAS"
+run_home_spelling_probes \
+	seatbelt_ignorable_home \
+	"$IGNORABLE_HOME" "$IGNORABLE_HOME_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_ignorable_profile_home \
+	"$IGNORABLE_HOME_ALIAS" "$IGNORABLE_HOME" \
+	|| exit 1
+
+run_home_spelling_probes \
+	seatbelt_case_spelling \
+	"$TEST_HOME" "$TEST_HOME" \
+	"lIBRARY/aPPLICATION sUPPORT/tElEgRaM dEsKtOp" \
+	"lIBRARY/aPPLICATION sUPPORT/OtherApp/TeLeGrAm Desktop/tdata" \
+	|| exit 1
+
+CASE_SWAPPED_HOME="$(
+python3 - "$TEST_HOME" <<'PY'
+import os
+import sys
+
+parent, name = os.path.split(sys.argv[1])
+print(os.path.join(parent, name.swapcase()))
+PY
+)"
+if [[ "$CASE_SWAPPED_HOME" == "$TEST_HOME" || ! -d "$CASE_SWAPPED_HOME" ]]; then
+	echo "case-swapped test home does not resolve to the same directory: $CASE_SWAPPED_HOME" >&2
+	exit 1
+fi
+CASE_SWAPPED_HOME_ID="$(stat -f '%d:%i' "$CASE_SWAPPED_HOME")"
+TEST_HOME_ID="$(stat -f '%d:%i' "$TEST_HOME")"
+if [[ "$CASE_SWAPPED_HOME_ID" != "$TEST_HOME_ID" ]]; then
+	echo "case-swapped test home resolved to a different directory: $CASE_SWAPPED_HOME" >&2
+	exit 1
+fi
+printf 'seatbelt_case_swapped_home_alias=PASS profile_home=%s path_home=%s inode=%s\n' \
+	"$TEST_HOME" "$CASE_SWAPPED_HOME" "$CASE_SWAPPED_HOME_ID"
+run_home_spelling_probes \
+	seatbelt_case_swapped_home \
+	"$TEST_HOME" "$CASE_SWAPPED_HOME" \
+	|| exit 1
+
+KELVIN_WEBKIT_CANONICAL="$TEST_HOME/Library/WebKit"
+KELVIN_WEBKIT_ALIAS="$TEST_HOME/Library/WebKit"
+verify_casefold_directory_alias \
+	seatbelt_kelvin_webkit_alias \
+	"$KELVIN_WEBKIT_CANONICAL" "$KELVIN_WEBKIT_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_kelvin_webkit \
+	"$TEST_HOME" "$TEST_HOME" \
+	"Library/WebKit/org.telegram.desktop" \
+	|| exit 1
+
+LONG_S_TELEGRAM_CANONICAL="$TEST_HOME/Library/Application Support/Telegram Desktop"
+LONG_S_TELEGRAM_ALIAS="$TEST_HOME/Library/Application Support/Telegram Deſktop"
+verify_casefold_directory_alias \
+	seatbelt_long_s_telegram_desktop_alias \
+	"$LONG_S_TELEGRAM_CANONICAL" "$LONG_S_TELEGRAM_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_long_s_telegram_desktop \
+	"$TEST_HOME" "$TEST_HOME" \
+	"Library/Application Support/Telegram Deſktop" \
+	|| exit 1
+
+NON_ASCII_HOME_NFC_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "teagram-café"))')"
+NON_ASCII_HOME_NFD_NAME="$(python3 -c 'import unicodedata; print(unicodedata.normalize("NFD", "teagram-café"))')"
+NON_ASCII_HOME_NFC="$TEST_HOME/$NON_ASCII_HOME_NFC_NAME"
+NON_ASCII_HOME_NFD="$TEST_HOME/$NON_ASCII_HOME_NFD_NAME"
+mkdir -p "$NON_ASCII_HOME_NFC"
+run_home_spelling_probes \
+	seatbelt_non_ascii_nfc_home \
+	"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFC" \
+	|| exit 1
+if [[ -d "$NON_ASCII_HOME_NFD" ]] \
+	&& [[ "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFC")" \
+		== "$(stat -f '%d:%i' "$NON_ASCII_HOME_NFD")" ]]; then
+	run_home_spelling_probes \
+		seatbelt_nfd_home_alias \
+		"$NON_ASCII_HOME_NFC" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+else
+	mkdir -p "$NON_ASCII_HOME_NFD"
+	run_home_spelling_probes \
+		seatbelt_non_ascii_nfd_home \
+		"$NON_ASCII_HOME_NFD" "$NON_ASCII_HOME_NFD" \
+		|| exit 1
+fi
+
+while IFS='|' read -r UNICODE_CASE_NAME UNICODE_CANONICAL_NAME UNICODE_ALIAS_NAME; do
+	UNICODE_CASE_CANONICAL="$TEST_HOME/$UNICODE_CANONICAL_NAME"
+	UNICODE_CASE_ALIAS="$TEST_HOME/$UNICODE_ALIAS_NAME"
+	verify_casefold_directory_alias \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}_alias" \
+		"$UNICODE_CASE_CANONICAL" "$UNICODE_CASE_ALIAS" \
+		|| exit 1
+	run_home_spelling_probes \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}" \
+		"$UNICODE_CASE_CANONICAL" "$UNICODE_CASE_ALIAS" \
+		|| exit 1
+	run_home_spelling_probes \
+		"seatbelt_unicode_home_${UNICODE_CASE_NAME}_reverse" \
+		"$UNICODE_CASE_ALIAS" "$UNICODE_CASE_CANONICAL" \
+		|| exit 1
+done <<'UNICODE_HOME_CASES'
+accent|teagram-Élise|teagram-élise
+stroke|teagram-Ølise|teagram-ølise
+cyrillic|teagram-АЛИСА|teagram-алиса
+sigma|teagram-Σ|teagram-ς
+deseret|teagram-𐐀|teagram-𐐨
+sharp-s|teagram-Maß|teagram-Mass
+UNICODE_HOME_CASES
+
+LONG_SHARP_S_HOME="$TEST_HOME/teagram-ssssssssss"
+LONG_SHARP_S_HOME_ALIAS="$TEST_HOME/teagram-ßßßßß"
+verify_casefold_directory_alias \
+	seatbelt_long_sharp_s_home_alias \
+	"$LONG_SHARP_S_HOME" "$LONG_SHARP_S_HOME_ALIAS" \
+	|| exit 1
+run_home_spelling_probes \
+	seatbelt_long_sharp_s_home \
+	"$LONG_SHARP_S_HOME" "$LONG_SHARP_S_HOME_ALIAS" \
+	"Library/Application Support/Telegram Desktop" \
+	"Library/Application Support/Teagram/tdata" \
+	"Library/Application Support/OtherApp/ordinary-data" \
+	|| exit 1
+
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_denial \
+	--mac-seatbelt-parent-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	parent EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_denial \
+	--mac-seatbelt-fork-open-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork EPERM \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_denial \
+	--mac-seatbelt-fork-exec-cat-probe "$TEST_HOME" "$SEATBELT_CANARY" \
+	fork-exec EPERM \
+	|| exit 1
+
+DEFAULT_IGNORABLE="$(printf '\342\200\213')"
+IGNORABLE_CHARACTERS=(
+	"$(printf '\342\200\213')"
+	"$(printf '\342\200\214')"
+	"$(printf '\342\200\215')"
+	"$(printf '\342\200\216')"
+	"$(printf '\342\200\217')"
+	"$(printf '\342\200\252')"
+	"$(printf '\342\200\253')"
+	"$(printf '\342\200\254')"
+	"$(printf '\342\200\255')"
+	"$(printf '\342\200\256')"
+	"$(printf '\342\201\252')"
+	"$(printf '\342\201\253')"
+	"$(printf '\342\201\254')"
+	"$(printf '\342\201\255')"
+	"$(printf '\342\201\256')"
+	"$(printf '\342\201\257')"
+	"$(printf '\357\273\277')"
+)
+for index in "${!IGNORABLE_CHARACTERS[@]}"; do
+	ignored="${IGNORABLE_CHARACTERS[$index]}"
+	canary="$TEST_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Te${ignored}legram/synthetic-canary"
+	mkdir -p "$(dirname "$canary")"
+	printf '%s' 'synthetic protected canary with a default-ignorable character' \
+		> "$canary"
+	run_seatbelt_cat_probe \
+		"seatbelt_default_ignorable_${index}_denial" \
+		--mac-seatbelt-cat-probe "$TEST_HOME" "$canary" \
+		|| exit 1
+done
+
+IGNORABLE_LIBRARY_CANARY="$TEST_HOME/Lib${DEFAULT_IGNORABLE}rary/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$IGNORABLE_LIBRARY_CANARY")"
+printf '%s' 'synthetic protected canary with an ignored Library character' \
+	> "$IGNORABLE_LIBRARY_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_library_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$IGNORABLE_LIBRARY_CANARY" \
+	|| exit 1
+
+FOLDED_GROUP_PARENT_CANARY="$TEST_HOME/Library/Group Con${DEFAULT_IGNORABLE}tainers/6N38VWS5BX.ru.keepcoder.Telegram/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_GROUP_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded group parent' \
+	> "$FOLDED_GROUP_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_group_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_GROUP_PARENT_CANARY" \
+	|| exit 1
+
+FOLDED_PARENT_CANARY="$TEST_HOME/Library/Application Supp${DEFAULT_IGNORABLE}ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded parent component' \
+	> "$FOLDED_PARENT_CANARY"
+FOLDED_PARENT_CANARY_HASH="$(shasum -a 256 \
+	"$FOLDED_PARENT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_support_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_PARENT_CANARY" \
+	|| exit 1
+
+FOLDED_APPLICATION_CANARY="$TEST_HOME/Library/Application Support/Telegram Des${DEFAULT_IGNORABLE}ktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_APPLICATION_CANARY")"
+printf '%s' 'synthetic protected canary with a folded application component' \
+	> "$FOLDED_APPLICATION_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_application_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_APPLICATION_CANARY" \
+	|| exit 1
+
+UNRELATED_CANARY="$TEST_HOME/Library/Application Support/OtherApp/telegram/cache${DEFAULT_IGNORABLE}"
+mkdir -p "$(dirname "$UNRELATED_CANARY")"
+printf '%s' 'synthetic unrelated application bytes' > "$UNRELATED_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_unrelated_telegram_ignorable_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$UNRELATED_CANARY" \
+	|| exit 1
+
+NARROW_NO_BREAK_SPACE="$(printf '\342\200\257')"
+NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Supp${NARROW_NO_BREAK_SPACE}ort/Telegram Desktop/synthetic-canary"
+mkdir -p "$(dirname "$NEAR_MATCH_CANARY")"
+printf '%s' 'synthetic non-ignorable near-match bytes' > "$NEAR_MATCH_CANARY"
+# The ignored-character class accepts any non-ASCII character, so a
+# non-ignorable one inside a protected name is denied as well.
+run_seatbelt_cat_probe \
+	seatbelt_non_ignorable_application_support_near_match_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$NEAR_MATCH_CANARY" \
+	|| exit 1
+
+ASCII_NEAR_MATCH_CANARY="$TEST_HOME/Library/Application Suppxort/Telegram Desktop/synthetic-allowed-file"
+mkdir -p "$(dirname "$ASCII_NEAR_MATCH_CANARY")"
+printf '%s' 'synthetic ASCII near-match bytes' > "$ASCII_NEAR_MATCH_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_ascii_application_support_near_match_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ASCII_NEAR_MATCH_CANARY" \
+	|| exit 1
+
+OTHER_APP_TELEGRAM_CANARY="$TEST_HOME/Library/Application Support/OtherApp/Telegram Desktop/synthetic-allowed-file"
+mkdir -p "$(dirname "$OTHER_APP_TELEGRAM_CANARY")"
+printf '%s' 'synthetic nested Telegram name bytes' > "$OTHER_APP_TELEGRAM_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_nested_telegram_desktop_name_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$OTHER_APP_TELEGRAM_CANARY" \
+	|| exit 1
+
+CONTAINER_CANARY="$TEST_HOME/Library/Containers/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$CONTAINER_CANARY")"
+printf '%s' 'synthetic protected container bytes' > "$CONTAINER_CANARY"
+CONTAINER_CANARY_HASH="$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$CONTAINER_CANARY" \
+	|| exit 1
+
+FOLDED_CONTAINER_CANARY="$TEST_HOME/Library/Containers/${DEFAULT_IGNORABLE}org.telegram.desktop${DEFAULT_IGNORABLE}/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_CONTAINER_CANARY")"
+printf '%s' 'synthetic protected canary with a folded container bundle id' \
+	> "$FOLDED_CONTAINER_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_container_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_CONTAINER_CANARY" \
+	|| exit 1
+
+run_bundle_keyed_probe seatbelt_bundle_keyed_denial Preferences || exit 1
+run_bundle_keyed_probe seatbelt_caches_denial Caches || exit 1
+run_bundle_keyed_probe seatbelt_httpstorages_denial HTTPStorages || exit 1
+run_bundle_keyed_probe seatbelt_webkit_denial WebKit || exit 1
+run_bundle_keyed_probe \
+	seatbelt_saved_application_state_denial \
+	"Saved Application State" \
+	|| exit 1
+
+FOLDED_BUNDLE_CANARY="$TEST_HOME/Library/Preferences/org.telegram.des${DEFAULT_IGNORABLE}ktop.fixture/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed id' \
+	> "$FOLDED_BUNDLE_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_keyed_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_CANARY" \
+	|| exit 1
+
+FOLDED_BUNDLE_PARENT_CANARY="$TEST_HOME/Library/Preference${DEFAULT_IGNORABLE}s/org.telegram.desktop/synthetic-canary"
+mkdir -p "$(dirname "$FOLDED_BUNDLE_PARENT_CANARY")"
+printf '%s' 'synthetic protected canary with a folded bundle-keyed parent' \
+	> "$FOLDED_BUNDLE_PARENT_CANARY"
+run_seatbelt_cat_probe \
+	seatbelt_default_ignorable_bundle_parent_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FOLDED_BUNDLE_PARENT_CANARY" \
+	|| exit 1
+
+APPLICATION_SUPPORT_CANARY="$PROFILE/../Telegram Desktop/tdata/synthetic-canary"
+mkdir -p "$(dirname "$APPLICATION_SUPPORT_CANARY")"
+printf '%s' 'synthetic protected application support bytes' \
+	> "$APPLICATION_SUPPORT_CANARY"
+APPLICATION_SUPPORT_CANARY_HASH="$(shasum -a 256 \
+	"$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_traversal_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$APPLICATION_SUPPORT_CANARY" \
+	|| exit 1
+
+REALPATH_HOME_ALIAS="$TEST_HOME/realpath-home"
+ln -s "$TEST_HOME" "$REALPATH_HOME_ALIAS"
+REALPATH_CANARY="$REALPATH_HOME_ALIAS/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_realpath_denial \
+	--mac-seatbelt-cat-probe "$REALPATH_HOME_ALIAS" "$REALPATH_CANARY" \
+	|| exit 1
+
+FIRMLINK_HOME="/System/Volumes/Data$TEST_HOME"
+if [[ ! -d "$FIRMLINK_HOME" ]] \
+	|| [[ "$(stat -f '%d:%i' "$FIRMLINK_HOME")" \
+		!= "$(stat -f '%d:%i' "$TEST_HOME")" ]]; then
+	echo "synthetic home has no matching /System/Volumes/Data alias." >&2
+	exit 1
+fi
+FIRMLINK_CANARY="$FIRMLINK_HOME/Library/Application Support/Teagram/../Telegram Desktop/tdata/synthetic-canary"
+run_seatbelt_cat_probe \
+	seatbelt_application_support_firmlink_denial \
+	--mac-seatbelt-cat-probe "$TEST_HOME" "$FIRMLINK_CANARY" \
+	|| exit 1
+
+run_seatbelt_cat_probe \
+	seatbelt_teagram_profile_allowed \
+	--mac-seatbelt-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_parent_open_allowed \
+	--mac-seatbelt-parent-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	parent 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_open_allowed \
+	--mac-seatbelt-fork-open-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork 0 \
+	|| exit 1
+run_seatbelt_mode_probe \
+	seatbelt_fork_exec_cat_allowed \
+	--mac-seatbelt-fork-exec-cat-allow-probe "$TEST_HOME" "$ACCOUNT_STATE" \
+	fork-exec 0 \
+	|| exit 1
+
+if [[ "$(shasum -a 256 "$APPLICATION_SUPPORT_CANARY" | awk '{print $1}')" \
+	!= "$APPLICATION_SUPPORT_CANARY_HASH" ]]; then
+	echo "application support canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$CONTAINER_CANARY" | awk '{print $1}')" \
+	!= "$CONTAINER_CANARY_HASH" ]]; then
+	echo "container canary changed during the denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$FOLDED_PARENT_CANARY" | awk '{print $1}')" \
+	!= "$FOLDED_PARENT_CANARY_HASH" ]]; then
+	echo "folded application support parent canary changed during denial probes." >&2
+	exit 1
+fi
+if [[ "$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')" \
+	!= "$ACCOUNT_STATE_HASH" ]]; then
+	echo "allowed Teagram profile file changed during the access probe." >&2
+	exit 1
+fi
 
 mkdir -p "$IPC_DIRECTORY"
 
@@ -535,6 +1226,18 @@ if (( FAILURES > 0 )); then
 	exit 1
 fi
 
+ACCOUNT_STATE_HASH_AFTER="$(shasum -a 256 "$ACCOUNT_STATE" | awk '{print $1}')"
+ENDPOINT_ENROLLMENT_HASH_AFTER="$(shasum -a 256 "$ENDPOINT_ENROLLMENT" | awk '{print $1}')"
+if [[ "$ACCOUNT_STATE_HASH_AFTER" != "$ACCOUNT_STATE_HASH" \
+	|| "$ENDPOINT_ENROLLMENT_HASH_AFTER" != "$ENDPOINT_ENROLLMENT_HASH" \
+	|| -e "$TELEGRAMD_PROFILE" ]]; then
+	echo "startup changed the existing Teagram profile or created a replacement profile." >&2
+	exit 1
+fi
+printf 'existing_profile_preserved=PASS account_state_sha256_before=%s account_state_sha256_after=%s endpoint_enrollment_sha256_before=%s endpoint_enrollment_sha256_after=%s replacement_profile_absent=1\n' \
+	"$ACCOUNT_STATE_HASH" "$ACCOUNT_STATE_HASH_AFTER" \
+	"$ENDPOINT_ENROLLMENT_HASH" "$ENDPOINT_ENROLLMENT_HASH_AFTER"
+
 CACHE_TEXT="$PROFILE/tdata/emoji/spoiler/text"
 CACHE_TEXT_FILES="$(find "$TEST_HOME" -type f -path '*/tdata/emoji/spoiler/text' -print)"
 report_result spoiler_cache_location "$([[ -f "$CACHE_TEXT" && "$CACHE_TEXT_FILES" == "$CACHE_TEXT" ]] && printf true || printf false)" \
@@ -549,15 +1252,68 @@ AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
 mkdir -p "$AUTH_HOME"
+STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+for fixture in \
+	cache-root \
+	media-cache-root \
+	cache-leaf \
+	media-cache-leaf \
+	opened-cache \
+	opened-media-cache \
+	legacy-cleanup; do
+	mkdir -p "$STORAGE_FIXTURE_ROOT/$fixture"
+	printf '%s' 'synthetic protected fixture' \
+		> "$STORAGE_FIXTURE_ROOT/$fixture/marker"
+done
+printf '%s' 'legacy bytes' \
+	> "$STORAGE_FIXTURE_ROOT/legacy-cleanup/unrecognized-legacy-file"
+
+verify_storage_fixture() {
+	local directory="$1"
+	local expected="$(printf '%s\n' "$directory/marker")"
+	local entries="$(find "$directory" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	[[ "$entries" == "$expected" ]] \
+		&& [[ "$(cat "$directory/marker")" == 'synthetic protected fixture' ]]
+}
+
+verify_protected_storage_fixtures() {
+	local fixture
+	for fixture in \
+		cache-root \
+		media-cache-root \
+		cache-leaf \
+		media-cache-leaf \
+		opened-cache \
+		opened-media-cache; do
+		if ! verify_storage_fixture "$STORAGE_FIXTURE_ROOT/$fixture"; then
+			echo "protected_storage_fixture=FAIL fixture=$fixture"
+			return 1
+		fi
+	done
+	local cleanup="$STORAGE_FIXTURE_ROOT/legacy-cleanup"
+	local expected="$(printf '%s\n%s\n' \
+		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
+	local entries="$(find "$cleanup" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+	if [[ "$entries" != "$expected" ]] \
+		|| [[ "$(cat "$cleanup/marker")" != 'synthetic protected fixture' ]] \
+		|| [[ "$(cat "$cleanup/unrecognized-legacy-file")" != 'legacy bytes' ]]; then
+		echo "protected_storage_fixture=FAIL fixture=legacy-cleanup"
+		return 1
+	fi
+	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
+}
+
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	verify_protected_storage_fixtures || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
+verify_protected_storage_fixtures
 if ! grep -E -q \
 	'^Translation action routing: custom_provider=[0-3] custom_hidden=[01] custom_rich_hidden=1 local_failure=[01] stock_provider=[1-3] stock_hidden=0\.$' \
 	"$AUTH_LOG"; then
@@ -593,6 +1349,7 @@ for native_evidence in \
 	'native_lifecycle_case=session-window-lifecycle result=PASS' \
 	'native_lifecycle_case=translation-controls result=PASS' \
 	'native_lifecycle_case=manage-controls result=PASS' \
+	'native_lifecycle_case=passport-link-refusal result=PASS' \
 	'native_lifecycle_case=mini-app-open result=PASS' \
 	'native_lifecycle_case=chatlist-invite-check result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
@@ -713,6 +1470,8 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=translation-controls result=' \
 		'native_lifecycle_case=manage-controls status=START' \
 		'native_lifecycle_case=manage-controls result=' \
+		'native_lifecycle_case=passport-link-refusal status=START' \
+		'native_lifecycle_case=passport-link-refusal result=PASS' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks status=START' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
 		'native_lifecycle_case=post-open-cache status=START' \
@@ -783,25 +1542,27 @@ run_native_failure_continuation_case() {
 /native_lifecycle_case=translation-controls result=/ && step == 22 { step = 23; next }
 /native_lifecycle_case=manage-controls status=START/ && step == 23 { step = 24; next }
 /native_lifecycle_case=manage-controls result=/ && step == 24 { step = 25; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 25 { step = 26; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 26 { step = 27; next }
-/native_lifecycle_case=post-open-cache status=START/ && step == 27 { step = 28; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 28 { step = 29; next }
-/native_lifecycle_case=post-open-media-cache status=START/ && step == 29 { step = 30; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 30 { step = 31; next }
-/native_lifecycle_case=folder-crud status=START/ && step == 31 { step = 32; next }
-/native_lifecycle_case=folder-crud result=FAIL/ && step == 32 { step = 33; next }
-/native_lifecycle_case=admin-session-identities status=START/ && step == 33 { step = 34; next }
-/native_lifecycle_case=admin-session-identities result=FAIL/ && step == 34 { step = 35; next }
-/native_lifecycle_case=pinned-migration-fixture status=START/ && step == 35 { step = 36; next }
-/native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 36 { step = 37; next }
-/native_lifecycle_case=stock-basic-group-creator status=START/ && step == 37 { step = 38; next }
-/native_lifecycle_case=stock-basic-group-creator result=PASS/ && step == 38 { step = 39; next }
-/native_lifecycle_case=pinned-basic-group-creator status=START/ && step == 39 { step = 40; next }
-/native_lifecycle_case=pinned-basic-group-creator result=PASS/ && step == 40 { step = 41; next }
-/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 41 { step = 42; next }
-/native_lifecycle_case=chat-migration result=PASS/ && step == 42 { step = 43; next }
-END { exit step != 43 }
+/native_lifecycle_case=passport-link-refusal status=START/ && step == 25 { step = 26; next }
+/native_lifecycle_case=passport-link-refusal result=PASS/ && step == 26 { step = 27; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 27 { step = 28; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 28 { step = 29; next }
+/native_lifecycle_case=post-open-cache status=START/ && step == 29 { step = 30; next }
+/native_lifecycle_case=post-open-cache result=/ && step == 30 { step = 31; next }
+/native_lifecycle_case=post-open-media-cache status=START/ && step == 31 { step = 32; next }
+/native_lifecycle_case=post-open-media-cache result=/ && step == 32 { step = 33; next }
+/native_lifecycle_case=folder-crud status=START/ && step == 33 { step = 34; next }
+/native_lifecycle_case=folder-crud result=FAIL/ && step == 34 { step = 35; next }
+/native_lifecycle_case=admin-session-identities status=START/ && step == 35 { step = 36; next }
+/native_lifecycle_case=admin-session-identities result=FAIL/ && step == 36 { step = 37; next }
+/native_lifecycle_case=pinned-migration-fixture status=START/ && step == 37 { step = 38; next }
+/native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 38 { step = 39; next }
+/native_lifecycle_case=stock-basic-group-creator status=START/ && step == 39 { step = 40; next }
+/native_lifecycle_case=stock-basic-group-creator result=PASS/ && step == 40 { step = 41; next }
+/native_lifecycle_case=pinned-basic-group-creator status=START/ && step == 41 { step = 42; next }
+/native_lifecycle_case=pinned-basic-group-creator result=PASS/ && step == 42 { step = 43; next }
+/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 43 { step = 44; next }
+/native_lifecycle_case=chat-migration result=PASS/ && step == 44 { step = 45; next }
+END { exit step != 45 }
 ' "$case_log"; then
 		cat "$case_log" >&2
 		echo "native lifecycle cases did not continue around the early and late failures." >&2

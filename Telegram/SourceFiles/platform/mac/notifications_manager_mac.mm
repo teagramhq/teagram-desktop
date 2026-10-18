@@ -320,8 +320,8 @@ private:
 };
 
 [[nodiscard]] QString ResolveSoundsFolder() {
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		return cWorkingDir() + u"tdata/sounds"_q;
+	if (Core::MacProtectedPath::IsActive()) {
+		return Core::MacProtectedPath::NotificationSoundsDirectory();
 	}
 	NSArray *paths = NSSearchPathForDirectoriesInDomains(
 		NSLibraryDirectory,

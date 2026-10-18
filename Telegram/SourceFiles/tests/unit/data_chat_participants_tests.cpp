@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 using Data::details::BasicChatAdminCapabilitiesFor;
+using Data::details::BasicChatAdminDefaultRightsFor;
 using Data::details::BasicChatAdminRightsFor;
 using Data::details::BasicChatAdminRoleForSave;
 using Data::details::BasicChatControlsFor;
@@ -116,6 +117,18 @@ TEST_CASE(CustomServerAdminSaveUsesSelectedRights) {
 	constexpr auto defaultAdminRights = 0x25u;
 	CHECK(BasicChatAdminRoleForSave(defaultAdminRights));
 	CHECK(!BasicChatAdminRoleForSave(0u));
+}
+
+TEST_CASE(CustomServerBasicGroupAdminDefaultsKeepRoleWithoutPermissions) {
+	constexpr auto defaultRights = 0x7Fu;
+	constexpr auto roleOnlyRights = 0x1000u;
+	const auto customRights
+		= BasicChatAdminDefaultRightsFor(true, defaultRights, roleOnlyRights);
+	CHECK(customRights == roleOnlyRights);
+	CHECK(BasicChatAdminRoleForSave(customRights));
+	CHECK(BasicChatAdminRightsFor(true, true, customRights) == 0u);
+	CHECK(BasicChatAdminDefaultRightsFor(false, defaultRights, roleOnlyRights)
+		  == defaultRights);
 }
 
 TEST_CASE(BasicGroupAdminRightsMapOnlyForOfficialServer) {

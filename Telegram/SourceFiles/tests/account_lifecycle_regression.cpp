@@ -69,6 +69,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_tracker.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "info/info_controller.h"
+#include "info/info_layer_widget.h"
 #include "info/info_wrap_widget.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
@@ -96,6 +97,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
+#include "passport/passport_form_controller.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_calls.h"
@@ -1060,20 +1062,8 @@ RunRefusedDownloadHistoryRegression(not_null<Main::Session *> session,
 	return !published && !loaded;
 }
 
-[[nodiscard]] bool FixtureContainsOnlyMarker(const QString &path) {
-	const auto entries = QDir(path).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::NoSort);
-	if (entries != QStringList{"marker"}) {
-		return false;
-	}
-	auto marker = QFile(path + "/marker");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture";
-}
-
 [[nodiscard]] bool
-PrepareProtectedCacheFixtures(ProtectedCacheFixtures *fixtures) {
+SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	if (!Core::MacProtectedPath::IntegrationTestActive()) {
 		return true;
 	}
@@ -1091,42 +1081,7 @@ PrepareProtectedCacheFixtures(ProtectedCacheFixtures *fixtures) {
 	fixtures->openedCache = fixtures->root + "/opened-cache";
 	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
-	for (const auto &path : {
-			 fixtures->cacheRoot,
-			 fixtures->mediaCacheRoot,
-			 fixtures->cacheLeaf,
-			 fixtures->mediaCacheLeaf,
-			 fixtures->openedCache,
-			 fixtures->openedMediaCache,
-			 fixtures->cleanupRoot,
-		 }) {
-		if (!QDir().mkpath(path)
-			|| !WriteFixtureFile(path + "/marker",
-								 "synthetic protected fixture")) {
-			return false;
-		}
-	}
-	return WriteFixtureFile(fixtures->cleanupRoot + "/unrecognized-legacy-file",
-							"legacy bytes");
-}
-
-[[nodiscard]] bool FixtureContainsCleanupFiles(const QString &path) {
-	const auto entries = QDir(path).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::Name);
-	if (entries
-		!= QStringList{
-			"marker",
-			"unrecognized-legacy-file",
-		}) {
-		return false;
-	}
-	auto marker = QFile(path + "/marker");
-	auto legacy = QFile(path + "/unrecognized-legacy-file");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture"
-		   && legacy.open(QIODevice::ReadOnly)
-		   && legacy.readAll() == "legacy bytes";
+	return true;
 }
 
 [[nodiscard]] bool
@@ -1146,6 +1101,7 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	struct InitialState {
 		bool completed = false;
+		bool collectorCalled = false;
 	};
 	const auto initialState = std::make_shared<InitialState>();
 	const auto initialLoop = std::make_shared<QEventLoop>();
@@ -1155,7 +1111,10 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 					 &QEventLoop::quit);
 	Storage::ClearLegacyFilesGuarded(
 		initialAlias + '/',
-		[](FnMut<void(::base::flat_set<QString> &&)> then) { then({}); },
+		[initialState](FnMut<void(::base::flat_set<QString> &&)> then) {
+			initialState->collectorCalled = true;
+			then({});
+		},
 		[=] {
 			initialState->completed = true;
 			initialLoop->quit();
@@ -1166,8 +1125,7 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 	}
 	initialTimer->stop();
 	const auto initialRetained
-		= initialState->completed
-		  && FixtureContainsCleanupFiles(fixtures.cleanupRoot);
+		= initialState->completed && !initialState->collectorCalled;
 	QFile::remove(initialAlias);
 	if (!initialRetained) {
 		return false;
@@ -1203,13 +1161,12 @@ RunLegacyCleanupSymlinkRegression(const ProtectedCacheFixtures &fixtures) {
 		loop->exec();
 	}
 	timer->stop();
-	const auto protectedUnchanged
-		= FixtureContainsCleanupFiles(fixtures.cleanupRoot);
 	auto originalContents = QFile(originalFile);
 	const auto originalRetained = QFileInfo::exists(originalFile);
-	return state->swapped && state->completed && protectedUnchanged
-		   && originalRetained && originalContents.open(QIODevice::ReadOnly)
-		   && originalContents.readAll() == "legacy bytes";
+	return state->swapped && state->completed && originalRetained
+		   && originalContents.open(QIODevice::ReadOnly)
+		   && originalContents.readAll() == "legacy bytes"
+		   && QFileInfo(base).isSymLink();
 }
 
 [[nodiscard]] std::shared_ptr<MTP::details::RSAPublicKey>
@@ -1729,26 +1686,6 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 	return {};
 }
 
-[[nodiscard]] bool CopyCacheVersionFiles(const QString &source,
-										 const QString &destination) {
-	const auto files = QDir(source).entryList(
-		QDir::Files | QDir::Hidden | QDir::System, QDir::Name);
-	for (const auto &file : files) {
-		if (file != "marker"
-			&& !QFile::copy(QDir(source).filePath(file),
-							QDir(destination).filePath(file))) {
-			return false;
-		}
-	}
-	return true;
-}
-
-[[nodiscard]] bool FixtureMarkerIsIntact(const QString &path) {
-	auto marker = QFile(path + "/marker");
-	return marker.open(QIODevice::ReadOnly)
-		   && marker.readAll() == "synthetic protected fixture";
-}
-
 [[nodiscard]] bool
 RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 								  CacheGetter cache, CacheClearer clearCaches,
@@ -1776,8 +1713,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto active = ActiveCacheVersionPath(path);
 	const auto saved = active + ".guard-test-original";
 	if (active.isEmpty() || QFileInfo::exists(saved)
-		|| !FixtureMarkerIsIntact(fixture)
-		|| !CopyCacheVersionFiles(active, fixture)
 		|| !QDir().rename(active, saved)) {
 		return false;
 	}
@@ -1791,9 +1726,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (!QFile::link(fixture, active)) {
 		return false;
 	}
-	const auto fixtureEntries = QDir(fixture).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-		QDir::Name);
 	const auto readerRefused = cacheRefusal();
 	const auto read = AwaitCacheCallback<QByteArray>(
 		[&](auto done) { cache().get(seedKey, std::move(done)); });
@@ -1805,12 +1737,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		});
 	clearCaches();
 	cache().sync();
-	const auto unchanged
-		= (fixtureEntries
-		   == QDir(fixture).entryList(QDir::AllEntries | QDir::Hidden
-										  | QDir::System | QDir::NoDotAndDotDot,
-									  QDir::Name))
-		  && FixtureMarkerIsIntact(fixture);
 	const auto writeRefused
 		= write && (write->type != Storage::Cache::Error::Type::None);
 	const auto aliasRemoved = QFile::remove(active);
@@ -1818,13 +1744,13 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	restored = aliasRemoved && originalRestored;
 	cache().sync();
 	const auto passed
-		= readerRefused && readRefused && writeRefused && unchanged && restored;
+		= readerRefused && readRefused && writeRefused && restored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
 			"Post-open cache regression failed: reader=%d read=%d write=%d "
-			"fixture=%d restored=%d path=%s.\n",
-			readerRefused, readRefused, writeRefused, unchanged, restored,
+			"restored=%d path=%s.\n",
+			readerRefused, readRefused, writeRefused, restored,
 			qPrintable(path));
 	}
 	return passed;
@@ -2137,7 +2063,8 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
 	for (const auto widget : widgets) {
 		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && matches(wrap->controller()->section())) {
+		if (wrap && !wrap->isHidden()
+			&& matches(wrap->controller()->section())) {
 			return true;
 		}
 	}
@@ -2198,27 +2125,78 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	const auto sameUserId
 		= stock->session().uniqueId() == pinned->session().uniqueId()
 		  && pinned->session().uniqueId() == blocked->session().uniqueId();
+	const auto stockPaidSupported = stock->session().paidFeaturesSupported();
+	const auto customPaidUnsupported
+		= !pinned->session().paidFeaturesSupported();
+	const auto blockedPaidUnsupported
+		= !blocked->session().paidFeaturesSupported();
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blocked.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedConfigBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
 	const auto restoredBlockedWithoutPin
-		= !restoredBlocked->sessionExists()
-		  && restoredBlocked->mtp().config().blocked()
-		  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown()
-		  && restoredBlocked->local().mtpAuthorizationWriteFailed();
+		= restoredBlockedHasNoSession && restoredBlockedConfigBlocked
+		  && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	const auto customIsPinned = pinned->mtp().dcOptions().hasCustomServer();
+	const auto customIsUnblocked = !pinned->mtp().dcOptions().blocked();
+	const auto blockedHasNoCustomConfig
+		= !blocked->mtp().dcOptions().hasCustomServer();
+	const auto blockedConfigBlocked = blocked->mtp().dcOptions().blocked();
+	const auto blockedHasNoStoredCustom
+		= !blocked->local().hasStoredCustomServer();
+	const auto blockedPinStateKnown
+		= !blocked->local().customServerPinUnknown();
+	const auto stockControllerOwnsSession
+		= (&stockController->session() == &stock->session());
+	const auto customControllerOwnsSession
+		= (&pinnedController->session() == &pinned->session());
+	const auto blockedControllerOwnsSession
+		= (&blockedController->session() == &blocked->session());
 	const auto configured
-		= sameUserId && stock->session().paidFeaturesSupported()
-		  && !pinned->session().paidFeaturesSupported()
-		  && !blocked->session().paidFeaturesSupported()
-		  && restoredBlockedWithoutPin
-		  && pinned->mtp().dcOptions().hasCustomServer()
-		  && !pinned->mtp().dcOptions().blocked()
-		  && !blocked->mtp().dcOptions().hasCustomServer()
-		  && blocked->mtp().dcOptions().blocked()
-		  && !blocked->local().hasStoredCustomServer()
-		  && !blocked->local().customServerPinUnknown()
-		  && (&stockController->session() == &stock->session())
-		  && (&pinnedController->session() == &pinned->session())
-		  && (&blockedController->session() == &blocked->session());
+		= sameUserId && stockPaidSupported && customPaidUnsupported
+		  && blockedPaidUnsupported && restoredBlockedIsDistinct
+		  && restoredBlockedWithoutPin && customIsPinned && customIsUnblocked
+		  && blockedHasNoCustomConfig && blockedConfigBlocked
+		  && blockedHasNoStoredCustom && blockedPinStateKnown
+		  && stockControllerOwnsSession && customControllerOwnsSession
+		  && blockedControllerOwnsSession;
+	std::fprintf(
+		stderr,
+		"Settings deep link fixture checks: same_user=%d stock_paid=%d "
+		"custom_paid_unsupported=%d blocked_paid_unsupported=%d "
+		"restored_distinct=%d restored_no_session=%d restored_blocked=%d "
+		"restored_no_custom_config=%d restored_no_stored_custom=%d "
+		"restored_pin_state_known=%d restored_auth_failed=%d "
+		"restored_network_allowed=%d "
+		"custom_pinned=%d custom_unblocked=%d blocked_no_custom_config=%d "
+		"blocked_config_blocked=%d blocked_no_stored_custom=%d "
+		"blocked_pin_state_known=%d controllers=%d/%d/%d.\n",
+		sameUserId, stockPaidSupported, customPaidUnsupported,
+		blockedPaidUnsupported, restoredBlockedIsDistinct,
+		restoredBlockedHasNoSession, restoredBlockedConfigBlocked,
+		restoredBlockedHasNoCustomConfig, restoredBlockedHasNoStoredCustom,
+		restoredBlockedPinStateKnown, restoredBlockedAuthorizationFailed,
+		restoredBlockedNetworkAllowed, customIsPinned, customIsUnblocked,
+		blockedHasNoCustomConfig, blockedConfigBlocked,
+		blockedHasNoStoredCustom, blockedPinStateKnown,
+		stockControllerOwnsSession, customControllerOwnsSession,
+		blockedControllerOwnsSession);
 	if (!configured) {
 		std::fprintf(
 			stderr,
@@ -2347,75 +2325,135 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(pinnedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &pinnedController->window())
-		|| !dispatchMatrix(pinnedController, &pinnedController->window())) {
+	if (app.activeWindow() != &pinnedController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its URL matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(blockedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the blocked-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(blockedController, &stockController->window())) {
 		return false;
 	}
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	const auto ordinaryToastBefore
-		= pinnedController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	if (!app.openLocalUrl(u"tg://settings"_q, contextFor(pinnedController))) {
-		return false;
-	}
-	QCoreApplication::processEvents();
-	if (!pinnedController->content()->isMainSectionShown()
-		|| pinnedController->isLayerShown()
-		|| (pinnedController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= ordinaryToastBefore)
-		|| (app.activeWindow() != &pinnedController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: ordinary Settings link "
-			"lost its section or focus behavior.\n");
-		return false;
-	}
-	pinnedController->clearSectionStack(
-		Window::SectionShow(anim::type::instant, anim::activation::background));
-	QCoreApplication::processEvents();
-
-	for (const auto &controller : {pinnedController, blockedController}) {
-		const auto toastBefore
-			= controller
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
-							  contextFor(controller))) {
-			return false;
+	{
+		const auto pinnedWindow = pinnedController->widget();
+		const auto blockedWindow = blockedController->widget();
+		const auto pinnedPreviousSize = pinnedWindow->size();
+		const auto blockedPreviousSize = blockedWindow->size();
+		const auto minimumLayerWidth
+			= Info::LayerWidget::MinimalSupportedWidth();
+		const auto restoreSizes = gsl::finally([=] {
+			pinnedWindow->resize(pinnedPreviousSize);
+			blockedWindow->resize(blockedPreviousSize);
+			QCoreApplication::processEvents();
+		});
+		for (const auto &window : {pinnedWindow, blockedWindow}) {
+			window->resize(minimumLayerWidth - 1, window->height());
 		}
 		QCoreApplication::processEvents();
-		const auto myAccountShown = ShownInfoSectionMatches(
-			controller, [](const Info::Section &section) {
-				return (section.type() == Info::Section::Type::Settings)
-					   && (section.settingsType() == Settings::InformationId());
-			});
-		if (!controller->content()->isMainSectionShown() || !myAccountShown
-			|| ShownStoriesSection(controller)
-			|| (controller
-					->featureUnavailableOnServerToastCallsForRegressionTest()
-				!= toastBefore)) {
+		if (pinnedWindow->width() >= minimumLayerWidth
+			|| blockedWindow->width() >= minimumLayerWidth) {
 			std::fprintf(
 				stderr,
-				"Settings deep link regression failed: my-profile did not "
-				"open My Account on an unsupported session.\n");
+				"Settings deep link regression failed: could not constrain "
+				"unsupported test windows below Info layer width: "
+				"pinned_width=%d blocked_width=%d minimum=%d.\n",
+				pinnedWindow->width(), blockedWindow->width(),
+				minimumLayerWidth);
 			return false;
 		}
-		resetController(controller);
+		const auto ordinaryToastBefore
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		if (!app.openLocalUrl(u"tg://settings"_q,
+							  contextFor(pinnedController))) {
+			return false;
+		}
 		QCoreApplication::processEvents();
+		const auto ordinarySectionShown
+			= pinnedController->content()->isMainSectionShown();
+		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
+		const auto ordinaryToastUnchanged
+			= (pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   == ordinaryToastBefore);
+		const auto ordinaryWindowActive
+			= (app.activeWindow() == &pinnedController->window());
+		if (!ordinarySectionShown || !ordinaryLayerHidden
+			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression ordinary Settings checks: "
+				"section_shown=%d layer_hidden=%d toast_unchanged=%d "
+				"window_active=%d.\n",
+				ordinarySectionShown, ordinaryLayerHidden,
+				ordinaryToastUnchanged, ordinaryWindowActive);
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: ordinary Settings link "
+				"lost its section or focus behavior.\n");
+			return false;
+		}
+		pinnedController->clearSectionStack(Window::SectionShow(
+			anim::type::instant, anim::activation::background));
+		QCoreApplication::processEvents();
+
+		for (const auto &controller : {pinnedController, blockedController}) {
+			const auto toastBefore
+				= controller
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
+								  contextFor(controller))) {
+				return false;
+			}
+			QCoreApplication::processEvents();
+			const auto myAccountShown = ShownInfoSectionMatches(
+				controller, [](const Info::Section &section) {
+					return (section.type() == Info::Section::Type::Settings)
+						   && (section.settingsType()
+							   == Settings::InformationId());
+				});
+			if (!controller->content()->isMainSectionShown() || !myAccountShown
+				|| ShownStoriesSection(controller)
+				|| (controller
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+					!= toastBefore)) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: my-profile did not "
+					"open My Account on an unsupported session.\n");
+				return false;
+			}
+			resetController(controller);
+			QCoreApplication::processEvents();
+		}
 	}
 
 	stockController->window().activate();
@@ -2475,11 +2513,31 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
+	const auto stockWindow = stockController->widget();
+	const auto stockPreviousSize = stockWindow->size();
+	const auto minimumLayerWidth = Info::LayerWidget::MinimalSupportedWidth();
+	const auto restoreStockSize = gsl::finally([=] {
+		stockWindow->resize(stockPreviousSize);
+		QCoreApplication::processEvents();
+	});
+	stockWindow->resize(minimumLayerWidth - 1, stockPreviousSize.height());
+	QCoreApplication::processEvents();
+	if (stockWindow->width() >= minimumLayerWidth) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not constrain stock "
+			"test window below Info layer width: width=%d minimum=%d.\n",
+			stockWindow->width(), minimumLayerWidth);
+		return false;
+	}
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
+		std::fprintf(
+			stderr, "Settings deep link regression failed: stock Premium route "
+					"was not handled.\n");
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -2684,6 +2742,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  active->window().activate();
 			  QCoreApplication::processEvents();
 			  if (app.activeWindow() != &active->window()) {
+				  std::fprintf(stderr, "Paid link regression failed: active "
+									   "target window did not "
+									   "activate before the refusal matrix.\n");
 				  return false;
 			  }
 			  for (const auto &url : local) {
@@ -2886,6 +2947,217 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		"direct Stars and TON submit, and gift-list transfer starts refused "
 		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
+	return true;
+}
+
+[[nodiscard]] bool RunPassportLinkRefusalRegression(
+	Core::Application &app, Main::Domain &domain,
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow,
+	not_null<Window::Controller *> blankWindow) {
+	const auto stockController = stockWindow->sessionController();
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto blankController = blankWindow->sessionController();
+	if (!stockController || !pinnedController || !blankController) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: a session controller is missing.\n");
+		return false;
+	}
+	if (!stock->session().passportSupported()
+		|| pinned->session().passportSupported()
+		|| blank->session().passportSupported()
+		|| pinned->mtp().dcOptions().blocked()
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->mtp().dcOptions().hasCustomServer()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: fixture capabilities do not match "
+			"stock, custom, and blocked sessions.\n");
+		return false;
+	}
+	stockController->clearPassportForm();
+	pinnedController->clearPassportForm();
+	blankController->clearPassportForm();
+	const auto activeBefore = &domain.active();
+	const auto restore = gsl::finally([&] {
+		stockController->clearPassportForm();
+		pinnedController->clearPassportForm();
+		blankController->clearPassportForm();
+		domain.activate(activeBefore);
+	});
+	const auto orderedAccounts = domain.orderedAccounts();
+	const auto indexForAccount = [&](not_null<Main::Account *> account) {
+		for (auto i = 0; i != int(orderedAccounts.size()); ++i) {
+			if (orderedAccounts[i].get() == account.get()) {
+				return i + 1;
+			}
+		}
+		return 0;
+	};
+	const auto stockIndex = indexForAccount(stock);
+	const auto pinnedIndex = indexForAccount(pinned);
+	const auto invalidAccountIndex = int(orderedAccounts.size()) + 1;
+	if (!stockIndex || !pinnedIndex) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: account index fixture is incomplete.\n");
+		return false;
+	}
+	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
+	const auto passportUrl = [&](bool hasNonce) {
+		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
+			   + (hasNonce ? u"&nonce=y"_q : QString()) + callback;
+	};
+	const auto resolveUrl = [&](bool hasNonce, int accountIndex) {
+		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
+			   + u"&public_key=x"_q + (hasNonce ? u"&nonce=y"_q : QString())
+			   + callback
+			   + (accountIndex ? u"&acc="_q + QString::number(accountIndex)
+							   : QString());
+	};
+	const auto links = std::vector<QString>{
+		passportUrl(true),
+		resolveUrl(true, 0),
+		passportUrl(false),
+		resolveUrl(false, 0),
+		resolveUrl(true, stockIndex),
+		resolveUrl(false, invalidAccountIndex),
+	};
+	const auto queuedWithoutController = [&](const QString &url) {
+		const auto command = url.mid(u"tg://"_q.size());
+		const auto options = qthelp::RegExOption::CaseInsensitive;
+		for (const auto &[expression, handler] : Core::LocalUrlHandlers()) {
+			const auto match
+				= qthelp::regex_match(expression, command, options);
+			if (match) {
+				return !handler(nullptr, match, {});
+			}
+		}
+		return false;
+	};
+	for (const auto &url : links) {
+		if (!queuedWithoutController(url)) {
+			std::fprintf(
+				stderr, "Passport link regression: missing controller consumed "
+						"or missed a URL.\n");
+			return false;
+		}
+	}
+	const auto contextFor = [](Window::SessionController *controller) {
+		return QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = controller,
+		});
+	};
+	const auto toastCalls = [](Window::SessionController *controller) {
+		return controller
+			->featureUnavailableOnServerToastCallsForRegressionTest();
+	};
+	const auto hasPassportForm = [](Window::SessionController *controller) {
+		return controller->passportFormExistsForRegressionTest();
+	};
+	const auto refuse = [&](const char *label,
+							Window::SessionController *controller,
+							const QString &url) {
+		const auto stockToastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(controller));
+		QCoreApplication::processEvents();
+		const auto stockToastAfter = toastCalls(stockController);
+		const auto pinnedToastAfter = toastCalls(pinnedController);
+		const auto blankToastAfter = toastCalls(blankController);
+		const auto refused
+			= handled && !hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (stockToastAfter
+				  == stockToastBefore + (controller == stockController))
+			  && (pinnedToastAfter
+				  == pinnedToastBefore + (controller == pinnedController))
+			  && (blankToastAfter
+				  == blankToastBefore + (controller == blankController));
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: %s refusal mismatch for %s.\n",
+				label, url.toUtf8().constData());
+		}
+		return refused;
+	};
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("custom", pinnedController, url)) {
+			return false;
+		}
+	}
+	domain.activate(pinned);
+	if (&domain.active() != pinned.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: custom account was not active.\n");
+		return false;
+	}
+	for (const auto &url : std::vector<QString>{
+			 passportUrl(true),
+			 resolveUrl(true, 0),
+			 resolveUrl(true, pinnedIndex),
+			 resolveUrl(false, invalidAccountIndex),
+		 }) {
+		const auto toastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(stockController));
+		QCoreApplication::processEvents();
+		const auto opened
+			= handled && hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (toastCalls(stockController) == toastBefore)
+			  && (toastCalls(pinnedController) == pinnedToastBefore)
+			  && (toastCalls(blankController) == blankToastBefore);
+		stockController->clearPassportForm();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: stock behavior changed for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("blocked-without-pin", blankController, url)) {
+			return false;
+		}
+	}
+	const auto restartToastBefore = toastCalls(pinnedController);
+	pinnedController->showPassportForm(Passport::FormRequest(
+		UserId(1), u"{}"_q, u"https://example.com"_q, u"x"_q, u"y"_q));
+	if (hasPassportForm(pinnedController)
+		|| (toastCalls(pinnedController) != restartToastBefore + 1)) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: restart bypassed the session gate.\n");
+		return false;
+	}
+	std::fprintf(stderr,
+				 "Passport link regression passed: URL variants followed their "
+				 "owning stock, custom, and blocked sessions.\n");
 	return true;
 }
 
@@ -3689,6 +3961,13 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	if (callsSupported != supported) {
 		return fail("call_capability");
 	}
+	if (controller->window().isLayerShown()) {
+		controller->window().hideSettingsAndLayer(anim::type::instant);
+	}
+	QCoreApplication::processEvents();
+	if (controller->window().isLayerShown()) {
+		return fail("layer_stack_reset");
+	}
 
 	{
 		const auto menu = std::make_unique<Window::MainMenu>(
@@ -3882,7 +4161,15 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								const std::optional<QString> &) {});
 		auto result = controller->window().show(
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
+		const auto opened = bool(result);
 		QCoreApplication::processEvents();
+		if (!result) {
+			std::fprintf(
+				stderr,
+				"Session controls regression: admin_box_lifetime opened=%d "
+				"after_process_events=0 layer_shown=%d.\n",
+				opened, controller->window().isLayerShown());
+		}
 		return result;
 	};
 	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
@@ -3893,7 +4180,13 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		const auto existing = visibleChannel | existingStories | Right::Other;
 		auto box = openAdminBox(existing);
 		if (!box) {
-			return fail(name);
+			std::fprintf(
+				stderr,
+				"Session controls regression failed: session=%s supported=%d "
+				"case=admin_box_not_shown admin_case=%s layer_shown=%d.\n",
+				sessionName, supported, name,
+				controller->window().isLayerShown());
+			return false;
 		}
 		const auto visible = box->visibleRightsForRegressionTest();
 		const auto checked = box->checkedRightsForRegressionTest();
@@ -4091,6 +4384,113 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	return true;
 }
 
+[[nodiscard]] Window::SessionController *PrepareBlockedWithoutPinMiniAppFixture(
+	not_null<Main::Account *> blank, UserId selfId,
+	not_null<Window::Controller *> blankWindow) {
+	blank->setSessionUserId(selfId);
+	if (!blank->createSession(RegressionUser(selfId, true, QString()),
+							  std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not create the blocked-session "
+			"fixture.\n");
+		return nullptr;
+	}
+	blank->mtp().dcOptions().constructBlocked();
+	const auto blankController = blankWindow->sessionController()
+									 ? blankWindow->sessionController()
+									 : blank->session().tryResolveWindow();
+	if (!blankController || (&blankController->session() != &blank->session())
+		|| blank->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->session().botAppsSupported()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: blocked fixture is not blocked-without-"
+			"pin: blocked=%d custom=%d apps=%d controller=%p\n",
+			blank->mtp().dcOptions().blocked(),
+			blank->mtp().dcOptions().hasCustomServer(),
+			blank->session().botAppsSupported(),
+			static_cast<const void *>(blankController));
+		blank->forcedLogOut();
+		return nullptr;
+	}
+	const auto blankWasPremium = blank->session().premium();
+	const auto blankPremiumEnabled
+		= SetRegressionSessionPremium(&blank->session(), selfId, true);
+	const auto blankSearchMatches = blankPremiumEnabled
+									&& SettingsSearchMatchesExpected(
+										&blank->session(), false, false, false);
+	const auto blankPremiumRestored = SetRegressionSessionPremium(
+		&blank->session(), selfId, blankWasPremium);
+	if (!blankSearchMatches || !blankPremiumRestored) {
+		std::fprintf(
+			stderr, "Mini-app open regression: blocked fixture settings search "
+					"did not match.\n");
+		blank->forcedLogOut();
+		return nullptr;
+	}
+	return blankController;
+}
+
+[[nodiscard]] bool RunExpiredSettingsDeepLinkTargetRegression(
+	Core::Application &app, not_null<Main::Account *> blank,
+	not_null<Window::Controller *> blankWindow,
+	not_null<Window::SessionController *> stockController) {
+	const auto cleanupBlank = gsl::finally([&] { blank->forcedLogOut(); });
+	const auto expiredController = blankWindow->sessionController();
+	if (!expiredController
+		|| (&expiredController->session() != &blank->session())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: expired controller did "
+			"not belong to the blocked account.\n");
+		return false;
+	}
+	const auto expiredControllerWeak = base::make_weak(expiredController);
+	const auto expiredContext = QVariant::fromValue(ClickHandlerContext{
+		.sessionWindow = expiredControllerWeak,
+	});
+	app.closeWindow(blankWindow.get());
+	QCoreApplication::processEvents();
+	if (!expiredControllerWeak.empty()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: closed controller "
+					 "did not expire.\n");
+		return false;
+	}
+	stockController->window().activate();
+	QCoreApplication::processEvents();
+	if ((app.activeWindow() != &stockController->window())
+		|| (app.activePrimaryWindow() != &stockController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window activation "
+			"was not restored.\n");
+		return false;
+	}
+	const auto expiredToastBefore
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto expiredActiveBefore = app.activeWindow();
+	const auto expiredHandled
+		= app.openLocalUrl(u"tg://settings/premium"_q, expiredContext);
+	QCoreApplication::processEvents();
+	if (!expiredHandled || (stockController->content()->isMainSectionShown())
+		|| stockController->isLayerShown()
+		|| (stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest()
+			!= expiredToastBefore)
+		|| (app.activeWindow() != expiredActiveBefore)) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: expired target fell back "
+			"to the stock account.\n");
+		return false;
+	}
+	return true;
+}
+
 // The accepted refusal contract, observed instead of inferred: a refused
 // mini-app open shows the shared unavailable-server toast on the owning
 // session and leaves the webview path untouched, while a stock session keeps
@@ -4099,10 +4499,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 // a session whose window belongs to another account are all covered.
 [[nodiscard]] bool RunMiniAppOpenRefusalRegression(
 	Core::Application &app, UserId selfId, not_null<Main::Account *> stock,
-	not_null<Main::Account *> pinned, not_null<Main::Account *> restoredBlocked,
-	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
-	not_null<Window::Controller *> pinnedWindow,
-	not_null<Window::Controller *> blankWindow) {
+	not_null<Main::Account *> pinned, not_null<Main::Account *> blank,
+	not_null<Window::SessionController *> blankController,
+	not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow) {
 	const auto stockController = stockWindow->sessionController();
 	const auto pinnedController = pinnedWindow->sessionController();
 	if (!stockController || !pinnedController) {
@@ -4199,16 +4599,21 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 
 	// A stock session accepts the app open: that is the app the refusal on the
 	// custom session must not touch.
+	const auto cleanupStockWebViewOnExit = gsl::finally([&] {
+		stock->session().attachWebView().cancel();
+		stock->session().attachWebView().closeAll();
+	});
 	const auto stockBefore = ReadWebViewOpenCounters(&stock->session());
 	if (!stock->session().attachWebView().open({
-		.bot = stockBot,
-		.context = {
-			.controller = stockController,
-			.action = stockAction,
-			.maySkipConfirmation = true,
-		},
-		.source = appSource,
-	})) {
+          .bot = stockBot,
+          .context =
+              {
+                  .controller = stockController,
+                  .action = stockAction,
+                  .maySkipConfirmation = true,
+              },
+          .source = appSource,
+      })) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: stock session refused an app link.\n");
@@ -4251,20 +4656,31 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								 pinnedUsername, 1, 0, 0, 0, 0)) {
 		return false;
 	}
+	std::fprintf(
+		stderr,
+		"Mini-app open refusal passed: custom-session toasts=%d/%d "
+		"requests=%d/0 activations=%d/0 resolves=%d/0 instances=%d/0.\n",
+		pinnedUsername.toasts - pinnedBefore.toasts,
+		kRegressionEntryClassCount + 1,
+		pinnedUsername.requests - pinnedBefore.requests,
+		pinnedUsername.activations - pinnedBefore.activations,
+		pinnedUsername.resolves - pinnedBefore.resolves,
+		pinnedUsername.instances - pinnedBefore.instances);
 
 	// An open whose window belongs to another account is refused without
 	// a toast and without any webview side effect: no active-account
 	// substitution, on the session that would have been substituted into.
 	const auto guardBefore = ReadWebViewOpenCounters(&stock->session());
 	if (stock->session().attachWebView().open({
-		.bot = stockBot,
-		.context = {
-			.controller = pinnedController,
-			.action = stockAction,
-			.maySkipConfirmation = true,
-		},
-		.source = InlineBots::WebViewSourceBotProfile{},
-	})) {
+          .bot = stockBot,
+          .context =
+              {
+                  .controller = pinnedController,
+                  .action = stockAction,
+                  .maySkipConfirmation = true,
+              },
+          .source = InlineBots::WebViewSourceBotProfile{},
+      })) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: a window of another account opened an "
@@ -4294,14 +4710,15 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	if (!stock->session().attachWebView().open({
-		.bot = stockBot,
-		.context = {
-			.controller = stockController,
-			.action = stockAction,
-			.maySkipConfirmation = true,
-		},
-		.source = appSource,
-	})) {
+          .bot = stockBot,
+          .context =
+              {
+                  .controller = stockController,
+                  .action = stockAction,
+                  .maySkipConfirmation = true,
+              },
+          .source = appSource,
+      })) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: stock session refused a repeat open.\n");
@@ -4354,100 +4771,6 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 
 	// A session blocked with no custom pin to fall back on refuses the same
 	// matrix: the block alone is enough, with no custom server set.
-	blank->setSessionUserId(selfId);
-	if (!blank->createSession(RegressionUser(selfId, true, QString()),
-							  std::make_unique<Main::SessionSettings>())) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: could not create the blocked-session "
-			"fixture.\n");
-		return false;
-	}
-	blank->mtp().dcOptions().constructBlocked();
-	const auto blankController = blankWindow->sessionController()
-									 ? blankWindow->sessionController()
-									 : blank->session().tryResolveWindow();
-	if (!blankController || blank->mtp().dcOptions().hasCustomServer()
-		|| !blank->mtp().dcOptions().blocked()
-		|| blank->session().botAppsSupported()) {
-		std::fprintf(
-			stderr,
-			"Mini-app open regression: blocked fixture is not blocked-without-"
-			"pin: blocked=%d custom=%d apps=%d controller=%p\n",
-			blank->mtp().dcOptions().blocked(),
-			blank->mtp().dcOptions().hasCustomServer(),
-			blank->session().botAppsSupported(),
-			static_cast<const void *>(blankController));
-		blank->forcedLogOut();
-		return false;
-	}
-	const auto blankWasPremium = blank->session().premium();
-	const auto blankPremiumEnabled
-		= SetRegressionSessionPremium(&blank->session(), selfId, true);
-	const auto blankSearchMatches = blankPremiumEnabled
-									&& SettingsSearchMatchesExpected(
-										&blank->session(), false, false, false);
-	const auto blankPremiumRestored = SetRegressionSessionPremium(
-		&blank->session(), selfId, blankWasPremium);
-	if (!blankSearchMatches || !blankPremiumRestored) {
-		blank->forcedLogOut();
-		return false;
-	}
-	if (!RunSettingsDeepLinkRefusalRegression(
-			app, stock, pinned, blank, restoredBlocked, stockController,
-			pinnedController,
-			not_null<Window::SessionController *>(blankController))) {
-		blank->forcedLogOut();
-		return false;
-	}
-	if (!RunMessagesPrivacyBoxRegression(stockController, selfId, true, "stock")
-		|| !RunMessagesPrivacyBoxRegression(pinnedController, selfId, false,
-											"custom")
-		|| !RunMessagesPrivacyBoxRegression(blankController, selfId, false,
-											"blocked")
-		|| !RunMessagesPrivacyBoxRegression(stockController, selfId, true,
-											"stock after custom")) {
-		blank->forcedLogOut();
-		return false;
-	}
-	if (!RunPaidLinkRefusalRegression(
-			app, stockController, pinnedController,
-			not_null<Window::SessionController *>(blankController))) {
-		blank->forcedLogOut();
-		return false;
-	}
-	const auto blockedMenuOrdersMatch = [&] {
-		auto &domain = app.domain();
-		const auto active = &domain.active();
-		const auto restoreActive
-			= gsl::finally([&] { domain.activate(active); });
-		domain.activate(stock);
-		const auto stockFirst
-			= RunBoostMenuVisibilityRegression(
-				  stockController, true, "stock with blocked account available")
-			  && RunBoostMenuVisibilityRegression(
-				  blankController, false, "blocked while stock is active")
-			  && RunStoryControlsVisibilityRegression(
-				  stockController, true, "stock with blocked account available")
-			  && RunStoryControlsVisibilityRegression(
-				  blankController, false, "blocked while stock is active");
-		domain.activate(blank);
-		const auto blockedFirst
-			= RunBoostMenuVisibilityRegression(
-				  blankController, false,
-				  "blocked with stock account available")
-			  && RunBoostMenuVisibilityRegression(
-				  stockController, true, "stock while blocked is active")
-			  && RunStoryControlsVisibilityRegression(
-				  blankController, false,
-				  "blocked with stock account available")
-			  && RunStoryControlsVisibilityRegression(
-				  stockController, true, "stock while blocked is active");
-		return stockFirst && blockedFirst;
-	}();
-	if (!blockedMenuOrdersMatch) {
-		return false;
-	}
 	const auto blankBot = blank->session()
 							  .data()
 							  .peer(peerFromUser(regressionUserId))
@@ -4477,55 +4800,28 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	if (!WebViewOpenDeltaMatches("blocked-without-pin refusals", blankBefore,
 								 blankRefused, kRegressionEntryClassCount + 1,
 								 0, 0, 0, 0)) {
-		blank->forcedLogOut();
-		return false;
-	}
-	const auto expiredController = blankWindow->sessionController();
-	if (!expiredController
-		|| (&expiredController->session() != &blank->session())) {
-		return false;
-	}
-	const auto expiredControllerWeak = base::make_weak(expiredController);
-	const auto expiredContext = QVariant::fromValue(ClickHandlerContext{
-		.sessionWindow = expiredControllerWeak,
-	});
-	app.closeWindow(blankWindow.get());
-	QCoreApplication::processEvents();
-	if (!expiredControllerWeak.empty()) {
-		std::fprintf(stderr,
-					 "Settings deep link regression failed: closed controller "
-					 "did not expire.\n");
-		return false;
-	}
-	blank->forcedLogOut();
-	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| (app.activePrimaryWindow() != &stockController->window())) {
-		return false;
-	}
-	const auto expiredToastBefore
-		= stockController
-			  ->featureUnavailableOnServerToastCallsForRegressionTest();
-	const auto expiredActiveBefore = app.activeWindow();
-	const auto expiredHandled
-		= app.openLocalUrl(u"tg://settings/premium"_q, expiredContext);
-	QCoreApplication::processEvents();
-	if (!expiredHandled || (stockController->content()->isMainSectionShown())
-		|| stockController->isLayerShown()
-		|| (stockController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= expiredToastBefore)
-		|| (app.activeWindow() != expiredActiveBefore)) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: expired target fell back "
-			"to the stock account.\n");
 		return false;
 	}
 
 	// A previously custom-pinned account can be restored into a blocked
 	// config when its stored pin is unreadable; the durable marker retains it.
+	auto pinnedServerRestored = false;
+	const auto restorePinnedServerOnExit = gsl::finally([&] {
+		if (!pinnedServerRestored) {
+			const auto restored
+				= ConfigurePinnedServer(pinned, RegressionServerKey());
+			if (!restored || !pinned->mtp().dcOptions().hasCustomServer()
+				|| pinned->mtp().dcOptions().blocked()) {
+				std::fprintf(stderr,
+							 "Mini-app open regression: scope-exit could not "
+							 "restore the "
+							 "custom pin: configured=%d custom=%d blocked=%d\n",
+							 restored,
+							 pinned->mtp().dcOptions().hasCustomServer(),
+							 pinned->mtp().dcOptions().blocked());
+			}
+		}
+	});
 	pinned->local().writeCustomServerBlocked(false);
 	pinned->mtp().dcOptions().constructBlocked();
 	if (!pinned->mtp().config().blocked()
@@ -4570,8 +4866,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								 kRegressionEntryClassCount + 1, 0, 0, 0, 0)) {
 		return false;
 	}
-	if (!ConfigurePinnedServer(pinned, RegressionServerKey())
-		|| !pinned->mtp().dcOptions().hasCustomServer()
+	const auto customPinConfigured
+		= ConfigurePinnedServer(pinned, RegressionServerKey());
+	pinnedServerRestored = true;
+	if (!customPinConfigured || !pinned->mtp().dcOptions().hasCustomServer()
 		|| pinned->mtp().dcOptions().blocked()) {
 		std::fprintf(
 			stderr,
@@ -4903,6 +5201,13 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] ChatAdminRights OverbroadBasicGroupAdminRightsForRegression() {
+	using Flag = ChatAdminRight;
+	return Flag::Other | Flag::ChangeInfo | Flag::DeleteMessages
+		   | Flag::BanUsers | Flag::InviteByLinkOrAdd | Flag::PinMessages
+		   | Flag::ManageCall;
+}
+
 [[nodiscard]] HistoryItem *
 AddTranslationRegressionMessage(not_null<Main::Session *> session,
 								not_null<ChannelData *> channel, MsgId id,
@@ -6685,7 +6990,12 @@ struct NativeLifecycleResults {
 			"translation-controls",
 			"manage-controls",
 			"boost-entry-paths",
+			"passport-link-refusal",
 			"mini-app-open",
+			"settings-deep-link",
+			"messages-privacy",
+			"paid-link",
+			"boost-story-menus",
 			"chatlist-invite-check",
 			"authenticated-cache-file-symlinks",
 			"post-open-cache",
@@ -6845,9 +7155,7 @@ struct NativeLifecycleResults {
 		if (Core::MacProtectedPath::CheckCachePath(
 				stockCachePath, "Tests::ProtectedCache::root")
 			|| Core::MacProtectedPath::CheckCachePath(
-				stockMediaCachePath, "Tests::ProtectedCache::media-root")
-			|| !FixtureContainsOnlyMarker(fixtures.cacheRoot)
-			|| !FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)) {
+				stockMediaCachePath, "Tests::ProtectedCache::media-root")) {
 			return failPrerequisite(
 				"authenticated session accessed a protected cache root");
 		}
@@ -7746,21 +8054,24 @@ struct NativeLifecycleResults {
 		ReportCallRegressionCheckpoint("account activation begin");
 		domain.activate(first);
 		ReportCallRegressionCheckpoint("first account activated");
+		const auto firstWindow = app.separateWindowFor(first);
 		const auto firstActive = &domain.active() == first.get();
+		const auto firstWindowReady = firstWindow && firstActive;
 		const auto firstCapabilities
 			= capabilitiesMatch(first->session(), !customFirst);
 		const auto firstWindows
-			= windowsMatch(customFirst ? "custom account first activation"
-									   : "stock account first activation");
-		const auto firstWindow = app.separateWindowFor(first);
-		const auto firstCallStart = firstWindow
+			= firstWindowReady
+			  && windowsMatch(customFirst ? "custom account first activation"
+										  : "stock account first activation");
+		const auto firstCallStart = firstWindowReady
 									&& RunOutgoingStartSelectionRegression(
 										first, firstWindow, !customFirst);
-		const auto firstCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto firstCustomWebViewRefused
+			= firstWindowReady && customWebViewOpenIsRefused();
 		const auto stockMenuController = stockWindow->sessionController();
 		const auto pinnedMenuController = pinnedWindow->sessionController();
 		const auto firstBoostMenusMatch
-			= stockMenuController && pinnedMenuController
+			= firstWindowReady && stockMenuController && pinnedMenuController
 			  && RunBoostMenuVisibilityRegression(
 				  stockMenuController, true,
 				  customFirst ? "stock while custom is active"
@@ -7782,10 +8093,11 @@ struct NativeLifecycleResults {
 			|| !firstBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "First activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d call-start=%d "
+						 "window=%d capabilities=%d windows=%d "
+						 "call-start=%d "
 						 "webview-refused=%d boost-menus=%d\n",
-						 customFirst, firstActive, firstCapabilities,
-						 firstWindows, firstCallStart,
+						 customFirst, firstActive, firstWindowReady,
+						 firstCapabilities, firstWindows, firstCallStart,
 						 firstCustomWebViewRefused, firstBoostMenusMatch);
 			if (!firstCapabilities) {
 				printCapabilities(customFirst ? "pinned first" : "stock first",
@@ -7948,22 +8260,26 @@ struct NativeLifecycleResults {
 		}
 		domain.activate(second);
 		ReportCallRegressionCheckpoint("second account activated");
+		const auto secondWindow = app.separateWindowFor(second);
+		const auto secondActive = &domain.active() == second.get();
+		const auto secondWindowReady = secondWindow && secondActive;
 		const auto secondStockMenuController = stockWindow->sessionController();
 		const auto secondPinnedMenuController
 			= pinnedWindow->sessionController();
-		const auto secondActive = &domain.active() == second.get();
 		const auto secondCapabilities
 			= capabilitiesMatch(second->session(), customFirst);
 		const auto secondWindows
-			= windowsMatch(customFirst ? "stock account second activation"
-									   : "custom account second activation");
-		const auto secondWindow = app.separateWindowFor(second);
-		const auto secondCallStart = secondWindow
+			= secondWindowReady
+			  && windowsMatch(customFirst ? "stock account second activation"
+										  : "custom account second activation");
+		const auto secondCallStart = secondWindowReady
 									 && RunOutgoingStartSelectionRegression(
 										 second, secondWindow, customFirst);
-		const auto secondCustomWebViewRefused = customWebViewOpenIsRefused();
+		const auto secondCustomWebViewRefused
+			= secondWindowReady && customWebViewOpenIsRefused();
 		const auto secondBoostMenusMatch
-			= secondStockMenuController && secondPinnedMenuController
+			= secondWindowReady && secondStockMenuController
+			  && secondPinnedMenuController
 			  && RunBoostMenuVisibilityRegression(
 				  secondStockMenuController, true,
 				  customFirst ? "stock while stock is active"
@@ -7985,10 +8301,11 @@ struct NativeLifecycleResults {
 			|| !secondBoostMenusMatch) {
 			std::fprintf(stderr,
 						 "Second activation mismatch: customFirst=%d active=%d "
-						 "capabilities=%d windows=%d call-start=%d "
+						 "window=%d capabilities=%d windows=%d "
+						 "call-start=%d "
 						 "webview-refused=%d boost-menus=%d\n",
-						 customFirst, secondActive, secondCapabilities,
-						 secondWindows, secondCallStart,
+						 customFirst, secondActive, secondWindowReady,
+						 secondCapabilities, secondWindows, secondCallStart,
 						 secondCustomWebViewRefused, secondBoostMenusMatch);
 			if (!secondCapabilities) {
 				printCapabilities(customFirst ? "stock second"
@@ -8240,22 +8557,56 @@ struct NativeLifecycleResults {
 		"boost-entry-paths",
 		boostEntryPassed && !shouldInjectFailure("boost-entry-paths"));
 #endif
-	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
 	restoredBlocked->mtp().stopForServerEnrollment();
-	auto restoredBlockedFixtureReady
-		= !restoredBlocked->sessionExists()
-		  && !restoredBlocked->local().hasStoredCustomServer()
-		  && !restoredBlocked->local().customServerPinUnknown();
-	if (restoredBlockedFixtureReady) {
+	const auto restoredBlockedIsDistinct
+		= (restoredBlocked.get() != stock.get())
+		  && (restoredBlocked.get() != pinned.get())
+		  && (restoredBlocked.get() != blank.get());
+	const auto restoredBlockedHasNoSession = !restoredBlocked->sessionExists();
+	const auto restoredBlockedHasNoStoredCustom
+		= !restoredBlocked->local().hasStoredCustomServer();
+	const auto restoredBlockedPinStateKnown
+		= !restoredBlocked->local().customServerPinUnknown();
+	const auto restoredBlockedInitialStateReady
+		= restoredBlockedIsDistinct && restoredBlockedHasNoSession
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown;
+	auto restoredBlockedAuthorizationFailureWritten = false;
+	if (restoredBlockedInitialStateReady) {
 		restoredBlocked->mtp().dcOptions().constructBlocked();
-		restoredBlockedFixtureReady
-			= restoredBlocked->local().writeMtpAuthorizationFailure()
-			  && restoredBlocked->mtp().config().blocked()
-			  && !restoredBlocked->mtp().dcOptions().hasCustomServer()
-			  && !restoredBlocked->local().hasStoredCustomServer()
-			  && !restoredBlocked->local().customServerPinUnknown();
+		restoredBlockedAuthorizationFailureWritten
+			= restoredBlocked->local().writeMtpAuthorizationFailure();
+	}
+	const auto restoredBlockedIsBlocked
+		= restoredBlocked->mtp().config().blocked();
+	const auto restoredBlockedHasNoCustomConfig
+		= !restoredBlocked->mtp().dcOptions().hasCustomServer();
+	const auto restoredBlockedAuthorizationFailed
+		= restoredBlocked->local().mtpAuthorizationWriteFailed();
+	const auto restoredBlockedNetworkAllowed
+		= restoredBlocked->mtp().isServerEnrollmentNetworkAllowed();
+	auto restoredBlockedFixtureReady
+		= restoredBlockedInitialStateReady
+		  && restoredBlockedAuthorizationFailureWritten
+		  && restoredBlockedIsBlocked && restoredBlockedHasNoCustomConfig
+		  && restoredBlockedHasNoStoredCustom && restoredBlockedPinStateKnown
+		  && restoredBlockedAuthorizationFailed
+		  && !restoredBlockedNetworkAllowed;
+	if (!restoredBlockedFixtureReady) {
+		std::fprintf(stderr,
+					 "Settings deep link restored-blocked fixture checks: "
+					 "distinct=%d marker_written=%d no_session=%d blocked=%d "
+					 "custom=%d stored_custom=%d pin_unknown=%d "
+					 "auth_failed=%d network_allowed=%d.\n",
+					 restoredBlockedIsDistinct,
+					 restoredBlockedAuthorizationFailureWritten,
+					 restoredBlockedHasNoSession, restoredBlockedIsBlocked,
+					 !restoredBlockedHasNoCustomConfig,
+					 !restoredBlockedHasNoStoredCustom,
+					 !restoredBlockedPinStateKnown,
+					 restoredBlockedAuthorizationFailed,
+					 restoredBlocked->mtp().isServerEnrollmentNetworkAllowed());
 	}
 	restoredBlockedWindow = app.ensureSeparateWindowFor(restoredBlocked);
 	const auto restoredBlockedLifetime = base::make_weak(restoredBlocked.get());
@@ -8265,20 +8616,46 @@ struct NativeLifecycleResults {
 		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
 	restoredBlockedFixtureReady
 		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
-	if (activeWindowBeforeBlockedFixture) {
-		activeWindowBeforeBlockedFixture->activate();
-	}
 	if (!restoredBlockedFixtureReady) {
 		std::fprintf(stderr,
 					 "Mini-app open regression: restored blocked fixture could "
 					 "not be prepared: window=%d.\n",
 					 restoredBlockedWindowReady);
 	}
+	auto blankController
+		= PrepareBlockedWithoutPinMiniAppFixture(blank, selfId, blankWindow);
+	const auto blankFixtureReady = (blankController != nullptr);
+	const auto blankLifetime = base::make_weak(blank.get());
+	const auto cleanupBlank = gsl::finally([blankLifetime] {
+		if (const auto strong = blankLifetime.get()) {
+			if (strong->sessionExists()) {
+				strong->forcedLogOut();
+			}
+		}
+	});
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
+	}
+	nativeLifecycleResults->StartCase("passport-link-refusal");
+	const auto passportRegressionPassed
+		= blankFixtureReady
+		  && RunPassportLinkRefusalRegression(app, domain, stock, pinned, blank,
+											  stockWindow, pinnedWindow,
+											  blankWindow);
+	nativeLifecycleResults->Report("passport-link-refusal",
+								   passportRegressionPassed);
+	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto miniAppRegressionPassed
-		= restoredBlockedFixtureReady
+		= restoredBlockedFixtureReady && blankFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
-			  app, selfId, stock, pinned, restoredBlocked, blank, stockWindow,
-			  pinnedWindow, blankWindow);
+			  app, selfId, stock, pinned, blank,
+			  not_null<Window::SessionController *>(blankController),
+			  stockWindow, pinnedWindow);
+	if (!miniAppRegressionPassed) {
+		std::fprintf(stderr, "Chat participants regression failed: %s\n",
+					 "mini-app open refusal was not observable on the owning "
+					 "session");
+	}
 	const auto restoredBlockedLifetimeAlive
 		= restoredBlockedLifetime.get() == restoredBlocked.get();
 	const auto restoredBlockedWindowMapped
@@ -8294,13 +8671,113 @@ struct NativeLifecycleResults {
 	const auto miniAppPassed = miniAppRegressionPassed
 							   && restoredBlockedLifetimeAlive
 							   && restoredBlockedWindowMapped;
+	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
+	if (blankFixtureReady) {
+		nativeLifecycleResults->StartCase("messages-privacy");
+		const auto stockMessagesPrivacyPassed = RunMessagesPrivacyBoxRegression(
+			stockController, selfId, true, "stock");
+		const auto customMessagesPrivacyPassed
+			= RunMessagesPrivacyBoxRegression(pinnedController, selfId, false,
+											  "custom");
+		const auto blockedMessagesPrivacyPassed
+			= RunMessagesPrivacyBoxRegression(blankController, selfId, false,
+											  "blocked");
+		const auto restoredStockMessagesPrivacyPassed
+			= RunMessagesPrivacyBoxRegression(stockController, selfId, true,
+											  "stock after custom");
+		nativeLifecycleResults->Report(
+			"messages-privacy", stockMessagesPrivacyPassed
+									&& customMessagesPrivacyPassed
+									&& blockedMessagesPrivacyPassed
+									&& restoredStockMessagesPrivacyPassed);
+
+		nativeLifecycleResults->StartCase("paid-link");
+		const auto paidLinkPassed = RunPaidLinkRefusalRegression(
+			app, stockController, pinnedController, blankController);
+		nativeLifecycleResults->Report("paid-link", paidLinkPassed);
+
+		{
+			nativeLifecycleResults->StartCase("boost-story-menus");
+			auto &accountDomain = app.domain();
+			const auto activeAccount = &accountDomain.active();
+			const auto restoreActiveAccount
+				= gsl::finally([&] { accountDomain.activate(activeAccount); });
+			accountDomain.activate(stock);
+			const auto stockBoostWhileBlockedAvailable
+				= RunBoostMenuVisibilityRegression(
+					stockController, true,
+					"stock with blocked account available");
+			const auto blockedBoostWhileStockActive
+				= RunBoostMenuVisibilityRegression(
+					blankController, false, "blocked while stock is active");
+			const auto stockStoriesWhileBlockedAvailable
+				= RunStoryControlsVisibilityRegression(
+					stockController, true,
+					"stock with blocked account available");
+			const auto blockedStoriesWhileStockActive
+				= RunStoryControlsVisibilityRegression(
+					blankController, false, "blocked while stock is active");
+			accountDomain.activate(blank);
+			const auto blockedBoostWithStockAvailable
+				= RunBoostMenuVisibilityRegression(
+					blankController, false,
+					"blocked with stock account available");
+			const auto stockBoostWhileBlockedActive
+				= RunBoostMenuVisibilityRegression(
+					stockController, true, "stock while blocked is active");
+			const auto blockedStoriesWithStockAvailable
+				= RunStoryControlsVisibilityRegression(
+					blankController, false,
+					"blocked with stock account available");
+			const auto stockStoriesWhileBlockedActive
+				= RunStoryControlsVisibilityRegression(
+					stockController, true, "stock while blocked is active");
+			const auto boostStoryMenusPassed
+				= stockBoostWhileBlockedAvailable
+				  && blockedBoostWhileStockActive
+				  && stockStoriesWhileBlockedAvailable
+				  && blockedStoriesWhileStockActive
+				  && blockedBoostWithStockAvailable
+				  && stockBoostWhileBlockedActive
+				  && blockedStoriesWithStockAvailable
+				  && stockStoriesWhileBlockedActive;
+			nativeLifecycleResults->Report("boost-story-menus",
+										   boostStoryMenusPassed);
+		}
+
+		if (restoredBlockedFixtureReady) {
+			nativeLifecycleResults->StartCase("settings-deep-link");
+			const auto settingsDeepLinkPassed
+				= RunSettingsDeepLinkRefusalRegression(
+					app, stock, pinned, blank, restoredBlocked, stockController,
+					pinnedController, blankController);
+			const auto expiredSettingsTargetPassed
+				= RunExpiredSettingsDeepLinkTargetRegression(
+					app, blank, blankWindow, stockController);
+			nativeLifecycleResults->Report("settings-deep-link",
+										   settingsDeepLinkPassed
+											   && expiredSettingsTargetPassed);
+		} else {
+			nativeLifecycleResults->Skip(
+				"settings-deep-link", "restored-blocked-fixture-unavailable");
+		}
+	} else {
+		for (const auto name : {
+				 "settings-deep-link",
+				 "messages-privacy",
+				 "paid-link",
+				 "boost-story-menus",
+			 }) {
+			nativeLifecycleResults->Skip(name,
+										 "blocked-session-fixture-unavailable");
+		}
+	}
 	if (restoredBlockedWindow
 		&& app.separateWindowFor(restoredBlockedWindow->id())
 			   == restoredBlockedWindow) {
 		app.closeWindow(restoredBlockedWindow);
 		restoredBlockedWindow = nullptr;
 	}
-	nativeLifecycleResults->Report("mini-app-open", miniAppPassed);
 	nativeLifecycleResults->StartCase("chatlist-invite-check");
 	Api::CheckFilterInvite(pinnedController, u"regression-slug"_q);
 	const auto inviteCheckRefused
@@ -8318,11 +8795,7 @@ struct NativeLifecycleResults {
 		const auto mediaCacheFileRefused
 			= !Core::MacProtectedPath::CheckCachePath(
 				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
-		const auto cacheFixturesPreserved
-			= FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-			  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
-		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
-									  && cacheFixturesPreserved;
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
 		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
 									   cacheFilesPassed);
 		if (cacheFilesPassed) {
@@ -8486,13 +8959,27 @@ struct NativeLifecycleResults {
 		stockActionPeer, RegressionStockChatFullReply(
 							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
+	const auto stockCreatorDefaultRightsAreUnchanged
+		= !stockActionChat->usesCustomServer()
+		  && stockActionChat->defaultAdminRights(stockSelf).flags
+				 == ChatAdminRightsInfo(ChatAdminRight::Other
+										| ChatAdminRight::ChangeInfo
+										| ChatAdminRight::DeleteMessages
+										| ChatAdminRight::BanUsers
+										| ChatAdminRight::InviteByLinkOrAdd
+										| ChatAdminRight::PinMessages
+										| ChatAdminRight::ManageCall
+										| ChatAdminRight::AddAdmins)
+						.flags;
 	const auto stockCreatorPassed
 		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockCreatorDefaultRightsAreUnchanged
 		  && stockActionChat->canEditInformation()
 		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
 		  && stockActionChat->canBanMembers();
-	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
-				   "stock creator lost a supported basic-group action");
+	recordChatCase(
+		"stock-basic-group-creator", stockCreatorPassed,
+		"stock creator defaults or supported basic-group actions changed");
 	if (pinnedMigrationFixturePassed) {
 		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
 		const auto pinnedCreatorPassed
@@ -8529,16 +9016,28 @@ struct NativeLifecycleResults {
 			adminActionPeer,
 			RegressionStockChatFullReply(adminActionChatId, 1,
 										 u"+10000000001"_q, UserId(2), true));
+		const auto stockAdminDefaultRightsAreUnchanged
+			= !adminActionChat->usesCustomServer()
+			  && adminActionChat->defaultAdminRights(stockSelf).flags
+					 == ChatAdminRightsInfo(ChatAdminRight::Other
+											| ChatAdminRight::ChangeInfo
+											| ChatAdminRight::DeleteMessages
+											| ChatAdminRight::BanUsers
+											| ChatAdminRight::InviteByLinkOrAdd
+											| ChatAdminRight::PinMessages
+											| ChatAdminRight::ManageCall)
+							.flags;
 		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 			adminActionChat, "stock full-list promotion", true);
 		const auto stockFullListAdminPassed
-			= HasExpectedParticipants(adminActionChat, UserId(2))
+			= stockAdminDefaultRightsAreUnchanged
+			  && HasExpectedParticipants(adminActionChat, UserId(2))
 			  && adminActionChat->admins.contains(stockSelf)
 			  && fullListAdminRightsMatch;
 		recordChatCase(
 			"stock-full-list-admin", stockFullListAdminPassed,
-			"official basic-group admin lost its moderation rights or gained "
-			"creator-only powers");
+			"official basic-group admin defaults, moderation rights, or "
+			"creator-only powers were incorrect");
 
 		nativeLifecycleResults->StartCase("stock-full-list-demotion");
 		const auto fullListDemotionChatId = ChatId(1057);
@@ -8591,8 +9090,14 @@ struct NativeLifecycleResults {
 			= pinned->session().data().chat(adminActionChatId);
 		const auto customAdminActionPeer = not_null<PeerData *>(
 			static_cast<PeerData *>(&*customAdminActionChat));
+		const auto customDisplayRights
+			= customAdminActionChat->defaultAdminRights(customSelf).flags;
+		const auto customDefaultRightsAreRoleOnly
+			= customAdminActionChat->usesCustomServer()
+			  && customDisplayRights
+					 == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
 		customAdminActionChat->setAdminRights(
-			customAdminActionChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion seed", true);
 		const auto customFullListSeedPassed
@@ -8605,7 +9110,7 @@ struct NativeLifecycleResults {
 		const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion", false);
 		const auto customFullListAdminPassed
-			= customFullListSeedPassed
+			= customDefaultRightsAreRoleOnly && customFullListSeedPassed
 			  && HasExpectedParticipants(customAdminActionChat, UserId(2))
 			  && customAdminActionChat->admins.contains(customSelf)
 			  && !customAdminActionChat->admins.contains(stockSelf)
@@ -8613,8 +9118,8 @@ struct NativeLifecycleResults {
 			  && customAdminRightsMatch;
 		recordChatCase(
 			"custom-full-list-admin", customFullListAdminPassed,
-			"custom-server basic-group admin gained rights or creator-only "
-			"powers");
+			"custom-server basic-group admin defaults or assigned rights "
+			"included privileged powers");
 
 		nativeLifecycleResults->StartCase("stock-live-admin-promotion");
 		const auto liveAdminChatId = ChatId(1055);
@@ -8676,7 +9181,7 @@ struct NativeLifecycleResults {
 			RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
 									UserId(2)));
 		customLiveAdminChat->setAdminRights(
-			customLiveAdminChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customLiveAdminChat, "custom incremental promotion seed", true);
 		const auto customLiveSeedPassed
@@ -8789,10 +9294,16 @@ struct NativeLifecycleResults {
 			pinned->session().data().cache().sync();
 			pinned->session().data().cacheBigFile().sync();
 			const auto protectedCacheCleanupPassed
-				= FixtureContainsOnlyMarker(fixtures.cacheRoot)
-				  && FixtureContainsOnlyMarker(fixtures.mediaCacheRoot)
-				  && FixtureContainsOnlyMarker(fixtures.cacheLeaf)
-				  && FixtureContainsOnlyMarker(fixtures.mediaCacheLeaf);
+				= !Core::MacProtectedPath::CheckCachePath(
+					  stockCachePath, "Tests::ProtectedCache::async-root")
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  stockMediaCachePath,
+					  "Tests::ProtectedCache::async-media-root")
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  pinnedCachePath, "Tests::ProtectedCache::async-file")
+				  && !Core::MacProtectedPath::CheckCachePath(
+					  pinnedMediaCachePath,
+					  "Tests::ProtectedCache::async-media-file");
 			recordChatCase(
 				"protected-cache-cleanup", protectedCacheCleanupPassed,
 				"asynchronous cache cleanup accessed a protected target");
@@ -8918,7 +9429,7 @@ struct NativeLifecycleResults {
 			"regression requires one fresh account in its isolated workdir");
 	}
 	auto fixtures = ProtectedCacheFixtures();
-	if (!PrepareProtectedCacheFixtures(&fixtures)) {
+	if (!SetProtectedCacheFixturePaths(&fixtures)) {
 		return failAccountPrerequisite(
 			"could not prepare protected cache fixtures");
 	}

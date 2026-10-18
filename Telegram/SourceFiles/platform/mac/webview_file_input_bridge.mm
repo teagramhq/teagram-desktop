@@ -56,7 +56,7 @@ void GuardedOpenPanel(id target, SEL selector, WKWebView *webView,
 					  Core::MacProtectedPath::Operation::Read, path,
 					  "webview.html-file-input");
 			  },
-			  Core::MacProtectedPath::IntegrationTestActive(),
+			  Core::MacProtectedPath::IsActive(),
 			  [](const QString &path) { return QFileInfo(path).isFile(); },
 			  [&](const QStringList &) {
 				  if (validSelection) {

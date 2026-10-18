@@ -84,6 +84,13 @@ BasicChatAdminRoleForSave(Rights selectedRights) {
 
 template <typename Rights>
 [[nodiscard]] inline constexpr Rights
+BasicChatAdminDefaultRightsFor(bool customServer, Rights defaultRights,
+							   Rights roleOnlyRights) {
+	return customServer ? roleOnlyRights : defaultRights;
+}
+
+template <typename Rights>
+[[nodiscard]] inline constexpr Rights
 BasicChatAdminRightsFor(bool isAdmin, bool customServer, Rights defaultRights) {
 	return (isAdmin && !customServer) ? defaultRights : Rights();
 }

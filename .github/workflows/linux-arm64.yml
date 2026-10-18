@@ -1,9 +1,15 @@
 name: Linux arm64 build.
 
-run-name: Linux arm64 build (${{ github.sha }})
+run-name: Linux arm64 build (${{ github.sha }})${{ inputs.issue && format(' [{0}]', inputs.issue) || '' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue key to report this run to (e.g. MAIN-123). Leave empty for no report."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read

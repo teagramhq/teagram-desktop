@@ -3181,7 +3181,19 @@ void SessionController::showCalendar(ShowCalendarDescriptor &&descriptor) {
 	}));
 }
 
+bool SessionController::showPassportUnavailableIfUnsupported() {
+	if (session().passportSupported()) {
+		return false;
+	}
+	window().activate();
+	showFeatureUnavailableOnServerToast();
+	return true;
+}
+
 void SessionController::showPassportForm(const Passport::FormRequest &request) {
+	if (showPassportUnavailableIfUnsupported()) {
+		return;
+	}
 	_passportForm = std::make_unique<Passport::FormController>(
 		this,
 		request);

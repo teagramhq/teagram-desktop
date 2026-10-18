@@ -11,6 +11,7 @@ approval_workflow=".github/workflows/mac_pr_approval.yml"
 unit_workflow=".github/workflows/macos_unit_feedback.yml"
 updater_workflow=".github/workflows/macos_updater_fixtures.yml"
 updater_runner=".github/scripts/run_teagram_updater_fixtures.sh"
+macos_libraries_image_script=".github/scripts/macos_libraries_image.sh"
 ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 
 temp_dir="$(mktemp -d)"
@@ -111,8 +112,114 @@ if [[ "$push_group" != "$schedule_group" ]]; then
 fi
 
 require_permission_map "$mac_workflow" 'workflow: inherit
-macos: contents=read
+macos-libraries: contents=read,packages=read
+macos-libraries-build: contents=read,packages=write
+macos-libraries-prune: actions=write,contents=read
+macos: contents=read,packages=read
 libiconv: contents=read'
+
+require_job_field "$mac_workflow" macos-libraries '.["runs-on"]' 'ubuntu-latest'
+expect_contains "$mac_workflow macos-libraries if" \
+  "$(job_field "$mac_workflow" macos-libraries '.if')" \
+  "github.event_name == 'push' || github.event_name == 'schedule'" \
+  "github.ref == 'refs/heads/dev'" \
+  "github.repository == 'teagramhq/teagram-desktop'"
+require_step_field "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
+  '.env.DEPENDENCY_HASH' \
+  "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
+  "$macos_libraries_image_script\" set-image"
+require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.uses' \
+  'oras-project/setup-oras@v2'
+require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
+require_job_field "$mac_workflow" macos-libraries '.outputs["cache-hit"]' "\${{ steps.image-cache.outputs.cache-hit }}"
+
+require_job_field "$mac_workflow" macos-libraries-build '.needs' 'macos-libraries'
+require_job_field "$mac_workflow" macos-libraries-build '.["runs-on"]' 'macos-latest'
+expect_contains "$mac_workflow macos-libraries-build if" \
+  "$(job_field "$mac_workflow" macos-libraries-build '.if')" \
+  '!cancelled()' \
+  "github.event_name == 'push' || github.event_name == 'schedule'" \
+  "github.ref == 'refs/heads/dev'" \
+  "github.repository == 'teagramhq/teagram-desktop'" \
+  "needs.macos-libraries.result == 'success'" \
+  "needs.macos-libraries.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.uses' \
+  'oras-project/setup-oras@v2'
+require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' '.if' \
+  "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+require_step_script "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' \
+  'bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" libraries' \
+  'echo "$tools/bin" >> "$GITHUB_PATH"'
+dependency_tools_step_index=-1
+libraries_setup_step_index=-1
+step_index=0
+while IFS= read -r step_name; do
+  case "$step_name" in
+    'Set up dependency build tools.') dependency_tools_step_index="$step_index" ;;
+    'Libraries.') libraries_setup_step_index="$step_index" ;;
+  esac
+  ((step_index += 1))
+done < <(JOB=macos-libraries-build yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
+if ((dependency_tools_step_index < 0 || dependency_tools_step_index >= libraries_setup_step_index)); then
+  contract_fail "$mac_workflow must install dependency build tools before the cold Libraries build."
+fi
+require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+expect_equal "$mac_workflow macos-libraries-build legacy cache restore if" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.if')" 'null'
+require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key' \
+  "macOS-libs-\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+expect_equal "$mac_workflow legacy cache key" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$mac_workflow" macos-libraries-build 'Libraries.' '.if' \
+  "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.if' \
+  "steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'"
+require_step_script "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' \
+  "$macos_libraries_image_script\" push"
+require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" push \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\""
+
+require_job_field "$mac_workflow" macos-libraries-prune '.["runs-on"]' 'ubuntu-latest'
+require_job_field "$mac_workflow" macos-libraries-prune '.needs | join(",")' \
+  'macos-libraries,macos-libraries-build'
+expect_contains "$mac_workflow macos-libraries-prune if" \
+  "$(job_field "$mac_workflow" macos-libraries-prune '.if')" \
+  '!cancelled()' \
+  "needs.macos-libraries.result == 'success'" \
+  "needs.macos-libraries.outputs.cache-hit == 'true'" \
+  "needs.macos-libraries-build.result == 'success'"
+require_step_field "$mac_workflow" macos-libraries-prune 'Prune legacy macOS library caches.' '.run' \
+  "bash $macos_libraries_image_script prune-legacy-cache"
+require_job_field "$mac_workflow" macos '.needs | join(",")' \
+  'macos-libraries,macos-libraries-build,macos-libraries-prune'
+expect_contains "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" \
+  '!cancelled()' \
+  "needs.macos-libraries.result == 'success'" \
+  "needs.macos-libraries.result == 'skipped'" \
+  "needs.macos-libraries-build.result == 'success'" \
+  "needs.macos-libraries-build.result == 'skipped'" \
+  "needs.macos-libraries-prune.result == 'success'" \
+  "needs.macos-libraries-prune.result == 'skipped'"
+expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" 'always()'
+require_step_field "$mac_workflow" macos 'Set macOS dependency image tag.' \
+  '.env.DEPENDENCY_HASH' \
+  "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.' \
+  'oras login ghcr.io' '--password-stdin'
+require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # MacOS. builds a PR once its approved head is labeled macos-build; a later
 # push cancels that build and clears the label from mac_pr_approval.yml.
@@ -122,8 +229,6 @@ require_workflow_field "$mac_workflow" '(.on.pull_request.types // []) | join(",
 # replace their older run.
 require_workflow_field "$mac_workflow" '.concurrency["cancel-in-progress"]' \
   "\${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}"
-require_job_field "$mac_workflow" macos '.if' \
-  "\${{ !inputs.libiconv_only && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build') }}"
 require_triggers "$approval_workflow" 'pull_request_target'
 require_workflow_field "$approval_workflow" '.on.pull_request_target.branches | join(",")' 'dev'
 require_workflow_field "$approval_workflow" '.on.pull_request_target.types | join(",")' 'synchronize'
@@ -293,7 +398,7 @@ require_step_field "$mac_workflow" macos 'Teagram compiler cache.' '.with["resto
 macOS-arm64-ccache-dev-${hash_expression}-
 macOS-arm64-ccache-dev-${profile_expression}-"
 # Only a dev push or scheduled seed whose commit is still the dev tip saves the
-# shared compiler cache, and only dev publishes Libraries; PRs restore both.
+# shared compiler cache. The separate trusted job publishes Libraries to GHCR.
 seed_condition="always() && !cancelled() && steps.ccache-stats.outputs.save == 'true' && (github.event_name == 'schedule' || github.event_name == 'push') && github.ref == 'refs/heads/dev'"
 expect_equal "$mac_workflow job macos step 'Check compiler cache seed is current.' if" \
   "$(contract_squash "$(step_field "$mac_workflow" macos 'Check compiler cache seed is current.' '.if')")" \
@@ -310,13 +415,10 @@ save_cache_index="$(job_field "$mac_workflow" macos \
   '.steps | to_entries[] | select(.value.name == "Save Teagram compiler cache.") | .key')"
 ((seed_check_index < save_cache_index)) \
   || contract_fail 'The seed currency check must run before the compiler cache save.'
-require_step_field "$mac_workflow" macos 'Save libraries cache.' '.if' \
-  "\${{ !cancelled() && steps.libraries.outcome == 'success' && steps.cache-libs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' }}"
 require_step_field "$mac_workflow" macos 'Save Teagram compiler cache.' '.with.key' \
   '${{ steps.cache-ccache.outputs.cache-primary-key }}'
 expect_equal "$mac_workflow cache writers" "$(cache_writers "$mac_workflow")" \
-  'macos / Save libraries cache.
-macos / Save Teagram compiler cache.'
+  'macos / Save Teagram compiler cache.'
 reject_value "$mac_workflow" \
   'macOS-arm64-ccache-pr-' \
   'startsWith(steps.cache-ccache.outputs.cache-matched-key' \
@@ -398,10 +500,10 @@ require_step_script "$mac_workflow" macos 'Report MacOS job wall time.' \
   '::warning::Warm-cache MacOS PR build exceeded the 30-minute target ('
 reject_step_script "$mac_workflow" macos 'Report MacOS job wall time.' '::error::' 'exit 1'
 reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
-
-require_step_field "$mac_workflow" macos 'Libraries cache.' '.with.key' \
-  "macOS-libs-\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_field "$mac_workflow" macos 'Libraries.' '.if' "steps.cache-libs.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
@@ -458,6 +560,10 @@ for native_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   folder-crud \
   stock-basic-group-creator \
   pinned-basic-group-creator \
@@ -467,6 +573,19 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+for native_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$native_case" '
+    /nativeLifecycleResults->Report\(/ { remaining = 4 }
+    remaining > 0 && index($0, "\"" case_name "\"") { found = 1 }
+    remaining > 0 { remaining-- }
+    END { exit !found }
+  ' "$native_harness" \
+    || contract_fail "$native_harness must report $native_case independently."
+done
 grep -Fq 'status=START' "$native_harness" \
   || contract_fail "$native_harness must print active native cases before running them."
 for active_case in \
@@ -475,6 +594,10 @@ for active_case in \
   translation-controls \
   manage-controls \
   mini-app-open \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus \
   chatlist-invite-check \
   pinned-chat-participants \
   folder-crud \
@@ -531,6 +654,14 @@ require_native_start_before manage-controls \
   'RunManageControlsLifecycleRegression('
 require_native_start_before mini-app-open \
   'RunMiniAppOpenRefusalRegression('
+require_native_start_before settings-deep-link \
+  'RunSettingsDeepLinkRefusalRegression('
+require_native_start_before messages-privacy \
+  'RunMessagesPrivacyBoxRegression('
+require_native_start_before paid-link \
+  'RunPaidLinkRefusalRegression('
+require_native_start_before boost-story-menus \
+  'RunBoostMenuVisibilityRegression('
 require_native_start_before chatlist-invite-check \
   'Api::CheckFilterInvite('
 require_native_start_before folder-crud \
@@ -541,6 +672,90 @@ require_native_start_before stock-basic-group-creator \
   'RegressionStockChatFullReply('
 require_native_start_before post-close-window-lifecycle \
   'windowsMatch("after primary close")'
+for independent_case in \
+  settings-deep-link \
+  messages-privacy \
+  paid-link \
+  boost-story-menus; do
+  awk -v case_name="$independent_case" '
+    /nativeLifecycleResults->Report\("mini-app-open"/ { mini_app_line = NR }
+    /nativeLifecycleResults->StartCase\(/ &&
+      index($0, "\"" case_name "\"") { case_line = NR }
+    END { exit !(mini_app_line && case_line && mini_app_line < case_line) }
+  ' "$native_harness" \
+    || contract_fail "$independent_case must run after mini-app-open completes."
+done
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /restorePinnedServerOnExit = gsl::finally/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /std::fprintf/ { cleanup_diagnostic = NR }
+  in_cleanup && /Expects\(/ { fatal_cleanup = 1 }
+  in_mini_app && /ConfigurePinnedServer\(pinned, RegressionServerKey\(\)\)/ {
+    if (cleanup_guard && !blocked_setup && NR > cleanup_guard) {
+      cleanup_restore = NR
+    }
+    if (blocked_setup && NR > blocked_setup) {
+      normal_restore = NR
+    }
+  }
+  in_mini_app && /pinned->mtp\(\)\.dcOptions\(\)\.constructBlocked\(\)/ {
+    blocked_setup = NR
+  }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /pinnedServerRestored = true/ { normal_restore_attempted = NR }
+  in_mini_app && /if \(!customPinConfigured/ { normal_restore_check = NR }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cleanup_restore < blocked_setup && normal_restore && cleanup_diagnostic && !fatal_cleanup && normal_restore < normal_restore_attempted && normal_restore_attempted < normal_restore_check)
+  }
+' "$native_harness" \
+  || contract_fail 'The custom-plus-blocked mini-app cleanup must report restore failures without aborting or retrying a normal restore.'
+awk '
+  /RunMiniAppOpenRefusalRegression\(/ { in_mini_app = 1 }
+  in_mini_app && /cleanupStockWebViewOnExit = gsl::finally/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.cancel\(\)/ {
+    cancel = NR
+  }
+  in_cleanup && /stock->session\(\)\.attachWebView\(\)\.closeAll\(\)/ {
+    close_all = NR
+  }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_mini_app && /stock->session\(\)\.attachWebView\(\)\.open\(\{/ {
+    first_stock_open = NR
+    exit
+  }
+  in_mini_app && /FailChatParticipantsRegression\(/ { exit }
+  END {
+    exit !(cleanup_guard && cancel > cleanup_guard && close_all > cancel && first_stock_open > close_all)
+  }
+' "$native_harness" \
+  || contract_fail 'The mini-app case must cancel and close stock webviews on every exit after its first open.'
+awk '
+  /const auto blankFixtureReady = \(blankController != nullptr\)/ {
+    in_blank_fixture_cleanup = 1
+  }
+  in_blank_fixture_cleanup && /const auto blankLifetime = base::make_weak\(blank.get\(\)\)/ {
+    weak_account = NR
+  }
+  in_blank_fixture_cleanup && /cleanupBlank = gsl::finally\(\[blankLifetime\]/ {
+    cleanup_guard = NR
+    in_cleanup = 1
+  }
+  in_cleanup && /blankLifetime\.get\(\)/ { weak_check = NR }
+  in_cleanup && /blank->(sessionExists|forcedLogOut)\(\)/ { raw_account_use = 1 }
+  in_cleanup && /^[[:space:]]*}\);/ { in_cleanup = 0 }
+  in_blank_fixture_cleanup && /nativeLifecycleResults->StartCase\("settings-deep-link"\)/ { exit }
+  END {
+    exit !(weak_account && cleanup_guard > weak_account && weak_check && !raw_account_use)
+  }
+' "$native_harness" \
+  || contract_fail 'The blocked mini-app cleanup must check a weak account reference before logout.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
   || contract_fail "$native_harness must start each post-open cache case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
@@ -648,7 +863,7 @@ require_workflow_field "$packaged_workflow" '.concurrency.group' \
 require_workflow_field "$packaged_workflow" '.concurrency["cancel-in-progress"]' 'false'
 require_workflow_field "$packaged_workflow" '.concurrency.queue' 'null'
 require_permission_map "$packaged_workflow" 'workflow: inherit
-macos: actions=write,contents=read
+macos: actions=write,contents=read,packages=read
 publish: actions=read,contents=write'
 require_job_field "$packaged_workflow" publish '.if' \
   "\${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}"
@@ -677,14 +892,23 @@ require_step_script "$packaged_workflow" macos 'Libraries.' "$prepare_libraries"
   'install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries'
 require_step_script "$packaged_workflow" macos 'First set up.' \
   'install_macos_build_tools.sh" "$tools" client'
+require_step_script "$packaged_workflow" macos 'First set up.' 'for formula in oras zstd'
 require_step_script "$packaged_workflow" macos 'Teagram build.' './configure.sh'
-for libraries_step in 'Libraries cache.' 'Save libraries cache.'; do
-  expect_equal "$packaged_workflow job macos step '$libraries_step' with.key" \
-    "$(step_field "$packaged_workflow" macos "$libraries_step" '.with.key')" \
-    "$(step_field "$mac_workflow" macos "$libraries_step" '.with.key')"
-done
+require_step_field "$packaged_workflow" macos 'Set macOS dependency image tag.' \
+  '.env.DEPENDENCY_HASH' \
+  "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_field "$packaged_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$packaged_workflow legacy cache key" \
+  "$(step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$packaged_workflow" macos 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 reject_value "$packaged_workflow" \
-  'brew ' \
   'refs/heads/master' \
   'git clone' \
   '/opt/homebrew/opt/' \
@@ -702,6 +926,10 @@ build_tools_body="$(strip_shell_comments < "$build_tools_script")" \
   || contract_fail "$build_tools_script does not parse as bash."
 expect_script_lacks "$build_tools_script" "$build_tools_body" 'brew '
 expect_script_contains "$build_tools_script" "$build_tools_body" 'ln -sf glibtoolize "$prefix/bin/libtoolize"'
+grep -Fq '"meson|' <<< "$tool_entries" \
+  || contract_fail "$build_tools_script must install pinned Meson for a cold dependency publisher."
+expect_script_contains "$build_tools_script" "$build_tools_body" \
+  'for command in m4 autoconf automake autoreconf libtoolize glibtool nasm meson; do'
 prepare_recipe="Telegram/build/prepare/prepare.py"
 mutable_checkouts="$(grep -nE '^ *git checkout ' "$prepare_recipe" \
   | grep -vE 'git checkout ([0-9a-f]{7,40}|v[0-9]+(\.[0-9]+)+)$' || true)"
@@ -713,17 +941,29 @@ mutable_clones="$(grep -nE '^ *git clone .*-b (master|main|dev)( |$)' "$prepare_
   || contract_fail "$prepare_recipe must not clone a moving branch:
 $mutable_clones"
 
-# MacOS unit feedback. is dispatch-only and shares the Libraries cache recipe.
+# MacOS unit feedback. is dispatch-only and reads the recipe-tagged GHCR artifact.
 require_triggers "$unit_workflow" 'workflow_dispatch'
 require_workflow_field "$unit_workflow" '.concurrency.group' \
   '${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || inputs.ref || github.ref_name }}'
 require_workflow_field "$unit_workflow" '.concurrency["cancel-in-progress"]' 'true'
-expect_contains "$unit_workflow job unit step 'Libraries cache.' with.key" \
-  "$(step_field "$unit_workflow" unit 'Libraries cache.' '.with.key')" \
-  'Telegram/build/prepare/mac.sh'
-require_step_field "$unit_workflow" unit 'Libraries.' '.if' "steps.cache-libs.outputs.cache-hit != 'true'"
+require_permission_map "$unit_workflow" 'workflow: contents=read,packages=read
+unit: inherit'
+require_step_field "$unit_workflow" unit 'Set macOS dependency image tag.' \
+  '.env.DEPENDENCY_HASH' \
+  "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_field "$unit_workflow" unit 'Restore macOS libraries artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$unit_workflow legacy cache key" \
+  "$(step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$unit_workflow" unit 'Libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
-# macOS updater fixtures. tests the exact PR merge ref without secrets.
+# macOS updater fixtures. tests the exact PR merge ref with read-only package access.
 require_triggers "$updater_workflow" 'pull_request'
 updater_paths="$(workflow_field "$updater_workflow" '.on.pull_request.paths[]')"
 for updater_path in \
@@ -736,13 +976,14 @@ for updater_path in \
   grep -Fxq -- "$updater_path" <<< "$updater_paths" \
     || contract_fail "$updater_workflow on.pull_request.paths must list $updater_path"
 done
-require_permission_map "$updater_workflow" 'workflow: contents=read
+require_permission_map "$updater_workflow" 'workflow: contents=read,packages=read
 updater-fixtures: inherit'
 require_workflow_field "$updater_workflow" '.concurrency["cancel-in-progress"]' 'true'
 require_job_field "$updater_workflow" updater-fixtures '.["runs-on"]' 'macos-latest'
 require_job_field "$updater_workflow" updater-fixtures '.["timeout-minutes"]' '180'
+expect_contains "$updater_workflow GITHUB_TOKEN reference" \
+  "$(workflow_strings "$updater_workflow")" 'secrets.GITHUB_TOKEN'
 reject_value "$updater_workflow" \
-  'secrets.' \
   'TEAGRAM_UPDATE_PRIVATE_KEY' \
   'EXPECTED_BASE_SHA' \
   'github.event.pull_request.base.sha' \
@@ -757,6 +998,24 @@ verify_step='Verify the checked out PR merge ref.'
 require_step_field "$updater_workflow" updater-fixtures "$verify_step" '.env.EXPECTED_MERGE_SHA' '${{ github.sha }}'
 require_step_field "$updater_workflow" updater-fixtures "$verify_step" '.env.EXPECTED_HEAD_SHA' \
   '${{ github.event.pull_request.head.sha }}'
+require_step_field "$updater_workflow" updater-fixtures 'Set macOS dependency image tag.' \
+  '.env.DEPENDENCY_HASH' \
+  "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_field "$updater_workflow" updater-fixtures 'Restore macOS libraries artifact.' '.run' \
+  "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
+require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.uses' \
+  'actions/cache/restore@v6'
+require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true'"
+expect_equal "$updater_workflow legacy cache key" \
+  "$(step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$updater_workflow" updater-fixtures 'Prepare libraries.' '.if' \
+  "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
+for libraries_cache_workflow in "$mac_workflow" "$packaged_workflow" "$unit_workflow" "$updater_workflow"; do
+  expect_lacks "$libraries_cache_workflow legacy cache writers" \
+    "$(cache_writers "$libraries_cache_workflow")" 'Save libraries cache.'
+done
 verify_script="$temp_dir/verify-merge-ref.sh"
 step_field "$updater_workflow" updater-fixtures "$verify_step" '.run' > "$verify_script"
 merge_repo="$temp_dir/merge-repo"
@@ -899,5 +1158,8 @@ python3 "$fixture_launcher" "$temp_dir/slow_unit" SlowFixture 1 > /dev/null 2>&1
 launcher_status=$?
 set -e
 expect_equal 'Updater fixture launcher status for a timed-out case' "$launcher_status" '124'
+
+python3 .github/scripts/test_macos_launch_smoke.py
+python3 .github/scripts/test_mac_profile_fixture.py
 
 printf 'macOS CI contract tests passed.\n'
