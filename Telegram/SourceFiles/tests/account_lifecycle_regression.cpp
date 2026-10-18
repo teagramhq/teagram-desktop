@@ -4656,6 +4656,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 						.takePendingResolveForRegressionTest();
 	const auto diedWebviewWeak
 		= base::make_weak(&deferred->session().attachWebView());
+	const auto diedSessionWeak = base::make_weak(&deferred->session());
 	const auto diedControllerWeak = base::make_weak(secondController);
 	if (!retained || !diedWebviewWeak || !diedControllerWeak) {
 		std::fprintf(stderr,
@@ -4664,10 +4665,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	deferred->forcedLogOut();
-	if (deferred->sessionExists()) {
+	if (!diedSessionWeak.empty()) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: teardown kept the session with a "
+			"Mini-app open regression: teardown kept the session alive with a "
 			"resolve in flight.\n");
 		return false;
 	}
