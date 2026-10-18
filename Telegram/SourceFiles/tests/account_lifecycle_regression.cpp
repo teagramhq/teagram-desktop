@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/options.h"
 #include "base/platform/base_platform_info.h"
+#include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/about_box.h"
@@ -95,6 +96,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
+#include "passport/passport_form_controller.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_calls.h"
@@ -2283,20 +2285,38 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(pinnedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
 	pinnedController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &pinnedController->window())
-		|| !dispatchMatrix(pinnedController, &pinnedController->window())) {
+	if (app.activeWindow() != &pinnedController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its URL matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
 	stockController->window().activate();
 	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| !dispatchMatrix(blockedController, &stockController->window())) {
+	if (app.activeWindow() != &stockController->window()) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the blocked-session matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(blockedController, &stockController->window())) {
 		return false;
 	}
 
@@ -2475,6 +2495,9 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
+		std::fprintf(
+			stderr, "Settings deep link regression failed: stock Premium route "
+					"was not handled.\n");
 		return false;
 	}
 	QCoreApplication::processEvents();
@@ -2679,6 +2702,9 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			  active->window().activate();
 			  QCoreApplication::processEvents();
 			  if (app.activeWindow() != &active->window()) {
+				  std::fprintf(stderr, "Paid link regression failed: active "
+									   "target window did not "
+									   "activate before the refusal matrix.\n");
 				  return false;
 			  }
 			  for (const auto &url : local) {
@@ -2881,6 +2907,217 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		"direct Stars and TON submit, and gift-list transfer starts refused "
 		"before payment requests; stock links opened.\n",
 		int(local.size() + internal.size()));
+	return true;
+}
+
+[[nodiscard]] bool RunPassportLinkRefusalRegression(
+	Core::Application &app, Main::Domain &domain,
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	not_null<Main::Account *> blank, not_null<Window::Controller *> stockWindow,
+	not_null<Window::Controller *> pinnedWindow,
+	not_null<Window::Controller *> blankWindow) {
+	const auto stockController = stockWindow->sessionController();
+	const auto pinnedController = pinnedWindow->sessionController();
+	const auto blankController = blankWindow->sessionController();
+	if (!stockController || !pinnedController || !blankController) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: a session controller is missing.\n");
+		return false;
+	}
+	if (!stock->session().passportSupported()
+		|| pinned->session().passportSupported()
+		|| blank->session().passportSupported()
+		|| pinned->mtp().dcOptions().blocked()
+		|| !pinned->mtp().dcOptions().hasCustomServer()
+		|| !blank->mtp().dcOptions().blocked()
+		|| blank->mtp().dcOptions().hasCustomServer()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: fixture capabilities do not match "
+			"stock, custom, and blocked sessions.\n");
+		return false;
+	}
+	stockController->clearPassportForm();
+	pinnedController->clearPassportForm();
+	blankController->clearPassportForm();
+	const auto activeBefore = &domain.active();
+	const auto restore = gsl::finally([&] {
+		stockController->clearPassportForm();
+		pinnedController->clearPassportForm();
+		blankController->clearPassportForm();
+		domain.activate(activeBefore);
+	});
+	const auto orderedAccounts = domain.orderedAccounts();
+	const auto indexForAccount = [&](not_null<Main::Account *> account) {
+		for (auto i = 0; i != int(orderedAccounts.size()); ++i) {
+			if (orderedAccounts[i].get() == account.get()) {
+				return i + 1;
+			}
+		}
+		return 0;
+	};
+	const auto stockIndex = indexForAccount(stock);
+	const auto pinnedIndex = indexForAccount(pinned);
+	const auto invalidAccountIndex = int(orderedAccounts.size()) + 1;
+	if (!stockIndex || !pinnedIndex) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: account index fixture is incomplete.\n");
+		return false;
+	}
+	const auto callback = u"&callback_url=https%3A%2F%2Fexample.com"_q;
+	const auto passportUrl = [&](bool hasNonce) {
+		return u"tg://passport?bot_id=1&scope=%7B%7D&public_key=x"_q
+			   + (hasNonce ? u"&nonce=y"_q : QString()) + callback;
+	};
+	const auto resolveUrl = [&](bool hasNonce, int accountIndex) {
+		return u"tg://resolve?domain=telegrampassport&bot_id=1&scope=%7B%7D"_q
+			   + u"&public_key=x"_q + (hasNonce ? u"&nonce=y"_q : QString())
+			   + callback
+			   + (accountIndex ? u"&acc="_q + QString::number(accountIndex)
+							   : QString());
+	};
+	const auto links = std::vector<QString>{
+		passportUrl(true),
+		resolveUrl(true, 0),
+		passportUrl(false),
+		resolveUrl(false, 0),
+		resolveUrl(true, stockIndex),
+		resolveUrl(false, invalidAccountIndex),
+	};
+	const auto queuedWithoutController = [&](const QString &url) {
+		const auto command = url.mid(u"tg://"_q.size());
+		const auto options = qthelp::RegExOption::CaseInsensitive;
+		for (const auto &[expression, handler] : Core::LocalUrlHandlers()) {
+			const auto match
+				= qthelp::regex_match(expression, command, options);
+			if (match) {
+				return !handler(nullptr, match, {});
+			}
+		}
+		return false;
+	};
+	for (const auto &url : links) {
+		if (!queuedWithoutController(url)) {
+			std::fprintf(
+				stderr, "Passport link regression: missing controller consumed "
+						"or missed a URL.\n");
+			return false;
+		}
+	}
+	const auto contextFor = [](Window::SessionController *controller) {
+		return QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = controller,
+		});
+	};
+	const auto toastCalls = [](Window::SessionController *controller) {
+		return controller
+			->featureUnavailableOnServerToastCallsForRegressionTest();
+	};
+	const auto hasPassportForm = [](Window::SessionController *controller) {
+		return controller->passportFormExistsForRegressionTest();
+	};
+	const auto refuse = [&](const char *label,
+							Window::SessionController *controller,
+							const QString &url) {
+		const auto stockToastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(controller));
+		QCoreApplication::processEvents();
+		const auto stockToastAfter = toastCalls(stockController);
+		const auto pinnedToastAfter = toastCalls(pinnedController);
+		const auto blankToastAfter = toastCalls(blankController);
+		const auto refused
+			= handled && !hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (stockToastAfter
+				  == stockToastBefore + (controller == stockController))
+			  && (pinnedToastAfter
+				  == pinnedToastBefore + (controller == pinnedController))
+			  && (blankToastAfter
+				  == blankToastBefore + (controller == blankController));
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: %s refusal mismatch for %s.\n",
+				label, url.toUtf8().constData());
+		}
+		return refused;
+	};
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("custom", pinnedController, url)) {
+			return false;
+		}
+	}
+	domain.activate(pinned);
+	if (&domain.active() != pinned.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: custom account was not active.\n");
+		return false;
+	}
+	for (const auto &url : std::vector<QString>{
+			 passportUrl(true),
+			 resolveUrl(true, 0),
+			 resolveUrl(true, pinnedIndex),
+			 resolveUrl(false, invalidAccountIndex),
+		 }) {
+		const auto toastBefore = toastCalls(stockController);
+		const auto pinnedToastBefore = toastCalls(pinnedController);
+		const auto blankToastBefore = toastCalls(blankController);
+		const auto handled = app.openLocalUrl(url, contextFor(stockController));
+		QCoreApplication::processEvents();
+		const auto opened
+			= handled && hasPassportForm(stockController)
+			  && !hasPassportForm(pinnedController)
+			  && !hasPassportForm(blankController)
+			  && (toastCalls(stockController) == toastBefore)
+			  && (toastCalls(pinnedController) == pinnedToastBefore)
+			  && (toastCalls(blankController) == blankToastBefore);
+		stockController->clearPassportForm();
+		if (!opened) {
+			std::fprintf(
+				stderr,
+				"Passport link regression: stock behavior changed for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+	}
+	domain.activate(stock);
+	if (&domain.active() != stock.get()) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: stock account was not active.\n");
+		return false;
+	}
+	for (const auto &url : links) {
+		if (!refuse("blocked-without-pin", blankController, url)) {
+			return false;
+		}
+	}
+	const auto restartToastBefore = toastCalls(pinnedController);
+	pinnedController->showPassportForm(Passport::FormRequest(
+		UserId(1), u"{}"_q, u"https://example.com"_q, u"x"_q, u"y"_q));
+	if (hasPassportForm(pinnedController)
+		|| (toastCalls(pinnedController) != restartToastBefore + 1)) {
+		std::fprintf(
+			stderr,
+			"Passport link regression: restart bypassed the session gate.\n");
+		return false;
+	}
+	std::fprintf(stderr,
+				 "Passport link regression passed: URL variants followed their "
+				 "owning stock, custom, and blocked sessions.\n");
 	return true;
 }
 
@@ -6384,6 +6621,7 @@ struct NativeLifecycleResults {
 			"session-window-lifecycle",
 			"translation-controls",
 			"manage-controls",
+			"passport-link-refusal",
 			"mini-app-open",
 			"settings-deep-link",
 			"messages-privacy",
@@ -7910,7 +8148,6 @@ struct NativeLifecycleResults {
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
 #endif
-	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
 	restoredBlocked->mtp().stopForServerEnrollment();
@@ -7970,9 +8207,6 @@ struct NativeLifecycleResults {
 		  && (&restoredBlockedWindow->account() == restoredBlocked.get());
 	restoredBlockedFixtureReady
 		= restoredBlockedFixtureReady && restoredBlockedWindowReady;
-	if (activeWindowBeforeBlockedFixture) {
-		activeWindowBeforeBlockedFixture->activate();
-	}
 	if (!restoredBlockedFixtureReady) {
 		std::fprintf(stderr,
 					 "Mini-app open regression: restored blocked fixture could "
@@ -7990,6 +8224,18 @@ struct NativeLifecycleResults {
 			}
 		}
 	});
+	if (activeWindowBeforeBlockedFixture) {
+		activeWindowBeforeBlockedFixture->activate();
+	}
+	nativeLifecycleResults->StartCase("passport-link-refusal");
+	const auto passportRegressionPassed
+		= blankFixtureReady
+		  && RunPassportLinkRefusalRegression(app, domain, stock, pinned, blank,
+											  stockWindow, pinnedWindow,
+											  blankWindow);
+	nativeLifecycleResults->Report("passport-link-refusal",
+								   passportRegressionPassed);
+	nativeLifecycleResults->StartCase("mini-app-open");
 	const auto miniAppRegressionPassed
 		= restoredBlockedFixtureReady && blankFixtureReady
 		  && RunMiniAppOpenRefusalRegression(
