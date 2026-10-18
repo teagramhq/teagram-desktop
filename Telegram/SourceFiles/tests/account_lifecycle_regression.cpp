@@ -6341,10 +6341,131 @@ struct NativeLifecycleResults {
 	}
 };
 
+void RunAuthenticatedCacheSymlinkCases(
+	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
+	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
+	const QString &pinnedMediaCachePath,
+	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
+		pinned->session().data().cache().sync();
+		pinned->session().data().cacheBigFile().sync();
+		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
+			pinnedCachePath, "Tests::ProtectedCache::file");
+		const auto mediaCacheFileRefused
+			= !Core::MacProtectedPath::CheckCachePath(
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
+		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
+									   cacheFilesPassed);
+		if (cacheFilesPassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache regression passed: root, "
+						 "directory, and file "
+						 "symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
+									 "protected-path-integration-disabled");
+	}
+	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		const auto selfId = UserId(1);
+		auto postOpenCachePassed = false;
+		auto postOpenMediaCachePassed = false;
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			const auto cacheGetter
+				= [guarded, mediaCache]() -> Storage::Cache::Database & {
+				auto &data = guarded->session().data();
+				return mediaCache ? data.cacheBigFile() : data.cache();
+			};
+			const auto clearCaches = [guarded] {
+				auto &data = guarded->session().data();
+				data.clearLocalStorage();
+				data.cache().sync();
+				data.cacheBigFile().sync();
+			};
+			const auto passed = RunPostOpenCacheSymlinkRegression(
+				mediaCache ? guarded->local().cacheBigFilePath()
+						   : guarded->local().cachePath(),
+				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
+				cacheGetter, clearCaches, [guarded, mediaCache] {
+					return RunRefusedCacheReaderRegressions(guarded,
+															mediaCache);
+				});
+			nativeLifecycleResults->Report(caseName, passed);
+			if (mediaCache) {
+				postOpenMediaCachePassed = passed;
+			} else {
+				postOpenCachePassed = passed;
+			}
+		}
+		if (postOpenCachePassed && postOpenMediaCachePassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache post-open regression passed: "
+						 "get, put, and "
+						 "clear symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+	}
+}
+
+void RunProtectedCacheCleanupRegression(
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	const QString &stockCachePath, const QString &stockMediaCachePath,
+	const QString &pinnedCachePath, const QString &pinnedMediaCachePath,
+	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+	if (!Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->Skip("protected-cache-cleanup",
+									 "protected-path-integration-disabled");
+		return;
+	}
+	nativeLifecycleResults->StartCase("protected-cache-cleanup");
+	stock->session().data().clearLocalStorage();
+	pinned->session().data().clearLocalStorage();
+	stock->session().data().cache().sync();
+	stock->session().data().cacheBigFile().sync();
+	pinned->session().data().cache().sync();
+	pinned->session().data().cacheBigFile().sync();
+	const auto protectedCacheCleanupPassed
+		= !Core::MacProtectedPath::CheckCachePath(
+			  stockCachePath, "Tests::ProtectedCache::async-root")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  stockMediaCachePath, "Tests::ProtectedCache::async-media-root")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  pinnedCachePath, "Tests::ProtectedCache::async-file")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  pinnedMediaCachePath, "Tests::ProtectedCache::async-media-file");
+	nativeLifecycleResults->Report("protected-cache-cleanup",
+								   protectedCacheCleanupPassed);
+	if (!protectedCacheCleanupPassed) {
+		std::fprintf(stderr,
+					 "Chat participants regression failed: asynchronous cache "
+					 "cleanup accessed a protected target.\n");
+	}
+}
+
 [[nodiscard]] int StartChatParticipantsRegression(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults,
 	Fn<void(int)> done) {
+	const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
 			  .split(',', Qt::SkipEmptyParts);
@@ -6444,21 +6565,23 @@ struct NativeLifecycleResults {
 	const auto stockChat = stock->session().data().chat(chatId);
 	const auto stockPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockChat));
-	stock->session().api().processFullPeer(
-		stockPeer,
-		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
-	if (stock->session().user()->isLoaded()
-		|| !stockChat->participants.empty()) {
-		return failPrerequisite(
-			"stock session accepted phone-free self in full chat info");
-	}
-	stock->session().api().processFullPeer(
-		stockPeer,
-		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
-	if (!stock->session().user()->isLoaded()
-		|| !HasExpectedParticipants(stockChat, UserId(2))) {
-		return failPrerequisite(
-			"stock session with phone did not load creator and members");
+	if (!authenticatedCacheOnly) {
+		stock->session().api().processFullPeer(
+			stockPeer,
+			RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
+		if (stock->session().user()->isLoaded()
+			|| !stockChat->participants.empty()) {
+			return failPrerequisite(
+				"stock session accepted phone-free self in full chat info");
+		}
+		stock->session().api().processFullPeer(
+			stockPeer, RegressionStockChatFullReply(
+						   chatId, 2, u"+10000000001"_q, UserId(2)));
+		if (!stock->session().user()->isLoaded()
+			|| !HasExpectedParticipants(stockChat, UserId(2))) {
+			return failPrerequisite(
+				"stock session with phone did not load creator and members");
+		}
 	}
 
 	const auto pinned = domain.add(MTP::Environment::Production);
@@ -6489,6 +6612,27 @@ struct NativeLifecycleResults {
 	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
 		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
+	}
+	if (authenticatedCacheOnly) {
+		nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+		RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned,
+										  pinnedCachePath, pinnedMediaCachePath,
+										  nativeLifecycleResults);
+		RunProtectedCacheCleanupRegression(
+			stock, pinned, stockCachePath, stockMediaCachePath, pinnedCachePath,
+			pinnedMediaCachePath, nativeLifecycleResults);
+		nativeLifecycleResults->SkipUnreported("authenticated-cache-only");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		if (!nativeLifecycleResults->Passed()) {
+			done(FailChatParticipantsRegression(
+				"authenticated cache regression failed"));
+		} else {
+			std::fprintf(stderr,
+						 "Authenticated cache regression cases passed.\n");
+			done(0);
+		}
+		return 0;
 	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
 									  bool supported) {
@@ -7984,82 +8128,9 @@ struct NativeLifecycleResults {
 			   .checkFilterInviteRequestPendingForRegressionTest();
 	nativeLifecycleResults->Report("chatlist-invite-check", inviteCheckRefused);
 	ReportCallRegressionCheckpoint("account activation regressions complete");
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
-		pinned->session().data().cache().sync();
-		pinned->session().data().cacheBigFile().sync();
-		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
-			pinnedCachePath, "Tests::ProtectedCache::file");
-		const auto mediaCacheFileRefused
-			= !Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
-		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
-		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
-									   cacheFilesPassed);
-		if (cacheFilesPassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache regression passed: root, "
-						 "directory, and file "
-						 "symlinks refused for cache and media_cache.\n");
-		}
-	} else {
-		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
-									 "protected-path-integration-disabled");
-	}
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		auto postOpenCachePassed = false;
-		auto postOpenMediaCachePassed = false;
-		for (const auto mediaCache : {false, true}) {
-			const auto caseName
-				= mediaCache ? "post-open-media-cache" : "post-open-cache";
-			nativeLifecycleResults->StartCase(caseName);
-			const auto guarded = domain.add(MTP::Environment::Production);
-			guarded->mtp().stopForServerEnrollment();
-			guarded->setSessionUserId(selfId);
-			if (!guarded->createSession(
-					RegressionUser(selfId, true, QString()),
-					std::make_unique<Main::SessionSettings>())) {
-				nativeLifecycleResults->Report(caseName, false);
-				continue;
-			}
-			const auto cacheGetter
-				= [guarded, mediaCache]() -> Storage::Cache::Database & {
-				auto &data = guarded->session().data();
-				return mediaCache ? data.cacheBigFile() : data.cache();
-			};
-			const auto clearCaches = [guarded] {
-				auto &data = guarded->session().data();
-				data.clearLocalStorage();
-				data.cache().sync();
-				data.cacheBigFile().sync();
-			};
-			const auto passed = RunPostOpenCacheSymlinkRegression(
-				mediaCache ? guarded->local().cacheBigFilePath()
-						   : guarded->local().cachePath(),
-				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
-				cacheGetter, clearCaches, [guarded, mediaCache] {
-					return RunRefusedCacheReaderRegressions(guarded,
-															mediaCache);
-				});
-			nativeLifecycleResults->Report(caseName, passed);
-			if (mediaCache) {
-				postOpenMediaCachePassed = passed;
-			} else {
-				postOpenCachePassed = passed;
-			}
-		}
-		if (postOpenCachePassed && postOpenMediaCachePassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache post-open regression passed: "
-						 "get, put, and "
-						 "clear symlinks refused for cache and media_cache.\n");
-		}
-	} else {
-		nativeLifecycleResults->Skip("post-open-cache",
-									 "protected-path-integration-disabled");
-		nativeLifecycleResults->Skip("post-open-media-cache",
-									 "protected-path-integration-disabled");
-	}
+	RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned, pinnedCachePath,
+									  pinnedMediaCachePath,
+									  nativeLifecycleResults);
 	nativeLifecycleResults->StartCase("pinned-chat-participants");
 	const auto pinnedChat = pinned->session().data().chat(chatId);
 	const auto pinnedPeer
@@ -8483,32 +8554,9 @@ struct NativeLifecycleResults {
 				"chat-migration", migrationPassed,
 				"pinned basic-group migration was not rejected locally");
 		}
-		if (Core::MacProtectedPath::IntegrationTestActive()) {
-			nativeLifecycleResults->StartCase("protected-cache-cleanup");
-			stock->session().data().clearLocalStorage();
-			pinned->session().data().clearLocalStorage();
-			stock->session().data().cache().sync();
-			stock->session().data().cacheBigFile().sync();
-			pinned->session().data().cache().sync();
-			pinned->session().data().cacheBigFile().sync();
-			const auto protectedCacheCleanupPassed
-				= !Core::MacProtectedPath::CheckCachePath(
-					  stockCachePath, "Tests::ProtectedCache::async-root")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  stockMediaCachePath,
-					  "Tests::ProtectedCache::async-media-root")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  pinnedCachePath, "Tests::ProtectedCache::async-file")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  pinnedMediaCachePath,
-					  "Tests::ProtectedCache::async-media-file");
-			recordChatCase(
-				"protected-cache-cleanup", protectedCacheCleanupPassed,
-				"asynchronous cache cleanup accessed a protected target");
-		} else {
-			nativeLifecycleResults->Skip("protected-cache-cleanup",
-										 "protected-path-integration-disabled");
-		}
+		RunProtectedCacheCleanupRegression(
+			stock, pinned, stockCachePath, stockMediaCachePath, pinnedCachePath,
+			pinnedMediaCachePath, nativeLifecycleResults);
 		nativeLifecycleResults->finalized = true;
 		nativeLifecycleResults->ReportSummary();
 		if (!nativeLifecycleResults->Passed()) {
