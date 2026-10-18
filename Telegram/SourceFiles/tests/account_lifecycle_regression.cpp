@@ -4705,7 +4705,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			if (strong->sessionExists()) {
 				strong->forcedLogOut();
 			}
-			if (const auto window = app.separateWindowFor(strong)) {
+			if (const auto window = app.separateWindowFor(not_null(strong))) {
 				app.closeWindow(window);
 			}
 		}
