@@ -539,6 +539,7 @@ for case_name in \
   spoiler-cache-spoiler \
   spoiler-cache-text \
   spoiler-cache-image \
+  authenticated-lifecycle \
   authenticated-cache \
   native-failure-continuation \
   folder-fault-barrier-timeout \
@@ -652,6 +653,20 @@ require_native_start_before mini-app-open \
   'RunMiniAppOpenRefusalRegression('
 require_native_start_before settings-deep-link \
   'RunSettingsDeepLinkRefusalRegression('
+awk '
+/if \(authenticatedCacheOnly\) \{/ { in_cache_branch = 1; next }
+in_cache_branch && /const auto capabilitiesMatch/ { exit }
+in_cache_branch && /crl::on_main\(\[=\] \{/ { completion_queued = 1 }
+in_cache_branch && /done\(/ {
+  if (!completion_queued) {
+    direct_completion = 1
+  } else {
+    queued_completion = 1
+  }
+}
+END { exit !(completion_queued && queued_completion && !direct_completion) }
+' "$native_harness" \
+  || contract_fail "$native_harness must defer authenticated-cache completion until its setup stack unwinds."
 require_native_start_before messages-privacy \
   'RunMessagesPrivacyBoxRegression('
 require_native_start_before paid-link \
