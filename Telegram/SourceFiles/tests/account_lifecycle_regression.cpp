@@ -3222,6 +3222,9 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	return peer ? peer->asChannel() : nullptr;
 }
 
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
 [[nodiscard]] bool RunBoostEntryPathRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -3317,18 +3320,35 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		= pinnedController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	pinnedController->showPeerHistory(pinned->session().user());
+	const auto pinnedHistoryRestored = WaitForRegressionCondition([&] {
+		return pinnedController->activeChatCurrent().peer()
+			== pinned->session().user();
+	});
 	const auto normalPinnedLinkOpened
-		= openLink(pinnedController, u"https://t.me/regression_boost"_q);
-	QCoreApplication::processEvents();
-	if (!normalPinnedLinkOpened
-		|| pinnedController->activeChatCurrent().peer() != pinnedChannel
-		|| pinnedController
-				   ->featureUnavailableOnServerToastCallsForRegressionTest()
-			   != pinnedToastAfterLink
-		|| !noBoostRequestsFor(&pinned->session().mtp())) {
+		= pinnedHistoryRestored
+		&& openLink(pinnedController, u"https://t.me/regression_boost"_q);
+	const auto normalPinnedChannelOpened = normalPinnedLinkOpened
+		&& WaitForRegressionCondition([&] {
+			return pinnedController->activeChatCurrent().peer() == pinnedChannel;
+		});
+	const auto normalPinnedToastUnchanged
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		== pinnedToastAfterLink;
+	const auto normalPinnedNoBoostRequests
+		= noBoostRequestsFor(&pinned->session().mtp());
+	if (!normalPinnedChannelOpened || !normalPinnedToastUnchanged
+		|| !normalPinnedNoBoostRequests) {
 		std::fprintf(
-			stderr, "Boost entry regression failed: custom normal channel link "
-					"was refused or entered the boost path.\n");
+			stderr,
+			"Boost entry regression failed: custom normal channel link opened=%d "
+			"history_restored=%d channel_opened=%d toast_unchanged=%d "
+			"requests=%d/%d/%d.\n",
+			bool(normalPinnedLinkOpened), bool(pinnedHistoryRestored),
+			bool(normalPinnedChannelOpened), bool(normalPinnedToastUnchanged),
+			countsFor(&pinned->session().mtp()).boostsStatus,
+			countsFor(&pinned->session().mtp()).myBoosts,
+			countsFor(&pinned->session().mtp()).applyBoost);
 		return false;
 	}
 	const auto pinnedToastBeforeSlowMode
@@ -3395,19 +3415,35 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 		= blockedController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	blockedController->showPeerHistory(blocked->session().user());
+	const auto blockedHistoryRestored = WaitForRegressionCondition([&] {
+		return blockedController->activeChatCurrent().peer()
+			== blocked->session().user();
+	});
 	const auto normalBlockedLinkOpened
-		= openLink(blockedController, u"https://t.me/regression_boost"_q);
-	QCoreApplication::processEvents();
-	if (!normalBlockedLinkOpened
-		|| blockedController->activeChatCurrent().peer() != blockedChannel
-		|| blockedController
-				   ->featureUnavailableOnServerToastCallsForRegressionTest()
-			   != blockedToastAfterLink
-		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		= blockedHistoryRestored
+		&& openLink(blockedController, u"https://t.me/regression_boost"_q);
+	const auto normalBlockedChannelOpened = normalBlockedLinkOpened
+		&& WaitForRegressionCondition([&] {
+			return blockedController->activeChatCurrent().peer() == blockedChannel;
+		});
+	const auto normalBlockedToastUnchanged
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		== blockedToastAfterLink;
+	const auto normalBlockedNoBoostRequests
+		= noBoostRequestsFor(&blocked->session().mtp());
+	if (!normalBlockedChannelOpened || !normalBlockedToastUnchanged
+		|| !normalBlockedNoBoostRequests) {
 		std::fprintf(
 			stderr,
-			"Boost entry regression failed: blocked normal channel link "
-			"was refused or entered the boost path.\n");
+			"Boost entry regression failed: blocked normal channel link opened=%d "
+			"history_restored=%d channel_opened=%d toast_unchanged=%d "
+			"requests=%d/%d/%d.\n",
+			bool(normalBlockedLinkOpened), bool(blockedHistoryRestored),
+			bool(normalBlockedChannelOpened), bool(normalBlockedToastUnchanged),
+			countsFor(&blocked->session().mtp()).boostsStatus,
+			countsFor(&blocked->session().mtp()).myBoosts,
+			countsFor(&blocked->session().mtp()).applyBoost);
 		return false;
 	}
 	const auto blockedToastBeforeSlowMode
@@ -3586,9 +3622,6 @@ SnapshotVideoChatMenu(not_null<Window::SessionController *> controller,
 							  Ui::Menu::CreateAddActionCallback(&menu));
 	return SnapshotMenuActions(menu);
 }
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunMessagesPrivacyBoxPassRegression(
 	not_null<Window::SessionController *> controller, UserId selfId,
