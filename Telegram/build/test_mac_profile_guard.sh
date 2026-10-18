@@ -1440,6 +1440,7 @@ for native_evidence in \
 	'native_lifecycle_case=session-window-lifecycle result=PASS' \
 	'native_lifecycle_case=translation-controls result=PASS' \
 	'native_lifecycle_case=manage-controls result=PASS' \
+	'native_lifecycle_case=passport-link-refusal result=PASS' \
 	'native_lifecycle_case=mini-app-open result=PASS' \
 	'native_lifecycle_case=chatlist-invite-check result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
@@ -1517,6 +1518,8 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=translation-controls result=' \
 		'native_lifecycle_case=manage-controls status=START' \
 		'native_lifecycle_case=manage-controls result=' \
+		'native_lifecycle_case=passport-link-refusal status=START' \
+		'native_lifecycle_case=passport-link-refusal result=PASS' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks status=START' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
 		'native_lifecycle_case=post-open-cache status=START' \
@@ -1587,25 +1590,27 @@ run_native_failure_continuation_case() {
 /native_lifecycle_case=translation-controls result=/ && step == 22 { step = 23; next }
 /native_lifecycle_case=manage-controls status=START/ && step == 23 { step = 24; next }
 /native_lifecycle_case=manage-controls result=/ && step == 24 { step = 25; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 25 { step = 26; next }
-/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 26 { step = 27; next }
-/native_lifecycle_case=post-open-cache status=START/ && step == 27 { step = 28; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 28 { step = 29; next }
-/native_lifecycle_case=post-open-media-cache status=START/ && step == 29 { step = 30; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 30 { step = 31; next }
-/native_lifecycle_case=folder-crud status=START/ && step == 31 { step = 32; next }
-/native_lifecycle_case=folder-crud result=FAIL/ && step == 32 { step = 33; next }
-/native_lifecycle_case=admin-session-identities status=START/ && step == 33 { step = 34; next }
-/native_lifecycle_case=admin-session-identities result=FAIL/ && step == 34 { step = 35; next }
-/native_lifecycle_case=pinned-migration-fixture status=START/ && step == 35 { step = 36; next }
-/native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 36 { step = 37; next }
-/native_lifecycle_case=stock-basic-group-creator status=START/ && step == 37 { step = 38; next }
-/native_lifecycle_case=stock-basic-group-creator result=PASS/ && step == 38 { step = 39; next }
-/native_lifecycle_case=pinned-basic-group-creator status=START/ && step == 39 { step = 40; next }
-/native_lifecycle_case=pinned-basic-group-creator result=PASS/ && step == 40 { step = 41; next }
-/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 41 { step = 42; next }
-/native_lifecycle_case=chat-migration result=PASS/ && step == 42 { step = 43; next }
-END { exit step != 43 }
+/native_lifecycle_case=passport-link-refusal status=START/ && step == 25 { step = 26; next }
+/native_lifecycle_case=passport-link-refusal result=PASS/ && step == 26 { step = 27; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 27 { step = 28; next }
+/native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 28 { step = 29; next }
+/native_lifecycle_case=post-open-cache status=START/ && step == 29 { step = 30; next }
+/native_lifecycle_case=post-open-cache result=/ && step == 30 { step = 31; next }
+/native_lifecycle_case=post-open-media-cache status=START/ && step == 31 { step = 32; next }
+/native_lifecycle_case=post-open-media-cache result=/ && step == 32 { step = 33; next }
+/native_lifecycle_case=folder-crud status=START/ && step == 33 { step = 34; next }
+/native_lifecycle_case=folder-crud result=FAIL/ && step == 34 { step = 35; next }
+/native_lifecycle_case=admin-session-identities status=START/ && step == 35 { step = 36; next }
+/native_lifecycle_case=admin-session-identities result=FAIL/ && step == 36 { step = 37; next }
+/native_lifecycle_case=pinned-migration-fixture status=START/ && step == 37 { step = 38; next }
+/native_lifecycle_case=pinned-migration-fixture result=PASS/ && step == 38 { step = 39; next }
+/native_lifecycle_case=stock-basic-group-creator status=START/ && step == 39 { step = 40; next }
+/native_lifecycle_case=stock-basic-group-creator result=PASS/ && step == 40 { step = 41; next }
+/native_lifecycle_case=pinned-basic-group-creator status=START/ && step == 41 { step = 42; next }
+/native_lifecycle_case=pinned-basic-group-creator result=PASS/ && step == 42 { step = 43; next }
+/native_lifecycle_case=post-close-window-lifecycle result=/ && step == 43 { step = 44; next }
+/native_lifecycle_case=chat-migration result=PASS/ && step == 44 { step = 45; next }
+END { exit step != 45 }
 ' "$case_log"; then
 		cat "$case_log" >&2
 		echo "native lifecycle cases did not continue around the early and late failures." >&2

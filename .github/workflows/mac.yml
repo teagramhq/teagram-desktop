@@ -974,6 +974,15 @@ jobs:
             printf 'Lifecycle crash: %s\n' "$faulting_frame" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+          passport_case_count="$(
+            grep -Fxc 'native_lifecycle_case=passport-link-refusal result=PASS' \
+              "$diagnostics/stderr.log" || true
+          )"
+          if [ "$passport_case_count" -ne 1 ]; then
+            printf 'Expected one passing Passport link refusal lifecycle case; found %s.\n' \
+              "$passport_case_count"
+            exit 1
+          fi
           if [ "$debugger_status" -ne 0 ] || ! grep -F 'exited with status = 0' "$diagnostics/lldb.log" >/dev/null; then
             echo "Debugger did not observe a clean lifecycle regression exit; inspect the retained diagnostics artifact."
             exit 1
