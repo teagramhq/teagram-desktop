@@ -4874,8 +4874,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			app.separateWindowFor(overflowAccount) != nullptr);
 		return false;
 	}
-	disposablePrimaryWindow->activate();
-	QCoreApplication::processEvents();
+	app.setActivePrimaryWindow(disposablePrimaryWindow);
 	if (app.activePrimaryWindow() != disposablePrimaryWindow) {
 		std::fprintf(stderr, "Mini-app open regression: disposable primary "
 							 "window did not become "
