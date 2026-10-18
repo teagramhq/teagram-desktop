@@ -4479,6 +4479,13 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] ChatAdminRights OverbroadBasicGroupAdminRightsForRegression() {
+	using Flag = ChatAdminRight;
+	return Flag::Other | Flag::ChangeInfo | Flag::DeleteMessages
+		   | Flag::BanUsers | Flag::InviteByLinkOrAdd | Flag::PinMessages
+		   | Flag::ManageCall;
+}
+
 [[nodiscard]] HistoryItem *
 AddTranslationRegressionMessage(not_null<Main::Session *> session,
 								not_null<ChannelData *> channel, MsgId id,
@@ -8024,13 +8031,27 @@ struct NativeLifecycleResults {
 		stockActionPeer, RegressionStockChatFullReply(
 							 actionChatId, 1, u"+10000000001"_q, selfId));
 	stockActionChat->setFlags(ChatDataFlag::Creator);
+	const auto stockCreatorDefaultRightsAreUnchanged
+		= !stockActionChat->usesCustomServer()
+		  && stockActionChat->defaultAdminRights(stockSelf).flags
+				 == ChatAdminRightsInfo(ChatAdminRight::Other
+										| ChatAdminRight::ChangeInfo
+										| ChatAdminRight::DeleteMessages
+										| ChatAdminRight::BanUsers
+										| ChatAdminRight::InviteByLinkOrAdd
+										| ChatAdminRight::PinMessages
+										| ChatAdminRight::ManageCall
+										| ChatAdminRight::AddAdmins)
+						.flags;
 	const auto stockCreatorPassed
 		= HasExpectedParticipants(stockActionChat, selfId)
+		  && stockCreatorDefaultRightsAreUnchanged
 		  && stockActionChat->canEditInformation()
 		  && stockActionChat->canAddMembers() && stockActionChat->canAddAdmins()
 		  && stockActionChat->canBanMembers();
-	recordChatCase("stock-basic-group-creator", stockCreatorPassed,
-				   "stock creator lost a supported basic-group action");
+	recordChatCase(
+		"stock-basic-group-creator", stockCreatorPassed,
+		"stock creator defaults or supported basic-group actions changed");
 	if (pinnedMigrationFixturePassed) {
 		nativeLifecycleResults->StartCase("pinned-basic-group-creator");
 		const auto pinnedCreatorPassed
@@ -8067,16 +8088,28 @@ struct NativeLifecycleResults {
 			adminActionPeer,
 			RegressionStockChatFullReply(adminActionChatId, 1,
 										 u"+10000000001"_q, UserId(2), true));
+		const auto stockAdminDefaultRightsAreUnchanged
+			= !adminActionChat->usesCustomServer()
+			  && adminActionChat->defaultAdminRights(stockSelf).flags
+					 == ChatAdminRightsInfo(ChatAdminRight::Other
+											| ChatAdminRight::ChangeInfo
+											| ChatAdminRight::DeleteMessages
+											| ChatAdminRight::BanUsers
+											| ChatAdminRight::InviteByLinkOrAdd
+											| ChatAdminRight::PinMessages
+											| ChatAdminRight::ManageCall)
+							.flags;
 		const auto fullListAdminRightsMatch = BasicGroupAdminRightsMatch(
 			adminActionChat, "stock full-list promotion", true);
 		const auto stockFullListAdminPassed
-			= HasExpectedParticipants(adminActionChat, UserId(2))
+			= stockAdminDefaultRightsAreUnchanged
+			  && HasExpectedParticipants(adminActionChat, UserId(2))
 			  && adminActionChat->admins.contains(stockSelf)
 			  && fullListAdminRightsMatch;
 		recordChatCase(
 			"stock-full-list-admin", stockFullListAdminPassed,
-			"official basic-group admin lost its moderation rights or gained "
-			"creator-only powers");
+			"official basic-group admin defaults, moderation rights, or "
+			"creator-only powers were incorrect");
 
 		nativeLifecycleResults->StartCase("stock-full-list-demotion");
 		const auto fullListDemotionChatId = ChatId(1057);
@@ -8129,8 +8162,14 @@ struct NativeLifecycleResults {
 			= pinned->session().data().chat(adminActionChatId);
 		const auto customAdminActionPeer = not_null<PeerData *>(
 			static_cast<PeerData *>(&*customAdminActionChat));
+		const auto customDisplayRights
+			= customAdminActionChat->defaultAdminRights(customSelf).flags;
+		const auto customDefaultRightsAreRoleOnly
+			= customAdminActionChat->usesCustomServer()
+			  && customDisplayRights
+					 == ChatAdminRightsInfo(ChatAdminRight::Other).flags;
 		customAdminActionChat->setAdminRights(
-			customAdminActionChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customFullListSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion seed", true);
 		const auto customFullListSeedPassed
@@ -8143,7 +8182,7 @@ struct NativeLifecycleResults {
 		const auto customAdminRightsMatch = BasicGroupAdminRightsMatch(
 			customAdminActionChat, "custom full-list promotion", false);
 		const auto customFullListAdminPassed
-			= customFullListSeedPassed
+			= customDefaultRightsAreRoleOnly && customFullListSeedPassed
 			  && HasExpectedParticipants(customAdminActionChat, UserId(2))
 			  && customAdminActionChat->admins.contains(customSelf)
 			  && !customAdminActionChat->admins.contains(stockSelf)
@@ -8151,8 +8190,8 @@ struct NativeLifecycleResults {
 			  && customAdminRightsMatch;
 		recordChatCase(
 			"custom-full-list-admin", customFullListAdminPassed,
-			"custom-server basic-group admin gained rights or creator-only "
-			"powers");
+			"custom-server basic-group admin defaults or assigned rights "
+			"included privileged powers");
 
 		nativeLifecycleResults->StartCase("stock-live-admin-promotion");
 		const auto liveAdminChatId = ChatId(1055);
@@ -8214,7 +8253,7 @@ struct NativeLifecycleResults {
 			RegressionChatFullReply(customLiveAdminChatId, 1, u"+10000000001"_q,
 									UserId(2)));
 		customLiveAdminChat->setAdminRights(
-			customLiveAdminChat->defaultAdminRights(customSelf).flags);
+			OverbroadBasicGroupAdminRightsForRegression());
 		const auto customLiveSeedRightsMatch = BasicGroupAdminRightsMatch(
 			customLiveAdminChat, "custom incremental promotion seed", true);
 		const auto customLiveSeedPassed
