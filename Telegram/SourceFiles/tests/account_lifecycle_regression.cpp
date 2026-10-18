@@ -8230,9 +8230,9 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->StartCase("passport-link-refusal");
 	const auto passportRegressionPassed
 		= blankFixtureReady
-		  && RunPassportLinkRefusalRegression(
-			  app, domain, stock, pinned, blank, stockWindow, pinnedWindow,
-			  blankWindow);
+		  && RunPassportLinkRefusalRegression(app, domain, stock, pinned, blank,
+											  stockWindow, pinnedWindow,
+											  blankWindow);
 	nativeLifecycleResults->Report("passport-link-refusal",
 								   passportRegressionPassed);
 	nativeLifecycleResults->StartCase("mini-app-open");
