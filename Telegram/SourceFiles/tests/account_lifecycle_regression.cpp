@@ -3322,26 +3322,28 @@ template <typename Predicate>
 	pinnedController->showPeerHistory(pinned->session().user());
 	const auto pinnedHistoryRestored = WaitForRegressionCondition([&] {
 		return pinnedController->activeChatCurrent().peer()
-			== pinned->session().user();
+			   == pinned->session().user();
 	});
 	const auto normalPinnedLinkOpened
 		= pinnedHistoryRestored
-		&& openLink(pinnedController, u"https://t.me/regression_boost"_q);
-	const auto normalPinnedChannelOpened = normalPinnedLinkOpened
-		&& WaitForRegressionCondition([&] {
-			return pinnedController->activeChatCurrent().peer() == pinnedChannel;
-		});
+		  && openLink(pinnedController, u"https://t.me/regression_boost"_q);
+	const auto normalPinnedChannelOpened
+		= normalPinnedLinkOpened && WaitForRegressionCondition([&] {
+			  return pinnedController->activeChatCurrent().peer()
+					 == pinnedChannel;
+		  });
 	const auto normalPinnedToastUnchanged
 		= pinnedController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest()
-		== pinnedToastAfterLink;
+		  == pinnedToastAfterLink;
 	const auto normalPinnedNoBoostRequests
 		= noBoostRequestsFor(&pinned->session().mtp());
 	if (!normalPinnedChannelOpened || !normalPinnedToastUnchanged
 		|| !normalPinnedNoBoostRequests) {
 		std::fprintf(
 			stderr,
-			"Boost entry regression failed: custom normal channel link opened=%d "
+			"Boost entry regression failed: custom normal channel link "
+			"opened=%d "
 			"history_restored=%d channel_opened=%d toast_unchanged=%d "
 			"requests=%d/%d/%d.\n",
 			bool(normalPinnedLinkOpened), bool(pinnedHistoryRestored),
@@ -3417,26 +3419,28 @@ template <typename Predicate>
 	blockedController->showPeerHistory(blocked->session().user());
 	const auto blockedHistoryRestored = WaitForRegressionCondition([&] {
 		return blockedController->activeChatCurrent().peer()
-			== blocked->session().user();
+			   == blocked->session().user();
 	});
 	const auto normalBlockedLinkOpened
 		= blockedHistoryRestored
-		&& openLink(blockedController, u"https://t.me/regression_boost"_q);
-	const auto normalBlockedChannelOpened = normalBlockedLinkOpened
-		&& WaitForRegressionCondition([&] {
-			return blockedController->activeChatCurrent().peer() == blockedChannel;
-		});
+		  && openLink(blockedController, u"https://t.me/regression_boost"_q);
+	const auto normalBlockedChannelOpened
+		= normalBlockedLinkOpened && WaitForRegressionCondition([&] {
+			  return blockedController->activeChatCurrent().peer()
+					 == blockedChannel;
+		  });
 	const auto normalBlockedToastUnchanged
 		= blockedController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest()
-		== blockedToastAfterLink;
+		  == blockedToastAfterLink;
 	const auto normalBlockedNoBoostRequests
 		= noBoostRequestsFor(&blocked->session().mtp());
 	if (!normalBlockedChannelOpened || !normalBlockedToastUnchanged
 		|| !normalBlockedNoBoostRequests) {
 		std::fprintf(
 			stderr,
-			"Boost entry regression failed: blocked normal channel link opened=%d "
+			"Boost entry regression failed: blocked normal channel link "
+			"opened=%d "
 			"history_restored=%d channel_opened=%d toast_unchanged=%d "
 			"requests=%d/%d/%d.\n",
 			bool(normalBlockedLinkOpened), bool(blockedHistoryRestored),
