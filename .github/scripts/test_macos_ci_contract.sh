@@ -76,9 +76,13 @@ for seed_path in 'Telegram/**' 'cmake' 'cmake/**' 'CMakeLists.txt' \
   grep -Fxq -- "$seed_path" <<< "$mac_push_paths" \
     || contract_fail "$mac_workflow on.push.paths must list $seed_path"
 done
-for input in branch pull_request_repository pull_request_branch; do
+for input in branch pull_request_repository pull_request_branch issue; do
   require_workflow_field "$mac_workflow" ".on.workflow_dispatch.inputs.$input.type" 'string'
 done
+require_workflow_field "$mac_workflow" '.on.workflow_dispatch.inputs.issue.required' 'false'
+require_workflow_field "$mac_workflow" '.on.workflow_dispatch.inputs.issue.default' ''
+require_workflow_field "$mac_workflow" '.run-name' \
+  "\${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || '' }}"
 require_workflow_field "$mac_workflow" '.concurrency.group' \
   "\${{ github.workflow }}-\${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}"
 assert_pr_dispatch_group 'teagramhq/teagram-desktop' 'feature/cache-refresh'
