@@ -2071,6 +2071,46 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	return false;
 }
 
+struct SettingsDeepLinkInfoCounts {
+	int wraps = 0;
+	int visibleWraps = 0;
+	int notHiddenWraps = 0;
+	int settingsWraps = 0;
+	int informationWraps = 0;
+	int visibleInformationWraps = 0;
+	int notHiddenInformationWraps = 0;
+	int storiesWraps = 0;
+};
+
+[[nodiscard]] SettingsDeepLinkInfoCounts CountSettingsDeepLinkInfoSections(
+	not_null<Window::SessionController *> controller) {
+	auto result = SettingsDeepLinkInfoCounts();
+	const auto widgets = controller->widget()->findChildren<QWidget *>();
+	for (const auto widget : widgets) {
+		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
+		if (!wrap) {
+			continue;
+		}
+		++result.wraps;
+		const auto visible = wrap->isVisible();
+		const auto notHidden = !wrap->isHidden();
+		result.visibleWraps += visible;
+		result.notHiddenWraps += notHidden;
+		const auto &section = wrap->controller()->section();
+		if (section.type() == Info::Section::Type::Settings) {
+			++result.settingsWraps;
+			if (section.settingsType() == Settings::InformationId()) {
+				++result.informationWraps;
+				result.visibleInformationWraps += visible;
+				result.notHiddenInformationWraps += notHidden;
+			}
+		} else if (section.type() == Info::Section::Type::Stories) {
+			++result.storiesWraps;
+		}
+	}
+	return result;
+}
+
 [[nodiscard]] bool
 ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	return ShownInfoSectionMatches(
@@ -2519,6 +2559,37 @@ template <typename Condition>
 			if (storiesSupported || !myProfileStateRestored || !mainSectionShown
 				|| !myAccountIsShown || storiesShown || !layerHidden
 				|| !toastUnchanged) {
+				const auto targetInfoCounts
+					= CountSettingsDeepLinkInfoSections(controller);
+				const auto stockInfoCounts
+					= CountSettingsDeepLinkInfoSections(stockController);
+				const auto targetWindowVisible
+					= controller->widget()->isVisible();
+				const auto targetWindowActive
+					= (app.activeWindow() == &controller->window());
+				std::fprintf(
+					stderr,
+					"Settings deep link my-profile observer counts: "
+					"target-window-visible=%d target-window-active=%d "
+					"target-wraps=%d target-visible-wraps=%d "
+					"target-not-hidden-wraps=%d target-settings-wraps=%d "
+					"target-information-wraps=%d "
+					"target-information-visible=%d "
+					"target-information-not-hidden=%d "
+					"target-stories-wraps=%d stock-wraps=%d "
+					"stock-information-wraps=%d stock-information-visible=%d "
+					"stock-information-not-hidden=%d.\n",
+					targetWindowVisible, targetWindowActive,
+					targetInfoCounts.wraps, targetInfoCounts.visibleWraps,
+					targetInfoCounts.notHiddenWraps,
+					targetInfoCounts.settingsWraps,
+					targetInfoCounts.informationWraps,
+					targetInfoCounts.visibleInformationWraps,
+					targetInfoCounts.notHiddenInformationWraps,
+					targetInfoCounts.storiesWraps, stockInfoCounts.wraps,
+					stockInfoCounts.informationWraps,
+					stockInfoCounts.visibleInformationWraps,
+					stockInfoCounts.notHiddenInformationWraps);
 				std::fprintf(stderr,
 							 "Settings deep link my-profile counts: "
 							 "stories-supported=%d "
