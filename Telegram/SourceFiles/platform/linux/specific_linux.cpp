@@ -236,13 +236,14 @@ bool GenerateDesktopFile(
 
 #ifdef TDESKTOP_TEAGRAM
 	const auto sourceFile = u":/misc/org.teagram.desktop.desktop"_q;
-#else // !TDESKTOP_TEAGRAM
+#else  // !TDESKTOP_TEAGRAM
 	const auto sourceFile = u":/misc/org.telegram.desktop.desktop"_q;
 #endif // TDESKTOP_TEAGRAM
-	const auto targetFile = targetPath
-		+ Platform::Linux::DesktopIntegrationFileNamesFor(
-			QGuiApplication::desktopFileName(),
-			ApplicationIconName()).desktopEntry;
+	const auto targetFile
+		= targetPath
+		  + Platform::Linux::DesktopIntegrationFileNamesFor(
+				QGuiApplication::desktopFileName(), ApplicationIconName())
+				.desktopEntry;
 
 	const auto sourceText = [&] {
 		QFile source(sourceFile);
@@ -406,10 +407,11 @@ bool GenerateServiceFile(bool silent = false) {
 	const auto targetPath = QStandardPaths::writableLocation(
 		QStandardPaths::GenericDataLocation) + u"/dbus-1/services/"_q;
 
-	const auto targetFile = targetPath
-		+ Platform::Linux::DesktopIntegrationFileNamesFor(
-			QGuiApplication::desktopFileName(),
-			ApplicationIconName()).dbusService;
+	const auto targetFile
+		= targetPath
+		  + Platform::Linux::DesktopIntegrationFileNamesFor(
+				QGuiApplication::desktopFileName(), ApplicationIconName())
+				.dbusService;
 
 	DEBUG_LOG(("App Info: placing D-Bus service file to %1").arg(targetPath));
 	if (!QDir(targetPath).exists()) QDir().mkpath(targetPath);
@@ -480,10 +482,8 @@ void InstallLauncher() {
 		"DESKTOPINTEGRATION");
 
 #ifdef TDESKTOP_TEAGRAM
-	if (cAlphaVersion()
-			|| KSandbox::isInside()
-			|| DisabledByEnv) {
-#else // !TDESKTOP_TEAGRAM
+	if (cAlphaVersion() || KSandbox::isInside() || DisabledByEnv) {
+#else  // !TDESKTOP_TEAGRAM
 	if (cAlphaVersion()
 			|| Core::UpdaterDisabled()
 			|| KSandbox::isInside()
@@ -505,8 +505,7 @@ void InstallLauncher() {
 	if (!QDir(appIcons).exists()) QDir().mkpath(appIcons);
 
 	const auto fileNames = Platform::Linux::DesktopIntegrationFileNamesFor(
-		QGuiApplication::desktopFileName(),
-		ApplicationIconName());
+		QGuiApplication::desktopFileName(), ApplicationIconName());
 	const auto icon = appIcons + fileNames.applicationIcon;
 	QFile::remove(icon);
 #ifndef TDESKTOP_TEAGRAM
@@ -520,13 +519,11 @@ void InstallLauncher() {
 	if (!QDir().exists(symbolicIcons)) QDir().mkpath(symbolicIcons);
 
 	const auto monochromeIcons = {
-		std::pair{ u":/gui/icons/tray/monochrome.svg"_q, fileNames.trayIcon },
-		std::pair{
-			u":/gui/icons/tray/monochrome_attention.svg"_q,
-			fileNames.trayAttentionIcon },
-		std::pair{
-			u":/gui/icons/tray/monochrome_mute.svg"_q,
-			fileNames.trayMuteIcon },
+		std::pair{u":/gui/icons/tray/monochrome.svg"_q, fileNames.trayIcon},
+		std::pair{u":/gui/icons/tray/monochrome_attention.svg"_q,
+				  fileNames.trayAttentionIcon},
+		std::pair{u":/gui/icons/tray/monochrome_mute.svg"_q,
+				  fileNames.trayMuteIcon},
 	};
 
 	for (const auto &[source, fileName] : monochromeIcons) {
@@ -609,9 +606,7 @@ void SetApplicationIcon(const QIcon &icon) {
 QString SingleInstanceLocalServerName(const QString &hash) {
 #if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
 	return Platform::Linux::SingleInstanceLocalServerName(
-		hash,
-		QCoreApplication::applicationName(),
-		KSandbox::isSnap(),
+		hash, QCoreApplication::applicationName(), KSandbox::isSnap(),
 		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
 #else // Q_OS_LINUX && Qt >= 6.2.0
 	return QDir::tempPath()
@@ -652,9 +647,9 @@ void AutostartToggle(bool enabled, Fn<void(bool)> done) {
 		if (!enabled) {
 			return QFile::remove(
 				autostart
-					+ Platform::Linux::DesktopIntegrationFileNamesFor(
-						QGuiApplication::desktopFileName(),
-						ApplicationIconName()).desktopEntry);
+				+ Platform::Linux::DesktopIntegrationFileNamesFor(
+					  QGuiApplication::desktopFileName(), ApplicationIconName())
+					  .desktopEntry);
 		}
 
 		return GenerateDesktopFile(
@@ -732,9 +727,8 @@ void start() {
 		const auto instanceHash = QString::fromLatin1(
 			Core::Launcher::Instance().instanceHash().constData());
 		return Platform::Linux::DesktopFileId(
-			instanceHash,
-			!Core::UpdaterDisabled() && !KSandbox::isInside());
-#else // !TDESKTOP_TEAGRAM
+			instanceHash, !Core::UpdaterDisabled() && !KSandbox::isInside());
+#else  // !TDESKTOP_TEAGRAM
 		if (KSandbox::isFlatpak()) {
 			return qEnvironmentVariable("FLATPAK_ID");
 		}
@@ -854,7 +848,7 @@ QString ApplicationIconName() {
 		QGuiApplication::desktopFileName(),
 		QString::fromLatin1(
 			Core::Launcher::Instance().instanceHash().constData()));
-#else // !TDESKTOP_TEAGRAM
+#else  // !TDESKTOP_TEAGRAM
 	static const auto Result = KSandbox::isSnap()
 		? u"snap.%1."_q.arg(qEnvironmentVariable("SNAP_INSTANCE_NAME"))
 		: QGuiApplication::desktopFileName().remove(

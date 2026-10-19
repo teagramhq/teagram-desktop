@@ -20,31 +20,26 @@ struct DesktopIntegrationFileNames {
 	QString trayMuteIcon;
 };
 
-[[nodiscard]] inline QString DesktopFileId(
-		const QString &instanceHash,
-		bool includeInstanceHash) {
+[[nodiscard]] inline QString DesktopFileId(const QString &instanceHash,
+										   bool includeInstanceHash) {
 #ifdef TDESKTOP_TEAGRAM
 	const auto base = u"org.teagram.desktop"_q;
-#else // !TDESKTOP_TEAGRAM
+#else  // !TDESKTOP_TEAGRAM
 	const auto base = u"org.telegram.desktop"_q;
 #endif // TDESKTOP_TEAGRAM
-	return includeInstanceHash
-		? base + u"._"_q + instanceHash
-		: base;
+	return includeInstanceHash ? base + u"._"_q + instanceHash : base;
 }
 
-[[nodiscard]] inline QString DesktopIconName(
-		const QString &desktopFileId,
-		const QString &instanceHash) {
+[[nodiscard]] inline QString DesktopIconName(const QString &desktopFileId,
+											 const QString &instanceHash) {
 	auto result = desktopFileId;
 	result.remove(u"._"_q + instanceHash);
 	return result;
 }
 
 [[nodiscard]] inline DesktopIntegrationFileNames
-DesktopIntegrationFileNamesFor(
-		const QString &desktopFileId,
-		const QString &iconName) {
+DesktopIntegrationFileNamesFor(const QString &desktopFileId,
+							   const QString &iconName) {
 	return {
 		desktopFileId + u".desktop"_q,
 		desktopFileId + u".service"_q,
@@ -55,16 +50,15 @@ DesktopIntegrationFileNamesFor(
 	};
 }
 
-[[nodiscard]] inline QString SingleInstanceLocalServerName(
-		const QString &hash,
-		const QString &applicationName,
-		bool snap,
-		const QString &snapInstanceName) {
+[[nodiscard]] inline QString
+SingleInstanceLocalServerName(const QString &hash,
+							  const QString &applicationName, bool snap,
+							  const QString &snapInstanceName) {
 	if (snap) {
 		const auto result = u"snap.%1.%2"_q.arg(snapInstanceName, hash);
 #ifdef TDESKTOP_TEAGRAM
 		return result + '-' + applicationName;
-#else // !TDESKTOP_TEAGRAM
+#else  // !TDESKTOP_TEAGRAM
 		return result;
 #endif // TDESKTOP_TEAGRAM
 	}
