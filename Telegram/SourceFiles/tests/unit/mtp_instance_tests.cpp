@@ -93,7 +93,7 @@ TEST_CASE(KeyMismatchReportPreservesPinAndEndpointIdentity) {
 		.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps,
 		.discoveryOrigin =
 			"https://telegram-server.tailaa4918.ts.net/"
-			".well-known/telegramd/client",
+			".well-known/teagramd/client",
 	};
 	const auto before = pinned;
 	const auto report = MakePinnedServerFailureReport(

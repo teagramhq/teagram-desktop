@@ -80,7 +80,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 [[nodiscard]] bool ValidDiscoveryMetadata(
 		const CustomServer &server,
-		bool allowRestoredPreviouslyAllowedLiteral = false) {
+		bool allowRestoredMetadata = false) {
 	const auto hasHostname = !server.hostname.empty();
 	const auto hasIp = !server.ip.empty();
 	if (hasHostname && hasIp) {
@@ -97,7 +97,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 	const auto selection = CheckServerSelection(
 		QString::fromStdString(server.serverSelection));
 	const auto restoredPreviouslyAllowedLiteral =
-		allowRestoredPreviouslyAllowedLiteral
+		allowRestoredMetadata
 		&& server.discoveryPolicy == ServerDiscoveryPolicy::LocalDirect
 		&& selection.status == ServerSelectionStatus::PublicIpLiteral
 		&& selection.explicitPort
@@ -116,7 +116,15 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		== ServerDiscoveryPolicy::PublicHttps)
 		? PublicDiscoveryUrl(selection)
 		: (u"local:"_q + selection.normalizedSelection);
-	if (QString::fromStdString(server.discoveryOrigin) != expectedOrigin) {
+	const auto storedOrigin = QString::fromStdString(server.discoveryOrigin);
+	const auto legacyPublicOrigin = (allowRestoredMetadata
+		&& server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps)
+		? (u"https://"_q
+			+ selection.host
+			+ u"/.well-known/telegramd/client"_q)
+		: QString();
+	if (storedOrigin != expectedOrigin
+		&& storedOrigin != legacyPublicOrigin) {
 		return false;
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
@@ -172,7 +180,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 // silently stops applying and the pinned key can be shadowed again.
 [[nodiscard]] const char *CustomServerProblem(
 		const CustomServer &server,
-		bool allowRestoredPreviouslyAllowedLiteral = false) {
+		bool allowRestoredMetadata = false) {
 	if (!server.key) {
 		return "no RSA key";
 	} else if (!server.key->valid()) {
@@ -189,7 +197,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		return "bad port";
 	} else if (!ValidDiscoveryMetadata(
 			server,
-			allowRestoredPreviouslyAllowedLiteral)) {
+			allowRestoredMetadata)) {
 		return "invalid discovery metadata";
 	}
 	return nullptr;

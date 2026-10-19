@@ -899,7 +899,7 @@ QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 	}
 	return u"https://"_q
 		+ selection.host
-		+ u"/.well-known/telegramd/client"_q;
+		+ u"/.well-known/teagramd/client"_q;
 }
 
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
