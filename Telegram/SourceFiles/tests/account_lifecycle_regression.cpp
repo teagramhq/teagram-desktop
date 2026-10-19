@@ -2519,14 +2519,16 @@ template <typename Condition>
 			if (storiesSupported || !myProfileStateRestored || !mainSectionShown
 				|| !myAccountIsShown || storiesShown || !layerHidden
 				|| !toastUnchanged) {
-				std::fprintf(
-					stderr,
-					"Settings deep link my-profile counts: stories-supported=%d "
-					"state-restored=%d main-section=%d my-account=%d stories=%d "
-					"layer-hidden=%d toast-unchanged=%d "
-					"expected=0/1/1/1/0/1/1.\n",
-					storiesSupported, myProfileStateRestored, mainSectionShown,
-					myAccountIsShown, storiesShown, layerHidden, toastUnchanged);
+				std::fprintf(stderr,
+							 "Settings deep link my-profile counts: "
+							 "stories-supported=%d "
+							 "state-restored=%d main-section=%d my-account=%d "
+							 "stories=%d "
+							 "layer-hidden=%d toast-unchanged=%d "
+							 "expected=0/1/1/1/0/1/1.\n",
+							 storiesSupported, myProfileStateRestored,
+							 mainSectionShown, myAccountIsShown, storiesShown,
+							 layerHidden, toastUnchanged);
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
