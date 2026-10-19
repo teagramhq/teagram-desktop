@@ -3,6 +3,11 @@
 The intro flow accepts one ordinary server address. It does not ask for an
 enrollment artifact, a PEM, a fingerprint, or a checksum.
 
+The current client requests the compatibility path
+`/.well-known/telegramd/client`; teagram-server keeps it as an alias while the
+client still uses that route. The local preflight markers below also keep their
+`telegramd` spelling as protocol identifiers across the daemon rename.
+
 A public multi-label DNS name is verified through the platform TLS trust
 store at:
 

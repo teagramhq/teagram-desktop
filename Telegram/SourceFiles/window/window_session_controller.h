@@ -341,6 +341,15 @@ public:
 	featureUnavailableOnServerToastCallsForRegressionTest() const {
 		return _featureUnavailableOnServerToastCallsForRegressionTest;
 	}
+	[[nodiscard]] PeerData *
+	featureUnavailableOnServerPeerForRegressionTest() const {
+		return _featureUnavailableOnServerPeerForRegressionTest;
+	}
+	[[nodiscard]] int boostFlowsOpenedForRegressionTest() const {
+		return _boostFlowsOpenedForRegressionTest;
+	}
+	void applyBoostForRegressionTest(not_null<ChannelData *> channel);
+	void applyBoostsCheckedForRegressionTest(not_null<ChannelData *> channel);
 #endif
 
 	[[nodiscard]] virtual std::shared_ptr<ChatHelpers::Show> uiShow();
@@ -392,6 +401,8 @@ private:
 	const not_null<Main::Session*> _session;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _featureUnavailableOnServerToastCallsForRegressionTest = 0;
+	PeerData *_featureUnavailableOnServerPeerForRegressionTest = nullptr;
+	int _boostFlowsOpenedForRegressionTest = 0;
 #endif
 
 	MTP::Sender _api;

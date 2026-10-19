@@ -756,7 +756,12 @@ void SessionNavigation::showPeerByLinkResolved(
 			info.startToken,
 			info.startAdminRights);
 	} else if (resolveType == ResolveType::Boost && peer->isChannel()) {
-		resolveBoostState(peer->asChannel());
+		if (session().paidFeaturesSupported()) {
+			resolveBoostState(peer->asChannel());
+		} else {
+			showPeerHistory(peer, params, msgId);
+			showFeatureUnavailableOnServerToast();
+		}
 	} else if (peer->isForum()) {
 		if (!msgId || !useRequestedMessageId) {
 			applyBotStartToken();
@@ -874,6 +879,10 @@ void SessionNavigation::showPeerByLinkResolved(
 void SessionNavigation::resolveBoostState(
 		not_null<ChannelData*> channel,
 		int boostsToLift) {
+	if (!session().paidFeaturesSupported()) {
+		showFeatureUnavailableOnServerToast();
+		return;
+	}
 	_boostsToLift = boostsToLift;
 	if (_boostStateResolving == channel) {
 		return;
@@ -885,15 +894,22 @@ void SessionNavigation::resolveBoostState(
 		if (base::take(_boostStateResolving) != channel) {
 			return;
 		}
+		if (!session().paidFeaturesSupported()) {
+			showFeatureUnavailableOnServerToast();
+			return;
+		}
 		const auto boosted = std::make_shared<bool>();
 		channel->updateLevelHint(result.data().vlevel().v);
 		const auto submit = [=](Fn<void(Ui::BoostCounters)> done) {
 			applyBoost(channel, [=](Ui::BoostCounters counters) {
-				*boosted = true;
+				*boosted = session().paidFeaturesSupported();
 				done(counters);
 			});
 		};
 		const auto lifting = base::take(_boostsToLift);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		++_boostFlowsOpenedForRegressionTest;
+#endif
 		const auto box = uiShow()->show(Box(Ui::BoostBox, Ui::BoostBoxData{
 			.name = channel->name(),
 			.boost = ParseBoostCounters(result),
@@ -911,6 +927,10 @@ void SessionNavigation::resolveBoostState(
 		}
 	}).fail([=](const MTP::Error &error) {
 		_boostStateResolving = nullptr;
+		if (!session().paidFeaturesSupported()) {
+			showFeatureUnavailableOnServerToast();
+			return;
+		}
 		showToast(u"Error: "_q + error.type());
 	}).send();
 }
@@ -1106,117 +1126,155 @@ void SessionNavigation::resolveConferenceCall(
 void SessionNavigation::applyBoost(
 		not_null<ChannelData*> channel,
 		Fn<void(Ui::BoostCounters)> done) {
-	_api.request(MTPpremium_GetMyBoosts(
-	)).done([=](const MTPpremium_MyBoosts &result) {
-		const auto &data = result.data();
-		_session->data().processUsers(data.vusers());
-		_session->data().processChats(data.vchats());
-		const auto slots = ParseForChannelBoostSlots(
-			channel,
-			data.vmy_boosts().v);
-		if (!slots.free.empty()) {
-			applyBoostsChecked(channel, { slots.free.front() }, done);
-		} else if (slots.other.empty()) {
-			if (!slots.already.empty()) {
-				if (const auto receive = BoostsForGift(_session)) {
-					const auto again = true;
+	if (!session().paidFeaturesSupported()) {
+		showFeatureUnavailableOnServerToast();
+		done({});
+		return;
+	}
+	_api.request(MTPpremium_GetMyBoosts())
+		.done([=](const MTPpremium_MyBoosts &result) {
+			if (!session().paidFeaturesSupported()) {
+				showFeatureUnavailableOnServerToast();
+				done({});
+				return;
+			}
+			const auto &data = result.data();
+			_session->data().processUsers(data.vusers());
+			_session->data().processChats(data.vchats());
+			const auto slots
+				= ParseForChannelBoostSlots(channel, data.vmy_boosts().v);
+			if (!slots.free.empty()) {
+				applyBoostsChecked(channel, {slots.free.front()}, done);
+			} else if (slots.other.empty()) {
+				if (!slots.already.empty()) {
+					if (const auto receive = BoostsForGift(_session)) {
+						const auto again = true;
+						const auto name = channel->name();
+						uiShow()->show(
+							Box(Ui::GiftForBoostsBox, name, receive, again));
+					} else {
+						uiShow()->show(
+							Box(Ui::BoostBoxAlready, channel->isMegagroup()));
+					}
+				} else if (!_session->premium()) {
+					const auto group = channel->isMegagroup();
+					uiShow()->show(Box(Ui::PremiumForBoostsBox, group, [=] {
+						const auto id = peerToChannel(channel->id).bare;
+						Settings::ShowPremium(parentController(),
+											  "channel_boost__"
+												  + QString::number(id));
+					}));
+				} else if (const auto receive = BoostsForGift(_session)) {
+					const auto again = false;
 					const auto name = channel->name();
 					uiShow()->show(
 						Box(Ui::GiftForBoostsBox, name, receive, again));
 				} else {
 					uiShow()->show(
-						Box(Ui::BoostBoxAlready, channel->isMegagroup()));
+						Box(Ui::GiftedNoBoostsBox, channel->isMegagroup()));
 				}
-			} else if (!_session->premium()) {
-				const auto group = channel->isMegagroup();
-				uiShow()->show(Box(Ui::PremiumForBoostsBox, group, [=] {
-					const auto id = peerToChannel(channel->id).bare;
-					Settings::ShowPremium(
-						parentController(),
-						"channel_boost__" + QString::number(id));
-				}));
-			} else if (const auto receive = BoostsForGift(_session)) {
-				const auto again = false;
-				const auto name = channel->name();
-				uiShow()->show(
-					Box(Ui::GiftForBoostsBox, name, receive, again));
+				done({});
 			} else {
-				uiShow()->show(
-					Box(Ui::GiftedNoBoostsBox, channel->isMegagroup()));
-			}
-			done({});
-		} else {
-			const auto weak = std::make_shared<base::weak_qptr<Ui::BoxContent>>();
-			const auto reassign = [=](
-					std::vector<int> slots,
-					int groups,
-					int channels) {
-				const auto count = int(slots.size());
-				const auto callback = [=](Ui::BoostCounters counters) {
-					if (const auto strong = weak->get()) {
-						strong->closeBox();
-					}
-					done(counters);
-					uiShow()->showToast(tr::lng_boost_reassign_done(
-						tr::now,
-						lt_count,
-						count,
-						lt_channels,
-						(!groups
-							? tr::lng_boost_reassign_channels
-							: !channels
-							? tr::lng_boost_reassign_groups
-							: tr::lng_boost_reassign_mixed)(
-									tr::now,
-									lt_count,
-									groups + channels)));
+				const auto weak
+					= std::make_shared<base::weak_qptr<Ui::BoxContent>>();
+				const auto reassign = [=](std::vector<int> slots, int groups,
+										  int channels) {
+					const auto count = int(slots.size());
+					const auto callback = [=](Ui::BoostCounters counters) {
+						if (const auto strong = weak->get()) {
+							strong->closeBox();
+						}
+						done(counters);
+						uiShow()->showToast(tr::lng_boost_reassign_done(
+							tr::now, lt_count, count, lt_channels,
+							(!groups	 ? tr::lng_boost_reassign_channels
+							 : !channels ? tr::lng_boost_reassign_groups
+										 : tr::lng_boost_reassign_mixed)(
+								tr::now, lt_count, groups + channels)));
+					};
+					applyBoostsChecked(channel, slots,
+									   crl::guard(this, callback));
 				};
-				applyBoostsChecked(
-					channel,
-					slots,
-					crl::guard(this, callback));
-			};
-			*weak = uiShow()->show(ReassignBoostsBox(
-				channel,
-				slots.other,
-				reassign,
-				[=] { done({}); }));
-		}
-	}).fail([=](const MTP::Error &error) {
-		const auto type = error.type();
-		showToast(u"Error: "_q + type);
-		done({});
-	}).handleFloodErrors().send();
+				*weak = uiShow()->show(ReassignBoostsBox(
+					channel, slots.other, reassign, [=] { done({}); }));
+			}
+		})
+		.fail([=](const MTP::Error &error) {
+			if (!session().paidFeaturesSupported()) {
+				showFeatureUnavailableOnServerToast();
+				done({});
+				return;
+			}
+			const auto type = error.type();
+			showToast(u"Error: "_q + type);
+			done({});
+		})
+		.handleFloodErrors()
+		.send();
 }
 
 void SessionNavigation::applyBoostsChecked(
 		not_null<ChannelData*> channel,
 		std::vector<int> slots,
 		Fn<void(Ui::BoostCounters)> done) {
+	if (!session().paidFeaturesSupported()) {
+		showFeatureUnavailableOnServerToast();
+		done({});
+		return;
+	}
 	auto mtp = MTP_vector_from_range(ranges::views::all(
 		slots
 	) | ranges::views::transform([](int slot) {
 		return MTP_int(slot);
 	}));
 	_api.request(MTPpremium_ApplyBoost(
-		MTP_flags(MTPpremium_ApplyBoost::Flag::f_slots),
-		std::move(mtp),
-		channel->input()
-	)).done([=](const MTPpremium_MyBoosts &result) {
-		_api.request(MTPpremium_GetBoostsStatus(
-			channel->input()
-		)).done([=](const MTPpremium_BoostsStatus &result) {
-			channel->updateLevelHint(result.data().vlevel().v);
-			done(ParseBoostCounters(result));
-		}).fail([=](const MTP::Error &error) {
+					 MTP_flags(MTPpremium_ApplyBoost::Flag::f_slots),
+					 std::move(mtp), channel->input()))
+		.done([=](const MTPpremium_MyBoosts &result) {
+			if (!session().paidFeaturesSupported()) {
+				showFeatureUnavailableOnServerToast();
+				done({});
+				return;
+			}
+			_api.request(MTPpremium_GetBoostsStatus(channel->input()))
+				.done([=](const MTPpremium_BoostsStatus &result) {
+					channel->updateLevelHint(result.data().vlevel().v);
+					done(ParseBoostCounters(result));
+				})
+				.fail([=](const MTP::Error &error) {
+					if (!session().paidFeaturesSupported()) {
+						showFeatureUnavailableOnServerToast();
+						done({});
+						return;
+					}
+					showToast(u"Error: "_q + error.type());
+					done({});
+				})
+				.send();
+		})
+		.fail([=](const MTP::Error &error) {
+			if (!session().paidFeaturesSupported()) {
+				showFeatureUnavailableOnServerToast();
+				done({});
+				return;
+			}
 			showToast(u"Error: "_q + error.type());
 			done({});
-		}).send();
-	}).fail([=](const MTP::Error &error) {
-		showToast(u"Error: "_q + error.type());
-		done({});
-	}).send();
+		})
+		.send();
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void SessionNavigation::applyBoostForRegressionTest(
+	not_null<ChannelData *> channel) {
+	applyBoost(channel, [](Ui::BoostCounters) {});
+}
+
+void SessionNavigation::applyBoostsCheckedForRegressionTest(
+	not_null<ChannelData *> channel) {
+	applyBoostsChecked(channel, {1}, [](Ui::BoostCounters) {});
+}
+#endif
 
 void SessionNavigation::joinVoiceChatFromLink(
 		not_null<PeerData*> peer,
@@ -1578,6 +1636,8 @@ auto SessionNavigation::showToast(
 void SessionNavigation::showFeatureUnavailableOnServerToast() {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_featureUnavailableOnServerToastCallsForRegressionTest;
+	_featureUnavailableOnServerPeerForRegressionTest
+		= parentController()->activeChatCurrent().peer();
 #endif
 	showToast(tr::lng_server_feature_unavailable(tr::now));
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
