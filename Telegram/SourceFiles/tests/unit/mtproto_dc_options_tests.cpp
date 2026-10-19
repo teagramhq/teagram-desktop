@@ -543,9 +543,8 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 		CHECK_EQ(server->ip, "8.8.8.88");
 		CHECK_EQ(server->serverSelection, "server.example.com");
 		CHECK(server->discoveryPolicy == ServerDiscoveryPolicy::PublicHttps);
-		CHECK_EQ(
-			server->discoveryOrigin,
-			"https://server.example.com/.well-known/teagramd/client");
+		CHECK_EQ(server->discoveryOrigin,
+				 "https://server.example.com/.well-known/teagramd/client");
 
 		auto options = DcOptions(Environment::Production);
 		CHECK(options.setCustomServer(*server));
@@ -572,15 +571,15 @@ TEST_CASE(PublicHttpsLegacyDiscoveryOriginRestoresStoredEndpoint) {
 	server.port = 8443;
 	server.serverSelection = "server.example.com";
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://server.example.com/.well-known/teagramd/client";
+	server.discoveryOrigin
+		= "https://server.example.com/.well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 
 	auto serialized = options.serialize();
-	const auto currentOrigin = QByteArray(
-		"https://server.example.com/.well-known/teagramd/client");
-	const auto legacyOrigin = QByteArray(
-		"https://server.example.com/.well-known/telegramd/client");
+	const auto currentOrigin
+		= QByteArray("https://server.example.com/.well-known/teagramd/client");
+	const auto legacyOrigin
+		= QByteArray("https://server.example.com/.well-known/telegramd/client");
 	const auto originOffset = serialized.indexOf(currentOrigin);
 	CHECK(originOffset >= int(sizeof(qint32)));
 	if (originOffset < int(sizeof(qint32))) {
@@ -711,9 +710,8 @@ TEST_CASE(PublicMagicDnsTailnetBindingSurvivesSerialization) {
 	server.port = 2443;
 	server.serverSelection = "telegram-server.tailaa4918.ts.net";
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://telegram-server.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://telegram-server.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 
 	auto restored = DcOptions(Environment::Production);
@@ -858,9 +856,8 @@ TEST_CASE(StartProxyCheckUsesVettedLiteralForAllTransportPaths) {
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://telegram-server.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://telegram-server.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 
@@ -936,9 +933,8 @@ TEST_CASE(StartProxyCheckRejectsFailedHostnameResolution) {
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://telegram-server.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://telegram-server.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 
@@ -1055,9 +1051,8 @@ TEST_CASE(HostnameConnectionRetriesWithFreshResolution) {
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://telegram-server.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://telegram-server.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 
@@ -1121,9 +1116,8 @@ TEST_CASE(DefaultHostnameResolverDoesNotReusePreviousAnswer) {
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://resolver-test.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://resolver-test.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 
@@ -1205,9 +1199,8 @@ TEST_CASE(DefaultHostnameResolverUsesSystemResolver) {
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://system-resolver-fixture.test/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://system-resolver-fixture.test/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 	details::SetServerHostnameResolverTestLookup({});
@@ -1315,9 +1308,8 @@ void RunDefaultResolverOwnerRemovalCase(
 	server.port = 2443;
 	server.serverSelection = server.hostname;
 	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
-	server.discoveryOrigin =
-		"https://owner-removal-test.tailaa4918.ts.net/"
-		".well-known/teagramd/client";
+	server.discoveryOrigin = "https://owner-removal-test.tailaa4918.ts.net/"
+							 ".well-known/teagramd/client";
 	CHECK(options.setCustomServer(server));
 	details::UnitProxyCheckOptions = &options;
 	UnitHostResolver resolver;

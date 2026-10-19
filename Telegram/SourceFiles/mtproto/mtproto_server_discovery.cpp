@@ -897,9 +897,7 @@ QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 		|| selection.policy != ServerDiscoveryPolicy::PublicHttps) {
 		return {};
 	}
-	return u"https://"_q
-		+ selection.host
-		+ u"/.well-known/teagramd/client"_q;
+	return u"https://"_q + selection.host + u"/.well-known/teagramd/client"_q;
 }
 
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {

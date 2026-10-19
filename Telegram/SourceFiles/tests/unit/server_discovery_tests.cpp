@@ -1495,9 +1495,8 @@ TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
 
 TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
-	CHECK_EQ(
-		PublicDiscoveryUrl(selection),
-		u"https://server.example.com/.well-known/teagramd/client"_q);
+	CHECK_EQ(PublicDiscoveryUrl(selection),
+			 u"https://server.example.com/.well-known/teagramd/client"_q);
 }
 
 TEST_CASE(DiscoveryAttemptsAreLimitedAndReleased) {
