@@ -2348,17 +2348,15 @@ template <typename Condition>
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
 		window->activate();
-		return WaitForSettingsDeepLinkCondition([&] {
-			return app.activeWindow() == window;
-		});
+		return WaitForSettingsDeepLinkCondition(
+			[&] { return app.activeWindow() == window; });
 	};
 
 	if (!activateSettingsWindow(&stockController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link activation counts: active-window=%d "
-			"expected=1.\n",
-			app.activeWindow() == &stockController->window());
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2369,11 +2367,10 @@ template <typename Condition>
 		return false;
 	}
 	if (!activateSettingsWindow(&pinnedController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link activation counts: active-window=%d "
-			"expected=1.\n",
-			app.activeWindow() == &pinnedController->window());
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &pinnedController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
@@ -2384,11 +2381,10 @@ template <typename Condition>
 		return false;
 	}
 	if (!activateSettingsWindow(&stockController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link activation counts: active-window=%d "
-			"expected=1.\n",
-			app.activeWindow() == &stockController->window());
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2400,11 +2396,10 @@ template <typename Condition>
 	}
 
 	if (!activateSettingsWindow(&pinnedController->window())) {
-		std::fprintf(
-			stderr,
-			"Settings deep link activation counts: active-window=%d "
-			"expected=1.\n",
-			app.activeWindow() == &pinnedController->window());
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &pinnedController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
