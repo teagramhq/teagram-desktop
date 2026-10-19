@@ -290,7 +290,7 @@ bool GenerateDesktopFile(
 		if (target.has_key(group, "TryExec", nullptr)) {
 			target.set_string(
 				group, "TryExec",
-				Platform::Linux::DesktopEntryCommandLine({executable})
+				Platform::Linux::DesktopEntryTryExecValue(executable)
 					.toStdString());
 		}
 

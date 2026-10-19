@@ -50,6 +50,11 @@ DesktopEntryCommandLine(const QStringList &arguments) {
 }
 
 [[nodiscard]] inline QString
+DesktopEntryTryExecValue(const QString &executable) {
+	return executable;
+}
+
+[[nodiscard]] inline QString
 DBusServiceCommandLine(const QStringList &arguments) {
 	return KShell::joinArgs(arguments);
 }

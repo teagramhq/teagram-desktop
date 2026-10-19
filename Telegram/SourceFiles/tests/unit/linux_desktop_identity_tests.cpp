@@ -88,3 +88,12 @@ TEST_CASE(LinuxTeagramLauncherCommandsUseAbsoluteExecutableOutsidePath) {
 	CHECK_EQ(Platform::Linux::DBusServiceCommandLine({executable}),
 			 u"/home/user/Downloads/Teagram"_q);
 }
+
+TEST_CASE(LinuxTeagramTryExecRemainsRawForSpacedPath) {
+	const auto executable = u"/home/user/Downloads/Teagram Build/Teagram"_q;
+	CHECK_EQ(Platform::Linux::DesktopEntryTryExecValue(executable), executable);
+	const auto exec = Platform::Linux::DesktopEntryCommandLine(
+		{executable, u"--"_q, u"%U"_q});
+	CHECK(KShell::splitArgs(exec)
+		  == QStringList({executable, u"--"_q, u"%U"_q}));
+}
