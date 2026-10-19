@@ -2063,7 +2063,7 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
 	for (const auto widget : widgets) {
 		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && !wrap->isHidden()
+		if (wrap && wrap->isVisible()
 			&& matches(wrap->controller()->section())) {
 			return true;
 		}
@@ -2482,6 +2482,8 @@ template <typename Condition>
 			const auto toastBefore
 				= controller
 					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto storiesSupported
+				= controller->session().storiesSupported();
 			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
 								  contextFor(controller))) {
 				return false;
@@ -2496,9 +2498,11 @@ template <typename Condition>
 			};
 			const auto
 				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
-					return controller->content()->isMainSectionShown()
+					return !storiesSupported
+						   && controller->content()->isMainSectionShown()
 						   && myAccountShown()
 						   && !ShownStoriesSection(controller)
+						   && !controller->isLayerShown()
 						   && (controller
 								   ->featureUnavailableOnServerToastCallsForRegressionTest()
 							   == toastBefore);
@@ -2507,19 +2511,22 @@ template <typename Condition>
 				= controller->content()->isMainSectionShown();
 			const auto myAccountIsShown = myAccountShown();
 			const auto storiesShown = ShownStoriesSection(controller);
+			const auto layerHidden = !controller->isLayerShown();
 			const auto toastUnchanged
 				= (controller
 					   ->featureUnavailableOnServerToastCallsForRegressionTest()
 				   == toastBefore);
-			if (!myProfileStateRestored || !mainSectionShown
-				|| !myAccountIsShown || storiesShown || !toastUnchanged) {
+			if (storiesSupported || !myProfileStateRestored || !mainSectionShown
+				|| !myAccountIsShown || storiesShown || !layerHidden
+				|| !toastUnchanged) {
 				std::fprintf(
 					stderr,
-					"Settings deep link my-profile counts: main-section=%d "
-					"my-account=%d stories=%d toast-unchanged=%d "
-					"expected=1/1/0/1.\n",
-					mainSectionShown, myAccountIsShown, storiesShown,
-					toastUnchanged);
+					"Settings deep link my-profile counts: stories-supported=%d "
+					"state-restored=%d main-section=%d my-account=%d stories=%d "
+					"layer-hidden=%d toast-unchanged=%d "
+					"expected=0/1/1/1/0/1/1.\n",
+					storiesSupported, myProfileStateRestored, mainSectionShown,
+					myAccountIsShown, storiesShown, layerHidden, toastUnchanged);
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
