@@ -28,8 +28,7 @@ inline bool PreventsQuit(Core::QuitReason reason) {
 	return false;
 }
 
-inline void ActivateThisProcess(not_null<QWidget*>) {
-}
+inline void ActivateThisProcess(not_null<QWidget *>) {}
 
 // 1 - secondary, 2 - primary.
 void SetWindowPriority(not_null<QWidget*> window, uint32 priority);

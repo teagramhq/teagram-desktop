@@ -27,7 +27,7 @@ inline bool SkipTaskbarSupported() {
 	return false;
 }
 
-void ActivateThisProcess(not_null<QWidget*> window);
+void ActivateThisProcess(not_null<QWidget *> window);
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
 	return 1;

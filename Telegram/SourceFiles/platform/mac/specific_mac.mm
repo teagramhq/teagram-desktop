@@ -279,7 +279,7 @@ bool PreventsQuit(Core::QuitReason reason) {
 				ConfirmQuit::QuitKeysString()));
 }
 
-void ActivateThisProcess(not_null<QWidget*> window) {
+void ActivateThisProcess(not_null<QWidget *> window) {
 	objc_activateProgram(window->winId());
 }
 
