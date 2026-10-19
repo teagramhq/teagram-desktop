@@ -2456,32 +2456,22 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 								  contextFor(controller))) {
 				return false;
 			}
-			const auto myAccountShown = WaitForRegressionCondition([&] {
-				return controller->content()->isMainSectionShown()
-					   && ShownInfoSectionMatches(
-						   controller, [](const Info::Section &section) {
-							   return (section.type()
-									   == Info::Section::Type::Settings)
-									  && (section.settingsType()
-										  == Settings::InformationId());
-						   });
-			});
-			const auto storiesShown = ShownStoriesSection(controller);
-			const auto toastUnchanged
-				= (controller
-					   ->featureUnavailableOnServerToastCallsForRegressionTest()
-				   == toastBefore);
-			if (!myAccountShown || storiesShown || !toastUnchanged) {
+			QCoreApplication::processEvents();
+			const auto myAccountShown = ShownInfoSectionMatches(
+				controller, [](const Info::Section &section) {
+					return (section.type() == Info::Section::Type::Settings)
+						   && (section.settingsType()
+							   == Settings::InformationId());
+				});
+			if (!controller->content()->isMainSectionShown() || !myAccountShown
+				|| ShownStoriesSection(controller)
+				|| (controller
+						->featureUnavailableOnServerToastCallsForRegressionTest()
+					!= toastBefore)) {
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
-					"open My Account on an unsupported session: controller=%p "
-					"stories-supported=%d main-section=%d my-account=%d "
-					"stories=%d toast-unchanged=%d.\n",
-					static_cast<void *>(controller.get()),
-					controller->session().storiesSupported(),
-					controller->content()->isMainSectionShown(), myAccountShown,
-					storiesShown, toastUnchanged);
+					"open My Account on an unsupported session.\n");
 				return false;
 			}
 			resetController(controller);
