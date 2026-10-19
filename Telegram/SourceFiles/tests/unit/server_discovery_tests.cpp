@@ -1469,8 +1469,8 @@ TEST_CASE(ServerWidgetDiscoveryLimitIsRetryable) {
 }
 
 TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
-	QNetworkRequest request(QUrl(
-		u"https://example.com/.well-known/telegramd/client"_q));
+	const auto selection = CheckServerSelection(u"example.com"_q);
+	QNetworkRequest request(QUrl(PublicDiscoveryUrl(selection)));
 	ConfigurePublicDiscoveryRequest(request);
 	CHECK(request.attribute(QNetworkRequest::CookieLoadControlAttribute).toInt()
 		== int(QNetworkRequest::Manual));
@@ -1491,6 +1491,12 @@ TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
 	CHECK(hasUserAgent);
 	const auto userAgent = request.rawHeader(QByteArray("User-Agent"));
 	CHECK_EQ(userAgent, QByteArrayLiteral("-"));
+}
+
+TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	CHECK_EQ(PublicDiscoveryUrl(selection),
+			 u"https://server.example.com/.well-known/teagramd/client"_q);
 }
 
 TEST_CASE(DiscoveryAttemptsAreLimitedAndReleased) {
