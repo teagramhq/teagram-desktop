@@ -2486,18 +2486,40 @@ template <typename Condition>
 								  contextFor(controller))) {
 				return false;
 			}
-			QCoreApplication::processEvents();
-			const auto myAccountShown = ShownInfoSectionMatches(
-				controller, [](const Info::Section &section) {
-					return (section.type() == Info::Section::Type::Settings)
-						   && (section.settingsType()
-							   == Settings::InformationId());
+			const auto myAccountShown = [&] {
+				return ShownInfoSectionMatches(
+					controller, [](const Info::Section &section) {
+						return (section.type() == Info::Section::Type::Settings)
+							   && (section.settingsType()
+								   == Settings::InformationId());
+					});
+			};
+			const auto
+				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
+					return controller->content()->isMainSectionShown()
+						   && myAccountShown()
+						   && !ShownStoriesSection(controller)
+						   && (controller
+								   ->featureUnavailableOnServerToastCallsForRegressionTest()
+							   == toastBefore);
 				});
-			if (!controller->content()->isMainSectionShown() || !myAccountShown
-				|| ShownStoriesSection(controller)
-				|| (controller
-						->featureUnavailableOnServerToastCallsForRegressionTest()
-					!= toastBefore)) {
+			const auto mainSectionShown
+				= controller->content()->isMainSectionShown();
+			const auto myAccountIsShown = myAccountShown();
+			const auto storiesShown = ShownStoriesSection(controller);
+			const auto toastUnchanged
+				= (controller
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == toastBefore);
+			if (!myProfileStateRestored || !mainSectionShown
+				|| !myAccountIsShown || storiesShown || !toastUnchanged) {
+				std::fprintf(
+					stderr,
+					"Settings deep link my-profile counts: main-section=%d "
+					"my-account=%d stories=%d toast-unchanged=%d "
+					"expected=1/1/0/1.\n",
+					mainSectionShown, myAccountIsShown, storiesShown,
+					toastUnchanged);
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
