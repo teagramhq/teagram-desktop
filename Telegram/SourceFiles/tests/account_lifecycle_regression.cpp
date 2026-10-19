@@ -2566,35 +2566,37 @@ template <typename Condition>
 			const auto myProfileRouteRequested = (myProfileRouteCount == 1);
 			const auto informationFallbackRequested
 				= (informationFallbackCount == 1);
-			const auto myAccountShown = [&] {
-				const auto counts = controller->content()
-										->sectionStackCountsForRegressionTest();
+			const auto myAccountShown = [&](const auto &counts) {
 				return (counts.mainSettings == 1)
 					   && (counts.mainInformation == 1)
 					   && (counts.mainSectionVisible == 1)
-					   && (counts.mainSectionAnimating == 1
-						   || ShownInfoSectionMatches(
-							   controller, [](const Info::Section &section) {
-								   return (section.type()
-										   == Info::Section::Type::Settings)
-										  && (section.settingsType()
-											  == Settings::InformationId());
-							   }));
+					   && (counts.mainSectionAnimating == 0)
+					   && ShownInfoSectionMatches(
+						   controller, [](const Info::Section &section) {
+							   return (section.type()
+									   == Info::Section::Type::Settings)
+									  && (section.settingsType()
+										  == Settings::InformationId());
+						   });
 			};
 			const auto
 				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
 					return !storiesSupported
 						   && controller->content()->isMainSectionShown()
-						   && myAccountShown()
+						   && myAccountShown(
+							   controller->content()
+								   ->sectionStackCountsForRegressionTest())
 						   && !ShownStoriesSection(controller)
 						   && !controller->isLayerShown()
 						   && (controller
 								   ->featureUnavailableOnServerToastCallsForRegressionTest()
 							   == toastBefore);
 				});
+			const auto stackCountsAtDeadline
+				= controller->content()->sectionStackCountsForRegressionTest();
 			const auto mainSectionShown
 				= controller->content()->isMainSectionShown();
-			const auto myAccountIsShown = myAccountShown();
+			const auto myAccountIsShown = myAccountShown(stackCountsAtDeadline);
 			const auto storiesShown = ShownStoriesSection(controller);
 			const auto layerHidden = !controller->isLayerShown();
 			const auto toastUnchanged
@@ -2609,9 +2611,6 @@ template <typename Condition>
 					= CountSettingsDeepLinkInfoSections(controller);
 				const auto stockInfoCounts
 					= CountSettingsDeepLinkInfoSections(stockController);
-				const auto stackCounts
-					= controller->content()
-						  ->sectionStackCountsForRegressionTest();
 				const auto targetWindowVisible
 					= controller->widget()->isVisible();
 				const auto targetWindowActive
@@ -2633,17 +2632,21 @@ template <typename Condition>
 					"main-settings=%d main-information=%d main-stories=%d "
 					"restore-conditions-missing=%d.\n",
 					myProfileRouteCount, informationFallbackCount,
-					stackCounts.navigationDepth,
-					stackCounts.navigationTopHistory,
-					stackCounts.navigationTopSection,
-					stackCounts.navigationTopInfo,
-					stackCounts.navigationTopSettings,
-					stackCounts.navigationTopInformation,
-					stackCounts.navigationTopStories, stackCounts.mainHistory,
-					stackCounts.mainOther, stackCounts.mainInfo,
-					stackCounts.mainSectionVisible,
-					stackCounts.mainSectionAnimating, stackCounts.mainSettings,
-					stackCounts.mainInformation, stackCounts.mainStories,
+					stackCountsAtDeadline.navigationDepth,
+					stackCountsAtDeadline.navigationTopHistory,
+					stackCountsAtDeadline.navigationTopSection,
+					stackCountsAtDeadline.navigationTopInfo,
+					stackCountsAtDeadline.navigationTopSettings,
+					stackCountsAtDeadline.navigationTopInformation,
+					stackCountsAtDeadline.navigationTopStories,
+					stackCountsAtDeadline.mainHistory,
+					stackCountsAtDeadline.mainOther,
+					stackCountsAtDeadline.mainInfo,
+					stackCountsAtDeadline.mainSectionVisible,
+					stackCountsAtDeadline.mainSectionAnimating,
+					stackCountsAtDeadline.mainSettings,
+					stackCountsAtDeadline.mainInformation,
+					stackCountsAtDeadline.mainStories,
 					restoreConditionsMissing);
 				std::fprintf(
 					stderr,
