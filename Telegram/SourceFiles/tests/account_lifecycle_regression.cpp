@@ -2346,10 +2346,19 @@ template <typename Condition>
 			  }
 			  return true;
 		  };
+	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		window->activate();
+		return WaitForSettingsDeepLinkCondition([&] {
+			return app.activeWindow() == window;
+		});
+	};
 
-	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &stockController->window()) {
+	if (!activateSettingsWindow(&stockController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link activation counts: active-window=%d "
+			"expected=1.\n",
+			app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2359,9 +2368,12 @@ template <typename Condition>
 	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
-	pinnedController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &pinnedController->window()) {
+	if (!activateSettingsWindow(&pinnedController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link activation counts: active-window=%d "
+			"expected=1.\n",
+			app.activeWindow() == &pinnedController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
@@ -2371,9 +2383,12 @@ template <typename Condition>
 	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
-	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &stockController->window()) {
+	if (!activateSettingsWindow(&stockController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link activation counts: active-window=%d "
+			"expected=1.\n",
+			app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2384,8 +2399,18 @@ template <typename Condition>
 		return false;
 	}
 
-	pinnedController->window().activate();
-	QCoreApplication::processEvents();
+	if (!activateSettingsWindow(&pinnedController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link activation counts: active-window=%d "
+			"expected=1.\n",
+			app.activeWindow() == &pinnedController->window());
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before the unsupported-route checks.\n");
+		return false;
+	}
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
