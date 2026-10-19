@@ -8,7 +8,6 @@ Terminal=false
 StartupWMClass=Teagram
 Type=Application
 Categories=Chat;Network;InstantMessaging;Qt;
-MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;
 Keywords=teagram;chat;im;messaging;messenger;sms;
 Actions=quit;
 DBusActivatable=true

@@ -67,6 +67,9 @@ TEST_CASE(LinuxTeagramDesktopIdentityUsesPrivateNames) {
 	desktop.beginGroup(u"Desktop Entry"_q);
 	CHECK_EQ(desktop.value(u"Name"_q).toString(), u"Teagram"_q);
 	CHECK_EQ(desktop.value(u"Icon"_q).toString(), u"org.teagram.desktop"_q);
+	const auto mimeTypes = desktop.value(u"MimeType"_q).toString();
+	CHECK(!mimeTypes.contains(u"x-scheme-handler/tg"_q));
+	CHECK(!mimeTypes.contains(u"x-scheme-handler/tonsite"_q));
 	desktop.endGroup();
 
 	auto service = QSettings(QDir(xdg).filePath(staticFiles.dbusService),
