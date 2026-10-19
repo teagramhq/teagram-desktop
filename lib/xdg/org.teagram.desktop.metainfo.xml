@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component type="desktop">
+    <id>org.teagram.desktop</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0</project_license>
+    <name>Teagram</name>
+    <summary>Messaging client for Teagram servers</summary>
+    <description>
+        <p>Teagram is a desktop client for your self-hosted messaging server.</p>
+    </description>
+    <launchable type="desktop-id">org.teagram.desktop.desktop</launchable>
+</component>

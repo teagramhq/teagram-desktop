@@ -1,0 +1,22 @@
+[Desktop Entry]
+Name=Teagram
+Comment=Messaging client for Teagram servers
+TryExec=Teagram
+Exec=Teagram -- %U
+Icon=org.teagram.desktop
+Terminal=false
+StartupWMClass=Teagram
+Type=Application
+Categories=Chat;Network;InstantMessaging;Qt;
+MimeType=x-scheme-handler/tg;x-scheme-handler/tonsite;
+Keywords=teagram;chat;im;messaging;messenger;sms;
+Actions=quit;
+DBusActivatable=true
+SingleMainWindow=true
+X-GNOME-UsesNotifications=true
+X-GNOME-SingleWindow=true
+
+[Desktop Action quit]
+Exec=Teagram -quit
+Name=Quit Teagram
+Icon=application-exit

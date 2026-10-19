@@ -38,6 +38,7 @@ target_compile_definitions(test_unit PRIVATE
     TDESKTOP_API_HASH=${TDESKTOP_API_HASH}
     "TDESKTOP_TEST_PYTHON_EXECUTABLE=\"${teagram_test_python_executable}\""
     "TDESKTOP_TEST_TEAGRAM_UPDATE_PRODUCER=\"${teagram_test_update_manifest_script}\""
+    "TDESKTOP_TEST_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\""
 )
 
 # Xcode links every object from an object-library dependency into each
@@ -184,6 +185,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     PRIVATE
         platform/linux/app_data_path.cpp
         tests/unit/linux_data_path_tests.cpp
+        tests/unit/linux_desktop_identity_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )
