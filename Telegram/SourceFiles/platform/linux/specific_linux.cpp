@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/linux/specific_linux.h"
+#include "platform/linux/desktop_identity.h"
 
 #include "base/openssl_help.h"
 #include "base/random.h"
@@ -45,6 +46,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <unistd.h>
 #include <dirent.h>
 #include <pwd.h>
+#include <utility>
 
 namespace {
 
@@ -232,10 +234,16 @@ bool GenerateDesktopFile(
 	DEBUG_LOG(("App Info: placing .desktop file to %1").arg(targetPath));
 	if (!QDir(targetPath).exists()) QDir().mkpath(targetPath);
 
+#ifdef TDESKTOP_TEAGRAM
+	const auto sourceFile = u":/misc/org.teagram.desktop.desktop"_q;
+#else  // !TDESKTOP_TEAGRAM
 	const auto sourceFile = u":/misc/org.telegram.desktop.desktop"_q;
-	const auto targetFile = targetPath
-		+ QGuiApplication::desktopFileName()
-		+ u".desktop"_q;
+#endif // TDESKTOP_TEAGRAM
+	const auto targetFile
+		= targetPath
+		  + Platform::Linux::DesktopIntegrationFileNamesFor(
+				QGuiApplication::desktopFileName(), ApplicationIconName())
+				.desktopEntry;
 
 	const auto sourceText = [&] {
 		QFile source(sourceFile);
@@ -281,11 +289,9 @@ bool GenerateDesktopFile(
 
 		if (target.has_key(group, "TryExec", nullptr)) {
 			target.set_string(
-				group,
-				"TryExec",
-				KShell::joinArgs({ executable }).replace(
-					'\\',
-					qstr("\\\\")).toStdString());
+				group, "TryExec",
+				Platform::Linux::DesktopEntryTryExecValue(executable)
+					.toStdString());
 		}
 
 		if (target.has_key(group, "Exec", nullptr)) {
@@ -297,12 +303,9 @@ bool GenerateDesktopFile(
 					exec.append(cWorkingDir());
 				}
 				exec.append(args);
-				target.set_string(
-					group,
-					"Exec",
-					KShell::joinArgs(exec).replace(
-						'\\',
-						qstr("\\\\")).toStdString());
+				target.set_string(group, "Exec",
+								  Platform::Linux::DesktopEntryCommandLine(exec)
+									  .toStdString());
 			} else {
 				auto exec = KShell::splitArgs(
 					QString::fromStdString(
@@ -318,11 +321,9 @@ bool GenerateDesktopFile(
 						exec.insert(2, cWorkingDir());
 					}
 					target.set_string(
-						group,
-						"Exec",
-						KShell::joinArgs(exec).replace(
-							'\\',
-							qstr("\\\\")).toStdString());
+						group, "Exec",
+						Platform::Linux::DesktopEntryCommandLine(exec)
+							.toStdString());
 				}
 			}
 		}
@@ -347,6 +348,7 @@ bool GenerateDesktopFile(
 			| QFileDevice::ExeGroup
 			| QFileDevice::ExeOther);
 
+#ifndef TDESKTOP_TEAGRAM
 	if (!Core::UpdaterDisabled()) {
 		DEBUG_LOG(("App Info: removing old .desktop files"));
 		QFile::remove(u"%1telegram.desktop"_q.arg(targetPath));
@@ -384,6 +386,7 @@ bool GenerateDesktopFile(
 			targetPath,
 			md5Hash));
 	}
+#endif // !TDESKTOP_TEAGRAM
 
 	return true;
 }
@@ -397,9 +400,11 @@ bool GenerateServiceFile(bool silent = false) {
 	const auto targetPath = QStandardPaths::writableLocation(
 		QStandardPaths::GenericDataLocation) + u"/dbus-1/services/"_q;
 
-	const auto targetFile = targetPath
-		+ QGuiApplication::desktopFileName()
-		+ u".service"_q;
+	const auto targetFile
+		= targetPath
+		  + Platform::Linux::DesktopIntegrationFileNamesFor(
+				QGuiApplication::desktopFileName(), ApplicationIconName())
+				.dbusService;
 
 	DEBUG_LOG(("App Info: placing D-Bus service file to %1").arg(targetPath));
 	if (!QDir(targetPath).exists()) QDir().mkpath(targetPath);
@@ -419,9 +424,8 @@ bool GenerateServiceFile(bool silent = false) {
 		exec.append(cWorkingDir());
 	}
 	target.set_string(
-		group,
-		"Exec",
-		KShell::joinArgs(exec).toStdString());
+		group, "Exec",
+		Platform::Linux::DBusServiceCommandLine(exec).toStdString());
 
 	const auto saved = target.save_to_file(targetFile.toStdString());
 	if (!saved) {
@@ -431,6 +435,7 @@ bool GenerateServiceFile(bool silent = false) {
 		return false;
 	}
 
+#ifndef TDESKTOP_TEAGRAM
 	if (!Core::UpdaterDisabled()
 			&& !Core::Launcher::Instance().customWorkingDir()) {
 		DEBUG_LOG(("App Info: removing old D-Bus service files"));
@@ -443,6 +448,7 @@ bool GenerateServiceFile(bool silent = false) {
 			targetPath,
 			md5Hash));
 	}
+#endif // !TDESKTOP_TEAGRAM
 
 	XdgDBus::DBusProxy::new_for_bus(
 		Gio::BusType::SESSION_,
@@ -467,11 +473,14 @@ void InstallLauncher() {
 	static const auto DisabledByEnv = !qEnvironmentVariableIsEmpty(
 		"DESKTOPINTEGRATION");
 
-	// don't update desktop file for alpha version or if updater is disabled
+#ifdef TDESKTOP_TEAGRAM
+	if (cAlphaVersion() || KSandbox::isInside() || DisabledByEnv) {
+#else  // !TDESKTOP_TEAGRAM
 	if (cAlphaVersion()
 			|| Core::UpdaterDisabled()
 			|| KSandbox::isInside()
 			|| DisabledByEnv) {
+#endif // TDESKTOP_TEAGRAM
 		return;
 	}
 
@@ -487,9 +496,13 @@ void InstallLauncher() {
 	const auto appIcons = icons + u"/hicolor/256x256/apps/"_q;
 	if (!QDir(appIcons).exists()) QDir().mkpath(appIcons);
 
-	const auto icon = appIcons + ApplicationIconName() + u".png"_q;
+	const auto fileNames = Platform::Linux::DesktopIntegrationFileNamesFor(
+		QGuiApplication::desktopFileName(), ApplicationIconName());
+	const auto icon = appIcons + fileNames.applicationIcon;
 	QFile::remove(icon);
+#ifndef TDESKTOP_TEAGRAM
 	QFile::remove(icons + u"telegram.png"_q);
+#endif // TDESKTOP_TEAGRAM
 	if (QFile::copy(u":/gui/art/logo_256.png"_q, icon)) {
 		DEBUG_LOG(("App Info: Icon copied to '%1'").arg(icon));
 	}
@@ -498,19 +511,15 @@ void InstallLauncher() {
 	if (!QDir().exists(symbolicIcons)) QDir().mkpath(symbolicIcons);
 
 	const auto monochromeIcons = {
-		QString(),
-		u"attention"_q,
-		u"mute"_q,
+		std::pair{u":/gui/icons/tray/monochrome.svg"_q, fileNames.trayIcon},
+		std::pair{u":/gui/icons/tray/monochrome_attention.svg"_q,
+				  fileNames.trayAttentionIcon},
+		std::pair{u":/gui/icons/tray/monochrome_mute.svg"_q,
+				  fileNames.trayMuteIcon},
 	};
 
-	for (const auto &icon : monochromeIcons) {
-		QFile::copy(
-			u":/gui/icons/tray/monochrome%1.svg"_q.arg(
-				!icon.isEmpty() ? u"_"_q + icon : QString()),
-			symbolicIcons
-				+ ApplicationIconName()
-				+ (!icon.isEmpty() ? u"-"_q + icon : QString())
-				+ u"-symbolic.svg"_q);
+	for (const auto &[source, fileName] : monochromeIcons) {
+		QFile::copy(source, symbolicIcons + fileName);
 	}
 
 	QProcess::execute("update-desktop-database", {
@@ -588,13 +597,9 @@ void SetApplicationIcon(const QIcon &icon) {
 
 QString SingleInstanceLocalServerName(const QString &hash) {
 #if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-	if (KSandbox::isSnap()) {
-		return u"snap."_q
-			+ qEnvironmentVariable("SNAP_INSTANCE_NAME")
-			+ '.'
-			+ hash;
-	}
-	return hash + '-' + QCoreApplication::applicationName();
+	return Platform::Linux::SingleInstanceLocalServerName(
+		hash, QCoreApplication::applicationName(), KSandbox::isSnap(),
+		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
 #else // Q_OS_LINUX && Qt >= 6.2.0
 	return QDir::tempPath()
 		+ '/'
@@ -634,8 +639,9 @@ void AutostartToggle(bool enabled, Fn<void(bool)> done) {
 		if (!enabled) {
 			return QFile::remove(
 				autostart
-					+ QGuiApplication::desktopFileName()
-					+ u".desktop"_q);
+				+ Platform::Linux::DesktopIntegrationFileNamesFor(
+					  QGuiApplication::desktopFileName(), ApplicationIconName())
+					  .desktopEntry);
 		}
 
 		return GenerateDesktopFile(
@@ -669,17 +675,9 @@ bool SkipTaskbarSupported() {
 }
 
 QString ExecutablePathForShortcuts() {
-	if (Core::UpdaterDisabled()) {
-		const auto &arguments = Core::Launcher::Instance().arguments();
-		if (!arguments.isEmpty()) {
-			const auto result = QFileInfo(arguments.first()).fileName();
-			if (!result.isEmpty()) {
-				return result;
-			}
-		}
-		return cExeName();
-	}
-	return cExeDir() + cExeName();
+	return Platform::Linux::ShortcutExecutablePath(
+		Core::UpdaterDisabled(), Core::Launcher::Instance().arguments(),
+		cExeDir(), cExeName());
 }
 
 } // namespace Platform
@@ -709,6 +707,12 @@ namespace Platform {
 
 void start() {
 	QGuiApplication::setDesktopFileName([&] {
+#ifdef TDESKTOP_TEAGRAM
+		const auto instanceHash = QString::fromLatin1(
+			Core::Launcher::Instance().instanceHash().constData());
+		return Platform::Linux::DesktopFileId(
+			instanceHash, !Core::UpdaterDisabled() && !KSandbox::isInside());
+#else  // !TDESKTOP_TEAGRAM
 		if (KSandbox::isFlatpak()) {
 			return qEnvironmentVariable("FLATPAK_ID");
 		}
@@ -725,6 +729,7 @@ void start() {
 		}
 
 		return u"org.telegram.desktop"_q;
+#endif // TDESKTOP_TEAGRAM
 	}());
 
 	LOG(("App ID: %1").arg(QGuiApplication::desktopFileName()));
@@ -822,11 +827,18 @@ QImage DefaultApplicationIcon() {
 }
 
 QString ApplicationIconName() {
+#ifdef TDESKTOP_TEAGRAM
+	return Platform::Linux::DesktopIconName(
+		QGuiApplication::desktopFileName(),
+		QString::fromLatin1(
+			Core::Launcher::Instance().instanceHash().constData()));
+#else  // !TDESKTOP_TEAGRAM
 	static const auto Result = KSandbox::isSnap()
 		? u"snap.%1."_q.arg(qEnvironmentVariable("SNAP_INSTANCE_NAME"))
 		: QGuiApplication::desktopFileName().remove(
 		u"._"_q + Core::Launcher::Instance().instanceHash());
 	return Result;
+#endif // TDESKTOP_TEAGRAM
 }
 
 void LaunchMaps(const Data::LocationPoint &point, Fn<void()> fail) {
