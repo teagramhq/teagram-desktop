@@ -217,7 +217,7 @@ public:
 	}
 #endif
 
-private:
+  private:
 	rpl::producer<> sectionRemoveRequests() const override;
 
 	std::shared_ptr<Window::SectionMemento> _memento;
@@ -1346,8 +1346,7 @@ HistoryWidget *MainWidget::historyWidgetForRegressionTest() const {
 SectionStackCountsForRegressionTest
 MainWidget::sectionStackCountsForRegressionTest() const {
 	const auto countInfoSection = [](const Info::Section &section,
-									 int &settings,
-									 int &information,
+									 int &settings, int &information,
 									 int &stories) {
 		if (section.type() == Info::Section::Type::Settings) {
 			settings = 1;
@@ -1367,22 +1366,18 @@ MainWidget::sectionStackCountsForRegressionTest() const {
 				section->mementoForRegressionTest().get());
 			if (memento) {
 				result.navigationTopInfo = 1;
-				countInfoSection(
-					memento->content()->section(),
-					result.navigationTopSettings,
-					result.navigationTopInformation,
-					result.navigationTopStories);
+				countInfoSection(memento->content()->section(),
+								 result.navigationTopSettings,
+								 result.navigationTopInformation,
+								 result.navigationTopStories);
 			}
 		}
 	}
 	if (const auto section
 		= dynamic_cast<Info::WrapWidget *>(_mainSection.get())) {
 		result.mainInfo = 1;
-		countInfoSection(
-			section->controller()->section(),
-			result.mainSettings,
-			result.mainInformation,
-			result.mainStories);
+		countInfoSection(section->controller()->section(), result.mainSettings,
+						 result.mainInformation, result.mainStories);
 	} else if (_mainSection) {
 		result.mainOther = 1;
 	} else if (_history->peer()) {

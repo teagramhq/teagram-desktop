@@ -220,8 +220,8 @@ Result ShowMyProfile(const Context &ctx) {
 	}
 	const auto storiesSupported = ctx.controller->session().storiesSupported();
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	Tests::RecordSettingsMyProfileRouteForRegressionTest(
-		ctx.controller, !storiesSupported);
+	Tests::RecordSettingsMyProfileRouteForRegressionTest(ctx.controller,
+														 !storiesSupported);
 #endif
 	if (!storiesSupported) {
 		ctx.controller->showSettings(::Settings::InformationId());

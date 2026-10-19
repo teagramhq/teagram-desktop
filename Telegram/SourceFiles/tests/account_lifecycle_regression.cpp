@@ -472,14 +472,13 @@ void RecordFeatureUnavailableToastForRegressionTest() {
 }
 
 void RecordSettingsMyProfileRouteForRegressionTest(
-		const Window::SessionController *controller,
-		bool informationFallback) {
-	gSettingsDeepLinkRouteEvents.push_back({ controller, informationFallback });
+	const Window::SessionController *controller, bool informationFallback) {
+	gSettingsDeepLinkRouteEvents.push_back({controller, informationFallback});
 }
 
 SettingsDeepLinkRouteCountsForRegressionTest
 GetSettingsDeepLinkRouteCountsForRegressionTest(
-		const Window::SessionController *controller) {
+	const Window::SessionController *controller) {
 	auto result = SettingsDeepLinkRouteCountsForRegressionTest();
 	for (const auto &event : gSettingsDeepLinkRouteEvents) {
 		if (event.controller == controller) {
@@ -2559,9 +2558,8 @@ template <typename Condition>
 			const auto routeCountsAfter
 				= GetSettingsDeepLinkRouteCountsForRegressionTest(
 					controller.get());
-			const auto myProfileRouteCount
-				= routeCountsAfter.myProfileRoute
-				  - routeCountsBefore.myProfileRoute;
+			const auto myProfileRouteCount = routeCountsAfter.myProfileRoute
+											 - routeCountsBefore.myProfileRoute;
 			const auto informationFallbackCount
 				= routeCountsAfter.informationFallback
 				  - routeCountsBefore.informationFallback;
@@ -2598,9 +2596,8 @@ template <typename Condition>
 				   == toastBefore);
 			if (storiesSupported || !myProfileStateRestored
 				|| !myProfileRouteRequested || !informationFallbackRequested
-				|| !mainSectionShown
-				|| !myAccountIsShown || storiesShown || !layerHidden
-				|| !toastUnchanged) {
+				|| !mainSectionShown || !myAccountIsShown || storiesShown
+				|| !layerHidden || !toastUnchanged) {
 				const auto targetInfoCounts
 					= CountSettingsDeepLinkInfoSections(controller);
 				const auto stockInfoCounts
@@ -2634,11 +2631,10 @@ template <typename Condition>
 					stackCounts.navigationTopInfo,
 					stackCounts.navigationTopSettings,
 					stackCounts.navigationTopInformation,
-					stackCounts.navigationTopStories,
-					stackCounts.mainHistory, stackCounts.mainOther,
-					stackCounts.mainInfo, stackCounts.mainSettings,
-					stackCounts.mainInformation, stackCounts.mainStories,
-					restoreConditionsMissing);
+					stackCounts.navigationTopStories, stackCounts.mainHistory,
+					stackCounts.mainOther, stackCounts.mainInfo,
+					stackCounts.mainSettings, stackCounts.mainInformation,
+					stackCounts.mainStories, restoreConditionsMissing);
 				std::fprintf(
 					stderr,
 					"Settings deep link my-profile observer counts: "

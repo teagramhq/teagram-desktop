@@ -93,8 +93,7 @@ struct SettingsDeepLinkRouteCountsForRegressionTest {
 };
 
 void RecordSettingsMyProfileRouteForRegressionTest(
-	const Window::SessionController *controller,
-	bool informationFallback);
+	const Window::SessionController *controller, bool informationFallback);
 [[nodiscard]] SettingsDeepLinkRouteCountsForRegressionTest
 GetSettingsDeepLinkRouteCountsForRegressionTest(
 	const Window::SessionController *controller);
