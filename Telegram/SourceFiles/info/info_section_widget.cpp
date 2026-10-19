@@ -138,6 +138,12 @@ rpl::producer<> SectionWidget::removeRequests() const {
 	return _content->removeRequests();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+Section SectionWidget::contentSectionForRegressionTest() const {
+	return _content->controller()->section();
+}
+#endif
+
 bool SectionWidget::floatPlayerHandleWheelEvent(QEvent *e) {
 	return _content->floatPlayerHandleWheelEvent(e);
 }

@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "info/info_content_widget.h"
 #include "info/info_memento.h"
+#include "info/info_section_widget.h"
 #include "apiwrap.h"
 #include "dialogs/dialogs_widget.h"
 #include "history/history_widget.h"
@@ -1375,10 +1376,11 @@ MainWidget::sectionStackCountsForRegressionTest() const {
 		}
 	}
 	if (const auto section
-		= dynamic_cast<Info::WrapWidget *>(_mainSection.get())) {
+		= dynamic_cast<Info::SectionWidget *>(_mainSection.get())) {
 		result.mainInfo = 1;
-		countInfoSection(section->controller()->section(), result.mainSettings,
-						 result.mainInformation, result.mainStories);
+		countInfoSection(section->contentSectionForRegressionTest(),
+						 result.mainSettings, result.mainInformation,
+						 result.mainStories);
 	} else if (_mainSection) {
 		result.mainOther = 1;
 	} else if (_history->peer()) {
