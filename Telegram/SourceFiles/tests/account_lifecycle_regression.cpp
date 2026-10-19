@@ -2057,6 +2057,29 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return matches;
 }
 
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+	if (condition()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	auto poll = QTimer();
+	timeout.setSingleShot(true);
+	poll.setInterval(10);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (condition()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	timeout.start(5000);
+	loop.exec();
+	poll.stop();
+	return condition();
+}
+
 [[nodiscard]] bool
 ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 						Fn<bool(const Info::Section &)> matches) {
@@ -2433,22 +2456,32 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 								  contextFor(controller))) {
 				return false;
 			}
-			QCoreApplication::processEvents();
-			const auto myAccountShown = ShownInfoSectionMatches(
-				controller, [](const Info::Section &section) {
-					return (section.type() == Info::Section::Type::Settings)
-						   && (section.settingsType()
-							   == Settings::InformationId());
-				});
-			if (!controller->content()->isMainSectionShown() || !myAccountShown
-				|| ShownStoriesSection(controller)
-				|| (controller
-						->featureUnavailableOnServerToastCallsForRegressionTest()
-					!= toastBefore)) {
+			const auto myAccountShown = WaitForRegressionCondition([&] {
+				return controller->content()->isMainSectionShown()
+					   && ShownInfoSectionMatches(
+						   controller, [](const Info::Section &section) {
+							   return (section.type()
+									   == Info::Section::Type::Settings)
+									  && (section.settingsType()
+										  == Settings::InformationId());
+						   });
+			});
+			const auto storiesShown = ShownStoriesSection(controller);
+			const auto toastUnchanged
+				= (controller
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == toastBefore);
+			if (!myAccountShown || storiesShown || !toastUnchanged) {
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
-					"open My Account on an unsupported session.\n");
+					"open My Account on an unsupported session: controller=%p "
+					"stories-supported=%d main-section=%d my-account=%d "
+					"stories=%d toast-unchanged=%d.\n",
+					static_cast<void *>(controller.get()),
+					controller->session().storiesSupported(),
+					controller->content()->isMainSectionShown(), myAccountShown,
+					storiesShown, toastUnchanged);
 				return false;
 			}
 			resetController(controller);
@@ -2612,29 +2645,6 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		= (item && item->media()) ? item->media()->invoice() : nullptr;
 	return (invoice && (invoice->receiptMsgId == receiptMsgId)) ? item
 																: nullptr;
-}
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
-	if (condition()) {
-		return true;
-	}
-	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	auto poll = QTimer();
-	timeout.setSingleShot(true);
-	poll.setInterval(10);
-	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-		if (condition()) {
-			loop.quit();
-		}
-	});
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	poll.start();
-	timeout.start(5000);
-	loop.exec();
-	poll.stop();
-	return condition();
 }
 
 [[nodiscard]] bool RunPaidLinkRefusalRegression(
@@ -2966,19 +2976,30 @@ template <typename Predicate>
 			url, QVariant::fromValue(ClickHandlerContext{
 					 .sessionWindow = base::make_weak(stockController.get()),
 				 }));
-		QCoreApplication::processEvents();
-		const auto opened
-			= handled && (toastCounts() == before)
-			  && (section ? stockController->content()->isMainSectionShown()
-						  : stockController->isLayerShown())
-			  && !pinnedController->content()->isMainSectionShown()
+		const auto stockUiOpened
+			= handled && WaitForRegressionCondition([&] {
+				  return section
+							 ? stockController->content()->isMainSectionShown()
+							 : stockController->isLayerShown();
+			  });
+		const auto toastUnchanged = (toastCounts() == before);
+		const auto pinnedUiUnchanged
+			= !pinnedController->content()->isMainSectionShown()
 			  && !pinnedController->isLayerShown();
+		const auto stockSectionShown
+			= stockController->content()->isMainSectionShown();
+		const auto stockLayerShown = stockController->isLayerShown();
+		const auto opened
+			= stockUiOpened && toastUnchanged && pinnedUiUnchanged;
 		if (!opened) {
 			std::fprintf(
 				stderr,
 				"Paid link regression failed: stock link=%s did not keep its "
-				"behavior.\n",
-				url.toUtf8().constData());
+				"behavior: handled=%d stock-ui-opened=%d stock-section=%d "
+				"stock-layer=%d toast-unchanged=%d pinned-ui-unchanged=%d.\n",
+				url.toUtf8().constData(), handled, stockUiOpened,
+				stockSectionShown, stockLayerShown, toastUnchanged,
+				pinnedUiUnchanged);
 		}
 		resetControllers();
 		return opened;
