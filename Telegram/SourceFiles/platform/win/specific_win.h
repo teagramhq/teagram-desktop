@@ -28,7 +28,7 @@ inline bool PreventsQuit(Core::QuitReason reason) {
 	return false;
 }
 
-inline void ActivateThisProcess() {
+inline void ActivateThisProcess(not_null<QWidget*>) {
 }
 
 // 1 - secondary, 2 - primary.

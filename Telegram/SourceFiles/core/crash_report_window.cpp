@@ -91,7 +91,7 @@ QLineEdit:focus {
 void PreLaunchWindow::activate() {
 	setWindowState(windowState() & ~Qt::WindowMinimized);
 	setVisible(true);
-	Platform::ActivateThisProcess();
+	Platform::ActivateThisProcess(this);
 	raise();
 	activateWindow();
 }

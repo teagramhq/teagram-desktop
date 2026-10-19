@@ -615,7 +615,7 @@ void MainWindow::activate() {
 	bool wasHidden = !isVisible();
 	setWindowState(windowState() & ~Qt::WindowMinimized);
 	setVisible(true);
-	Platform::ActivateThisProcess();
+	Platform::ActivateThisProcess(this);
 	raise();
 	activateWindow();
 	controller().updateIsActiveFocus();
