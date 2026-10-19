@@ -2464,6 +2464,9 @@ void Instance::sendRequest(
 														  request, callbacks)) {
 		return;
 	}
+	if (Tests::CaptureBoostRequestForRegressionTest(this, request)) {
+		return;
+	}
 #endif
 	return _private->sendRequest(
 		requestId,

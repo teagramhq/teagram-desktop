@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
 #include "core/deep_links/deep_links_router.h"
+#include "core/local_url_conversion.h"
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
@@ -167,6 +168,7 @@ auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
 auto gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
 auto gCallStartRegressionIntercept = false;
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+BoostRequestCaptureForRegressionTest *gBoostRequestCapture = nullptr;
 
 enum class TranslationRpcRoleForRegressionTest {
 	None,
@@ -522,6 +524,44 @@ void ResetTranslationRpcCountsForRegressionTest() {
 TranslationRpcCountsForRegressionTest
 GetTranslationRpcCountsForRegressionTest() {
 	return gTranslationRpcCounts;
+}
+
+BoostRequestCaptureForRegressionTest *SetBoostRequestCaptureForRegressionTest(
+	BoostRequestCaptureForRegressionTest *capture) {
+	return std::exchange(gBoostRequestCapture, capture);
+}
+
+bool CaptureBoostRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gBoostRequestCapture;
+	if (!capture) {
+		return false;
+	}
+	const auto i = std::find_if(
+		capture->sessions.begin(), capture->sessions.end(),
+		[&](const auto &session) { return session.instance == instance; });
+	if (i == capture->sessions.end()) {
+		return false;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return false;
+	}
+	switch (body.front()) {
+	case mtpc_premium_getBoostsStatus:
+		++i->boostsStatus;
+		return true;
+	case mtpc_premium_getMyBoosts:
+		++i->myBoosts;
+		return true;
+	case mtpc_premium_applyBoost:
+		++i->applyBoost;
+		return true;
+	default:
+		return false;
+	}
 }
 
 bool CaptureChannelSaveRequestForRegressionTest(
@@ -3195,6 +3235,374 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	return accepted;
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] ChannelData *AddBoostRegressionChannel(Main::Session &session,
+													 ChannelId id,
+													 uint64 accessHash,
+													 const QString &name,
+													 const QString &username) {
+	using Flag = MTPDchannel::Flag;
+	const auto chat = MTP_channel(
+		MTP_flags(Flag::f_broadcast | Flag::f_access_hash | Flag::f_username),
+		MTP_long(id.bare), MTP_long(accessHash), MTP_string(name),
+		MTP_string(username), MTP_chatPhotoEmpty(), MTP_int(1),
+		MTPVector<MTPRestrictionReason>(), MTPChatAdminRights(),
+		MTPChatBannedRights(), MTPChatBannedRights(), MTPint(),
+		MTPVector<MTPUsername>(), MTPRecentStory(), MTPPeerColor(),
+		MTPPeerColor(), MTPEmojiStatus(), MTPint(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong(), MTPlong());
+	const auto peer = session.data().processChats(MTP_vector<MTPChat>({chat}));
+	return peer ? peer->asChannel() : nullptr;
+}
+
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunBoostEntryPathRefusalRegression(
+	Core::Application &app, not_null<Main::Account *> stock,
+	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
+	not_null<Window::SessionController *> stockController,
+	not_null<Window::SessionController *> pinnedController,
+	not_null<Window::SessionController *> blockedController) {
+	const auto activeAtStart = &app.domain().active();
+	const auto restoreActive
+		= gsl::finally([&] { app.domain().activate(activeAtStart); });
+	const auto sameIdentity
+		= stock->session().uniqueId() == pinned->session().uniqueId()
+		  && stock->session().uniqueId() == blocked->session().uniqueId();
+	const auto channelId = ChannelId(1251);
+	const auto accessHash = uint64(125100);
+	const auto username = u"regression_boost"_q;
+	const auto stockChannel
+		= AddBoostRegressionChannel(stock->session(), channelId, accessHash,
+									u"Stock boost channel"_q, username);
+	const auto pinnedChannel
+		= AddBoostRegressionChannel(pinned->session(), channelId, accessHash,
+									u"Pinned boost channel"_q, username);
+	const auto blockedChannel
+		= AddBoostRegressionChannel(blocked->session(), channelId, accessHash,
+									u"Blocked boost channel"_q, username);
+	if (!sameIdentity || !stockChannel || !pinnedChannel || !blockedChannel) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: session or channel fixture "
+					"was incomplete.\n");
+		return false;
+	}
+	const auto pinnedBoostFlowsBefore
+		= pinnedController->boostFlowsOpenedForRegressionTest();
+	const auto blockedBoostFlowsBefore
+		= blockedController->boostFlowsOpenedForRegressionTest();
+	auto requests = BoostRequestCaptureForRegressionTest{
+		.sessions = {
+			{ .instance = &stock->session().mtp() },
+			{ .instance = &pinned->session().mtp() },
+			{ .instance = &blocked->session().mtp() },
+		},
+	};
+	const auto previousCapture
+		= SetBoostRequestCaptureForRegressionTest(&requests);
+	const auto restoreCapture = gsl::finally([=] {
+		static_cast<void>(
+			SetBoostRequestCaptureForRegressionTest(previousCapture));
+	});
+	const auto countsFor = [&](const MTP::Instance *instance)
+		-> const BoostRequestSessionCountsForRegressionTest & {
+		const auto i = std::find_if(
+			requests.sessions.begin(), requests.sessions.end(),
+			[&](const auto &session) { return session.instance == instance; });
+		return *i;
+	};
+	const auto noBoostRequestsFor = [&](const MTP::Instance *instance) {
+		const auto &counts = countsFor(instance);
+		return !counts.boostsStatus && !counts.myBoosts && !counts.applyBoost;
+	};
+	const auto openLink = [&](not_null<Window::SessionController *> controller,
+							  const QString &link) {
+		const auto context = QVariant::fromValue(ClickHandlerContext{
+			.sessionWindow = base::make_weak(controller.get()),
+		});
+		return app.openLocalUrl(Core::TryConvertUrlToLocal(link), context);
+	};
+	const auto pinnedToastBefore
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	app.domain().activate(stock);
+	const auto tmeBoostOpened
+		= openLink(pinnedController, u"https://t.me/regression_boost?boost"_q);
+	QCoreApplication::processEvents();
+	const auto pinnedLinkOpenedFirst
+		= tmeBoostOpened
+		  && (pinnedController->activeChatCurrent().peer() == pinnedChannel)
+		  && (pinnedController
+				  ->featureUnavailableOnServerPeerForRegressionTest()
+			  == pinnedChannel)
+		  && (pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == pinnedToastBefore + 1);
+	if (!pinnedLinkOpenedFirst || !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| !noBoostRequestsFor(&stock->session().mtp())
+		|| pinnedController->boostFlowsOpenedForRegressionTest()
+			   != pinnedBoostFlowsBefore) {
+		std::fprintf(stderr,
+					 "Boost entry regression failed: custom t.me boost link "
+					 "did not open the channel before the shared refusal.\n");
+		return false;
+	}
+	const auto pinnedToastAfterLink
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->showPeerHistory(pinned->session().user());
+	const auto pinnedHistoryRestored = WaitForRegressionCondition([&] {
+		return pinnedController->activeChatCurrent().peer()
+			   == pinned->session().user();
+	});
+	const auto normalPinnedLinkOpened
+		= pinnedHistoryRestored
+		  && openLink(pinnedController, u"https://t.me/regression_boost"_q);
+	const auto normalPinnedChannelOpened
+		= normalPinnedLinkOpened && WaitForRegressionCondition([&] {
+			  return pinnedController->activeChatCurrent().peer()
+					 == pinnedChannel;
+		  });
+	const auto normalPinnedToastUnchanged
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastAfterLink;
+	const auto normalPinnedNoBoostRequests
+		= noBoostRequestsFor(&pinned->session().mtp());
+	if (!normalPinnedChannelOpened || !normalPinnedToastUnchanged
+		|| !normalPinnedNoBoostRequests) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: custom normal channel link "
+			"opened=%d "
+			"history_restored=%d channel_opened=%d toast_unchanged=%d "
+			"requests=%d/%d/%d.\n",
+			bool(normalPinnedLinkOpened), bool(pinnedHistoryRestored),
+			bool(normalPinnedChannelOpened), bool(normalPinnedToastUnchanged),
+			countsFor(&pinned->session().mtp()).boostsStatus,
+			countsFor(&pinned->session().mtp()).myBoosts,
+			countsFor(&pinned->session().mtp()).applyBoost);
+		return false;
+	}
+	const auto pinnedToastBeforeSlowMode
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->resolveBoostState(pinnedChannel, 2);
+	const auto pinnedSlowModeRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeSlowMode + 1;
+	const auto pinnedToastBeforeApply
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->applyBoostForRegressionTest(pinnedChannel);
+	const auto pinnedApplyRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeApply + 1;
+	const auto pinnedToastBeforeApplyChecked
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	pinnedController->applyBoostsCheckedForRegressionTest(pinnedChannel);
+	const auto pinnedApplyCheckedRefused
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == pinnedToastBeforeApplyChecked + 1;
+	if (!pinnedSlowModeRefused || !pinnedApplyRefused
+		|| !pinnedApplyCheckedRefused
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| pinnedController->boostFlowsOpenedForRegressionTest()
+			   != pinnedBoostFlowsBefore) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: custom direct or slow-mode "
+					"boost path was not refused atomically.\n");
+		return false;
+	}
+
+	const auto blockedToastBefore
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	app.domain().activate(stock);
+	const auto blockedBoostOpened
+		= openLink(blockedController, u"tg://boost?channel=1251"_q);
+	QCoreApplication::processEvents();
+	const auto blockedLinkOpenedFirst
+		= blockedBoostOpened
+		  && (blockedController->activeChatCurrent().peer() == blockedChannel)
+		  && (blockedController
+				  ->featureUnavailableOnServerPeerForRegressionTest()
+			  == blockedChannel)
+		  && (blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == blockedToastBefore + 1);
+	if (!blockedLinkOpenedFirst
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| blockedController->boostFlowsOpenedForRegressionTest()
+			   != blockedBoostFlowsBefore) {
+		std::fprintf(stderr,
+					 "Boost entry regression failed: blocked tg boost link "
+					 "did not open the channel before the shared refusal.\n");
+		return false;
+	}
+	const auto blockedToastAfterLink
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->showPeerHistory(blocked->session().user());
+	const auto blockedHistoryRestored = WaitForRegressionCondition([&] {
+		return blockedController->activeChatCurrent().peer()
+			   == blocked->session().user();
+	});
+	const auto normalBlockedLinkOpened
+		= blockedHistoryRestored
+		  && openLink(blockedController, u"https://t.me/regression_boost"_q);
+	const auto normalBlockedChannelOpened
+		= normalBlockedLinkOpened && WaitForRegressionCondition([&] {
+			  return blockedController->activeChatCurrent().peer()
+					 == blockedChannel;
+		  });
+	const auto normalBlockedToastUnchanged
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastAfterLink;
+	const auto normalBlockedNoBoostRequests
+		= noBoostRequestsFor(&blocked->session().mtp());
+	if (!normalBlockedChannelOpened || !normalBlockedToastUnchanged
+		|| !normalBlockedNoBoostRequests) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: blocked normal channel link "
+			"opened=%d "
+			"history_restored=%d channel_opened=%d toast_unchanged=%d "
+			"requests=%d/%d/%d.\n",
+			bool(normalBlockedLinkOpened), bool(blockedHistoryRestored),
+			bool(normalBlockedChannelOpened), bool(normalBlockedToastUnchanged),
+			countsFor(&blocked->session().mtp()).boostsStatus,
+			countsFor(&blocked->session().mtp()).myBoosts,
+			countsFor(&blocked->session().mtp()).applyBoost);
+		return false;
+	}
+	const auto blockedToastBeforeSlowMode
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->resolveBoostState(blockedChannel, 3);
+	const auto blockedSlowModeRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeSlowMode + 1;
+	const auto blockedToastBeforeApply
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->applyBoostForRegressionTest(blockedChannel);
+	const auto blockedApplyRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeApply + 1;
+	const auto blockedToastBeforeApplyChecked
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	blockedController->applyBoostsCheckedForRegressionTest(blockedChannel);
+	const auto blockedApplyCheckedRefused
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == blockedToastBeforeApplyChecked + 1;
+	if (!blockedSlowModeRefused || !blockedApplyRefused
+		|| !blockedApplyCheckedRefused
+		|| !noBoostRequestsFor(&blocked->session().mtp())
+		|| blockedController->boostFlowsOpenedForRegressionTest()
+			   != blockedBoostFlowsBefore) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: blocked direct or slow-mode "
+			"boost path was not refused atomically.\n");
+		return false;
+	}
+
+	const auto stockToastBefore
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	stockController->showPeerHistory(stock->session().user());
+	app.domain().activate(pinned);
+	const auto stockBoostOpened
+		= openLink(stockController, u"tg://boost?channel=1251"_q);
+	const auto stockStatusKept
+		= countsFor(&stock->session().mtp()).boostsStatus == 1;
+	const auto stockToastKept
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest()
+		  == stockToastBefore;
+	const auto stockNavigationKept = stockController->activeChatCurrent().peer()
+									 == stock->session().user();
+	stockController->applyBoostForRegressionTest(stockChannel);
+	const auto stockApplicationKept
+		= countsFor(&stock->session().mtp()).myBoosts == 1;
+	stockController->applyBoostsCheckedForRegressionTest(stockChannel);
+	const auto stockApplyKept
+		= countsFor(&stock->session().mtp()).applyBoost == 1;
+	if (!stockBoostOpened || !stockStatusKept || !stockToastKept
+		|| !stockNavigationKept || !stockApplicationKept || !stockApplyKept
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		std::fprintf(
+			stderr,
+			"Boost entry regression failed: stock boost behavior changed "
+			"or the owning session was crossed.\n");
+		return false;
+	}
+
+	const auto pinnedToastAtNoController
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto stockToastAtNoController
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto blockedToastAtNoController
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto stockRequestsAtNoController = countsFor(&stock->session().mtp());
+	auto noControllerNoOp = false;
+	for (const auto &handler : Core::LocalUrlHandlers()) {
+		const auto match
+			= qthelp::regex_match(handler.expression, u"boost?channel=1251"_q,
+								  qthelp::RegExOption::CaseInsensitive);
+		if (match) {
+			noControllerNoOp = !handler.handler(nullptr, match, QVariant());
+			break;
+		}
+	}
+	if (!noControllerNoOp
+		|| pinnedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != pinnedToastAtNoController
+		|| stockController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != stockToastAtNoController
+		|| blockedController
+				   ->featureUnavailableOnServerToastCallsForRegressionTest()
+			   != blockedToastAtNoController
+		|| countsFor(&stock->session().mtp()).boostsStatus
+			   != stockRequestsAtNoController.boostsStatus
+		|| countsFor(&stock->session().mtp()).myBoosts
+			   != stockRequestsAtNoController.myBoosts
+		|| countsFor(&stock->session().mtp()).applyBoost
+			   != stockRequestsAtNoController.applyBoost
+		|| !noBoostRequestsFor(&pinned->session().mtp())
+		|| !noBoostRequestsFor(&blocked->session().mtp())) {
+		std::fprintf(
+			stderr, "Boost entry regression failed: missing controller context "
+					"fell back to another window.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Boost entry regression passed: custom and blocked links opened the "
+		"channel before refusal, unsupported sessions sent no boost requests, "
+		"and stock behavior stayed on its owning session.\n");
+	return true;
+}
+#endif
+
 struct PeerMenuSnapshot final {
 	QStringList actions;
 	QStringList accessibleNames;
@@ -3251,9 +3659,6 @@ SnapshotVideoChatMenu(not_null<Window::SessionController *> controller,
 							  Ui::Menu::CreateAddActionCallback(&menu));
 	return SnapshotMenuActions(menu);
 }
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunMessagesPrivacyBoxPassRegression(
 	not_null<Window::SessionController *> controller, UserId selfId,
@@ -4191,6 +4596,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			static_cast<const void *>(pinnedController));
 		return false;
 	}
+	const auto stockControllerLifetime = base::make_weak(stockController);
+	const auto pinnedControllerLifetime = base::make_weak(pinnedController);
+	const auto blankControllerLifetime = base::make_weak(blankController.get());
 	if (stock->mtp().dcOptions().hasCustomServer()
 		|| stock->mtp().dcOptions().blocked()
 		|| !pinned->mtp().dcOptions().hasCustomServer()
@@ -4701,6 +5109,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 						.takePendingResolveForRegressionTest();
 	const auto diedWebviewWeak
 		= base::make_weak(&deferred->session().attachWebView());
+	const auto diedSessionWeak = base::make_weak(&deferred->session());
 	const auto diedControllerWeak = base::make_weak(secondController);
 	if (!retained || !diedWebviewWeak || !diedControllerWeak) {
 		std::fprintf(stderr,
@@ -4709,10 +5118,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	deferred->forcedLogOut();
-	if (deferred->sessionExists()) {
+	if (!diedSessionWeak.empty()) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: teardown kept the session with a "
+			"Mini-app open regression: teardown kept the session alive with a "
 			"resolve in flight.\n");
 		return false;
 	}
@@ -4740,6 +5149,45 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	const auto replacement = app.domain().add(MTP::Environment::Production);
 	replacement->mtp().stopForServerEnrollment();
 	replacement->setSessionUserId(selfId);
+	const auto replacementLifetime = base::make_weak(replacement.get());
+	const auto stockWasPremium = stock->session().premium();
+	const auto pinnedWasPremium = pinned->session().premium();
+	const auto blankWasPremium = blank->session().premium();
+	auto accountLimitFixtureRestored = false;
+	base::weak_ptr<Window::Controller> disposablePrimaryWindowLifetime;
+	const auto restoreAccountLimitFixture = [&] {
+		if (accountLimitFixtureRestored) {
+			return;
+		}
+		accountLimitFixtureRestored = true;
+		if (const auto strong = replacementLifetime.get()) {
+			if (strong->sessionExists()) {
+				strong->forcedLogOut();
+			}
+			if (const auto window = app.separateWindowFor(not_null(strong))) {
+				app.closeWindow(window);
+			}
+		}
+		if (const auto window = disposablePrimaryWindowLifetime.get()) {
+			if (app.separateWindowFor(window->id()) == window) {
+				app.closeWindow(window);
+			}
+		}
+		app.domain().activate(stock);
+		QCoreApplication::processEvents();
+		QCoreApplication::processEvents();
+		app.domain().removeRedundantAccounts();
+		QCoreApplication::processEvents();
+		const auto stockRestored = SetRegressionSessionPremium(
+			&stock->session(), selfId, stockWasPremium);
+		const auto pinnedRestored = SetRegressionSessionPremium(
+			&pinned->session(), selfId, pinnedWasPremium);
+		const auto blankRestored = SetRegressionSessionPremium(
+			&blank->session(), selfId, blankWasPremium);
+		Expects(stockRestored && pinnedRestored && blankRestored);
+	};
+	const auto restoreAccountLimitFixtureOnExit
+		= gsl::finally(restoreAccountLimitFixture);
 	if (!replacement->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
@@ -4749,19 +5197,26 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			"session.\n");
 		return false;
 	}
-	const auto thirdWindow = app.ensureSeparateWindowFor(replacement);
+	const auto disposablePrimaryWindow
+		= app.ensureSeparateWindowFor(replacement);
+	if (disposablePrimaryWindow) {
+		disposablePrimaryWindowLifetime
+			= base::make_weak(disposablePrimaryWindow);
+	}
 	QCoreApplication::processEvents();
 	QCoreApplication::processEvents();
-	const auto thirdController
-		= thirdWindow ? thirdWindow->sessionController() : nullptr;
+	const auto replacementController
+		= disposablePrimaryWindow ? disposablePrimaryWindow->sessionController()
+								  : nullptr;
 	// The replacement is a live session of this account with its own window
 	// registered, established without comparing any destroyed address.
 	const auto secondRegistration = replacement->session().windows();
-	if (!thirdController || (secondRegistration.size() != 1)
+	if (!disposablePrimaryWindow || !replacementController
+		|| (secondRegistration.size() != 1)
 		|| (*secondRegistration.begin()
-			!= not_null<Window::SessionController *>(thirdController))
-		|| (app.separateWindowFor(replacement) != thirdWindow)
-		|| (&thirdController->session() != &replacement->session())) {
+			!= not_null<Window::SessionController *>(replacementController))
+		|| (app.separateWindowFor(replacement) != disposablePrimaryWindow)
+		|| (&replacementController->session() != &replacement->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session did not take "
@@ -4807,7 +5262,8 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	// Positive control: the same seam opens on the replacement session,
 	// so the zeros above are a refusal and not an inert webview.
-	if (!OpenMiniAppByUsername(&replacement->session(), thirdController)) {
+	if (!OpenMiniAppByUsername(&replacement->session(),
+							   replacementController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session refused a "
@@ -4828,9 +5284,87 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	replacement->session().attachWebView().cancel();
 	replacement->session().attachWebView().closeAll();
+	if (!SetRegressionSessionPremium(&stock->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&pinned->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&blank->session(), selfId, false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not set up the account-limit "
+			"fixture.\n");
+		return false;
+	}
+	if (app.domain().maxAccounts() != Main::Domain::kMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture retained a "
+			"premium allowance: max=%d expected=%d.\n",
+			app.domain().maxAccounts(), Main::Domain::kMaxAccounts);
+		return false;
+	}
+	app.domain().activate(stock);
+	const auto accountsBeforeRedundantCleanup = app.domain().accounts().size();
+	app.domain().removeRedundantAccounts();
+	const auto accountsAfterRedundantCleanup = app.domain().accounts().size();
+	if (accountsAfterRedundantCleanup >= Main::Domain::kPremiumMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture has no slot for "
+			"the overflow account: before=%d after_cleanup=%d max=%d.\n",
+			int(accountsBeforeRedundantCleanup),
+			int(accountsAfterRedundantCleanup),
+			Main::Domain::kPremiumMaxAccounts);
+		return false;
+	}
+	const auto overflowAccount = app.domain().add(MTP::Environment::Production);
+	overflowAccount->mtp().stopForServerEnrollment();
+	const auto orderedBeforeReplacementLogout = app.domain().orderedAccounts();
+	const auto overflowAccountPosition
+		= ranges::find(orderedBeforeReplacementLogout, overflowAccount);
+	const auto overflowAccountIndex = int(std::distance(
+		begin(orderedBeforeReplacementLogout), overflowAccountPosition));
+	if ((overflowAccountPosition == end(orderedBeforeReplacementLogout))
+		|| (overflowAccountIndex < app.domain().maxAccounts())
+		|| overflowAccount->sessionExists()
+		|| app.separateWindowFor(overflowAccount)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture did not place a "
+			"sessionless account beyond the limit: accounts=%d max=%d "
+			"index=%d session=%d window=%d.\n",
+			int(orderedBeforeReplacementLogout.size()),
+			app.domain().maxAccounts(), overflowAccountIndex,
+			overflowAccount->sessionExists(),
+			app.separateWindowFor(overflowAccount) != nullptr);
+		return false;
+	}
+	app.setActivePrimaryWindow(disposablePrimaryWindow);
+	if (app.activePrimaryWindow() != disposablePrimaryWindow) {
+		std::fprintf(stderr, "Mini-app open regression: disposable primary "
+							 "window did not become "
+							 "the active primary window.\n");
+		return false;
+	}
+	app.domain().activate(overflowAccount);
+	if (&app.domain().active() != overflowAccount.get()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: sessionless account beyond the account "
+			"limit did not become active.\n");
+		return false;
+	}
 	replacement->forcedLogOut();
-	if (thirdWindow && (app.separateWindowFor(replacement) == thirdWindow)) {
-		app.closeWindow(thirdWindow);
+	restoreAccountLimitFixture();
+	const auto fixtureControllersSurvived = !stockControllerLifetime.empty()
+											&& !pinnedControllerLifetime.empty()
+											&& !blankControllerLifetime.empty();
+	if (!fixtureControllersSurvived) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit cleanup destroyed an "
+			"existing fixture controller: stock=%d pinned=%d blocked=%d.\n",
+			!stockControllerLifetime.empty(), !pinnedControllerLifetime.empty(),
+			!blankControllerLifetime.empty());
+		return false;
 	}
 	std::fprintf(
 		stderr,
@@ -6666,6 +7200,7 @@ struct NativeLifecycleResults {
 			"session-window-lifecycle",
 			"translation-controls",
 			"manage-controls",
+			"boost-entry-paths",
 			"passport-link-refusal",
 			"mini-app-open",
 			"settings-deep-link",
@@ -6736,10 +7271,131 @@ struct NativeLifecycleResults {
 	}
 };
 
+void RunAuthenticatedCacheSymlinkCases(
+	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
+	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
+	const QString &pinnedMediaCachePath,
+	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
+		pinned->session().data().cache().sync();
+		pinned->session().data().cacheBigFile().sync();
+		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
+			pinnedCachePath, "Tests::ProtectedCache::file");
+		const auto mediaCacheFileRefused
+			= !Core::MacProtectedPath::CheckCachePath(
+				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
+		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
+									   cacheFilesPassed);
+		if (cacheFilesPassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache regression passed: root, "
+						 "directory, and file "
+						 "symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
+									 "protected-path-integration-disabled");
+	}
+	if (Core::MacProtectedPath::IntegrationTestActive()) {
+		const auto selfId = UserId(1);
+		auto postOpenCachePassed = false;
+		auto postOpenMediaCachePassed = false;
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			const auto cacheGetter
+				= [guarded, mediaCache]() -> Storage::Cache::Database & {
+				auto &data = guarded->session().data();
+				return mediaCache ? data.cacheBigFile() : data.cache();
+			};
+			const auto clearCaches = [guarded] {
+				auto &data = guarded->session().data();
+				data.clearLocalStorage();
+				data.cache().sync();
+				data.cacheBigFile().sync();
+			};
+			const auto passed = RunPostOpenCacheSymlinkRegression(
+				mediaCache ? guarded->local().cacheBigFilePath()
+						   : guarded->local().cachePath(),
+				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
+				cacheGetter, clearCaches, [guarded, mediaCache] {
+					return RunRefusedCacheReaderRegressions(guarded,
+															mediaCache);
+				});
+			nativeLifecycleResults->Report(caseName, passed);
+			if (mediaCache) {
+				postOpenMediaCachePassed = passed;
+			} else {
+				postOpenCachePassed = passed;
+			}
+		}
+		if (postOpenCachePassed && postOpenMediaCachePassed) {
+			std::fprintf(stderr,
+						 "Authenticated cache post-open regression passed: "
+						 "get, put, and "
+						 "clear symlinks refused for cache and media_cache.\n");
+		}
+	} else {
+		nativeLifecycleResults->Skip("post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+	}
+}
+
+void RunProtectedCacheCleanupRegression(
+	not_null<Main::Account *> stock, not_null<Main::Account *> pinned,
+	const QString &stockCachePath, const QString &stockMediaCachePath,
+	const QString &pinnedCachePath, const QString &pinnedMediaCachePath,
+	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+	if (!Core::MacProtectedPath::IntegrationTestActive()) {
+		nativeLifecycleResults->Skip("protected-cache-cleanup",
+									 "protected-path-integration-disabled");
+		return;
+	}
+	nativeLifecycleResults->StartCase("protected-cache-cleanup");
+	stock->session().data().clearLocalStorage();
+	pinned->session().data().clearLocalStorage();
+	stock->session().data().cache().sync();
+	stock->session().data().cacheBigFile().sync();
+	pinned->session().data().cache().sync();
+	pinned->session().data().cacheBigFile().sync();
+	const auto protectedCacheCleanupPassed
+		= !Core::MacProtectedPath::CheckCachePath(
+			  stockCachePath, "Tests::ProtectedCache::async-root")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  stockMediaCachePath, "Tests::ProtectedCache::async-media-root")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  pinnedCachePath, "Tests::ProtectedCache::async-file")
+		  && !Core::MacProtectedPath::CheckCachePath(
+			  pinnedMediaCachePath, "Tests::ProtectedCache::async-media-file");
+	nativeLifecycleResults->Report("protected-cache-cleanup",
+								   protectedCacheCleanupPassed);
+	if (!protectedCacheCleanupPassed) {
+		std::fprintf(stderr,
+					 "Chat participants regression failed: asynchronous cache "
+					 "cleanup accessed a protected target.\n");
+	}
+}
+
 [[nodiscard]] int StartChatParticipantsRegression(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults,
 	Fn<void(int)> done) {
+	const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
 			  .split(',', Qt::SkipEmptyParts);
@@ -6776,8 +7432,8 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->Report("cache-concurrent-deletion",
 								   cacheConcurrentDeletionPassed);
 	nativeLifecycleResults->StartCase("chat-participants-prerequisites");
-	// Stock, pinned, blank and restored blocked accounts coexist in this test.
-	constexpr auto requiredAccounts = 4;
+	// Stock, pinned, blank, boost and restored blocked accounts coexist here.
+	constexpr auto requiredAccounts = 5;
 	if (domain.accounts().size()
 		> Main::Domain::kPremiumMaxAccounts - requiredAccounts) {
 		return failPrerequisite(
@@ -6839,21 +7495,23 @@ struct NativeLifecycleResults {
 	const auto stockChat = stock->session().data().chat(chatId);
 	const auto stockPeer
 		= not_null<PeerData *>(static_cast<PeerData *>(&*stockChat));
-	stock->session().api().processFullPeer(
-		stockPeer,
-		RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
-	if (stock->session().user()->isLoaded()
-		|| !stockChat->participants.empty()) {
-		return failPrerequisite(
-			"stock session accepted phone-free self in full chat info");
-	}
-	stock->session().api().processFullPeer(
-		stockPeer,
-		RegressionStockChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
-	if (!stock->session().user()->isLoaded()
-		|| !HasExpectedParticipants(stockChat, UserId(2))) {
-		return failPrerequisite(
-			"stock session with phone did not load creator and members");
+	if (!authenticatedCacheOnly) {
+		stock->session().api().processFullPeer(
+			stockPeer,
+			RegressionStockChatFullReply(chatId, 1, QString(), UserId(2)));
+		if (stock->session().user()->isLoaded()
+			|| !stockChat->participants.empty()) {
+			return failPrerequisite(
+				"stock session accepted phone-free self in full chat info");
+		}
+		stock->session().api().processFullPeer(
+			stockPeer, RegressionStockChatFullReply(
+						   chatId, 2, u"+10000000001"_q, UserId(2)));
+		if (!stock->session().user()->isLoaded()
+			|| !HasExpectedParticipants(stockChat, UserId(2))) {
+			return failPrerequisite(
+				"stock session with phone did not load creator and members");
+		}
 	}
 
 	const auto pinned = domain.add(MTP::Environment::Production);
@@ -6884,6 +7542,28 @@ struct NativeLifecycleResults {
 	if (stock->session().uniqueId() != pinned->session().uniqueId()) {
 		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
+	}
+	if (authenticatedCacheOnly) {
+		nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+		RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned,
+										  pinnedCachePath, pinnedMediaCachePath,
+										  nativeLifecycleResults);
+		RunProtectedCacheCleanupRegression(
+			stock, pinned, stockCachePath, stockMediaCachePath, pinnedCachePath,
+			pinnedMediaCachePath, nativeLifecycleResults);
+		nativeLifecycleResults->SkipUnreported("authenticated-cache-only");
+		nativeLifecycleResults->finalized = true;
+		nativeLifecycleResults->ReportSummary();
+		auto result = 0;
+		if (!nativeLifecycleResults->Passed()) {
+			result = FailChatParticipantsRegression(
+				"authenticated cache regression failed");
+		} else {
+			std::fprintf(stderr,
+						 "Authenticated cache regression cases passed.\n");
+		}
+		crl::on_main([=] { done(result); });
+		return 0;
 	}
 	const auto capabilitiesMatch = [](const Main::Session &session,
 									  bool supported) {
@@ -8192,6 +8872,46 @@ struct NativeLifecycleResults {
 	nativeLifecycleResults->Report("manage-controls", manageControlsPassed);
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("boost-entry-paths");
+	const auto activeWindowBeforeBoost = app.activeWindow();
+	const auto boostBlocked = domain.add(MTP::Environment::Production);
+	boostBlocked->mtp().stopForServerEnrollment();
+	const auto boostWindow = app.ensureSeparateWindowFor(boostBlocked);
+	boostBlocked->setSessionUserId(selfId);
+	auto boostEntryPassed = false;
+	if (boostWindow && app.separateWindowFor(boostBlocked) == boostWindow
+		&& boostBlocked->createSession(
+			RegressionUser(selfId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		boostBlocked->mtp().dcOptions().constructBlocked();
+		const auto boostController
+			= boostWindow->sessionController()
+				  ? boostWindow->sessionController()
+				  : boostBlocked->session().tryResolveWindow();
+		if (boostController && boostBlocked->mtp().dcOptions().blocked()
+			&& !boostBlocked->mtp().dcOptions().hasCustomServer()) {
+			boostEntryPassed = RunBoostEntryPathRefusalRegression(
+				app, stock, pinned, boostBlocked, stockController,
+				pinnedController, boostController);
+		} else {
+			std::fprintf(stderr, "Boost entry regression: blocked fixture "
+								 "could not be prepared.\n");
+		}
+		boostBlocked->forcedLogOut();
+	} else {
+		std::fprintf(
+			stderr,
+			"Boost entry regression: could not create the blocked fixture.\n");
+		if (boostWindow && app.separateWindowFor(boostBlocked) == boostWindow) {
+			app.closeWindow(boostWindow);
+		}
+	}
+	if (activeWindowBeforeBoost) {
+		activeWindowBeforeBoost->activate();
+	}
+	nativeLifecycleResults->Report(
+		"boost-entry-paths",
+		boostEntryPassed && !shouldInjectFailure("boost-entry-paths"));
 #endif
 	const auto activeWindowBeforeBlockedFixture = app.activeWindow();
 	const auto restoredBlocked = domain.add(MTP::Environment::Production);
@@ -8422,82 +9142,9 @@ struct NativeLifecycleResults {
 			   .checkFilterInviteRequestPendingForRegressionTest();
 	nativeLifecycleResults->Report("chatlist-invite-check", inviteCheckRefused);
 	ReportCallRegressionCheckpoint("account activation regressions complete");
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
-		pinned->session().data().cache().sync();
-		pinned->session().data().cacheBigFile().sync();
-		const auto cacheFileRefused = !Core::MacProtectedPath::CheckCachePath(
-			pinnedCachePath, "Tests::ProtectedCache::file");
-		const auto mediaCacheFileRefused
-			= !Core::MacProtectedPath::CheckCachePath(
-				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
-		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
-		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
-									   cacheFilesPassed);
-		if (cacheFilesPassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache regression passed: root, "
-						 "directory, and file "
-						 "symlinks refused for cache and media_cache.\n");
-		}
-	} else {
-		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
-									 "protected-path-integration-disabled");
-	}
-	if (Core::MacProtectedPath::IntegrationTestActive()) {
-		auto postOpenCachePassed = false;
-		auto postOpenMediaCachePassed = false;
-		for (const auto mediaCache : {false, true}) {
-			const auto caseName
-				= mediaCache ? "post-open-media-cache" : "post-open-cache";
-			nativeLifecycleResults->StartCase(caseName);
-			const auto guarded = domain.add(MTP::Environment::Production);
-			guarded->mtp().stopForServerEnrollment();
-			guarded->setSessionUserId(selfId);
-			if (!guarded->createSession(
-					RegressionUser(selfId, true, QString()),
-					std::make_unique<Main::SessionSettings>())) {
-				nativeLifecycleResults->Report(caseName, false);
-				continue;
-			}
-			const auto cacheGetter
-				= [guarded, mediaCache]() -> Storage::Cache::Database & {
-				auto &data = guarded->session().data();
-				return mediaCache ? data.cacheBigFile() : data.cache();
-			};
-			const auto clearCaches = [guarded] {
-				auto &data = guarded->session().data();
-				data.clearLocalStorage();
-				data.cache().sync();
-				data.cacheBigFile().sync();
-			};
-			const auto passed = RunPostOpenCacheSymlinkRegression(
-				mediaCache ? guarded->local().cacheBigFilePath()
-						   : guarded->local().cachePath(),
-				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
-				cacheGetter, clearCaches, [guarded, mediaCache] {
-					return RunRefusedCacheReaderRegressions(guarded,
-															mediaCache);
-				});
-			nativeLifecycleResults->Report(caseName, passed);
-			if (mediaCache) {
-				postOpenMediaCachePassed = passed;
-			} else {
-				postOpenCachePassed = passed;
-			}
-		}
-		if (postOpenCachePassed && postOpenMediaCachePassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache post-open regression passed: "
-						 "get, put, and "
-						 "clear symlinks refused for cache and media_cache.\n");
-		}
-	} else {
-		nativeLifecycleResults->Skip("post-open-cache",
-									 "protected-path-integration-disabled");
-		nativeLifecycleResults->Skip("post-open-media-cache",
-									 "protected-path-integration-disabled");
-	}
+	RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned, pinnedCachePath,
+									  pinnedMediaCachePath,
+									  nativeLifecycleResults);
 	nativeLifecycleResults->StartCase("pinned-chat-participants");
 	const auto pinnedChat = pinned->session().data().chat(chatId);
 	const auto pinnedPeer
@@ -8921,32 +9568,9 @@ struct NativeLifecycleResults {
 				"chat-migration", migrationPassed,
 				"pinned basic-group migration was not rejected locally");
 		}
-		if (Core::MacProtectedPath::IntegrationTestActive()) {
-			nativeLifecycleResults->StartCase("protected-cache-cleanup");
-			stock->session().data().clearLocalStorage();
-			pinned->session().data().clearLocalStorage();
-			stock->session().data().cache().sync();
-			stock->session().data().cacheBigFile().sync();
-			pinned->session().data().cache().sync();
-			pinned->session().data().cacheBigFile().sync();
-			const auto protectedCacheCleanupPassed
-				= !Core::MacProtectedPath::CheckCachePath(
-					  stockCachePath, "Tests::ProtectedCache::async-root")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  stockMediaCachePath,
-					  "Tests::ProtectedCache::async-media-root")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  pinnedCachePath, "Tests::ProtectedCache::async-file")
-				  && !Core::MacProtectedPath::CheckCachePath(
-					  pinnedMediaCachePath,
-					  "Tests::ProtectedCache::async-media-file");
-			recordChatCase(
-				"protected-cache-cleanup", protectedCacheCleanupPassed,
-				"asynchronous cache cleanup accessed a protected target");
-		} else {
-			nativeLifecycleResults->Skip("protected-cache-cleanup",
-										 "protected-path-integration-disabled");
-		}
+		RunProtectedCacheCleanupRegression(
+			stock, pinned, stockCachePath, stockMediaCachePath, pinnedCachePath,
+			pinnedMediaCachePath, nativeLifecycleResults);
 		nativeLifecycleResults->finalized = true;
 		nativeLifecycleResults->ReportSummary();
 		if (!nativeLifecycleResults->Passed()) {
