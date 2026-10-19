@@ -7,7 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <QtCore/QFileInfo>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
+
+#include <kshell.h>
 
 namespace Platform::Linux {
 
@@ -19,6 +23,36 @@ struct DesktopIntegrationFileNames {
 	QString trayAttentionIcon;
 	QString trayMuteIcon;
 };
+
+[[nodiscard]] inline QString
+ShortcutExecutablePath(bool updaterDisabled, const QStringList &arguments,
+					   const QString &executableDirectory,
+					   const QString &executableName) {
+#ifdef TDESKTOP_TEAGRAM
+	return executableDirectory + executableName;
+#else  // !TDESKTOP_TEAGRAM
+	if (updaterDisabled) {
+		if (!arguments.isEmpty()) {
+			const auto result = QFileInfo(arguments.first()).fileName();
+			if (!result.isEmpty()) {
+				return result;
+			}
+		}
+		return executableName;
+	}
+	return executableDirectory + executableName;
+#endif // TDESKTOP_TEAGRAM
+}
+
+[[nodiscard]] inline QString
+DesktopEntryCommandLine(const QStringList &arguments) {
+	return KShell::joinArgs(arguments).replace('\\', u"\\\\"_q);
+}
+
+[[nodiscard]] inline QString
+DBusServiceCommandLine(const QStringList &arguments) {
+	return KShell::joinArgs(arguments);
+}
 
 [[nodiscard]] inline QString DesktopFileId(const QString &instanceHash,
 										   bool includeInstanceHash) {

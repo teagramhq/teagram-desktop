@@ -74,3 +74,17 @@ TEST_CASE(LinuxTeagramDesktopIdentityUsesPrivateNames) {
 	service.beginGroup(u"D-BUS Service"_q);
 	CHECK_EQ(service.value(u"Name"_q).toString(), u"org.teagram.desktop"_q);
 }
+
+TEST_CASE(LinuxTeagramLauncherCommandsUseAbsoluteExecutableOutsidePath) {
+	const auto executable = Platform::Linux::ShortcutExecutablePath(
+		true, {u"/home/user/Downloads/Teagram"_q}, u"/home/user/Downloads/"_q,
+		u"Teagram"_q);
+	CHECK_EQ(executable, u"/home/user/Downloads/Teagram"_q);
+	CHECK_EQ(Platform::Linux::DesktopEntryCommandLine({executable}),
+			 u"/home/user/Downloads/Teagram"_q);
+	CHECK_EQ(Platform::Linux::DesktopEntryCommandLine(
+				 {executable, u"--"_q, u"%U"_q}),
+			 u"/home/user/Downloads/Teagram -- %U"_q);
+	CHECK_EQ(Platform::Linux::DBusServiceCommandLine({executable}),
+			 u"/home/user/Downloads/Teagram"_q);
+}

@@ -289,11 +289,9 @@ bool GenerateDesktopFile(
 
 		if (target.has_key(group, "TryExec", nullptr)) {
 			target.set_string(
-				group,
-				"TryExec",
-				KShell::joinArgs({ executable }).replace(
-					'\\',
-					qstr("\\\\")).toStdString());
+				group, "TryExec",
+				Platform::Linux::DesktopEntryCommandLine({executable})
+					.toStdString());
 		}
 
 		if (target.has_key(group, "Exec", nullptr)) {
@@ -305,12 +303,9 @@ bool GenerateDesktopFile(
 					exec.append(cWorkingDir());
 				}
 				exec.append(args);
-				target.set_string(
-					group,
-					"Exec",
-					KShell::joinArgs(exec).replace(
-						'\\',
-						qstr("\\\\")).toStdString());
+				target.set_string(group, "Exec",
+								  Platform::Linux::DesktopEntryCommandLine(exec)
+									  .toStdString());
 			} else {
 				auto exec = KShell::splitArgs(
 					QString::fromStdString(
@@ -326,11 +321,9 @@ bool GenerateDesktopFile(
 						exec.insert(2, cWorkingDir());
 					}
 					target.set_string(
-						group,
-						"Exec",
-						KShell::joinArgs(exec).replace(
-							'\\',
-							qstr("\\\\")).toStdString());
+						group, "Exec",
+						Platform::Linux::DesktopEntryCommandLine(exec)
+							.toStdString());
 				}
 			}
 		}
@@ -431,9 +424,8 @@ bool GenerateServiceFile(bool silent = false) {
 		exec.append(cWorkingDir());
 	}
 	target.set_string(
-		group,
-		"Exec",
-		KShell::joinArgs(exec).toStdString());
+		group, "Exec",
+		Platform::Linux::DBusServiceCommandLine(exec).toStdString());
 
 	const auto saved = target.save_to_file(targetFile.toStdString());
 	if (!saved) {
@@ -683,17 +675,9 @@ bool SkipTaskbarSupported() {
 }
 
 QString ExecutablePathForShortcuts() {
-	if (Core::UpdaterDisabled()) {
-		const auto &arguments = Core::Launcher::Instance().arguments();
-		if (!arguments.isEmpty()) {
-			const auto result = QFileInfo(arguments.first()).fileName();
-			if (!result.isEmpty()) {
-				return result;
-			}
-		}
-		return cExeName();
-	}
-	return cExeDir() + cExeName();
+	return Platform::Linux::ShortcutExecutablePath(
+		Core::UpdaterDisabled(), Core::Launcher::Instance().arguments(),
+		cExeDir(), cExeName());
 }
 
 } // namespace Platform
