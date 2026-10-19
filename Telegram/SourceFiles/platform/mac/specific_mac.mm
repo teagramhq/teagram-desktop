@@ -279,11 +279,8 @@ bool PreventsQuit(Core::QuitReason reason) {
 				ConfirmQuit::QuitKeysString()));
 }
 
-void ActivateThisProcess() {
-	const auto window = Core::IsAppLaunched()
-		? Core::App().activeWindow()
-		: nullptr;
-	objc_activateProgram(window ? window->widget()->winId() : 0);
+void ActivateThisProcess(not_null<QWidget*> window) {
+	objc_activateProgram(window->winId());
 }
 
 void LaunchMaps(const Data::LocationPoint &point, Fn<void()> fail) {

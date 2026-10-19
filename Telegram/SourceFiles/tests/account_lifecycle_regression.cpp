@@ -2102,6 +2102,30 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		});
 }
 
+template <typename Condition>
+[[nodiscard]] bool WaitForSettingsDeepLinkCondition(Condition condition) {
+	if (condition()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto poll = QTimer();
+	auto deadline = QTimer();
+	poll.setInterval(10);
+	deadline.setSingleShot(true);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (condition()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	deadline.start(1000);
+	loop.exec();
+	poll.stop();
+	deadline.stop();
+	return condition();
+}
+
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -2345,10 +2369,17 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			  }
 			  return true;
 		  };
+	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		window->activate();
+		return WaitForSettingsDeepLinkCondition(
+			[&] { return app.activeWindow() == window; });
+	};
 
-	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &stockController->window()) {
+	if (!activateSettingsWindow(&stockController->window())) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2358,9 +2389,11 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
-	pinnedController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &pinnedController->window()) {
+	if (!activateSettingsWindow(&pinnedController->window())) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &pinnedController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
@@ -2370,9 +2403,11 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
 		return false;
 	}
-	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if (app.activeWindow() != &stockController->window()) {
+	if (!activateSettingsWindow(&stockController->window())) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &stockController->window());
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -2383,8 +2418,17 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 		return false;
 	}
 
-	pinnedController->window().activate();
-	QCoreApplication::processEvents();
+	if (!activateSettingsWindow(&pinnedController->window())) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &pinnedController->window());
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before the unsupported-route checks.\n");
+		return false;
+	}
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
@@ -2419,7 +2463,15 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 							  contextFor(pinnedController))) {
 			return false;
 		}
-		QCoreApplication::processEvents();
+		const auto
+			ordinarySettingsStateRestored = WaitForSettingsDeepLinkCondition([&] {
+				return pinnedController->content()->isMainSectionShown()
+					   && !pinnedController->isLayerShown()
+					   && (pinnedController
+							   ->featureUnavailableOnServerToastCallsForRegressionTest()
+						   == ordinaryToastBefore)
+					   && (app.activeWindow() == &pinnedController->window());
+			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
 		const auto ordinaryLayerHidden = !pinnedController->isLayerShown();
@@ -2429,13 +2481,14 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 			   == ordinaryToastBefore);
 		const auto ordinaryWindowActive
 			= (app.activeWindow() == &pinnedController->window());
-		if (!ordinarySectionShown || !ordinaryLayerHidden
-			|| !ordinaryToastUnchanged || !ordinaryWindowActive) {
+		if (!ordinarySettingsStateRestored || !ordinarySectionShown
+			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
+			|| !ordinaryWindowActive) {
 			std::fprintf(
 				stderr,
-				"Settings deep link regression ordinary Settings checks: "
-				"section_shown=%d layer_hidden=%d toast_unchanged=%d "
-				"window_active=%d.\n",
+				"Settings deep link ordinary Settings counts: section=%d "
+				"layer-hidden=%d toast-unchanged=%d active-window=%d "
+				"expected=1/1/1/1.\n",
 				ordinarySectionShown, ordinaryLayerHidden,
 				ordinaryToastUnchanged, ordinaryWindowActive);
 			std::fprintf(
@@ -2456,18 +2509,40 @@ ShownStoriesSection(not_null<Window::SessionController *> controller) {
 								  contextFor(controller))) {
 				return false;
 			}
-			QCoreApplication::processEvents();
-			const auto myAccountShown = ShownInfoSectionMatches(
-				controller, [](const Info::Section &section) {
-					return (section.type() == Info::Section::Type::Settings)
-						   && (section.settingsType()
-							   == Settings::InformationId());
+			const auto myAccountShown = [&] {
+				return ShownInfoSectionMatches(
+					controller, [](const Info::Section &section) {
+						return (section.type() == Info::Section::Type::Settings)
+							   && (section.settingsType()
+								   == Settings::InformationId());
+					});
+			};
+			const auto
+				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
+					return controller->content()->isMainSectionShown()
+						   && myAccountShown()
+						   && !ShownStoriesSection(controller)
+						   && (controller
+								   ->featureUnavailableOnServerToastCallsForRegressionTest()
+							   == toastBefore);
 				});
-			if (!controller->content()->isMainSectionShown() || !myAccountShown
-				|| ShownStoriesSection(controller)
-				|| (controller
-						->featureUnavailableOnServerToastCallsForRegressionTest()
-					!= toastBefore)) {
+			const auto mainSectionShown
+				= controller->content()->isMainSectionShown();
+			const auto myAccountIsShown = myAccountShown();
+			const auto storiesShown = ShownStoriesSection(controller);
+			const auto toastUnchanged
+				= (controller
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == toastBefore);
+			if (!myProfileStateRestored || !mainSectionShown
+				|| !myAccountIsShown || storiesShown || !toastUnchanged) {
+				std::fprintf(
+					stderr,
+					"Settings deep link my-profile counts: main-section=%d "
+					"my-account=%d stories=%d toast-unchanged=%d "
+					"expected=1/1/0/1.\n",
+					mainSectionShown, myAccountIsShown, storiesShown,
+					toastUnchanged);
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
@@ -4556,9 +4631,21 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| (app.activePrimaryWindow() != &stockController->window())) {
+	const auto stockWindowActivationRestored = WaitForSettingsDeepLinkCondition(
+		[&] {
+			return (app.activeWindow() == &stockController->window())
+				   && (app.activePrimaryWindow() == &stockController->window());
+		});
+	const auto activeWindowRestored
+		= app.activeWindow() == &stockController->window();
+	const auto activePrimaryWindowRestored
+		= app.activePrimaryWindow() == &stockController->window();
+	if (!stockWindowActivationRestored || !activeWindowRestored
+		|| !activePrimaryWindowRestored) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window activation "
