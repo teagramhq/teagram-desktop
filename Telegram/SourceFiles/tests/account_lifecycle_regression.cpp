@@ -4551,6 +4551,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			static_cast<const void *>(pinnedController));
 		return false;
 	}
+	const auto stockControllerLifetime = base::make_weak(stockController);
+	const auto pinnedControllerLifetime = base::make_weak(pinnedController);
+	const auto blankControllerLifetime = base::make_weak(blankController.get());
 	if (stock->mtp().dcOptions().hasCustomServer()
 		|| stock->mtp().dcOptions().blocked()
 		|| !pinned->mtp().dcOptions().hasCustomServer()
@@ -5061,6 +5064,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 						.takePendingResolveForRegressionTest();
 	const auto diedWebviewWeak
 		= base::make_weak(&deferred->session().attachWebView());
+	const auto diedSessionWeak = base::make_weak(&deferred->session());
 	const auto diedControllerWeak = base::make_weak(secondController);
 	if (!retained || !diedWebviewWeak || !diedControllerWeak) {
 		std::fprintf(stderr,
@@ -5069,10 +5073,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	deferred->forcedLogOut();
-	if (deferred->sessionExists()) {
+	if (!diedSessionWeak.empty()) {
 		std::fprintf(
 			stderr,
-			"Mini-app open regression: teardown kept the session with a "
+			"Mini-app open regression: teardown kept the session alive with a "
 			"resolve in flight.\n");
 		return false;
 	}
@@ -5100,6 +5104,45 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	const auto replacement = app.domain().add(MTP::Environment::Production);
 	replacement->mtp().stopForServerEnrollment();
 	replacement->setSessionUserId(selfId);
+	const auto replacementLifetime = base::make_weak(replacement.get());
+	const auto stockWasPremium = stock->session().premium();
+	const auto pinnedWasPremium = pinned->session().premium();
+	const auto blankWasPremium = blank->session().premium();
+	auto accountLimitFixtureRestored = false;
+	base::weak_ptr<Window::Controller> disposablePrimaryWindowLifetime;
+	const auto restoreAccountLimitFixture = [&] {
+		if (accountLimitFixtureRestored) {
+			return;
+		}
+		accountLimitFixtureRestored = true;
+		if (const auto strong = replacementLifetime.get()) {
+			if (strong->sessionExists()) {
+				strong->forcedLogOut();
+			}
+			if (const auto window = app.separateWindowFor(not_null(strong))) {
+				app.closeWindow(window);
+			}
+		}
+		if (const auto window = disposablePrimaryWindowLifetime.get()) {
+			if (app.separateWindowFor(window->id()) == window) {
+				app.closeWindow(window);
+			}
+		}
+		app.domain().activate(stock);
+		QCoreApplication::processEvents();
+		QCoreApplication::processEvents();
+		app.domain().removeRedundantAccounts();
+		QCoreApplication::processEvents();
+		const auto stockRestored = SetRegressionSessionPremium(
+			&stock->session(), selfId, stockWasPremium);
+		const auto pinnedRestored = SetRegressionSessionPremium(
+			&pinned->session(), selfId, pinnedWasPremium);
+		const auto blankRestored = SetRegressionSessionPremium(
+			&blank->session(), selfId, blankWasPremium);
+		Expects(stockRestored && pinnedRestored && blankRestored);
+	};
+	const auto restoreAccountLimitFixtureOnExit
+		= gsl::finally(restoreAccountLimitFixture);
 	if (!replacement->createSession(
 			RegressionUser(selfId, true, QString()),
 			std::make_unique<Main::SessionSettings>())) {
@@ -5109,19 +5152,26 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			"session.\n");
 		return false;
 	}
-	const auto thirdWindow = app.ensureSeparateWindowFor(replacement);
+	const auto disposablePrimaryWindow
+		= app.ensureSeparateWindowFor(replacement);
+	if (disposablePrimaryWindow) {
+		disposablePrimaryWindowLifetime
+			= base::make_weak(disposablePrimaryWindow);
+	}
 	QCoreApplication::processEvents();
 	QCoreApplication::processEvents();
-	const auto thirdController
-		= thirdWindow ? thirdWindow->sessionController() : nullptr;
+	const auto replacementController
+		= disposablePrimaryWindow ? disposablePrimaryWindow->sessionController()
+								  : nullptr;
 	// The replacement is a live session of this account with its own window
 	// registered, established without comparing any destroyed address.
 	const auto secondRegistration = replacement->session().windows();
-	if (!thirdController || (secondRegistration.size() != 1)
+	if (!disposablePrimaryWindow || !replacementController
+		|| (secondRegistration.size() != 1)
 		|| (*secondRegistration.begin()
-			!= not_null<Window::SessionController *>(thirdController))
-		|| (app.separateWindowFor(replacement) != thirdWindow)
-		|| (&thirdController->session() != &replacement->session())) {
+			!= not_null<Window::SessionController *>(replacementController))
+		|| (app.separateWindowFor(replacement) != disposablePrimaryWindow)
+		|| (&replacementController->session() != &replacement->session())) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session did not take "
@@ -5167,7 +5217,8 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	// Positive control: the same seam opens on the replacement session,
 	// so the zeros above are a refusal and not an inert webview.
-	if (!OpenMiniAppByUsername(&replacement->session(), thirdController)) {
+	if (!OpenMiniAppByUsername(&replacement->session(),
+							   replacementController)) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: the replacement session refused a "
@@ -5188,9 +5239,87 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 	replacement->session().attachWebView().cancel();
 	replacement->session().attachWebView().closeAll();
+	if (!SetRegressionSessionPremium(&stock->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&pinned->session(), selfId, false)
+		|| !SetRegressionSessionPremium(&blank->session(), selfId, false)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: could not set up the account-limit "
+			"fixture.\n");
+		return false;
+	}
+	if (app.domain().maxAccounts() != Main::Domain::kMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture retained a "
+			"premium allowance: max=%d expected=%d.\n",
+			app.domain().maxAccounts(), Main::Domain::kMaxAccounts);
+		return false;
+	}
+	app.domain().activate(stock);
+	const auto accountsBeforeRedundantCleanup = app.domain().accounts().size();
+	app.domain().removeRedundantAccounts();
+	const auto accountsAfterRedundantCleanup = app.domain().accounts().size();
+	if (accountsAfterRedundantCleanup >= Main::Domain::kPremiumMaxAccounts) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture has no slot for "
+			"the overflow account: before=%d after_cleanup=%d max=%d.\n",
+			int(accountsBeforeRedundantCleanup),
+			int(accountsAfterRedundantCleanup),
+			Main::Domain::kPremiumMaxAccounts);
+		return false;
+	}
+	const auto overflowAccount = app.domain().add(MTP::Environment::Production);
+	overflowAccount->mtp().stopForServerEnrollment();
+	const auto orderedBeforeReplacementLogout = app.domain().orderedAccounts();
+	const auto overflowAccountPosition
+		= ranges::find(orderedBeforeReplacementLogout, overflowAccount);
+	const auto overflowAccountIndex = int(std::distance(
+		begin(orderedBeforeReplacementLogout), overflowAccountPosition));
+	if ((overflowAccountPosition == end(orderedBeforeReplacementLogout))
+		|| (overflowAccountIndex < app.domain().maxAccounts())
+		|| overflowAccount->sessionExists()
+		|| app.separateWindowFor(overflowAccount)) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit fixture did not place a "
+			"sessionless account beyond the limit: accounts=%d max=%d "
+			"index=%d session=%d window=%d.\n",
+			int(orderedBeforeReplacementLogout.size()),
+			app.domain().maxAccounts(), overflowAccountIndex,
+			overflowAccount->sessionExists(),
+			app.separateWindowFor(overflowAccount) != nullptr);
+		return false;
+	}
+	app.setActivePrimaryWindow(disposablePrimaryWindow);
+	if (app.activePrimaryWindow() != disposablePrimaryWindow) {
+		std::fprintf(stderr, "Mini-app open regression: disposable primary "
+							 "window did not become "
+							 "the active primary window.\n");
+		return false;
+	}
+	app.domain().activate(overflowAccount);
+	if (&app.domain().active() != overflowAccount.get()) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: sessionless account beyond the account "
+			"limit did not become active.\n");
+		return false;
+	}
 	replacement->forcedLogOut();
-	if (thirdWindow && (app.separateWindowFor(replacement) == thirdWindow)) {
-		app.closeWindow(thirdWindow);
+	restoreAccountLimitFixture();
+	const auto fixtureControllersSurvived = !stockControllerLifetime.empty()
+											&& !pinnedControllerLifetime.empty()
+											&& !blankControllerLifetime.empty();
+	if (!fixtureControllersSurvived) {
+		std::fprintf(
+			stderr,
+			"Mini-app open regression: account-limit cleanup destroyed an "
+			"existing fixture controller: stock=%d pinned=%d blocked=%d.\n",
+			!stockControllerLifetime.empty(), !pinnedControllerLifetime.empty(),
+			!blankControllerLifetime.empty());
+		return false;
 	}
 	std::fprintf(
 		stderr,
