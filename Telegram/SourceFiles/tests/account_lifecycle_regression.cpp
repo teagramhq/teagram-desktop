@@ -2567,12 +2567,19 @@ template <typename Condition>
 			const auto informationFallbackRequested
 				= (informationFallbackCount == 1);
 			const auto myAccountShown = [&] {
-				return ShownInfoSectionMatches(
-					controller, [](const Info::Section &section) {
-						return (section.type() == Info::Section::Type::Settings)
-							   && (section.settingsType()
-								   == Settings::InformationId());
-					});
+				const auto counts = controller->content()
+										->sectionStackCountsForRegressionTest();
+				return (counts.mainSettings == 1)
+					   && (counts.mainInformation == 1)
+					   && (counts.mainSectionVisible == 1)
+					   && (counts.mainSectionAnimating == 1
+						   || ShownInfoSectionMatches(
+							   controller, [](const Info::Section &section) {
+								   return (section.type()
+										   == Info::Section::Type::Settings)
+										  && (section.settingsType()
+											  == Settings::InformationId());
+							   }));
 			};
 			const auto
 				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
@@ -2622,6 +2629,7 @@ template <typename Condition>
 					"navigation-top-settings=%d "
 					"navigation-top-information=%d navigation-top-stories=%d "
 					"main-history=%d main-other=%d main-info=%d "
+					"main-section-visible=%d main-section-animating=%d "
 					"main-settings=%d main-information=%d main-stories=%d "
 					"restore-conditions-missing=%d.\n",
 					myProfileRouteCount, informationFallbackCount,
@@ -2633,8 +2641,10 @@ template <typename Condition>
 					stackCounts.navigationTopInformation,
 					stackCounts.navigationTopStories, stackCounts.mainHistory,
 					stackCounts.mainOther, stackCounts.mainInfo,
-					stackCounts.mainSettings, stackCounts.mainInformation,
-					stackCounts.mainStories, restoreConditionsMissing);
+					stackCounts.mainSectionVisible,
+					stackCounts.mainSectionAnimating, stackCounts.mainSettings,
+					stackCounts.mainInformation, stackCounts.mainStories,
+					restoreConditionsMissing);
 				std::fprintf(
 					stderr,
 					"Settings deep link my-profile observer counts: "

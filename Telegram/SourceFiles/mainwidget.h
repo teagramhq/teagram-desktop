@@ -99,6 +99,8 @@ struct SectionStackCountsForRegressionTest {
 	int mainHistory = 0;
 	int mainOther = 0;
 	int mainInfo = 0;
+	int mainSectionVisible = 0;
+	int mainSectionAnimating = 0;
 	int mainSettings = 0;
 	int mainInformation = 0;
 	int mainStories = 0;

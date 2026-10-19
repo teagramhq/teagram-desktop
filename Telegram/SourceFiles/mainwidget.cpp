@@ -1378,6 +1378,8 @@ MainWidget::sectionStackCountsForRegressionTest() const {
 	if (const auto section
 		= dynamic_cast<Info::SectionWidget *>(_mainSection.get())) {
 		result.mainInfo = 1;
+		result.mainSectionVisible = section->isVisible();
+		result.mainSectionAnimating = section->animatingShow();
 		countInfoSection(section->contentSectionForRegressionTest(),
 						 result.mainSettings, result.mainInformation,
 						 result.mainStories);
