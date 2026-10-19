@@ -214,9 +214,8 @@ Result ShowMyProfile(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
 	} else if (!ctx.controller->session().storiesSupported()) {
-		ctx.controller->showSettings(
-			::Settings::InformationId(),
-			Window::SectionShow::Way::ClearStack);
+		ctx.controller->showSettings(::Settings::InformationId(),
+									 Window::SectionShow::Way::ClearStack);
 		return Result::Handled;
 	}
 	ctx.controller->showSection(
