@@ -91,6 +91,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
+#include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "support/support_helper.h"
 #include "storage/storage_user_photos.h"
@@ -209,6 +210,12 @@ public:
 	std::shared_ptr<Window::SectionMemento> takeMemento() {
 		return std::move(_memento);
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const std::shared_ptr<Window::SectionMemento> &
+	mementoForRegressionTest() const {
+		return _memento;
+	}
+#endif
 
 private:
 	rpl::producer<> sectionRemoveRequests() const override;
@@ -1334,6 +1341,54 @@ void MainWidget::toggleChooseChatTheme(
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 HistoryWidget *MainWidget::historyWidgetForRegressionTest() const {
 	return _history.get();
+}
+
+SectionStackCountsForRegressionTest
+MainWidget::sectionStackCountsForRegressionTest() const {
+	const auto countInfoSection = [](const Info::Section &section,
+									 int &settings,
+									 int &information,
+									 int &stories) {
+		if (section.type() == Info::Section::Type::Settings) {
+			settings = 1;
+			information = (section.settingsType() == Settings::InformationId());
+		} else if (section.type() == Info::Section::Type::Stories) {
+			stories = 1;
+		}
+	};
+	auto result = SectionStackCountsForRegressionTest();
+	result.navigationDepth = int(_stack.size());
+	if (!_stack.empty()) {
+		const auto top = _stack.back().get();
+		result.navigationTopHistory = (top->type() == HistoryStackItem);
+		result.navigationTopSection = (top->type() == SectionStackItem);
+		if (const auto section = dynamic_cast<StackItemSection *>(top)) {
+			const auto memento = dynamic_cast<Info::Memento *>(
+				section->mementoForRegressionTest().get());
+			if (memento) {
+				result.navigationTopInfo = 1;
+				countInfoSection(
+					memento->content()->section(),
+					result.navigationTopSettings,
+					result.navigationTopInformation,
+					result.navigationTopStories);
+			}
+		}
+	}
+	if (const auto section
+		= dynamic_cast<Info::WrapWidget *>(_mainSection.get())) {
+		result.mainInfo = 1;
+		countInfoSection(
+			section->controller()->section(),
+			result.mainSettings,
+			result.mainInformation,
+			result.mainStories);
+	} else if (_mainSection) {
+		result.mainOther = 1;
+	} else if (_history->peer()) {
+		result.mainHistory = 1;
+	}
+	return result;
 }
 #endif
 

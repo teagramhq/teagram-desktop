@@ -180,6 +180,12 @@ auto gTranslationRpcRoleForRegressionTest
 	= TranslationRpcRoleForRegressionTest::None;
 auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+struct SettingsDeepLinkRouteEventForRegressionTest {
+	const Window::SessionController *controller = nullptr;
+	bool informationFallback = false;
+};
+auto gSettingsDeepLinkRouteEvents
+	= std::vector<SettingsDeepLinkRouteEventForRegressionTest>();
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -463,6 +469,25 @@ void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer) {
 void RecordFeatureUnavailableToastForRegressionTest() {
 	gCallStartRegressionSnapshot.navigationEvents.push_back(
 		SessionNavigationRegressionEvent::FeatureUnavailableToast);
+}
+
+void RecordSettingsMyProfileRouteForRegressionTest(
+		const Window::SessionController *controller,
+		bool informationFallback) {
+	gSettingsDeepLinkRouteEvents.push_back({ controller, informationFallback });
+}
+
+SettingsDeepLinkRouteCountsForRegressionTest
+GetSettingsDeepLinkRouteCountsForRegressionTest(
+		const Window::SessionController *controller) {
+	auto result = SettingsDeepLinkRouteCountsForRegressionTest();
+	for (const auto &event : gSettingsDeepLinkRouteEvents) {
+		if (event.controller == controller) {
+			++result.myProfileRoute;
+			result.informationFallback += event.informationFallback;
+		}
+	}
+	return result;
 }
 
 void RecordLifecycleWriteForRegressionTest(
@@ -2524,10 +2549,25 @@ template <typename Condition>
 					  ->featureUnavailableOnServerToastCallsForRegressionTest();
 			const auto storiesSupported
 				= controller->session().storiesSupported();
+			const auto routeCountsBefore
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					controller.get());
 			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
 								  contextFor(controller))) {
 				return false;
 			}
+			const auto routeCountsAfter
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					controller.get());
+			const auto myProfileRouteCount
+				= routeCountsAfter.myProfileRoute
+				  - routeCountsBefore.myProfileRoute;
+			const auto informationFallbackCount
+				= routeCountsAfter.informationFallback
+				  - routeCountsBefore.informationFallback;
+			const auto myProfileRouteRequested = (myProfileRouteCount == 1);
+			const auto informationFallbackRequested
+				= (informationFallbackCount == 1);
 			const auto myAccountShown = [&] {
 				return ShownInfoSectionMatches(
 					controller, [](const Info::Section &section) {
@@ -2556,17 +2596,49 @@ template <typename Condition>
 				= (controller
 					   ->featureUnavailableOnServerToastCallsForRegressionTest()
 				   == toastBefore);
-			if (storiesSupported || !myProfileStateRestored || !mainSectionShown
+			if (storiesSupported || !myProfileStateRestored
+				|| !myProfileRouteRequested || !informationFallbackRequested
+				|| !mainSectionShown
 				|| !myAccountIsShown || storiesShown || !layerHidden
 				|| !toastUnchanged) {
 				const auto targetInfoCounts
 					= CountSettingsDeepLinkInfoSections(controller);
 				const auto stockInfoCounts
 					= CountSettingsDeepLinkInfoSections(stockController);
+				const auto stackCounts
+					= controller->content()
+						  ->sectionStackCountsForRegressionTest();
 				const auto targetWindowVisible
 					= controller->widget()->isVisible();
 				const auto targetWindowActive
 					= (app.activeWindow() == &controller->window());
+				const auto restoreConditionsMissing
+					= int(!mainSectionShown) + int(!myAccountIsShown)
+					  + int(storiesShown) + int(!layerHidden)
+					  + int(!toastUnchanged);
+				std::fprintf(
+					stderr,
+					"Settings deep link route and stack counts: "
+					"my-profile-route=%d information-fallback=%d "
+					"navigation-depth=%d navigation-top-history=%d "
+					"navigation-top-section=%d navigation-top-info=%d "
+					"navigation-top-settings=%d "
+					"navigation-top-information=%d navigation-top-stories=%d "
+					"main-history=%d main-other=%d main-info=%d "
+					"main-settings=%d main-information=%d main-stories=%d "
+					"restore-conditions-missing=%d.\n",
+					myProfileRouteCount, informationFallbackCount,
+					stackCounts.navigationDepth,
+					stackCounts.navigationTopHistory,
+					stackCounts.navigationTopSection,
+					stackCounts.navigationTopInfo,
+					stackCounts.navigationTopSettings,
+					stackCounts.navigationTopInformation,
+					stackCounts.navigationTopStories,
+					stackCounts.mainHistory, stackCounts.mainOther,
+					stackCounts.mainInfo, stackCounts.mainSettings,
+					stackCounts.mainInformation, stackCounts.mainStories,
+					restoreConditionsMissing);
 				std::fprintf(
 					stderr,
 					"Settings deep link my-profile observer counts: "

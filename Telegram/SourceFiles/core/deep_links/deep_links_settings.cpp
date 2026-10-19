@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/deep_links/deep_links_router.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "apiwrap.h"
 #include "base/binary_guard.h"
 #include "boxes/add_contact_box.h"
@@ -213,7 +217,13 @@ Result OpenInternalUrl(const Context &ctx, const QString &url) {
 Result ShowMyProfile(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
-	} else if (!ctx.controller->session().storiesSupported()) {
+	}
+	const auto storiesSupported = ctx.controller->session().storiesSupported();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordSettingsMyProfileRouteForRegressionTest(
+		ctx.controller, !storiesSupported);
+#endif
+	if (!storiesSupported) {
 		ctx.controller->showSettings(::Settings::InformationId());
 		return Result::Handled;
 	}
