@@ -87,6 +87,26 @@ class HistoryHider;
 struct SeparateId;
 } // namespace Window
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+struct SectionStackCountsForRegressionTest {
+	int navigationDepth = 0;
+	int navigationTopHistory = 0;
+	int navigationTopSection = 0;
+	int navigationTopInfo = 0;
+	int navigationTopSettings = 0;
+	int navigationTopInformation = 0;
+	int navigationTopStories = 0;
+	int mainHistory = 0;
+	int mainOther = 0;
+	int mainInfo = 0;
+	int mainSectionVisible = 0;
+	int mainSectionAnimating = 0;
+	int mainSettings = 0;
+	int mainInformation = 0;
+	int mainStories = 0;
+};
+#endif
+
 namespace Calls {
 class Call;
 class GroupCall;
@@ -202,6 +222,8 @@ public:
 		std::optional<bool> show);
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] HistoryWidget *historyWidgetForRegressionTest() const;
+	[[nodiscard]] SectionStackCountsForRegressionTest
+	sectionStackCountsForRegressionTest() const;
 #endif
 
 	void showHistory(

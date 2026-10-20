@@ -19,6 +19,7 @@ namespace Info {
 class Memento;
 class MoveMemento;
 class Controller;
+class Section;
 class WrapWidget;
 enum class Wrap;
 
@@ -51,6 +52,10 @@ public:
 		QRect bodyGeometry) override;
 
 	rpl::producer<> removeRequests() const override;
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] Section contentSectionForRegressionTest() const;
+#endif
 
 	// Float player interface.
 	bool floatPlayerHandleWheelEvent(QEvent *e) override;

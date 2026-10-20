@@ -24,8 +24,7 @@ inline bool PreventsQuit(Core::QuitReason reason) {
 	return false;
 }
 
-inline void ActivateThisProcess() {
-}
+inline void ActivateThisProcess(not_null<QWidget *>) {}
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
 	return 1;
