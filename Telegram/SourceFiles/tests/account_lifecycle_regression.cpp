@@ -180,6 +180,12 @@ auto gTranslationRpcRoleForRegressionTest
 	= TranslationRpcRoleForRegressionTest::None;
 auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
+struct SettingsDeepLinkRouteEventForRegressionTest {
+	const Window::SessionController *controller = nullptr;
+	bool informationFallback = false;
+};
+auto gSettingsDeepLinkRouteEvents
+	= std::vector<SettingsDeepLinkRouteEventForRegressionTest>();
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -463,6 +469,24 @@ void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer) {
 void RecordFeatureUnavailableToastForRegressionTest() {
 	gCallStartRegressionSnapshot.navigationEvents.push_back(
 		SessionNavigationRegressionEvent::FeatureUnavailableToast);
+}
+
+void RecordSettingsMyProfileRouteForRegressionTest(
+	const Window::SessionController *controller, bool informationFallback) {
+	gSettingsDeepLinkRouteEvents.push_back({controller, informationFallback});
+}
+
+SettingsDeepLinkRouteCountsForRegressionTest
+GetSettingsDeepLinkRouteCountsForRegressionTest(
+	const Window::SessionController *controller) {
+	auto result = SettingsDeepLinkRouteCountsForRegressionTest();
+	for (const auto &event : gSettingsDeepLinkRouteEvents) {
+		if (event.controller == controller) {
+			++result.myProfileRoute;
+			result.informationFallback += event.informationFallback;
+		}
+	}
+	return result;
 }
 
 void RecordLifecycleWriteForRegressionTest(
@@ -2086,12 +2110,52 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
 	for (const auto widget : widgets) {
 		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && !wrap->isHidden()
+		if (wrap && wrap->isVisible()
 			&& matches(wrap->controller()->section())) {
 			return true;
 		}
 	}
 	return false;
+}
+
+struct SettingsDeepLinkInfoCounts {
+	int wraps = 0;
+	int visibleWraps = 0;
+	int notHiddenWraps = 0;
+	int settingsWraps = 0;
+	int informationWraps = 0;
+	int visibleInformationWraps = 0;
+	int notHiddenInformationWraps = 0;
+	int storiesWraps = 0;
+};
+
+[[nodiscard]] SettingsDeepLinkInfoCounts CountSettingsDeepLinkInfoSections(
+	not_null<Window::SessionController *> controller) {
+	auto result = SettingsDeepLinkInfoCounts();
+	const auto widgets = controller->widget()->findChildren<QWidget *>();
+	for (const auto widget : widgets) {
+		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
+		if (!wrap) {
+			continue;
+		}
+		++result.wraps;
+		const auto visible = wrap->isVisible();
+		const auto notHidden = !wrap->isHidden();
+		result.visibleWraps += visible;
+		result.notHiddenWraps += notHidden;
+		const auto &section = wrap->controller()->section();
+		if (section.type() == Info::Section::Type::Settings) {
+			++result.settingsWraps;
+			if (section.settingsType() == Settings::InformationId()) {
+				++result.informationWraps;
+				result.visibleInformationWraps += visible;
+				result.notHiddenInformationWraps += notHidden;
+			}
+		} else if (section.type() == Info::Section::Type::Stories) {
+			++result.storiesWraps;
+		}
+	}
+	return result;
 }
 
 [[nodiscard]] bool
@@ -2505,44 +2569,141 @@ template <typename Condition>
 			const auto toastBefore
 				= controller
 					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto storiesSupported
+				= controller->session().storiesSupported();
+			const auto routeCountsBefore
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					controller.get());
 			if (!app.openLocalUrl(u"tg://settings/my-profile"_q,
 								  contextFor(controller))) {
 				return false;
 			}
-			const auto myAccountShown = [&] {
-				return ShownInfoSectionMatches(
-					controller, [](const Info::Section &section) {
-						return (section.type() == Info::Section::Type::Settings)
-							   && (section.settingsType()
-								   == Settings::InformationId());
-					});
+			const auto routeCountsAfter
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					controller.get());
+			const auto myProfileRouteCount = routeCountsAfter.myProfileRoute
+											 - routeCountsBefore.myProfileRoute;
+			const auto informationFallbackCount
+				= routeCountsAfter.informationFallback
+				  - routeCountsBefore.informationFallback;
+			const auto myProfileRouteRequested = (myProfileRouteCount == 1);
+			const auto informationFallbackRequested
+				= (informationFallbackCount == 1);
+			const auto myAccountShown = [&](const auto &counts) {
+				return (counts.mainSettings == 1)
+					   && (counts.mainInformation == 1)
+					   && (counts.mainSectionVisible == 1)
+					   && (counts.mainSectionAnimating == 0)
+					   && ShownInfoSectionMatches(
+						   controller, [](const Info::Section &section) {
+							   return (section.type()
+									   == Info::Section::Type::Settings)
+									  && (section.settingsType()
+										  == Settings::InformationId());
+						   });
 			};
 			const auto
 				myProfileStateRestored = WaitForSettingsDeepLinkCondition([&] {
-					return controller->content()->isMainSectionShown()
-						   && myAccountShown()
+					return !storiesSupported
+						   && controller->content()->isMainSectionShown()
+						   && myAccountShown(
+							   controller->content()
+								   ->sectionStackCountsForRegressionTest())
 						   && !ShownStoriesSection(controller)
+						   && !controller->isLayerShown()
 						   && (controller
 								   ->featureUnavailableOnServerToastCallsForRegressionTest()
 							   == toastBefore);
 				});
+			const auto stackCountsAtDeadline
+				= controller->content()->sectionStackCountsForRegressionTest();
 			const auto mainSectionShown
 				= controller->content()->isMainSectionShown();
-			const auto myAccountIsShown = myAccountShown();
+			const auto myAccountIsShown = myAccountShown(stackCountsAtDeadline);
 			const auto storiesShown = ShownStoriesSection(controller);
+			const auto layerHidden = !controller->isLayerShown();
 			const auto toastUnchanged
 				= (controller
 					   ->featureUnavailableOnServerToastCallsForRegressionTest()
 				   == toastBefore);
-			if (!myProfileStateRestored || !mainSectionShown
-				|| !myAccountIsShown || storiesShown || !toastUnchanged) {
+			if (storiesSupported || !myProfileStateRestored
+				|| !myProfileRouteRequested || !informationFallbackRequested
+				|| !mainSectionShown || !myAccountIsShown || storiesShown
+				|| !layerHidden || !toastUnchanged) {
+				const auto targetInfoCounts
+					= CountSettingsDeepLinkInfoSections(controller);
+				const auto stockInfoCounts
+					= CountSettingsDeepLinkInfoSections(stockController);
+				const auto targetWindowVisible
+					= controller->widget()->isVisible();
+				const auto targetWindowActive
+					= (app.activeWindow() == &controller->window());
+				const auto restoreConditionsMissing
+					= int(!mainSectionShown) + int(!myAccountIsShown)
+					  + int(storiesShown) + int(!layerHidden)
+					  + int(!toastUnchanged);
 				std::fprintf(
 					stderr,
-					"Settings deep link my-profile counts: main-section=%d "
-					"my-account=%d stories=%d toast-unchanged=%d "
-					"expected=1/1/0/1.\n",
-					mainSectionShown, myAccountIsShown, storiesShown,
-					toastUnchanged);
+					"Settings deep link route and stack counts: "
+					"my-profile-route=%d information-fallback=%d "
+					"navigation-depth=%d navigation-top-history=%d "
+					"navigation-top-section=%d navigation-top-info=%d "
+					"navigation-top-settings=%d "
+					"navigation-top-information=%d navigation-top-stories=%d "
+					"main-history=%d main-other=%d main-info=%d "
+					"main-section-visible=%d main-section-animating=%d "
+					"main-settings=%d main-information=%d main-stories=%d "
+					"restore-conditions-missing=%d.\n",
+					myProfileRouteCount, informationFallbackCount,
+					stackCountsAtDeadline.navigationDepth,
+					stackCountsAtDeadline.navigationTopHistory,
+					stackCountsAtDeadline.navigationTopSection,
+					stackCountsAtDeadline.navigationTopInfo,
+					stackCountsAtDeadline.navigationTopSettings,
+					stackCountsAtDeadline.navigationTopInformation,
+					stackCountsAtDeadline.navigationTopStories,
+					stackCountsAtDeadline.mainHistory,
+					stackCountsAtDeadline.mainOther,
+					stackCountsAtDeadline.mainInfo,
+					stackCountsAtDeadline.mainSectionVisible,
+					stackCountsAtDeadline.mainSectionAnimating,
+					stackCountsAtDeadline.mainSettings,
+					stackCountsAtDeadline.mainInformation,
+					stackCountsAtDeadline.mainStories,
+					restoreConditionsMissing);
+				std::fprintf(
+					stderr,
+					"Settings deep link my-profile observer counts: "
+					"target-window-visible=%d target-window-active=%d "
+					"target-wraps=%d target-visible-wraps=%d "
+					"target-not-hidden-wraps=%d target-settings-wraps=%d "
+					"target-information-wraps=%d "
+					"target-information-visible=%d "
+					"target-information-not-hidden=%d "
+					"target-stories-wraps=%d stock-wraps=%d "
+					"stock-information-wraps=%d stock-information-visible=%d "
+					"stock-information-not-hidden=%d.\n",
+					targetWindowVisible, targetWindowActive,
+					targetInfoCounts.wraps, targetInfoCounts.visibleWraps,
+					targetInfoCounts.notHiddenWraps,
+					targetInfoCounts.settingsWraps,
+					targetInfoCounts.informationWraps,
+					targetInfoCounts.visibleInformationWraps,
+					targetInfoCounts.notHiddenInformationWraps,
+					targetInfoCounts.storiesWraps, stockInfoCounts.wraps,
+					stockInfoCounts.informationWraps,
+					stockInfoCounts.visibleInformationWraps,
+					stockInfoCounts.notHiddenInformationWraps);
+				std::fprintf(stderr,
+							 "Settings deep link my-profile counts: "
+							 "stories-supported=%d "
+							 "state-restored=%d main-section=%d my-account=%d "
+							 "stories=%d "
+							 "layer-hidden=%d toast-unchanged=%d "
+							 "expected=0/1/1/1/0/1/1.\n",
+							 storiesSupported, myProfileStateRestored,
+							 mainSectionShown, myAccountIsShown, storiesShown,
+							 layerHidden, toastUnchanged);
 				std::fprintf(
 					stderr,
 					"Settings deep link regression failed: my-profile did not "
@@ -2555,13 +2716,23 @@ template <typename Condition>
 	}
 
 	stockController->window().activate();
-	QCoreApplication::processEvents();
-	if ((app.activeWindow() != &stockController->window())
-		|| (app.activePrimaryWindow() != &stockController->window())) {
+	const auto stockWindowActivated = WaitForSettingsDeepLinkCondition([&] {
+		return (app.activeWindow() == &stockController->window())
+			   && (app.activePrimaryWindow() == &stockController->window());
+	});
+	if (!stockWindowActivated) {
+		const auto activeWindowRestored
+			= (app.activeWindow() == &stockController->window());
+		const auto activePrimaryWindowRestored
+			= (app.activePrimaryWindow() == &stockController->window());
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
-			"become active.\n");
+			"become active before missing-target checks.\n");
 		return false;
 	}
 	resetController(stockController);

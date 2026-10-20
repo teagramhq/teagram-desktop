@@ -17,6 +17,10 @@ namespace Main {
 class Session;
 } // namespace Main
 
+namespace Window {
+class SessionController;
+} // namespace Window
+
 class PeerData;
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -82,6 +86,17 @@ void RecordCallActivationForRegressionTest();
 void RecordCallLeavePromptForRegressionTest();
 void RecordCallLinkChannelOpenedForRegressionTest(const PeerData *peer);
 void RecordFeatureUnavailableToastForRegressionTest();
+
+struct SettingsDeepLinkRouteCountsForRegressionTest {
+	int myProfileRoute = 0;
+	int informationFallback = 0;
+};
+
+void RecordSettingsMyProfileRouteForRegressionTest(
+	const Window::SessionController *controller, bool informationFallback);
+[[nodiscard]] SettingsDeepLinkRouteCountsForRegressionTest
+GetSettingsDeepLinkRouteCountsForRegressionTest(
+	const Window::SessionController *controller);
 
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,

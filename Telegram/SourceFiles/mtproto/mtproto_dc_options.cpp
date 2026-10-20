@@ -78,9 +78,8 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 5+bfo3Nhmcyvk5ftB0WkJ9z6bNZ7yxrP8wIDAQAB\n\
 -----END RSA PUBLIC KEY-----" };
 
-[[nodiscard]] bool ValidDiscoveryMetadata(
-		const CustomServer &server,
-		bool allowRestoredPreviouslyAllowedLiteral = false) {
+[[nodiscard]] bool ValidDiscoveryMetadata(const CustomServer &server,
+										  bool allowRestoredMetadata = false) {
 	const auto hasHostname = !server.hostname.empty();
 	const auto hasIp = !server.ip.empty();
 	if (hasHostname && hasIp) {
@@ -96,14 +95,13 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 	}
 	const auto selection = CheckServerSelection(
 		QString::fromStdString(server.serverSelection));
-	const auto restoredPreviouslyAllowedLiteral =
-		allowRestoredPreviouslyAllowedLiteral
-		&& server.discoveryPolicy == ServerDiscoveryPolicy::LocalDirect
-		&& selection.status == ServerSelectionStatus::PublicIpLiteral
-		&& selection.explicitPort
-		&& selection.requestedPort == server.port
-		&& selection.normalizedSelection
-			== QString::fromStdString(server.serverSelection);
+	const auto restoredPreviouslyAllowedLiteral
+		= allowRestoredMetadata
+		  && server.discoveryPolicy == ServerDiscoveryPolicy::LocalDirect
+		  && selection.status == ServerSelectionStatus::PublicIpLiteral
+		  && selection.explicitPort && selection.requestedPort == server.port
+		  && selection.normalizedSelection
+				 == QString::fromStdString(server.serverSelection);
 	if ((!selection || selection.policy != server.discoveryPolicy)
 		&& !restoredPreviouslyAllowedLiteral) {
 		return false;
@@ -116,7 +114,14 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		== ServerDiscoveryPolicy::PublicHttps)
 		? PublicDiscoveryUrl(selection)
 		: (u"local:"_q + selection.normalizedSelection);
-	if (QString::fromStdString(server.discoveryOrigin) != expectedOrigin) {
+	const auto storedOrigin = QString::fromStdString(server.discoveryOrigin);
+	const auto legacyPublicOrigin
+		= (allowRestoredMetadata
+		   && server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps)
+			  ? (u"https://"_q + selection.host
+				 + u"/.well-known/telegramd/client"_q)
+			  : QString();
+	if (storedOrigin != expectedOrigin && storedOrigin != legacyPublicOrigin) {
 		return false;
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
@@ -170,9 +175,9 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 // looks pinned but is not: an invalid key trips the fingerprint
 // assertions, and a zero dc id matches no real DC, so the CDN refusal
 // silently stops applying and the pinned key can be shadowed again.
-[[nodiscard]] const char *CustomServerProblem(
-		const CustomServer &server,
-		bool allowRestoredPreviouslyAllowedLiteral = false) {
+[[nodiscard]] const char *CustomServerProblem(const CustomServer &server,
+											  bool allowRestoredMetadata
+											  = false) {
 	if (!server.key) {
 		return "no RSA key";
 	} else if (!server.key->valid()) {
@@ -187,9 +192,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		return "no port";
 	} else if (server.port > 65535) {
 		return "bad port";
-	} else if (!ValidDiscoveryMetadata(
-			server,
-			allowRestoredPreviouslyAllowedLiteral)) {
+	} else if (!ValidDiscoveryMetadata(server, allowRestoredMetadata)) {
 		return "invalid discovery metadata";
 	}
 	return nullptr;
