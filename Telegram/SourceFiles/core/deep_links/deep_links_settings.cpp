@@ -224,7 +224,8 @@ Result ShowMyProfile(const Context &ctx) {
 														 !storiesSupported);
 #endif
 	if (!storiesSupported) {
-		ctx.controller->showSettings(::Settings::InformationId());
+		ctx.controller->showSettings(::Settings::InformationId(),
+									 Window::SectionShow(anim::type::instant));
 		return Result::Handled;
 	}
 	ctx.controller->showSection(
