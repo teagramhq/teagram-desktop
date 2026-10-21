@@ -3228,24 +3228,22 @@ void Controller::savePhoto() {
 		if (peer->usesCustomServer()) {
 			_controls.photo->showUploadProgress();
 			_photoUploadPending = true;
-			const auto uploadFinished = crl::guard(this, [=] {
-				_photoUploadPending = false;
+			const auto uploadFinished = crl::guard(this, [=](bool success) {
 				base::call_delayed(crl::time(0), _box, crl::guard(this, [=] {
+									   _photoUploadPending = false;
 									   _photoUploadLifetime.destroy();
+									   if (success) {
+										   _box->closeBox();
+									   }
 								   }));
 			});
 			_peer->session().api().peerPhoto().subscribeToUpload(
 				peer, _photoUploadLifetime,
 				{
-					.done = uploadFinished,
-					.failed = uploadFinished,
+					.done = [=] { uploadFinished(true); },
+					.failed = [=] { uploadFinished(false); },
 				});
-			_peer->session().api().peerPhoto().upload(
-				peer, {std::move(image)}, crl::guard(this, [=] {
-					base::call_delayed(
-						crl::time(0), _box,
-						crl::guard(this, [=] { _box->closeBox(); }));
-				}));
+			_peer->session().api().peerPhoto().upload(peer, {std::move(image)});
 			return;
 		}
 		_peer->session().api().peerPhoto().upload(_peer, {std::move(image)});

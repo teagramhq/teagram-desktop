@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_invite_links.h"
 #include "api/api_peer_photo.h"
 #include "api/api_self_destruct.h"
+#include "base/call_delayed.h"
 #include "main/main_session.h"
 #include "styles/style_add_contact_box.h"
 #include "styles/style_boxes.h"
@@ -93,7 +94,7 @@ void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
 	} | [&](auto chats) {
 		return navigation->session().data().chat(chats->front().c_chat().vid());
 	} | [&](not_null<ChatData *> chat) {
-		const auto uploadPhoto = [&] {
+		const auto uploadPhoto = [chat, image = std::move(image)]() mutable {
 			if (!image.isNull()) {
 				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
 					chat, {std::move(image)});
@@ -119,7 +120,8 @@ void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
 			});
 		}
 		if (customServer) {
-			uploadPhoto();
+			base::call_delayed(crl::time(0), navigation->parentController(),
+							   std::move(uploadPhoto));
 		}
 	};
 	if (!success) {

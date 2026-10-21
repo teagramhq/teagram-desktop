@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
+#include "boxes/peer_list_box.h"
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
@@ -1454,12 +1455,9 @@ template <typename Predicate>
 			"unavailable.\n");
 		return false;
 	}
-	auto query = RequestPeerQuery();
-	query.type = RequestPeerQuery::Type::Group;
-	query.isBotParticipant = true;
 	const auto box = controller->window().show(
-		object_ptr<GroupInfoBox>(controller->widget().get(), controller, member,
-								 query, nullptr),
+		object_ptr<GroupInfoBox>(controller->widget().get(), controller,
+								 GroupInfoBox::Type::Group),
 		Ui::LayerOption::KeepOther, anim::type::normal);
 	if (!box) {
 		std::fprintf(stderr, "Created group photo regression failed: create "
@@ -1469,19 +1467,18 @@ template <typename Predicate>
 	const auto root = not_null<QWidget *>(box.get());
 	const auto photo = Test::FindFirst<Ui::UserpicButton>(root);
 	const auto title = Test::FindFirst<Ui::InputField>(root);
-	auto create = static_cast<Ui::RoundButton *>(nullptr);
+	auto next = static_cast<Ui::RoundButton *>(nullptr);
 	for (const auto button :
 		 Test::FindAll<Ui::RoundButton>(box->parentWidget())) {
-		if (button->accessibilityName()
-			== tr::lng_create_group_create(tr::now)) {
-			create = button;
+		if (button->accessibilityName() == tr::lng_create_group_next(tr::now)) {
+			next = button;
 			break;
 		}
 	}
-	if (!photo || !title || !create) {
+	if (!photo || !title || !next) {
 		std::fprintf(
 			stderr,
-			"Created group photo regression failed: photo, title or Create "
+			"Created group photo regression failed: photo, title or Next "
 			"control was missing.\n");
 		return false;
 	}
@@ -1490,6 +1487,30 @@ template <typename Predicate>
 	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	image.fill(Qt::green);
 	photo->showCustom(std::move(image));
+	Test::Click(next);
+	const auto selection
+		= Test::FindFirst<PeerListBox>(controller->widget().get());
+	if (!selection) {
+		std::fprintf(stderr, "Created group photo regression failed: member "
+							 "selection did not open.\n");
+		return false;
+	}
+	selection->peerListAddSelectedPeers(
+		std::vector<not_null<PeerData *>>{member});
+	auto create = static_cast<Ui::RoundButton *>(nullptr);
+	for (const auto button :
+		 Test::FindAll<Ui::RoundButton>(selection->parentWidget())) {
+		if (button->accessibilityName()
+			== tr::lng_create_group_create(tr::now)) {
+			create = button;
+			break;
+		}
+	}
+	if (!create) {
+		std::fprintf(stderr, "Created group photo regression failed: final "
+							 "Create control was missing.\n");
+		return false;
+	}
 	ChannelSaveRequestCapture capture{
 		.instance = &controller->session().mtp(),
 	};
