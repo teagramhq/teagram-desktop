@@ -2206,8 +2206,7 @@ void OverlayWidget::fillContextMenuActions(
 				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 					channel->isMegagroup());
 				return Data::details::CanEditChatPhotoFor(
-					channel->usesCustomServer(),
-					kind,
+					channel->usesCustomServer(), kind,
 					channel->canEditInformation());
 			}
 		}
@@ -2254,8 +2253,7 @@ void OverlayWidget::fillContextMenuActions(
 				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 					channel->isMegagroup());
 				if (!Data::details::CanEditChatPhotoFor(
-						channel->usesCustomServer(),
-						kind,
+						channel->usesCustomServer(), kind,
 						channel->canEditInformation())) {
 					return;
 				}

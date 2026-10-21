@@ -38,10 +38,8 @@ namespace {
 
 constexpr auto kSharedMediaLimit = 100;
 
-void ShowPeerPhotoError(
-		PeerData *peer,
-		const MTP::Error &error,
-		bool showFallback = false) {
+void ShowPeerPhotoError(PeerData *peer, const MTP::Error &error,
+						bool showFallback = false) {
 	if (!peer) {
 		return;
 	}
@@ -266,8 +264,7 @@ void PeerPhoto::upload(
 		const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 			channel->isMegagroup());
 		if (!Data::details::CanEditChatPhotoFor(
-				channel->usesCustomServer(),
-				kind,
+				channel->usesCustomServer(), kind,
 				channel->canEditInformation())) {
 			return;
 		}
@@ -391,27 +388,28 @@ void PeerPhoto::clear(not_null<PhotoData*> photo) {
 					chat->canEditInformation())) {
 				return;
 			}
-			_api.request(MTPmessages_EditChatPhoto(
-				chat->inputChat(),
-				MTP_inputChatPhotoEmpty()
-			)).done(applier).fail([=](const MTP::Error &error) {
-				ShowPeerPhotoError(photo->peer, error, true);
-			}).send();
+			_api.request(MTPmessages_EditChatPhoto(chat->inputChat(),
+												   MTP_inputChatPhotoEmpty()))
+				.done(applier)
+				.fail([=](const MTP::Error &error) {
+					ShowPeerPhotoError(photo->peer, error, true);
+				})
+				.send();
 		} else if (const auto channel = photo->peer->asChannel()) {
 			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 				channel->isMegagroup());
 			if (!Data::details::CanEditChatPhotoFor(
-					channel->usesCustomServer(),
-					kind,
+					channel->usesCustomServer(), kind,
 					channel->canEditInformation())) {
 				return;
 			}
-			_api.request(MTPchannels_EditPhoto(
-				channel->inputChannel(),
-				MTP_inputChatPhotoEmpty()
-			)).done(applier).fail([=](const MTP::Error &error) {
-				ShowPeerPhotoError(photo->peer, error, true);
-			}).send();
+			_api.request(MTPchannels_EditPhoto(channel->inputChannel(),
+											   MTP_inputChatPhotoEmpty()))
+				.done(applier)
+				.fail([=](const MTP::Error &error) {
+					ShowPeerPhotoError(photo->peer, error, true);
+				})
+				.send();
 		}
 	} else {
 		const auto fallbackPhotoId = SyncUserFallbackPhotoViewer(self);
@@ -488,27 +486,30 @@ void PeerPhoto::set(not_null<PeerData*> peer, not_null<PhotoData*> photo) {
 					chat->canEditInformation())) {
 				return;
 			}
-			_api.request(MTPmessages_EditChatPhoto(
-				chat->inputChat(),
-				MTP_inputChatPhoto(photo->mtpInput())
-			)).done(applier).fail([=](const MTP::Error &error) {
-				ShowPeerPhotoError(peer, error, true);
-			}).send();
+			_api
+				.request(MTPmessages_EditChatPhoto(
+					chat->inputChat(), MTP_inputChatPhoto(photo->mtpInput())))
+				.done(applier)
+				.fail([=](const MTP::Error &error) {
+					ShowPeerPhotoError(peer, error, true);
+				})
+				.send();
 		} else if (const auto channel = peer->asChannel()) {
 			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 				channel->isMegagroup());
 			if (!Data::details::CanEditChatPhotoFor(
-					channel->usesCustomServer(),
-					kind,
+					channel->usesCustomServer(), kind,
 					channel->canEditInformation())) {
 				return;
 			}
 			_api.request(MTPchannels_EditPhoto(
-				channel->inputChannel(),
-				MTP_inputChatPhoto(photo->mtpInput())
-			)).done(applier).fail([=](const MTP::Error &error) {
-				ShowPeerPhotoError(peer, error, true);
-			}).send();
+							 channel->inputChannel(),
+							 MTP_inputChatPhoto(photo->mtpInput())))
+				.done(applier)
+				.fail([=](const MTP::Error &error) {
+					ShowPeerPhotoError(peer, error, true);
+				})
+				.send();
 		}
 	}
 }

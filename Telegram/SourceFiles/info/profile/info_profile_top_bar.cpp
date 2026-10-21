@@ -1221,8 +1221,7 @@ void TopBar::setupUserpicButton(
 			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 				channel->isMegagroup());
 			return Data::details::CanEditChatPhotoFor(
-				channel->usesCustomServer(),
-				kind,
+				channel->usesCustomServer(), kind,
 				channel->canEditInformation());
 		}
 		return false;

@@ -566,13 +566,12 @@ void GroupInfoBox::prepare() {
 		(_type == Type::Forum) ? Ui::PeerUserpicShape::Forum : Ui::PeerUserpicShape::Auto);
 	_photo->showCustomOnChosen();
 	const auto photoKind = (_type == Type::Group)
-		? Data::details::ChatPhotoPeerKind::BasicGroup
-		: (_type == Type::Channel)
-		? Data::details::ChatPhotoPeerKind::Channel
-		: Data::details::ChatPhotoPeerKind::Supergroup;
+							   ? Data::details::ChatPhotoPeerKind::BasicGroup
+						   : (_type == Type::Channel)
+							   ? Data::details::ChatPhotoPeerKind::Channel
+							   : Data::details::ChatPhotoPeerKind::Supergroup;
 	if (!Data::details::ChatPhotoSupportedFor(
-			_navigation->session().user()->usesCustomServer(),
-			photoKind)) {
+			_navigation->session().user()->usesCustomServer(), photoKind)) {
 		// Hidden, it chooses nothing, so the new group gets no photo.
 		_photo->hide();
 	}

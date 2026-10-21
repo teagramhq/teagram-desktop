@@ -52,14 +52,12 @@ enum class ChatPhotoPeerKind {
 
 [[nodiscard]] inline constexpr ChatPhotoPeerKind
 ChatPhotoPeerKindForChannel(bool isMegagroup) {
-	return isMegagroup
-		? ChatPhotoPeerKind::Supergroup
-		: ChatPhotoPeerKind::Channel;
+	return isMegagroup ? ChatPhotoPeerKind::Supergroup
+					   : ChatPhotoPeerKind::Channel;
 }
 
-[[nodiscard]] inline constexpr bool ChatPhotoSupportedFor(
-		bool customServer,
-		ChatPhotoPeerKind kind) {
+[[nodiscard]] inline constexpr bool
+ChatPhotoSupportedFor(bool customServer, ChatPhotoPeerKind kind) {
 	return !customServer || (kind == ChatPhotoPeerKind::BasicGroup);
 }
 
@@ -76,9 +74,8 @@ struct BasicChatControls {
 [[nodiscard]] inline constexpr BasicChatControls
 BasicChatControlsFor(bool customServer) {
 	return {
-		.canEditPhoto = ChatPhotoSupportedFor(
-			customServer,
-			ChatPhotoPeerKind::BasicGroup),
+		.canEditPhoto
+		= ChatPhotoSupportedFor(customServer, ChatPhotoPeerKind::BasicGroup),
 		.canEditType = !customServer,
 		.canEditHistoryVisibility = !customServer,
 		.canRestrictMembers = !customServer,
@@ -91,12 +88,10 @@ template <typename Chat>
 	return BasicChatControlsFor(chat->usesCustomServer());
 }
 
-[[nodiscard]] inline constexpr bool CanEditChatPhotoFor(
-		bool customServer,
-		ChatPhotoPeerKind kind,
-		bool canEditInformation) {
-	return ChatPhotoSupportedFor(customServer, kind)
-		&& canEditInformation;
+[[nodiscard]] inline constexpr bool
+CanEditChatPhotoFor(bool customServer, ChatPhotoPeerKind kind,
+					bool canEditInformation) {
+	return ChatPhotoSupportedFor(customServer, kind) && canEditInformation;
 }
 
 template <typename Peer>

@@ -830,8 +830,7 @@ object_ptr<Ui::RpWidget> Controller::createPhotoAndTitleEdit() {
 		const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 			channel->isMegagroup());
 		if (!Data::details::CanEditChatPhotoFor(
-				channel->usesCustomServer(),
-				kind,
+				channel->usesCustomServer(), kind,
 				channel->canEditInformation())) {
 			return createTitleEdit();
 		}
