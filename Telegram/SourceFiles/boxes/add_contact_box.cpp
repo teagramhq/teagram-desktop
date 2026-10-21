@@ -100,8 +100,7 @@ void ChatCreateDone(
 		| [&](not_null<ChatData*> chat) {
 			if (!image.isNull()) {
 				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
-					chat,
-					{ std::move(image) });
+					chat, {std::move(image)});
 			}
 			if (ttlPeriod) {
 				chat->setMessagesTTL(ttlPeriod);

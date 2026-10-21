@@ -90,10 +90,9 @@ template <typename Chat>
 
 [[nodiscard]] inline constexpr bool
 CanEditChatPhotoFor(bool customServer, ChatPhotoPeerKind kind,
-					bool canEditInformation,
-					bool newlyCreatedBySelf = false) {
+					bool canEditInformation, bool newlyCreatedBySelf = false) {
 	return ChatPhotoSupportedFor(customServer, kind)
-		&& (canEditInformation || newlyCreatedBySelf);
+		   && (canEditInformation || newlyCreatedBySelf);
 }
 
 template <typename Peer>

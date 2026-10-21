@@ -207,17 +207,11 @@ void PeerPhoto::upload(
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		Fn<void()> done) {
-	upload(
-		peer,
-		std::move(photo),
-		UploadType::Default,
-		std::move(done),
-		false);
+	upload(peer, std::move(photo), UploadType::Default, std::move(done), false);
 }
 
-void PeerPhoto::uploadCreatedGroupPhoto(
-		not_null<ChatData*> chat,
-		UserPhoto &&photo) {
+void PeerPhoto::uploadCreatedGroupPhoto(not_null<ChatData *> chat,
+										UserPhoto &&photo) {
 	upload(chat, std::move(photo), UploadType::Default, nullptr, true);
 }
 
@@ -258,19 +252,15 @@ void PeerPhoto::updateSelf(
 	send(send);
 }
 
-void PeerPhoto::upload(
-		not_null<PeerData*> peer,
-		UserPhoto &&photo,
-		UploadType type,
-		Fn<void()> done,
-		bool newlyCreatedBySelf) {
+void PeerPhoto::upload(not_null<PeerData *> peer, UserPhoto &&photo,
+					   UploadType type, Fn<void()> done,
+					   bool newlyCreatedBySelf) {
 	peer = peer->migrateToOrMe();
 	if (const auto chat = peer->asChat()) {
 		if (!Data::details::CanEditChatPhotoFor(
 				chat->usesCustomServer(),
 				Data::details::ChatPhotoPeerKind::BasicGroup,
-				chat->canEditInformation(),
-				newlyCreatedBySelf)) {
+				chat->canEditInformation(), newlyCreatedBySelf)) {
 			return;
 		}
 	} else if (const auto channel = peer->asChannel()) {

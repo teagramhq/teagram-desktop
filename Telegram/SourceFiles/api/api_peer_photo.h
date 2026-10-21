@@ -51,9 +51,7 @@ public:
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		Fn<void()> done = nullptr);
-	void uploadCreatedGroupPhoto(
-		not_null<ChatData*> chat,
-		UserPhoto &&photo);
+	void uploadCreatedGroupPhoto(not_null<ChatData *> chat, UserPhoto &&photo);
 	void uploadFallback(not_null<PeerData*> peer, UserPhoto &&photo);
 	void updateSelf(
 		not_null<PhotoData*> photo,
@@ -111,12 +109,8 @@ private:
 		const FullMsgId &msgId,
 		std::optional<MTPInputFile> file,
 		std::optional<MTPVideoSize> videoSize);
-	void upload(
-		not_null<PeerData*> peer,
-		UserPhoto &&photo,
-		UploadType type,
-		Fn<void()> done,
-		bool newlyCreatedBySelf);
+	void upload(not_null<PeerData *> peer, UserPhoto &&photo, UploadType type,
+				Fn<void()> done, bool newlyCreatedBySelf);
 
 	[[nodiscard]] EmojiListData &emojiList(EmojiListType type);
 	[[nodiscard]] const EmojiListData &emojiList(EmojiListType type) const;

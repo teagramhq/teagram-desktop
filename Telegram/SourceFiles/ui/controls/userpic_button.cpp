@@ -466,8 +466,7 @@ void UserpicButton::choosePhotoLocally() {
 	}
 	if (const auto chat = _peer ? _peer->asChat() : nullptr) {
 		const auto photoId = chat->userpicPhotoId();
-		if (chat->usesCustomServer()
-			&& photoId
+		if (chat->usesCustomServer() && photoId
 			&& Data::details::CanEditChatPhotoFor(
 				chat->usesCustomServer(),
 				Data::details::ChatPhotoPeerKind::BasicGroup,
@@ -479,23 +478,25 @@ void UserpicButton::choosePhotoLocally() {
 					const auto photo = chat->owner().photo(photoId);
 					_window->show(Ui::MakeConfirmBox({
 						.text = tr::lng_delete_photo_sure(),
-						.confirmed = [=](Fn<void()> close) {
-							if (chat->userpicPhotoId() != photoId) {
+						.confirmed =
+							[=](Fn<void()> close) {
+								if (chat->userpicPhotoId() != photoId) {
+									close();
+									return;
+								}
+								if (!Data::details::CanEditChatPhotoFor(
+										chat->usesCustomServer(),
+										Data::details::ChatPhotoPeerKind::
+											BasicGroup,
+										chat->canEditInformation())) {
+									_window->showToast(
+										tr::lng_cant_do_this(tr::now));
+									close();
+									return;
+								}
+								chat->session().api().peerPhoto().clear(photo);
 								close();
-								return;
-							}
-							if (!Data::details::CanEditChatPhotoFor(
-									chat->usesCustomServer(),
-									Data::details::ChatPhotoPeerKind::BasicGroup,
-									chat->canEditInformation())) {
-								_window->showToast(
-									tr::lng_cant_do_this(tr::now));
-								close();
-								return;
-							}
-							chat->session().api().peerPhoto().clear(photo);
-							close();
-						},
+							},
 						.confirmText = tr::lng_mediaview_delete(tr::now),
 						.confirmStyle = &st::attentionBoxButton,
 					}));
