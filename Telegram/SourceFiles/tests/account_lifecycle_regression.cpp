@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_chat_filters.h"
 #include "api/api_common.h"
+#include "api/api_peer_photo.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/options.h"
@@ -1149,6 +1150,96 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
+	not_null<Window::SessionController *> controller) {
+	auto &session = controller->session();
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &session.mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+
+	const auto denied = session.data().chat(ChatId(1181));
+	denied->setName(u"Restricted photo removal group"_q);
+	denied->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	denied->setDefaultRestrictions(
+		ChatRestrictions(ChatRestriction::ChangeInfo));
+	const auto deniedPhotoId = PhotoId(118101);
+	denied->updateUserpic(deniedPhotoId, session.mtp().mainDcId(), false);
+	const auto unloadedDeniedPhoto = session.data().photo(deniedPhotoId);
+	if (!denied->usesCustomServer() || !denied->hasUserpic()
+		|| denied->canEditInformation() || !unloadedDeniedPhoto->isNull()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: restricted fixture did not "
+			"have an unloaded existing photo.\n");
+		return false;
+	}
+	session.api().peerPhoto().clearChatPhoto(denied);
+	QCoreApplication::processEvents();
+	if (!capture.requests.empty() || !denied->hasUserpic()
+		|| denied->userpicPhotoId() != deniedPhotoId) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: denied member sent a "
+			"removal request or lost the photo locally.\n");
+		return false;
+	}
+
+	const auto chat = session.data().chat(ChatId(1182));
+	chat->setName(u"Photo removal lifecycle group"_q);
+	chat->setFlags(ChatDataFlag::Creator);
+	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto photoId = PhotoId(118201);
+	chat->updateUserpic(photoId, session.mtp().mainDcId(), false);
+	const auto unloadedPhoto = session.data().photo(photoId);
+	if (!chat->usesCustomServer() || !chat->hasUserpic()
+		|| !chat->canEditInformation() || !unloadedPhoto->isNull()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: creator fixture did not "
+			"have an unloaded existing photo.\n");
+		return false;
+	}
+	session.api().peerPhoto().clearChatPhoto(chat);
+	QCoreApplication::processEvents();
+	auto expectedRequest = mtpBuffer();
+	MTPmessages_EditChatPhoto(chat->inputChat(), MTP_inputChatPhotoEmpty())
+		.write(expectedRequest);
+	if (capture.requests.size() != 1
+		|| capture.requests.front().body != expectedRequest) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: empty-photo request was "
+			"missing or malformed.\n");
+		return false;
+	}
+	const auto updatedChat = MTP_chat(
+		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chat->id.value),
+		MTP_string(u"Photo removal lifecycle group"_q), MTP_chatPhotoEmpty(),
+		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+		MTPChatAdminRights(), MTPChatBannedRights());
+	const auto reply = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, 0, mtpc_messages_editChatPhoto, reply)
+		|| chat->hasUserpic() || chat->userpicPhotoId()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: server confirmation did "
+			"not clear the photo.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Peer photo removal regression passed: restricted requests were "
+		"denied and the server response removed the existing photo.\n");
+	return true;
+}
 
 [[nodiscard]] bool RunPeerPhotoUploadLifecycleRegression(
 	not_null<Window::SessionController *> controller,
@@ -9251,6 +9342,12 @@ void RunProtectedCacheCleanupRegression(
 								   translationControlsPassed);
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("pinned-peer-photo-removal-lifecycle");
+	const auto pinnedPeerPhotoRemovalLifecyclePassed
+		= !shouldInjectFailure("pinned-peer-photo-removal-lifecycle")
+		  && RunPeerPhotoRemovalLifecycleRegression(pinnedController);
+	nativeLifecycleResults->Report("pinned-peer-photo-removal-lifecycle",
+								   pinnedPeerPhotoRemovalLifecyclePassed);
 	nativeLifecycleResults->StartCase("stock-peer-photo-upload-lifecycle");
 	const auto stockPeerPhotoUploadLifecyclePassed
 		= !shouldInjectFailure("stock-peer-photo-upload-lifecycle")
