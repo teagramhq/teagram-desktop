@@ -1404,14 +1404,13 @@ template <typename Predicate>
 		auto failureAnimationWait = QElapsedTimer();
 		failureAnimationWait.start();
 		if (!WaitForRegressionCondition([&] {
-				return failureAnimationWait.elapsed()
-					>= st::radialDuration * 5;
+				return failureAnimationWait.elapsed() >= st::radialDuration * 5;
 			})
 			|| !photo->pendingCustomUploadShownForRegressionTest()) {
-			std::fprintf(
-				stderr,
-				"Peer photo lifecycle regression failed: replacement preview or "
-				"upload progress disappeared while the replacement was pending.\n");
+			std::fprintf(stderr, "Peer photo lifecycle regression failed: "
+								 "replacement preview or "
+								 "upload progress disappeared while the "
+								 "replacement was pending.\n");
 			return false;
 		}
 		Test::Click(save);
