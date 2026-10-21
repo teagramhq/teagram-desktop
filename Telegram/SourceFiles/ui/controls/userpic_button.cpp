@@ -55,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "apiwrap.h"
 #include "api/api_peer_photo.h"
+#include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_userpic_button.h"
