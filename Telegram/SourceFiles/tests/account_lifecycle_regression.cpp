@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_photo.h"
 #include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
@@ -1172,7 +1173,9 @@ template <typename Predicate>
 	denied->setDefaultRestrictions(
 		ChatRestrictions(ChatRestriction::ChangeInfo));
 	const auto deniedPhotoId = PhotoId(118101);
-	denied->updateUserpic(deniedPhotoId, session.mtp().mainDcId(), false);
+	denied->setPhoto(MTP_chatPhoto(MTP_flags(0),
+								   MTP_long(static_cast<int64>(deniedPhotoId)),
+								   MTPbytes(), MTP_int(2)));
 	const auto unloadedDeniedPhoto = session.data().photo(deniedPhotoId);
 	if (!denied->usesCustomServer() || !denied->hasUserpic()
 		|| denied->canEditInformation() || !unloadedDeniedPhoto->isNull()) {
@@ -1198,7 +1201,9 @@ template <typename Predicate>
 	chat->setFlags(ChatDataFlag::Creator);
 	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
 	const auto photoId = PhotoId(118201);
-	chat->updateUserpic(photoId, session.mtp().mainDcId(), false);
+	chat->setPhoto(MTP_chatPhoto(MTP_flags(0),
+								 MTP_long(static_cast<int64>(photoId)),
+								 MTPbytes(), MTP_int(2)));
 	const auto unloadedPhoto = session.data().photo(photoId);
 	if (!chat->usesCustomServer() || !chat->hasUserpic()
 		|| !chat->canEditInformation() || !unloadedPhoto->isNull()) {
@@ -1222,7 +1227,8 @@ template <typename Predicate>
 		return false;
 	}
 	const auto updatedChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chat->id.value),
+		MTP_flags(MTPDchat::Flag::f_creator),
+		MTP_long(peerToChat(chat->id).bare),
 		MTP_string(u"Photo removal lifecycle group"_q), MTP_chatPhotoEmpty(),
 		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
 		MTPChatAdminRights(), MTPChatBannedRights());
@@ -1253,14 +1259,15 @@ template <typename Predicate>
 	chat->setFlags(ChatDataFlag::Creator);
 	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
 	const auto originalPhotoId = PhotoId(117100);
-	const auto originalChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chat->id.value),
-		MTP_string(u"Photo upload lifecycle group"_q),
-		MTP_chatPhoto(MTP_flags(0),
-					  MTP_long(static_cast<int64>(originalPhotoId)), MTPbytes(),
-					  MTP_int(2)),
-		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
-		MTPChatAdminRights(), MTPChatBannedRights());
+	const auto originalChat
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_creator),
+				   MTP_long(peerToChat(chat->id).bare),
+				   MTP_string(u"Photo upload lifecycle group"_q),
+				   MTP_chatPhoto(MTP_flags(0),
+								 MTP_long(static_cast<int64>(originalPhotoId)),
+								 MTPbytes(), MTP_int(2)),
+				   MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+				   MTPChatAdminRights(), MTPChatBannedRights());
 	controller->session().data().processChats(
 		MTP_vector<MTPChat>({originalChat}));
 	if (chat->usesCustomServer() != expectServerConfirmation) {
@@ -1378,7 +1385,8 @@ template <typename Predicate>
 		return false;
 	}
 	const auto updatedChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chat->id.value),
+		MTP_flags(MTPDchat::Flag::f_creator),
+		MTP_long(peerToChat(chat->id).bare),
 		MTP_string(u"Photo upload lifecycle group"_q),
 		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
 					  MTPbytes(), MTP_int(2)),
@@ -1471,9 +1479,9 @@ template <typename Predicate>
 	}
 	const auto chatId = ChatId(1172);
 	const auto createdChat
-		= MTP_chat(MTP_flags(MTPDchat::Flag::f_left), MTP_long(chatId.value),
-				   MTP_string(groupName), MTP_chatPhotoEmpty(MTP_long(0)),
-				   MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_left), MTP_long(chatId.bare),
+				   MTP_string(groupName), MTP_chatPhotoEmpty(), MTP_int(1),
+				   MTP_int(1), MTP_int(2), MTPInputChannel(),
 				   MTPChatAdminRights(), MTPChatBannedRights());
 	const auto createdUpdates = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
@@ -1506,7 +1514,7 @@ template <typename Predicate>
 	}
 	const auto photoId = PhotoId(117201);
 	const auto updatedChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chatId.value),
+		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chatId.bare),
 		MTP_string(groupName),
 		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
 					  MTPbytes(), MTP_int(2)),
