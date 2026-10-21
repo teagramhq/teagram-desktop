@@ -1296,6 +1296,39 @@ template <typename Predicate>
 		return false;
 	}
 	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	ChannelSaveRequestCapture capture{
+		.instance = &controller->session().mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	auto previousImage = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	previousImage.fill(Qt::red);
+	controller->session().api().peerPhoto().upload(peer,
+												   {std::move(previousImage)});
+	if (!WaitForRegressionCondition([&] { return !capture.requests.empty(); })
+		|| static_cast<uint32>(capture.requests.front().body.front())
+			   != mtpc_upload_saveFilePart) {
+		std::fprintf(stderr,
+					 "Peer photo lifecycle regression failed: the first "
+					 "pending upload did not start.\n");
+		return false;
+	}
+	auto supersededImage = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	supersededImage.fill(Qt::yellow);
+	controller->session().api().peerPhoto().upload(
+		peer, {std::move(supersededImage)});
+	if (!WaitForRegressionCondition(
+			[&] { return capture.requests.size() == 2; })
+		|| static_cast<uint32>(capture.requests.back().body.front())
+			   != mtpc_upload_saveFilePart) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: replacing a pending "
+			"upload did not start.\n");
+		return false;
+	}
 	const auto box = controller->window().show(
 		object_ptr<EditPeerInfoBox>(controller->widget().get(), controller,
 									peer),
@@ -1306,13 +1339,6 @@ template <typename Predicate>
 			"Peer photo lifecycle regression failed: edit box did not open.\n");
 		return false;
 	}
-	ChannelSaveRequestCapture capture{
-		.instance = &controller->session().mtp(),
-	};
-	const auto restoreCapture = gsl::finally(
-		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
-			gChannelSaveRequestCapture = previous;
-		});
 	const auto root = not_null<QWidget *>(box.get());
 	const auto buttonRoot = not_null<QWidget *>(box->parentWidget());
 	const auto photo = Test::FindFirst<Ui::UserpicButton>(root);
@@ -1345,9 +1371,11 @@ template <typename Predicate>
 	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	image.fill(Qt::blue);
 	photo->showCustom(std::move(image));
+	const auto replacementUploadIndex = capture.requests.size();
 	Test::Click(save);
 	QCoreApplication::processEvents();
-	if (!WaitForRegressionCondition([&] { return !capture.requests.empty(); })
+	if (!WaitForRegressionCondition(
+			[&] { return capture.requests.size() > replacementUploadIndex; })
 		|| (!expectServerConfirmation
 			&& !WaitForRegressionCondition([&] { return !box; }))) {
 		std::fprintf(
@@ -1357,8 +1385,9 @@ template <typename Predicate>
 		return false;
 	}
 	const auto editClosedBeforeConfirmation = !box;
-	if (capture.requests.size() != 1
-		|| static_cast<uint32>(capture.requests.front().body.front())
+	if (capture.requests.size() != replacementUploadIndex + 1
+		|| static_cast<uint32>(
+			   capture.requests[replacementUploadIndex].body.front())
 			   != mtpc_upload_saveFilePart
 		|| chat->userpicPhotoId() != originalPhotoId
 		|| (expectServerConfirmation == editClosedBeforeConfirmation)) {
@@ -1371,7 +1400,7 @@ template <typename Predicate>
 	if (expectServerConfirmation) {
 		Test::Click(save);
 		QCoreApplication::processEvents();
-		if (!box || capture.requests.size() != 1
+		if (!box || capture.requests.size() != replacementUploadIndex + 1
 			|| chat->userpicPhotoId() != originalPhotoId) {
 			std::fprintf(
 				stderr,
@@ -1381,9 +1410,11 @@ template <typename Predicate>
 		}
 	}
 	if (!ReplyToCapturedRequestForRegressionTest(
-			capture, 0, mtpc_upload_saveFilePart, MTP_boolTrue())
-		|| !WaitForRegressionCondition(
-			[&] { return capture.requests.size() == 2; })) {
+			capture, replacementUploadIndex, mtpc_upload_saveFilePart,
+			MTP_boolTrue())
+		|| !WaitForRegressionCondition([&] {
+			   return capture.requests.size() == replacementUploadIndex + 2;
+		   })) {
 		std::fprintf(
 			stderr,
 			"Peer photo lifecycle regression failed: uploaded photo was not "
@@ -1393,7 +1424,8 @@ template <typename Predicate>
 	const auto editClosedBeforePhotoUpdate = !box;
 	if ((expectServerConfirmation == editClosedBeforePhotoUpdate)
 		|| chat->userpicPhotoId() != originalPhotoId
-		|| static_cast<uint32>(capture.requests[1].body.front())
+		|| static_cast<uint32>(
+			   capture.requests[replacementUploadIndex + 1].body.front())
 			   != mtpc_messages_editChatPhoto) {
 		std::fprintf(
 			stderr,
@@ -1418,7 +1450,8 @@ template <typename Predicate>
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
 	if (!ReplyToCapturedRequestForRegressionTest(
-			capture, 1, mtpc_messages_editChatPhoto, reply)
+			capture, replacementUploadIndex + 1, mtpc_messages_editChatPhoto,
+			reply)
 		|| chat->userpicPhotoId() != photoId
 		|| (expectServerConfirmation
 			&& (!(chat->defaultRestrictions() & ChatRestriction::ChangeInfo)
@@ -1543,8 +1576,7 @@ template <typename Predicate>
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 0, mtpc_messages_createChat, invitedUsers)
 		|| box || !controller->session().data().chat(chatId)
-		|| !WaitForRegressionCondition(
-			[&] { return capture.requests.size() == 2; })
+		|| capture.requests.size() != 2
 		|| static_cast<uint32>(capture.requests[1].body.front())
 			   != mtpc_upload_saveFilePart) {
 		std::fprintf(

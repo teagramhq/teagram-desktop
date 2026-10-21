@@ -3237,6 +3237,7 @@ void Controller::savePhoto() {
 									   }
 								   }));
 			});
+			_peer->session().api().peerPhoto().cancelUpload(peer);
 			_peer->session().api().peerPhoto().subscribeToUpload(
 				peer, _photoUploadLifetime,
 				{

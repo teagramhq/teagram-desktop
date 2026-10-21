@@ -100,10 +100,7 @@ void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
 					chat, {std::move(image)});
 			}
 		};
-		const auto customServer = chat->usesCustomServer();
-		if (!customServer) {
-			uploadPhoto();
-		}
+		uploadPhoto();
 		if (ttlPeriod) {
 			chat->setMessagesTTL(ttlPeriod);
 		}
@@ -118,10 +115,6 @@ void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
 				.fromPeerId = chat->id,
 				.joinedPeerId = chat->id,
 			});
-		}
-		if (customServer) {
-			base::call_delayed(crl::time(0), navigation->parentController(),
-							   std::move(uploadPhoto));
 		}
 	};
 	if (!success) {

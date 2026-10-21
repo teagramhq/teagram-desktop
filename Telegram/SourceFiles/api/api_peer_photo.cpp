@@ -298,8 +298,10 @@ void PeerPhoto::upload(not_null<PeerData *> peer, UserPhoto &&photo,
 		peer,
 		[](const auto &pair) { return pair.second.peer; });
 	if (already != end(_uploads)) {
-		_session->uploader().cancel(already->first);
+		const auto previousUpload = already->first;
 		_uploads.erase(already);
+		_session->uploader().cancel(previousUpload);
+		_uploadFailed.fire_copy(peer);
 	}
 	const auto &[it, ok] = _uploads.emplace(
 		fakeId,
