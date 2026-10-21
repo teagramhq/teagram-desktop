@@ -3238,7 +3238,7 @@ void Controller::savePhoto() {
 					.failed = uploadFinished,
 				});
 			_peer->session().api().peerPhoto().upload(
-				_peer, {std::move(image)},
+				peer, {std::move(image)},
 				crl::guard(this, [=] { _box->closeBox(); }));
 			return;
 		}

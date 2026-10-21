@@ -53,6 +53,12 @@ void ShowPeerPhotoError(PeerData *peer, const MTP::Error &error,
 	}
 }
 
+void ShowPeerPhotoDenied(PeerData *peer) {
+	if (const auto window = peer->session().tryResolveWindow(peer)) {
+		window->showToast(tr::lng_cant_do_this(tr::now));
+	}
+}
+
 [[nodiscard]] std::shared_ptr<FilePrepareResult> PreparePeerPhoto(
 		MTP::DcId dcId,
 		PeerId peerId,
@@ -255,12 +261,18 @@ void PeerPhoto::updateSelf(
 void PeerPhoto::upload(not_null<PeerData *> peer, UserPhoto &&photo,
 					   UploadType type, Fn<void()> done,
 					   bool newlyCreatedBySelf) {
-	peer = peer->migrateToOrMe();
+	if (!newlyCreatedBySelf) {
+		peer = peer->migrateToOrMe();
+	}
 	if (const auto chat = peer->asChat()) {
 		if (!Data::details::CanEditChatPhotoFor(
 				chat->usesCustomServer(),
 				Data::details::ChatPhotoPeerKind::BasicGroup,
 				chat->canEditInformation(), newlyCreatedBySelf)) {
+			if (chat->usesCustomServer()) {
+				ShowPeerPhotoDenied(chat);
+				_uploadFailed.fire_copy(peer);
+			}
 			return;
 		}
 	} else if (const auto channel = peer->asChannel()) {
@@ -269,6 +281,10 @@ void PeerPhoto::upload(not_null<PeerData *> peer, UserPhoto &&photo,
 		if (!Data::details::CanEditChatPhotoFor(
 				channel->usesCustomServer(), kind,
 				channel->canEditInformation())) {
+			if (channel->usesCustomServer()) {
+				ShowPeerPhotoDenied(channel);
+				_uploadFailed.fire_copy(peer);
+			}
 			return;
 		}
 	}
