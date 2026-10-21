@@ -1320,12 +1320,17 @@ template <typename Predicate>
 		return false;
 	}
 	const auto photoId = PhotoId(117101);
-	auto editClosed = false;
-	auto photoChangedBeforeClose = false;
-	QObject::connect(box.get(), &QObject::destroyed, [&, chat] {
-		editClosed = true;
-		photoChangedBeforeClose = (chat->userpicPhotoId() == photoId);
-	});
+	struct EditCloseState {
+		bool editClosed = false;
+		bool photoChangedBeforeClose = false;
+	};
+	const auto editCloseState = std::make_shared<EditCloseState>();
+	QObject::connect(box.get(), &QObject::destroyed,
+					 [editCloseState, chat, photoId] {
+						 editCloseState->editClosed = true;
+						 editCloseState->photoChangedBeforeClose
+							 = (chat->userpicPhotoId() == photoId);
+					 });
 	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	image.fill(Qt::blue);
 	photo->showCustom(std::move(image));
@@ -1397,8 +1402,10 @@ template <typename Predicate>
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 1, mtpc_messages_editChatPhoto, reply)
-		|| box || chat->userpicPhotoId() != photoId || !editClosed
-		|| (expectServerConfirmation && !photoChangedBeforeClose)) {
+		|| box || chat->userpicPhotoId() != photoId
+		|| !editCloseState->editClosed
+		|| (expectServerConfirmation
+			&& !editCloseState->photoChangedBeforeClose)) {
 		std::fprintf(
 			stderr,
 			"Peer photo lifecycle regression failed: server photo update was "
