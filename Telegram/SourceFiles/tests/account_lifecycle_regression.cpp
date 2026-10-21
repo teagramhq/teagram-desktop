@@ -129,17 +129,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
-#include "styles/style_widgets.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
 
+#include "styles/style_basic.h"
+#include "styles/style_widgets.h"
+
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDataStream>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -1398,6 +1401,19 @@ template <typename Predicate>
 		return false;
 	}
 	if (expectServerConfirmation) {
+		auto failureAnimationWait = QElapsedTimer();
+		failureAnimationWait.start();
+		if (!WaitForRegressionCondition([&] {
+				return failureAnimationWait.elapsed()
+					>= st::radialDuration * 5;
+			})
+			|| !photo->pendingCustomUploadShownForRegressionTest()) {
+			std::fprintf(
+				stderr,
+				"Peer photo lifecycle regression failed: replacement preview or "
+				"upload progress disappeared while the replacement was pending.\n");
+			return false;
+		}
 		Test::Click(save);
 		QCoreApplication::processEvents();
 		if (!box || capture.requests.size() != replacementUploadIndex + 1

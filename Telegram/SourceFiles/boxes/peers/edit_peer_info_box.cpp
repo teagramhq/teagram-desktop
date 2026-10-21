@@ -3226,6 +3226,7 @@ void Controller::savePhoto() {
 			return;
 		}
 		if (peer->usesCustomServer()) {
+			_peer->session().api().peerPhoto().cancelUpload(peer);
 			_controls.photo->showUploadProgress();
 			_photoUploadPending = true;
 			const auto uploadFinished = crl::guard(this, [=](bool success) {
@@ -3237,7 +3238,6 @@ void Controller::savePhoto() {
 									   }
 								   }));
 			});
-			_peer->session().api().peerPhoto().cancelUpload(peer);
 			_peer->session().api().peerPhoto().subscribeToUpload(
 				peer, _photoUploadLifetime,
 				{
