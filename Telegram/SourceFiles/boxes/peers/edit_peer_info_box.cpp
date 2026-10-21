@@ -15,8 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_user_names.h"
 #include "main/main_session.h"
 #include "main/session_feature_support.h"
-#include "ui/boxes/confirm_box.h"
+#include "base/call_delayed.h"
 #include "base/event_filter.h"
+#include "ui/boxes/confirm_box.h"
 #include "boxes/peers/edit_participants_box.h"
 #include "boxes/peers/edit_peer_color_box.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -3227,10 +3228,12 @@ void Controller::savePhoto() {
 		if (peer->usesCustomServer()) {
 			_controls.photo->showUploadProgress();
 			_photoUploadPending = true;
-			const auto uploadFinished = [=] {
+			const auto uploadFinished = crl::guard(this, [=] {
 				_photoUploadPending = false;
-				_photoUploadLifetime.destroy();
-			};
+				base::call_delayed(crl::time(0), _box, crl::guard(this, [=] {
+									   _photoUploadLifetime.destroy();
+								   }));
+			});
 			_peer->session().api().peerPhoto().subscribeToUpload(
 				peer, _photoUploadLifetime,
 				{
@@ -3238,8 +3241,11 @@ void Controller::savePhoto() {
 					.failed = uploadFinished,
 				});
 			_peer->session().api().peerPhoto().upload(
-				peer, {std::move(image)},
-				crl::guard(this, [=] { _box->closeBox(); }));
+				peer, {std::move(image)}, crl::guard(this, [=] {
+					base::call_delayed(
+						crl::time(0), _box,
+						crl::guard(this, [=] { _box->closeBox(); }));
+				}));
 			return;
 		}
 		_peer->session().api().peerPhoto().upload(_peer, {std::move(image)});

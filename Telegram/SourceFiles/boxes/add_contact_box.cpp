@@ -66,63 +66,65 @@ bool IsValidPhone(QString phone) {
 				|| phone == u"4242"_q));
 }
 
-void ChatCreateDone(
-		not_null<Window::SessionNavigation*> navigation,
-		QImage image,
-		TimeId ttlPeriod,
-		const MTPmessages_InvitedUsers &result,
-		Fn<void(not_null<PeerData*>)> done) {
+void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
+					QImage image, TimeId ttlPeriod,
+					const MTPmessages_InvitedUsers &result,
+					Fn<void(not_null<PeerData *>)> done) {
 	const auto &data = result.data();
 	navigation->session().api().applyUpdates(data.vupdates());
 
-	const auto success = base::make_optional(&data.vupdates())
-		| [](auto updates) -> std::optional<const QVector<MTPChat>*> {
-			switch (updates->type()) {
-			case mtpc_updates:
-				return &updates->c_updates().vchats().v;
-			case mtpc_updatesCombined:
-				return &updates->c_updatesCombined().vchats().v;
-			}
-			LOG(("API Error: unexpected update cons %1 "
-				"(GroupInfoBox::creationDone)").arg(updates->type()));
-			return std::nullopt;
+	const auto success
+		= base::make_optional(&data.vupdates()) |
+		  [](auto updates) -> std::optional<const QVector<MTPChat> *> {
+		switch (updates->type()) {
+		case mtpc_updates:
+			return &updates->c_updates().vchats().v;
+		case mtpc_updatesCombined:
+			return &updates->c_updatesCombined().vchats().v;
 		}
-		| [](auto chats) {
-			return (!chats->empty()
-				&& chats->front().type() == mtpc_chat)
-				? base::make_optional(chats)
-				: std::nullopt;
-		}
-		| [&](auto chats) {
-			return navigation->session().data().chat(
-				chats->front().c_chat().vid());
-		}
-		| [&](not_null<ChatData*> chat) {
+		LOG(("API Error: unexpected update cons %1 "
+			 "(GroupInfoBox::creationDone)")
+				.arg(updates->type()));
+		return std::nullopt;
+	} | [](auto chats) {
+		return (!chats->empty() && chats->front().type() == mtpc_chat)
+				   ? base::make_optional(chats)
+				   : std::nullopt;
+	} | [&](auto chats) {
+		return navigation->session().data().chat(chats->front().c_chat().vid());
+	} | [&](not_null<ChatData *> chat) {
+		const auto uploadPhoto = [&] {
 			if (!image.isNull()) {
 				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
 					chat, {std::move(image)});
 			}
-			if (ttlPeriod) {
-				chat->setMessagesTTL(ttlPeriod);
-			}
-			if (done) {
-				done(chat);
-			} else {
-				const auto show = navigation->uiShow();
-				navigation->showPeerHistory(chat);
-				ChatInviteForbidden(
-					show,
-					chat,
-					CollectForbiddenUsers(&chat->session(), result));
-				chat->owner().addRecentJoinChat({
-					.fromPeerId = chat->id,
-					.joinedPeerId = chat->id,
-				});
-			}
 		};
+		const auto customServer = chat->usesCustomServer();
+		if (!customServer) {
+			uploadPhoto();
+		}
+		if (ttlPeriod) {
+			chat->setMessagesTTL(ttlPeriod);
+		}
+		if (done) {
+			done(chat);
+		} else {
+			const auto show = navigation->uiShow();
+			navigation->showPeerHistory(chat);
+			ChatInviteForbidden(
+				show, chat, CollectForbiddenUsers(&chat->session(), result));
+			chat->owner().addRecentJoinChat({
+				.fromPeerId = chat->id,
+				.joinedPeerId = chat->id,
+			});
+		}
+		if (customServer) {
+			uploadPhoto();
+		}
+	};
 	if (!success) {
 		LOG(("API Error: chat not found in updates "
-			"(ContactsBox::creationDone)"));
+			 "(ContactsBox::creationDone)"));
 	}
 }
 

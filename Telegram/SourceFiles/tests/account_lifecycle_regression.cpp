@@ -1270,6 +1270,16 @@ template <typename Predicate>
 				   MTPChatAdminRights(), MTPChatBannedRights());
 	controller->session().data().processChats(
 		MTP_vector<MTPChat>({originalChat}));
+	if (expectServerConfirmation) {
+		chat->setDefaultRestrictions(
+			ChatRestrictions(ChatRestriction::ChangeInfo));
+		if (!chat->canEditInformation()) {
+			std::fprintf(stderr, "Peer photo lifecycle regression failed: "
+								 "creator lost photo edit "
+								 "rights under default restrictions.\n");
+			return false;
+		}
+	}
 	if (chat->usesCustomServer() != expectServerConfirmation) {
 		std::fprintf(
 			stderr,
@@ -1360,7 +1370,8 @@ template <typename Predicate>
 	if (expectServerConfirmation) {
 		Test::Click(save);
 		QCoreApplication::processEvents();
-		if (!box || capture.requests.size() != 1 || chat->userpicPhotoId()) {
+		if (!box || capture.requests.size() != 1
+			|| chat->userpicPhotoId() != originalPhotoId) {
 			std::fprintf(
 				stderr,
 				"Peer photo lifecycle regression failed: second Save closed "
@@ -1396,13 +1407,28 @@ template <typename Predicate>
 		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
 					  MTPbytes(), MTP_int(2)),
 		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
-		MTPChatAdminRights(), MTPChatBannedRights());
+		MTPChatAdminRights(),
+		expectServerConfirmation
+			? MTPChatBannedRights(MTP_chatBannedRights(
+				  MTP_flags(MTPDchatBannedRights::Flag::f_change_info),
+				  MTP_int(0)))
+			: MTPChatBannedRights());
 	const auto reply = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 1, mtpc_messages_editChatPhoto, reply)
-		|| box || chat->userpicPhotoId() != photoId
+		|| chat->userpicPhotoId() != photoId
+		|| (expectServerConfirmation
+			&& (!(chat->defaultRestrictions() & ChatRestriction::ChangeInfo)
+				|| !chat->canEditInformation()))) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: server photo update was "
+			"not applied.\n");
+		return false;
+	}
+	if (!WaitForRegressionCondition([&] { return !box; })
 		|| !editCloseState->editClosed
 		|| (expectServerConfirmation
 			&& !editCloseState->photoChangedBeforeClose)) {
@@ -1431,11 +1457,9 @@ template <typename Predicate>
 	auto query = RequestPeerQuery();
 	query.type = RequestPeerQuery::Type::Group;
 	query.isBotParticipant = true;
-	auto createdPeer = static_cast<PeerData *>(nullptr);
 	const auto box = controller->window().show(
-		object_ptr<GroupInfoBox>(
-			controller->widget().get(), controller, member, query,
-			[&](not_null<PeerData *> peer) { createdPeer = peer; }),
+		object_ptr<GroupInfoBox>(controller->widget().get(), controller, member,
+								 query, nullptr),
 		Ui::LayerOption::KeepOther, anim::type::normal);
 	if (!box) {
 		std::fprintf(stderr, "Created group photo regression failed: create "
@@ -1486,7 +1510,7 @@ template <typename Predicate>
 	}
 	const auto chatId = ChatId(1172);
 	const auto createdChat
-		= MTP_chat(MTP_flags(MTPDchat::Flag::f_left), MTP_long(chatId.bare),
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chatId.bare),
 				   MTP_string(groupName), MTP_chatPhotoEmpty(), MTP_int(1),
 				   MTP_int(1), MTP_int(2), MTPInputChannel(),
 				   MTPChatAdminRights(), MTPChatBannedRights());
@@ -1497,9 +1521,9 @@ template <typename Predicate>
 		createdUpdates, MTP_vector<MTPMissingInvitee>());
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 0, mtpc_messages_createChat, invitedUsers)
-		|| box || !createdPeer || !WaitForRegressionCondition([&] {
-			   return capture.requests.size() == 2;
-		   })
+		|| box || !controller->session().data().chat(chatId)
+		|| !WaitForRegressionCondition(
+			[&] { return capture.requests.size() == 2; })
 		|| static_cast<uint32>(capture.requests[1].body.front())
 			   != mtpc_upload_saveFilePart) {
 		std::fprintf(
