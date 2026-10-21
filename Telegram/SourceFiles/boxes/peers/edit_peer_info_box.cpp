@@ -3201,9 +3201,32 @@ void Controller::savePhoto() {
 		? _controls.photo->takeResultImage()
 		: QImage();
 	if (!image.isNull()) {
+		const auto peer = _peer->migrateToOrMe();
+		const auto canEdit = [&] {
+			if (const auto chat = peer->asChat()) {
+				return Data::details::CanEditChatPhotoFor(
+					chat->usesCustomServer(),
+					Data::details::ChatPhotoPeerKind::BasicGroup,
+					chat->canEditInformation());
+			} else if (const auto channel = peer->asChannel()) {
+				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+					channel->isMegagroup());
+				return Data::details::CanEditChatPhotoFor(
+					channel->usesCustomServer(), kind,
+					channel->canEditInformation());
+			}
+			return true;
+		}();
+		if (!canEdit) {
+			_controls.photo->showCustom(std::move(image));
+			_navigation->showToast(tr::lng_cant_do_this(tr::now));
+			return;
+		}
+		_controls.photo->showUploadProgress();
 		_peer->session().api().peerPhoto().upload(
-			_peer,
-			{ std::move(image) });
+			_peer, {std::move(image)},
+			crl::guard(this, [=] { _box->closeBox(); }));
+		return;
 	}
 	_box->closeBox();
 }

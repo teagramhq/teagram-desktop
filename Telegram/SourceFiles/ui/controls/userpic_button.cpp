@@ -466,36 +466,41 @@ void UserpicButton::choosePhotoLocally() {
 		}
 	}
 	if (const auto chat = _peer ? _peer->asChat() : nullptr) {
-		const auto photoId = chat->userpicPhotoId();
-		if (chat->usesCustomServer() && photoId
-			&& Data::details::CanEditChatPhotoFor(
+		if (chat->usesCustomServer()
+			&& Data::details::CanRemoveChatPhotoFor(
 				chat->usesCustomServer(),
 				Data::details::ChatPhotoPeerKind::BasicGroup,
-				chat->canEditInformation())) {
+				chat->hasUserpic(), chat->canEditInformation())) {
 			_menu->addSeparator(&st::expandedMenuSeparator);
 			_menu->addAction(
 				tr::lng_mediaview_delete(tr::now),
 				[=] {
-					const auto photo = chat->owner().photo(photoId);
+					const auto photoLocation = chat->userpicLocation();
 					_window->show(Ui::MakeConfirmBox({
 						.text = tr::lng_delete_photo_sure(),
 						.confirmed =
 							[=](Fn<void()> close) {
-								if (chat->userpicPhotoId() != photoId) {
+								if (!chat->hasUserpic()
+									|| chat->userpicLocation()
+										   != photoLocation) {
 									close();
 									return;
 								}
-								if (!Data::details::CanEditChatPhotoFor(
+								if (!Data::details::CanRemoveChatPhotoFor(
 										chat->usesCustomServer(),
 										Data::details::ChatPhotoPeerKind::
 											BasicGroup,
+										chat->hasUserpic(),
 										chat->canEditInformation())) {
 									_window->showToast(
 										tr::lng_cant_do_this(tr::now));
 									close();
 									return;
 								}
-								chat->session().api().peerPhoto().clear(photo);
+								chat->session()
+									.api()
+									.peerPhoto()
+									.clearChatPhoto(chat);
 								close();
 							},
 						.confirmText = tr::lng_mediaview_delete(tr::now),

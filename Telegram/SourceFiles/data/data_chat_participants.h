@@ -95,6 +95,13 @@ CanEditChatPhotoFor(bool customServer, ChatPhotoPeerKind kind,
 		   && (canEditInformation || newlyCreatedBySelf);
 }
 
+[[nodiscard]] inline constexpr bool
+CanRemoveChatPhotoFor(bool customServer, ChatPhotoPeerKind kind, bool hasPhoto,
+					  bool canEditInformation) {
+	return hasPhoto
+		   && CanEditChatPhotoFor(customServer, kind, canEditInformation);
+}
+
 template <typename Peer>
 [[nodiscard]] inline bool SupportsMemberRestrictions(const Peer &peer) {
 	const auto chat = peer->asChat();

@@ -59,6 +59,7 @@ public:
 		Fn<void()> done = nullptr);
 	void suggest(not_null<PeerData*> peer, UserPhoto &&photo);
 	void clear(not_null<PhotoData*> photo);
+	void clearChatPhoto(not_null<ChatData *> chat);
 	void clearPersonal(not_null<UserData*> user);
 	void set(not_null<PeerData*> peer, not_null<PhotoData*> photo);
 

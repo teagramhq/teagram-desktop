@@ -385,19 +385,7 @@ void PeerPhoto::clear(not_null<PhotoData*> photo) {
 			_session->updates().applyUpdates(result);
 		};
 		if (const auto chat = photo->peer->asChat()) {
-			if (!Data::details::CanEditChatPhotoFor(
-					chat->usesCustomServer(),
-					Data::details::ChatPhotoPeerKind::BasicGroup,
-					chat->canEditInformation())) {
-				return;
-			}
-			_api.request(MTPmessages_EditChatPhoto(chat->inputChat(),
-												   MTP_inputChatPhotoEmpty()))
-				.done(applier)
-				.fail([=](const MTP::Error &error) {
-					ShowPeerPhotoError(photo->peer, error, true);
-				})
-				.send();
+			clearChatPhoto(chat);
 		} else if (const auto channel = photo->peer->asChannel()) {
 			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
 				channel->isMegagroup());
@@ -436,7 +424,25 @@ void PeerPhoto::clear(not_null<PhotoData*> photo) {
 	}
 }
 
-void PeerPhoto::clearPersonal(not_null<UserData*> user) {
+void PeerPhoto::clearChatPhoto(not_null<ChatData *> chat) {
+	if (!Data::details::CanRemoveChatPhotoFor(
+			chat->usesCustomServer(),
+			Data::details::ChatPhotoPeerKind::BasicGroup, chat->hasUserpic(),
+			chat->canEditInformation())) {
+		return;
+	}
+	_api.request(MTPmessages_EditChatPhoto(chat->inputChat(),
+										   MTP_inputChatPhotoEmpty()))
+		.done([=](const MTPUpdates &result) {
+			_session->updates().applyUpdates(result);
+		})
+		.fail([=](const MTP::Error &error) {
+			ShowPeerPhotoError(chat, error, true);
+		})
+		.send();
+}
+
+void PeerPhoto::clearPersonal(not_null<UserData *> user) {
 	_api.request(MTPphotos_UploadContactProfilePhoto(
 		MTP_flags(MTPphotos_UploadContactProfilePhoto::Flag::f_save),
 		user->inputUser(),
@@ -535,7 +541,8 @@ void PeerPhoto::ready(
 		}
 	};
 	const auto fail = [=](const MTP::Error &error) {
-		ShowPeerPhotoError(peer, error);
+		ShowPeerPhotoError(peer, error,
+						   peer->asChat() && peer->usesCustomServer());
 		_uploadFailed.fire_copy(peer);
 	};
 	const auto applier = [=](const MTPUpdates &result) {

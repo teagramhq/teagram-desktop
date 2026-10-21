@@ -22,6 +22,7 @@ using Data::details::CanAddBasicChatAdmins;
 using Data::details::CanEditChatPhotoFor;
 using Data::details::CanManageBasicChatCall;
 using Data::details::CanMarkUserLoadedNormally;
+using Data::details::CanRemoveChatPhotoFor;
 using Data::details::ChatParticipantInfo;
 using Data::details::ChatPhotoPeerKind;
 using Data::details::ChatPhotoPeerKindForChannel;
@@ -96,6 +97,18 @@ TEST_CASE(PinnedBasicGroupPhotoNeedsChangeInfoPermission) {
 	// members, and false for members restricted from changing group info.
 	CHECK(CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true));
 	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false));
+}
+
+TEST_CASE(PinnedBasicGroupPhotoRemovalUsesVisiblePhotoAndChangeInfo) {
+	CHECK(
+		CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true, true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false,
+								 true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true,
+								 false));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::Supergroup, true,
+								 true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::Channel, true, true));
 }
 
 TEST_CASE(NewlyCreatedPinnedBasicGroupPhotoDoesNotNeedLoadedRights) {
