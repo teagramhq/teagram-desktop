@@ -736,6 +736,8 @@ public:
 	Controls _controls;
 
 	std::deque<FnMut<void()>> _saveStagesQueue;
+	bool _photoUploadPending = false;
+	rpl::lifetime _photoUploadLifetime;
 	Saving _savingData;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	bool _autoTranslateControlPresentForRegressionTest = false;
@@ -2596,7 +2598,7 @@ bool Controller::validateRequestToJoin(Saving &to) const {
 void Controller::save() {
 	Expects(_wrap != nullptr);
 
-	if (!_saveStagesQueue.empty()) {
+	if (_photoUploadPending || !_saveStagesQueue.empty()) {
 		return;
 	}
 	if (const auto saving = validate()) {
@@ -3223,6 +3225,17 @@ void Controller::savePhoto() {
 			return;
 		}
 		_controls.photo->showUploadProgress();
+		_photoUploadPending = true;
+		const auto uploadFinished = [=] {
+			_photoUploadPending = false;
+			_photoUploadLifetime.destroy();
+		};
+		_peer->session().api().peerPhoto().subscribeToUpload(
+			peer, _photoUploadLifetime,
+			{
+				.done = uploadFinished,
+				.failed = uploadFinished,
+			});
 		_peer->session().api().peerPhoto().upload(
 			_peer, {std::move(image)},
 			crl::guard(this, [=] { _box->closeBox(); }));

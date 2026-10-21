@@ -1207,6 +1207,15 @@ template <typename Predicate>
 			"with the photo upload pending.\n");
 		return false;
 	}
+	Test::Click(save);
+	QCoreApplication::processEvents();
+	if (!box || capture.requests.size() != 1 || chat->userpicPhotoId()) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: second Save closed the "
+			"edit before the photo upload completed.\n");
+		return false;
+	}
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 0, mtpc_upload_saveFilePart, MTP_boolTrue())
 		|| !WaitForRegressionCondition(
