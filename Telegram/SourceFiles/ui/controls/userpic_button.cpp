@@ -1242,8 +1242,9 @@ void UserpicButton::showUploadProgress() {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 bool UserpicButton::pendingCustomUploadShownForRegressionTest() const {
-	return (_source == Source::Custom) && !_result.isNull() && _uploadOverlay
-		   && _uploadOverlay->shown() && _uploadOverlay->uploading();
+	return (_source == Source::Custom) && _userpicHasImage && !_userpic.isNull()
+		   && _uploadOverlay && _uploadOverlay->shown()
+		   && _uploadOverlay->uploading();
 }
 #endif
 
