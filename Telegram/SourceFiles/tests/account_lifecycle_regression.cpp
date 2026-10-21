@@ -1151,11 +1151,19 @@ template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunPeerPhotoUploadLifecycleRegression(
-	not_null<Window::SessionController *> controller) {
+	not_null<Window::SessionController *> controller,
+	bool expectServerConfirmation) {
 	const auto chat = controller->session().data().chat(ChatId(1171));
 	chat->setName(u"Photo upload lifecycle group"_q);
 	chat->setFlags(ChatDataFlag::Creator);
 	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	if (chat->usesCustomServer() != expectServerConfirmation) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: account fixture did not "
+			"match the expected upload completion behavior.\n");
+		return false;
+	}
 	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 	const auto box = controller->window().show(
 		object_ptr<EditPeerInfoBox>(controller->widget().get(), controller,
@@ -1197,27 +1205,45 @@ template <typename Predicate>
 	Test::Click(save);
 	QCoreApplication::processEvents();
 	if (!WaitForRegressionCondition([&] { return !capture.requests.empty(); })
-		|| !box || capture.requests.size() != 1
-		|| static_cast<uint32>(capture.requests.front().body.front())
-			   != mtpc_upload_saveFilePart
-		|| chat->userpicPhotoId()) {
+		|| (!expectServerConfirmation
+			&& !WaitForRegressionCondition([&] { return !box; }))) {
 		std::fprintf(
 			stderr,
-			"Peer photo lifecycle regression failed: edit did not stay open "
-			"with the photo upload pending.\n");
+			"Peer photo lifecycle regression failed: upload did not start or "
+			"the stock editor did not close.\n");
+		return false;
+	}
+	const auto editClosedBeforeConfirmation = !box;
+	if (capture.requests.size() != 1
+		|| static_cast<uint32>(capture.requests.front().body.front())
+			   != mtpc_upload_saveFilePart
+		|| chat->userpicPhotoId()
+		|| (expectServerConfirmation == editClosedBeforeConfirmation)) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: edit box did not follow "
+			"the account's upload completion behavior.\n");
 		return false;
 	}
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 0, mtpc_upload_saveFilePart, MTP_boolTrue())
 		|| !WaitForRegressionCondition(
-			[&] { return capture.requests.size() == 2; })
-		|| !box || chat->userpicPhotoId()
+			[&] { return capture.requests.size() == 2; })) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: uploaded photo was not "
+			"sent to the chat.\n");
+		return false;
+	}
+	const auto editClosedBeforePhotoUpdate = !box;
+	if ((expectServerConfirmation == editClosedBeforePhotoUpdate)
+		|| chat->userpicPhotoId()
 		|| static_cast<uint32>(capture.requests[1].body.front())
 			   != mtpc_messages_editChatPhoto) {
 		std::fprintf(
 			stderr,
-			"Peer photo lifecycle regression failed: edit closed before the "
-			"server confirmed the photo update.\n");
+			"Peer photo lifecycle regression failed: edit box or photo state "
+			"changed before the server photo update.\n");
 		return false;
 	}
 	const auto photoId = PhotoId(117101);
@@ -1241,9 +1267,8 @@ template <typename Predicate>
 		return false;
 	}
 	std::fprintf(
-		stderr,
-		"Peer photo lifecycle regression passed: edit stayed open during "
-		"upload and closed after the server photo update.\n");
+		stderr, "Peer photo lifecycle regression passed: edit box followed the "
+				"account's upload completion behavior.\n");
 	return true;
 }
 
@@ -9215,13 +9240,20 @@ void RunProtectedCacheCleanupRegression(
 								   translationControlsPassed);
 	stockController->hideLayer(anim::type::instant);
 	pinnedController->hideLayer(anim::type::instant);
-	nativeLifecycleResults->StartCase("peer-photo-upload-lifecycle");
-	const auto peerPhotoUploadLifecyclePassed
-		= !shouldInjectFailure("peer-photo-upload-lifecycle")
-		  && RunPeerPhotoUploadLifecycleRegression(pinnedController);
-	nativeLifecycleResults->Report("peer-photo-upload-lifecycle",
-								   peerPhotoUploadLifecyclePassed);
+	nativeLifecycleResults->StartCase("stock-peer-photo-upload-lifecycle");
+	const auto stockPeerPhotoUploadLifecyclePassed
+		= !shouldInjectFailure("stock-peer-photo-upload-lifecycle")
+		  && RunPeerPhotoUploadLifecycleRegression(stockController, false);
+	nativeLifecycleResults->Report("stock-peer-photo-upload-lifecycle",
+								   stockPeerPhotoUploadLifecyclePassed);
+	nativeLifecycleResults->StartCase("pinned-peer-photo-upload-lifecycle");
+	const auto pinnedPeerPhotoUploadLifecyclePassed
+		= !shouldInjectFailure("pinned-peer-photo-upload-lifecycle")
+		  && RunPeerPhotoUploadLifecycleRegression(pinnedController, true);
+	nativeLifecycleResults->Report("pinned-peer-photo-upload-lifecycle",
+								   pinnedPeerPhotoUploadLifecyclePassed);
 	pinnedController->hideLayer(anim::type::instant);
+	stockController->hideLayer(anim::type::instant);
 	nativeLifecycleResults->StartCase("manage-controls");
 	const auto manageControlsPassed = RunManageControlsLifecycleRegression(
 		stockController, pinnedController);

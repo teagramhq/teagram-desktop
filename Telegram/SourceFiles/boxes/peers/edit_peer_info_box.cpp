@@ -3222,11 +3222,14 @@ void Controller::savePhoto() {
 			_navigation->showToast(tr::lng_cant_do_this(tr::now));
 			return;
 		}
-		_controls.photo->showUploadProgress();
-		_peer->session().api().peerPhoto().upload(
-			_peer, {std::move(image)},
-			crl::guard(this, [=] { _box->closeBox(); }));
-		return;
+		if (peer->usesCustomServer()) {
+			_controls.photo->showUploadProgress();
+			_peer->session().api().peerPhoto().upload(
+				_peer, {std::move(image)},
+				crl::guard(this, [=] { _box->closeBox(); }));
+			return;
+		}
+		_peer->session().api().peerPhoto().upload(_peer, {std::move(image)});
 	}
 	_box->closeBox();
 }
