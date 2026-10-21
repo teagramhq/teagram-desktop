@@ -1256,13 +1256,13 @@ template <typename Predicate>
 	const auto originalChat = MTP_chat(
 		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chat->id.value),
 		MTP_string(u"Photo upload lifecycle group"_q),
-		MTP_chatPhoto(
-			MTP_flags(0), MTP_long(static_cast<int64>(originalPhotoId)), MTPbytes(),
+		MTP_chatPhoto(MTP_flags(0),
+					  MTP_long(static_cast<int64>(originalPhotoId)), MTPbytes(),
 					  MTP_int(2)),
 		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
 		MTPChatAdminRights(), MTPChatBannedRights());
 	controller->session().data().processChats(
-		MTP_vector<MTPChat>({ originalChat }));
+		MTP_vector<MTPChat>({originalChat}));
 	if (chat->usesCustomServer() != expectServerConfirmation) {
 		std::fprintf(
 			stderr,
@@ -1389,8 +1389,7 @@ template <typename Predicate>
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 1, mtpc_messages_editChatPhoto, reply)
-		|| box || chat->userpicPhotoId() != photoId
-		|| !editClosed
+		|| box || chat->userpicPhotoId() != photoId || !editClosed
 		|| (expectServerConfirmation && !photoChangedBeforeClose)) {
 		std::fprintf(
 			stderr,
@@ -1424,17 +1423,16 @@ template <typename Predicate>
 			[&](not_null<PeerData *> peer) { createdPeer = peer; }),
 		Ui::LayerOption::KeepOther, anim::type::normal);
 	if (!box) {
-		std::fprintf(
-			stderr,
-			"Created group photo regression failed: create box did not open.\n");
+		std::fprintf(stderr, "Created group photo regression failed: create "
+							 "box did not open.\n");
 		return false;
 	}
 	const auto root = not_null<QWidget *>(box.get());
 	const auto photo = Test::FindFirst<Ui::UserpicButton>(root);
 	const auto title = Test::FindFirst<Ui::InputField>(root);
 	auto create = static_cast<Ui::RoundButton *>(nullptr);
-	for (const auto button : Test::FindAll<Ui::RoundButton>(
-			box->parentWidget())) {
+	for (const auto button :
+		 Test::FindAll<Ui::RoundButton>(box->parentWidget())) {
 		if (button->accessibilityName()
 			== tr::lng_create_group_create(tr::now)) {
 			create = button;
@@ -1464,7 +1462,7 @@ template <typename Predicate>
 	if (!WaitForRegressionCondition(
 			[&] { return capture.requests.size() == 1; })
 		|| static_cast<uint32>(capture.requests.front().body.front())
-			!= mtpc_messages_createChat) {
+			   != mtpc_messages_createChat) {
 		std::fprintf(
 			stderr,
 			"Created group photo regression failed: group creation request "
@@ -1472,23 +1470,23 @@ template <typename Predicate>
 		return false;
 	}
 	const auto chatId = ChatId(1172);
-	const auto createdChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_left), MTP_long(chatId.value),
-		MTP_string(groupName), MTP_chatPhotoEmpty(MTP_long(0)),
-		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
-		MTPChatAdminRights(), MTPChatBannedRights());
+	const auto createdChat
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_left), MTP_long(chatId.value),
+				   MTP_string(groupName), MTP_chatPhotoEmpty(MTP_long(0)),
+				   MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+				   MTPChatAdminRights(), MTPChatBannedRights());
 	const auto createdUpdates = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
-		MTP_vector<MTPChat>({ createdChat }), MTP_int(2), MTP_int(0));
+		MTP_vector<MTPChat>({createdChat}), MTP_int(2), MTP_int(0));
 	const auto invitedUsers = MTP_messages_invitedUsers(
 		createdUpdates, MTP_vector<MTPMissingInvitee>());
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 0, mtpc_messages_createChat, invitedUsers)
-		|| box || !createdPeer
-		|| !WaitForRegressionCondition(
-			[&] { return capture.requests.size() == 2; })
+		|| box || !createdPeer || !WaitForRegressionCondition([&] {
+			   return capture.requests.size() == 2;
+		   })
 		|| static_cast<uint32>(capture.requests[1].body.front())
-			!= mtpc_upload_saveFilePart) {
+			   != mtpc_upload_saveFilePart) {
 		std::fprintf(
 			stderr,
 			"Created group photo regression failed: selected photo was not "
@@ -1500,11 +1498,10 @@ template <typename Predicate>
 		|| !WaitForRegressionCondition(
 			[&] { return capture.requests.size() == 3; })
 		|| static_cast<uint32>(capture.requests[2].body.front())
-			!= mtpc_messages_editChatPhoto) {
-		std::fprintf(
-			stderr,
-			"Created group photo regression failed: photo update did not target "
-			"the created group.\n");
+			   != mtpc_messages_editChatPhoto) {
+		std::fprintf(stderr, "Created group photo regression failed: photo "
+							 "update did not target "
+							 "the created group.\n");
 		return false;
 	}
 	const auto photoId = PhotoId(117201);
@@ -1517,7 +1514,7 @@ template <typename Predicate>
 		MTPChatAdminRights(), MTPChatBannedRights());
 	const auto photoUpdates = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
-		MTP_vector<MTPChat>({ updatedChat }), MTP_int(3), MTP_int(0));
+		MTP_vector<MTPChat>({updatedChat}), MTP_int(3), MTP_int(0));
 	const auto created = controller->session().data().chat(chatId);
 	if (!ReplyToCapturedRequestForRegressionTest(
 			capture, 2, mtpc_messages_editChatPhoto, photoUpdates)
