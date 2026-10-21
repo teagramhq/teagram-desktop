@@ -94,7 +94,7 @@ void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
 	} | [&](auto chats) {
 		return navigation->session().data().chat(chats->front().c_chat().vid());
 	} | [&](not_null<ChatData *> chat) {
-		const auto uploadPhoto = [chat, image = std::move(image)]() mutable {
+		auto uploadPhoto = [chat, image = std::move(image)]() mutable {
 			if (!image.isNull()) {
 				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
 					chat, {std::move(image)});
