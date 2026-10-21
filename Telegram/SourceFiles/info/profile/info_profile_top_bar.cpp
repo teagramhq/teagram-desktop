@@ -1212,11 +1212,18 @@ void TopBar::setupUserpicButton(
 				&& !user->isServiceUser();
 		}
 		if (const auto chat = peer->asChat()) {
-			return chat->canEditInformation()
-				   && Data::details::BasicChatControlsOf(chat).canEditPhoto;
+			return Data::details::CanEditChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->canEditInformation());
 		}
 		if (const auto channel = peer->asChannel()) {
-			return channel->canEditInformation();
+			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+				channel->isMegagroup());
+			return Data::details::CanEditChatPhotoFor(
+				channel->usesCustomServer(),
+				kind,
+				channel->canEditInformation());
 		}
 		return false;
 	};

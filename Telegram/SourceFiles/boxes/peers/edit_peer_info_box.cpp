@@ -820,7 +820,19 @@ object_ptr<Ui::RpWidget> Controller::createPhotoAndTitleEdit() {
 		return nullptr;
 	}
 	if (const auto chat = _peer->asChat()) {
-		if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+		if (!Data::details::CanEditChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->canEditInformation())) {
+			return createTitleEdit();
+		}
+	} else if (const auto channel = _peer->asChannel()) {
+		const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+			channel->isMegagroup());
+		if (!Data::details::CanEditChatPhotoFor(
+				channel->usesCustomServer(),
+				kind,
+				channel->canEditInformation())) {
 			return createTitleEdit();
 		}
 	}

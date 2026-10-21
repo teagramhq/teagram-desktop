@@ -23,10 +23,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_user_photos.h"
 #include "history/history.h"
+#include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mtproto/mtproto_response.h"
 #include "storage/file_upload.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_user_photos.h"
+#include "window/window_session_controller.h"
 
 #include <QtCore/QBuffer>
 
@@ -34,6 +37,23 @@ namespace Api {
 namespace {
 
 constexpr auto kSharedMediaLimit = 100;
+
+void ShowPeerPhotoError(
+		PeerData *peer,
+		const MTP::Error &error,
+		bool showFallback = false) {
+	if (!peer) {
+		return;
+	}
+	if (const auto window = peer->session().tryResolveWindow(peer)) {
+		if (error.type() == u"CHAT_ADMIN_REQUIRED"_q
+			|| error.type() == u"PEER_ID_INVALID"_q) {
+			window->showToast(tr::lng_cant_do_this(tr::now));
+		} else if (showFallback) {
+			MTP::ShowErrorFallback(window, error);
+		}
+	}
+}
 
 [[nodiscard]] std::shared_ptr<FilePrepareResult> PreparePeerPhoto(
 		MTP::DcId dcId,
@@ -235,10 +255,20 @@ void PeerPhoto::upload(
 		UploadType type,
 		Fn<void()> done) {
 	peer = peer->migrateToOrMe();
-	// A custom server has no chat photos, so its basic groups never send
-	// messages.editChatPhoto.
 	if (const auto chat = peer->asChat()) {
-		if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+		if (!Data::details::CanEditChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->canEditInformation())) {
+			return;
+		}
+	} else if (const auto channel = peer->asChannel()) {
+		const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+			channel->isMegagroup());
+		if (!Data::details::CanEditChatPhotoFor(
+				channel->usesCustomServer(),
+				kind,
+				channel->canEditInformation())) {
 			return;
 		}
 	}
@@ -355,18 +385,33 @@ void PeerPhoto::clear(not_null<PhotoData*> photo) {
 			_session->updates().applyUpdates(result);
 		};
 		if (const auto chat = photo->peer->asChat()) {
-			if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+			if (!Data::details::CanEditChatPhotoFor(
+					chat->usesCustomServer(),
+					Data::details::ChatPhotoPeerKind::BasicGroup,
+					chat->canEditInformation())) {
 				return;
 			}
 			_api.request(MTPmessages_EditChatPhoto(
 				chat->inputChat(),
 				MTP_inputChatPhotoEmpty()
-			)).done(applier).send();
+			)).done(applier).fail([=](const MTP::Error &error) {
+				ShowPeerPhotoError(photo->peer, error, true);
+			}).send();
 		} else if (const auto channel = photo->peer->asChannel()) {
+			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+				channel->isMegagroup());
+			if (!Data::details::CanEditChatPhotoFor(
+					channel->usesCustomServer(),
+					kind,
+					channel->canEditInformation())) {
+				return;
+			}
 			_api.request(MTPchannels_EditPhoto(
 				channel->inputChannel(),
 				MTP_inputChatPhotoEmpty()
-			)).done(applier).send();
+			)).done(applier).fail([=](const MTP::Error &error) {
+				ShowPeerPhotoError(photo->peer, error, true);
+			}).send();
 		}
 	} else {
 		const auto fallbackPhotoId = SyncUserFallbackPhotoViewer(self);
@@ -437,18 +482,33 @@ void PeerPhoto::set(not_null<PeerData*> peer, not_null<PhotoData*> photo) {
 			_session->updates().applyUpdates(result);
 		};
 		if (const auto chat = peer->asChat()) {
-			if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+			if (!Data::details::CanEditChatPhotoFor(
+					chat->usesCustomServer(),
+					Data::details::ChatPhotoPeerKind::BasicGroup,
+					chat->canEditInformation())) {
 				return;
 			}
 			_api.request(MTPmessages_EditChatPhoto(
 				chat->inputChat(),
 				MTP_inputChatPhoto(photo->mtpInput())
-			)).done(applier).send();
+			)).done(applier).fail([=](const MTP::Error &error) {
+				ShowPeerPhotoError(peer, error, true);
+			}).send();
 		} else if (const auto channel = peer->asChannel()) {
+			const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+				channel->isMegagroup());
+			if (!Data::details::CanEditChatPhotoFor(
+					channel->usesCustomServer(),
+					kind,
+					channel->canEditInformation())) {
+				return;
+			}
 			_api.request(MTPchannels_EditPhoto(
 				channel->inputChannel(),
 				MTP_inputChatPhoto(photo->mtpInput())
-			)).done(applier).send();
+			)).done(applier).fail([=](const MTP::Error &error) {
+				ShowPeerPhotoError(peer, error, true);
+			}).send();
 		}
 	}
 }
@@ -471,6 +531,7 @@ void PeerPhoto::ready(
 		}
 	};
 	const auto fail = [=](const MTP::Error &error) {
+		ShowPeerPhotoError(peer, error);
 		_uploadFailed.fire_copy(peer);
 	};
 	const auto applier = [=](const MTPUpdates &result) {
