@@ -98,6 +98,24 @@ TEST_CASE(PinnedBasicGroupPhotoNeedsChangeInfoPermission) {
 	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false));
 }
 
+TEST_CASE(NewlyCreatedPinnedBasicGroupPhotoDoesNotNeedLoadedRights) {
+	CHECK(CanEditChatPhotoFor(
+		true,
+		ChatPhotoPeerKind::BasicGroup,
+		false,
+		true));
+	CHECK(!CanEditChatPhotoFor(
+		true,
+		ChatPhotoPeerKind::Supergroup,
+		false,
+		true));
+	CHECK(!CanEditChatPhotoFor(
+		true,
+		ChatPhotoPeerKind::Channel,
+		false,
+		true));
+}
+
 TEST_CASE(PinnedSupergroupAndChannelPhotosStayHidden) {
 	CHECK(ChatPhotoSupportedFor(true, ChatPhotoPeerKind::BasicGroup));
 	CHECK(!ChatPhotoSupportedFor(true, ChatPhotoPeerKind::Supergroup));

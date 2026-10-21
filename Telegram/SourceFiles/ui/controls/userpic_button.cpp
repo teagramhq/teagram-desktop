@@ -16,6 +16,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_info_box.h" // EditPeerInfoBox::Available.
 #include "ui/effects/ripple_animation.h"
 #include "ui/empty_userpic.h"
+#include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_photo.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
@@ -28,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_instance.h"
 #include "core/application.h"
 #include "ui/effects/premium_graphics.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/menu/menu_action.h"
@@ -459,6 +462,45 @@ void UserpicButton::choosePhotoLocally() {
 						value));
 				}, _menu->lifetime());
 			}, &st::menuIconProfile);
+		}
+	}
+	if (const auto chat = _peer ? _peer->asChat() : nullptr) {
+		const auto photoId = chat->userpicPhotoId();
+		if (chat->usesCustomServer()
+			&& photoId
+			&& Data::details::CanEditChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->canEditInformation())) {
+			_menu->addSeparator(&st::expandedMenuSeparator);
+			_menu->addAction(
+				tr::lng_mediaview_delete(tr::now),
+				[=] {
+					const auto photo = chat->owner().photo(photoId);
+					_window->show(Ui::MakeConfirmBox({
+						.text = tr::lng_delete_photo_sure(),
+						.confirmed = [=](Fn<void()> close) {
+							if (chat->userpicPhotoId() != photoId) {
+								close();
+								return;
+							}
+							if (!Data::details::CanEditChatPhotoFor(
+									chat->usesCustomServer(),
+									Data::details::ChatPhotoPeerKind::BasicGroup,
+									chat->canEditInformation())) {
+								_window->showToast(
+									tr::lng_cant_do_this(tr::now));
+								close();
+								return;
+							}
+							chat->session().api().peerPhoto().clear(photo);
+							close();
+						},
+						.confirmText = tr::lng_mediaview_delete(tr::now),
+						.confirmStyle = &st::attentionBoxButton,
+					}));
+				},
+				&st::menuIconDeleteAttention);
 		}
 	}
 	const auto position = rect().contains(mapFromGlobal(QCursor::pos()))

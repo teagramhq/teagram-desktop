@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/sender.h"
 
 class ApiWrap;
+class ChatData;
 class PeerData;
 class UserData;
 
@@ -50,6 +51,9 @@ public:
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		Fn<void()> done = nullptr);
+	void uploadCreatedGroupPhoto(
+		not_null<ChatData*> chat,
+		UserPhoto &&photo);
 	void uploadFallback(not_null<PeerData*> peer, UserPhoto &&photo);
 	void updateSelf(
 		not_null<PhotoData*> photo,
@@ -111,7 +115,8 @@ private:
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		UploadType type,
-		Fn<void()> done);
+		Fn<void()> done,
+		bool newlyCreatedBySelf);
 
 	[[nodiscard]] EmojiListData &emojiList(EmojiListType type);
 	[[nodiscard]] const EmojiListData &emojiList(EmojiListType type) const;

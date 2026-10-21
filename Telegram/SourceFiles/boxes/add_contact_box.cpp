@@ -99,7 +99,7 @@ void ChatCreateDone(
 		}
 		| [&](not_null<ChatData*> chat) {
 			if (!image.isNull()) {
-				chat->session().api().peerPhoto().upload(
+				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
 					chat,
 					{ std::move(image) });
 			}

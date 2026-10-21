@@ -207,11 +207,22 @@ void PeerPhoto::upload(
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		Fn<void()> done) {
-	upload(peer, std::move(photo), UploadType::Default, std::move(done));
+	upload(
+		peer,
+		std::move(photo),
+		UploadType::Default,
+		std::move(done),
+		false);
+}
+
+void PeerPhoto::uploadCreatedGroupPhoto(
+		not_null<ChatData*> chat,
+		UserPhoto &&photo) {
+	upload(chat, std::move(photo), UploadType::Default, nullptr, true);
 }
 
 void PeerPhoto::uploadFallback(not_null<PeerData*> peer, UserPhoto &&photo) {
-	upload(peer, std::move(photo), UploadType::Fallback, nullptr);
+	upload(peer, std::move(photo), UploadType::Fallback, nullptr, false);
 }
 
 void PeerPhoto::updateSelf(
@@ -251,13 +262,15 @@ void PeerPhoto::upload(
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		UploadType type,
-		Fn<void()> done) {
+		Fn<void()> done,
+		bool newlyCreatedBySelf) {
 	peer = peer->migrateToOrMe();
 	if (const auto chat = peer->asChat()) {
 		if (!Data::details::CanEditChatPhotoFor(
 				chat->usesCustomServer(),
 				Data::details::ChatPhotoPeerKind::BasicGroup,
-				chat->canEditInformation())) {
+				chat->canEditInformation(),
+				newlyCreatedBySelf)) {
 			return;
 		}
 	} else if (const auto channel = peer->asChannel()) {
@@ -298,7 +311,7 @@ void PeerPhoto::upload(
 }
 
 void PeerPhoto::suggest(not_null<PeerData*> peer, UserPhoto &&photo) {
-	upload(peer, std::move(photo), UploadType::Suggestion, nullptr);
+	upload(peer, std::move(photo), UploadType::Suggestion, nullptr, false);
 }
 
 void PeerPhoto::subscribeToUpload(
