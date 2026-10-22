@@ -1366,7 +1366,7 @@ template <typename Predicate>
 	};
 	const auto editCloseState = std::make_shared<EditCloseState>();
 	QObject::connect(box.get(), &QObject::destroyed,
-					 [editCloseState, chat, photoId] {
+					 [editCloseState, chat] {
 						 editCloseState->editClosed = true;
 						 editCloseState->photoChangedBeforeClose
 							 = (chat->userpicPhotoId() == photoId);
