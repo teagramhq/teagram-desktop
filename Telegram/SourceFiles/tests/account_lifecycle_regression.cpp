@@ -1365,12 +1365,11 @@ template <typename Predicate>
 		bool photoChangedBeforeClose = false;
 	};
 	const auto editCloseState = std::make_shared<EditCloseState>();
-	QObject::connect(box.get(), &QObject::destroyed,
-					 [editCloseState, chat] {
-						 editCloseState->editClosed = true;
-						 editCloseState->photoChangedBeforeClose
-							 = (chat->userpicPhotoId() == photoId);
-					 });
+	QObject::connect(box.get(), &QObject::destroyed, [editCloseState, chat] {
+		editCloseState->editClosed = true;
+		editCloseState->photoChangedBeforeClose
+			= (chat->userpicPhotoId() == photoId);
+	});
 	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	image.fill(Qt::blue);
 	photo->showCustom(std::move(image));
