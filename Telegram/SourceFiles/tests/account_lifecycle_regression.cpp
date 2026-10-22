@@ -10741,7 +10741,7 @@ void RunProtectedCacheCleanupRegression(
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
-	if (!forgotten->createSession(RegressionUser(UserId(4242), true, u"4242"_q),
+	if (!forgotten->createSession(RegressionUser(UserId(4242), true, QString()),
 								  std::make_unique<Main::SessionSettings>())
 		|| !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()

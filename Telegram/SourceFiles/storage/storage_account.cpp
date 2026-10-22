@@ -388,13 +388,9 @@ Account::Account(not_null<Main::Account*> owner, const QString &dataName)
 		return QByteArray();
 	}
 	const auto self = owner->session().user();
-	if (self->phone().isEmpty()) {
-		DEBUG_LOG(("AuthSelf Error: Phone is empty."));
-		return QByteArray();
-	}
 	auto result = QByteArray();
 	result.reserve(Serialize::peerSize(self)
-		+ Serialize::stringSize(self->about()));
+				   + Serialize::stringSize(self->about()));
 	{
 		QBuffer buffer(&result);
 		buffer.open(QIODevice::WriteOnly);
