@@ -140,7 +140,7 @@ TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
 	sessions.beginRefresh();
 	start();
 	CHECK_EQ(int(transport.requests.size()), 1);
-	CHECK_EQ(clock.delayMs, AuthorizationsReloadState::kTimeoutMs);
+	CHECK_EQ(int(clock.delayMs), AuthorizationsReloadState::kTimeoutMs);
 	CHECK(sessions.rowsVisible());
 
 	clock.advance();
@@ -163,7 +163,7 @@ TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
 	CHECK(reopened.failed());
 	CHECK(reopened.contentVisible());
 
-	CHECK_EQ(retryClock.delayMs,
+	CHECK_EQ(int(retryClock.delayMs),
 			 ActiveSessionsState::kFailedReloadRetryDelayMs);
 	retryClock.advance();
 	CHECK_EQ(int(transport.requests.size()), 2);
