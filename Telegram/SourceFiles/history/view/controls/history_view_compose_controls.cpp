@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/controls/history_view_compose_controls.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "base/call_delayed.h"
 #include "base/event_filter.h"
 #include "base/options.h"
@@ -4423,11 +4427,8 @@ void ComposeControls::triggerAiApplyInPlace() {
 	}
 	const auto field = _field;
 	Api::TriggerAiApplyInPlace(
-		_session,
-		_show,
-		_wrap.get(),
-		field,
-		prepareTextForEditMsg(),
+		_session, _show, _wrap.get(), field,
+		[=] { return prepareTextForEditMsg(); },
 		crl::guard(_wrap.get(), [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
 				textWithTags,
@@ -4436,6 +4437,15 @@ void ComposeControls::triggerAiApplyInPlace() {
 			field->setCursorPosition(cursor);
 		}));
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void ComposeControls::triggerAiApplyInPlaceForRegressionTest(
+	const QString &text) {
+	setFieldText({text, {}});
+	triggerAiApplyInPlace();
+	clearFieldText();
+}
+#endif
 
 bool ComposeControls::canSendAiComposeDirect() const {
 	using Type = Ui::SendButton::Type;
@@ -5281,6 +5291,10 @@ Ui::InputField *ComposeControls::fieldForMention() const {
 }
 
 TextWithEntities ComposeControls::prepareTextForEditMsg() const {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordAiComposeApplyRegressionEvent(
+		Tests::AiComposeApplyRegressionEvent::ComposeControlsDraftRead);
+#endif
 	if (!_history) {
 		return {};
 	}

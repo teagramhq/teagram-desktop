@@ -110,6 +110,18 @@ struct LifecycleWriteCountsForRegressionTest {
 	int customServerBlockMarker = 0;
 };
 
+enum class AiComposeApplyRegressionEvent {
+	HistoryWidgetDraftRead,
+	ComposeControlsDraftRead,
+	ApplyDispatched,
+};
+
+struct AiComposeApplyRegressionCounts {
+	int historyWidgetDraftReads = 0;
+	int composeControlsDraftReads = 0;
+	int applyDispatches = 0;
+};
+
 enum class TranslationRpcForRegressionTest {
 	ChannelAutoTranslationToggle,
 	Text,
@@ -138,6 +150,10 @@ void RecordLifecycleWriteForRegressionTest(
 void ResetLifecycleWriteCountsForRegressionTest();
 [[nodiscard]] LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest();
+void RecordAiComposeApplyRegressionEvent(AiComposeApplyRegressionEvent event);
+void ResetAiComposeApplyRegressionCounts();
+[[nodiscard]] AiComposeApplyRegressionCounts
+GetAiComposeApplyRegressionCounts();
 void RecordTranslationRpcForRegressionTest(
 	TranslationRpcForRegressionTest operation);
 void ResetTranslationRpcCountsForRegressionTest();

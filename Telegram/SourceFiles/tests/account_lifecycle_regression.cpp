@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_compose_with_ai.h"
 #include "api/api_chat_filters.h"
 #include "api/api_common.h"
 #include "api/api_peer_photo.h"
@@ -45,6 +46,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
 #include "data/components/scheduled_messages.h"
+#include "data/data_ai_compose_tones.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
@@ -117,6 +119,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
+#include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
@@ -176,6 +179,7 @@ namespace Tests {
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
+auto gAiComposeApplyRegressionCounts = AiComposeApplyRegressionCounts();
 auto gCallStartRegressionSnapshot = CallStartRegressionSnapshot();
 auto gCallStartRegressionIntercept = false;
 auto gTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
@@ -557,6 +561,28 @@ void ResetLifecycleWriteCountsForRegressionTest() {
 LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest() {
 	return gLifecycleWriteCounts;
+}
+
+void RecordAiComposeApplyRegressionEvent(AiComposeApplyRegressionEvent event) {
+	switch (event) {
+	case AiComposeApplyRegressionEvent::HistoryWidgetDraftRead:
+		++gAiComposeApplyRegressionCounts.historyWidgetDraftReads;
+		break;
+	case AiComposeApplyRegressionEvent::ComposeControlsDraftRead:
+		++gAiComposeApplyRegressionCounts.composeControlsDraftReads;
+		break;
+	case AiComposeApplyRegressionEvent::ApplyDispatched:
+		++gAiComposeApplyRegressionCounts.applyDispatches;
+		break;
+	}
+}
+
+void ResetAiComposeApplyRegressionCounts() {
+	gAiComposeApplyRegressionCounts = AiComposeApplyRegressionCounts();
+}
+
+AiComposeApplyRegressionCounts GetAiComposeApplyRegressionCounts() {
+	return gAiComposeApplyRegressionCounts;
 }
 
 void RecordTranslationRpcForRegressionTest(
@@ -8211,6 +8237,132 @@ void RunProtectedCacheCleanupRegression(
 	}
 }
 
+[[nodiscard]] bool
+RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
+								   not_null<Main::Account *> account,
+								   bool supported, const char *stage) {
+	const auto controller = window->sessionController();
+	if (!controller || (&controller->session() != &account->session())
+		|| (controller->session().aiComposeSupported() != supported)) {
+		return false;
+	}
+	const auto chatId = ChatId(1051);
+	const auto chat = controller->session().data().chat(chatId);
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	if (!controller->session().user()->isLoaded()) {
+		controller->session().api().processFullPeer(
+			peer,
+			RegressionChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
+	}
+	const auto history = controller->session().data().history(peer);
+	controller->showPeerHistory(history);
+	QCoreApplication::processEvents();
+	const auto historyWidget = [&] {
+		for (const auto child :
+			 controller->content()->findChildren<QWidget *>()) {
+			if (const auto result = dynamic_cast<HistoryWidget *>(child)) {
+				return result;
+			}
+		}
+		return static_cast<HistoryWidget *>(nullptr);
+	}();
+	if (!historyWidget) {
+		return false;
+	}
+	const auto verify = [&](const char *handler, bool historyWidgetHandler,
+							AiComposeApplyRegressionCounts before,
+							int resolvesBefore) {
+		const auto after = GetAiComposeApplyRegressionCounts();
+		const auto expected = supported ? 1 : 0;
+		const auto historyReads
+			= after.historyWidgetDraftReads - before.historyWidgetDraftReads;
+		const auto composeReads = after.composeControlsDraftReads
+								  - before.composeControlsDraftReads;
+		const auto dispatches = after.applyDispatches - before.applyDispatches;
+		const auto resolves = account->session()
+								  .data()
+								  .aiComposeTones()
+								  .resolveCallsForRegressionTest()
+							  - resolvesBefore;
+		const auto matches
+			= historyWidgetHandler
+				  ? (historyReads == expected && composeReads == 0)
+				  : (historyReads == 0 && composeReads == expected);
+		if (!matches || dispatches != expected || resolves != expected) {
+			std::fprintf(stderr,
+						 "AI apply lifecycle regression failed at %s / %s: "
+						 "reads=%d/%d dispatches=%d resolves=%d expected=%d\n",
+						 stage, handler, historyReads, composeReads, dispatches,
+						 resolves, expected);
+			return false;
+		}
+		return true;
+	};
+
+	auto tones = &account->session().data().aiComposeTones();
+	auto readsBefore = GetAiComposeApplyRegressionCounts();
+	auto resolvesBefore = tones->resolveCallsForRegressionTest();
+	historyWidget->triggerAiApplyInPlaceForRegressionTest(u"lifecycle draft"_q);
+	if (!verify("HistoryWidget", true, readsBefore, resolvesBefore)) {
+		return false;
+	}
+
+	controller->showSection(
+		std::make_shared<HistoryView::ChatMemento>(HistoryView::ChatViewId{
+			.history = history,
+			.repliesRootId = MsgId(),
+		}),
+		Window::SectionShow::Way::ClearStack);
+	QCoreApplication::processEvents();
+	const auto chatWidget = [&] {
+		for (const auto child :
+			 controller->content()->findChildren<QWidget *>()) {
+			if (const auto result
+				= dynamic_cast<HistoryView::ChatWidget *>(child)) {
+				return result;
+			}
+		}
+		return static_cast<HistoryView::ChatWidget *>(nullptr);
+	}();
+	if (!chatWidget) {
+		return false;
+	}
+	readsBefore = GetAiComposeApplyRegressionCounts();
+	resolvesBefore = tones->resolveCallsForRegressionTest();
+	chatWidget->triggerAiApplyInPlaceForRegressionTest(u"lifecycle draft"_q);
+	return verify("ComposeControls", false, readsBefore, resolvesBefore);
+}
+
+[[nodiscard]] bool RunAiComposeApplySwitchRegression(
+	not_null<Window::Controller *> window, not_null<Main::Account *> stock,
+	not_null<Main::Account *> custom, not_null<Main::Account *> blocked) {
+	const auto previousSlug = Api::AiApplyBoundSlug();
+	Api::SetAiApplyBoundSlug(u"lifecycle-regression-missing-tone"_q);
+	const auto restoreSlug = gsl::finally([=] {
+		Api::SetAiApplyBoundSlug(previousSlug);
+		ResetAiComposeApplyRegressionCounts();
+	});
+	ResetAiComposeApplyRegressionCounts();
+	const auto run = [&](not_null<Main::Account *> account, bool supported,
+						 const char *stage) {
+		return RunAiComposeApplyHandlerRegression(window, account, supported,
+												  stage);
+	};
+	if (!run(stock, true, "stock")) {
+		return false;
+	}
+	window->showAccount(custom);
+	if (!run(custom, false, "custom")) {
+		return false;
+	}
+	window->showAccount(blocked);
+	if (!run(blocked, false, "blocked")) {
+		return false;
+	}
+	window->showAccount(stock);
+	return run(stock, true, "stock after switch back");
+}
+
 [[nodiscard]] int StartChatParticipantsRegression(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults,
@@ -8364,6 +8516,15 @@ void RunProtectedCacheCleanupRegression(
 		return failPrerequisite(
 			"stock and pinned sessions did not share the same user id");
 	}
+	const auto &stockTones = stock->session().data().aiComposeTones();
+	const auto &pinnedTones = pinned->session().data().aiComposeTones();
+	if (stockTones.refreshRequestsForRegressionTest() != 1
+		|| !stockTones.periodicRefreshScheduledForRegressionTest()
+		|| pinnedTones.refreshRequestsForRegressionTest() != 0
+		|| pinnedTones.periodicRefreshScheduledForRegressionTest()) {
+		return failPrerequisite(
+			"tone refresh escaped the stock-session capability boundary");
+	}
 	if (authenticatedCacheOnly) {
 		nativeLifecycleResults->Report("chat-participants-prerequisites", true);
 		RunAuthenticatedCacheSymlinkCases(domain, fixtures, pinned,
@@ -8395,6 +8556,9 @@ void RunProtectedCacheCleanupRegression(
 			   && (session.exportSupported() == supported)
 			   && (session.passportSupported() == supported)
 			   && (session.aiComposeSupported() == supported)
+			   && (Ui::AiComposeButtonAllowed(session.aiComposeSupported(),
+											  false, true)
+				   == supported)
 			   && (session.serverTranslationSupported() == supported)
 			   && (session.sharedFoldersSupported() == supported)
 			   && (session.accountBioEditSupported() == supported)
@@ -8552,6 +8716,7 @@ void RunProtectedCacheCleanupRegression(
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
+	discarded->mtp().dcOptions().constructBlocked();
 	discarded->setSessionUserId(selfId);
 	if (!discarded->createSession(RegressionUser(selfId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
@@ -8562,6 +8727,14 @@ void RunProtectedCacheCleanupRegression(
 		return failPrerequisite(
 			"previous-session teardown fixture did not share the stock user "
 			"id");
+	}
+	if (discarded->session().aiComposeSupported()
+		|| !RunAiComposeApplySwitchRegression(primary, stock, pinned, discarded)
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"AI apply handlers read or dispatched draft text for an "
+			"unsupported "
+			"session, or stopped working after switching back to stock");
 	}
 	discarded->mtp().dcOptions().constructBlocked();
 	const auto stockBeforeQueuedSwitches
