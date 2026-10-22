@@ -212,7 +212,9 @@ QString AiApplyShortcutText() {
 	return QString();
 }
 
-void TriggerAiApplyInPlace(
+namespace {
+
+void TriggerAiApplyInPlaceForSupportedSession(
 		not_null<Main::Session*> session,
 		std::shared_ptr<Ui::Show> show,
 		not_null<QObject*> guard,
@@ -321,6 +323,28 @@ void TriggerAiApplyInPlace(
 				show->showToast(type);
 			}
 		}));
+}
+
+} // namespace
+
+void TriggerAiApplyInPlace(
+		not_null<Main::Session*> session,
+		std::shared_ptr<Ui::Show> show,
+		not_null<QObject*> guard,
+		not_null<Ui::InputField*> field,
+		Fn<TextWithEntities()> fullFieldText,
+		Fn<void(TextWithTags textWithTags, int cursor)> applyToField) {
+	details::RunIfAiComposeSupported(
+		*session,
+		[&](const Main::Session &) {
+			TriggerAiApplyInPlaceForSupportedSession(
+				session,
+				std::move(show),
+				guard,
+				field,
+				std::move(fullFieldText),
+				std::move(applyToField));
+		});
 }
 
 } // namespace Api

@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_entity.h"
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 class ApiWrap;
@@ -109,6 +110,19 @@ void SetAiApplyBoundSlug(const QString &slug);
 void ClearAiApplyBoundSlug();
 
 [[nodiscard]] QString AiApplyShortcutText();
+
+namespace details {
+
+template <typename Session, typename OnAllowed>
+void RunIfAiComposeSupported(
+		const Session &session,
+		OnAllowed &&onAllowed) {
+	if (session.aiComposeSupported()) {
+		std::forward<OnAllowed>(onAllowed)(session);
+	}
+}
+
+} // namespace details
 
 void TriggerAiApplyInPlace(
 	not_null<Main::Session*> session,
