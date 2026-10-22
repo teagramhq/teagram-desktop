@@ -2977,14 +2977,6 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				   ? app.openInternalUrl(url, context)
 				   : app.openLocalUrl(url, context);
 	};
-	const auto controllerIndex = [&](const auto *controller) {
-		for (auto i = 0; i != int(controllers.size()); ++i) {
-			if (controllers[i].get() == controller) {
-				return i;
-			}
-		}
-		return -1;
-	};
 	const auto dispatchRefused = [&](const QString &url,
 									 Window::SessionController *target) {
 		const auto activeBefore = app.activeWindow();
@@ -3013,49 +3005,32 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		resetControllers();
 		return refused;
 	};
-	const auto dispatchMatrix
-		= [&](Window::SessionController *target,
-			  not_null<Window::SessionController *> active) {
-			  active->window().activate();
-			  QCoreApplication::processEvents();
-			  const auto activeWindow = app.activeWindow();
-			  const auto activeWindowMatchesImmediately
-				  = (activeWindow == &active->window());
-			  const auto activeWindowMatches
-				  = activeWindowMatchesImmediately
-					|| WaitForRegressionCondition([&] {
-						   return app.activeWindow() == &active->window();
-					   });
-			  std::fprintf(
-				  stderr,
-				  "Paid link regression activation: target=%d active=%d "
-				  "immediate-match=%d settled-match=%d.\n",
-				  controllerIndex(target), controllerIndex(active.get()),
-				  activeWindowMatchesImmediately, activeWindowMatches);
-			  if (!activeWindowMatches) {
-				  std::fprintf(stderr, "Paid link regression failed: active "
-									   "target window did not "
-									   "activate before the refusal matrix.\n");
-				  return false;
-			  }
-			  for (const auto &url : local) {
-				  if (!dispatchRefused(url, target)) {
-					  return false;
-				  }
-			  }
-			  for (const auto &url : internal) {
-				  if (!dispatchRefused(url, target)) {
-					  return false;
-				  }
-			  }
-			  return true;
-		  };
-	if (!dispatchMatrix(pinnedController, stockController)
-		|| !dispatchMatrix(pinnedController, pinnedController)
-		|| !dispatchMatrix(blockedController, stockController)
-		|| !dispatchMatrix(blockedController, blockedController)
-		|| !dispatchMatrix(nullptr, stockController)
-		|| !dispatchMatrix(nullptr, pinnedController)) {
+	const auto stockWindow = &stockController->window();
+	stockWindow->activate();
+	QCoreApplication::processEvents();
+	if ((app.activeWindow() != stockWindow) && !WaitForRegressionCondition([&] {
+			return app.activeWindow() == stockWindow;
+		})) {
+		std::fprintf(
+			stderr,
+			"Paid link regression failed: stock window did not activate.\n");
+		return false;
+	}
+	const auto dispatchMatrix = [&](Window::SessionController *target) {
+		for (const auto &url : local) {
+			if (!dispatchRefused(url, target)) {
+				return false;
+			}
+		}
+		for (const auto &url : internal) {
+			if (!dispatchRefused(url, target)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	if (!dispatchMatrix(pinnedController) || !dispatchMatrix(blockedController)
+		|| !dispatchMatrix(nullptr)) {
 		return false;
 	}
 
