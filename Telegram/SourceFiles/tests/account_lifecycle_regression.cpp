@@ -3014,7 +3014,7 @@ template <typename Condition>
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
 		window->activate();
-		return WaitForSettingsDeepLinkCondition(
+		return WaitForRegressionCondition(
 			[&] { return app.activeWindow() == window; });
 	};
 
@@ -3295,7 +3295,7 @@ template <typename Condition>
 	}
 
 	stockController->window().activate();
-	const auto stockWindowActivated = WaitForSettingsDeepLinkCondition([&] {
+	const auto stockWindowActivated = WaitForRegressionCondition([&] {
 		return (app.activeWindow() == &stockController->window())
 			   && (app.activePrimaryWindow() == &stockController->window());
 	});
@@ -5373,7 +5373,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	const auto stockWindowActivationRestored = WaitForSettingsDeepLinkCondition(
+	const auto stockWindowActivationRestored = WaitForRegressionCondition(
 		[&] {
 			return (app.activeWindow() == &stockController->window())
 				   && (app.activePrimaryWindow() == &stockController->window());
