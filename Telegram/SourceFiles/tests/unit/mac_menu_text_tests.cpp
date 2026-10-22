@@ -16,12 +16,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 class MenuTranslation final : public QTranslator {
-public:
-	QString translate(
-		const char *context,
-		const char *sourceText,
-		const char *,
-		int) const override {
+  public:
+	QString translate(const char *context, const char *sourceText, const char *,
+					  int) const override {
 		if (std::strcmp(context, "QMenuBar") == 0
 			&& std::strcmp(sourceText, "About %1") == 0) {
 			return u"À propos de %1"_q;

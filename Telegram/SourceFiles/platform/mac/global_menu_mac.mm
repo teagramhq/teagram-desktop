@@ -358,9 +358,7 @@ void Manager::buildAppleMenu(QMenu *main) {
 				window->show(Box(AboutBox));
 			});
 		};
-		_about = main->addAction(
-			MacAboutMenuText(),
-			std::move(callback));
+		_about = main->addAction(MacAboutMenuText(), std::move(callback));
 		_about->setMenuRole(QAction::AboutQtRole);
 	}
 
@@ -628,10 +626,9 @@ void Manager::destroy() {
 	_menuBar.reset();
 	_languageBound = false;
 	_about = _logout = _undo = _redo = _cut = _copy = _paste = _delete
-		= _selectAll
-		= _contacts = _addContact = _newGroup = _newChannel = _showTeagram
-		= _fullScreen = _emoji = _bold = _italic = _underline = _strikeOut
-		= _blockquote = _monospace = _clearFormat = nullptr;
+		= _selectAll = _contacts = _addContact = _newGroup = _newChannel
+		= _showTeagram = _fullScreen = _emoji = _bold = _italic = _underline
+		= _strikeOut = _blockquote = _monospace = _clearFormat = nullptr;
 	_pasteboard = nullptr;
 	_pasteboardChangeCount = -1;
 	_pasteboardHasText = false;
