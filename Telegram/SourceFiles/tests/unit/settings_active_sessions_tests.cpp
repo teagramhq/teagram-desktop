@@ -117,7 +117,9 @@ TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
 			[&](mtpRequestId id) { transport.cancel(id); },
 			[&](const int &rows) {
 				sessions.reloadSucceeded();
-				sessions.receiveList(rows != 0, true);
+				const auto transition = sessions.receiveList(rows != 0, true);
+				CHECK_EQ(transition.clearRows, rows == 0);
+				CHECK(transition.schedulePoll);
 			});
 	};
 	BindReloadFailures(
@@ -152,7 +154,9 @@ TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
 	CHECK_EQ(sessions.failureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
 	CHECK_EQ(reload.lastFailureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
 	CHECK(!sessions.shouldUseCachedList(true, true));
-	sessions.receiveList(true, true);
+	const auto replayAgain = sessions.receiveList(true, true);
+	CHECK(!replayAgain.clearRows);
+	CHECK(replayAgain.schedulePoll);
 	CHECK(sessions.failed());
 	auto reopened = ActiveSessionsState();
 	reopened.initialize(true, true, reload.lastFailureType());
@@ -200,7 +204,9 @@ TEST_CASE(ColdReloadTimeoutShowsFailureUntilEmptyResponse) {
 			[&](mtpRequestId id) { transport.cancel(id); },
 			[&](const int &rows) {
 				sessions.reloadSucceeded();
-				sessions.receiveList(rows != 0, true);
+				const auto transition = sessions.receiveList(rows != 0, true);
+				CHECK_EQ(transition.clearRows, rows == 0);
+				CHECK(transition.schedulePoll);
 			});
 	};
 	BindReloadFailures(
