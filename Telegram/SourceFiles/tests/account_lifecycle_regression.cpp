@@ -5373,11 +5373,10 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	stockController->window().activate();
-	const auto stockWindowActivationRestored
-		= WaitForRegressionCondition([&] {
-			return (app.activeWindow() == &stockController->window())
-				   && (app.activePrimaryWindow() == &stockController->window());
-		});
+	const auto stockWindowActivationRestored = WaitForRegressionCondition([&] {
+		return (app.activeWindow() == &stockController->window())
+			   && (app.activePrimaryWindow() == &stockController->window());
+	});
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
