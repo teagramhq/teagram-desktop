@@ -10741,18 +10741,14 @@ void RunProtectedCacheCleanupRegression(
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
-	if (!forgotten->createSession(
-			RegressionUser(UserId(4242), true, u"4242"_q),
-			std::make_unique<Main::SessionSettings>())
+	if (!forgotten->createSession(RegressionUser(UserId(4242), true, u"4242"_q),
+								  std::make_unique<Main::SessionSettings>())
 		|| !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()
-		|| forgotten->local().checkServerCacheBinding(
-			originalFingerprint,
-			4242) != Storage::ServerCacheBindingStatus::Match
-		|| !CachePayloadMatches(
-			forgotten->session().data().cache(),
-			cacheKey,
-			cachePayload)) {
+		|| forgotten->local().checkServerCacheBinding(originalFingerprint, 4242)
+			   != Storage::ServerCacheBindingStatus::Match
+		|| !CachePayloadMatches(forgotten->session().data().cache(), cacheKey,
+								cachePayload)) {
 		return failAccountLifecycle("matching server and user identity did not "
 									"reuse the retained cache payload");
 	}
@@ -10764,8 +10760,8 @@ void RunProtectedCacheCleanupRegression(
 		return failAccountLifecycle(
 			"could not restart after active account teardown");
 	}
-	auto active = not_null<Main::Account*>(
-		domain.accounts().front().account.get());
+	auto active
+		= not_null<Main::Account *>(domain.accounts().front().account.get());
 	if (!active->sessionExists()) {
 		return failAccountLifecycle(
 			"active teardown regression fixture did not restore its self user");
