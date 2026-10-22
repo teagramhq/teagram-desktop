@@ -10745,13 +10745,10 @@ void RunProtectedCacheCleanupRegression(
 			std::make_unique<Main::SessionSettings>())
 		|| !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()
-		|| forgotten->local().checkServerCacheBinding(
-			originalFingerprint,
-			4242) != Storage::ServerCacheBindingStatus::Match
-		|| !CachePayloadMatches(
-			forgotten->session().data().cache(),
-			cacheKey,
-			cachePayload)) {
+		|| forgotten->local().checkServerCacheBinding(originalFingerprint, 4242)
+			   != Storage::ServerCacheBindingStatus::Match
+		|| !CachePayloadMatches(forgotten->session().data().cache(), cacheKey,
+								cachePayload)) {
 		return failAccountLifecycle("matching server and user identity did not "
 									"reuse the retained cache payload");
 	}
