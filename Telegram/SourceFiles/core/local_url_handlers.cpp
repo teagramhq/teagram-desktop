@@ -1958,11 +1958,14 @@ QString TryConvertUrlToLocal(QString url, const Main::Session *session) {
 	if (!session) {
 		return TryConvertUrlToLocal(std::move(url));
 	}
-	const auto pinned = session->mtp().config().hasCustomServer();
-	return TryConvertUrlToLocal(
-		std::move(url),
-		session->serverConfig().internalLinksDomain,
-		pinned);
+	const auto &config = session->mtp().config();
+	const auto pinned = config.hasCustomServer();
+	const auto pinnedServerHostname
+		= pinned ? QString::fromStdString(config.customServer().hostname)
+				 : QString();
+	return TryConvertUrlToLocal(std::move(url),
+								session->serverConfig().internalLinksDomain,
+								pinned, pinnedServerHostname);
 }
 
 bool IsMiniAppUrl(const QString &url) {

@@ -12,9 +12,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 [[nodiscard]] QString TryConvertUrlToLocal(QString url);
-[[nodiscard]] QString TryConvertUrlToLocal(
-	QString url,
-	const QString &internalLinksDomain,
-	bool hasPinnedServer);
+[[nodiscard]] QString
+TryConvertUrlToLocal(QString url, const QString &internalLinksDomain,
+					 bool hasPinnedServer,
+					 const QString &pinnedServerHostname = {});
 
 } // namespace Core

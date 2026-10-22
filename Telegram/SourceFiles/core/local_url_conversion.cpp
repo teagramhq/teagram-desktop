@@ -359,14 +359,16 @@ QString TryConvertUrlToLocal(QString url) {
 	return ConvertLegacyUrlToLocal(std::move(url));
 }
 
-QString TryConvertUrlToLocal(
-		QString url,
-		const QString &internalLinksDomain,
-		bool hasPinnedServer) {
+QString TryConvertUrlToLocal(QString url, const QString &internalLinksDomain,
+							 bool hasPinnedServer,
+							 const QString &pinnedServerHostname) {
 	if (hasPinnedServer && url.size() <= 8192) {
-		if (const auto remapped = CustomOriginUrlAsTelegramUrl(
-				url,
-				internalLinksDomain)) {
+		auto remapped = CustomOriginUrlAsTelegramUrl(url, internalLinksDomain);
+		if (!remapped && !pinnedServerHostname.isEmpty()) {
+			remapped = CustomOriginUrlAsTelegramUrl(
+				url, u"https://"_q + pinnedServerHostname + u"/"_q);
+		}
+		if (remapped) {
 			const auto local = ConvertLegacyUrlToLocal(*remapped);
 			return local.startsWith(u"tg://"_q, Qt::CaseInsensitive)
 				? WithoutAccountIndex(local)

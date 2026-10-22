@@ -18,6 +18,7 @@ namespace {
 
 const auto kServerPrefix =
 	u"https://telegram-server.tailaa4918.ts.net/"_q;
+const auto kPinnedServerHostname = u"teagram.tailaa4918.ts.net"_q;
 
 TEST_CASE(PinnedServerInviteLinkOpensJoinFlow) {
 	CHECK_EQ(
@@ -26,6 +27,70 @@ TEST_CASE(PinnedServerInviteLinkOpensJoinFlow) {
 			kServerPrefix,
 			true),
 		u"tg://join?invite=example"_q);
+}
+
+TEST_CASE(PinnedServerRenamedHostInviteLinksOpenJoinFlow) {
+	const auto links = std::vector<std::pair<QString, QString>>{
+		{
+			u"https://teagram.tailaa4918.ts.net/+example"_q,
+			u"tg://join?invite=example"_q,
+		},
+		{
+			u"https://teagram.tailaa4918.ts.net/joinchat/example"_q,
+			u"tg://join?invite=example"_q,
+		},
+	};
+	for (const auto &[link, want] : links) {
+		CHECK_EQ(Core::TryConvertUrlToLocal(link, kServerPrefix, true,
+											kPinnedServerHostname),
+				 want);
+	}
+}
+
+TEST_CASE(PinnedServerRenamedHostPublicLinksOpenInApp) {
+	const auto links = std::vector<std::pair<QString, QString>>{
+		{
+			u"https://teagram.tailaa4918.ts.net/example"_q,
+			u"tg://resolve?domain=example"_q,
+		},
+		{
+			u"https://teagram.tailaa4918.ts.net/example/123"_q,
+			u"tg://resolve?domain=example&post=123"_q,
+		},
+		{
+			u"https://teagram.tailaa4918.ts.net/c/123/456"_q,
+			u"tg://privatepost?channel=123&post=456"_q,
+		},
+	};
+	for (const auto &[link, want] : links) {
+		CHECK_EQ(Core::TryConvertUrlToLocal(link, kServerPrefix, true,
+											kPinnedServerHostname),
+				 want);
+	}
+}
+
+TEST_CASE(OfficialSessionsKeepRenamedHostExternal) {
+	const auto link = u"https://teagram.tailaa4918.ts.net/+example"_q;
+	CHECK_EQ(Core::TryConvertUrlToLocal(link, kServerPrefix, false,
+										kPinnedServerHostname),
+			 link);
+	CHECK_EQ(Core::TryConvertUrlToLocal(link), link);
+}
+
+TEST_CASE(PinnedServerRenamedHostLookalikesStayExternal) {
+	const auto links = QStringList{
+		u"https://teagram.tailaa4918.ts.net.evil.example/+x"_q,
+		u"https://evilteagram.tailaa4918.ts.net/+x"_q,
+		u"https://teagram.tailaa4918.ts.net@evil.example/+x"_q,
+		u"https://evil.example@teagram.tailaa4918.ts.net/+x"_q,
+		u"https://teagram.tailaa4918.ts.net./+x"_q,
+		u"http://teagram.tailaa4918.ts.net/+x"_q,
+	};
+	for (const auto &link : links) {
+		CHECK_EQ(Core::TryConvertUrlToLocal(link, kServerPrefix, true,
+											kPinnedServerHostname),
+				 link);
+	}
 }
 
 TEST_CASE(PinnedServerUsernameLinkResolvesUsername) {
