@@ -11,28 +11,53 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-TEST_CASE(ActiveSessionsShowCachedRowsWhileRefreshing) {
-	CHECK(!Settings::details::ShouldShowSessionsLoading(false, true));
+using Settings::details::ActiveSessionsState;
+
+TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
+	auto state = ActiveSessionsState();
+	state.initialize(true, true);
+	CHECK(state.rowsVisible());
+
+	const auto replay = state.receiveList(true, true);
+	CHECK(!replay.clearRows);
+	CHECK(state.rowsVisible());
+
+	state.beginRefresh();
+	CHECK(state.rowsVisible());
+	CHECK(!state.loading());
 }
 
-TEST_CASE(ActiveSessionsWaitForTheFirstResponse) {
-	CHECK(Settings::details::ShouldShowSessionsLoading(false, false));
+TEST_CASE(TerminateAllInvalidationClearsCachedSessions) {
+	auto state = ActiveSessionsState();
+	state.initialize(true, true);
+	const auto replay = state.receiveList(true, true);
+	CHECK(!replay.clearRows);
+	state.beginTerminateAll();
+	CHECK(!state.rowsVisible());
+
+	const auto invalidation = state.receiveList(false, false);
+	CHECK(invalidation.clearRows);
+	CHECK(invalidation.schedulePoll);
+	CHECK(!state.hasRows());
+	CHECK(state.loading());
+
+	const auto emptyResponse = state.receiveList(false, true);
+	CHECK(emptyResponse.clearRows);
+	CHECK(emptyResponse.schedulePoll);
+	CHECK(!state.hasRows());
+	CHECK(!state.loading());
+	CHECK(!state.rowsVisible());
 }
 
-TEST_CASE(ActiveSessionsFinishLoadingAfterAnEmptyResponse) {
-	const auto transition
-		= Settings::details::HandleEmptySessionsResponse(true, true);
-	CHECK(transition.updateLoading);
-	CHECK(!transition.loading);
-	CHECK(transition.schedulePoll);
-}
+TEST_CASE(CompletedInitialEmptyListStopsLoading) {
+	auto state = ActiveSessionsState();
+	state.initialize(false, false);
+	CHECK(state.loading());
 
-TEST_CASE(ActiveSessionsStayLoadingUntilAnEmptyResponseArrives) {
-	const auto transition
-		= Settings::details::HandleEmptySessionsResponse(false, true);
-	CHECK(!transition.updateLoading);
-	CHECK(transition.loading);
-	CHECK(!transition.schedulePoll);
+	const auto emptyResponse = state.receiveList(false, true);
+	CHECK(emptyResponse.clearRows);
+	CHECK(emptyResponse.schedulePoll);
+	CHECK(!state.loading());
 }
 
 } // namespace

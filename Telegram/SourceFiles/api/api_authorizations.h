@@ -39,6 +39,7 @@ public:
 	void apply(const MTPUpdate &update);
 
 	[[nodiscard]] crl::time lastReceivedTime();
+	[[nodiscard]] bool hasAuthoritativeList() const;
 
 	[[nodiscard]] List list() const;
 	[[nodiscard]] rpl::producer<List> listValue() const;
@@ -86,6 +87,7 @@ private:
 	rpl::variable<bool> _callsDisabledHere;
 
 	crl::time _lastReceived = 0;
+	bool _hasAuthoritativeList = false;
 	rpl::lifetime _lifetime;
 
 };

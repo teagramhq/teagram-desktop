@@ -127,6 +127,7 @@ void Authorizations::reload() {
 	)).done([=](const MTPaccount_Authorizations &result) {
 		_requestId = 0;
 		_lastReceived = crl::now();
+		_hasAuthoritativeList = true;
 		const auto &data = result.data();
 		_ttlDays = data.vauthorization_ttl_days().v;
 		_list = ranges::views::all(
@@ -164,7 +165,9 @@ void Authorizations::requestTerminate(
 		).done([=, done = std::move(done)](const MTPBool &result) {
 			done(result);
 			if (mtpIsTrue(result)) {
+				_hasAuthoritativeList = false;
 				if (hash) {
+					cancelCurrentRequest();
 					_list.erase(
 						ranges::remove(_list, *hash, &Entry::hash),
 						end(_list));
@@ -277,6 +280,10 @@ crl::time Authorizations::lastReceivedTime() {
 	return _lastReceived;
 }
 
+bool Authorizations::hasAuthoritativeList() const {
+	return _hasAuthoritativeList;
+}
+
 const std::vector<Data::UnreviewedAuth> &Authorizations::unreviewed() {
 	removeExpiredUnreviewed();
 	return _unreviewed;
@@ -341,6 +348,8 @@ void Authorizations::review(const std::vector<uint64> &hashes, bool confirm) {
 				MTP_long(hash)
 			)).done([=](const MTPBool &result) {
 				if (mtpIsTrue(result)) {
+					cancelCurrentRequest();
+					_hasAuthoritativeList = false;
 					_list.erase(
 						ranges::remove(_list, hash, &Entry::hash),
 						end(_list));

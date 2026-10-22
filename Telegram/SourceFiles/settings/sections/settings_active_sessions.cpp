@@ -637,7 +637,7 @@ private:
 	const not_null<Window::SessionController*> _controller;
 	const not_null<Api::Authorizations*> _authorizations;
 
-	rpl::variable<bool> _loading = false;
+	details::ActiveSessionsState _state;
 	Full _data;
 
 	object_ptr<Inner> _inner;
@@ -749,14 +749,10 @@ void SessionsContent::setupContent() {
 		terminateAll();
 	}, lifetime());
 
-	_loading.changes(
-	) | rpl::on_next([=](bool value) {
-		_inner->setVisible(!value);
-	}, lifetime());
-
 	const auto currentList = _authorizations->list();
-	_loading = details::ShouldShowSessionsLoading(
-		_authorizations->lastReceivedTime() != 0, !currentList.empty());
+	_state.initialize(_authorizations->hasAuthoritativeList(),
+					  !currentList.empty());
+	_inner->setVisible(!_state.loading());
 
 	_authorizations->listValue(
 	) | rpl::on_next([=](const Api::Authorizations::List &list) {
@@ -767,36 +763,30 @@ void SessionsContent::setupContent() {
 }
 
 void SessionsContent::parse(const Api::Authorizations::List &list) {
-	if (list.empty()) {
-		const auto transition = details::HandleEmptySessionsResponse(
-			_authorizations->lastReceivedTime() != 0, _loading.current());
-		if (transition.updateLoading) {
-			_loading = transition.loading;
-		}
-		if (transition.schedulePoll) {
-			_shortPollTimer.callOnce(kShortPollTimeout);
-		}
-		return;
-	}
+	const auto transition = _state.receiveList(
+		!list.empty(), _authorizations->hasAuthoritativeList());
 	_data = Full();
-	for (const auto &auth : list) {
-		if (!auth.hash) {
-			_data.current = auth;
-		} else if (auth.incomplete) {
-			_data.incomplete.push_back(auth);
-		} else {
-			_data.list.push_back(auth);
+	if (!transition.clearRows) {
+		for (const auto &auth : list) {
+			if (!auth.hash) {
+				_data.current = auth;
+			} else if (auth.incomplete) {
+				_data.incomplete.push_back(auth);
+			} else {
+				_data.list.push_back(auth);
+			}
 		}
 	}
-
-	_loading = false;
-
 	ranges::sort(_data.list, std::greater<>(), &EntryData::activeTime);
 	ranges::sort(_data.incomplete, std::greater<>(), &EntryData::activeTime);
 
 	_inner->showData(_data);
+	_inner->setVisible(!_state.loading());
 
-	_shortPollTimer.callOnce(kShortPollTimeout);
+	if (transition.schedulePoll) {
+		_shortPollTimer.callOnce(kShortPollTimeout);
+	}
+	update();
 }
 
 void SessionsContent::resizeEvent(QResizeEvent *e) {
@@ -810,7 +800,7 @@ void SessionsContent::paintEvent(QPaintEvent *e) {
 
 	Painter p(this);
 
-	if (_loading.current()) {
+	if (_state.loading()) {
 		p.setFont(st::noContactsFont);
 		p.setPen(st::noContactsColor);
 		p.drawText(
@@ -823,11 +813,13 @@ void SessionsContent::paintEvent(QPaintEvent *e) {
 void SessionsContent::shortPollSessions() {
 	const auto left = kShortPollTimeout
 		- (crl::now() - _authorizations->lastReceivedTime());
-	if (left > 0) {
+	if (_authorizations->hasAuthoritativeList() && left > 0) {
 		parse(_authorizations->list());
 		_shortPollTimer.cancel();
 		_shortPollTimer.callOnce(left);
 	} else {
+		_state.beginRefresh();
+		_inner->setVisible(!_state.loading());
 		_authorizations->reload();
 	}
 	update();
@@ -890,10 +882,24 @@ void SessionsContent::terminateAll() {
 			_authorizations->cancelCurrentRequest();
 			_authorizations->reload();
 		});
+		_state.beginTerminateAll();
+		_inner->setVisible(!_state.loading());
+		update();
 		_authorizations->requestTerminate(
-			[=](const MTPBool &result) { reset(); },
-			[=](const MTP::Error &result) { reset(); });
-		_loading = true;
+			[=](const MTPBool &result) {
+				reset();
+				if (mtpIsFalse(result)) {
+					_state.refreshFailed();
+					_inner->setVisible(!_state.loading());
+					update();
+				}
+			},
+			[=](const MTP::Error &result) {
+				reset();
+				_state.refreshFailed();
+				_inner->setVisible(!_state.loading());
+				update();
+			});
 	};
 	terminate(std::move(callback), tr::lng_settings_reset_sure(tr::now));
 }
