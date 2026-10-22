@@ -10756,6 +10756,10 @@ void RunProtectedCacheCleanupRegression(
 	const auto finalKey = RegressionAuthKey(0x22);
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
+	forgotten->local().writeSelf();
+	auto selfWriteLoop = QEventLoop();
+	QTimer::singleShot(1500, &selfWriteLoop, &QEventLoop::quit);
+	selfWriteLoop.exec();
 	if (!RestartDomain(domain)) {
 		return failAccountLifecycle(
 			"could not restart after active account teardown");
