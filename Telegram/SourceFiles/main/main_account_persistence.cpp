@@ -27,9 +27,8 @@ bool ShouldBlockRestoredSessionWithoutServerPin(
 	return hasRestoredUserId && !hasReadableServerPin;
 }
 
-bool ShouldRestoreStoredSession(
-		bool hasStoredUserId,
-		bool hasSerializedSelfUser) {
+bool ShouldRestoreStoredSession(bool hasStoredUserId,
+								bool hasSerializedSelfUser) {
 	return hasStoredUserId && hasSerializedSelfUser;
 }
 

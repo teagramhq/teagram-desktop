@@ -204,8 +204,7 @@ std::unique_ptr<MTP::Config> Account::prepareToStart(
 
 void Account::start(std::unique_ptr<MTP::Config> config) {
 	if (!details::ShouldRestoreStoredSession(
-			bool(_sessionUserId),
-			!_sessionUserSerialized.isEmpty())) {
+			bool(_sessionUserId), !_sessionUserSerialized.isEmpty())) {
 		_sessionUserId = 0;
 		_sessionUserSerialized = {};
 		_sessionUserStreamVersion = 0;
