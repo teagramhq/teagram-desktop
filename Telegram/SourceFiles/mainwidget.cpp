@@ -93,6 +93,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
+#include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "support/support_helper.h"
@@ -1380,9 +1381,15 @@ MainWidget::sectionStackCountsForRegressionTest() const {
 		result.mainInfo = 1;
 		result.mainSectionVisible = section->isVisible();
 		result.mainSectionAnimating = section->animatingShow();
-		countInfoSection(section->contentSectionForRegressionTest(),
-						 result.mainSettings, result.mainInformation,
+		const auto current = section->contentSectionForRegressionTest();
+		countInfoSection(current, result.mainSettings, result.mainInformation,
 						 result.mainStories);
+		if (current.type() == Info::Section::Type::Settings) {
+			result.mainCredits
+				= (current.settingsType() == Settings::CreditsId());
+			result.mainCurrency
+				= (current.settingsType() == Settings::CurrencyId());
+		}
 	} else if (_mainSection) {
 		result.mainOther = 1;
 	} else if (_history->peer()) {

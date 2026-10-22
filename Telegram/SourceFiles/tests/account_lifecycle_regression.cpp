@@ -2660,6 +2660,29 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 	return matches;
 }
 
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+	if (condition()) {
+		return true;
+	}
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	auto poll = QTimer();
+	timeout.setSingleShot(true);
+	poll.setInterval(10);
+	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+		if (condition()) {
+			loop.quit();
+		}
+	});
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	poll.start();
+	timeout.start(5000);
+	loop.exec();
+	poll.stop();
+	return condition();
+}
+
 [[nodiscard]] bool
 ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 						Fn<bool(const Info::Section &)> matches) {
@@ -3561,35 +3584,32 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		resetControllers();
 		return refused;
 	};
-	const auto dispatchMatrix
-		= [&](Window::SessionController *target,
-			  not_null<Window::SessionController *> active) {
-			  active->window().activate();
-			  QCoreApplication::processEvents();
-			  if (app.activeWindow() != &active->window()) {
-				  std::fprintf(stderr, "Paid link regression failed: active "
-									   "target window did not "
-									   "activate before the refusal matrix.\n");
-				  return false;
-			  }
-			  for (const auto &url : local) {
-				  if (!dispatchRefused(url, target)) {
-					  return false;
-				  }
-			  }
-			  for (const auto &url : internal) {
-				  if (!dispatchRefused(url, target)) {
-					  return false;
-				  }
-			  }
-			  return true;
-		  };
-	if (!dispatchMatrix(pinnedController, stockController)
-		|| !dispatchMatrix(pinnedController, pinnedController)
-		|| !dispatchMatrix(blockedController, stockController)
-		|| !dispatchMatrix(blockedController, blockedController)
-		|| !dispatchMatrix(nullptr, stockController)
-		|| !dispatchMatrix(nullptr, pinnedController)) {
+	const auto stockWindow = &stockController->window();
+	stockWindow->activate();
+	QCoreApplication::processEvents();
+	if ((app.activeWindow() != stockWindow) && !WaitForRegressionCondition([&] {
+			return app.activeWindow() == stockWindow;
+		})) {
+		std::fprintf(
+			stderr,
+			"Paid link regression failed: stock window did not activate.\n");
+		return false;
+	}
+	const auto dispatchMatrix = [&](Window::SessionController *target) {
+		for (const auto &url : local) {
+			if (!dispatchRefused(url, target)) {
+				return false;
+			}
+		}
+		for (const auto &url : internal) {
+			if (!dispatchRefused(url, target)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	if (!dispatchMatrix(pinnedController) || !dispatchMatrix(blockedController)
+		|| !dispatchMatrix(nullptr)) {
 		return false;
 	}
 
@@ -3706,14 +3726,17 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				.mine = true,
 			});
 		QCoreApplication::processEvents();
+		const auto callbacksSettled
+			= WaitForRegressionCondition([&] { return results->size() >= 10; });
 		auto expected = before;
 		for (auto i = 0; i != int(controllers.size()); ++i) {
 			expected[i] += (controllers[i] == target) ? 11 : 0;
 		}
 		const auto refused
-			= (*results
-			   == std::vector<Payments::CheckoutResult>(
-				   10, Payments::CheckoutResult::Cancelled))
+			= callbacksSettled
+			  && (*results
+				  == std::vector<Payments::CheckoutResult>(
+					  10, Payments::CheckoutResult::Cancelled))
 			  && captureObserved && payments.constructors.empty()
 			  && (target->activeChatCurrent() == activeChatBefore)
 			  && (toastCounts() == expected) && !paidUiOpen();
@@ -3735,7 +3758,24 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		return false;
 	}
 
-	const auto stockOpens = [&](const QString &url, bool section) {
+	const auto stockSettingsOpened = [&](Settings::Type type) {
+		const auto main
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto mainSettingsShown
+			= !stockController->isLayerShown()
+			  && stockController->content()->isMainSectionShown()
+			  && ((type == Settings::CreditsId()) ? main.mainCredits
+												  : main.mainCurrency);
+		const auto layer = dynamic_cast<Info::WrapWidget *>(
+			stockController->activeLayerSection());
+		const auto layerSettingsShown
+			= stockController->isLayerShown() && layer
+			  && (layer->controller()->section().type()
+				  == Info::Section::Type::Settings)
+			  && (layer->controller()->section().settingsType() == type);
+		return mainSettingsShown || layerSettingsShown;
+	};
+	const auto stockOpens = [&](const QString &url, Settings::Type setting) {
 		pinnedController->window().activate();
 		QCoreApplication::processEvents();
 		const auto before = toastCounts();
@@ -3743,25 +3783,39 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 			url, QVariant::fromValue(ClickHandlerContext{
 					 .sessionWindow = base::make_weak(stockController.get()),
 				 }));
-		QCoreApplication::processEvents();
-		const auto opened
-			= handled && (toastCounts() == before)
-			  && (section ? stockController->content()->isMainSectionShown()
-						  : stockController->isLayerShown())
-			  && !pinnedController->content()->isMainSectionShown()
+		const auto stockUiOpened
+			= handled && WaitForRegressionCondition([&] {
+				  return setting ? stockSettingsOpened(setting)
+								 : stockController->isLayerShown();
+			  });
+		const auto toastUnchanged = (toastCounts() == before);
+		const auto pinnedUiUnchanged
+			= !pinnedController->content()->isMainSectionShown()
 			  && !pinnedController->isLayerShown();
+		const auto stockSectionShown
+			= stockController->content()->isMainSectionShown();
+		const auto stockLayerShown = stockController->isLayerShown();
+		const auto expectedSettingsShown
+			= setting && stockSettingsOpened(setting);
+		const auto opened
+			= stockUiOpened && toastUnchanged && pinnedUiUnchanged;
 		if (!opened) {
 			std::fprintf(
 				stderr,
 				"Paid link regression failed: stock link=%s did not keep its "
-				"behavior.\n",
-				url.toUtf8().constData());
+				"behavior: handled=%d stock-ui-opened=%d stock-section=%d "
+				"stock-layer=%d expected-settings=%d toast-unchanged=%d "
+				"pinned-ui-unchanged=%d.\n",
+				url.toUtf8().constData(), handled, stockUiOpened,
+				stockSectionShown, stockLayerShown, expectedSettingsShown,
+				toastUnchanged, pinnedUiUnchanged);
 		}
 		resetControllers();
 		return opened;
 	};
-	if (!stockOpens(u"tg://stars"_q, true) || !stockOpens(u"tg://ton"_q, true)
-		|| !stockOpens(u"internal:stars_examples"_q, false)) {
+	if (!stockOpens(u"tg://stars"_q, Settings::CreditsId())
+		|| !stockOpens(u"tg://ton"_q, Settings::CurrencyId())
+		|| !stockOpens(u"internal:stars_examples"_q, nullptr)) {
 		return false;
 	}
 	std::fprintf(
@@ -7549,28 +7603,6 @@ template <typename Widget>
 }
 #endif
 
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
-	if (condition()) {
-		return true;
-	}
-	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	auto poll = QTimer();
-	timeout.setSingleShot(true);
-	poll.setInterval(10);
-	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-		if (condition()) {
-			loop.quit();
-		}
-	});
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	poll.start();
-	timeout.start(5000);
-	loop.exec();
-	poll.stop();
-	return condition();
-}
 [[nodiscard]] bool
 WaitForBindingFilesRemovedForRegression(const QStringList &files) {
 	return WaitForRegressionCondition([&] {
