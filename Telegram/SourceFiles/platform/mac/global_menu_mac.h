@@ -7,11 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <QtCore/QCoreApplication>
+
 namespace Ui {
 struct MarkdownEnabledState;
 } // namespace Ui
 
 namespace Platform {
+
+[[nodiscard]] inline QString MacAboutMenuText() {
+	return QCoreApplication::translate("QMenuBar", "About %1")
+		.arg(QCoreApplication::applicationName());
+}
 
 void CreateGlobalMenu();
 void DestroyGlobalMenu();

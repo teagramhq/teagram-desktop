@@ -102,6 +102,7 @@ PRIVATE
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/mac_menu_text_tests.cpp
     tests/unit/mac_protected_path_policy_tests.cpp
     tests/unit/mtproto_custom_server_input_tests.cpp
     tests/unit/mtproto_dc_options_tests.cpp
