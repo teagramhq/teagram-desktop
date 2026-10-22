@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_active_sessions_callbacks.h"
 #include "settings/sections/settings_active_sessions_state.h"
 
 #include "settings/settings_common_session.h"
@@ -885,7 +886,8 @@ void SessionsContent::terminateAll() {
 		_state.beginTerminateAll();
 		_inner->setVisible(!_state.loading());
 		update();
-		_authorizations->requestTerminate(
+		auto [done, fail] = details::GuardTerminateAllCallbacks(
+			weak,
 			[=](const MTPBool &result) {
 				reset();
 				if (mtpIsFalse(result)) {
@@ -900,6 +902,7 @@ void SessionsContent::terminateAll() {
 				_inner->setVisible(!_state.loading());
 				update();
 			});
+		_authorizations->requestTerminate(std::move(done), std::move(fail));
 	};
 	terminate(std::move(callback), tr::lng_settings_reset_sure(tr::now));
 }

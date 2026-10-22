@@ -7,11 +7,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "base/weak_ptr.h"
+#include "settings/sections/settings_active_sessions_callbacks.h"
 #include "settings/sections/settings_active_sessions_state.h"
+
+#include <memory>
 
 namespace {
 
 using Settings::details::ActiveSessionsState;
+using Settings::details::GuardTerminateAllCallbacks;
 
 TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	auto state = ActiveSessionsState();
@@ -58,6 +63,26 @@ TEST_CASE(CompletedInitialEmptyListStopsLoading) {
 	CHECK(emptyResponse.clearRows);
 	CHECK(emptyResponse.schedulePoll);
 	CHECK(!state.loading());
+}
+
+TEST_CASE(TerminateAllCallbacksIgnoreResultsAfterContentDestruction) {
+	struct CallbackOwner final : base::has_weak_ptr {};
+	auto owner = std::make_unique<CallbackOwner>();
+	const auto weak = base::make_weak(owner.get());
+	auto callbackCount = 0;
+	auto [done, fail] = GuardTerminateAllCallbacks(
+		weak,
+		[&](bool result) {
+			if (!result) {
+				++callbackCount;
+			}
+		},
+		[&](int) { ++callbackCount; });
+
+	owner.reset();
+	done(false);
+	fail(1);
+	CHECK_EQ(callbackCount, 0);
 }
 
 } // namespace
