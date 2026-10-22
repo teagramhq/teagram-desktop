@@ -1402,6 +1402,12 @@ TEST_CASE(RestoredSessionWithoutReadablePinMustBeBlocked) {
 		false));
 }
 
+TEST_CASE(SessionRestorationRequiresStoredSelfUser) {
+	CHECK(!Main::details::ShouldRestoreStoredSession(true, false));
+	CHECK(Main::details::ShouldRestoreStoredSession(true, true));
+	CHECK(!Main::details::ShouldRestoreStoredSession(false, true));
+}
+
 TEST_CASE(ForgetServerStorageFailureDoesNotRestartAndStaysBlocked) {
 	QTemporaryDir directory;
 	CHECK(directory.isValid());

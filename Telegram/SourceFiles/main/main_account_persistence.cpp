@@ -27,6 +27,12 @@ bool ShouldBlockRestoredSessionWithoutServerPin(
 	return hasRestoredUserId && !hasReadableServerPin;
 }
 
+bool ShouldRestoreStoredSession(
+		bool hasStoredUserId,
+		bool hasSerializedSelfUser) {
+	return hasStoredUserId && hasSerializedSelfUser;
+}
+
 bool CommitServerForget(
 		not_null<Storage::Account*> local,
 		Storage::ServerCacheBinding binding,

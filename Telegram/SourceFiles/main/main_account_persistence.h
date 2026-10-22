@@ -33,6 +33,10 @@ enum class ServerReenrollmentPrompt {
 	bool hasRestoredUserId,
 	bool hasReadableServerPin);
 
+[[nodiscard]] bool ShouldRestoreStoredSession(
+	bool hasStoredUserId,
+	bool hasSerializedSelfUser);
+
 [[nodiscard]] bool CommitServerForget(
 	not_null<Storage::Account*> local,
 	Storage::ServerCacheBinding binding,
