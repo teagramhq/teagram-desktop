@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_active_sessions_state.h"
 
 #include "settings/settings_common_session.h"
 
@@ -753,17 +754,25 @@ void SessionsContent::setupContent() {
 		_inner->setVisible(!value);
 	}, lifetime());
 
+	const auto currentList = _authorizations->list();
+	_loading = details::ShouldShowSessionsLoading(
+		_authorizations->lastReceivedTime() != 0,
+		!currentList.empty());
+
 	_authorizations->listValue(
 	) | rpl::on_next([=](const Api::Authorizations::List &list) {
 		parse(list);
 	}, lifetime());
 
-	_loading = true;
 	shortPollSessions();
 }
 
 void SessionsContent::parse(const Api::Authorizations::List &list) {
 	if (list.empty()) {
+		if (_authorizations->lastReceivedTime()) {
+			_loading = false;
+			_shortPollTimer.callOnce(kShortPollTimeout);
+		}
 		return;
 	}
 	_data = Full();
