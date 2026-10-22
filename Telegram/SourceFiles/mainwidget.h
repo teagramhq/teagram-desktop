@@ -102,6 +102,8 @@ struct SectionStackCountsForRegressionTest {
 	int mainSectionVisible = 0;
 	int mainSectionAnimating = 0;
 	int mainSettings = 0;
+	int mainCredits = 0;
+	int mainCurrency = 0;
 	int mainInformation = 0;
 	int mainStories = 0;
 };

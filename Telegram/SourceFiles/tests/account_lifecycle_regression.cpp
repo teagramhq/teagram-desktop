@@ -3204,7 +3204,24 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		return false;
 	}
 
-	const auto stockOpens = [&](const QString &url, bool section) {
+	const auto stockSettingsOpened = [&](Settings::Type type) {
+		const auto main
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto mainSettingsShown
+			= !stockController->isLayerShown()
+			  && stockController->content()->isMainSectionShown()
+			  && ((type == Settings::CreditsId()) ? main.mainCredits
+												  : main.mainCurrency);
+		const auto layer = dynamic_cast<Info::WrapWidget *>(
+			stockController->activeLayerSection());
+		const auto layerSettingsShown
+			= stockController->isLayerShown() && layer
+			  && (layer->controller()->section().type()
+				  == Info::Section::Type::Settings)
+			  && (layer->controller()->section().settingsType() == type);
+		return mainSettingsShown || layerSettingsShown;
+	};
+	const auto stockOpens = [&](const QString &url, Settings::Type setting) {
 		pinnedController->window().activate();
 		QCoreApplication::processEvents();
 		const auto before = toastCounts();
@@ -3214,9 +3231,8 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				 }));
 		const auto stockUiOpened
 			= handled && WaitForRegressionCondition([&] {
-				  return section
-							 ? stockController->content()->isMainSectionShown()
-							 : stockController->isLayerShown();
+				  return setting ? stockSettingsOpened(setting)
+								 : stockController->isLayerShown();
 			  });
 		const auto toastUnchanged = (toastCounts() == before);
 		const auto pinnedUiUnchanged
@@ -3225,6 +3241,8 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 		const auto stockSectionShown
 			= stockController->content()->isMainSectionShown();
 		const auto stockLayerShown = stockController->isLayerShown();
+		const auto expectedSettingsShown
+			= setting && stockSettingsOpened(setting);
 		const auto opened
 			= stockUiOpened && toastUnchanged && pinnedUiUnchanged;
 		if (!opened) {
@@ -3232,16 +3250,18 @@ AddPaidInvoiceRegressionMessage(not_null<Main::Session *> session, MsgId id,
 				stderr,
 				"Paid link regression failed: stock link=%s did not keep its "
 				"behavior: handled=%d stock-ui-opened=%d stock-section=%d "
-				"stock-layer=%d toast-unchanged=%d pinned-ui-unchanged=%d.\n",
+				"stock-layer=%d expected-settings=%d toast-unchanged=%d "
+				"pinned-ui-unchanged=%d.\n",
 				url.toUtf8().constData(), handled, stockUiOpened,
-				stockSectionShown, stockLayerShown, toastUnchanged,
-				pinnedUiUnchanged);
+				stockSectionShown, stockLayerShown, expectedSettingsShown,
+				toastUnchanged, pinnedUiUnchanged);
 		}
 		resetControllers();
 		return opened;
 	};
-	if (!stockOpens(u"tg://stars"_q, true) || !stockOpens(u"tg://ton"_q, true)
-		|| !stockOpens(u"internal:stars_examples"_q, false)) {
+	if (!stockOpens(u"tg://stars"_q, Settings::CreditsId())
+		|| !stockOpens(u"tg://ton"_q, Settings::CurrencyId())
+		|| !stockOpens(u"internal:stars_examples"_q, nullptr)) {
 		return false;
 	}
 	std::fprintf(
