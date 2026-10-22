@@ -7,8 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/timer.h"
 #include "data/data_authorization.h"
 #include "mtproto/sender.h"
+
+#include <optional>
 
 class ApiWrap;
 
@@ -18,20 +21,59 @@ namespace details {
 
 class AuthorizationsReloadState final {
   public:
-	void setRequestId(mtpRequestId requestId) { _requestId = requestId; }
+	using Generation = uint64;
 
-	[[nodiscard]] bool pending() const { return _requestId != 0; }
-
-	void complete() { _requestId = 0; }
-
-	void fail(const MTP::Error &error) {
+	[[nodiscard]] Generation begin() {
+		_pending = true;
 		_requestId = 0;
+		return ++_generation;
+	}
+
+	void setRequestId(Generation generation, mtpRequestId requestId) {
+		if (isCurrent(generation)) {
+			_requestId = requestId;
+		}
+	}
+
+	[[nodiscard]] bool pending() const { return _pending; }
+
+	[[nodiscard]] bool isCurrent(Generation generation) const {
+		return _pending && (generation == _generation);
+	}
+
+	[[nodiscard]] Generation currentGeneration() const { return _generation; }
+
+	[[nodiscard]] bool complete(Generation generation) {
+		if (!isCurrent(generation)) {
+			return false;
+		}
+		_pending = false;
+		_requestId = 0;
+		return true;
+	}
+
+	void fail(Generation generation, const MTP::Error &error) {
+		if (!complete(generation)) {
+			return;
+		}
 		_failures.fire_copy(error);
+	}
+
+	[[nodiscard]] mtpRequestId timeout(Generation generation) {
+		const auto requestId = _requestId;
+		if (!complete(generation)) {
+			return 0;
+		}
+		_failures.fire_copy(MTP::Error::Local(
+			QStringLiteral("AUTHORIZATIONS_RELOAD_TIMEOUT"), {}));
+		return requestId;
 	}
 
 	[[nodiscard]] mtpRequestId takeRequestId() {
 		const auto result = _requestId;
 		_requestId = 0;
+		_pending = false;
+		++_generation;
 		return result;
 	}
 
@@ -41,6 +83,8 @@ class AuthorizationsReloadState final {
 
   private:
 	mtpRequestId _requestId = 0;
+	Generation _generation = 0;
+	bool _pending = false;
 	rpl::event_stream<MTP::Error> _failures;
 };
 
@@ -100,9 +144,11 @@ public:
 private:
 	void refreshCallsDisabledHereFromCloud();
 	void removeExpiredUnreviewed();
+	void reloadTimedOut();
 
 	MTP::Sender _api;
 	details::AuthorizationsReloadState _reloadState;
+	std::optional<base::Timer> _reloadTimeout;
 
 	List _list;
 	rpl::event_stream<> _listChanges;

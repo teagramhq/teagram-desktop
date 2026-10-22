@@ -7,16 +7,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <utility>
+
 namespace Settings::details {
 
 class ActiveSessionsState final {
   public:
+	static constexpr auto kFailedReloadRetryDelayMs = 5'000;
+
 	struct ListTransition {
 		bool clearRows = false;
 		bool schedulePoll = false;
 	};
 	struct RefreshTransition {
 		bool schedulePoll = false;
+		int retryDelayMs = 0;
 	};
 
 	void initialize(bool hasAuthoritativeList, bool hasRows) {
@@ -31,7 +36,10 @@ class ActiveSessionsState final {
 
 	[[nodiscard]] RefreshTransition refreshFailed() {
 		_loading = false;
-		return {.schedulePoll = true};
+		return {
+			.schedulePoll = true,
+			.retryDelayMs = kFailedReloadRetryDelayMs,
+		};
 	}
 
 	[[nodiscard]] ListTransition receiveList(bool hasRows,
@@ -55,5 +63,14 @@ class ActiveSessionsState final {
 	bool _hasRows = false;
 	bool _loading = false;
 };
+
+template <typename SchedulePoll>
+void HandleReloadFailure(ActiveSessionsState &state,
+						 SchedulePoll &&schedulePoll) {
+	const auto transition = state.refreshFailed();
+	if (transition.schedulePoll) {
+		std::forward<SchedulePoll>(schedulePoll)(transition.retryDelayMs);
+	}
+}
 
 } // namespace Settings::details

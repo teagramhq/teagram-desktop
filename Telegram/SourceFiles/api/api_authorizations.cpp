@@ -23,6 +23,7 @@ namespace {
 constexpr auto TestApiId = 17349;
 constexpr auto SnapApiId = 611335;
 constexpr auto DesktopApiId = 2040;
+constexpr auto kAuthorizationReloadTimeout = 10 * crl::time(1000);
 
 Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 	auto result = Authorizations::Entry();
@@ -123,30 +124,60 @@ void Authorizations::reload() {
 		return;
 	}
 
-	_reloadState.setRequestId(
-		_api.request(MTPaccount_GetAuthorizations())
-			.done([=](const MTPaccount_Authorizations &result) {
-				_reloadState.complete();
-				_lastReceived = crl::now();
-				_hasAuthoritativeList = true;
-				const auto &data = result.data();
-				_ttlDays = data.vauthorization_ttl_days().v;
-				_list = ranges::views::all(data.vauthorizations().v)
-						| ranges::views::transform(
-							[](const MTPAuthorization &auth) {
-								return ParseEntry(auth.data());
-							})
-						| ranges::to<List>;
-				removeExpiredUnreviewed();
-				refreshCallsDisabledHereFromCloud();
-				_listChanges.fire({});
-			})
-			.fail([=](const MTP::Error &error) { _reloadState.fail(error); })
-			.send());
+	if (!_reloadTimeout) {
+		_reloadTimeout.emplace([=] { reloadTimedOut(); });
+	}
+	const auto generation = _reloadState.begin();
+	const auto requestId
+		= _api.request(MTPaccount_GetAuthorizations())
+			  .done([=](const MTPaccount_Authorizations &result) {
+				  if (!_reloadState.complete(generation)) {
+					  return;
+				  }
+				  _reloadTimeout->cancel();
+				  _lastReceived = crl::now();
+				  _hasAuthoritativeList = true;
+				  const auto &data = result.data();
+				  _ttlDays = data.vauthorization_ttl_days().v;
+				  _list = ranges::views::all(data.vauthorizations().v)
+						  | ranges::views::transform(
+							  [](const MTPAuthorization &auth) {
+								  return ParseEntry(auth.data());
+							  })
+						  | ranges::to<List>;
+				  removeExpiredUnreviewed();
+				  refreshCallsDisabledHereFromCloud();
+				  _listChanges.fire({});
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  if (!_reloadState.isCurrent(generation)) {
+					  return;
+				  }
+				  _reloadTimeout->cancel();
+				  _reloadState.fail(generation, error);
+			  })
+			  .send();
+	_reloadState.setRequestId(generation, requestId);
+	if (_reloadState.isCurrent(generation)) {
+		_reloadTimeout->callOnce(kAuthorizationReloadTimeout);
+	}
+}
+
+void Authorizations::reloadTimedOut() {
+	const auto requestId
+		= _reloadState.timeout(_reloadState.currentGeneration());
+	if (requestId) {
+		_api.request(requestId).cancel();
+	}
 }
 
 void Authorizations::cancelCurrentRequest() {
-	_api.request(_reloadState.takeRequestId()).cancel();
+	if (_reloadTimeout) {
+		_reloadTimeout->cancel();
+	}
+	if (const auto requestId = _reloadState.takeRequestId()) {
+		_api.request(requestId).cancel();
+	}
 }
 
 void Authorizations::refreshCallsDisabledHereFromCloud() {

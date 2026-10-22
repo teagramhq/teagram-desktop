@@ -20,7 +20,9 @@ namespace {
 
 using Api::details::AuthorizationsReloadState;
 using Settings::details::ActiveSessionsState;
+using Settings::details::BindReloadFailures;
 using Settings::details::GuardTerminateAllCallbacks;
+using Settings::details::HandleReloadFailure;
 
 TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	auto state = ActiveSessionsState();
@@ -36,20 +38,21 @@ TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	CHECK(!state.loading());
 }
 
-TEST_CASE(CachedSessionsStayVisibleAfterRefreshFailure) {
+TEST_CASE(CachedSessionsStayVisibleWhenRefreshTimesOut) {
 	auto state = ActiveSessionsState();
 	state.initialize(true, true);
-	const auto error = MTP::Error::Local(u"SESSION_REFRESH_FAILED"_q, {});
 	auto reload = AuthorizationsReloadState();
-	reload.setRequestId(1);
-	auto scheduledPoll = false;
+	const auto generation = reload.begin();
+	reload.setRequestId(generation, 1);
+	auto retryDelayMs = 0;
 	auto lifetime = rpl::lifetime();
-	reload.failures()
-		| rpl::on_next(
-			[&](const MTP::Error &) {
-				scheduledPoll = state.refreshFailed().schedulePoll;
-			},
-			lifetime);
+	BindReloadFailures(
+		reload.failures(),
+		[&] {
+			HandleReloadFailure(state,
+								[&](int delayMs) { retryDelayMs = delayMs; });
+		},
+		lifetime);
 
 	const auto replay = state.receiveList(true, true);
 	CHECK(!replay.clearRows);
@@ -57,37 +60,43 @@ TEST_CASE(CachedSessionsStayVisibleAfterRefreshFailure) {
 	CHECK(state.hasRows());
 	CHECK(state.rowsVisible());
 
-	reload.fail(error);
+	CHECK_EQ(reload.timeout(generation), 1);
 	CHECK(!reload.pending());
-	CHECK(scheduledPoll);
+	CHECK_EQ(retryDelayMs, ActiveSessionsState::kFailedReloadRetryDelayMs);
 	CHECK(state.hasRows());
 	CHECK(state.rowsVisible());
 	CHECK(!state.loading());
+
+	const auto retryGeneration = reload.begin();
+	reload.setRequestId(retryGeneration, 2);
+	CHECK(!reload.complete(generation));
+	CHECK(reload.pending());
 }
 
-TEST_CASE(InitialRefreshFailureStopsLoadingAndRetries) {
+TEST_CASE(InitialRefreshTimeoutStopsLoadingAndRetries) {
 	auto state = ActiveSessionsState();
 	state.initialize(false, false);
-	const auto error = MTP::Error::Local(u"SESSION_REFRESH_FAILED"_q, {});
 	auto reload = AuthorizationsReloadState();
-	reload.setRequestId(1);
-	auto scheduledPoll = false;
+	const auto generation = reload.begin();
+	reload.setRequestId(generation, 1);
+	auto retryDelayMs = 0;
 	auto lifetime = rpl::lifetime();
-	reload.failures()
-		| rpl::on_next(
-			[&](const MTP::Error &) {
-				scheduledPoll = state.refreshFailed().schedulePoll;
-			},
-			lifetime);
+	BindReloadFailures(
+		reload.failures(),
+		[&] {
+			HandleReloadFailure(state,
+								[&](int delayMs) { retryDelayMs = delayMs; });
+		},
+		lifetime);
 	const auto replay = state.receiveList(false, false);
 	CHECK(replay.clearRows);
 	CHECK(state.loading());
 	state.beginRefresh();
 	CHECK(state.loading());
 
-	reload.fail(error);
+	CHECK_EQ(reload.timeout(generation), 1);
 	CHECK(!reload.pending());
-	CHECK(scheduledPoll);
+	CHECK_EQ(retryDelayMs, ActiveSessionsState::kFailedReloadRetryDelayMs);
 	CHECK(!state.loading());
 	CHECK(!state.rowsVisible());
 

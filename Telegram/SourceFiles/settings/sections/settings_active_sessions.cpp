@@ -755,8 +755,8 @@ void SessionsContent::setupContent() {
 	_state.initialize(_authorizations->hasAuthoritativeList(),
 					  !currentList.empty());
 	_inner->setVisible(!_state.loading());
-	_authorizations->reloadFailures()
-		| rpl::on_next([=](const MTP::Error &) { reloadFailed(); }, lifetime());
+	details::BindReloadFailures(
+		_authorizations->reloadFailures(), [=] { reloadFailed(); }, lifetime());
 
 	_authorizations->listValue()
 		| rpl::on_next(
@@ -794,12 +794,11 @@ void SessionsContent::parse(const Api::Authorizations::List &list) {
 }
 
 void SessionsContent::reloadFailed() {
-	const auto transition = _state.refreshFailed();
-	_inner->setVisible(!_state.loading());
-	if (transition.schedulePoll) {
+	details::HandleReloadFailure(_state, [=](int retryDelayMs) {
 		_shortPollTimer.cancel();
-		_shortPollTimer.callOnce(kShortPollTimeout);
-	}
+		_shortPollTimer.callOnce(retryDelayMs);
+	});
+	_inner->setVisible(!_state.loading());
 	update();
 }
 
