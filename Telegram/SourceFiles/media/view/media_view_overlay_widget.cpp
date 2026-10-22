@@ -2198,10 +2198,16 @@ void OverlayWidget::fillContextMenuActions(
 			return _userPhotosData && _fullIndex && _fullCount;
 		} else if (_photo && _photo->peer && _photo->peer->userpicPhotoId() == _photo->id) {
 			if (auto chat = _photo->peer->asChat()) {
-				return chat->canEditInformation()
-					   && Data::details::BasicChatControlsOf(chat).canEditPhoto;
+				return Data::details::CanEditChatPhotoFor(
+					chat->usesCustomServer(),
+					Data::details::ChatPhotoPeerKind::BasicGroup,
+					chat->canEditInformation());
 			} else if (auto channel = _photo->peer->asChannel()) {
-				return channel->canEditInformation();
+				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+					channel->isMegagroup());
+				return Data::details::CanEditChatPhotoFor(
+					channel->usesCustomServer(), kind,
+					channel->canEditInformation());
 			}
 		}
 		return false;
@@ -2237,12 +2243,18 @@ void OverlayWidget::fillContextMenuActions(
 		using Type = SharedMediaType;
 		if (sharedMediaType().value_or(Type::File) == Type::ChatPhoto) {
 			if (const auto chat = _peer->asChat()) {
-				if (!chat->canEditInformation()
-					|| !Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+				if (!Data::details::CanEditChatPhotoFor(
+						chat->usesCustomServer(),
+						Data::details::ChatPhotoPeerKind::BasicGroup,
+						chat->canEditInformation())) {
 					return;
 				}
 			} else if (const auto channel = _peer->asChannel()) {
-				if (!channel->canEditInformation()) {
+				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+					channel->isMegagroup());
+				if (!Data::details::CanEditChatPhotoFor(
+						channel->usesCustomServer(), kind,
+						channel->canEditInformation())) {
 					return;
 				}
 			} else {

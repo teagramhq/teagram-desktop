@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_invite_links.h"
 #include "api/api_peer_photo.h"
 #include "api/api_self_destruct.h"
+#include "base/call_delayed.h"
 #include "main/main_session.h"
 #include "styles/style_add_contact_box.h"
 #include "styles/style_boxes.h"
@@ -66,64 +67,59 @@ bool IsValidPhone(QString phone) {
 				|| phone == u"4242"_q));
 }
 
-void ChatCreateDone(
-		not_null<Window::SessionNavigation*> navigation,
-		QImage image,
-		TimeId ttlPeriod,
-		const MTPmessages_InvitedUsers &result,
-		Fn<void(not_null<PeerData*>)> done) {
+void ChatCreateDone(not_null<Window::SessionNavigation *> navigation,
+					QImage image, TimeId ttlPeriod,
+					const MTPmessages_InvitedUsers &result,
+					Fn<void(not_null<PeerData *>)> done) {
 	const auto &data = result.data();
 	navigation->session().api().applyUpdates(data.vupdates());
 
-	const auto success = base::make_optional(&data.vupdates())
-		| [](auto updates) -> std::optional<const QVector<MTPChat>*> {
-			switch (updates->type()) {
-			case mtpc_updates:
-				return &updates->c_updates().vchats().v;
-			case mtpc_updatesCombined:
-				return &updates->c_updatesCombined().vchats().v;
-			}
-			LOG(("API Error: unexpected update cons %1 "
-				"(GroupInfoBox::creationDone)").arg(updates->type()));
-			return std::nullopt;
+	const auto success
+		= base::make_optional(&data.vupdates()) |
+		  [](auto updates) -> std::optional<const QVector<MTPChat> *> {
+		switch (updates->type()) {
+		case mtpc_updates:
+			return &updates->c_updates().vchats().v;
+		case mtpc_updatesCombined:
+			return &updates->c_updatesCombined().vchats().v;
 		}
-		| [](auto chats) {
-			return (!chats->empty()
-				&& chats->front().type() == mtpc_chat)
-				? base::make_optional(chats)
-				: std::nullopt;
-		}
-		| [&](auto chats) {
-			return navigation->session().data().chat(
-				chats->front().c_chat().vid());
-		}
-		| [&](not_null<ChatData*> chat) {
+		LOG(("API Error: unexpected update cons %1 "
+			 "(GroupInfoBox::creationDone)")
+				.arg(updates->type()));
+		return std::nullopt;
+	} | [](auto chats) {
+		return (!chats->empty() && chats->front().type() == mtpc_chat)
+				   ? base::make_optional(chats)
+				   : std::nullopt;
+	} | [&](auto chats) {
+		return navigation->session().data().chat(chats->front().c_chat().vid());
+	} | [&](not_null<ChatData *> chat) {
+		auto uploadPhoto = [chat, image = std::move(image)]() mutable {
 			if (!image.isNull()) {
-				chat->session().api().peerPhoto().upload(
-					chat,
-					{ std::move(image) });
-			}
-			if (ttlPeriod) {
-				chat->setMessagesTTL(ttlPeriod);
-			}
-			if (done) {
-				done(chat);
-			} else {
-				const auto show = navigation->uiShow();
-				navigation->showPeerHistory(chat);
-				ChatInviteForbidden(
-					show,
-					chat,
-					CollectForbiddenUsers(&chat->session(), result));
-				chat->owner().addRecentJoinChat({
-					.fromPeerId = chat->id,
-					.joinedPeerId = chat->id,
-				});
+				chat->session().api().peerPhoto().uploadCreatedGroupPhoto(
+					chat, {std::move(image)});
 			}
 		};
+		uploadPhoto();
+		if (ttlPeriod) {
+			chat->setMessagesTTL(ttlPeriod);
+		}
+		if (done) {
+			done(chat);
+		} else {
+			const auto show = navigation->uiShow();
+			navigation->showPeerHistory(chat);
+			ChatInviteForbidden(
+				show, chat, CollectForbiddenUsers(&chat->session(), result));
+			chat->owner().addRecentJoinChat({
+				.fromPeerId = chat->id,
+				.joinedPeerId = chat->id,
+			});
+		}
+	};
 	if (!success) {
 		LOG(("API Error: chat not found in updates "
-			"(ContactsBox::creationDone)"));
+			 "(ContactsBox::creationDone)"));
 	}
 }
 
@@ -565,10 +561,13 @@ void GroupInfoBox::prepare() {
 		st::defaultUserpicButton,
 		(_type == Type::Forum) ? Ui::PeerUserpicShape::Forum : Ui::PeerUserpicShape::Auto);
 	_photo->showCustomOnChosen();
-	const auto customServerGroup
-		= (_type == Type::Group)
-		  && _navigation->session().user()->usesCustomServer();
-	if (!Data::details::BasicChatControlsFor(customServerGroup).canEditPhoto) {
+	const auto photoKind = (_type == Type::Group)
+							   ? Data::details::ChatPhotoPeerKind::BasicGroup
+						   : (_type == Type::Channel)
+							   ? Data::details::ChatPhotoPeerKind::Channel
+							   : Data::details::ChatPhotoPeerKind::Supergroup;
+	if (!Data::details::ChatPhotoSupportedFor(
+			_navigation->session().user()->usesCustomServer(), photoKind)) {
 		// Hidden, it chooses nothing, so the new group gets no photo.
 		_photo->hide();
 	}

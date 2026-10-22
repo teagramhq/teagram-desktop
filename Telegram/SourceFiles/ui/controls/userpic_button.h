@@ -114,6 +114,9 @@ public:
 	void showCustomOnChosen();
 
 	void showUploadProgress();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] bool pendingCustomUploadShownForRegressionTest() const;
+#endif
 
 	[[nodiscard]] PopupMenu *showChangePhotoMenu();
 

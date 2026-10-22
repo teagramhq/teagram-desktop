@@ -44,8 +44,25 @@ BasicChatAdminCapabilitiesFor(bool customServer) {
 	};
 }
 
-// A custom server has no chat photos, migration, member tags or
-// per-member restrictions, so a basic group there offers none of them.
+enum class ChatPhotoPeerKind {
+	BasicGroup,
+	Supergroup,
+	Channel,
+};
+
+[[nodiscard]] inline constexpr ChatPhotoPeerKind
+ChatPhotoPeerKindForChannel(bool isMegagroup) {
+	return isMegagroup ? ChatPhotoPeerKind::Supergroup
+					   : ChatPhotoPeerKind::Channel;
+}
+
+[[nodiscard]] inline constexpr bool
+ChatPhotoSupportedFor(bool customServer, ChatPhotoPeerKind kind) {
+	return !customServer || (kind == ChatPhotoPeerKind::BasicGroup);
+}
+
+// Custom servers support basic group photos; the other controls below remain
+// unavailable there.
 struct BasicChatControls {
 	bool canEditPhoto = true;
 	bool canEditType = true;
@@ -57,7 +74,8 @@ struct BasicChatControls {
 [[nodiscard]] inline constexpr BasicChatControls
 BasicChatControlsFor(bool customServer) {
 	return {
-		.canEditPhoto = !customServer,
+		.canEditPhoto
+		= ChatPhotoSupportedFor(customServer, ChatPhotoPeerKind::BasicGroup),
 		.canEditType = !customServer,
 		.canEditHistoryVisibility = !customServer,
 		.canRestrictMembers = !customServer,
@@ -68,6 +86,20 @@ BasicChatControlsFor(bool customServer) {
 template <typename Chat>
 [[nodiscard]] inline BasicChatControls BasicChatControlsOf(const Chat &chat) {
 	return BasicChatControlsFor(chat->usesCustomServer());
+}
+
+[[nodiscard]] inline constexpr bool
+CanEditChatPhotoFor(bool customServer, ChatPhotoPeerKind kind,
+					bool canEditInformation, bool newlyCreatedBySelf = false) {
+	return ChatPhotoSupportedFor(customServer, kind)
+		   && (canEditInformation || newlyCreatedBySelf);
+}
+
+[[nodiscard]] inline constexpr bool
+CanRemoveChatPhotoFor(bool customServer, ChatPhotoPeerKind kind, bool hasPhoto,
+					  bool canEditInformation) {
+	return hasPhoto
+		   && CanEditChatPhotoFor(customServer, kind, canEditInformation);
 }
 
 template <typename Peer>

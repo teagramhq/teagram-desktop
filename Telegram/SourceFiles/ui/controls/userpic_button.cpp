@@ -16,6 +16,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_info_box.h" // EditPeerInfoBox::Available.
 #include "ui/effects/ripple_animation.h"
 #include "ui/empty_userpic.h"
+#include "data/data_chat.h"
+#include "data/data_chat_participants.h"
 #include "data/data_photo.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
@@ -28,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_instance.h"
 #include "core/application.h"
 #include "ui/effects/premium_graphics.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/menu/menu_action.h"
@@ -53,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "api/api_peer_photo.h"
 #include "styles/style_chat.h"
+#include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_userpic_button.h"
 
@@ -459,6 +463,51 @@ void UserpicButton::choosePhotoLocally() {
 						value));
 				}, _menu->lifetime());
 			}, &st::menuIconProfile);
+		}
+	}
+	if (const auto chat = _peer ? _peer->asChat() : nullptr) {
+		if (chat->usesCustomServer()
+			&& Data::details::CanRemoveChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->hasUserpic(), chat->canEditInformation())) {
+			_menu->addSeparator(&st::expandedMenuSeparator);
+			_menu->addAction(
+				tr::lng_mediaview_delete(tr::now),
+				[=] {
+					const auto photoLocation = chat->userpicLocation();
+					_window->show(Ui::MakeConfirmBox({
+						.text = tr::lng_delete_photo_sure(),
+						.confirmed =
+							[=](Fn<void()> close) {
+								if (!chat->hasUserpic()
+									|| chat->userpicLocation()
+										   != photoLocation) {
+									close();
+									return;
+								}
+								if (!Data::details::CanRemoveChatPhotoFor(
+										chat->usesCustomServer(),
+										Data::details::ChatPhotoPeerKind::
+											BasicGroup,
+										chat->hasUserpic(),
+										chat->canEditInformation())) {
+									_window->showToast(
+										tr::lng_cant_do_this(tr::now));
+									close();
+									return;
+								}
+								chat->session()
+									.api()
+									.peerPhoto()
+									.clearChatPhoto(chat);
+								close();
+							},
+						.confirmText = tr::lng_mediaview_delete(tr::now),
+						.confirmStyle = &st::attentionBoxButton,
+					}));
+				},
+				&st::menuIconDeleteAttention);
 		}
 	}
 	const auto position = rect().contains(mapFromGlobal(QCursor::pos()))
@@ -1190,6 +1239,14 @@ void UserpicButton::showUploadProgress() {
 			},
 		});
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool UserpicButton::pendingCustomUploadShownForRegressionTest() const {
+	return (_source == Source::Custom) && _userpicHasImage && !_userpic.isNull()
+		   && _uploadOverlay && _uploadOverlay->shown()
+		   && _uploadOverlay->uploading();
+}
+#endif
 
 void UserpicButton::fillShape(QPainter &p, QBrush brush) const {
 	PainterHighQualityEnabler hq(p);

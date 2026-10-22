@@ -15,8 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_user_names.h"
 #include "main/main_session.h"
 #include "main/session_feature_support.h"
-#include "ui/boxes/confirm_box.h"
+#include "base/call_delayed.h"
 #include "base/event_filter.h"
+#include "ui/boxes/confirm_box.h"
 #include "boxes/peers/edit_participants_box.h"
 #include "boxes/peers/edit_peer_color_box.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -736,6 +737,8 @@ public:
 	Controls _controls;
 
 	std::deque<FnMut<void()>> _saveStagesQueue;
+	bool _photoUploadPending = false;
+	rpl::lifetime _photoUploadLifetime;
 	Saving _savingData;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	bool _autoTranslateControlPresentForRegressionTest = false;
@@ -820,7 +823,18 @@ object_ptr<Ui::RpWidget> Controller::createPhotoAndTitleEdit() {
 		return nullptr;
 	}
 	if (const auto chat = _peer->asChat()) {
-		if (!Data::details::BasicChatControlsOf(chat).canEditPhoto) {
+		if (!Data::details::CanEditChatPhotoFor(
+				chat->usesCustomServer(),
+				Data::details::ChatPhotoPeerKind::BasicGroup,
+				chat->canEditInformation())) {
+			return createTitleEdit();
+		}
+	} else if (const auto channel = _peer->asChannel()) {
+		const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+			channel->isMegagroup());
+		if (!Data::details::CanEditChatPhotoFor(
+				channel->usesCustomServer(), kind,
+				channel->canEditInformation())) {
 			return createTitleEdit();
 		}
 	}
@@ -2585,7 +2599,7 @@ bool Controller::validateRequestToJoin(Saving &to) const {
 void Controller::save() {
 	Expects(_wrap != nullptr);
 
-	if (!_saveStagesQueue.empty()) {
+	if (_photoUploadPending || !_saveStagesQueue.empty()) {
 		return;
 	}
 	if (const auto saving = validate()) {
@@ -3190,9 +3204,50 @@ void Controller::savePhoto() {
 		? _controls.photo->takeResultImage()
 		: QImage();
 	if (!image.isNull()) {
-		_peer->session().api().peerPhoto().upload(
-			_peer,
-			{ std::move(image) });
+		const auto peer = _peer->migrateToOrMe();
+		const auto canEdit = [&] {
+			if (const auto chat = peer->asChat()) {
+				return Data::details::CanEditChatPhotoFor(
+					chat->usesCustomServer(),
+					Data::details::ChatPhotoPeerKind::BasicGroup,
+					chat->canEditInformation());
+			} else if (const auto channel = peer->asChannel()) {
+				const auto kind = Data::details::ChatPhotoPeerKindForChannel(
+					channel->isMegagroup());
+				return Data::details::CanEditChatPhotoFor(
+					channel->usesCustomServer(), kind,
+					channel->canEditInformation());
+			}
+			return true;
+		}();
+		if (!canEdit) {
+			_controls.photo->showCustom(std::move(image));
+			_navigation->showToast(tr::lng_cant_do_this(tr::now));
+			return;
+		}
+		if (peer->usesCustomServer()) {
+			_peer->session().api().peerPhoto().cancelUpload(peer);
+			_controls.photo->showUploadProgress();
+			_photoUploadPending = true;
+			const auto uploadFinished = crl::guard(this, [=](bool success) {
+				base::call_delayed(crl::time(0), _box, crl::guard(this, [=] {
+									   _photoUploadPending = false;
+									   _photoUploadLifetime.destroy();
+									   if (success) {
+										   _box->closeBox();
+									   }
+								   }));
+			});
+			_peer->session().api().peerPhoto().subscribeToUpload(
+				peer, _photoUploadLifetime,
+				{
+					.done = [=] { uploadFinished(true); },
+					.failed = [=] { uploadFinished(false); },
+				});
+			_peer->session().api().peerPhoto().upload(peer, {std::move(image)});
+			return;
+		}
+		_peer->session().api().peerPhoto().upload(_peer, {std::move(image)});
 	}
 	_box->closeBox();
 }

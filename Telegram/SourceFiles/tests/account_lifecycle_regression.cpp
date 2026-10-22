@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_chat_filters.h"
 #include "api/api_common.h"
+#include "api/api_peer_photo.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/options.h"
@@ -17,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
 #include "boxes/about_box.h"
+#include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
@@ -24,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
+#include "boxes/peer_list_box.h"
 #include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
@@ -50,6 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
 #include "data/data_peer_id.h"
+#include "data/data_photo.h"
 #include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
@@ -62,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_item_reply_markup.h"
 #include "history/history_widget.h"
 #include "history/view/history_view_chat_section.h"
 #include "history/view/history_view_top_bar_widget.h"
@@ -111,27 +116,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
+#include "test/test_widgets.h"
+#include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
-#include "styles/style_widgets.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
 
+#include "styles/style_basic.h"
+#include "styles/style_widgets.h"
+
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDataStream>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -264,6 +275,41 @@ template <typename Request>
 		std::fprintf(stderr,
 					 "Channel Save regression failed: response "
 					 "%zu could not be parsed.\n",
+					 index);
+		return false;
+	}
+	return true;
+}
+
+template <typename Response>
+[[nodiscard]] bool ReplyToCapturedRequestForRegressionTest(
+	ChannelSaveRequestCapture &capture, size_t index,
+	uint32 expectedConstructor, const Response &result) {
+	if (capture.requests.size() != index + 1) {
+		std::fprintf(stderr,
+					 "Peer photo regression failed: request %zu was missing or "
+					 "unexpected requests were sent.\n",
+					 index);
+		return false;
+	}
+	auto &request = capture.requests[index];
+	if (request.body.isEmpty()
+		|| static_cast<uint32>(request.body.front()) != expectedConstructor
+		|| !request.callbacks.done) {
+		std::fprintf(stderr,
+					 "Peer photo regression failed: request %zu had the wrong "
+					 "constructor or no success handler.\n",
+					 index);
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	result.write(response.reply);
+	auto done = std::move(request.callbacks.done);
+	if (!done(response)) {
+		std::fprintf(stderr,
+					 "Peer photo regression failed: response %zu could not be "
+					 "parsed.\n",
 					 index);
 		return false;
 	}
@@ -613,6 +659,9 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_messages_editChatAbout:
 	case mtpc_account_setGlobalPrivacySettings:
 	case mtpc_channels_getParticipant:
+	case mtpc_messages_createChat:
+	case mtpc_upload_saveFilePart:
+	case mtpc_messages_editChatPhoto:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -1105,6 +1154,487 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	fixtures->openedCache = fixtures->root + "/opened-cache";
 	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
+	return true;
+}
+
+template <typename Predicate>
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+
+[[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
+	not_null<Window::SessionController *> controller) {
+	auto &session = controller->session();
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &session.mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+
+	const auto denied = session.data().chat(ChatId(1181));
+	denied->setName(u"Restricted photo removal group"_q);
+	denied->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	denied->setDefaultRestrictions(
+		ChatRestrictions(ChatRestriction::ChangeInfo));
+	const auto deniedPhotoId = PhotoId(118101);
+	denied->setPhoto(MTP_chatPhoto(MTP_flags(0),
+								   MTP_long(static_cast<int64>(deniedPhotoId)),
+								   MTPbytes(), MTP_int(2)));
+	const auto unloadedDeniedPhoto = session.data().photo(deniedPhotoId);
+	if (!denied->usesCustomServer() || !denied->hasUserpic()
+		|| denied->canEditInformation() || !unloadedDeniedPhoto->isNull()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: restricted fixture did not "
+			"have an unloaded existing photo.\n");
+		return false;
+	}
+	session.api().peerPhoto().clearChatPhoto(denied);
+	QCoreApplication::processEvents();
+	if (!capture.requests.empty() || !denied->hasUserpic()
+		|| denied->userpicPhotoId() != deniedPhotoId) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: denied member sent a "
+			"removal request or lost the photo locally.\n");
+		return false;
+	}
+
+	const auto chat = session.data().chat(ChatId(1182));
+	chat->setName(u"Photo removal lifecycle group"_q);
+	chat->setFlags(ChatDataFlag::Creator);
+	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto photoId = PhotoId(118201);
+	chat->setPhoto(MTP_chatPhoto(MTP_flags(0),
+								 MTP_long(static_cast<int64>(photoId)),
+								 MTPbytes(), MTP_int(2)));
+	const auto unloadedPhoto = session.data().photo(photoId);
+	if (!chat->usesCustomServer() || !chat->hasUserpic()
+		|| !chat->canEditInformation() || !unloadedPhoto->isNull()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: creator fixture did not "
+			"have an unloaded existing photo.\n");
+		return false;
+	}
+	session.api().peerPhoto().clearChatPhoto(chat);
+	QCoreApplication::processEvents();
+	auto expectedRequest = mtpBuffer();
+	MTPmessages_EditChatPhoto(chat->inputChat(), MTP_inputChatPhotoEmpty())
+		.write(expectedRequest);
+	if (capture.requests.size() != 1
+		|| capture.requests.front().body != expectedRequest) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: empty-photo request was "
+			"missing or malformed.\n");
+		return false;
+	}
+	const auto updatedChat = MTP_chat(
+		MTP_flags(MTPDchat::Flag::f_creator),
+		MTP_long(peerToChat(chat->id).bare),
+		MTP_string(u"Photo removal lifecycle group"_q), MTP_chatPhotoEmpty(),
+		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+		MTPChatAdminRights(), MTPChatBannedRights());
+	const auto reply = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, 0, mtpc_messages_editChatPhoto, reply)
+		|| chat->hasUserpic() || chat->userpicPhotoId()) {
+		std::fprintf(
+			stderr,
+			"Peer photo removal regression failed: server confirmation did "
+			"not clear the photo.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Peer photo removal regression passed: restricted requests were "
+		"denied and the server response removed the existing photo.\n");
+	return true;
+}
+
+[[nodiscard]] bool RunPeerPhotoUploadLifecycleRegression(
+	not_null<Window::SessionController *> controller,
+	bool expectServerConfirmation) {
+	const auto chat = controller->session().data().chat(ChatId(1171));
+	chat->setName(u"Photo upload lifecycle group"_q);
+	chat->setFlags(ChatDataFlag::Creator);
+	chat->setLoadedStatus(PeerData::LoadedStatus::Normal);
+	const auto originalPhotoId = PhotoId(117100);
+	const auto originalChat
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_creator),
+				   MTP_long(peerToChat(chat->id).bare),
+				   MTP_string(u"Photo upload lifecycle group"_q),
+				   MTP_chatPhoto(MTP_flags(0),
+								 MTP_long(static_cast<int64>(originalPhotoId)),
+								 MTPbytes(), MTP_int(2)),
+				   MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+				   MTPChatAdminRights(), MTPChatBannedRights());
+	controller->session().data().processChats(
+		MTP_vector<MTPChat>({originalChat}));
+	if (expectServerConfirmation) {
+		chat->setDefaultRestrictions(
+			ChatRestrictions(ChatRestriction::ChangeInfo));
+		if (!chat->canEditInformation()) {
+			std::fprintf(stderr, "Peer photo lifecycle regression failed: "
+								 "creator lost photo edit "
+								 "rights under default restrictions.\n");
+			return false;
+		}
+	}
+	if (chat->usesCustomServer() != expectServerConfirmation) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: account fixture did not "
+			"match the expected upload completion behavior.\n");
+		return false;
+	}
+	if (chat->userpicPhotoId() != originalPhotoId) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: original photo was not "
+			"installed before replacement.\n");
+		return false;
+	}
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	ChannelSaveRequestCapture capture{
+		.instance = &controller->session().mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	auto previousImage = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	previousImage.fill(Qt::red);
+	controller->session().api().peerPhoto().upload(peer,
+												   {std::move(previousImage)});
+	if (!WaitForRegressionCondition([&] { return !capture.requests.empty(); })
+		|| static_cast<uint32>(capture.requests.front().body.front())
+			   != mtpc_upload_saveFilePart) {
+		std::fprintf(stderr,
+					 "Peer photo lifecycle regression failed: the first "
+					 "pending upload did not start.\n");
+		return false;
+	}
+	auto supersededImage = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	supersededImage.fill(Qt::yellow);
+	controller->session().api().peerPhoto().upload(
+		peer, {std::move(supersededImage)});
+	if (!WaitForRegressionCondition(
+			[&] { return capture.requests.size() == 2; })
+		|| static_cast<uint32>(capture.requests.back().body.front())
+			   != mtpc_upload_saveFilePart) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: replacing a pending "
+			"upload did not start.\n");
+		return false;
+	}
+	const auto box = controller->window().show(
+		object_ptr<EditPeerInfoBox>(controller->widget().get(), controller,
+									peer),
+		Ui::LayerOption::KeepOther, anim::type::normal);
+	if (!box) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: edit box did not open.\n");
+		return false;
+	}
+	const auto root = not_null<QWidget *>(box.get());
+	const auto buttonRoot = not_null<QWidget *>(box->parentWidget());
+	const auto photo = Test::FindFirst<Ui::UserpicButton>(root);
+	auto save = static_cast<Ui::RoundButton *>(nullptr);
+	for (const auto button : Test::FindAll<Ui::RoundButton>(buttonRoot)) {
+		if (button->accessibilityName() == tr::lng_settings_save(tr::now)) {
+			save = button;
+			break;
+		}
+	}
+	if (!photo || !save) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: photo or Save control was "
+			"missing.\n");
+		return false;
+	}
+	const auto photoId = PhotoId(117101);
+	struct EditCloseState {
+		bool editClosed = false;
+		bool photoChangedBeforeClose = false;
+	};
+	const auto editCloseState = std::make_shared<EditCloseState>();
+	QObject::connect(box.get(), &QObject::destroyed, [editCloseState, chat] {
+		editCloseState->editClosed = true;
+		editCloseState->photoChangedBeforeClose
+			= (chat->userpicPhotoId() == photoId);
+	});
+	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	image.fill(Qt::blue);
+	photo->showCustom(std::move(image));
+	const auto replacementUploadIndex = capture.requests.size();
+	Test::Click(save);
+	QCoreApplication::processEvents();
+	if (!WaitForRegressionCondition(
+			[&] { return capture.requests.size() > replacementUploadIndex; })
+		|| (!expectServerConfirmation
+			&& !WaitForRegressionCondition([&] { return !box; }))) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: upload did not start or "
+			"the stock editor did not close.\n");
+		return false;
+	}
+	const auto editClosedBeforeConfirmation = !box;
+	if (capture.requests.size() != replacementUploadIndex + 1
+		|| static_cast<uint32>(
+			   capture.requests[replacementUploadIndex].body.front())
+			   != mtpc_upload_saveFilePart
+		|| chat->userpicPhotoId() != originalPhotoId
+		|| (expectServerConfirmation == editClosedBeforeConfirmation)) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: edit box did not follow "
+			"the account's upload completion behavior.\n");
+		return false;
+	}
+	if (expectServerConfirmation) {
+		auto failureAnimationWait = QElapsedTimer();
+		failureAnimationWait.start();
+		if (!WaitForRegressionCondition([&] {
+				return failureAnimationWait.elapsed() >= st::radialDuration * 5;
+			})
+			|| !photo->pendingCustomUploadShownForRegressionTest()) {
+			std::fprintf(stderr, "Peer photo lifecycle regression failed: "
+								 "replacement preview or "
+								 "upload progress disappeared while the "
+								 "replacement was pending.\n");
+			return false;
+		}
+		Test::Click(save);
+		QCoreApplication::processEvents();
+		if (!box || capture.requests.size() != replacementUploadIndex + 1
+			|| chat->userpicPhotoId() != originalPhotoId) {
+			std::fprintf(
+				stderr,
+				"Peer photo lifecycle regression failed: second Save closed "
+				"the edit before the photo upload completed.\n");
+			return false;
+		}
+	}
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, replacementUploadIndex, mtpc_upload_saveFilePart,
+			MTP_boolTrue())
+		|| !WaitForRegressionCondition([&] {
+			   return capture.requests.size() == replacementUploadIndex + 2;
+		   })) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: uploaded photo was not "
+			"sent to the chat.\n");
+		return false;
+	}
+	const auto editClosedBeforePhotoUpdate = !box;
+	if ((expectServerConfirmation == editClosedBeforePhotoUpdate)
+		|| chat->userpicPhotoId() != originalPhotoId
+		|| static_cast<uint32>(
+			   capture.requests[replacementUploadIndex + 1].body.front())
+			   != mtpc_messages_editChatPhoto) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: edit box or photo state "
+			"changed before the server photo update.\n");
+		return false;
+	}
+	const auto updatedChat = MTP_chat(
+		MTP_flags(MTPDchat::Flag::f_creator),
+		MTP_long(peerToChat(chat->id).bare),
+		MTP_string(u"Photo upload lifecycle group"_q),
+		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
+					  MTPbytes(), MTP_int(2)),
+		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+		MTPChatAdminRights(),
+		expectServerConfirmation
+			? MTPChatBannedRights(MTP_chatBannedRights(
+				  MTP_flags(MTPDchatBannedRights::Flag::f_change_info),
+				  MTP_int(0)))
+			: MTPChatBannedRights());
+	const auto reply = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, replacementUploadIndex + 1, mtpc_messages_editChatPhoto,
+			reply)
+		|| chat->userpicPhotoId() != photoId
+		|| (expectServerConfirmation
+			&& (!(chat->defaultRestrictions() & ChatRestriction::ChangeInfo)
+				|| !chat->canEditInformation()))) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: server photo update was "
+			"not applied.\n");
+		return false;
+	}
+	if (!WaitForRegressionCondition([&] { return !box; })
+		|| !editCloseState->editClosed
+		|| (expectServerConfirmation
+			&& !editCloseState->photoChangedBeforeClose)) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: server photo update was "
+			"not applied before the edit closed.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr, "Peer photo lifecycle regression passed: edit box followed the "
+				"account's upload completion behavior.\n");
+	return true;
+}
+
+[[nodiscard]] bool RunCreatedGroupPhotoUploadRegression(
+	not_null<Window::SessionController *> controller) {
+	const auto member = controller->session().data().userLoaded(UserId(2));
+	if (!member || !controller->session().user()->usesCustomServer()) {
+		std::fprintf(
+			stderr,
+			"Created group photo regression failed: pinned group fixture was "
+			"unavailable.\n");
+		return false;
+	}
+	const auto box = controller->window().show(
+		object_ptr<GroupInfoBox>(controller->widget().get(), controller,
+								 GroupInfoBox::Type::Group),
+		Ui::LayerOption::KeepOther, anim::type::normal);
+	if (!box) {
+		std::fprintf(stderr, "Created group photo regression failed: create "
+							 "box did not open.\n");
+		return false;
+	}
+	const auto root = not_null<QWidget *>(box.get());
+	const auto photo = Test::FindFirst<Ui::UserpicButton>(root);
+	const auto title = Test::FindFirst<Ui::InputField>(root);
+	auto next = static_cast<Ui::RoundButton *>(nullptr);
+	for (const auto button :
+		 Test::FindAll<Ui::RoundButton>(box->parentWidget())) {
+		if (button->accessibilityName() == tr::lng_create_group_next(tr::now)) {
+			next = button;
+			break;
+		}
+	}
+	if (!photo || !title || !next) {
+		std::fprintf(
+			stderr,
+			"Created group photo regression failed: photo, title or Next "
+			"control was missing.\n");
+		return false;
+	}
+	const auto groupName = u"Created photo lifecycle group"_q;
+	Test::Settle([&] { title->setText(groupName); });
+	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
+	image.fill(Qt::green);
+	photo->showCustom(std::move(image));
+	Test::Click(next);
+	const auto selection
+		= Test::FindFirst<PeerListBox>(controller->widget().get());
+	if (!selection) {
+		std::fprintf(stderr, "Created group photo regression failed: member "
+							 "selection did not open.\n");
+		return false;
+	}
+	selection->peerListAddSelectedPeers(
+		std::vector<not_null<PeerData *>>{member});
+	auto create = static_cast<Ui::RoundButton *>(nullptr);
+	for (const auto button :
+		 Test::FindAll<Ui::RoundButton>(selection->parentWidget())) {
+		if (button->accessibilityName()
+			== tr::lng_create_group_create(tr::now)) {
+			create = button;
+			break;
+		}
+	}
+	if (!create) {
+		std::fprintf(stderr, "Created group photo regression failed: final "
+							 "Create control was missing.\n");
+		return false;
+	}
+	ChannelSaveRequestCapture capture{
+		.instance = &controller->session().mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	Test::Click(create);
+	if (!WaitForRegressionCondition(
+			[&] { return capture.requests.size() == 1; })
+		|| static_cast<uint32>(capture.requests.front().body.front())
+			   != mtpc_messages_createChat) {
+		std::fprintf(
+			stderr,
+			"Created group photo regression failed: group creation request "
+			"did not start.\n");
+		return false;
+	}
+	const auto chatId = ChatId(1172);
+	const auto createdChat
+		= MTP_chat(MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chatId.bare),
+				   MTP_string(groupName), MTP_chatPhotoEmpty(), MTP_int(1),
+				   MTP_int(1), MTP_int(2), MTPInputChannel(),
+				   MTPChatAdminRights(), MTPChatBannedRights());
+	const auto createdUpdates = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({createdChat}), MTP_int(2), MTP_int(0));
+	const auto invitedUsers = MTP_messages_invitedUsers(
+		createdUpdates, MTP_vector<MTPMissingInvitee>());
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, 0, mtpc_messages_createChat, invitedUsers)
+		|| box || !controller->session().data().chat(chatId)
+		|| capture.requests.size() != 2
+		|| static_cast<uint32>(capture.requests[1].body.front())
+			   != mtpc_upload_saveFilePart) {
+		std::fprintf(
+			stderr,
+			"Created group photo regression failed: selected photo was not "
+			"uploaded after group creation.\n");
+		return false;
+	}
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, 1, mtpc_upload_saveFilePart, MTP_boolTrue())
+		|| !WaitForRegressionCondition(
+			[&] { return capture.requests.size() == 3; })
+		|| static_cast<uint32>(capture.requests[2].body.front())
+			   != mtpc_messages_editChatPhoto) {
+		std::fprintf(stderr, "Created group photo regression failed: photo "
+							 "update did not target "
+							 "the created group.\n");
+		return false;
+	}
+	const auto photoId = PhotoId(117201);
+	const auto updatedChat = MTP_chat(
+		MTP_flags(MTPDchat::Flag::f_creator), MTP_long(chatId.bare),
+		MTP_string(groupName),
+		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
+					  MTPbytes(), MTP_int(2)),
+		MTP_int(1), MTP_int(1), MTP_int(2), MTPInputChannel(),
+		MTPChatAdminRights(), MTPChatBannedRights());
+	const auto photoUpdates = MTP_updates(
+		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
+		MTP_vector<MTPChat>({updatedChat}), MTP_int(3), MTP_int(0));
+	const auto created = controller->session().data().chat(chatId);
+	if (!ReplyToCapturedRequestForRegressionTest(
+			capture, 2, mtpc_messages_editChatPhoto, photoUpdates)
+		|| created->userpicPhotoId() != photoId) {
+		std::fprintf(
+			stderr,
+			"Created group photo regression failed: uploaded photo was not "
+			"applied to the created group.\n");
+		return false;
+	}
+	std::fprintf(
+		stderr,
+		"Created group photo regression passed: selected image reached the "
+		"created group.\n");
 	return true;
 }
 
@@ -3467,9 +3997,6 @@ AcceptedMiniAppOpens(not_null<Main::Session *> session,
 	const auto peer = session.data().processChats(MTP_vector<MTPChat>({chat}));
 	return peer ? peer->asChannel() : nullptr;
 }
-
-template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
 
 [[nodiscard]] bool RunBoostEntryPathRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
@@ -9078,6 +9605,33 @@ void RunProtectedCacheCleanupRegression(
 	nativeLifecycleResults->Report("translation-controls",
 								   translationControlsPassed);
 	stockController->hideLayer(anim::type::instant);
+	pinnedController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("pinned-peer-photo-removal-lifecycle");
+	const auto pinnedPeerPhotoRemovalLifecyclePassed
+		= !shouldInjectFailure("pinned-peer-photo-removal-lifecycle")
+		  && RunPeerPhotoRemovalLifecycleRegression(pinnedController);
+	nativeLifecycleResults->Report("pinned-peer-photo-removal-lifecycle",
+								   pinnedPeerPhotoRemovalLifecyclePassed);
+	nativeLifecycleResults->StartCase("stock-peer-photo-upload-lifecycle");
+	const auto stockPeerPhotoUploadLifecyclePassed
+		= !shouldInjectFailure("stock-peer-photo-upload-lifecycle")
+		  && RunPeerPhotoUploadLifecycleRegression(stockController, false);
+	nativeLifecycleResults->Report("stock-peer-photo-upload-lifecycle",
+								   stockPeerPhotoUploadLifecyclePassed);
+	nativeLifecycleResults->StartCase("pinned-peer-photo-upload-lifecycle");
+	const auto pinnedPeerPhotoUploadLifecyclePassed
+		= !shouldInjectFailure("pinned-peer-photo-upload-lifecycle")
+		  && RunPeerPhotoUploadLifecycleRegression(pinnedController, true);
+	nativeLifecycleResults->Report("pinned-peer-photo-upload-lifecycle",
+								   pinnedPeerPhotoUploadLifecyclePassed);
+	pinnedController->hideLayer(anim::type::instant);
+	stockController->hideLayer(anim::type::instant);
+	nativeLifecycleResults->StartCase("pinned-created-group-photo-lifecycle");
+	const auto pinnedCreatedGroupPhotoPassed
+		= !shouldInjectFailure("pinned-created-group-photo-lifecycle")
+		  && RunCreatedGroupPhotoUploadRegression(pinnedController);
+	nativeLifecycleResults->Report("pinned-created-group-photo-lifecycle",
+								   pinnedCreatedGroupPhotoPassed);
 	pinnedController->hideLayer(anim::type::instant);
 	nativeLifecycleResults->StartCase("manage-controls");
 	const auto manageControlsPassed = RunManageControlsLifecycleRegression(

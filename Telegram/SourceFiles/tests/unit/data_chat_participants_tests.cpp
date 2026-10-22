@@ -19,9 +19,14 @@ using Data::details::BasicChatAdminRoleForSave;
 using Data::details::BasicChatControlsFor;
 using Data::details::BasicChatRole;
 using Data::details::CanAddBasicChatAdmins;
+using Data::details::CanEditChatPhotoFor;
 using Data::details::CanManageBasicChatCall;
 using Data::details::CanMarkUserLoadedNormally;
+using Data::details::CanRemoveChatPhotoFor;
 using Data::details::ChatParticipantInfo;
+using Data::details::ChatPhotoPeerKind;
+using Data::details::ChatPhotoPeerKindForChannel;
+using Data::details::ChatPhotoSupportedFor;
 using Data::details::ResolveChatParticipants;
 
 auto ResolveForAccount(
@@ -76,15 +81,65 @@ TEST_CASE(CustomServerBasicGroupAdminEditorIsRoleOnly) {
 	CHECK(normal.canTransferOwnership);
 }
 
-// A custom server has no chat photos, migration, member tags or per-member
-// restrictions, so none of these controls is built for its basic groups.
-TEST_CASE(CustomServerBasicGroupHidesUnsupportedControls) {
+// Pinned basic groups support photos; the other unsupported controls stay
+// hidden.
+TEST_CASE(CustomServerBasicGroupPhotoReturnsAndOtherControlsStayHidden) {
 	const auto custom = BasicChatControlsFor(true);
-	CHECK(!custom.canEditPhoto);
+	CHECK(custom.canEditPhoto);
 	CHECK(!custom.canEditType);
 	CHECK(!custom.canEditHistoryVisibility);
 	CHECK(!custom.canRestrictMembers);
 	CHECK(!custom.canEditMemberTags);
+}
+
+TEST_CASE(PinnedBasicGroupPhotoNeedsChangeInfoPermission) {
+	// ChatData::canEditInformation() is true for creators and unrestricted
+	// members, and false for members restricted from changing group info.
+	CHECK(CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true));
+	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false));
+}
+
+TEST_CASE(PinnedBasicGroupPhotoRemovalUsesVisiblePhotoAndChangeInfo) {
+	CHECK(
+		CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true, true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false,
+								 true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, true,
+								 false));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::Supergroup, true,
+								 true));
+	CHECK(!CanRemoveChatPhotoFor(true, ChatPhotoPeerKind::Channel, true, true));
+}
+
+TEST_CASE(NewlyCreatedPinnedBasicGroupPhotoDoesNotNeedLoadedRights) {
+	CHECK(
+		CanEditChatPhotoFor(true, ChatPhotoPeerKind::BasicGroup, false, true));
+	CHECK(
+		!CanEditChatPhotoFor(true, ChatPhotoPeerKind::Supergroup, false, true));
+	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::Channel, false, true));
+}
+
+TEST_CASE(PinnedSupergroupAndChannelPhotosStayHidden) {
+	CHECK(ChatPhotoSupportedFor(true, ChatPhotoPeerKind::BasicGroup));
+	CHECK(!ChatPhotoSupportedFor(true, ChatPhotoPeerKind::Supergroup));
+	CHECK(!ChatPhotoSupportedFor(true, ChatPhotoPeerKind::Channel));
+	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::Supergroup, true));
+	CHECK(!CanEditChatPhotoFor(true, ChatPhotoPeerKind::Channel, true));
+}
+
+TEST_CASE(PinnedPhotoPeerKindFollowsChannelShape) {
+	CHECK(ChatPhotoPeerKindForChannel(true) == ChatPhotoPeerKind::Supergroup);
+	CHECK(ChatPhotoPeerKindForChannel(false) == ChatPhotoPeerKind::Channel);
+}
+
+TEST_CASE(StockChatPhotoPermissionsStayUnchanged) {
+	for (const auto kind :
+		 {ChatPhotoPeerKind::BasicGroup, ChatPhotoPeerKind::Supergroup,
+		  ChatPhotoPeerKind::Channel}) {
+		CHECK(ChatPhotoSupportedFor(false, kind));
+		CHECK(CanEditChatPhotoFor(false, kind, true));
+		CHECK(!CanEditChatPhotoFor(false, kind, false));
+	}
 }
 
 TEST_CASE(StockBasicGroupKeepsEveryControl) {
