@@ -23,7 +23,8 @@ namespace {
 constexpr auto TestApiId = 17349;
 constexpr auto SnapApiId = 611335;
 constexpr auto DesktopApiId = 2040;
-constexpr auto kAuthorizationReloadTimeout = 10 * crl::time(1000);
+constexpr auto kAuthorizationReloadTimeout
+	= crl::time(details::AuthorizationsReloadState::kTimeoutMs);
 
 Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 	auto result = Authorizations::Entry();
@@ -127,47 +128,49 @@ void Authorizations::reload() {
 	if (!_reloadTimeout) {
 		_reloadTimeout.emplace([=] { reloadTimedOut(); });
 	}
-	const auto generation = _reloadState.begin();
-	const auto requestId
-		= _api.request(MTPaccount_GetAuthorizations())
-			  .done([=](const MTPaccount_Authorizations &result) {
-				  if (!_reloadState.complete(generation)) {
-					  return;
-				  }
-				  _reloadTimeout->cancel();
-				  _lastReceived = crl::now();
-				  _hasAuthoritativeList = true;
-				  const auto &data = result.data();
-				  _ttlDays = data.vauthorization_ttl_days().v;
-				  _list = ranges::views::all(data.vauthorizations().v)
-						  | ranges::views::transform(
-							  [](const MTPAuthorization &auth) {
-								  return ParseEntry(auth.data());
-							  })
-						  | ranges::to<List>;
-				  removeExpiredUnreviewed();
-				  refreshCallsDisabledHereFromCloud();
-				  _listChanges.fire({});
-			  })
-			  .fail([=](const MTP::Error &error) {
-				  if (!_reloadState.isCurrent(generation)) {
-					  return;
-				  }
-				  _reloadTimeout->cancel();
-				  _reloadState.fail(generation, error);
-			  })
-			  .send();
-	_reloadState.setRequestId(generation, requestId);
-	if (_reloadState.isCurrent(generation)) {
-		_reloadTimeout->callOnce(kAuthorizationReloadTimeout);
-	}
+	details::RunAuthorizationsReload(
+		_reloadState, kAuthorizationReloadTimeout,
+		[=](auto done, auto fail) {
+			return _api.request(MTPaccount_GetAuthorizations())
+				.done(std::move(done))
+				.fail(std::move(fail))
+				.send();
+		},
+		[=](crl::time timeout, auto callback) {
+			details::ScheduleAuthorizationsReloadTimeout(
+				*_reloadTimeout, _reloadTimeoutAction, timeout,
+				std::move(callback));
+		},
+		[=] {
+			if (_reloadTimeout) {
+				_reloadTimeout->cancel();
+			}
+			_reloadTimeoutAction = nullptr;
+		},
+		[=](mtpRequestId id) { _api.request(id).cancel(); },
+		[=](const MTPaccount_Authorizations &result) {
+			_lastReceived = crl::now();
+			_hasAuthoritativeList = true;
+			const auto &data = result.data();
+			_ttlDays = data.vauthorization_ttl_days().v;
+			_list
+				= ranges::views::all(data.vauthorizations().v)
+				  | ranges::views::transform([](const MTPAuthorization &auth) {
+						return ParseEntry(auth.data());
+					})
+				  | ranges::to<List>;
+			removeExpiredUnreviewed();
+			refreshCallsDisabledHereFromCloud();
+			_reloadSuccesses.fire({});
+			_listChanges.fire({});
+		});
 }
 
 void Authorizations::reloadTimedOut() {
-	const auto requestId
-		= _reloadState.timeout(_reloadState.currentGeneration());
-	if (requestId) {
-		_api.request(requestId).cancel();
+	auto callback = std::move(_reloadTimeoutAction);
+	_reloadTimeoutAction = nullptr;
+	if (callback) {
+		callback();
 	}
 }
 
@@ -175,6 +178,7 @@ void Authorizations::cancelCurrentRequest() {
 	if (_reloadTimeout) {
 		_reloadTimeout->cancel();
 	}
+	_reloadTimeoutAction = nullptr;
 	if (const auto requestId = _reloadState.takeRequestId()) {
 		_api.request(requestId).cancel();
 	}
@@ -319,6 +323,14 @@ bool Authorizations::hasAuthoritativeList() const {
 
 rpl::producer<MTP::Error> Authorizations::reloadFailures() const {
 	return _reloadState.failures();
+}
+
+rpl::producer<> Authorizations::reloadSuccesses() const {
+	return _reloadSuccesses.events();
+}
+
+QString Authorizations::lastReloadFailureType() const {
+	return _reloadState.lastFailureType();
 }
 
 const std::vector<Data::UnreviewedAuth> &Authorizations::unreviewed() {

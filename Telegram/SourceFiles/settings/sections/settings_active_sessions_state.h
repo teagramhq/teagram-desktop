@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <utility>
 
+#include <QtCore/QString>
+
 namespace Settings::details {
 
 class ActiveSessionsState final {
@@ -24,17 +26,35 @@ class ActiveSessionsState final {
 		int retryDelayMs = 0;
 	};
 
-	void initialize(bool hasAuthoritativeList, bool hasRows) {
+	void initialize(bool hasAuthoritativeList, bool hasRows,
+					const QString &failureType = QString()) {
 		_hasAuthoritativeList = hasAuthoritativeList;
 		_hasRows = hasRows;
-		_loading = !hasAuthoritativeList && !hasRows;
+		_failureType = failureType;
+		_failed = !_failureType.isEmpty();
+		_loading = !_failed && !hasAuthoritativeList && !hasRows;
 	}
 
-	void beginRefresh() { _loading = !_hasAuthoritativeList && !_hasRows; }
+	void beginRefresh() {
+		if (!_failed) {
+			_loading = !_hasAuthoritativeList && !_hasRows;
+		}
+	}
 
-	void beginTerminateAll() { _loading = true; }
+	void beginTerminateAll() {
+		_failed = false;
+		_failureType = QString();
+		_loading = true;
+	}
 
-	[[nodiscard]] RefreshTransition refreshFailed() {
+	void reloadSucceeded() {
+		_failed = false;
+		_failureType = QString();
+	}
+
+	[[nodiscard]] RefreshTransition refreshFailed(const QString &errorType) {
+		_failed = true;
+		_failureType = errorType;
 		_loading = false;
 		return {
 			.schedulePoll = true,
@@ -54,20 +74,35 @@ class ActiveSessionsState final {
 
 	[[nodiscard]] bool loading() const { return _loading; }
 
+	[[nodiscard]] bool failed() const { return _failed; }
+
+	[[nodiscard]] const QString &failureType() const { return _failureType; }
+
 	[[nodiscard]] bool hasRows() const { return _hasRows; }
 
 	[[nodiscard]] bool rowsVisible() const { return _hasRows && !_loading; }
+
+	[[nodiscard]] bool contentVisible() const {
+		return !_loading && (_hasAuthoritativeList || _hasRows);
+	}
+
+	[[nodiscard]] bool shouldUseCachedList(bool hasAuthoritativeList,
+										   bool cacheIsFresh) const {
+		return hasAuthoritativeList && cacheIsFresh && !_failed;
+	}
 
   private:
 	bool _hasAuthoritativeList = false;
 	bool _hasRows = false;
 	bool _loading = false;
+	bool _failed = false;
+	QString _failureType;
 };
 
-template <typename SchedulePoll>
-void HandleReloadFailure(ActiveSessionsState &state,
+template <typename Error, typename SchedulePoll>
+void HandleReloadFailure(ActiveSessionsState &state, const Error &error,
 						 SchedulePoll &&schedulePoll) {
-	const auto transition = state.refreshFailed();
+	const auto transition = state.refreshFailed(error.type());
 	if (transition.schedulePoll) {
 		std::forward<SchedulePoll>(schedulePoll)(transition.retryDelayMs);
 	}

@@ -19,7 +19,7 @@ void BindReloadFailures(Producer &&failures, Handler &&handler,
 						rpl::lifetime &lifetime) {
 	std::forward<Producer>(failures)
 		| rpl::on_next([handler = std::forward<Handler>(handler)](
-						   const auto &) { handler(); },
+						   const auto &error) { handler(error); },
 					   lifetime);
 }
 

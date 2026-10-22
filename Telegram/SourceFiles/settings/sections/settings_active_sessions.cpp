@@ -630,7 +630,7 @@ private:
 
 	void shortPollSessions();
 	void parse(const Api::Authorizations::List &list);
-	void reloadFailed();
+	void reloadFailed(const MTP::Error &error);
 
 	void terminate(Fn<void()> terminateRequest, QString message);
 	void terminateOne(uint64 hash);
@@ -690,6 +690,7 @@ public:
 		rpl::producer<int> ttlDays);
 
 	void showData(const Full &data);
+	void showReloadFailed(bool failed);
 	[[nodiscard]] rpl::producer<EntryData> showRequests() const;
 	[[nodiscard]] rpl::producer<uint64> terminateOne() const;
 	[[nodiscard]] rpl::producer<> terminateAll() const;
@@ -709,6 +710,7 @@ private:
 	QPointer<Ui::RpWidget> _currentHeader;
 	QPointer<Ui::RpWidget> _incompleteHeader;
 	QPointer<Ui::RpWidget> _otherHeader;
+	QPointer<Ui::SlideWrap<Ui::FlatLabel>> _reloadFailure;
 	std::unique_ptr<ListController> _incomplete;
 	std::unique_ptr<ListController> _list;
 	rpl::variable<int> _ttlDays;
@@ -753,10 +755,15 @@ void SessionsContent::setupContent() {
 
 	const auto currentList = _authorizations->list();
 	_state.initialize(_authorizations->hasAuthoritativeList(),
-					  !currentList.empty());
-	_inner->setVisible(!_state.loading());
+					  !currentList.empty(),
+					  _authorizations->lastReloadFailureType());
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
 	details::BindReloadFailures(
-		_authorizations->reloadFailures(), [=] { reloadFailed(); }, lifetime());
+		_authorizations->reloadFailures(),
+		[=](const MTP::Error &error) { reloadFailed(error); }, lifetime());
+	_authorizations->reloadSuccesses()
+		| rpl::on_next([=] { _state.reloadSucceeded(); }, lifetime());
 
 	_authorizations->listValue()
 		| rpl::on_next(
@@ -785,7 +792,8 @@ void SessionsContent::parse(const Api::Authorizations::List &list) {
 	ranges::sort(_data.incomplete, std::greater<>(), &EntryData::activeTime);
 
 	_inner->showData(_data);
-	_inner->setVisible(!_state.loading());
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
 
 	if (transition.schedulePoll) {
 		_shortPollTimer.callOnce(kShortPollTimeout);
@@ -793,12 +801,13 @@ void SessionsContent::parse(const Api::Authorizations::List &list) {
 	update();
 }
 
-void SessionsContent::reloadFailed() {
-	details::HandleReloadFailure(_state, [=](int retryDelayMs) {
+void SessionsContent::reloadFailed(const MTP::Error &error) {
+	details::HandleReloadFailure(_state, error, [=](int retryDelayMs) {
 		_shortPollTimer.cancel();
 		_shortPollTimer.callOnce(retryDelayMs);
 	});
-	_inner->setVisible(!_state.loading());
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
 	update();
 }
 
@@ -820,19 +829,25 @@ void SessionsContent::paintEvent(QPaintEvent *e) {
 			QRect(0, 0, width(), st::noContactsHeight),
 			tr::lng_contacts_loading(tr::now),
 			style::al_center);
+	} else if (_state.failed() && !_state.contentVisible()) {
+		p.setFont(st::noContactsFont);
+		p.setPen(st::noContactsColor);
+		p.drawText(QRect(0, 0, width(), st::noContactsHeight),
+				   tr::lng_sessions_refresh_failed(tr::now), style::al_center);
 	}
 }
 
 void SessionsContent::shortPollSessions() {
 	const auto left = kShortPollTimeout
 		- (crl::now() - _authorizations->lastReceivedTime());
-	if (_authorizations->hasAuthoritativeList() && left > 0) {
+	if (_state.shouldUseCachedList(_authorizations->hasAuthoritativeList(),
+								   left > 0)) {
 		parse(_authorizations->list());
 		_shortPollTimer.cancel();
 		_shortPollTimer.callOnce(left);
 	} else {
 		_state.beginRefresh();
-		_inner->setVisible(!_state.loading());
+		_inner->setVisible(_state.contentVisible());
 		_authorizations->reload();
 		_shortPollTimer.callOnce(kShortPollTimeout);
 	}
@@ -904,12 +919,13 @@ void SessionsContent::terminateAll() {
 			[=](const MTPBool &result) {
 				reset();
 				if (mtpIsFalse(result)) {
-					reloadFailed();
+					reloadFailed(MTP::Error::Local(
+						u"AUTHORIZATIONS_TERMINATE_FAILED"_q, QString()));
 				}
 			},
 			[=](const MTP::Error &result) {
 				reset();
-				reloadFailed();
+				reloadFailed(result);
 			});
 		_authorizations->requestTerminate(std::move(done), std::move(fail));
 	};
@@ -950,6 +966,14 @@ void SessionsContent::Inner::setupContent() {
 	using namespace rpl::mappers;
 
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	_reloadFailure = content
+						 ->add(object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+							 content,
+							 object_ptr<Ui::FlatLabel>(
+								 content, tr::lng_sessions_refresh_failed(),
+								 st::boxDividerLabel),
+							 st::defaultBoxDividerLabelPadding))
+						 ->setDuration(0);
 
 	_currentHeader = AddSubsectionTitle(
 		content,
@@ -1062,6 +1086,10 @@ void SessionsContent::Inner::showData(const Full &data) {
 	_current->showData({ &data.current, &data.current + 1 });
 	_list->showData(data.list);
 	_incomplete->showData(data.incomplete);
+}
+
+void SessionsContent::Inner::showReloadFailed(bool failed) {
+	_reloadFailure->toggle(failed, anim::type::instant);
 }
 
 rpl::producer<> SessionsContent::Inner::terminateAll() const {

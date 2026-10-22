@@ -22,6 +22,7 @@ namespace details {
 class AuthorizationsReloadState final {
   public:
 	using Generation = uint64;
+	static constexpr auto kTimeoutMs = 10'000;
 
 	[[nodiscard]] Generation begin() {
 		_pending = true;
@@ -41,8 +42,6 @@ class AuthorizationsReloadState final {
 		return _pending && (generation == _generation);
 	}
 
-	[[nodiscard]] Generation currentGeneration() const { return _generation; }
-
 	[[nodiscard]] bool complete(Generation generation) {
 		if (!isCurrent(generation)) {
 			return false;
@@ -56,25 +55,39 @@ class AuthorizationsReloadState final {
 		if (!complete(generation)) {
 			return;
 		}
+		_lastFailureType = error.type();
 		_failures.fire_copy(error);
 	}
 
 	[[nodiscard]] mtpRequestId timeout(Generation generation) {
 		const auto requestId = _requestId;
-		if (!complete(generation)) {
+		if (!isCurrent(generation)) {
 			return 0;
 		}
-		_failures.fire_copy(MTP::Error::Local(
-			QStringLiteral("AUTHORIZATIONS_RELOAD_TIMEOUT"), {}));
+		fail(generation,
+			 MTP::Error::Local(u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q, {}));
 		return requestId;
+	}
+
+	[[nodiscard]] bool succeed(Generation generation) {
+		if (!complete(generation)) {
+			return false;
+		}
+		_lastFailureType = QString();
+		return true;
 	}
 
 	[[nodiscard]] mtpRequestId takeRequestId() {
 		const auto result = _requestId;
 		_requestId = 0;
 		_pending = false;
+		_lastFailureType = QString();
 		++_generation;
 		return result;
+	}
+
+	[[nodiscard]] const QString &lastFailureType() const {
+		return _lastFailureType;
 	}
 
 	[[nodiscard]] rpl::producer<MTP::Error> failures() const {
@@ -85,8 +98,65 @@ class AuthorizationsReloadState final {
 	mtpRequestId _requestId = 0;
 	Generation _generation = 0;
 	bool _pending = false;
+	QString _lastFailureType;
 	rpl::event_stream<MTP::Error> _failures;
 };
+
+template <typename Timer, typename Callback>
+void ScheduleAuthorizationsReloadTimeout(Timer &timer, Fn<void()> &action,
+										 crl::time timeout,
+										 Callback &&callback) {
+	action = Fn<void()>(std::forward<Callback>(callback));
+	timer.callOnce(timeout);
+}
+
+template <typename Request, typename ScheduleTimeout, typename CancelTimeout,
+		  typename CancelRequest, typename Done>
+void RunAuthorizationsReload(AuthorizationsReloadState &state,
+							 crl::time timeout, Request &&request,
+							 ScheduleTimeout &&scheduleTimeout,
+							 CancelTimeout &&cancelTimeout,
+							 CancelRequest &&cancelRequest, Done &&done) {
+	if (state.pending()) {
+		return;
+	}
+	const auto generation = state.begin();
+	auto cancelOnDone = std::forward<CancelTimeout>(cancelTimeout);
+	auto cancelOnFail = cancelOnDone;
+	auto cancelOnTimeout = cancelOnDone;
+	auto cancelRequestOnTimeout = std::forward<CancelRequest>(cancelRequest);
+	auto doneHandler = std::forward<Done>(done);
+	const auto requestId = std::forward<Request>(request)(
+		[statePtr = &state, generation, cancel = std::move(cancelOnDone),
+		 done = std::move(doneHandler)](const auto &result) mutable {
+			if (!statePtr->succeed(generation)) {
+				return;
+			}
+			cancel();
+			done(result);
+		},
+		[statePtr = &state, generation,
+		 cancel = std::move(cancelOnFail)](const MTP::Error &error) mutable {
+			if (!statePtr->isCurrent(generation)) {
+				return;
+			}
+			cancel();
+			statePtr->fail(generation, error);
+		});
+	state.setRequestId(generation, requestId);
+	if (state.isCurrent(generation)) {
+		std::forward<ScheduleTimeout>(scheduleTimeout)(
+			timeout,
+			[statePtr = &state, generation, cancel = std::move(cancelOnTimeout),
+			 cancelRequest = std::move(cancelRequestOnTimeout)]() mutable {
+				const auto id = statePtr->timeout(generation);
+				cancel();
+				if (id) {
+					cancelRequest(id);
+				}
+			});
+	}
+}
 
 } // namespace details
 
@@ -117,6 +187,8 @@ public:
 	[[nodiscard]] crl::time lastReceivedTime();
 	[[nodiscard]] bool hasAuthoritativeList() const;
 	[[nodiscard]] rpl::producer<MTP::Error> reloadFailures() const;
+	[[nodiscard]] rpl::producer<> reloadSuccesses() const;
+	[[nodiscard]] QString lastReloadFailureType() const;
 
 	[[nodiscard]] List list() const;
 	[[nodiscard]] rpl::producer<List> listValue() const;
@@ -149,9 +221,11 @@ private:
 	MTP::Sender _api;
 	details::AuthorizationsReloadState _reloadState;
 	std::optional<base::Timer> _reloadTimeout;
+	Fn<void()> _reloadTimeoutAction;
 
 	List _list;
 	rpl::event_stream<> _listChanges;
+	rpl::event_stream<> _reloadSuccesses;
 
 	Fn<int()> _autoconfirmPeriod;
 	std::vector<Data::UnreviewedAuth> _unreviewed;

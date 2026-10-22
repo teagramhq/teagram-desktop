@@ -15,14 +15,67 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <rpl/event_stream.h>
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace {
 
 using Api::details::AuthorizationsReloadState;
+using Api::details::RunAuthorizationsReload;
+using Api::details::ScheduleAuthorizationsReloadTimeout;
 using Settings::details::ActiveSessionsState;
 using Settings::details::BindReloadFailures;
 using Settings::details::GuardTerminateAllCallbacks;
 using Settings::details::HandleReloadFailure;
+
+struct FakeReloadTransport final {
+	struct Request {
+		mtpRequestId id = 0;
+		Fn<void(const int &)> done;
+		Fn<void(const MTP::Error &)> fail;
+	};
+
+	mtpRequestId send(Fn<void(const int &)> done,
+					  Fn<void(const MTP::Error &)> fail) {
+		const auto id = mtpRequestId(requests.size() + 1);
+		requests.push_back({id, std::move(done), std::move(fail)});
+		return id;
+	}
+
+	void cancel(mtpRequestId id) { cancelled.push_back(id); }
+
+	std::vector<Request> requests;
+	std::vector<mtpRequestId> cancelled;
+};
+
+struct FakeReloadClock final {
+	template <typename Callback>
+	void schedule(crl::time delay, Callback &&callback) {
+		ScheduleAuthorizationsReloadTimeout(*this, action, delay,
+											std::forward<Callback>(callback));
+	}
+
+	void callOnce(crl::time delay) {
+		delayMs = delay;
+		timeout = std::move(action);
+	}
+
+	void cancel() {
+		action = nullptr;
+		timeout = nullptr;
+	}
+
+	void advance() {
+		auto callback = std::exchange(timeout, nullptr);
+		if (callback) {
+			callback();
+		}
+	}
+
+	crl::time delayMs = 0;
+	Fn<void()> action;
+	Fn<void()> timeout;
+};
 
 TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	auto state = ActiveSessionsState();
@@ -38,70 +91,152 @@ TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	CHECK(!state.loading());
 }
 
-TEST_CASE(CachedSessionsStayVisibleWhenRefreshTimesOut) {
-	auto state = ActiveSessionsState();
-	state.initialize(true, true);
+TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
+	auto sessions = ActiveSessionsState();
+	sessions.initialize(true, true);
+	const auto replay = sessions.receiveList(true, true);
+	CHECK(!replay.clearRows);
+	CHECK(sessions.rowsVisible());
+
 	auto reload = AuthorizationsReloadState();
-	const auto generation = reload.begin();
-	reload.setRequestId(generation, 1);
+	auto transport = FakeReloadTransport();
+	auto clock = FakeReloadClock();
+	auto retryClock = FakeReloadClock();
 	auto retryDelayMs = 0;
 	auto lifetime = rpl::lifetime();
+	const auto start = [&] {
+		RunAuthorizationsReload(
+			reload, AuthorizationsReloadState::kTimeoutMs,
+			[&](auto done, auto fail) {
+				return transport.send(std::move(done), std::move(fail));
+			},
+			[&](crl::time delayMs, auto callback) {
+				clock.schedule(delayMs, std::move(callback));
+			},
+			[&] { clock.cancel(); },
+			[&](mtpRequestId id) { transport.cancel(id); },
+			[&](const int &rows) {
+				sessions.reloadSucceeded();
+				sessions.receiveList(rows != 0, true);
+			});
+	};
 	BindReloadFailures(
 		reload.failures(),
-		[&] {
-			HandleReloadFailure(state,
-								[&](int delayMs) { retryDelayMs = delayMs; });
+		[&, start](const MTP::Error &error) {
+			HandleReloadFailure(sessions, error, [&](int delayMs) {
+				retryDelayMs = delayMs;
+				retryClock.schedule(delayMs, [&, start] {
+					if (!sessions.shouldUseCachedList(true, true)) {
+						sessions.beginRefresh();
+						start();
+					}
+				});
+			});
 		},
 		lifetime);
 
-	const auto replay = state.receiveList(true, true);
-	CHECK(!replay.clearRows);
-	state.beginRefresh();
-	CHECK(state.hasRows());
-	CHECK(state.rowsVisible());
+	sessions.beginRefresh();
+	start();
+	CHECK_EQ(int(transport.requests.size()), 1);
+	CHECK_EQ(clock.delayMs, AuthorizationsReloadState::kTimeoutMs);
+	CHECK(sessions.rowsVisible());
 
-	CHECK_EQ(reload.timeout(generation), 1);
+	clock.advance();
+	CHECK_EQ(int(transport.cancelled.size()), 1);
+	CHECK_EQ(transport.cancelled.front(), transport.requests.front().id);
 	CHECK(!reload.pending());
 	CHECK_EQ(retryDelayMs, ActiveSessionsState::kFailedReloadRetryDelayMs);
-	CHECK(state.hasRows());
-	CHECK(state.rowsVisible());
-	CHECK(!state.loading());
+	CHECK(sessions.hasRows());
+	CHECK(sessions.rowsVisible());
+	CHECK(sessions.failed());
+	CHECK_EQ(sessions.failureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
+	CHECK_EQ(reload.lastFailureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
+	CHECK(!sessions.shouldUseCachedList(true, true));
+	sessions.receiveList(true, true);
+	CHECK(sessions.failed());
+	auto reopened = ActiveSessionsState();
+	reopened.initialize(true, true, reload.lastFailureType());
+	CHECK(reopened.failed());
+	CHECK(reopened.contentVisible());
 
-	const auto retryGeneration = reload.begin();
-	reload.setRequestId(retryGeneration, 2);
-	CHECK(!reload.complete(generation));
+	CHECK_EQ(retryClock.delayMs,
+			 ActiveSessionsState::kFailedReloadRetryDelayMs);
+	retryClock.advance();
+	CHECK_EQ(int(transport.requests.size()), 2);
 	CHECK(reload.pending());
+	transport.requests.front().done(1);
+	CHECK(reload.pending());
+	CHECK(sessions.failed());
+	transport.requests.back().done(0);
+	CHECK(!reload.pending());
+	CHECK(!sessions.failed());
+	CHECK(sessions.failureType().isEmpty());
+	CHECK(reload.lastFailureType().isEmpty());
+	CHECK(sessions.contentVisible());
 }
 
-TEST_CASE(InitialRefreshTimeoutStopsLoadingAndRetries) {
-	auto state = ActiveSessionsState();
-	state.initialize(false, false);
+TEST_CASE(ColdReloadTimeoutShowsFailureUntilEmptyResponse) {
+	auto sessions = ActiveSessionsState();
+	sessions.initialize(false, false);
+	CHECK(sessions.loading());
+	CHECK(!sessions.contentVisible());
+
 	auto reload = AuthorizationsReloadState();
-	const auto generation = reload.begin();
-	reload.setRequestId(generation, 1);
+	auto transport = FakeReloadTransport();
+	auto clock = FakeReloadClock();
+	auto retryClock = FakeReloadClock();
 	auto retryDelayMs = 0;
 	auto lifetime = rpl::lifetime();
+	const auto start = [&] {
+		RunAuthorizationsReload(
+			reload, AuthorizationsReloadState::kTimeoutMs,
+			[&](auto done, auto fail) {
+				return transport.send(std::move(done), std::move(fail));
+			},
+			[&](crl::time delayMs, auto callback) {
+				clock.schedule(delayMs, std::move(callback));
+			},
+			[&] { clock.cancel(); },
+			[&](mtpRequestId id) { transport.cancel(id); },
+			[&](const int &rows) {
+				sessions.reloadSucceeded();
+				sessions.receiveList(rows != 0, true);
+			});
+	};
 	BindReloadFailures(
 		reload.failures(),
-		[&] {
-			HandleReloadFailure(state,
-								[&](int delayMs) { retryDelayMs = delayMs; });
+		[&, start](const MTP::Error &error) {
+			HandleReloadFailure(sessions, error, [&](int delayMs) {
+				retryDelayMs = delayMs;
+				retryClock.schedule(delayMs, [&, start] {
+					if (!sessions.shouldUseCachedList(true, true)) {
+						sessions.beginRefresh();
+						start();
+					}
+				});
+			});
 		},
 		lifetime);
-	const auto replay = state.receiveList(false, false);
-	CHECK(replay.clearRows);
-	CHECK(state.loading());
-	state.beginRefresh();
-	CHECK(state.loading());
 
-	CHECK_EQ(reload.timeout(generation), 1);
-	CHECK(!reload.pending());
+	start();
+	clock.advance();
+	CHECK(!sessions.loading());
+	CHECK(sessions.failed());
+	CHECK(!sessions.contentVisible());
+	CHECK(!reload.lastFailureType().isEmpty());
 	CHECK_EQ(retryDelayMs, ActiveSessionsState::kFailedReloadRetryDelayMs);
-	CHECK(!state.loading());
-	CHECK(!state.rowsVisible());
+	CHECK(!sessions.shouldUseCachedList(true, true));
 
-	state.beginRefresh();
-	CHECK(state.loading());
+	retryClock.advance();
+	CHECK(!sessions.loading());
+	CHECK(sessions.failed());
+	CHECK_EQ(int(transport.requests.size()), 2);
+	transport.requests.back().done(0);
+	CHECK(!sessions.loading());
+	CHECK(!sessions.failed());
+	CHECK(reload.lastFailureType().isEmpty());
+	CHECK(sessions.contentVisible());
+	CHECK(!sessions.hasRows());
 }
 
 TEST_CASE(TerminateAllInvalidationClearsCachedSessions) {
@@ -117,13 +252,22 @@ TEST_CASE(TerminateAllInvalidationClearsCachedSessions) {
 	CHECK(invalidation.schedulePoll);
 	CHECK(!state.hasRows());
 	CHECK(state.loading());
+	CHECK(!state.contentVisible());
 
+	const auto failed = state.refreshFailed(u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
+	CHECK(failed.schedulePoll);
+	CHECK(state.failed());
+	CHECK(!state.contentVisible());
+
+	state.reloadSucceeded();
 	const auto emptyResponse = state.receiveList(false, true);
 	CHECK(emptyResponse.clearRows);
 	CHECK(emptyResponse.schedulePoll);
 	CHECK(!state.hasRows());
 	CHECK(!state.loading());
 	CHECK(!state.rowsVisible());
+	CHECK(!state.failed());
+	CHECK(state.contentVisible());
 }
 
 TEST_CASE(CompletedInitialEmptyListStopsLoading) {
@@ -131,10 +275,13 @@ TEST_CASE(CompletedInitialEmptyListStopsLoading) {
 	state.initialize(false, false);
 	CHECK(state.loading());
 
+	state.reloadSucceeded();
 	const auto emptyResponse = state.receiveList(false, true);
 	CHECK(emptyResponse.clearRows);
 	CHECK(emptyResponse.schedulePoll);
 	CHECK(!state.loading());
+	CHECK(!state.failed());
+	CHECK(state.contentVisible());
 }
 
 TEST_CASE(TerminateAllCallbacksIgnoreResultsAfterContentDestruction) {
