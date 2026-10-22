@@ -97,6 +97,7 @@ private:
 	// BeforeWaiting before the next NSEvent dispatches, so menu state
 	// is fresh by the time Cmd+C reaches AppKit's performKeyEquivalent.
 	std::unique_ptr<SingleQueuedInvokation> _scheduledUpdate;
+	QAction *_about = nullptr;
 	QAction *_logout = nullptr;
 	QAction *_undo = nullptr;
 	QAction *_redo = nullptr;
@@ -175,6 +176,9 @@ bool Manager::clipboardHasText() {
 }
 
 void Manager::retranslate() {
+	if (_about) {
+		_about->setText(MacAboutMenuText());
+	}
 	if (_logout) {
 		_logout->setText(tr::lng_mac_menu_logout(tr::now));
 	}
@@ -354,10 +358,8 @@ void Manager::buildAppleMenu(QMenu *main) {
 				window->show(Box(AboutBox));
 			});
 		};
-		const auto about = main->addAction(
-			u"About Telegram"_q,
-			std::move(callback));
-		about->setMenuRole(QAction::AboutQtRole);
+		_about = main->addAction(MacAboutMenuText(), std::move(callback));
+		_about->setMenuRole(QAction::AboutQtRole);
 	}
 
 	main->addSeparator();
@@ -623,10 +625,10 @@ void Manager::destroy() {
 	_lifetime.destroy();
 	_menuBar.reset();
 	_languageBound = false;
-	_logout = _undo = _redo = _cut = _copy = _paste = _delete = _selectAll
-		= _contacts = _addContact = _newGroup = _newChannel = _showTeagram
-		= _fullScreen = _emoji = _bold = _italic = _underline = _strikeOut
-		= _blockquote = _monospace = _clearFormat = nullptr;
+	_about = _logout = _undo = _redo = _cut = _copy = _paste = _delete
+		= _selectAll = _contacts = _addContact = _newGroup = _newChannel
+		= _showTeagram = _fullScreen = _emoji = _bold = _italic = _underline
+		= _strikeOut = _blockquote = _monospace = _clearFormat = nullptr;
 	_pasteboard = nullptr;
 	_pasteboardChangeCount = -1;
 	_pasteboardHasText = false;
