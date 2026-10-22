@@ -49,6 +49,7 @@ struct Session {
 };
 
 struct ApplyCounts {
+	int preflights = 0;
 	int historyWidgetDraftReads = 0;
 	int composeControlsDraftReads = 0;
 	int toneResolutions = 0;
@@ -61,7 +62,7 @@ enum class Handler {
 };
 
 struct Step {
-	const Session *owner = nullptr;
+	Session *owner = nullptr;
 	bool supported = false;
 };
 
@@ -74,9 +75,9 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 	auto blockedOptions = MTP::DcOptions(MTP::Environment::Production);
 	blockedOptions.constructBlocked();
 
-	const auto stock = Session{1, 42, &stockOptions};
-	const auto custom = Session{2, 42, &customOptions};
-	const auto blocked = Session{3, 42, &blockedOptions};
+	auto stock = Session{1, 42, &stockOptions};
+	auto custom = Session{2, 42, &customOptions};
+	auto blocked = Session{3, 42, &blockedOptions};
 	CHECK(stock.aiComposeSupported());
 	CHECK(!custom.aiComposeSupported());
 	CHECK(!blocked.aiComposeSupported());
@@ -109,18 +110,30 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 			CHECK_EQ(step.owner->aiComposeSupported(), step.supported);
 			for (const auto handler : handlers) {
 				const auto before = counts;
-				Api::details::RunIfAiComposeSupported(
-					*step.owner, [&](const Session &authorizedOwner) {
-						CHECK(&authorizedOwner == step.owner);
+				Api::details::RunAiApplyInPlaceForSession(
+					*step.owner,
+					[&](const Session &preflightOwner) {
+						CHECK(&preflightOwner == step.owner);
+						++counts.preflights;
+						return true;
+					},
+					[&](const Session &draftOwner) {
+						CHECK(&draftOwner == step.owner);
 						if (handler == Handler::HistoryWidget) {
 							++counts.historyWidgetDraftReads;
 						} else {
 							++counts.composeControlsDraftReads;
 						}
+						return draftOwner.sessionId;
+					},
+					[&](const Session &authorizedOwner, int draftOwnerId) {
+						CHECK(&authorizedOwner == step.owner);
+						CHECK_EQ(draftOwnerId, step.owner->sessionId);
 						++counts.toneResolutions;
 						++counts.composeRequests;
 					});
 				const auto expected = step.supported ? 1 : 0;
+				CHECK_EQ(counts.preflights - before.preflights, expected);
 				CHECK_EQ(counts.historyWidgetDraftReads
 							 - before.historyWidgetDraftReads,
 						 handler == Handler::HistoryWidget ? expected : 0);

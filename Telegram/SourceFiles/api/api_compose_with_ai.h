@@ -113,11 +113,18 @@ void ClearAiApplyBoundSlug();
 
 namespace details {
 
-template <typename Session, typename OnAllowed>
-void RunIfAiComposeSupported(const Session &session, OnAllowed &&onAllowed) {
-	if (session.aiComposeSupported()) {
-		std::forward<OnAllowed>(onAllowed)(session);
+template <typename Session, typename Prepare, typename ReadDraft,
+		  typename Apply>
+void RunAiApplyInPlaceForSession(Session &session, Prepare &&prepare,
+								 ReadDraft &&readDraft, Apply &&apply) {
+	if (!session.aiComposeSupported()) {
+		return;
 	}
+	if (!std::forward<Prepare>(prepare)(session)) {
+		return;
+	}
+	auto draft = std::forward<ReadDraft>(readDraft)(session);
+	std::forward<Apply>(apply)(session, std::move(draft));
 }
 
 } // namespace details
