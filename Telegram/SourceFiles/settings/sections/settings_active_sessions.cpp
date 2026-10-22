@@ -756,8 +756,7 @@ void SessionsContent::setupContent() {
 
 	const auto currentList = _authorizations->list();
 	_loading = details::ShouldShowSessionsLoading(
-		_authorizations->lastReceivedTime() != 0,
-		!currentList.empty());
+		_authorizations->lastReceivedTime() != 0, !currentList.empty());
 
 	_authorizations->listValue(
 	) | rpl::on_next([=](const Api::Authorizations::List &list) {

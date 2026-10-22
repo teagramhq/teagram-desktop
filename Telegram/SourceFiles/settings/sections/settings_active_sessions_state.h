@@ -9,9 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Settings::details {
 
-[[nodiscard]] constexpr bool ShouldShowSessionsLoading(
-		bool hasReceivedResponse,
-		bool hasCachedSessions) {
+[[nodiscard]] constexpr bool ShouldShowSessionsLoading(bool hasReceivedResponse,
+													   bool hasCachedSessions) {
 	return !hasReceivedResponse && !hasCachedSessions;
 }
 
