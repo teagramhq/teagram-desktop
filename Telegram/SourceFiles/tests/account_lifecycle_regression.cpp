@@ -1754,6 +1754,55 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		data);
 }
 
+[[nodiscard]] bool IncompleteStoredSessionStartsPaused(Main::Domain &domain) {
+	auto account = std::make_unique<Main::Account>(
+		&domain, u"main-2327-incomplete-session-regression"_q, 0);
+	auto config = account->prepareToStart(RegressionAuthKey(0x45));
+	if (!config) {
+		config = std::make_unique<MTP::Config>(MTP::Environment::Production);
+	}
+	account->setSessionUserId(UserId(4242));
+	account->setSessionFromStorage(std::make_unique<Main::SessionSettings>(),
+								   QByteArray(), 0);
+	account->setLegacyMtpKey(RegressionAuthKey(0x44));
+
+	if (!config->dcOptions().setCustomServer(MTP::CustomServer{
+			.dcId = 2,
+			.ip = "127.0.0.1",
+			.port = 8443,
+			.key = RegressionServerKey(),
+		})) {
+		return false;
+	}
+	account->start(std::move(config));
+	if (account->sessionExists()
+		|| account->willHaveSessionUniqueId(nullptr) != 0
+		|| !account->mtp().getKeysForWrite().empty()
+		|| !account->mtp().dcOptions().hasCustomServer()
+		|| account->mtp().dcOptions().blocked()
+		|| account->mtp().dcOptions().isAuthorized(2)
+		|| account->mtp().isServerEnrollmentNetworkAllowed()) {
+		return false;
+	}
+
+	auto pausedFailures = 0;
+	auto sender = MTP::Sender(&account->mtp());
+	const auto requestId
+		= sender.request(MTPupdates_GetState())
+			  .fail([&](const MTP::Error &error) {
+				  if (MTP::IsServerEnrollmentPausedError(error)) {
+					  ++pausedFailures;
+				  }
+			  })
+			  .send();
+	if (!sender.pending(requestId)) {
+		return false;
+	}
+	QCoreApplication::processEvents();
+	return !sender.pending(requestId) && pausedFailures == 1
+		   && !account->mtp().isServerEnrollmentNetworkAllowed();
+}
+
 [[nodiscard]] bool HasAuthKey(
 		not_null<Main::Account*> account,
 		MTP::AuthKey::KeyId keyId) {
@@ -10501,6 +10550,11 @@ void RunProtectedCacheCleanupRegression(
 		nativeLifecycleResults->ReportSummary();
 		return 1;
 	};
+	if (!IncompleteStoredSessionStartsPaused(domain)) {
+		return failAccountLifecycle(
+			"Account::start restored an incomplete stored session or did not "
+			"keep its enrollment request paused");
+	}
 	if (!WriteCachePayload(account, cacheKey, cachePayload)) {
 		return failAccountLifecycle("could not seed the cache payload");
 	}
