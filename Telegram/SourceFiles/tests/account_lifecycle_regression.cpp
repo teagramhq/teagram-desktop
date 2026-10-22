@@ -10742,7 +10742,7 @@ void RunProtectedCacheCleanupRegression(
 	}
 	forgotten->setSessionUserId(UserId(4242));
 	if (!forgotten->createSession(
-			RegressionUser(UserId(4242), true, QString()),
+			RegressionUser(UserId(4242), true, u"4242"_q),
 			std::make_unique<Main::SessionSettings>())
 		|| !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()
@@ -10766,7 +10766,11 @@ void RunProtectedCacheCleanupRegression(
 	}
 	auto active = not_null<Main::Account*>(
 		domain.accounts().front().account.get());
-	if (!active->sessionExists() || !HasAuthKey(active, finalKeyId)
+	if (!active->sessionExists()) {
+		return failAccountLifecycle(
+			"active teardown regression fixture did not restore its self user");
+	}
+	if (!HasAuthKey(active, finalKeyId)
 		|| !active->local().mtpAuthorizationDataExistsForRegressionTest()) {
 		return failAccountLifecycle(
 			"active teardown did not persist its final authorization snapshot");
