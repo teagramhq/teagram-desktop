@@ -14,6 +14,38 @@ class ApiWrap;
 
 namespace Api {
 
+namespace details {
+
+class AuthorizationsReloadState final {
+  public:
+	void setRequestId(mtpRequestId requestId) { _requestId = requestId; }
+
+	[[nodiscard]] bool pending() const { return _requestId != 0; }
+
+	void complete() { _requestId = 0; }
+
+	void fail(const MTP::Error &error) {
+		_requestId = 0;
+		_failures.fire_copy(error);
+	}
+
+	[[nodiscard]] mtpRequestId takeRequestId() {
+		const auto result = _requestId;
+		_requestId = 0;
+		return result;
+	}
+
+	[[nodiscard]] rpl::producer<MTP::Error> failures() const {
+		return _failures.events();
+	}
+
+  private:
+	mtpRequestId _requestId = 0;
+	rpl::event_stream<MTP::Error> _failures;
+};
+
+} // namespace details
+
 class Authorizations final {
 public:
 	explicit Authorizations(not_null<ApiWrap*> api);
@@ -70,11 +102,10 @@ private:
 	void removeExpiredUnreviewed();
 
 	MTP::Sender _api;
-	mtpRequestId _requestId = 0;
+	details::AuthorizationsReloadState _reloadState;
 
 	List _list;
 	rpl::event_stream<> _listChanges;
-	rpl::event_stream<MTP::Error> _reloadFailures;
 
 	Fn<int()> _autoconfirmPeriod;
 	std::vector<Data::UnreviewedAuth> _unreviewed;

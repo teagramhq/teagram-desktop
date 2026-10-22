@@ -119,36 +119,34 @@ Authorizations::Authorizations(not_null<ApiWrap*> api)
 }
 
 void Authorizations::reload() {
-	if (_requestId) {
+	if (_reloadState.pending()) {
 		return;
 	}
 
-	_requestId = _api.request(MTPaccount_GetAuthorizations())
-					 .done([=](const MTPaccount_Authorizations &result) {
-						 _requestId = 0;
-						 _lastReceived = crl::now();
-						 _hasAuthoritativeList = true;
-						 const auto &data = result.data();
-						 _ttlDays = data.vauthorization_ttl_days().v;
-						 _list = ranges::views::all(data.vauthorizations().v)
-								 | ranges::views::transform(
-									 [](const MTPAuthorization &auth) {
-										 return ParseEntry(auth.data());
-									 })
-								 | ranges::to<List>;
-						 removeExpiredUnreviewed();
-						 refreshCallsDisabledHereFromCloud();
-						 _listChanges.fire({});
-					 })
-					 .fail([=](const MTP::Error &error) {
-						 _requestId = 0;
-						 _reloadFailures.fire_copy(error);
-					 })
-					 .send();
+	_reloadState.setRequestId(
+		_api.request(MTPaccount_GetAuthorizations())
+			.done([=](const MTPaccount_Authorizations &result) {
+				_reloadState.complete();
+				_lastReceived = crl::now();
+				_hasAuthoritativeList = true;
+				const auto &data = result.data();
+				_ttlDays = data.vauthorization_ttl_days().v;
+				_list = ranges::views::all(data.vauthorizations().v)
+						| ranges::views::transform(
+							[](const MTPAuthorization &auth) {
+								return ParseEntry(auth.data());
+							})
+						| ranges::to<List>;
+				removeExpiredUnreviewed();
+				refreshCallsDisabledHereFromCloud();
+				_listChanges.fire({});
+			})
+			.fail([=](const MTP::Error &error) { _reloadState.fail(error); })
+			.send());
 }
 
 void Authorizations::cancelCurrentRequest() {
-	_api.request(base::take(_requestId)).cancel();
+	_api.request(_reloadState.takeRequestId()).cancel();
 }
 
 void Authorizations::refreshCallsDisabledHereFromCloud() {
@@ -289,7 +287,7 @@ bool Authorizations::hasAuthoritativeList() const {
 }
 
 rpl::producer<MTP::Error> Authorizations::reloadFailures() const {
-	return _reloadFailures.events();
+	return _reloadState.failures();
 }
 
 const std::vector<Data::UnreviewedAuth> &Authorizations::unreviewed() {
