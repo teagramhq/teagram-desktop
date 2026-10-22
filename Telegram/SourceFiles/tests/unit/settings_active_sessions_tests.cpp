@@ -19,8 +19,20 @@ TEST_CASE(ActiveSessionsWaitForTheFirstResponse) {
 	CHECK(Settings::details::ShouldShowSessionsLoading(false, false));
 }
 
-TEST_CASE(ActiveSessionsFinishLoadingWhenTheResponseIsEmpty) {
-	CHECK(!Settings::details::ShouldShowSessionsLoading(true, false));
+TEST_CASE(ActiveSessionsFinishLoadingAfterAnEmptyResponse) {
+	const auto transition
+		= Settings::details::HandleEmptySessionsResponse(true, true);
+	CHECK(transition.updateLoading);
+	CHECK(!transition.loading);
+	CHECK(transition.schedulePoll);
+}
+
+TEST_CASE(ActiveSessionsStayLoadingUntilAnEmptyResponseArrives) {
+	const auto transition
+		= Settings::details::HandleEmptySessionsResponse(false, true);
+	CHECK(!transition.updateLoading);
+	CHECK(transition.loading);
+	CHECK(!transition.schedulePoll);
 }
 
 } // namespace

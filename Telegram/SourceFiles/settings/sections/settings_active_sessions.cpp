@@ -768,8 +768,12 @@ void SessionsContent::setupContent() {
 
 void SessionsContent::parse(const Api::Authorizations::List &list) {
 	if (list.empty()) {
-		if (_authorizations->lastReceivedTime()) {
-			_loading = false;
+		const auto transition = details::HandleEmptySessionsResponse(
+			_authorizations->lastReceivedTime() != 0, _loading.current());
+		if (transition.updateLoading) {
+			_loading = transition.loading;
+		}
+		if (transition.schedulePoll) {
 			_shortPollTimer.callOnce(kShortPollTimeout);
 		}
 		return;
