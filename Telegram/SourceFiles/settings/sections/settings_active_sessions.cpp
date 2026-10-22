@@ -630,6 +630,7 @@ private:
 
 	void shortPollSessions();
 	void parse(const Api::Authorizations::List &list);
+	void reloadFailed();
 
 	void terminate(Fn<void()> terminateRequest, QString message);
 	void terminateOne(uint64 hash);
@@ -754,11 +755,13 @@ void SessionsContent::setupContent() {
 	_state.initialize(_authorizations->hasAuthoritativeList(),
 					  !currentList.empty());
 	_inner->setVisible(!_state.loading());
+	_authorizations->reloadFailures()
+		| rpl::on_next([=](const MTP::Error &) { reloadFailed(); }, lifetime());
 
-	_authorizations->listValue(
-	) | rpl::on_next([=](const Api::Authorizations::List &list) {
-		parse(list);
-	}, lifetime());
+	_authorizations->listValue()
+		| rpl::on_next(
+			[=](const Api::Authorizations::List &list) { parse(list); },
+			lifetime());
 
 	shortPollSessions();
 }
@@ -785,6 +788,16 @@ void SessionsContent::parse(const Api::Authorizations::List &list) {
 	_inner->setVisible(!_state.loading());
 
 	if (transition.schedulePoll) {
+		_shortPollTimer.callOnce(kShortPollTimeout);
+	}
+	update();
+}
+
+void SessionsContent::reloadFailed() {
+	const auto transition = _state.refreshFailed();
+	_inner->setVisible(!_state.loading());
+	if (transition.schedulePoll) {
+		_shortPollTimer.cancel();
 		_shortPollTimer.callOnce(kShortPollTimeout);
 	}
 	update();
@@ -822,6 +835,7 @@ void SessionsContent::shortPollSessions() {
 		_state.beginRefresh();
 		_inner->setVisible(!_state.loading());
 		_authorizations->reload();
+		_shortPollTimer.callOnce(kShortPollTimeout);
 	}
 	update();
 }
@@ -891,16 +905,12 @@ void SessionsContent::terminateAll() {
 			[=](const MTPBool &result) {
 				reset();
 				if (mtpIsFalse(result)) {
-					_state.refreshFailed();
-					_inner->setVisible(!_state.loading());
-					update();
+					reloadFailed();
 				}
 			},
 			[=](const MTP::Error &result) {
 				reset();
-				_state.refreshFailed();
-				_inner->setVisible(!_state.loading());
-				update();
+				reloadFailed();
 			});
 		_authorizations->requestTerminate(std::move(done), std::move(fail));
 	};

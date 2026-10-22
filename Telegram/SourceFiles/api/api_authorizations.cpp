@@ -123,24 +123,28 @@ void Authorizations::reload() {
 		return;
 	}
 
-	_requestId = _api.request(MTPaccount_GetAuthorizations(
-	)).done([=](const MTPaccount_Authorizations &result) {
-		_requestId = 0;
-		_lastReceived = crl::now();
-		_hasAuthoritativeList = true;
-		const auto &data = result.data();
-		_ttlDays = data.vauthorization_ttl_days().v;
-		_list = ranges::views::all(
-			data.vauthorizations().v
-		) | ranges::views::transform([](const MTPAuthorization &auth) {
-			return ParseEntry(auth.data());
-		}) | ranges::to<List>;
-		removeExpiredUnreviewed();
-		refreshCallsDisabledHereFromCloud();
-		_listChanges.fire({});
-	}).fail([=] {
-		_requestId = 0;
-	}).send();
+	_requestId = _api.request(MTPaccount_GetAuthorizations())
+					 .done([=](const MTPaccount_Authorizations &result) {
+						 _requestId = 0;
+						 _lastReceived = crl::now();
+						 _hasAuthoritativeList = true;
+						 const auto &data = result.data();
+						 _ttlDays = data.vauthorization_ttl_days().v;
+						 _list = ranges::views::all(data.vauthorizations().v)
+								 | ranges::views::transform(
+									 [](const MTPAuthorization &auth) {
+										 return ParseEntry(auth.data());
+									 })
+								 | ranges::to<List>;
+						 removeExpiredUnreviewed();
+						 refreshCallsDisabledHereFromCloud();
+						 _listChanges.fire({});
+					 })
+					 .fail([=](const MTP::Error &error) {
+						 _requestId = 0;
+						 _reloadFailures.fire_copy(error);
+					 })
+					 .send();
 }
 
 void Authorizations::cancelCurrentRequest() {
@@ -282,6 +286,10 @@ crl::time Authorizations::lastReceivedTime() {
 
 bool Authorizations::hasAuthoritativeList() const {
 	return _hasAuthoritativeList;
+}
+
+rpl::producer<MTP::Error> Authorizations::reloadFailures() const {
+	return _reloadFailures.events();
 }
 
 const std::vector<Data::UnreviewedAuth> &Authorizations::unreviewed() {

@@ -15,6 +15,9 @@ class ActiveSessionsState final {
 		bool clearRows = false;
 		bool schedulePoll = false;
 	};
+	struct RefreshTransition {
+		bool schedulePoll = false;
+	};
 
 	void initialize(bool hasAuthoritativeList, bool hasRows) {
 		_hasAuthoritativeList = hasAuthoritativeList;
@@ -26,7 +29,10 @@ class ActiveSessionsState final {
 
 	void beginTerminateAll() { _loading = true; }
 
-	void refreshFailed() { _loading = !_hasAuthoritativeList && !_hasRows; }
+	[[nodiscard]] RefreshTransition refreshFailed() {
+		_loading = false;
+		return {.schedulePoll = true};
+	}
 
 	[[nodiscard]] ListTransition receiveList(bool hasRows,
 											 bool hasAuthoritativeList) {

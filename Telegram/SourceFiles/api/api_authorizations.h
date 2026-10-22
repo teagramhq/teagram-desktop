@@ -40,6 +40,7 @@ public:
 
 	[[nodiscard]] crl::time lastReceivedTime();
 	[[nodiscard]] bool hasAuthoritativeList() const;
+	[[nodiscard]] rpl::producer<MTP::Error> reloadFailures() const;
 
 	[[nodiscard]] List list() const;
 	[[nodiscard]] rpl::producer<List> listValue() const;
@@ -73,6 +74,7 @@ private:
 
 	List _list;
 	rpl::event_stream<> _listChanges;
+	rpl::event_stream<MTP::Error> _reloadFailures;
 
 	Fn<int()> _autoconfirmPeriod;
 	std::vector<Data::UnreviewedAuth> _unreviewed;

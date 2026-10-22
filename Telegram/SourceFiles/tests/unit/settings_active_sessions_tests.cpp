@@ -32,6 +32,41 @@ TEST_CASE(CachedSessionsStayVisibleDuringRefresh) {
 	CHECK(!state.loading());
 }
 
+TEST_CASE(CachedSessionsStayVisibleAfterRefreshFailure) {
+	auto state = ActiveSessionsState();
+	state.initialize(true, true);
+
+	const auto replay = state.receiveList(true, true);
+	CHECK(!replay.clearRows);
+	state.beginRefresh();
+	CHECK(state.hasRows());
+	CHECK(state.rowsVisible());
+
+	const auto failed = state.refreshFailed();
+	CHECK(failed.schedulePoll);
+	CHECK(state.hasRows());
+	CHECK(state.rowsVisible());
+	CHECK(!state.loading());
+}
+
+TEST_CASE(InitialRefreshFailureStopsLoadingAndRetries) {
+	auto state = ActiveSessionsState();
+	state.initialize(false, false);
+	const auto replay = state.receiveList(false, false);
+	CHECK(replay.clearRows);
+	CHECK(state.loading());
+	state.beginRefresh();
+	CHECK(state.loading());
+
+	const auto failed = state.refreshFailed();
+	CHECK(failed.schedulePoll);
+	CHECK(!state.loading());
+	CHECK(!state.rowsVisible());
+
+	state.beginRefresh();
+	CHECK(state.loading());
+}
+
 TEST_CASE(TerminateAllInvalidationClearsCachedSessions) {
 	auto state = ActiveSessionsState();
 	state.initialize(true, true);
