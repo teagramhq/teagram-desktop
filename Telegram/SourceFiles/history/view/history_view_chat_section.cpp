@@ -2669,8 +2669,7 @@ void ChatWidget::finishSending() {
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-void ChatWidget::triggerAiApplyInPlaceForRegressionTest(
-		const QString &text) {
+void ChatWidget::triggerAiApplyInPlaceForRegressionTest(const QString &text) {
 	Expects(_composeControls != nullptr);
 	_composeControls->triggerAiApplyInPlaceForRegressionTest(text);
 }

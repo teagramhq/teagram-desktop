@@ -5232,10 +5232,7 @@ void HistoryWidget::showAiComposeBox() {
 
 void HistoryWidget::triggerAiApplyInPlace() {
 	Api::TriggerAiApplyInPlace(
-		&session(),
-		controller()->uiShow(),
-		this,
-		_field,
+		&session(), controller()->uiShow(), this, _field,
 		[=] { return prepareTextForEditMsg(); },
 		crl::guard(this, [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
@@ -5248,8 +5245,8 @@ void HistoryWidget::triggerAiApplyInPlace() {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void HistoryWidget::triggerAiApplyInPlaceForRegressionTest(
-		const QString &text) {
-	setFieldText({ text, {} });
+	const QString &text) {
+	setFieldText({text, {}});
 	triggerAiApplyInPlace();
 	clearFieldText();
 }

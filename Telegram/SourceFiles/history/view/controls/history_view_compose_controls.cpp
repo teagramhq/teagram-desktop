@@ -4427,10 +4427,7 @@ void ComposeControls::triggerAiApplyInPlace() {
 	}
 	const auto field = _field;
 	Api::TriggerAiApplyInPlace(
-		_session,
-		_show,
-		_wrap.get(),
-		field,
+		_session, _show, _wrap.get(), field,
 		[=] { return prepareTextForEditMsg(); },
 		crl::guard(_wrap.get(), [=](TextWithTags textWithTags, int cursor) {
 			setFieldText(
@@ -4443,8 +4440,8 @@ void ComposeControls::triggerAiApplyInPlace() {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void ComposeControls::triggerAiApplyInPlaceForRegressionTest(
-		const QString &text) {
-	setFieldText({ text, {} });
+	const QString &text) {
+	setFieldText({text, {}});
 	triggerAiApplyInPlace();
 	clearFieldText();
 }

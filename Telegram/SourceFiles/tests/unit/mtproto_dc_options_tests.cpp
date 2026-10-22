@@ -1600,16 +1600,16 @@ TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {
 	auto blocked = DcOptions(Environment::Production);
 	blocked.constructBlocked();
 
-	CHECK(!Ui::AiComposeButtonAllowed(
-		Main::details::aiComposeSupported(custom), false, true));
+	CHECK(!Ui::AiComposeButtonAllowed(Main::details::aiComposeSupported(custom),
+									  false, true));
 	CHECK(!Ui::AiComposeButtonAllowed(
 		Main::details::aiComposeSupported(blocked), false, true));
-	CHECK(Ui::AiComposeButtonAllowed(
-		Main::details::aiComposeSupported(stock), false, true));
-	CHECK(!Ui::AiComposeButtonAllowed(
-		Main::details::aiComposeSupported(stock), true, true));
-	CHECK(!Ui::AiComposeButtonAllowed(
-		Main::details::aiComposeSupported(stock), false, false));
+	CHECK(Ui::AiComposeButtonAllowed(Main::details::aiComposeSupported(stock),
+									 false, true));
+	CHECK(!Ui::AiComposeButtonAllowed(Main::details::aiComposeSupported(stock),
+									  true, true));
+	CHECK(!Ui::AiComposeButtonAllowed(Main::details::aiComposeSupported(stock),
+									  false, false));
 }
 
 TEST_CASE(TelegramdPinnedSessionsRefuseCallLinksAndStarts) {

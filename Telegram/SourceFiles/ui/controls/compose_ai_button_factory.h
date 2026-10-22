@@ -29,10 +29,9 @@ struct PreparedList;
 
 extern const char kOptionHideAiButton[];
 
-[[nodiscard]] inline bool AiComposeButtonAllowed(
-		bool sessionSupported,
-		bool hideAiButton,
-		bool hasTones) {
+[[nodiscard]] inline bool AiComposeButtonAllowed(bool sessionSupported,
+												 bool hideAiButton,
+												 bool hasTones) {
 	return sessionSupported && !hideAiButton && hasTones;
 }
 

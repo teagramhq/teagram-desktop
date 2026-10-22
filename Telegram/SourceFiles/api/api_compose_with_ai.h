@@ -114,9 +114,7 @@ void ClearAiApplyBoundSlug();
 namespace details {
 
 template <typename Session, typename OnAllowed>
-void RunIfAiComposeSupported(
-		const Session &session,
-		OnAllowed &&onAllowed) {
+void RunIfAiComposeSupported(const Session &session, OnAllowed &&onAllowed) {
 	if (session.aiComposeSupported()) {
 		std::forward<OnAllowed>(onAllowed)(session);
 	}
@@ -125,10 +123,8 @@ void RunIfAiComposeSupported(
 } // namespace details
 
 void TriggerAiApplyInPlace(
-	not_null<Main::Session*> session,
-	std::shared_ptr<Ui::Show> show,
-	not_null<QObject*> guard,
-	not_null<Ui::InputField*> field,
+	not_null<Main::Session *> session, std::shared_ptr<Ui::Show> show,
+	not_null<QObject *> guard, not_null<Ui::InputField *> field,
 	Fn<TextWithEntities()> fullFieldText,
 	Fn<void(TextWithTags textWithTags, int cursor)> applyToField);
 

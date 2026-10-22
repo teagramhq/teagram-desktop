@@ -563,8 +563,7 @@ GetLifecycleWriteCountsForRegressionTest() {
 	return gLifecycleWriteCounts;
 }
 
-void RecordAiComposeApplyRegressionEvent(
-		AiComposeApplyRegressionEvent event) {
+void RecordAiComposeApplyRegressionEvent(AiComposeApplyRegressionEvent event) {
 	switch (event) {
 	case AiComposeApplyRegressionEvent::HistoryWidgetDraftRead:
 		++gAiComposeApplyRegressionCounts.historyWidgetDraftReads;
@@ -8206,73 +8205,63 @@ void RunProtectedCacheCleanupRegression(
 	}
 }
 
-[[nodiscard]] bool RunAiComposeApplyHandlerRegression(
-		not_null<Window::Controller*> window,
-		not_null<Main::Account*> account,
-		bool supported,
-		const char *stage) {
+[[nodiscard]] bool
+RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
+								   not_null<Main::Account *> account,
+								   bool supported, const char *stage) {
 	const auto controller = window->sessionController();
-	if (!controller
-		|| (&controller->session() != &account->session())
+	if (!controller || (&controller->session() != &account->session())
 		|| (controller->session().aiComposeSupported() != supported)) {
 		return false;
 	}
 	const auto chatId = ChatId(1051);
 	const auto chat = controller->session().data().chat(chatId);
-	const auto peer = not_null<PeerData*>(static_cast<PeerData*>(&*chat));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 	if (!controller->session().user()->isLoaded()) {
 		controller->session().api().processFullPeer(
 			peer,
-			RegressionChatFullReply(
-				chatId,
-				2,
-				u"+10000000001"_q,
-				UserId(2)));
+			RegressionChatFullReply(chatId, 2, u"+10000000001"_q, UserId(2)));
 	}
 	const auto history = controller->session().data().history(peer);
 	controller->showPeerHistory(history);
 	QCoreApplication::processEvents();
 	const auto historyWidget = [&] {
-		for (const auto child : controller->content()->findChildren<QWidget*>()) {
-			if (const auto result = dynamic_cast<HistoryWidget*>(child)) {
+		for (const auto child :
+			 controller->content()->findChildren<QWidget *>()) {
+			if (const auto result = dynamic_cast<HistoryWidget *>(child)) {
 				return result;
 			}
 		}
-		return static_cast<HistoryWidget*>(nullptr);
+		return static_cast<HistoryWidget *>(nullptr);
 	}();
 	if (!historyWidget) {
 		return false;
 	}
-	const auto verify = [&](const char *handler,
-							bool historyWidgetHandler,
+	const auto verify = [&](const char *handler, bool historyWidgetHandler,
 							AiComposeApplyRegressionCounts before,
 							int resolvesBefore) {
 		const auto after = GetAiComposeApplyRegressionCounts();
 		const auto expected = supported ? 1 : 0;
-		const auto historyReads = after.historyWidgetDraftReads
-			- before.historyWidgetDraftReads;
+		const auto historyReads
+			= after.historyWidgetDraftReads - before.historyWidgetDraftReads;
 		const auto composeReads = after.composeControlsDraftReads
-			- before.composeControlsDraftReads;
+								  - before.composeControlsDraftReads;
 		const auto dispatches = after.applyDispatches - before.applyDispatches;
-		const auto resolves = account->session().data().aiComposeTones()
-			.resolveCallsForRegressionTest() - resolvesBefore;
-		const auto matches = historyWidgetHandler
-			? (historyReads == expected && composeReads == 0)
-			: (historyReads == 0 && composeReads == expected);
-		if (!matches
-			|| dispatches != expected
-			|| resolves != expected) {
-			std::fprintf(
-				stderr,
-				"AI apply lifecycle regression failed at %s / %s: "
-				"reads=%d/%d dispatches=%d resolves=%d expected=%d\n",
-				stage,
-				handler,
-				historyReads,
-				composeReads,
-				dispatches,
-				resolves,
-				expected);
+		const auto resolves = account->session()
+								  .data()
+								  .aiComposeTones()
+								  .resolveCallsForRegressionTest()
+							  - resolvesBefore;
+		const auto matches
+			= historyWidgetHandler
+				  ? (historyReads == expected && composeReads == 0)
+				  : (historyReads == 0 && composeReads == expected);
+		if (!matches || dispatches != expected || resolves != expected) {
+			std::fprintf(stderr,
+						 "AI apply lifecycle regression failed at %s / %s: "
+						 "reads=%d/%d dispatches=%d resolves=%d expected=%d\n",
+						 stage, handler, historyReads, composeReads, dispatches,
+						 resolves, expected);
 			return false;
 		}
 		return true;
@@ -8281,44 +8270,40 @@ void RunProtectedCacheCleanupRegression(
 	auto tones = &account->session().data().aiComposeTones();
 	auto readsBefore = GetAiComposeApplyRegressionCounts();
 	auto resolvesBefore = tones->resolveCallsForRegressionTest();
-	historyWidget->triggerAiApplyInPlaceForRegressionTest(
-		u"lifecycle draft"_q);
+	historyWidget->triggerAiApplyInPlaceForRegressionTest(u"lifecycle draft"_q);
 	if (!verify("HistoryWidget", true, readsBefore, resolvesBefore)) {
 		return false;
 	}
 
 	controller->showSection(
-		std::make_shared<HistoryView::ChatMemento>(
-			HistoryView::ChatViewId{
-				.history = history,
-				.repliesRootId = MsgId(),
-			}),
+		std::make_shared<HistoryView::ChatMemento>(HistoryView::ChatViewId{
+			.history = history,
+			.repliesRootId = MsgId(),
+		}),
 		Window::SectionShow::Way::ClearStack);
 	QCoreApplication::processEvents();
 	const auto chatWidget = [&] {
-		for (const auto child : controller->content()->findChildren<QWidget*>()) {
+		for (const auto child :
+			 controller->content()->findChildren<QWidget *>()) {
 			if (const auto result
-				= dynamic_cast<HistoryView::ChatWidget*>(child)) {
+				= dynamic_cast<HistoryView::ChatWidget *>(child)) {
 				return result;
 			}
 		}
-		return static_cast<HistoryView::ChatWidget*>(nullptr);
+		return static_cast<HistoryView::ChatWidget *>(nullptr);
 	}();
 	if (!chatWidget) {
 		return false;
 	}
 	readsBefore = GetAiComposeApplyRegressionCounts();
 	resolvesBefore = tones->resolveCallsForRegressionTest();
-	chatWidget->triggerAiApplyInPlaceForRegressionTest(
-		u"lifecycle draft"_q);
+	chatWidget->triggerAiApplyInPlaceForRegressionTest(u"lifecycle draft"_q);
 	return verify("ComposeControls", false, readsBefore, resolvesBefore);
 }
 
 [[nodiscard]] bool RunAiComposeApplySwitchRegression(
-		not_null<Window::Controller*> window,
-		not_null<Main::Account*> stock,
-		not_null<Main::Account*> custom,
-		not_null<Main::Account*> blocked) {
+	not_null<Window::Controller *> window, not_null<Main::Account *> stock,
+	not_null<Main::Account *> custom, not_null<Main::Account *> blocked) {
 	const auto previousSlug = Api::AiApplyBoundSlug();
 	Api::SetAiApplyBoundSlug(u"lifecycle-regression-missing-tone"_q);
 	const auto restoreSlug = gsl::finally([=] {
@@ -8326,11 +8311,10 @@ void RunProtectedCacheCleanupRegression(
 		ResetAiComposeApplyRegressionCounts();
 	});
 	ResetAiComposeApplyRegressionCounts();
-	const auto run = [&](not_null<Main::Account*> account,
-						 bool supported,
+	const auto run = [&](not_null<Main::Account *> account, bool supported,
 						 const char *stage) {
-		return RunAiComposeApplyHandlerRegression(
-			window, account, supported, stage);
+		return RunAiComposeApplyHandlerRegression(window, account, supported,
+												  stage);
 	};
 	if (!run(stock, true, "stock")) {
 		return false;
@@ -8540,8 +8524,9 @@ void RunProtectedCacheCleanupRegression(
 			   && (session.exportSupported() == supported)
 			   && (session.passportSupported() == supported)
 			   && (session.aiComposeSupported() == supported)
-			   && (Ui::AiComposeButtonAllowed(
-				   session.aiComposeSupported(), false, true) == supported)
+			   && (Ui::AiComposeButtonAllowed(session.aiComposeSupported(),
+											  false, true)
+				   == supported)
 			   && (session.serverTranslationSupported() == supported)
 			   && (session.sharedFoldersSupported() == supported)
 			   && (session.accountBioEditSupported() == supported)
@@ -8712,11 +8697,11 @@ void RunProtectedCacheCleanupRegression(
 			"id");
 	}
 	if (discarded->session().aiComposeSupported()
-		|| !RunAiComposeApplySwitchRegression(
-			primary, stock, pinned, discarded)
+		|| !RunAiComposeApplySwitchRegression(primary, stock, pinned, discarded)
 		|| primary->maybeSession() != &stock->session()) {
 		return failPrerequisite(
-			"AI apply handlers read or dispatched draft text for an unsupported "
+			"AI apply handlers read or dispatched draft text for an "
+			"unsupported "
 			"session, or stopped working after switching back to stock");
 	}
 	discarded->mtp().dcOptions().constructBlocked();

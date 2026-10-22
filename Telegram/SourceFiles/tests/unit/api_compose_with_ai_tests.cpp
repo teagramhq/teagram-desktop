@@ -29,13 +29,12 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 MTP::DcOptions MakeCustomServerOptions() {
 	auto options = MTP::DcOptions(MTP::Environment::Production);
-	CHECK(options.setCustomServer({
-		.dcId = 2,
-		.ip = "10.4.1.7",
-		.port = 8443,
-		.key = std::make_shared<MTP::details::RSAPublicKey>(
-			bytes::make_span(kTestPublicKey, sizeof(kTestPublicKey) - 1))
-	}));
+	CHECK(options.setCustomServer(
+		{.dcId = 2,
+		 .ip = "10.4.1.7",
+		 .port = 8443,
+		 .key = std::make_shared<MTP::details::RSAPublicKey>(
+			 bytes::make_span(kTestPublicKey, sizeof(kTestPublicKey) - 1))}));
 	return options;
 }
 
@@ -75,9 +74,9 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 	auto blockedOptions = MTP::DcOptions(MTP::Environment::Production);
 	blockedOptions.constructBlocked();
 
-	const auto stock = Session{ 1, 42, &stockOptions };
-	const auto custom = Session{ 2, 42, &customOptions };
-	const auto blocked = Session{ 3, 42, &blockedOptions };
+	const auto stock = Session{1, 42, &stockOptions};
+	const auto custom = Session{2, 42, &customOptions};
+	const auto blocked = Session{3, 42, &blockedOptions};
 	CHECK(stock.aiComposeSupported());
 	CHECK(!custom.aiComposeSupported());
 	CHECK(!blocked.aiComposeSupported());
@@ -91,14 +90,14 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 	CHECK(&custom != &blocked);
 
 	const auto orders = std::array<std::array<Step, 3>, 4>{
-		std::array<Step, 3>{
-			Step{ &stock, true }, Step{ &custom, false }, Step{ &stock, true } },
-		std::array<Step, 3>{
-			Step{ &custom, false }, Step{ &stock, true }, Step{ &custom, false } },
-		std::array<Step, 3>{
-			Step{ &stock, true }, Step{ &blocked, false }, Step{ &stock, true } },
-		std::array<Step, 3>{
-			Step{ &blocked, false }, Step{ &stock, true }, Step{ &blocked, false } },
+		std::array<Step, 3>{Step{&stock, true}, Step{&custom, false},
+							Step{&stock, true}},
+		std::array<Step, 3>{Step{&custom, false}, Step{&stock, true},
+							Step{&custom, false}},
+		std::array<Step, 3>{Step{&stock, true}, Step{&blocked, false},
+							Step{&stock, true}},
+		std::array<Step, 3>{Step{&blocked, false}, Step{&stock, true},
+							Step{&blocked, false}},
 	};
 	constexpr auto handlers = std::array{
 		Handler::HistoryWidget,
@@ -111,8 +110,7 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 			for (const auto handler : handlers) {
 				const auto before = counts;
 				Api::details::RunIfAiComposeSupported(
-					*step.owner,
-					[&](const Session &authorizedOwner) {
+					*step.owner, [&](const Session &authorizedOwner) {
 						CHECK(&authorizedOwner == step.owner);
 						if (handler == Handler::HistoryWidget) {
 							++counts.historyWidgetDraftReads;
@@ -123,16 +121,16 @@ TEST_CASE(AiComposeApplySessionSwitchIsolation) {
 						++counts.composeRequests;
 					});
 				const auto expected = step.supported ? 1 : 0;
-				CHECK_EQ(
-					counts.historyWidgetDraftReads
-						- before.historyWidgetDraftReads,
-					handler == Handler::HistoryWidget ? expected : 0);
-				CHECK_EQ(
-					counts.composeControlsDraftReads
-						- before.composeControlsDraftReads,
-					handler == Handler::ComposeControls ? expected : 0);
-				CHECK_EQ(counts.toneResolutions - before.toneResolutions, expected);
-				CHECK_EQ(counts.composeRequests - before.composeRequests, expected);
+				CHECK_EQ(counts.historyWidgetDraftReads
+							 - before.historyWidgetDraftReads,
+						 handler == Handler::HistoryWidget ? expected : 0);
+				CHECK_EQ(counts.composeControlsDraftReads
+							 - before.composeControlsDraftReads,
+						 handler == Handler::ComposeControls ? expected : 0);
+				CHECK_EQ(counts.toneResolutions - before.toneResolutions,
+						 expected);
+				CHECK_EQ(counts.composeRequests - before.composeRequests,
+						 expected);
 			}
 		}
 	}

@@ -150,8 +150,7 @@ void RecordLifecycleWriteForRegressionTest(
 void ResetLifecycleWriteCountsForRegressionTest();
 [[nodiscard]] LifecycleWriteCountsForRegressionTest
 GetLifecycleWriteCountsForRegressionTest();
-void RecordAiComposeApplyRegressionEvent(
-	AiComposeApplyRegressionEvent event);
+void RecordAiComposeApplyRegressionEvent(AiComposeApplyRegressionEvent event);
 void ResetAiComposeApplyRegressionCounts();
 [[nodiscard]] AiComposeApplyRegressionCounts
 GetAiComposeApplyRegressionCounts();

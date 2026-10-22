@@ -177,9 +177,13 @@ struct SetupShortcutsResult {
 	const auto state = content->lifetime().make_state<State>();
 	auto labeled = Entries();
 	if (!controller->session().aiComposeSupported()) {
-		labeled.erase(ranges::remove_if(labeled, [](const Labeled &entry) {
-			return entry.command == S::Command::ComposeAiApplyInPlace;
-		}), end(labeled));
+		labeled.erase(
+			ranges::remove_if(labeled,
+							  [](const Labeled &entry) {
+								  return entry.command
+										 == S::Command::ComposeAiApplyInPlace;
+							  }),
+			end(labeled));
 	}
 	auto &entries = state->entries = ranges::views::all(
 		labeled

@@ -123,7 +123,6 @@ private:
 	int _resolveCallsForRegressionTest = 0;
 	bool _periodicRefreshScheduledForRegressionTest = false;
 #endif
-
 };
 
 } // namespace Data
