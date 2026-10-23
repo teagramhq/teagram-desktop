@@ -8716,13 +8716,13 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
-	discarded->mtp().dcOptions().constructBlocked();
 	discarded->setSessionUserId(selfId);
 	if (!discarded->createSession(RegressionUser(selfId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
 		return failPrerequisite(
 			"could not create the previous-session teardown fixture");
 	}
+	discarded->mtp().dcOptions().constructBlocked();
 	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
 		return failPrerequisite(
 			"previous-session teardown fixture did not share the stock user "
