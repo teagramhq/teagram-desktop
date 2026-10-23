@@ -310,10 +310,27 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 	}
 	CHECK(editableAccessible->state().editable);
 	CHECK(!editableAccessible->state().readOnly);
+	auto usernameFlow = Ui::EditPeer::UsernameEditorFlow();
+	usernameFlow.inputChanged(editable.text(), true);
+	auto editableChanges = 0;
+	QObject::connect(&editable, &Ui::MaskedInputField::changed, &editable, [&] {
+		++editableChanges;
+		usernameFlow.inputChanged(editable.text(), false);
+	});
+	editableAccessible->setText(QAccessible::Value, u" new_name "_q);
+	CHECK_EQ(editable.text(), u"new_name"_q);
+	CHECK_EQ(editable.getLastText(), u"new_name"_q);
+	CHECK_EQ(editableChanges, 1);
 	const auto editableText = editableAccessible->editableTextInterface();
 	CHECK(editableText != nullptr);
 	if (editableText) {
-		editableText->insertText(8, u"_"_q);
-		CHECK_EQ(editable.text(), u"operator_"_q);
+		editableText->insertText(8, u"_next"_q);
+		CHECK_EQ(editable.text(), u"new_name_next"_q);
+		CHECK_EQ(editable.getLastText(), u"new_name_next"_q);
+		CHECK_EQ(editableChanges, 2);
 	}
+	auto submittedUsername = QString();
+	CHECK(usernameFlow.saveAccount(
+		[&](const QString &username) { submittedUsername = username; }));
+	CHECK_EQ(submittedUsername, u"new_name_next"_q);
 }
