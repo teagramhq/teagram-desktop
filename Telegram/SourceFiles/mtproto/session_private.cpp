@@ -454,11 +454,10 @@ bool SessionPrivate::setState(int state, int ifState) {
 	return true;
 }
 
-AuthenticatedResponseTransition ProcessAuthenticatedResponse(
-		int state,
-		uint64 sessionSalt,
-		uint64 serverSalt,
-		bool badTime) {
+AuthenticatedResponseTransition ProcessAuthenticatedResponse(int state,
+															 uint64 sessionSalt,
+															 uint64 serverSalt,
+															 bool badTime) {
 	if (!badTime) {
 		sessionSalt = serverSalt;
 	}
@@ -1478,10 +1477,7 @@ void SessionPrivate::handleReceived() {
 		const auto state = getState();
 		bool wasConnected = (state == ConnectedState);
 		const auto responseTransition = ProcessAuthenticatedResponse(
-			state,
-			_sessionSalt,
-			serverSalt,
-			badTime);
+			state, _sessionSalt, serverSalt, badTime);
 		if (serverSalt != _sessionSalt) {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
