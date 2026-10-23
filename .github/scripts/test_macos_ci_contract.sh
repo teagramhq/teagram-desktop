@@ -18,6 +18,11 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 require_contract_tests_in_lint
+for trigger in push pull_request; do
+  paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
+  grep -Fxq -- '.github/scripts/test_macos_launch_smoke.py' <<< "$paths" \
+    || contract_fail "Workflow lint must run when .github/scripts/test_macos_launch_smoke.py changes ($trigger)."
+done
 
 # Mirrors the MacOS. concurrency group expression, which is pinned below.
 macos_group_for_event() {
@@ -210,6 +215,57 @@ expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')"
 require_step_field "$mac_workflow" macos 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
+require_step_field "$mac_workflow" macos 'Clone.' '.with.submodules' 'false'
+merge_dev_step='Merge current dev for dispatched branches.'
+require_step_field "$mac_workflow" macos "$merge_dev_step" '.if' \
+  "\${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only }}"
+require_step_script "$mac_workflow" macos "$merge_dev_step" \
+  'git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev:refs/remotes/origin/dev' \
+  'base_sha="$(git -C "$REPO_NAME" rev-parse origin/dev)"' \
+  'git -C "$REPO_NAME" -c user.name='\''github-actions[bot]'\'' -c user.email='\''41898282+github-actions[bot]@users.noreply.github.com'\'' merge --no-edit --no-ff "$base_sha"' \
+  'git -C "$REPO_NAME" diff --name-only --diff-filter=U' \
+  'conflicts with dev at $base_sha; update the branch from dev' \
+  'head_sha=%s' 'base_sha=%s' 'tested_sha=%s'
+submodules_step='Update submodules.'
+require_step_field "$mac_workflow" macos "$submodules_step" '.run' \
+  'git -C "$REPO_NAME" submodule update --init --recursive'
+clone_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Clone.") | .key')"
+merge_dev_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Merge current dev for dispatched branches.") | .key')"
+submodules_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Update submodules.") | .key')"
+dependency_hash_step_index="$(job_field "$mac_workflow" macos \
+  '.steps | to_entries[] | select(.value.name == "Set macOS dependency image tag.") | .key')"
+if ((clone_step_index >= merge_dev_step_index || merge_dev_step_index >= submodules_step_index \
+    || submodules_step_index >= dependency_hash_step_index)); then
+  contract_fail "$mac_workflow must merge dev after Clone and update submodules before hashing dependencies."
+fi
+require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.HEAD_SHA' \
+  "\${{ steps.merge-dev.outputs.head_sha || github.sha }}"
+require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.BASE_SHA' \
+  "\${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}"
+require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.TESTED_SHA' \
+  "\${{ steps.merge-dev.outputs.tested_sha || github.sha }}"
+require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
+  'head_sha=%s' 'base_sha=%s' 'tested_sha=%s' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
+require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
+  'HEAD_SHA=%s' 'BASE_SHA=%s' 'TESTED_SHA=%s' '$GITHUB_ENV'
+require_job_field "$mac_workflow" macos '.env.HEAD_SHA' "\${{ github.sha }}"
+require_job_field "$mac_workflow" macos '.env.BASE_SHA' 'not_merged'
+require_job_field "$mac_workflow" macos '.env.TESTED_SHA' "\${{ github.sha }}"
+require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.HEAD_SHA' \
+  "\${{ steps.merge-dev.outputs.head_sha || github.sha }}"
+require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.BASE_SHA' \
+  "\${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}"
+require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.TESTED_SHA' \
+  "\${{ steps.merge-dev.outputs.tested_sha || github.sha }}"
+require_step_script "$mac_workflow" macos 'Summarize on-demand validation.' \
+  'head_sha' 'base_sha' 'tested_sha' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
+require_step_script "$mac_workflow" macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'
+require_step_script "$mac_workflow" macos 'Launch app smoke test.' '$TESTED_SHA'
+require_step_script "$mac_workflow" macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
+require_step_script "$mac_workflow" macos 'Full chat info session regression.' '$TESTED_SHA'
 require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.' \
   'oras login ghcr.io' '--password-stdin'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \

@@ -30,7 +30,8 @@ for expected_status in (0, 42, 143):
             stub.write_text('#!/bin/bash\n' + body)
             stub.chmod(0o755)
         environment = dict(os.environ, REPO_NAME='repo', BUILD_VARIANT='non-store', RUNNER_TEMP=str(root),
-                           GITHUB_SHA='test-sha', GITHUB_STEP_SUMMARY=str(root / 'summary'),
+                           GITHUB_SHA='test-sha', TESTED_SHA='test-sha',
+                           GITHUB_STEP_SUMMARY=str(root / 'summary'),
                            PATH=str(binaries) + ':' + os.environ['PATH'])
         result = subprocess.run(['bash', '-c', script], cwd=root, env=environment,
                                 capture_output=True, text=True, timeout=10)
