@@ -350,9 +350,9 @@ TeagramUpdateInstallLock::TeagramUpdateInstallLock(
 		|| ::flock(directory.value, LOCK_EX | LOCK_NB) != 0) {
 		return;
 	}
-	auto legacy = FileDescriptor(::openat(
-		directory.value, kLegacyInstallLockFile,
-		O_RDWR | O_CLOEXEC | O_NOFOLLOW));
+	auto legacy
+		= FileDescriptor(::openat(directory.value, kLegacyInstallLockFile,
+								  O_RDWR | O_CLOEXEC | O_NOFOLLOW));
 	if (legacy.value < 0) {
 		if (errno != ENOENT) {
 			return;
@@ -403,9 +403,8 @@ bool TeagramUpdateInstallLock::removeLegacyLockFile() {
 		return false;
 	}
 	if (_legacyDescriptor < 0) {
-		_legacyDescriptor = ::openat(
-			_descriptor, kLegacyInstallLockFile,
-			O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+		_legacyDescriptor = ::openat(_descriptor, kLegacyInstallLockFile,
+									 O_RDWR | O_CLOEXEC | O_NOFOLLOW);
 		if (_legacyDescriptor < 0) {
 			return errno == ENOENT;
 		}

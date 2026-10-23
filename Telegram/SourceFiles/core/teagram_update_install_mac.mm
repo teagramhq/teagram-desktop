@@ -839,9 +839,10 @@ enum class StartupWaitResult {
 		const auto lockFileRemoved
 			= lock.acquired() && lock.removeLegacyLockFile();
 		if (!lockFileRemoved) {
-			LOG(("Teagram update lock file could not be removed after startup."));
+			LOG(("Teagram update lock file could not be removed after "
+				 "startup."));
 		} else if (!RemoveMarker(parent, kCommitMarker)
-			|| !RemoveMarker(parent, kStartedMarker)) {
+				   || !RemoveMarker(parent, kStartedMarker)) {
 			LOG(("Teagram update markers could not be cleared after startup."));
 		}
 	}

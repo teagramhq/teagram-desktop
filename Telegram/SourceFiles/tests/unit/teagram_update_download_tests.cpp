@@ -1397,9 +1397,9 @@ void CheckUpdateLockHonorsLegacyLock(const QString &temporaryRoot) {
 	const auto lockPath = root.filePath(u".teagram-update.lock"_q);
 	CHECK(WriteFile(lockPath, QByteArrayLiteral("legacy lock")));
 	CHECK(QFile::setPermissions(lockPath, QFileDevice::ReadOwner
-											 | QFileDevice::WriteOwner));
-	auto legacyDescriptor = ::open(
-		QFile::encodeName(lockPath).constData(), O_RDWR | O_CLOEXEC);
+											  | QFileDevice::WriteOwner));
+	auto legacyDescriptor
+		= ::open(QFile::encodeName(lockPath).constData(), O_RDWR | O_CLOEXEC);
 	CHECK(legacyDescriptor >= 0);
 	if (legacyDescriptor < 0) {
 		return;
@@ -2093,7 +2093,7 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 	writeBundle(installed, 101);
 	CHECK(WriteFile(legacyLock, QByteArrayLiteral("legacy lock")));
 	CHECK(QFile::setPermissions(legacyLock, QFileDevice::ReadOwner
-											 | QFileDevice::WriteOwner));
+												| QFileDevice::WriteOwner));
 	const auto previousBuild = downgrade ? 271 : 100;
 	writeBundle(downgrade ? QDir(staging).filePath(u"Teagram.app"_q) : previous,
 				previousBuild);
