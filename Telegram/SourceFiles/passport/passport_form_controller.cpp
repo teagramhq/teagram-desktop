@@ -1797,6 +1797,10 @@ void FormController::loadFile(File &file) {
 	if (i != _fileLoaders.end()) {
 		return;
 	}
+	if (file.size < 0 || file.size > Storage::kMaxFileInMemory) {
+		fileLoadFail(key);
+		return;
+	}
 	file.downloadStatus.set(LoadStatus::Status::InProgress, 0);
 	const auto &[j, ok] = _fileLoaders.emplace(
 		key,
