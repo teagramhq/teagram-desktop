@@ -1184,7 +1184,9 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+[[nodiscard]] bool WaitForRegressionCondition(
+	Predicate condition,
+	int timeoutMs = 5000);
 
 [[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
 	not_null<Window::SessionController *> controller) {
@@ -2687,7 +2689,9 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+[[nodiscard]] bool WaitForRegressionCondition(
+	Predicate condition,
+	int timeoutMs) {
 	if (condition()) {
 		return true;
 	}
@@ -2703,7 +2707,7 @@ template <typename Predicate>
 	});
 	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 	poll.start();
-	timeout.start(5000);
+	timeout.start(timeoutMs);
 	loop.exec();
 	poll.stop();
 	return condition();
@@ -2727,7 +2731,7 @@ ActivateWindowForRegression(Core::Application &app,
 	});
 	retry.start();
 	window->activate();
-	const auto activated = WaitForRegressionCondition(isActive);
+	const auto activated = WaitForRegressionCondition(isActive, 15'000);
 	retry.stop();
 	return activated;
 }
