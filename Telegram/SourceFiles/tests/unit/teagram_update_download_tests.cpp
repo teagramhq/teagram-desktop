@@ -2054,6 +2054,9 @@ TEST_CASE(TeagramUpdateInstallerClearsUncommittedCandidateOnRestart) {
 		CheckInstallerClearsUncommittedCandidateOnRestart);
 }
 
+[[nodiscard]] bool WaitUntil(const std::function<bool()> &condition,
+							 int timeout);
+
 void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 									 bool downgrade) {
 	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
@@ -2159,6 +2162,35 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 												  [] { return false; }));
 	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
+
+	CHECK(WriteFile(legacyLock, QByteArrayLiteral("legacy lock")));
+	CHECK(QFile::setPermissions(legacyLock, QFileDevice::ReadOwner
+												| QFileDevice::WriteOwner));
+	CHECK(
+		WriteTeagramUpdateMarker(root.path(), ".teagram-update-pending", 101));
+	auto oldProcessRunning = true;
+	auto otherInstanceChecks = 0;
+	const auto otherInstanceRunning = [&] {
+		++otherInstanceChecks;
+		return oldProcessRunning;
+	};
+	CHECK(CompleteTeagramUpdateStartupForTesting(installed,
+												 otherInstanceRunning));
+	CHECK(QFileInfo(legacyLock).exists());
+	CHECK(QFileInfo(pending).exists());
+	CHECK_EQ(ReadFile(started), QByteArrayLiteral("101\n"));
+	CHECK(WaitUntil([&] { return otherInstanceChecks >= 2; }, 5'000));
+	CHECK(QFileInfo(legacyLock).exists());
+	CHECK(QFile::remove(pending));
+	CHECK(QFile::remove(started));
+	oldProcessRunning = false;
+	CHECK(WaitUntil(
+		[&] {
+			return otherInstanceChecks >= 3 && !QFileInfo(legacyLock).exists()
+				   && !QFileInfo(pending).exists()
+				   && !QFileInfo(started).exists();
+		},
+		5'000));
 }
 
 TEST_CASE(TeagramUpdateStartupKeepsOlderPreviousBundleAndRemovesLegacyLock) {
