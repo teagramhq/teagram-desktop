@@ -8321,26 +8321,16 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return false;
 	}
 
-	controller->showSection(
-		std::make_shared<HistoryView::ChatMemento>(HistoryView::ChatViewId{
-			.history = history,
-			.repliesRootId = MsgId(),
-		}),
-		Window::SectionShow::Way::ClearStack);
-	QCoreApplication::processEvents();
-	const auto chatWidget = [&] {
-		for (const auto child :
-			 controller->content()->findChildren<QWidget *>()) {
-			if (const auto result
-				= dynamic_cast<HistoryView::ChatWidget *>(child)) {
-				return result;
-			}
-		}
-		return static_cast<HistoryView::ChatWidget *>(nullptr);
-	}();
-	if (!chatWidget) {
-		return false;
-	}
+	const auto self = not_null<PeerData *>(
+		static_cast<PeerData *>(&*controller->session().user()));
+	const auto selfHistory = controller->session().data().history(self);
+	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
+		controller->content().get(),
+		controller,
+		HistoryView::ChatViewId{
+			.history = selfHistory,
+			.sublist = controller->session().data().savedMessages().sublist(self),
+		});
 	readsBefore = GetAiComposeApplyRegressionCounts();
 	resolvesBefore = tones->resolveCallsForRegressionTest();
 	chatWidget->triggerAiApplyInPlaceForRegressionTest(u"lifecycle draft"_q);
