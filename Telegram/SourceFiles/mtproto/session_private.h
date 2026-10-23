@@ -30,28 +30,6 @@ class SessionData;
 class RSAPublicKey;
 struct SessionOptions;
 
-template <typename MarkConnected, typename ResendAll, typename HandleReply,
-		  typename GetState, typename ResumeAndSend>
-[[nodiscard]] inline bool ProcessAuthenticatedResponse(
-	int state, bool wasConnected, uint64 &sessionSalt, uint64 serverSalt,
-	bool badTime, MarkConnected &&markConnected, ResendAll &&resendAll,
-	HandleReply &&handleReply, GetState &&getState,
-	ResumeAndSend &&resumeAndSend) {
-	if (!badTime) {
-		sessionSalt = serverSalt;
-	}
-	if ((state == ConnectingState) && !badTime && markConnected()) {
-		resendAll();
-	}
-	if (!handleReply()) {
-		return false;
-	}
-	if (!wasConnected && getState() == ConnectedState) {
-		resumeAndSend();
-	}
-	return true;
-}
-
 class SessionPrivate final : public QObject {
 public:
 	SessionPrivate(
@@ -78,7 +56,10 @@ public:
 	// pin check and asking again reaches the same answer.
 	void stopUntilPinChange();
 
-private:
+  private:
+	friend class SessionPrivateTestAccess;
+	struct TestTag {};
+
 	static constexpr auto kUpdateStateAlways = 666;
 
 	struct TestConnection {
@@ -100,6 +81,11 @@ private:
 	};
 
 	void connectToServer(bool afterConfig = false);
+	SessionPrivate(TestTag, not_null<Instance *> instance,
+				   not_null<QThread *> thread,
+				   std::shared_ptr<SessionData> data, ShiftedDcId shiftedDcId);
+	[[nodiscard]] bool networkAllowed() const;
+	[[nodiscard]] bool isTestMode() const;
 	void connectingTimedOut();
 	void doDisconnect();
 	void restart();
@@ -154,6 +140,7 @@ private:
 		uint64 serverSalt = 0;
 		int32 serverTime = 0;
 		bool badTime = false;
+		bool *sessionSaltChanged = nullptr;
 	};
 	[[nodiscard]] HandleResult handleOneReceived(
 		const mtpPrime *from,
@@ -217,6 +204,7 @@ private:
 	const ShiftedDcId _shiftedDcId = 0;
 	DcType _realDcType = DcType();
 	DcType _currentDcType = DcType();
+	bool _testFixture = false;
 
 	mutable QReadWriteLock _stateMutex;
 	int _state = DisconnectedState;
