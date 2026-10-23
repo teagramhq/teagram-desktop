@@ -33,6 +33,9 @@ QString filedialogNextFilename(
 
 namespace File {
 
+[[nodiscard]] bool IsUrlSchemeAllowed(const QString &scheme);
+void ShowUnsupportedUrl();
+
 // Those functions are async wrappers to Platform::File::Unsafe* calls.
 void OpenUrl(const QString &url);
 void OpenEmailLink(const QString &email);
