@@ -288,8 +288,7 @@ template <typename Request>
 template <typename Request>
 [[nodiscard]] bool ReplyToCapturedRequestForRegressionTest(
 	ChannelSaveRequestCapture &capture, size_t index,
-	uint32 expectedConstructor,
-	const typename Request::ResponseType &result) {
+	uint32 expectedConstructor, const typename Request::ResponseType &result) {
 	if (capture.requests.size() != index + 1) {
 		std::fprintf(stderr,
 					 "Peer photo regression failed: request %zu was missing or "
