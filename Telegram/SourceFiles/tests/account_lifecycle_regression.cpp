@@ -2684,6 +2684,29 @@ template <typename Predicate>
 }
 
 [[nodiscard]] bool
+ActivateWindowForRegression(Core::Application &app,
+							not_null<Window::Controller *> window,
+							bool requirePrimary = false) {
+	const auto isActive = [&] {
+		return (app.activeWindow() == window.get())
+			   && (!requirePrimary
+				   || (app.activePrimaryWindow() == window.get()));
+	};
+	auto retry = QTimer();
+	retry.setInterval(100);
+	QObject::connect(&retry, &QTimer::timeout, &retry, [&] {
+		if (!isActive()) {
+			window->activate();
+		}
+	});
+	retry.start();
+	window->activate();
+	const auto activated = WaitForRegressionCondition(isActive);
+	retry.stop();
+	return activated;
+}
+
+[[nodiscard]] bool
 ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 						Fn<bool(const Info::Section &)> matches) {
 	const auto widgets = controller->widget()->findChildren<QWidget *>();
@@ -3013,9 +3036,7 @@ template <typename Condition>
 			  return true;
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
-		window->activate();
-		return WaitForRegressionCondition(
-			[&] { return app.activeWindow() == window; });
+		return ActivateWindowForRegression(app, window);
 	};
 
 	if (!activateSettingsWindow(&stockController->window())) {
@@ -3294,11 +3315,8 @@ template <typename Condition>
 		}
 	}
 
-	stockController->window().activate();
-	const auto stockWindowActivated = WaitForRegressionCondition([&] {
-		return (app.activeWindow() == &stockController->window())
-			   && (app.activePrimaryWindow() == &stockController->window());
-	});
+	const auto stockWindowActivated
+		= ActivateWindowForRegression(app, &stockController->window(), true);
 	if (!stockWindowActivated) {
 		const auto activeWindowRestored
 			= (app.activeWindow() == &stockController->window());
@@ -5372,11 +5390,8 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 					 "did not expire.\n");
 		return false;
 	}
-	stockController->window().activate();
-	const auto stockWindowActivationRestored = WaitForRegressionCondition([&] {
-		return (app.activeWindow() == &stockController->window())
-			   && (app.activePrimaryWindow() == &stockController->window());
-	});
+	const auto stockWindowActivationRestored
+		= ActivateWindowForRegression(app, &stockController->window(), true);
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
