@@ -123,7 +123,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
+#include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
+#include "ui/text/text.h"
+#include "ui/text/text_entity.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
@@ -133,6 +136,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/click_handler.h"
+#include "ui/item_text_options.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
@@ -141,6 +146,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller_link_info.h"
 
 #include "styles/style_basic.h"
+#include "styles/style_chat.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QByteArray>
@@ -169,6 +175,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtWidgets/QApplication>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -2828,6 +2835,19 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	return false;
 }
 
+[[nodiscard]] bool
+ShownInfoControllerMatches(not_null<Window::SessionController *> controller,
+						   Fn<bool(const Info::Controller &)> matches) {
+	const auto widgets = controller->widget()->findChildren<QWidget *>();
+	for (const auto widget : widgets) {
+		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
+		if (wrap && wrap->isVisible() && matches(*wrap->controller())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 struct SettingsDeepLinkInfoCounts {
 	int wraps = 0;
 	int visibleWraps = 0;
@@ -2899,6 +2919,10 @@ template <typename Condition>
 	deadline.stop();
 	return condition();
 }
+
+[[nodiscard]] bool
+ActivateWindowForRegression(Core::Application &app,
+							not_null<Window::Controller *> window);
 
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
@@ -3155,6 +3179,179 @@ template <typename Condition>
 		= [](WindowActivationForRegressionResult result) {
 			  return result == WindowActivationForRegressionResult::Failed;
 		  };
+	const auto prepareMessageLinkContext
+		= [&](not_null<Window::SessionController *> target)
+		-> std::optional<std::pair<HistoryWidget *, ClickHandlerContext>> {
+		const auto self = target->session().user();
+		const auto messageId
+			= FullMsgId(target->session().userPeerId(), MsgId(0x7e5704));
+		resetController(target);
+		if (!WaitForRegressionCondition([&] {
+				return !target->content()->isMainSectionShown()
+					   && !target->content()->isThirdSectionShown()
+					   && !target->isLayerShown();
+			})) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: custom window did not "
+				"return to its base section before Saved Messages setup.\n");
+			return std::nullopt;
+		}
+		target->showPeerHistory(self);
+		const auto clickContextReady = [&] {
+			const auto historyWidget
+				= target->content()->historyWidgetForRegressionTest();
+			return historyWidget && (historyWidget->peer() == self.get())
+				   && target->content()->isMainSectionShown()
+				   && !target->content()->isThirdSectionShown()
+				   && !target->isLayerShown()
+				   && (historyWidget
+						   ->prepareClickHandlerContextForRegressionTest(
+							   messageId)
+						   .sessionWindow.get()
+					   == target.get());
+		};
+		if (!WaitForRegressionCondition(clickContextReady)) {
+			const auto historyWidget
+				= target->content()->historyWidgetForRegressionTest();
+			const auto peerMatches
+				= historyWidget && (historyWidget->peer() == self.get());
+			const auto contextMatches
+				= historyWidget
+				  && (historyWidget
+						  ->prepareClickHandlerContextForRegressionTest(
+							  messageId)
+						  .sessionWindow.get()
+					  == target.get());
+			std::fprintf(
+				stderr,
+				"Settings deep link Saved Messages readiness: history=%d "
+				"peer=%d main-section=%d third-section=%d layer-hidden=%d "
+				"click-context=%d.\n",
+				historyWidget != nullptr, peerMatches,
+				target->content()->isMainSectionShown(),
+				!target->content()->isThirdSectionShown(),
+				!target->isLayerShown(), contextMatches);
+			return std::nullopt;
+		}
+		const auto historyWidget
+			= target->content()->historyWidgetForRegressionTest();
+		const auto context
+			= historyWidget->prepareClickHandlerContextForRegressionTest(
+				messageId);
+		if (context.sessionWindow.get() != target.get()) {
+			return std::nullopt;
+		}
+		return std::pair(historyWidget, context);
+	};
+	const auto makeMessageLinkHandler = [&](const QString &url) {
+		const auto messageText = Ui::Text::String(
+			st::messageTextStyle,
+			TextWithEntities{
+				.text = url,
+				.entities = {
+					EntityInText(EntityType::Url, 0, int(url.size())),
+				},
+			},
+			Ui::ItemTextDefaultOptions(),
+			st::msgMinWidth);
+		const auto width = messageText.maxWidth();
+		const auto height
+			= std::max(messageText.countHeight(width), messageText.minHeight());
+		for (auto y = 0; y != height; ++y) {
+			for (auto x = 0; x != width; ++x) {
+				if (const auto link
+					= messageText.getState(QPoint(x, y), width).link) {
+					return link;
+				}
+			}
+		}
+		return ClickHandlerPtr();
+	};
+	const auto clickMessageLink = [&](const QString &url,
+									  not_null<Window::SessionController *>
+										  target,
+									  not_null<HistoryWidget *> historyWidget,
+									  const ClickHandlerContext &messageContext,
+									  Window::Controller *activeBefore) {
+		const auto before = std::array{
+			stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			blockedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+		};
+		auto handler = makeMessageLinkHandler(url);
+		if (!handler) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: message link had no "
+				"click handler for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		ActivateClickHandler(historyWidget->window(), handler,
+							 ClickContext{
+								 Qt::LeftButton,
+								 QVariant::fromValue(messageContext),
+							 });
+		const auto dispatched = WaitForRegressionCondition([&] {
+			const auto current = std::array{
+				stockController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+				pinnedController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+				blockedController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+			};
+			return current != before;
+		});
+		const auto after = std::array{
+			stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			blockedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+		};
+		const auto toastOnly
+			= after[0] == before[0]
+			  && after[1]
+					 == before[1] + (target.get() == pinnedController.get())
+			  && after[2]
+					 == before[2] + (target.get() == blockedController.get());
+		const auto sameMessageView
+			= target->content()->historyWidgetForRegressionTest()
+				  == historyWidget.get()
+			  && (historyWidget->peer() == target->session().user().get())
+			  && !target->content()->isThirdSectionShown()
+			  && !ShownInfoSectionMatches(
+				  target, [](const Info::Section &) { return true; });
+		const auto unchanged
+			= [&](not_null<Window::SessionController *> controller) {
+				  return (controller.get() == target.get())
+						 || (!controller->content()->isMainSectionShown()
+							 && !controller->isLayerShown());
+			  };
+		const auto otherWindowsUnchanged = unchanged(stockController)
+										   && unchanged(pinnedController)
+										   && unchanged(blockedController);
+		const auto noPaidUiOpen = sameMessageView && !target->isLayerShown()
+								  && otherWindowsUnchanged;
+		const auto refused = dispatched && toastOnly && noPaidUiOpen
+							 && (app.activeWindow() == activeBefore);
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: clicked message link="
+				"%s toast-only=%d paid-ui-open=%d active=%p expected=%p.\n",
+				url.toUtf8().constData(), toastOnly, !noPaidUiOpen,
+				static_cast<void *>(app.activeWindow()),
+				static_cast<void *>(activeBefore));
+		}
+		return refused;
+	};
 
 	const auto stockWindowActivation
 		= activateSettingsWindow(&stockController->window());
@@ -3202,6 +3399,65 @@ template <typename Condition>
 						pinnedFocusCheckAvailable)) {
 		return false;
 	}
+	const auto messageRoutes = std::vector<QString>{
+		u"tg://settings/premium"_q,
+		u"tg://settings/stars"_q,
+		u"tg://settings/stars/top-up"_q,
+		u"tg://settings/stars/topup"_q,
+		u"tg://settings/stars/stats"_q,
+		u"tg://settings/stars/gift"_q,
+		u"tg://settings/stars/earn"_q,
+		u"tg://settings/ton"_q,
+		u"tg://settings/business"_q,
+		u"tg://settings/business/upgrade"_q,
+		u"tg://settings/business/do-not-hide-ads"_q,
+		u"tg://settings/send-gift"_q,
+		u"tg://settings/send-gift/self"_q,
+	};
+	const auto pinnedMessageState = prepareMessageLinkContext(pinnedController);
+	if (!pinnedMessageState) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not prepare the "
+			"custom Saved Messages click context.\n");
+		return false;
+	}
+	if (activationFailed(
+			activateSettingsWindow(&stockController->window()))) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom message-link matrix.\n");
+		return false;
+	}
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &stockController->window())) {
+			return false;
+		}
+	}
+	if (activationFailed(
+			activateSettingsWindow(&pinnedController->window()))) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its message-link matrix.\n");
+		return false;
+	}
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &pinnedController->window())) {
+			return false;
+		}
+	}
+	resetController(stockController);
+	resetController(pinnedController);
+	resetController(blockedController);
+	QCoreApplication::processEvents();
 	const auto stockBeforeBlockedActivation
 		= activateSettingsWindow(&stockController->window());
 	if (activationFailed(stockBeforeBlockedActivation)) {
@@ -3565,6 +3821,15 @@ template <typename Condition>
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto hasStockSettingsSection = [&](Settings::Type type) {
+		return stockController->content()->isMainSectionShown()
+			   && !stockController->isLayerShown()
+			   && ShownInfoSectionMatches(
+				   stockController, [&](const Info::Section &section) {
+					   return (section.type() == Info::Section::Type::Settings)
+							  && (section.settingsType() == type);
+				   });
+	};
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
 		std::fprintf(
@@ -3589,6 +3854,195 @@ template <typename Condition>
 	}
 	stockController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
+	QCoreApplication::processEvents();
+	auto stockMessageState
+		= std::optional<std::pair<HistoryWidget *, ClickHandlerContext>>();
+	const auto hasStockInfoSection = [&](Info::Section::Type type) {
+		return stockController->content()->isMainSectionShown()
+			   && !stockController->isLayerShown()
+			   && ShownInfoSectionMatches(stockController,
+										  [&](const Info::Section &section) {
+											  return section.type() == type;
+										  });
+	};
+	const auto hasStockLayerText = [&](const QString &text) {
+		const auto widgets
+			= stockController->widget()->findChildren<QWidget *>();
+		for (const auto widget : widgets) {
+			const auto layer = dynamic_cast<Ui::BoxLayerWidget *>(widget);
+			if (!layer || !layer->isVisible()) {
+				continue;
+			}
+			const auto children = layer->findChildren<QWidget *>();
+			for (const auto child : children) {
+				const auto label = dynamic_cast<Ui::FlatLabel *>(child);
+				if (label && label->isVisible()
+					&& (label->accessibilityName() == text)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	const auto stockSavedMessagesHistoryShown = [&] {
+		const auto historyWidget
+			= stockController->content()->historyWidgetForRegressionTest();
+		return stockController->content()->isMainSectionShown()
+			   && !stockController->content()->isThirdSectionShown()
+			   && (historyWidget == stockMessageState->first)
+			   && (historyWidget->peer()
+				   == stockController->session().user().get());
+	};
+	const auto noStockInfoSectionShown = [&] {
+		return !ShownInfoSectionMatches(
+			stockController, [](const Info::Section &) { return true; });
+	};
+	const auto stockCanJoinStarReferrals
+		= stockController->session().appConfig().starrefJoinAllowed();
+	const auto stockMessageDestinationShown = [&](const QString &url) {
+		if (url == u"tg://settings/premium"_q) {
+			return hasStockSettingsSection(Settings::PremiumId());
+		} else if (url == u"tg://settings/stars"_q
+				   || url == u"tg://settings/stars/topup"_q) {
+			return hasStockSettingsSection(Settings::CreditsId());
+		} else if (url == u"tg://settings/stars/top-up"_q) {
+			return stockController->isLayerShown()
+				   && hasStockLayerText(
+					   tr::lng_credits_summary_options_subtitle(tr::now))
+				   && stockSavedMessagesHistoryShown()
+				   && noStockInfoSectionShown();
+		} else if (url == u"tg://settings/stars/gift"_q) {
+			return stockController->isLayerShown()
+				   && hasStockLayerText(tr::lng_credits_gift_title(tr::now))
+				   && stockSavedMessagesHistoryShown()
+				   && noStockInfoSectionShown();
+		} else if (url == u"tg://settings/send-gift"_q) {
+			return stockController->isLayerShown()
+				   && hasStockLayerText(tr::lng_gift_premium_or_stars(tr::now))
+				   && stockSavedMessagesHistoryShown()
+				   && noStockInfoSectionShown();
+		} else if (url == u"tg://settings/send-gift/self"_q) {
+			return stockController->isLayerShown()
+				   && hasStockLayerText(tr::lng_gift_self_title(tr::now))
+				   && stockSavedMessagesHistoryShown()
+				   && noStockInfoSectionShown();
+		} else if (url == u"tg://settings/stars/stats"_q) {
+			return hasStockInfoSection(Info::Section::Type::BotEarn);
+		} else if (url == u"tg://settings/stars/earn"_q) {
+			return stockCanJoinStarReferrals
+					   ? ShownInfoControllerMatches(
+							 stockController,
+							 [](const Info::Controller &controller) {
+								 return (controller.section().type()
+										 == Info::Section::Type::BotStarRef)
+										&& (controller.starrefType()
+											== Info::BotStarRef::Type::Join);
+							 })
+					   : (stockSavedMessagesHistoryShown()
+						  && !stockController->isLayerShown()
+						  && noStockInfoSectionShown());
+		} else if (url == u"tg://settings/ton"_q) {
+			return hasStockSettingsSection(Settings::CurrencyId());
+		} else if (url == u"tg://settings/business"_q
+				   || url == u"tg://settings/business/upgrade"_q) {
+			return hasStockSettingsSection(Settings::BusinessId());
+		} else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
+			return hasStockSettingsSection(Settings::BusinessId())
+				   && (stockController->highlightControlId()
+					   == u"business/sponsored"_q);
+		}
+		return false;
+	};
+	const auto previousStockHighlight = stockController->highlightControlId();
+	const auto restoreStockHighlight = gsl::finally([&] {
+		stockController->setHighlightControlId(previousStockHighlight);
+	});
+	for (const auto &url : messageRoutes) {
+		resetController(stockController);
+		stockController->setHighlightControlId(QString());
+		QCoreApplication::processEvents();
+		if (!activateSettingsWindow(&stockController->window())) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: stock window did not "
+				"activate before message route=%s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		stockMessageState = prepareMessageLinkContext(stockController);
+		if (!stockMessageState
+			|| stockMessageState->second.sessionWindow.get()
+				   != stockController.get()) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: could not prepare the "
+				"active stock Saved Messages click context for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		const auto toastBefore
+			= stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto handler = makeMessageLinkHandler(url);
+		if (!handler) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: stock message link had "
+				"no click handler for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		ActivateClickHandler(stockMessageState->first->window(), handler,
+							 ClickContext{
+								 Qt::LeftButton,
+								 QVariant::fromValue(stockMessageState->second),
+							 });
+		const auto clickDispatchCompleted
+			= WaitForMainQueueBarrierForRegressionTest()
+			  == MainQueueBarrierResult::Completed;
+		if (!clickDispatchCompleted) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: stock message click "
+				"dispatch did not complete for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		const auto destinationShown = WaitForRegressionCondition(
+			[&] { return stockMessageDestinationShown(url); });
+		const auto toastUnchanged
+			= stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == toastBefore;
+		const auto otherWindowsUnchanged
+			= !pinnedController->content()->isMainSectionShown()
+			  && !pinnedController->isLayerShown()
+			  && !blockedController->content()->isMainSectionShown()
+			  && !blockedController->isLayerShown();
+		const auto stockWindowActive
+			= app.activeWindow() == &stockController->window();
+		if (!destinationShown || !toastUnchanged || !otherWindowsUnchanged
+			|| !stockWindowActive) {
+			const auto infoCounts
+				= CountSettingsDeepLinkInfoSections(stockController);
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: stock message route=%s "
+				"destination=%d toast-unchanged=%d other-windows-unchanged=%d "
+				"active-window=%d info-wraps=%d visible-wraps=%d "
+				"not-hidden-wraps=%d settings-wraps=%d "
+				"information-wraps=%d visible-information=%d "
+				"not-hidden-information=%d stories-wraps=%d.\n",
+				url.toUtf8().constData(), destinationShown, toastUnchanged,
+				otherWindowsUnchanged, stockWindowActive, infoCounts.wraps,
+				infoCounts.visibleWraps, infoCounts.notHiddenWraps,
+				infoCounts.settingsWraps, infoCounts.informationWraps,
+				infoCounts.visibleInformationWraps,
+				infoCounts.notHiddenInformationWraps, infoCounts.storiesWraps);
+			return false;
+		}
+	}
+	resetController(stockController);
 	QCoreApplication::processEvents();
 	std::fprintf(stderr,
 				 "Settings deep link regression passed: paid and story routes "
@@ -8020,6 +8474,24 @@ template <typename Widget>
 	return true;
 }
 #endif
+
+[[nodiscard]] bool
+ActivateWindowForRegression(Core::Application &app,
+							not_null<Window::Controller *> window) {
+	const auto isActive = [&] { return app.activeWindow() == window.get(); };
+	auto retry = QTimer();
+	retry.setInterval(100);
+	QObject::connect(&retry, &QTimer::timeout, window->widget(), [&] {
+		if (!isActive()) {
+			window->activate();
+		}
+	});
+	retry.start();
+	window->activate();
+	const auto activated = WaitForRegressionCondition(isActive);
+	retry.stop();
+	return activated;
+}
 
 [[nodiscard]] bool
 WaitForBindingFilesRemovedForRegression(const QStringList &files) {

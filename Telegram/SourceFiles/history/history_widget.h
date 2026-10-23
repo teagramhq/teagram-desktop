@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 enum class SendMediaType;
 class MessageLinksParser;
+struct ClickHandlerContext;
 struct InlineBotQuery;
 
 namespace MTP {
@@ -293,6 +294,8 @@ public:
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	void sendForRegressionTest(Api::SendOptions options);
 	[[nodiscard]] bool chatThemeControlsAccessibleForRegressionTest() const;
+	[[nodiscard]] ClickHandlerContext
+	prepareClickHandlerContextForRegressionTest(FullMsgId itemId) const;
 #endif
 
 	void applyCloudDraft(History *history);
