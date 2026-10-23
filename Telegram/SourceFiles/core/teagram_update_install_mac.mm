@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QProcess>
+#include <QtCore/QTimer>
 #include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
@@ -55,6 +56,7 @@ constexpr auto kPreviousBundle = ".Teagram.app.previous";
 constexpr auto kCommitMarker = ".teagram-update-pending";
 constexpr auto kStartedMarker = ".teagram-update-started";
 constexpr auto kStartupWaitMs = 30'000;
+constexpr auto kStartupCleanupRetryMs = 100;
 constexpr auto kDataFolder = "tdata";
 constexpr auto kMaximumDataCopies = 100;
 constexpr auto kCustomIconFile = "Icon\r";
@@ -427,6 +429,46 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 	return removed;
 }
 
+[[nodiscard]] bool RemoveLegacyInstallLockFile(const QString &installed) {
+	auto lock = TeagramUpdateInstallLock(installed);
+	return lock.acquired() && lock.removeLegacyLockFile();
+}
+
+void CleanupTeagramUpdateStartup(const QString &installed,
+								 const QString &parent) {
+	if (!RemoveLegacyInstallLockFile(installed)) {
+		LOG(("Teagram update lock file could not be removed after "
+			 "startup."));
+	} else if (!RemoveMarker(parent, kCommitMarker)
+			   || !RemoveMarker(parent, kStartedMarker)) {
+		LOG(("Teagram update markers could not be cleared after startup."));
+	}
+}
+
+void RetryTeagramUpdateStartupCleanupAfterRelaunch(
+	const QString &installed, const QString &parent,
+	const std::function<bool()> &otherInstanceRunning) {
+	auto *application = QCoreApplication::instance();
+	if (!application) {
+		return;
+	}
+	QTimer::singleShot(
+		kStartupCleanupRetryMs, application,
+		[installed, parent, otherInstanceRunning] {
+			@autoreleasepool {
+				const auto relaunchWaiting = otherInstanceRunning
+												 ? otherInstanceRunning()
+												 : OtherInstanceRunning();
+				if (relaunchWaiting) {
+					RetryTeagramUpdateStartupCleanupAfterRelaunch(
+						installed, parent, otherInstanceRunning);
+				} else {
+					CleanupTeagramUpdateStartup(installed, parent);
+				}
+			}
+		});
+}
+
 [[nodiscard]] bool CarryCustomIconFile(const QString &installed,
 									   const QString &candidate) {
 	const auto source = QFile::encodeName(installed) + '/' + kCustomIconFile;
@@ -755,6 +797,11 @@ enum class StartupWaitResult {
 										: StartupWaitResult::Failed)
 								 : WaitForStartup(*pending, parent);
 		if (startup == StartupWaitResult::Acknowledged) {
+			if (!RemoveLegacyInstallLockFile(installed)) {
+				LOG(("Teagram update lock file could not be removed after "
+					 "startup."));
+				return TeagramUpdateRelaunchResult::Failed;
+			}
 			return RemoveMarker(parent, kCommitMarker)
 						   && RemoveMarker(parent, kStartedMarker)
 					   ? TeagramUpdateRelaunchResult::CandidateStarted
@@ -834,10 +881,11 @@ enum class StartupWaitResult {
 	}
 	const auto relaunchWaiting = otherInstanceRunning ? otherInstanceRunning()
 													  : OtherInstanceRunning();
-	if (!relaunchWaiting
-		&& (!RemoveMarker(parent, kCommitMarker)
-			|| !RemoveMarker(parent, kStartedMarker))) {
-		LOG(("Teagram update markers could not be cleared after startup."));
+	if (relaunchWaiting) {
+		RetryTeagramUpdateStartupCleanupAfterRelaunch(installed, parent,
+													  otherInstanceRunning);
+	} else {
+		CleanupTeagramUpdateStartup(installed, parent);
 	}
 	return true;
 }
