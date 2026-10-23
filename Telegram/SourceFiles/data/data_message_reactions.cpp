@@ -372,12 +372,11 @@ PossibleItemReactions::PossibleItemReactions(
 , tags(other.tags){
 }
 
-Reactions::Reactions(not_null<Session*> owner)
-: _owner(owner)
-, _topRefreshTimer([=] { refreshTop(); })
-, _defaultUpdateTimer([=] { processDefaultUpdate(); })
-, _repaintTimer([=] { repaintCollected(); })
-, _sendPaidTimer([=] { sendPaid(); }) {
+Reactions::Reactions(not_null<Session *> owner)
+	: _owner(owner), _topRefreshTimer([=] { refreshTop(); }),
+	  _defaultUpdateTimer([=] { processDefaultUpdate(); }),
+	  _repaintTimer([=] { repaintCollected(); }),
+	  _sendPaidTimer([=] { sendPaid(); }) {
 	refreshDefault();
 
 	_myTags.emplace(nullptr);
@@ -1156,18 +1155,16 @@ void Reactions::updateDefault(const MTPDmessages_availableReactions &data) {
 	_defaultUpdateTimer.callOnce(0);
 }
 
-void Reactions::addDefaultReaction(
-		DefaultUpdate &update,
-		const MTPAvailableReaction &reaction) {
+void Reactions::addDefaultReaction(DefaultUpdate &update,
+								   const MTPAvailableReaction &reaction) {
 	if (const auto parsed = parse(reaction)) {
 		update.available.push_back(*parsed);
 		if (parsed->active) {
 			update.active.push_back(*parsed);
 			const auto toCache = [&](DocumentData *document) {
 				if (document) {
-					update.iconsCache.emplace(
-						document,
-						document->createMediaView());
+					update.iconsCache.emplace(document,
+											  document->createMediaView());
 				}
 			};
 			toCache(parsed->appearAnimation);
@@ -1185,8 +1182,7 @@ void Reactions::processDefaultUpdate() {
 	auto &update = *_defaultUpdate;
 	const auto started = crl::now();
 	const auto more = details::ProcessAvailableReactionsBatch(
-		update.reactions,
-		update.position,
+		update.reactions, update.position,
 		[&](const MTPAvailableReaction &reaction) {
 			addDefaultReaction(update, reaction);
 		});
@@ -1194,9 +1190,7 @@ void Reactions::processDefaultUpdate() {
 		auto last = end(update.previousIconsCache);
 		update.previousIconsCache.erase(--last);
 	}
-	update.longestBatch = std::max(
-		update.longestBatch,
-		crl::now() - started);
+	update.longestBatch = std::max(update.longestBatch, crl::now() - started);
 	if (more || !update.previousIconsCache.empty()) {
 		_defaultUpdateTimer.callOnce(0);
 		return;
@@ -1212,12 +1206,12 @@ void Reactions::processDefaultUpdate() {
 		resolveReactionImages();
 	}
 	defaultUpdated();
-	finished.longestBatch = std::max(
-		finished.longestBatch,
-		crl::now() - finalizeStarted);
-	DEBUG_LOG(("Reaction Info: imported %1 reactions; max main-thread batch %2 ms.")
-		.arg(finished.reactions.size())
-		.arg(finished.longestBatch));
+	finished.longestBatch
+		= std::max(finished.longestBatch, crl::now() - finalizeStarted);
+	DEBUG_LOG(
+		("Reaction Info: imported %1 reactions; max main-thread batch %2 ms.")
+			.arg(finished.reactions.size())
+			.arg(finished.longestBatch));
 }
 
 void Reactions::updateGeneric(const MTPDmessages_stickerSet &data) {

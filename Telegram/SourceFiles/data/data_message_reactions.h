@@ -178,18 +178,17 @@ public:
 		const MTPMessage &message);
 
 private:
-	using DocumentMediaCache = base::flat_map<
-		not_null<DocumentData*>,
-		std::shared_ptr<DocumentMedia>>;
-	struct DefaultUpdate {
-		QVector<MTPAvailableReaction> reactions;
-		DocumentMediaCache previousIconsCache;
-		DocumentMediaCache iconsCache;
-		std::vector<Reaction> active;
-		std::vector<Reaction> available;
-		crl::time longestBatch = 0;
-		int position = 0;
-	};
+  using DocumentMediaCache = base::flat_map<not_null<DocumentData *>,
+											std::shared_ptr<DocumentMedia>>;
+  struct DefaultUpdate {
+	  QVector<MTPAvailableReaction> reactions;
+	  DocumentMediaCache previousIconsCache;
+	  DocumentMediaCache iconsCache;
+	  std::vector<Reaction> active;
+	  std::vector<Reaction> available;
+	  crl::time longestBatch = 0;
+	  int position = 0;
+  };
 
 	struct ImageSet {
 		QImage image;
@@ -227,9 +226,8 @@ private:
 	void updateTop(const MTPDmessages_reactions &data);
 	void updateRecent(const MTPDmessages_reactions &data);
 	void updateDefault(const MTPDmessages_availableReactions &data);
-	void addDefaultReaction(
-		DefaultUpdate &update,
-		const MTPAvailableReaction &reaction);
+	void addDefaultReaction(DefaultUpdate &update,
+							const MTPAvailableReaction &reaction);
 	void processDefaultUpdate();
 	void updateGeneric(const MTPDmessages_stickerSet &data);
 	void updateMyTags(

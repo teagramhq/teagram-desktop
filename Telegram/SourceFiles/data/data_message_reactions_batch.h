@@ -10,10 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Data::details {
 
 template <typename Items, typename Callback>
-[[nodiscard]] bool ProcessAvailableReactionsBatch(
-		const Items &items,
-		int &position,
-		Callback &&callback) {
+[[nodiscard]] bool ProcessAvailableReactionsBatch(const Items &items,
+												  int &position,
+												  Callback &&callback) {
 	const auto count = int(items.size());
 	if (position >= count) {
 		return false;

@@ -29,9 +29,7 @@ TEST_CASE(AvailableReactionsResponseWith73ItemsUsesOneItemPerTurn) {
 		const auto before = position;
 		auto documentsThisTurn = 0;
 		const auto more = Data::details::ProcessAvailableReactionsBatch(
-			response,
-			position,
-			[&](const AvailableReactionFixture &reaction) {
+			response, position, [&](const AvailableReactionFixture &reaction) {
 				++processed;
 				documentsThisTurn = reaction.documents;
 				processedDocuments += reaction.documents;
