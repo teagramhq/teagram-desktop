@@ -15,21 +15,33 @@ using namespace MTP;
 using namespace MTP::details;
 
 TEST_CASE(AuthenticatedResponseCompletesReconnectWithoutSaltChange) {
-	CHECK(ShouldMarkConnectedAfterAuthenticatedResponse(
+	const auto transition = ProcessAuthenticatedResponse(
 		ConnectingState,
-		false));
+		42,
+		42,
+		false);
+	CHECK_EQ(transition.sessionSalt, uint64(42));
+	CHECK(transition.shouldMarkConnected);
 }
 
 TEST_CASE(BadTimeAuthenticatedResponseDoesNotCompleteReconnect) {
-	CHECK(!ShouldMarkConnectedAfterAuthenticatedResponse(
+	const auto transition = ProcessAuthenticatedResponse(
 		ConnectingState,
-		true));
+		42,
+		84,
+		true);
+	CHECK_EQ(transition.sessionSalt, uint64(42));
+	CHECK(!transition.shouldMarkConnected);
 }
 
 TEST_CASE(AuthenticatedResponseDoesNotResetAlreadyConnectedSession) {
-	CHECK(!ShouldMarkConnectedAfterAuthenticatedResponse(
+	const auto transition = ProcessAuthenticatedResponse(
 		ConnectedState,
-		false));
+		42,
+		84,
+		false);
+	CHECK_EQ(transition.sessionSalt, uint64(84));
+	CHECK(!transition.shouldMarkConnected);
 }
 
 } // namespace

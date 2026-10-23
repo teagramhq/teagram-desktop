@@ -454,10 +454,18 @@ bool SessionPrivate::setState(int state, int ifState) {
 	return true;
 }
 
-bool ShouldMarkConnectedAfterAuthenticatedResponse(
+AuthenticatedResponseTransition ProcessAuthenticatedResponse(
 		int state,
+		uint64 sessionSalt,
+		uint64 serverSalt,
 		bool badTime) {
-	return (state == ConnectingState) && !badTime;
+	if (!badTime) {
+		sessionSalt = serverSalt;
+	}
+	return {
+		sessionSalt,
+		(state == ConnectingState) && !badTime,
+	};
 }
 
 void SessionPrivate::resetSession() {
@@ -1467,11 +1475,16 @@ void SessionPrivate::handleReceived() {
 			DEBUG_LOG(("MTP Info: bad server time from msg_id: %1, my time: %2").arg(serverTime).arg(clientTime));
 		}
 
-		bool wasConnected = (getState() == ConnectedState);
+		const auto state = getState();
+		bool wasConnected = (state == ConnectedState);
+		const auto responseTransition = ProcessAuthenticatedResponse(
+			state,
+			_sessionSalt,
+			serverSalt,
+			badTime);
 		if (serverSalt != _sessionSalt) {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
-				_sessionSalt = serverSalt;
 			} else {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2").arg(serverSalt).arg(_sessionSalt));
 			}
@@ -1480,9 +1493,8 @@ void SessionPrivate::handleReceived() {
 		}
 		// A valid reply proves this session is live even when its salt did not
 		// change. Advance before dispatch, which may ignore an untracked pong.
-		if (ShouldMarkConnectedAfterAuthenticatedResponse(
-				getState(),
-				badTime)
+		_sessionSalt = responseTransition.sessionSalt;
+		if (responseTransition.shouldMarkConnected
 			&& setState(ConnectedState, ConnectingState)) {
 			resendAll();
 		}

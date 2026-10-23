@@ -30,8 +30,15 @@ class SessionData;
 class RSAPublicKey;
 struct SessionOptions;
 
-[[nodiscard]] bool ShouldMarkConnectedAfterAuthenticatedResponse(
+struct AuthenticatedResponseTransition {
+	uint64 sessionSalt = 0;
+	bool shouldMarkConnected = false;
+};
+
+[[nodiscard]] AuthenticatedResponseTransition ProcessAuthenticatedResponse(
 	int state,
+	uint64 sessionSalt,
+	uint64 serverSalt,
 	bool badTime);
 
 class SessionPrivate final : public QObject {
