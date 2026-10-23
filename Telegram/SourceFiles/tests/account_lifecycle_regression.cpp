@@ -1473,9 +1473,12 @@ template <typename Predicate>
 			"changed before the server photo update.\n");
 		return false;
 	}
+	const auto updatedChatFlags
+		= MTPDchat::Flags(0) | MTPDchat::Flag::f_creator
+		  | (expectServerConfirmation ? MTPDchat::Flag::f_default_banned_rights
+									  : MTPDchat::Flags(0));
 	const auto updatedChat = MTP_chat(
-		MTP_flags(MTPDchat::Flag::f_creator),
-		MTP_long(peerToChat(chat->id).bare),
+		MTP_flags(updatedChatFlags), MTP_long(peerToChat(chat->id).bare),
 		MTP_string(u"Photo upload lifecycle group"_q),
 		MTP_chatPhoto(MTP_flags(0), MTP_long(static_cast<int64>(photoId)),
 					  MTPbytes(), MTP_int(2)),
@@ -1491,15 +1494,29 @@ template <typename Predicate>
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
 	if (!ReplyToCapturedRequestForRegressionTest<MTPmessages_EditChatPhoto>(
 			capture, replacementUploadIndex + 1, mtpc_messages_editChatPhoto,
-			reply)
-		|| chat->userpicPhotoId() != photoId
-		|| (expectServerConfirmation
-			&& (!(chat->defaultRestrictions() & ChatRestriction::ChangeInfo)
-				|| !chat->canEditInformation()))) {
+			reply)) {
+		return false;
+	}
+	if (chat->userpicPhotoId() != photoId) {
 		std::fprintf(
 			stderr,
 			"Peer photo lifecycle regression failed: server photo update was "
 			"not applied.\n");
+		return false;
+	}
+	if (expectServerConfirmation
+		&& !(chat->defaultRestrictions() & ChatRestriction::ChangeInfo)) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: synthetic server chat "
+			"response did not preserve default_banned_rights.\n");
+		return false;
+	}
+	if (expectServerConfirmation && !chat->canEditInformation()) {
+		std::fprintf(
+			stderr,
+			"Peer photo lifecycle regression failed: creator lost photo edit "
+			"rights after the server update.\n");
 		return false;
 	}
 	if (!WaitForRegressionCondition([&] { return !box; })
