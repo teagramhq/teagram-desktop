@@ -6,6 +6,8 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_active_sessions_callbacks.h"
+#include "settings/sections/settings_active_sessions_state.h"
 
 #include "settings/settings_common_session.h"
 
@@ -628,6 +630,7 @@ private:
 
 	void shortPollSessions();
 	void parse(const Api::Authorizations::List &list);
+	void reloadFailed(const MTP::Error &error);
 
 	void terminate(Fn<void()> terminateRequest, QString message);
 	void terminateOne(uint64 hash);
@@ -636,7 +639,7 @@ private:
 	const not_null<Window::SessionController*> _controller;
 	const not_null<Api::Authorizations*> _authorizations;
 
-	rpl::variable<bool> _loading = false;
+	details::ActiveSessionsState _state;
 	Full _data;
 
 	object_ptr<Inner> _inner;
@@ -687,6 +690,7 @@ public:
 		rpl::producer<int> ttlDays);
 
 	void showData(const Full &data);
+	void showReloadFailed(bool failed);
 	[[nodiscard]] rpl::producer<EntryData> showRequests() const;
 	[[nodiscard]] rpl::producer<uint64> terminateOne() const;
 	[[nodiscard]] rpl::producer<> terminateAll() const;
@@ -706,6 +710,7 @@ private:
 	QPointer<Ui::RpWidget> _currentHeader;
 	QPointer<Ui::RpWidget> _incompleteHeader;
 	QPointer<Ui::RpWidget> _otherHeader;
+	QPointer<Ui::SlideWrap<Ui::FlatLabel>> _reloadFailure;
 	std::unique_ptr<ListController> _incomplete;
 	std::unique_ptr<ListController> _list;
 	rpl::variable<int> _ttlDays;
@@ -748,43 +753,62 @@ void SessionsContent::setupContent() {
 		terminateAll();
 	}, lifetime());
 
-	_loading.changes(
-	) | rpl::on_next([=](bool value) {
-		_inner->setVisible(!value);
-	}, lifetime());
+	const auto currentList = _authorizations->list();
+	_state.initialize(_authorizations->hasAuthoritativeList(),
+					  !currentList.empty(),
+					  _authorizations->lastReloadFailureType());
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
+	details::BindReloadFailures(
+		_authorizations->reloadFailures(),
+		[=](const MTP::Error &error) { reloadFailed(error); }, lifetime());
+	_authorizations->reloadSuccesses()
+		| rpl::on_next([=] { _state.reloadSucceeded(); }, lifetime());
 
-	_authorizations->listValue(
-	) | rpl::on_next([=](const Api::Authorizations::List &list) {
-		parse(list);
-	}, lifetime());
+	_authorizations->listValue()
+		| rpl::on_next(
+			[=](const Api::Authorizations::List &list) { parse(list); },
+			lifetime());
 
-	_loading = true;
 	shortPollSessions();
 }
 
 void SessionsContent::parse(const Api::Authorizations::List &list) {
-	if (list.empty()) {
-		return;
-	}
+	const auto transition = _state.receiveList(
+		!list.empty(), _authorizations->hasAuthoritativeList());
 	_data = Full();
-	for (const auto &auth : list) {
-		if (!auth.hash) {
-			_data.current = auth;
-		} else if (auth.incomplete) {
-			_data.incomplete.push_back(auth);
-		} else {
-			_data.list.push_back(auth);
+	if (!transition.clearRows) {
+		for (const auto &auth : list) {
+			if (!auth.hash) {
+				_data.current = auth;
+			} else if (auth.incomplete) {
+				_data.incomplete.push_back(auth);
+			} else {
+				_data.list.push_back(auth);
+			}
 		}
 	}
-
-	_loading = false;
-
 	ranges::sort(_data.list, std::greater<>(), &EntryData::activeTime);
 	ranges::sort(_data.incomplete, std::greater<>(), &EntryData::activeTime);
 
 	_inner->showData(_data);
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
 
-	_shortPollTimer.callOnce(kShortPollTimeout);
+	if (transition.schedulePoll) {
+		_shortPollTimer.callOnce(kShortPollTimeout);
+	}
+	update();
+}
+
+void SessionsContent::reloadFailed(const MTP::Error &error) {
+	details::HandleReloadFailure(_state, error, [=](int retryDelayMs) {
+		_shortPollTimer.cancel();
+		_shortPollTimer.callOnce(retryDelayMs);
+	});
+	_inner->showReloadFailed(_state.failed());
+	_inner->setVisible(_state.contentVisible());
+	update();
 }
 
 void SessionsContent::resizeEvent(QResizeEvent *e) {
@@ -798,25 +822,34 @@ void SessionsContent::paintEvent(QPaintEvent *e) {
 
 	Painter p(this);
 
-	if (_loading.current()) {
+	if (_state.loading()) {
 		p.setFont(st::noContactsFont);
 		p.setPen(st::noContactsColor);
 		p.drawText(
 			QRect(0, 0, width(), st::noContactsHeight),
 			tr::lng_contacts_loading(tr::now),
 			style::al_center);
+	} else if (_state.failed() && !_state.contentVisible()) {
+		p.setFont(st::noContactsFont);
+		p.setPen(st::noContactsColor);
+		p.drawText(QRect(0, 0, width(), st::noContactsHeight),
+				   tr::lng_sessions_refresh_failed(tr::now), style::al_center);
 	}
 }
 
 void SessionsContent::shortPollSessions() {
 	const auto left = kShortPollTimeout
 		- (crl::now() - _authorizations->lastReceivedTime());
-	if (left > 0) {
+	if (_state.shouldUseCachedList(_authorizations->hasAuthoritativeList(),
+								   left > 0)) {
 		parse(_authorizations->list());
 		_shortPollTimer.cancel();
 		_shortPollTimer.callOnce(left);
 	} else {
+		_state.beginRefresh();
+		_inner->setVisible(_state.contentVisible());
 		_authorizations->reload();
+		_shortPollTimer.callOnce(kShortPollTimeout);
 	}
 	update();
 }
@@ -878,10 +911,23 @@ void SessionsContent::terminateAll() {
 			_authorizations->cancelCurrentRequest();
 			_authorizations->reload();
 		});
-		_authorizations->requestTerminate(
-			[=](const MTPBool &result) { reset(); },
-			[=](const MTP::Error &result) { reset(); });
-		_loading = true;
+		_state.beginTerminateAll();
+		_inner->setVisible(!_state.loading());
+		update();
+		auto [done, fail] = details::GuardTerminateAllCallbacks(
+			weak,
+			[=](const MTPBool &result) {
+				reset();
+				if (mtpIsFalse(result)) {
+					reloadFailed(MTP::Error::Local(
+						u"AUTHORIZATIONS_TERMINATE_FAILED"_q, QString()));
+				}
+			},
+			[=](const MTP::Error &result) {
+				reset();
+				reloadFailed(result);
+			});
+		_authorizations->requestTerminate(std::move(done), std::move(fail));
 	};
 	terminate(std::move(callback), tr::lng_settings_reset_sure(tr::now));
 }
@@ -920,6 +966,14 @@ void SessionsContent::Inner::setupContent() {
 	using namespace rpl::mappers;
 
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	_reloadFailure = content
+						 ->add(object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+							 content,
+							 object_ptr<Ui::FlatLabel>(
+								 content, tr::lng_sessions_refresh_failed(),
+								 st::boxDividerLabel),
+							 st::defaultBoxDividerLabelPadding))
+						 ->setDuration(0);
 
 	_currentHeader = AddSubsectionTitle(
 		content,
@@ -1032,6 +1086,10 @@ void SessionsContent::Inner::showData(const Full &data) {
 	_current->showData({ &data.current, &data.current + 1 });
 	_list->showData(data.list);
 	_incomplete->showData(data.incomplete);
+}
+
+void SessionsContent::Inner::showReloadFailed(bool failed) {
+	_reloadFailure->toggle(failed, anim::type::instant);
 }
 
 rpl::producer<> SessionsContent::Inner::terminateAll() const {

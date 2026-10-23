@@ -92,6 +92,7 @@ PRIVATE
     storage/storage_account_persistence.cpp
     storage/storage_server_forget_startup.cpp
     storage/storage_domain.cpp
+    tests/unit/api_compose_with_ai_tests.cpp
     tests/unit/bio_save_failure_tests.cpp
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_download_manager_tests.cpp
@@ -111,6 +112,7 @@ PRIVATE
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
+    tests/unit/settings_active_sessions_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp

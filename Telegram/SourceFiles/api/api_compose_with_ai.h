@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_entity.h"
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 class ApiWrap;
@@ -110,12 +111,28 @@ void ClearAiApplyBoundSlug();
 
 [[nodiscard]] QString AiApplyShortcutText();
 
+namespace details {
+
+template <typename Session, typename Prepare, typename ReadDraft,
+		  typename Apply>
+void RunAiApplyInPlaceForSession(Session &session, Prepare &&prepare,
+								 ReadDraft &&readDraft, Apply &&apply) {
+	if (!session.aiComposeSupported()) {
+		return;
+	}
+	if (!std::forward<Prepare>(prepare)(session)) {
+		return;
+	}
+	auto draft = std::forward<ReadDraft>(readDraft)(session);
+	std::forward<Apply>(apply)(session, std::move(draft));
+}
+
+} // namespace details
+
 void TriggerAiApplyInPlace(
-	not_null<Main::Session*> session,
-	std::shared_ptr<Ui::Show> show,
-	not_null<QObject*> guard,
-	not_null<Ui::InputField*> field,
-	TextWithEntities fullFieldText,
+	not_null<Main::Session *> session, std::shared_ptr<Ui::Show> show,
+	not_null<QObject *> guard, not_null<Ui::InputField *> field,
+	Fn<TextWithEntities()> fullFieldText,
 	Fn<void(TextWithTags textWithTags, int cursor)> applyToField);
 
 } // namespace Api

@@ -1604,6 +1604,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_generic_subscribe_link" = "Telegram Premium";
 
 "lng_sessions_header" = "This device";
+"lng_sessions_refresh_failed" = "Couldn't verify active sessions. Any shown sessions may be out of date. Retrying…";
 "lng_sessions_other_header" = "Active Devices";
 "lng_sessions_other_desc" = "You can log in to Telegram from other mobile, tablet and desktop devices, using the same phone number. All your data will be instantly synchronized.";
 "lng_sessions_terminate_all" = "Terminate all other sessions";
