@@ -96,7 +96,7 @@ public:
 	void setLinkPlaceholder(const QString &placeholder);
 	void setMaxLength(int maxLength);
 	void setReadOnlyWithDescription(const QString &description);
-	void setTextFromAccessibility(const QString &text);
+	void setTextFromAccessibility(const QString &text, int cursorAfterEdit);
 
   protected:
 	void keyPressEvent(QKeyEvent *e) override;

@@ -327,10 +327,17 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 		editableText->insertText(8, u"_next"_q);
 		CHECK_EQ(editable.text(), u"new_name_next"_q);
 		CHECK_EQ(editable.getLastText(), u"new_name_next"_q);
+		CHECK_EQ(editable.cursorPosition(), 13);
 		CHECK_EQ(editableChanges, 2);
+		auto typingEvent
+			= QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, u"x"_q);
+		QCoreApplication::sendEvent(&editable, &typingEvent);
+		CHECK_EQ(editable.text(), u"new_name_nextx"_q);
+		CHECK_EQ(editable.cursorPosition(), 14);
+		CHECK_EQ(editableChanges, 3);
 	}
 	auto submittedUsername = QString();
 	CHECK(usernameFlow.saveAccount(
 		[&](const QString &username) { submittedUsername = username; }));
-	CHECK_EQ(submittedUsername, u"new_name_next"_q);
+	CHECK_EQ(submittedUsername, u"new_name_nextx"_q);
 }

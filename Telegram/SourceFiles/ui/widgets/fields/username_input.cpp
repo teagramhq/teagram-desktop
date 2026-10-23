@@ -69,7 +69,7 @@ class UsernameInputAccessible final : public QAccessibleWidget,
 
 	void setText(QAccessible::Text type, const QString &text) override {
 		if (type == QAccessible::Value) {
-			input()->setTextFromAccessibility(text);
+			input()->setTextFromAccessibility(text, 0);
 		} else {
 			QAccessibleWidget::setText(type, text);
 		}
@@ -159,16 +159,18 @@ class UsernameInputAccessible final : public QAccessibleWidget,
 
 	void deleteText(int start, int end) override {
 		input()->setTextFromAccessibility(
-			input()->text().remove(start, end - start));
+			input()->text().remove(start, end - start), start);
 	}
 
 	void insertText(int offset, const QString &text) override {
-		input()->setTextFromAccessibility(input()->text().insert(offset, text));
+		input()->setTextFromAccessibility(input()->text().insert(offset, text),
+										  offset + text.size());
 	}
 
 	void replaceText(int start, int end, const QString &text) override {
 		input()->setTextFromAccessibility(
-			input()->text().replace(start, end - start, text));
+			input()->text().replace(start, end - start, text),
+			start + text.size());
 	}
 
   private:
@@ -217,14 +219,15 @@ void UsernameInput::setReadOnlyWithDescription(const QString &description) {
 	setAccessibleDescription(description);
 }
 
-void UsernameInput::setTextFromAccessibility(const QString &text) {
+void UsernameInput::setTextFromAccessibility(const QString &text,
+											 int cursorAfterEdit) {
 	if (isReadOnly()) {
 		return;
 	}
 	const auto wasText = getLastText();
 	const auto wasCursor = cursorPosition();
 	auto now = text;
-	auto nowCursor = 0;
+	auto nowCursor = cursorAfterEdit;
 	correctValue(wasText, wasCursor, now, nowCursor);
 	if (QLineEdit::text() != now) {
 		setText(now);
