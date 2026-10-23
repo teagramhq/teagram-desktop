@@ -263,7 +263,8 @@ void RunReconnectScenario(AuthKey::Type keyType) {
 	SessionPrivateTestAccess::Receive(*session, invalidAuthentication);
 	CHECK(session->getState() < 0);
 	CHECK(log->sent.empty());
-	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)), quint64(0));
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(0));
 	CHECK(SessionPrivateTestAccess::SessionSalt(*session) == kSessionSalt);
 
 	SessionPrivateTestAccess::Reconnect(
@@ -275,7 +276,8 @@ void RunReconnectScenario(AuthKey::Type keyType) {
 	SessionPrivateTestAccess::Receive(*session, malformedReply);
 	CHECK(session->getState() < 0);
 	CHECK(log->sent.empty());
-	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)), quint64(0));
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(0));
 	CHECK(SessionPrivateTestAccess::SessionSalt(*session) == kSessionSalt);
 
 	SessionPrivateTestAccess::Reconnect(
@@ -285,7 +287,8 @@ void RunReconnectScenario(AuthKey::Type keyType) {
 	SessionPrivateTestAccess::Receive(*session, std::move(priorReply));
 	CHECK_EQ(session->getState(), ConnectingState);
 	CHECK(log->sent.empty());
-	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)), quint64(0));
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(0));
 
 	const auto reconnectReply = MakeAuthenticatedServerPacket(
 		key, kSessionSalt, kSessionId, ServerMessageId(), MakeUntrackedPong());
