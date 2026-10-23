@@ -222,10 +222,30 @@ require_step_field "$mac_workflow" macos "$merge_dev_step" '.if' \
 require_step_script "$mac_workflow" macos "$merge_dev_step" \
   'git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev:refs/remotes/origin/dev' \
   'base_sha="$(git -C "$REPO_NAME" rev-parse origin/dev)"' \
+  'base_sha=not_fetched' 'tested_sha=not_merged' \
+  'write_merge_state()' 'write_merge_state' \
+  'head_sha=%s\nbase_sha=%s\ntested_sha=%s\n' \
+  'HEAD_SHA=%s\nBASE_SHA=%s\nTESTED_SHA=%s\n' \
   'git -C "$REPO_NAME" -c user.name='\''github-actions[bot]'\'' -c user.email='\''41898282+github-actions[bot]@users.noreply.github.com'\'' merge --no-edit --no-ff "$base_sha"' \
   'git -C "$REPO_NAME" diff --name-only --diff-filter=U' \
   'conflicts with dev at $base_sha; update the branch from dev' \
-  'head_sha=%s' 'base_sha=%s' 'tested_sha=%s'
+  'tested_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"'
+merge_dev_run="$(step_field "$mac_workflow" macos "$merge_dev_step" '.run')"
+if ! awk '
+  /tested_sha=not_merged/ { unmerged = NR }
+  /base_sha="\$\(git -C "\$REPO_NAME" rev-parse origin\/dev\)"/ { fetched_base = NR }
+  /^write_merge_state$/ && fetched_base && !merge { emitted_state = NR }
+  /merge --no-edit --no-ff "\$base_sha"/ { merge = NR }
+  /tested_sha="\$\(git -C "\$REPO_NAME" rev-parse HEAD\)"/ { tested = NR }
+  /^write_merge_state$/ && merge { final_state = NR }
+  END {
+    exit !(unmerged && fetched_base && emitted_state && merge && tested && final_state \
+      && unmerged < fetched_base && fetched_base < emitted_state && emitted_state < merge \
+      && merge < tested && tested < final_state)
+  }
+' <<< "$merge_dev_run"; then
+  contract_fail "$mac_workflow must emit the fetched dev SHA and not_merged status before merging, then record tested_sha only after a successful merge."
+fi
 submodules_step='Update submodules.'
 require_step_field "$mac_workflow" macos "$submodules_step" '.run' \
   'git -C "$REPO_NAME" submodule update --init --recursive'
@@ -241,25 +261,20 @@ if ((clone_step_index >= merge_dev_step_index || merge_dev_step_index >= submodu
     || submodules_step_index >= dependency_hash_step_index)); then
   contract_fail "$mac_workflow must merge dev after Clone and update submodules before hashing dependencies."
 fi
-require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.HEAD_SHA' \
-  "\${{ steps.merge-dev.outputs.head_sha || github.sha }}"
-require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.BASE_SHA' \
-  "\${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}"
-require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.env.TESTED_SHA' \
-  "\${{ steps.merge-dev.outputs.tested_sha || github.sha }}"
+require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.if' \
+  "\${{ always() && github.event_name != 'pull_request' }}"
 require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
   'head_sha=%s' 'base_sha=%s' 'tested_sha=%s' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
 require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
   'HEAD_SHA=%s' 'BASE_SHA=%s' 'TESTED_SHA=%s' '$GITHUB_ENV'
 require_job_field "$mac_workflow" macos '.env.HEAD_SHA' "\${{ github.sha }}"
 require_job_field "$mac_workflow" macos '.env.BASE_SHA' 'not_merged'
-require_job_field "$mac_workflow" macos '.env.TESTED_SHA' "\${{ github.sha }}"
-require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.HEAD_SHA' \
-  "\${{ steps.merge-dev.outputs.head_sha || github.sha }}"
-require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.BASE_SHA' \
-  "\${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}"
-require_step_field "$mac_workflow" macos 'Summarize on-demand validation.' '.env.TESTED_SHA' \
-  "\${{ steps.merge-dev.outputs.tested_sha || github.sha }}"
+require_job_field "$mac_workflow" macos '.env.TESTED_SHA' \
+  "\${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only && 'not_merged' || github.sha }}"
+for metadata_field in HEAD_SHA BASE_SHA TESTED_SHA; do
+  expect_equal "$mac_workflow Summarize on-demand validation $metadata_field source" \
+    "$(step_field "$mac_workflow" macos 'Summarize on-demand validation.' ".env.$metadata_field")" 'null'
+done
 require_step_script "$mac_workflow" macos 'Summarize on-demand validation.' \
   'head_sha' 'base_sha' 'tested_sha' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
 require_step_script "$mac_workflow" macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'

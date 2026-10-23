@@ -221,7 +221,7 @@ jobs:
       BUILD_VARIANT: ${{ matrix.variant }}
       HEAD_SHA: ${{ github.sha }}
       BASE_SHA: not_merged
-      TESTED_SHA: ${{ github.sha }}
+      TESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only && 'not_merged' || github.sha }}
       UPLOAD_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && matrix.variant == 'non-store' && 'true' || 'false' }}
       ONLY_CACHE: "false"
       CCACHE_MAXSIZE: "5G"
@@ -259,11 +259,21 @@ jobs:
         run: |
           set -Eeuo pipefail
           head_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
+          base_sha=not_fetched
+          tested_sha=not_merged
+          write_merge_state() {
+            printf 'head_sha=%s\nbase_sha=%s\ntested_sha=%s\n' \
+              "$head_sha" "$base_sha" "$tested_sha" >> "$GITHUB_OUTPUT"
+            printf 'HEAD_SHA=%s\nBASE_SHA=%s\nTESTED_SHA=%s\n' \
+              "$head_sha" "$base_sha" "$tested_sha" >> "$GITHUB_ENV"
+          }
+          write_merge_state
           if ! git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev:refs/remotes/origin/dev; then
             echo "::error::Unable to fetch dev for $GITHUB_REF_NAME."
             exit 1
           fi
           base_sha="$(git -C "$REPO_NAME" rev-parse origin/dev)"
+          write_merge_state
           if ! git -C "$REPO_NAME" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' merge --no-edit --no-ff "$base_sha"; then
             if [[ -n "$(git -C "$REPO_NAME" diff --name-only --diff-filter=U)" ]]; then
               echo "::error::$GITHUB_REF_NAME conflicts with dev at $base_sha; update the branch from dev"
@@ -273,11 +283,7 @@ jobs:
             exit 1
           fi
           tested_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
-          {
-            printf 'head_sha=%s\n' "$head_sha"
-            printf 'base_sha=%s\n' "$base_sha"
-            printf 'tested_sha=%s\n' "$tested_sha"
-          } >> "$GITHUB_OUTPUT"
+          write_merge_state
 
       - name: Update submodules.
         run: git -C "$REPO_NAME" submodule update --init --recursive
@@ -302,11 +308,7 @@ jobs:
           printf 'PR merge-head SHA: %s\n' "$actual_sha"
 
       - name: Initialize workflow evidence.
-        if: github.event_name != 'pull_request'
-        env:
-          HEAD_SHA: ${{ steps.merge-dev.outputs.head_sha || github.sha }}
-          BASE_SHA: ${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}
-          TESTED_SHA: ${{ steps.merge-dev.outputs.tested_sha || github.sha }}
+        if: ${{ always() && github.event_name != 'pull_request' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -1062,9 +1064,6 @@ jobs:
       - name: Summarize on-demand validation.
         if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
-          HEAD_SHA: ${{ steps.merge-dev.outputs.head_sha || github.sha }}
-          BASE_SHA: ${{ steps.merge-dev.outputs.base_sha || 'not_merged' }}
-          TESTED_SHA: ${{ steps.merge-dev.outputs.tested_sha || github.sha }}
           STORE_REJECTION_OUTCOME: ${{ steps.store_variant_rejection.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact-verification.outcome }}
