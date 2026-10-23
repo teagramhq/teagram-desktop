@@ -374,7 +374,6 @@ PossibleItemReactions::PossibleItemReactions(
 
 Reactions::Reactions(not_null<Session *> owner)
 	: _owner(owner), _topRefreshTimer([=] { refreshTop(); }),
-	  _defaultUpdateTimer([=] { processDefaultUpdate(); }),
 	  _repaintTimer([=] { repaintCollected(); }),
 	  _sendPaidTimer([=] { sendPaid(); }) {
 	refreshDefault();
@@ -1146,72 +1145,56 @@ void Reactions::updateRecent(const MTPDmessages_reactions &data) {
 void Reactions::updateDefault(const MTPDmessages_availableReactions &data) {
 	_defaultHash = data.vhash().v;
 	auto update = DefaultUpdate();
-	update.reactions = data.vreactions().v;
+	update.reactionCount = data.vreactions().v.size();
 	update.previousIconsCache = base::take(_iconsCache);
-	update.active.reserve(update.reactions.size());
-	update.available.reserve(update.reactions.size());
-	update.iconsCache.reserve(update.reactions.size() * 4);
+	update.iconsCache.reserve(update.reactionCount * 4);
 	_defaultUpdate = std::move(update);
-	_defaultUpdateTimer.callOnce(0);
-}
-
-void Reactions::addDefaultReaction(DefaultUpdate &update,
-								   const MTPAvailableReaction &reaction) {
-	if (const auto parsed = parse(reaction)) {
-		update.available.push_back(*parsed);
-		if (parsed->active) {
-			update.active.push_back(*parsed);
+	_defaultUpdateScheduler.start(
+		data.vreactions().v,
+		[=](const MTPAvailableReaction &reaction) { return parse(reaction); },
+		[=](const Reaction &reaction) {
+			auto &update = *_defaultUpdate;
 			const auto toCache = [&](DocumentData *document) {
 				if (document) {
 					update.iconsCache.emplace(document,
 											  document->createMediaView());
 				}
 			};
-			toCache(parsed->appearAnimation);
-			toCache(parsed->selectAnimation);
-			toCache(parsed->centerIcon);
-			toCache(parsed->aroundAnimation);
-		}
-	}
-}
-
-void Reactions::processDefaultUpdate() {
-	if (!_defaultUpdate) {
-		return;
-	}
-	auto &update = *_defaultUpdate;
-	const auto started = crl::now();
-	const auto more = details::ProcessAvailableReactionsBatch(
-		update.reactions, update.position,
-		[&](const MTPAvailableReaction &reaction) {
-			addDefaultReaction(update, reaction);
+			toCache(reaction.appearAnimation);
+			toCache(reaction.selectAnimation);
+			toCache(reaction.centerIcon);
+			toCache(reaction.aroundAnimation);
+		},
+		[=] {
+			auto &update = *_defaultUpdate;
+			if (!update.previousIconsCache.empty()) {
+				auto last = end(update.previousIconsCache);
+				update.previousIconsCache.erase(--last);
+			}
+			return !update.previousIconsCache.empty();
+		},
+		[=](std::vector<Reaction> &&active, std::vector<Reaction> &&available,
+			crl::time longestBatch) {
+			auto finished = std::move(*_defaultUpdate);
+			_defaultUpdate.reset();
+			finished.longestBatch
+				= std::max(finished.longestBatch, longestBatch);
+			const auto finalizeStarted = crl::now();
+			_active = std::move(active);
+			_available = std::move(available);
+			_iconsCache = std::move(finished.iconsCache);
+			if (_waitingForReactions) {
+				_waitingForReactions = false;
+				resolveReactionImages();
+			}
+			defaultUpdated();
+			finished.longestBatch
+				= std::max(finished.longestBatch, crl::now() - finalizeStarted);
+			DEBUG_LOG(("Reaction Info: imported %1 reactions; max main-thread "
+					   "batch %2 ms.")
+						  .arg(finished.reactionCount)
+						  .arg(finished.longestBatch));
 		});
-	if (!update.previousIconsCache.empty()) {
-		auto last = end(update.previousIconsCache);
-		update.previousIconsCache.erase(--last);
-	}
-	update.longestBatch = std::max(update.longestBatch, crl::now() - started);
-	if (more || !update.previousIconsCache.empty()) {
-		_defaultUpdateTimer.callOnce(0);
-		return;
-	}
-	auto finished = std::move(*_defaultUpdate);
-	_defaultUpdate.reset();
-	const auto finalizeStarted = crl::now();
-	_active = std::move(finished.active);
-	_available = std::move(finished.available);
-	_iconsCache = std::move(finished.iconsCache);
-	if (_waitingForReactions) {
-		_waitingForReactions = false;
-		resolveReactionImages();
-	}
-	defaultUpdated();
-	finished.longestBatch
-		= std::max(finished.longestBatch, crl::now() - finalizeStarted);
-	DEBUG_LOG(
-		("Reaction Info: imported %1 reactions; max main-thread batch %2 ms.")
-			.arg(finished.reactions.size())
-			.arg(finished.longestBatch));
 }
 
 void Reactions::updateGeneric(const MTPDmessages_stickerSet &data) {
@@ -1478,24 +1461,25 @@ std::optional<Reaction> Reactions::parse(const MTPAvailableReaction &entry) {
 		LOG(("API Error: Unknown emoji in reactions: %1").arg(emoji));
 		return std::nullopt;
 	}
+	const auto documents = details::HydrateAvailableReactionDocuments(
+		data, [=](const MTPDocument &document) {
+			return _owner->processDocument(document);
+		});
 	return std::make_optional(Reaction{
-		.id = ReactionId{ emoji },
+		.id = ReactionId{emoji},
 		.title = qs(data.vtitle()),
 		//.staticIcon = _owner->processDocument(data.vstatic_icon()),
-		.appearAnimation = _owner->processDocument(
-			data.vappear_animation()),
-		.selectAnimation = _owner->processDocument(
-			data.vselect_animation()),
+		.appearAnimation = documents.appearAnimation,
+		.selectAnimation = documents.selectAnimation,
 		//.activateAnimation = _owner->processDocument(
 		//	data.vactivate_animation()),
 		//.activateEffects = _owner->processDocument(
 		//	data.veffect_animation()),
-		.centerIcon = (data.vcenter_icon()
-			? _owner->processDocument(*data.vcenter_icon()).get()
-			: nullptr),
-		.aroundAnimation = (data.varound_animation()
-			? _owner->processDocument(*data.varound_animation()).get()
-			: nullptr),
+		.centerIcon
+		= (documents.centerIcon ? documents.centerIcon->get() : nullptr),
+		.aroundAnimation
+		= (documents.aroundAnimation ? documents.aroundAnimation->get()
+									 : nullptr),
 		.active = !data.is_inactive(),
 	});
 }

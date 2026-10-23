@@ -12,6 +12,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reaction_id.h"
 #include "data/stickers/data_custom_emoji.h"
 
+#include <optional>
+#include <type_traits>
+
 namespace Calls {
 class GroupCall;
 } // namespace Calls
@@ -45,6 +48,37 @@ struct Reaction {
 	bool effect = false;
 	bool premium = false;
 };
+
+namespace details {
+
+template <typename Document> struct AvailableReactionDocuments {
+	Document appearAnimation;
+	Document selectAnimation;
+	std::optional<Document> centerIcon;
+	std::optional<Document> aroundAnimation;
+};
+
+template <typename ProcessDocument>
+[[nodiscard]] auto
+HydrateAvailableReactionDocuments(const MTPDavailableReaction &data,
+								  ProcessDocument &&processDocument) {
+	using Document
+		= std::decay_t<decltype(processDocument(data.vappear_animation()))>;
+	return AvailableReactionDocuments<Document>{
+		.appearAnimation = processDocument(data.vappear_animation()),
+		.selectAnimation = processDocument(data.vselect_animation()),
+		.centerIcon
+		= data.vcenter_icon()
+			  ? std::optional<Document>(processDocument(*data.vcenter_icon()))
+			  : std::nullopt,
+		.aroundAnimation = data.varound_animation()
+							   ? std::optional<Document>(
+									 processDocument(*data.varound_animation()))
+							   : std::nullopt,
+	};
+}
+
+} // namespace details
 
 struct PossibleItemReactionsRef {
 	std::vector<not_null<const Reaction*>> recent;
@@ -180,14 +214,14 @@ public:
 private:
   using DocumentMediaCache = base::flat_map<not_null<DocumentData *>,
 											std::shared_ptr<DocumentMedia>>;
+  using DefaultUpdateScheduler
+	  = details::IncrementalAvailableReactionsUpdate<MTPAvailableReaction,
+													 Reaction>;
   struct DefaultUpdate {
-	  QVector<MTPAvailableReaction> reactions;
 	  DocumentMediaCache previousIconsCache;
 	  DocumentMediaCache iconsCache;
-	  std::vector<Reaction> active;
-	  std::vector<Reaction> available;
+	  int reactionCount = 0;
 	  crl::time longestBatch = 0;
-	  int position = 0;
   };
 
 	struct ImageSet {
@@ -226,9 +260,6 @@ private:
 	void updateTop(const MTPDmessages_reactions &data);
 	void updateRecent(const MTPDmessages_reactions &data);
 	void updateDefault(const MTPDmessages_availableReactions &data);
-	void addDefaultReaction(DefaultUpdate &update,
-							const MTPAvailableReaction &reaction);
-	void processDefaultUpdate();
 	void updateGeneric(const MTPDmessages_stickerSet &data);
 	void updateMyTags(
 		SavedSublist *sublist,
@@ -346,7 +377,7 @@ private:
 
 	base::Timer _topRefreshTimer;
 	std::optional<DefaultUpdate> _defaultUpdate;
-	base::Timer _defaultUpdateTimer;
+	DefaultUpdateScheduler _defaultUpdateScheduler;
 	mtpRequestId _topRequestId = 0;
 	uint64 _topHash = 0;
 
