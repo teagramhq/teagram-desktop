@@ -91,9 +91,8 @@ TEST_CASE(QueuedUsernameCheckCompletesAfterIdleSameSaltReconnect) {
 			}
 			requestThatReceivedResponse = (*sent)->requestId;
 			CHECK_EQ(requestThatReceivedResponse, mtpRequestId(17));
-			CHECK_EQ(
-				uint32((*sent)->at(SerializedRequest::kMessageBodyPosition)),
-				uint32(0xa677244f));
+			CHECK(uint32((*sent)->at(SerializedRequest::kMessageBodyPosition))
+				  == uint32(0xa677244f));
 
 			auto result = MTPauth_SentCode();
 			auto from = reply.constData();
