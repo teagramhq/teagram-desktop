@@ -164,7 +164,8 @@ QImage FileLoader::imageData(int progressiveSizeLimit) const {
 }
 
 void FileLoader::readImage(int progressiveSizeLimit) const {
-	const auto buffer = progressiveSizeLimit
+	const auto buffer = (progressiveSizeLimit > 0
+		&& progressiveSizeLimit < _data.size())
 		? QByteArray::fromRawData(_data.data(), progressiveSizeLimit)
 		: _data;
 	auto read = Images::Read({ .content = buffer });
@@ -440,6 +441,10 @@ QByteArray FileLoader::readLoadedPartBack(int64 offset, int size) {
 bool FileLoader::finalizeResult() {
 	Expects(!_finished);
 
+	if (_skippedBytes != 0) {
+		cancel(FailureReason::OtherFailure);
+		return false;
+	}
 	if (!_filename.isEmpty() && (_toCache == LoadToCacheAsWell)) {
 		if (!_fileIsOpen) {
 			_fileIsOpen = Core::MacProtectedPath::OpenExternalFile(
