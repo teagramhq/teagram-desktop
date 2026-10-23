@@ -125,6 +125,7 @@ PRIVATE
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
+    tests/unit/ffmpeg_frame_storage_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_signup_invite_validation_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
@@ -203,6 +204,7 @@ PRIVATE
     tdesktop::td_scheme
     desktop-app::lib_base
     desktop-app::lib_crl
+    desktop-app::lib_ffmpeg
     desktop-app::lib_storage
     desktop-app::lib_ui
     desktop-app::lib_webview
