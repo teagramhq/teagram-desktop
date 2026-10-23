@@ -2920,10 +2920,6 @@ template <typename Condition>
 	return condition();
 }
 
-[[nodiscard]] bool
-ActivateWindowForRegression(Core::Application &app,
-							not_null<Window::Controller *> window);
-
 [[nodiscard]] bool RunSettingsDeepLinkRefusalRegression(
 	Core::Application &app, not_null<Main::Account *> stock,
 	not_null<Main::Account *> pinned, not_null<Main::Account *> blocked,
@@ -8474,24 +8470,6 @@ template <typename Widget>
 	return true;
 }
 #endif
-
-[[nodiscard]] bool
-ActivateWindowForRegression(Core::Application &app,
-							not_null<Window::Controller *> window) {
-	const auto isActive = [&] { return app.activeWindow() == window.get(); };
-	auto retry = QTimer();
-	retry.setInterval(100);
-	QObject::connect(&retry, &QTimer::timeout, window->widget(), [&] {
-		if (!isActive()) {
-			window->activate();
-		}
-	});
-	retry.start();
-	window->activate();
-	const auto activated = WaitForRegressionCondition(isActive);
-	retry.stop();
-	return activated;
-}
 
 [[nodiscard]] bool
 WaitForBindingFilesRemovedForRegression(const QStringList &files) {
