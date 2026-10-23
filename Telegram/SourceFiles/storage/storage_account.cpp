@@ -885,6 +885,7 @@ void Account::reset() {
 	_fileLocationAliases.clear();
 	_downloadsSerialize = nullptr;
 	_downloadsSerialized = QByteArray();
+	_selfSerializedForMap = QByteArray();
 	_cacheTotalSizeLimit = Database::Settings().totalSizeLimit;
 	_cacheTotalTimeLimit = Database::Settings().totalTimeLimit;
 	_cacheBigFileTotalSizeLimit = Database::Settings().totalSizeLimit;
@@ -3445,6 +3446,12 @@ void Account::readSearchSuggestions() {
 }
 
 void Account::writeSelf() {
+	if (_serializeSelf) {
+		const auto self = _serializeSelf();
+		if (!self.isEmpty()) {
+			_selfSerializedForMap = self;
+		}
+	}
 	writeMapDelayed();
 }
 

@@ -926,7 +926,12 @@ bool Account::writeMap(bool sync) {
 	map.writeData(QByteArray());
 
 	uint32 mapSize = 0;
-	const auto self = _serializeSelf ? _serializeSelf() : QByteArray();
+	auto self = _serializeSelf ? _serializeSelf() : QByteArray();
+	if (!self.isEmpty()) {
+		_selfSerializedForMap = self;
+	} else {
+		self = _selfSerializedForMap;
+	}
 	if (!self.isEmpty()) mapSize += sizeof(quint32) + Serialize::bytearraySize(self);
 	if (!_draftsMap.empty()) mapSize += sizeof(quint32) * 2 + _draftsMap.size() * sizeof(quint64) * 2;
 	if (!_draftCursorsMap.empty()) mapSize += sizeof(quint32) * 2 + _draftCursorsMap.size() * sizeof(quint64) * 2;
