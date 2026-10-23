@@ -8307,10 +8307,50 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return false;
 	}
 
+	const auto repliesRootId = MsgId(1);
+	const auto repliesRootFullId = FullMsgId(peer->id, repliesRootId);
+	if (!controller->session().data().message(repliesRootFullId)) {
+		const auto root = MTP_message(
+			MTP_flags(MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_out),
+			MTP_int(int(repliesRootId.bare)),
+			peerToMTP(controller->session().userPeerId()),
+			MTPint(),	 // from_boosts_applied
+			MTPstring(), // from_rank
+			peerToMTP(peer->id),
+			MTPPeer(), // saved_peer_id
+			MTPMessageFwdHeader(),
+			MTP_long(0), // via_bot_id
+			MTPlong(),	 // via_business_bot_id
+			MTPPeer(),	 // guestchat_via_from
+			MTPMessageReplyHeader(),
+			MTP_int(1), // date
+			MTP_string(u"synthetic replies root"_q), MTP_messageMediaEmpty(),
+			MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(),
+			MTP_int(0), // views
+			MTP_int(0), // forwards
+			MTPMessageReplies(),
+			MTP_int(0), // edit_date
+			MTPstring(), MTPlong(), MTPMessageReactions(),
+			MTPVector<MTPRestrictionReason>(),
+			MTP_int(0), // ttl_period
+			MTPint(),	// quick_reply_shortcut_id
+			MTPlong(),	// effect
+			MTPFactCheck(),
+			MTPint(),  // report_delivery_until_date
+			MTPlong(), // paid_message_stars
+			MTPSuggestedPost(),
+			MTPint(),	 // schedule_repeat_period
+			MTPstring(), // summary_from_language
+			MTPRichMessage());
+		if (!controller->session().data().addNewMessage(
+				root, MessageFlags(), NewMessageType::Existing)) {
+			return false;
+		}
+	}
 	controller->showSection(
 		std::make_shared<HistoryView::ChatMemento>(HistoryView::ChatViewId{
 			.history = history,
-			.repliesRootId = MsgId(),
+			.repliesRootId = repliesRootId,
 		}),
 		Window::SectionShow::Way::ClearStack);
 	QCoreApplication::processEvents();
