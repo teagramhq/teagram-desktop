@@ -2123,15 +2123,28 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 		CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 	}
 
-	CHECK(
-		CompleteTeagramUpdateStartupForTesting(installed, [] { return true; }));
-	CHECK(QFileInfo(legacyLock).exists());
-	CHECK(QFileInfo(pending).exists());
-	CHECK_EQ(ReadFile(started), QByteArrayLiteral("101\n"));
-	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
-
-	CHECK(CompleteTeagramUpdateStartupForTesting(installed,
-												 [] { return false; }));
+	auto candidateStarted = false;
+	auto lockRemainedWhileWaiting = false;
+	auto markersRemainedWhileWaiting = false;
+	const auto relaunched = RelaunchTeagramUpdateAfterShutdownForTesting(
+		installed, u"data"_q,
+		[&](const QString &bundle, const QStringList &, qint64 *processId) {
+			*processId = 0;
+			candidateStarted = CompleteTeagramUpdateStartupForTesting(
+				bundle, [] { return true; });
+			lockRemainedWhileWaiting = QFileInfo(legacyLock).exists();
+			markersRemainedWhileWaiting
+				= QFileInfo(pending).exists()
+				  && ReadFile(started) == QByteArrayLiteral("101\n");
+			return candidateStarted;
+		},
+		[] { return false; }, {}, [&] {
+			return candidateStarted && QFileInfo(started).exists();
+		}, [](qint64) { return true; });
+	CHECK(relaunched == TeagramUpdateRelaunchResult::CandidateStarted);
+	CHECK(candidateStarted);
+	CHECK(lockRemainedWhileWaiting);
+	CHECK(markersRemainedWhileWaiting);
 	CHECK(!QFileInfo(legacyLock).exists());
 	CHECK(!QFileInfo(pending).exists());
 	CHECK(!QFileInfo(started).exists());

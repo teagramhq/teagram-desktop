@@ -427,6 +427,11 @@ ValidateBundle(const QString &bundlePath, const QString &expectedChannel,
 	return removed;
 }
 
+[[nodiscard]] bool RemoveLegacyInstallLockFile(const QString &installed) {
+	auto lock = TeagramUpdateInstallLock(installed);
+	return lock.acquired() && lock.removeLegacyLockFile();
+}
+
 [[nodiscard]] bool CarryCustomIconFile(const QString &installed,
 									   const QString &candidate) {
 	const auto source = QFile::encodeName(installed) + '/' + kCustomIconFile;
@@ -755,6 +760,11 @@ enum class StartupWaitResult {
 										: StartupWaitResult::Failed)
 								 : WaitForStartup(*pending, parent);
 		if (startup == StartupWaitResult::Acknowledged) {
+			if (!RemoveLegacyInstallLockFile(installed)) {
+				LOG(("Teagram update lock file could not be removed after "
+					 "startup."));
+				return TeagramUpdateRelaunchResult::Failed;
+			}
 			return RemoveMarker(parent, kCommitMarker)
 						   && RemoveMarker(parent, kStartedMarker)
 					   ? TeagramUpdateRelaunchResult::CandidateStarted
@@ -835,10 +845,7 @@ enum class StartupWaitResult {
 	const auto relaunchWaiting = otherInstanceRunning ? otherInstanceRunning()
 													  : OtherInstanceRunning();
 	if (!relaunchWaiting) {
-		auto lock = TeagramUpdateInstallLock(installed);
-		const auto lockFileRemoved
-			= lock.acquired() && lock.removeLegacyLockFile();
-		if (!lockFileRemoved) {
+		if (!RemoveLegacyInstallLockFile(installed)) {
 			LOG(("Teagram update lock file could not be removed after "
 				 "startup."));
 		} else if (!RemoveMarker(parent, kCommitMarker)
