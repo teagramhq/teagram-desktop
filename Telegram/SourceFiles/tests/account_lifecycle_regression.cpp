@@ -285,10 +285,11 @@ template <typename Request>
 	return true;
 }
 
-template <typename Response>
+template <typename Request>
 [[nodiscard]] bool ReplyToCapturedRequestForRegressionTest(
 	ChannelSaveRequestCapture &capture, size_t index,
-	uint32 expectedConstructor, const Response &result) {
+	uint32 expectedConstructor,
+	const typename Request::ResponseType &result) {
 	if (capture.requests.size() != index + 1) {
 		std::fprintf(stderr,
 					 "Peer photo regression failed: request %zu was missing or "
@@ -1265,7 +1266,7 @@ template <typename Predicate>
 	const auto reply = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPmessages_EditChatPhoto>(
 			capture, 0, mtpc_messages_editChatPhoto, reply)
 		|| chat->hasUserpic() || chat->userpicPhotoId()) {
 		std::fprintf(
@@ -1449,7 +1450,7 @@ template <typename Predicate>
 			return false;
 		}
 	}
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPupload_SaveFilePart>(
 			capture, replacementUploadIndex, mtpc_upload_saveFilePart,
 			MTP_boolTrue())
 		|| !WaitForRegressionCondition([&] {
@@ -1489,7 +1490,7 @@ template <typename Predicate>
 	const auto reply = MTP_updates(
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(2), MTP_int(0));
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPmessages_EditChatPhoto>(
 			capture, replacementUploadIndex + 1, mtpc_messages_editChatPhoto,
 			reply)
 		|| chat->userpicPhotoId() != photoId
@@ -1613,7 +1614,7 @@ template <typename Predicate>
 		MTP_vector<MTPChat>({createdChat}), MTP_int(2), MTP_int(0));
 	const auto invitedUsers = MTP_messages_invitedUsers(
 		createdUpdates, MTP_vector<MTPMissingInvitee>());
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPmessages_CreateChat>(
 			capture, 0, mtpc_messages_createChat, invitedUsers)
 		|| box || !controller->session().data().chat(chatId)
 		|| capture.requests.size() != 2
@@ -1625,7 +1626,7 @@ template <typename Predicate>
 			"uploaded after group creation.\n");
 		return false;
 	}
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPupload_SaveFilePart>(
 			capture, 1, mtpc_upload_saveFilePart, MTP_boolTrue())
 		|| !WaitForRegressionCondition(
 			[&] { return capture.requests.size() == 3; })
@@ -1648,7 +1649,7 @@ template <typename Predicate>
 		MTP_vector<MTPUpdate>(), MTP_vector<MTPUser>(),
 		MTP_vector<MTPChat>({updatedChat}), MTP_int(3), MTP_int(0));
 	const auto created = controller->session().data().chat(chatId);
-	if (!ReplyToCapturedRequestForRegressionTest(
+	if (!ReplyToCapturedRequestForRegressionTest<MTPmessages_EditChatPhoto>(
 			capture, 2, mtpc_messages_editChatPhoto, photoUpdates)
 		|| created->userpicPhotoId() != photoId) {
 		std::fprintf(
