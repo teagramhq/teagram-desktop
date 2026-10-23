@@ -8721,12 +8721,20 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	const auto discarded = domain.add(MTP::Environment::Production);
 	discarded->mtp().stopForServerEnrollment();
 	discarded->setSessionUserId(selfId);
+	// createSession() must persist the MTP config, so keep network access
+	// stopped until the session exists, then block it before any switch update
+	// can be dispatched.
 	if (!discarded->createSession(RegressionUser(selfId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
 		return failPrerequisite(
 			"could not create the previous-session teardown fixture");
 	}
 	discarded->mtp().dcOptions().constructBlocked();
+	if (!discarded->mtp().dcOptions().blocked()
+		|| discarded->mtp().isServerEnrollmentNetworkAllowed()) {
+		return failPrerequisite(
+			"previous-session teardown fixture was not blocked and paused");
+	}
 	if (discarded->session().uniqueId() != stock->session().uniqueId()) {
 		return failPrerequisite(
 			"previous-session teardown fixture did not share the stock user "
@@ -8739,6 +8747,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"AI apply handlers read or dispatched draft text for an "
 			"unsupported "
 			"session, or stopped working after switching back to stock");
+	}
+	// Drain setup switches while the blocked discarded session is still alive;
+	// their deferred callbacks are separate from the teardown assertions below.
+	if (!WaitForMainQueueBarrier()) {
+		return failPrerequisite(
+			"main-thread queue did not drain after blocked-session setup");
 	}
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
