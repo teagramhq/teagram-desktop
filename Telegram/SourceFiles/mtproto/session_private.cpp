@@ -1462,9 +1462,8 @@ void SessionPrivate::handleReceived() {
 		}
 
 		const auto state = getState();
-		bool wasConnected = (state == ConnectedState);
-		const auto responseTransition = ProcessAuthenticatedResponse(
-			state, _sessionSalt, serverSalt, badTime);
+		const auto wasConnected = (state == ConnectedState);
+		const auto transitionServerSalt = serverSalt;
 		if (serverSalt != _sessionSalt) {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
@@ -1472,60 +1471,79 @@ void SessionPrivate::handleReceived() {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2").arg(serverSalt).arg(_sessionSalt));
 			}
 		} else {
-			serverSalt = 0; // dont pass to handle method, so not to lock in setSalt()
+			serverSalt = 0; // dont pass to handle method, so not to lock
+							// in setSalt()
 		}
-		// A valid reply proves this session is live even when its salt did not
-		// change. Advance before dispatch, which may ignore an untracked pong.
-		_sessionSalt = responseTransition.sessionSalt;
-		if (responseTransition.shouldMarkConnected
-			&& setState(ConnectedState, ConnectingState)) {
-			resendAll();
-		}
+		auto res = HandleResult::Success;
+		const auto responseHandled = ProcessAuthenticatedResponse(
+			state, wasConnected, _sessionSalt, transitionServerSalt, badTime,
+			[=] { return setState(ConnectedState, ConnectingState); },
+			[=] { resendAll(); },
+			[&] {
+				if (needAck)
+					_ackRequestData.push_back(MTP_long(msgId));
 
-		if (needAck) _ackRequestData.push_back(MTP_long(msgId));
+				auto from = decryptedInts + kEncryptedHeaderIntsCount;
+				auto end = from + (messageLength / kIntSize);
+				auto sfrom
+					= decryptedInts + 4U; // msg_id + seq_no + length + message
+				MTP_LOG(_shiftedDcId,
+						("Recv: ") + DumpToText(sfrom, end)
+							+ QString(" (dc:%1,key:%2,session:%3)")
+								  .arg(AbstractConnection::ProtocolDcDebugId(
+									  getProtocolDcId()))
+								  .arg(_encryptionKey->keyId())
+								  .arg(_sessionId));
 
-		auto res = HandleResult::Success; // if no need to handle, then succeed
-		auto from = decryptedInts + kEncryptedHeaderIntsCount;
-		auto end = from + (messageLength / kIntSize);
-		auto sfrom = decryptedInts + 4U; // msg_id + seq_no + length + message
-		MTP_LOG(_shiftedDcId, ("Recv: ")
-			+ DumpToText(sfrom, end)
-			+ QString(" (dc:%1,key:%2,session:%3)"
-			).arg(AbstractConnection::ProtocolDcDebugId(getProtocolDcId())
-			).arg(_encryptionKey->keyId()
-			).arg(_sessionId));
+				const auto registered
+					= _receivedMessageIds.registerMsgId(msgId, needAck);
+				if (registered == ReceivedIdsManager::Result::Success) {
+					res = handleOneReceived(from, end, msgId,
+											{
+												.outerMsgId = msgId,
+												.serverSalt = serverSalt,
+												.serverTime = serverTime,
+												.badTime = badTime,
+											});
+				} else if (registered == ReceivedIdsManager::Result::TooOld) {
+					res = HandleResult::ResetSession;
+				}
+				_receivedMessageIds.shrink();
 
-		const auto registered = _receivedMessageIds.registerMsgId(
-			msgId,
-			needAck);
-		if (registered == ReceivedIdsManager::Result::Success) {
-			res = handleOneReceived(from, end, msgId, {
-				.outerMsgId = msgId,
-				.serverSalt = serverSalt,
-				.serverTime = serverTime,
-				.badTime = badTime,
-			});
-		} else if (registered == ReceivedIdsManager::Result::TooOld) {
-			res = HandleResult::ResetSession;
-		}
-		_receivedMessageIds.shrink();
+				// send acks
+				if (const auto toAckSize = _ackRequestData.size()) {
+					DEBUG_LOG(("MTP Info: will send %1 acks, ids: %2")
+								  .arg(toAckSize)
+								  .arg(LogIdsVector(_ackRequestData)));
+					_sessionData->queueSendAnything(kAckSendWaiting);
+				}
 
-		// send acks
-		if (const auto toAckSize = _ackRequestData.size()) {
-			DEBUG_LOG(("MTP Info: will send %1 acks, ids: %2").arg(toAckSize).arg(LogIdsVector(_ackRequestData)));
-			_sessionData->queueSendAnything(kAckSendWaiting);
-		}
+				auto lock = QReadLocker(_sessionData->haveReceivedMutex());
+				const auto tryToReceive
+					= !_sessionData->haveReceivedMessages().empty();
+				lock.unlock();
 
-		auto lock = QReadLocker(_sessionData->haveReceivedMutex());
-		const auto tryToReceive = !_sessionData->haveReceivedMessages().empty();
-		lock.unlock();
+				if (tryToReceive) {
+					DEBUG_LOG(
+						("MTP Info: queueTryToReceive() - need to "
+						 "parse in another thread, %1 messages.")
+							.arg(_sessionData->haveReceivedMessages().size()));
+					_sessionData->queueTryToReceive();
+				}
 
-		if (tryToReceive) {
-			DEBUG_LOG(("MTP Info: queueTryToReceive() - need to parse in another thread, %1 messages.").arg(_sessionData->haveReceivedMessages().size()));
-			_sessionData->queueTryToReceive();
-		}
+				if (res != HandleResult::Success
+					&& res != HandleResult::Ignored) {
+					return false;
+				}
+				_retryTimeout = 1; // reset restart() timer
 
-		if (res != HandleResult::Success && res != HandleResult::Ignored) {
+				_startedConnectingAt = crl::time(0);
+				return true;
+			},
+			[=] { return getState(); },
+			[=] { _sessionData->queueNeedToResumeAndSend(); });
+
+		if (!responseHandled) {
 			if (res == HandleResult::DestroyPersistentKey) {
 				destroyPersistentKey();
 			} else if (res == HandleResult::DestroyTemporaryKey) {
@@ -1534,15 +1552,6 @@ void SessionPrivate::handleReceived() {
 				_needSessionReset = true;
 			}
 			return restart();
-		}
-		_retryTimeout = 1; // reset restart() timer
-
-		_startedConnectingAt = crl::time(0);
-
-		if (!wasConnected) {
-			if (getState() == ConnectedState) {
-				_sessionData->queueNeedToResumeAndSend();
-			}
 		}
 	}
 	if (_connection->needHttpWait()) {

@@ -30,21 +30,26 @@ class SessionData;
 class RSAPublicKey;
 struct SessionOptions;
 
-struct AuthenticatedResponseTransition {
-	uint64 sessionSalt = 0;
-	bool shouldMarkConnected = false;
-};
-
-[[nodiscard]] inline AuthenticatedResponseTransition
-ProcessAuthenticatedResponse(int state, uint64 sessionSalt, uint64 serverSalt,
-							 bool badTime) {
+template <typename MarkConnected, typename ResendAll, typename HandleReply,
+		  typename GetState, typename ResumeAndSend>
+[[nodiscard]] inline bool ProcessAuthenticatedResponse(
+	int state, bool wasConnected, uint64 &sessionSalt, uint64 serverSalt,
+	bool badTime, MarkConnected &&markConnected, ResendAll &&resendAll,
+	HandleReply &&handleReply, GetState &&getState,
+	ResumeAndSend &&resumeAndSend) {
 	if (!badTime) {
 		sessionSalt = serverSalt;
 	}
-	return {
-		sessionSalt,
-		(state == ConnectingState) && !badTime,
-	};
+	if ((state == ConnectingState) && !badTime && markConnected()) {
+		resendAll();
+	}
+	if (!handleReply()) {
+		return false;
+	}
+	if (!wasConnected && getState() == ConnectedState) {
+		resumeAndSend();
+	}
+	return true;
 }
 
 class SessionPrivate final : public QObject {
