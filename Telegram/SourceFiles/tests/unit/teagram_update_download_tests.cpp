@@ -2138,9 +2138,9 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 				  && ReadFile(started) == QByteArrayLiteral("101\n");
 			return candidateStarted;
 		},
-		[] { return false; }, {}, [&] {
-			return candidateStarted && QFileInfo(started).exists();
-		}, [](qint64) { return true; });
+		[] { return false; }, {},
+		[&] { return candidateStarted && QFileInfo(started).exists(); },
+		[](qint64) { return true; });
 	CHECK(relaunched == TeagramUpdateRelaunchResult::CandidateStarted);
 	CHECK(candidateStarted);
 	CHECK(lockRemainedWhileWaiting);
