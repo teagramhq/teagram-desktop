@@ -27,7 +27,9 @@ struct ParsedAvailableReaction {
 	const auto document = [=](int offset) {
 		return MTP_documentEmpty(MTP_long(index * 10 + offset));
 	};
-	const auto flags = 2 | (index % 2);
+	using Flag = MTPDavailableReaction::Flag;
+	const auto flags
+		= Flag::f_around_animation | (index % 2 ? Flag::f_inactive : Flag());
 	return MTP_availableReaction(
 		MTP_flags(flags), MTP_string(u"👍"_q),
 		MTP_string(QString::number(index)), document(1), document(2),
