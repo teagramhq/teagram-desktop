@@ -43,6 +43,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/random.h"
 
+#include <algorithm>
+
 namespace Data {
 namespace {
 
@@ -373,6 +375,7 @@ PossibleItemReactions::PossibleItemReactions(
 Reactions::Reactions(not_null<Session*> owner)
 : _owner(owner)
 , _topRefreshTimer([=] { refreshTop(); })
+, _defaultUpdateTimer([=] { processDefaultUpdate(); })
 , _repaintTimer([=] { repaintCollected(); })
 , _sendPaidTimer([=] { sendPaid(); }) {
 	refreshDefault();
@@ -1024,7 +1027,7 @@ void Reactions::requestRecent() {
 }
 
 void Reactions::requestDefault() {
-	if (_defaultRequestId) {
+	if (_defaultRequestId || _defaultUpdate) {
 		return;
 	}
 	auto &api = _owner->session().api();
@@ -1143,36 +1146,78 @@ void Reactions::updateRecent(const MTPDmessages_reactions &data) {
 
 void Reactions::updateDefault(const MTPDmessages_availableReactions &data) {
 	_defaultHash = data.vhash().v;
+	auto update = DefaultUpdate();
+	update.reactions = data.vreactions().v;
+	update.previousIconsCache = base::take(_iconsCache);
+	update.active.reserve(update.reactions.size());
+	update.available.reserve(update.reactions.size());
+	update.iconsCache.reserve(update.reactions.size() * 4);
+	_defaultUpdate = std::move(update);
+	_defaultUpdateTimer.callOnce(0);
+}
 
-	const auto &list = data.vreactions().v;
-	const auto oldCache = base::take(_iconsCache);
-	const auto toCache = [&](DocumentData *document) {
-		if (document) {
-			_iconsCache.emplace(document, document->createMediaView());
-		}
-	};
-	_active.clear();
-	_available.clear();
-	_active.reserve(list.size());
-	_available.reserve(list.size());
-	_iconsCache.reserve(list.size() * 4);
-	for (const auto &reaction : list) {
-		if (const auto parsed = parse(reaction)) {
-			_available.push_back(*parsed);
-			if (parsed->active) {
-				_active.push_back(*parsed);
-				toCache(parsed->appearAnimation);
-				toCache(parsed->selectAnimation);
-				toCache(parsed->centerIcon);
-				toCache(parsed->aroundAnimation);
-			}
+void Reactions::addDefaultReaction(
+		DefaultUpdate &update,
+		const MTPAvailableReaction &reaction) {
+	if (const auto parsed = parse(reaction)) {
+		update.available.push_back(*parsed);
+		if (parsed->active) {
+			update.active.push_back(*parsed);
+			const auto toCache = [&](DocumentData *document) {
+				if (document) {
+					update.iconsCache.emplace(
+						document,
+						document->createMediaView());
+				}
+			};
+			toCache(parsed->appearAnimation);
+			toCache(parsed->selectAnimation);
+			toCache(parsed->centerIcon);
+			toCache(parsed->aroundAnimation);
 		}
 	}
+}
+
+void Reactions::processDefaultUpdate() {
+	if (!_defaultUpdate) {
+		return;
+	}
+	auto &update = *_defaultUpdate;
+	const auto started = crl::now();
+	const auto more = details::ProcessAvailableReactionsBatch(
+		update.reactions,
+		update.position,
+		[&](const MTPAvailableReaction &reaction) {
+			addDefaultReaction(update, reaction);
+		});
+	if (!update.previousIconsCache.empty()) {
+		auto last = end(update.previousIconsCache);
+		update.previousIconsCache.erase(--last);
+	}
+	update.longestBatch = std::max(
+		update.longestBatch,
+		crl::now() - started);
+	if (more || !update.previousIconsCache.empty()) {
+		_defaultUpdateTimer.callOnce(0);
+		return;
+	}
+	auto finished = std::move(*_defaultUpdate);
+	_defaultUpdate.reset();
+	const auto finalizeStarted = crl::now();
+	_active = std::move(finished.active);
+	_available = std::move(finished.available);
+	_iconsCache = std::move(finished.iconsCache);
 	if (_waitingForReactions) {
 		_waitingForReactions = false;
 		resolveReactionImages();
 	}
 	defaultUpdated();
+	finished.longestBatch = std::max(
+		finished.longestBatch,
+		crl::now() - finalizeStarted);
+	DEBUG_LOG(("Reaction Info: imported %1 reactions; max main-thread batch %2 ms.")
+		.arg(finished.reactions.size())
+		.arg(finished.longestBatch));
 }
 
 void Reactions::updateGeneric(const MTPDmessages_stickerSet &data) {

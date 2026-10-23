@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/timer.h"
+#include "data/data_message_reactions_batch.h"
 #include "data/data_message_reaction_id.h"
 #include "data/stickers/data_custom_emoji.h"
 
@@ -177,6 +178,19 @@ public:
 		const MTPMessage &message);
 
 private:
+	using DocumentMediaCache = base::flat_map<
+		not_null<DocumentData*>,
+		std::shared_ptr<DocumentMedia>>;
+	struct DefaultUpdate {
+		QVector<MTPAvailableReaction> reactions;
+		DocumentMediaCache previousIconsCache;
+		DocumentMediaCache iconsCache;
+		std::vector<Reaction> active;
+		std::vector<Reaction> available;
+		crl::time longestBatch = 0;
+		int position = 0;
+	};
+
 	struct ImageSet {
 		QImage image;
 		std::shared_ptr<DocumentMedia> media;
@@ -213,6 +227,10 @@ private:
 	void updateTop(const MTPDmessages_reactions &data);
 	void updateRecent(const MTPDmessages_reactions &data);
 	void updateDefault(const MTPDmessages_availableReactions &data);
+	void addDefaultReaction(
+		DefaultUpdate &update,
+		const MTPAvailableReaction &reaction);
+	void processDefaultUpdate();
 	void updateGeneric(const MTPDmessages_stickerSet &data);
 	void updateMyTags(
 		SavedSublist *sublist,
@@ -305,9 +323,7 @@ private:
 	ReactionId _favoriteId;
 	ReactionId _unresolvedFavoriteId;
 	std::optional<Reaction> _favorite;
-	base::flat_map<
-		not_null<DocumentData*>,
-		std::shared_ptr<DocumentMedia>> _iconsCache;
+	DocumentMediaCache _iconsCache;
 	base::flat_map<
 		not_null<DocumentData*>,
 		std::shared_ptr<DocumentMedia>> _genericCache;
@@ -331,6 +347,8 @@ private:
 	DocumentData *_paidToastAnimation = nullptr;
 
 	base::Timer _topRefreshTimer;
+	std::optional<DefaultUpdate> _defaultUpdate;
+	base::Timer _defaultUpdateTimer;
 	mtpRequestId _topRequestId = 0;
 	uint64 _topHash = 0;
 
