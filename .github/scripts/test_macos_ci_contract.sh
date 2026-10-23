@@ -658,6 +658,22 @@ require_native_start_before mini-app-open \
 require_native_start_before settings-deep-link \
   'RunSettingsDeepLinkRefusalRegression('
 awk '
+  /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
+  in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
+  in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
+    custom_window_matrix = NR
+  }
+  in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
+    direct_custom_activation = NR
+  }
+  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  END {
+    exit !(ordinary_window_active && custom_window_matrix &&
+      ordinary_window_active < custom_window_matrix && !direct_custom_activation)
+  }
+' "$native_harness" \
+  || contract_fail 'The custom-session URL matrix must use the window activated by the ordinary Settings deep link.'
+awk '
 /if \(authenticatedCacheOnly\) \{/ { in_cache_branch = 1; next }
 in_cache_branch && /const auto capabilitiesMatch/ { exit }
 in_cache_branch && /crl::on_main\(\[=\] \{/ { completion_queued = 1 }

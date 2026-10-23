@@ -3079,20 +3079,6 @@ template <typename Condition>
 	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
-	if (!activateSettingsWindow(&pinnedController->window())) {
-		std::fprintf(stderr,
-					 "Settings deep link activation counts: active-window=%d "
-					 "expected=1.\n",
-					 app.activeWindow() == &pinnedController->window());
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: custom window did not "
-			"activate before its URL matrix.\n");
-		return false;
-	}
-	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
-		return false;
-	}
 	if (!activateSettingsWindow(&stockController->window())) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
@@ -3108,17 +3094,6 @@ template <typename Condition>
 		return false;
 	}
 
-	if (!activateSettingsWindow(&pinnedController->window())) {
-		std::fprintf(stderr,
-					 "Settings deep link activation counts: active-window=%d "
-					 "expected=1.\n",
-					 app.activeWindow() == &pinnedController->window());
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: custom window did not "
-			"activate before the unsupported-route checks.\n");
-		return false;
-	}
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
@@ -3190,7 +3165,12 @@ template <typename Condition>
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
 		QCoreApplication::processEvents();
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
+		return false;
+	}
 
+	{
 		for (const auto &controller : {pinnedController, blockedController}) {
 			const auto toastBefore
 				= controller
