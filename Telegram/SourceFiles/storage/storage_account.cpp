@@ -388,13 +388,9 @@ Account::Account(not_null<Main::Account*> owner, const QString &dataName)
 		return QByteArray();
 	}
 	const auto self = owner->session().user();
-	if (self->phone().isEmpty()) {
-		DEBUG_LOG(("AuthSelf Error: Phone is empty."));
-		return QByteArray();
-	}
 	auto result = QByteArray();
 	result.reserve(Serialize::peerSize(self)
-		+ Serialize::stringSize(self->about()));
+				   + Serialize::stringSize(self->about()));
 	{
 		QBuffer buffer(&result);
 		buffer.open(QIODevice::WriteOnly);
@@ -889,6 +885,7 @@ void Account::reset() {
 	_fileLocationAliases.clear();
 	_downloadsSerialize = nullptr;
 	_downloadsSerialized = QByteArray();
+	_selfSerializedForMap = QByteArray();
 	_cacheTotalSizeLimit = Database::Settings().totalSizeLimit;
 	_cacheTotalTimeLimit = Database::Settings().totalTimeLimit;
 	_cacheBigFileTotalSizeLimit = Database::Settings().totalSizeLimit;
@@ -3449,6 +3446,12 @@ void Account::readSearchSuggestions() {
 }
 
 void Account::writeSelf() {
+	if (_serializeSelf) {
+		const auto self = _serializeSelf();
+		if (!self.isEmpty()) {
+			_selfSerializedForMap = self;
+		}
+	}
 	writeMapDelayed();
 }
 

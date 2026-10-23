@@ -452,6 +452,7 @@ private:
 #endif
 	Fn<QByteArray()> _serializeSelf;
 	Fn<void()> _queueMapWrite;
+	QByteArray _selfSerializedForMap;
 
 	FileKey _prefsKey = 0;
 	FileKey _locationsKey = 0;
