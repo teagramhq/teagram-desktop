@@ -159,6 +159,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
 #include <QtGui/QCursor>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -2709,6 +2710,28 @@ template <typename Predicate>
 	return condition();
 }
 
+void LogWindowActivationForRegression(
+		Core::Application &app,
+		not_null<Window::Controller *> window) {
+	const auto widget = window->widget();
+	const auto focusWindow = QGuiApplication::focusWindow();
+	const auto targetWindow = widget->windowHandle();
+	std::fprintf(
+		stderr,
+		"Window activation regression diagnostics: app-active-window=%p "
+		"target-controller=%p focus-window=%p target-window-handle=%p "
+		"focus-is-target=%d target-active=%d target-window-state=%d "
+		"target-visible=%d.\n",
+		static_cast<void *>(app.activeWindow()),
+		static_cast<void *>(window.get()),
+		static_cast<void *>(focusWindow),
+		static_cast<void *>(targetWindow),
+		focusWindow == targetWindow,
+		widget->isActiveWindow(),
+		static_cast<int>(widget->windowState()),
+		widget->isVisible());
+}
+
 [[nodiscard]] bool
 ActivateWindowForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
@@ -2729,6 +2752,9 @@ ActivateWindowForRegression(Core::Application &app,
 	window->activate();
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
+	if (!activated) {
+		LogWindowActivationForRegression(app, window);
+	}
 	return activated;
 }
 
@@ -3079,6 +3105,20 @@ template <typename Condition>
 	if (!dispatchMatrix(pinnedController, &stockController->window())) {
 		return false;
 	}
+	if (!activateSettingsWindow(&pinnedController->window())) {
+		std::fprintf(stderr,
+					 "Settings deep link activation counts: active-window=%d "
+					 "expected=1.\n",
+					 app.activeWindow() == &pinnedController->window());
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its URL matrix.\n");
+		return false;
+	}
+	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
+		return false;
+	}
 	if (!activateSettingsWindow(&stockController->window())) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
@@ -3149,6 +3189,8 @@ template <typename Condition>
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
 			|| !ordinaryWindowActive) {
+			LogWindowActivationForRegression(
+				app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "

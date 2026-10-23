@@ -658,21 +658,33 @@ require_native_start_before mini-app-open \
 require_native_start_before settings-deep-link \
   'RunSettingsDeepLinkRefusalRegression('
 awk '
+  /^void LogWindowActivationForRegression/ { in_activation = 1 }
+  in_activation && /QGuiApplication::focusWindow\(\)/ { logs_focus_window = 1 }
+  in_activation && /->isActiveWindow\(\)/ { logs_active_window = 1 }
+  in_activation && /->windowState\(\)/ { logs_window_state = 1 }
+  in_activation && /^\[\[nodiscard\]\] bool/ { exit }
+  END {
+    exit !(logs_focus_window && logs_active_window && logs_window_state)
+  }
+' "$native_harness" \
+  || contract_fail 'Window activation failures must log Qt focus, active-window, and window-state diagnostics.'
+awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
+  in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
+    custom_window_activation = NR
+  }
   in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
     custom_window_matrix = NR
   }
-  in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
-    direct_custom_activation = NR
-  }
   in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
   END {
-    exit !(ordinary_window_active && custom_window_matrix &&
-      ordinary_window_active < custom_window_matrix && !direct_custom_activation)
+    exit !(custom_window_activation && custom_window_matrix &&
+      ordinary_window_active && custom_window_activation < custom_window_matrix &&
+      ordinary_window_active < custom_window_matrix)
   }
 ' "$native_harness" \
-  || contract_fail 'The custom-session URL matrix must use the window activated by the ordinary Settings deep link.'
+  || contract_fail 'The custom-session matrix must follow a diagnosable activation attempt and a verified ordinary Settings link.'
 awk '
 /if \(authenticatedCacheOnly\) \{/ { in_cache_branch = 1; next }
 in_cache_branch && /const auto capabilitiesMatch/ { exit }
