@@ -8325,11 +8325,11 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		static_cast<PeerData *>(&*controller->session().user()));
 	const auto selfHistory = controller->session().data().history(self);
 	auto chatWidget = std::make_unique<HistoryView::ChatWidget>(
-		controller->content().get(),
-		controller,
+		controller->content().get(), controller,
 		HistoryView::ChatViewId{
 			.history = selfHistory,
-			.sublist = controller->session().data().savedMessages().sublist(self),
+			.sublist
+			= controller->session().data().savedMessages().sublist(self),
 		});
 	readsBefore = GetAiComposeApplyRegressionCounts();
 	resolvesBefore = tones->resolveCallsForRegressionTest();
