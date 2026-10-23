@@ -35,9 +35,17 @@ struct AuthenticatedResponseTransition {
 	bool shouldMarkConnected = false;
 };
 
-[[nodiscard]] AuthenticatedResponseTransition
+[[nodiscard]] inline AuthenticatedResponseTransition
 ProcessAuthenticatedResponse(int state, uint64 sessionSalt, uint64 serverSalt,
-							 bool badTime);
+							 bool badTime) {
+	if (!badTime) {
+		sessionSalt = serverSalt;
+	}
+	return {
+		sessionSalt,
+		(state == ConnectingState) && !badTime,
+	};
+}
 
 class SessionPrivate final : public QObject {
 public:

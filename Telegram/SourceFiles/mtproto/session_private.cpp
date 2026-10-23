@@ -454,19 +454,6 @@ bool SessionPrivate::setState(int state, int ifState) {
 	return true;
 }
 
-AuthenticatedResponseTransition ProcessAuthenticatedResponse(int state,
-															 uint64 sessionSalt,
-															 uint64 serverSalt,
-															 bool badTime) {
-	if (!badTime) {
-		sessionSalt = serverSalt;
-	}
-	return {
-		sessionSalt,
-		(state == ConnectingState) && !badTime,
-	};
-}
-
 void SessionPrivate::resetSession() {
 	MTP_LOG(_shiftedDcId, ("Resetting session!"));
 	_needSessionReset = false;
