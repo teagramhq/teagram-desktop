@@ -47,6 +47,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -1317,8 +1319,6 @@ void CheckUpdateInForeignOwnedParent(const QString &shared) {
 	const auto cleanup = gsl::finally([&] {
 		QDir(installed).removeRecursively();
 		QDir(previous).removeRecursively();
-		// The lock file stays: it is the real updater's lock in this folder,
-		// and unlinking it while another updater holds it breaks exclusion.
 		QFile::remove(QDir(shared).filePath(marker));
 	});
 	CHECK(QDir().mkpath(QFileInfo(installedExecutable).absolutePath()));
@@ -1359,6 +1359,75 @@ TEST_CASE(TeagramUpdateReplacementSwapsInSharedWritableParent) {
 	if (!shared.isEmpty()) {
 		CheckUpdateInForeignOwnedParent(shared);
 	}
+}
+
+void CheckUpdateLockLeavesNoFile(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto installed = root.filePath(u"Teagram.app"_q);
+	const auto lockPath = root.filePath(u".teagram-update.lock"_q);
+	{
+		auto lock = TeagramUpdateInstallLock(installed);
+		CHECK(lock.acquired());
+		if (!lock.acquired()) {
+			return;
+		}
+		const auto competingLock = TeagramUpdateInstallLock(installed);
+		CHECK(!competingLock.acquired());
+	}
+	CHECK(!QFileInfo::exists(lockPath));
+}
+
+TEST_CASE(TeagramUpdateInstallLockLeavesNoFileAfterUpdate) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallLockLeavesNoFileAfterUpdate",
+		CheckUpdateLockLeavesNoFile);
+}
+
+void CheckUpdateLockHonorsLegacyLock(const QString &temporaryRoot) {
+	auto root = CreateUpdaterFixtureDirectory(temporaryRoot);
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto installed = root.filePath(u"Teagram.app"_q);
+	const auto lockPath = root.filePath(u".teagram-update.lock"_q);
+	CHECK(WriteFile(lockPath, QByteArrayLiteral("legacy lock")));
+	CHECK(QFile::setPermissions(lockPath, QFileDevice::ReadOwner
+											 | QFileDevice::WriteOwner));
+	auto legacyDescriptor = ::open(
+		QFile::encodeName(lockPath).constData(), O_RDWR | O_CLOEXEC);
+	CHECK(legacyDescriptor >= 0);
+	if (legacyDescriptor < 0) {
+		return;
+	}
+	const auto locked = ::flock(legacyDescriptor, LOCK_EX | LOCK_NB) == 0;
+	CHECK(locked);
+	if (!locked) {
+		::close(legacyDescriptor);
+		return;
+	}
+	{
+		const auto competingLock = TeagramUpdateInstallLock(installed);
+		CHECK(!competingLock.acquired());
+	}
+	CHECK(::flock(legacyDescriptor, LOCK_UN) == 0);
+	::close(legacyDescriptor);
+	{
+		auto lock = TeagramUpdateInstallLock(installed);
+		CHECK(lock.acquired());
+		CHECK(lock.removeLegacyLockFile());
+	}
+	CHECK(!QFileInfo::exists(lockPath));
+}
+
+TEST_CASE(TeagramUpdateInstallLockHonorsLegacyLock) {
+	RunUpdaterFixtureWithTemporaryRoots(
+		"TeagramUpdateInstallLockHonorsLegacyLock",
+		CheckUpdateLockHonorsLegacyLock);
 }
 
 #if defined(Q_OS_MAC)
@@ -1997,6 +2066,7 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 	const auto previous = root.filePath(u".Teagram.app.previous"_q);
 	const auto pending = root.filePath(u".teagram-update-pending"_q);
 	const auto started = root.filePath(u".teagram-update-started"_q);
+	const auto legacyLock = root.filePath(u".teagram-update.lock"_q);
 	const auto previousExecutable
 		= QDir(previous).filePath(u"Contents/MacOS/Teagram"_q);
 	const auto bundleInfo = [](quint64 build) {
@@ -2021,6 +2091,9 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 													| QFileDevice::ExeOwner));
 	};
 	writeBundle(installed, 101);
+	CHECK(WriteFile(legacyLock, QByteArrayLiteral("legacy lock")));
+	CHECK(QFile::setPermissions(legacyLock, QFileDevice::ReadOwner
+											 | QFileDevice::WriteOwner));
 	const auto previousBuild = downgrade ? 271 : 100;
 	writeBundle(downgrade ? QDir(staging).filePath(u"Teagram.app"_q) : previous,
 				previousBuild);
@@ -2052,12 +2125,14 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 
 	CHECK(
 		CompleteTeagramUpdateStartupForTesting(installed, [] { return true; }));
+	CHECK(QFileInfo(legacyLock).exists());
 	CHECK(QFileInfo(pending).exists());
 	CHECK_EQ(ReadFile(started), QByteArrayLiteral("101\n"));
 	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
 
 	CHECK(CompleteTeagramUpdateStartupForTesting(installed,
 												 [] { return false; }));
+	CHECK(!QFileInfo(legacyLock).exists());
 	CHECK(!QFileInfo(pending).exists());
 	CHECK(!QFileInfo(started).exists());
 	CHECK_EQ(ReadFile(previousExecutable), previousBytes);
@@ -2073,9 +2148,9 @@ void CheckStartupKeepsPreviousBundle(const QString &temporaryRoot,
 	CHECK(HasPreviousTeagramUpdateBundleForTesting(installed));
 }
 
-TEST_CASE(TeagramUpdateStartupKeepsOlderPreviousBundle) {
+TEST_CASE(TeagramUpdateStartupKeepsOlderPreviousBundleAndRemovesLegacyLock) {
 	RunUpdaterFixtureWithTemporaryRoots(
-		"TeagramUpdateStartupKeepsOlderPreviousBundle",
+		"TeagramUpdateStartupKeepsOlderPreviousBundleAndRemovesLegacyLock",
 		[](const QString &root) {
 			CheckStartupKeepsPreviousBundle(root, false);
 		});

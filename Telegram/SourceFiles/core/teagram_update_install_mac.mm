@@ -834,10 +834,16 @@ enum class StartupWaitResult {
 	}
 	const auto relaunchWaiting = otherInstanceRunning ? otherInstanceRunning()
 													  : OtherInstanceRunning();
-	if (!relaunchWaiting
-		&& (!RemoveMarker(parent, kCommitMarker)
-			|| !RemoveMarker(parent, kStartedMarker))) {
-		LOG(("Teagram update markers could not be cleared after startup."));
+	if (!relaunchWaiting) {
+		auto lock = TeagramUpdateInstallLock(installed);
+		const auto lockFileRemoved
+			= lock.acquired() && lock.removeLegacyLockFile();
+		if (!lockFileRemoved) {
+			LOG(("Teagram update lock file could not be removed after startup."));
+		} else if (!RemoveMarker(parent, kCommitMarker)
+			|| !RemoveMarker(parent, kStartedMarker)) {
+			LOG(("Teagram update markers could not be cleared after startup."));
+		}
 	}
 	return true;
 }

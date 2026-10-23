@@ -29,6 +29,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 namespace {
 
+constexpr auto kLegacyInstallLockFile = ".teagram-update.lock";
+
 struct FileDescriptor final {
 	FileDescriptor() = default;
 	explicit FileDescriptor(int value) : value(value) {}
@@ -101,6 +103,13 @@ struct ResolvedPath {
 		return {};
 	}
 	return FileDescriptor(descriptor);
+}
+
+[[nodiscard]] bool IsValidLegacyInstallLock(int descriptor) {
+	struct stat info = {};
+	return ::fstat(descriptor, &info) == 0 && S_ISREG(info.st_mode)
+		   && info.st_uid == ::geteuid() && info.st_nlink == 1
+		   && (info.st_mode & 0077) == 0;
 }
 
 [[nodiscard]] bool IsOwnedDirectoryAt(int parent, const QByteArray &name,
@@ -336,24 +345,30 @@ TeagramUpdateInstallLock::TeagramUpdateInstallLock(
 	if (_directory.isEmpty()) {
 		return;
 	}
-	const auto path = QFile::encodeName(
-		QDir(_directory).filePath(u".teagram-update.lock"_q));
-	_descriptor = ::open(path.constData(),
-						 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
-	if (_descriptor < 0) {
+	auto directory = OpenDirectory(_directory, false);
+	if (directory.value < 0
+		|| ::flock(directory.value, LOCK_EX | LOCK_NB) != 0) {
 		return;
 	}
-	struct stat info = {};
-	if (::fstat(_descriptor, &info) != 0 || !S_ISREG(info.st_mode)
-		|| info.st_uid != ::geteuid() || info.st_nlink != 1
-		|| (info.st_mode & 0077) != 0
-		|| ::flock(_descriptor, LOCK_EX | LOCK_NB) != 0) {
-		::close(_descriptor);
-		_descriptor = -1;
+	auto legacy = FileDescriptor(::openat(
+		directory.value, kLegacyInstallLockFile,
+		O_RDWR | O_CLOEXEC | O_NOFOLLOW));
+	if (legacy.value < 0) {
+		if (errno != ENOENT) {
+			return;
+		}
+	} else if (!IsValidLegacyInstallLock(legacy.value)
+			   || ::flock(legacy.value, LOCK_EX | LOCK_NB) != 0) {
+		return;
 	}
+	_descriptor = std::exchange(directory.value, -1);
+	_legacyDescriptor = std::exchange(legacy.value, -1);
 }
 
 TeagramUpdateInstallLock::~TeagramUpdateInstallLock() {
+	if (_legacyDescriptor >= 0) {
+		::close(_legacyDescriptor);
+	}
 	if (_descriptor >= 0) {
 		::close(_descriptor);
 	}
@@ -362,7 +377,8 @@ TeagramUpdateInstallLock::~TeagramUpdateInstallLock() {
 TeagramUpdateInstallLock::TeagramUpdateInstallLock(
 	TeagramUpdateInstallLock &&other) noexcept
 	: _directory(std::move(other._directory)),
-	  _descriptor(std::exchange(other._descriptor, -1)) {}
+	  _descriptor(std::exchange(other._descriptor, -1)),
+	  _legacyDescriptor(std::exchange(other._legacyDescriptor, -1)) {}
 
 TeagramUpdateInstallLock &
 TeagramUpdateInstallLock::operator=(TeagramUpdateInstallLock &&other) noexcept {
@@ -370,13 +386,55 @@ TeagramUpdateInstallLock::operator=(TeagramUpdateInstallLock &&other) noexcept {
 		if (_descriptor >= 0) {
 			::close(_descriptor);
 		}
+		if (_legacyDescriptor >= 0) {
+			::close(_legacyDescriptor);
+		}
 		_directory = std::move(other._directory);
 		_descriptor = std::exchange(other._descriptor, -1);
+		_legacyDescriptor = std::exchange(other._legacyDescriptor, -1);
 	}
 	return *this;
 }
 
 bool TeagramUpdateInstallLock::acquired() const { return _descriptor >= 0; }
+
+bool TeagramUpdateInstallLock::removeLegacyLockFile() {
+	if (_descriptor < 0) {
+		return false;
+	}
+	if (_legacyDescriptor < 0) {
+		_legacyDescriptor = ::openat(
+			_descriptor, kLegacyInstallLockFile,
+			O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+		if (_legacyDescriptor < 0) {
+			return errno == ENOENT;
+		}
+		if (!IsValidLegacyInstallLock(_legacyDescriptor)
+			|| ::flock(_legacyDescriptor, LOCK_EX | LOCK_NB) != 0) {
+			::close(std::exchange(_legacyDescriptor, -1));
+			return false;
+		}
+	}
+	if (!IsValidLegacyInstallLock(_legacyDescriptor)) {
+		return false;
+	}
+	struct stat openInfo = {};
+	struct stat pathInfo = {};
+	if (::fstat(_legacyDescriptor, &openInfo) != 0
+		|| ::fstatat(_descriptor, kLegacyInstallLockFile, &pathInfo,
+					 AT_SYMLINK_NOFOLLOW)
+			   != 0
+		|| !S_ISREG(pathInfo.st_mode) || pathInfo.st_uid != ::geteuid()
+		|| pathInfo.st_nlink != 1 || (pathInfo.st_mode & 0077) != 0
+		|| openInfo.st_dev != pathInfo.st_dev
+		|| openInfo.st_ino != pathInfo.st_ino) {
+		return false;
+	}
+	if (::unlinkat(_descriptor, kLegacyInstallLockFile, 0) != 0) {
+		return false;
+	}
+	return ::fsync(_descriptor) == 0;
+}
 
 const QString &TeagramUpdateInstallLock::directory() const {
 	return _directory;

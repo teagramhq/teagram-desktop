@@ -57,10 +57,12 @@ class TeagramUpdateInstallLock final {
 
 	[[nodiscard]] bool acquired() const;
 	[[nodiscard]] const QString &directory() const;
+	[[nodiscard]] bool removeLegacyLockFile();
 
   private:
 	QString _directory;
 	int _descriptor = -1;
+	int _legacyDescriptor = -1;
 };
 
 enum class TeagramUpdateReplacementReason {
