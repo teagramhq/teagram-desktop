@@ -4928,6 +4928,25 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 					 sessionName, supported, what);
 		return false;
 	};
+	auto &app = Core::App();
+	const auto targetWindow = &controller->window();
+	const auto activeAccount = &app.domain().active();
+	const auto windowWasActive = (app.activeWindow() == targetWindow);
+	const auto windowActivated = ActivateWindowForRegression(app, targetWindow);
+	const auto activeAccountUnchanged
+		= (&app.domain().active() == activeAccount);
+	if (!windowActivated || !activeAccountUnchanged) {
+		std::fprintf(stderr,
+					 "Session controls regression: target window activation "
+					 "active=%d account_unchanged=%d.\n",
+					 windowActivated, activeAccountUnchanged);
+		return fail("window_activation");
+	}
+	if (!windowWasActive) {
+		std::fprintf(stderr,
+					 "Session controls fixture: activated inactive window "
+					 "account_unchanged=1.\n");
+	}
 	if (session.storiesSupported() != supported) {
 		return fail("capability");
 	}
