@@ -8821,6 +8821,45 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"main-thread queue did not drain after blocked-session setup");
 	}
+	const auto stockSetupDispatchesBeforeQueuedSwitches
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedSetupDispatchesBeforeQueuedSwitches
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"setup before queued switch fixture settle",
+		stockSetupDispatchesBeforeQueuedSwitches,
+		pinnedSetupDispatchesBeforeQueuedSwitches);
+	const auto queuedSwitchSetupSettled
+		= WaitForDeferredOnlineUpdateDispatchesToSettle(
+			stock->session(), pinned->session(),
+			DeferredOnlineUpdatePhase::Setup);
+	const auto stockSetupDispatchesAfterQueuedSwitches
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedSetupDispatchesAfterQueuedSwitches
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"setup after queued switch fixture settle",
+		stockSetupDispatchesAfterQueuedSwitches,
+		pinnedSetupDispatchesAfterQueuedSwitches);
+	const auto stockSetupOutstanding = DeferredOnlineUpdateDispatchOutstanding(
+		stockSetupDispatchesAfterQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	const auto pinnedSetupOutstanding = DeferredOnlineUpdateDispatchOutstanding(
+		pinnedSetupDispatchesAfterQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	if (!queuedSwitchSetupSettled || stockSetupOutstanding != 0
+		|| pinnedSetupOutstanding != 0) {
+		return failPrerequisite("setup switch callbacks did not settle before "
+								"queued teardown fixture");
+	}
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
