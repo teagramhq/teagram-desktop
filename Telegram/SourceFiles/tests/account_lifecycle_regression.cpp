@@ -2710,9 +2710,8 @@ template <typename Predicate>
 	return condition();
 }
 
-void LogWindowActivationForRegression(
-		Core::Application &app,
-		not_null<Window::Controller *> window) {
+void LogWindowActivationForRegression(Core::Application &app,
+									  not_null<Window::Controller *> window) {
 	const auto widget = window->widget();
 	const auto focusWindow = QGuiApplication::focusWindow();
 	const auto targetWindow = widget->windowHandle();
@@ -2723,12 +2722,9 @@ void LogWindowActivationForRegression(
 		"focus-is-target=%d target-active=%d target-window-state=%d "
 		"target-visible=%d.\n",
 		static_cast<void *>(app.activeWindow()),
-		static_cast<void *>(window.get()),
-		static_cast<void *>(focusWindow),
-		static_cast<void *>(targetWindow),
-		focusWindow == targetWindow,
-		widget->isActiveWindow(),
-		static_cast<int>(widget->windowState()),
+		static_cast<void *>(window.get()), static_cast<void *>(focusWindow),
+		static_cast<void *>(targetWindow), focusWindow == targetWindow,
+		widget->isActiveWindow(), static_cast<int>(widget->windowState()),
 		widget->isVisible());
 }
 
@@ -3189,8 +3185,7 @@ template <typename Condition>
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
 			|| !ordinaryWindowActive) {
-			LogWindowActivationForRegression(
-				app, &pinnedController->window());
+			LogWindowActivationForRegression(app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
