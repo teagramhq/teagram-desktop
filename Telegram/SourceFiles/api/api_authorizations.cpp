@@ -23,6 +23,8 @@ namespace {
 constexpr auto TestApiId = 17349;
 constexpr auto SnapApiId = 611335;
 constexpr auto DesktopApiId = 2040;
+constexpr auto kAuthorizationReloadTimeout
+	= crl::time(details::AuthorizationsReloadState::kTimeoutMs);
 
 Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 	auto result = Authorizations::Entry();
@@ -119,31 +121,67 @@ Authorizations::Authorizations(not_null<ApiWrap*> api)
 }
 
 void Authorizations::reload() {
-	if (_requestId) {
+	if (_reloadState.pending()) {
 		return;
 	}
 
-	_requestId = _api.request(MTPaccount_GetAuthorizations(
-	)).done([=](const MTPaccount_Authorizations &result) {
-		_requestId = 0;
-		_lastReceived = crl::now();
-		const auto &data = result.data();
-		_ttlDays = data.vauthorization_ttl_days().v;
-		_list = ranges::views::all(
-			data.vauthorizations().v
-		) | ranges::views::transform([](const MTPAuthorization &auth) {
-			return ParseEntry(auth.data());
-		}) | ranges::to<List>;
-		removeExpiredUnreviewed();
-		refreshCallsDisabledHereFromCloud();
-		_listChanges.fire({});
-	}).fail([=] {
-		_requestId = 0;
-	}).send();
+	if (!_reloadTimeout) {
+		_reloadTimeout.emplace([=] { reloadTimedOut(); });
+	}
+	details::RunAuthorizationsReload(
+		_reloadState, kAuthorizationReloadTimeout,
+		[=](auto done, auto fail) {
+			return _api.request(MTPaccount_GetAuthorizations())
+				.done(std::move(done))
+				.fail(std::move(fail))
+				.send();
+		},
+		[=](crl::time timeout, auto callback) {
+			details::ScheduleAuthorizationsReloadTimeout(
+				*_reloadTimeout, _reloadTimeoutAction, timeout,
+				std::move(callback));
+		},
+		[=] {
+			if (_reloadTimeout) {
+				_reloadTimeout->cancel();
+			}
+			_reloadTimeoutAction = nullptr;
+		},
+		[=](mtpRequestId id) { _api.request(id).cancel(); },
+		[=](const MTPaccount_Authorizations &result) {
+			_lastReceived = crl::now();
+			_hasAuthoritativeList = true;
+			const auto &data = result.data();
+			_ttlDays = data.vauthorization_ttl_days().v;
+			_list
+				= ranges::views::all(data.vauthorizations().v)
+				  | ranges::views::transform([](const MTPAuthorization &auth) {
+						return ParseEntry(auth.data());
+					})
+				  | ranges::to<List>;
+			removeExpiredUnreviewed();
+			refreshCallsDisabledHereFromCloud();
+			_reloadSuccesses.fire({});
+			_listChanges.fire({});
+		});
+}
+
+void Authorizations::reloadTimedOut() {
+	auto callback = std::move(_reloadTimeoutAction);
+	_reloadTimeoutAction = nullptr;
+	if (callback) {
+		callback();
+	}
 }
 
 void Authorizations::cancelCurrentRequest() {
-	_api.request(base::take(_requestId)).cancel();
+	if (_reloadTimeout) {
+		_reloadTimeout->cancel();
+	}
+	_reloadTimeoutAction = nullptr;
+	if (const auto requestId = _reloadState.takeRequestId()) {
+		_api.request(requestId).cancel();
+	}
 }
 
 void Authorizations::refreshCallsDisabledHereFromCloud() {
@@ -164,7 +202,9 @@ void Authorizations::requestTerminate(
 		).done([=, done = std::move(done)](const MTPBool &result) {
 			done(result);
 			if (mtpIsTrue(result)) {
+				_hasAuthoritativeList = false;
 				if (hash) {
+					cancelCurrentRequest();
 					_list.erase(
 						ranges::remove(_list, *hash, &Entry::hash),
 						end(_list));
@@ -277,6 +317,22 @@ crl::time Authorizations::lastReceivedTime() {
 	return _lastReceived;
 }
 
+bool Authorizations::hasAuthoritativeList() const {
+	return _hasAuthoritativeList;
+}
+
+rpl::producer<MTP::Error> Authorizations::reloadFailures() const {
+	return _reloadState.failures();
+}
+
+rpl::producer<> Authorizations::reloadSuccesses() const {
+	return _reloadSuccesses.events();
+}
+
+QString Authorizations::lastReloadFailureType() const {
+	return _reloadState.lastFailureType();
+}
+
 const std::vector<Data::UnreviewedAuth> &Authorizations::unreviewed() {
 	removeExpiredUnreviewed();
 	return _unreviewed;
@@ -341,6 +397,8 @@ void Authorizations::review(const std::vector<uint64> &hashes, bool confirm) {
 				MTP_long(hash)
 			)).done([=](const MTPBool &result) {
 				if (mtpIsTrue(result)) {
+					cancelCurrentRequest();
+					_hasAuthoritativeList = false;
 					_list.erase(
 						ranges::remove(_list, hash, &Entry::hash),
 						end(_list));
