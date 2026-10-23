@@ -260,8 +260,8 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 	}
 
 	auto input = Ui::UsernameInput(nullptr, st::defaultInputField,
-								   rpl::single(u"@username"_q),
-								   u"operator"_q, QString());
+								   rpl::single(u"@username"_q), u"operator"_q,
+								   QString());
 	const auto description
 		= u"You sign in with your username, so it can't be changed."_q;
 	input.setReadOnlyWithDescription(description);
@@ -285,7 +285,7 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 		return;
 	}
 	CHECK(accessible->interface_cast(QAccessible::EditableTextInterface)
-		== nullptr);
+		  == nullptr);
 	text->setSelection(0, 0, input.text().size());
 	CHECK_EQ(input.selectedText(), u"operator"_q);
 	const auto copy = QKeySequence::keyBindings(QKeySequence::Copy);
@@ -294,16 +294,14 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 		return;
 	}
 	const auto copyKey = copy.front()[0];
-	auto copyEvent = QKeyEvent(
-		QEvent::KeyPress,
-		copyKey.key(),
-		copyKey.keyboardModifiers());
+	auto copyEvent = QKeyEvent(QEvent::KeyPress, copyKey.key(),
+							   copyKey.keyboardModifiers());
 	QCoreApplication::sendEvent(&input, &copyEvent);
 	CHECK_EQ(QApplication::clipboard()->text(), u"operator"_q);
 
 	auto editable = Ui::UsernameInput(nullptr, st::defaultInputField,
-								  rpl::single(u"@username"_q),
-								  u"operator"_q, QString());
+									  rpl::single(u"@username"_q),
+									  u"operator"_q, QString());
 	const auto editableAccessible
 		= QAccessible::queryAccessibleInterface(&editable);
 	CHECK(editableAccessible != nullptr);

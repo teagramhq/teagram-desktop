@@ -394,8 +394,9 @@ void FillUsernamesBox(
 	const auto readOnlyAccountUsername
 		= !isBot && peer->isUser() && peer->isSelf()
 		  && !peer->session().accountUsernameEditSupported();
-	const auto usernameUnavailable = readOnlyAccountUsername
-		&& peer->asUser()->editableUsername().isEmpty();
+	const auto usernameUnavailable
+		= readOnlyAccountUsername
+		  && peer->asUser()->editableUsername().isEmpty();
 	box->setTitle(isBot
 		? tr::lng_bot_username_title()
 		: tr::lng_username_title());
@@ -407,8 +408,8 @@ void FillUsernamesBox(
 		style::margins());
 	if (readOnlyAccountUsername) {
 		editor->setReadOnly(usernameUnavailable
-			? tr::lng_username_unavailable_about(tr::now)
-			: tr::lng_username_immutable_about(tr::now));
+								? tr::lng_username_unavailable_about(tr::now)
+								: tr::lng_username_immutable_about(tr::now));
 	} else {
 		editor->setEnabled(!isBot);
 	}

@@ -23,24 +23,23 @@ namespace {
 
 constexpr auto kMaxUsernameLength = 32;
 
-class UsernameInputAccessible final
-	: public QAccessibleWidget
-	, public QAccessibleTextInterface
-	, public QAccessibleEditableTextInterface {
-public:
+class UsernameInputAccessible final : public QAccessibleWidget,
+									  public QAccessibleTextInterface,
+									  public QAccessibleEditableTextInterface {
+  public:
 	explicit UsernameInputAccessible(UsernameInput *input)
-	: QAccessibleWidget(input, QAccessible::EditableText) {
+		: QAccessibleWidget(input, QAccessible::EditableText) {
 		addControllingSignal(u"textChanged(const QString&)"_q);
 		addControllingSignal(u"returnPressed()"_q);
 	}
 
 	void *interface_cast(QAccessible::InterfaceType type) override {
 		if (type == QAccessible::TextInterface) {
-			return static_cast<QAccessibleTextInterface*>(this);
+			return static_cast<QAccessibleTextInterface *>(this);
 		}
 		if (type == QAccessible::EditableTextInterface
 			&& !input()->isReadOnly()) {
-			return static_cast<QAccessibleEditableTextInterface*>(this);
+			return static_cast<QAccessibleEditableTextInterface *>(this);
 		}
 		return QAccessibleWidget::interface_cast(type);
 	}
@@ -59,15 +58,13 @@ public:
 			if (input()->echoMode() == QLineEdit::Normal) {
 				return input()->text();
 			} else if (input()->echoMode() != QLineEdit::NoEcho) {
-				return QString(
-					input()->text().size(),
-					QChar::fromLatin1('*'));
+				return QString(input()->text().size(), QChar::fromLatin1('*'));
 			}
 		}
 		const auto result = QAccessibleWidget::text(type);
 		return (result.isEmpty() && type == QAccessible::Description)
-			? input()->placeholderText()
-			: result;
+				   ? input()->placeholderText()
+				   : result;
 	}
 
 	void setText(QAccessible::Text type, const QString &text) override {
@@ -109,9 +106,7 @@ public:
 		}
 	}
 
-	int cursorPosition() const override {
-		return input()->cursorPosition();
-	}
+	int cursorPosition() const override { return input()->cursorPosition(); }
 
 	void setCursorPosition(int position) override {
 		input()->setCursorPosition(position);
@@ -124,9 +119,7 @@ public:
 		return input()->text().mid(start, end - start);
 	}
 
-	int characterCount() const override {
-		return input()->text().size();
-	}
+	int characterCount() const override { return input()->text().size(); }
 
 	QRect characterRect(int offset) const override {
 		const auto character = text(offset, offset + 1);
@@ -135,8 +128,8 @@ public:
 		}
 		const auto metrics = QFontMetrics(input()->font());
 		const auto margins = input()->textMargins();
-		const auto availableWidth = input()->width()
-			- margins.left() - margins.right();
+		const auto availableWidth
+			= input()->width() - margins.left() - margins.right();
 		const auto value = input()->text();
 		const auto textWidth = metrics.horizontalAdvance(value);
 		auto left = margins.left();
@@ -148,9 +141,8 @@ public:
 		const auto x = left + metrics.horizontalAdvance(value.left(offset));
 		const auto y = (input()->height() - metrics.height()) / 2;
 		const auto width = metrics.horizontalAdvance(character);
-		return QRect(
-			input()->mapToGlobal(QPoint(x, y)),
-			QSize(width, metrics.height()));
+		return QRect(input()->mapToGlobal(QPoint(x, y)),
+					 QSize(width, metrics.height()));
 	}
 
 	int offsetAtPoint(const QPoint &point) const override {
@@ -185,19 +177,16 @@ public:
 		}
 	}
 
-private:
+  private:
 	UsernameInput *input() const {
-		return static_cast<UsernameInput*>(object());
+		return static_cast<UsernameInput *>(object());
 	}
 };
 
-QAccessibleInterface *UsernameAccessibilityFactory(
-		const QString &,
-		QObject *object) {
-	const auto input = dynamic_cast<UsernameInput*>(object);
-	return input
-		? new UsernameInputAccessible(input)
-		: nullptr;
+QAccessibleInterface *UsernameAccessibilityFactory(const QString &,
+												   QObject *object) {
+	const auto input = dynamic_cast<UsernameInput *>(object);
+	return input ? new UsernameInputAccessible(input) : nullptr;
 }
 
 } // namespace
