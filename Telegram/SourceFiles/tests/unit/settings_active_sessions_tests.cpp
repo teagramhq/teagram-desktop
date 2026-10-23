@@ -151,8 +151,9 @@ TEST_CASE(CachedSessionsStayVisibleAndMarkedStaleAfterReloadTimeout) {
 	CHECK(sessions.hasRows());
 	CHECK(sessions.rowsVisible());
 	CHECK(sessions.failed());
-	CHECK_EQ(sessions.failureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
-	CHECK_EQ(reload.lastFailureType(), u"AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
+	CHECK_EQ(sessions.failureType(), u"CLIENT_AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
+	CHECK_EQ(reload.lastFailureType(),
+			 u"CLIENT_AUTHORIZATIONS_RELOAD_TIMEOUT"_q);
 	CHECK(!sessions.shouldUseCachedList(true, true));
 	const auto replayAgain = sessions.receiveList(true, true);
 	CHECK(!replayAgain.clearRows);
