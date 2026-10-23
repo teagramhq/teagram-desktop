@@ -112,6 +112,7 @@ PRIVATE
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
+    tests/unit/session_private_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp

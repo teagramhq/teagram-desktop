@@ -30,6 +30,10 @@ class SessionData;
 class RSAPublicKey;
 struct SessionOptions;
 
+[[nodiscard]] bool ShouldMarkConnectedAfterAuthenticatedResponse(
+	int state,
+	bool badTime);
+
 class SessionPrivate final : public QObject {
 public:
 	SessionPrivate(

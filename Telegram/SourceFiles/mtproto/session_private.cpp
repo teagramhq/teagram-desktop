@@ -454,6 +454,12 @@ bool SessionPrivate::setState(int state, int ifState) {
 	return true;
 }
 
+bool ShouldMarkConnectedAfterAuthenticatedResponse(
+		int state,
+		bool badTime) {
+	return (state == ConnectingState) && !badTime;
+}
+
 void SessionPrivate::resetSession() {
 	MTP_LOG(_shiftedDcId, ("Resetting session!"));
 	_needSessionReset = false;
@@ -1466,15 +1472,19 @@ void SessionPrivate::handleReceived() {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
 				_sessionSalt = serverSalt;
-
-				if (setState(ConnectedState, ConnectingState)) {
-					resendAll();
-				}
 			} else {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2").arg(serverSalt).arg(_sessionSalt));
 			}
 		} else {
 			serverSalt = 0; // dont pass to handle method, so not to lock in setSalt()
+		}
+		// A valid reply proves this session is live even when its salt did not
+		// change. Advance before dispatch, which may ignore an untracked pong.
+		if (ShouldMarkConnectedAfterAuthenticatedResponse(
+				getState(),
+				badTime)
+			&& setState(ConnectedState, ConnectingState)) {
+			resendAll();
 		}
 
 		if (needAck) _ackRequestData.push_back(MTP_long(msgId));
