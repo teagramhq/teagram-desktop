@@ -563,6 +563,7 @@ bool Account::createSession(
 	}
 
 	Ensures(_session != nullptr);
+	local().writeSelf();
 	return true;
 }
 
