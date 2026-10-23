@@ -43,6 +43,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/random.h"
 
+#include <algorithm>
+
 namespace Data {
 namespace {
 
@@ -370,11 +372,10 @@ PossibleItemReactions::PossibleItemReactions(
 , tags(other.tags){
 }
 
-Reactions::Reactions(not_null<Session*> owner)
-: _owner(owner)
-, _topRefreshTimer([=] { refreshTop(); })
-, _repaintTimer([=] { repaintCollected(); })
-, _sendPaidTimer([=] { sendPaid(); }) {
+Reactions::Reactions(not_null<Session *> owner)
+	: _owner(owner), _topRefreshTimer([=] { refreshTop(); }),
+	  _repaintTimer([=] { repaintCollected(); }),
+	  _sendPaidTimer([=] { sendPaid(); }) {
 	refreshDefault();
 
 	_myTags.emplace(nullptr);
@@ -1024,7 +1025,7 @@ void Reactions::requestRecent() {
 }
 
 void Reactions::requestDefault() {
-	if (_defaultRequestId) {
+	if (_defaultRequestId || _defaultUpdate) {
 		return;
 	}
 	auto &api = _owner->session().api();
@@ -1143,36 +1144,57 @@ void Reactions::updateRecent(const MTPDmessages_reactions &data) {
 
 void Reactions::updateDefault(const MTPDmessages_availableReactions &data) {
 	_defaultHash = data.vhash().v;
-
-	const auto &list = data.vreactions().v;
-	const auto oldCache = base::take(_iconsCache);
-	const auto toCache = [&](DocumentData *document) {
-		if (document) {
-			_iconsCache.emplace(document, document->createMediaView());
-		}
-	};
-	_active.clear();
-	_available.clear();
-	_active.reserve(list.size());
-	_available.reserve(list.size());
-	_iconsCache.reserve(list.size() * 4);
-	for (const auto &reaction : list) {
-		if (const auto parsed = parse(reaction)) {
-			_available.push_back(*parsed);
-			if (parsed->active) {
-				_active.push_back(*parsed);
-				toCache(parsed->appearAnimation);
-				toCache(parsed->selectAnimation);
-				toCache(parsed->centerIcon);
-				toCache(parsed->aroundAnimation);
+	auto update = DefaultUpdate();
+	update.reactionCount = data.vreactions().v.size();
+	update.previousIconsCache = base::take(_iconsCache);
+	update.iconsCache.reserve(update.reactionCount * 4);
+	_defaultUpdate = std::move(update);
+	_defaultUpdateScheduler.start(
+		data.vreactions().v,
+		[=](const MTPAvailableReaction &reaction) { return parse(reaction); },
+		[=](const Reaction &reaction) {
+			auto &update = *_defaultUpdate;
+			const auto toCache = [&](DocumentData *document) {
+				if (document) {
+					update.iconsCache.emplace(document,
+											  document->createMediaView());
+				}
+			};
+			toCache(reaction.appearAnimation);
+			toCache(reaction.selectAnimation);
+			toCache(reaction.centerIcon);
+			toCache(reaction.aroundAnimation);
+		},
+		[=] {
+			auto &update = *_defaultUpdate;
+			if (!update.previousIconsCache.empty()) {
+				auto last = end(update.previousIconsCache);
+				update.previousIconsCache.erase(--last);
 			}
-		}
-	}
-	if (_waitingForReactions) {
-		_waitingForReactions = false;
-		resolveReactionImages();
-	}
-	defaultUpdated();
+			return !update.previousIconsCache.empty();
+		},
+		[=](std::vector<Reaction> &&active, std::vector<Reaction> &&available,
+			crl::time longestBatch) {
+			auto finished = std::move(*_defaultUpdate);
+			_defaultUpdate.reset();
+			finished.longestBatch
+				= std::max(finished.longestBatch, longestBatch);
+			const auto finalizeStarted = crl::now();
+			_active = std::move(active);
+			_available = std::move(available);
+			_iconsCache = std::move(finished.iconsCache);
+			if (_waitingForReactions) {
+				_waitingForReactions = false;
+				resolveReactionImages();
+			}
+			defaultUpdated();
+			finished.longestBatch
+				= std::max(finished.longestBatch, crl::now() - finalizeStarted);
+			DEBUG_LOG(("Reaction Info: imported %1 reactions; max main-thread "
+					   "batch %2 ms.")
+						  .arg(finished.reactionCount)
+						  .arg(finished.longestBatch));
+		});
 }
 
 void Reactions::updateGeneric(const MTPDmessages_stickerSet &data) {
@@ -1439,24 +1461,25 @@ std::optional<Reaction> Reactions::parse(const MTPAvailableReaction &entry) {
 		LOG(("API Error: Unknown emoji in reactions: %1").arg(emoji));
 		return std::nullopt;
 	}
+	const auto documents = details::HydrateAvailableReactionDocuments(
+		data, [=](const MTPDocument &document) {
+			return _owner->processDocument(document);
+		});
 	return std::make_optional(Reaction{
-		.id = ReactionId{ emoji },
+		.id = ReactionId{emoji},
 		.title = qs(data.vtitle()),
 		//.staticIcon = _owner->processDocument(data.vstatic_icon()),
-		.appearAnimation = _owner->processDocument(
-			data.vappear_animation()),
-		.selectAnimation = _owner->processDocument(
-			data.vselect_animation()),
+		.appearAnimation = documents.appearAnimation,
+		.selectAnimation = documents.selectAnimation,
 		//.activateAnimation = _owner->processDocument(
 		//	data.vactivate_animation()),
 		//.activateEffects = _owner->processDocument(
 		//	data.veffect_animation()),
-		.centerIcon = (data.vcenter_icon()
-			? _owner->processDocument(*data.vcenter_icon()).get()
-			: nullptr),
-		.aroundAnimation = (data.varound_animation()
-			? _owner->processDocument(*data.varound_animation()).get()
-			: nullptr),
+		.centerIcon
+		= (documents.centerIcon ? documents.centerIcon->get() : nullptr),
+		.aroundAnimation
+		= (documents.aroundAnimation ? documents.aroundAnimation->get()
+									 : nullptr),
 		.active = !data.is_inactive(),
 	});
 }

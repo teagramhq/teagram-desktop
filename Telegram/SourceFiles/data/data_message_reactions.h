@@ -8,8 +8,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/timer.h"
+#include "data/data_message_reactions_batch.h"
 #include "data/data_message_reaction_id.h"
 #include "data/stickers/data_custom_emoji.h"
+
+#include <optional>
+#include <type_traits>
 
 namespace Calls {
 class GroupCall;
@@ -44,6 +48,37 @@ struct Reaction {
 	bool effect = false;
 	bool premium = false;
 };
+
+namespace details {
+
+template <typename Document> struct AvailableReactionDocuments {
+	Document appearAnimation;
+	Document selectAnimation;
+	std::optional<Document> centerIcon;
+	std::optional<Document> aroundAnimation;
+};
+
+template <typename ProcessDocument>
+[[nodiscard]] auto
+HydrateAvailableReactionDocuments(const MTPDavailableReaction &data,
+								  ProcessDocument &&processDocument) {
+	using Document
+		= std::decay_t<decltype(processDocument(data.vappear_animation()))>;
+	return AvailableReactionDocuments<Document>{
+		.appearAnimation = processDocument(data.vappear_animation()),
+		.selectAnimation = processDocument(data.vselect_animation()),
+		.centerIcon
+		= data.vcenter_icon()
+			  ? std::optional<Document>(processDocument(*data.vcenter_icon()))
+			  : std::nullopt,
+		.aroundAnimation = data.varound_animation()
+							   ? std::optional<Document>(
+									 processDocument(*data.varound_animation()))
+							   : std::nullopt,
+	};
+}
+
+} // namespace details
 
 struct PossibleItemReactionsRef {
 	std::vector<not_null<const Reaction*>> recent;
@@ -177,6 +212,18 @@ public:
 		const MTPMessage &message);
 
 private:
+  using DocumentMediaCache = base::flat_map<not_null<DocumentData *>,
+											std::shared_ptr<DocumentMedia>>;
+  using DefaultUpdateScheduler
+	  = details::IncrementalAvailableReactionsUpdate<MTPAvailableReaction,
+													 Reaction>;
+  struct DefaultUpdate {
+	  DocumentMediaCache previousIconsCache;
+	  DocumentMediaCache iconsCache;
+	  int reactionCount = 0;
+	  crl::time longestBatch = 0;
+  };
+
 	struct ImageSet {
 		QImage image;
 		std::shared_ptr<DocumentMedia> media;
@@ -305,9 +352,7 @@ private:
 	ReactionId _favoriteId;
 	ReactionId _unresolvedFavoriteId;
 	std::optional<Reaction> _favorite;
-	base::flat_map<
-		not_null<DocumentData*>,
-		std::shared_ptr<DocumentMedia>> _iconsCache;
+	DocumentMediaCache _iconsCache;
 	base::flat_map<
 		not_null<DocumentData*>,
 		std::shared_ptr<DocumentMedia>> _genericCache;
@@ -331,6 +376,8 @@ private:
 	DocumentData *_paidToastAnimation = nullptr;
 
 	base::Timer _topRefreshTimer;
+	std::optional<DefaultUpdate> _defaultUpdate;
+	DefaultUpdateScheduler _defaultUpdateScheduler;
 	mtpRequestId _topRequestId = 0;
 	uint64 _topHash = 0;
 
