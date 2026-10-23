@@ -299,6 +299,24 @@ TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
 	QCoreApplication::sendEvent(&input, &copyEvent);
 	CHECK_EQ(QApplication::clipboard()->text(), u"operator"_q);
 
+	auto valueEditable = Ui::UsernameInput(nullptr, st::defaultInputField,
+										   rpl::single(u"@username"_q),
+										   u"operator"_q, QString());
+	const auto valueAccessible
+		= QAccessible::queryAccessibleInterface(&valueEditable);
+	CHECK(valueAccessible != nullptr);
+	if (!valueAccessible) {
+		return;
+	}
+	valueAccessible->setText(QAccessible::Value, u" new_name "_q);
+	CHECK_EQ(valueEditable.text(), u"new_name"_q);
+	CHECK_EQ(valueEditable.cursorPosition(), 8);
+	auto valueTypingEvent
+		= QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, u"x"_q);
+	QCoreApplication::sendEvent(&valueEditable, &valueTypingEvent);
+	CHECK_EQ(valueEditable.text(), u"new_namex"_q);
+	CHECK_EQ(valueEditable.cursorPosition(), 9);
+
 	auto editable = Ui::UsernameInput(nullptr, st::defaultInputField,
 									  rpl::single(u"@username"_q),
 									  u"operator"_q, QString());

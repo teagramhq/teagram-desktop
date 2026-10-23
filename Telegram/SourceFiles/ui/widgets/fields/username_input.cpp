@@ -69,7 +69,7 @@ class UsernameInputAccessible final : public QAccessibleWidget,
 
 	void setText(QAccessible::Text type, const QString &text) override {
 		if (type == QAccessible::Value) {
-			input()->setTextFromAccessibility(text, 0);
+			input()->setTextFromAccessibility(text, int(text.size()));
 		} else {
 			QAccessibleWidget::setText(type, text);
 		}
