@@ -78,6 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/system_media_controls_manager.h"
 #include "window/notifications_manager.h"
 #include "window/themes/window_theme.h"
+#include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_options.h"
@@ -333,6 +334,7 @@ void Application::run() {
 
 	style::StartManager(cScale());
 	Ui::Accessible::Init();
+	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
 	Ui::Emoji::Init();

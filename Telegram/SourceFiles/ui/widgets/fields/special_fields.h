@@ -95,6 +95,7 @@ public:
 
 	void setLinkPlaceholder(const QString &placeholder);
 	void setMaxLength(int maxLength);
+	void setReadOnlyWithDescription(const QString &description);
 
 protected:
   void keyPressEvent(QKeyEvent *e) override;
@@ -107,6 +108,8 @@ private:
 	int _maxLength = 0;
 
 };
+
+void InitUsernameInputAccessibility();
 
 class PhoneInput : public MaskedInputField {
 public:
