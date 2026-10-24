@@ -122,6 +122,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "test/test_widgets.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
+#include "ui/effects/animations.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
@@ -3999,8 +4000,13 @@ template <typename Condition>
 	{
 		const auto previousAnimationsDisabled = anim::Disabled();
 		anim::SetDisabled(true);
-		const auto restoreAnimations = gsl::finally(
-			[=] { anim::SetDisabled(previousAnimationsDisabled); });
+		// Section slides run inside the nested wait below. Let animation
+		// ticks use its queued events instead of the outer-loop postpone queue.
+		Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
+		const auto restoreAnimations = gsl::finally([=] {
+			Ui::Animations::Manager::SetScheduleWithInvokeQueued(false);
+			anim::SetDisabled(previousAnimationsDisabled);
+		});
 		for (const auto &url : messageRoutes) {
 			resetController(stockController);
 			stockController->setHighlightControlId(QString());
