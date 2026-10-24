@@ -9214,7 +9214,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			pinned->session(),
 			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2
 				+ pinnedFallbackWindowSetupInline.switchInline
-				+ pinnedFallbackWindowSetupDispatchDelta.setupEnqueued)
+				+ pinnedFallbackWindowDispatchDelta.setupEnqueued)
 		|| !queuedStockDeferredObserved || !queuedPinnedDeferredObserved
 		|| !queuedDeferredMatches || !queuedDispatchCountsMatch) {
 		return failPrerequisite(
