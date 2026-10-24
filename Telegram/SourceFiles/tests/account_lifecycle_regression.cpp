@@ -8940,12 +8940,32 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
-	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
-		DeferredOnlineUpdatePhase::CloseSwitch);
 	if (!queuedDispatchesRemainBounded("after queued switch fixture")) {
 		return failPrerequisite(
 			"queued switch fixture enqueued an extra live-session update");
 	}
+	// Account logout falls back to an account without a primary window. Keep
+	// pinned out of that path so teardown cannot switch the stock primary.
+	const auto pinnedFallbackWindow = app.ensureSeparateWindowFor(pinned);
+	const auto closePinnedFallbackWindow = gsl::finally([&] {
+		if (app.separateWindowFor(pinned) == pinnedFallbackWindow) {
+			app.closeWindow(pinnedFallbackWindow);
+		}
+	});
+	primary->activate();
+	if (!pinnedFallbackWindow->isPrimary()
+		|| app.separateWindowFor(pinned) != pinnedFallbackWindow
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"could not stabilize the pinned fallback window before logout");
+	}
+	if (!queuedDispatchesRemainBounded("after pinned fallback window setup")) {
+		return failPrerequisite("pinned fallback window setup enqueued an "
+								"extra live-session update");
+	}
+	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
+		DeferredOnlineUpdatePhase::CloseSwitch);
 	const auto discardedAtTeardown = discardedQueuedThird;
 	const auto discardedWindow = app.ensureSeparateWindowFor(Window::SeparateId(
 		Window::SeparateType::Archive, &discarded->session()));
@@ -9043,6 +9063,15 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"queued live and destroyed-session updates reached the wrong "
 			"sessions");
+	}
+	app.closeWindow(pinnedFallbackWindow);
+	primary->activate();
+	if (app.separateWindowFor(pinned) != nullptr
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()
+		|| !WaitForMainQueueBarrier()) {
+		return failPrerequisite(
+			"could not restore the stock primary after logout fallback setup");
 	}
 	const auto stockDcOptionsBeforeDeferredLink
 		= MTP::DcOptions(MTP::Environment::Production).serialize();
