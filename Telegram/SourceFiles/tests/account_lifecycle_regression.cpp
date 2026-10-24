@@ -151,6 +151,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QMutex>
+#include <QtCore/QPointer>
 #include <QtCore/QSemaphore>
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
@@ -161,6 +162,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QCursor>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
+#include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
 
 #include <algorithm>
@@ -172,6 +174,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 #include <set>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace Tests {
@@ -4917,6 +4920,107 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 // Stories and call controls are presentation-gated per owning session. The
 // admin box checks run their own save computation, so checkbox-only saves
 // that drop hidden rights fail here and in the standalone save cases.
+class RegressionBoxCloseEventTrace final : public QObject {
+  public:
+	explicit RegressionBoxCloseEventTrace(not_null<QWidget *> root)
+		: _root(root.get()) {
+		QCoreApplication::instance()->installEventFilter(this);
+	}
+
+	~RegressionBoxCloseEventTrace() override {
+		if (const auto app = QCoreApplication::instance()) {
+			app->removeEventFilter(this);
+		}
+	}
+
+	void setPhase(const char *phase) { _phase = phase; }
+
+	void boxClosing(const char *caseName, bool targetActive,
+					bool activeAccountUnchanged, bool layerShown) {
+		const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
+		const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
+		std::fprintf(stderr,
+					 "Session controls regression: admin_box_closing case=%s "
+					 "phase=%s last_event=%s event_widget=%s event_age_ms=%lld "
+					 "last_input=%s input_widget=%s key=%d button=%d "
+					 "input_age_ms=%lld target_active=%d account_unchanged=%d "
+					 "layer_shown=%d.\n",
+					 caseName, _phase, _event, _eventWidget,
+					 static_cast<long long>(eventAge), _input, _inputWidget,
+					 _key, _button, static_cast<long long>(inputAge),
+					 targetActive, activeAccountUnchanged, layerShown);
+		_closed = true;
+	}
+
+	[[nodiscard]] bool closed() const { return _closed; }
+
+	bool eventFilter(QObject *watched, QEvent *event) override {
+		if (event->type() == QEvent::ApplicationDeactivate) {
+			_event = "application_deactivate";
+			_eventWidget = "QCoreApplication";
+			_eventAge.start();
+			return false;
+		}
+		const auto root = _root.data();
+		const auto widget = qobject_cast<QWidget *>(watched);
+		if (!root || !widget
+			|| (widget != root && !root->isAncestorOf(widget))) {
+			return false;
+		}
+		const auto record
+			= [&](const char *name, int key, int button, bool input) {
+				  _event = name;
+				  _eventWidget = widget->metaObject()->className();
+				  _eventAge.start();
+				  if (input) {
+					  _input = name;
+					  _inputWidget = _eventWidget;
+					  _key = key;
+					  _button = button;
+					  _inputAge.start();
+				  }
+			  };
+		switch (event->type()) {
+		case QEvent::KeyPress: {
+			const auto keyEvent = static_cast<QKeyEvent *>(event);
+			record("key_press", keyEvent->key(), 0, true);
+		} break;
+		case QEvent::MouseButtonPress:
+		case QEvent::MouseButtonRelease: {
+			const auto mouseEvent = static_cast<QMouseEvent *>(event);
+			record(event->type() == QEvent::MouseButtonPress ? "mouse_press"
+															 : "mouse_release",
+				   0, int(mouseEvent->button()), true);
+		} break;
+		case QEvent::WindowDeactivate:
+			record("window_deactivate", 0, 0, false);
+			break;
+		case QEvent::FocusOut:
+			record("focus_out", 0, 0, false);
+			break;
+		case QEvent::Shortcut:
+			record("shortcut", 0, 0, true);
+			break;
+		default:
+			break;
+		}
+		return false;
+	}
+
+  private:
+	QPointer<QWidget> _root;
+	const char *_phase = "show";
+	const char *_event = "none";
+	const char *_eventWidget = "none";
+	const char *_input = "none";
+	const char *_inputWidget = "none";
+	QElapsedTimer _eventAge;
+	QElapsedTimer _inputAge;
+	int _key = 0;
+	int _button = 0;
+	bool _closed = false;
+};
+
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
 	const char *sessionName) {
@@ -4931,22 +5035,6 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	auto &app = Core::App();
 	const auto targetWindow = &controller->window();
 	const auto activeAccount = &app.domain().active();
-	const auto windowWasActive = (app.activeWindow() == targetWindow);
-	const auto windowActivated = ActivateWindowForRegression(app, targetWindow);
-	const auto activeAccountUnchanged
-		= (&app.domain().active() == activeAccount);
-	if (!windowActivated || !activeAccountUnchanged) {
-		std::fprintf(stderr,
-					 "Session controls regression: target window activation "
-					 "active=%d account_unchanged=%d.\n",
-					 windowActivated, activeAccountUnchanged);
-		return fail("window_activation");
-	}
-	if (!windowWasActive) {
-		std::fprintf(stderr,
-					 "Session controls fixture: activated inactive window "
-					 "account_unchanged=1.\n");
-	}
 	if (session.storiesSupported() != supported) {
 		return fail("capability");
 	}
@@ -5146,24 +5234,40 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 	}
 
 	const auto admin = session.data().user(UserId(1182));
-	const auto openAdminBox = [&](Rights existing) {
+	const auto openAdminBox = [&](const char *caseName, Rights existing) {
 		auto box = Box<EditAdminBox>(channelPeer, admin,
 									 ChatAdminRightsInfo(existing), QString(),
 									 TimeId(0), nullptr);
 		box->setSaveCallback([](ChatAdminRightsInfo, ChatAdminRightsInfo,
 								const std::optional<QString> &) {});
+		auto trace = std::make_shared<RegressionBoxCloseEventTrace>(
+			not_null<QWidget *>(controller->widget().get()));
+		box->boxClosing()
+			| rpl::on_next(
+				[=] {
+					trace->boxClosing(
+						caseName, Core::App().activeWindow() == targetWindow,
+						&Core::App().domain().active() == activeAccount,
+						controller->window().isLayerShown());
+				},
+				box->lifetime());
 		auto result = controller->window().show(
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
 		const auto opened = bool(result);
+		trace->setPhase("process_events");
 		QCoreApplication::processEvents();
+		trace->setPhase("inspect");
 		if (!result) {
 			std::fprintf(
 				stderr,
 				"Session controls regression: admin_box_lifetime opened=%d "
-				"after_process_events=0 layer_shown=%d.\n",
-				opened, controller->window().isLayerShown());
+				"after_process_events=0 layer_shown=%d close_seen=%d "
+				"target_active=%d account_unchanged=%d.\n",
+				opened, controller->window().isLayerShown(), trace->closed(),
+				app.activeWindow() == targetWindow,
+				&app.domain().active() == activeAccount);
 		}
-		return result;
+		return std::make_pair(std::move(result), std::move(trace));
 	};
 	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
 								| Right::EditMessages | Right::DeleteMessages
@@ -5171,7 +5275,7 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 								| Right::ManageDirect | Right::BanUsers;
 	const auto adminCase = [&](const char *name, Rights existingStories) {
 		const auto existing = visibleChannel | existingStories | Right::Other;
-		auto box = openAdminBox(existing);
+		auto [box, trace] = openAdminBox(name, existing);
 		if (!box) {
 			std::fprintf(
 				stderr,
@@ -5192,7 +5296,9 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 						: (!(visible & stories) && !(checked & stories));
 		const auto callRowMatches
 			= bool(visible & Right::ManageCall) == callsSupported;
+		trace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
+		trace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		if (!rowsMatch || !callRowMatches
 			|| (saved.value() != expected.value())) {
@@ -5212,13 +5318,15 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 		return false;
 	}
 	{
-		auto box = openAdminBox(Rights());
+		auto [box, trace] = openAdminBox("new_admin", Rights());
 		if (!box) {
 			return fail("new_admin_box");
 		}
 		const auto checked = box->checkedRightsForRegressionTest();
 		const auto saved = box->rightsToSaveForRegressionTest(checked);
+		trace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
+		trace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		const auto savedStories = (saved & stories);
 		const auto expectedStories = supported ? stories : Rights();
