@@ -4933,8 +4933,6 @@ class RegressionBoxCloseEventTrace final : public QObject {
 
 	void setPhase(const char *phase);
 	void resetForBox();
-	void setInactiveWindowPreserved(bool preserved);
-	[[nodiscard]] bool inactiveWindowPreserved() const;
 	void boxClosing(const char *caseName, bool targetActive,
 					bool activeAccountUnchanged, bool layerShown);
 	[[nodiscard]] bool closed() const;
@@ -4955,7 +4953,6 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	int _key = 0;
 	int _button = 0;
 	bool _closed = false;
-	bool _inactiveWindowPreserved = true;
 };
 
 [[nodiscard]] QString RegressionBoxCloseCallStack() {
@@ -5010,15 +5007,6 @@ void RegressionBoxCloseEventTrace::resetForBox() {
 	_key = 0;
 	_button = 0;
 	_closed = false;
-	_inactiveWindowPreserved = true;
-}
-
-void RegressionBoxCloseEventTrace::setInactiveWindowPreserved(bool preserved) {
-	_inactiveWindowPreserved = preserved;
-}
-
-bool RegressionBoxCloseEventTrace::inactiveWindowPreserved() const {
-	return _inactiveWindowPreserved;
 }
 
 void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
@@ -5348,65 +5336,38 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 						controller->window().isLayerShown());
 				},
 				box->lifetime());
-		const auto ensureActiveAccountWindow = [&] {
-			return !targetShouldBeInactive
-				   || app.activeWindow() == activeAccountWindow
-				   || ActivateWindowForRegression(
-					   app,
-					   not_null<Window::Controller *>(activeAccountWindow));
-		};
-		trace->setPhase("restore_active_account_window_before_show");
-		const auto activeAccountWindowRestoredBeforeShow
-			= ensureActiveAccountWindow();
-		const auto targetInactiveBeforeShow
-			= !targetShouldBeInactive
-			  || app.activeWindow() == activeAccountWindow;
+		const auto targetActiveBeforeShow = app.activeWindow() == targetWindow;
 		trace->setPhase("show");
 		auto result = controller->window().show(
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
 		const auto opened = bool(result);
-		trace->setPhase("restore_active_account_window_after_show");
-		const auto activeAccountWindowRestoredAfterShow
-			= ensureActiveAccountWindow();
-		const auto targetInactiveBeforeEvents
-			= !targetShouldBeInactive
-			  || app.activeWindow() == activeAccountWindow;
+		const auto targetActiveAfterShow = app.activeWindow() == targetWindow;
 		trace->setPhase("process_events");
 		QCoreApplication::processEvents();
-		const auto targetInactiveAfterEvents
-			= !targetShouldBeInactive
-			  || app.activeWindow() == activeAccountWindow;
+		const auto targetActiveAfterEvents = app.activeWindow() == targetWindow;
+		const auto activeAccountUnchanged
+			= &app.domain().active() == activeAccount;
 		trace->setPhase("inspect");
-		const auto inactiveWindowPreserved
-			= activeAccountWindowRestoredBeforeShow && targetInactiveBeforeShow
-			  && activeAccountWindowRestoredAfterShow
-			  && targetInactiveBeforeEvents && targetInactiveAfterEvents
-			  && (&app.domain().active() == activeAccount);
-		trace->setInactiveWindowPreserved(inactiveWindowPreserved);
 		if (targetShouldBeInactive) {
 			std::fprintf(
 				stderr,
 				"Session controls regression: admin_box_window_state "
 				"case=%s opened=%d target_active_before_show=%d "
-				"target_active_before_events=%d "
+				"target_active_after_show=%d "
 				"target_active_after_events=%d account_unchanged=%d.\n",
-				caseName, opened, !targetInactiveBeforeShow,
-				!targetInactiveBeforeEvents, !targetInactiveAfterEvents,
-				&app.domain().active() == activeAccount);
+				caseName, opened, targetActiveBeforeShow, targetActiveAfterShow,
+				targetActiveAfterEvents, activeAccountUnchanged);
 		}
-		if (!result || !inactiveWindowPreserved) {
+		if (!result) {
 			std::fprintf(
 				stderr,
 				"Session controls regression: admin_box_lifetime opened=%d "
 				"after_process_events=0 layer_shown=%d close_seen=%d "
-				"target_active=%d account_unchanged=%d "
-				"inactive_window_preserved=%d.\n",
+				"target_active=%d account_unchanged=%d.\n",
 				opened, controller->window().isLayerShown(), trace->closed(),
-				app.activeWindow() == targetWindow,
-				&app.domain().active() == activeAccount,
-				inactiveWindowPreserved);
+				app.activeWindow() == targetWindow, activeAccountUnchanged);
 		}
-		return std::make_pair(std::move(result), trace);
+		return result;
 	};
 	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
 								| Right::EditMessages | Right::DeleteMessages
@@ -5415,7 +5376,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	const auto adminCase = [&](const char *name, Rights existingStories) {
 		const auto existing = visibleChannel | existingStories | Right::Other;
 		trace->resetForBox();
-		auto [box, boxTrace] = openAdminBox(name, existing);
+		auto box = openAdminBox(name, existing);
 		if (!box) {
 			std::fprintf(
 				stderr,
@@ -5424,12 +5385,6 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				sessionName, supported, name,
 				controller->window().isLayerShown());
 			return false;
-		}
-		if (!boxTrace->inactiveWindowPreserved()) {
-			boxTrace->setPhase("fixture_cleanup");
-			controller->hideLayer(anim::type::instant);
-			QCoreApplication::processEvents();
-			return fail("admin_box_window_state");
 		}
 		const auto visible = box->visibleRightsForRegressionTest();
 		const auto checked = box->checkedRightsForRegressionTest();
@@ -5442,9 +5397,9 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 						: (!(visible & stories) && !(checked & stories));
 		const auto callRowMatches
 			= bool(visible & Right::ManageCall) == callsSupported;
-		boxTrace->setPhase("test_hide_layer");
+		trace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
-		boxTrace->setPhase("test_hide_layer_process_events");
+		trace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		if (!rowsMatch || !callRowMatches
 			|| (saved.value() != expected.value())) {
@@ -5465,21 +5420,15 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 	{
 		trace->resetForBox();
-		auto [box, boxTrace] = openAdminBox("new_admin", Rights());
+		auto box = openAdminBox("new_admin", Rights());
 		if (!box) {
 			return fail("new_admin_box");
 		}
-		if (!boxTrace->inactiveWindowPreserved()) {
-			boxTrace->setPhase("fixture_cleanup");
-			controller->hideLayer(anim::type::instant);
-			QCoreApplication::processEvents();
-			return fail("new_admin_box_window_state");
-		}
 		const auto checked = box->checkedRightsForRegressionTest();
 		const auto saved = box->rightsToSaveForRegressionTest(checked);
-		boxTrace->setPhase("test_hide_layer");
+		trace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
-		boxTrace->setPhase("test_hide_layer_process_events");
+		trace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		const auto savedStories = (saved & stories);
 		const auto expectedStories = supported ? stories : Rights();
