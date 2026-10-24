@@ -9111,7 +9111,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto discardedWindowSetupOnlineBefore
 		= discarded->session().updates().onlineUpdateCountsForRegressionTest();
-	const auto discardedWindowSetupBefore
+	const auto discardedWindowDispatchesBefore
 		= discarded->session()
 			  .updates()
 			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
@@ -9131,7 +9131,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			discarded->session()
 				.updates()
 				.deferredOnlineUpdateDispatchCountsForRegressionTest(),
-			discardedWindowSetupBefore);
+			discardedWindowDispatchesBefore);
 	const auto discardedWindowSetupInlineMatches = ReportSwitchUpdateDeltas(
 		"discarded primary window setup inline", discardedWindowSetupStock,
 		{0, 0}, discardedWindowSetupPinned, {0, 0}, &discardedWindowSetupInline,
