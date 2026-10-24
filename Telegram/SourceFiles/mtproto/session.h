@@ -88,15 +88,8 @@ struct SessionOptions {
 class Session;
 class SessionData final {
 public:
-  struct TestHooks {
-	  bool connectionInited = false;
-	  std::function<void()> needToResumeAndSend;
-  };
-
 	explicit SessionData(not_null<Session*> creator) : _owner(creator) {
 	}
-	explicit SessionData(TestHooks hooks)
-		: _testHooks(std::move(hooks)), _hasTestHooks(true) {}
 
 	void notifyConnectionInited(const SessionOptions &options);
 	void setOptions(SessionOptions options) {
@@ -165,8 +158,6 @@ private:
 
 	Session *_owner = nullptr;
 	mutable QMutex _ownerMutex;
-	TestHooks _testHooks;
-	bool _hasTestHooks = false;
 
 	SessionOptions _options;
 	mutable QReadWriteLock _optionsLock;

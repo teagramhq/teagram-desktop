@@ -71,12 +71,6 @@ void SessionData::queueTryToReceive() {
 }
 
 void SessionData::queueNeedToResumeAndSend() {
-	if (_hasTestHooks) {
-		if (_testHooks.needToResumeAndSend) {
-			_testHooks.needToResumeAndSend();
-		}
-		return;
-	}
 	withSession([](not_null<Session*> session) {
 		session->needToResumeAndSend();
 	});
@@ -116,8 +110,7 @@ void SessionData::queueSendAnything(crl::time msCanWait) {
 
 bool SessionData::connectionInited() const {
 	QMutexLocker lock(&_ownerMutex);
-	return _owner ? _owner->connectionInited()
-				  : (_hasTestHooks && _testHooks.connectionInited);
+	return _owner ? _owner->connectionInited() : false;
 }
 
 AuthKeyPtr SessionData::getTemporaryKey(TemporaryKeyType type) const {

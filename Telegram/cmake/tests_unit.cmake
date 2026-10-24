@@ -126,6 +126,8 @@ PRIVATE
     mtproto/connection_server_resolving.cpp
     mtproto/connection_server_resolving.h
     mtproto/proxy_check.cpp
+    mtproto/session_private.cpp
+    mtproto/session_private.h
 )
 
 if(UNIX)
@@ -170,6 +172,7 @@ PRIVATE
     desktop-app::lib_ui
     desktop-app::lib_webview
     desktop-app::lib_tl
+    desktop-app::external_kcoreaddons
     desktop-app::external_qt
     desktop-app::external_openssl
     desktop-app::external_zlib

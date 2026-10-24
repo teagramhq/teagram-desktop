@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "mtproto/connection_abstract.h"
+#include "mtproto/details/mtproto_dcenter.h"
+#include "mtproto/mtp_instance.h"
 #include "mtproto/session.h"
 #include "mtproto/session_private.h"
 #include "mtproto/mtproto_auth_key.h"
@@ -20,7 +22,132 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <memory>
 #include <vector>
 
+// session_private.cpp is linked as shipped. The application-only code it
+// calls into (Instance, Session behind SessionData, the real transports
+// behind AbstractConnection) is replaced below by the smallest stand-ins
+// the reconnect path needs.
+
+namespace MTP {
+
+bool Instance::isTestMode() const { return false; }
+
+QString Instance::deviceModel() const { return QString(); }
+
+QString Instance::systemVersion() const { return QString(); }
+
+bool Instance::isServerEnrollmentNetworkAllowed() const { return true; }
+
+uint64 Instance::serverEnrollmentStopToken() const { return 0; }
+
+bool Instance::hasCallback(mtpRequestId requestId) const { return true; }
+
+bool Instance::isKeysDestroyer() const { return false; }
+
+void Instance::keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId) {}
+
+} // namespace MTP
+
 namespace MTP::details {
+namespace {
+
+bool UnitConnectionInited = false;
+Fn<void()> UnitNeedToResumeAndSend;
+
+} // namespace
+
+mtpBuffer AbstractConnection::prepareSecurePacket(uint64 keyId,
+												  MTPint128 msgKey,
+												  uint32 size) const {
+	auto result = mtpBuffer();
+	constexpr auto kTcpPrefixInts = 2;
+	constexpr auto kAuthKeyIdPosition = kTcpPrefixInts;
+	constexpr auto kAuthKeyIdInts = 2;
+	constexpr auto kMessageKeyPosition = kAuthKeyIdPosition + kAuthKeyIdInts;
+	constexpr auto kMessageKeyInts = 4;
+	constexpr auto kPrefixInts
+		= kTcpPrefixInts + kAuthKeyIdInts + kMessageKeyInts;
+	constexpr auto kTcpPostfixInts = 4;
+	result.reserve(kPrefixInts + size + kTcpPostfixInts);
+	result.resize(kPrefixInts);
+	*reinterpret_cast<uint64 *>(&result[kAuthKeyIdPosition]) = keyId;
+	*reinterpret_cast<MTPint128 *>(&result[kMessageKeyPosition]) = msgKey;
+	return result;
+}
+
+gsl::span<const mtpPrime>
+AbstractConnection::parseNotSecureResponse(const mtpBuffer &buffer) const {
+	Unexpected("Key creation is not exercised by these tests.");
+}
+
+uint32 AbstractConnection::extendedNotSecurePadding() const {
+	Unexpected("Key creation is not exercised by these tests.");
+}
+
+QString AbstractConnection::ProtocolDcDebugId(int16 protocolDcId) {
+	return QString::number(protocolDcId);
+}
+
+void AbstractConnection::logInfo(const QString &message) {}
+
+void SessionData::notifyConnectionInited(const SessionOptions &options) {}
+
+void SessionData::queueTryToReceive() {}
+
+void SessionData::queueNeedToResumeAndSend() {
+	if (UnitNeedToResumeAndSend) {
+		UnitNeedToResumeAndSend();
+	}
+}
+
+void SessionData::queueConnectionStateChange(int newState) {}
+
+void SessionData::queuePinnedServerFailure(PinnedServerFailure failure,
+										   uint64 presentedFingerprint,
+										   const QString &pinnedHostname,
+										   const QString &dialledAddress) {}
+
+void SessionData::queueResetDone() {}
+
+void SessionData::queueSendAnything(crl::time msCanWait) {}
+
+bool SessionData::connectionInited() const { return UnitConnectionInited; }
+
+AuthKeyPtr SessionData::getPersistentKey() const { return nullptr; }
+
+AuthKeyPtr SessionData::getTemporaryKey(TemporaryKeyType type) const {
+	return nullptr;
+}
+
+CreatingKeyType SessionData::acquireKeyCreation(DcType type) {
+	return CreatingKeyType::None;
+}
+
+CreatingKeyType SessionData::acquirePersistentKeyCreation() {
+	return CreatingKeyType::None;
+}
+
+bool SessionData::releaseKeyCreationOnDone(
+	const AuthKeyPtr &temporaryKey,
+	const AuthKeyPtr &persistentKeyUsedForBind) {
+	return false;
+}
+
+bool SessionData::releasePersistentKeyCreationOnDone(
+	const AuthKeyPtr &persistentKey) {
+	return false;
+}
+
+bool SessionData::releaseCdnKeyCreationOnDone(const AuthKeyPtr &temporaryKey) {
+	return false;
+}
+
+void SessionData::releaseKeyCreationOnFail() {}
+
+void SessionData::releasePersistentKeyCreationOnFail() {}
+
+void SessionData::destroyPersistentKey(uint64 keyId) {}
+
+void SessionData::destroyTemporaryKey(uint64 keyId) {}
 
 class SessionPrivateTestAccess final {
   public:
@@ -222,15 +349,18 @@ void RunReconnectScenario(AuthKey::Type keyType) {
 	constexpr auto kRequestId = mtpRequestId(17);
 	auto log = std::make_shared<TransportLog>();
 	auto session = std::unique_ptr<SessionPrivate>();
-	auto data = std::make_shared<SessionData>(SessionData::TestHooks{
-		.connectionInited = true,
-		.needToResumeAndSend =
-			[&] {
-				if (session) {
-					session->tryToSend();
-				}
-			},
+	UnitConnectionInited = true;
+	UnitNeedToResumeAndSend = [&] {
+		if (session) {
+			session->tryToSend();
+		}
+	};
+	const auto resetHooks = gsl::finally([] {
+		UnitConnectionInited = false;
+		UnitNeedToResumeAndSend = nullptr;
 	});
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
 	session = SessionPrivateTestAccess::Create(data);
 	const auto key = MakeTestAuthKey(keyType);
 	auto oldConnection = ConnectionPointer::New<FakeTransport>(
