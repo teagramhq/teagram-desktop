@@ -5472,9 +5472,8 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		auto &sandbox = Core::Sandbox::Instance();
 		sandbox.setPostponedCallsDeferred(true);
 		{
-			const auto restorePostponedCalls = gsl::finally([&] {
-				sandbox.setPostponedCallsDeferred(false);
-			});
+			const auto restorePostponedCalls = gsl::finally(
+				[&] { sandbox.setPostponedCallsDeferred(false); });
 			queueInputAndOpen();
 		}
 		sandbox.drainPostponedCalls();
