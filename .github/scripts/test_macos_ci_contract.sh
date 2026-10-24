@@ -686,19 +686,58 @@ awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
   in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
-    custom_window_activation = NR
+    custom_window_activations++
+    if (custom_window_activations == 1) {
+      custom_window_activation = NR
+    } else if (custom_window_activations == 2) {
+      unsupported_route_activation = NR
+    }
   }
   in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
+    custom_window_matrices++
     custom_window_matrix = NR
+  }
+  in_settings && /dispatchMatrix\(blockedController, &stockController->window\(\)\)/ {
+    blocked_window_matrix = NR
+  }
+  in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
+    unsupported_route_checks = NR
   }
   in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
   END {
-    exit !(custom_window_activation && custom_window_matrix &&
-      ordinary_window_active && custom_window_activation < custom_window_matrix &&
-      ordinary_window_active < custom_window_matrix)
+    exit !(custom_window_activations == 2 && custom_window_matrices == 1 &&
+      custom_window_activation < custom_window_matrix &&
+      custom_window_matrix < blocked_window_matrix &&
+      blocked_window_matrix < unsupported_route_activation &&
+      unsupported_route_activation < unsupported_route_checks &&
+      unsupported_route_checks < ordinary_window_active)
   }
 ' "$native_harness" \
-  || contract_fail 'The custom-session matrix must follow a diagnosable activation attempt and a verified ordinary Settings link.'
+  || contract_fail 'Settings deep-link checks must keep the base activation check and run the custom-active URL matrix once.'
+awk '
+  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  in_activation && /if \(!activated\)/ { activation_timeout = NR }
+  in_activation && /LogWindowActivationForRegression\(app, window\)/ {
+    activation_diagnostics = NR
+  }
+  in_activation && /return activated/ { exit }
+  END { exit !(activation_timeout && activation_diagnostics > activation_timeout) }
+' "$native_harness" \
+  || contract_fail 'Activation timeouts must log the target Qt and AppKit window state.'
+awk '
+  /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
+  in_settings && /if \(!ordinarySettingsStateRestored/ { ordinary_settings_failure = NR }
+  in_settings \
+    && /LogWindowActivationForRegression\(app, &pinnedController->window\(\)\)/ {
+      ordinary_settings_diagnostics = NR
+    }
+  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  END {
+    exit !(ordinary_settings_failure &&
+      ordinary_settings_diagnostics > ordinary_settings_failure)
+  }
+' "$native_harness" \
+  || contract_fail 'Ordinary Settings failures must log the target Qt and AppKit window state.'
 awk '
 /if \(authenticatedCacheOnly\) \{/ { in_cache_branch = 1; next }
 in_cache_branch && /const auto capabilitiesMatch/ { exit }
