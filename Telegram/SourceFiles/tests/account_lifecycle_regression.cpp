@@ -3713,13 +3713,14 @@ template <typename Condition>
 					"was not handled.\n");
 		return false;
 	}
-	const auto stockOpensPremium = WaitForRegressionCondition([&] {
-		return hasStockSettingsSection(Settings::PremiumId())
-			   && (stockController
-					   ->featureUnavailableOnServerToastCallsForRegressionTest()
-				   == stockToastBefore)
-			   && (app.activeWindow() == &stockController->window());
-	});
+	QCoreApplication::processEvents();
+	const auto stockOpensPremium
+		= stockController->content()->isMainSectionShown()
+		  && !stockController->isLayerShown()
+		  && (stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == stockToastBefore)
+		  && (app.activeWindow() == &stockController->window());
 	if (!stockOpensPremium) {
 		std::fprintf(
 			stderr,
@@ -3854,106 +3855,114 @@ template <typename Condition>
 			stockBaseRestored = restoreStockBase();
 		}
 	});
-	for (const auto &url : messageRoutes) {
-		resetController(stockController);
-		stockController->setHighlightControlId(QString());
-		QCoreApplication::processEvents();
-		if (!activateSettingsWindow(&stockController->window())) {
-			std::fprintf(stderr,
-						 "Settings deep link regression failed: stock "
-						 "window did not "
-						 "activate before message route=%s.\n",
-						 url.toUtf8().constData());
-			return false;
-		}
-		stockMessageState = prepareMessageLinkContext(stockController);
-		if (!stockMessageState
-			|| stockMessageState->second.sessionWindow.get()
-				   != stockController.get()) {
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: could not prepare "
-				"the "
-				"active stock Saved Messages click context for %s.\n",
-				url.toUtf8().constData());
-			return false;
-		}
-		const auto toastBefore
-			= stockController
-				  ->featureUnavailableOnServerToastCallsForRegressionTest();
-		const auto infoCountsBefore
-			= CountSettingsDeepLinkInfoSections(stockController);
-		const auto handler = makeMessageLinkHandler(url);
-		if (!handler) {
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: stock message link "
-				"had no click handler for %s.\n",
-				url.toUtf8().constData());
-			return false;
-		}
-		ActivateClickHandler(stockMessageState->first->window(), handler,
-							 ClickContext{
-								 Qt::LeftButton,
-								 QVariant::fromValue(stockMessageState->second),
-							 });
-		const auto clickDispatchCompleted
-			= WaitForMainQueueBarrierForRegressionTest()
-			  == MainQueueBarrierResult::Completed;
-		if (!clickDispatchCompleted) {
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: stock message click "
-				"dispatch did not complete for %s.\n",
-				url.toUtf8().constData());
-			return false;
-		}
-		const auto destinationShown = WaitForRegressionCondition(
-			[&] { return stockMessageDestinationShown(url); });
-		const auto toastUnchanged
-			= stockController
-				  ->featureUnavailableOnServerToastCallsForRegressionTest()
-			  == toastBefore;
-		const auto otherWindowsUnchanged
-			= !pinnedController->content()->isMainSectionShown()
-			  && !pinnedController->isLayerShown()
-			  && !blockedController->content()->isMainSectionShown()
-			  && !blockedController->isLayerShown();
-		const auto stockWindowActive
-			= app.activeWindow() == &stockController->window();
-		if (!destinationShown || !toastUnchanged || !otherWindowsUnchanged
-			|| !stockWindowActive) {
-			const auto infoCounts
+	{
+		const auto previousAnimationsDisabled = anim::Disabled();
+		anim::SetDisabled(true);
+		const auto restoreAnimations = gsl::finally(
+			[=] { anim::SetDisabled(previousAnimationsDisabled); });
+		for (const auto &url : messageRoutes) {
+			resetController(stockController);
+			stockController->setHighlightControlId(QString());
+			QCoreApplication::processEvents();
+			if (!activateSettingsWindow(&stockController->window())) {
+				std::fprintf(stderr,
+							 "Settings deep link regression failed: stock "
+							 "window did not "
+							 "activate before message route=%s.\n",
+							 url.toUtf8().constData());
+				return false;
+			}
+			stockMessageState = prepareMessageLinkContext(stockController);
+			if (!stockMessageState
+				|| stockMessageState->second.sessionWindow.get()
+					   != stockController.get()) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: could not prepare "
+					"the "
+					"active stock Saved Messages click context for %s.\n",
+					url.toUtf8().constData());
+				return false;
+			}
+			const auto toastBefore
+				= stockController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto infoCountsBefore
 				= CountSettingsDeepLinkInfoSections(stockController);
-			const auto sectionCounts
-				= stockController->content()
-					  ->sectionStackCountsForRegressionTest();
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: stock message "
-				"route=%s "
-				"destination=%d toast-unchanged=%d "
-				"other-windows-unchanged=%d "
-				"active-window=%d info-wraps=%d visible-wraps=%d "
-				"not-hidden-wraps=%d settings-wraps=%d settings-wrap=%p "
-				"settingsType=%p premiumType=%p "
-				"before-settings-wrap=%p before-settingsType=%p "
-				"main-info=%d main-settings=%d main-visible=%d "
-				"main-animating=%d window-animating=%d history=%d "
-				"stories-wraps=%d.\n",
-				url.toUtf8().constData(), destinationShown, toastUnchanged,
-				otherWindowsUnchanged, stockWindowActive, infoCounts.wraps,
-				infoCounts.visibleWraps, infoCounts.notHiddenWraps,
-				infoCounts.settingsWraps, infoCounts.settingsWrap,
-				infoCounts.settingsType,
-				static_cast<const void *>(Settings::PremiumId().get()),
-				infoCountsBefore.settingsWrap, infoCountsBefore.settingsType,
-				sectionCounts.mainInfo, sectionCounts.mainSettings,
-				sectionCounts.mainSectionVisible,
-				sectionCounts.mainSectionAnimating,
-				stockController->content()->animatingShow(),
-				sectionCounts.mainHistory, infoCounts.storiesWraps);
-			return false;
+			const auto handler = makeMessageLinkHandler(url);
+			if (!handler) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: stock message link "
+					"had no click handler for %s.\n",
+					url.toUtf8().constData());
+				return false;
+			}
+			ActivateClickHandler(
+				stockMessageState->first->window(), handler,
+				ClickContext{
+					Qt::LeftButton,
+					QVariant::fromValue(stockMessageState->second),
+				});
+			const auto clickDispatchCompleted
+				= WaitForMainQueueBarrierForRegressionTest()
+				  == MainQueueBarrierResult::Completed;
+			if (!clickDispatchCompleted) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: stock message click "
+					"dispatch did not complete for %s.\n",
+					url.toUtf8().constData());
+				return false;
+			}
+			const auto destinationShown = WaitForRegressionCondition(
+				[&] { return stockMessageDestinationShown(url); });
+			const auto toastUnchanged
+				= stockController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == toastBefore;
+			const auto otherWindowsUnchanged
+				= !pinnedController->content()->isMainSectionShown()
+				  && !pinnedController->isLayerShown()
+				  && !blockedController->content()->isMainSectionShown()
+				  && !blockedController->isLayerShown();
+			const auto stockWindowActive
+				= app.activeWindow() == &stockController->window();
+			if (!destinationShown || !toastUnchanged || !otherWindowsUnchanged
+				|| !stockWindowActive) {
+				const auto infoCounts
+					= CountSettingsDeepLinkInfoSections(stockController);
+				const auto sectionCounts
+					= stockController->content()
+						  ->sectionStackCountsForRegressionTest();
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: stock message "
+					"route=%s "
+					"destination=%d toast-unchanged=%d "
+					"other-windows-unchanged=%d "
+					"active-window=%d info-wraps=%d visible-wraps=%d "
+					"not-hidden-wraps=%d settings-wraps=%d settings-wrap=%p "
+					"settingsType=%p premiumType=%p "
+					"before-settings-wrap=%p before-settingsType=%p "
+					"main-info=%d main-settings=%d main-visible=%d "
+					"main-animating=%d window-animating=%d history=%d "
+					"stories-wraps=%d.\n",
+					url.toUtf8().constData(), destinationShown, toastUnchanged,
+					otherWindowsUnchanged, stockWindowActive, infoCounts.wraps,
+					infoCounts.visibleWraps, infoCounts.notHiddenWraps,
+					infoCounts.settingsWraps, infoCounts.settingsWrap,
+					infoCounts.settingsType,
+					static_cast<const void *>(Settings::PremiumId().get()),
+					infoCountsBefore.settingsWrap,
+					infoCountsBefore.settingsType, sectionCounts.mainInfo,
+					sectionCounts.mainSettings,
+					sectionCounts.mainSectionVisible,
+					sectionCounts.mainSectionAnimating,
+					stockController->content()->animatingShow(),
+					sectionCounts.mainHistory, infoCounts.storiesWraps);
+				return false;
+			}
 		}
 	}
 	stockBaseRestored = restoreStockBase();
