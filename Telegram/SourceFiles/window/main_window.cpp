@@ -615,12 +615,17 @@ void MainWindow::activate() {
 	bool wasHidden = !isVisible();
 	setWindowState(windowState() & ~Qt::WindowMinimized);
 	setVisible(true);
-	Platform::ActivateThisProcess(this);
+	const auto session = sessionController();
+	if (session && session->session().user()->usesCustomServer()) {
+		Platform::ActivateCustomSessionThisProcess(this);
+	} else {
+		Platform::ActivateThisProcess(this);
+	}
 	raise();
 	activateWindow();
 	controller().updateIsActiveFocus();
 	if (wasHidden) {
-		if (const auto session = sessionController()) {
+		if (session) {
 			session->content()->windowShown();
 		}
 	}

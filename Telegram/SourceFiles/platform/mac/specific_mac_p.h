@@ -17,7 +17,7 @@ void objc_start();
 void objc_ignoreApplicationActivationRightNow();
 void objc_finish();
 
-void objc_activateProgram(WId winId);
+void objc_activateProgram(WId winId, bool customSession);
 bool objc_moveFile(const QString &from, const QString &to);
 
 double objc_appkitVersion();

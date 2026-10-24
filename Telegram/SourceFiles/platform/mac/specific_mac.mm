@@ -280,7 +280,11 @@ bool PreventsQuit(Core::QuitReason reason) {
 }
 
 void ActivateThisProcess(not_null<QWidget *> window) {
-	objc_activateProgram(window->winId());
+	objc_activateProgram(window->winId(), false);
+}
+
+void ActivateCustomSessionThisProcess(not_null<QWidget *> window) {
+	objc_activateProgram(window->winId(), true);
 }
 
 void LaunchMaps(const Data::LocationPoint &point, Fn<void()> fail) {
