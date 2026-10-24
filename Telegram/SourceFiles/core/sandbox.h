@@ -45,14 +45,15 @@ public:
 	void postponeCall(FnMut<void()> &&callable);
 
 	// Test-only seam: runs every pending postponed call and any calls they
-	// queue, regardless of loop-nesting tags. Enabled for -testagent and
-	// account lifecycle regression runs. Call only from a top-level context.
+	// queue, regardless of loop-nesting tags. Enabled for -testagent and, in
+	// lifecycle-regression builds, account lifecycle regression runs. Call only
+	// from a top-level context.
 	void drainPostponedCalls();
 
 	// Test-only seam: while set, postponed calls queue but never run at event
 	// unwinds. The harness brackets synthetic dispatch with it, then drains.
-	// Enabled for -testagent and account lifecycle regression runs; otherwise
-	// this is a no-op.
+	// Enabled for -testagent and, in lifecycle-regression builds, account
+	// lifecycle regression runs; otherwise this is a no-op.
 	void setPostponedCallsDeferred(bool deferred);
 
 	bool notify(QObject *receiver, QEvent *e) override;

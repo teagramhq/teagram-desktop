@@ -820,8 +820,13 @@ void Sandbox::processPostponedCalls(int level) {
 void Sandbox::drainPostponedCalls() {
 	Expects(QThread::currentThreadId() == _mainThreadId);
 
-	if (!cTestAgent()
-		&& !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")) {
+	auto enabled = cTestAgent();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	enabled
+		= enabled
+		  || qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+#endif
+	if (!enabled) {
 		return;
 	}
 	const auto wasDeferred = std::exchange(_postponedCallsDeferred, true);
@@ -838,8 +843,13 @@ void Sandbox::drainPostponedCalls() {
 void Sandbox::setPostponedCallsDeferred(bool deferred) {
 	Expects(QThread::currentThreadId() == _mainThreadId);
 
-	if (!cTestAgent()
-		&& !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")) {
+	auto enabled = cTestAgent();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	enabled
+		= enabled
+		  || qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+#endif
+	if (!enabled) {
 		return;
 	}
 	_postponedCallsDeferred = deferred;

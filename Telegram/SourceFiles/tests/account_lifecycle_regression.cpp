@@ -2933,6 +2933,9 @@ template <typename Condition>
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
+	Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
+	const auto restoreAnimationSchedule = gsl::finally(
+		[] { Ui::Animations::Manager::SetScheduleWithInvokeQueued(false); });
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
 		u"tg://settings/PREMIUM"_q,
@@ -4000,12 +4003,8 @@ template <typename Condition>
 	{
 		const auto previousAnimationsDisabled = anim::Disabled();
 		anim::SetDisabled(true);
-		Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
-		Test::SettlePostponedCalls();
-		const auto restoreAnimations = gsl::finally([=] {
-			Ui::Animations::Manager::SetScheduleWithInvokeQueued(false);
-			anim::SetDisabled(previousAnimationsDisabled);
-		});
+		const auto restoreAnimations = gsl::finally(
+			[=] { anim::SetDisabled(previousAnimationsDisabled); });
 		for (const auto &url : messageRoutes) {
 			resetController(stockController);
 			stockController->setHighlightControlId(QString());
