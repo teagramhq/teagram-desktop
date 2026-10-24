@@ -3833,15 +3833,14 @@ template <typename Condition>
 	const auto hasStockSettingsSection = [&](Settings::Type type) {
 		const auto counts
 			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto infoCounts
+			= CountSettingsDeepLinkInfoSections(stockController);
 		return counts.mainSettings && counts.mainSectionVisible
-			   && !counts.mainSectionAnimating
 			   && stockController->content()->isMainSectionShown()
 			   && !stockController->isLayerShown()
-			   && ShownInfoSectionMatches(
-				   stockController, [&](const Info::Section &section) {
-					   return (section.type() == Info::Section::Type::Settings)
-							  && (section.settingsType() == type);
-				   });
+			   && (infoCounts.settingsWraps == 1)
+			   && (infoCounts.settingsType
+				   == static_cast<const void *>(type.get()));
 	};
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
@@ -3852,8 +3851,7 @@ template <typename Condition>
 	}
 	QCoreApplication::processEvents();
 	const auto stockOpensPremium
-		= stockController->content()->isMainSectionShown()
-		  && !stockController->isLayerShown()
+		= hasStockSettingsSection(Settings::PremiumId())
 		  && (stockController
 				  ->featureUnavailableOnServerToastCallsForRegressionTest()
 			  == stockToastBefore)
