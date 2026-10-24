@@ -4039,6 +4039,7 @@ template <typename Condition>
 					url.toUtf8().constData());
 				return false;
 			}
+			anim::SetDisabled(true);
 			ActivateClickHandler(
 				stockMessageState->first->window(), handler,
 				ClickContext{
@@ -4056,8 +4057,12 @@ template <typename Condition>
 					url.toUtf8().constData());
 				return false;
 			}
-			const auto destinationShown = WaitForRegressionCondition(
-				[&] { return stockMessageDestinationShown(url); });
+			const auto destinationShown = WaitForRegressionCondition([&] {
+				if (!anim::Disabled()) {
+					anim::SetDisabled(true);
+				}
+				return stockMessageDestinationShown(url);
+			});
 			const auto toastUnchanged
 				= stockController
 					  ->featureUnavailableOnServerToastCallsForRegressionTest()
@@ -4087,7 +4092,8 @@ template <typename Condition>
 					"settingsType=%p premiumType=%p "
 					"before-settings-wrap=%p before-settingsType=%p "
 					"main-info=%d main-settings=%d main-visible=%d "
-					"main-animating=%d window-animating=%d history=%d "
+					"main-animating=%d window-animating=%d "
+					"animations-disabled=%d slow-multiplier=%d history=%d "
 					"stories-wraps=%d.\n",
 					url.toUtf8().constData(), destinationShown, toastUnchanged,
 					otherWindowsUnchanged, stockWindowActive, infoCounts.wraps,
@@ -4101,6 +4107,7 @@ template <typename Condition>
 					sectionCounts.mainSectionVisible,
 					sectionCounts.mainSectionAnimating,
 					stockController->content()->animatingShow(),
+					anim::Disabled(), anim::SlowMultiplier(),
 					sectionCounts.mainHistory, infoCounts.storiesWraps);
 				return false;
 			}
