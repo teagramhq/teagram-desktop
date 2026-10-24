@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QDesktopServices>
 #include <QtWidgets/QApplication>
 
+#include <cstdio>
 #include <cstdlib>
 #include <execinfo.h>
 #include <sys/xattr.h>
@@ -281,6 +282,17 @@ bool PreventsQuit(Core::QuitReason reason) {
 
 void ActivateThisProcess(not_null<QWidget *> window) {
 	objc_activateProgram(window->winId());
+}
+
+void LogWindowActivationStateForRegression(not_null<QWidget *> widget) {
+	const auto targetWindow =
+		[reinterpret_cast<NSView *>(widget->winId()) window];
+	const auto keyWindow = [NSApp keyWindow];
+	std::fprintf(stderr,
+				 "AppKit window activation diagnostics: app-active=%d "
+				 "key-window=%p target-is-key=%d target-can-be-key=%d.\n",
+				 [NSApp isActive], reinterpret_cast<void *>(keyWindow),
+				 [targetWindow isKeyWindow], [targetWindow canBecomeKeyWindow]);
 }
 
 void LaunchMaps(const Data::LocationPoint &point, Fn<void()> fail) {

@@ -25,6 +25,7 @@ inline bool PreventsQuit(Core::QuitReason reason) {
 }
 
 inline void ActivateThisProcess(not_null<QWidget *>) {}
+inline void LogWindowActivationStateForRegression(not_null<QWidget *>) {}
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
 	return 1;

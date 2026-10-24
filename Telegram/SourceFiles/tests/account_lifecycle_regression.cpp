@@ -101,6 +101,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/sender.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
+#include "platform/platform_specific.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
@@ -159,6 +160,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
 #include <QtGui/QCursor>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -2744,6 +2746,25 @@ template <typename Predicate>
 	return condition();
 }
 
+void LogWindowActivationForRegression(Core::Application &app,
+									  not_null<Window::Controller *> window) {
+	const auto widget = window->widget();
+	Platform::LogWindowActivationStateForRegression(widget);
+	const auto focusWindow = QGuiApplication::focusWindow();
+	const auto targetWindow = widget->windowHandle();
+	std::fprintf(
+		stderr,
+		"Window activation regression diagnostics: app-active-window=%p "
+		"target-controller=%p focus-window=%p target-window-handle=%p "
+		"focus-is-target=%d target-active=%d target-window-state=%d "
+		"target-visible=%d.\n",
+		static_cast<void *>(app.activeWindow()),
+		static_cast<void *>(window.get()), static_cast<void *>(focusWindow),
+		static_cast<void *>(targetWindow), focusWindow == targetWindow,
+		widget->isActiveWindow(), static_cast<int>(widget->windowState()),
+		widget->isVisible());
+}
+
 [[nodiscard]] bool
 ActivateWindowForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
@@ -2764,6 +2785,9 @@ ActivateWindowForRegression(Core::Application &app,
 	window->activate();
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
+	if (!activated) {
+		LogWindowActivationForRegression(app, window);
+	}
 	return activated;
 }
 
@@ -3209,6 +3233,7 @@ template <typename Condition>
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
 			|| !ordinaryWindowActive) {
+			LogWindowActivationForRegression(app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
