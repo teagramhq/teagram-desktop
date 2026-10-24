@@ -101,6 +101,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/sender.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
+#include "platform/platform_specific.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_credits.h"
@@ -2713,6 +2714,7 @@ template <typename Predicate>
 void LogWindowActivationForRegression(Core::Application &app,
 									  not_null<Window::Controller *> window) {
 	const auto widget = window->widget();
+	Platform::LogWindowActivationStateForRegression(widget);
 	const auto focusWindow = QGuiApplication::focusWindow();
 	const auto targetWindow = widget->windowHandle();
 	std::fprintf(

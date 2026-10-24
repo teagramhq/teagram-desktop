@@ -382,16 +382,8 @@ void objc_finish() {
 	}
 }
 
-void objc_activateProgram(WId winId, bool customSession) {
-	if (customSession) {
-		if (@available(macOS 14.0, *)) {
-			[NSApp activate];
-		} else {
-			[NSApp activateIgnoringOtherApps:YES];
-		}
-	} else {
-		[NSApp activateIgnoringOtherApps:YES];
-	}
+void objc_activateProgram(WId winId) {
+	[NSApp activateIgnoringOtherApps:YES];
 	if (winId) {
 		NSWindow *w = [reinterpret_cast<NSView*>(winId) window];
 		[w makeKeyAndOrderFront:NSApp];

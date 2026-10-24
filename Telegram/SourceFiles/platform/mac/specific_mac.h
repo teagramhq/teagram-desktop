@@ -28,7 +28,7 @@ inline bool SkipTaskbarSupported() {
 }
 
 void ActivateThisProcess(not_null<QWidget *> window);
-void ActivateCustomSessionThisProcess(not_null<QWidget *> window);
+void LogWindowActivationStateForRegression(not_null<QWidget *> window);
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
 	return 1;

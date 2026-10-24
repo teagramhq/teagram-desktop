@@ -555,6 +555,7 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 for native_case in \
   settings-search \
   session-window-lifecycle \
@@ -662,12 +663,25 @@ awk '
   in_activation && /QGuiApplication::focusWindow\(\)/ { logs_focus_window = 1 }
   in_activation && /->isActiveWindow\(\)/ { logs_active_window = 1 }
   in_activation && /->windowState\(\)/ { logs_window_state = 1 }
+  in_activation \
+    && /Platform::LogWindowActivationStateForRegression\(widget\)/ {
+      logs_appkit_state = 1
+    }
   in_activation && /^\[\[nodiscard\]\] bool/ { exit }
   END {
-    exit !(logs_focus_window && logs_active_window && logs_window_state)
+    exit !(logs_focus_window && logs_active_window &&
+      logs_window_state && logs_appkit_state)
   }
 ' "$native_harness" \
-  || contract_fail 'Window activation failures must log Qt focus, active-window, and window-state diagnostics.'
+  || contract_fail 'Window activation failures must log Qt and AppKit activation diagnostics.'
+for appkit_state in \
+  '[NSApp isActive]' \
+  '[NSApp keyWindow]' \
+  '[targetWindow isKeyWindow]' \
+  '[targetWindow canBecomeKeyWindow]'; do
+  grep -Fq "$appkit_state" "$mac_platform" \
+    || contract_fail "$mac_platform must log AppKit activation state: $appkit_state."
+done
 awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
