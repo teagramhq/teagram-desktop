@@ -119,6 +119,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
+#include "tests/test_main.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
@@ -4926,8 +4927,10 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	~RegressionBoxCloseEventTrace() override;
 
 	void setPhase(const char *phase);
+	void resetForBox();
 	void setInactiveWindowPreserved(bool preserved);
 	[[nodiscard]] bool inactiveWindowPreserved() const;
+	[[nodiscard]] bool closedByBackgroundClick() const;
 	void boxClosing(const char *caseName, bool targetActive,
 					bool activeAccountUnchanged, bool layerShown);
 	[[nodiscard]] bool closed() const;
@@ -4936,6 +4939,8 @@ class RegressionBoxCloseEventTrace final : public QObject {
   private:
 	QPointer<QWidget> _root;
 	const char *_phase = "show";
+	const char *_closeSite = "none";
+	const char *_closeEventPhase = "none";
 	const char *_event = "none";
 	const char *_eventWidget = "none";
 	const char *_input = "none";
@@ -4964,12 +4969,32 @@ void RegressionBoxCloseEventTrace::setPhase(const char *phase) {
 	_phase = phase;
 }
 
+void RegressionBoxCloseEventTrace::resetForBox() {
+	_phase = "show";
+	_closeSite = "none";
+	_closeEventPhase = "none";
+	_event = "none";
+	_eventWidget = "none";
+	_input = "none";
+	_inputWidget = "none";
+	_eventAge.invalidate();
+	_inputAge.invalidate();
+	_key = 0;
+	_button = 0;
+	_closed = false;
+	_inactiveWindowPreserved = true;
+}
+
 void RegressionBoxCloseEventTrace::setInactiveWindowPreserved(bool preserved) {
 	_inactiveWindowPreserved = preserved;
 }
 
 bool RegressionBoxCloseEventTrace::inactiveWindowPreserved() const {
 	return _inactiveWindowPreserved;
+}
+
+bool RegressionBoxCloseEventTrace::closedByBackgroundClick() const {
+	return !std::strcmp(_closeSite, "background_click");
 }
 
 void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
@@ -4980,14 +5005,16 @@ void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
 	const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
 	std::fprintf(stderr,
 				 "Session controls regression: admin_box_closing case=%s "
-				 "phase=%s last_event=%s event_widget=%s event_age_ms=%lld "
+				 "phase=%s close_site=%s close_event_phase=%s "
+				 "last_event=%s event_widget=%s "
+				 "event_age_ms=%lld "
 				 "last_input=%s input_widget=%s key=%d button=%d "
 				 "input_age_ms=%lld target_active=%d account_unchanged=%d "
 				 "layer_shown=%d.\n",
-				 caseName, _phase, _event, _eventWidget,
-				 static_cast<long long>(eventAge), _input, _inputWidget, _key,
-				 _button, static_cast<long long>(inputAge), targetActive,
-				 activeAccountUnchanged, layerShown);
+				 caseName, _phase, _closeSite, _closeEventPhase, _event,
+				 _eventWidget, static_cast<long long>(eventAge), _input,
+				 _inputWidget, _key, _button, static_cast<long long>(inputAge),
+				 targetActive, activeAccountUnchanged, layerShown);
 	_closed = true;
 }
 
@@ -5016,6 +5043,17 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 			_key = key;
 			_button = button;
 			_inputAge.start();
+			if (std::strcmp(name, "mouse_release")) {
+				_closeEventPhase = _phase;
+				if (key == Qt::Key_Escape) {
+					_closeSite = "escape";
+				} else if (dynamic_cast<Ui::LayerStackWidget *>(widget)
+						   && !std::strcmp(name, "mouse_press")) {
+					_closeSite = "background_click";
+				} else {
+					_closeSite = name;
+				}
+			}
 		}
 	};
 	switch (event->type()) {
@@ -5047,7 +5085,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
-	const char *sessionName) {
+	const char *sessionName, bool testPrequeuedBackgroundClick = false) {
 	auto &session = controller->session();
 	const auto fail = [&](const char *what) {
 		std::fprintf(stderr,
@@ -5058,6 +5096,8 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	};
 	auto &app = Core::App();
 	const auto targetWindow = &controller->window();
+	auto trace = std::make_shared<RegressionBoxCloseEventTrace>(
+		not_null<QWidget *>(controller->widget().get()));
 	const auto activeAccount = &app.domain().active();
 	const auto activeAccountWindow
 		= app.separateWindowFor(not_null<Main::Account *>(activeAccount));
@@ -5270,8 +5310,6 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 									 TimeId(0), nullptr);
 		box->setSaveCallback([](ChatAdminRightsInfo, ChatAdminRightsInfo,
 								const std::optional<QString> &) {});
-		auto trace = std::make_shared<RegressionBoxCloseEventTrace>(
-			not_null<QWidget *>(controller->widget().get()));
 		box->boxClosing()
 			| rpl::on_next(
 				[=] {
@@ -5294,6 +5332,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		const auto targetInactiveBeforeShow
 			= !targetShouldBeInactive
 			  || app.activeWindow() == activeAccountWindow;
+		trace->setPhase("show");
 		auto result = controller->window().show(
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
 		const auto opened = bool(result);
@@ -5338,15 +5377,70 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				&app.domain().active() == activeAccount,
 				inactiveWindowPreserved);
 		}
-		return std::make_pair(std::move(result), std::move(trace));
+		return std::make_pair(std::move(result), trace);
 	};
 	const auto visibleChannel = Rights(Right::ChangeInfo) | Right::PostMessages
 								| Right::EditMessages | Right::DeleteMessages
 								| Right::InviteByLinkOrAdd | Right::ManageCall
 								| Right::ManageDirect | Right::BanUsers;
+	if (testPrequeuedBackgroundClick) {
+		const auto existing = visibleChannel | Right::Other;
+		trace->resetForBox();
+		auto [seedBox, seedTrace]
+			= openAdminBox("prequeued_background_click_seed", existing);
+		if (!seedBox || !seedTrace->inactiveWindowPreserved()) {
+			controller->hideLayer(anim::type::instant);
+			QCoreApplication::processEvents();
+			return fail("prequeued_background_click_seed");
+		}
+		trace->resetForBox();
+		trace->setPhase("prequeued_background_click");
+		auto prequeued = std::optional<decltype(openAdminBox(
+			"prequeued_background_click", Rights()))>();
+		auto clickQueued = false;
+		Test::app().customEnterFromEventLoop([&] {
+			const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
+				not_null<QWidget *>(controller->widget().get()));
+			if (!stack) {
+				return;
+			}
+			auto press = QMouseEvent(
+				QEvent::MouseButtonPress, QPointF(stack->rect().center()),
+				Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(stack, &press);
+			clickQueued = true;
+			prequeued.emplace(
+				openAdminBox("prequeued_background_click", existing));
+		});
+		if (const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
+				not_null<QWidget *>(controller->widget().get()))) {
+			stack->finishAnimating();
+		}
+		QCoreApplication::processEvents();
+		const auto backgroundCloseCaptured
+			= clickQueued && prequeued && trace->closed()
+			  && trace->closedByBackgroundClick() && !prequeued->first
+			  && controller->window().isLayerShown();
+		std::fprintf(
+			stderr,
+			"Session controls regression: "
+			"admin_box_prequeued_background_close "
+			"queued=%d close_seen=%d background_click=%d layer_shown=%d.\n",
+			clickQueued, prequeued && trace->closed(),
+			prequeued && trace->closedByBackgroundClick(),
+			controller->window().isLayerShown());
+		trace->resetForBox();
+		trace->setPhase("fixture_cleanup");
+		controller->hideLayer(anim::type::instant);
+		QCoreApplication::processEvents();
+		if (!backgroundCloseCaptured) {
+			return fail("prequeued_background_click_close_site");
+		}
+	}
 	const auto adminCase = [&](const char *name, Rights existingStories) {
 		const auto existing = visibleChannel | existingStories | Right::Other;
-		auto [box, trace] = openAdminBox(name, existing);
+		trace->resetForBox();
+		auto [box, boxTrace] = openAdminBox(name, existing);
 		if (!box) {
 			std::fprintf(
 				stderr,
@@ -5356,8 +5450,8 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				controller->window().isLayerShown());
 			return false;
 		}
-		if (!trace->inactiveWindowPreserved()) {
-			trace->setPhase("fixture_cleanup");
+		if (!boxTrace->inactiveWindowPreserved()) {
+			boxTrace->setPhase("fixture_cleanup");
 			controller->hideLayer(anim::type::instant);
 			QCoreApplication::processEvents();
 			return fail("admin_box_window_state");
@@ -5373,9 +5467,9 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 						: (!(visible & stories) && !(checked & stories));
 		const auto callRowMatches
 			= bool(visible & Right::ManageCall) == callsSupported;
-		trace->setPhase("test_hide_layer");
+		boxTrace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
-		trace->setPhase("test_hide_layer_process_events");
+		boxTrace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		if (!rowsMatch || !callRowMatches
 			|| (saved.value() != expected.value())) {
@@ -5395,21 +5489,22 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		return false;
 	}
 	{
-		auto [box, trace] = openAdminBox("new_admin", Rights());
+		trace->resetForBox();
+		auto [box, boxTrace] = openAdminBox("new_admin", Rights());
 		if (!box) {
 			return fail("new_admin_box");
 		}
-		if (!trace->inactiveWindowPreserved()) {
-			trace->setPhase("fixture_cleanup");
+		if (!boxTrace->inactiveWindowPreserved()) {
+			boxTrace->setPhase("fixture_cleanup");
 			controller->hideLayer(anim::type::instant);
 			QCoreApplication::processEvents();
 			return fail("new_admin_box_window_state");
 		}
 		const auto checked = box->checkedRightsForRegressionTest();
 		const auto saved = box->rightsToSaveForRegressionTest(checked);
-		trace->setPhase("test_hide_layer");
+		boxTrace->setPhase("test_hide_layer");
 		controller->hideLayer(anim::type::instant);
-		trace->setPhase("test_hide_layer_process_events");
+		boxTrace->setPhase("test_hide_layer_process_events");
 		QCoreApplication::processEvents();
 		const auto savedStories = (saved & stories);
 		const auto expectedStories = supported ? stories : Rights();
@@ -9727,7 +9822,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			  && RunStoryControlsVisibilityRegression(
 				  stockMenuController, true,
 				  customFirst ? "stock while custom is active"
-							  : "stock while stock is active")
+							  : "stock while stock is active",
+				  customFirst)
 			  && RunStoryControlsVisibilityRegression(
 				  pinnedMenuController, false,
 				  customFirst ? "custom while custom is active"
