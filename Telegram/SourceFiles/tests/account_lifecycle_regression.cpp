@@ -8845,14 +8845,13 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		= pinned->session()
 			  .updates()
 			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
-	if (DeferredOnlineUpdateDispatchOutstanding(
-			stockSetupDispatchesBeforeQueuedSwitches,
-			DeferredOnlineUpdatePhase::Setup)
-		!= 0
-		|| DeferredOnlineUpdateDispatchOutstanding(
-			pinnedSetupDispatchesBeforeQueuedSwitches,
-			DeferredOnlineUpdatePhase::Setup)
-			!= 0) {
+	const auto stockSetupPending = DeferredOnlineUpdateDispatchOutstanding(
+		stockSetupDispatchesBeforeQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	const auto pinnedSetupPending = DeferredOnlineUpdateDispatchOutstanding(
+		pinnedSetupDispatchesBeforeQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	if (stockSetupPending || pinnedSetupPending) {
 		return failPrerequisite(
 			"setup switch callbacks were pending after the main queue barrier");
 	}
