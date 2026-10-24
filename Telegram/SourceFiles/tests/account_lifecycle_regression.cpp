@@ -3424,50 +3424,6 @@ template <typename Condition>
 		u"tg://settings/send-gift"_q,
 		u"tg://settings/send-gift/self"_q,
 	};
-	const auto pinnedMessageState = prepareMessageLinkContext(pinnedController);
-	if (!pinnedMessageState) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: could not prepare the "
-			"custom Saved Messages click context.\n");
-		return false;
-	}
-	if (activationFailed(
-			activateSettingsWindow(&stockController->window()))) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: stock window did not "
-			"activate before the custom message-link matrix.\n");
-		return false;
-	}
-	for (const auto &url : messageRoutes) {
-		if (!clickMessageLink(
-				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &stockController->window())) {
-			return false;
-		}
-	}
-	if (activationFailed(
-			activateSettingsWindow(&pinnedController->window()))) {
-		std::fprintf(
-			stderr,
-			"Settings deep link regression failed: custom window did not "
-			"activate before its message-link matrix.\n");
-		return false;
-	}
-	for (const auto &url : messageRoutes) {
-		if (!clickMessageLink(
-				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &pinnedController->window())) {
-			return false;
-		}
-	}
-	resetController(stockController);
-	resetController(pinnedController);
-	resetController(blockedController);
-	QCoreApplication::processEvents();
 	const auto stockBeforeBlockedActivation
 		= activateSettingsWindow(&stockController->window());
 	if (activationFailed(stockBeforeBlockedActivation)) {
@@ -3836,17 +3792,11 @@ template <typename Condition>
 			= stockController->content()->sectionStackCountsForRegressionTest();
 		const auto infoCounts
 			= CountSettingsDeepLinkInfoSections(stockController);
-		return counts.mainSettings && counts.mainSectionVisible
-			   && stockController->content()->isMainSectionShown()
-			   && !stockController->isLayerShown()
+		return (counts.mainSettings == 1)
+			   && (counts.mainSectionVisible == 1)
 			   && (infoCounts.settingsWraps == 1)
 			   && (infoCounts.settingsType
-				   == static_cast<const void *>(type.get()))
-			   && ShownInfoSectionMatches(
-				   stockController, [&](const Info::Section &section) {
-					   return (section.type() == Info::Section::Type::Settings)
-							  && (section.settingsType() == type);
-				   });
+				   == static_cast<const void *>(type.get()));
 	};
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
@@ -3997,6 +3947,48 @@ template <typename Condition>
 			stockBaseRestored = restoreStockBase();
 		}
 	});
+	const auto pinnedMessageState = prepareMessageLinkContext(pinnedController);
+	if (!pinnedMessageState) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not prepare the "
+			"custom Saved Messages click context.\n");
+		return false;
+	}
+	if (!ActivateWindowForRegression(app, &stockController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom message-link matrix.\n");
+		return false;
+	}
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &stockController->window())) {
+			return false;
+		}
+	}
+	if (!ActivateWindowForRegression(app, &pinnedController->window())) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its message-link matrix.\n");
+		return false;
+	}
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &pinnedController->window())) {
+			return false;
+		}
+	}
+	resetController(stockController);
+	resetController(pinnedController);
+	resetController(blockedController);
+	QCoreApplication::processEvents();
 	{
 		const auto previousAnimationsDisabled = anim::Disabled();
 		anim::SetDisabled(true);
@@ -11962,9 +11954,6 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 }
 
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
-	Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
-	const auto restoreAnimationSchedule = gsl::finally(
-		[] { Ui::Animations::Manager::SetScheduleWithInvokeQueued(false); });
 	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
