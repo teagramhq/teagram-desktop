@@ -2933,9 +2933,6 @@ template <typename Condition>
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
-	Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
-	const auto restoreAnimationSchedule = gsl::finally(
-		[] { Ui::Animations::Manager::SetScheduleWithInvokeQueued(false); });
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
 		u"tg://settings/PREMIUM"_q,
@@ -11965,6 +11962,9 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 }
 
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
+	Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
+	const auto restoreAnimationSchedule = gsl::finally(
+		[] { Ui::Animations::Manager::SetScheduleWithInvokeQueued(false); });
 	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")
