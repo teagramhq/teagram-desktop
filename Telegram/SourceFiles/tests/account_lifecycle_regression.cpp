@@ -5321,6 +5321,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 
 	const auto admin = session.data().user(UserId(1182));
+	auto adminBoxAccountUnchanged = true;
 	const auto openAdminBox = [&](const char *caseName, Rights existing) {
 		auto box = Box<EditAdminBox>(channelPeer, admin,
 									 ChatAdminRightsInfo(existing), QString(),
@@ -5342,11 +5343,16 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
 		const auto opened = bool(result);
 		const auto targetActiveAfterShow = app.activeWindow() == targetWindow;
+		const auto accountUnchangedAfterShow
+			= &app.domain().active() == activeAccount;
 		trace->setPhase("process_events");
 		QCoreApplication::processEvents();
 		const auto targetActiveAfterEvents = app.activeWindow() == targetWindow;
-		const auto activeAccountUnchanged
+		const auto accountUnchangedAfterEvents
 			= &app.domain().active() == activeAccount;
+		const auto activeAccountUnchanged
+			= accountUnchangedAfterShow && accountUnchangedAfterEvents;
+		adminBoxAccountUnchanged = activeAccountUnchanged;
 		trace->setPhase("inspect");
 		if (targetShouldBeInactive) {
 			std::fprintf(
@@ -5377,6 +5383,9 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		const auto existing = visibleChannel | existingStories | Right::Other;
 		trace->resetForBox();
 		auto box = openAdminBox(name, existing);
+		if (!adminBoxAccountUnchanged) {
+			return fail("active_account_changed_during_admin_box");
+		}
 		if (!box) {
 			std::fprintf(
 				stderr,
@@ -5421,6 +5430,9 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	{
 		trace->resetForBox();
 		auto box = openAdminBox("new_admin", Rights());
+		if (!adminBoxAccountUnchanged) {
+			return fail("active_account_changed_during_admin_box");
+		}
 		if (!box) {
 			return fail("new_admin_box");
 		}
