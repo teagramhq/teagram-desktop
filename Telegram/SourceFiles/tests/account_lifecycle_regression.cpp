@@ -9104,22 +9104,73 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			   && (stockDelta.closeSwitchEnqueued == 0)
 			   && (pinnedDelta.closeSwitchEnqueued == 0);
 	};
-	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
-		DeferredOnlineUpdatePhase::CloseSwitch);
 	const auto discardedAtTeardown = discardedQueuedThird;
-	const auto discardedWindow = app.ensureSeparateWindowFor(Window::SeparateId(
-		Window::SeparateType::Archive, &discarded->session()));
-	if (!teardownDispatchesRemainBounded("after discarded window creation")) {
+	const auto discardedWindowSetupStockBefore
+		= stock->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupPinnedBefore
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupOnlineBefore
+		= discarded->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupBefore
+		= discarded->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	// Exercise logout closing discarded's own primary account window.
+	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	const auto discardedWindowSetupStock = OnlineUpdateDelta(
+		stock->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupStockBefore);
+	const auto discardedWindowSetupPinned = OnlineUpdateDelta(
+		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupPinnedBefore);
+	const auto discardedWindowSetupInline = OnlineUpdateDelta(
+		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupOnlineBefore);
+	const auto discardedWindowSetupDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			discarded->session()
+				.updates()
+				.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+			discardedWindowSetupBefore);
+	const auto discardedWindowSetupInlineMatches = ReportSwitchUpdateDeltas(
+		"discarded primary window setup inline", discardedWindowSetupStock,
+		{0, 0}, discardedWindowSetupPinned, {0, 0}, &discardedWindowSetupInline,
+		"discarded-window-setup", {1, 0});
+	std::fprintf(
+		stderr,
+		"Deferred online callback delta: observation=discarded primary "
+		"window setup discarded{setup_enqueued=%d setup_executed=%d "
+		"close_enqueued=%d close_executed=%d}\n",
+		discardedWindowSetupDispatches.setupEnqueued,
+		discardedWindowSetupDispatches.setupExecuted,
+		discardedWindowSetupDispatches.closeSwitchEnqueued,
+		discardedWindowSetupDispatches.closeSwitchExecuted);
+	primary->activate();
+	if (!teardownDispatchesRemainBounded(
+			"after discarded primary window creation")) {
 		return failPrerequisite(
-			"discarded window creation enqueued an extra live-session update");
+			"discarded primary window creation enqueued an extra live-session "
+			"update");
 	}
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
-	if (!discardedController || discardedWindow->isPrimary()) {
+	if (!discardedController || !discardedWindow->isPrimary()
+		|| app.separateWindowFor(discarded) != discardedWindow
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
 		return failPrerequisite(
-			"could not create a non-primary controller for deferred "
+			"could not stabilize the primary controller for deferred "
 			"call-link teardown");
 	}
+	if (!discardedWindowSetupInlineMatches
+		|| discardedWindowSetupDispatches.setupEnqueued != 1
+		|| discardedWindowSetupDispatches.closeSwitchEnqueued != 0) {
+		return failPrerequisite(
+			"discarded primary window setup did not produce its isolated "
+			"session update");
+	}
+	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
+		DeferredOnlineUpdatePhase::CloseSwitch);
 	const auto destroyedSessionChannelId = ChannelId(3051);
 	PrepareRegressionChannel(
 		discarded->session().data().channel(destroyedSessionChannelId));
