@@ -4932,6 +4932,8 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	void setInactiveWindowPreserved(bool preserved);
 	[[nodiscard]] bool inactiveWindowPreserved() const;
 	[[nodiscard]] bool closedByBackgroundClick(const char *phase) const;
+	[[nodiscard]] bool closedByEscape(const char *phase) const;
+	[[nodiscard]] bool layerShownAtClose() const;
 	void boxClosing(const char *caseName, bool targetActive,
 					bool activeAccountUnchanged, bool layerShown);
 	[[nodiscard]] bool closed() const;
@@ -4951,8 +4953,8 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	QElapsedTimer _inputAge;
 	int _key = 0;
 	int _button = 0;
-	bool _backgroundClickPending = false;
 	bool _closed = false;
+	bool _layerShownAtClose = false;
 	bool _inactiveWindowPreserved = true;
 };
 
@@ -4985,8 +4987,8 @@ void RegressionBoxCloseEventTrace::resetForBox() {
 	_inputAge.invalidate();
 	_key = 0;
 	_button = 0;
-	_backgroundClickPending = false;
 	_closed = false;
+	_layerShownAtClose = false;
 	_inactiveWindowPreserved = true;
 }
 
@@ -5004,15 +5006,32 @@ bool RegressionBoxCloseEventTrace::closedByBackgroundClick(
 		   && !std::strcmp(_closeEventPhase, phase);
 }
 
+bool RegressionBoxCloseEventTrace::closedByEscape(const char *phase) const {
+	return !std::strcmp(_closeSite, "escape")
+		   && !std::strcmp(_closeEventPhase, phase);
+}
+
+bool RegressionBoxCloseEventTrace::layerShownAtClose() const {
+	return _layerShownAtClose;
+}
+
 void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
 											  bool targetActive,
 											  bool activeAccountUnchanged,
 											  bool layerShown) {
-	if (_backgroundClickPending) {
+	// These phases cover draining the postponed callback and completing its
+	// hide animation.
+	// A queued click alone cannot identify the closer because Escape can close
+	// the box while that callback is still pending.
+	const auto completingBackgroundClick
+		= !std::strcmp(_phase, "drain_prequeued_background_click")
+		  || !std::strcmp(_phase, "finish_prequeued_background_click");
+	if (!std::strcmp(_closeSite, "background_click_queued")
+		&& completingBackgroundClick) {
 		_closeSite = "LayerStackWidget::backgroundClicked";
 		_closeEventPhase = _backgroundClickPhase;
-		_backgroundClickPending = false;
 	}
+	_layerShownAtClose = layerShown;
 	const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
 	const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
 	std::fprintf(stderr,
@@ -5059,21 +5078,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				= dynamic_cast<Ui::LayerStackWidget *>(widget)
 				  && !std::strcmp(name, "mouse_press");
 			if (backgroundClickPress) {
-				_backgroundClickPending = true;
 				_backgroundClickPhase = _phase;
-				const auto weak = QPointer<RegressionBoxCloseEventTrace>(this);
-				// This marker is queued before mousePressEvent queues
-				// backgroundClicked(). The sandbox drains postponed calls LIFO.
-				Ui::PostponeCall([weak] {
-					if (weak && weak->_backgroundClickPending) {
-						weak->_backgroundClickPending = false;
-						if (!std::strcmp(weak->_closeSite,
-										 "background_click_queued")) {
-							weak->_closeSite = "none";
-							weak->_closeEventPhase = "none";
-						}
-					}
-				});
 			}
 			if (std::strcmp(name, "mouse_release")) {
 				_closeEventPhase = _phase;
@@ -5414,6 +5419,42 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 								| Right::EditMessages | Right::DeleteMessages
 								| Right::InviteByLinkOrAdd | Right::ManageCall
 								| Right::ManageDirect | Right::BanUsers;
+	const auto sendOutsideClick = [](Ui::LayerStackWidget *stack) {
+		if (!stack) {
+			return false;
+		}
+		const auto layer = stack->topShownLayer();
+		if (!layer) {
+			return false;
+		}
+		const auto clickPoints = {
+			QPoint(0, 0),
+			QPoint(stack->width() - 1, 0),
+			QPoint(0, stack->height() - 1),
+			QPoint(stack->width() - 1, stack->height() - 1),
+		};
+		const auto clickPoint = [&] {
+			for (const auto point : clickPoints) {
+				if (stack->rect().contains(point)
+					&& !layer->geometry().contains(point)) {
+					return point;
+				}
+			}
+			return QPoint(-1, -1);
+		}();
+		if (!stack->rect().contains(clickPoint)) {
+			return false;
+		}
+		auto press
+			= QMouseEvent(QEvent::MouseButtonPress, QPointF(clickPoint),
+						  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(stack, &press);
+		auto release
+			= QMouseEvent(QEvent::MouseButtonRelease, QPointF(clickPoint),
+						  Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(stack, &release);
+		return true;
+	};
 	if (testPrequeuedBackgroundClick) {
 		const auto existing = visibleChannel | Right::Other;
 		trace->resetForBox();
@@ -5426,46 +5467,19 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		}
 		trace->resetForBox();
 		trace->setPhase("prequeued_background_click");
+		const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
+			not_null<QWidget *>(controller->widget().get()));
+		if (!stack) {
+			return fail("prequeued_background_click_stack");
+		}
 		auto prequeued = std::optional<decltype(openAdminBox(
 			"prequeued_background_click", Rights()))>();
 		auto clickQueued = false;
 		const auto queueInputAndOpen = [&] {
-			const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
-				not_null<QWidget *>(controller->widget().get()));
-			if (!stack) {
+			clickQueued = sendOutsideClick(stack);
+			if (!clickQueued) {
 				return;
 			}
-			const auto layer = stack->topShownLayer();
-			if (!layer) {
-				return;
-			}
-			const auto clickPoints = {
-				QPoint(0, 0),
-				QPoint(stack->width() - 1, 0),
-				QPoint(0, stack->height() - 1),
-				QPoint(stack->width() - 1, stack->height() - 1),
-			};
-			const auto clickPoint = [&] {
-				for (const auto point : clickPoints) {
-					if (stack->rect().contains(point)
-						&& !layer->geometry().contains(point)) {
-						return point;
-					}
-				}
-				return QPoint(-1, -1);
-			}();
-			if (!stack->rect().contains(clickPoint)) {
-				return;
-			}
-			auto press
-				= QMouseEvent(QEvent::MouseButtonPress, QPointF(clickPoint),
-							  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-			QCoreApplication::sendEvent(stack, &press);
-			auto release
-				= QMouseEvent(QEvent::MouseButtonRelease, QPointF(clickPoint),
-							  Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-			QCoreApplication::sendEvent(stack, &release);
-			clickQueued = true;
 			prequeued.emplace(
 				openAdminBox("prequeued_background_click", existing));
 		};
@@ -5476,31 +5490,117 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				[&] { sandbox.setPostponedCallsDeferred(false); });
 			queueInputAndOpen();
 		}
+		trace->setPhase("drain_prequeued_background_click");
 		sandbox.drainPostponedCalls();
+		trace->setPhase("finish_prequeued_background_click");
 		if (const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
 				not_null<QWidget *>(controller->widget().get()))) {
 			stack->finishAnimating();
 		}
 		QCoreApplication::processEvents();
+		const auto layerStackTornDown = !controller->window().isLayerShown();
 		const auto backgroundCloseCaptured
 			= clickQueued && prequeued && trace->closed()
 			  && trace->closedByBackgroundClick("prequeued_background_click")
-			  && !prequeued->first && controller->window().isLayerShown();
+			  && trace->layerShownAtClose() && !prequeued->first;
 		std::fprintf(
 			stderr,
 			"Session controls regression: "
 			"admin_box_prequeued_background_close "
-			"queued=%d close_seen=%d background_click=%d layer_shown=%d.\n",
+			"queued=%d close_seen=%d background_click=%d "
+			"layer_shown_at_close=%d layer_stack_torn_down=%d.\n",
 			clickQueued, prequeued && trace->closed(),
 			prequeued
 				&& trace->closedByBackgroundClick("prequeued_background_click"),
-			controller->window().isLayerShown());
+			trace->layerShownAtClose(), layerStackTornDown);
 		trace->resetForBox();
 		trace->setPhase("fixture_cleanup");
 		controller->hideLayer(anim::type::instant);
 		QCoreApplication::processEvents();
 		if (!backgroundCloseCaptured) {
 			return fail("prequeued_background_click_close_site");
+		}
+		if (!layerStackTornDown) {
+			return fail("prequeued_background_click_stack_teardown");
+		}
+		{
+			const auto [seedBox, seedTrace] = openAdminBox(
+				"prequeued_background_click_escape_seed", existing);
+			if (!seedBox || !seedTrace->inactiveWindowPreserved()) {
+				controller->hideLayer(anim::type::instant);
+				QCoreApplication::processEvents();
+				return fail("prequeued_background_click_escape_seed");
+			}
+			trace->resetForBox();
+			trace->setPhase("prequeued_background_click_escape");
+			const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
+				not_null<QWidget *>(controller->widget().get()));
+			if (!stack) {
+				return fail("prequeued_background_click_escape_stack");
+			}
+			const auto escapeStack = QPointer<Ui::LayerStackWidget>(stack);
+			auto escapeBox = std::optional<decltype(openAdminBox(
+				"prequeued_background_click_then_escape", Rights()))>();
+			auto clickQueuedBeforeEscape = false;
+			auto escapeCloseCaptured = false;
+			auto &sandbox = Core::Sandbox::Instance();
+			sandbox.setPostponedCallsDeferred(true);
+			{
+				const auto restorePostponedCalls = gsl::finally(
+					[&] { sandbox.setPostponedCallsDeferred(false); });
+				clickQueuedBeforeEscape = sendOutsideClick(stack);
+				if (clickQueuedBeforeEscape) {
+					escapeBox.emplace(openAdminBox(
+						"prequeued_background_click_then_escape", existing));
+					if (escapeBox->first && escapeStack) {
+						trace->setPhase("escape_before_background_click_drain");
+						auto escape = QKeyEvent(QEvent::KeyPress,
+												Qt::Key_Escape, Qt::NoModifier);
+						QCoreApplication::sendEvent(stack, &escape);
+						if (escapeStack) {
+							escapeStack->finishAnimating();
+						}
+						escapeCloseCaptured
+							= trace->closed()
+							  && trace->closedByEscape(
+								  "escape_before_background_click_drain")
+							  && trace->layerShownAtClose();
+					}
+				}
+			}
+			sandbox.drainPostponedCalls();
+			QCoreApplication::processEvents();
+			const auto layerStackTornDown
+				= !controller->window().isLayerShown();
+			const auto escapeCloseCapturedCorrectly
+				= clickQueuedBeforeEscape && escapeBox && escapeCloseCaptured
+				  && trace->closedByEscape(
+					  "escape_before_background_click_drain")
+				  && !trace->closedByBackgroundClick(
+					  "prequeued_background_click_escape");
+			std::fprintf(
+				stderr,
+				"Session controls regression: "
+				"admin_box_escape_with_prequeued_background_click "
+				"queued=%d close_seen=%d escape=%d background_click=%d "
+				"layer_shown_at_close=%d layer_stack_torn_down=%d.\n",
+				clickQueuedBeforeEscape, trace->closed(),
+				trace->closedByEscape("escape_before_background_click_drain"),
+				trace->closedByBackgroundClick(
+					"prequeued_background_click_escape"),
+				trace->layerShownAtClose(), layerStackTornDown);
+			trace->resetForBox();
+			trace->setPhase("fixture_cleanup");
+			if (controller->window().isLayerShown()) {
+				controller->hideLayer(anim::type::instant);
+				QCoreApplication::processEvents();
+			}
+			if (!escapeCloseCapturedCorrectly) {
+				return fail("prequeued_background_click_escape_close_site");
+			}
+			if (!layerStackTornDown) {
+				return fail("prequeued_background_click_escape_stack_teardown");
+			}
 		}
 	}
 	const auto adminCase = [&](const char *name, Rights existingStories) {
