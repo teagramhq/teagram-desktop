@@ -6554,6 +6554,12 @@ bool HistoryWidget::chatThemeControlsAccessibleForRegressionTest() const {
 	return isChoosingTheme()
 		   && _chooseTheme->accessibleButtonsForRegressionTest();
 }
+
+ClickHandlerContext HistoryWidget::prepareClickHandlerContextForRegressionTest(
+	FullMsgId itemId) const {
+	return _list ? _list->prepareClickHandlerContext(itemId)
+				 : ClickHandlerContext();
+}
 #endif
 
 bool HistoryWidget::isMuteUnmute() const {
