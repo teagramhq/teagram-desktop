@@ -3840,7 +3840,12 @@ template <typename Condition>
 			   && !stockController->isLayerShown()
 			   && (infoCounts.settingsWraps == 1)
 			   && (infoCounts.settingsType
-				   == static_cast<const void *>(type.get()));
+				   == static_cast<const void *>(type.get()))
+			   && ShownInfoSectionMatches(
+				   stockController, [&](const Info::Section &section) {
+					   return (section.type() == Info::Section::Type::Settings)
+							  && (section.settingsType() == type);
+				   });
 	};
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
@@ -3849,13 +3854,13 @@ template <typename Condition>
 					"was not handled.\n");
 		return false;
 	}
-	QCoreApplication::processEvents();
-	const auto stockOpensPremium
-		= hasStockSettingsSection(Settings::PremiumId())
-		  && (stockController
-				  ->featureUnavailableOnServerToastCallsForRegressionTest()
-			  == stockToastBefore)
-		  && (app.activeWindow() == &stockController->window());
+	const auto stockOpensPremium = WaitForRegressionCondition([&] {
+		return hasStockSettingsSection(Settings::PremiumId())
+			   && (stockController
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == stockToastBefore)
+			   && (app.activeWindow() == &stockController->window());
+	});
 	if (!stockOpensPremium) {
 		std::fprintf(
 			stderr,
