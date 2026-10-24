@@ -3202,12 +3202,10 @@ template <typename Condition>
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
 		QCoreApplication::processEvents();
-	}
-	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
-		return false;
-	}
+		if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
+			return false;
+		}
 
-	{
 		for (const auto &controller : {pinnedController, blockedController}) {
 			const auto toastBefore
 				= controller
