@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_conversion.h"
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
+#include "core/sandbox.h"
 #include "core/teagram_icon_choice.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
@@ -119,11 +120,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
-#include "tests/test_main.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/image/image_location.h"
 #include "ui/layers/generic_box.h"
+#include "ui/ui_utility.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
@@ -5062,8 +5063,8 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				_backgroundClickPhase = _phase;
 				const auto weak = QPointer<RegressionBoxCloseEventTrace>(this);
 				// This marker is queued before mousePressEvent queues
-				// backgroundClicked(). Test::App drains postponed calls LIFO.
-				Test::app().postponeCall([weak] {
+				// backgroundClicked(). The sandbox drains postponed calls LIFO.
+				Ui::PostponeCall([weak] {
 					if (weak && weak->_backgroundClickPending) {
 						weak->_backgroundClickPending = false;
 						if (!std::strcmp(weak->_closeSite,
@@ -5428,7 +5429,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		auto prequeued = std::optional<decltype(openAdminBox(
 			"prequeued_background_click", Rights()))>();
 		auto clickQueued = false;
-		Test::app().customEnterFromEventLoop([&] {
+		const auto queueInputAndOpen = [&] {
 			const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
 				not_null<QWidget *>(controller->widget().get()));
 			if (!stack) {
@@ -5467,7 +5468,16 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 			clickQueued = true;
 			prequeued.emplace(
 				openAdminBox("prequeued_background_click", existing));
-		});
+		};
+		auto &sandbox = Core::Sandbox::Instance();
+		sandbox.setPostponedCallsDeferred(true);
+		{
+			const auto restorePostponedCalls = gsl::finally([&] {
+				sandbox.setPostponedCallsDeferred(false);
+			});
+			queueInputAndOpen();
+		}
+		sandbox.drainPostponedCalls();
 		if (const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
 				not_null<QWidget *>(controller->widget().get()))) {
 			stack->finishAnimating();
