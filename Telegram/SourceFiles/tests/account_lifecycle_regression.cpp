@@ -5508,6 +5508,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		trace->setPhase("process_events");
 		QTimer::singleShot(0, [] {});
 		QCoreApplication::processEvents();
+		sandbox.drainPostponedCalls();
 		trace->setPhase("finish_background_close_animation");
 		if (const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
 				not_null<QWidget *>(controller->widget().get()))) {
