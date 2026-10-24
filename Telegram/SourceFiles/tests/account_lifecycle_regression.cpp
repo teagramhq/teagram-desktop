@@ -170,6 +170,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <future>
 #include <memory>
@@ -178,6 +179,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if !defined(Q_OS_WIN)
+#include <execinfo.h>
+#endif
 
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -4944,11 +4949,11 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	const char *_phase = "show";
 	const char *_closeSite = "none";
 	const char *_closeEventPhase = "none";
-	const char *_backgroundClickPhase = "none";
 	const char *_event = "none";
 	const char *_eventWidget = "none";
 	const char *_input = "none";
 	const char *_inputWidget = "none";
+	const char *_inputPhase = "none";
 	QElapsedTimer _eventAge;
 	QElapsedTimer _inputAge;
 	int _key = 0;
@@ -4957,6 +4962,28 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	bool _layerShownAtClose = false;
 	bool _inactiveWindowPreserved = true;
 };
+
+[[nodiscard]] QString RegressionBoxCloseCallStack() {
+#if defined(Q_OS_WIN)
+	return u"unavailable"_q;
+#else
+	void *frames[32] = {};
+	const auto count = backtrace(frames, 32);
+	if (count <= 0) {
+		return u"unavailable"_q;
+	}
+	const auto symbols = backtrace_symbols(frames, count);
+	if (!symbols) {
+		return u"unavailable"_q;
+	}
+	auto result = QStringList();
+	for (auto i = 0; i != count; ++i) {
+		result.push_back(QString::fromLocal8Bit(symbols[i]));
+	}
+	std::free(symbols);
+	return result.join(u" <- "_q);
+#endif
+}
 
 RegressionBoxCloseEventTrace::RegressionBoxCloseEventTrace(
 	not_null<QWidget *> root)
@@ -4978,11 +5005,11 @@ void RegressionBoxCloseEventTrace::resetForBox() {
 	_phase = "show";
 	_closeSite = "none";
 	_closeEventPhase = "none";
-	_backgroundClickPhase = "none";
 	_event = "none";
 	_eventWidget = "none";
 	_input = "none";
 	_inputWidget = "none";
+	_inputPhase = "none";
 	_eventAge.invalidate();
 	_inputAge.invalidate();
 	_key = 0;
@@ -5019,32 +5046,35 @@ void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
 											  bool targetActive,
 											  bool activeAccountUnchanged,
 											  bool layerShown) {
-	// These phases cover draining the postponed callback and completing its
-	// hide animation.
-	// A queued click alone cannot identify the closer because Escape can close
-	// the box while that callback is still pending.
-	const auto completingBackgroundClick
-		= !std::strcmp(_phase, "drain_prequeued_background_click")
-		  || !std::strcmp(_phase, "finish_prequeued_background_click");
-	if (!std::strcmp(_closeSite, "background_click_queued")
-		&& completingBackgroundClick) {
+	const auto callStack = RegressionBoxCloseCallStack();
+	_closeEventPhase = _phase;
+	_closeSite = "unresolved";
+	const auto layerStackFrame = callStack.contains(u"LayerStackWidget"_q);
+	if (layerStackFrame && callStack.contains(u"backgroundClicked"_q)) {
 		_closeSite = "LayerStackWidget::backgroundClicked";
-		_closeEventPhase = _backgroundClickPhase;
+	} else if (layerStackFrame && callStack.contains(u"keyPressEvent"_q)) {
+		_closeSite = "escape";
+	} else if (layerStackFrame && callStack.contains(u"closeLayer"_q)) {
+		_closeSite = "LayerStackWidget::closeLayer";
 	}
 	_layerShownAtClose = layerShown;
 	const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
 	const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
+	const auto callStackBytes = callStack.toUtf8();
 	std::fprintf(stderr,
 				 "Session controls regression: admin_box_closing case=%s "
 				 "phase=%s close_site=%s close_event_phase=%s "
+				 "call_stack=%s "
 				 "last_event=%s event_widget=%s "
 				 "event_age_ms=%lld "
 				 "last_input=%s input_widget=%s key=%d button=%d "
-				 "input_age_ms=%lld target_active=%d account_unchanged=%d "
+				 "input_phase=%s input_age_ms=%lld target_active=%d "
+				 "account_unchanged=%d "
 				 "layer_shown=%d.\n",
-				 caseName, _phase, _closeSite, _closeEventPhase, _event,
-				 _eventWidget, static_cast<long long>(eventAge), _input,
-				 _inputWidget, _key, _button, static_cast<long long>(inputAge),
+				 caseName, _phase, _closeSite, _closeEventPhase,
+				 callStackBytes.constData(), _event, _eventWidget,
+				 static_cast<long long>(eventAge), _input, _inputWidget, _key,
+				 _button, _inputPhase, static_cast<long long>(inputAge),
 				 targetActive, activeAccountUnchanged, layerShown);
 	_closed = true;
 }
@@ -5071,25 +5101,10 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		if (input) {
 			_input = name;
 			_inputWidget = _eventWidget;
+			_inputPhase = _phase;
 			_key = key;
 			_button = button;
 			_inputAge.start();
-			const auto backgroundClickPress
-				= dynamic_cast<Ui::LayerStackWidget *>(widget)
-				  && !std::strcmp(name, "mouse_press");
-			if (backgroundClickPress) {
-				_backgroundClickPhase = _phase;
-			}
-			if (std::strcmp(name, "mouse_release")) {
-				_closeEventPhase = _phase;
-				if (key == Qt::Key_Escape) {
-					_closeSite = "escape";
-				} else if (backgroundClickPress) {
-					_closeSite = "background_click_queued";
-				} else {
-					_closeSite = name;
-				}
-			}
 		}
 	};
 	switch (event->type()) {
@@ -5490,9 +5505,10 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				[&] { sandbox.setPostponedCallsDeferred(false); });
 			queueInputAndOpen();
 		}
-		trace->setPhase("drain_prequeued_background_click");
-		sandbox.drainPostponedCalls();
-		trace->setPhase("finish_prequeued_background_click");
+		trace->setPhase("process_events");
+		QTimer::singleShot(0, [] {});
+		QCoreApplication::processEvents();
+		trace->setPhase("finish_background_close_animation");
 		if (const auto stack = Test::FindFirst<Ui::LayerStackWidget>(
 				not_null<QWidget *>(controller->widget().get()))) {
 			stack->finishAnimating();
@@ -5501,18 +5517,17 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 		const auto layerStackTornDown = !controller->window().isLayerShown();
 		const auto backgroundCloseCaptured
 			= clickQueued && prequeued && trace->closed()
-			  && trace->closedByBackgroundClick("prequeued_background_click")
+			  && trace->closedByBackgroundClick("process_events")
 			  && trace->layerShownAtClose() && !prequeued->first;
-		std::fprintf(
-			stderr,
-			"Session controls regression: "
-			"admin_box_prequeued_background_close "
-			"queued=%d close_seen=%d background_click=%d "
-			"layer_shown_at_close=%d layer_stack_torn_down=%d.\n",
-			clickQueued, prequeued && trace->closed(),
-			prequeued
-				&& trace->closedByBackgroundClick("prequeued_background_click"),
-			trace->layerShownAtClose(), layerStackTornDown);
+		std::fprintf(stderr,
+					 "Session controls regression: "
+					 "admin_box_prequeued_background_close "
+					 "queued=%d close_seen=%d background_click=%d "
+					 "layer_shown_at_close=%d layer_stack_torn_down=%d.\n",
+					 clickQueued, prequeued && trace->closed(),
+					 prequeued
+						 && trace->closedByBackgroundClick("process_events"),
+					 trace->layerShownAtClose(), layerStackTornDown);
 		trace->resetForBox();
 		trace->setPhase("fixture_cleanup");
 		controller->hideLayer(anim::type::instant);
