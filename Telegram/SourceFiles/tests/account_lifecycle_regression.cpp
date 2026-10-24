@@ -8671,15 +8671,55 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"primary window disappeared before online-update lifetime "
 			"regression");
 	}
+	const auto fallbackAccount = not_null<Main::Account *>(&domain.active());
+	if (fallbackAccount->sessionExists()) {
+		return failPrerequisite(
+			"initial logout fallback account unexpectedly had a session");
+	}
+	const auto fallbackAccountLifetime = base::make_weak(fallbackAccount.get());
+	auto pinnedFallbackWindow = static_cast<Window::Controller *>(nullptr);
+	auto fallbackAccountWindow = static_cast<Window::Controller *>(nullptr);
+	auto fallbackWindowsOpen = true;
+	const auto closeFallbackWindows = gsl::finally([&] {
+		if (!fallbackWindowsOpen) {
+			return;
+		}
+		if (const auto account = fallbackAccountLifetime.get();
+			fallbackAccountWindow && account
+			&& app.separateWindowFor(not_null<Main::Account *>(account))
+				   == fallbackAccountWindow) {
+			app.closeWindow(fallbackAccountWindow);
+		}
+		if (pinnedFallbackWindow
+			&& app.separateWindowFor(pinned) == pinnedFallbackWindow) {
+			app.closeWindow(pinnedFallbackWindow);
+		}
+	});
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
 		return failPrerequisite(
 			"primary window did not switch to the stock session");
 	}
+	// Keep the initial sessionless account available as a stable logout
+	// fallback. Activating stock schedules removeRedundantAccounts(), which
+	// otherwise drops this account once the primary is rebound.
+	if (app.separateWindowFor(fallbackAccount)) {
+		return failPrerequisite(
+			"initial logout fallback still owned the primary window");
+	}
+	fallbackAccountWindow = app.ensureSeparateWindowFor(fallbackAccount);
+	primary->activate();
+	if (!fallbackAccountWindow || fallbackAccountWindow == primary
+		|| app.separateWindowFor(fallbackAccount) != fallbackAccountWindow
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"could not preserve the initial logout fallback window");
+	}
 	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
-		return failPrerequisite(
-			"main-thread queue did not drain after the initial session switch");
+		return failPrerequisite("main-thread queue did not drain after the "
+								"initial session switch");
 	}
 	QCoreApplication::processEvents();
 	if (!RunDeferredSwitchMutationRegression(
@@ -8944,38 +8984,17 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"queued switch fixture enqueued an extra live-session update");
 	}
-	const auto fallbackAccount
-		= not_null<Main::Account *>(domain.accounts().front().account.get());
-	if (domain.accounts().size() != 4 || fallbackAccount == stock
-		|| fallbackAccount == pinned || fallbackAccount == discarded
-		|| fallbackAccount->sessionExists()) {
+	if (fallbackAccountLifetime.get() != fallbackAccount.get()
+		|| fallbackAccount->sessionExists()
+		|| app.separateWindowFor(fallbackAccount) != fallbackAccountWindow) {
 		return failPrerequisite(
-			"could not identify the blocked account used by logout fallback");
+			"preserved logout fallback account did not survive setup");
 	}
 	const auto pinnedFallbackWindowBefore = app.separateWindowFor(pinned);
-	const auto fallbackAccountWindowBefore
-		= app.separateWindowFor(fallbackAccount);
-	if (pinnedFallbackWindowBefore || fallbackAccountWindowBefore) {
+	if (pinnedFallbackWindowBefore) {
 		return failPrerequisite(
-			"logout fallback accounts already had primary windows");
+			"pinned account already had a primary window before isolation");
 	}
-	auto pinnedFallbackWindow = static_cast<Window::Controller *>(nullptr);
-	auto fallbackAccountWindow = static_cast<Window::Controller *>(nullptr);
-	auto fallbackWindowsOpen = true;
-	const auto closeFallbackWindows = gsl::finally([&] {
-		if (!fallbackWindowsOpen) {
-			return;
-		}
-		if (fallbackAccountWindow
-			&& app.separateWindowFor(fallbackAccount)
-				   == fallbackAccountWindow) {
-			app.closeWindow(fallbackAccountWindow);
-		}
-		if (pinnedFallbackWindow
-			&& app.separateWindowFor(pinned) == pinnedFallbackWindow) {
-			app.closeWindow(pinnedFallbackWindow);
-		}
-	});
 	const auto pinnedWindowSetupBefore
 		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto stockWindowSetupBefore
@@ -9033,7 +9052,6 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"pinned fallback window setup did not match its separate update");
 	}
-	fallbackAccountWindow = app.ensureSeparateWindowFor(fallbackAccount);
 	primary->activate();
 	if (!pinnedFallbackWindow || !fallbackAccountWindow
 		|| !pinnedFallbackWindow->isPrimary()
@@ -9225,7 +9243,9 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	app.closeWindow(pinnedFallbackWindow);
 	fallbackWindowsOpen = false;
 	primary->activate();
+	domain.removeRedundantAccounts();
 	if (app.separateWindowFor(pinned) != nullptr
+		|| !fallbackAccountLifetime.empty()
 		|| app.activePrimaryWindow() != primary
 		|| primary->maybeSession() != &stock->session()
 		|| !WaitForMainQueueBarrier()) {
