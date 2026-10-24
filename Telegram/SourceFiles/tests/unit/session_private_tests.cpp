@@ -45,6 +45,20 @@ bool Instance::isKeysDestroyer() const { return false; }
 
 void Instance::keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId) {}
 
+void Instance::requestConfig() {}
+
+void Instance::requestConfigIfOld() {}
+
+void Instance::requestCDNConfig() {}
+
+void Instance::badConfigurationError() {}
+
+void Instance::syncHttpUnixtime() {}
+
+void Instance::restartedByTimeout(ShiftedDcId) {}
+
+void Instance::keyDestroyedOnServer(ShiftedDcId, uint64) {}
+
 } // namespace MTP
 
 namespace MTP::details {
