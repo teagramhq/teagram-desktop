@@ -4935,6 +4935,14 @@ class RegressionBoxCloseEventTrace final : public QObject {
 
 	void setPhase(const char *phase) { _phase = phase; }
 
+	void setInactiveWindowPreserved(bool preserved) {
+		_inactiveWindowPreserved = preserved;
+	}
+
+	[[nodiscard]] bool inactiveWindowPreserved() const {
+		return _inactiveWindowPreserved;
+	}
+
 	void boxClosing(const char *caseName, bool targetActive,
 					bool activeAccountUnchanged, bool layerShown) {
 		const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
@@ -5019,6 +5027,7 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	int _key = 0;
 	int _button = 0;
 	bool _closed = false;
+	bool _inactiveWindowPreserved = true;
 };
 
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
@@ -5035,6 +5044,12 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	auto &app = Core::App();
 	const auto targetWindow = &controller->window();
 	const auto activeAccount = &app.domain().active();
+	const auto activeAccountWindow
+		= app.separateWindowFor(not_null<Main::Account *>(activeAccount));
+	if (!activeAccountWindow) {
+		return fail("active_account_window");
+	}
+	const auto targetShouldBeInactive = activeAccountWindow != targetWindow;
 	if (session.storiesSupported() != supported) {
 		return fail("capability");
 	}
@@ -5251,21 +5266,62 @@ class RegressionBoxCloseEventTrace final : public QObject {
 						controller->window().isLayerShown());
 				},
 				box->lifetime());
+		const auto ensureActiveAccountWindow = [&] {
+			return !targetShouldBeInactive
+				   || app.activeWindow() == activeAccountWindow
+				   || ActivateWindowForRegression(
+					   app,
+					   not_null<Window::Controller *>(activeAccountWindow));
+		};
+		trace->setPhase("restore_active_account_window_before_show");
+		const auto activeAccountWindowRestoredBeforeShow
+			= ensureActiveAccountWindow();
+		const auto targetInactiveBeforeShow
+			= !targetShouldBeInactive
+			  || app.activeWindow() == activeAccountWindow;
 		auto result = controller->window().show(
 			std::move(box), Ui::LayerOption::KeepOther, anim::type::instant);
 		const auto opened = bool(result);
+		trace->setPhase("restore_active_account_window_after_show");
+		const auto activeAccountWindowRestoredAfterShow
+			= ensureActiveAccountWindow();
+		const auto targetInactiveBeforeEvents
+			= !targetShouldBeInactive
+			  || app.activeWindow() == activeAccountWindow;
 		trace->setPhase("process_events");
 		QCoreApplication::processEvents();
+		const auto targetInactiveAfterEvents
+			= !targetShouldBeInactive
+			  || app.activeWindow() == activeAccountWindow;
 		trace->setPhase("inspect");
-		if (!result) {
+		const auto inactiveWindowPreserved
+			= activeAccountWindowRestoredBeforeShow && targetInactiveBeforeShow
+			  && activeAccountWindowRestoredAfterShow
+			  && targetInactiveBeforeEvents && targetInactiveAfterEvents
+			  && (&app.domain().active() == activeAccount);
+		trace->setInactiveWindowPreserved(inactiveWindowPreserved);
+		if (targetShouldBeInactive) {
+			std::fprintf(
+				stderr,
+				"Session controls regression: admin_box_window_state "
+				"case=%s opened=%d target_active_before_show=%d "
+				"target_active_before_events=%d "
+				"target_active_after_events=%d account_unchanged=%d.\n",
+				caseName, opened, !targetInactiveBeforeShow,
+				!targetInactiveBeforeEvents, !targetInactiveAfterEvents,
+				&app.domain().active() == activeAccount);
+		}
+		if (!result || !inactiveWindowPreserved) {
 			std::fprintf(
 				stderr,
 				"Session controls regression: admin_box_lifetime opened=%d "
 				"after_process_events=0 layer_shown=%d close_seen=%d "
-				"target_active=%d account_unchanged=%d.\n",
+				"target_active=%d account_unchanged=%d "
+				"inactive_window_preserved=%d.\n",
 				opened, controller->window().isLayerShown(), trace->closed(),
 				app.activeWindow() == targetWindow,
-				&app.domain().active() == activeAccount);
+				&app.domain().active() == activeAccount,
+				inactiveWindowPreserved);
 		}
 		return std::make_pair(std::move(result), std::move(trace));
 	};
@@ -5284,6 +5340,12 @@ class RegressionBoxCloseEventTrace final : public QObject {
 				sessionName, supported, name,
 				controller->window().isLayerShown());
 			return false;
+		}
+		if (!trace->inactiveWindowPreserved()) {
+			trace->setPhase("fixture_cleanup");
+			controller->hideLayer(anim::type::instant);
+			QCoreApplication::processEvents();
+			return fail("admin_box_window_state");
 		}
 		const auto visible = box->visibleRightsForRegressionTest();
 		const auto checked = box->checkedRightsForRegressionTest();
@@ -5321,6 +5383,12 @@ class RegressionBoxCloseEventTrace final : public QObject {
 		auto [box, trace] = openAdminBox("new_admin", Rights());
 		if (!box) {
 			return fail("new_admin_box");
+		}
+		if (!trace->inactiveWindowPreserved()) {
+			trace->setPhase("fixture_cleanup");
+			controller->hideLayer(anim::type::instant);
+			QCoreApplication::processEvents();
+			return fail("new_admin_box_window_state");
 		}
 		const auto checked = box->checkedRightsForRegressionTest();
 		const auto saved = box->rightsToSaveForRegressionTest(checked);
