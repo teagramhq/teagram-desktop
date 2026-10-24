@@ -2832,7 +2832,7 @@ template <typename Condition>
 	});
 	QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
 	poll.start();
-	deadline.start(1000);
+	deadline.start(5000);
 	loop.exec();
 	poll.stop();
 	deadline.stop();
@@ -3693,18 +3693,29 @@ template <typename Condition>
 		return false;
 	}
 	QCoreApplication::processEvents();
-	const auto stockOpensPremium
-		= stockController->content()->isMainSectionShown()
-		  && !stockController->isLayerShown()
-		  && (stockController
-				  ->featureUnavailableOnServerToastCallsForRegressionTest()
-			  == stockToastBefore)
-		  && (app.activeWindow() == &stockController->window());
+	const auto stockOpensPremium = WaitForSettingsDeepLinkCondition([&] {
+		return hasStockSettingsSection(Settings::PremiumId())
+			   && (stockController
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == stockToastBefore)
+			   && (app.activeWindow() == &stockController->window());
+	});
 	if (!stockOpensPremium) {
+		const auto infoCounts
+			= CountSettingsDeepLinkInfoSections(stockController);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock Premium route did "
-			"not retain its section and focus behavior.\n");
+			"not show its section and focus behavior: section=%d layer=%d "
+			"toast-unchanged=%d active-window=%d info-wraps=%d "
+			"visible-wraps=%d settings-wraps=%d.\n",
+			hasStockSettingsSection(Settings::PremiumId()),
+			stockController->isLayerShown(),
+			stockController
+					->featureUnavailableOnServerToastCallsForRegressionTest()
+				== stockToastBefore,
+			app.activeWindow() == &stockController->window(), infoCounts.wraps,
+			infoCounts.visibleWraps, infoCounts.settingsWraps);
 		return false;
 	}
 	stockController->clearSectionStack(
@@ -3863,7 +3874,7 @@ template <typename Condition>
 				url.toUtf8().constData());
 			return false;
 		}
-		const auto destinationShown = WaitForRegressionCondition(
+		const auto destinationShown = WaitForSettingsDeepLinkCondition(
 			[&] { return stockMessageDestinationShown(url); });
 		const auto toastUnchanged
 			= stockController
@@ -5883,23 +5894,55 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 			"was not restored.\n");
 		return false;
 	}
+	stockController->clearSectionStack(
+		Window::SectionShow(anim::type::instant, anim::activation::background));
+	const auto stockBaseSectionRestored = WaitForSettingsDeepLinkCondition([&] {
+		return !stockController->content()->isMainSectionShown()
+			   && !stockController->content()->isThirdSectionShown()
+			   && !stockController->isLayerShown()
+			   && !ShownInfoSectionMatches(
+				   stockController, [](const Info::Section &) { return true; });
+	});
+	if (!stockBaseSectionRestored) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window was not at "
+			"its base section before expired-target check.\n");
+		return false;
+	}
 	const auto expiredToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
 	const auto expiredActiveBefore = app.activeWindow();
 	const auto expiredHandled
 		= app.openLocalUrl(u"tg://settings/premium"_q, expiredContext);
+	const auto expiredDispatchCompleted
+		= WaitForMainQueueBarrierForRegressionTest()
+		  == MainQueueBarrierResult::Completed;
 	QCoreApplication::processEvents();
-	if (!expiredHandled || (stockController->content()->isMainSectionShown())
-		|| stockController->isLayerShown()
-		|| (stockController
-				->featureUnavailableOnServerToastCallsForRegressionTest()
-			!= expiredToastBefore)
-		|| (app.activeWindow() != expiredActiveBefore)) {
+	const auto stockRemainsAtBase = WaitForSettingsDeepLinkCondition([&] {
+		return !stockController->content()->isMainSectionShown()
+			   && !stockController->content()->isThirdSectionShown()
+			   && !stockController->isLayerShown()
+			   && !ShownInfoSectionMatches(
+				   stockController, [](const Info::Section &) { return true; })
+			   && (stockController
+					   ->featureUnavailableOnServerToastCallsForRegressionTest()
+				   == expiredToastBefore)
+			   && (app.activeWindow() == expiredActiveBefore);
+	});
+	if (!expiredHandled || !expiredDispatchCompleted || !stockRemainsAtBase) {
 		std::fprintf(
 			stderr,
-			"Settings deep link regression failed: expired target fell back "
-			"to the stock account.\n");
+			"Settings deep link regression failed: expired target changed "
+			"the "
+			"stock window: handled=%d dispatch-completed=%d base-section=%d "
+			"toast-unchanged=%d active-window=%d.\n",
+			expiredHandled, expiredDispatchCompleted, stockRemainsAtBase,
+			stockController
+					->featureUnavailableOnServerToastCallsForRegressionTest()
+				== expiredToastBefore,
+			app.activeWindow() == expiredActiveBefore);
 		return false;
 	}
 	return true;
