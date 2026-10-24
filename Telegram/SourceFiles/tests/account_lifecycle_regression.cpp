@@ -864,6 +864,24 @@ void ReportDeferredOnlineUpdateDispatchCounts(
 	std::fprintf(stderr, "\n");
 }
 
+void ReportDeferredOnlineUpdateDispatchDeltas(
+	const char *observation, const DeferredOnlineUpdateDispatchCounts &stock,
+	const DeferredOnlineUpdateDispatchCounts &pinned) {
+	const auto print = [](const char *role,
+						  const DeferredOnlineUpdateDispatchCounts &counts) {
+		std::fprintf(stderr,
+					 " %s{setup_enqueued=%d setup_executed=%d "
+					 "close_enqueued=%d close_executed=%d}",
+					 role, counts.setupEnqueued, counts.setupExecuted,
+					 counts.closeSwitchEnqueued, counts.closeSwitchExecuted);
+	};
+	std::fprintf(stderr, "Deferred online callback delta: observation=%s",
+				 observation);
+	print("stock", stock);
+	print("pinned", pinned);
+	std::fprintf(stderr, "\n");
+}
+
 [[nodiscard]] bool
 WaitForDeferredOnlineUpdateDispatchesToSettle(Main::Session &stock,
 											  Main::Session &pinned,
@@ -8653,15 +8671,55 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"primary window disappeared before online-update lifetime "
 			"regression");
 	}
+	const auto fallbackAccount = not_null<Main::Account *>(&domain.active());
+	if (fallbackAccount->sessionExists()) {
+		return failPrerequisite(
+			"initial logout fallback account unexpectedly had a session");
+	}
+	const auto fallbackAccountLifetime = base::make_weak(fallbackAccount.get());
+	auto pinnedFallbackWindow = static_cast<Window::Controller *>(nullptr);
+	auto fallbackAccountWindow = static_cast<Window::Controller *>(nullptr);
+	auto fallbackWindowsOpen = true;
+	const auto closeFallbackWindows = gsl::finally([&] {
+		if (!fallbackWindowsOpen) {
+			return;
+		}
+		if (const auto account = fallbackAccountLifetime.get();
+			fallbackAccountWindow && account
+			&& app.separateWindowFor(not_null<Main::Account *>(account))
+				   == fallbackAccountWindow) {
+			app.closeWindow(fallbackAccountWindow);
+		}
+		if (pinnedFallbackWindow
+			&& app.separateWindowFor(pinned) == pinnedFallbackWindow) {
+			app.closeWindow(pinnedFallbackWindow);
+		}
+	});
 	primary->showAccount(stock);
 	if (primary->maybeSession() != &stock->session()) {
 		return failPrerequisite(
 			"primary window did not switch to the stock session");
 	}
+	// Keep the initial sessionless account available as a stable logout
+	// fallback. Activating stock schedules removeRedundantAccounts(), which
+	// otherwise drops this account once the primary is rebound.
+	if (app.separateWindowFor(fallbackAccount)) {
+		return failPrerequisite(
+			"initial logout fallback still owned the primary window");
+	}
+	fallbackAccountWindow = app.ensureSeparateWindowFor(fallbackAccount);
+	primary->activate();
+	if (!fallbackAccountWindow || fallbackAccountWindow == primary
+		|| app.separateWindowFor(fallbackAccount) != fallbackAccountWindow
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"could not preserve the initial logout fallback window");
+	}
 	domain.activate(stock);
 	if (!WaitForMainQueueBarrier()) {
-		return failPrerequisite(
-			"main-thread queue did not drain after the initial session switch");
+		return failPrerequisite("main-thread queue did not drain after the "
+								"initial session switch");
 	}
 	QCoreApplication::processEvents();
 	if (!RunDeferredSwitchMutationRegression(
@@ -8815,12 +8873,48 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"unsupported "
 			"session, or stopped working after switching back to stock");
 	}
-	// Drain setup switches while the blocked discarded session is still alive;
-	// their deferred callbacks are separate from the teardown assertions below.
 	if (!WaitForMainQueueBarrier()) {
 		return failPrerequisite(
 			"main-thread queue did not drain after blocked-session setup");
 	}
+	const auto stockSetupDispatchesBeforeQueuedSwitches
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedSetupDispatchesBeforeQueuedSwitches
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto stockSetupPending = DeferredOnlineUpdateDispatchOutstanding(
+		stockSetupDispatchesBeforeQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	const auto pinnedSetupPending = DeferredOnlineUpdateDispatchOutstanding(
+		pinnedSetupDispatchesBeforeQueuedSwitches,
+		DeferredOnlineUpdatePhase::Setup);
+	if (stockSetupPending || pinnedSetupPending) {
+		return failPrerequisite(
+			"setup switch callbacks were pending after the main queue barrier");
+	}
+	const auto queuedDispatchesRemainBounded = [&](const char *observation) {
+		const auto stockCurrent
+			= stock->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto pinnedCurrent
+			= pinned->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto stockDelta = DeferredOnlineUpdateDispatchDelta(
+			stockCurrent, stockSetupDispatchesBeforeQueuedSwitches);
+		const auto pinnedDelta = DeferredOnlineUpdateDispatchDelta(
+			pinnedCurrent, pinnedSetupDispatchesBeforeQueuedSwitches);
+		ReportDeferredOnlineUpdateDispatchDeltas(observation, stockDelta,
+												 pinnedDelta);
+		return (stockDelta.setupEnqueued == 1)
+			   && (pinnedDelta.setupEnqueued == 1)
+			   && (stockDelta.closeSwitchEnqueued == 0)
+			   && (pinnedDelta.closeSwitchEnqueued == 0);
+	};
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -8886,14 +8980,197 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
+	if (!queuedDispatchesRemainBounded("after queued switch fixture")) {
+		return failPrerequisite(
+			"queued switch fixture enqueued an extra live-session update");
+	}
+	if (fallbackAccountLifetime.get() != fallbackAccount.get()
+		|| fallbackAccount->sessionExists()
+		|| app.separateWindowFor(fallbackAccount) != fallbackAccountWindow) {
+		return failPrerequisite(
+			"preserved logout fallback account did not survive setup");
+	}
+	const auto pinnedFallbackWindowBefore = app.separateWindowFor(pinned);
+	if (pinnedFallbackWindowBefore) {
+		return failPrerequisite(
+			"pinned account already had a primary window before isolation");
+	}
+	const auto pinnedWindowSetupBefore
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto stockWindowSetupBefore
+		= stock->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupBefore
+		= discarded->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto pinnedWindowDispatchesBefore
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto stockWindowDispatchesBefore
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	pinnedFallbackWindow = app.ensureSeparateWindowFor(pinned);
+	const auto pinnedFallbackWindowSetupInline = OnlineUpdateDelta(
+		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
+		pinnedWindowSetupBefore);
+	const auto stockFallbackWindowSetupInline = OnlineUpdateDelta(
+		stock->session().updates().onlineUpdateCountsForRegressionTest(),
+		stockWindowSetupBefore);
+	const auto discardedFallbackWindowSetupInline = OnlineUpdateDelta(
+		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupBefore);
+	const auto pinnedFallbackWindowSetupInlineMatches
+		= ReportSwitchUpdateDeltas("pinned fallback window setup inline",
+								   stockFallbackWindowSetupInline, {0, 0},
+								   pinnedFallbackWindowSetupInline, {1, 0},
+								   &discardedFallbackWindowSetupInline,
+								   "discarded", {0, 0});
+	const auto pinnedWindowDispatchesAfter
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto stockWindowDispatchesAfter
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedFallbackWindowDispatchDelta
+		= DeferredOnlineUpdateDispatchDelta(pinnedWindowDispatchesAfter,
+											pinnedWindowDispatchesBefore);
+	const auto stockFallbackWindowDispatchDelta
+		= DeferredOnlineUpdateDispatchDelta(stockWindowDispatchesAfter,
+											stockWindowDispatchesBefore);
+	ReportDeferredOnlineUpdateDispatchDeltas("pinned fallback window setup",
+											 stockFallbackWindowDispatchDelta,
+											 pinnedFallbackWindowDispatchDelta);
+	const auto pinnedFallbackWindowDispatchesMatch
+		= (stockFallbackWindowDispatchDelta.setupEnqueued == 0)
+		  && (stockFallbackWindowDispatchDelta.closeSwitchEnqueued == 0)
+		  && (pinnedFallbackWindowDispatchDelta.setupEnqueued == 1)
+		  && (pinnedFallbackWindowDispatchDelta.closeSwitchEnqueued == 0);
+	if (!pinnedFallbackWindowSetupInlineMatches
+		|| !pinnedFallbackWindowDispatchesMatch) {
+		return failPrerequisite(
+			"pinned fallback window setup did not match its separate update");
+	}
+	primary->activate();
+	if (!pinnedFallbackWindow || !fallbackAccountWindow
+		|| !pinnedFallbackWindow->isPrimary()
+		|| app.separateWindowFor(pinned) != pinnedFallbackWindow
+		|| !fallbackAccountWindow->isPrimary()
+		|| app.separateWindowFor(fallbackAccount) != fallbackAccountWindow
+		|| app.separateWindowFor(stock) != primary
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"could not stabilize logout fallback windows before teardown");
+	}
+	const auto stockAfterFallbackWindowSetup
+		= stock->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	const auto pinnedAfterFallbackWindowSetup
+		= pinned->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	ReportDeferredOnlineUpdateDispatchCounts(
+		"before destroyed-session teardown", stockAfterFallbackWindowSetup,
+		pinnedAfterFallbackWindowSetup);
+	if (DeferredOnlineUpdateDispatchOutstanding(
+			stockAfterFallbackWindowSetup, DeferredOnlineUpdatePhase::Setup)
+			!= 1
+		|| DeferredOnlineUpdateDispatchOutstanding(
+			   pinnedAfterFallbackWindowSetup, DeferredOnlineUpdatePhase::Setup)
+			   != 2) {
+		return failPrerequisite("queued switch callbacks did not remain "
+								"pending through window setup");
+	}
+	const auto teardownDispatchesRemainBounded = [&](const char *observation) {
+		const auto stockCurrent
+			= stock->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto pinnedCurrent
+			= pinned->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto stockDelta = DeferredOnlineUpdateDispatchDelta(
+			stockCurrent, stockAfterFallbackWindowSetup);
+		const auto pinnedDelta = DeferredOnlineUpdateDispatchDelta(
+			pinnedCurrent, pinnedAfterFallbackWindowSetup);
+		ReportDeferredOnlineUpdateDispatchDeltas(observation, stockDelta,
+												 pinnedDelta);
+		return (stockDelta.setupEnqueued == 0)
+			   && (pinnedDelta.setupEnqueued == 0)
+			   && (stockDelta.closeSwitchEnqueued == 0)
+			   && (pinnedDelta.closeSwitchEnqueued == 0);
+	};
 	const auto discardedAtTeardown = discardedQueuedThird;
+	const auto discardedWindowSetupStockBefore
+		= stock->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupPinnedBefore
+		= pinned->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowSetupOnlineBefore
+		= discarded->session().updates().onlineUpdateCountsForRegressionTest();
+	const auto discardedWindowDispatchesBefore
+		= discarded->session()
+			  .updates()
+			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+	// Exercise logout closing discarded's own primary account window.
 	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	const auto discardedWindowSetupStock = OnlineUpdateDelta(
+		stock->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupStockBefore);
+	const auto discardedWindowSetupPinned = OnlineUpdateDelta(
+		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupPinnedBefore);
+	const auto discardedWindowSetupInline = OnlineUpdateDelta(
+		discarded->session().updates().onlineUpdateCountsForRegressionTest(),
+		discardedWindowSetupOnlineBefore);
+	const auto discardedWindowSetupDispatches
+		= DeferredOnlineUpdateDispatchDelta(
+			discarded->session()
+				.updates()
+				.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+			discardedWindowDispatchesBefore);
+	const auto discardedWindowSetupInlineMatches = ReportSwitchUpdateDeltas(
+		"discarded primary window setup inline", discardedWindowSetupStock,
+		{0, 0}, discardedWindowSetupPinned, {0, 0}, &discardedWindowSetupInline,
+		"discarded-window-setup", {1, 0});
+	std::fprintf(
+		stderr,
+		"Deferred online callback delta: observation=discarded primary "
+		"window setup discarded{setup_enqueued=%d setup_executed=%d "
+		"close_enqueued=%d close_executed=%d}\n",
+		discardedWindowSetupDispatches.setupEnqueued,
+		discardedWindowSetupDispatches.setupExecuted,
+		discardedWindowSetupDispatches.closeSwitchEnqueued,
+		discardedWindowSetupDispatches.closeSwitchExecuted);
+	primary->activate();
+	if (!teardownDispatchesRemainBounded(
+			"after discarded primary window creation")) {
+		return failPrerequisite(
+			"discarded primary window creation enqueued an extra live-session "
+			"update");
+	}
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
-	if (!discardedController) {
+	if (!discardedController || !discardedWindow->isPrimary()
+		|| app.separateWindowFor(discarded) != discardedWindow
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
 		return failPrerequisite(
-			"could not create a controller for deferred call-link teardown");
+			"could not stabilize the primary controller for deferred "
+			"call-link teardown");
 	}
+	if (!discardedWindowSetupInlineMatches
+		|| discardedWindowSetupDispatches.setupEnqueued != 1
+		|| discardedWindowSetupDispatches.closeSwitchEnqueued != 0) {
+		return failPrerequisite(
+			"discarded primary window setup did not produce its isolated "
+			"session update");
+	}
+	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
+		DeferredOnlineUpdatePhase::CloseSwitch);
 	const auto destroyedSessionChannelId = ChannelId(3051);
 	PrepareRegressionChannel(
 		discarded->session().data().channel(destroyedSessionChannelId));
@@ -8905,12 +9182,25 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	if (!teardownDispatchesRemainBounded(
+			"after destroyed-session link dispatch")) {
+		return failPrerequisite(
+			"destroyed-session link dispatch enqueued an extra "
+			"live-session update");
+	}
 	const auto discardedServerCacheBindingFiles
 		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
-	if (discarded->sessionExists()) {
+	if (!teardownDispatchesRemainBounded("after destroyed-session logout")) {
 		return failPrerequisite(
-			"previous-session teardown fixture was not destroyed");
+			"destroyed-session logout enqueued an extra live-session update");
+	}
+	if (discarded->sessionExists() || &domain.active() != stock.get()
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()) {
+		return failPrerequisite(
+			"logout changed stock primary ownership or kept the teardown "
+			"session alive");
 	}
 	ReportCallRegressionCheckpoint("destroyed-session logout complete");
 	if (!WaitForMainQueueBarrier()) {
@@ -8925,6 +9215,13 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
+	closeSwitchPhase.restore();
+	if (!teardownDispatchesRemainBounded(
+			"after destroyed-session event processing")) {
+		return failPrerequisite(
+			"destroyed-session event processing enqueued an extra "
+			"live-session update");
+	}
 	if (!discardedLifetime.empty()) {
 		return failPrerequisite(
 			"previous-session account survived after its window closed");
@@ -8932,17 +9229,47 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	const auto queuedStockDeferredObserved = WaitForDeferredSwitchUpdate(
 		stock->session(), stockBeforeQueuedSwitches.switchDeferred + 1);
 	const auto queuedPinnedDeferredObserved = WaitForDeferredSwitchUpdate(
-		pinned->session(), pinnedBeforeQueuedSwitches.switchDeferred + 1);
+		pinned->session(), pinnedBeforeQueuedSwitches.switchDeferred + 2);
 	const auto stockQueuedDeferred = OnlineUpdateDelta(
 		stock->session().updates().onlineUpdateCountsForRegressionTest(),
 		stockBeforeQueuedSwitches);
-	const auto pinnedQueuedDeferred = OnlineUpdateDelta(
+	auto pinnedQueuedDeferred = OnlineUpdateDelta(
 		pinned->session().updates().onlineUpdateCountsForRegressionTest(),
 		pinnedBeforeQueuedSwitches);
+	pinnedQueuedDeferred.total
+		-= pinnedFallbackWindowSetupInline.total
+		   + pinnedFallbackWindowDispatchDelta.setupEnqueued;
+	pinnedQueuedDeferred.other -= pinnedFallbackWindowSetupInline.other;
+	pinnedQueuedDeferred.switchInline
+		-= pinnedFallbackWindowSetupInline.switchInline;
+	pinnedQueuedDeferred.switchDeferred
+		-= pinnedFallbackWindowDispatchDelta.setupEnqueued;
 	const auto queuedDeferredMatches = ReportSwitchUpdateDeltas(
 		"queued switch teardown deferred", stockQueuedDeferred, {1, 1},
 		pinnedQueuedDeferred, {1, 1}, &discardedAtTeardown,
 		"discarded-at-teardown", {1, 0});
+	const auto stockQueuedDispatches = DeferredOnlineUpdateDispatchDelta(
+		stock->session()
+			.updates()
+			.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+		stockSetupDispatchesBeforeQueuedSwitches);
+	const auto pinnedQueuedDispatches = DeferredOnlineUpdateDispatchDelta(
+		pinned->session()
+			.updates()
+			.deferredOnlineUpdateDispatchCountsForRegressionTest(),
+		pinnedSetupDispatchesBeforeQueuedSwitches);
+	ReportDeferredOnlineUpdateDispatchDeltas(
+		"queued switch teardown dispatches", stockQueuedDispatches,
+		pinnedQueuedDispatches);
+	const auto queuedDispatchCountsMatch
+		= (stockQueuedDispatches.setupEnqueued == 1)
+		  && (stockQueuedDispatches.setupExecuted == 1)
+		  && (stockQueuedDispatches.closeSwitchEnqueued == 0)
+		  && (stockQueuedDispatches.closeSwitchExecuted == 0)
+		  && (pinnedQueuedDispatches.setupEnqueued == 2)
+		  && (pinnedQueuedDispatches.setupExecuted == 2)
+		  && (pinnedQueuedDispatches.closeSwitchEnqueued == 0)
+		  && (pinnedQueuedDispatches.closeSwitchExecuted == 0);
 	const auto destroyedSessionEvents = GetCallStartRegressionSnapshotForTest();
 	if (!destroyedSessionEvents.navigationEvents.empty()
 		|| !destroyedSessionEvents.openedPeers.empty()) {
@@ -8954,12 +9281,27 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			stock->session(),
 			SessionSwitchUpdateCountForTest(stockBeforeQueuedSwitches) + 2,
 			pinned->session(),
-			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2)
+			SessionSwitchUpdateCountForTest(pinnedBeforeQueuedSwitches) + 2
+				+ pinnedFallbackWindowSetupInline.switchInline
+				+ pinnedFallbackWindowDispatchDelta.setupEnqueued)
 		|| !queuedStockDeferredObserved || !queuedPinnedDeferredObserved
-		|| !queuedDeferredMatches) {
+		|| !queuedDeferredMatches || !queuedDispatchCountsMatch) {
 		return failPrerequisite(
 			"queued live and destroyed-session updates reached the wrong "
 			"sessions");
+	}
+	app.closeWindow(fallbackAccountWindow);
+	app.closeWindow(pinnedFallbackWindow);
+	fallbackWindowsOpen = false;
+	primary->activate();
+	domain.removeRedundantAccounts();
+	if (app.separateWindowFor(pinned) != nullptr
+		|| !fallbackAccountLifetime.empty()
+		|| app.activePrimaryWindow() != primary
+		|| primary->maybeSession() != &stock->session()
+		|| !WaitForMainQueueBarrier()) {
+		return failPrerequisite(
+			"could not restore the stock primary after logout fallback setup");
 	}
 	const auto stockDcOptionsBeforeDeferredLink
 		= MTP::DcOptions(MTP::Environment::Production).serialize();
