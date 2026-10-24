@@ -4001,6 +4001,7 @@ template <typename Condition>
 		const auto previousAnimationsDisabled = anim::Disabled();
 		anim::SetDisabled(true);
 		Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
+		Test::SettlePostponedCalls();
 		const auto restoreAnimations = gsl::finally([=] {
 			Ui::Animations::Manager::SetScheduleWithInvokeQueued(false);
 			anim::SetDisabled(previousAnimationsDisabled);
