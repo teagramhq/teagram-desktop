@@ -184,6 +184,30 @@ SessionPrivate::SessionPrivate(
 	});
 }
 
+SessionPrivate::SessionPrivate(TestTag, not_null<Instance *> instance,
+							   not_null<QThread *> thread,
+							   std::shared_ptr<SessionData> data,
+							   ShiftedDcId shiftedDcId)
+	: QObject(nullptr), _instance(instance), _shiftedDcId(shiftedDcId),
+	  _realDcType(DcType::Regular), _currentDcType(DcType::Regular),
+	  _testFixture(true), _state(DisconnectedState),
+	  _retryTimer(thread, [=] { retryByTimer(); }),
+	  _oldConnectionTimer(thread, [=] { markConnectionOld(); }),
+	  _waitForConnectedTimer(thread, [=] { waitConnectedFailed(); }),
+	  _waitForReceivedTimer(thread, [=] { waitReceivedFailed(); }),
+	  _waitForBetterTimer(thread, [=] { waitBetterFailed(); }),
+	  _waitForReceived(kMinReceiveTimeout),
+	  _waitForConnected(kMinConnectedTimeout),
+	  _pingSender(thread, [=] { sendPingByTimer(); }),
+	  _checkSentRequestsTimer(thread, [=] { checkSentRequests(); }),
+	  _clearOldContainersTimer(thread, [=] { clearOldContainers(); }),
+	  _sessionData(std::move(data)),
+	  _options(std::make_unique<SessionOptions>()) {
+	Expects(_shiftedDcId != 0);
+
+	moveToThread(thread);
+}
+
 SessionPrivate::~SessionPrivate() {
 	releaseKeyCreationOnFail();
 	doDisconnect();
@@ -281,12 +305,19 @@ int16 SessionPrivate::getProtocolDcId() const {
 	const auto simpleDcId = isTemporaryDcId(dcId)
 		? getRealIdFromTemporaryDcId(dcId)
 		: dcId;
-	const auto testedDcId = _instance->isTestMode()
-		? (kTestModeDcIdShift + simpleDcId)
-		: simpleDcId;
+	const auto testedDcId
+		= isTestMode() ? (kTestModeDcIdShift + simpleDcId) : simpleDcId;
 	return (_currentDcType == DcType::MediaCluster)
 		? -testedDcId
 		: testedDcId;
+}
+
+bool SessionPrivate::networkAllowed() const {
+	return _testFixture || _instance->isServerEnrollmentNetworkAllowed();
+}
+
+bool SessionPrivate::isTestMode() const {
+	return !_testFixture && _instance->isTestMode();
 }
 
 void SessionPrivate::checkSentRequests() {
@@ -624,7 +655,7 @@ MTPVector<MTPJSONObjectValue> SessionPrivate::prepareInitParams() {
 
 void SessionPrivate::tryToSend() {
 	DEBUG_LOG(("MTP Info: tryToSend for dc %1.").arg(_shiftedDcId));
-	if (!_instance->isServerEnrollmentNetworkAllowed()) {
+	if (!networkAllowed()) {
 		return;
 	}
 	if (!_connection) {
@@ -1195,7 +1226,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 
 void SessionPrivate::restart() {
 	DEBUG_LOG(("MTP Info: restarting Connection"));
-	if (!_instance->isServerEnrollmentNetworkAllowed()) {
+	if (!networkAllowed()) {
 		doDisconnect();
 		return;
 	}
@@ -1361,7 +1392,7 @@ void SessionPrivate::requestCDNConfig() {
 }
 
 void SessionPrivate::handleReceived() {
-	if (!_instance->isServerEnrollmentNetworkAllowed()) {
+	if (!networkAllowed()) {
 		doDisconnect();
 		return;
 	}
@@ -1461,54 +1492,68 @@ void SessionPrivate::handleReceived() {
 			DEBUG_LOG(("MTP Info: bad server time from msg_id: %1, my time: %2").arg(serverTime).arg(clientTime));
 		}
 
-		bool wasConnected = (getState() == ConnectedState);
+		const auto state = getState();
+		const auto wasConnected = (state == ConnectedState);
+		const auto transitionServerSalt = serverSalt;
 		if (serverSalt != _sessionSalt) {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
-				_sessionSalt = serverSalt;
-
-				if (setState(ConnectedState, ConnectingState)) {
-					resendAll();
-				}
 			} else {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2").arg(serverSalt).arg(_sessionSalt));
 			}
 		} else {
-			serverSalt = 0; // dont pass to handle method, so not to lock in setSalt()
+			serverSalt = 0; // dont pass to handle method, so not to lock
+							// in setSalt()
 		}
-
-		if (needAck) _ackRequestData.push_back(MTP_long(msgId));
-
-		auto res = HandleResult::Success; // if no need to handle, then succeed
+		auto res = HandleResult::Success;
+		auto sessionSaltChanged = false;
 		auto from = decryptedInts + kEncryptedHeaderIntsCount;
 		auto end = from + (messageLength / kIntSize);
-		auto sfrom = decryptedInts + 4U; // msg_id + seq_no + length + message
-		MTP_LOG(_shiftedDcId, ("Recv: ")
-			+ DumpToText(sfrom, end)
-			+ QString(" (dc:%1,key:%2,session:%3)"
-			).arg(AbstractConnection::ProtocolDcDebugId(getProtocolDcId())
-			).arg(_encryptionKey->keyId()
-			).arg(_sessionId));
+		auto sfrom = decryptedInts + 4U;
+		MTP_LOG(_shiftedDcId,
+				("Recv: ") + DumpToText(sfrom, end)
+					+ QString(" (dc:%1,key:%2,session:%3)")
+						  .arg(AbstractConnection::ProtocolDcDebugId(
+							  getProtocolDcId()))
+						  .arg(_encryptionKey->keyId())
+						  .arg(_sessionId));
 
-		const auto registered = _receivedMessageIds.registerMsgId(
-			msgId,
-			needAck);
-		if (registered == ReceivedIdsManager::Result::Success) {
-			res = handleOneReceived(from, end, msgId, {
-				.outerMsgId = msgId,
-				.serverSalt = serverSalt,
-				.serverTime = serverTime,
-				.badTime = badTime,
-			});
+		const auto registered
+			= _receivedMessageIds.registerMsgId(msgId, needAck);
+		const auto duplicate
+			= (registered == ReceivedIdsManager::Result::Duplicate);
+		if (duplicate) {
+			if (needAck) {
+				_ackRequestData.push_back(MTP_long(msgId));
+			}
 		} else if (registered == ReceivedIdsManager::Result::TooOld) {
 			res = HandleResult::ResetSession;
+		} else {
+			if (needAck) {
+				_ackRequestData.push_back(MTP_long(msgId));
+			}
+			res = handleOneReceived(
+				from, end, msgId,
+				{
+					.outerMsgId = msgId,
+					.serverSalt = serverSalt,
+					.serverTime = serverTime,
+					.badTime = badTime,
+					.sessionSaltChanged = &sessionSaltChanged,
+				});
 		}
-		_receivedMessageIds.shrink();
+		if (!duplicate) {
+			_receivedMessageIds.shrink();
+		}
 
-		// send acks
 		if (const auto toAckSize = _ackRequestData.size()) {
-			DEBUG_LOG(("MTP Info: will send %1 acks, ids: %2").arg(toAckSize).arg(LogIdsVector(_ackRequestData)));
+			DEBUG_LOG(("MTP Info: will send %1 acks, ids: %2")
+						  .arg(toAckSize)
+						  .arg(LogIdsVector(_ackRequestData)));
 			_sessionData->queueSendAnything(kAckSendWaiting);
+		}
+		if (duplicate) {
+			continue;
 		}
 
 		auto lock = QReadLocker(_sessionData->haveReceivedMutex());
@@ -1516,7 +1561,9 @@ void SessionPrivate::handleReceived() {
 		lock.unlock();
 
 		if (tryToReceive) {
-			DEBUG_LOG(("MTP Info: queueTryToReceive() - need to parse in another thread, %1 messages.").arg(_sessionData->haveReceivedMessages().size()));
+			DEBUG_LOG(("MTP Info: queueTryToReceive() - need to "
+					   "parse in another thread, %1 messages.")
+						  .arg(_sessionData->haveReceivedMessages().size()));
 			_sessionData->queueTryToReceive();
 		}
 
@@ -1530,14 +1577,17 @@ void SessionPrivate::handleReceived() {
 			}
 			return restart();
 		}
-		_retryTimeout = 1; // reset restart() timer
-
+		if (!badTime && !sessionSaltChanged) {
+			_sessionSalt = transitionServerSalt;
+		}
+		if ((state == ConnectingState) && !badTime
+			&& setState(ConnectedState, ConnectingState)) {
+			resendAll();
+		}
+		_retryTimeout = 1;
 		_startedConnectingAt = crl::time(0);
-
-		if (!wasConnected) {
-			if (getState() == ConnectedState) {
-				_sessionData->queueNeedToResumeAndSend();
-			}
+		if (!wasConnected && getState() == ConnectedState) {
+			_sessionData->queueNeedToResumeAndSend();
 		}
 	}
 	if (_connection->needHttpWait()) {
@@ -1695,6 +1745,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 
 			if (needResend) { // bad msg_id or bad container
 				if (info.serverSalt) {
+					if (info.sessionSaltChanged) {
+						*info.sessionSaltChanged = true;
+					}
 					_sessionSalt = info.serverSalt;
 				}
 
@@ -1706,6 +1759,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 			} else { // must create new session, because msg_id and msg_seqno are inconsistent
 				if (info.badTime) {
 					if (info.serverSalt) {
+						if (info.sessionSaltChanged) {
+							*info.sessionSaltChanged = true;
+						}
 						_sessionSalt = info.serverSalt;
 					}
 					correctUnixtimeWithBadLocal(info.serverTime);
@@ -1770,6 +1826,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 			return (info.badTime ? HandleResult::Ignored : HandleResult::Success);
 		}
 
+		if (info.sessionSaltChanged) {
+			*info.sessionSaltChanged = true;
+		}
 		_sessionSalt = data.vnew_server_salt().v;
 
 		// Don't force time update here.
@@ -1810,6 +1869,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 		}
 		if (info.badTime) {
 			if (info.serverSalt) {
+				if (info.sessionSaltChanged) {
+					*info.sessionSaltChanged = true;
+				}
 				_sessionSalt = info.serverSalt; // requestsFixTimeSalt with no lookup
 			}
 			correctUnixtimeWithBadLocal(info.serverTime);
@@ -2001,6 +2063,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 		}
 
 		DEBUG_LOG(("Message Info: new server session created, unique_id %1, first_msg_id %2, server_salt %3").arg(data.vunique_id().v).arg(data.vfirst_msg_id().v).arg(data.vserver_salt().v));
+		if (info.sessionSaltChanged) {
+			*info.sessionSaltChanged = true;
+		}
 		_sessionSalt = data.vserver_salt().v;
 
 		mtpMsgId firstMsgId = data.vfirst_msg_id().v;
@@ -2175,6 +2240,9 @@ bool SessionPrivate::requestsFixTimeSalt(const QVector<MTPlong> &ids, const Oute
 		if (wasSent(id.v)) {
 			// Found such msg_id in recent acked or in recent sent requests.
 			if (info.serverSalt) {
+				if (info.sessionSaltChanged) {
+					*info.sessionSaltChanged = true;
+				}
 				_sessionSalt = info.serverSalt;
 			}
 			correctUnixtimeWithBadLocal(info.serverTime);
@@ -2446,7 +2514,7 @@ void SessionPrivate::onConnected(
 
 void SessionPrivate::onDisconnected(
 		not_null<AbstractConnection*> connection) {
-	if (!_instance->isServerEnrollmentNetworkAllowed()) {
+	if (!networkAllowed()) {
 		doDisconnect();
 		return;
 	}
@@ -2543,8 +2611,8 @@ void SessionPrivate::updatePermanentAuthKey() {
 }
 
 bool SessionPrivate::usesPermanentAuthKey() const {
-	return !_instance->isKeysDestroyer()
-		&& _instance->dcOptions().usesPermanentAuthKey(_shiftedDcId);
+	return !_testFixture && !_instance->isKeysDestroyer()
+		   && _instance->dcOptions().usesPermanentAuthKey(_shiftedDcId);
 }
 
 void SessionPrivate::setCurrentKeyId(uint64 newKeyId) {

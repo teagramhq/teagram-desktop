@@ -113,6 +113,7 @@ PRIVATE
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
+    tests/unit/session_private_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
@@ -126,6 +127,8 @@ PRIVATE
     mtproto/connection_server_resolving.cpp
     mtproto/connection_server_resolving.h
     mtproto/proxy_check.cpp
+    mtproto/session_private.cpp
+    mtproto/session_private.h
 )
 
 if(UNIX)
@@ -170,6 +173,7 @@ PRIVATE
     desktop-app::lib_ui
     desktop-app::lib_webview
     desktop-app::lib_tl
+    desktop-app::external_kcoreaddons
     desktop-app::external_qt
     desktop-app::external_openssl
     desktop-app::external_zlib
