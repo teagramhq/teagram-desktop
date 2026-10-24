@@ -4922,98 +4922,16 @@ RunTeagramBrandingRegression(not_null<Window::SessionController *> controller,
 // that drop hidden rights fail here and in the standalone save cases.
 class RegressionBoxCloseEventTrace final : public QObject {
   public:
-	explicit RegressionBoxCloseEventTrace(not_null<QWidget *> root)
-		: _root(root.get()) {
-		QCoreApplication::instance()->installEventFilter(this);
-	}
+	explicit RegressionBoxCloseEventTrace(not_null<QWidget *> root);
+	~RegressionBoxCloseEventTrace() override;
 
-	~RegressionBoxCloseEventTrace() override {
-		if (const auto app = QCoreApplication::instance()) {
-			app->removeEventFilter(this);
-		}
-	}
-
-	void setPhase(const char *phase) { _phase = phase; }
-
-	void setInactiveWindowPreserved(bool preserved) {
-		_inactiveWindowPreserved = preserved;
-	}
-
-	[[nodiscard]] bool inactiveWindowPreserved() const {
-		return _inactiveWindowPreserved;
-	}
-
+	void setPhase(const char *phase);
+	void setInactiveWindowPreserved(bool preserved);
+	[[nodiscard]] bool inactiveWindowPreserved() const;
 	void boxClosing(const char *caseName, bool targetActive,
-					bool activeAccountUnchanged, bool layerShown) {
-		const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
-		const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
-		std::fprintf(stderr,
-					 "Session controls regression: admin_box_closing case=%s "
-					 "phase=%s last_event=%s event_widget=%s event_age_ms=%lld "
-					 "last_input=%s input_widget=%s key=%d button=%d "
-					 "input_age_ms=%lld target_active=%d account_unchanged=%d "
-					 "layer_shown=%d.\n",
-					 caseName, _phase, _event, _eventWidget,
-					 static_cast<long long>(eventAge), _input, _inputWidget,
-					 _key, _button, static_cast<long long>(inputAge),
-					 targetActive, activeAccountUnchanged, layerShown);
-		_closed = true;
-	}
-
-	[[nodiscard]] bool closed() const { return _closed; }
-
-	bool eventFilter(QObject *watched, QEvent *event) override {
-		if (event->type() == QEvent::ApplicationDeactivate) {
-			_event = "application_deactivate";
-			_eventWidget = "QCoreApplication";
-			_eventAge.start();
-			return false;
-		}
-		const auto root = _root.data();
-		const auto widget = qobject_cast<QWidget *>(watched);
-		if (!root || !widget
-			|| (widget != root && !root->isAncestorOf(widget))) {
-			return false;
-		}
-		const auto record
-			= [&](const char *name, int key, int button, bool input) {
-				  _event = name;
-				  _eventWidget = widget->metaObject()->className();
-				  _eventAge.start();
-				  if (input) {
-					  _input = name;
-					  _inputWidget = _eventWidget;
-					  _key = key;
-					  _button = button;
-					  _inputAge.start();
-				  }
-			  };
-		switch (event->type()) {
-		case QEvent::KeyPress: {
-			const auto keyEvent = static_cast<QKeyEvent *>(event);
-			record("key_press", keyEvent->key(), 0, true);
-		} break;
-		case QEvent::MouseButtonPress:
-		case QEvent::MouseButtonRelease: {
-			const auto mouseEvent = static_cast<QMouseEvent *>(event);
-			record(event->type() == QEvent::MouseButtonPress ? "mouse_press"
-															 : "mouse_release",
-				   0, int(mouseEvent->button()), true);
-		} break;
-		case QEvent::WindowDeactivate:
-			record("window_deactivate", 0, 0, false);
-			break;
-		case QEvent::FocusOut:
-			record("focus_out", 0, 0, false);
-			break;
-		case QEvent::Shortcut:
-			record("shortcut", 0, 0, true);
-			break;
-		default:
-			break;
-		}
-		return false;
-	}
+					bool activeAccountUnchanged, bool layerShown);
+	[[nodiscard]] bool closed() const;
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
 	QPointer<QWidget> _root;
@@ -5029,6 +4947,103 @@ class RegressionBoxCloseEventTrace final : public QObject {
 	bool _closed = false;
 	bool _inactiveWindowPreserved = true;
 };
+
+RegressionBoxCloseEventTrace::RegressionBoxCloseEventTrace(
+	not_null<QWidget *> root)
+	: _root(root.get()) {
+	QCoreApplication::instance()->installEventFilter(this);
+}
+
+RegressionBoxCloseEventTrace::~RegressionBoxCloseEventTrace() {
+	if (const auto app = QCoreApplication::instance()) {
+		app->removeEventFilter(this);
+	}
+}
+
+void RegressionBoxCloseEventTrace::setPhase(const char *phase) {
+	_phase = phase;
+}
+
+void RegressionBoxCloseEventTrace::setInactiveWindowPreserved(bool preserved) {
+	_inactiveWindowPreserved = preserved;
+}
+
+bool RegressionBoxCloseEventTrace::inactiveWindowPreserved() const {
+	return _inactiveWindowPreserved;
+}
+
+void RegressionBoxCloseEventTrace::boxClosing(const char *caseName,
+											  bool targetActive,
+											  bool activeAccountUnchanged,
+											  bool layerShown) {
+	const auto eventAge = _eventAge.isValid() ? _eventAge.elapsed() : -1;
+	const auto inputAge = _inputAge.isValid() ? _inputAge.elapsed() : -1;
+	std::fprintf(stderr,
+				 "Session controls regression: admin_box_closing case=%s "
+				 "phase=%s last_event=%s event_widget=%s event_age_ms=%lld "
+				 "last_input=%s input_widget=%s key=%d button=%d "
+				 "input_age_ms=%lld target_active=%d account_unchanged=%d "
+				 "layer_shown=%d.\n",
+				 caseName, _phase, _event, _eventWidget,
+				 static_cast<long long>(eventAge), _input, _inputWidget, _key,
+				 _button, static_cast<long long>(inputAge), targetActive,
+				 activeAccountUnchanged, layerShown);
+	_closed = true;
+}
+
+bool RegressionBoxCloseEventTrace::closed() const { return _closed; }
+
+bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
+											   QEvent *event) {
+	if (event->type() == QEvent::ApplicationDeactivate) {
+		_event = "application_deactivate";
+		_eventWidget = "QCoreApplication";
+		_eventAge.start();
+		return false;
+	}
+	const auto root = _root.data();
+	const auto widget = qobject_cast<QWidget *>(watched);
+	if (!root || !widget || (widget != root && !root->isAncestorOf(widget))) {
+		return false;
+	}
+	const auto record = [&](const char *name, int key, int button, bool input) {
+		_event = name;
+		_eventWidget = widget->metaObject()->className();
+		_eventAge.start();
+		if (input) {
+			_input = name;
+			_inputWidget = _eventWidget;
+			_key = key;
+			_button = button;
+			_inputAge.start();
+		}
+	};
+	switch (event->type()) {
+	case QEvent::KeyPress: {
+		const auto keyEvent = static_cast<QKeyEvent *>(event);
+		record("key_press", keyEvent->key(), 0, true);
+	} break;
+	case QEvent::MouseButtonPress:
+	case QEvent::MouseButtonRelease: {
+		const auto mouseEvent = static_cast<QMouseEvent *>(event);
+		record(event->type() == QEvent::MouseButtonPress ? "mouse_press"
+														 : "mouse_release",
+			   0, int(mouseEvent->button()), true);
+	} break;
+	case QEvent::WindowDeactivate:
+		record("window_deactivate", 0, 0, false);
+		break;
+	case QEvent::FocusOut:
+		record("focus_out", 0, 0, false);
+		break;
+	case QEvent::Shortcut:
+		record("shortcut", 0, 0, true);
+		break;
+	default:
+		break;
+	}
+	return false;
+}
 
 [[nodiscard]] bool RunStoryControlsVisibilityRegression(
 	not_null<Window::SessionController *> controller, bool supported,
