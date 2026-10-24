@@ -219,6 +219,9 @@ jobs:
         variant: ["non-store"]
     env:
       BUILD_VARIANT: ${{ matrix.variant }}
+      HEAD_SHA: ${{ github.sha }}
+      BASE_SHA: not_merged
+      TESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only && 'not_merged' || github.sha }}
       UPLOAD_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && matrix.variant == 'non-store' && 'true' || 'false' }}
       ONLY_CACHE: "false"
       CCACHE_MAXSIZE: "5G"
@@ -246,9 +249,44 @@ jobs:
       - name: Clone.
         uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: false
           fetch-depth: 0
           path: ${{ env.REPO_NAME }}
+
+      - name: Merge current dev for dispatched branches.
+        id: merge-dev
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only }}
+        run: |
+          set -Eeuo pipefail
+          head_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
+          base_sha=not_fetched
+          tested_sha=not_merged
+          write_merge_state() {
+            printf 'head_sha=%s\nbase_sha=%s\ntested_sha=%s\n' \
+              "$head_sha" "$base_sha" "$tested_sha" >> "$GITHUB_OUTPUT"
+            printf 'HEAD_SHA=%s\nBASE_SHA=%s\nTESTED_SHA=%s\n' \
+              "$head_sha" "$base_sha" "$tested_sha" >> "$GITHUB_ENV"
+          }
+          write_merge_state
+          if ! git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev:refs/remotes/origin/dev; then
+            echo "::error::Unable to fetch dev for $GITHUB_REF_NAME."
+            exit 1
+          fi
+          base_sha="$(git -C "$REPO_NAME" rev-parse origin/dev)"
+          write_merge_state
+          if ! git -C "$REPO_NAME" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' merge --no-edit --no-ff "$base_sha"; then
+            if [[ -n "$(git -C "$REPO_NAME" diff --name-only --diff-filter=U)" ]]; then
+              echo "::error::$GITHUB_REF_NAME conflicts with dev at $base_sha; update the branch from dev"
+            else
+              echo "::error::Unable to merge dev at $base_sha into $GITHUB_REF_NAME; update the branch from dev"
+            fi
+            exit 1
+          fi
+          tested_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"
+          write_merge_state
+
+      - name: Update submodules.
+        run: git -C "$REPO_NAME" submodule update --init --recursive
 
       - name: Set macOS dependency image tag.
         env:
@@ -270,12 +308,15 @@ jobs:
           printf 'PR merge-head SHA: %s\n' "$actual_sha"
 
       - name: Initialize workflow evidence.
-        if: github.event_name != 'pull_request'
+        if: ${{ always() && github.event_name != 'pull_request' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
           mkdir -p "$evidence"
-          printf 'tested_sha=%s\nvariant=%s\n' "$GITHUB_SHA" "$BUILD_VARIANT" > "$evidence/run.txt"
+          printf 'HEAD_SHA=%s\nBASE_SHA=%s\nTESTED_SHA=%s\n' \
+            "$HEAD_SHA" "$BASE_SHA" "$TESTED_SHA" >> "$GITHUB_ENV"
+          printf 'head_sha=%s\nbase_sha=%s\ntested_sha=%s\nvariant=%s\n' \
+            "$HEAD_SHA" "$BASE_SHA" "$TESTED_SHA" "$BUILD_VARIANT" > "$evidence/run.txt"
 
       - name: Verify Teagram identity contract.
         run: bash "$REPO_NAME/Telegram/build/test_mac_identity.sh" "$REPO_NAME" identity
@@ -348,7 +389,7 @@ jobs:
             exit 1
           fi
           printf 'tested_sha=%s\nvariant=build_macstore\nresult=unsupported\nconfigure_exit_status=%s\n' \
-            "$GITHUB_SHA" "$rejection_status" \
+            "$TESTED_SHA" "$rejection_status" \
             > "$evidence/macstore-rejection-status.txt"
 
       - name: Log in to GitHub Container Registry.
@@ -494,7 +535,7 @@ jobs:
           launch_pid=""
           record_launch_status() {
             printf 'tested_sha=%s\nvariant=%s\nexit_status=%s\n' \
-              "$GITHUB_SHA" "$BUILD_VARIANT" "$launch_status" \
+              "$TESTED_SHA" "$BUILD_VARIANT" "$launch_status" \
               > "$evidence/launch-smoke-status.txt"
             printf 'Teagram launch child exit status: %s\n' "$launch_status" \
               | tee -a "$GITHUB_STEP_SUMMARY"
@@ -540,8 +581,8 @@ jobs:
             echo "Teagram exited with status $launch_status after launch."
             exit 1
           fi
-          echo "Teagram launch smoke test passed on $GITHUB_SHA."
-          echo "Teagram launch smoke test passed on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          echo "Teagram launch smoke test passed on $TESTED_SHA."
+          echo "Teagram launch smoke test passed on $TESTED_SHA." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run isolation observer self-tests (informational).
         if: ${{ always() && env.UPLOAD_ARTIFACT == 'true' }}
@@ -582,12 +623,12 @@ jobs:
             echo "::error::Could not retain profile/IPC integration logs for variant=$BUILD_VARIANT."
           fi
           printf 'tested_sha=%s\nvariant=%s\nexit_status=%s\n' \
-            "$GITHUB_SHA" "$BUILD_VARIANT" "$test_status" \
+            "$TESTED_SHA" "$BUILD_VARIANT" "$test_status" \
             > "$evidence/profile-ipc-${BUILD_VARIANT}-status.txt"
           {
             printf '### Protected profile and IPC: %s\n\n' "$BUILD_VARIANT"
             printf -- '- Tested SHA: `%s`\n- Exit status: `%s`\n' \
-              "$GITHUB_SHA" "$test_status"
+              "$TESTED_SHA" "$test_status"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$test_status"
 
@@ -620,9 +661,9 @@ jobs:
             local status=$?
             if [ "$status" -ne 0 ]; then
               printf 'full_chat_info_session_regression=FAIL tested_sha=%s exit_status=%s\n' \
-                "$GITHUB_SHA" "$status" >&2
+                "$TESTED_SHA" "$status" >&2
               printf 'Full chat info session regression failed on %s (exit status %s).\n' \
-                "$GITHUB_SHA" "$status" >> "$GITHUB_STEP_SUMMARY"
+                "$TESTED_SHA" "$status" >> "$GITHUB_STEP_SUMMARY"
             fi
           }
           trap report_lifecycle_failure EXIT
@@ -641,7 +682,7 @@ jobs:
           }
 
           {
-            printf 'Built SHA: %s\n' "$GITHUB_SHA"
+            printf 'Built SHA: %s\n' "$TESTED_SHA"
             printf 'Environment: ALSOFT_DRIVERS=null TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1\n'
             printf 'HOME: %s\nWorkdir: %s\n' "$regression_home" "$regression_work"
             printf 'Runner: %s (%s)\n' "$RUNNER_NAME" "$RUNNER_OS"
@@ -967,7 +1008,7 @@ jobs:
           if grep -Eq 'EXC_(BAD_ACCESS|BREAKPOINT|CRASH)|SIG(SEGV|ABRT|BUS)' "$diagnostics/lldb.log"; then
             if [ -z "$faulting_frame" ]; then
               echo "Crash reproduced, but LLDB did not symbolize the faulting Teagram frame despite passing the DWARF prerequisite." >> "$diagnostics/metadata.txt"
-              echo "Crash reproduced without a symbolized faulting Teagram frame on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+              echo "Crash reproduced without a symbolized faulting Teagram frame on $TESTED_SHA." >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
             printf 'Faulting Teagram frame: %s\n' "$faulting_frame" >> "$diagnostics/metadata.txt"
@@ -988,7 +1029,7 @@ jobs:
             exit 1
           fi
           mutation_evidence="$diagnostics/deferred-switch-mutation-evidence.txt"
-          printf 'Tested SHA: %s\n' "$GITHUB_SHA" > "$mutation_evidence"
+          printf 'Tested SHA: %s\n' "$TESTED_SHA" > "$mutation_evidence"
           awk '
             /Online update lifecycle: case=mutation-remove-deferred / { removed = $0; removed_count++ }
             /Online update lifecycle: case=mutation-duplicate-deferred / { duplicated = $0; duplicated_count++ }
@@ -1007,9 +1048,9 @@ jobs:
               print duplicated_result
             }
           ' "$diagnostics/stderr.log" >> "$mutation_evidence"
-          printf 'full_chat_info_session_regression=PASS tested_sha=%s\n' "$GITHUB_SHA"
+          printf 'full_chat_info_session_regression=PASS tested_sha=%s\n' "$TESTED_SHA"
           printf 'Full chat info session regression passed on %s.\n' \
-            "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            "$TESTED_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report skipped full chat info session regression.
         if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}
@@ -1032,7 +1073,8 @@ jobs:
           set -Eeuo pipefail
           {
             printf '### macOS Teagram validation: %s\n\n' "$BUILD_VARIANT"
-            printf -- '- Tested SHA: `%s`\n' "$GITHUB_SHA"
+            printf -- '- `head_sha`: `%s`\n- `base_sha`: `%s`\n- `tested_sha`: `%s`\n' \
+              "$HEAD_SHA" "$BASE_SHA" "$TESTED_SHA"
             printf -- '- Mac App Store rejection check: `%s`\n- Build: `%s`\n- Artifact verification: `%s`\n- Profile/IPC harness: `%s`\n- Full chat info session regression: `%s`\n' \
               "$STORE_REJECTION_OUTCOME" "$BUILD_OUTCOME" "$ARTIFACT_OUTCOME" \
               "$PROFILE_IPC_OUTCOME" "$LIFECYCLE_OUTCOME"
