@@ -95,18 +95,22 @@ public:
 
 	void setLinkPlaceholder(const QString &placeholder);
 	void setMaxLength(int maxLength);
+	void setReadOnlyWithDescription(const QString &description);
+	void setTextFromAccessibility(const QString &text, int cursorAfterEdit);
 
-protected:
-  void keyPressEvent(QKeyEvent *e) override;
-  void correctValue(const QString &was, int wasCursor, QString &now,
-					int &nowCursor) override;
-  void paintAdditionalPlaceholder(QPainter &p) override;
+  protected:
+	void keyPressEvent(QKeyEvent *e) override;
+	void correctValue(const QString &was, int wasCursor, QString &now,
+					  int &nowCursor) override;
+	void paintAdditionalPlaceholder(QPainter &p) override;
 
-private:
+  private:
 	QString _linkPlaceholder;
 	int _maxLength = 0;
 
 };
+
+void InitUsernameInputAccessibility();
 
 class PhoneInput : public MaskedInputField {
 public:

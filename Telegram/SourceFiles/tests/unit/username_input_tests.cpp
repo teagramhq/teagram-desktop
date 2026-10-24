@@ -17,6 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QResource>
+#include <QtGui/QAccessible>
+#include <QtGui/QClipboard>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
@@ -74,6 +76,7 @@ class UsernameInputFixture final {
   public:
 	UsernameInputFixture() {
 		Ui::Integration::Set(&Integration());
+		Ui::InitUsernameInputAccessibility();
 		style::internal::StartFonts();
 		style::StartManager(style::kScaleDefault);
 		_animations = std::make_unique<Ui::Animations::Manager>();
@@ -233,4 +236,126 @@ TEST_CASE(ReadOnlyUsernameInputRejectsWordDeletion) {
 		}
 		fixture.processPostponedCalls();
 	}
+}
+
+TEST_CASE(ReadOnlyUsernameInputIsNotAccessibleAsEditable) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto fontResource = QResource(u":/gui/fonts/OpenSans-Regular.ttf"_q);
+	CHECK(fontResource.isValid());
+	if (!fontResource.isValid()) {
+		return;
+	}
+
+	const auto hasFont = bool(st::defaultInputField.style.font);
+	CHECK(hasFont);
+	if (!hasFont) {
+		return;
+	}
+
+	auto input = Ui::UsernameInput(nullptr, st::defaultInputField,
+								   rpl::single(u"@username"_q), u"operator"_q,
+								   QString());
+	const auto description
+		= u"You sign in with your username, so it can't be changed."_q;
+	input.setReadOnlyWithDescription(description);
+	const auto accessible = QAccessible::queryAccessibleInterface(&input);
+	CHECK(accessible != nullptr);
+	if (!accessible) {
+		return;
+	}
+
+	const auto state = accessible->state();
+	CHECK(state.readOnly);
+	CHECK(!state.editable);
+	CHECK(state.selectableText);
+	CHECK_EQ(accessible->text(QAccessible::Value), u"operator"_q);
+	CHECK_EQ(accessible->text(QAccessible::Description), description);
+	accessible->setText(QAccessible::Value, u"changed"_q);
+	CHECK_EQ(input.text(), u"operator"_q);
+	const auto text = accessible->textInterface();
+	CHECK(text != nullptr);
+	if (!text) {
+		return;
+	}
+	CHECK(accessible->interface_cast(QAccessible::EditableTextInterface)
+		  == nullptr);
+	text->setSelection(0, 0, input.text().size());
+	CHECK_EQ(input.selectedText(), u"operator"_q);
+	const auto copy = QKeySequence::keyBindings(QKeySequence::Copy);
+	CHECK(!copy.isEmpty());
+	if (copy.isEmpty()) {
+		return;
+	}
+	const auto copyKey = copy.front()[0];
+	auto copyEvent = QKeyEvent(QEvent::KeyPress, copyKey.key(),
+							   copyKey.keyboardModifiers());
+	QCoreApplication::sendEvent(&input, &copyEvent);
+	CHECK_EQ(QApplication::clipboard()->text(), u"operator"_q);
+
+	auto valueEditable = Ui::UsernameInput(nullptr, st::defaultInputField,
+										   rpl::single(u"@username"_q),
+										   u"operator"_q, QString());
+	const auto valueAccessible
+		= QAccessible::queryAccessibleInterface(&valueEditable);
+	CHECK(valueAccessible != nullptr);
+	if (!valueAccessible) {
+		return;
+	}
+	valueAccessible->setText(QAccessible::Value, u" new_name "_q);
+	CHECK_EQ(valueEditable.text(), u"new_name"_q);
+	CHECK_EQ(valueEditable.cursorPosition(), 8);
+	auto valueTypingEvent
+		= QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, u"x"_q);
+	QCoreApplication::sendEvent(&valueEditable, &valueTypingEvent);
+	CHECK_EQ(valueEditable.text(), u"new_namex"_q);
+	CHECK_EQ(valueEditable.cursorPosition(), 9);
+
+	auto editable = Ui::UsernameInput(nullptr, st::defaultInputField,
+									  rpl::single(u"@username"_q),
+									  u"operator"_q, QString());
+	const auto editableAccessible
+		= QAccessible::queryAccessibleInterface(&editable);
+	CHECK(editableAccessible != nullptr);
+	if (!editableAccessible) {
+		return;
+	}
+	CHECK(editableAccessible->state().editable);
+	CHECK(!editableAccessible->state().readOnly);
+	auto usernameFlow = Ui::EditPeer::UsernameEditorFlow();
+	usernameFlow.inputChanged(editable.text(), true);
+	auto editableChanges = 0;
+	QObject::connect(&editable, &Ui::MaskedInputField::changed, &editable, [&] {
+		++editableChanges;
+		usernameFlow.inputChanged(editable.text(), false);
+	});
+	editableAccessible->setText(QAccessible::Value, u" new_name "_q);
+	CHECK_EQ(editable.text(), u"new_name"_q);
+	CHECK_EQ(editable.getLastText(), u"new_name"_q);
+	CHECK_EQ(editableChanges, 1);
+	const auto editableText = editableAccessible->editableTextInterface();
+	CHECK(editableText != nullptr);
+	if (editableText) {
+		editableText->insertText(8, u"_next"_q);
+		CHECK_EQ(editable.text(), u"new_name_next"_q);
+		CHECK_EQ(editable.getLastText(), u"new_name_next"_q);
+		CHECK_EQ(editable.cursorPosition(), 13);
+		CHECK_EQ(editableChanges, 2);
+		auto typingEvent
+			= QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, u"x"_q);
+		QCoreApplication::sendEvent(&editable, &typingEvent);
+		CHECK_EQ(editable.text(), u"new_name_nextx"_q);
+		CHECK_EQ(editable.cursorPosition(), 14);
+		CHECK_EQ(editableChanges, 3);
+	}
+	auto submittedUsername = QString();
+	CHECK(usernameFlow.saveAccount(
+		[&](const QString &username) { submittedUsername = username; }));
+	CHECK_EQ(submittedUsername, u"new_name_nextx"_q);
 }

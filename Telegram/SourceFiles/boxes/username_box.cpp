@@ -43,7 +43,7 @@ public:
 
 	void setInnerFocus();
 	void setEnabled(bool value);
-	void setReadOnly();
+	void setReadOnly(const QString &description);
 	[[nodiscard]] rpl::producer<> submitted() const;
 	[[nodiscard]] rpl::producer<> save();
 	[[nodiscard]] rpl::producer<UsernameCheckInfo> checkInfoChanged() const;
@@ -134,11 +134,11 @@ void UsernameEditor::setEnabled(bool value) {
 	_username->setDisplayFocused(value);
 }
 
-void UsernameEditor::setReadOnly() {
+void UsernameEditor::setReadOnly(const QString &description) {
 	_usernameEditorFlow.setReadOnly();
 	_checkTimer.cancel();
 	_api.request(base::take(_checkRequestId)).cancel();
-	_username->setReadOnly(true);
+	_username->setReadOnlyWithDescription(description);
 	_username->setDisplayFocused(true);
 }
 
@@ -394,6 +394,9 @@ void FillUsernamesBox(
 	const auto readOnlyAccountUsername
 		= !isBot && peer->isUser() && peer->isSelf()
 		  && !peer->session().accountUsernameEditSupported();
+	const auto usernameUnavailable
+		= readOnlyAccountUsername
+		  && peer->asUser()->editableUsername().isEmpty();
 	box->setTitle(isBot
 		? tr::lng_bot_username_title()
 		: tr::lng_username_title());
@@ -404,14 +407,15 @@ void FillUsernamesBox(
 		object_ptr<UsernameEditor>(box, peer),
 		style::margins());
 	if (readOnlyAccountUsername) {
-		editor->setReadOnly();
+		editor->setReadOnly(usernameUnavailable
+								? tr::lng_username_unavailable_about(tr::now)
+								: tr::lng_username_immutable_about(tr::now));
 	} else {
 		editor->setEnabled(!isBot);
 	}
 	box->setFocusCallback([=] { editor->setInnerFocus(); });
 	if (readOnlyAccountUsername) {
-		const auto user = peer->asUser();
-		Ui::AddDividerText(container, user->editableUsername().isEmpty()
+		Ui::AddDividerText(container, usernameUnavailable
 										  ? tr::lng_username_unavailable_about()
 										  : tr::lng_username_immutable_about());
 		for (const auto key : {
