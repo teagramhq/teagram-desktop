@@ -3792,8 +3792,7 @@ template <typename Condition>
 			= stockController->content()->sectionStackCountsForRegressionTest();
 		const auto infoCounts
 			= CountSettingsDeepLinkInfoSections(stockController);
-		return (counts.mainSettings == 1)
-			   && (counts.mainSectionVisible == 1)
+		return (counts.mainSettings == 1) && (counts.mainSectionVisible == 1)
 			   && (infoCounts.settingsWraps == 1)
 			   && (infoCounts.settingsType
 				   == static_cast<const void *>(type.get()));
