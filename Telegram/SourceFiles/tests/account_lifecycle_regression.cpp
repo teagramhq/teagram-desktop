@@ -864,6 +864,24 @@ void ReportDeferredOnlineUpdateDispatchCounts(
 	std::fprintf(stderr, "\n");
 }
 
+void ReportDeferredOnlineUpdateDispatchDeltas(
+	const char *observation, const DeferredOnlineUpdateDispatchCounts &stock,
+	const DeferredOnlineUpdateDispatchCounts &pinned) {
+	const auto print = [](const char *role,
+						  const DeferredOnlineUpdateDispatchCounts &counts) {
+		std::fprintf(stderr,
+					 " %s{setup_enqueued=%d setup_executed=%d "
+					 "close_enqueued=%d close_executed=%d}",
+					 role, counts.setupEnqueued, counts.setupExecuted,
+					 counts.closeSwitchEnqueued, counts.closeSwitchExecuted);
+	};
+	std::fprintf(stderr, "Deferred online callback delta: observation=%s",
+				 observation);
+	print("stock", stock);
+	print("pinned", pinned);
+	std::fprintf(stderr, "\n");
+}
+
 [[nodiscard]] bool
 WaitForDeferredOnlineUpdateDispatchesToSettle(Main::Session &stock,
 											  Main::Session &pinned,
@@ -8815,8 +8833,6 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"unsupported "
 			"session, or stopped working after switching back to stock");
 	}
-	// Drain setup switches while the blocked discarded session is still alive;
-	// their deferred callbacks are separate from the teardown assertions below.
 	if (!WaitForMainQueueBarrier()) {
 		return failPrerequisite(
 			"main-thread queue did not drain after blocked-session setup");
@@ -8829,37 +8845,33 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		= pinned->session()
 			  .updates()
 			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
-	ReportDeferredOnlineUpdateDispatchCounts(
-		"setup before queued switch fixture settle",
-		stockSetupDispatchesBeforeQueuedSwitches,
-		pinnedSetupDispatchesBeforeQueuedSwitches);
-	const auto queuedSwitchSetupSettled
-		= WaitForDeferredOnlineUpdateDispatchesToSettle(
-			stock->session(), pinned->session(),
-			DeferredOnlineUpdatePhase::Setup);
-	const auto stockSetupDispatchesAfterQueuedSwitches
-		= stock->session()
-			  .updates()
-			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
-	const auto pinnedSetupDispatchesAfterQueuedSwitches
-		= pinned->session()
-			  .updates()
-			  .deferredOnlineUpdateDispatchCountsForRegressionTest();
-	ReportDeferredOnlineUpdateDispatchCounts(
-		"setup after queued switch fixture settle",
-		stockSetupDispatchesAfterQueuedSwitches,
-		pinnedSetupDispatchesAfterQueuedSwitches);
-	const auto stockSetupOutstanding = DeferredOnlineUpdateDispatchOutstanding(
-		stockSetupDispatchesAfterQueuedSwitches,
-		DeferredOnlineUpdatePhase::Setup);
-	const auto pinnedSetupOutstanding = DeferredOnlineUpdateDispatchOutstanding(
-		pinnedSetupDispatchesAfterQueuedSwitches,
-		DeferredOnlineUpdatePhase::Setup);
-	if (!queuedSwitchSetupSettled || stockSetupOutstanding != 0
-		|| pinnedSetupOutstanding != 0) {
-		return failPrerequisite("setup switch callbacks did not settle before "
-								"queued teardown fixture");
+	if (DeferredOnlineUpdateDispatchOutstanding(
+			stockSetupDispatchesBeforeQueuedSwitches,
+			DeferredOnlineUpdatePhase::Setup)
+		!= 0
+		|| DeferredOnlineUpdateDispatchOutstanding(
+			pinnedSetupDispatchesBeforeQueuedSwitches,
+			DeferredOnlineUpdatePhase::Setup)
+			!= 0) {
+		return failPrerequisite(
+			"setup switch callbacks were pending after the main queue barrier");
 	}
+	const auto reportQueuedDispatchDeltas = [&](const char *observation) {
+		const auto stockCurrent
+			= stock->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto pinnedCurrent
+			= pinned->session()
+				  .updates()
+				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		ReportDeferredOnlineUpdateDispatchDeltas(
+			observation,
+			DeferredOnlineUpdateDispatchDelta(
+				stockCurrent, stockSetupDispatchesBeforeQueuedSwitches),
+			DeferredOnlineUpdateDispatchDelta(
+				pinnedCurrent, pinnedSetupDispatchesBeforeQueuedSwitches));
+	};
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
 	const auto pinnedBeforeQueuedSwitches
@@ -8925,8 +8937,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"queued teardown-to-stock switch missed its inline session update");
 	}
+	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
+		DeferredOnlineUpdatePhase::CloseSwitch);
+	reportQueuedDispatchDeltas("after queued switch fixture");
 	const auto discardedAtTeardown = discardedQueuedThird;
 	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
+	reportQueuedDispatchDeltas("after discarded window creation");
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
 	if (!discardedController) {
@@ -8944,9 +8960,11 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
+	reportQueuedDispatchDeltas("after destroyed-session link dispatch");
 	const auto discardedServerCacheBindingFiles
 		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
+	reportQueuedDispatchDeltas("after destroyed-session logout");
 	if (discarded->sessionExists()) {
 		return failPrerequisite(
 			"previous-session teardown fixture was not destroyed");
@@ -8964,6 +8982,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
+	closeSwitchPhase.restore();
+	reportQueuedDispatchDeltas("after destroyed-session event processing");
 	if (!discardedLifetime.empty()) {
 		return failPrerequisite(
 			"previous-session account survived after its window closed");
