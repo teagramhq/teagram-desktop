@@ -219,6 +219,15 @@ class SessionPrivateTestAccess final {
 		return session._sessionSalt;
 	}
 
+	static bool HasPendingAck(SessionPrivate &session, mtpMsgId messageId) {
+		for (const auto &ack : session._ackRequestData) {
+			if (ack.v == messageId) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	static size_t ReceivedCount(SessionData &data) {
 		QReadLocker locker(data.haveReceivedMutex());
 		return data.haveReceivedMessages().size();
@@ -298,16 +307,15 @@ void AppendLong(mtpBuffer &buffer, uint64 value) {
 	return (uint64(base::unixtime::now()) << 32) | low;
 }
 
-[[nodiscard]] mtpBuffer MakeAuthenticatedServerPacket(const AuthKeyPtr &key,
-													  uint64 salt,
-													  uint64 sessionId,
-													  mtpMsgId messageId,
-													  const mtpBuffer &body) {
+[[nodiscard]] mtpBuffer
+MakeAuthenticatedServerPacket(const AuthKeyPtr &key, uint64 salt,
+							  uint64 sessionId, mtpMsgId messageId,
+							  const mtpBuffer &body, uint32 seqNo = 0) {
 	auto decrypted = mtpBuffer(8 + body.size() + 3);
 	memcpy(decrypted.data(), &salt, sizeof(salt));
 	memcpy(decrypted.data() + 2, &sessionId, sizeof(sessionId));
 	memcpy(decrypted.data() + 4, &messageId, sizeof(messageId));
-	decrypted[6] = 0;
+	decrypted[6] = seqNo;
 	decrypted[7] = body.size() * sizeof(mtpPrime);
 	memcpy(decrypted.data() + 8, body.constData(),
 		   body.size() * sizeof(mtpPrime));
@@ -479,4 +487,77 @@ TEST_CASE(IdleReconnectResumesUsernameCheckWithStoredKey) {
 
 TEST_CASE(IdleReconnectResumesUsernameCheckWithFreshKey) {
 	RunReconnectScenario(AuthKey::Type::Generated);
+}
+
+TEST_CASE(DuplicateOddSeqnoReplyIsAcknowledgedAfterReconnect) {
+	constexpr auto kSessionId = uint64(0x1122334455667788ULL);
+	constexpr auto kSessionSalt = uint64(42);
+	constexpr auto kRequestId = mtpRequestId(17);
+	const auto duplicateMessageId = ServerMessageId();
+	auto log = std::make_shared<TransportLog>();
+	auto session = std::unique_ptr<SessionPrivate>();
+	UnitConnectionInited = true;
+	UnitNeedToResumeAndSend = [&] {
+		if (session) {
+			session->tryToSend();
+		}
+	};
+	const auto resetHooks = gsl::finally([] {
+		UnitConnectionInited = false;
+		UnitNeedToResumeAndSend = nullptr;
+	});
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	session = SessionPrivateTestAccess::Create(data);
+	const auto key = MakeTestAuthKey(AuthKey::Type::ReadFromFile);
+	auto connection = ConnectionPointer::New<FakeTransport>(
+		QThread::currentThread(), ProxyData(), log);
+	SessionPrivateTestAccess::StartConnected(*session, std::move(connection),
+											 key, kSessionId, kSessionSalt);
+	{
+		QWriteLocker locker(data->toSendMutex());
+		data->toSendMap().emplace(kRequestId,
+								  MakeUsernameCheckRequest(kRequestId));
+	}
+	session->tryToSend();
+	const auto requestMsgId
+		= SessionPrivateTestAccess::SentMessageId(*session, kRequestId);
+	CHECK(requestMsgId != 0);
+	const auto retransmitted = MakeAuthenticatedServerPacket(
+		key, kSessionSalt, kSessionId, duplicateMessageId,
+		MakeUsernameCheckReply(requestMsgId), 1);
+	SessionPrivateTestAccess::Receive(*session, retransmitted);
+	CHECK_EQ(session->getState(), ConnectedState);
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(1));
+	CHECK(
+		SessionPrivateTestAccess::HasPendingAck(*session, duplicateMessageId));
+
+	session->tryToSend();
+	CHECK(
+		!SessionPrivateTestAccess::HasPendingAck(*session, duplicateMessageId));
+	CHECK(!log->sent.empty());
+	log->sent.clear();
+
+	SessionPrivateTestAccess::IdleDisconnect(*session);
+	CHECK(session->getState() < 0);
+	SessionPrivateTestAccess::Reconnect(
+		*session, ConnectionPointer::New<FakeTransport>(
+					  QThread::currentThread(), ProxyData(), log));
+	SessionPrivateTestAccess::Receive(*session, retransmitted);
+	CHECK_EQ(session->getState(), ConnectingState);
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(1));
+	CHECK(
+		SessionPrivateTestAccess::HasPendingAck(*session, duplicateMessageId));
+
+	const auto reconnectReply = MakeAuthenticatedServerPacket(
+		key, kSessionSalt, kSessionId, ServerMessageId(), MakeUntrackedPong());
+	SessionPrivateTestAccess::Receive(*session, reconnectReply);
+	CHECK_EQ(session->getState(), ConnectedState);
+	CHECK_EQ(quint64(SessionPrivateTestAccess::ReceivedCount(*data)),
+			 quint64(1));
+	CHECK(
+		!SessionPrivateTestAccess::HasPendingAck(*session, duplicateMessageId));
+	CHECK(!log->sent.empty());
 }

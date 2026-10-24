@@ -1520,8 +1520,12 @@ void SessionPrivate::handleReceived() {
 
 		const auto registered
 			= _receivedMessageIds.registerMsgId(msgId, needAck);
-		if (registered == ReceivedIdsManager::Result::Duplicate) {
-			continue;
+		const auto duplicate
+			= (registered == ReceivedIdsManager::Result::Duplicate);
+		if (duplicate) {
+			if (needAck) {
+				_ackRequestData.push_back(MTP_long(msgId));
+			}
 		} else if (registered == ReceivedIdsManager::Result::TooOld) {
 			res = HandleResult::ResetSession;
 		} else {
@@ -1538,13 +1542,18 @@ void SessionPrivate::handleReceived() {
 					.sessionSaltChanged = &sessionSaltChanged,
 				});
 		}
-		_receivedMessageIds.shrink();
+		if (!duplicate) {
+			_receivedMessageIds.shrink();
+		}
 
 		if (const auto toAckSize = _ackRequestData.size()) {
 			DEBUG_LOG(("MTP Info: will send %1 acks, ids: %2")
 						  .arg(toAckSize)
 						  .arg(LogIdsVector(_ackRequestData)));
 			_sessionData->queueSendAnything(kAckSendWaiting);
+		}
+		if (duplicate) {
+			continue;
 		}
 
 		auto lock = QReadLocker(_sessionData->haveReceivedMutex());
