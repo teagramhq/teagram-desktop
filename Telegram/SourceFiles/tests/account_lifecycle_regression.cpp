@@ -4000,8 +4000,6 @@ template <typename Condition>
 	{
 		const auto previousAnimationsDisabled = anim::Disabled();
 		anim::SetDisabled(true);
-		// Section slides run inside the nested wait below. Let animation
-		// ticks use its queued events instead of the outer-loop postpone queue.
 		Ui::Animations::Manager::SetScheduleWithInvokeQueued(true);
 		const auto restoreAnimations = gsl::finally([=] {
 			Ui::Animations::Manager::SetScheduleWithInvokeQueued(false);
