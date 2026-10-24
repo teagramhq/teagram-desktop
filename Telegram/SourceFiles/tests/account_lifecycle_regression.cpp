@@ -8868,12 +8868,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			stockCurrent, stockSetupDispatchesBeforeQueuedSwitches);
 		const auto pinnedDelta = DeferredOnlineUpdateDispatchDelta(
 			pinnedCurrent, pinnedSetupDispatchesBeforeQueuedSwitches);
-		ReportDeferredOnlineUpdateDispatchDeltas(
-			observation, stockDelta, pinnedDelta);
+		ReportDeferredOnlineUpdateDispatchDeltas(observation, stockDelta,
+												 pinnedDelta);
 		return (stockDelta.setupEnqueued == 1)
-			&& (pinnedDelta.setupEnqueued == 1)
-			&& (stockDelta.closeSwitchEnqueued == 0)
-			&& (pinnedDelta.closeSwitchEnqueued == 0);
+			   && (pinnedDelta.setupEnqueued == 1)
+			   && (stockDelta.closeSwitchEnqueued == 0)
+			   && (pinnedDelta.closeSwitchEnqueued == 0);
 	};
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
@@ -8947,8 +8947,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"queued switch fixture enqueued an extra live-session update");
 	}
 	const auto discardedAtTeardown = discardedQueuedThird;
-	const auto discardedWindow = app.ensureSeparateWindowFor(
-		Window::SeparateId(Window::SeparateType::Archive, &discarded->session()));
+	const auto discardedWindow = app.ensureSeparateWindowFor(Window::SeparateId(
+		Window::SeparateType::Archive, &discarded->session()));
 	if (!queuedDispatchesRemainBounded("after discarded window creation")) {
 		return failPrerequisite(
 			"discarded window creation enqueued an extra live-session update");
