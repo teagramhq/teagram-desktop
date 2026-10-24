@@ -8855,7 +8855,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failPrerequisite(
 			"setup switch callbacks were pending after the main queue barrier");
 	}
-	const auto reportQueuedDispatchDeltas = [&](const char *observation) {
+	const auto queuedDispatchesRemainBounded = [&](const char *observation) {
 		const auto stockCurrent
 			= stock->session()
 				  .updates()
@@ -8864,12 +8864,16 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			= pinned->session()
 				  .updates()
 				  .deferredOnlineUpdateDispatchCountsForRegressionTest();
+		const auto stockDelta = DeferredOnlineUpdateDispatchDelta(
+			stockCurrent, stockSetupDispatchesBeforeQueuedSwitches);
+		const auto pinnedDelta = DeferredOnlineUpdateDispatchDelta(
+			pinnedCurrent, pinnedSetupDispatchesBeforeQueuedSwitches);
 		ReportDeferredOnlineUpdateDispatchDeltas(
-			observation,
-			DeferredOnlineUpdateDispatchDelta(
-				stockCurrent, stockSetupDispatchesBeforeQueuedSwitches),
-			DeferredOnlineUpdateDispatchDelta(
-				pinnedCurrent, pinnedSetupDispatchesBeforeQueuedSwitches));
+			observation, stockDelta, pinnedDelta);
+		return (stockDelta.setupEnqueued == 1)
+			&& (pinnedDelta.setupEnqueued == 1)
+			&& (stockDelta.closeSwitchEnqueued == 0)
+			&& (pinnedDelta.closeSwitchEnqueued == 0);
 	};
 	const auto stockBeforeQueuedSwitches
 		= stock->session().updates().onlineUpdateCountsForRegressionTest();
@@ -8938,15 +8942,23 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	auto closeSwitchPhase = ScopedDeferredOnlineUpdatePhase(
 		DeferredOnlineUpdatePhase::CloseSwitch);
-	reportQueuedDispatchDeltas("after queued switch fixture");
+	if (!queuedDispatchesRemainBounded("after queued switch fixture")) {
+		return failPrerequisite(
+			"queued switch fixture enqueued an extra live-session update");
+	}
 	const auto discardedAtTeardown = discardedQueuedThird;
-	const auto discardedWindow = app.ensureSeparateWindowFor(discarded);
-	reportQueuedDispatchDeltas("after discarded window creation");
+	const auto discardedWindow = app.ensureSeparateWindowFor(
+		Window::SeparateId(Window::SeparateType::Archive, &discarded->session()));
+	if (!queuedDispatchesRemainBounded("after discarded window creation")) {
+		return failPrerequisite(
+			"discarded window creation enqueued an extra live-session update");
+	}
 	const auto discardedController
 		= discardedWindow ? discardedWindow->sessionController() : nullptr;
-	if (!discardedController) {
+	if (!discardedController || discardedWindow->isPrimary()) {
 		return failPrerequisite(
-			"could not create a controller for deferred call-link teardown");
+			"could not create a non-primary controller for deferred "
+			"call-link teardown");
 	}
 	const auto destroyedSessionChannelId = ChannelId(3051);
 	PrepareRegressionChannel(
@@ -8959,11 +8971,19 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		.voicechatHash = u"destroyed-session"_q,
 	});
 	ReportCallRegressionCheckpoint("destroyed-session link dispatched");
-	reportQueuedDispatchDeltas("after destroyed-session link dispatch");
+	if (!queuedDispatchesRemainBounded(
+			"after destroyed-session link dispatch")) {
+		return failPrerequisite(
+			"destroyed-session link dispatch enqueued an extra "
+			"live-session update");
+	}
 	const auto discardedServerCacheBindingFiles
 		= discarded->local().serverCacheBindingFilesForRegressionTest();
 	discarded->forcedLogOut();
-	reportQueuedDispatchDeltas("after destroyed-session logout");
+	if (!queuedDispatchesRemainBounded("after destroyed-session logout")) {
+		return failPrerequisite(
+			"destroyed-session logout enqueued an extra live-session update");
+	}
 	if (discarded->sessionExists()) {
 		return failPrerequisite(
 			"previous-session teardown fixture was not destroyed");
@@ -8982,7 +9002,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	QCoreApplication::processEvents();
 	ReportCallRegressionCheckpoint("destroyed-session events processed");
 	closeSwitchPhase.restore();
-	reportQueuedDispatchDeltas("after destroyed-session event processing");
+	if (!queuedDispatchesRemainBounded(
+			"after destroyed-session event processing")) {
+		return failPrerequisite(
+			"destroyed-session event processing enqueued an extra "
+			"live-session update");
+	}
 	if (!discardedLifetime.empty()) {
 		return failPrerequisite(
 			"previous-session account survived after its window closed");
