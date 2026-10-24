@@ -626,6 +626,7 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 for native_case in \
   settings-search \
   session-window-lifecycle \
@@ -728,6 +729,86 @@ require_native_start_before mini-app-open \
   'RunMiniAppOpenRefusalRegression('
 require_native_start_before settings-deep-link \
   'RunSettingsDeepLinkRefusalRegression('
+awk '
+  /^void LogWindowActivationForRegression/ { in_activation = 1 }
+  in_activation && /QGuiApplication::focusWindow\(\)/ { logs_focus_window = 1 }
+  in_activation && /->isActiveWindow\(\)/ { logs_active_window = 1 }
+  in_activation && /->windowState\(\)/ { logs_window_state = 1 }
+  in_activation \
+    && /Platform::LogWindowActivationStateForRegression\(widget\)/ {
+      logs_appkit_state = 1
+    }
+  in_activation && /^\[\[nodiscard\]\] bool/ { exit }
+  END {
+    exit !(logs_focus_window && logs_active_window &&
+      logs_window_state && logs_appkit_state)
+  }
+' "$native_harness" \
+  || contract_fail 'Window activation failures must log Qt and AppKit activation diagnostics.'
+for appkit_state in \
+  '[NSApp isActive]' \
+  '[NSApp keyWindow]' \
+  '[targetWindow isKeyWindow]' \
+  '[targetWindow canBecomeKeyWindow]'; do
+  grep -Fq "$appkit_state" "$mac_platform" \
+    || contract_fail "$mac_platform must log AppKit activation state: $appkit_state."
+done
+awk '
+  /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
+  in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
+  in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
+    custom_window_activations++
+    if (custom_window_activations == 1) {
+      custom_window_activation = NR
+    } else if (custom_window_activations == 2) {
+      unsupported_route_activation = NR
+    }
+  }
+  in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
+    custom_window_matrices++
+    custom_window_matrix = NR
+  }
+  in_settings && /dispatchMatrix\(blockedController, &stockController->window\(\)\)/ {
+    blocked_window_matrix = NR
+  }
+  in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
+    unsupported_route_checks = NR
+  }
+  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  END {
+    exit !(custom_window_activations == 2 && custom_window_matrices == 1 &&
+      custom_window_activation < custom_window_matrix &&
+      custom_window_matrix < blocked_window_matrix &&
+      blocked_window_matrix < unsupported_route_activation &&
+      unsupported_route_activation < unsupported_route_checks &&
+      unsupported_route_checks < ordinary_window_active)
+  }
+' "$native_harness" \
+  || contract_fail 'Settings deep-link checks must keep the base activation check and run the custom-active URL matrix once.'
+awk '
+  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  in_activation && /if \(!activated\)/ { activation_timeout = NR }
+  in_activation && /LogWindowActivationForRegression\(app, window\)/ {
+    activation_diagnostics = NR
+  }
+  in_activation && /return activated/ { exit }
+  END { exit !(activation_timeout && activation_diagnostics > activation_timeout) }
+' "$native_harness" \
+  || contract_fail 'Activation timeouts must log the target Qt and AppKit window state.'
+awk '
+  /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
+  in_settings && /if \(!ordinarySettingsStateRestored/ { ordinary_settings_failure = NR }
+  in_settings \
+    && /LogWindowActivationForRegression\(app, &pinnedController->window\(\)\)/ {
+      ordinary_settings_diagnostics = NR
+    }
+  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  END {
+    exit !(ordinary_settings_failure &&
+      ordinary_settings_diagnostics > ordinary_settings_failure)
+  }
+' "$native_harness" \
+  || contract_fail 'Ordinary Settings failures must log the target Qt and AppKit window state.'
 awk '
 /if \(authenticatedCacheOnly\) \{/ { in_cache_branch = 1; next }
 in_cache_branch && /const auto capabilitiesMatch/ { exit }
