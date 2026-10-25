@@ -2865,7 +2865,6 @@ ActivateWindowForRegression(Core::Application &app,
 		}
 	});
 	retry.start();
-	Platform::ActivateThisProcess(window->widget());
 	window->activate();
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
@@ -3223,6 +3222,7 @@ template <typename Condition>
 			  return true;
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		Platform::ActivateThisProcess(window->widget());
 		return ActivateWindowForRegression(app, window);
 	};
 	const auto activationFailed
