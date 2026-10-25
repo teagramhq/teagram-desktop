@@ -828,11 +828,14 @@ void Updates::getDifference() {
 
 void Updates::getDifferenceAfterReconnect() {
 	clearStaleSyncRequests();
-	if (const auto requestId = _syncRequests.takePending()) {
-		session().mtp().cancel(requestId);
-		_ptsWaiter.setRequesting(false);
-	}
-	getDifference();
+	_syncRequests.afterReconnect(
+		_ptsWaiter.inited(),
+		[this](mtpRequestId requestId) {
+			session().mtp().cancel(requestId);
+			_ptsWaiter.setRequesting(false);
+		},
+		[this] { requestState(); },
+		[this] { getDifference(); });
 }
 
 void Updates::getChannelDifference(

@@ -121,13 +121,29 @@ public:
 		return _state || _difference;
 	}
 
+	template <typename Cancel, typename RequestState, typename RequestDifference>
+	void afterReconnect(
+			bool ptsInited,
+			Cancel &&cancel,
+			RequestState &&requestState,
+			RequestDifference &&requestDifference) {
+		if (const auto requestId = takePending()) {
+			cancel(requestId);
+		}
+		if (ptsInited) {
+			requestDifference();
+		} else {
+			requestState();
+		}
+	}
+
+private:
 	[[nodiscard]] mtpRequestId takePending() {
 		_recovering = false;
 		return _state ? std::exchange(_state, 0)
 					  : std::exchange(_difference, 0);
 	}
 
-private:
 	mtpRequestId &slot(Type type) {
 		return (type == Type::State) ? _state : _difference;
 	}
