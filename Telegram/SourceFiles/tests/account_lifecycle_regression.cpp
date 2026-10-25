@@ -8478,19 +8478,19 @@ void RunAuthenticatedCacheSymlinkCases(
 				RegressionUser(selfId, true, QString()),
 				std::make_unique<Main::SessionSettings>());
 			const auto cachePath = watched->local().cachePath();
-			const auto fixture = QDir(cachePath).filePath(
-				"watchdog-cache-regression");
+			const auto fixture
+				= QDir(cachePath).filePath("watchdog-cache-regression");
 			auto seeded = passed && QDir().mkpath(fixture);
 			for (auto i = 0; seeded && i != 125; ++i) {
 				seeded = QDir().mkpath(
 					QDir(fixture).filePath(u"directory-%1"_q.arg(i)));
 			}
 			for (auto i = 0; seeded && i != 169; ++i) {
-				const auto parent = QDir(fixture).filePath(
-					u"directory-%1"_q.arg(i % 125));
+				const auto parent
+					= QDir(fixture).filePath(u"directory-%1"_q.arg(i % 125));
 				auto file = QFile(QDir(parent).filePath(u"file-%1"_q.arg(i)));
 				seeded = file.open(QIODevice::WriteOnly)
-					&& (file.write("fixture") == 7);
+						 && (file.write("fixture") == 7);
 			}
 			// Let any earlier startup stall fall outside the watchdog's log
 			// rate limit so this fixture can identify the cache walk itself.
@@ -8501,8 +8501,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			std::this_thread::sleep_for(std::chrono::milliseconds(60));
 			QCoreApplication::processEvents();
 			std::this_thread::sleep_for(std::chrono::milliseconds(60));
-			Logs::writeMain(
-				"UI stall watchdog cache regression begin");
+			Logs::writeMain("UI stall watchdog cache regression begin");
 			const auto before = Core::UiStallWatchdog::StallCount();
 			auto accesses = 0;
 			auto timer = QElapsedTimer();
@@ -8516,23 +8515,22 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto duration = timer.nsecsElapsed();
 			const auto detected = WaitForRegressionCondition([&] {
 				return Core::UiStallWatchdog::StallCount() > before
-					|| duration < 150'000'000;
+					   || duration < 150'000'000;
 			});
 			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
 			Logs::writeMain("UI stall watchdog cache regression end");
 			passed = seeded && (accesses == 292) && detected
-				&& ((duration < 30'000'000 && !stalls)
-					|| (duration >= 150'000'000 && (stalls > 0)));
-			std::fprintf(
-				stderr,
-				"Cache watchdog regression: seeded_directories=125 "
-				"seeded_files=169 cache_accesses=%d duration_ns=%lld "
-				"stalls=%llu.\n",
-				accesses, static_cast<long long>(duration),
-				static_cast<unsigned long long>(stalls));
+					 && ((duration < 30'000'000 && !stalls)
+						 || (duration >= 150'000'000 && (stalls > 0)));
+			std::fprintf(stderr,
+						 "Cache watchdog regression: seeded_directories=125 "
+						 "seeded_files=169 cache_accesses=%d duration_ns=%lld "
+						 "stalls=%llu.\n",
+						 accesses, static_cast<long long>(duration),
+						 static_cast<unsigned long long>(stalls));
 #endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
-			nativeLifecycleResults->Report(
-				"cache-path-watchdog-regression", passed);
+			nativeLifecycleResults->Report("cache-path-watchdog-regression",
+										   passed);
 		}
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {

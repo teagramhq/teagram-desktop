@@ -20,9 +20,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 class UiStallWatchdog final : public QObject {
-public:
-	explicit UiStallWatchdog(
-		std::function<void(const QString &)> log);
+  public:
+	explicit UiStallWatchdog(std::function<void(const QString &)> log);
 	~UiStallWatchdog() override;
 
 	UiStallWatchdog(const UiStallWatchdog &) = delete;
@@ -30,10 +29,10 @@ public:
 
 	[[nodiscard]] static quint64 StallCount();
 
-protected:
+  protected:
 	bool event(QEvent *event) override;
 
-private:
+  private:
 	void run();
 
 	std::function<void(const QString &)> _log;

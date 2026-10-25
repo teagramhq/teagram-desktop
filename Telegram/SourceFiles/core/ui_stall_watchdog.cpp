@@ -61,7 +61,7 @@ struct RegisterState final {
 	std::uintptr_t frame = 0;
 };
 
-std::array<void*, kMaxFrames> CapturedFrames = {};
+std::array<void *, kMaxFrames> CapturedFrames = {};
 std::atomic_uint CapturedFrameCount = 0;
 std::atomic_uint RequestedCapture = 0;
 std::atomic_uint CompletedCapture = 0;
@@ -76,11 +76,11 @@ static_assert(std::atomic_uint::is_always_lock_free);
 
 [[nodiscard]] StackBounds CurrentStackBounds(pthread_t thread) {
 #ifdef Q_OS_MAC
-	const auto high = reinterpret_cast<std::uintptr_t>(
-		pthread_get_stackaddr_np(thread));
+	const auto high
+		= reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(thread));
 	const auto size = pthread_get_stacksize_np(thread);
-	return high > size ? StackBounds{ high - size, high } : StackBounds();
-#else // Q_OS_MAC
+	return high > size ? StackBounds{high - size, high} : StackBounds();
+#else  // Q_OS_MAC
 	auto attributes = pthread_attr_t();
 	if (pthread_getattr_np(thread, &attributes) != 0) {
 		return {};
@@ -90,35 +90,29 @@ static_assert(std::atomic_uint::is_always_lock_free);
 	const auto result = pthread_attr_getstack(&attributes, &address, &size);
 	const auto destroyResult = pthread_attr_destroy(&attributes);
 	return result == 0 && destroyResult == 0 && address && size
-		? StackBounds{
-			reinterpret_cast<std::uintptr_t>(address),
-			reinterpret_cast<std::uintptr_t>(address) + size }
-		: StackBounds();
+			   ? StackBounds{reinterpret_cast<std::uintptr_t>(address),
+							 reinterpret_cast<std::uintptr_t>(address) + size}
+			   : StackBounds();
 #endif // else for Q_OS_MAC
 }
 
 [[nodiscard]] RegisterState RegistersFromContext(void *rawContext) noexcept {
-	const auto context = static_cast<ucontext_t*>(rawContext);
+	const auto context = static_cast<ucontext_t *>(rawContext);
 #if defined(Q_OS_MAC) && defined(__x86_64__)
-	return {
-		static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__rip),
-		static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__rbp) };
+	return {static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__rip),
+			static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__rbp)};
 #elif defined(Q_OS_MAC) && defined(__arm64__)
-	return {
-		static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__pc),
-		static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__fp) };
+	return {static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__pc),
+			static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__fp)};
 #elif defined(Q_OS_LINUX) && defined(__x86_64__)
-	return {
-		static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]),
-		static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RBP]) };
+	return {static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]),
+			static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RBP])};
 #elif defined(Q_OS_LINUX) && defined(__i386__)
-	return {
-		static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_EIP]),
-		static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_EBP]) };
+	return {static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_EIP]),
+			static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_EBP])};
 #elif defined(Q_OS_LINUX) && defined(__aarch64__)
-	return {
-		static_cast<std::uintptr_t>(context->uc_mcontext.pc),
-		static_cast<std::uintptr_t>(context->uc_mcontext.regs[29]) };
+	return {static_cast<std::uintptr_t>(context->uc_mcontext.pc),
+			static_cast<std::uintptr_t>(context->uc_mcontext.regs[29])};
 #else
 	return {};
 #endif
@@ -132,15 +126,16 @@ static_assert(std::atomic_uint::is_always_lock_free);
 	const auto registers = RegistersFromContext(rawContext);
 	auto count = 0U;
 	if (registers.instruction) {
-		CapturedFrames[count++] = reinterpret_cast<void*>(registers.instruction);
+		CapturedFrames[count++]
+			= reinterpret_cast<void *>(registers.instruction);
 	}
 	auto frame = registers.frame;
 	while (count < kMaxFrames
-		&& (MainStack.high > MainStack.low + 2 * sizeof(std::uintptr_t))
-		&& frame >= MainStack.low
-		&& frame <= MainStack.high - 2 * sizeof(std::uintptr_t)
-		&& (frame % alignof(std::uintptr_t)) == 0) {
-		const auto record = reinterpret_cast<const std::uintptr_t*>(frame);
+		   && (MainStack.high > MainStack.low + 2 * sizeof(std::uintptr_t))
+		   && frame >= MainStack.low
+		   && frame <= MainStack.high - 2 * sizeof(std::uintptr_t)
+		   && (frame % alignof(std::uintptr_t)) == 0) {
+		const auto record = reinterpret_cast<const std::uintptr_t *>(frame);
 		const auto previous = record[0];
 		auto address = record[1];
 		if (!address) {
@@ -148,10 +143,9 @@ static_assert(std::atomic_uint::is_always_lock_free);
 		}
 #if defined(Q_OS_MAC) && defined(__arm64__)
 		address = reinterpret_cast<std::uintptr_t>(ptrauth_strip(
-			reinterpret_cast<void*>(address),
-			ptrauth_key_return_address));
+			reinterpret_cast<void *>(address), ptrauth_key_return_address));
 #endif // Q_OS_MAC && __arm64__
-		CapturedFrames[count++] = reinterpret_cast<void*>(address);
+		CapturedFrames[count++] = reinterpret_cast<void *>(address);
 		if (previous <= frame || previous >= MainStack.high) {
 			break;
 		}
@@ -162,8 +156,7 @@ static_assert(std::atomic_uint::is_always_lock_free);
 
 void CaptureSignal(int, siginfo_t *, void *context) {
 	const auto request = RequestedCapture.load(std::memory_order_acquire);
-	if (!request
-		|| !pthread_equal(pthread_self(), MainThread)
+	if (!request || !pthread_equal(pthread_self(), MainThread)
 		|| (CompletedCapture.load(std::memory_order_relaxed) == request)) {
 		return;
 	}
@@ -203,7 +196,7 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 	return true;
 }
 
-[[nodiscard]] std::vector<void*> CaptureStack() {
+[[nodiscard]] std::vector<void *> CaptureStack() {
 	if (!SignalInstalled) {
 		return {};
 	}
@@ -218,10 +211,10 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 	}
 	for (auto i = 0; i != 10; ++i) {
 		if (CompletedCapture.load(std::memory_order_acquire) == request) {
-			const auto count = std::min(
-				CapturedFrameCount.load(std::memory_order_relaxed),
-				static_cast<unsigned>(kMaxFrames));
-			auto result = std::vector<void*>(count);
+			const auto count
+				= std::min(CapturedFrameCount.load(std::memory_order_relaxed),
+						   static_cast<unsigned>(kMaxFrames));
+			auto result = std::vector<void *>(count);
 			std::copy_n(CapturedFrames.begin(), count, result.begin());
 			RequestedCapture.store(0, std::memory_order_release);
 			return result;
@@ -235,70 +228,62 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 [[nodiscard]] QString DescribeFrame(void *frame, bool returnAddress) {
 	const auto address = reinterpret_cast<std::uintptr_t>(frame);
 	const auto lookup = returnAddress && address
-		? reinterpret_cast<void*>(address - 1)
-		: frame;
+							? reinterpret_cast<void *>(address - 1)
+							: frame;
 	auto info = Dl_info();
 	if (dladdr(lookup, &info) && info.dli_sname) {
 		auto status = 0;
-		const auto demangled = abi::__cxa_demangle(
-			info.dli_sname,
-			nullptr,
-			nullptr,
-			&status);
+		const auto demangled
+			= abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
 		const auto name = (status == 0 && demangled)
-			? QString::fromLocal8Bit(demangled)
-			: QString::fromLocal8Bit(info.dli_sname);
+							  ? QString::fromLocal8Bit(demangled)
+							  : QString::fromLocal8Bit(info.dli_sname);
 		std::free(demangled);
 		if (!info.dli_saddr) {
 			return name;
 		}
-		const auto offset = address
-			- reinterpret_cast<std::uintptr_t>(info.dli_saddr);
+		const auto offset
+			= address - reinterpret_cast<std::uintptr_t>(info.dli_saddr);
 		return u"%1+0x%2"_q.arg(name).arg(qulonglong(offset), 0, 16);
 	}
 	return u"0x%1"_q.arg(qulonglong(address), 0, 16);
 }
 
-[[nodiscard]] QString FormatStack(const std::vector<void*> &frames) {
+[[nodiscard]] QString FormatStack(const std::vector<void *> &frames) {
 	auto result = QStringList();
 	for (auto i = 0; i != int(frames.size()); ++i) {
 		result.push_back(DescribeFrame(frames[i], i != 0));
 	}
-	return result.isEmpty() ? u"stack unavailable"_q
-							: result.join(u" <- "_q);
+	return result.isEmpty() ? u"stack unavailable"_q : result.join(u" <- "_q);
 }
 
 #endif // Q_OS_LINUX || Q_OS_MAC
 
 class PingEvent final : public QEvent {
-public:
+  public:
 	static auto Type() {
 		static const auto Result = QEvent::Type(QEvent::registerEventType());
 		return Result;
 	}
 
 	explicit PingEvent(std::uint64_t sequence)
-	: QEvent(Type())
-	, sequence(sequence) {
-	}
+		: QEvent(Type()), sequence(sequence) {}
 
 	const std::uint64_t sequence;
 };
 
 } // namespace
 
-UiStallWatchdog::UiStallWatchdog(
-		std::function<void(const QString &)> log)
-: QObject(nullptr)
-, _log(std::move(log)) {
+UiStallWatchdog::UiStallWatchdog(std::function<void(const QString &)> log)
+	: QObject(nullptr), _log(std::move(log)) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
 	try {
 		_thread = std::thread([this] { run(); });
 	} catch (const std::system_error &error) {
 		if (_log) {
-			_log(u"UI stall watchdog could not start: %1"_q
-				.arg(QString::fromLocal8Bit(error.what())));
+			_log(u"UI stall watchdog could not start: %1"_q.arg(
+				QString::fromLocal8Bit(error.what())));
 		}
 		return;
 	}
@@ -334,7 +319,7 @@ bool UiStallWatchdog::event(QEvent *event) {
 	if (event->type() != PingEvent::Type()) {
 		return QObject::event(event);
 	}
-	const auto ping = static_cast<PingEvent*>(event);
+	const auto ping = static_cast<PingEvent *>(event);
 	{
 		const auto lock = std::lock_guard(_mutex);
 		if (ping->sequence > _acknowledgedSequence) {
@@ -365,10 +350,10 @@ void UiStallWatchdog::run() {
 
 		auto shouldLog = false;
 		auto lock = std::unique_lock(_mutex);
-		const auto acknowledged = [&] {
-			return _stopping || (_acknowledgedSequence >= current);
-		};
-		if (_condition.wait_until(lock, start + kCountThreshold, acknowledged)) {
+		const auto acknowledged
+			= [&] { return _stopping || (_acknowledgedSequence >= current); };
+		if (_condition.wait_until(lock, start + kCountThreshold,
+								  acknowledged)) {
 			if (_stopping) {
 				return;
 			}
@@ -379,10 +364,8 @@ void UiStallWatchdog::run() {
 			shouldLog = (duration >= kLogThreshold);
 		} else {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (_condition.wait_until(
-					lock,
-					start + kLogThreshold,
-					acknowledged)) {
+			if (_condition.wait_until(lock, start + kLogThreshold,
+									  acknowledged)) {
 				if (_stopping) {
 					return;
 				}
@@ -394,18 +377,19 @@ void UiStallWatchdog::run() {
 
 		if (shouldLog
 			&& (!hasLogged || (Clock::now() - lastLogged) >= kLogRateLimit)) {
-			const auto duration = (_acknowledgedSequence >= current)
-				? std::chrono::duration_cast<std::chrono::milliseconds>(
-					_acknowledgedAt - start)
-				: std::chrono::duration_cast<std::chrono::milliseconds>(
-					Clock::now() - start);
+			const auto duration
+				= (_acknowledgedSequence >= current)
+					  ? std::chrono::duration_cast<std::chrono::milliseconds>(
+							_acknowledgedAt - start)
+					  : std::chrono::duration_cast<std::chrono::milliseconds>(
+							Clock::now() - start);
 			lock.unlock();
-			const auto frames = _canCaptureStack ? CaptureStack() : std::vector<void*>();
+			const auto frames
+				= _canCaptureStack ? CaptureStack() : std::vector<void *>();
 			if (_log) {
-				_log(u"UI stall %1 ms (started %2): %3"_q
-					.arg(duration.count())
-					.arg(startTime.toString(Qt::ISODateWithMs))
-					.arg(FormatStack(frames)));
+				_log(u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
+						 .arg(startTime.toString(Qt::ISODateWithMs))
+						 .arg(FormatStack(frames)));
 			}
 			lastLogged = Clock::now();
 			hasLogged = true;

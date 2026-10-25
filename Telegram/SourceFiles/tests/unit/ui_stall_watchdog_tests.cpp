@@ -18,8 +18,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <vector>
 
 __attribute__((noinline)) void UiStallWatchdogTestBlock() {
-	const auto deadline = std::chrono::steady_clock::now()
-		+ std::chrono::milliseconds(300);
+	const auto deadline
+		= std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
 	while (std::chrono::steady_clock::now() < deadline) {
 		std::atomic_signal_fence(std::memory_order_seq_cst);
 	}
@@ -36,8 +36,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		});
 		QCoreApplication::processEvents();
 		UiStallWatchdogTestBlock();
-		const auto deadline = std::chrono::steady_clock::now()
-			+ std::chrono::seconds(2);
+		const auto deadline
+			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 		while (std::chrono::steady_clock::now() < deadline) {
 			QCoreApplication::processEvents();
 			{
