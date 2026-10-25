@@ -51,9 +51,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
+#include "data/data_document.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
+#include "data/data_message_reactions.h"
 #include "data/data_peer_id.h"
 #include "data/data_photo.h"
 #include "data/data_saved_messages.h"
@@ -169,6 +171,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtWidgets/QApplication>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -8184,6 +8187,149 @@ struct NativeLifecycleResults {
 	}
 };
 
+[[nodiscard]] MTPDocument RegressionReactionDocument(int64 id) {
+	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
+						MTP_int(1), MTP_string("application/octet-stream"),
+						MTP_long(0), MTP_vector<MTPPhotoSize>(),
+						MTPVector<MTPVideoSize>(), MTP_int(0),
+						MTP_vector<MTPDocumentAttribute>());
+}
+
+[[nodiscard]] MTPAvailableReaction RegressionAvailableReaction(int index) {
+	using Flag = MTPDavailableReaction::Flag;
+	const auto flags
+		= Flag::f_around_animation | (index % 2 ? Flag::f_inactive : Flag());
+	const auto id = int64(100'000 + index * 10);
+	return MTP_availableReaction(
+		MTP_flags(flags), MTP_string(u"👍"_q),
+		MTP_string(QString::number(index)), RegressionReactionDocument(id + 0),
+		RegressionReactionDocument(id + 1), RegressionReactionDocument(id + 2),
+		RegressionReactionDocument(id + 3), RegressionReactionDocument(id + 4),
+		RegressionReactionDocument(id + 5), RegressionReactionDocument(id + 6));
+}
+
+struct CacheChatSwitchRegressionResult final {
+	int reactions = 0;
+	int hydratedDocuments = 0;
+	int chatSwitches = 0;
+	int cachedDocuments = 0;
+	qint64 maxStallNanoseconds = -1;
+	bool passed = false;
+};
+
+struct CacheReactionProbe final {
+	std::array<DocumentData *, 4> documents = {};
+	bool active = false;
+};
+
+[[nodiscard]] CacheChatSwitchRegressionResult
+RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
+									Window::Controller *window) {
+	auto result = CacheChatSwitchRegressionResult();
+	const auto controller = window ? window->sessionController() : nullptr;
+	if (!controller || (&controller->session() != &account->session())) {
+		return result;
+	}
+	auto &session = account->session();
+	auto &data = session.data();
+	const auto makeHistory = [&](ChatId id) {
+		const auto chat = data.chat(id);
+		const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+		session.api().processFullPeer(
+			peer, RegressionChatFullReply(id, 1, QString(), UserId(1)));
+		return data.history(peer);
+	};
+	const auto firstHistory = makeHistory(ChatId(1051));
+	const auto secondHistory = makeHistory(ChatId(1052));
+	controller->showPeerHistory(firstHistory);
+	QCoreApplication::processEvents();
+	controller->showPeerHistory(secondHistory);
+	QCoreApplication::processEvents();
+
+	constexpr auto kReactionCount = 73;
+	constexpr auto kDocumentsPerReaction = 4;
+	constexpr auto kMaxStallNanoseconds = qint64(50'000'000);
+	auto reactions = QVector<MTPAvailableReaction>();
+	reactions.reserve(kReactionCount);
+	for (auto i = 0; i != kReactionCount; ++i) {
+		reactions.push_back(RegressionAvailableReaction(i));
+	}
+	auto update = Data::details::IncrementalAvailableReactionsUpdate<
+		MTPAvailableReaction, CacheReactionProbe>();
+	auto loop = QEventLoop();
+	auto completed = false;
+	auto timedOut = false;
+	const auto maybeFinish = [&] {
+		if (completed && (result.chatSwitches == kReactionCount)) {
+			loop.quit();
+		}
+	};
+	auto mediaViews = std::vector<std::shared_ptr<Data::DocumentMedia>>();
+	update.start(
+		std::move(reactions),
+		[&](const MTPAvailableReaction &reaction)
+			-> std::optional<CacheReactionProbe> {
+			auto started = QElapsedTimer();
+			started.start();
+			const auto documents
+				= Data::details::HydrateAvailableReactionDocuments(
+					reaction.data(), [&](const MTPDocument &document) {
+						++result.hydratedDocuments;
+						return data.processDocument(document);
+					});
+			if (!documents.centerIcon || !documents.aroundAnimation) {
+				return std::nullopt;
+			}
+			const auto active = !reaction.data().is_inactive();
+			const auto parsed = CacheReactionProbe{
+            .documents =
+                {
+                    documents.appearAnimation.get(),
+                    documents.selectAnimation.get(),
+                    documents.centerIcon->get(),
+                    documents.aroundAnimation->get(),
+                },
+            .active = active,
+        };
+			++result.reactions;
+			QTimer::singleShot(0, &loop, [&, started] {
+				const auto target
+					= (result.chatSwitches % 2) ? secondHistory : firstHistory;
+				controller->showPeerHistory(target);
+				result.maxStallNanoseconds = std::max(
+					result.maxStallNanoseconds, started.nsecsElapsed());
+				++result.chatSwitches;
+				maybeFinish();
+			});
+			return parsed;
+		},
+		[&](const auto &reaction) {
+			for (const auto document : reaction.documents) {
+				mediaViews.push_back(document->createMediaView());
+			}
+		},
+		[] { return false; },
+		[&](auto &&, auto &&, crl::time) {
+			completed = true;
+			maybeFinish();
+		});
+	QTimer::singleShot(30'000, &loop, [&] {
+		timedOut = true;
+		loop.quit();
+	});
+	loop.exec();
+	result.cachedDocuments = int(mediaViews.size());
+	result.passed = completed && !timedOut
+					&& (result.reactions == kReactionCount)
+					&& (result.hydratedDocuments
+						== kReactionCount * kDocumentsPerReaction)
+					&& (result.chatSwitches == kReactionCount)
+					&& (result.cachedDocuments
+						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
+	return result;
+}
+
 void RunAuthenticatedCacheSymlinkCases(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
 	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
@@ -8215,10 +8361,23 @@ void RunAuthenticatedCacheSymlinkCases(
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto selfId = UserId(1);
 		const auto seedCacheTree = [](const QString &path) {
-			for (auto i = 0; i != 100; ++i) {
+			auto directories = std::vector<QString>();
+			for (auto i = 0; i != 125; ++i) {
 				const auto directory = QDir(path).filePath(
 					u"cache-access-regression/%1"_q.arg(i));
 				if (!QDir().mkpath(directory)) {
+					return false;
+				}
+				directories.push_back(directory);
+			}
+			for (auto i = 0; i != 169; ++i) {
+				const auto parent
+					= (i < int(directories.size()))
+						  ? directories[i]
+						  : QDir(path).filePath("cache-access-regression");
+				auto file = QFile(QDir(parent).filePath(u"file-%1"_q.arg(i)));
+				if (!file.open(QIODevice::WriteOnly)
+					|| (file.write("fixture") != 7)) {
 					return false;
 				}
 			}
@@ -8281,6 +8440,31 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
+			auto chatSwitch = CacheChatSwitchRegressionResult();
+			const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
+				"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
+			if (!mediaCache && authenticatedCacheOnly) {
+				auto &app = Core::App();
+				const auto window = app.ensureSeparateWindowFor(guarded);
+				const auto closeWindow = gsl::finally([&] {
+					if (window && app.separateWindowFor(guarded) == window) {
+						app.closeWindow(window);
+					}
+				});
+				chatSwitch
+					= RunCacheChatSwitchLatencyRegression(guarded, window);
+				std::fprintf(
+					stderr,
+					"Cache chat switch latency regression: "
+					"seeded_directories=125 seeded_files=169 reactions=%d "
+					"hydrated_documents=%d chat_switches=%d "
+					"max_stall_ns=%lld under_50ms=%d.\n",
+					chatSwitch.reactions, chatSwitch.hydratedDocuments,
+					chatSwitch.chatSwitches,
+					static_cast<long long>(chatSwitch.maxStallNanoseconds),
+					(chatSwitch.maxStallNanoseconds >= 0
+					 && chatSwitch.maxStallNanoseconds < 50'000'000));
+			}
 			auto swappedRootRefused = false;
 			auto rootRestoreSucceeded = true;
 			const auto cachePath = mediaCache
@@ -8318,7 +8502,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			std::fprintf(
 				stderr,
 				"Cache access latency regression: cache=%s "
-				"seeded_directories=100 session_setup_ns=%lld under_100ms=%d "
+				"seeded_directories=125 seeded_files=169 "
+				"session_setup_ns=%lld under_100ms=%d "
 				"first_access_ns=%lld under_50ms=%d "
 				"root_swap_refused=%d root_restored=%d startup_walks=%d "
 				"main_thread_walks=%d.\n",
@@ -8331,6 +8516,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto passed = startupScansCompleted && first && second
 								&& (startupWalks == 2) && (mainThreadWalks == 0)
 								&& swappedRootRefused && rootRestoreSucceeded
+								&& (mediaCache || !authenticatedCacheOnly
+									|| chatSwitch.passed)
 								&& (sessionSetupNanoseconds < 100'000'000)
 								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);
