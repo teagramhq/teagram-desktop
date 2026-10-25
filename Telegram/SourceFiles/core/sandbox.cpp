@@ -335,7 +335,9 @@ void Sandbox::launchApplication() {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 		if (!_uiStallWatchdog) {
 			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
-				[](const QString &line) { Logs::writeMain(line); });
+				[](const QString &line, bool update) {
+					Logs::writeMainUiStall(line, update);
+				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC
 		setupScreenScale();

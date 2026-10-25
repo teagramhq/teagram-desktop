@@ -14,6 +14,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/version.h"
 #include "mtproto/facade.h"
 
+#include <QtCore/QByteArray>
+#include <QtCore/QFile>
+
+#include <optional>
+
 namespace {
 
 std::atomic<int> ThreadCounter/* = 0*/;
@@ -63,6 +68,19 @@ QString _logsFilePath(LogDataType type, const QString &postfix = QString()) {
 [[nodiscard]] bool CheckLogPath(Core::MacProtectedPath::Operation operation,
 								const QString &path, const char *callsite) {
 	return Core::MacProtectedPath::CheckPath(operation, path, callsite);
+}
+
+[[nodiscard]] QString MainLogPrefix() {
+	auto t = time(NULL);
+	auto tm = struct tm();
+	mylocaltime(&tm, &t);
+	return QString("[%1.%2.%3 %4:%5:%6] ")
+		.arg(tm.tm_year + 1900)
+		.arg(tm.tm_mon + 1, 2, 10, QChar('0'))
+		.arg(tm.tm_mday, 2, 10, QChar('0'))
+		.arg(tm.tm_hour, 2, 10, QChar('0'))
+		.arg(tm.tm_min, 2, 10, QChar('0'))
+		.arg(tm.tm_sec, 2, 10, QChar('0'));
 }
 
 int32 LogsStartIndexChosen = -1;
@@ -136,8 +154,76 @@ public:
 		file->flush();
 	}
 
+	void writeMainUiStall(
+		const QString &prefix,
+		const QString &message,
+		bool update) {
+		constexpr auto kDurationReserve = 19;
+		QMutexLocker lock(_logsMutex(LogDataMain));
+		WritingEntryScope scope;
+
+		const auto file = files[LogDataMain].get();
+		if (!file || !file->isOpen()
+			|| !CheckLogPath(Core::MacProtectedPath::Operation::Write,
+							file->fileName(), Q_FUNC_INFO)) {
+			return;
+		}
+		if (!update) {
+			auto bytes = (prefix + message).toUtf8();
+			bytes += QByteArray(kDurationReserve, ' ');
+			bytes += '\n';
+			const auto offset = file->size();
+			const auto size = bytes.size();
+			const auto written = file->write(bytes);
+			const auto flushed = file->flush();
+			if (written == size && flushed) {
+				pendingMainUiStall = PendingMainUiStall{
+					file->fileName(), prefix.toUtf8(), offset, size };
+			}
+			return;
+		}
+		if (!pendingMainUiStall
+			|| pendingMainUiStall->fileName != file->fileName()) {
+			return;
+		}
+
+		auto bytes
+			= (QString::fromUtf8(pendingMainUiStall->prefix) + message).toUtf8();
+		const auto padding = pendingMainUiStall->size - bytes.size() - 1;
+		if (padding < 0 || padding > kDurationReserve) {
+			pendingMainUiStall.reset();
+			return;
+		}
+		bytes += QByteArray(int(padding), ' ');
+		bytes += '\n';
+		auto output = QFile(pendingMainUiStall->fileName);
+		if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
+						 output.fileName(), Q_FUNC_INFO)
+			|| !output.open(QIODevice::ReadWrite)
+			|| output.size() < pendingMainUiStall->offset + bytes.size()
+			|| !output.seek(pendingMainUiStall->offset)) {
+			pendingMainUiStall.reset();
+			return;
+		}
+		const auto written = output.write(bytes);
+		const auto flushed = output.flush();
+		if (written != bytes.size() || !flushed) {
+			pendingMainUiStall.reset();
+			return;
+		}
+		pendingMainUiStall.reset();
+	}
+
 private:
+	struct PendingMainUiStall final {
+		QString fileName;
+		QByteArray prefix;
+		qint64 offset = 0;
+		qint64 size = 0;
+	};
+
 	std::unique_ptr<QFile> files[LogDataCount];
+	std::optional<PendingMainUiStall> pendingMainUiStall;
 
 	int32 part = -1;
 
@@ -569,21 +655,22 @@ void closeMain() {
 }
 
 void writeMain(const QString &v) {
-	time_t t = time(NULL);
-	struct tm tm;
-	mylocaltime(&tm, &t);
-
-	const auto msg = QString("[%1.%2.%3 %4:%5:%6] %7\n"
-	).arg(tm.tm_year + 1900
-	).arg(tm.tm_mon + 1, 2, 10, QChar('0')
-	).arg(tm.tm_mday, 2, 10, QChar('0')
-	).arg(tm.tm_hour, 2, 10, QChar('0')
-	).arg(tm.tm_min, 2, 10, QChar('0')
-	).arg(tm.tm_sec, 2, 10, QChar('0')
-	).arg(v);
+	const auto msg = MainLogPrefix() + v + u"\n"_q;
 	_logsWrite(LogDataMain, msg);
 
 	writeDebug(v);
+}
+
+void writeMainUiStall(const QString &v, bool update) {
+	if (LogsData) {
+		LogsData->writeMainUiStall(
+			update ? QString() : MainLogPrefix(), v, update);
+		if (!update) {
+			writeDebug(v);
+		}
+	} else if (!update) {
+		writeMain(v);
+	}
 }
 
 void writeDebug(const QString &v) {

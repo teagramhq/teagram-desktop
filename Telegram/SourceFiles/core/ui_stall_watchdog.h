@@ -21,7 +21,8 @@ namespace Core {
 
 class UiStallWatchdog final : public QObject {
   public:
-	explicit UiStallWatchdog(std::function<void(const QString &)> log);
+	explicit UiStallWatchdog(
+		std::function<void(const QString &, bool update)> log);
 	~UiStallWatchdog() override;
 
 	UiStallWatchdog(const UiStallWatchdog &) = delete;
@@ -35,7 +36,7 @@ class UiStallWatchdog final : public QObject {
   private:
 	void run();
 
-	std::function<void(const QString &)> _log;
+	std::function<void(const QString &, bool update)> _log;
 	std::thread _thread;
 	std::mutex _mutex;
 	std::condition_variable _condition;

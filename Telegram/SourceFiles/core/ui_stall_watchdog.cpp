@@ -273,7 +273,8 @@ class PingEvent final : public QEvent {
 
 } // namespace
 
-UiStallWatchdog::UiStallWatchdog(std::function<void(const QString &)> log)
+UiStallWatchdog::UiStallWatchdog(
+	std::function<void(const QString &, bool update)> log)
 	: QObject(nullptr), _log(std::move(log)) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
@@ -282,7 +283,8 @@ UiStallWatchdog::UiStallWatchdog(std::function<void(const QString &)> log)
 	} catch (const std::system_error &error) {
 		if (_log) {
 			_log(u"UI stall watchdog could not start: %1"_q.arg(
-				QString::fromLocal8Bit(error.what())));
+					 QString::fromLocal8Bit(error.what())),
+				 false);
 		}
 		return;
 	}
@@ -302,7 +304,8 @@ UiStallWatchdog::~UiStallWatchdog() {
 	}
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	if (_canCaptureStack && !RestoreSignalHandler() && _log) {
-		_log(u"UI stall watchdog could not restore its signal handler"_q);
+		_log(u"UI stall watchdog could not restore its signal handler"_q,
+			 false);
 	}
 #endif
 	if (QCoreApplication::instance()) {
@@ -346,8 +349,6 @@ void UiStallWatchdog::run() {
 		}
 		_condition.notify_all();
 
-		// Persist the detection record before waiting; an ack adds the
-		// duration.
 		auto writeLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
@@ -399,7 +400,7 @@ void UiStallWatchdog::run() {
 				stack = FormatStack(frames);
 				lock.lock();
 				lock.unlock();
-				_log(lineForDuration(detectedAt - postedAt));
+				_log(lineForDuration(detectedAt - postedAt), false);
 				lastLogged = Clock::now();
 				hasLogged = true;
 				lock.lock();
@@ -411,15 +412,8 @@ void UiStallWatchdog::run() {
 		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
-			const auto completedMilliseconds
-				= std::chrono::duration_cast<std::chrono::milliseconds>(
-					completedAt - postedAt);
-			const auto completion
-				= u"UI watchdog acknowledgement after %1 ms (started %2)"_q
-					  .arg(completedMilliseconds.count())
-					  .arg(startTime.toString(Qt::ISODateWithMs));
 			lock.unlock();
-			_log(completion);
+			_log(lineForDuration(completedAt - postedAt), true);
 			lastLogged = Clock::now();
 			lock.lock();
 		}

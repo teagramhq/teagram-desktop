@@ -27,6 +27,7 @@ void multipleInstances();
 void closeMain();
 
 void writeMain(const QString &v);
+void writeMainUiStall(const QString &v, bool update);
 void writeDebug(const QString &v);
 void writeMtp(int32 dc, const QString &v);
 
