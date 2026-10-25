@@ -359,9 +359,16 @@ void UiStallWatchdog::run() {
 	auto lastAck = Clock::now();
 	while (true) {
 		const auto current = ++sequence;
-		QCoreApplication::postEvent(this, new PingEvent(current));
+		// Dispatchers may emit awake after delivering pending events.
+		auto idleAtPost = false;
+		auto postedAt = Clock::time_point();
+		auto lastAwakeAt = Clock::time_point();
 		{
 			const auto lock = std::lock_guard(_mutex);
+			idleAtPost = _mainThreadIdle;
+			postedAt = Clock::now();
+			lastAwakeAt = _lastAwakeAt;
+			QCoreApplication::postEvent(this, new PingEvent(current));
 			_started = true;
 		}
 		_condition.notify_all();
@@ -379,7 +386,8 @@ void UiStallWatchdog::run() {
 		if (_stopping) {
 			return;
 		}
-		const auto start = std::max(lastAck, _lastAwakeAt);
+		const auto start
+			= std::max(lastAck, idleAtPost ? postedAt : lastAwakeAt);
 		const auto elapsedSinceStart
 			= std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()
 																	- start)
