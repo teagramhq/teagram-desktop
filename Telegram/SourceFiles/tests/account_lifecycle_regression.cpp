@@ -95,6 +95,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/facade.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
@@ -699,6 +700,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_messages_createChat:
 	case mtpc_upload_saveFilePart:
 	case mtpc_messages_editChatPhoto:
+	case mtpc_updates_getDifference:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -708,6 +710,42 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	default:
 		return false;
 	}
+}
+
+[[nodiscard]] bool ReplyToReconnectDifferenceForRegressionTest(
+	ChannelSaveRequestCapture &capture,
+	const MTPupdates_Difference &difference) {
+	if (capture.requests.size() != 1) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: expected one captured "
+			"getDifference request, got %zu.\n",
+			capture.requests.size());
+		return false;
+	}
+	auto &request = capture.requests.front();
+	if (request.body.isEmpty()
+		|| static_cast<uint32>(request.body.front())
+			   != mtpc_updates_getDifference
+		|| !request.callbacks.done) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: captured request was not "
+			"getDifference with a success callback.\n");
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	difference.write(response.reply);
+	auto done = std::move(request.callbacks.done);
+	if (!done(response)) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: the difference response "
+			"could not be parsed.\n");
+		return false;
+	}
+	return true;
 }
 
 MainQueueBarrierResult
@@ -2454,6 +2492,66 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
 					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
 					MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] bool RunMainDcReconnectDifferenceUnreadRegression(
+	not_null<Main::Account *> account) {
+	auto &session = account->session();
+	const auto senderId = UserId(2388);
+	const auto senderPeer = peerFromUser(senderId);
+	const auto messageId = MsgId(2388001);
+	auto history = session.data().history(senderPeer);
+	if (!history->folderKnown()) {
+		history->setFolder(session.data().folder(FolderId(0)));
+	}
+	history->setUnreadCount(0);
+	if (session.data().message(senderPeer, messageId)) {
+		return false;
+	}
+
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &account->mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	const auto mainDc = account->mtp().mainDcId();
+	const auto restoreConnection = gsl::finally(
+		[&] { account->mtp().onStateChange(mainDc, MTP::DisconnectedState); });
+	account->mtp().onStateChange(mainDc, MTP::ConnectedState);
+	account->mtp().onStateChange(mainDc, MTP::DisconnectedState);
+	account->mtp().onStateChange(mainDc, MTP::ConnectedState);
+
+	const auto flags
+		= MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_silent;
+	const auto missed = MTP_message(
+		MTP_flags(flags), MTP_int(int(messageId.bare)), peerToMTP(senderPeer),
+		MTPint(), MTPstring(), peerToMTP(senderPeer), MTPPeer(),
+		MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(int(base::unixtime::now())),
+		MTP_string(u"message received during reconnect"_q),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(), MTP_int(0), MTP_int(0),
+		MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+	const auto difference = MTP_updates_difference(
+		MTP_vector<MTPMessage>({missed}), MTP_vector<MTPEncryptedMessage>(0),
+		MTP_vector<MTPUpdate>(0), MTP_vector<MTPChat>(0),
+		MTP_vector<MTPUser>({
+			RegressionUser(senderId, false, u"2388"_q),
+		}),
+		MTP_updates_state(MTP_int(1), MTP_int(0),
+						  MTP_int(int(base::unixtime::now())), MTP_int(0),
+						  MTP_int(1)));
+	if (!ReplyToReconnectDifferenceForRegressionTest(capture, difference)) {
+		return false;
+	}
+	const auto item = session.data().message(senderPeer, messageId);
+	return item && item->unread(history) && history->lastMessage() == item
+		   && history->unreadCount() == 1;
 }
 
 [[nodiscard]] bool
@@ -8902,6 +9000,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		crl::on_main([=] { done(result); });
 		return 0;
 	}
+	nativeLifecycleResults->StartCase("main-dc-reconnect-private-message");
+	const auto reconnectDifferencePassed
+		= RunMainDcReconnectDifferenceUnreadRegression(pinned)
+		  && !shouldInjectFailure("main-dc-reconnect-private-message");
+	nativeLifecycleResults->Report("main-dc-reconnect-private-message",
+								   reconnectDifferencePassed);
 	const auto capabilitiesMatch = [](const Main::Session &session,
 									  bool supported) {
 		return (session.callsSupported() == supported)
