@@ -8374,7 +8374,6 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 	session.api().processFullPeer(
 		peer, RegressionChatFullReply(chatId, 1, QString(), UserId(1)));
-	data.history(peer);
 	auto capture = ChannelSaveRequestCapture{
 		.instance = &account->mtp(),
 	};
