@@ -8187,6 +8187,7 @@ struct NativeLifecycleResults {
 	}
 };
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] MTPDocument RegressionReactionDocument(int64 id) {
 	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
 						MTP_int(1), MTP_string("application/octet-stream"),
@@ -8329,6 +8330,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
 	return result;
 }
+#endif // defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 
 void RunAuthenticatedCacheSymlinkCases(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
