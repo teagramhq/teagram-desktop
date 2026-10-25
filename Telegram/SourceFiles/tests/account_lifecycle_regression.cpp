@@ -8225,15 +8225,15 @@ void RunAuthenticatedCacheSymlinkCases(
 			return true;
 		};
 		for (const auto mediaCache : {false, true}) {
-			const auto caseName = mediaCache
-				? "media-cache-access-no-walk"
-				: "cache-access-no-walk";
+			const auto caseName = mediaCache ? "media-cache-access-no-walk"
+											 : "cache-access-no-walk";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
-			const auto seeded = seedCacheTree(guarded->local().cachePath())
-				&& seedCacheTree(guarded->local().cacheBigFilePath());
+			const auto seeded
+				= seedCacheTree(guarded->local().cachePath())
+				  && seedCacheTree(guarded->local().cacheBigFilePath());
 			if (!seeded) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
@@ -8256,13 +8256,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				}
 				return data.cacheIfAllowed();
 			};
-			const auto getCache = [&]() -> Storage::Cache::Database* {
+			const auto getCache = [&]() -> Storage::Cache::Database * {
 				return mediaCache ? &data.cacheBigFile() : &data.cache();
 			};
-			auto firstCache = static_cast<Storage::Cache::Database*>(nullptr);
+			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
 			const auto startupScansCompleted = WaitForRegressionCondition([&] {
-				if (Core::MacProtectedPath::CachePathWalkCountForTesting() != 2) {
+				if (Core::MacProtectedPath::CachePathWalkCountForTesting()
+					!= 2) {
 					return false;
 				}
 				auto timer = QElapsedTimer();
@@ -8282,8 +8283,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
 			const auto startupWalks
 				= Core::MacProtectedPath::CachePathWalkCountForTesting();
-			const auto mainThreadWalks
-				= Core::MacProtectedPath::CachePathWalkMainThreadCountForTesting();
+			const auto mainThreadWalks = Core::MacProtectedPath::
+				CachePathWalkMainThreadCountForTesting();
 			std::fprintf(
 				stderr,
 				"Cache access latency regression: cache=%s "
@@ -8294,16 +8295,12 @@ void RunAuthenticatedCacheSymlinkCases(
 				static_cast<long long>(sessionSetupNanoseconds),
 				(sessionSetupNanoseconds < 100'000'000),
 				static_cast<long long>(firstAccessNanoseconds),
-				(firstAccessNanoseconds < 50'000'000),
-				startupWalks,
+				(firstAccessNanoseconds < 50'000'000), startupWalks,
 				mainThreadWalks);
-			const auto passed = startupScansCompleted
-				&& first
-				&& second
-				&& (startupWalks == 2)
-				&& (mainThreadWalks == 0)
-				&& (sessionSetupNanoseconds < 100'000'000)
-				&& (firstAccessNanoseconds < 50'000'000);
+			const auto passed = startupScansCompleted && first && second
+								&& (startupWalks == 2) && (mainThreadWalks == 0)
+								&& (sessionSetupNanoseconds < 100'000'000)
+								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 #else

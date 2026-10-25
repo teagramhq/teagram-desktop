@@ -275,23 +275,21 @@ Session::Session(not_null<Main::Session *> session)
 	crl::async([=] {
 		const auto cacheAllowed = Core::MacProtectedPath::CheckCachePath(
 			cachePath, "Data::Session::cache");
-		const auto bigFileCacheAllowed
-			= Core::MacProtectedPath::CheckCachePath(
-				bigFileCachePath, "Data::Session::cacheBigFile");
+		const auto bigFileCacheAllowed = Core::MacProtectedPath::CheckCachePath(
+			bigFileCachePath, "Data::Session::cacheBigFile");
 		crl::on_main(weak, [=] {
 			if (const auto session = weak.get()) {
-				session->initializeCacheDatabases(
-					cacheAllowed,
-					bigFileCacheAllowed);
+				session->initializeCacheDatabases(cacheAllowed,
+												  bigFileCacheAllowed);
 			}
 		});
 	});
 #else
 	initializeCacheDatabases(
-		Core::MacProtectedPath::CheckCachePath(
-			_cachePath, "Data::Session::cache"),
-		Core::MacProtectedPath::CheckCachePath(
-			_bigFileCachePath, "Data::Session::cacheBigFile"));
+		Core::MacProtectedPath::CheckCachePath(_cachePath,
+											   "Data::Session::cache"),
+		Core::MacProtectedPath::CheckCachePath(_bigFileCachePath,
+											   "Data::Session::cacheBigFile"));
 #endif
 
 	if constexpr (Platform::IsLinux()) {
@@ -442,9 +440,8 @@ void Session::subscribeForTopicRepliesLists() {
 	}, _lifetime);
 }
 
-void Session::initializeCacheDatabases(
-		bool cacheAllowed,
-		bool bigFileCacheAllowed) {
+void Session::initializeCacheDatabases(bool cacheAllowed,
+									   bool bigFileCacheAllowed) {
 	if (cacheAllowed) {
 		_cache->open(_session->local().cacheKey());
 	}

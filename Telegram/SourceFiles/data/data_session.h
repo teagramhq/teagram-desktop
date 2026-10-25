@@ -168,7 +168,7 @@ struct ViewRemoval {
 };
 
 class Session final : public base::has_weak_ptr {
-public:
+  public:
 	using ViewElement = HistoryView::Element;
 
 	struct SentData {
@@ -1433,7 +1433,6 @@ private:
 	rpl::event_stream<RecentJoinChat> _recentJoinChat;
 
 	rpl::lifetime _lifetime;
-
 };
 
 } // namespace Data
