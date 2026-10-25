@@ -95,6 +95,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
 #include <QtCore/QMutexLocker>
+#include <rpl/flatten_latest.h>
 
 namespace Data {
 namespace {
@@ -522,11 +523,15 @@ void Session::initializeCacheDatabases(
 	} else {
 		_bigFileCache->close();
 	}
-	QMutexLocker lock(&_cacheMutex);
-	_cacheIdentity = std::move(cacheIdentity);
-	_bigFileCacheIdentity = std::move(bigFileCacheIdentity);
-	_cacheAllowed = cacheAllowed;
-	_bigFileCacheAllowed = bigFileCacheAllowed;
+	{
+		QMutexLocker lock(&_cacheMutex);
+		_cacheIdentity = std::move(cacheIdentity);
+		_bigFileCacheIdentity = std::move(bigFileCacheIdentity);
+		_cacheAllowed = cacheAllowed;
+		_bigFileCacheAllowed = bigFileCacheAllowed;
+	}
+	_cacheInitializationReady = true;
+	_bigFileCacheInitializationReady = true;
 #endif
 }
 
@@ -534,28 +539,35 @@ void Session::initializeCacheDatabases(
 void Session::finishCacheDatabaseInitialization(
 	bool bigFileCache, bool cacheAllowed,
 	Core::MacProtectedPath::CachePathIdentity cacheIdentity) {
-	QMutexLocker lock(&_cacheMutex);
-	if (!cacheAllowed) {
+	{
+		QMutexLocker lock(&_cacheMutex);
+		if (!cacheAllowed) {
+			if (bigFileCache) {
+				_bigFileCache->close();
+			} else {
+				_cache->close();
+			}
+		}
 		if (bigFileCache) {
-			_bigFileCache->close();
+			_bigFileCacheIdentity = std::move(cacheIdentity);
+			_bigFileCacheAllowed = cacheAllowed;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			_bigFileCacheInitializationFinishedForTesting = true;
+			_bigFileCacheInitializationAllowedForTesting = cacheAllowed;
+#endif
 		} else {
-			_cache->close();
+			_cacheIdentity = std::move(cacheIdentity);
+			_cacheAllowed = cacheAllowed;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			_cacheInitializationFinishedForTesting = true;
+			_cacheInitializationAllowedForTesting = cacheAllowed;
+#endif
 		}
 	}
 	if (bigFileCache) {
-		_bigFileCacheIdentity = std::move(cacheIdentity);
-		_bigFileCacheAllowed = cacheAllowed;
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		_bigFileCacheInitializationFinishedForTesting = true;
-		_bigFileCacheInitializationAllowedForTesting = cacheAllowed;
-#endif
+		_bigFileCacheInitializationReady = true;
 	} else {
-		_cacheIdentity = std::move(cacheIdentity);
-		_cacheAllowed = cacheAllowed;
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		_cacheInitializationFinishedForTesting = true;
-		_cacheInitializationAllowedForTesting = cacheAllowed;
-#endif
+		_cacheInitializationReady = true;
 	}
 }
 #endif
@@ -1886,6 +1898,20 @@ Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 		_bigFileCache->close();
 	}
 	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
+}
+
+rpl::producer<Storage::Cache::Database::Stats> Session::cacheStatsOnMain(
+		bool bigFileCache) {
+	const auto ready = bigFileCache
+		? _bigFileCacheInitializationReady.value()
+		: _cacheInitializationReady.value();
+	return ready
+		| rpl::filter([](bool initialized) { return initialized; })
+		| rpl::map([=](bool) {
+			return bigFileCache ? cacheBigFile().statsOnMain()
+								: cache().statsOnMain();
+		})
+		| rpl::flatten_latest();
 }
 
 void Session::suggestStartExport(TimeId availableAt) {

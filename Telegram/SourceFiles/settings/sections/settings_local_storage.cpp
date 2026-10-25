@@ -1957,8 +1957,8 @@ void LocalStorage::setupContent() {
 
 	setupControls(content);
 
-	rpl::combine(_session->data().cache().statsOnMain(),
-				 _session->data().cacheBigFile().statsOnMain())
+	rpl::combine(_session->data().cacheStatsOnMain(false),
+				 _session->data().cacheStatsOnMain(true))
 		| rpl::on_next(
 			[=](Database::Stats &&stats, Database::Stats &&statsBig) {
 				update(std::move(stats), std::move(statsBig));

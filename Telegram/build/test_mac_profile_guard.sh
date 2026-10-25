@@ -1332,6 +1332,8 @@ for native_evidence in \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
 	'native_lifecycle_case=failed-init-cache-access result=PASS' \
 	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
+	'native_lifecycle_case=cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=media-cache-stats-initialization result=PASS' \
 	'native_lifecycle_case=cold-post-open-cache result=PASS' \
 	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
 	'native_lifecycle_case=cache-access-no-walk result=PASS' \
@@ -1468,6 +1470,8 @@ for native_evidence in \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
 	'native_lifecycle_case=failed-init-cache-access result=PASS' \
 	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
+	'native_lifecycle_case=cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=media-cache-stats-initialization result=PASS' \
 	'native_lifecycle_case=cold-post-open-cache result=PASS' \
 	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
 	'native_lifecycle_case=cache-access-no-walk result=PASS' \

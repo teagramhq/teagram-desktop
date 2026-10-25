@@ -272,6 +272,8 @@ class Session final : public base::has_weak_ptr {
 	[[nodiscard]] Storage::Cache::Database &cacheBigFile();
 	[[nodiscard]] Storage::Cache::Database *cacheIfAllowed();
 	[[nodiscard]] Storage::Cache::Database *cacheBigFileIfAllowed();
+	[[nodiscard]] rpl::producer<Storage::Cache::Database::Stats>
+	cacheStatsOnMain(bool bigFileCache);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
@@ -1199,6 +1201,8 @@ private:
 	const QString _bigFileCachePath;
 	Storage::DatabasePointer _cache;
 	Storage::DatabasePointer _bigFileCache;
+	rpl::variable<bool> _cacheInitializationReady = false;
+	rpl::variable<bool> _bigFileCacheInitializationReady = false;
 #ifdef Q_OS_MAC
 	Storage::Cache::Database _unavailableCache;
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)

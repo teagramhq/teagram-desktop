@@ -661,6 +661,8 @@ for native_case in \
   post-open-media-cache \
   failed-init-cache-access \
   failed-init-media-cache-access \
+  cache-stats-initialization \
+  media-cache-stats-initialization \
   cold-post-open-cache \
   cold-post-open-media-cache \
   cache-access-no-walk \
@@ -668,6 +670,9 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+grep -Fq 'cacheStatsOnMain' \
+  Telegram/SourceFiles/settings/sections/settings_local_storage.cpp \
+  || contract_fail 'Local storage must subscribe to cache statistics after initialization.'
 for native_case in \
   settings-deep-link \
   messages-privacy \
