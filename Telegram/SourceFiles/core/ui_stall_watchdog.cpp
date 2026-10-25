@@ -29,7 +29,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ucontext.h>
-#include <ucontext.h>
 #if defined(Q_OS_MAC) && defined(__arm64__)
 #include <ptrauth.h>
 #endif // Q_OS_MAC && __arm64__
