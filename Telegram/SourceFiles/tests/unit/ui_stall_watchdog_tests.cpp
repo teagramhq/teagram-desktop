@@ -122,9 +122,8 @@ TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
-		auto watchdog = Core::UiStallWatchdog([&](const QString &line) {
-			lines.push_back(line);
-		});
+		auto watchdog = Core::UiStallWatchdog(
+			[&](const QString &line) { lines.push_back(line); });
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
 			std::chrono::milliseconds(80), &loop);
 		watchdog.installEventFilter(&blockFilter);
