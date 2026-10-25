@@ -245,7 +245,10 @@ public:
 	  return _ptsWaiter.requesting();
   }
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-  void initializePtsForRegressionTest(int32 pts) { setState(pts, 0, 0, 0); }
+  void completeInitialStateForRegressionTest(int32 pts) {
+	  setState(pts, 0, 0, 0);
+	  _ptsWaiter.setRequesting(false);
+  }
 #endif
   [[nodiscard]] bool handlingChannelDifference() const {
 	  return _handlingChannelDifference;

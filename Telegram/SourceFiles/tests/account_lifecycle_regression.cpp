@@ -2509,7 +2509,10 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 		return false;
 	}
 	// Model a signed-in session whose initial updates.getState has completed.
-	session.updates().initializePtsForRegressionTest(1);
+	session.updates().completeInitialStateForRegressionTest(1);
+	if (session.updates().requestingDifference()) {
+		return false;
+	}
 
 	auto capture = ChannelSaveRequestCapture{
 		.instance = &account->mtp(),
