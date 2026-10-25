@@ -295,7 +295,9 @@ jobs:
 
       - name: Select compiler cache profile.
         id: ccache-profile
-        run: bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT_LABEL: ${{ github.event.label.name || '' }}
+        run: bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"
 
       - name: Verify PR merge head.
         if: github.event_name == 'pull_request'
@@ -423,13 +425,15 @@ jobs:
       - name: Teagram build.
         id: build
         if: env.ONLY_CACHE == 'false'
+        env:
+          PROTECTED_PATH_INTEGRATION: ${{ steps.ccache-profile.outputs.protected_path_integration }}
         run: |
           set -Eeo pipefail
           BUILD_LOG="$RUNNER_TEMP/teagram-build-${BUILD_VARIANT}.log"
           cd "$REPO_NAME/Telegram"
 
           BUILD_ARGS=()
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$PROTECTED_PATH_INTEGRATION" = "ON" ]; then
             BUILD_ARGS+=(-D TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=ON)
           fi
 
@@ -596,7 +600,7 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -633,7 +637,7 @@ jobs:
           exit "$test_status"
 
       - name: Report skipped profile and IPC integration tests.
-        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome != 'success' }}
         env:
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
@@ -642,7 +646,7 @@ jobs:
             "$BUILD_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve on-demand failure logs.
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'failure' }}
+        if: ${{ always() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'failure' }}
         run: |
           set -Eeuo pipefail
           evidence="$REPO_NAME/out/Debug/evidence"

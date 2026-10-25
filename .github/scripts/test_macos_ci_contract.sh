@@ -439,8 +439,13 @@ require_job_field "$mac_workflow" macos '.env.CCACHE_MAXSIZE' '5G'
 require_job_field "$mac_workflow" macos '.env.CCACHE_SLOPPINESS' 'pch_defines,time_macros'
 require_job_field "$mac_workflow" macos '.env.CCACHE_COMPILERCHECK' 'content'
 require_step_field "$mac_workflow" macos 'Select compiler cache profile.' '.run' \
-  'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
+  'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"'
+require_step_field "$mac_workflow" macos 'Select compiler cache profile.' '.env.EVENT_LABEL' \
+  "\${{ github.event.label.name || '' }}"
+require_step_field "$mac_workflow" macos 'Teagram build.' '.env.PROTECTED_PATH_INTEGRATION' \
+  '${{ steps.ccache-profile.outputs.protected_path_integration }}'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
+approved_pull_request_profile="$(bash "$ccache_profile_script" pull_request macos-build)"
 scheduled_profile="$(bash "$ccache_profile_script" schedule)"
 push_profile="$(bash "$ccache_profile_script" push)"
 dispatch_profile="$(bash "$ccache_profile_script" workflow_dispatch)"
@@ -448,10 +453,17 @@ if [[ "$pull_request_profile" != "$scheduled_profile" || "$pull_request_profile"
   contract_fail 'MacOS PR, scheduled and dev push builds must share one ccache profile.'
 fi
 if [[ "$pull_request_profile" != $'name=pr-compatible\nprotected_path_integration=OFF' ]]; then
-  contract_fail 'MacOS PR and scheduled builds must use the PR-compatible OFF profile.'
+  contract_fail 'Unapproved MacOS PR and scheduled builds must use the PR-compatible OFF profile.'
+fi
+if [[ "$approved_pull_request_profile" != "$dispatch_profile" ]]; then
+  contract_fail 'Approved MacOS PR builds and protected dispatches must use the same ON ccache profile.'
+fi
+other_label_profile="$(bash "$ccache_profile_script" pull_request unrelated-label)"
+if [[ "$other_label_profile" != "$pull_request_profile" ]]; then
+  contract_fail 'Only the approved macos-build PR label may enable the protected profile.'
 fi
 if [[ "$dispatch_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
-  contract_fail 'Protected-path dispatches must use a separate ON ccache profile.'
+  contract_fail 'Protected-path builds must use a separate ON ccache profile.'
 fi
 require_step_field "$mac_workflow" macos 'First set up.' '.env.PROTECTED_PATH_INTEGRATION' \
   '${{ steps.ccache-profile.outputs.protected_path_integration }}'
@@ -499,6 +511,8 @@ reject_value "$mac_workflow" \
   'clang-format'
 
 require_step_script "$mac_workflow" macos 'Teagram build.' \
+  'if [ "$PROTECTED_PATH_INTEGRATION" = "ON" ]; then' \
+  '-D TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=ON' \
   'CMAKE_C_COMPILER_LAUNCHER=ccache' \
   'ccache_launcher.sh' \
   '-Xclang -fno-pch-timestamp' \
@@ -602,10 +616,12 @@ summary_step_index="$(job_field "$mac_workflow" macos \
   || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
 profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" macos "$profile_step" '.if' \
-  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+grep -Fq 'First messages\.getDialogs handler latency regression:' "$profile_harness" \
+  || contract_fail "$profile_harness must assert seeded first-getDialogs latency output."
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
@@ -955,7 +971,7 @@ grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
 grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
   || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
 require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
-  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}"
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome != 'success' }}"
 require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
 require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
