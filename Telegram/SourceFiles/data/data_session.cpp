@@ -1890,6 +1890,16 @@ void Session::setCacheClearPauseForTesting(bool bigFileCache,
 		_cacheClearPauseForTesting = std::move(pause);
 	}
 }
+
+void Session::setCacheClearHandoffForTesting(bool bigFileCache,
+											 Fn<void()> handoff) {
+	QMutexLocker lock(&_cacheMutex);
+	if (bigFileCache) {
+		_bigFileCacheClearHandoffForTesting = std::move(handoff);
+	} else {
+		_cacheClearHandoffForTesting = std::move(handoff);
+	}
+}
 #endif
 
 void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
@@ -1899,6 +1909,7 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 #ifdef Q_OS_MAC
 	auto identity = Core::MacProtectedPath::CachePathIdentity();
 	auto pause = Fn<void()>();
+	auto handoff = Fn<void()>();
 	auto canClear = false;
 	{
 		QMutexLocker lock(&_cacheMutex);
@@ -1919,8 +1930,10 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 				if (bigFileCache) {
 					pause = std::move(_bigFileCacheClearPauseForTesting);
+					handoff = std::move(_bigFileCacheClearHandoffForTesting);
 				} else {
 					pause = std::move(_cacheClearPauseForTesting);
+					handoff = std::move(_cacheClearHandoffForTesting);
 				}
 #endif
 			} else {
@@ -1943,7 +1956,8 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		database->close();
 	}
 	database->clear([weak, bigFileCache, closeBefore, path,
-					 identity = std::move(identity), done = std::move(done)](
+					 identity = std::move(identity), done = std::move(done),
+					 handoff = std::move(handoff)](
 						Storage::Cache::Error error) mutable {
 		const auto allowed
 			= !closeBefore && (error.type == Storage::Cache::Error::Type::None)
@@ -1952,27 +1966,36 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 				  bigFileCache ? "Data::Session::cacheBigFile.clear"
 							   : "Data::Session::cache.clear",
 				  &identity);
-		if (const auto session = weak.get()) {
-			{
-				QMutexLocker lock(&session->_cacheMutex);
-				if (bigFileCache) {
-					session->_bigFileCacheIdentity = std::move(identity);
-					session->_bigFileCacheAllowed = allowed;
-					session->_bigFileCacheClearPending = false;
-				} else {
-					session->_cacheIdentity = std::move(identity);
-					session->_cacheAllowed = allowed;
-					session->_cacheClearPending = false;
+		crl::on_main(weak, [weak, bigFileCache, allowed,
+							identity = std::move(identity)]() mutable {
+			if (const auto session = weak.get()) {
+				{
+					QMutexLocker lock(&session->_cacheMutex);
+					if (bigFileCache) {
+						session->_bigFileCacheIdentity = std::move(identity);
+						session->_bigFileCacheAllowed = allowed;
+						session->_bigFileCacheClearPending = false;
+					} else {
+						session->_cacheIdentity = std::move(identity);
+						session->_cacheAllowed = allowed;
+						session->_cacheClearPending = false;
+					}
+				}
+				if (!allowed) {
+					(bigFileCache ? session->_bigFileCache.get()
+								  : session->_cache.get())
+						->close();
 				}
 			}
-			if (!allowed) {
-				(bigFileCache ? session->_bigFileCache.get()
-							  : session->_cache.get())
-					->close();
-			}
-		}
+		});
 		if (done) {
-			done(std::move(error));
+			crl::on_main(
+				[done = std::move(done), error = std::move(error)]() mutable {
+					done(std::move(error));
+				});
+		}
+		if (handoff) {
+			handoff();
 		}
 	});
 #else

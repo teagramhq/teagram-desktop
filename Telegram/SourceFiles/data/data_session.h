@@ -282,6 +282,7 @@ class Session final : public base::has_weak_ptr {
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheAllowedForTesting(bool bigFileCache);
 	void setCacheClearPauseForTesting(bool bigFileCache, Fn<void()> pause);
+	void setCacheClearHandoffForTesting(bool bigFileCache, Fn<void()> handoff);
 #endif
 
 	[[nodiscard]] not_null<PeerData*> peer(PeerId id);
@@ -1228,6 +1229,8 @@ private:
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	Fn<void()> _cacheClearPauseForTesting;
 	Fn<void()> _bigFileCacheClearPauseForTesting;
+	Fn<void()> _cacheClearHandoffForTesting;
+	Fn<void()> _bigFileCacheClearHandoffForTesting;
 #endif
 #endif
 

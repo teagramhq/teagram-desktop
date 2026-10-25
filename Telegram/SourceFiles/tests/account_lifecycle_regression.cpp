@@ -159,6 +159,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSemaphore>
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QVariant>
 #include <QtGui/QAccessible>
@@ -2456,11 +2457,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (beforeClear.isEmpty()) {
 		return false;
 	}
-	struct ClearState {
-		QSemaphore completed;
-		std::optional<Storage::Cache::Error> error;
-	};
-	const auto clearState = std::make_shared<ClearState>();
 	auto paused = false;
 	auto markerRotated = false;
 	auto activeVersionMissing = false;
@@ -2472,6 +2468,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	};
 	const auto writePayload = QByteArray("cache clear rotation window");
 	auto blockedWrite = std::optional<Storage::Cache::Error>();
+	auto clearCallbackOnMain = std::atomic_bool(false);
 	data.setCacheClearPauseForTesting(mediaCache, [&] {
 		paused = true;
 		auto version = QFileInfo(beforeClear).fileName().toInt() + 1;
@@ -2502,15 +2499,23 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 							  std::move(done));
 			  });
 	});
-	data.clearCacheDatabase(mediaCache, false,
-							[clearState](Storage::Cache::Error error) {
-								clearState->error = std::move(error);
-								clearState->completed.release();
-							});
-	const auto clearCompleted = clearState->completed.tryAcquire(1, 10000);
-	const auto cleared = clearCompleted
-							 ? clearState->error
-							 : std::optional<Storage::Cache::Error>();
+	const auto cleared = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) {
+			data.clearCacheDatabase(
+				mediaCache, false,
+				[&,
+				 done = std::move(done)](Storage::Cache::Error error) mutable {
+					clearCallbackOnMain.store(
+						QThread::currentThread()
+							== QCoreApplication::instance()->thread(),
+						std::memory_order_release);
+					done(std::move(error));
+				});
+		},
+		10000);
+	const auto clearCompleted = cleared.has_value();
+	const auto callbackOnMain
+		= clearCallbackOnMain.load(std::memory_order_acquire);
 	const auto blockedWriteRefused
 		= blockedWrite
 		  && (blockedWrite->type != Storage::Cache::Error::Type::None);
@@ -2528,23 +2533,89 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto swapped = rotated && allowedAfterClear
 						 && RunPostOpenCacheSymlinkRegression(
 							 path, fixture, cache, [] {}, cacheRefusal);
-	const auto passed = paused && markerRotated && activeVersionMissing
-						&& blockedDuringClear && cacheAllowedPreserved
-						&& blockedWriteRefused && clearCompleted
-						&& CacheOperationSucceeded(cleared) && rotated
-						&& allowedAfterClear && wroteAfterClear && swapped;
+	const auto passed
+		= paused && markerRotated && activeVersionMissing && blockedDuringClear
+		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
+		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
+		  && allowedAfterClear && wroteAfterClear && swapped;
 	if (!passed) {
 		std::fprintf(
 			stderr,
 			"Clear-then-swap cache regression failed: paused=%d "
 			"marker_rotated=%d active_missing=%d blocked_during=%d "
 			"allowed_preserved=%d "
-			"blocked_write_refused=%d clear_completed=%d rotated=%d "
+			"blocked_write_refused=%d clear_completed=%d callback_on_main=%d "
+			"rotated=%d "
 			"allowed_after=%d "
 			"write_after_clear=%d swapped=%d path=%s.\n",
 			paused, markerRotated, activeVersionMissing, blockedDuringClear,
-			cacheAllowedPreserved, blockedWriteRefused, clearCompleted, rotated,
-			allowedAfterClear, wroteAfterClear, swapped, qPrintable(path));
+			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
+			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
+			swapped, qPrintable(path));
+	}
+	return passed;
+}
+
+[[nodiscard]] bool RunPendingCacheClearSessionDestructionRegression(
+	Main::Domain &domain, UserId selfId, bool mediaCache) {
+	const auto guarded = domain.add(MTP::Environment::Production);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto cleanup = gsl::finally([&] {
+		if (guarded->sessionExists()) {
+			guarded->forcedLogOut();
+		}
+	});
+	auto &data = guarded->session().data();
+	const auto cacheIfAllowed = [&] {
+		return mediaCache ? data.cacheBigFileIfAllowed()
+						  : data.cacheIfAllowed();
+	};
+	if (!WaitForRegressionCondition(
+			[&] { return cacheIfAllowed() != nullptr; })) {
+		return false;
+	}
+	struct State {
+		QSemaphore mainUpdateQueued;
+		bool completed = false;
+		bool callbackOnMain = false;
+		std::optional<Storage::Cache::Error> error;
+	};
+	const auto state = std::make_shared<State>();
+	data.setCacheClearHandoffForTesting(
+		mediaCache, [state] { state->mainUpdateQueued.release(); });
+	data.clearCacheDatabase(
+		mediaCache, false, [state](Storage::Cache::Error error) {
+			state->callbackOnMain = QThread::currentThread()
+									== QCoreApplication::instance()->thread();
+			state->error = std::move(error);
+			state->completed = true;
+		});
+	const auto mainUpdateQueued = state->mainUpdateQueued.tryAcquire(1, 10000);
+	const auto accessStayedBlocked = mainUpdateQueued
+									 && data.cacheAllowedForTesting(mediaCache)
+									 && (cacheIfAllowed() == nullptr);
+	guarded->forcedLogOut();
+	const auto sessionDestroyed = !guarded->sessionExists();
+	const auto callbackCompleted
+		= WaitForRegressionCondition([&] { return state->completed; });
+	const auto passed = mainUpdateQueued && accessStayedBlocked
+						&& sessionDestroyed && callbackCompleted
+						&& state->callbackOnMain
+						&& CacheOperationSucceeded(state->error);
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Pending cache clear logout regression failed: media=%d "
+					 "main_update_queued=%d blocked=%d destroyed=%d "
+					 "callback_completed=%d callback_on_main=%d path=%s.\n",
+					 mediaCache, mainUpdateQueued, accessStayedBlocked,
+					 sessionDestroyed, callbackCompleted, state->callbackOnMain,
+					 qPrintable(mediaCache ? guarded->local().cacheBigFilePath()
+										   : guarded->local().cachePath()));
 	}
 	return passed;
 }
@@ -9296,6 +9367,16 @@ void RunAuthenticatedCacheSymlinkCases(
 										return RunRefusedCacheReaderRegressions(
 											guarded, mediaCache);
 									});
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "pending-media-cache-clear-session-destruction"
+							 : "pending-cache-clear-session-destruction";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed
+				= RunPendingCacheClearSessionDestructionRegression(
+					domain, selfId, mediaCache);
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {
