@@ -346,37 +346,50 @@ void UiStallWatchdog::run() {
 		}
 		_condition.notify_all();
 
-		// A stall is the time the UI thread takes to answer a ping. The
-		// stack is sampled while it is still stuck, the line is written once
-		// it answers, so the line carries the whole duration.
+		// Persist the record at detection; a hung UI may never answer.
 		auto writeLog = false;
+		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
-		if (!_condition.wait_until(lock, postedAt + kCountThreshold,
-								   acknowledged)) {
+		if (_condition.wait_until(lock, postedAt + kCountThreshold,
+								  acknowledged)) {
+			if (_stopping) {
+				return;
+			}
+			const auto duration = _acknowledgedAt - postedAt;
+			if (duration >= kCountThreshold) {
+				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
+			}
+			if (duration >= kLogThreshold) {
+				detectedAt = _acknowledgedAt;
+			}
+		} else {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			if (!_condition.wait_until(lock, postedAt + kLogThreshold,
 									   acknowledged)) {
-				writeLog = _log
-						   && (!hasLogged
-							   || (Clock::now() - lastLogged) >= kLogRateLimit);
-				if (writeLog && _canCaptureStack) {
-					lock.unlock();
-					frames = CaptureStack();
-					lock.lock();
-				}
+				detectedAt = Clock::now();
+			} else if (_stopping) {
+				return;
+			} else if (_acknowledgedAt - postedAt >= kLogThreshold) {
+				detectedAt = _acknowledgedAt;
 			}
 		}
-		_condition.wait(lock, acknowledged);
-		if (_stopping) {
-			return;
+		if (detectedAt != Clock::time_point()) {
+			writeLog = _log
+					   && (!hasLogged
+						   || (Clock::now() - lastLogged) >= kLogRateLimit);
+			if (writeLog && _canCaptureStack) {
+				lock.unlock();
+				frames = CaptureStack();
+				lock.lock();
+			}
 		}
 		if (writeLog) {
 			const auto duration
 				= std::chrono::duration_cast<std::chrono::milliseconds>(
-					_acknowledgedAt - postedAt);
+					detectedAt - postedAt);
 			const auto line
 				= u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
 					  .arg(startTime.toString(Qt::ISODateWithMs))
@@ -386,6 +399,10 @@ void UiStallWatchdog::run() {
 			lastLogged = Clock::now();
 			hasLogged = true;
 			lock.lock();
+		}
+		_condition.wait(lock, acknowledged);
+		if (_stopping) {
+			return;
 		}
 		_condition.wait_until(lock, _acknowledgedAt + kPingInterval,
 							  [this] { return _stopping; });

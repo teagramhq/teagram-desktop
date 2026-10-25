@@ -37,10 +37,14 @@ UiStallWatchdogTestBlock(std::chrono::milliseconds duration) {
 class UiStallWatchdogTestBlockFilter final : public QObject {
   public:
 	UiStallWatchdogTestBlockFilter(std::chrono::milliseconds duration,
-								   QEventLoop *loop)
-		: _duration(duration), _loop(loop) {}
+								   QEventLoop *loop,
+								   std::atomic_bool *logged = nullptr)
+		: _duration(duration), _loop(loop), _logged(logged) {}
 
 	[[nodiscard]] bool Blocked() const { return _blocked; }
+	[[nodiscard]] bool LoggedWhileBlocked() const {
+		return _loggedWhileBlocked;
+	}
 
   protected:
 	bool eventFilter(QObject *, QEvent *event) override {
@@ -48,6 +52,8 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 		if (event->type() >= QEvent::User && ++_pingCount == 2) {
 			_blocked = true;
 			UiStallWatchdogTestBlock(_duration);
+			_loggedWhileBlocked
+				= _logged && _logged->load(std::memory_order_acquire);
 			_loop->quit();
 		}
 		return false;
@@ -56,26 +62,31 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
   private:
 	const std::chrono::milliseconds _duration;
 	QEventLoop *_loop = nullptr;
+	std::atomic_bool *_logged = nullptr;
 	int _pingCount = 0;
 	bool _blocked = false;
+	bool _loggedWhileBlocked = false;
 };
 
 TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto lines = std::vector<QString>();
 	auto mutex = std::mutex();
+	auto logged = std::atomic_bool(false);
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([&](const QString &line) {
 			const auto lock = std::lock_guard(mutex);
 			lines.push_back(line);
+			logged.store(true, std::memory_order_release);
 		});
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
-			std::chrono::milliseconds(300), &loop);
+			std::chrono::milliseconds(300), &loop, &logged);
 		watchdog.installEventFilter(&blockFilter);
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
+		CHECK(blockFilter.LoggedWhileBlocked());
 		const auto deadline
 			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 		while (std::chrono::steady_clock::now() < deadline) {
@@ -99,7 +110,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 								  .mid(u"UI stall "_q.size())
 								  .section(u' ', 0, 0)
 								  .toInt();
-		CHECK(duration >= 300);
+		CHECK(duration >= 100);
 	}
 }
 
