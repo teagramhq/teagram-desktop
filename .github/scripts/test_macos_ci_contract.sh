@@ -659,6 +659,8 @@ for native_case in \
   authenticated-cache-file-symlinks \
   post-open-cache \
   post-open-media-cache \
+  failed-init-cache-access \
+  failed-init-media-cache-access \
   cold-post-open-cache \
   cold-post-open-media-cache \
   cache-access-no-walk \

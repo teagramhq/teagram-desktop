@@ -2437,6 +2437,106 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	}
 	return passed;
 }
+
+[[nodiscard]] bool RunFailedCacheInitializationAccessRegression(
+	Main::Domain &domain, UserId selfId, const ProtectedCacheFixtures &fixtures,
+	bool mediaCache) {
+	const auto guarded = domain.add(MTP::Environment::Production);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto cachePath = mediaCache ? guarded->local().cacheBigFilePath()
+									  : guarded->local().cachePath();
+	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
+									 : guarded->local().cacheSettings();
+	auto opened = Core::App().databases().get(cachePath, settings);
+	if (!OpenCache(*opened, guarded)) {
+		return false;
+	}
+	const auto seedKey = Storage::Cache::Key{
+		0x4641494c4544494eULL,
+		0x495449414c534545ULL,
+	};
+	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+		opened->put(seedKey, QByteArray("pre-open protected cache seed"),
+					std::move(done));
+	});
+	if (!CacheOperationSucceeded(seed)) {
+		return false;
+	}
+	opened->sync();
+	const auto active = ActiveCacheVersionPath(cachePath);
+	const auto target
+		= QDir(fixtures.root)
+			  .filePath(mediaCache ? "failed-init-media-cache-target"
+								   : "failed-init-cache-target");
+	if (active.isEmpty() || QFileInfo::exists(target)) {
+		return false;
+	}
+	auto moved = QDir().rename(active, target);
+	auto linked = moved && QFile::link(target, active);
+	const auto targetEntriesBefore = QDir(target).entryList(
+		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+	auto cleanupDone = false;
+	auto cleanupSucceeded = true;
+	auto cleanup = [&] {
+		if (cleanupDone) {
+			return cleanupSucceeded;
+		}
+		opened->close();
+		opened->sync();
+		const auto linkRemoved = !linked || QFile::remove(active);
+		const auto originalRestored = !moved || QDir().rename(target, active);
+		cleanupSucceeded = linkRemoved && originalRestored;
+		cleanupDone = true;
+		return cleanupSucceeded;
+	};
+	auto cleanupGuard = gsl::finally([&] { cleanup(); });
+	if (!moved || !linked
+		|| !guarded->createSession(RegressionUser(selfId, true, QString()),
+								   std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	const auto initializationPending
+		= !data.cacheInitializationFinishedForTesting(mediaCache);
+	const auto key = Storage::Cache::Key{
+		0x4641494c4544494eULL,
+		mediaCache ? 0x495449414c4d4544ULL : 0x495449414c434143ULL,
+	};
+	auto read = std::optional<QByteArray>();
+	auto write = std::optional<Storage::Cache::Error>();
+	auto &cache = mediaCache ? data.cacheBigFile() : data.cache();
+	cache.get(seedKey, [&](QByteArray &&value) { read = std::move(value); });
+	cache.put(key, QByteArray("must not reach protected cache"),
+			  [&](Storage::Cache::Error error) { write = std::move(error); });
+	cache.sync();
+	const auto directReadRefused = read && read->isEmpty();
+	const auto directAccessRefused
+		= write && (write->type == Storage::Cache::Error::Type::IO);
+	const auto initializationFinished = WaitForRegressionCondition(
+		[&] { return data.cacheInitializationFinishedForTesting(mediaCache); });
+	const auto initializationRejected
+		= initializationFinished
+		  && !data.cacheInitializationAllowedForTesting(mediaCache)
+		  && (mediaCache ? (data.cacheBigFileIfAllowed() == nullptr)
+						 : (data.cacheIfAllowed() == nullptr));
+	const auto targetUnchanged
+		= QDir(target).entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+								 | QDir::NoDotAndDotDot)
+		  == targetEntriesBefore;
+	const auto passed = initializationPending && directReadRefused
+						&& directAccessRefused && targetUnchanged
+						&& initializationRejected;
+	std::fprintf(stderr,
+				 "Failed cache initialization access regression: cache=%s "
+				 "pending=%d direct_read_refused=%d direct_write_refused=%d "
+				 "target_unchanged=%d "
+				 "initialization_finished=%d rejected=%d.\n",
+				 mediaCache ? "media_cache" : "cache", initializationPending,
+				 directReadRefused, directAccessRefused, targetUnchanged,
+				 initializationFinished, initializationRejected);
+	return passed && cleanup();
+}
 #endif
 
 [[nodiscard]] Main::Account *
@@ -8381,6 +8481,8 @@ struct NativeLifecycleResults {
 			"authenticated-cache-file-symlinks",
 			"post-open-cache",
 			"post-open-media-cache",
+			"failed-init-cache-access",
+			"failed-init-media-cache-access",
 			"cold-post-open-cache",
 			"cold-post-open-media-cache",
 			"cache-access-no-walk",
@@ -8920,6 +9022,14 @@ void RunAuthenticatedCacheSymlinkCases(
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache ? "failed-init-media-cache-access"
+											 : "failed-init-cache-access";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunFailedCacheInitializationAccessRegression(
+				domain, selfId, fixtures, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
 			const auto caseName
 				= mediaCache ? "post-open-media-cache" : "post-open-cache";
 			nativeLifecycleResults->StartCase(caseName);
@@ -9017,6 +9127,10 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
 									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-media-cache-access",
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-media-cache",
@@ -9030,6 +9144,10 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-media-cache-access",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-cache",
 									 "protected-path-integration-disabled");

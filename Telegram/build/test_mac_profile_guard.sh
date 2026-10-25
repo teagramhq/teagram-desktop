@@ -1330,6 +1330,8 @@ for native_evidence in \
 	'native_lifecycle_case=chat-participants-prerequisites result=PASS' \
 	'native_lifecycle_case=cache-concurrent-deletion result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
+	'native_lifecycle_case=failed-init-cache-access result=PASS' \
+	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
 	'native_lifecycle_case=cold-post-open-cache result=PASS' \
 	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
 	'native_lifecycle_case=cache-access-no-walk result=PASS' \
@@ -1464,6 +1466,8 @@ for native_evidence in \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=failed-init-cache-access result=PASS' \
+	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
 	'native_lifecycle_case=cold-post-open-cache result=PASS' \
 	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
 	'native_lifecycle_case=cache-access-no-walk result=PASS' \
@@ -1646,7 +1650,7 @@ END { exit step != 45 }
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,cold-post-open-cache,cold-post-open-media-cache,cache-access-no-walk,media-cache-access-no-walk,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,failed-init-cache-access,failed-init-media-cache-access,cold-post-open-cache,cold-post-open-media-cache,cache-access-no-walk,media-cache-access-no-walk,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
 	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \

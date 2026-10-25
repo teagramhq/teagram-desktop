@@ -272,6 +272,10 @@ class Session final : public base::has_weak_ptr {
 	[[nodiscard]] Storage::Cache::Database &cacheBigFile();
 	[[nodiscard]] Storage::Cache::Database *cacheIfAllowed();
 	[[nodiscard]] Storage::Cache::Database *cacheBigFileIfAllowed();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
+	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
+#endif
 
 	[[nodiscard]] not_null<PeerData*> peer(PeerId id);
 	[[nodiscard]] not_null<PeerData*> peer(UserId id) = delete;
@@ -1195,6 +1199,15 @@ private:
 	const QString _bigFileCachePath;
 	Storage::DatabasePointer _cache;
 	Storage::DatabasePointer _bigFileCache;
+#ifdef Q_OS_MAC
+	Storage::Cache::Database _unavailableCache;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	bool _cacheInitializationFinishedForTesting = false;
+	bool _bigFileCacheInitializationFinishedForTesting = false;
+	bool _cacheInitializationAllowedForTesting = false;
+	bool _bigFileCacheInitializationAllowedForTesting = false;
+#endif
+#endif
 	QMutex _cacheMutex;
 	Core::MacProtectedPath::CachePathIdentity _cacheIdentity;
 	Core::MacProtectedPath::CachePathIdentity _bigFileCacheIdentity;

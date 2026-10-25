@@ -236,6 +236,9 @@ Session::Session(not_null<Main::Session *> session)
 										 _session->local().cacheSettings())),
 	  _bigFileCache(Core::App().databases().get(
 		  _bigFileCachePath, _session->local().cacheBigFileSettings())),
+#ifdef Q_OS_MAC
+	  _unavailableCache(_cachePath, _session->local().cacheSettings()),
+#endif
 	  _groupFreeTranscribeLevel(
 		  session->appConfig().value()
 		  | rpl::map([limits = Data::LevelLimits(session)] {
@@ -542,9 +545,17 @@ void Session::finishCacheDatabaseInitialization(
 	if (bigFileCache) {
 		_bigFileCacheIdentity = std::move(cacheIdentity);
 		_bigFileCacheAllowed = cacheAllowed;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		_bigFileCacheInitializationFinishedForTesting = true;
+		_bigFileCacheInitializationAllowedForTesting = cacheAllowed;
+#endif
 	} else {
 		_cacheIdentity = std::move(cacheIdentity);
 		_cacheAllowed = cacheAllowed;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		_cacheInitializationFinishedForTesting = true;
+		_cacheInitializationAllowedForTesting = cacheAllowed;
+#endif
 	}
 }
 #endif
@@ -1822,15 +1833,37 @@ Storage::Cache::Database &Session::cache() {
 	if (const auto cache = cacheIfAllowed()) {
 		return *cache;
 	}
+#ifdef Q_OS_MAC
+	return _unavailableCache;
+#else
 	return *_cache;
+#endif
 }
 
 Storage::Cache::Database &Session::cacheBigFile() {
 	if (const auto cache = cacheBigFileIfAllowed()) {
 		return *cache;
 	}
+#ifdef Q_OS_MAC
+	return _unavailableCache;
+#else
 	return *_bigFileCache;
+#endif
 }
+
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+bool Session::cacheInitializationFinishedForTesting(bool bigFileCache) {
+	QMutexLocker lock(&_cacheMutex);
+	return bigFileCache ? _bigFileCacheInitializationFinishedForTesting
+						: _cacheInitializationFinishedForTesting;
+}
+
+bool Session::cacheInitializationAllowedForTesting(bool bigFileCache) {
+	QMutexLocker lock(&_cacheMutex);
+	return bigFileCache ? _bigFileCacheInitializationAllowedForTesting
+						: _cacheInitializationAllowedForTesting;
+}
+#endif
 
 Storage::Cache::Database *Session::cacheIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
