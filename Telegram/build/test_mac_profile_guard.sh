@@ -1330,8 +1330,8 @@ for native_evidence in \
 	'native_lifecycle_case=chat-participants-prerequisites result=PASS' \
 	'native_lifecycle_case=cache-concurrent-deletion result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
-	'native_lifecycle_case=post-open-cache result=PASS' \
-	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=cache-access-no-walk result=PASS' \
+	'native_lifecycle_case=media-cache-access-no-walk result=PASS' \
 	'native_lifecycle_case=protected-cache-cleanup result=PASS' \
 	'native_lifecycle_cases_failed=none'; do
 	if ! grep -F -q "$native_evidence" "$AUTH_LOG"; then
@@ -1444,8 +1444,8 @@ for native_evidence in \
 	'native_lifecycle_case=mini-app-open result=PASS' \
 	'native_lifecycle_case=chatlist-invite-check result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
-	'native_lifecycle_case=post-open-cache result=PASS' \
-	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=cache-access-no-walk result=PASS' \
+	'native_lifecycle_case=media-cache-access-no-walk result=PASS' \
 	'native_lifecycle_case=folder-crud result=PASS' \
 	'native_lifecycle_case=stock-basic-group-creator result=PASS' \
 	'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
@@ -1522,10 +1522,10 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=passport-link-refusal result=PASS' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks status=START' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
-		'native_lifecycle_case=post-open-cache status=START' \
-		'native_lifecycle_case=post-open-cache result=' \
-		'native_lifecycle_case=post-open-media-cache status=START' \
-		'native_lifecycle_case=post-open-media-cache result=' \
+		'native_lifecycle_case=cache-access-no-walk status=START' \
+		'native_lifecycle_case=cache-access-no-walk result=' \
+		'native_lifecycle_case=media-cache-access-no-walk status=START' \
+		'native_lifecycle_case=media-cache-access-no-walk result=' \
 		'native_lifecycle_case=calls-instance-start result=PASS' \
 		'native_lifecycle_case=stock-incoming-call-answer status=START' \
 		'native_lifecycle_case=stock-incoming-call-answer result=FAIL' \
@@ -1594,10 +1594,10 @@ run_native_failure_continuation_case() {
 /native_lifecycle_case=passport-link-refusal result=PASS/ && step == 26 { step = 27; next }
 /native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 27 { step = 28; next }
 /native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 28 { step = 29; next }
-/native_lifecycle_case=post-open-cache status=START/ && step == 29 { step = 30; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 30 { step = 31; next }
-/native_lifecycle_case=post-open-media-cache status=START/ && step == 31 { step = 32; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 32 { step = 33; next }
+/native_lifecycle_case=cache-access-no-walk status=START/ && step == 29 { step = 30; next }
+/native_lifecycle_case=cache-access-no-walk result=/ && step == 30 { step = 31; next }
+/native_lifecycle_case=media-cache-access-no-walk status=START/ && step == 31 { step = 32; next }
+/native_lifecycle_case=media-cache-access-no-walk result=/ && step == 32 { step = 33; next }
 /native_lifecycle_case=folder-crud status=START/ && step == 33 { step = 34; next }
 /native_lifecycle_case=folder-crud result=FAIL/ && step == 34 { step = 35; next }
 /native_lifecycle_case=admin-session-identities status=START/ && step == 35 { step = 36; next }
@@ -1616,7 +1616,7 @@ END { exit step != 45 }
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,cache-access-no-walk,media-cache-access-no-walk,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
 	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \

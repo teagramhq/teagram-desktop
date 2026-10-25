@@ -1121,8 +1121,6 @@ struct ProtectedCacheFixtures {
 	QString mediaCacheRoot;
 	QString cacheLeaf;
 	QString mediaCacheLeaf;
-	QString openedCache;
-	QString openedMediaCache;
 	QString cleanupRoot;
 };
 
@@ -1206,8 +1204,6 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	fixtures->mediaCacheRoot = fixtures->root + "/media-cache-root";
 	fixtures->cacheLeaf = fixtures->root + "/cache-leaf";
 	fixtures->mediaCacheLeaf = fixtures->root + "/media-cache-leaf";
-	fixtures->openedCache = fixtures->root + "/opened-cache";
-	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
 	return true;
 }
@@ -2153,169 +2149,6 @@ template <typename Result, typename Start>
 		&& CachePayloadMatches(*cache, key, expected);
 }
 
-using CacheGetter = Fn<Storage::Cache::Database &()>;
-using CacheClearer = Fn<void()>;
-using CachePointerGetter = Fn<Storage::Cache::Database *()>;
-using RefusedCacheReaderRegression = Fn<bool()>;
-
-class RefusedCacheLoader final : public Media::Streaming::Loader {
-  public:
-	static constexpr auto kSize = int64(81) * Loader::kPartSize;
-
-	Storage::Cache::Key baseCacheKey() const override {
-		return {0x5245465553454443ULL, 0x4143484554455354ULL};
-	}
-
-	int64 size() const override { return kSize; }
-
-	void load(int64 offset) override {
-		QMutexLocker lock(&_mutex);
-		_loaded.emplace(offset);
-	}
-
-	void cancel(int64) override {}
-
-	void resetPriorities() override {}
-
-	void setPriority(int) override {}
-
-	void stop() override {}
-
-	void tryRemoveFromQueue() override {}
-
-	rpl::producer<Media::Streaming::LoadedPart> parts() const override {
-		return _parts.events();
-	}
-
-	rpl::producer<Media::Streaming::SpeedEstimate>
-	speedEstimate() const override {
-		return _speed.events();
-	}
-
-	void
-	attachDownloader(not_null<Storage::StreamedFileDownloader *>) override {}
-
-	void clearAttachedDownloader() override {}
-
-	[[nodiscard]] bool loaded(int64 offset) const {
-		QMutexLocker lock(&_mutex);
-		return _loaded.contains(offset);
-	}
-
-  private:
-	mutable QMutex _mutex;
-	std::set<int64> _loaded;
-	rpl::event_stream<Media::Streaming::LoadedPart> _parts;
-	rpl::event_stream<Media::Streaming::SpeedEstimate> _speed;
-};
-
-[[nodiscard]] bool
-RunRefusedCacheStreamingRegression(CachePointerGetter cache) {
-	auto loader = std::make_unique<RefusedCacheLoader>();
-	auto rawLoader = loader.get();
-	auto reader = std::make_shared<Media::Streaming::Reader>(std::move(loader),
-															 std::move(cache));
-	auto notify = std::make_shared<crl::semaphore>();
-	struct Result {
-		std::atomic<bool> completed = false;
-		std::atomic<bool> cancelled = false;
-		Media::Streaming::Reader::FillState state
-			= Media::Streaming::Reader::FillState::WaitingCache;
-	};
-	const auto result = std::make_shared<Result>();
-	auto entered = QSemaphore();
-	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	timeout.setSingleShot(true);
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	auto streaming = std::thread([=, &entered, &loop] {
-		auto buffer = QByteArray(1, Qt::Uninitialized);
-		auto state
-			= reader->fill(0, bytes::make_detached_span(buffer), notify.get());
-		entered.release();
-		while ((state != Media::Streaming::Reader::FillState::Failed)
-			   && !rawLoader->loaded(0)
-			   && !result->cancelled.load(std::memory_order_acquire)) {
-			notify->acquire();
-			if (result->cancelled.load(std::memory_order_acquire)) {
-				break;
-			}
-			state = reader->fill(0, bytes::make_detached_span(buffer),
-								 notify.get());
-		}
-		result->state = state;
-		result->completed.store(true, std::memory_order_release);
-		QMetaObject::invokeMethod(
-			&loop, [&loop] { loop.quit(); }, Qt::QueuedConnection);
-	});
-	entered.acquire();
-	if (!result->completed.load(std::memory_order_acquire)) {
-		timeout.start(5000);
-		loop.exec();
-	}
-	const auto completed = result->completed.load(std::memory_order_acquire);
-	if (!completed) {
-		result->cancelled.store(true, std::memory_order_release);
-		notify->release();
-	}
-	streaming.join();
-	reader->stopStreaming();
-	return completed
-		   && (result->state
-			   == Media::Streaming::Reader::FillState::WaitingRemote)
-		   && rawLoader->loaded(0);
-}
-
-[[nodiscard]] bool
-RunRefusedCacheDownloaderRegression(not_null<Main::Account *> account,
-									CachePointerGetter cache) {
-	auto loader = std::make_unique<RefusedCacheLoader>();
-	auto rawLoader = loader.get();
-	auto reader = std::make_shared<Media::Streaming::Reader>(std::move(loader),
-															 std::move(cache));
-	auto downloader = std::make_unique<Storage::StreamedFileDownloader>(
-		not_null<Main::Session *>(&account->session()), 1, 2,
-		Data::FileOrigin(), Storage::Cache::Key{1, 2}, MediaKey{0, 0}, reader,
-		Core::MacProtectedPath::ProfileRoot()
-			+ u"tdata/refused_cache_download"_q,
-		RefusedCacheLoader::kSize, DocumentFileLocation, LoadToFileOnly,
-		LoadFromCloudOrLocal, false, 0);
-	auto loop = QEventLoop();
-	auto timeout = QTimer();
-	auto poll = QTimer();
-	timeout.setSingleShot(true);
-	poll.setInterval(10);
-	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
-		if (rawLoader->loaded(0)) {
-			loop.quit();
-		}
-	});
-	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-	reader->loadForDownloader(downloader.get(), 0);
-	reader->continueDownloaderFromMainThread();
-	if (!rawLoader->loaded(0)) {
-		poll.start();
-		timeout.start(5000);
-		loop.exec();
-	}
-	poll.stop();
-	return rawLoader->loaded(0);
-}
-
-[[nodiscard]] bool
-RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
-								 bool mediaCache) {
-	const auto cache = [=] {
-		auto &data = account->session().data();
-		return mediaCache ? data.cacheBigFileIfAllowed()
-						  : data.cacheIfAllowed();
-	};
-	const auto streaming = RunRefusedCacheStreamingRegression(cache);
-	const auto downloading
-		= RunRefusedCacheDownloaderRegression(account, cache);
-	return streaming && downloading;
-}
-
 [[nodiscard]] bool RunCacheConcurrentDeletionRegression() {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	if (!Core::MacProtectedPath::IntegrationTestActive()) {
@@ -2347,88 +2180,6 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 #else
 	return true;
 #endif
-}
-
-[[nodiscard]] QString ActiveCacheVersionPath(const QString &path) {
-	const auto directories
-		= QDir(path).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-	for (const auto &directory : directories) {
-		const auto version = QDir(path).filePath(directory);
-		if (QFileInfo(version + "/binlog").isFile()) {
-			return version;
-		}
-	}
-	return {};
-}
-
-[[nodiscard]] bool
-RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
-								  CacheGetter cache, CacheClearer clearCaches,
-								  RefusedCacheReaderRegression cacheRefusal) {
-	const auto seedKey = Storage::Cache::Key{
-		0x4d41494e39353731ULL,
-		0x4341434845534545ULL,
-	};
-	const auto writeKey = Storage::Cache::Key{
-		0x4d41494e39353732ULL,
-		0x4341434845575249ULL,
-	};
-	const auto payload = QByteArray("post-open cache guard seed");
-	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-		cache().put(seedKey, QByteArray(payload), std::move(done));
-	});
-	if (!CacheOperationSucceeded(seed)) {
-		std::fprintf(stderr,
-					 "Post-open cache setup failed: seed error=%d path=%s.\n",
-					 seed ? int(seed->type) : -1, qPrintable(path));
-		return false;
-	}
-	cache().sync();
-
-	const auto active = ActiveCacheVersionPath(path);
-	const auto saved = active + ".guard-test-original";
-	if (active.isEmpty() || QFileInfo::exists(saved)
-		|| !QDir().rename(active, saved)) {
-		return false;
-	}
-	auto restored = false;
-	const auto restore = gsl::finally([&] {
-		if (!restored) {
-			QFile::remove(active);
-			QDir().rename(saved, active);
-		}
-	});
-	if (!QFile::link(fixture, active)) {
-		return false;
-	}
-	const auto readerRefused = cacheRefusal();
-	const auto read = AwaitCacheCallback<QByteArray>(
-		[&](auto done) { cache().get(seedKey, std::move(done)); });
-	const auto readRefused = read && read->isEmpty();
-	const auto write = AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) {
-			cache().put(writeKey, QByteArray("must not reach protected cache"),
-						std::move(done));
-		});
-	clearCaches();
-	cache().sync();
-	const auto writeRefused
-		= write && (write->type != Storage::Cache::Error::Type::None);
-	const auto aliasRemoved = QFile::remove(active);
-	const auto originalRestored = QDir().rename(saved, active);
-	restored = aliasRemoved && originalRestored;
-	cache().sync();
-	const auto passed
-		= readerRefused && readRefused && writeRefused && restored;
-	if (!passed) {
-		std::fprintf(
-			stderr,
-			"Post-open cache regression failed: reader=%d read=%d write=%d "
-			"restored=%d path=%s.\n",
-			readerRefused, readRefused, writeRefused, restored,
-			qPrintable(path));
-	}
-	return passed;
 }
 
 [[nodiscard]] Main::Account *
@@ -8371,8 +8122,8 @@ struct NativeLifecycleResults {
 			"boost-story-menus",
 			"chatlist-invite-check",
 			"authenticated-cache-file-symlinks",
-			"post-open-cache",
-			"post-open-media-cache",
+			"cache-access-no-walk",
+			"media-cache-access-no-walk",
 			"pinned-chat-participants",
 			"folder-crud",
 			"bio-editor-target",
@@ -8461,12 +8212,12 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "protected-path-integration-disabled");
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto selfId = UserId(1);
-		auto postOpenCachePassed = false;
-		auto postOpenMediaCachePassed = false;
 		for (const auto mediaCache : {false, true}) {
-			const auto caseName
-				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			const auto caseName = mediaCache
+				? "media-cache-access-no-walk"
+				: "cache-access-no-walk";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
@@ -8477,42 +8228,30 @@ void RunAuthenticatedCacheSymlinkCases(
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
-			const auto cacheGetter
-				= [guarded, mediaCache]() -> Storage::Cache::Database & {
-				auto &data = guarded->session().data();
-				return mediaCache ? data.cacheBigFile() : data.cache();
+			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			auto &data = guarded->session().data();
+			const auto getCache = [&] {
+				if (mediaCache) {
+					return data.cacheBigFileIfAllowed();
+				}
+				return data.cacheIfAllowed();
 			};
-			const auto clearCaches = [guarded] {
-				auto &data = guarded->session().data();
-				data.clearLocalStorage();
-				data.cache().sync();
-				data.cacheBigFile().sync();
-			};
-			const auto passed = RunPostOpenCacheSymlinkRegression(
-				mediaCache ? guarded->local().cacheBigFilePath()
-						   : guarded->local().cachePath(),
-				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
-				cacheGetter, clearCaches, [guarded, mediaCache] {
-					return RunRefusedCacheReaderRegressions(guarded,
-															mediaCache);
-				});
+			const auto first = (getCache() != nullptr);
+			const auto second = (getCache() != nullptr);
+			const auto passed = first && second
+				&& (Core::MacProtectedPath::CachePathWalkCountForTesting() == 0);
 			nativeLifecycleResults->Report(caseName, passed);
-			if (mediaCache) {
-				postOpenMediaCachePassed = passed;
-			} else {
-				postOpenCachePassed = passed;
-			}
 		}
-		if (postOpenCachePassed && postOpenMediaCachePassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache post-open regression passed: "
-						 "get, put, and "
-						 "clear symlinks refused for cache and media_cache.\n");
-		}
-	} else {
-		nativeLifecycleResults->Skip("post-open-cache",
+#else
+		nativeLifecycleResults->Skip("cache-access-no-walk",
 									 "protected-path-integration-disabled");
-		nativeLifecycleResults->Skip("post-open-media-cache",
+		nativeLifecycleResults->Skip("media-cache-access-no-walk",
+									 "protected-path-integration-disabled");
+#endif
+	} else {
+		nativeLifecycleResults->Skip("cache-access-no-walk",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("media-cache-access-no-walk",
 									 "protected-path-integration-disabled");
 	}
 }

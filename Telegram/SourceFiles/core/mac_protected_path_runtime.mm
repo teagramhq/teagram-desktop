@@ -55,6 +55,10 @@ struct RuntimeState final {
 	RefusalLog refusals;
 };
 
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+thread_local auto CachePathWalkCount = 0;
+#endif
+
 [[nodiscard]] RuntimeState &State() {
 	static auto result = RuntimeState();
 	return result;
@@ -558,6 +562,9 @@ bool CheckCachePathImpl(
 		return true;
 	}
 #endif // TDESKTOP_TEAGRAM
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	++CachePathWalkCount;
+#endif
 	if (!CheckPath(Operation::OpenDir, path, callsite)) {
 		return false;
 	}
@@ -646,6 +653,14 @@ bool CheckCachePath(const QString &path, const char *callsite) {
 }
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+void ResetCachePathWalkCountForTesting() {
+	CachePathWalkCount = 0;
+}
+
+int CachePathWalkCountForTesting() {
+	return CachePathWalkCount;
+}
+
 int RunNotificationSoundProbe() {
 	if (!IntegrationTestActive()) {
 		return 1;

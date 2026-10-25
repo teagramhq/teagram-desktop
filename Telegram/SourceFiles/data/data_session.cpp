@@ -1711,30 +1711,12 @@ Storage::Cache::Database &Session::cacheBigFile() {
 
 Storage::Cache::Database *Session::cacheIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
-	if (!_cacheAllowed) {
-		return nullptr;
-	}
-	if (!Core::MacProtectedPath::CheckCachePath(
-			_cachePath, "Data::Session::cache.operation")) {
-		_cacheAllowed = false;
-		_cache->close();
-		return nullptr;
-	}
-	return _cache.get();
+	return _cacheAllowed ? _cache.get() : nullptr;
 }
 
 Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
-	if (!_bigFileCacheAllowed) {
-		return nullptr;
-	}
-	if (!Core::MacProtectedPath::CheckCachePath(
-			_bigFileCachePath, "Data::Session::cacheBigFile.operation")) {
-		_bigFileCacheAllowed = false;
-		_bigFileCache->close();
-		return nullptr;
-	}
-	return _bigFileCache.get();
+	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 }
 
 void Session::suggestStartExport(TimeId availableAt) {

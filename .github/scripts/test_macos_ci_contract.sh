@@ -641,8 +641,8 @@ for native_case in \
   stock-basic-group-creator \
   pinned-basic-group-creator \
   authenticated-cache-file-symlinks \
-  post-open-cache \
-  post-open-media-cache; do
+  cache-access-no-walk \
+  media-cache-access-no-walk; do
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
@@ -938,7 +938,7 @@ grep -Fq 'dependency-admin-session-identities' "$native_harness" \
 grep -Fq 'native_lifecycle_case=settings-search result=FAIL' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify the injected native failure.'
-grep -Fq 'native_lifecycle_case=post-open-media-cache result=' \
+grep -Fq 'native_lifecycle_case=media-cache-access-no-walk result=' \
   "$profile_harness" \
   || contract_fail 'The profile harness must verify a later native cache result.'
 grep -Fq 'username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion' \
