@@ -657,6 +657,8 @@ for native_case in \
   stock-basic-group-creator \
   pinned-basic-group-creator \
   authenticated-cache-file-symlinks \
+  post-open-cache \
+  post-open-media-cache \
   cache-access-no-walk \
   media-cache-access-no-walk; do
   grep -Fq "\"$native_case\"" "$native_harness" \

@@ -27,6 +27,7 @@ struct CachePathComponentIdentity final {
 struct CachePathIdentity final {
 	QString absolutePath;
 	std::vector<CachePathComponentIdentity> components;
+	CachePathComponentIdentity activeVersionDirectory;
 };
 
 #ifdef Q_OS_MAC

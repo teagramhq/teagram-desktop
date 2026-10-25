@@ -716,6 +716,20 @@ ReadCachePathTargetIdentity(const QString &path,
 	return true;
 }
 
+[[nodiscard]] QString ActiveCacheVersionPath(const QString &cachePath) {
+	auto versionFile = QFile(QDir(cachePath).filePath("version"));
+	if (!versionFile.open(QIODevice::ReadOnly)) {
+		return {};
+	}
+	auto version = qint32();
+	const auto read = versionFile.read(reinterpret_cast<char *>(&version),
+									   qint64(sizeof(version)));
+	if (read != qint64(sizeof(version))) {
+		return {};
+	}
+	return QDir(cachePath).filePath(QString::number(version));
+}
+
 [[nodiscard]] bool CaptureCachePathIdentity(const QString &path,
 											CachePathIdentity *identity) {
 	const auto absolutePath = AbsoluteCachePath(path);
@@ -739,6 +753,17 @@ ReadCachePathTargetIdentity(const QString &path,
 			}
 		}
 		result.components.push_back(std::move(component));
+	}
+	result.activeVersionDirectory.path = ActiveCacheVersionPath(absolutePath);
+	if (!result.activeVersionDirectory.path.isEmpty()) {
+		auto missing = false;
+		if (!ReadCachePathLinkIdentity(result.activeVersionDirectory.path,
+									   &result.activeVersionDirectory, &missing)
+			|| missing
+			|| !ReadCachePathTargetIdentity(result.activeVersionDirectory.path,
+											&result.activeVersionDirectory)) {
+			return false;
+		}
 	}
 	*identity = std::move(result);
 	return true;
@@ -813,6 +838,18 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 			}
 			refreshed[i] = std::move(actual);
 			addedDirectory = true;
+		}
+	}
+	if (!identity->activeVersionDirectory.path.isEmpty()) {
+		const auto &expected = identity->activeVersionDirectory;
+		auto actual = CachePathComponentIdentity{.path = expected.path};
+		auto missing = false;
+		if (!ReadCachePathLinkIdentity(expected.path, &actual, &missing)
+			|| missing || !SameCachePathLinkIdentity(expected, actual)
+			|| !ReadCachePathTargetIdentity(expected.path, &actual)
+			|| !SameCachePathTargetIdentity(expected, actual)) {
+			ReportCachePathIdentityRefusal(callsite);
+			return false;
 		}
 	}
 	if (addedDirectory

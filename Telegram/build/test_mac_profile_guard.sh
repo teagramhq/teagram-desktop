@@ -1460,6 +1460,8 @@ for native_evidence in \
 	'native_lifecycle_case=mini-app-open result=PASS' \
 	'native_lifecycle_case=chatlist-invite-check result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
+	'native_lifecycle_case=post-open-cache result=PASS' \
+	'native_lifecycle_case=post-open-media-cache result=PASS' \
 	'native_lifecycle_case=cache-access-no-walk result=PASS' \
 	'native_lifecycle_case=media-cache-access-no-walk result=PASS' \
 	'native_lifecycle_case=folder-crud result=PASS' \
