@@ -2774,10 +2774,22 @@ void LogWindowActivationForRegression(Core::Application &app,
 		widget->isVisible());
 }
 
-[[nodiscard]] bool
+enum class WindowActivationForRegressionResult {
+	Activated,
+	AppInactive,
+	Failed,
+};
+
+[[nodiscard]] WindowActivationForRegressionResult
 ActivateWindowForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
 							bool requirePrimary = false) {
+	if (!Platform::IsApplicationActiveForRegression()) {
+		LogWindowActivationForRegression(app, window);
+		std::fprintf(stderr, "Settings deep link activation unavailable: "
+							 "AppKit app is inactive.\n");
+		return WindowActivationForRegressionResult::AppInactive;
+	}
 	const auto isActive = [&] {
 		return (app.activeWindow() == window.get())
 			   && (!requirePrimary
@@ -2797,7 +2809,8 @@ ActivateWindowForRegression(Core::Application &app,
 	if (!activated) {
 		LogWindowActivationForRegression(app, window);
 	}
-	return activated;
+	return activated ? WindowActivationForRegressionResult::Activated
+					 : WindowActivationForRegressionResult::Failed;
 }
 
 [[nodiscard]] bool
@@ -3069,7 +3082,8 @@ template <typename Condition>
 	const auto dispatchRefused = [&](const QString &url,
 									 not_null<Window::SessionController *>
 										 target,
-									 Window::Controller *activeBefore) {
+									 Window::Controller *activeBefore,
+									 bool focusCheckAvailable) {
 		const auto stockToastBefore
 			= stockController
 				  ->featureUnavailableOnServerToastCallsForRegressionTest();
@@ -3100,8 +3114,10 @@ template <typename Condition>
 			  && !stockController->isLayerShown()
 			  && !pinnedController->isLayerShown()
 			  && !blockedController->isLayerShown();
+		const auto activeWindowUnchanged
+			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
 		const auto refused = handled && targetToastOnly && noPaidUiOpen
-							 && (app.activeWindow() == activeBefore);
+							 && activeWindowUnchanged;
 		if (!refused) {
 			std::fprintf(
 				stderr,
@@ -3116,14 +3132,16 @@ template <typename Condition>
 	};
 	const auto dispatchMatrix
 		= [&](not_null<Window::SessionController *> target,
-			  Window::Controller *activeBefore) {
+			  Window::Controller *activeBefore, bool focusCheckAvailable) {
 			  for (const auto &url : routes) {
-				  if (!dispatchRefused(url, target, activeBefore)) {
+				  if (!dispatchRefused(url, target, activeBefore,
+									   focusCheckAvailable)) {
 					  return false;
 				  }
 			  }
 			  for (const auto &url : storyRoutes) {
-				  if (!dispatchRefused(url, target, activeBefore)) {
+				  if (!dispatchRefused(url, target, activeBefore,
+									   focusCheckAvailable)) {
 					  return false;
 				  }
 			  }
@@ -3132,8 +3150,14 @@ template <typename Condition>
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
 		return ActivateWindowForRegression(app, window);
 	};
+	const auto activationFailed
+		= [](WindowActivationForRegressionResult result) {
+			  return result == WindowActivationForRegressionResult::Failed;
+		  };
 
-	if (!activateSettingsWindow(&stockController->window())) {
+	const auto stockWindowActivation
+		= activateSettingsWindow(&stockController->window());
+	if (activationFailed(stockWindowActivation)) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "expected=1.\n",
@@ -3144,10 +3168,19 @@ template <typename Condition>
 			"activate before the custom-session matrix.\n");
 		return false;
 	}
-	if (!dispatchMatrix(pinnedController, &stockController->window())) {
+	const auto stockFocusCheckAvailable
+		= (stockWindowActivation
+		   == WindowActivationForRegressionResult::Activated);
+	const auto activeBeforeCustomMatrix = stockFocusCheckAvailable
+											  ? &stockController->window()
+											  : app.activeWindow();
+	if (!dispatchMatrix(pinnedController, activeBeforeCustomMatrix,
+						stockFocusCheckAvailable)) {
 		return false;
 	}
-	if (!activateSettingsWindow(&pinnedController->window())) {
+	const auto pinnedWindowActivation
+		= activateSettingsWindow(&pinnedController->window());
+	if (activationFailed(pinnedWindowActivation)) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "expected=1.\n",
@@ -3158,10 +3191,19 @@ template <typename Condition>
 			"activate before its URL matrix.\n");
 		return false;
 	}
-	if (!dispatchMatrix(pinnedController, &pinnedController->window())) {
+	const auto pinnedFocusCheckAvailable
+		= (pinnedWindowActivation
+		   == WindowActivationForRegressionResult::Activated);
+	const auto activeBeforePinnedMatrix = pinnedFocusCheckAvailable
+											  ? &pinnedController->window()
+											  : app.activeWindow();
+	if (!dispatchMatrix(pinnedController, activeBeforePinnedMatrix,
+						pinnedFocusCheckAvailable)) {
 		return false;
 	}
-	if (!activateSettingsWindow(&stockController->window())) {
+	const auto stockBeforeBlockedActivation
+		= activateSettingsWindow(&stockController->window());
+	if (activationFailed(stockBeforeBlockedActivation)) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "expected=1.\n",
@@ -3172,11 +3214,20 @@ template <typename Condition>
 			"activate before the blocked-session matrix.\n");
 		return false;
 	}
-	if (!dispatchMatrix(blockedController, &stockController->window())) {
+	const auto blockedMatrixFocusCheckAvailable
+		= (stockBeforeBlockedActivation
+		   == WindowActivationForRegressionResult::Activated);
+	const auto activeBeforeBlockedMatrix = blockedMatrixFocusCheckAvailable
+											   ? &stockController->window()
+											   : app.activeWindow();
+	if (!dispatchMatrix(blockedController, activeBeforeBlockedMatrix,
+						blockedMatrixFocusCheckAvailable)) {
 		return false;
 	}
 
-	if (!activateSettingsWindow(&pinnedController->window())) {
+	const auto pinnedBeforeUnsupportedActivation
+		= activateSettingsWindow(&pinnedController->window());
+	if (activationFailed(pinnedBeforeUnsupportedActivation)) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "expected=1.\n",
@@ -3187,6 +3238,9 @@ template <typename Condition>
 			"activate before the unsupported-route checks.\n");
 		return false;
 	}
+	const auto ordinaryFocusCheckAvailable
+		= (pinnedBeforeUnsupportedActivation
+		   == WindowActivationForRegressionResult::Activated);
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
@@ -3228,7 +3282,9 @@ template <typename Condition>
 					   && (pinnedController
 							   ->featureUnavailableOnServerToastCallsForRegressionTest()
 						   == ordinaryToastBefore)
-					   && (app.activeWindow() == &pinnedController->window());
+					   && (!ordinaryFocusCheckAvailable
+						   || (app.activeWindow()
+							   == &pinnedController->window()));
 			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
@@ -3239,22 +3295,30 @@ template <typename Condition>
 			   == ordinaryToastBefore);
 		const auto ordinaryWindowActive
 			= (app.activeWindow() == &pinnedController->window());
+		const auto ordinaryFocusBehaviorMatches
+			= !ordinaryFocusCheckAvailable || ordinaryWindowActive;
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
-			|| !ordinaryWindowActive) {
+			|| !ordinaryFocusBehaviorMatches) {
 			LogWindowActivationForRegression(app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
 				"layer-hidden=%d toast-unchanged=%d active-window=%d "
-				"expected=1/1/1/1.\n",
+				"focus-check=%d expected-section-layer-toast-focus=1/1/1/1.\n",
 				ordinarySectionShown, ordinaryLayerHidden,
-				ordinaryToastUnchanged, ordinaryWindowActive);
+				ordinaryToastUnchanged, ordinaryWindowActive,
+				ordinaryFocusCheckAvailable);
 			std::fprintf(
 				stderr,
 				"Settings deep link regression failed: ordinary Settings link "
 				"lost its section or focus behavior.\n");
 			return false;
+		}
+		if (!ordinaryFocusCheckAvailable) {
+			std::fprintf(stderr,
+						 "Settings deep link native focus assertion skipped: "
+						 "AppKit app is inactive.\n");
 		}
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
@@ -3412,15 +3476,21 @@ template <typename Condition>
 
 	const auto stockWindowActivated
 		= ActivateWindowForRegression(app, &stockController->window(), true);
-	if (!stockWindowActivated) {
-		const auto activeWindowRestored
-			= (app.activeWindow() == &stockController->window());
-		const auto activePrimaryWindowRestored
-			= (app.activePrimaryWindow() == &stockController->window());
+	const auto stockFocusRestoreCheckAvailable
+		= (stockWindowActivated
+		   == WindowActivationForRegressionResult::Activated);
+	const auto activeWindowRestored
+		= (app.activeWindow() == &stockController->window());
+	const auto activePrimaryWindowRestored
+		= (app.activePrimaryWindow() == &stockController->window());
+	if (activationFailed(stockWindowActivated)
+		|| (stockFocusRestoreCheckAvailable
+			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored);
+					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored,
+					 stockFocusRestoreCheckAvailable);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -5717,18 +5787,24 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 					 "did not expire.\n");
 		return false;
 	}
-	const auto stockWindowActivationRestored
+	const auto stockWindowActivationResult
 		= ActivateWindowForRegression(app, &stockController->window(), true);
+	const auto stockWindowFocusCheckAvailable
+		= (stockWindowActivationResult
+		   == WindowActivationForRegressionResult::Activated);
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
 		= app.activePrimaryWindow() == &stockController->window();
-	if (!stockWindowActivationRestored || !activeWindowRestored
-		|| !activePrimaryWindowRestored) {
+	if (stockWindowActivationResult
+			== WindowActivationForRegressionResult::Failed
+		|| (stockWindowFocusCheckAvailable
+			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored);
+					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored,
+					 stockWindowFocusCheckAvailable);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window activation "

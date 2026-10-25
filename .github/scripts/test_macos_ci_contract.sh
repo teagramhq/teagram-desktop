@@ -753,6 +753,26 @@ for appkit_state in \
   grep -Fq "$appkit_state" "$mac_platform" \
     || contract_fail "$mac_platform must log AppKit activation state: $appkit_state."
 done
+for platform_header in \
+  Telegram/SourceFiles/platform/mac/specific_mac.h \
+  Telegram/SourceFiles/platform/linux/specific_linux.h \
+  Telegram/SourceFiles/platform/win/specific_win.h; do
+  grep -Fq 'IsApplicationActiveForRegression' "$platform_header" \
+    || contract_fail "$platform_header must expose application activation state to the regression fixture."
+done
+awk '
+  /^bool IsApplicationActiveForRegression\(\)/ { in_check = 1 }
+  in_check && /return \[NSApp isActive\]/ { reads_appkit = 1 }
+  in_check && /^}/ { exit }
+  END { exit !reads_appkit }
+' "$mac_platform" \
+  || contract_fail "$mac_platform must expose the current AppKit application activation state."
+grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
+  || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
+  || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
+grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
+  || contract_fail "$native_harness must retain the ordinary Settings focus assertion whenever AppKit is active."
 awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
@@ -764,11 +784,11 @@ awk '
       unsupported_route_activation = NR
     }
   }
-  in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
+  in_settings && /pinnedController, activeBeforePinnedMatrix/ {
     custom_window_matrices++
     custom_window_matrix = NR
   }
-  in_settings && /dispatchMatrix\(blockedController, &stockController->window\(\)\)/ {
+  in_settings && /blockedController,/ {
     blocked_window_matrix = NR
   }
   in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
@@ -791,7 +811,7 @@ awk '
   in_activation && /LogWindowActivationForRegression\(app, window\)/ {
     activation_diagnostics = NR
   }
-  in_activation && /return activated/ { exit }
+  in_activation && /WindowActivationForRegressionResult::Failed/ { exit }
   END { exit !(activation_timeout && activation_diagnostics > activation_timeout) }
 ' "$native_harness" \
   || contract_fail 'Activation timeouts must log the target Qt and AppKit window state.'
