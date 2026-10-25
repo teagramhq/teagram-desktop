@@ -657,10 +657,207 @@ bool CheckCachePathImpl(
 	return allowed;
 }
 
+[[nodiscard]] QString AbsoluteCachePath(const QString &path) {
+	if (QDir::isAbsolutePath(path)) {
+		return QDir::cleanPath(path);
+	}
+	const auto profile = ProfileRoot();
+	return profile.isEmpty() ? QString()
+							 : QDir::cleanPath(QDir(profile).filePath(path));
+}
+
+[[nodiscard]] std::vector<QString>
+CachePathPrefixes(const QString &absolutePath) {
+	auto result = std::vector<QString>{u"/"_q};
+	auto prefix = u"/"_q;
+	for (const auto &component : absolutePath.split('/', Qt::SkipEmptyParts)) {
+		if (prefix != u"/"_q) {
+			prefix.append('/');
+		}
+		prefix.append(component);
+		result.push_back(prefix);
+	}
+	return result;
+}
+
+[[nodiscard]] bool
+ReadCachePathLinkIdentity(const QString &path,
+						  CachePathComponentIdentity *identity, bool *missing) {
+	const auto native = QFile::encodeName(path);
+	struct stat link = {};
+	if (::lstat(native.constData(), &link) != 0) {
+		if (errno == ENOENT) {
+			*missing = true;
+			return true;
+		}
+		return false;
+	}
+	if (!S_ISDIR(link.st_mode) && !S_ISLNK(link.st_mode)) {
+		return false;
+	}
+	identity->device = quint64(link.st_dev);
+	identity->inode = quint64(link.st_ino);
+	identity->type = quint32(link.st_mode & S_IFMT);
+	identity->exists = true;
+	return true;
+}
+
+[[nodiscard]] bool
+ReadCachePathTargetIdentity(const QString &path,
+							CachePathComponentIdentity *identity) {
+	const auto native = QFile::encodeName(path);
+	struct stat target = {};
+	if (::stat(native.constData(), &target) != 0 || !S_ISDIR(target.st_mode)) {
+		return false;
+	}
+	identity->targetDevice = quint64(target.st_dev);
+	identity->targetInode = quint64(target.st_ino);
+	identity->targetType = quint32(target.st_mode & S_IFMT);
+	return true;
+}
+
+[[nodiscard]] bool CaptureCachePathIdentity(const QString &path,
+											CachePathIdentity *identity) {
+	const auto absolutePath = AbsoluteCachePath(path);
+	if (absolutePath.isEmpty() || !identity) {
+		return false;
+	}
+	auto result = CachePathIdentity();
+	result.absolutePath = absolutePath;
+	auto missingSuffix = false;
+	for (const auto &prefix : CachePathPrefixes(absolutePath)) {
+		auto component = CachePathComponentIdentity{.path = prefix};
+		if (!missingSuffix) {
+			auto missing = false;
+			if (!ReadCachePathLinkIdentity(prefix, &component, &missing)) {
+				return false;
+			}
+			missingSuffix = missing;
+			if (component.exists
+				&& !ReadCachePathTargetIdentity(prefix, &component)) {
+				return false;
+			}
+		}
+		result.components.push_back(std::move(component));
+	}
+	*identity = std::move(result);
+	return true;
+}
+
+[[nodiscard]] bool
+SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
+						  const CachePathComponentIdentity &right) {
+	return left.exists && right.exists && (left.device == right.device)
+		   && (left.inode == right.inode) && (left.type == right.type);
+}
+
+[[nodiscard]] bool
+SameCachePathTargetIdentity(const CachePathComponentIdentity &left,
+							const CachePathComponentIdentity &right) {
+	return (left.targetDevice == right.targetDevice)
+		   && (left.targetInode == right.targetInode)
+		   && (left.targetType == right.targetType);
+}
+
+void ReportCachePathIdentityRefusal(const char *callsite) {
+	ReportRefusal({
+		.operation = Operation::OpenDir,
+		.protectedClass = ProtectedClass::Invalid,
+		.callsite = callsite ? QString::fromUtf8(callsite) : QString(),
+	});
+}
+
+[[nodiscard]] bool CachePathIdentityStillValid(const QString &path,
+											   const char *callsite,
+											   CachePathIdentity *identity) {
+	const auto absolutePath = AbsoluteCachePath(path);
+	const auto prefixes = CachePathPrefixes(absolutePath);
+	if (!identity || absolutePath.isEmpty()
+		|| (absolutePath != identity->absolutePath)
+		|| (prefixes.size() != identity->components.size())) {
+		ReportCachePathIdentityRefusal(callsite);
+		return false;
+	}
+	auto refreshed = identity->components;
+	auto addedDirectory = false;
+	for (auto i = 0; i != int(prefixes.size()); ++i) {
+		auto actual = CachePathComponentIdentity{.path = prefixes[i]};
+		auto missing = false;
+		if (!ReadCachePathLinkIdentity(prefixes[i], &actual, &missing)) {
+			ReportCachePathIdentityRefusal(callsite);
+			return false;
+		}
+		const auto &expected = identity->components[i];
+		if (expected.path != prefixes[i]) {
+			ReportCachePathIdentityRefusal(callsite);
+			return false;
+		}
+		if (expected.exists) {
+			if (missing || !SameCachePathLinkIdentity(expected, actual)) {
+				ReportCachePathIdentityRefusal(callsite);
+				return false;
+			}
+			if (!ReadCachePathTargetIdentity(prefixes[i], &actual)
+				|| !SameCachePathTargetIdentity(expected, actual)) {
+				ReportCachePathIdentityRefusal(callsite);
+				return false;
+			}
+		} else if (!missing) {
+			if (actual.type != quint32(S_IFDIR)) {
+				ReportCachePathIdentityRefusal(callsite);
+				return false;
+			}
+			if (!ReadCachePathTargetIdentity(prefixes[i], &actual)) {
+				ReportCachePathIdentityRefusal(callsite);
+				return false;
+			}
+			refreshed[i] = std::move(actual);
+			addedDirectory = true;
+		}
+	}
+	if (addedDirectory
+		&& !CheckPath(Operation::OpenDir, absolutePath, callsite)) {
+		return false;
+	}
+	identity->components = std::move(refreshed);
+	return true;
+}
+
 } // namespace
 
 bool CheckCachePath(const QString &path, const char *callsite) {
 	return CheckCachePathImpl(path, callsite, {});
+}
+
+bool CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
+									  CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		*identity = CachePathIdentity();
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	if (!CheckCachePathImpl(path, callsite, {})) {
+		return false;
+	}
+	if (!CaptureCachePathIdentity(path, identity)) {
+		ReportCachePathIdentityRefusal(callsite);
+		return false;
+	}
+	return true;
+}
+
+bool CheckCachePathIdentity(const QString &path, const char *callsite,
+							CachePathIdentity *identity) {
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	return CachePathIdentityStillValid(path, callsite, identity);
 }
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)

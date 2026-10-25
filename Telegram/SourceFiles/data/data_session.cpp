@@ -273,23 +273,35 @@ Session::Session(not_null<Main::Session *> session)
 	const auto cachePath = _cachePath;
 	const auto bigFileCachePath = _bigFileCachePath;
 	crl::async([=] {
-		const auto cacheAllowed = Core::MacProtectedPath::CheckCachePath(
-			cachePath, "Data::Session::cache");
-		const auto bigFileCacheAllowed = Core::MacProtectedPath::CheckCachePath(
-			bigFileCachePath, "Data::Session::cacheBigFile");
+		auto cacheIdentity = Core::MacProtectedPath::CachePathIdentity();
+		const auto cacheAllowed
+			= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+				cachePath, "Data::Session::cache", &cacheIdentity);
+		auto bigFileCacheIdentity = Core::MacProtectedPath::CachePathIdentity();
+		const auto bigFileCacheAllowed
+			= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+				bigFileCachePath, "Data::Session::cacheBigFile",
+				&bigFileCacheIdentity);
 		crl::on_main(weak, [=] {
 			if (const auto session = weak.get()) {
-				session->initializeCacheDatabases(cacheAllowed,
-												  bigFileCacheAllowed);
+				session->initializeCacheDatabases(cacheAllowed, cacheIdentity,
+												  bigFileCacheAllowed,
+												  bigFileCacheIdentity);
 			}
 		});
 	});
 #else
-	initializeCacheDatabases(
-		Core::MacProtectedPath::CheckCachePath(_cachePath,
-											   "Data::Session::cache"),
-		Core::MacProtectedPath::CheckCachePath(_bigFileCachePath,
-											   "Data::Session::cacheBigFile"));
+	auto cacheIdentity = Core::MacProtectedPath::CachePathIdentity();
+	const auto cacheAllowed
+		= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+			_cachePath, "Data::Session::cache", &cacheIdentity);
+	auto bigFileCacheIdentity = Core::MacProtectedPath::CachePathIdentity();
+	const auto bigFileCacheAllowed
+		= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+			_bigFileCachePath, "Data::Session::cacheBigFile",
+			&bigFileCacheIdentity);
+	initializeCacheDatabases(cacheAllowed, cacheIdentity, bigFileCacheAllowed,
+							 bigFileCacheIdentity);
 #endif
 
 	if constexpr (Platform::IsLinux()) {
@@ -440,8 +452,10 @@ void Session::subscribeForTopicRepliesLists() {
 	}, _lifetime);
 }
 
-void Session::initializeCacheDatabases(bool cacheAllowed,
-									   bool bigFileCacheAllowed) {
+void Session::initializeCacheDatabases(
+	bool cacheAllowed, Core::MacProtectedPath::CachePathIdentity cacheIdentity,
+	bool bigFileCacheAllowed,
+	Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity) {
 	if (cacheAllowed) {
 		_cache->open(_session->local().cacheKey());
 	}
@@ -449,6 +463,8 @@ void Session::initializeCacheDatabases(bool cacheAllowed,
 		_bigFileCache->open(_session->local().cacheBigFileKey());
 	}
 	QMutexLocker lock(&_cacheMutex);
+	_cacheIdentity = std::move(cacheIdentity);
+	_bigFileCacheIdentity = std::move(bigFileCacheIdentity);
 	_cacheAllowed = cacheAllowed;
 	_bigFileCacheAllowed = bigFileCacheAllowed;
 }
@@ -1738,11 +1754,22 @@ Storage::Cache::Database &Session::cacheBigFile() {
 
 Storage::Cache::Database *Session::cacheIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
+	if (_cacheAllowed
+		&& !Core::MacProtectedPath::CheckCachePathIdentity(
+			_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
+		_cacheAllowed = false;
+	}
 	return _cacheAllowed ? _cache.get() : nullptr;
 }
 
 Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
+	if (_bigFileCacheAllowed
+		&& !Core::MacProtectedPath::CheckCachePathIdentity(
+			_bigFileCachePath, "Data::Session::cacheBigFile.access",
+			&_bigFileCacheIdentity)) {
+		_bigFileCacheAllowed = false;
+	}
 	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 }
 

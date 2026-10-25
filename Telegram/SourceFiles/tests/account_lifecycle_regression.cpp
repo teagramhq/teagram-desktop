@@ -8281,6 +8281,36 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
+			auto swappedRootRefused = false;
+			auto rootRestoreSucceeded = true;
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			const auto movedCachePath
+				= cachePath + ".cache-access-identity-backup";
+			{
+				auto rootMoved = false;
+				auto protectedSymlinkCreated = false;
+				const auto restoreCachePath = gsl::finally([&] {
+					if (protectedSymlinkCreated && !QFile::remove(cachePath)) {
+						rootRestoreSucceeded = false;
+					}
+					if (rootMoved
+						&& !QDir().rename(movedCachePath, cachePath)) {
+						rootRestoreSucceeded = false;
+					}
+				});
+				if (!QFileInfo::exists(movedCachePath)) {
+					rootMoved = QDir().rename(cachePath, movedCachePath);
+				}
+				if (rootMoved) {
+					protectedSymlinkCreated
+						= QFile::link(fixtures.cacheRoot, cachePath);
+				}
+				if (rootMoved && protectedSymlinkCreated) {
+					swappedRootRefused = (getAllowedCache() == nullptr);
+				}
+			}
 			const auto startupWalks
 				= Core::MacProtectedPath::CachePathWalkCountForTesting();
 			const auto mainThreadWalks = Core::MacProtectedPath::
@@ -8290,15 +8320,17 @@ void RunAuthenticatedCacheSymlinkCases(
 				"Cache access latency regression: cache=%s "
 				"seeded_directories=100 session_setup_ns=%lld under_100ms=%d "
 				"first_access_ns=%lld under_50ms=%d "
-				"startup_walks=%d main_thread_walks=%d.\n",
+				"root_swap_refused=%d root_restored=%d startup_walks=%d "
+				"main_thread_walks=%d.\n",
 				mediaCache ? "media_cache" : "cache",
 				static_cast<long long>(sessionSetupNanoseconds),
 				(sessionSetupNanoseconds < 100'000'000),
 				static_cast<long long>(firstAccessNanoseconds),
-				(firstAccessNanoseconds < 50'000'000), startupWalks,
-				mainThreadWalks);
+				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
+				rootRestoreSucceeded, startupWalks, mainThreadWalks);
 			const auto passed = startupScansCompleted && first && second
 								&& (startupWalks == 2) && (mainThreadWalks == 0)
+								&& swappedRootRefused && rootRestoreSucceeded
 								&& (sessionSetupNanoseconds < 100'000'000)
 								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);

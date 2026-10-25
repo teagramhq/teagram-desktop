@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "core/mac_protected_path_runtime.h"
 #include "storage/storage_databases.h"
 #include "dialogs/dialogs_main_list.h"
 #include "data/data_groups.h"
@@ -1029,7 +1030,11 @@ private:
 	};
 
 	void suggestStartExport();
-	void initializeCacheDatabases(bool cacheAllowed, bool bigFileCacheAllowed);
+	void initializeCacheDatabases(
+		bool cacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity cacheIdentity,
+		bool bigFileCacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity);
 
 	void setupMigrationViewer();
 	void setupChannelLeavingViewer();
@@ -1186,6 +1191,8 @@ private:
 	Storage::DatabasePointer _cache;
 	Storage::DatabasePointer _bigFileCache;
 	QMutex _cacheMutex;
+	Core::MacProtectedPath::CachePathIdentity _cacheIdentity;
+	Core::MacProtectedPath::CachePathIdentity _bigFileCacheIdentity;
 	bool _cacheAllowed = false;
 	bool _bigFileCacheAllowed = false;
 

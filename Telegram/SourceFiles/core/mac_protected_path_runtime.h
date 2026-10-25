@@ -13,6 +13,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core::MacProtectedPath {
 
+struct CachePathComponentIdentity final {
+	QString path;
+	quint64 device = 0;
+	quint64 inode = 0;
+	quint32 type = 0;
+	quint64 targetDevice = 0;
+	quint64 targetInode = 0;
+	quint32 targetType = 0;
+	bool exists = false;
+};
+
+struct CachePathIdentity final {
+	QString absolutePath;
+	std::vector<CachePathComponentIdentity> components;
+};
+
 #ifdef Q_OS_MAC
 [[nodiscard]] bool InitializeProfile();
 [[nodiscard]] bool IntegrationTestActive();
@@ -32,6 +48,12 @@ namespace Core::MacProtectedPath {
 									 const char *callsite);
 
 [[nodiscard]] bool CheckCachePath(const QString &path, const char *callsite);
+[[nodiscard]] bool
+CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
+								 CachePathIdentity *identity);
+[[nodiscard]] bool CheckCachePathIdentity(const QString &path,
+										  const char *callsite,
+										  CachePathIdentity *identity);
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 void ResetCachePathWalkCountForTesting();
@@ -70,6 +92,15 @@ CheckCachePathForTesting(const QString &path, const char *callsite,
 	return true;
 }
 [[nodiscard]] inline bool CheckCachePath(const QString &, const char *) {
+	return true;
+}
+[[nodiscard]] inline bool
+CheckCachePathAndCaptureIdentity(const QString &, const char *,
+								 CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool CheckCachePathIdentity(const QString &, const char *,
+												 CachePathIdentity *) {
 	return true;
 }
 [[nodiscard]] inline bool CheckPair(Operation, const QString &, const QString &,
