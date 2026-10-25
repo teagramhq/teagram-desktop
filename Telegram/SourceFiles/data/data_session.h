@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_star_gift.h"
 #include "history/history_location_manager.h"
 #include "base/timer.h"
+#include "base/weak_ptr.h"
 
 #include <QtCore/QMutex>
 
@@ -166,7 +167,7 @@ struct ViewRemoval {
 	ViewRemovalReason reason = ViewRemovalReason::Removed;
 };
 
-class Session final {
+class Session final : public base::has_weak_ptr {
 public:
 	using ViewElement = HistoryView::Element;
 
@@ -1028,6 +1029,7 @@ private:
 	};
 
 	void suggestStartExport();
+	void initializeCacheDatabases(bool cacheAllowed, bool bigFileCacheAllowed);
 
 	void setupMigrationViewer();
 	void setupChannelLeavingViewer();

@@ -36,6 +36,7 @@ namespace Core::MacProtectedPath {
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 void ResetCachePathWalkCountForTesting();
 [[nodiscard]] int CachePathWalkCountForTesting();
+[[nodiscard]] int CachePathWalkMainThreadCountForTesting();
 [[nodiscard]] bool
 CheckCachePathForTesting(const QString &path, const char *callsite,
 						 std::function<void(const QString &)> beforeEntryStat);

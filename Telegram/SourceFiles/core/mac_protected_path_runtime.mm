@@ -18,8 +18,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMutex>
 #include <QtCore/QMutexLocker>
 #include <QtCore/QSaveFile>
+#include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
 #include <sandbox.h>
@@ -56,7 +58,10 @@ struct RuntimeState final {
 };
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-thread_local auto CachePathWalkCount = 0;
+QMutex CachePathWalkCountMutex;
+auto CachePathWalkCount = 0;
+auto CachePathWalkMainThreadCount = 0;
+Qt::HANDLE CachePathWalkMainThread = nullptr;
 #endif
 
 [[nodiscard]] RuntimeState &State() {
@@ -563,7 +568,13 @@ bool CheckCachePathImpl(
 	}
 #endif // TDESKTOP_TEAGRAM
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	++CachePathWalkCount;
+	{
+		QMutexLocker lock(&CachePathWalkCountMutex);
+		++CachePathWalkCount;
+		if (QThread::currentThreadId() == CachePathWalkMainThread) {
+			++CachePathWalkMainThreadCount;
+		}
+	}
 #endif
 	if (!CheckPath(Operation::OpenDir, path, callsite)) {
 		return false;
@@ -654,11 +665,20 @@ bool CheckCachePath(const QString &path, const char *callsite) {
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 void ResetCachePathWalkCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
 	CachePathWalkCount = 0;
+	CachePathWalkMainThreadCount = 0;
+	CachePathWalkMainThread = QThread::currentThreadId();
 }
 
 int CachePathWalkCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
 	return CachePathWalkCount;
+}
+
+int CachePathWalkMainThreadCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
+	return CachePathWalkMainThreadCount;
 }
 
 int RunNotificationSoundProbe() {

@@ -924,7 +924,7 @@ awk '
 ' "$native_harness" \
   || contract_fail 'The blocked mini-app cleanup must check a weak account reference before logout.'
 grep -Fq 'StartCase(caseName)' "$native_harness" \
-  || contract_fail "$native_harness must start each post-open cache case before setup."
+  || contract_fail "$native_harness must start each cache access case before setup."
 grep -Fq 'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE' "$native_harness" \
   || contract_fail 'The native lifecycle harness must support a deliberate early-case failure.'
 grep -Fq 'native_lifecycle_cases_failed=' "$native_harness" \

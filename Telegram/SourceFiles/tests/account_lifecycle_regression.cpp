@@ -8214,6 +8214,16 @@ void RunAuthenticatedCacheSymlinkCases(
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto selfId = UserId(1);
+		const auto seedCacheTree = [](const QString &path) {
+			for (auto i = 0; i != 100; ++i) {
+				const auto directory = QDir(path).filePath(
+					u"cache-access-regression/%1"_q.arg(i));
+				if (!QDir().mkpath(directory)) {
+					return false;
+				}
+			}
+			return true;
+		};
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache
 				? "media-cache-access-no-walk"
@@ -8222,24 +8232,78 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
+			const auto seeded = seedCacheTree(guarded->local().cachePath())
+				&& seedCacheTree(guarded->local().cacheBigFilePath());
+			if (!seeded) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			auto sessionSetupTimer = QElapsedTimer();
+			sessionSetupTimer.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
-			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			const auto sessionSetupNanoseconds
+				= sessionSetupTimer.nsecsElapsed();
 			auto &data = guarded->session().data();
-			const auto getCache = [&] {
+			const auto getAllowedCache = [&] {
 				if (mediaCache) {
 					return data.cacheBigFileIfAllowed();
 				}
 				return data.cacheIfAllowed();
 			};
-			const auto first = (getCache() != nullptr);
-			const auto second = (getCache() != nullptr);
-			const auto passed = first && second
-				&& (Core::MacProtectedPath::CachePathWalkCountForTesting() == 0);
+			const auto getCache = [&]() -> Storage::Cache::Database* {
+				return mediaCache ? &data.cacheBigFile() : &data.cache();
+			};
+			auto firstCache = static_cast<Storage::Cache::Database*>(nullptr);
+			auto firstAccessNanoseconds = qint64(-1);
+			const auto startupScansCompleted = WaitForRegressionCondition([&] {
+				if (Core::MacProtectedPath::CachePathWalkCountForTesting() != 2) {
+					return false;
+				}
+				auto timer = QElapsedTimer();
+				timer.start();
+				if (!getAllowedCache()) {
+					return false;
+				}
+				firstCache = getCache();
+				if (!firstCache) {
+					return false;
+				}
+				firstAccessNanoseconds = timer.nsecsElapsed();
+				return true;
+			});
+			const auto first = (firstCache != nullptr);
+			const auto second
+				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
+			const auto startupWalks
+				= Core::MacProtectedPath::CachePathWalkCountForTesting();
+			const auto mainThreadWalks
+				= Core::MacProtectedPath::CachePathWalkMainThreadCountForTesting();
+			std::fprintf(
+				stderr,
+				"Cache access latency regression: cache=%s "
+				"seeded_directories=100 session_setup_ns=%lld under_100ms=%d "
+				"first_access_ns=%lld under_50ms=%d "
+				"startup_walks=%d main_thread_walks=%d.\n",
+				mediaCache ? "media_cache" : "cache",
+				static_cast<long long>(sessionSetupNanoseconds),
+				(sessionSetupNanoseconds < 100'000'000),
+				static_cast<long long>(firstAccessNanoseconds),
+				(firstAccessNanoseconds < 50'000'000),
+				startupWalks,
+				mainThreadWalks);
+			const auto passed = startupScansCompleted
+				&& first
+				&& second
+				&& (startupWalks == 2)
+				&& (mainThreadWalks == 0)
+				&& (sessionSetupNanoseconds < 100'000'000)
+				&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 #else

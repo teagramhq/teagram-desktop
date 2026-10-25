@@ -1347,13 +1347,15 @@ if ! grep -F -q \
 	echo "authenticated cache regression did not report coverage." >&2
 	exit 1
 fi
-if ! grep -F -q \
-	"Authenticated cache post-open regression passed: get, put, and clear symlinks refused for cache and media_cache." \
-	"$AUTH_LOG"; then
-	cat "$AUTH_LOG" >&2
-	echo "post-open authenticated cache regression did not report coverage." >&2
-	exit 1
-fi
+for cache in cache media_cache; do
+	if ! grep -E -q \
+		"^Cache access latency regression: cache=$cache seeded_directories=100 session_setup_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
+		exit 1
+	fi
+done
 if ! grep -F -q \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"$AUTH_LOG"; then
@@ -1458,7 +1460,6 @@ for native_evidence in \
 done
 for cache_evidence in \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
-	"Authenticated cache post-open regression passed: get, put, and clear symlinks refused for cache and media_cache." \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
 	"Chat participants regression passed." \
@@ -1467,6 +1468,15 @@ for cache_evidence in \
 	if ! grep -F -q "$cache_evidence" "$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
 		printf 'authenticated lifecycle evidence missing: %s\n' "$cache_evidence" >&2
+		exit 1
+	fi
+done
+for cache in cache media_cache; do
+	if ! grep -E -q \
+		"^Cache access latency regression: cache=$cache seeded_directories=100 session_setup_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
 done

@@ -71,6 +71,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_row.h"
 #include "base/options.h"
 #include "data/data_send_action.h"
+#include "crl/crl.h"
 #include "data/data_message_reactions.h"
 #include "data/data_emoji_statuses.h"
 #include "data/data_forum_icons.h"
@@ -267,16 +268,31 @@ Session::Session(not_null<Main::Session *> session)
 	  _chatbots(std::make_unique<Chatbots>(this)),
 	  _businessInfo(std::make_unique<BusinessInfo>(this)),
 	  _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
-	_cacheAllowed = Core::MacProtectedPath::CheckCachePath(
-		_cachePath, "Data::Session::cache");
-	_bigFileCacheAllowed = Core::MacProtectedPath::CheckCachePath(
-		_bigFileCachePath, "Data::Session::cacheBigFile");
-	if (_cacheAllowed) {
-		_cache->open(_session->local().cacheKey());
-	}
-	if (_bigFileCacheAllowed) {
-		_bigFileCache->open(_session->local().cacheBigFileKey());
-	}
+#ifdef Q_OS_MAC
+	const auto weak = base::make_weak(this);
+	const auto cachePath = _cachePath;
+	const auto bigFileCachePath = _bigFileCachePath;
+	crl::async([=] {
+		const auto cacheAllowed = Core::MacProtectedPath::CheckCachePath(
+			cachePath, "Data::Session::cache");
+		const auto bigFileCacheAllowed
+			= Core::MacProtectedPath::CheckCachePath(
+				bigFileCachePath, "Data::Session::cacheBigFile");
+		crl::on_main(weak, [=] {
+			if (const auto session = weak.get()) {
+				session->initializeCacheDatabases(
+					cacheAllowed,
+					bigFileCacheAllowed);
+			}
+		});
+	});
+#else
+	initializeCacheDatabases(
+		Core::MacProtectedPath::CheckCachePath(
+			_cachePath, "Data::Session::cache"),
+		Core::MacProtectedPath::CheckCachePath(
+			_bigFileCachePath, "Data::Session::cacheBigFile"));
+#endif
 
 	if constexpr (Platform::IsLinux()) {
 		const auto wasVersion = _session->local().oldMapVersion();
@@ -424,6 +440,20 @@ void Session::subscribeForTopicRepliesLists() {
 			});
 		}
 	}, _lifetime);
+}
+
+void Session::initializeCacheDatabases(
+		bool cacheAllowed,
+		bool bigFileCacheAllowed) {
+	if (cacheAllowed) {
+		_cache->open(_session->local().cacheKey());
+	}
+	if (bigFileCacheAllowed) {
+		_bigFileCache->open(_session->local().cacheBigFileKey());
+	}
+	QMutexLocker lock(&_cacheMutex);
+	_cacheAllowed = cacheAllowed;
+	_bigFileCacheAllowed = bigFileCacheAllowed;
 }
 
 void Session::clear() {
