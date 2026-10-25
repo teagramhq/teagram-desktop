@@ -72,7 +72,7 @@ QString _logsFilePath(LogDataType type, const QString &postfix = QString()) {
 
 [[nodiscard]] QString MainLogPrefix() {
 	auto t = time(NULL);
-	auto tm = struct tm();
+	struct tm tm = {};
 	mylocaltime(&tm, &t);
 	return QString("[%1.%2.%3 %4:%5:%6] ")
 		.arg(tm.tm_year + 1900)
