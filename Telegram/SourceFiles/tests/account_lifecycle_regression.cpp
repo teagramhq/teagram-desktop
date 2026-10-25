@@ -3815,31 +3815,55 @@ template <typename Condition>
 	const auto hasStockInfoSection = [&](Info::Section::Type type) {
 		const auto counts
 			= stockController->content()->sectionStackCountsForRegressionTest();
-		const auto sections
-			= stockController->content()->findChildren<Info::SectionWidget *>();
+		auto infoSectionCount = 0;
+		auto matchingInfoSection = false;
+		const auto widgets
+			= stockController->content()->findChildren<QWidget *>();
+		for (const auto widget : widgets) {
+			const auto section = dynamic_cast<Info::SectionWidget *>(widget);
+			if (!section) {
+				continue;
+			}
+			++infoSectionCount;
+			matchingInfoSection
+				= (section->contentSectionForRegressionTest().type() == type);
+		}
 		return (counts.mainInfo == 1) && (counts.mainSectionVisible == 1)
-			   && !stockController->isLayerShown() && (sections.size() == 1)
-			   && (sections.front()->contentSectionForRegressionTest().type()
-				   == type);
+			   && !stockController->isLayerShown() && (infoSectionCount == 1)
+			   && matchingInfoSection;
 	};
 	const auto hasStockStarRefJoin = [&] {
 		const auto counts
 			= stockController->content()->sectionStackCountsForRegressionTest();
-		const auto sections
-			= stockController->content()->findChildren<Info::SectionWidget *>();
-		if ((counts.mainInfo != 1) || (counts.mainSectionVisible != 1)
-			|| stockController->isLayerShown() || (sections.size() != 1)) {
-			return false;
+		auto infoSectionCount = 0;
+		auto starRefJoinCount = 0;
+		const auto widgets
+			= stockController->content()->findChildren<QWidget *>();
+		for (const auto widget : widgets) {
+			const auto section = dynamic_cast<Info::SectionWidget *>(widget);
+			if (!section) {
+				continue;
+			}
+			++infoSectionCount;
+			if (section->contentSectionForRegressionTest().type()
+				!= Info::Section::Type::BotStarRef) {
+				continue;
+			}
+			const auto children = section->findChildren<QWidget *>();
+			for (const auto child : children) {
+				const auto wrap = dynamic_cast<Info::WrapWidget *>(child);
+				if (wrap
+					&& (wrap->controller()->section().type()
+						== Info::Section::Type::BotStarRef)
+					&& (wrap->controller()->starrefType()
+						== Info::BotStarRef::Type::Join)) {
+					++starRefJoinCount;
+				}
+			}
 		}
-		const auto section = sections.front();
-		if (section->contentSectionForRegressionTest().type()
-			!= Info::Section::Type::BotStarRef) {
-			return false;
-		}
-		const auto wraps = section->findChildren<Info::WrapWidget *>();
-		return (wraps.size() == 1)
-			   && (wraps.front()->controller()->starrefType()
-				   == Info::BotStarRef::Type::Join);
+		return (counts.mainInfo == 1) && (counts.mainSectionVisible == 1)
+			   && !stockController->isLayerShown() && (infoSectionCount == 1)
+			   && (starRefJoinCount == 1);
 	};
 	const auto hasStockLayerText = [&](const QString &text) {
 		const auto widgets
