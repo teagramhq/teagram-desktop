@@ -654,6 +654,7 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
+        timeout-minutes: 20
         if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
@@ -816,47 +817,35 @@ jobs:
             fail_dwarf_prerequisite "Xcode llvm-dwarfdump is unavailable for symbol inspection"
           fi
           "$dwarf_tool" --version > "$diagnostics/llvm-dwarfdump-version.txt" 2>&1 || fail_dwarf_prerequisite "llvm-dwarfdump could not report its version"
-          progress "Inspecting Teagram DWARF compile units and source paths."
-          if ! "$dwarf_tool" --debug-info --arch=arm64 "$dsym_file" 2> "$diagnostics/dwarf-info-errors.txt" | awk '
-            /DW_TAG_compile_unit/ { compile_units++ }
-            /DW_TAG_subprogram/ { functions++ }
-            /DW_AT_stmt_list/ { statement_lists++ }
-            /Telegram\/SourceFiles/ {
-              app_source_paths++
-              if (app_source_paths <= 5) {
-                print "Telegram source entry: " $0
-              }
-            }
-            END {
-              printf "DWARF compile units: %d\nDWARF function entries: %d\nDWARF statement-list attributes: %d\nTelegram source path entries: %d\n", compile_units, functions, statement_lists, app_source_paths
-              if (!compile_units || !functions || !statement_lists || !app_source_paths) {
-                exit 1
-              }
-            }
-          ' > "$diagnostics/dwarf-info-summary.txt"; then
-            fail_dwarf_prerequisite "the dSYM lacks Teagram compile units, functions, or application source paths"
+          progress "Inspecting Teagram regression symbols and source lines."
+          dwarf_probe_name=RunAccountLifecycleRegression
+          if ! "$dwarf_tool" --find=RunAccountLifecycleRegression --show-parents --arch=arm64 "$dsym_file" > "$diagnostics/dwarf-info-summary.txt" 2> "$diagnostics/dwarf-info-errors.txt"; then
+            fail_dwarf_prerequisite "llvm-dwarfdump could not find $dwarf_probe_name; see dwarf-info-errors.txt"
           fi
-          progress "Inspecting Teagram DWARF line tables."
-          if ! "$dwarf_tool" --debug-line --arch=arm64 "$dsym_file" 2> "$diagnostics/dwarf-line-errors.txt" | awk '
-            /^debug_line\[/ { line_tables++ }
-            /^[[:space:]]*0x[[:xdigit:]]+[[:space:]]+[1-9][[:digit:]]*[[:space:]]+[0-9]+/ {
-              source_lines++
-              if (source_lines <= 5) {
-                print "DWARF source line row: " $0
-              }
-            }
-            END {
-              printf "DWARF line tables: %d\nDWARF source line rows: %d\n", line_tables, source_lines
-              if (!line_tables || !source_lines) {
-                exit 1
-              }
-            }
-          ' > "$diagnostics/dwarf-line-summary.txt"; then
-            fail_dwarf_prerequisite "the dSYM lacks populated DWARF source line tables"
+          for dwarf_info in \
+            DW_TAG_compile_unit \
+            DW_TAG_subprogram \
+            DW_AT_name \
+            DW_AT_stmt_list \
+            DW_AT_low_pc \
+            Telegram/SourceFiles/tests/account_lifecycle_regression.cpp; do
+            if ! grep -Fq "$dwarf_info" "$diagnostics/dwarf-info-summary.txt"; then
+              fail_dwarf_prerequisite "the regression dSYM entry is missing $dwarf_info; see dwarf-info-summary.txt"
+            fi
+          done
+          if ! probe_address="$(python3 "$repo/.github/scripts/extract_dwarf_subprogram_address.py" "$dwarf_probe_name" account_lifecycle_regression.cpp "$diagnostics/dwarf-info-summary.txt")"; then
+            fail_dwarf_prerequisite "llvm-dwarfdump did not expose the regression subprogram address"
           fi
-          "$dwarf_tool" --verify --arch=arm64 "$dsym_file" > "$diagnostics/dwarf-verify.txt" 2>&1 || fail_dwarf_prerequisite "llvm-dwarfdump found invalid DWARF; see dwarf-verify.txt"
+          if ! "$dwarf_tool" --lookup="$probe_address" --arch=arm64 "$dsym_file" > "$diagnostics/dwarf-line-summary.txt" 2> "$diagnostics/dwarf-line-errors.txt"; then
+            fail_dwarf_prerequisite "llvm-dwarfdump could not look up the regression function; see dwarf-line-summary.txt"
+          fi
+          for dwarf_lookup in "$dwarf_probe_name" account_lifecycle_regression.cpp; do
+            if ! grep -Fq "$dwarf_lookup" "$diagnostics/dwarf-line-summary.txt"; then
+              fail_dwarf_prerequisite "the regression lookup is missing $dwarf_lookup; see dwarf-line-summary.txt"
+            fi
+          done
 
-          printf 'DWARF compile-unit/function/line-table inspection passed. See dwarf-info-summary.txt and dwarf-line-summary.txt.\n' >> "$diagnostics/metadata.txt"
+          printf 'DWARF regression symbol and source-line inspection passed. See dwarf-info-summary.txt and dwarf-line-summary.txt.\n' >> "$diagnostics/metadata.txt"
           symbol_file="$dsym_file"
           printf 'Replay status: symbol prerequisite passed; LLDB replay may start.\n' > "$diagnostics/replay-status.txt"
 

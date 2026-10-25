@@ -284,6 +284,8 @@ void ActivateThisProcess(not_null<QWidget *> window) {
 	objc_activateProgram(window->winId());
 }
 
+bool IsApplicationActiveForRegression() { return [NSApp isActive]; }
+
 void LogWindowActivationStateForRegression(not_null<QWidget *> widget) {
 	const auto targetWindow =
 		[reinterpret_cast<NSView *>(widget->winId()) window];

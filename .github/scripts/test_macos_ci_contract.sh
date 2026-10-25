@@ -20,8 +20,12 @@ trap 'rm -rf "$temp_dir"' EXIT
 require_contract_tests_in_lint
 for trigger in push pull_request; do
   paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
-  grep -Fxq -- '.github/scripts/test_macos_launch_smoke.py' <<< "$paths" \
-    || contract_fail "Workflow lint must run when .github/scripts/test_macos_launch_smoke.py changes ($trigger)."
+  for script_path in \
+    .github/scripts/test_macos_launch_smoke.py \
+    .github/scripts/extract_dwarf_subprogram_address.py; do
+    grep -Fxq -- "$script_path" <<< "$paths" \
+      || contract_fail "Workflow lint must run when $script_path changes ($trigger)."
+  done
 done
 
 # Mirrors the MacOS. concurrency group expression, which is pinned below.
@@ -578,16 +582,56 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
+dwarf_address_helper='.github/scripts/extract_dwarf_subprogram_address.py'
+dwarf_info_fixture="$temp_dir/dwarf-info-summary.txt"
+cat > "$dwarf_info_fixture" <<'DWARF'
+0x00000000: DW_TAG_compile_unit
+              DW_AT_name ("OtherRegression.cpp")
+              DW_AT_low_pc (0x0000000100001000)
+0x00000032: DW_TAG_subprogram
+              DW_AT_name ("RunAccountLifecycleRegression")
+              DW_AT_low_pc (0x0000000100001100)
+0x00000064: DW_TAG_compile_unit
+              DW_AT_name ("Telegram/SourceFiles/tests/account_lifecycle_regression.cpp")
+              DW_AT_low_pc (0x0000000100002000)
+0x00000096: DW_TAG_subprogram
+              DW_AT_name ("RunAccountLifecycleRegression")
+              DW_AT_low_pc (0x0000000100002100)
+0x000000c8: DW_TAG_subprogram
+              DW_AT_name ("OtherRegression")
+              DW_AT_low_pc (0x0000000100003100)
+DWARF
+if ! dwarf_probe_address="$(python3 "$dwarf_address_helper" \
+    RunAccountLifecycleRegression account_lifecycle_regression.cpp \
+    "$dwarf_info_fixture" 2>"$temp_dir/dwarf-parser.err")"; then
+  cat "$temp_dir/dwarf-parser.err" >&2
+  contract_fail "$dwarf_address_helper must find the requested subprogram address."
+fi
+expect_equal 'DWARF probe skips the compile-unit low_pc' \
+  "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
   "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
+require_step_field "$mac_workflow" macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
   'full_chat_info_session_regression=FAIL' \
   'ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram' \
+  '--find=RunAccountLifecycleRegression' \
+  '--show-parents' \
+  'DW_AT_name' \
+  'DW_AT_stmt_list' \
+  'DW_AT_low_pc' \
+  'python3 "$repo/.github/scripts/extract_dwarf_subprogram_address.py" "$dwarf_probe_name" account_lifecycle_regression.cpp "$diagnostics/dwarf-info-summary.txt"' \
+  '--lookup="$probe_address"' \
+  'grep -Fq "$dwarf_lookup" "$diagnostics/dwarf-line-summary.txt"' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
+reject_step_script "$mac_workflow" macos "$regression_step" \
+  '--debug-info --arch=arm64' \
+  '--debug-line --arch=arm64' \
+  'head -n 1'
 # The app bounds and cleanup live in the Python the step runs, so they are
 # read from its syntax tree: a commented-out call does not count.
 require_step_python "$mac_workflow" macos "$regression_step" \
@@ -606,6 +650,12 @@ require_step_field "$mac_workflow" macos "$profile_step" '.if' \
 require_step_script "$mac_workflow" macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+settings_link_evidence='Settings deep link regression passed: paid and story routes'
+grep -Fq "$settings_link_evidence" \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The Settings deep link regression must report its current success evidence.'
+grep -Fq "\"$settings_link_evidence" "$profile_harness" \
+  || contract_fail "$profile_harness must check the Settings deep link regression success evidence."
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
@@ -753,6 +803,50 @@ for appkit_state in \
   grep -Fq "$appkit_state" "$mac_platform" \
     || contract_fail "$mac_platform must log AppKit activation state: $appkit_state."
 done
+for platform_header in \
+  Telegram/SourceFiles/platform/mac/specific_mac.h \
+  Telegram/SourceFiles/platform/linux/specific_linux.h \
+  Telegram/SourceFiles/platform/win/specific_win.h; do
+  grep -Fq 'IsApplicationActiveForRegression' "$platform_header" \
+    || contract_fail "$platform_header must expose application activation state to the regression fixture."
+done
+awk '
+  /^bool IsApplicationActiveForRegression\(\)/ { in_check = 1 }
+  in_check && /return \[NSApp isActive\]/ { reads_appkit = 1 }
+  in_check && /^}/ { exit }
+  END { exit !reads_appkit }
+' "$mac_platform" \
+  || contract_fail "$mac_platform must expose the current AppKit application activation state."
+grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
+  || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
+  || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
+awk '
+  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  in_activation && /if \(!activated\)/ { activation_timeout = NR }
+  in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
+  in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
+    if (activation_timeout) {
+      timeout_appkit_check = NR
+    } else {
+      pre_attempt_appkit_check = NR
+    }
+  }
+  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
+    if (!activation_call || NR < activation_call) inactive_return_before_attempt = 1
+  }
+  in_activation && /^}/ { exit }
+  END {
+    exit !(activation_call && activation_timeout > activation_call &&
+      !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
+      !inactive_return_before_attempt)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
+grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
+  || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
+grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
+  || contract_fail "$native_harness must retain the ordinary Settings focus assertion whenever AppKit is active."
 awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
@@ -764,11 +858,11 @@ awk '
       unsupported_route_activation = NR
     }
   }
-  in_settings && /dispatchMatrix\(pinnedController, &pinnedController->window\(\)\)/ {
+  in_settings && /pinnedController, activeBeforePinnedMatrix/ {
     custom_window_matrices++
     custom_window_matrix = NR
   }
-  in_settings && /dispatchMatrix\(blockedController, &stockController->window\(\)\)/ {
+  in_settings && /blockedController,/ {
     blocked_window_matrix = NR
   }
   in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
@@ -791,7 +885,7 @@ awk '
   in_activation && /LogWindowActivationForRegression\(app, window\)/ {
     activation_diagnostics = NR
   }
-  in_activation && /return activated/ { exit }
+  in_activation && /WindowActivationForRegressionResult::Failed/ { exit }
   END { exit !(activation_timeout && activation_diagnostics > activation_timeout) }
 ' "$native_harness" \
   || contract_fail 'Activation timeouts must log the target Qt and AppKit window state.'
