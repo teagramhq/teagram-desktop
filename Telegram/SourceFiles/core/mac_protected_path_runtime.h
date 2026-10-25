@@ -52,6 +52,9 @@ struct CachePathIdentity final {
 [[nodiscard]] bool
 CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
 								 CachePathIdentity *identity);
+[[nodiscard]] bool
+CaptureCachePathActiveVersionIdentity(const QString &path, const char *callsite,
+									  CachePathIdentity *identity);
 [[nodiscard]] bool CheckCachePathIdentity(const QString &path,
 										  const char *callsite,
 										  CachePathIdentity *identity);
@@ -98,6 +101,11 @@ CheckCachePathForTesting(const QString &path, const char *callsite,
 [[nodiscard]] inline bool
 CheckCachePathAndCaptureIdentity(const QString &, const char *,
 								 CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool
+CaptureCachePathActiveVersionIdentity(const QString &, const char *,
+									  CachePathIdentity *) {
 	return true;
 }
 [[nodiscard]] inline bool CheckCachePathIdentity(const QString &, const char *,

@@ -887,6 +887,37 @@ bool CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
 	return true;
 }
 
+bool CaptureCachePathActiveVersionIdentity(const QString &path,
+										   const char *callsite,
+										   CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	if (!CachePathIdentityStillValid(path, callsite, identity)) {
+		return false;
+	}
+	const auto activePath = ActiveCacheVersionPath(identity->absolutePath);
+	if (activePath.isEmpty()) {
+		ReportCachePathIdentityRefusal(callsite);
+		return false;
+	}
+	auto active = CachePathComponentIdentity{.path = activePath};
+	auto missing = false;
+	if (!ReadCachePathLinkIdentity(activePath, &active, &missing) || missing
+		|| (active.type != quint32(S_IFDIR))
+		|| !ReadCachePathTargetIdentity(activePath, &active)) {
+		ReportCachePathIdentityRefusal(callsite);
+		return false;
+	}
+	identity->activeVersionDirectory = std::move(active);
+	return CachePathIdentityStillValid(path, callsite, identity);
+}
+
 bool CheckCachePathIdentity(const QString &path, const char *callsite,
 							CachePathIdentity *identity) {
 #ifndef TDESKTOP_TEAGRAM

@@ -1035,6 +1035,11 @@ private:
 		Core::MacProtectedPath::CachePathIdentity cacheIdentity,
 		bool bigFileCacheAllowed,
 		Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity);
+#ifdef Q_OS_MAC
+	void finishCacheDatabaseInitialization(
+		bool bigFileCache, bool cacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity cacheIdentity);
+#endif
 
 	void setupMigrationViewer();
 	void setupChannelLeavingViewer();

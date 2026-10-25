@@ -8381,6 +8381,8 @@ struct NativeLifecycleResults {
 			"authenticated-cache-file-symlinks",
 			"post-open-cache",
 			"post-open-media-cache",
+			"cold-post-open-cache",
+			"cold-post-open-media-cache",
 			"cache-access-no-walk",
 			"media-cache-access-no-walk",
 			"pinned-chat-participants",
@@ -8964,10 +8966,60 @@ void RunAuthenticatedCacheSymlinkCases(
 									});
 			nativeLifecycleResults->Report(caseName, passed);
 		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache ? "cold-post-open-media-cache"
+											 : "cold-post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			const auto coldBeforeOpen
+				= !QFileInfo::exists(QDir(cachePath).filePath("version"));
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			auto &data = guarded->session().data();
+			const auto cacheReady = WaitForRegressionCondition([&] {
+				const auto cache = mediaCache ? data.cacheBigFileIfAllowed()
+											  : data.cacheIfAllowed();
+				return cache != nullptr;
+			});
+			const auto cache = [&]() -> Storage::Cache::Database & {
+				return mediaCache ? data.cacheBigFile() : data.cache();
+			};
+			const auto clearCaches = [guarded] {
+				auto &sessionData = guarded->session().data();
+				sessionData.clearLocalStorage();
+				sessionData.cache().sync();
+				sessionData.cacheBigFile().sync();
+			};
+			const auto activeVersion = ActiveCacheVersionPath(cachePath);
+			const auto passed
+				= coldBeforeOpen && cacheReady && !activeVersion.isEmpty()
+				  && RunPostOpenCacheSymlinkRegression(
+					  cachePath,
+					  mediaCache ? fixtures.openedMediaCache
+								 : fixtures.openedCache,
+					  cache, clearCaches, [guarded, mediaCache] {
+						  return RunRefusedCacheReaderRegressions(guarded,
+																  mediaCache);
+					  });
+			nativeLifecycleResults->Report(caseName, passed);
+		}
 #else
 		nativeLifecycleResults->Skip("post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-media-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cache-access-no-walk",
 									 "protected-path-integration-disabled");
@@ -8978,6 +9030,10 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-media-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cache-access-no-walk",
 									 "protected-path-integration-disabled");
