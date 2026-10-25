@@ -2157,6 +2157,7 @@ template <typename Result, typename Start>
 		&& CachePayloadMatches(*cache, key, expected);
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 using CacheGetter = Fn<Storage::Cache::Database &()>;
 using CacheClearer = Fn<void()>;
 using CachePointerGetter = Fn<Storage::Cache::Database *()>;
@@ -2180,6 +2181,8 @@ class RefusedCacheLoader final : public Media::Streaming::Loader {
 	void cancel(int64) override {}
 
 	void resetPriorities() override {}
+
+	void setPriority(int) override {}
 
 	void stop() override {}
 
@@ -2432,6 +2435,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	}
 	return passed;
 }
+#endif
 
 [[nodiscard]] Main::Account *
 FindAuthorizationBlockedAccount(const Main::Domain &domain) {
