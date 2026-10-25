@@ -244,6 +244,9 @@ public:
   [[nodiscard]] bool requestingDifference() const {
 	  return _ptsWaiter.requesting();
   }
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+  void initializePtsForRegressionTest(int32 pts) { setState(pts, 0, 0, 0); }
+#endif
   [[nodiscard]] bool handlingChannelDifference() const {
 	  return _handlingChannelDifference;
   }
