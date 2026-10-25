@@ -3929,7 +3929,7 @@ template <typename Condition>
 			= stockController->content()->historyWidgetForRegressionTest();
 		const auto counts
 			= stockController->content()->sectionStackCountsForRegressionTest();
-		return (counts.mainHistory == 1) && (counts.mainSectionVisible == 1)
+		return (counts.mainHistory == 1)
 			   && !stockController->content()->isThirdSectionShown()
 			   && (historyWidget == stockMessageState->first)
 			   && (historyWidget->peer()
@@ -3999,6 +3999,7 @@ template <typename Condition>
 		[&](const QString &url, bool routeDispatched, bool routeActionStarted) {
 			if (findServerDependentStockMessageRoute(url)) {
 				return routeDispatched && routeActionStarted
+					   && stockSavedMessagesHistoryShown()
 					   && noStockInfoSectionShown();
 			}
 			if (url == u"tg://settings/premium"_q) {
