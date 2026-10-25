@@ -17,12 +17,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <thread>
 #include <vector>
 
+// Spins without calling into libstdc++ or the vDSO: those are built without
+// frame pointers, so a sample taken inside them would skip this frame.
 __attribute__((noinline)) void UiStallWatchdogTestBlock() {
-	const auto deadline
-		= std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
-	while (std::chrono::steady_clock::now() < deadline) {
+	auto released = std::atomic_bool(false);
+	auto releaser = std::thread([&] {
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		released.store(true, std::memory_order_release);
+	});
+	while (!released.load(std::memory_order_acquire)) {
 		std::atomic_signal_fence(std::memory_order_seq_cst);
 	}
+	releaser.join();
 }
 
 TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
