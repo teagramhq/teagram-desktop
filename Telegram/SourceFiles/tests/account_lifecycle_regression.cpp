@@ -2808,6 +2808,13 @@ ActivateWindowForRegression(Core::Application &app,
 	retry.stop();
 	if (!activated) {
 		LogWindowActivationForRegression(app, window);
+		if (!Platform::IsApplicationActiveForRegression()) {
+			std::fprintf(
+				stderr,
+				"Settings deep link activation unavailable: "
+				"AppKit app became inactive before focus verification.\n");
+			return WindowActivationForRegressionResult::AppInactive;
+		}
 	}
 	return activated ? WindowActivationForRegressionResult::Activated
 					 : WindowActivationForRegressionResult::Failed;

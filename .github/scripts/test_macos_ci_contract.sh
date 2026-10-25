@@ -769,6 +769,8 @@ awk '
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
 grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
+  || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
