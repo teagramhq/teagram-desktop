@@ -2802,11 +2802,11 @@ ActivateWindowForRegression(Core::Application &app,
 	retry.setInterval(100);
 	QObject::connect(&retry, &QTimer::timeout, &retry, [&] {
 		if (!isActive()) {
-			window->activate();
+			window->widget()->activate();
 		}
 	});
 	retry.start();
-	window->activate();
+	window->widget()->activate();
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
 	if (!activated) {
