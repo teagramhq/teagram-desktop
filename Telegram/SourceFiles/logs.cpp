@@ -11,13 +11,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/crash_reports.h"
 #include "core/launcher.h"
 #include "core/mac_protected_path_runtime.h"
+#include "core/ui_stall_log_writer.h"
 #include "core/version.h"
 #include "mtproto/facade.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QFile>
-
-#include <optional>
 
 namespace {
 
@@ -156,7 +155,6 @@ public:
 
 	void writeMainUiStall(const QString &prefix, const QString &message,
 						  bool update) {
-		constexpr auto kDurationReserve = 19;
 		QMutexLocker lock(_logsMutex(LogDataMain));
 		WritingEntryScope scope;
 
@@ -166,62 +164,30 @@ public:
 							 file->fileName(), Q_FUNC_INFO)) {
 			return;
 		}
-		if (!update) {
-			auto bytes = (prefix + message).toUtf8();
-			bytes += QByteArray(kDurationReserve, ' ');
-			bytes += '\n';
-			const auto offset = file->size();
-			const auto size = bytes.size();
-			const auto written = file->write(bytes);
-			const auto flushed = file->flush();
-			if (written == size && flushed) {
-				pendingMainUiStall = PendingMainUiStall{
-					file->fileName(), prefix.toUtf8(), offset, size};
+		if (update) {
+			const auto pendingFileName = _uiStallLogWriter.fileName();
+			if (pendingFileName.isEmpty()
+				|| pendingFileName != file->fileName()) {
+				return;
 			}
+			auto output = QFile(pendingFileName);
+			if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
+							  output.fileName(), Q_FUNC_INFO)
+				|| !output.open(QIODevice::ReadWrite)) {
+				_uiStallLogWriter.reset();
+				return;
+			}
+			if (!_uiStallLogWriter.writeCompletion(output, message)) {
+				return;
+			}
+		} else if (!_uiStallLogWriter.writeDetection(*file, prefix, message)) {
 			return;
 		}
-		if (!pendingMainUiStall
-			|| pendingMainUiStall->fileName != file->fileName()) {
-			return;
-		}
-
-		auto bytes = (QString::fromUtf8(pendingMainUiStall->prefix) + message)
-						 .toUtf8();
-		const auto padding = pendingMainUiStall->size - bytes.size() - 1;
-		if (padding < 0 || padding > kDurationReserve) {
-			pendingMainUiStall.reset();
-			return;
-		}
-		bytes += QByteArray(int(padding), ' ');
-		bytes += '\n';
-		auto output = QFile(pendingMainUiStall->fileName);
-		if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
-						  output.fileName(), Q_FUNC_INFO)
-			|| !output.open(QIODevice::ReadWrite)
-			|| output.size() < pendingMainUiStall->offset + bytes.size()
-			|| !output.seek(pendingMainUiStall->offset)) {
-			pendingMainUiStall.reset();
-			return;
-		}
-		const auto written = output.write(bytes);
-		const auto flushed = output.flush();
-		if (written != bytes.size() || !flushed) {
-			pendingMainUiStall.reset();
-			return;
-		}
-		pendingMainUiStall.reset();
 	}
 
   private:
-	struct PendingMainUiStall final {
-		QString fileName;
-		QByteArray prefix;
-		qint64 offset = 0;
-		qint64 size = 0;
-	};
-
 	std::unique_ptr<QFile> files[LogDataCount];
-	std::optional<PendingMainUiStall> pendingMainUiStall;
+	Core::UiStallLogWriter _uiStallLogWriter;
 
 	int32 part = -1;
 

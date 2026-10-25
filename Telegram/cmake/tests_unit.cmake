@@ -32,6 +32,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         core/ui_stall_watchdog.cpp
+        core/ui_stall_log_writer.cpp
+        core/ui_stall_log_writer.h
         tests/unit/ui_stall_watchdog_tests.cpp
     )
 endif()

@@ -635,6 +635,8 @@ PRIVATE
     core/sandbox.h
     core/ui_stall_watchdog.cpp
     core/ui_stall_watchdog.h
+    core/ui_stall_log_writer.cpp
+    core/ui_stall_log_writer.h
     core/shortcuts.cpp
     core/shortcuts.h
     core/teagram_update_verification.cpp

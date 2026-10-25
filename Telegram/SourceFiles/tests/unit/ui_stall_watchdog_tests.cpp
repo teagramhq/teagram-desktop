@@ -6,11 +6,16 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_stall_watchdog.h"
+#include "core/ui_stall_log_writer.h"
 
 #include "tests/unit/unit_test.h"
 
+#include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
 #include <QtCore/QEventLoop>
+#include <QtCore/QFile>
+#include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 
 #include <atomic>
@@ -115,6 +120,65 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 								  .section(u' ', 0, 0)
 								  .toInt();
 		CHECK(duration >= 300);
+	}
+}
+
+TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
+	auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+
+	const auto path = QDir(directory.path()).filePath(u"log.txt"_q);
+	auto log = QFile(path);
+	CHECK(log.open(QIODevice::WriteOnly | QIODevice::Append));
+	if (!log.isOpen()) {
+		return;
+	}
+
+	auto writer = Core::UiStallLogWriter();
+	CHECK(writer.writeDetection(log, u"[prefix] "_q,
+								u"UI stall 100 ms (started test): stack"_q));
+	auto detection = QFile(path);
+	CHECK(detection.open(QIODevice::ReadOnly));
+	if (!detection.isOpen()) {
+		return;
+	}
+	const auto detected = QString::fromUtf8(detection.readAll());
+	CHECK(detected.startsWith(
+		u"[prefix] UI stall 100 ms (started test): stack"_q));
+	detection.close();
+
+	const auto following = QByteArray(
+		"[following] first log entry\n[following] second log entry\n");
+	CHECK_EQ(log.write(following), qint64(following.size()));
+	CHECK(log.flush());
+	log.close();
+
+	auto output = QFile(path);
+	CHECK(output.open(QIODevice::ReadWrite));
+	if (!output.isOpen()) {
+		return;
+	}
+	CHECK(writer.writeCompletion(output,
+								 u"UI stall 325 ms (started test): stack"_q));
+	output.close();
+
+	auto result = QFile(path);
+	CHECK(result.open(QIODevice::ReadOnly));
+	if (!result.isOpen()) {
+		return;
+	}
+	const auto content = QString::fromUtf8(result.readAll());
+	const auto lines = content.split(u'\n', Qt::SkipEmptyParts);
+	CHECK_EQ(int(lines.size()), 3);
+	CHECK_EQ(content.count(u"UI stall "_q), 1);
+	if (lines.size() == 3) {
+		CHECK(lines.at(0).startsWith(
+			u"[prefix] UI stall 325 ms (started test): stack"_q));
+		CHECK_EQ(lines.at(1), u"[following] first log entry"_q);
+		CHECK_EQ(lines.at(2), u"[following] second log entry"_q);
 	}
 }
 
