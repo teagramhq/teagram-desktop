@@ -458,9 +458,13 @@ void Session::initializeCacheDatabases(
 	Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity) {
 	if (cacheAllowed) {
 		_cache->open(_session->local().cacheKey());
+	} else {
+		_cache->close();
 	}
 	if (bigFileCacheAllowed) {
 		_bigFileCache->open(_session->local().cacheBigFileKey());
+	} else {
+		_bigFileCache->close();
 	}
 	QMutexLocker lock(&_cacheMutex);
 	_cacheIdentity = std::move(cacheIdentity);
@@ -1758,6 +1762,7 @@ Storage::Cache::Database *Session::cacheIfAllowed() {
 		&& !Core::MacProtectedPath::CheckCachePathIdentity(
 			_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
 		_cacheAllowed = false;
+		_cache->close();
 	}
 	return _cacheAllowed ? _cache.get() : nullptr;
 }
@@ -1769,6 +1774,7 @@ Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 			_bigFileCachePath, "Data::Session::cacheBigFile.access",
 			&_bigFileCacheIdentity)) {
 		_bigFileCacheAllowed = false;
+		_bigFileCache->close();
 	}
 	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 }

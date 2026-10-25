@@ -700,6 +700,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_account_setGlobalPrivacySettings:
 	case mtpc_channels_getParticipant:
 	case mtpc_messages_createChat:
+	case mtpc_messages_getDialogs:
 	case mtpc_upload_saveFilePart:
 	case mtpc_messages_editChatPhoto:
 		capture->requests.push_back({
@@ -8187,7 +8188,6 @@ struct NativeLifecycleResults {
 	}
 };
 
-#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] MTPDocument RegressionReactionDocument(int64 id) {
 	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
 						MTP_int(1), MTP_string("application/octet-stream"),
@@ -8223,7 +8223,7 @@ struct CacheReactionProbe final {
 	bool active = false;
 };
 
-[[nodiscard]] CacheChatSwitchRegressionResult
+[[maybe_unused, nodiscard]] CacheChatSwitchRegressionResult
 RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 									Window::Controller *window) {
 	auto result = CacheChatSwitchRegressionResult();
@@ -8330,7 +8330,113 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
 	return result;
 }
+
+struct FirstDialogsHandlerRegressionResult final {
+	int requests = 0;
+	int cacheWalks = -1;
+	qint64 handlerNanoseconds = -1;
+	bool responseParsed = false;
+	bool passed = false;
+};
+
+[[nodiscard]] MTPMessage RegressionDialogsDocumentMessage(ChatId chatId,
+														  int messageId,
+														  int64 documentId) {
+	using MessageFlag = MTPDmessage::Flag;
+	using MediaFlag = MTPDmessageMediaDocument::Flag;
+	return MTP_message(
+		MTP_flags(MessageFlag::f_from_id | MessageFlag::f_media),
+		MTP_int(messageId), peerToMTP(peerFromUser(UserId(1))), MTPint(),
+		MTPstring(), peerToMTP(peerFromChat(chatId)), MTPPeer(),
+		MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(1),
+		MTP_string(u"cache dialog probe"_q),
+		MTP_messageMediaDocument(MTP_flags(MediaFlag::f_document),
+								 RegressionReactionDocument(documentId),
+								 MTPVector<MTPDocument>(), MTPPhoto(), MTPint(),
+								 MTPint()),
+		MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(), MTP_int(0),
+		MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
+[[maybe_unused, nodiscard]] FirstDialogsHandlerRegressionResult
+RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
+	auto result = FirstDialogsHandlerRegressionResult();
+	constexpr auto kMessageCount = 73;
+	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+	const auto chatId = ChatId(1053);
+	auto &session = account->session();
+	auto &data = session.data();
+	const auto chat = data.chat(chatId);
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	session.api().processFullPeer(
+		peer, RegressionChatFullReply(chatId, 1, QString(), UserId(1)));
+	data.history(peer);
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &account->mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	session.api().requestDialogs(nullptr);
+	const auto request
+		= std::find_if(capture.requests.begin(), capture.requests.end(),
+					   [](const auto &entry) {
+						   return static_cast<uint32>(entry.body.front())
+								  == mtpc_messages_getDialogs;
+					   });
+	result.requests
+		= int(std::count_if(capture.requests.begin(), capture.requests.end(),
+							[](const auto &entry) {
+								return static_cast<uint32>(entry.body.front())
+									   == mtpc_messages_getDialogs;
+							}));
+	if (request == capture.requests.end()) {
+		return result;
+	}
+	auto messages = QVector<MTPMessage>();
+	messages.reserve(kMessageCount);
+	for (auto i = 0; i != kMessageCount; ++i) {
+		messages.push_back(RegressionDialogsDocumentMessage(
+			chatId, i + 1, int64(300'000 + i)));
+	}
+	const auto notifySettings = MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
+	auto reply = mtpBuffer();
+	MTP_messages_dialogs(
+		MTP_vector<MTPDialog>({MTP_dialog(
+			MTP_flags(0), peerToMTP(peerFromChat(chatId)),
+			MTP_int(kMessageCount), MTP_int(0), MTP_int(0), MTP_int(0),
+			MTP_int(0), MTP_int(0), MTP_int(0), notifySettings, MTPint(),
+			MTPDraftMessage(), MTPint(), MTPint())}),
+		MTP_vector<MTPMessage>(std::move(messages)),
+		MTP_vector<MTPChat>({MTP_chatEmpty(MTP_long(chatId.bare))}),
+		MTP_vector<MTPUser>())
+		.write(reply);
+	const auto response = MTP::Response{
+		.reply = std::move(reply),
+		.requestId = request->id,
+	};
+	auto timer = QElapsedTimer();
+	timer.start();
+	result.responseParsed = request->callbacks.done(response);
+	result.handlerNanoseconds = timer.nsecsElapsed();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
 #endif
+	result.passed = (result.requests == 1) && result.responseParsed
+					&& (result.cacheWalks == 2)
+					&& (result.handlerNanoseconds < kMaxHandlerNanoseconds);
+	return result;
+}
 
 void RunAuthenticatedCacheSymlinkCases(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
@@ -8400,16 +8506,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
-			auto sessionSetupTimer = QElapsedTimer();
-			sessionSetupTimer.start();
+			auto cacheInitializationTimer = QElapsedTimer();
+			cacheInitializationTimer.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
-			const auto sessionSetupNanoseconds
-				= sessionSetupTimer.nsecsElapsed();
 			auto &data = guarded->session().data();
 			const auto getAllowedCache = [&] {
 				if (mediaCache) {
@@ -8439,13 +8543,29 @@ void RunAuthenticatedCacheSymlinkCases(
 				firstAccessNanoseconds = timer.nsecsElapsed();
 				return true;
 			});
+			const auto cacheInitializationNanoseconds
+				= cacheInitializationTimer.nsecsElapsed();
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
 			auto chatSwitch = CacheChatSwitchRegressionResult();
+			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
 			const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
 				"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
 			if (!mediaCache && authenticatedCacheOnly) {
+				dialogsHandler
+					= RunFirstDialogsHandlerLatencyRegression(guarded);
+				std::fprintf(
+					stderr,
+					"First messages.getDialogs handler latency regression: "
+					"seeded_directories=125 seeded_files=169 requests=%d "
+					"parsed=%d cache_walks=%d max_handler_ns=%lld "
+					"under_50ms=%d.\n",
+					dialogsHandler.requests, dialogsHandler.responseParsed,
+					dialogsHandler.cacheWalks,
+					static_cast<long long>(dialogsHandler.handlerNanoseconds),
+					(dialogsHandler.handlerNanoseconds >= 0
+					 && dialogsHandler.handlerNanoseconds < 50'000'000));
 				auto &app = Core::App();
 				const auto window = app.ensureSeparateWindowFor(guarded);
 				const auto closeWindow = gsl::finally([&] {
@@ -8468,6 +8588,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					 && chatSwitch.maxStallNanoseconds < 50'000'000));
 			}
 			auto swappedRootRefused = false;
+			auto directFallbackClosed = false;
 			auto rootRestoreSucceeded = true;
 			const auto cachePath = mediaCache
 									   ? guarded->local().cacheBigFilePath()
@@ -8495,33 +8616,51 @@ void RunAuthenticatedCacheSymlinkCases(
 				}
 				if (rootMoved && protectedSymlinkCreated) {
 					swappedRootRefused = (getAllowedCache() == nullptr);
+					const auto fallback = getCache();
+					const auto directWrite
+						= AwaitCacheCallback<Storage::Cache::Error>(
+							[&](auto done) {
+								fallback->put(
+									Storage::Cache::Key{0xCA5E,
+														uint64(mediaCache)},
+									QByteArray("refused"), std::move(done));
+							});
+					directFallbackClosed
+						= directWrite
+						  && (directWrite->type
+							  == Storage::Cache::Error::Type::IO);
 				}
 			}
 			const auto startupWalks
 				= Core::MacProtectedPath::CachePathWalkCountForTesting();
 			const auto mainThreadWalks = Core::MacProtectedPath::
 				CachePathWalkMainThreadCountForTesting();
-			std::fprintf(
-				stderr,
-				"Cache access latency regression: cache=%s "
-				"seeded_directories=125 seeded_files=169 "
-				"session_setup_ns=%lld under_100ms=%d "
-				"first_access_ns=%lld under_50ms=%d "
-				"root_swap_refused=%d root_restored=%d startup_walks=%d "
-				"main_thread_walks=%d.\n",
-				mediaCache ? "media_cache" : "cache",
-				static_cast<long long>(sessionSetupNanoseconds),
-				(sessionSetupNanoseconds < 100'000'000),
-				static_cast<long long>(firstAccessNanoseconds),
-				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
-				rootRestoreSucceeded, startupWalks, mainThreadWalks);
-			const auto passed = startupScansCompleted && first && second
-								&& (startupWalks == 2) && (mainThreadWalks == 0)
-								&& swappedRootRefused && rootRestoreSucceeded
-								&& (mediaCache || !authenticatedCacheOnly
-									|| chatSwitch.passed)
-								&& (sessionSetupNanoseconds < 100'000'000)
-								&& (firstAccessNanoseconds < 50'000'000);
+			std::fprintf(stderr,
+						 "Cache access latency regression: cache=%s "
+						 "seeded_directories=125 seeded_files=169 "
+						 "cache_initialization_ns=%lld under_100ms=%d "
+						 "first_access_ns=%lld under_50ms=%d "
+						 "root_swap_refused=%d direct_fallback_closed=%d "
+						 "root_restored=%d startup_walks=%d "
+						 "main_thread_walks=%d.\n",
+						 mediaCache ? "media_cache" : "cache",
+						 static_cast<long long>(cacheInitializationNanoseconds),
+						 (cacheInitializationNanoseconds < 100'000'000),
+						 static_cast<long long>(firstAccessNanoseconds),
+						 (firstAccessNanoseconds < 50'000'000),
+						 swappedRootRefused, directFallbackClosed,
+						 rootRestoreSucceeded, startupWalks, mainThreadWalks);
+			const auto passed
+				= startupScansCompleted && first && second
+				  && (startupWalks == 2) && (mainThreadWalks == 0)
+				  && swappedRootRefused && directFallbackClosed
+				  && rootRestoreSucceeded
+				  && (mediaCache || !authenticatedCacheOnly
+					  || chatSwitch.passed)
+				  && (mediaCache || !authenticatedCacheOnly
+					  || dialogsHandler.passed)
+				  && (cacheInitializationNanoseconds < 100'000'000)
+				  && (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 #else

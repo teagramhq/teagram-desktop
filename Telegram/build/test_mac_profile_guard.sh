@@ -1349,13 +1349,20 @@ if ! grep -F -q \
 fi
 for cache in cache media_cache; do
 	if ! grep -E -q \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 session_setup_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 cache_initialization_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
 done
+if ! grep -E -q \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
+	exit 1
+fi
 if ! grep -E -q \
 	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
@@ -1480,7 +1487,7 @@ for cache_evidence in \
 done
 for cache in cache media_cache; do
 	if ! grep -E -q \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 session_setup_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 cache_initialization_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
