@@ -3999,7 +3999,6 @@ template <typename Condition>
 		[&](const QString &url, bool routeDispatched, bool routeActionStarted) {
 			if (findServerDependentStockMessageRoute(url)) {
 				return routeDispatched && routeActionStarted
-					   && stockSavedMessagesHistoryShown()
 					   && noStockInfoSectionShown();
 			}
 			if (url == u"tg://settings/premium"_q) {
