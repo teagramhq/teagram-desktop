@@ -22,6 +22,7 @@ extern const char kOptionDeadlockDetector[];
 
 class UpdateChecker;
 class Application;
+class UiStallWatchdog;
 
 class Sandbox final
 	: public QApplication
@@ -147,6 +148,7 @@ private:
 	rpl::event_stream<> _widgetUpdateRequests;
 
 	std::unique_ptr<QThread> _deadlockDetector;
+	std::unique_ptr<UiStallWatchdog> _uiStallWatchdog;
 
 	rpl::lifetime _lifetime;
 
