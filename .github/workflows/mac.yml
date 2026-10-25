@@ -825,6 +825,7 @@ jobs:
           for dwarf_info in \
             DW_TAG_compile_unit \
             DW_TAG_subprogram \
+            DW_AT_name \
             DW_AT_stmt_list \
             DW_AT_low_pc \
             Telegram/SourceFiles/tests/account_lifecycle_regression.cpp; do
@@ -832,14 +833,17 @@ jobs:
               fail_dwarf_prerequisite "the regression dSYM entry is missing $dwarf_info; see dwarf-info-summary.txt"
             fi
           done
-          probe_address="$(sed -n -E 's/.*DW_AT_low_pc \((0x[[:xdigit:]]+).*/\1/p' "$diagnostics/dwarf-info-summary.txt" | head -n 1)"
-          if [ -z "$probe_address" ]; then
-            fail_dwarf_prerequisite "llvm-dwarfdump did not expose a regression function address"
+          if ! probe_address="$(python3 "$repo/.github/scripts/extract_dwarf_subprogram_address.py" "$dwarf_probe_name" account_lifecycle_regression.cpp "$diagnostics/dwarf-info-summary.txt")"; then
+            fail_dwarf_prerequisite "llvm-dwarfdump did not expose the regression subprogram address"
           fi
-          if ! "$dwarf_tool" --lookup="$probe_address" --arch=arm64 "$dsym_file" > "$diagnostics/dwarf-line-summary.txt" 2> "$diagnostics/dwarf-line-errors.txt" \
-              || ! grep -Fq 'account_lifecycle_regression.cpp' "$diagnostics/dwarf-line-summary.txt"; then
-            fail_dwarf_prerequisite "the regression function has no source line mapping; see dwarf-line-summary.txt"
+          if ! "$dwarf_tool" --lookup="$probe_address" --arch=arm64 "$dsym_file" > "$diagnostics/dwarf-line-summary.txt" 2> "$diagnostics/dwarf-line-errors.txt"; then
+            fail_dwarf_prerequisite "llvm-dwarfdump could not look up the regression function; see dwarf-line-summary.txt"
           fi
+          for dwarf_lookup in "$dwarf_probe_name" account_lifecycle_regression.cpp; do
+            if ! grep -Fq "$dwarf_lookup" "$diagnostics/dwarf-line-summary.txt"; then
+              fail_dwarf_prerequisite "the regression lookup is missing $dwarf_lookup; see dwarf-line-summary.txt"
+            fi
+          done
 
           printf 'DWARF regression symbol and source-line inspection passed. See dwarf-info-summary.txt and dwarf-line-summary.txt.\n' >> "$diagnostics/metadata.txt"
           symbol_file="$dsym_file"

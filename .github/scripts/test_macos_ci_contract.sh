@@ -20,8 +20,12 @@ trap 'rm -rf "$temp_dir"' EXIT
 require_contract_tests_in_lint
 for trigger in push pull_request; do
   paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
-  grep -Fxq -- '.github/scripts/test_macos_launch_smoke.py' <<< "$paths" \
-    || contract_fail "Workflow lint must run when .github/scripts/test_macos_launch_smoke.py changes ($trigger)."
+  for script_path in \
+    .github/scripts/test_macos_launch_smoke.py \
+    .github/scripts/extract_dwarf_subprogram_address.py; do
+    grep -Fxq -- "$script_path" <<< "$paths" \
+      || contract_fail "Workflow lint must run when $script_path changes ($trigger)."
+  done
 done
 
 # Mirrors the MacOS. concurrency group expression, which is pinned below.
@@ -578,6 +582,33 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
+dwarf_address_helper='.github/scripts/extract_dwarf_subprogram_address.py'
+dwarf_info_fixture="$temp_dir/dwarf-info-summary.txt"
+cat > "$dwarf_info_fixture" <<'DWARF'
+0x00000000: DW_TAG_compile_unit
+              DW_AT_name ("OtherRegression.cpp")
+              DW_AT_low_pc (0x0000000100001000)
+0x00000032: DW_TAG_subprogram
+              DW_AT_name ("RunAccountLifecycleRegression")
+              DW_AT_low_pc (0x0000000100001100)
+0x00000064: DW_TAG_compile_unit
+              DW_AT_name ("Telegram/SourceFiles/tests/account_lifecycle_regression.cpp")
+              DW_AT_low_pc (0x0000000100002000)
+0x00000096: DW_TAG_subprogram
+              DW_AT_name ("RunAccountLifecycleRegression")
+              DW_AT_low_pc (0x0000000100002100)
+0x000000c8: DW_TAG_subprogram
+              DW_AT_name ("OtherRegression")
+              DW_AT_low_pc (0x0000000100003100)
+DWARF
+if ! dwarf_probe_address="$(python3 "$dwarf_address_helper" \
+    RunAccountLifecycleRegression account_lifecycle_regression.cpp \
+    "$dwarf_info_fixture" 2>"$temp_dir/dwarf-parser.err")"; then
+  cat "$temp_dir/dwarf-parser.err" >&2
+  contract_fail "$dwarf_address_helper must find the requested subprogram address."
+fi
+expect_equal 'DWARF probe skips the compile-unit low_pc' \
+  "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
   "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
 require_step_field "$mac_workflow" macos "$regression_step" '.timeout-minutes' '20'
@@ -588,14 +619,19 @@ require_step_script "$mac_workflow" macos "$regression_step" \
   'full_chat_info_session_regression=FAIL' \
   'ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram' \
   '--find=RunAccountLifecycleRegression' \
+  '--show-parents' \
+  'DW_AT_name' \
   'DW_AT_stmt_list' \
   'DW_AT_low_pc' \
+  'python3 "$repo/.github/scripts/extract_dwarf_subprogram_address.py" "$dwarf_probe_name" account_lifecycle_regression.cpp "$diagnostics/dwarf-info-summary.txt"' \
   '--lookup="$probe_address"' \
+  'grep -Fq "$dwarf_lookup" "$diagnostics/dwarf-line-summary.txt"' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
 reject_step_script "$mac_workflow" macos "$regression_step" \
   '--debug-info --arch=arm64' \
-  '--debug-line --arch=arm64'
+  '--debug-line --arch=arm64' \
+  'head -n 1'
 # The app bounds and cleanup live in the Python the step runs, so they are
 # read from its syntax tree: a commented-out call does not count.
 require_step_python "$mac_workflow" macos "$regression_step" \
