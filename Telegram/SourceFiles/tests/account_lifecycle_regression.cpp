@@ -217,6 +217,8 @@ auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 struct SettingsDeepLinkRouteEventForRegressionTest {
 	const Window::SessionController *controller = nullptr;
+	SettingsDeepLinkRouteForRegressionTest route
+		= SettingsDeepLinkRouteForRegressionTest::MyProfile;
 	bool informationFallback = false;
 };
 auto gSettingsDeepLinkRouteEvents
@@ -543,7 +545,21 @@ void RecordFeatureUnavailableToastForRegressionTest() {
 
 void RecordSettingsMyProfileRouteForRegressionTest(
 	const Window::SessionController *controller, bool informationFallback) {
-	gSettingsDeepLinkRouteEvents.push_back({controller, informationFallback});
+	gSettingsDeepLinkRouteEvents.push_back({
+		controller,
+		SettingsDeepLinkRouteForRegressionTest::MyProfile,
+		informationFallback,
+	});
+}
+
+void RecordSettingsDeepLinkRouteForRegressionTest(
+	const Window::SessionController *controller,
+	SettingsDeepLinkRouteForRegressionTest route) {
+	gSettingsDeepLinkRouteEvents.push_back({
+		controller,
+		route,
+		false,
+	});
 }
 
 SettingsDeepLinkRouteCountsForRegressionTest
@@ -552,8 +568,14 @@ GetSettingsDeepLinkRouteCountsForRegressionTest(
 	auto result = SettingsDeepLinkRouteCountsForRegressionTest();
 	for (const auto &event : gSettingsDeepLinkRouteEvents) {
 		if (event.controller == controller) {
-			++result.myProfileRoute;
-			result.informationFallback += event.informationFallback;
+			if (event.route
+				== SettingsDeepLinkRouteForRegressionTest::MyProfile) {
+				++result.myProfileRoute;
+				result.informationFallback += event.informationFallback;
+			} else {
+				const auto index = static_cast<std::size_t>(event.route) - 1;
+				++result.messageRouteDispatches[index];
+			}
 		}
 	}
 	return result;
@@ -3882,42 +3904,67 @@ template <typename Condition>
 	};
 	const auto stockCanJoinStarReferrals
 		= stockController->session().appConfig().starrefJoinAllowed();
+	struct ServerDependentStockMessageRoute {
+		QString url;
+		SettingsDeepLinkRouteForRegressionTest route;
+	};
 	const auto serverDependentStockMessageRoutes = std::array{
-		u"tg://settings/stars/top-up"_q,
-		u"tg://settings/stars/gift"_q,
-		u"tg://settings/send-gift"_q,
-		u"tg://settings/send-gift/self"_q,
+		ServerDependentStockMessageRoute{
+			u"tg://settings/stars/top-up"_q,
+			SettingsDeepLinkRouteForRegressionTest::StarsTopUp,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/stars/gift"_q,
+			SettingsDeepLinkRouteForRegressionTest::StarsGift,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/send-gift"_q,
+			SettingsDeepLinkRouteForRegressionTest::SendGift,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/send-gift/self"_q,
+			SettingsDeepLinkRouteForRegressionTest::SendGiftSelf,
+		},
 	};
-	const auto stockMessageRouteStateMatches = [&](const QString &url) {
-		if (ranges::contains(serverDependentStockMessageRoutes, url)) {
-			return stockSavedMessagesHistoryShown()
-				   && noStockInfoSectionShown();
+	const auto findServerDependentStockMessageRoute = [&](const QString &url) {
+		for (const auto &route : serverDependentStockMessageRoutes) {
+			if (route.url == url) {
+				return &route;
+			}
 		}
-		if (url == u"tg://settings/premium"_q) {
-			return hasStockSettingsSection(Settings::PremiumId());
-		} else if (url == u"tg://settings/stars"_q
-				   || url == u"tg://settings/stars/topup"_q) {
-			return hasStockSettingsSection(Settings::CreditsId());
-		} else if (url == u"tg://settings/stars/stats"_q) {
-			return hasStockInfoSection(Info::Section::Type::BotEarn);
-		} else if (url == u"tg://settings/stars/earn"_q) {
-			return stockCanJoinStarReferrals
-					   ? hasStockStarRefJoin()
-					   : (stockSavedMessagesHistoryShown()
-						  && !stockController->isLayerShown()
-						  && noStockInfoSectionShown());
-		} else if (url == u"tg://settings/ton"_q) {
-			return hasStockSettingsSection(Settings::CurrencyId());
-		} else if (url == u"tg://settings/business"_q
-				   || url == u"tg://settings/business/upgrade"_q) {
-			return hasStockSettingsSection(Settings::BusinessId());
-		} else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
-			return hasStockSettingsSection(Settings::BusinessId())
-				   && (stockController->highlightControlId()
-					   == u"business/sponsored"_q);
-		}
-		return false;
+		return static_cast<const ServerDependentStockMessageRoute *>(nullptr);
 	};
+	const auto stockMessageRouteStateMatches
+		= [&](const QString &url, bool routeDispatched) {
+			  if (findServerDependentStockMessageRoute(url)) {
+				  return routeDispatched && stockSavedMessagesHistoryShown()
+						 && noStockInfoSectionShown();
+			  }
+			  if (url == u"tg://settings/premium"_q) {
+				  return hasStockSettingsSection(Settings::PremiumId());
+			  } else if (url == u"tg://settings/stars"_q
+						 || url == u"tg://settings/stars/topup"_q) {
+				  return hasStockSettingsSection(Settings::CreditsId());
+			  } else if (url == u"tg://settings/stars/stats"_q) {
+				  return hasStockInfoSection(Info::Section::Type::BotEarn);
+			  } else if (url == u"tg://settings/stars/earn"_q) {
+				  return stockCanJoinStarReferrals
+							 ? hasStockStarRefJoin()
+							 : (stockSavedMessagesHistoryShown()
+								&& !stockController->isLayerShown()
+								&& noStockInfoSectionShown());
+			  } else if (url == u"tg://settings/ton"_q) {
+				  return hasStockSettingsSection(Settings::CurrencyId());
+			  } else if (url == u"tg://settings/business"_q
+						 || url == u"tg://settings/business/upgrade"_q) {
+				  return hasStockSettingsSection(Settings::BusinessId());
+			  } else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
+				  return hasStockSettingsSection(Settings::BusinessId())
+						 && (stockController->highlightControlId()
+							 == u"business/sponsored"_q);
+			  }
+			  return false;
+		  };
 	const auto previousStockHighlight = stockController->highlightControlId();
 	const auto restoreStockHighlight = gsl::finally([&] {
 		stockController->setHighlightControlId(previousStockHighlight);
@@ -4018,6 +4065,9 @@ template <typename Condition>
 			const auto toastBefore
 				= stockController
 					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto routeDispatchesBefore
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					stockController.get());
 			const auto infoCountsBefore
 				= CountSettingsDeepLinkInfoSections(stockController);
 			const auto handler = makeMessageLinkHandler(url);
@@ -4047,11 +4097,26 @@ template <typename Condition>
 					url.toUtf8().constData());
 				return false;
 			}
+			const auto serverDependentRoute
+				= findServerDependentStockMessageRoute(url);
+			const auto routeDispatched = [&] {
+				if (!serverDependentRoute) {
+					return true;
+				}
+				const auto routeDispatchesAfter
+					= GetSettingsDeepLinkRouteCountsForRegressionTest(
+						stockController.get());
+				const auto index
+					= static_cast<std::size_t>(serverDependentRoute->route) - 1;
+				return routeDispatchesAfter.messageRouteDispatches[index]
+					   == routeDispatchesBefore.messageRouteDispatches[index]
+							  + 1;
+			}();
 			const auto routeStateMatched = WaitForRegressionCondition([&] {
 				if (!anim::Disabled()) {
 					anim::SetDisabled(true);
 				}
-				return stockMessageRouteStateMatches(url);
+				return stockMessageRouteStateMatches(url, routeDispatched);
 			});
 			const auto toastUnchanged
 				= stockController
@@ -4075,7 +4140,8 @@ template <typename Condition>
 					stderr,
 					"Settings deep link regression failed: stock message "
 					"route=%s "
-					"route-state=%d toast-unchanged=%d "
+					"route-state=%d route-dispatched=%d "
+					"toast-unchanged=%d "
 					"other-windows-unchanged=%d "
 					"active-window=%d info-wraps=%d visible-wraps=%d "
 					"not-hidden-wraps=%d settings-wraps=%d settings-wrap=%p "
@@ -4085,8 +4151,9 @@ template <typename Condition>
 					"main-animating=%d window-animating=%d "
 					"animations-disabled=%d slow-multiplier=%d history=%d "
 					"stories-wraps=%d.\n",
-					url.toUtf8().constData(), routeStateMatched, toastUnchanged,
-					otherWindowsUnchanged, stockWindowActive, infoCounts.wraps,
+					url.toUtf8().constData(), routeStateMatched,
+					routeDispatched, toastUnchanged, otherWindowsUnchanged,
+					stockWindowActive, infoCounts.wraps,
 					infoCounts.visibleWraps, infoCounts.notHiddenWraps,
 					infoCounts.settingsWraps, infoCounts.settingsWrap,
 					infoCounts.settingsType,

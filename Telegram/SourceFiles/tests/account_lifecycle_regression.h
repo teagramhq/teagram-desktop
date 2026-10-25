@@ -90,10 +90,22 @@ void RecordFeatureUnavailableToastForRegressionTest();
 struct SettingsDeepLinkRouteCountsForRegressionTest {
 	int myProfileRoute = 0;
 	int informationFallback = 0;
+	std::array<int, 4> messageRouteDispatches{};
+};
+
+enum class SettingsDeepLinkRouteForRegressionTest {
+	MyProfile,
+	StarsTopUp,
+	StarsGift,
+	SendGift,
+	SendGiftSelf,
 };
 
 void RecordSettingsMyProfileRouteForRegressionTest(
 	const Window::SessionController *controller, bool informationFallback);
+void RecordSettingsDeepLinkRouteForRegressionTest(
+	const Window::SessionController *controller,
+	SettingsDeepLinkRouteForRegressionTest route);
 [[nodiscard]] SettingsDeepLinkRouteCountsForRegressionTest
 GetSettingsDeepLinkRouteCountsForRegressionTest(
 	const Window::SessionController *controller);

@@ -289,6 +289,11 @@ Result ShowSendGift(const Context &ctx) {
 	if (!ctx.controller) {
 		return Result::NeedsAuth;
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordSettingsDeepLinkRouteForRegressionTest(
+		ctx.controller,
+		Tests::SettingsDeepLinkRouteForRegressionTest::SendGift);
+#endif
 	Ui::ChooseStarGiftRecipient(ctx.controller);
 	return Result::Handled;
 }
@@ -1678,6 +1683,11 @@ void RegisterSettingsHandlers(Router &router) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
 			}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			Tests::RecordSettingsDeepLinkRouteForRegressionTest(
+				ctx.controller,
+				Tests::SettingsDeepLinkRouteForRegressionTest::StarsTopUp);
+#endif
 			static auto handler = ::Settings::BuyStarsHandler();
 			handler.handler(ctx.controller->uiShow())();
 			return Result::Handled;
@@ -1702,6 +1712,11 @@ void RegisterSettingsHandlers(Router &router) {
 			if (!ctx.controller) {
 				return Result::NeedsAuth;
 			}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+			Tests::RecordSettingsDeepLinkRouteForRegressionTest(
+				ctx.controller,
+				Tests::SettingsDeepLinkRouteForRegressionTest::StarsGift);
+#endif
 			Ui::ShowGiftCreditsBox(ctx.controller, nullptr);
 			return Result::Handled;
 		}},
@@ -1756,6 +1771,12 @@ void RegisterSettingsHandlers(Router &router) {
 					   if (!ctx.controller) {
 						   return Result::NeedsAuth;
 					   }
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+					   Tests::RecordSettingsDeepLinkRouteForRegressionTest(
+						   ctx.controller,
+						   Tests::SettingsDeepLinkRouteForRegressionTest::
+							   SendGiftSelf);
+#endif
 					   Ui::ShowStarGiftBox(ctx.controller,
 										   ctx.controller->session().user());
 					   return Result::Handled;
