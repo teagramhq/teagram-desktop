@@ -93,6 +93,18 @@ struct SettingsDeepLinkRouteCountsForRegressionTest {
 	std::array<int, 4> messageRouteDispatches{};
 };
 
+struct SettingsDeepLinkRequestCountsForRegressionTest {
+	int starsTopupOptions = 0;
+	int contactBirthdays = 0;
+	int starGifts = 0;
+	int savedStarGifts = 0;
+};
+
+struct SettingsDeepLinkRequestCaptureForRegressionTest {
+	MTP::Instance *instance = nullptr;
+	SettingsDeepLinkRequestCountsForRegressionTest counts;
+};
+
 enum class SettingsDeepLinkRouteForRegressionTest {
 	MyProfile,
 	StarsTopUp,
@@ -109,6 +121,12 @@ void RecordSettingsDeepLinkRouteForRegressionTest(
 [[nodiscard]] SettingsDeepLinkRouteCountsForRegressionTest
 GetSettingsDeepLinkRouteCountsForRegressionTest(
 	const Window::SessionController *controller);
+[[nodiscard]] SettingsDeepLinkRequestCaptureForRegressionTest *
+SetSettingsDeepLinkRequestCaptureForRegressionTest(
+	SettingsDeepLinkRequestCaptureForRegressionTest *capture);
+void RecordSettingsDeepLinkRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request);
 
 enum class LifecycleWriteForRegressionTest {
 	AuthorizationSnapshot,

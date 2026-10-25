@@ -223,6 +223,8 @@ struct SettingsDeepLinkRouteEventForRegressionTest {
 };
 auto gSettingsDeepLinkRouteEvents
 	= std::vector<SettingsDeepLinkRouteEventForRegressionTest>();
+SettingsDeepLinkRequestCaptureForRegressionTest
+	*gSettingsDeepLinkRequestCaptureForRegressionTest = nullptr;
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -579,6 +581,41 @@ GetSettingsDeepLinkRouteCountsForRegressionTest(
 		}
 	}
 	return result;
+}
+
+SettingsDeepLinkRequestCaptureForRegressionTest *
+SetSettingsDeepLinkRequestCaptureForRegressionTest(
+	SettingsDeepLinkRequestCaptureForRegressionTest *capture) {
+	return std::exchange(gSettingsDeepLinkRequestCaptureForRegressionTest,
+						 capture);
+}
+
+void RecordSettingsDeepLinkRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gSettingsDeepLinkRequestCaptureForRegressionTest;
+	if (!capture || (capture->instance != instance)) {
+		return;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return;
+	}
+	switch (static_cast<uint32>(body.front())) {
+	case mtpc_payments_getStarsTopupOptions:
+		++capture->counts.starsTopupOptions;
+		break;
+	case mtpc_contacts_getBirthdays:
+		++capture->counts.contactBirthdays;
+		break;
+	case mtpc_payments_getStarGifts:
+		++capture->counts.starGifts;
+		break;
+	case mtpc_payments_getSavedStarGifts:
+		++capture->counts.savedStarGifts;
+		break;
+	}
 }
 
 void RecordLifecycleWriteForRegressionTest(
@@ -3908,6 +3945,9 @@ template <typename Condition>
 		QString url;
 		SettingsDeepLinkRouteForRegressionTest route;
 	};
+	auto stockRequestCapture = SettingsDeepLinkRequestCaptureForRegressionTest{
+		.instance = &stockController->session().mtp(),
+	};
 	const auto serverDependentStockMessageRoutes = std::array{
 		ServerDependentStockMessageRoute{
 			u"tg://settings/stars/top-up"_q,
@@ -3934,37 +3974,59 @@ template <typename Condition>
 		}
 		return static_cast<const ServerDependentStockMessageRoute *>(nullptr);
 	};
-	const auto stockMessageRouteStateMatches
-		= [&](const QString &url, bool routeDispatched) {
-			  if (findServerDependentStockMessageRoute(url)) {
-				  return routeDispatched && stockSavedMessagesHistoryShown()
-						 && noStockInfoSectionShown();
-			  }
-			  if (url == u"tg://settings/premium"_q) {
-				  return hasStockSettingsSection(Settings::PremiumId());
-			  } else if (url == u"tg://settings/stars"_q
-						 || url == u"tg://settings/stars/topup"_q) {
-				  return hasStockSettingsSection(Settings::CreditsId());
-			  } else if (url == u"tg://settings/stars/stats"_q) {
-				  return hasStockInfoSection(Info::Section::Type::BotEarn);
-			  } else if (url == u"tg://settings/stars/earn"_q) {
-				  return stockCanJoinStarReferrals
-							 ? hasStockStarRefJoin()
-							 : (stockSavedMessagesHistoryShown()
-								&& !stockController->isLayerShown()
-								&& noStockInfoSectionShown());
-			  } else if (url == u"tg://settings/ton"_q) {
-				  return hasStockSettingsSection(Settings::CurrencyId());
-			  } else if (url == u"tg://settings/business"_q
-						 || url == u"tg://settings/business/upgrade"_q) {
-				  return hasStockSettingsSection(Settings::BusinessId());
-			  } else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
-				  return hasStockSettingsSection(Settings::BusinessId())
-						 && (stockController->highlightControlId()
-							 == u"business/sponsored"_q);
+	const auto stockMessageRouteActionStarted
+		= [&](const ServerDependentStockMessageRoute &route,
+			  const SettingsDeepLinkRequestCountsForRegressionTest &before) {
+			  const auto &after = stockRequestCapture.counts;
+			  switch (route.route) {
+			  case SettingsDeepLinkRouteForRegressionTest::StarsTopUp:
+				  return after.starsTopupOptions > before.starsTopupOptions;
+			  case SettingsDeepLinkRouteForRegressionTest::StarsGift:
+				  return stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::SendGift:
+				  return (after.contactBirthdays > before.contactBirthdays)
+						 || stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::SendGiftSelf:
+				  return (after.starGifts > before.starGifts)
+						 || (after.savedStarGifts > before.savedStarGifts)
+						 || stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::MyProfile:
+				  return false;
 			  }
 			  return false;
 		  };
+	const auto stockMessageRouteStateMatches =
+		[&](const QString &url, bool routeDispatched, bool routeActionStarted) {
+			if (findServerDependentStockMessageRoute(url)) {
+				return routeDispatched && routeActionStarted
+					   && stockSavedMessagesHistoryShown()
+					   && noStockInfoSectionShown();
+			}
+			if (url == u"tg://settings/premium"_q) {
+				return hasStockSettingsSection(Settings::PremiumId());
+			} else if (url == u"tg://settings/stars"_q
+					   || url == u"tg://settings/stars/topup"_q) {
+				return hasStockSettingsSection(Settings::CreditsId());
+			} else if (url == u"tg://settings/stars/stats"_q) {
+				return hasStockInfoSection(Info::Section::Type::BotEarn);
+			} else if (url == u"tg://settings/stars/earn"_q) {
+				return stockCanJoinStarReferrals
+						   ? hasStockStarRefJoin()
+						   : (stockSavedMessagesHistoryShown()
+							  && !stockController->isLayerShown()
+							  && noStockInfoSectionShown());
+			} else if (url == u"tg://settings/ton"_q) {
+				return hasStockSettingsSection(Settings::CurrencyId());
+			} else if (url == u"tg://settings/business"_q
+					   || url == u"tg://settings/business/upgrade"_q) {
+				return hasStockSettingsSection(Settings::BusinessId());
+			} else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
+				return hasStockSettingsSection(Settings::BusinessId())
+					   && (stockController->highlightControlId()
+						   == u"business/sponsored"_q);
+			}
+			return false;
+		};
 	const auto previousStockHighlight = stockController->highlightControlId();
 	const auto restoreStockHighlight = gsl::finally([&] {
 		stockController->setHighlightControlId(previousStockHighlight);
@@ -4079,27 +4141,42 @@ template <typename Condition>
 					url.toUtf8().constData());
 				return false;
 			}
-			anim::SetDisabled(true);
-			ActivateClickHandler(
-				stockMessageState->first->window(), handler,
-				ClickContext{
-					Qt::LeftButton,
-					QVariant::fromValue(stockMessageState->second),
-				});
-			const auto clickDispatchCompleted
-				= WaitForMainQueueBarrierForRegressionTest()
-				  == MainQueueBarrierResult::Completed;
-			if (!clickDispatchCompleted) {
-				std::fprintf(
-					stderr,
-					"Settings deep link regression failed: stock message click "
-					"dispatch did not complete for %s.\n",
-					url.toUtf8().constData());
-				return false;
-			}
 			const auto serverDependentRoute
 				= findServerDependentStockMessageRoute(url);
-			const auto routeDispatched = [&] {
+			SettingsDeepLinkRequestCountsForRegressionTest requestCountsBefore;
+			auto routeDispatched = false;
+			auto routeActionStarted = !serverDependentRoute;
+			auto routeStateMatched = false;
+			{
+				const auto previousRequestCapture
+					= SetSettingsDeepLinkRequestCaptureForRegressionTest(
+						&stockRequestCapture);
+				const auto restoreRequestCapture = gsl::finally([=] {
+					static_cast<void>(
+						SetSettingsDeepLinkRequestCaptureForRegressionTest(
+							previousRequestCapture));
+				});
+				requestCountsBefore = stockRequestCapture.counts;
+				anim::SetDisabled(true);
+				ActivateClickHandler(
+					stockMessageState->first->window(), handler,
+					ClickContext{
+						Qt::LeftButton,
+						QVariant::fromValue(stockMessageState->second),
+					});
+				const auto clickDispatchCompleted
+					= WaitForMainQueueBarrierForRegressionTest()
+					  == MainQueueBarrierResult::Completed;
+				if (!clickDispatchCompleted) {
+					std::fprintf(stderr,
+								 "Settings deep link regression failed: stock "
+								 "message click "
+								 "dispatch did not complete for %s.\n",
+								 url.toUtf8().constData());
+					return false;
+				}
+			}
+			routeDispatched = [&] {
 				if (!serverDependentRoute) {
 					return true;
 				}
@@ -4112,11 +4189,16 @@ template <typename Condition>
 					   == routeDispatchesBefore.messageRouteDispatches[index]
 							  + 1;
 			}();
-			const auto routeStateMatched = WaitForRegressionCondition([&] {
+			routeStateMatched = WaitForRegressionCondition([&] {
 				if (!anim::Disabled()) {
 					anim::SetDisabled(true);
 				}
-				return stockMessageRouteStateMatches(url, routeDispatched);
+				if (serverDependentRoute) {
+					routeActionStarted = stockMessageRouteActionStarted(
+						*serverDependentRoute, requestCountsBefore);
+				}
+				return stockMessageRouteStateMatches(url, routeDispatched,
+													 routeActionStarted);
 			});
 			const auto toastUnchanged
 				= stockController
@@ -4140,7 +4222,8 @@ template <typename Condition>
 					stderr,
 					"Settings deep link regression failed: stock message "
 					"route=%s "
-					"route-state=%d route-dispatched=%d "
+					"route-state=%d route-dispatched=%d route-action=%d "
+					"requests=%d/%d/%d/%d "
 					"toast-unchanged=%d "
 					"other-windows-unchanged=%d "
 					"active-window=%d info-wraps=%d visible-wraps=%d "
@@ -4152,11 +4235,19 @@ template <typename Condition>
 					"animations-disabled=%d slow-multiplier=%d history=%d "
 					"stories-wraps=%d.\n",
 					url.toUtf8().constData(), routeStateMatched,
-					routeDispatched, toastUnchanged, otherWindowsUnchanged,
-					stockWindowActive, infoCounts.wraps,
-					infoCounts.visibleWraps, infoCounts.notHiddenWraps,
-					infoCounts.settingsWraps, infoCounts.settingsWrap,
-					infoCounts.settingsType,
+					routeDispatched, routeActionStarted,
+					stockRequestCapture.counts.starsTopupOptions
+						- requestCountsBefore.starsTopupOptions,
+					stockRequestCapture.counts.contactBirthdays
+						- requestCountsBefore.contactBirthdays,
+					stockRequestCapture.counts.starGifts
+						- requestCountsBefore.starGifts,
+					stockRequestCapture.counts.savedStarGifts
+						- requestCountsBefore.savedStarGifts,
+					toastUnchanged, otherWindowsUnchanged, stockWindowActive,
+					infoCounts.wraps, infoCounts.visibleWraps,
+					infoCounts.notHiddenWraps, infoCounts.settingsWraps,
+					infoCounts.settingsWrap, infoCounts.settingsType,
 					static_cast<const void *>(Settings::PremiumId().get()),
 					infoCountsBefore.settingsWrap,
 					infoCountsBefore.settingsType, sectionCounts.mainInfo,
