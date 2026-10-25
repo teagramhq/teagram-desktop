@@ -2320,6 +2320,7 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 		= RunRefusedCacheDownloaderRegression(account, cache);
 	return streaming && downloading;
 }
+#endif
 
 [[nodiscard]] bool RunCacheConcurrentDeletionRegression() {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
@@ -2354,6 +2355,7 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 #endif
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &path) {
 	const auto directories
 		= QDir(path).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
