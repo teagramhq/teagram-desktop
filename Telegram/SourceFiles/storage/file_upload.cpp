@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_editing.h"
 #include "api/api_send_progress.h"
 #include "storage/localimageloader.h"
+#include "storage/upload_limits.h"
 #include "storage/file_download.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
@@ -20,9 +21,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_location_factory.h"
 #include "history/history_item.h"
 #include "history/history.h"
+#include "boxes/premium_limits_box.h"
+#include "boxes/abstract_box.h"
 #include "core/file_location.h"
 #include "core/application.h"
 #include "core/mime_type.h"
+#include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "storage/storage_account.h"
 #include "apiwrap.h"
@@ -69,6 +73,16 @@ constexpr auto kAcceptAsFastIfTotalAtLeast = 512 * 1024;
 
 [[nodiscard]] const char *ThumbnailFormat(const QString &mime) {
 	return Core::IsMimeSticker(mime) ? "WEBP" : "JPG";
+}
+
+[[nodiscard]] int64 UploadFileSize(const FilePrepareResult &file) {
+	return std::max(file.filesize, file.partssize);
+}
+
+void ShowFileSizeLimitBox(not_null<Main::Session *> session, int64 fileSize) {
+	Ui::show(Box(FileSizeLimitBox, session,
+				 uint64(std::max(fileSize, int64(0))), nullptr),
+			 Ui::LayerOption::KeepOther);
 }
 
 } // namespace
@@ -366,7 +380,20 @@ void Uploader::upload(
 				file->videoCover->photoThumbs);
 		}
 	}
-	_queue.push_back({ itemId, file });
+	const auto maxFileBytes
+		= session().appConfig().get<int64>(u"upload_max_file_bytes"_q, -1);
+	const auto serverLimit = (maxFileBytes >= 0)
+								 ? std::optional<int64>(maxFileBytes)
+								 : std::nullopt;
+	const auto fileSize = UploadFileSize(*file);
+	if (details::ExceedsUploadMaxBytes(fileSize, serverLimit)) {
+		crl::on_main(this, [=] {
+			ShowFileSizeLimitBox(&_api->session(), fileSize);
+			notifyFailed(Entry(itemId, file));
+		});
+		return;
+	}
+	_queue.push_back({itemId, file});
 	if (!_nextTimer.isActive()) {
 		maybeSend();
 	}
@@ -977,7 +1004,15 @@ void Uploader::finishFront() {
 
 void Uploader::partFailed(const MTP::Error &error, mtpRequestId requestId) {
 	const auto request = finishRequest(requestId);
+	const auto filePartTooBig = details::IsFilePartTooBigError(error.type());
+	const auto i = ranges::find(_queue, request.itemId, &Entry::itemId);
+	const auto fileSize = (filePartTooBig && i != end(_queue))
+							  ? UploadFileSize(*i->file)
+							  : int64(0);
 	failed(request.itemId);
+	if (filePartTooBig) {
+		ShowFileSizeLimitBox(&_api->session(), fileSize);
+	}
 }
 
 void Uploader::uploadVideoCover(

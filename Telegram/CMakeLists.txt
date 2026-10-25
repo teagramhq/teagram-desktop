@@ -1923,6 +1923,7 @@ PRIVATE
     storage/file_download_web.h
     storage/file_upload.cpp
     storage/file_upload.h
+    storage/upload_limits.h
     storage/localimageloader.cpp
     storage/localimageloader.h
     storage/localstorage.cpp

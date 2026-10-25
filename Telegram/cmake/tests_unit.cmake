@@ -119,6 +119,7 @@ PRIVATE
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp
     tests/unit/teagram_update_verification_tests.cpp
+    tests/unit/upload_limits_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
     tests/unit/unit_test.cpp
