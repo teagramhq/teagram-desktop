@@ -407,7 +407,7 @@ void UiStallWatchdog::run() {
 			}
 		}
 		_condition.wait(lock, acknowledged);
-		if (_stopping) {
+		if (_acknowledgedSequence < current) {
 			return;
 		}
 		if (writeLog) {
