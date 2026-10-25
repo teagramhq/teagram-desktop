@@ -2437,8 +2437,13 @@ if (TDESKTOP_TEAGRAM)
         "TDESKTOP_TEAGRAM_UPDATE_CHANNEL=\"${TDESKTOP_TEAGRAM_UPDATE_CHANNEL}\""
     )
     if (TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-        target_compile_definitions(Telegram
-        PRIVATE
+        # Scope this opt-in define to its consumers. A target-wide define
+        # changes every compile command and prevents reuse of the shared ccache.
+        set_property(SOURCE
+            "${src_loc}/main.cpp"
+            "${src_loc}/core/mac_protected_path_runtime.mm"
+            "${src_loc}/tests/account_lifecycle_regression.cpp"
+            APPEND PROPERTY COMPILE_DEFINITIONS
             TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
         )
     endif()

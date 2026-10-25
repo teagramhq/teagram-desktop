@@ -12,7 +12,7 @@ case "$1" in
     protected_path_integration=OFF
     ;;
   workflow_dispatch)
-    profile=protected
+    profile=pr-compatible
     protected_path_integration=ON
     ;;
   *)
