@@ -872,8 +872,8 @@ bool Account::startMtp(
 			crl::on_main(session, [=] { logOut(); });
 		}
 	});
-	const auto mainDcConnection = _mtp->lifetime().make_state<
-		Api::details::UpdateConnectionState>(
+	const auto mainDcConnection
+		= _mtp->lifetime().make_state<Api::details::UpdateConnectionState>(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {

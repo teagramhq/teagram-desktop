@@ -32,11 +32,9 @@ namespace Api {
 namespace details {
 
 class UpdateConnectionState final {
-public:
+  public:
 	explicit UpdateConnectionState(bool connected = false)
-	: _connected(connected)
-	, _connectedOnce(connected) {
-	}
+		: _connected(connected), _connectedOnce(connected) {}
 
 	[[nodiscard]] bool update(bool connected) {
 		const auto reconnected = connected && _connectedOnce && !_connected;
@@ -45,7 +43,7 @@ public:
 		return reconnected;
 	}
 
-private:
+  private:
 	bool _connected = false;
 	bool _connectedOnce = false;
 };
@@ -125,9 +123,8 @@ public:
 
 	[[nodiscard]] mtpRequestId takePending() {
 		_recovering = false;
-		return _state
-			? std::exchange(_state, 0)
-			: std::exchange(_difference, 0);
+		return _state ? std::exchange(_state, 0)
+					  : std::exchange(_difference, 0);
 	}
 
 private:
