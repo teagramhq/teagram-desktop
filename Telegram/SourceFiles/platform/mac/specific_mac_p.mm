@@ -383,11 +383,7 @@ void objc_finish() {
 }
 
 void objc_activateProgram(WId winId) {
-	if (@available(macOS 14.0, *)) {
-		[NSApp activate];
-	} else {
-		[NSApp activateIgnoringOtherApps:YES];
-	}
+	[NSApp activateIgnoringOtherApps:YES];
 	if (winId) {
 		NSWindow *w = [reinterpret_cast<NSView*>(winId) window];
 		[w makeKeyAndOrderFront:NSApp];
