@@ -1890,11 +1890,11 @@ void LocalStorage::clearSelected() {
 
 void LocalStorage::startClearing() {
 	if (_allSelected.current()) {
-		if (const auto cache = _db()) {
-			cache->clear();
+		if (_db()) {
+			_session->data().clearCacheDatabase(false);
 		}
-		if (const auto cache = _dbBig()) {
-			cache->clear();
+		if (_dbBig()) {
+			_session->data().clearCacheDatabase(true);
 		}
 		Ui::Emoji::ClearIrrelevantCache();
 		return;
@@ -1905,8 +1905,8 @@ void LocalStorage::startClearing() {
 		}
 		const auto tag = kChartTags[i];
 		if (tag == kFakeMediaCacheTag) {
-			if (const auto cache = _dbBig()) {
-				cache->clear();
+			if (_dbBig()) {
+				_session->data().clearCacheDatabase(true);
 			}
 		} else {
 			if (const auto cache = _db()) {

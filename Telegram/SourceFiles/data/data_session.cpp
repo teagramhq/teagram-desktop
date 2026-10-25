@@ -1875,10 +1875,121 @@ bool Session::cacheInitializationAllowedForTesting(bool bigFileCache) {
 	return bigFileCache ? _bigFileCacheInitializationAllowedForTesting
 						: _cacheInitializationAllowedForTesting;
 }
+
+bool Session::cacheAllowedForTesting(bool bigFileCache) {
+	QMutexLocker lock(&_cacheMutex);
+	return bigFileCache ? _bigFileCacheAllowed : _cacheAllowed;
+}
+
+void Session::setCacheClearPauseForTesting(bool bigFileCache,
+										   Fn<void()> pause) {
+	QMutexLocker lock(&_cacheMutex);
+	if (bigFileCache) {
+		_bigFileCacheClearPauseForTesting = std::move(pause);
+	} else {
+		_cacheClearPauseForTesting = std::move(pause);
+	}
+}
 #endif
+
+void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
+								 FnMut<void(Storage::Cache::Error)> &&done) {
+	auto database = bigFileCache ? _bigFileCache.get() : _cache.get();
+	const auto path = bigFileCache ? _bigFileCachePath : _cachePath;
+#ifdef Q_OS_MAC
+	auto identity = Core::MacProtectedPath::CachePathIdentity();
+	auto pause = Fn<void()>();
+	auto canClear = false;
+	{
+		QMutexLocker lock(&_cacheMutex);
+		auto &allowed = bigFileCache ? _bigFileCacheAllowed : _cacheAllowed;
+		auto &clearPending
+			= bigFileCache ? _bigFileCacheClearPending : _cacheClearPending;
+		if (allowed && !clearPending) {
+			auto &currentIdentity
+				= bigFileCache ? _bigFileCacheIdentity : _cacheIdentity;
+			if (Core::MacProtectedPath::CheckCachePathIdentity(
+					path,
+					bigFileCache ? "Data::Session::cacheBigFile.clear"
+								 : "Data::Session::cache.clear",
+					&currentIdentity)) {
+				clearPending = true;
+				identity = currentIdentity;
+				canClear = true;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+				if (bigFileCache) {
+					pause = std::move(_bigFileCacheClearPauseForTesting);
+				} else {
+					pause = std::move(_cacheClearPauseForTesting);
+				}
+#endif
+			} else {
+				allowed = false;
+				database->close();
+			}
+		}
+	}
+	if (!canClear) {
+		if (done) {
+			done({Storage::Cache::Error::Type::IO, path});
+		}
+		return;
+	}
+	if (pause) {
+		pause();
+	}
+	const auto weak = base::make_weak(this);
+	if (closeBefore) {
+		database->close();
+	}
+	database->clear([weak, bigFileCache, closeBefore, path,
+					 identity = std::move(identity), done = std::move(done)](
+						Storage::Cache::Error error) mutable {
+		const auto allowed
+			= !closeBefore && (error.type == Storage::Cache::Error::Type::None)
+			  && Core::MacProtectedPath::CaptureCachePathActiveVersionIdentity(
+				  path,
+				  bigFileCache ? "Data::Session::cacheBigFile.clear"
+							   : "Data::Session::cache.clear",
+				  &identity);
+		if (const auto session = weak.get()) {
+			{
+				QMutexLocker lock(&session->_cacheMutex);
+				if (bigFileCache) {
+					session->_bigFileCacheIdentity = std::move(identity);
+					session->_bigFileCacheAllowed = allowed;
+					session->_bigFileCacheClearPending = false;
+				} else {
+					session->_cacheIdentity = std::move(identity);
+					session->_cacheAllowed = allowed;
+					session->_cacheClearPending = false;
+				}
+			}
+			if (!allowed) {
+				(bigFileCache ? session->_bigFileCache.get()
+							  : session->_cache.get())
+					->close();
+			}
+		}
+		if (done) {
+			done(std::move(error));
+		}
+	});
+#else
+	if (closeBefore) {
+		database->close();
+	}
+	database->clear(std::move(done));
+#endif
+}
 
 Storage::Cache::Database *Session::cacheIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
+#ifdef Q_OS_MAC
+	if (_cacheClearPending) {
+		return nullptr;
+	}
+#endif
 	if (_cacheAllowed
 		&& !Core::MacProtectedPath::CheckCachePathIdentity(
 			_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
@@ -1890,6 +2001,11 @@ Storage::Cache::Database *Session::cacheIfAllowed() {
 
 Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
+#ifdef Q_OS_MAC
+	if (_bigFileCacheClearPending) {
+		return nullptr;
+	}
+#endif
 	if (_bigFileCacheAllowed
 		&& !Core::MacProtectedPath::CheckCachePathIdentity(
 			_bigFileCachePath, "Data::Session::cacheBigFile.access",
@@ -6055,17 +6171,11 @@ rpl::producer<RecentJoinChat> Session::recentJoinChat() const {
 }
 
 void Session::clearLocalStorage() {
-	if (const auto cache = cacheIfAllowed()) {
-		cache->close();
-		if (const auto stillAllowed = cacheIfAllowed()) {
-			stillAllowed->clear();
-		}
+	if (cacheIfAllowed()) {
+		clearCacheDatabase(false, true);
 	}
-	if (const auto cache = cacheBigFileIfAllowed()) {
-		cache->close();
-		if (const auto stillAllowed = cacheBigFileIfAllowed()) {
-			stillAllowed->clear();
-		}
+	if (cacheBigFileIfAllowed()) {
+		clearCacheDatabase(true, true);
 	}
 }
 

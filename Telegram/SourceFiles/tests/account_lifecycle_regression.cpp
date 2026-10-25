@@ -2441,30 +2441,110 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return passed;
 }
 
-[[nodiscard]] bool
-RunClearThenCacheSymlinkRegression(const QString &path, const QString &fixture,
-								   CacheGetter cache,
-								   CachePointerGetter cacheIfAllowed,
-								   RefusedCacheReaderRegression cacheRefusal) {
+[[nodiscard]] bool RunClearThenCacheSymlinkRegression(
+	not_null<Main::Account *> account, bool mediaCache, const QString &path,
+	const QString &fixture, RefusedCacheReaderRegression cacheRefusal) {
+	auto &data = account->session().data();
+	const auto cache = [&]() -> Storage::Cache::Database & {
+		return mediaCache ? data.cacheBigFile() : data.cache();
+	};
+	const auto cacheIfAllowed = [&] {
+		return mediaCache ? data.cacheBigFileIfAllowed()
+						  : data.cacheIfAllowed();
+	};
 	const auto beforeClear = ActiveCacheVersionPath(path);
-	const auto cleared = AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) { cache().clear(std::move(done)); });
-	if (beforeClear.isEmpty() || !CacheOperationSucceeded(cleared)) {
+	if (beforeClear.isEmpty()) {
 		return false;
 	}
+	struct ClearState {
+		QSemaphore completed;
+		std::optional<Storage::Cache::Error> error;
+	};
+	const auto clearState = std::make_shared<ClearState>();
+	auto paused = false;
+	auto markerRotated = false;
+	auto activeVersionMissing = false;
+	auto blockedDuringClear = false;
+	auto cacheAllowedPreserved = false;
+	const auto writeKey = Storage::Cache::Key{
+		0x434c454152474150ULL,
+		0x4341434845575249ULL,
+	};
+	const auto writePayload = QByteArray("cache clear rotation window");
+	auto blockedWrite = std::optional<Storage::Cache::Error>();
+	data.setCacheClearPauseForTesting(mediaCache, [&] {
+		paused = true;
+		auto version = QFileInfo(beforeClear).fileName().toInt() + 1;
+		while (
+			QFileInfo(QDir(path).filePath(QString::number(version))).exists()) {
+			++version;
+		}
+		const auto nextVersion = qint32(version);
+		auto marker = QFile(QDir(path).filePath("version"));
+		const auto markerWritten
+			= marker.open(QIODevice::WriteOnly | QIODevice::Truncate)
+			  && (marker.write(reinterpret_cast<const char *>(&nextVersion),
+							   sizeof(nextVersion))
+				  == qint64(sizeof(nextVersion)))
+			  && marker.flush();
+		markerRotated = markerWritten
+						&& (QString::number(nextVersion)
+							!= QFileInfo(beforeClear).fileName());
+		activeVersionMissing
+			= markerRotated
+			  && !QFileInfo(QDir(path).filePath(QString::number(nextVersion)))
+					  .exists();
+		blockedDuringClear = cacheIfAllowed() == nullptr;
+		cacheAllowedPreserved = data.cacheAllowedForTesting(mediaCache);
+		blockedWrite
+			= AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+				  cache().put(writeKey, QByteArray(writePayload),
+							  std::move(done));
+			  });
+	});
+	data.clearCacheDatabase(mediaCache, false,
+							[clearState](Storage::Cache::Error error) {
+								clearState->error = std::move(error);
+								clearState->completed.release();
+							});
+	const auto clearCompleted = clearState->completed.tryAcquire(1, 10000);
+	const auto cleared = clearCompleted
+							 ? clearState->error
+							 : std::optional<Storage::Cache::Error>();
+	const auto blockedWriteRefused
+		= blockedWrite
+		  && (blockedWrite->type != Storage::Cache::Error::Type::None);
 	cache().sync();
 	const auto afterClear = ActiveCacheVersionPath(path);
 	const auto rotated = !afterClear.isEmpty() && (afterClear != beforeClear);
 	const auto allowedAfterClear = cacheIfAllowed() != nullptr;
+	const auto write
+		= AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+			  cache().put(writeKey, QByteArray(writePayload), std::move(done));
+		  });
+	const auto wroteAfterClear
+		= write && (write->type == Storage::Cache::Error::Type::None)
+		  && CachePayloadMatches(cache(), writeKey, writePayload);
 	const auto swapped = rotated && allowedAfterClear
 						 && RunPostOpenCacheSymlinkRegression(
 							 path, fixture, cache, [] {}, cacheRefusal);
-	const auto passed = rotated && allowedAfterClear && swapped;
+	const auto passed = paused && markerRotated && activeVersionMissing
+						&& blockedDuringClear && cacheAllowedPreserved
+						&& blockedWriteRefused && clearCompleted
+						&& CacheOperationSucceeded(cleared) && rotated
+						&& allowedAfterClear && wroteAfterClear && swapped;
 	if (!passed) {
-		std::fprintf(stderr,
-					 "Clear-then-swap cache regression failed: rotated=%d "
-					 "allowed_after_clear=%d swapped=%d path=%s.\n",
-					 rotated, allowedAfterClear, swapped, qPrintable(path));
+		std::fprintf(
+			stderr,
+			"Clear-then-swap cache regression failed: paused=%d "
+			"marker_rotated=%d active_missing=%d blocked_during=%d "
+			"allowed_preserved=%d "
+			"blocked_write_refused=%d clear_completed=%d rotated=%d "
+			"allowed_after=%d "
+			"write_after_clear=%d swapped=%d path=%s.\n",
+			paused, markerRotated, activeVersionMissing, blockedDuringClear,
+			cacheAllowedPreserved, blockedWriteRefused, clearCompleted, rotated,
+			allowedAfterClear, wroteAfterClear, swapped, qPrintable(path));
 	}
 	return passed;
 }
@@ -9201,25 +9281,21 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			auto &data = guarded->session().data();
-			const auto cache = [&]() -> Storage::Cache::Database & {
-				return mediaCache ? data.cacheBigFile() : data.cache();
-			};
 			const auto cacheIfAllowed = [&] {
 				return mediaCache ? data.cacheBigFileIfAllowed()
 								  : data.cacheIfAllowed();
 			};
 			const auto cacheReady = WaitForRegressionCondition(
 				[&] { return cacheIfAllowed() != nullptr; });
-			const auto passed
-				= cacheReady
-				  && RunClearThenCacheSymlinkRegression(
-					  cachePath,
-					  mediaCache ? fixtures.openedMediaCache
-								 : fixtures.openedCache,
-					  cache, cacheIfAllowed, [guarded, mediaCache] {
-						  return RunRefusedCacheReaderRegressions(guarded,
-																  mediaCache);
-					  });
+			const auto passed = cacheReady
+								&& RunClearThenCacheSymlinkRegression(
+									guarded, mediaCache, cachePath,
+									mediaCache ? fixtures.openedMediaCache
+											   : fixtures.openedCache,
+									[guarded, mediaCache] {
+										return RunRefusedCacheReaderRegressions(
+											guarded, mediaCache);
+									});
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {

@@ -272,11 +272,16 @@ class Session final : public base::has_weak_ptr {
 	[[nodiscard]] Storage::Cache::Database &cacheBigFile();
 	[[nodiscard]] Storage::Cache::Database *cacheIfAllowed();
 	[[nodiscard]] Storage::Cache::Database *cacheBigFileIfAllowed();
+	void clearCacheDatabase(bool bigFileCache, bool closeBefore = false,
+							FnMut<void(Storage::Cache::Error)> &&done
+							= nullptr);
 	[[nodiscard]] rpl::producer<Storage::Cache::Database::Stats>
 	cacheStatsOnMain(bool bigFileCache);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
+	[[nodiscard]] bool cacheAllowedForTesting(bool bigFileCache);
+	void setCacheClearPauseForTesting(bool bigFileCache, Fn<void()> pause);
 #endif
 
 	[[nodiscard]] not_null<PeerData*> peer(PeerId id);
@@ -1217,6 +1222,14 @@ private:
 	Core::MacProtectedPath::CachePathIdentity _bigFileCacheIdentity;
 	bool _cacheAllowed = false;
 	bool _bigFileCacheAllowed = false;
+#ifdef Q_OS_MAC
+	bool _cacheClearPending = false;
+	bool _bigFileCacheClearPending = false;
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	Fn<void()> _cacheClearPauseForTesting;
+	Fn<void()> _bigFileCacheClearPauseForTesting;
+#endif
+#endif
 
 	TimeId _exportAvailableAt = 0;
 	base::weak_qptr<Ui::BoxContent> _exportSuggestion;
