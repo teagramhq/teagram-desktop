@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_stall_watchdog.h"
 
+#include <QtCore/QAbstractEventDispatcher>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDateTime>
 #include <QtCore/QEvent>
@@ -41,7 +42,7 @@ using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
 constexpr auto kCountThreshold = 50ms;
-constexpr auto kPingInterval = kCountThreshold / 2;
+constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kMaxFrames = 15U;
@@ -276,6 +277,26 @@ class PingEvent final : public QEvent {
 UiStallWatchdog::UiStallWatchdog(std::function<void(const QString &)> log)
 	: QObject(nullptr), _log(std::move(log)) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+	_lastAwakeAt = Clock::now();
+	if (const auto dispatcher = QAbstractEventDispatcher::instance()) {
+		QObject::connect(dispatcher, &QAbstractEventDispatcher::aboutToBlock,
+						 this, [this] {
+							 {
+								 const auto lock = std::lock_guard(_mutex);
+								 _mainThreadIdle = true;
+							 }
+							 _condition.notify_one();
+						 });
+		QObject::connect(dispatcher, &QAbstractEventDispatcher::awake, this,
+						 [this] {
+							 {
+								 const auto lock = std::lock_guard(_mutex);
+								 _mainThreadIdle = false;
+								 _lastAwakeAt = Clock::now();
+							 }
+							 _condition.notify_one();
+						 });
+	}
 	_canCaptureStack = InstallSignalHandler();
 	try {
 		_thread = std::thread([this] { run(); });
@@ -337,12 +358,6 @@ void UiStallWatchdog::run() {
 	auto lastLogged = Clock::time_point();
 	auto lastAck = Clock::now();
 	while (true) {
-		const auto elapsedSinceAck
-			= std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()
-																	- lastAck)
-				  .count();
-		const auto startTime
-			= QDateTime::currentDateTime().addMSecs(-elapsedSinceAck);
 		const auto current = ++sequence;
 		QCoreApplication::postEvent(this, new PingEvent(current));
 		{
@@ -355,47 +370,52 @@ void UiStallWatchdog::run() {
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
-		if (_condition.wait_until(lock, lastAck + kCountThreshold,
+		if (_mainThreadIdle && (_acknowledgedSequence < current)) {
+			_condition.wait(lock, [&] {
+				return _stopping || (_acknowledgedSequence >= current)
+					   || !_mainThreadIdle;
+			});
+		}
+		if (_stopping) {
+			return;
+		}
+		const auto start = std::max(lastAck, _lastAwakeAt);
+		const auto elapsedSinceStart
+			= std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()
+																	- start)
+				  .count();
+		const auto startTime
+			= QDateTime::currentDateTime().addMSecs(-elapsedSinceStart);
+		if (_condition.wait_until(lock, start + kCountThreshold,
 								  acknowledged)) {
 			if (_stopping) {
 				return;
 			}
-			const auto duration = _acknowledgedAt - lastAck;
+			const auto duration = _acknowledgedAt - start;
 			if (duration >= kCountThreshold) {
 				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			}
 			shouldLog = (duration >= kLogThreshold);
 		} else {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (_condition.wait_until(lock, lastAck + kLogThreshold,
+			if (_condition.wait_until(lock, start + kLogThreshold,
 									  acknowledged)) {
 				if (_stopping) {
 					return;
 				}
-				shouldLog = ((_acknowledgedAt - lastAck) >= kLogThreshold);
+				shouldLog = ((_acknowledgedAt - start) >= kLogThreshold);
 			} else {
 				shouldLog = true;
 			}
 		}
 
-		if (shouldLog
-			&& (!hasLogged || (Clock::now() - lastLogged) >= kLogRateLimit)) {
-			const auto duration
-				= (_acknowledgedSequence >= current)
-					  ? std::chrono::duration_cast<std::chrono::milliseconds>(
-							_acknowledgedAt - lastAck)
-					  : std::chrono::duration_cast<std::chrono::milliseconds>(
-							Clock::now() - lastAck);
+		const auto writeLog
+			= shouldLog && _log
+			  && (!hasLogged || (Clock::now() - lastLogged) >= kLogRateLimit);
+		auto frames = std::vector<void *>();
+		if (writeLog) {
 			lock.unlock();
-			const auto frames
-				= _canCaptureStack ? CaptureStack() : std::vector<void *>();
-			if (_log) {
-				_log(u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
-						 .arg(startTime.toString(Qt::ISODateWithMs))
-						 .arg(FormatStack(frames)));
-			}
-			lastLogged = Clock::now();
-			hasLogged = true;
+			frames = _canCaptureStack ? CaptureStack() : std::vector<void *>();
 			lock.lock();
 		}
 
@@ -404,6 +424,20 @@ void UiStallWatchdog::run() {
 		}
 		if (_stopping) {
 			return;
+		}
+		if (writeLog) {
+			const auto duration
+				= std::chrono::duration_cast<std::chrono::milliseconds>(
+					_acknowledgedAt - start);
+			const auto line
+				= u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
+					  .arg(startTime.toString(Qt::ISODateWithMs))
+					  .arg(FormatStack(frames));
+			lock.unlock();
+			_log(line);
+			lastLogged = Clock::now();
+			hasLogged = true;
+			lock.lock();
 		}
 		lastAck = _acknowledgedAt;
 		_condition.wait_until(lock, lastAck + kPingInterval,

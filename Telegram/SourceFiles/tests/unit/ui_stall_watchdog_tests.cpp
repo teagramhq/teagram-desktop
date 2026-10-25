@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QEventLoop>
+#include <QtCore/QTimer>
 
 #include <atomic>
 #include <chrono>
@@ -34,8 +36,9 @@ UiStallWatchdogTestBlock(std::chrono::milliseconds duration) {
 
 class UiStallWatchdogTestBlockFilter final : public QObject {
   public:
-	explicit UiStallWatchdogTestBlockFilter(std::chrono::milliseconds duration)
-		: _duration(duration) {}
+	UiStallWatchdogTestBlockFilter(std::chrono::milliseconds duration,
+								   QEventLoop *loop)
+		: _duration(duration), _loop(loop) {}
 
 	[[nodiscard]] bool Blocked() const { return _blocked; }
 
@@ -44,12 +47,14 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 		if (++_eventCount == 2) {
 			_blocked = true;
 			UiStallWatchdogTestBlock(_duration);
+			_loop->quit();
 		}
 		return false;
 	}
 
   private:
 	const std::chrono::milliseconds _duration;
+	QEventLoop *_loop = nullptr;
 	int _eventCount = 0;
 	bool _blocked = false;
 };
@@ -59,12 +64,17 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto mutex = std::mutex();
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
+		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([&](const QString &line) {
 			const auto lock = std::lock_guard(mutex);
 			lines.push_back(line);
 		});
-		QCoreApplication::processEvents();
-		UiStallWatchdogTestBlock(std::chrono::milliseconds(300));
+		auto blockFilter = UiStallWatchdogTestBlockFilter(
+			std::chrono::milliseconds(300), &loop);
+		watchdog.installEventFilter(&blockFilter);
+		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+		loop.exec();
+		CHECK(blockFilter.Blocked());
 		const auto deadline
 			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 		while (std::chrono::steady_clock::now() < deadline) {
@@ -84,52 +94,44 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	if (!lines.empty()) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
 		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
+		const auto duration = lines.front()
+								  .mid(u"UI stall "_q.size())
+								  .section(u' ', 0, 0)
+								  .toInt();
+		CHECK(duration >= 300);
 	}
 }
 
-TEST_CASE(UiStallWatchdogCountsNearThresholdStallFromLastAck) {
+TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
+		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([](const QString &) {});
-		auto blockFilter
-			= UiStallWatchdogTestBlockFilter(std::chrono::milliseconds(30));
+		auto blockFilter = UiStallWatchdogTestBlockFilter(
+			std::chrono::milliseconds(30), &loop);
 		watchdog.installEventFilter(&blockFilter);
-		const auto deadline
-			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		while (!blockFilter.Blocked()
-			   && std::chrono::steady_clock::now() < deadline) {
-			QCoreApplication::processEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
+		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+		loop.exec();
 		CHECK(blockFilter.Blocked());
 	}
-	CHECK(Core::UiStallWatchdog::StallCount() > before);
+	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before);
 }
 
-TEST_CASE(UiStallWatchdogLogsNearThresholdStallFromLastAck) {
+TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 	auto lines = std::vector<QString>();
-	auto mutex = std::mutex();
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
+		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([&](const QString &line) {
-			const auto lock = std::lock_guard(mutex);
 			lines.push_back(line);
 		});
-		auto blockFilter
-			= UiStallWatchdogTestBlockFilter(std::chrono::milliseconds(80));
+		auto blockFilter = UiStallWatchdogTestBlockFilter(
+			std::chrono::milliseconds(80), &loop);
 		watchdog.installEventFilter(&blockFilter);
-		const auto deadline
-			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		while (!blockFilter.Blocked()
-			   && std::chrono::steady_clock::now() < deadline) {
-			QCoreApplication::processEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
+		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+		loop.exec();
 		CHECK(blockFilter.Blocked());
 	}
-	CHECK(Core::UiStallWatchdog::StallCount() > before);
-	CHECK_EQ(int(lines.size()), 1);
-	if (!lines.empty()) {
-		CHECK(lines.front().startsWith(u"UI stall "_q));
-	}
+	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
+	CHECK(lines.empty());
 }
