@@ -1462,7 +1462,7 @@ for cache_evidence in \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
 	"Chat participants regression passed." \
-	"Settings deep link regression passed: 13 routes refused in custom and blocked sessions;" \
+	"Settings deep link regression passed: paid and story routes refused in custom and blocked sessions;" \
 	"Paid link regression passed: 16 paid links refused in custom and blocked sessions"; do
 	if ! grep -F -q "$cache_evidence" "$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2

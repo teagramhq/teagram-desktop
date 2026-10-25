@@ -580,14 +580,22 @@ require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
 regression_step='Full chat info session regression.'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
   "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
+require_step_field "$mac_workflow" macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
   'full_chat_info_session_regression=FAIL' \
   'ninja -C "$build_dir" -f build-Debug.ninja -t commands Telegram' \
+  '--find=RunAccountLifecycleRegression' \
+  'DW_AT_stmt_list' \
+  'DW_AT_low_pc' \
+  '--lookup="$probe_address"' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
+reject_step_script "$mac_workflow" macos "$regression_step" \
+  '--debug-info --arch=arm64' \
+  '--debug-line --arch=arm64'
 # The app bounds and cleanup live in the Python the step runs, so they are
 # read from its syntax tree: a commented-out call does not count.
 require_step_python "$mac_workflow" macos "$regression_step" \
@@ -606,6 +614,12 @@ require_step_field "$mac_workflow" macos "$profile_step" '.if' \
 require_step_script "$mac_workflow" macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+settings_link_evidence='Settings deep link regression passed: paid and story routes'
+grep -Fq "$settings_link_evidence" \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The Settings deep link regression must report its current success evidence.'
+grep -Fq "\"$settings_link_evidence" "$profile_harness" \
+  || contract_fail "$profile_harness must check the Settings deep link regression success evidence."
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
