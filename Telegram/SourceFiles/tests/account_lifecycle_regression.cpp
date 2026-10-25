@@ -2538,8 +2538,9 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return passed && cleanup();
 }
 
-[[nodiscard]] bool RunCacheStatisticsInitializationRegression(
-	Main::Domain &domain, UserId selfId, bool mediaCache) {
+[[nodiscard]] bool
+RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
+										   bool mediaCache) {
 	const auto guarded = domain.add(MTP::Environment::Production);
 	guarded->mtp().stopForServerEnrollment();
 	guarded->setSessionUserId(selfId);
@@ -2558,27 +2559,28 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	constexpr auto kSeedTag = uint8(93);
 	const auto payload = QByteArray("cache statistics initialization seed");
 	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-		opened->put(
-			seedKey,
-			Storage::Cache::Database::TaggedValue(QByteArray(payload), kSeedTag),
-			std::move(done));
+		opened->put(seedKey,
+					Storage::Cache::Database::TaggedValue(QByteArray(payload),
+														  kSeedTag),
+					std::move(done));
 	});
 	if (!CacheOperationSucceeded(seed)) {
 		return false;
 	}
 	opened->sync();
-	if (!guarded->createSession(
-			RegressionUser(selfId, true, QString()),
-			std::make_unique<Main::SessionSettings>())) {
+	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
 		return false;
 	}
 	auto &data = guarded->session().data();
 	auto received = std::optional<Storage::Cache::Database::Stats>();
 	auto lifetime = rpl::lifetime();
-	data.cacheStatsOnMain(mediaCache) | rpl::on_next(
-		[&](Storage::Cache::Database::Stats &&stats) {
-			received = std::move(stats);
-		}, lifetime);
+	data.cacheStatsOnMain(mediaCache)
+		| rpl::on_next(
+			[&](Storage::Cache::Database::Stats &&stats) {
+				received = std::move(stats);
+			},
+			lifetime);
 	const auto subscribedBeforeInitialization = !received.has_value();
 	const auto receivedSeededStats = WaitForRegressionCondition([&] {
 		if (!received) {
@@ -2586,21 +2588,18 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		}
 		const auto i = received->tagged.find(kSeedTag);
 		return (i != end(received->tagged)) && (i->second.count > 0)
-			&& (i->second.totalSize >= payload.size());
+			   && (i->second.totalSize >= payload.size());
 	});
 	const auto initializationAllowed
 		= data.cacheInitializationAllowedForTesting(mediaCache);
-	const auto passed = subscribedBeforeInitialization
-					&& receivedSeededStats && initializationAllowed;
+	const auto passed = subscribedBeforeInitialization && receivedSeededStats
+						&& initializationAllowed;
 	if (!passed) {
-		std::fprintf(
-			stderr,
-			"Cache statistics initialization regression failed: "
-			"media_cache=%d pending=%d stats=%d allowed=%d.\n",
-			mediaCache,
-			subscribedBeforeInitialization,
-			receivedSeededStats,
-			initializationAllowed);
+		std::fprintf(stderr,
+					 "Cache statistics initialization regression failed: "
+					 "media_cache=%d pending=%d stats=%d allowed=%d.\n",
+					 mediaCache, subscribedBeforeInitialization,
+					 receivedSeededStats, initializationAllowed);
 	}
 	return passed;
 }
@@ -9098,8 +9097,8 @@ void RunAuthenticatedCacheSymlinkCases(
 		}
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache
-								  ? "media-cache-stats-initialization"
-								  : "cache-stats-initialization";
+									  ? "media-cache-stats-initialization"
+									  : "cache-stats-initialization";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto passed = RunCacheStatisticsInitializationRegression(
 				domain, selfId, mediaCache);
@@ -9208,9 +9207,9 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("failed-init-media-cache-access",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cache-stats-initialization",
-								 "protected-path-integration-disabled");
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("media-cache-stats-initialization",
-								 "protected-path-integration-disabled");
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-media-cache",
@@ -9230,9 +9229,9 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("failed-init-media-cache-access",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cache-stats-initialization",
-								 "protected-path-integration-disabled");
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("media-cache-stats-initialization",
-								 "protected-path-integration-disabled");
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("cold-post-open-media-cache",

@@ -1900,18 +1900,16 @@ Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 }
 
-rpl::producer<Storage::Cache::Database::Stats> Session::cacheStatsOnMain(
-		bool bigFileCache) {
-	const auto ready = bigFileCache
-		? _bigFileCacheInitializationReady.value()
-		: _cacheInitializationReady.value();
-	return ready
-		| rpl::filter([](bool initialized) { return initialized; })
-		| rpl::map([=](bool) {
-			return bigFileCache ? cacheBigFile().statsOnMain()
-								: cache().statsOnMain();
-		})
-		| rpl::flatten_latest();
+rpl::producer<Storage::Cache::Database::Stats>
+Session::cacheStatsOnMain(bool bigFileCache) {
+	const auto ready = bigFileCache ? _bigFileCacheInitializationReady.value()
+									: _cacheInitializationReady.value();
+	return ready | rpl::filter([](bool initialized) { return initialized; })
+		   | rpl::map([=](bool) {
+				 return bigFileCache ? cacheBigFile().statsOnMain()
+									 : cache().statsOnMain();
+			 })
+		   | rpl::flatten_latest();
 }
 
 void Session::suggestStartExport(TimeId availableAt) {
