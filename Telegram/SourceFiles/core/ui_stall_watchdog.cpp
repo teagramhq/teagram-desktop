@@ -346,10 +346,21 @@ void UiStallWatchdog::run() {
 		}
 		_condition.notify_all();
 
-		// Persist the record at detection; a hung UI may never answer.
+		// Persist the detection record before waiting; an ack adds the
+		// duration.
 		auto writeLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
+		auto stack = QString();
+		const auto lineForDuration = [&](Clock::duration duration) {
+			const auto milliseconds
+				= std::chrono::duration_cast<std::chrono::milliseconds>(
+					duration);
+			return u"UI stall %1 ms (started %2): %3"_q
+				.arg(milliseconds.count())
+				.arg(startTime.toString(Qt::ISODateWithMs))
+				.arg(stack);
+		};
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
@@ -380,29 +391,37 @@ void UiStallWatchdog::run() {
 			writeLog = _log
 					   && (!hasLogged
 						   || (Clock::now() - lastLogged) >= kLogRateLimit);
-			if (writeLog && _canCaptureStack) {
+			if (writeLog) {
 				lock.unlock();
-				frames = CaptureStack();
+				if (_canCaptureStack) {
+					frames = CaptureStack();
+				}
+				stack = FormatStack(frames);
+				lock.lock();
+				lock.unlock();
+				_log(lineForDuration(detectedAt - postedAt));
+				lastLogged = Clock::now();
+				hasLogged = true;
 				lock.lock();
 			}
-		}
-		if (writeLog) {
-			const auto duration
-				= std::chrono::duration_cast<std::chrono::milliseconds>(
-					detectedAt - postedAt);
-			const auto line
-				= u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
-					  .arg(startTime.toString(Qt::ISODateWithMs))
-					  .arg(FormatStack(frames));
-			lock.unlock();
-			_log(line);
-			lastLogged = Clock::now();
-			hasLogged = true;
-			lock.lock();
 		}
 		_condition.wait(lock, acknowledged);
 		if (_stopping) {
 			return;
+		}
+		if (writeLog) {
+			const auto completedAt = _acknowledgedAt;
+			const auto completedMilliseconds
+				= std::chrono::duration_cast<std::chrono::milliseconds>(
+					completedAt - postedAt);
+			const auto completion
+				= u"UI watchdog acknowledgement after %1 ms (started %2)"_q
+					  .arg(completedMilliseconds.count())
+					  .arg(startTime.toString(Qt::ISODateWithMs));
+			lock.unlock();
+			_log(completion);
+			lastLogged = Clock::now();
+			lock.lock();
 		}
 		_condition.wait_until(lock, _acknowledgedAt + kPingInterval,
 							  [this] { return _stopping; });

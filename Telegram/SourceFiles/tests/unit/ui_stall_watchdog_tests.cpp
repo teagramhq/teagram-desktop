@@ -93,7 +93,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			QCoreApplication::processEvents();
 			{
 				const auto lock = std::lock_guard(mutex);
-				if (!lines.empty()) {
+				if (lines.size() >= 2) {
 					break;
 				}
 			}
@@ -102,15 +102,20 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		QCoreApplication::processEvents();
 	}
 	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
-	CHECK_EQ(int(lines.size()), 1);
-	if (!lines.empty()) {
+	CHECK_EQ(int(lines.size()), 2);
+	if (lines.size() >= 2) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
 		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
-		const auto duration = lines.front()
-								  .mid(u"UI stall "_q.size())
-								  .section(u' ', 0, 0)
-								  .toInt();
-		CHECK(duration >= 100);
+		const auto detectedDuration = lines.front()
+										  .mid(u"UI stall "_q.size())
+										  .section(u' ', 0, 0)
+										  .toInt();
+		CHECK(detectedDuration >= 100);
+		const auto prefix = u"UI watchdog acknowledgement after "_q;
+		CHECK(lines.back().startsWith(prefix));
+		const auto duration
+			= lines.back().mid(prefix.size()).section(u' ', 0, 0).toInt();
+		CHECK(duration >= 300);
 	}
 }
 
