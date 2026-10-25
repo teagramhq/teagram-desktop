@@ -43,8 +43,9 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	[[nodiscard]] bool Blocked() const { return _blocked; }
 
   protected:
-	bool eventFilter(QObject *, QEvent *) override {
-		if (++_eventCount == 2) {
+	bool eventFilter(QObject *, QEvent *event) override {
+		// Block while handling the second ping, posted to an idle loop.
+		if (event->type() >= QEvent::User && ++_pingCount == 2) {
 			_blocked = true;
 			UiStallWatchdogTestBlock(_duration);
 			_loop->quit();
@@ -55,7 +56,7 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
   private:
 	const std::chrono::milliseconds _duration;
 	QEventLoop *_loop = nullptr;
-	int _eventCount = 0;
+	int _pingCount = 0;
 	bool _blocked = false;
 };
 
@@ -108,7 +109,7 @@ TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([](const QString &) {});
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
-			std::chrono::milliseconds(30), &loop);
+			std::chrono::milliseconds(20), &loop);
 		watchdog.installEventFilter(&blockFilter);
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
@@ -125,7 +126,7 @@ TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 		auto watchdog = Core::UiStallWatchdog(
 			[&](const QString &line) { lines.push_back(line); });
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
-			std::chrono::milliseconds(80), &loop);
+			std::chrono::milliseconds(70), &loop);
 		watchdog.installEventFilter(&blockFilter);
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();

@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_stall_watchdog.h"
 
-#include <QtCore/QAbstractEventDispatcher>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDateTime>
 #include <QtCore/QEvent>
@@ -277,26 +276,6 @@ class PingEvent final : public QEvent {
 UiStallWatchdog::UiStallWatchdog(std::function<void(const QString &)> log)
 	: QObject(nullptr), _log(std::move(log)) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
-	_lastAwakeAt = Clock::now();
-	if (const auto dispatcher = QAbstractEventDispatcher::instance()) {
-		QObject::connect(dispatcher, &QAbstractEventDispatcher::aboutToBlock,
-						 this, [this] {
-							 {
-								 const auto lock = std::lock_guard(_mutex);
-								 _mainThreadIdle = true;
-							 }
-							 _condition.notify_one();
-						 });
-		QObject::connect(dispatcher, &QAbstractEventDispatcher::awake, this,
-						 [this] {
-							 {
-								 const auto lock = std::lock_guard(_mutex);
-								 _mainThreadIdle = false;
-								 _lastAwakeAt = Clock::now();
-							 }
-							 _condition.notify_one();
-						 });
-	}
 	_canCaptureStack = InstallSignalHandler();
 	try {
 		_thread = std::thread([this] { run(); });
@@ -356,87 +335,48 @@ void UiStallWatchdog::run() {
 	auto sequence = std::uint64_t(0);
 	auto hasLogged = false;
 	auto lastLogged = Clock::time_point();
-	auto lastAck = Clock::now();
 	while (true) {
 		const auto current = ++sequence;
-		// Dispatchers may emit awake after delivering pending events.
-		auto idleAtPost = false;
-		auto postedAt = Clock::time_point();
-		auto lastAwakeAt = Clock::time_point();
+		const auto startTime = QDateTime::currentDateTime();
+		const auto postedAt = Clock::now();
+		QCoreApplication::postEvent(this, new PingEvent(current));
 		{
 			const auto lock = std::lock_guard(_mutex);
-			idleAtPost = _mainThreadIdle;
-			postedAt = Clock::now();
-			lastAwakeAt = _lastAwakeAt;
-			QCoreApplication::postEvent(this, new PingEvent(current));
 			_started = true;
 		}
 		_condition.notify_all();
 
-		auto shouldLog = false;
+		// A stall is the time the UI thread takes to answer a ping. The
+		// stack is sampled while it is still stuck, the line is written once
+		// it answers, so the line carries the whole duration.
+		auto writeLog = false;
+		auto frames = std::vector<void *>();
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
-		if (_mainThreadIdle && (_acknowledgedSequence < current)) {
-			_condition.wait(lock, [&] {
-				return _stopping || (_acknowledgedSequence >= current)
-					   || !_mainThreadIdle;
-			});
-		}
-		if (_stopping) {
-			return;
-		}
-		const auto start
-			= std::max(lastAck, idleAtPost ? postedAt : lastAwakeAt);
-		const auto elapsedSinceStart
-			= std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()
-																	- start)
-				  .count();
-		const auto startTime
-			= QDateTime::currentDateTime().addMSecs(-elapsedSinceStart);
-		if (_condition.wait_until(lock, start + kCountThreshold,
-								  acknowledged)) {
-			if (_stopping) {
-				return;
-			}
-			const auto duration = _acknowledgedAt - start;
-			if (duration >= kCountThreshold) {
-				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			}
-			shouldLog = (duration >= kLogThreshold);
-		} else {
+		if (!_condition.wait_until(lock, postedAt + kCountThreshold,
+								   acknowledged)) {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (_condition.wait_until(lock, start + kLogThreshold,
-									  acknowledged)) {
-				if (_stopping) {
-					return;
+			if (!_condition.wait_until(lock, postedAt + kLogThreshold,
+									   acknowledged)) {
+				writeLog = _log
+						   && (!hasLogged
+							   || (Clock::now() - lastLogged) >= kLogRateLimit);
+				if (writeLog && _canCaptureStack) {
+					lock.unlock();
+					frames = CaptureStack();
+					lock.lock();
 				}
-				shouldLog = ((_acknowledgedAt - start) >= kLogThreshold);
-			} else {
-				shouldLog = true;
 			}
 		}
-
-		const auto writeLog
-			= shouldLog && _log
-			  && (!hasLogged || (Clock::now() - lastLogged) >= kLogRateLimit);
-		auto frames = std::vector<void *>();
-		if (writeLog) {
-			lock.unlock();
-			frames = _canCaptureStack ? CaptureStack() : std::vector<void *>();
-			lock.lock();
-		}
-
-		while (!_stopping && (_acknowledgedSequence < current)) {
-			_condition.wait(lock);
-		}
+		_condition.wait(lock, acknowledged);
 		if (_stopping) {
 			return;
 		}
 		if (writeLog) {
 			const auto duration
 				= std::chrono::duration_cast<std::chrono::milliseconds>(
-					_acknowledgedAt - start);
+					_acknowledgedAt - postedAt);
 			const auto line
 				= u"UI stall %1 ms (started %2): %3"_q.arg(duration.count())
 					  .arg(startTime.toString(Qt::ISODateWithMs))
@@ -447,8 +387,7 @@ void UiStallWatchdog::run() {
 			hasLogged = true;
 			lock.lock();
 		}
-		lastAck = _acknowledgedAt;
-		_condition.wait_until(lock, lastAck + kPingInterval,
+		_condition.wait_until(lock, _acknowledgedAt + kPingInterval,
 							  [this] { return _stopping; });
 		if (_stopping) {
 			return;

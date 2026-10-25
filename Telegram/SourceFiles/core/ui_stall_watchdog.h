@@ -41,10 +41,8 @@ class UiStallWatchdog final : public QObject {
 	std::condition_variable _condition;
 	std::uint64_t _acknowledgedSequence = 0;
 	std::chrono::steady_clock::time_point _acknowledgedAt;
-	std::chrono::steady_clock::time_point _lastAwakeAt;
 	bool _started = false;
 	bool _stopping = false;
-	bool _mainThreadIdle = false;
 	bool _canCaptureStack = false;
 };
 
