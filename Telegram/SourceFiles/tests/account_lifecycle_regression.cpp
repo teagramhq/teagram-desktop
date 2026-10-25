@@ -2865,6 +2865,7 @@ ActivateWindowForRegression(Core::Application &app,
 		}
 	});
 	retry.start();
+	Platform::ActivateThisProcess(window->widget());
 	window->activate();
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
