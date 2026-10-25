@@ -8330,7 +8330,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
 	return result;
 }
-#endif // defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#endif
 
 void RunAuthenticatedCacheSymlinkCases(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
