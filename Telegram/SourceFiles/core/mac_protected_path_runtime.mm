@@ -719,10 +719,26 @@ ReadCachePathTargetIdentity(const QString &path,
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &cachePath) {
 	const auto versionPath = QDir(cachePath).filePath("version");
 	const auto native = QFile::encodeName(versionPath);
+	const auto versionZeroPath = [&] {
+		const auto zeroPath = QDir(cachePath).filePath("0");
+		const auto zeroNative = QFile::encodeName(zeroPath);
+		struct stat zero = {};
+		if (::lstat(zeroNative.constData(), &zero) != 0 && errno == ENOENT) {
+			return QString();
+		}
+		return zeroPath;
+	};
 	const auto descriptor = ::open(
 		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
 	if (descriptor < 0) {
-		return {};
+		if (errno != ENOENT) {
+			return {};
+		}
+		struct stat marker = {};
+		if (::lstat(native.constData(), &marker) == 0 || errno != ENOENT) {
+			return {};
+		}
+		return versionZeroPath();
 	}
 	const auto close = gsl::finally([=] { ::close(descriptor); });
 	struct stat opened = {};
@@ -730,21 +746,30 @@ ReadCachePathTargetIdentity(const QString &path,
 		return {};
 	}
 	auto version = qint32();
+	auto complete = false;
 	for (auto offset = size_t(); offset != sizeof(version);) {
 		const auto read
 			= ::read(descriptor, reinterpret_cast<char *>(&version) + offset,
 					 sizeof(version) - offset);
 		if (read < 0 && errno == EINTR) {
 			continue;
-		} else if (read <= 0) {
+		} else if (read < 0) {
 			return {};
+		} else if (read == 0) {
+			break;
 		}
 		offset += size_t(read);
+		complete = (offset == sizeof(version));
 	}
 	struct stat current = {};
 	if (::lstat(native.constData(), &current) != 0 || !S_ISREG(current.st_mode)
 		|| (opened.st_dev != current.st_dev)
-		|| (opened.st_ino != current.st_ino) || (version < 0)) {
+		|| (opened.st_ino != current.st_ino)) {
+		return {};
+	}
+	if (!complete) {
+		return versionZeroPath();
+	} else if (version < 0) {
 		return {};
 	}
 	return QDir(cachePath).filePath(QString::number(version));

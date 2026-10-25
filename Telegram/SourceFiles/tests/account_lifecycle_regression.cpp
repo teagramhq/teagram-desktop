@@ -2359,17 +2359,22 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &path) {
 	auto versionFile = QFile(QDir(path).filePath("version"));
-	if (!versionFile.open(QIODevice::ReadOnly)) {
+	auto version = qint32(0);
+	if (versionFile.open(QIODevice::ReadOnly)) {
+		const auto read = versionFile.read(reinterpret_cast<char *>(&version),
+										   qint64(sizeof(version)));
+		if (read < 0) {
+			return {};
+		} else if (read == qint64(sizeof(version)) && version < 0) {
+			return {};
+		} else if (read != qint64(sizeof(version))) {
+			version = 0;
+		}
+	} else if (QFileInfo::exists(versionFile.fileName())) {
 		return {};
 	}
-	auto version = qint32();
-	const auto read = versionFile.read(reinterpret_cast<char *>(&version),
-									   qint64(sizeof(version)));
 	const auto active = QDir(path).filePath(QString::number(version));
-	return (read == qint64(sizeof(version)) && version >= 0
-			&& QFileInfo(active + "/binlog").isFile())
-			   ? active
-			   : QString();
+	return QFileInfo(active + "/binlog").isFile() ? active : QString();
 }
 
 [[nodiscard]] bool
@@ -9389,8 +9394,37 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto cachePath = mediaCache
 									   ? guarded->local().cacheBigFilePath()
 									   : guarded->local().cachePath();
+			const auto versionPath = QDir(cachePath).filePath("version");
+			const auto cacheSettings
+				= mediaCache ? guarded->local().cacheBigFileSettings()
+							 : guarded->local().cacheSettings();
+			auto existing
+				= Core::App().databases().get(cachePath, cacheSettings);
+			const auto cacheKey = mediaCache
+									  ? guarded->local().cacheBigFileKey()
+									  : guarded->local().cacheKey();
+			const auto opened = CacheOperationSucceeded(
+				AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+					existing->open(cacheKey, std::move(done));
+				}));
+			const auto seed
+				= opened
+					  ? AwaitCacheCallback<Storage::Cache::Error>(
+							[&](auto done) {
+								existing->put(
+									Storage::Cache::Key{0x4e4f4d41524b4552ULL,
+														uint64(mediaCache)},
+									QByteArray("version marker omitted"),
+									std::move(done));
+							})
+					  : std::optional<Storage::Cache::Error>();
+			existing->close();
+			existing->sync();
+			const auto markerWasRemoved
+				= !QFileInfo::exists(versionPath) || QFile::remove(versionPath);
 			const auto coldBeforeOpen
-				= !QFileInfo::exists(QDir(cachePath).filePath("version"));
+				= markerWasRemoved && !QFileInfo::exists(versionPath)
+				  && QFileInfo(QDir(cachePath).filePath("0/binlog")).isFile();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
@@ -9413,8 +9447,11 @@ void RunAuthenticatedCacheSymlinkCases(
 				sessionData.cacheBigFile().sync();
 			};
 			const auto activeVersion = ActiveCacheVersionPath(cachePath);
+			const auto markerMissingAfterOpen = !QFileInfo::exists(versionPath);
 			const auto passed
-				= coldBeforeOpen && cacheReady && !activeVersion.isEmpty()
+				= opened && CacheOperationSucceeded(seed) && coldBeforeOpen
+				  && cacheReady && markerMissingAfterOpen
+				  && (activeVersion == QDir(cachePath).filePath("0"))
 				  && RunPostOpenCacheSymlinkRegression(
 					  cachePath,
 					  mediaCache ? fixtures.openedMediaCache
