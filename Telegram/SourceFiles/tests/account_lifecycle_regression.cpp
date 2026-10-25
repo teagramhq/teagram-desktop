@@ -74,12 +74,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
-#include "inline_bots/bot_attach_web_view.h"
+#include "info/peer_gifts/info_peer_gifts_common.h"
+#include "info/profile/info_profile_top_bar.h"
 #include "info/info_controller.h"
 #include "info/info_layer_widget.h"
+#include "info/info_section_widget.h"
 #include "info/info_wrap_widget.h"
-#include "info/profile/info_profile_top_bar.h"
-#include "info/peer_gifts/info_peer_gifts_common.h"
+#include "inline_bots/bot_attach_web_view.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
@@ -2836,19 +2837,6 @@ ShownInfoSectionMatches(not_null<Window::SessionController *> controller,
 	return false;
 }
 
-[[nodiscard]] bool
-ShownInfoControllerMatches(not_null<Window::SessionController *> controller,
-						   Fn<bool(const Info::Controller &)> matches) {
-	const auto widgets = controller->widget()->findChildren<QWidget *>();
-	for (const auto widget : widgets) {
-		const auto wrap = dynamic_cast<Info::WrapWidget *>(widget);
-		if (wrap && wrap->isVisible() && matches(*wrap->controller())) {
-			return true;
-		}
-	}
-	return false;
-}
-
 struct SettingsDeepLinkInfoCounts {
 	int wraps = 0;
 	int visibleWraps = 0;
@@ -3825,12 +3813,33 @@ template <typename Condition>
 	auto stockMessageState
 		= std::optional<std::pair<HistoryWidget *, ClickHandlerContext>>();
 	const auto hasStockInfoSection = [&](Info::Section::Type type) {
-		return stockController->content()->isMainSectionShown()
-			   && !stockController->isLayerShown()
-			   && ShownInfoSectionMatches(stockController,
-										  [&](const Info::Section &section) {
-											  return section.type() == type;
-										  });
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto sections
+			= stockController->content()->findChildren<Info::SectionWidget *>();
+		return (counts.mainInfo == 1) && (counts.mainSectionVisible == 1)
+			   && !stockController->isLayerShown() && (sections.size() == 1)
+			   && (sections.front()->contentSectionForRegressionTest().type()
+				   == type);
+	};
+	const auto hasStockStarRefJoin = [&] {
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto sections
+			= stockController->content()->findChildren<Info::SectionWidget *>();
+		if ((counts.mainInfo != 1) || (counts.mainSectionVisible != 1)
+			|| stockController->isLayerShown() || (sections.size() != 1)) {
+			return false;
+		}
+		const auto section = sections.front();
+		if (section->contentSectionForRegressionTest().type()
+			!= Info::Section::Type::BotStarRef) {
+			return false;
+		}
+		const auto wraps = section->findChildren<Info::WrapWidget *>();
+		return (wraps.size() == 1)
+			   && (wraps.front()->controller()->starrefType()
+				   == Info::BotStarRef::Type::Join);
 	};
 	const auto hasStockLayerText = [&](const QString &text) {
 		const auto widgets
@@ -3897,14 +3906,7 @@ template <typename Condition>
 			return hasStockInfoSection(Info::Section::Type::BotEarn);
 		} else if (url == u"tg://settings/stars/earn"_q) {
 			return stockCanJoinStarReferrals
-					   ? ShownInfoControllerMatches(
-							 stockController,
-							 [](const Info::Controller &controller) {
-								 return (controller.section().type()
-										 == Info::Section::Type::BotStarRef)
-										&& (controller.starrefType()
-											== Info::BotStarRef::Type::Join);
-							 })
+					   ? hasStockStarRefJoin()
 					   : (stockSavedMessagesHistoryShown()
 						  && !stockController->isLayerShown()
 						  && noStockInfoSectionShown());
