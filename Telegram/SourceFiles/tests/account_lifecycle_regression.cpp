@@ -2784,12 +2784,6 @@ enum class WindowActivationForRegressionResult {
 ActivateWindowForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
 							bool requirePrimary = false) {
-	if (!Platform::IsApplicationActiveForRegression()) {
-		LogWindowActivationForRegression(app, window);
-		std::fprintf(stderr, "Settings deep link activation unavailable: "
-							 "AppKit app is inactive.\n");
-		return WindowActivationForRegressionResult::AppInactive;
-	}
 	const auto isActive = [&] {
 		return (app.activeWindow() == window.get())
 			   && (!requirePrimary

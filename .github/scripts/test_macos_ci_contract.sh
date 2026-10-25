@@ -771,6 +771,28 @@ grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
 grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
   || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
+awk '
+  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  in_activation && /if \(!activated\)/ { activation_timeout = NR }
+  in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
+  in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
+    if (activation_timeout) {
+      timeout_appkit_check = NR
+    } else {
+      pre_attempt_appkit_check = NR
+    }
+  }
+  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
+    if (!activation_call || NR < activation_call) inactive_return_before_attempt = 1
+  }
+  in_activation && /^}/ { exit }
+  END {
+    exit !(activation_call && activation_timeout > activation_call &&
+      !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
+      !inactive_return_before_attempt)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
