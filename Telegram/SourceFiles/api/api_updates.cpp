@@ -834,8 +834,7 @@ void Updates::getDifferenceAfterReconnect() {
 			session().mtp().cancel(requestId);
 			_ptsWaiter.setRequesting(false);
 		},
-		[this] { requestState(); },
-		[this] { getDifference(); });
+		[this] { requestState(); }, [this] { getDifference(); });
 }
 
 void Updates::getChannelDifference(

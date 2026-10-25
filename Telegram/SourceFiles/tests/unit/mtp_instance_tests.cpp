@@ -334,8 +334,7 @@ TEST_CASE(MainDcReconnectBeforeInitialStateReissuesGetState) {
 	CHECK(!connection.update(false));
 	CHECK(connection.update(true));
 	requests.afterReconnect(
-		false,
-		[&](mtpRequestId requestId) { cancelledState = requestId; },
+		false, [&](mtpRequestId requestId) { cancelledState = requestId; },
 		[&] {
 			++stateRequests;
 			requests.started(Type::State, 42);
@@ -347,11 +346,8 @@ TEST_CASE(MainDcReconnectBeforeInitialStateReissuesGetState) {
 	CHECK(!requests.finish(Type::State, cancelledState, [] {}));
 
 	auto stateInitialized = false;
-	CHECK(requests.finishState(42, [&] {
-		stateInitialized = true;
-	}, [&] {
-		++differences;
-	}));
+	CHECK(requests.finishState(
+		42, [&] { stateInitialized = true; }, [&] { ++differences; }));
 	CHECK(stateInitialized);
 	CHECK_EQ(differences, 0);
 	CHECK(!requests.pending());
