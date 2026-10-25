@@ -44,7 +44,7 @@ constexpr auto kCountThreshold = 50ms;
 constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
-constexpr auto kMaxFrames = 15U;
+constexpr auto kMaxFrames = 32U;
 
 std::atomic<quint64> TotalStallCount = 0;
 
