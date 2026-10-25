@@ -2357,15 +2357,18 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &path) {
-	const auto directories
-		= QDir(path).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-	for (const auto &directory : directories) {
-		const auto version = QDir(path).filePath(directory);
-		if (QFileInfo(version + "/binlog").isFile()) {
-			return version;
-		}
+	auto versionFile = QFile(QDir(path).filePath("version"));
+	if (!versionFile.open(QIODevice::ReadOnly)) {
+		return {};
 	}
-	return {};
+	auto version = qint32();
+	const auto read = versionFile.read(reinterpret_cast<char *>(&version),
+									   qint64(sizeof(version)));
+	const auto active = QDir(path).filePath(QString::number(version));
+	return (read == qint64(sizeof(version)) && version >= 0
+			&& QFileInfo(active + "/binlog").isFile())
+			   ? active
+			   : QString();
 }
 
 [[nodiscard]] bool
@@ -2434,6 +2437,34 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			"restored=%d path=%s.\n",
 			readerRefused, readRefused, writeRefused, restored,
 			qPrintable(path));
+	}
+	return passed;
+}
+
+[[nodiscard]] bool
+RunClearThenCacheSymlinkRegression(const QString &path, const QString &fixture,
+								   CacheGetter cache,
+								   CachePointerGetter cacheIfAllowed,
+								   RefusedCacheReaderRegression cacheRefusal) {
+	const auto beforeClear = ActiveCacheVersionPath(path);
+	const auto cleared = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) { cache().clear(std::move(done)); });
+	if (beforeClear.isEmpty() || !CacheOperationSucceeded(cleared)) {
+		return false;
+	}
+	cache().sync();
+	const auto afterClear = ActiveCacheVersionPath(path);
+	const auto rotated = !afterClear.isEmpty() && (afterClear != beforeClear);
+	const auto allowedAfterClear = cacheIfAllowed() != nullptr;
+	const auto swapped = rotated && allowedAfterClear
+						 && RunPostOpenCacheSymlinkRegression(
+							 path, fixture, cache, [] {}, cacheRefusal);
+	const auto passed = rotated && allowedAfterClear && swapped;
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Clear-then-swap cache regression failed: rotated=%d "
+					 "allowed_after_clear=%d swapped=%d path=%s.\n",
+					 rotated, allowedAfterClear, swapped, qPrintable(path));
 	}
 	return passed;
 }
@@ -8547,6 +8578,8 @@ struct NativeLifecycleResults {
 			"authenticated-cache-file-symlinks",
 			"post-open-cache",
 			"post-open-media-cache",
+			"post-clear-cache",
+			"post-clear-media-cache",
 			"failed-init-cache-access",
 			"failed-init-media-cache-access",
 			"cold-post-open-cache",
@@ -9152,6 +9185,44 @@ void RunAuthenticatedCacheSymlinkCases(
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-clear-media-cache" : "post-clear-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			auto &data = guarded->session().data();
+			const auto cache = [&]() -> Storage::Cache::Database & {
+				return mediaCache ? data.cacheBigFile() : data.cache();
+			};
+			const auto cacheIfAllowed = [&] {
+				return mediaCache ? data.cacheBigFileIfAllowed()
+								  : data.cacheIfAllowed();
+			};
+			const auto cacheReady = WaitForRegressionCondition(
+				[&] { return cacheIfAllowed() != nullptr; });
+			const auto passed
+				= cacheReady
+				  && RunClearThenCacheSymlinkRegression(
+					  cachePath,
+					  mediaCache ? fixtures.openedMediaCache
+								 : fixtures.openedCache,
+					  cache, cacheIfAllowed, [guarded, mediaCache] {
+						  return RunRefusedCacheReaderRegressions(guarded,
+																  mediaCache);
+					  });
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "cold-post-open-media-cache"
 											 : "cold-post-open-cache";
 			nativeLifecycleResults->StartCase(caseName);
@@ -9202,6 +9273,10 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
 									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-media-cache",
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-cache-access",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-media-cache-access",
@@ -9223,6 +9298,10 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-media-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-cache-access",
 									 "protected-path-integration-disabled");

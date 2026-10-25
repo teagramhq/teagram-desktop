@@ -717,14 +717,34 @@ ReadCachePathTargetIdentity(const QString &path,
 }
 
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &cachePath) {
-	auto versionFile = QFile(QDir(cachePath).filePath("version"));
-	if (!versionFile.open(QIODevice::ReadOnly)) {
+	const auto versionPath = QDir(cachePath).filePath("version");
+	const auto native = QFile::encodeName(versionPath);
+	const auto descriptor = ::open(
+		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	if (descriptor < 0) {
+		return {};
+	}
+	const auto close = gsl::finally([=] { ::close(descriptor); });
+	struct stat opened = {};
+	if (::fstat(descriptor, &opened) != 0 || !S_ISREG(opened.st_mode)) {
 		return {};
 	}
 	auto version = qint32();
-	const auto read = versionFile.read(reinterpret_cast<char *>(&version),
-									   qint64(sizeof(version)));
-	if (read != qint64(sizeof(version))) {
+	for (auto offset = size_t(); offset != sizeof(version);) {
+		const auto read
+			= ::read(descriptor, reinterpret_cast<char *>(&version) + offset,
+					 sizeof(version) - offset);
+		if (read < 0 && errno == EINTR) {
+			continue;
+		} else if (read <= 0) {
+			return {};
+		}
+		offset += size_t(read);
+	}
+	struct stat current = {};
+	if (::lstat(native.constData(), &current) != 0 || !S_ISREG(current.st_mode)
+		|| (opened.st_dev != current.st_dev)
+		|| (opened.st_ino != current.st_ino) || (version < 0)) {
 		return {};
 	}
 	return QDir(cachePath).filePath(QString::number(version));
@@ -760,6 +780,7 @@ ReadCachePathTargetIdentity(const QString &path,
 		if (!ReadCachePathLinkIdentity(result.activeVersionDirectory.path,
 									   &result.activeVersionDirectory, &missing)
 			|| missing
+			|| (result.activeVersionDirectory.type != quint32(S_IFDIR))
 			|| !ReadCachePathTargetIdentity(result.activeVersionDirectory.path,
 											&result.activeVersionDirectory)) {
 			return false;
@@ -804,6 +825,7 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 		return false;
 	}
 	auto refreshed = identity->components;
+	auto refreshedActiveVersion = identity->activeVersionDirectory;
 	auto addedDirectory = false;
 	for (auto i = 0; i != int(prefixes.size()); ++i) {
 		auto actual = CachePathComponentIdentity{.path = prefixes[i]};
@@ -840,16 +862,33 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 			addedDirectory = true;
 		}
 	}
-	if (!identity->activeVersionDirectory.path.isEmpty()) {
-		const auto &expected = identity->activeVersionDirectory;
-		auto actual = CachePathComponentIdentity{.path = expected.path};
-		auto missing = false;
-		if (!ReadCachePathLinkIdentity(expected.path, &actual, &missing)
-			|| missing || !SameCachePathLinkIdentity(expected, actual)
-			|| !ReadCachePathTargetIdentity(expected.path, &actual)
-			|| !SameCachePathTargetIdentity(expected, actual)) {
+	const auto activePath = ActiveCacheVersionPath(absolutePath);
+	if (activePath.isEmpty()) {
+		if (!refreshedActiveVersion.path.isEmpty()) {
 			ReportCachePathIdentityRefusal(callsite);
 			return false;
+		}
+	} else {
+		auto actual = CachePathComponentIdentity{.path = activePath};
+		auto missing = false;
+		if (!ReadCachePathLinkIdentity(activePath, &actual, &missing) || missing
+			|| (actual.type != quint32(S_IFDIR))
+			|| !ReadCachePathTargetIdentity(activePath, &actual)) {
+			ReportCachePathIdentityRefusal(callsite);
+			return false;
+		}
+		if (refreshedActiveVersion.path == activePath) {
+			if (!SameCachePathLinkIdentity(refreshedActiveVersion, actual)
+				|| !SameCachePathTargetIdentity(refreshedActiveVersion,
+												actual)) {
+				ReportCachePathIdentityRefusal(callsite);
+				return false;
+			}
+		} else {
+			if (!CheckPath(Operation::OpenDir, activePath, callsite)) {
+				return false;
+			}
+			refreshedActiveVersion = std::move(actual);
 		}
 	}
 	if (addedDirectory
@@ -857,6 +896,7 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 		return false;
 	}
 	identity->components = std::move(refreshed);
+	identity->activeVersionDirectory = std::move(refreshedActiveVersion);
 	return true;
 }
 
