@@ -31,6 +31,25 @@ namespace Api {
 
 namespace details {
 
+class UpdateConnectionState final {
+public:
+	explicit UpdateConnectionState(bool connected = false)
+	: _connected(connected)
+	, _connectedOnce(connected) {
+	}
+
+	[[nodiscard]] bool update(bool connected) {
+		const auto reconnected = connected && _connectedOnce && !_connected;
+		_connected = connected;
+		_connectedOnce = _connectedOnce || connected;
+		return reconnected;
+	}
+
+private:
+	bool _connected = false;
+	bool _connectedOnce = false;
+};
+
 class UpdateRequestState final {
 public:
 	enum class Type {
@@ -102,6 +121,13 @@ public:
 
 	[[nodiscard]] bool pending() const {
 		return _state || _difference;
+	}
+
+	[[nodiscard]] mtpRequestId takePending() {
+		_recovering = false;
+		return _state
+			? std::exchange(_state, 0)
+			: std::exchange(_difference, 0);
 	}
 
 private:
@@ -197,6 +223,7 @@ public:
   void ptsWaiterStartTimerFor(ChannelData *channel, crl::time ms);
 
   void getDifference();
+  void getDifferenceAfterReconnect();
   void requestChannelRangeDifference(not_null<History *> history);
 
   void addActiveChat(rpl::producer<PeerData *> chat);

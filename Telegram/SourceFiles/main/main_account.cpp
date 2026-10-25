@@ -872,10 +872,18 @@ bool Account::startMtp(
 			crl::on_main(session, [=] { logOut(); });
 		}
 	});
+	const auto mainDcConnection = _mtp->lifetime().make_state<
+		Api::details::UpdateConnectionState>(
+			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {
 			Core::App().settings().proxy().connectionTypeChangesNotify();
 			Core::App().checkProxyRotation(this, state);
+			if (mainDcConnection->update(state == MTP::ConnectedState)) {
+				if (const auto session = maybeSession()) {
+					session->updates().getDifferenceAfterReconnect();
+				}
+			}
 		}
 	});
 	_mtp->setSessionResetHandler([=](MTP::ShiftedDcId shiftedDcId) {
