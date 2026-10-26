@@ -50,12 +50,8 @@ class ReadLimitedFile final : public QFile {
 		_readPastLimit = false;
 		unsetError();
 	}
-	[[nodiscard]] qint64 ReadCount() const {
-		return _readCount;
-	}
-	[[nodiscard]] bool ReadPastLimit() const {
-		return _readPastLimit;
-	}
+	[[nodiscard]] qint64 ReadCount() const { return _readCount; }
+	[[nodiscard]] bool ReadPastLimit() const { return _readPastLimit; }
 
   protected:
 	qint64 readData(char *data, qint64 maxSize) override {

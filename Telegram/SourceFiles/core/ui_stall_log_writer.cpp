@@ -18,7 +18,8 @@ void TruncateUtf8(QByteArray &bytes, qsizetype size) {
 	bytes.truncate(size);
 	auto start = bytes.size();
 	while (start > 0
-		   && (static_cast<unsigned char>(bytes.at(start - 1)) & 0xC0) == 0x80) {
+		   && (static_cast<unsigned char>(bytes.at(start - 1)) & 0xC0)
+				  == 0x80) {
 		--start;
 	}
 	if (!start) {
@@ -95,8 +96,8 @@ bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
 		return false;
 	}
 	const auto original = file.read(record.size);
-	if (file.error() != QFileDevice::NoError
-		|| original.size() != record.size || !file.seek(record.offset)) {
+	if (file.error() != QFileDevice::NoError || original.size() != record.size
+		|| !file.seek(record.offset)) {
 		return false;
 	}
 	const auto written = file.write(line);
