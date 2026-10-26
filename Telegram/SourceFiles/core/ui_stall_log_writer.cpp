@@ -12,7 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 namespace {
 
-constexpr auto kDurationReserve = 19;
+constexpr auto kMinimumRecordSize = 16 * 1024;
 
 void TruncateUtf8(QByteArray &bytes, qsizetype size) {
 	bytes.truncate(size);
@@ -51,7 +51,9 @@ bool UiStallLogWriter::writeDetection(QFile &file, const QString &prefix,
 	}
 
 	auto bytes = (prefix + message).toUtf8();
-	bytes += QByteArray(kDurationReserve, ' ');
+	if (bytes.size() < kMinimumRecordSize - 1) {
+		bytes += QByteArray(kMinimumRecordSize - 1 - bytes.size(), ' ');
+	}
 	bytes += '\n';
 	const auto offset = file.size();
 	const auto size = bytes.size();

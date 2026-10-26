@@ -45,6 +45,7 @@ constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kMaxFrames = 32U;
+constexpr auto kMaxFrameCharacters = 160;
 
 std::atomic<quint64> TotalStallCount = 0;
 
@@ -251,7 +252,9 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 [[nodiscard]] QString FormatStack(const std::vector<void *> &frames) {
 	auto result = QStringList();
 	for (auto i = 0; i != int(frames.size()); ++i) {
-		result.push_back(DescribeFrame(frames[i], i != 0));
+		auto frame = DescribeFrame(frames[i], i != 0);
+		frame.truncate(kMaxFrameCharacters);
+		result.push_back(std::move(frame));
 	}
 	return result.isEmpty() ? u"stack unavailable"_q : result.join(u" <- "_q);
 }

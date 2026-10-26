@@ -234,9 +234,13 @@ TEST_CASE(UiStallLogWriterUpdatesWithinLargeLogTail) {
 		return;
 	}
 	output.LimitReadTo(slotSize);
-	CHECK(writer.writeUpdate(
-		output,
-		u"UI stall 900 ms (started longer stall): replacement stack with additional frames beyond previous record"_q));
+	auto replacement = u"UI stall 900 ms (started longer stall): "_q;
+	const auto longFrame = QString(160, QChar(u'x'));
+	for (auto i = 0; i != 31; ++i) {
+		replacement += longFrame + u" <- "_q;
+	}
+	replacement += u"CheckCachePath"_q;
+	CHECK(writer.writeUpdate(output, replacement));
 	CHECK_EQ(output.ReadCount(), slotSize);
 	CHECK(!output.ReadPastLimit());
 	output.close();
@@ -248,7 +252,8 @@ TEST_CASE(UiStallLogWriterUpdatesWithinLargeLogTail) {
 	}
 	const auto content = result.readAll();
 	CHECK(content.startsWith(
-		"[prefix] UI stall 900 ms (started longer stall): replacement"));
+		"[prefix] UI stall 900 ms (started longer stall): x"));
+	CHECK(content.contains("CheckCachePath"));
 	CHECK_EQ(content.count("UI stall "), 1);
 	CHECK_EQ(content.mid(slotSize), following + largeTail);
 }
