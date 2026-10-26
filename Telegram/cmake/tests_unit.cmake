@@ -122,6 +122,7 @@ PRIVATE
     tests/unit/upload_limits_tests.cpp
     tests/unit/update_policy_tests.cpp
     tests/unit/username_check_state_tests.cpp
+    tests/unit/video_cover_upload_tests.cpp
     tests/unit/unit_test.cpp
     tests/unit/unit_test.h
     mtproto/connection_abstract.h

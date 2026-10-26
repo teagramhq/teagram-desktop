@@ -145,6 +145,7 @@ private:
 	void processDocumentProgress(FullMsgId itemId);
 	void processDocumentFailed(FullMsgId itemId);
 
+	void failVideoCover(FullMsgId coverId);
 	void notifyFailed(const Entry &entry);
 	void failed(FullMsgId itemId);
 	void cancelRequests(FullMsgId itemId);

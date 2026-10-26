@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_send_progress.h"
 #include "storage/localimageloader.h"
 #include "storage/upload_limits.h"
+#include "storage/video_cover_upload.h"
 #include "storage/file_download.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
@@ -406,21 +407,10 @@ void Uploader::failed(FullMsgId itemId) {
 		_queue.erase(i);
 		notifyFailed(entry);
 	} else if (const auto coverId = _videoIdToCoverId.take(itemId)) {
-		if (const auto video = _videoWaitingCover.take(*coverId)) {
-			const auto document = session().data().document(video->id);
-			if (document->uploading()) {
-				document->status = FileUploadFailed;
-			}
-			_documentFailed.fire_copy(video->fullId);
-		}
+		failVideoCover(*coverId);
 		failed(*coverId);
-	} else if (const auto video = _videoWaitingCover.take(itemId)) {
-		_videoIdToCoverId.remove(video->fullId);
-		const auto document = session().data().document(video->id);
-		if (document->uploading()) {
-			document->status = FileUploadFailed;
-		}
-		_documentFailed.fire_copy(video->fullId);
+	} else if (_videoWaitingCover.find(itemId) != end(_videoWaitingCover)) {
+		failVideoCover(itemId);
 	}
 	cancelRequests(itemId);
 	maybeFinishFront();
@@ -430,9 +420,24 @@ void Uploader::failed(FullMsgId itemId) {
 	});
 }
 
+void Uploader::failVideoCover(FullMsgId coverId) {
+	details::FailVideoCover(
+		coverId,
+		_videoWaitingCover,
+		_videoIdToCoverId,
+		[=](const UploadedMedia &video) {
+			const auto document = session().data().document(video.id);
+			if (document->uploading()) {
+				document->status = FileUploadFailed;
+			}
+			_documentFailed.fire_copy(video.fullId);
+		});
+}
+
 void Uploader::notifyFailed(const Entry &entry) {
 	const auto type = entry.file->type;
 	if (type == SendMediaType::Photo) {
+		failVideoCover(entry.itemId);
 		_photoFailed.fire_copy(entry.itemId);
 	} else if (type == SendMediaType::File
 		|| type == SendMediaType::ThemeFile

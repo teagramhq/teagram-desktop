@@ -1924,6 +1924,7 @@ PRIVATE
     storage/file_upload.cpp
     storage/file_upload.h
     storage/upload_limits.h
+    storage/video_cover_upload.h
     storage/localimageloader.cpp
     storage/localimageloader.h
     storage/localstorage.cpp
