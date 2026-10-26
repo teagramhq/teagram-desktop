@@ -392,8 +392,8 @@ void UiStallWatchdog::run() {
 		}
 		if (detectedAt != Clock::time_point() && _log) {
 			const auto rateLimitedUntil = lastLogged + kLogRateLimit;
-			const auto rateLimited = hasLogged
-				&& Clock::now() < rateLimitedUntil;
+			const auto rateLimited
+				= hasLogged && Clock::now() < rateLimitedUntil;
 			const auto observedDuration = detectedAt - postedAt;
 			if (!rateLimited) {
 				writeLog = true;
@@ -403,7 +403,8 @@ void UiStallWatchdog::run() {
 			} else {
 				const auto longerThanLastAt
 					= postedAt + lastLoggedDuration + Clock::duration(1);
-				const auto retryAt = std::min(rateLimitedUntil, longerThanLastAt);
+				const auto retryAt
+					= std::min(rateLimitedUntil, longerThanLastAt);
 				if (!_condition.wait_until(lock, retryAt, acknowledged)) {
 					detectedAt = Clock::now();
 					writeLog = true;

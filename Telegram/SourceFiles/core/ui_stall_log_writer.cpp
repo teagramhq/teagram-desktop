@@ -74,8 +74,8 @@ bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
 		const auto flushed = file.flush();
 		if (written != line.size() || !flushed) {
 			const auto restored = file.seek(record.offset)
-				&& file.write(original) == original.size()
-				&& file.flush();
+								  && file.write(original) == original.size()
+								  && file.flush();
 			if (!restored) {
 				reset();
 			}
