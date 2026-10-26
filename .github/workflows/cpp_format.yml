@@ -1,15 +1,49 @@
 name: C++ changed-range format.
 
+run-name: ${{ inputs.issue && format('{0} [{1}]', github.workflow, inputs.issue) || github.workflow }}
+
 on:
   pull_request:
     branches:
       - dev
+  workflow_dispatch:
+    inputs:
+      tested_head:
+        description: Exact full commit SHA whose contents will be checked.
+        required: true
+        type: string
+        default: f7f1217951d4f8eae30ffd654f6c3300a461cfbb
+      merged_profile_ipc_base:
+        description: Base SHA selecting the merged-profile-ipc source files.
+        required: true
+        type: string
+        default: 12e804d5ea3dfef7ef54209dbff2207265ef298f
+      merged_profile_ipc_head:
+        description: Head SHA selecting the merged-profile-ipc source files.
+        required: true
+        type: string
+        default: 9f4a8d28d588784a81a8aa603ec975245f33045b
+      lifecycle_repair_base:
+        description: Base SHA selecting lifecycle-repair source files.
+        required: true
+        type: string
+        default: daf71541a0bea6990694d6d6f132ca943f731305
+      lifecycle_repair_head:
+        description: Head SHA selecting lifecycle-repair source files.
+        required: true
+        type: string
+        default: f7f1217951d4f8eae30ffd654f6c3300a461cfbb
+      issue:
+        description: Issue key to report this run to (e.g. MAIN-123). Leave empty for no report.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: cpp-format-${{ github.event.pull_request.number || github.ref }}
+  group: cpp-format-${{ github.event.pull_request.number || inputs.tested_head || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +56,7 @@ jobs:
       - name: Clone.
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tested_head || github.sha }}
           fetch-depth: 0
 
       - name: Install clang-format 23.1.0.
@@ -56,24 +91,125 @@ jobs:
           echo "$(dirname "$formatter")" >> "$GITHUB_PATH"
 
       - name: Check changed C++ formatting.
+        id: check-format
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TESTED_HEAD: ${{ inputs.tested_head }}
+          MERGED_PROFILE_IPC_BASE: ${{ inputs.merged_profile_ipc_base }}
+          MERGED_PROFILE_IPC_HEAD: ${{ inputs.merged_profile_ipc_head }}
+          LIFECYCLE_REPAIR_BASE: ${{ inputs.lifecycle_repair_base }}
+          LIFECYCLE_REPAIR_HEAD: ${{ inputs.lifecycle_repair_head }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          format_dir="$RUNNER_TEMP/cpp-format"
+          mkdir -p "$format_dir"
+          log="$format_dir/format.log"
+          manifest="$format_dir/manifest.json"
+          script=.github/scripts/check_cpp_format.py
 
-          git cat-file -e "${PR_BASE_SHA}^{commit}"
-          git cat-file -e "${PR_HEAD_SHA}^{commit}"
-          git checkout --detach "$PR_HEAD_SHA"
-          merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+          python3 "$script" --formatter clang-format --self-test 2>&1 | tee "$log"
 
-          python3 .github/scripts/check_cpp_format.py \
-            --formatter clang-format \
-            --self-test
-          python3 .github/scripts/check_cpp_format.py \
+          source_ranges=()
+          allow_empty=()
+          if [[ "$EVENT_NAME" == 'pull_request' ]]; then
+            tested_head="$PR_HEAD_SHA"
+            git cat-file -e "${PR_BASE_SHA}^{commit}"
+            git cat-file -e "${PR_HEAD_SHA}^{commit}"
+            merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+            source_ranges=(--source-range pull-request "$merge_base" "$PR_HEAD_SHA")
+            allow_empty=(--allow-empty)
+          else
+            tested_head="$TESTED_HEAD"
+            require_full_sha() {
+              local name="$1" value="$2"
+              if [[ ! "$value" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                echo "::error::$name must be a full 40-character commit SHA."
+                return 1
+              fi
+            }
+            require_full_sha tested_head "$TESTED_HEAD"
+            require_full_sha merged_profile_ipc_base "$MERGED_PROFILE_IPC_BASE"
+            require_full_sha merged_profile_ipc_head "$MERGED_PROFILE_IPC_HEAD"
+            require_full_sha lifecycle_repair_base "$LIFECYCLE_REPAIR_BASE"
+            require_full_sha lifecycle_repair_head "$LIFECYCLE_REPAIR_HEAD"
+            source_ranges=(
+              --source-range merged-profile-ipc "$MERGED_PROFILE_IPC_BASE" "$MERGED_PROFILE_IPC_HEAD"
+              --source-range lifecycle-repair "$LIFECYCLE_REPAIR_BASE" "$LIFECYCLE_REPAIR_HEAD"
+            )
+          fi
+
+          git cat-file -e "${tested_head}^{commit}"
+          git checkout --detach "$tested_head"
+          checked_out_head="$(git rev-parse HEAD)"
+          if [[ "$checked_out_head" != "$tested_head" ]]; then
+            echo "::error::Checked-out HEAD $checked_out_head does not match tested SHA $tested_head."
+            exit 1
+          fi
+
+          format_status=0
+          python3 "$script" \
             --repo-root "$GITHUB_WORKSPACE" \
             --formatter clang-format \
-            --allow-empty \
-            --tested-head "$PR_HEAD_SHA" \
-            --source-range pull-request "$merge_base" "$PR_HEAD_SHA"
+            "${allow_empty[@]}" \
+            --tested-head "$tested_head" \
+            "${source_ranges[@]}" \
+            --manifest "$manifest" \
+            2>&1 | tee -a "$log" || format_status=$?
+
+          if [[ -f "$manifest" ]]; then
+            python3 - "$manifest" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              report = json.load(source)
+          print("### C++ changed-range format coverage")
+          print(f"- Result: `{report.get('result', 'unknown')}`")
+          print(f"- Formatter: `{report.get('formatter', 'unknown')}`")
+          print(
+              "- Tested SHA: `{} (declared {})`".format(
+                  report.get("resolved_tested_head", "unresolved"),
+                  report.get("declared_tested_head", "unknown"),
+              )
+          )
+          print(
+              "- Total coverage: {} files, {} changed lines across {} declared source ranges ({} file-range checks)".format(
+                  report.get("checked_source_count", 0),
+                  report.get("checked_changed_line_count", 0),
+                  len(report.get("source_ranges", [])),
+                  report.get("checked_source_range_count", 0),
+              )
+          )
+          for source_range in report.get("source_ranges", []):
+              declared = source_range.get("declared_source_range", {})
+              resolved = source_range.get("resolved_source_range", {})
+              print(
+                  "- {}: declared `{}..{}`, resolved `{}..{}`; {} files, {} changed lines; {}".format(
+                      source_range.get("name", "unnamed"),
+                      declared.get("base", "unknown"),
+                      declared.get("head", "unknown"),
+                      resolved.get("base", "unresolved"),
+                      resolved.get("head", "unresolved"),
+                      source_range.get("checked_source_count", 0),
+                      source_range.get("checked_changed_line_count", 0),
+                      source_range.get("result", "unknown"),
+                  )
+              )
+          PY
+          else
+            printf 'Formatter coverage manifest was not produced (exit %s).\n' \
+              "$format_status" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$format_status"
+
+      - name: Upload formatter coverage report.
+        if: always() && steps.check-format.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-format-coverage-${{ github.run_id }}
+          path: ${{ runner.temp }}/cpp-format/
+          if-no-files-found: warn
+          retention-days: 14
