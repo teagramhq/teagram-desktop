@@ -434,10 +434,18 @@ void Uploader::failVideoCover(FullMsgId coverId, bool markMessageFailed) {
 				document->status = FileUploadFailed;
 			}
 			document->uploadingData = nullptr;
-			details::FailLocalMessageUpload(
-				session().data().message(video.fullId), markMessageFailed);
+			failLocalMessage(video.fullId, markMessageFailed);
 			_documentFailed.fire_copy(video.fullId);
 		});
+}
+
+void Uploader::failLocalMessage(FullMsgId itemId, bool markMessageFailed) {
+	const auto message = session().data().message(itemId);
+	const auto cancelLocalItem = [=](HistoryItem *item) {
+		session().api().cancelLocalItem(not_null<HistoryItem *>(item));
+	};
+	details::FailLocalMessageUpload(message, markMessageFailed,
+									cancelLocalItem);
 }
 
 void Uploader::notifyFailed(const Entry &entry, bool markMessageFailed) {
@@ -445,8 +453,7 @@ void Uploader::notifyFailed(const Entry &entry, bool markMessageFailed) {
 	if (type == SendMediaType::Photo) {
 		session().data().photo(entry.file->id)->uploadingData = nullptr;
 		failVideoCover(entry.itemId, markMessageFailed);
-		details::FailLocalMessageUpload(session().data().message(entry.itemId),
-										markMessageFailed);
+		failLocalMessage(entry.itemId, markMessageFailed);
 		_photoFailed.fire_copy(entry.itemId);
 	} else if (type == SendMediaType::File
 		|| type == SendMediaType::ThemeFile
@@ -457,8 +464,7 @@ void Uploader::notifyFailed(const Entry &entry, bool markMessageFailed) {
 			document->status = FileUploadFailed;
 		}
 		document->uploadingData = nullptr;
-		details::FailLocalMessageUpload(session().data().message(entry.itemId),
-										markMessageFailed);
+		failLocalMessage(entry.itemId, markMessageFailed);
 		_documentFailed.fire_copy(entry.itemId);
 	} else if (type == SendMediaType::Secure) {
 		_secureFailed.fire_copy(entry.itemId);

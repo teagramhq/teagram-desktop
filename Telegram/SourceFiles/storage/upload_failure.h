@@ -20,8 +20,9 @@ namespace Storage::details {
 	return (type == u"FILE_PART_TOO_BIG"_q);
 }
 
-template <typename Item>
-void FailLocalMessageUpload(Item *item, bool markMessageFailed = true) {
+template <typename Item, typename BeforeFailure>
+void FailLocalMessageUpload(Item *item, bool markMessageFailed,
+							BeforeFailure &&beforeFailure) {
 	if (!item) {
 		return;
 	}
@@ -33,9 +34,18 @@ void FailLocalMessageUpload(Item *item, bool markMessageFailed = true) {
 			document->uploadingData = nullptr;
 		}
 	}
+	if (item->isEditingMedia()) {
+		item->returnSavedMedia();
+	}
 	if (markMessageFailed && item->isSending()) {
+		std::forward<BeforeFailure>(beforeFailure)(item);
 		item->sendFailed();
 	}
+}
+
+template <typename Item>
+void FailLocalMessageUpload(Item *item, bool markMessageFailed = true) {
+	FailLocalMessageUpload(item, markMessageFailed, [](Item *) {});
 }
 
 template <typename Failed, typename ShowLimit>

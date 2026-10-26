@@ -11,8 +11,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/upload_failure.h"
 #include "storage/upload_limits.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -40,14 +42,32 @@ struct UploadFailureMessage {
 		failed = true;
 	}
 	UploadFailureMedia *media() const { return mediaData; }
+	bool isEditingMedia() const { return editingMedia; }
+	void returnSavedMedia() {
+		if (editingMedia) {
+			mediaData = savedMediaData;
+			caption = savedCaption;
+			editingMedia = false;
+		}
+	}
 
+	FullMsgId itemId;
 	UploadFailureMedia *mediaData = nullptr;
+	UploadFailureMedia *savedMediaData = nullptr;
+	std::string caption;
+	std::string savedCaption;
 	bool sending = true;
 	bool failed = false;
+	bool editingMedia = false;
 };
 
 struct UploadRequest {
 	FullMsgId itemId;
+};
+
+struct UploadFailureAlbumItem {
+	FullMsgId itemId;
+	int64 size = 0;
 };
 
 } // namespace
@@ -116,6 +136,40 @@ TEST_CASE(FilePartTooBigFailureCancelsPartsAndFailsLocalMessage) {
 	CHECK_EQ(shownSize, int64(500'001));
 }
 
+TEST_CASE(OversizedAlbumMemberIsRemovedBeforeFailureMark) {
+	const auto rejectedId = FullMsgId(PeerId(1), 1);
+	const auto validId = FullMsgId(PeerId(1), 2);
+	auto message = UploadFailureMessage{.itemId = rejectedId};
+	auto album = std::vector<UploadFailureAlbumItem>{
+		{rejectedId, 500'001},
+		{validId, 250'000},
+	};
+	auto cancellationBeforeFailure = false;
+
+	Storage::details::HandlePreflightUploadFailure(
+		500'001, [](int64) {},
+		[&] {
+			Storage::details::FailLocalMessageUpload(
+				&message, true, [&](UploadFailureMessage *item) {
+					cancellationBeforeFailure = item->sending;
+					const auto rejected = std::find_if(
+						album.begin(), album.end(), [&](const auto &entry) {
+							return (entry.itemId == item->itemId);
+						});
+					if (rejected != album.end()) {
+						album.erase(rejected);
+					}
+				});
+		});
+
+	CHECK(cancellationBeforeFailure);
+	CHECK(!message.sending);
+	CHECK(message.failed);
+	CHECK(album.size() == 1);
+	CHECK(album.front().itemId == validId);
+	CHECK_EQ(album.front().size, int64(250'000));
+}
+
 TEST_CASE(PreflightUploadLimitFailsLocalDocumentMessage) {
 	auto document = UploadFailureDocument();
 	auto media = UploadFailureMedia{.documentData = &document};
@@ -135,6 +189,57 @@ TEST_CASE(PreflightUploadLimitFailsLocalDocumentMessage) {
 	CHECK(!document.uploadingData);
 	CHECK(sizeLimitShown);
 	CHECK(failureAfterLimitShown);
+}
+
+TEST_CASE(RejectedPhotoReplacementRestoresSavedMediaAndCaption) {
+	auto savedPhoto = UploadFailurePhoto();
+	auto savedMedia = UploadFailureMedia{.photoData = &savedPhoto};
+	auto replacementPhoto = UploadFailurePhoto();
+	auto replacementMedia = UploadFailureMedia{.photoData = &replacementPhoto};
+	auto message = UploadFailureMessage{
+		.mediaData = &replacementMedia,
+		.savedMediaData = &savedMedia,
+		.caption = "replacement caption",
+		.savedCaption = "original caption",
+		.sending = false,
+		.editingMedia = true,
+	};
+
+	Storage::details::HandlePreflightUploadFailure(
+		500'001, [](int64) {},
+		[&] { Storage::details::FailLocalMessageUpload(&message); });
+
+	CHECK(!replacementPhoto.uploadingData);
+	CHECK(message.mediaData == &savedMedia);
+	CHECK_EQ(message.caption, std::string("original caption"));
+	CHECK(!message.editingMedia);
+}
+
+TEST_CASE(RejectedDocumentReplacementRestoresSavedMediaAndCaption) {
+	auto savedDocument = UploadFailureDocument();
+	auto savedMedia = UploadFailureMedia{.documentData = &savedDocument};
+	auto replacementDocument = UploadFailureDocument();
+	auto replacementMedia = UploadFailureMedia{
+		.documentData = &replacementDocument,
+	};
+	auto message = UploadFailureMessage{
+		.mediaData = &replacementMedia,
+		.savedMediaData = &savedMedia,
+		.caption = "replacement caption",
+		.savedCaption = "original caption",
+		.sending = false,
+		.editingMedia = true,
+	};
+
+	Storage::details::HandleUploadPartFailure(
+		u"FILE_PART_TOO_BIG"_q, 500'001,
+		[&] { Storage::details::FailLocalMessageUpload(&message); },
+		[](int64) {});
+
+	CHECK(!replacementDocument.uploadingData);
+	CHECK(message.mediaData == &savedMedia);
+	CHECK_EQ(message.caption, std::string("original caption"));
+	CHECK(!message.editingMedia);
 }
 
 TEST_CASE(CancelledLocalUploadClearsDataWithoutFailingMessage) {
