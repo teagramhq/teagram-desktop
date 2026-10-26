@@ -4062,7 +4062,8 @@ template <typename Condition>
 			"custom Saved Messages click context.\n");
 		return false;
 	}
-	if (!ActivateWindowForRegression(app, &stockController->window())) {
+	if (activationFailed(
+			ActivateWindowForRegression(app, &stockController->window()))) {
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -4077,7 +4078,8 @@ template <typename Condition>
 			return false;
 		}
 	}
-	if (!ActivateWindowForRegression(app, &pinnedController->window())) {
+	if (activationFailed(
+			ActivateWindowForRegression(app, &pinnedController->window()))) {
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
@@ -4105,7 +4107,8 @@ template <typename Condition>
 			resetController(stockController);
 			stockController->setHighlightControlId(QString());
 			QCoreApplication::processEvents();
-			if (!activateSettingsWindow(&stockController->window())) {
+			if (activationFailed(
+					activateSettingsWindow(&stockController->window()))) {
 				std::fprintf(stderr,
 							 "Settings deep link regression failed: stock "
 							 "window did not "
