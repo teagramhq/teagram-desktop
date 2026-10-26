@@ -53,7 +53,7 @@ pr_profile="$(bash "$profile_script" pull_request)"
 dispatch_profile="$(bash "$profile_script" workflow_dispatch)"
 [[ "$schedule_profile" == "$pr_profile" ]] || fail 'The PR profile must match the scheduled seed profile.'
 [[ "$schedule_profile" == $'name=pr-compatible\nprotected_path_integration=OFF' ]] || fail 'The scheduled seed must use the PR-compatible profile.'
-[[ "$dispatch_profile" == $'name=protected\nprotected_path_integration=ON' ]] || fail 'The dispatch must use the protected diagnostic profile.'
+[[ "$dispatch_profile" == $'name=pr-compatible\nprotected_path_integration=ON' ]] || fail 'The dispatch must share the PR-compatible cache profile and keep integration enabled.'
 
 pr_hash='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 protected_hash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -72,14 +72,14 @@ if grep -Fq $'100\t' "$cache_state"; then
   fail 'Cleanup must remove the older PR-compatible snapshot.'
 fi
 
-dispatch_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1002-1"
-older_dispatch_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1000-1"
+legacy_protected_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1002-1"
+older_legacy_protected_key="macOS-arm64-ccache-dev-protected-${protected_hash}-1000-1"
 packaged_key="macOS-arm64-ccache-dev-${pr_hash}-999-1"
 older_packaged_key="macOS-arm64-ccache-dev-${pr_hash}-998-1"
 {
-  printf '202\t%s\n' "$dispatch_key"
+  printf '202\t%s\n' "$legacy_protected_key"
   cat "$cache_state"
-  printf '201\t%s\n' "$older_dispatch_key"
+  printf '201\t%s\n' "$older_legacy_protected_key"
   printf '199\t%s\n' "$packaged_key"
   printf '198\t%s\n' "$older_packaged_key"
 } > "${cache_state}.next"

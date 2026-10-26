@@ -16,7 +16,7 @@ case "$1" in
     fi
     ;;
   workflow_dispatch)
-    profile=protected
+    profile=pr-compatible
     protected_path_integration=ON
     ;;
   *)

@@ -459,21 +459,38 @@ fi
 if [[ "$pull_request_profile" != $'name=pr-compatible\nprotected_path_integration=OFF' ]]; then
   contract_fail 'Unapproved MacOS PR and scheduled builds must use the PR-compatible OFF profile.'
 fi
-if [[ "$approved_pull_request_profile" != "$dispatch_profile" ]]; then
-  contract_fail 'Approved MacOS PR builds and protected dispatches must use the same ON ccache profile.'
+if [[ "$approved_pull_request_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
+  contract_fail 'Approved MacOS PR builds must use the protected ON ccache profile.'
 fi
 other_label_profile="$(bash "$ccache_profile_script" pull_request unrelated-label)"
 if [[ "$other_label_profile" != "$pull_request_profile" ]]; then
   contract_fail 'Only the approved macos-build PR label may enable the protected profile.'
 fi
-if [[ "$dispatch_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
-  contract_fail 'Protected-path builds must use a separate ON ccache profile.'
+if [[ "$dispatch_profile" != $'name=pr-compatible\nprotected_path_integration=ON' ]]; then
+  contract_fail 'Protected-path dispatches must share the cache profile while keeping the ON integration define.'
 fi
-require_step_field "$mac_workflow" macos 'First set up.' '.env.PROTECTED_PATH_INTEGRATION' \
-  '${{ steps.ccache-profile.outputs.protected_path_integration }}'
 require_step_script "$mac_workflow" macos 'First set up.' \
-  'protected_path_integration="$PROTECTED_PATH_INTEGRATION"' \
-  'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s'
+  "TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=OFF"
+if awk '
+  /target_compile_definitions\(Telegram/ { in_target_definitions = 1 }
+  in_target_definitions && /TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST/ { found = 1 }
+  in_target_definitions && /^[[:space:]]*\)/ { in_target_definitions = 0 }
+  END { exit !found }
+' Telegram/CMakeLists.txt; then
+  contract_fail 'The protected-path define must not change every Telegram compile command.'
+fi
+protected_path_sources="$(sed -n '/# Scope this opt-in define/,/endif()/p' Telegram/CMakeLists.txt)"
+grep -Fq 'APPEND PROPERTY COMPILE_DEFINITIONS' <<< "$protected_path_sources" \
+  || contract_fail 'The protected-path define must use source-level compile definitions.'
+grep -Fq 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST' <<< "$protected_path_sources" \
+  || contract_fail 'The protected-path define must be enabled for its source consumers.'
+for source in \
+    '"${src_loc}/main.cpp"' \
+    '"${src_loc}/core/mac_protected_path_runtime.mm"' \
+    '"${src_loc}/tests/account_lifecycle_regression.cpp"'; do
+  grep -Fq -- "$source" <<< "$protected_path_sources" \
+    || contract_fail "The protected-path define must stay scoped to $source."
+done
 hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
 profile_expression="\${{ steps.ccache-profile.outputs.name }}"
 require_step_field "$mac_workflow" macos 'Teagram compiler cache.' '.uses | sub("@.*", "")' \
