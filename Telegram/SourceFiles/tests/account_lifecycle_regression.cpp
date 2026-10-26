@@ -3400,8 +3400,8 @@ template <typename Condition>
 								  && otherWindowsUnchanged;
 		const auto activeWindowUnchanged
 			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
-		const auto refused = dispatched && toastOnly && noPaidUiOpen
-							 && activeWindowUnchanged;
+		const auto refused
+			= dispatched && toastOnly && noPaidUiOpen && activeWindowUnchanged;
 		if (!refused) {
 			std::fprintf(
 				stderr,
