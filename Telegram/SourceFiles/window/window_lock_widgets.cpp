@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 #include "mainwindow.h"
 #include "core/application.h"
+#include "intro/intro_signup_terms.h"
 #include "api/api_text_entities.h"
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
@@ -322,6 +323,17 @@ TermsLock TermsLock::FromMTP(
 			data.is_popup()};
 }
 
+TermsLock TermsLock::FromSignupMTP(
+		const MTPDhelp_termsOfService &data) {
+	auto terms = Intro::details::SignupTermsPayloadFromMTP(data);
+	return {
+		std::move(terms.id),
+		std::move(terms.text),
+		std::move(terms.minAge),
+		terms.popup,
+	};
+}
+
 TermsBox::TermsBox(QWidget *, const TermsLock &data,
 				   rpl::producer<QString> agree, rpl::producer<QString> cancel,
 				   bool declineOnEscape)
@@ -460,12 +472,14 @@ void TermsBox::prepare() {
 }
 
 void TermsBox::keyPressEvent(QKeyEvent *e) {
-	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-		_agreeClicks.fire({});
-	} else if (e->key() == Qt::Key_Escape && _declineOnEscape) {
-		e->accept();
-		_cancelClicks.fire({});
-	} else {
+	if (!Intro::details::HandleSignupTermsKey(
+		e->key(),
+		_declineOnEscape,
+		[=] { _agreeClicks.fire({}); },
+		[=] {
+			e->accept();
+			_cancelClicks.fire({});
+		})) {
 		BoxContent::keyPressEvent(e);
 	}
 }

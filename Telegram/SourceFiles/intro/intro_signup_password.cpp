@@ -201,16 +201,19 @@ void SignUpPasswordWidget::submit() {
 }
 
 void SignUpPasswordWidget::requestSignup() {
-	RunSignupWithTerms(
-		!getData()->termsLock.text.text.isEmpty(),
-		_acceptedTermsId && (*_acceptedTermsId == getData()->termsLock.id),
+	const auto &termsLock = getData()->termsLock;
+	_termsGate.submit(
+		{
+			termsLock.id,
+			termsLock.text,
+			termsLock.minAge,
+			termsLock.popup,
+		},
 		[=](Fn<void()> accept, Fn<void()> decline) {
 			_termsPromptPending = true;
 			showSignupTerms(crl::guard(this,
 									   [=] {
 										   _termsPromptPending = false;
-										   _acceptedTermsId
-											   = getData()->termsLock.id;
 										   accept();
 									   }),
 							crl::guard(this, [=] {
@@ -218,12 +221,14 @@ void SignUpPasswordWidget::requestSignup() {
 								decline();
 							}));
 		},
-		crl::guard(this, [=] { signUp(); }), crl::guard(this, [=] {
+		crl::guard(this, [=](SignupTermsPermission permission) {
+			signUp(std::move(permission));
+		}), crl::guard(this, [=] {
 			showFormError(tr::lng_teagram_terms_declined(tr::now));
 		}));
 }
 
-void SignUpPasswordWidget::signUp() {
+void SignUpPasswordWidget::signUp(SignupTermsPermission) {
 	// A successful signUp creates a provisional account that cannot be
 	// recovered without this step. Do not let Back cancel the request before
 	// its outcome is known.

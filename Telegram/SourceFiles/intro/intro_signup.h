@@ -7,10 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/bytes.h"
 #include "intro/intro_step.h"
-
-#include <optional>
+#include "intro/intro_signup_terms.h"
 
 namespace Ui {
 class RoundButton;
@@ -52,7 +50,7 @@ private:
 
 	bool _invertOrder = false;
 
-	std::optional<bytes::vector> _acceptedTermsId;
+	SignupTermsGate _termsGate;
 	bool _termsPromptPending = false;
 };
 

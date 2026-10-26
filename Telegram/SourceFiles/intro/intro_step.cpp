@@ -172,9 +172,7 @@ void Step::finish(const MTPauth_Authorization &auth, QImage &&photo) {
 	}, [&](const MTPDauth_authorizationSignUpRequired &data) {
 		if (const auto terms = data.vterms_of_service()) {
 			terms->match([&](const MTPDhelp_termsOfService &data) {
-				getData()->termsLock = Window::TermsLock::FromMTP(
-					nullptr,
-					data);
+				getData()->termsLock = Window::TermsLock::FromSignupMTP(data);
 			});
 		} else {
 			getData()->termsLock = Window::TermsLock();

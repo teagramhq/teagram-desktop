@@ -173,7 +173,7 @@ void SignupWidget::submit() {
 		}
 	}
 
-	const auto send = [&] {
+	const auto send = [=](SignupTermsPermission) {
 		hideError();
 
 		_firstName = _first->getLastText().trimmed();
@@ -190,16 +190,19 @@ void SignupWidget::submit() {
 			nameSubmitFail(error);
 		}).handleFloodErrors().send();
 	};
-	RunSignupWithTerms(
-		!getData()->termsLock.text.text.isEmpty(),
-		_acceptedTermsId && (*_acceptedTermsId == getData()->termsLock.id),
+	const auto &termsLock = getData()->termsLock;
+	_termsGate.submit(
+		{
+			termsLock.id,
+			termsLock.text,
+			termsLock.minAge,
+			termsLock.popup,
+		},
 		[=](Fn<void()> accept, Fn<void()> decline) {
 			_termsPromptPending = true;
 			showSignupTerms(crl::guard(this,
 									   [=] {
 										   _termsPromptPending = false;
-										   _acceptedTermsId
-											   = getData()->termsLock.id;
 										   accept();
 									   }),
 							crl::guard(this, [=] {
@@ -207,7 +210,9 @@ void SignupWidget::submit() {
 								decline();
 							}));
 		},
-		crl::guard(this, [=] { send(); }), crl::guard(this, [=] {
+		crl::guard(this, [=](SignupTermsPermission permission) {
+			send(std::move(permission));
+		}), crl::guard(this, [=] {
 			showError(rpl::single(tr::lng_teagram_terms_declined(tr::now)));
 		}));
 }
