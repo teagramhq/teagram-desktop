@@ -3331,7 +3331,8 @@ template <typename Condition>
 										  target,
 									  not_null<HistoryWidget *> historyWidget,
 									  const ClickHandlerContext &messageContext,
-									  Window::Controller *activeBefore) {
+									  Window::Controller *activeBefore,
+									  bool focusCheckAvailable) {
 		const auto before = std::array{
 			stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
@@ -3397,8 +3398,10 @@ template <typename Condition>
 										   && unchanged(blockedController);
 		const auto noPaidUiOpen = sameMessageView && !target->isLayerShown()
 								  && otherWindowsUnchanged;
+		const auto activeWindowUnchanged
+			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
 		const auto refused = dispatched && toastOnly && noPaidUiOpen
-							 && (app.activeWindow() == activeBefore);
+							 && activeWindowUnchanged;
 		if (!refused) {
 			std::fprintf(
 				stderr,
@@ -4062,35 +4065,45 @@ template <typename Condition>
 			"custom Saved Messages click context.\n");
 		return false;
 	}
-	if (activationFailed(
-			ActivateWindowForRegression(app, &stockController->window()))) {
+	const auto stockBeforeMessageMatrix
+		= ActivateWindowForRegression(app, &stockController->window());
+	if (activationFailed(stockBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
 			"activate before the custom message-link matrix.\n");
 		return false;
 	}
+	const auto stockMessageFocusCheckAvailable
+		= (stockBeforeMessageMatrix
+		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &stockController->window())) {
+				pinnedMessageState->second, &stockController->window(),
+				stockMessageFocusCheckAvailable)) {
 			return false;
 		}
 	}
-	if (activationFailed(
-			ActivateWindowForRegression(app, &pinnedController->window()))) {
+	const auto pinnedBeforeMessageMatrix
+		= ActivateWindowForRegression(app, &pinnedController->window());
+	if (activationFailed(pinnedBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: custom window did not "
 			"activate before its message-link matrix.\n");
 		return false;
 	}
+	const auto pinnedMessageFocusCheckAvailable
+		= (pinnedBeforeMessageMatrix
+		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &pinnedController->window())) {
+				pinnedMessageState->second, &pinnedController->window(),
+				pinnedMessageFocusCheckAvailable)) {
 			return false;
 		}
 	}
@@ -4107,8 +4120,9 @@ template <typename Condition>
 			resetController(stockController);
 			stockController->setHighlightControlId(QString());
 			QCoreApplication::processEvents();
-			if (activationFailed(
-					activateSettingsWindow(&stockController->window()))) {
+			const auto stockBeforeMessageRoute
+				= activateSettingsWindow(&stockController->window());
+			if (activationFailed(stockBeforeMessageRoute)) {
 				std::fprintf(stderr,
 							 "Settings deep link regression failed: stock "
 							 "window did not "
@@ -4116,6 +4130,9 @@ template <typename Condition>
 							 url.toUtf8().constData());
 				return false;
 			}
+			const auto stockFocusCheckAvailable
+				= (stockBeforeMessageRoute
+				   == WindowActivationForRegressionResult::Activated);
 			stockMessageState = prepareMessageLinkContext(stockController);
 			if (!stockMessageState
 				|| stockMessageState->second.sessionWindow.get()
@@ -4214,7 +4231,8 @@ template <typename Condition>
 				  && !blockedController->content()->isMainSectionShown()
 				  && !blockedController->isLayerShown();
 			const auto stockWindowActive
-				= app.activeWindow() == &stockController->window();
+				= !stockFocusCheckAvailable
+				  || (app.activeWindow() == &stockController->window());
 			if (!routeStateMatched || !toastUnchanged || !otherWindowsUnchanged
 				|| !stockWindowActive) {
 				const auto infoCounts
