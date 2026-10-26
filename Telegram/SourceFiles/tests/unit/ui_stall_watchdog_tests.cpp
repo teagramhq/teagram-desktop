@@ -40,6 +40,43 @@ UiStallWatchdogTestBlock(std::chrono::milliseconds duration) {
 	releaser.join();
 }
 
+class PartialReadFile final : public QFile {
+  public:
+	using QFile::QFile;
+
+	void LimitReadTo(qint64 size) {
+		_readLimit = size;
+		_readCount = 0;
+		unsetError();
+	}
+	void ClearReadLimit() {
+		_readLimit = -1;
+		_readCount = 0;
+		unsetError();
+	}
+
+  protected:
+	qint64 readData(char *data, qint64 maxSize) override {
+		if (_readLimit < 0) {
+			return QFile::readData(data, maxSize);
+		}
+		const auto remaining = _readLimit - _readCount;
+		if (remaining <= 0) {
+			return 0;
+		}
+		const auto size = maxSize < remaining ? maxSize : remaining;
+		const auto result = QFile::readData(data, size);
+		if (result > 0) {
+			_readCount += result;
+		}
+		return result;
+	}
+
+  private:
+	qint64 _readLimit = -1;
+	qint64 _readCount = 0;
+};
+
 class UiStallWatchdogTestBlockFilter final : public QObject {
   public:
 	UiStallWatchdogTestBlockFilter(std::chrono::milliseconds duration,
@@ -187,7 +224,7 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	CHECK(log.flush());
 	log.close();
 
-	auto output = QFile(path);
+	auto output = PartialReadFile(path);
 	CHECK(output.open(QIODevice::ReadWrite));
 	if (!output.isOpen()) {
 		return;
@@ -197,6 +234,14 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	CHECK(writer.writeUpdate(
 		output,
 		u"UI stall 700 ms (started later test): longer replacement stack"_q));
+	output.LimitReadTo(output.size() - 1);
+	CHECK(!writer.writeUpdate(
+		output,
+		u"UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
+	output.ClearReadLimit();
+	CHECK(writer.writeUpdate(
+		output,
+		u"UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
 	output.close();
 
 	auto result = QFile(path);
@@ -208,9 +253,10 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	const auto lines = content.split(u'\n', Qt::SkipEmptyParts);
 	CHECK_EQ(int(lines.size()), 3);
 	CHECK_EQ(content.count(u"UI stall "_q), 1);
+	CHECK(content.endsWith(u"[following] second log entry\n"_q));
 	if (lines.size() == 3) {
 		CHECK(lines.at(0).startsWith(
-			u"[prefix] UI stall 700 ms (started later test): longer replacement stack"_q));
+			u"[prefix] UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
 		CHECK_EQ(lines.at(1), u"[following] first log entry"_q);
 		CHECK_EQ(lines.at(2), u"[following] second log entry"_q);
 	}

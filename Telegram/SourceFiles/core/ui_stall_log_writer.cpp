@@ -59,7 +59,8 @@ bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
 		line += QByteArray(kDurationReserve, ' ');
 	}
 	line += '\n';
-	if (file.size() < record.offset + record.size) {
+	const auto fileSize = file.size();
+	if (fileSize < record.offset + record.size) {
 		return false;
 	}
 	if (line.size() == record.size) {
@@ -67,7 +68,8 @@ bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
 			return false;
 		}
 		const auto original = file.read(record.size);
-		if (original.size() != record.size || !file.seek(record.offset)) {
+		if (file.error() != QFileDevice::NoError
+			|| original.size() != record.size || !file.seek(record.offset)) {
 			return false;
 		}
 		const auto written = file.write(line);
@@ -91,7 +93,9 @@ bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
 		return false;
 	}
 	const auto contents = file.readAll();
-	if (contents.size() < record.size) {
+	const auto expectedSuffixSize = fileSize - record.offset;
+	if (file.error() != QFileDevice::NoError
+		|| contents.size() != expectedSuffixSize) {
 		return false;
 	}
 	auto bytes = line;
