@@ -9082,12 +9082,6 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		crl::on_main([=] { done(result); });
 		return 0;
 	}
-	nativeLifecycleResults->StartCase("main-dc-reconnect-private-message");
-	const auto reconnectDifferencePassed
-		= RunMainDcReconnectDifferenceUnreadRegression(pinned)
-		  && !shouldInjectFailure("main-dc-reconnect-private-message");
-	nativeLifecycleResults->Report("main-dc-reconnect-private-message",
-								   reconnectDifferencePassed);
 	const auto capabilitiesMatch = [](const Main::Session &session,
 									  bool supported) {
 		return (session.callsSupported() == supported)
@@ -10592,6 +10586,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	ReportCallRegressionCheckpoint("call start fixtures ready");
 	nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+	nativeLifecycleResults->StartCase("main-dc-reconnect-private-message");
+	const auto reconnectDifferencePassed
+		= RunMainDcReconnectDifferenceUnreadRegression(pinned)
+		  && !shouldInjectFailure("main-dc-reconnect-private-message");
+	nativeLifecycleResults->Report("main-dc-reconnect-private-message",
+								   reconnectDifferencePassed);
 	nativeLifecycleResults->StartCase("call-session-fixtures");
 	nativeLifecycleResults->Report("call-session-fixtures", true);
 	nativeLifecycleResults->StartCase("calls-instance-start");
