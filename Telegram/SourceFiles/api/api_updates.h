@@ -31,6 +31,23 @@ namespace Api {
 
 namespace details {
 
+class UpdateConnectionState final {
+  public:
+	explicit UpdateConnectionState(bool connected = false)
+		: _connected(connected), _connectedOnce(connected) {}
+
+	[[nodiscard]] bool update(bool connected) {
+		const auto reconnected = connected && _connectedOnce && !_connected;
+		_connected = connected;
+		_connectedOnce = _connectedOnce || connected;
+		return reconnected;
+	}
+
+  private:
+	bool _connected = false;
+	bool _connectedOnce = false;
+};
+
 class UpdateRequestState final {
 public:
 	enum class Type {
@@ -104,7 +121,28 @@ public:
 		return _state || _difference;
 	}
 
-private:
+	template <typename Cancel, typename RequestState,
+			  typename RequestDifference>
+	void afterReconnect(bool ptsInited, Cancel &&cancel,
+						RequestState &&requestState,
+						RequestDifference &&requestDifference) {
+		if (const auto requestId = takePending()) {
+			cancel(requestId);
+		}
+		if (ptsInited) {
+			requestDifference();
+		} else {
+			requestState();
+		}
+	}
+
+  private:
+	[[nodiscard]] mtpRequestId takePending() {
+		_recovering = false;
+		return _state ? std::exchange(_state, 0)
+					  : std::exchange(_difference, 0);
+	}
+
 	mtpRequestId &slot(Type type) {
 		return (type == Type::State) ? _state : _difference;
 	}
@@ -197,6 +235,7 @@ public:
   void ptsWaiterStartTimerFor(ChannelData *channel, crl::time ms);
 
   void getDifference();
+  void getDifferenceAfterReconnect();
   void requestChannelRangeDifference(not_null<History *> history);
 
   void addActiveChat(rpl::producer<PeerData *> chat);
@@ -205,6 +244,12 @@ public:
   [[nodiscard]] bool requestingDifference() const {
 	  return _ptsWaiter.requesting();
   }
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+  void completeInitialStateForRegressionTest(int32 pts) {
+	  setState(pts, 0, 0, 0);
+	  _ptsWaiter.setRequesting(false);
+  }
+#endif
   [[nodiscard]] bool handlingChannelDifference() const {
 	  return _handlingChannelDifference;
   }
