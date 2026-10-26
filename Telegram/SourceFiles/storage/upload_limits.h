@@ -9,8 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 
-#include <QtCore/QString>
-
 #include <optional>
 
 namespace Storage::details {
@@ -18,10 +16,6 @@ namespace Storage::details {
 [[nodiscard]] inline bool ExceedsUploadMaxBytes(int64 fileSize,
 												std::optional<int64> maxBytes) {
 	return maxBytes && *maxBytes >= 0 && fileSize > *maxBytes;
-}
-
-[[nodiscard]] inline bool IsFilePartTooBigError(const QString &type) {
-	return (type == u"FILE_PART_TOO_BIG"_q);
 }
 
 } // namespace Storage::details

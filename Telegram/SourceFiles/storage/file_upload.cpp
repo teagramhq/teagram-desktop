@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_editing.h"
 #include "api/api_send_progress.h"
 #include "storage/localimageloader.h"
+#include "storage/upload_failure.h"
 #include "storage/upload_limits.h"
 #include "storage/video_cover_upload.h"
 #include "storage/file_download.h"
@@ -389,8 +390,12 @@ void Uploader::upload(
 	const auto fileSize = UploadFileSize(*file);
 	if (details::ExceedsUploadMaxBytes(fileSize, serverLimit)) {
 		crl::on_main(this, [=] {
-			ShowFileSizeLimitBox(&_api->session(), fileSize);
-			notifyFailed(Entry(itemId, file));
+			details::HandlePreflightUploadFailure(
+				fileSize,
+				[=](int64 size) {
+					ShowFileSizeLimitBox(&_api->session(), size);
+				},
+				[=] { notifyFailed(Entry(itemId, file)); });
 		});
 		return;
 	}
@@ -400,17 +405,17 @@ void Uploader::upload(
 	}
 }
 
-void Uploader::failed(FullMsgId itemId) {
+void Uploader::failed(FullMsgId itemId, bool markMessageFailed) {
 	const auto i = ranges::find(_queue, itemId, &Entry::itemId);
 	if (i != end(_queue)) {
 		const auto entry = std::move(*i);
 		_queue.erase(i);
-		notifyFailed(entry);
+		notifyFailed(entry, markMessageFailed);
 	} else if (const auto coverId = _videoIdToCoverId.take(itemId)) {
-		failVideoCover(*coverId);
-		failed(*coverId);
+		failVideoCover(*coverId, markMessageFailed);
+		failed(*coverId, markMessageFailed);
 	} else if (_videoWaitingCover.find(itemId) != end(_videoWaitingCover)) {
-		failVideoCover(itemId);
+		failVideoCover(itemId, markMessageFailed);
 	}
 	cancelRequests(itemId);
 	maybeFinishFront();
@@ -420,22 +425,28 @@ void Uploader::failed(FullMsgId itemId) {
 	});
 }
 
-void Uploader::failVideoCover(FullMsgId coverId) {
-	details::FailVideoCover(coverId, _videoWaitingCover, _videoIdToCoverId,
-							[=](const UploadedMedia &video) {
-								const auto document
-									= session().data().document(video.id);
-								if (document->uploading()) {
-									document->status = FileUploadFailed;
-								}
-								_documentFailed.fire_copy(video.fullId);
-							});
+void Uploader::failVideoCover(FullMsgId coverId, bool markMessageFailed) {
+	details::FailVideoCover(
+		coverId, _videoWaitingCover, _videoIdToCoverId,
+		[=](const UploadedMedia &video) {
+			const auto document = session().data().document(video.id);
+			if (document->uploading()) {
+				document->status = FileUploadFailed;
+			}
+			document->uploadingData = nullptr;
+			details::FailLocalMessageUpload(
+				session().data().message(video.fullId), markMessageFailed);
+			_documentFailed.fire_copy(video.fullId);
+		});
 }
 
-void Uploader::notifyFailed(const Entry &entry) {
+void Uploader::notifyFailed(const Entry &entry, bool markMessageFailed) {
 	const auto type = entry.file->type;
 	if (type == SendMediaType::Photo) {
-		failVideoCover(entry.itemId);
+		session().data().photo(entry.file->id)->uploadingData = nullptr;
+		failVideoCover(entry.itemId, markMessageFailed);
+		details::FailLocalMessageUpload(session().data().message(entry.itemId),
+										markMessageFailed);
 		_photoFailed.fire_copy(entry.itemId);
 	} else if (type == SendMediaType::File
 		|| type == SendMediaType::ThemeFile
@@ -445,6 +456,9 @@ void Uploader::notifyFailed(const Entry &entry) {
 		if (document->uploading()) {
 			document->status = FileUploadFailed;
 		}
+		document->uploadingData = nullptr;
+		details::FailLocalMessageUpload(session().data().message(entry.itemId),
+										markMessageFailed);
 		_documentFailed.fire_copy(entry.itemId);
 	} else if (type == SendMediaType::Secure) {
 		_secureFailed.fire_copy(entry.itemId);
@@ -721,13 +735,11 @@ void Uploader::maybeSend() {
 	}
 }
 
-void Uploader::cancel(FullMsgId itemId) {
-	failed(itemId);
-}
+void Uploader::cancel(FullMsgId itemId) { failed(itemId, false); }
 
 void Uploader::cancelAll() {
 	while (!_queue.empty()) {
-		failed(_queue.front().itemId);
+		failed(_queue.front().itemId, false);
 	}
 	clear();
 	unpause();
@@ -743,21 +755,13 @@ void Uploader::unpause() {
 }
 
 void Uploader::cancelRequests(FullMsgId itemId) {
-	for (auto i = begin(_requests); i != end(_requests);) {
-		if (i->second.itemId == itemId) {
-			const auto bytes = int(i->second.bytes.size());
-			_sentPerDcIndex[i->second.dcIndex] -= bytes;
-			_api->request(i->first).cancel();
-			i = _requests.erase(i);
-		} else {
-			++i;
-		}
-	}
-	_pendingFromRemovedDcIndices.erase(ranges::remove(
-		_pendingFromRemovedDcIndices,
-		itemId,
-		&Request::itemId
-	), end(_pendingFromRemovedDcIndices));
+	details::CancelUploadRequests(
+		itemId, _requests, _pendingFromRemovedDcIndices,
+		[=](mtpRequestId requestId, const Request &request) {
+			const auto bytes = int(request.bytes.size());
+			_sentPerDcIndex[request.dcIndex] -= bytes;
+			_api->request(requestId).cancel();
+		});
 }
 
 void Uploader::cancelAllRequests() {
@@ -1012,10 +1016,9 @@ void Uploader::partFailed(const MTP::Error &error, mtpRequestId requestId) {
 	const auto fileSize = (filePartTooBig && i != end(_queue))
 							  ? UploadFileSize(*i->file)
 							  : int64(0);
-	failed(request.itemId);
-	if (filePartTooBig) {
-		ShowFileSizeLimitBox(&_api->session(), fileSize);
-	}
+	details::HandleUploadPartFailure(
+		error.type(), fileSize, [=] { failed(request.itemId); },
+		[=](int64 size) { ShowFileSizeLimitBox(&_api->session(), size); });
 }
 
 void Uploader::uploadVideoCover(

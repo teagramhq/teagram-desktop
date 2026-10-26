@@ -1923,6 +1923,7 @@ PRIVATE
     storage/file_download_web.h
     storage/file_upload.cpp
     storage/file_upload.h
+    storage/upload_failure.h
     storage/upload_limits.h
     storage/video_cover_upload.h
     storage/localimageloader.cpp
