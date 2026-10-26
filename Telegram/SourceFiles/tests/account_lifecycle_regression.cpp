@@ -9477,9 +9477,8 @@ void RunAuthenticatedCacheSymlinkCases(
 							 : guarded->local().cacheSettings();
 			auto existing
 				= Core::App().databases().get(cachePath, cacheSettings);
-			auto cacheKey = mediaCache
-								? guarded->local().cacheBigFileKey()
-								: guarded->local().cacheKey();
+			auto cacheKey = mediaCache ? guarded->local().cacheBigFileKey()
+									   : guarded->local().cacheKey();
 			const auto opened = CacheOperationSucceeded(
 				AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 					existing->open(std::move(cacheKey), std::move(done));
