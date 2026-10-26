@@ -33,40 +33,103 @@ bool UiStallLogWriter::writeDetection(QFile &file, const QString &prefix,
 	if (written != size || !flushed) {
 		return false;
 	}
-	_pending = Pending{file.fileName(), prefix.toUtf8(), offset, size};
+	const auto record = Pending{file.fileName(), prefix.toUtf8(), offset, size};
+	_pending = record;
+	_last = record;
 	return true;
 }
 
 QString UiStallLogWriter::fileName() const {
-	return _pending ? _pending->fileName : QString();
+	return _last ? _last->fileName : QString();
 }
 
-bool UiStallLogWriter::writeCompletion(QFile &file, const QString &message) {
-	if (!_pending) {
+bool UiStallLogWriter::writeUpdate(QFile &file, const QString &message) {
+	if (!_last) {
 		return false;
 	}
-	const auto pending = *_pending;
-	reset();
-	if (!file.isOpen() || file.fileName() != pending.fileName) {
+	const auto record = _pending ? *_pending : *_last;
+	if (!file.isOpen() || file.fileName() != record.fileName) {
 		return false;
 	}
 
-	auto bytes = (QString::fromUtf8(pending.prefix) + message).toUtf8();
-	const auto padding = pending.size - bytes.size() - 1;
-	if (padding < 0 || padding > kDurationReserve) {
+	auto line = (QString::fromUtf8(record.prefix) + message).toUtf8();
+	if (line.size() <= record.size - 1) {
+		line += QByteArray(int(record.size - 1 - line.size()), ' ');
+	} else {
+		line += QByteArray(kDurationReserve, ' ');
+	}
+	line += '\n';
+	if (file.size() < record.offset + record.size) {
 		return false;
 	}
-	bytes += QByteArray(int(padding), ' ');
-	bytes += '\n';
-	if (file.size() < pending.offset + bytes.size()
-		|| !file.seek(pending.offset)) {
+	if (line.size() == record.size) {
+		if (!file.seek(record.offset)) {
+			return false;
+		}
+		const auto original = file.read(record.size);
+		if (original.size() != record.size || !file.seek(record.offset)) {
+			return false;
+		}
+		const auto written = file.write(line);
+		const auto flushed = file.flush();
+		if (written != line.size() || !flushed) {
+			const auto restored = file.seek(record.offset)
+				&& file.write(original) == original.size()
+				&& file.flush();
+			if (!restored) {
+				reset();
+			}
+			return false;
+		}
+		auto updated = record;
+		updated.size = line.size();
+		_last = updated;
+		_pending.reset();
+		return true;
+	}
+	if (!file.seek(record.offset)) {
+		return false;
+	}
+	const auto contents = file.readAll();
+	if (contents.size() < record.size) {
+		return false;
+	}
+	auto bytes = line;
+	bytes += contents.mid(record.size);
+	if (!file.seek(record.offset)) {
 		return false;
 	}
 	const auto written = file.write(bytes);
+	const auto size = record.offset + bytes.size();
+	const auto resized = file.resize(size);
 	const auto flushed = file.flush();
-	return written == bytes.size() && flushed;
+	if (written != bytes.size() || !resized || !flushed) {
+		const auto restored = [&] {
+			if (!file.seek(record.offset)) {
+				return false;
+			}
+			const auto restoredBytes = file.write(contents);
+			if (restoredBytes != contents.size()
+				|| !file.resize(record.offset + contents.size())) {
+				return false;
+			}
+			return file.flush();
+		}();
+		if (!restored) {
+			reset();
+		}
+		return false;
+	}
+	auto updated = record;
+	updated.size = line.size();
+	_last = updated;
+	_pending.reset();
+	return true;
 }
 
-void UiStallLogWriter::reset() { _pending.reset(); }
+void UiStallLogWriter::reset() {
+	_pending.reset();
+	_last.reset();
+}
 
 } // namespace Core

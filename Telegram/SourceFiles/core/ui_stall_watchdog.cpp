@@ -338,6 +338,7 @@ void UiStallWatchdog::run() {
 	auto sequence = std::uint64_t(0);
 	auto hasLogged = false;
 	auto lastLogged = Clock::time_point();
+	auto lastLoggedDuration = Clock::duration::zero();
 	while (true) {
 		const auto current = ++sequence;
 		const auto startTime = QDateTime::currentDateTime();
@@ -350,6 +351,7 @@ void UiStallWatchdog::run() {
 		_condition.notify_all();
 
 		auto writeLog = false;
+		auto replaceLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
 		auto stack = QString();
@@ -388,10 +390,35 @@ void UiStallWatchdog::run() {
 				detectedAt = _acknowledgedAt;
 			}
 		}
-		if (detectedAt != Clock::time_point()) {
-			writeLog = _log
-					   && (!hasLogged
-						   || (Clock::now() - lastLogged) >= kLogRateLimit);
+		if (detectedAt != Clock::time_point() && _log) {
+			const auto rateLimitedUntil = lastLogged + kLogRateLimit;
+			const auto rateLimited = hasLogged
+				&& Clock::now() < rateLimitedUntil;
+			const auto observedDuration = detectedAt - postedAt;
+			if (!rateLimited) {
+				writeLog = true;
+			} else if (observedDuration > lastLoggedDuration) {
+				writeLog = true;
+				replaceLog = true;
+			} else {
+				const auto longerThanLastAt
+					= postedAt + lastLoggedDuration + Clock::duration(1);
+				const auto retryAt = std::min(rateLimitedUntil, longerThanLastAt);
+				if (!_condition.wait_until(lock, retryAt, acknowledged)) {
+					detectedAt = Clock::now();
+					writeLog = true;
+					replaceLog = detectedAt < rateLimitedUntil;
+				} else if (_stopping) {
+					return;
+				} else if (_acknowledgedAt >= rateLimitedUntil) {
+					detectedAt = _acknowledgedAt;
+					writeLog = true;
+				} else if (_acknowledgedAt - postedAt > lastLoggedDuration) {
+					detectedAt = _acknowledgedAt;
+					writeLog = true;
+					replaceLog = true;
+				}
+			}
 			if (writeLog) {
 				lock.unlock();
 				if (_canCaptureStack) {
@@ -400,8 +427,10 @@ void UiStallWatchdog::run() {
 				stack = FormatStack(frames);
 				lock.lock();
 				lock.unlock();
-				_log(lineForDuration(detectedAt - postedAt), false);
+				const auto loggedDuration = detectedAt - postedAt;
+				_log(lineForDuration(loggedDuration), replaceLog);
 				lastLogged = Clock::now();
+				lastLoggedDuration = loggedDuration;
 				hasLogged = true;
 				lock.lock();
 			}
@@ -413,8 +442,10 @@ void UiStallWatchdog::run() {
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
 			lock.unlock();
-			_log(lineForDuration(completedAt - postedAt), true);
+			const auto duration = completedAt - postedAt;
+			_log(lineForDuration(duration), true);
 			lastLogged = Clock::now();
+			lastLoggedDuration = duration;
 			lock.lock();
 		}
 		_condition.wait_until(lock, _acknowledgedAt + kPingInterval,

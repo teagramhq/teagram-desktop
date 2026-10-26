@@ -21,7 +21,7 @@ class UiStallLogWriter final {
 	[[nodiscard]] bool writeDetection(QFile &file, const QString &prefix,
 									  const QString &message);
 	[[nodiscard]] QString fileName() const;
-	[[nodiscard]] bool writeCompletion(QFile &file, const QString &message);
+	[[nodiscard]] bool writeUpdate(QFile &file, const QString &message);
 	void reset();
 
   private:
@@ -33,6 +33,7 @@ class UiStallLogWriter final {
 	};
 
 	std::optional<Pending> _pending;
+	std::optional<Pending> _last;
 };
 
 } // namespace Core

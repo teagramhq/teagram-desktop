@@ -8492,15 +8492,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				seeded = file.open(QIODevice::WriteOnly)
 						 && (file.write("fixture") == 7);
 			}
-			// Let any earlier startup stall fall outside the watchdog's log
-			// rate limit so this fixture can identify the cache walk itself.
+			// Let earlier startup stalls fall outside the watchdog's log rate
+			// limit, then drain queued events without blocking the UI thread.
 			auto cooldown = QEventLoop();
 			QTimer::singleShot(11'000, &cooldown, &QEventLoop::quit);
 			cooldown.exec();
 			QCoreApplication::processEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(60));
+			QCoreApplication::sendPostedEvents();
 			QCoreApplication::processEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(60));
 			Logs::writeMain("UI stall watchdog cache regression begin");
 			const auto before = Core::UiStallWatchdog::StallCount();
 			auto accesses = 0;

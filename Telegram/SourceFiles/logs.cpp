@@ -165,19 +165,19 @@ public:
 			return;
 		}
 		if (update) {
-			const auto pendingFileName = _uiStallLogWriter.fileName();
-			if (pendingFileName.isEmpty()
-				|| pendingFileName != file->fileName()) {
+			const auto uiStallFileName = _uiStallLogWriter.fileName();
+			if (uiStallFileName.isEmpty()
+				|| uiStallFileName != file->fileName()) {
 				return;
 			}
-			auto output = QFile(pendingFileName);
+			auto output = QFile(uiStallFileName);
 			if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
 							  output.fileName(), Q_FUNC_INFO)
 				|| !output.open(QIODevice::ReadWrite)) {
 				_uiStallLogWriter.reset();
 				return;
 			}
-			if (!_uiStallLogWriter.writeCompletion(output, message)) {
+			if (!_uiStallLogWriter.writeUpdate(output, message)) {
 				return;
 			}
 		} else if (!_uiStallLogWriter.writeDetection(*file, prefix, message)) {
