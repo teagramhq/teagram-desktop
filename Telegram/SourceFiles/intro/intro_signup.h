@@ -7,7 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/bytes.h"
 #include "intro/intro_step.h"
+
+#include <optional>
 
 namespace Ui {
 class RoundButton;
@@ -25,7 +28,6 @@ public:
 		not_null<Main::Account*> account,
 		not_null<Data*> data);
 
-	void finishInit() override;
 	void setInnerFocus() override;
 	void activate() override;
 	void cancelled() override;
@@ -50,8 +52,8 @@ private:
 
 	bool _invertOrder = false;
 
-	bool _termsAccepted = false;
-
+	std::optional<bytes::vector> _acceptedTermsId;
+	bool _termsPromptPending = false;
 };
 
 } // namespace details

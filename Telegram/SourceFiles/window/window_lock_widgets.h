@@ -115,21 +115,15 @@ struct TermsLock {
 
 class TermsBox : public Ui::BoxContent {
 public:
-	TermsBox(
-		QWidget*,
-		const TermsLock &data,
-		rpl::producer<QString> agree,
-		rpl::producer<QString> cancel);
-	TermsBox(
-		QWidget*,
-		const TextWithEntities &text,
-		rpl::producer<QString> agree,
-		rpl::producer<QString> cancel,
-		bool attentionAgree = false);
+  TermsBox(QWidget *, const TermsLock &data, rpl::producer<QString> agree,
+		   rpl::producer<QString> cancel, bool declineOnEscape = false);
+  TermsBox(QWidget *, const TextWithEntities &text,
+		   rpl::producer<QString> agree, rpl::producer<QString> cancel,
+		   bool attentionAgree = false);
 
-	rpl::producer<> agreeClicks() const;
-	rpl::producer<> cancelClicks() const;
-	QString lastClickedMention() const;
+  rpl::producer<> agreeClicks() const;
+  rpl::producer<> cancelClicks() const;
+  QString lastClickedMention() const;
 
 protected:
 	void prepare() override;
@@ -144,6 +138,7 @@ private:
 	rpl::event_stream<> _cancelClicks;
 	QString _lastClickedMention;
 	bool _attentionAgree = false;
+	bool _declineOnEscape = false;
 
 	bool _ageErrorShown = false;
 	Ui::Animations::Simple _ageErrorAnimation;

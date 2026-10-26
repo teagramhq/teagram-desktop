@@ -556,8 +556,8 @@ void Widget::appendStep(Step *step) {
 			_api->request(base::take(_nearestDcRequestId)).cancel();
 		}
 	});
-	step->setAcceptTermsCallback([=](Fn<void()> callback) {
-		acceptTerms(callback);
+	step->setSignupTermsCallback([=](Fn<void()> accept, Fn<void()> decline) {
+		showSignupTerms(std::move(accept), std::move(decline));
 	});
 }
 
@@ -574,7 +574,10 @@ void Widget::showTerms() {
 			st::introTermsLabel);
 		_terms.create(this, std::move(entity));
 		_terms->entity()->overrideLinkClickHandler([=] {
-			showTerms(nullptr);
+			const auto box = Ui::show(Box<Window::TermsBox>(
+				getData()->termsLock.text, tr::lng_box_ok(), nullptr));
+			box->setCloseByEscape(false);
+			box->setCloseByOutsideClick(false);
 		});
 		updateControlsGeometry();
 		_terms->hide(anim::type::instant);
@@ -586,57 +589,43 @@ void Widget::showTerms() {
 	}
 }
 
-void Widget::acceptTerms(Fn<void()> callback) {
-	showTerms(callback);
-}
-
-void Widget::showTerms(Fn<void()> callback) {
+void Widget::showSignupTerms(Fn<void()> accept, Fn<void()> decline) {
 	if (getData()->termsLock.text.text.isEmpty()) {
+		if (accept) {
+			accept();
+		}
 		return;
 	}
-	const auto weak = base::make_weak(this);
-	const auto box = Ui::show(callback
-		? Box<Window::TermsBox>(
-			getData()->termsLock,
-			tr::lng_terms_agree(),
-			tr::lng_terms_decline())
-		: Box<Window::TermsBox>(
-			getData()->termsLock.text,
-			tr::lng_box_ok(),
-			nullptr));
+	const auto box = Ui::show(Box<Window::TermsBox>(
+		getData()->termsLock, tr::lng_teagram_terms_accept(),
+		tr::lng_terms_decline(), true));
 
 	box->setCloseByEscape(false);
 	box->setCloseByOutsideClick(false);
 
-	box->agreeClicks(
-	) | rpl::on_next([=] {
-		if (callback) {
-			callback();
-		}
-		if (box) {
-			box->closeBox();
-		}
-	}, box->lifetime());
+	box->agreeClicks()
+		| rpl::on_next(
+			[=] {
+				if (accept) {
+					accept();
+				}
+				if (box) {
+					box->closeBox();
+				}
+			},
+			box->lifetime());
 
-	box->cancelClicks(
-	) | rpl::on_next([=] {
-		const auto box = Ui::show(Box<Window::TermsBox>(
-			TextWithEntities{ tr::lng_terms_signup_sorry(tr::now) },
-			tr::lng_intro_finish(),
-			tr::lng_terms_decline()));
-		box->agreeClicks(
-		) | rpl::on_next([=] {
-			if (weak) {
-				showTerms(callback);
-			}
-		}, box->lifetime());
-		box->cancelClicks(
-		) | rpl::on_next([=] {
-			if (box) {
-				box->closeBox();
-			}
-		}, box->lifetime());
-	}, box->lifetime());
+	box->cancelClicks()
+		| rpl::on_next(
+			[=] {
+				if (decline) {
+					decline();
+				}
+				if (box) {
+					box->closeBox();
+				}
+			},
+			box->lifetime());
 }
 
 void ShowServerReenrollmentPrompt(

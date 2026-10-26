@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "config.h"
 #include "intro/intro_signup_controls.h"
 #include "intro/intro_signup_error.h"
+#include "intro/intro_signup_terms.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
 #include "lang/lang_keys.h"
@@ -152,7 +153,7 @@ void SignUpPasswordWidget::showFormError(const QString &text) {
 }
 
 void SignUpPasswordWidget::submit() {
-	if (_sentRequest) {
+	if (_sentRequest || _termsPromptPending) {
 		return;
 	}
 
@@ -195,8 +196,31 @@ void SignUpPasswordWidget::submit() {
 	} else if (_signupDone) {
 		requestPasswordData();
 	} else {
-		signUp();
+		requestSignup();
 	}
+}
+
+void SignUpPasswordWidget::requestSignup() {
+	RunSignupWithTerms(
+		!getData()->termsLock.text.text.isEmpty(),
+		_acceptedTermsId && (*_acceptedTermsId == getData()->termsLock.id),
+		[=](Fn<void()> accept, Fn<void()> decline) {
+			_termsPromptPending = true;
+			showSignupTerms(crl::guard(this,
+									   [=] {
+										   _termsPromptPending = false;
+										   _acceptedTermsId
+											   = getData()->termsLock.id;
+										   accept();
+									   }),
+							crl::guard(this, [=] {
+								_termsPromptPending = false;
+								decline();
+							}));
+		},
+		crl::guard(this, [=] { signUp(); }), crl::guard(this, [=] {
+			showFormError(tr::lng_teagram_terms_declined(tr::now));
+		}));
 }
 
 void SignUpPasswordWidget::signUp() {
@@ -336,7 +360,7 @@ void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
 			return;
 		}
 		getData()->phoneHash = hash;
-		signUp();
+		requestSignup();
 	}, [&](const MTPDauth_sentCodeSuccess &) {
 		showFormError(tr::lng_intro_signup_expired(tr::now));
 	}, [&](const MTPDauth_sentCodePaymentRequired &) {

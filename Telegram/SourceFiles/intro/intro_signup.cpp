@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "boxes/abstract_box.h"
 #include "intro/intro_widget.h"
+#include "intro/intro_signup_terms.h"
 #include "core/file_utilities.h"
 #include "ui/boxes/confirm_box.h"
 #include "lang/lang_keys.h"
@@ -36,6 +37,8 @@ SignupWidget::SignupWidget(
 , _last(this, st::introName, tr::lng_signup_lastname())
 , _invertOrder(langFirstNameGoesSecond()) {
 	_photo->showCustomOnChosen();
+	_first->changes() | rpl::on_next([=] { hideError(); }, _first->lifetime());
+	_last->changes() | rpl::on_next([=] { hideError(); }, _last->lifetime());
 
 	Lang::Updated(
 	) | rpl::on_next([=] {
@@ -53,10 +56,6 @@ SignupWidget::SignupWidget(
 	setTitleText(tr::lng_signup_title());
 	setDescriptionText(tr::lng_signup_desc());
 	setMouseTracking(true);
-}
-
-void SignupWidget::finishInit() {
-	showTerms();
 }
 
 void SignupWidget::refreshLang() {
@@ -152,9 +151,10 @@ void SignupWidget::nameSubmitFail(const MTP::Error &error) {
 }
 
 void SignupWidget::submit() {
-	if (_sentRequest) {
+	if (_sentRequest || _termsPromptPending) {
 		return;
 	}
+	hideError();
 	if (_invertOrder) {
 		if ((_last->hasFocus() || _last->getLastText().trimmed().length()) && !_first->getLastText().trimmed().length()) {
 			_first->setFocus();
@@ -190,16 +190,26 @@ void SignupWidget::submit() {
 			nameSubmitFail(error);
 		}).handleFloodErrors().send();
 	};
-	if (_termsAccepted
-		|| getData()->termsLock.text.text.isEmpty()
-		|| !getData()->termsLock.popup) {
-		send();
-	} else {
-		acceptTerms(crl::guard(this, [=] {
-			_termsAccepted = true;
-			send();
+	RunSignupWithTerms(
+		!getData()->termsLock.text.text.isEmpty(),
+		_acceptedTermsId && (*_acceptedTermsId == getData()->termsLock.id),
+		[=](Fn<void()> accept, Fn<void()> decline) {
+			_termsPromptPending = true;
+			showSignupTerms(crl::guard(this,
+									   [=] {
+										   _termsPromptPending = false;
+										   _acceptedTermsId
+											   = getData()->termsLock.id;
+										   accept();
+									   }),
+							crl::guard(this, [=] {
+								_termsPromptPending = false;
+								decline();
+							}));
+		},
+		crl::guard(this, [=] { send(); }), crl::guard(this, [=] {
+			showError(rpl::single(tr::lng_teagram_terms_declined(tr::now)));
 		}));
-	}
 }
 
 rpl::producer<QString> SignupWidget::nextButtonText() const {

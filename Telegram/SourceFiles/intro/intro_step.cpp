@@ -655,9 +655,9 @@ void Step::setCancelNearestDcCallback(Fn<void()> callback) {
 	_cancelNearestDcCallback = std::move(callback);
 }
 
-void Step::setAcceptTermsCallback(
-		Fn<void(Fn<void()> callback)> callback) {
-	_acceptTermsCallback = std::move(callback);
+void Step::setSignupTermsCallback(
+	Fn<void(Fn<void()> accept, Fn<void()> decline)> callback) {
+	_showSignupTermsCallback = std::move(callback);
 }
 
 void Step::showFast() {

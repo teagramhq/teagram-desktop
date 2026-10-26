@@ -313,25 +313,20 @@ TermsLock TermsLock::FromMTP(
 		Main::Session *session,
 		const MTPDhelp_termsOfService &data) {
 	const auto minAge = data.vmin_age_confirm();
-	return {
-		bytes::make_vector(data.vid().c_dataJSON().vdata().v),
-		TextWithEntities {
-			qs(data.vtext()),
-			Api::EntitiesFromMTP(session, data.ventities().v) },
-		(minAge ? std::make_optional(minAge->v) : std::nullopt),
-		data.is_popup()
-	};
+	auto text = TextWithEntities{
+		qs(data.vtext()), Api::EntitiesFromMTP(session, data.ventities().v)};
+	TextUtilities::ParseEntities(text, TextParseLinks);
+	return {bytes::make_vector(data.vid().c_dataJSON().vdata().v),
+			std::move(text),
+			(minAge ? std::make_optional(minAge->v) : std::nullopt),
+			data.is_popup()};
 }
 
-TermsBox::TermsBox(
-	QWidget*,
-	const TermsLock &data,
-	rpl::producer<QString> agree,
-	rpl::producer<QString> cancel)
-: _data(data)
-, _agree(std::move(agree))
-, _cancel(std::move(cancel)) {
-}
+TermsBox::TermsBox(QWidget *, const TermsLock &data,
+				   rpl::producer<QString> agree, rpl::producer<QString> cancel,
+				   bool declineOnEscape)
+	: _data(data), _agree(std::move(agree)), _cancel(std::move(cancel)),
+	  _declineOnEscape(declineOnEscape) {}
 
 TermsBox::TermsBox(
 	QWidget*,
@@ -467,6 +462,9 @@ void TermsBox::prepare() {
 void TermsBox::keyPressEvent(QKeyEvent *e) {
 	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
 		_agreeClicks.fire({});
+	} else if (e->key() == Qt::Key_Escape && _declineOnEscape) {
+		e->accept();
+		_cancelClicks.fire({});
 	} else {
 		BoxContent::keyPressEvent(e);
 	}
