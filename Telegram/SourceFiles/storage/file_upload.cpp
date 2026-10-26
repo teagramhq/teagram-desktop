@@ -421,17 +421,15 @@ void Uploader::failed(FullMsgId itemId) {
 }
 
 void Uploader::failVideoCover(FullMsgId coverId) {
-	details::FailVideoCover(
-		coverId,
-		_videoWaitingCover,
-		_videoIdToCoverId,
-		[=](const UploadedMedia &video) {
-			const auto document = session().data().document(video.id);
-			if (document->uploading()) {
-				document->status = FileUploadFailed;
-			}
-			_documentFailed.fire_copy(video.fullId);
-		});
+	details::FailVideoCover(coverId, _videoWaitingCover, _videoIdToCoverId,
+							[=](const UploadedMedia &video) {
+								const auto document
+									= session().data().document(video.id);
+								if (document->uploading()) {
+									document->status = FileUploadFailed;
+								}
+								_documentFailed.fire_copy(video.fullId);
+							});
 }
 
 void Uploader::notifyFailed(const Entry &entry) {

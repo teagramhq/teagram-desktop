@@ -17,21 +17,18 @@ TEST_CASE(FailedVideoCoverNotifiesParentAndClearsState) {
 	const auto coverId = FullMsgId(PeerId(1), 2);
 	auto waitingCover = base::flat_map<FullMsgId, Storage::UploadedMedia>();
 	waitingCover.emplace(coverId, Storage::UploadedMedia{
-		.fullId = videoId,
-	});
+									  .fullId = videoId,
+								  });
 	auto videoIdToCoverId = base::flat_map<FullMsgId, FullMsgId>();
 	videoIdToCoverId.emplace(videoId, coverId);
 
 	auto failedVideoId = FullMsgId();
 	auto failedCount = 0;
-	Storage::details::FailVideoCover(
-		coverId,
-		waitingCover,
-		videoIdToCoverId,
-		[&](const Storage::UploadedMedia &video) {
-			failedVideoId = video.fullId;
-			++failedCount;
-		});
+	Storage::details::FailVideoCover(coverId, waitingCover, videoIdToCoverId,
+									 [&](const Storage::UploadedMedia &video) {
+										 failedVideoId = video.fullId;
+										 ++failedCount;
+									 });
 
 	CHECK(failedCount == 1);
 	CHECK(failedVideoId == videoId);

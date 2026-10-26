@@ -13,11 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Storage::details {
 
 template <typename WaitingCoverMap, typename OnFailed>
-void FailVideoCover(
-		FullMsgId coverId,
-		WaitingCoverMap &videoWaitingCover,
-		base::flat_map<FullMsgId, FullMsgId> &videoIdToCoverId,
-		OnFailed &&onFailed) {
+void FailVideoCover(FullMsgId coverId, WaitingCoverMap &videoWaitingCover,
+					base::flat_map<FullMsgId, FullMsgId> &videoIdToCoverId,
+					OnFailed &&onFailed) {
 	auto video = videoWaitingCover.take(coverId);
 	if (video) {
 		videoIdToCoverId.remove(video->fullId);
