@@ -323,8 +323,6 @@ jobs:
 
       - name: First set up.
         id: setup
-        env:
-          PROTECTED_PATH_INTEGRATION: ${{ steps.ccache-profile.outputs.protected_path_integration }}
         run: |
           set -Eeo pipefail
           sudo chown -R `whoami`:admin /usr/local/share
@@ -345,13 +343,14 @@ jobs:
 
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-          protected_path_integration="$PROTECTED_PATH_INTEGRATION"
           {
             xcodebuild -version
             ccache --version
             printf 'CCACHE_SLOPPINESS=%s\n' "$CCACHE_SLOPPINESS"
             printf '%s\n' 'Clang PCH timestamp disabled'
-            printf 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=%s\n' "$protected_path_integration"
+            # Keep the cache fingerprint aligned with dev seeds. The protected
+            # define is source-scoped; ccache separates those compile commands.
+            printf '%s\n' 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=OFF'
           } > "$GITHUB_WORKSPACE/CCACHE_KEY.txt"
           echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
 
