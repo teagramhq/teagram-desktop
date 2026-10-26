@@ -40,19 +40,21 @@ UiStallWatchdogTestBlock(std::chrono::milliseconds duration) {
 	releaser.join();
 }
 
-class PartialReadFile final : public QFile {
+class ReadLimitedFile final : public QFile {
   public:
 	using QFile::QFile;
 
 	void LimitReadTo(qint64 size) {
 		_readLimit = size;
 		_readCount = 0;
+		_readPastLimit = false;
 		unsetError();
 	}
-	void ClearReadLimit() {
-		_readLimit = -1;
-		_readCount = 0;
-		unsetError();
+	[[nodiscard]] qint64 ReadCount() const {
+		return _readCount;
+	}
+	[[nodiscard]] bool ReadPastLimit() const {
+		return _readPastLimit;
 	}
 
   protected:
@@ -62,6 +64,7 @@ class PartialReadFile final : public QFile {
 		}
 		const auto remaining = _readLimit - _readCount;
 		if (remaining <= 0) {
+			_readPastLimit = true;
 			return 0;
 		}
 		const auto size = maxSize < remaining ? maxSize : remaining;
@@ -75,6 +78,7 @@ class PartialReadFile final : public QFile {
   private:
 	qint64 _readLimit = -1;
 	qint64 _readCount = 0;
+	bool _readPastLimit = false;
 };
 
 class UiStallWatchdogTestBlockFilter final : public QObject {
@@ -191,7 +195,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	}
 }
 
-TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
+TEST_CASE(UiStallLogWriterUpdatesWithinLargeLogTail) {
 	auto directory = QTemporaryDir();
 	CHECK(directory.isValid());
 	if (!directory.isValid()) {
@@ -208,6 +212,7 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	auto writer = Core::UiStallLogWriter();
 	CHECK(writer.writeDetection(log, u"[prefix] "_q,
 								u"UI stall 100 ms (started test): stack"_q));
+	const auto slotSize = log.size();
 	auto detection = QFile(path);
 	CHECK(detection.open(QIODevice::ReadOnly));
 	if (!detection.isOpen()) {
@@ -221,27 +226,23 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	const auto following = QByteArray(
 		"[following] first log entry\n[following] second log entry\n");
 	CHECK_EQ(log.write(following), qint64(following.size()));
+	auto largeTail = QByteArray(4 * 1024 * 1024, 'x');
+	largeTail += '\n';
+	CHECK_EQ(log.write(largeTail), qint64(largeTail.size()));
 	CHECK(log.flush());
 	log.close();
 
-	auto output = PartialReadFile(path);
+	auto output = ReadLimitedFile(path);
 	CHECK(output.open(QIODevice::ReadWrite));
 	if (!output.isOpen()) {
 		return;
 	}
-	CHECK(
-		writer.writeUpdate(output, u"UI stall 325 ms (started test): stack"_q));
+	output.LimitReadTo(slotSize);
 	CHECK(writer.writeUpdate(
 		output,
-		u"UI stall 700 ms (started later test): longer replacement stack"_q));
-	output.LimitReadTo(output.size() - 1);
-	CHECK(!writer.writeUpdate(
-		output,
-		u"UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
-	output.ClearReadLimit();
-	CHECK(writer.writeUpdate(
-		output,
-		u"UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
+		u"UI stall 900 ms (started longer stall): replacement stack with additional frames beyond previous record"_q));
+	CHECK_EQ(output.ReadCount(), slotSize);
+	CHECK(!output.ReadPastLimit());
 	output.close();
 
 	auto result = QFile(path);
@@ -249,17 +250,11 @@ TEST_CASE(UiStallLogWriterPreservesFollowingEntries) {
 	if (!result.isOpen()) {
 		return;
 	}
-	const auto content = QString::fromUtf8(result.readAll());
-	const auto lines = content.split(u'\n', Qt::SkipEmptyParts);
-	CHECK_EQ(int(lines.size()), 3);
-	CHECK_EQ(content.count(u"UI stall "_q), 1);
-	CHECK(content.endsWith(u"[following] second log entry\n"_q));
-	if (lines.size() == 3) {
-		CHECK(lines.at(0).startsWith(
-			u"[prefix] UI stall 900 ms (started partial read): replacement stack with additional frames beyond previous record"_q));
-		CHECK_EQ(lines.at(1), u"[following] first log entry"_q);
-		CHECK_EQ(lines.at(2), u"[following] second log entry"_q);
-	}
+	const auto content = result.readAll();
+	CHECK(content.startsWith(
+		"[prefix] UI stall 900 ms (started longer stall): replacement"));
+	CHECK_EQ(content.count("UI stall "), 1);
+	CHECK_EQ(content.mid(slotSize), following + largeTail);
 }
 
 TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
