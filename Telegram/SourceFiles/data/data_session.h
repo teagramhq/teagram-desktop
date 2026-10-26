@@ -277,7 +277,7 @@ class Session final : public base::has_weak_ptr {
 							= nullptr);
 	[[nodiscard]] rpl::producer<Storage::Cache::Database::Stats>
 	cacheStatsOnMain(bool bigFileCache);
-#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#ifdef Q_OS_MAC
 	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheAllowedForTesting(bool bigFileCache);
@@ -1211,12 +1211,10 @@ private:
 	rpl::variable<bool> _bigFileCacheInitializationReady = false;
 #ifdef Q_OS_MAC
 	Storage::Cache::Database _unavailableCache;
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	bool _cacheInitializationFinishedForTesting = false;
 	bool _bigFileCacheInitializationFinishedForTesting = false;
 	bool _cacheInitializationAllowedForTesting = false;
 	bool _bigFileCacheInitializationAllowedForTesting = false;
-#endif
 #endif
 	QMutex _cacheMutex;
 	Core::MacProtectedPath::CachePathIdentity _cacheIdentity;
@@ -1226,12 +1224,10 @@ private:
 #ifdef Q_OS_MAC
 	bool _cacheClearPending = false;
 	bool _bigFileCacheClearPending = false;
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	Fn<void()> _cacheClearPauseForTesting;
 	Fn<void()> _bigFileCacheClearPauseForTesting;
 	Fn<void()> _cacheClearHandoffForTesting;
 	Fn<void()> _bigFileCacheClearHandoffForTesting;
-#endif
 #endif
 
 	TimeId _exportAvailableAt = 0;
