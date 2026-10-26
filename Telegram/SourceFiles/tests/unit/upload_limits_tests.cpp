@@ -7,11 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
-#include "base/flat_map.h"
 #include "data/data_msg_id.h"
 #include "storage/upload_failure.h"
 #include "storage/upload_limits.h"
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -74,7 +74,7 @@ TEST_CASE(FilePartTooBigFailureCancelsPartsAndFailsLocalMessage) {
 	auto photo = UploadFailurePhoto();
 	auto media = UploadFailureMedia{.photoData = &photo};
 	auto message = UploadFailureMessage{.mediaData = &media};
-	auto requests = base::flat_map<int, UploadRequest>{
+	auto requests = std::map<int, UploadRequest>{
 		{1, {itemId}},
 		{2, {otherId}},
 		{3, {itemId}},
