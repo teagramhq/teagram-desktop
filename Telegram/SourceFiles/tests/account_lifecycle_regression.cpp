@@ -12681,9 +12681,14 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
-	if (!forgotten->createSession(RegressionUser(UserId(4242), true, QString()),
-								  std::make_unique<Main::SessionSettings>())
-		|| !forgotten->sessionExists()
+	const auto sessionCreated = forgotten->createSession(
+		RegressionUser(UserId(4242), true, QString()),
+		std::make_unique<Main::SessionSettings>());
+	const auto cacheReady
+		= sessionCreated && WaitForRegressionCondition([&] {
+			  return forgotten->session().data().cacheIfAllowed() != nullptr;
+		  });
+	if (!sessionCreated || !cacheReady || !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()
 		|| forgotten->local().checkServerCacheBinding(originalFingerprint, 4242)
 			   != Storage::ServerCacheBindingStatus::Match
