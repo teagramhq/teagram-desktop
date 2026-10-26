@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/upload_limits.h"
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -45,7 +46,13 @@ struct UploadFailureMessage {
 	bool isEditingMedia() const { return editingMedia; }
 	void returnSavedMedia() {
 		if (editingMedia) {
+			++returnSavedMediaCalls;
+			const auto destroyReplacement = onReplacementDestroyed;
+			onReplacementDestroyed = {};
 			mediaData = savedMediaData;
+			if (destroyReplacement) {
+				destroyReplacement();
+			}
 			caption = savedCaption;
 			editingMedia = false;
 		}
@@ -56,9 +63,11 @@ struct UploadFailureMessage {
 	UploadFailureMedia *savedMediaData = nullptr;
 	std::string caption;
 	std::string savedCaption;
+	std::function<void()> onReplacementDestroyed;
 	bool sending = true;
 	bool failed = false;
 	bool editingMedia = false;
+	int returnSavedMediaCalls = 0;
 };
 
 struct UploadRequest {
@@ -240,6 +249,35 @@ TEST_CASE(RejectedDocumentReplacementRestoresSavedMediaAndCaption) {
 	CHECK(message.mediaData == &savedMedia);
 	CHECK_EQ(message.caption, std::string("original caption"));
 	CHECK(!message.editingMedia);
+}
+
+TEST_CASE(CancellingReplacementDuringRestoreDoesNotReenterSavedMedia) {
+	auto savedPhoto = UploadFailurePhoto();
+	savedPhoto.uploadingData.reset();
+	auto savedMedia = UploadFailureMedia{.photoData = &savedPhoto};
+	auto replacementPhoto = UploadFailurePhoto();
+	auto replacementMedia = UploadFailureMedia{.photoData = &replacementPhoto};
+	auto message = UploadFailureMessage{
+		.mediaData = &replacementMedia,
+		.savedMediaData = &savedMedia,
+		.caption = "replacement caption",
+		.savedCaption = "original caption",
+		.sending = false,
+		.editingMedia = true,
+	};
+	message.onReplacementDestroyed = [&] {
+		replacementPhoto.uploadingData.reset();
+		Storage::details::FailLocalMessageUpload(&message, false);
+	};
+
+	message.returnSavedMedia();
+
+	CHECK_EQ(message.returnSavedMediaCalls, 1);
+	CHECK(message.mediaData == &savedMedia);
+	CHECK_EQ(message.caption, std::string("original caption"));
+	CHECK(!message.editingMedia);
+	CHECK(!replacementPhoto.uploadingData);
+	CHECK(!message.failed);
 }
 
 TEST_CASE(CancelledLocalUploadClearsDataWithoutFailingMessage) {

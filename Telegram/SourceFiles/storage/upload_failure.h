@@ -34,7 +34,7 @@ void FailLocalMessageUpload(Item *item, bool markMessageFailed,
 			document->uploadingData = nullptr;
 		}
 	}
-	if (item->isEditingMedia()) {
+	if (markMessageFailed && item->isEditingMedia()) {
 		item->returnSavedMedia();
 	}
 	if (markMessageFailed && item->isSending()) {
