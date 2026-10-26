@@ -1854,14 +1854,9 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 
 [[nodiscard]] MTP::AuthKeyPtr RegressionAuthKey(int byte) {
 	auto data = MTP::AuthKey::Data();
-	std::fill(
-		data.begin(),
-		data.end(),
-		static_cast<gsl::byte>(byte));
-	return std::make_shared<MTP::AuthKey>(
-		MTP::AuthKey::Type::Generated,
-		2,
-		data);
+	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(byte));
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::Generated, 2,
+										  data);
 }
 
 [[nodiscard]] bool IncompleteStoredSessionStartsPaused(Main::Domain &domain) {
@@ -1913,20 +1908,16 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		   && !account->mtp().isServerEnrollmentNetworkAllowed();
 }
 
-[[nodiscard]] bool HasAuthKey(
-		not_null<Main::Account*> account,
-		MTP::AuthKey::KeyId keyId) {
+[[nodiscard]] bool HasAuthKey(not_null<Main::Account *> account,
+							  MTP::AuthKey::KeyId keyId) {
 	const auto keys = account->mtp().getKeysForWrite();
-	return std::any_of(keys.begin(), keys.end(), [=](const auto &key) {
-		return key->keyId() == keyId;
-	});
+	return std::any_of(keys.begin(), keys.end(),
+					   [=](const auto &key) { return key->keyId() == keyId; });
 }
 
-[[nodiscard]] bool HasNoAuthorizationState(
-		not_null<Main::Account*> account) {
-	return account->mtp().getKeysForWrite().empty()
-		&& !account->sessionExists()
-		&& (account->willHaveSessionUniqueId(nullptr) == 0);
+[[nodiscard]] bool HasNoAuthorizationState(not_null<Main::Account *> account) {
+	return account->mtp().getKeysForWrite().empty() && !account->sessionExists()
+		   && (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
 constexpr auto kSyntheticStockCacheBindingForRegression
@@ -2055,33 +2046,30 @@ RestartDomain(Main::Domain &domain,
 	if (account->sessionExists()
 		|| !account->serverCacheBindingMismatchPending()
 		|| account->mtp().isServerEnrollmentNetworkAllowed()
-		|| account->local().checkServerCacheBinding(
-			retainedFingerprint,
-			retainedUserId) != Storage::ServerCacheBindingStatus::Match
-		|| account->local().checkServerCacheBinding(
-			candidateFingerprint,
-			candidateUserId.bare)
-			!= Storage::ServerCacheBindingStatus::Mismatch) {
+		|| account->local().checkServerCacheBinding(retainedFingerprint,
+													retainedUserId)
+			   != Storage::ServerCacheBindingStatus::Match
+		|| account->local().checkServerCacheBinding(candidateFingerprint,
+													candidateUserId.bare)
+			   != Storage::ServerCacheBindingStatus::Mismatch) {
 		return false;
 	}
 	if (account->beginServerReenrollment(
-			Main::details::ServerReenrollmentPrompt::IdentityChange,
-			true)
+			Main::details::ServerReenrollmentPrompt::IdentityChange, true)
 		|| account->beginServerReenrollment(
 			Main::details::ServerReenrollmentPrompt::DestructiveConfirmation,
 			false)
 		|| account->local().serverReenrollmentPending()) {
 		return false;
 	}
-	return account->local().checkServerCacheBinding(
-		retainedFingerprint,
-		retainedUserId) == Storage::ServerCacheBindingStatus::Match;
+	return account->local().checkServerCacheBinding(retainedFingerprint,
+													retainedUserId)
+		   == Storage::ServerCacheBindingStatus::Match;
 }
 
 template <typename Result, typename Start>
-[[nodiscard]] std::optional<Result> AwaitCacheCallback(
-	Start start,
-	int timeoutMs = 5000) {
+[[nodiscard]] std::optional<Result> AwaitCacheCallback(Start start,
+													   int timeoutMs = 5000) {
 	struct State {
 		std::optional<Result> result;
 		QEventLoop *loop = nullptr;
@@ -2118,77 +2106,71 @@ template <typename Result, typename Start>
 }
 
 [[nodiscard]] bool CacheCallbackTimeoutIsSafe() {
-	const auto failure = AwaitCacheCallback<int>([](auto done) {
-		done(-1);
-	});
+	const auto failure = AwaitCacheCallback<int>([](auto done) { done(-1); });
 	if (!failure || (*failure != -1)) {
 		return false;
 	}
 	auto release = std::promise<void>();
 	const auto waitForRelease = release.get_future().share();
 	auto delayed = std::thread();
-	const auto timedOut = AwaitCacheCallback<int>([&](auto done) {
-		delayed = std::thread([done = std::move(done), waitForRelease]() mutable {
-			waitForRelease.wait();
-			done(1);
-		});
-	}, 1);
+	const auto timedOut = AwaitCacheCallback<int>(
+		[&](auto done) {
+			delayed = std::thread(
+				[done = std::move(done), waitForRelease]() mutable {
+					waitForRelease.wait();
+					done(1);
+				});
+		},
+		1);
 	release.set_value();
 	delayed.join();
 	QCoreApplication::processEvents();
 	return !timedOut;
 }
 
-[[nodiscard]] bool CacheOperationSucceeded(
-		const std::optional<Storage::Cache::Error> &result) {
-	return result
-		&& (result->type == Storage::Cache::Error::Type::None);
+[[nodiscard]] bool
+CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
+	return result && (result->type == Storage::Cache::Error::Type::None);
 }
 
-[[nodiscard]] bool OpenCache(
-		Storage::Cache::Database &cache,
-		not_null<Main::Account*> account) {
-	return CacheOperationSucceeded(AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) {
+[[nodiscard]] bool OpenCache(Storage::Cache::Database &cache,
+							 not_null<Main::Account *> account) {
+	return CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 			cache.open(account->local().cacheKey(), std::move(done));
 		}));
 }
 
-[[nodiscard]] bool WriteCachePayload(
-		not_null<Main::Account*> account,
-		const Storage::Cache::Key &key,
-		const QByteArray &payload) {
-	auto cache = Core::App().databases().get(
-		account->local().cachePath(),
-		account->local().cacheSettings());
+[[nodiscard]] bool WriteCachePayload(not_null<Main::Account *> account,
+									 const Storage::Cache::Key &key,
+									 const QByteArray &payload) {
+	auto cache = Core::App().databases().get(account->local().cachePath(),
+											 account->local().cacheSettings());
 	if (!OpenCache(*cache, account)) {
 		return false;
 	}
-	return CacheOperationSucceeded(AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) {
+	return CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 			cache->put(key, QByteArray(payload), std::move(done));
 		}));
 }
 
-[[nodiscard]] bool CachePayloadMatches(
-		Storage::Cache::Database &cache,
-		const Storage::Cache::Key &key,
-		const QByteArray &expected) {
-	const auto payload = AwaitCacheCallback<QByteArray>([&](auto done) {
-		cache.get(key, std::move(done));
-	});
+[[nodiscard]] bool CachePayloadMatches(Storage::Cache::Database &cache,
+									   const Storage::Cache::Key &key,
+									   const QByteArray &expected) {
+	const auto payload = AwaitCacheCallback<QByteArray>(
+		[&](auto done) { cache.get(key, std::move(done)); });
 	return payload && (*payload == expected);
 }
 
-[[nodiscard]] bool PersistedCachePayloadMatches(
-		not_null<Main::Account*> account,
-		const Storage::Cache::Key &key,
-		const QByteArray &expected) {
-	auto cache = Core::App().databases().get(
-		account->local().cachePath(),
-		account->local().cacheSettings());
+[[nodiscard]] bool
+PersistedCachePayloadMatches(not_null<Main::Account *> account,
+							 const Storage::Cache::Key &key,
+							 const QByteArray &expected) {
+	auto cache = Core::App().databases().get(account->local().cachePath(),
+											 account->local().cacheSettings());
 	return OpenCache(*cache, account)
-		&& CachePayloadMatches(*cache, key, expected);
+		   && CachePayloadMatches(*cache, key, expected);
 }
 
 using CacheGetter = Fn<Storage::Cache::Database &()>;
