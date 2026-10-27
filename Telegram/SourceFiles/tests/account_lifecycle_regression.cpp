@@ -2652,32 +2652,35 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	}
 	opened->sync();
 	const auto active = ActiveCacheVersionPath(cachePath);
-	const auto target
-		= QDir(fixtures.root)
-			  .filePath(mediaCache ? "failed-init-media-cache-target"
-								   : "failed-init-cache-target");
-	if (active.isEmpty() || QFileInfo::exists(target)) {
+	const auto protectedTarget
+		= mediaCache ? fixtures.mediaCacheRoot : fixtures.cacheRoot;
+	const auto saved = active + ".failed-init-original";
+	if (active.isEmpty() || QFileInfo::exists(saved)) {
 		return false;
 	}
-	auto moved = QDir().rename(active, target);
-	auto linked = moved && QFile::link(target, active);
-	const auto targetEntriesBefore = QDir(target).entryList(
-		QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+	const auto targetEntriesBefore
+		= QDir(protectedTarget)
+			  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+						 | QDir::NoDotAndDotDot);
+	auto moved = false;
+	auto linked = false;
 	auto cleanupDone = false;
 	auto cleanupSucceeded = true;
 	auto cleanup = [&] {
 		if (cleanupDone) {
 			return cleanupSucceeded;
 		}
-		opened->close();
 		opened->sync();
+		opened->close();
 		const auto linkRemoved = !linked || QFile::remove(active);
-		const auto originalRestored = !moved || QDir().rename(target, active);
+		const auto originalRestored = !moved || QDir().rename(saved, active);
 		cleanupSucceeded = linkRemoved && originalRestored;
 		cleanupDone = true;
 		return cleanupSucceeded;
 	};
 	auto cleanupGuard = gsl::finally([&] { cleanup(); });
+	moved = QDir().rename(active, saved);
+	linked = moved && QFile::link(protectedTarget, active);
 	if (!moved || !linked
 		|| !guarded->createSession(RegressionUser(selfId, true, QString()),
 								   std::make_unique<Main::SessionSettings>())) {
@@ -2708,8 +2711,9 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		  && (mediaCache ? (data.cacheBigFileIfAllowed() == nullptr)
 						 : (data.cacheIfAllowed() == nullptr));
 	const auto targetUnchanged
-		= QDir(target).entryList(QDir::AllEntries | QDir::Hidden | QDir::System
-								 | QDir::NoDotAndDotDot)
+		= QDir(protectedTarget)
+			  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+						 | QDir::NoDotAndDotDot)
 		  == targetEntriesBefore;
 	const auto passed = initializationPending && directReadRefused
 						&& directAccessRefused && targetUnchanged
@@ -8905,6 +8909,8 @@ struct CacheChatSwitchRegressionResult final {
 	int hydratedDocuments = 0;
 	int chatSwitches = 0;
 	int cachedDocuments = 0;
+	qint64 maxHydrationNanoseconds = -1;
+	qint64 maxChatSwitchNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	bool passed = false;
 };
@@ -8961,14 +8967,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::move(reactions),
 		[&](const MTPAvailableReaction &reaction)
 			-> std::optional<CacheReactionProbe> {
-			auto started = QElapsedTimer();
-			started.start();
+			auto hydrationTimer = QElapsedTimer();
+			hydrationTimer.start();
 			const auto documents
 				= Data::details::HydrateAvailableReactionDocuments(
 					reaction.data(), [&](const MTPDocument &document) {
 						++result.hydratedDocuments;
 						return data.processDocument(document);
 					});
+			result.maxHydrationNanoseconds = std::max(
+				result.maxHydrationNanoseconds, hydrationTimer.nsecsElapsed());
 			if (!documents.centerIcon || !documents.aroundAnimation) {
 				return std::nullopt;
 			}
@@ -8984,12 +8992,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
             .active = active,
         };
 			++result.reactions;
-			QTimer::singleShot(0, &loop, [&, started] {
+			QTimer::singleShot(0, &loop, [&] {
 				const auto target
 					= (result.chatSwitches % 2) ? secondHistory : firstHistory;
+				auto switchTimer = QElapsedTimer();
+				switchTimer.start();
 				controller->showPeerHistory(target);
-				result.maxStallNanoseconds = std::max(
-					result.maxStallNanoseconds, started.nsecsElapsed());
+				result.maxChatSwitchNanoseconds
+					= std::max(result.maxChatSwitchNanoseconds,
+							   switchTimer.nsecsElapsed());
+				result.maxStallNanoseconds
+					= std::max(result.maxHydrationNanoseconds,
+							   result.maxChatSwitchNanoseconds);
 				++result.chatSwitches;
 				maybeFinish();
 			});
@@ -9101,7 +9115,8 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	auto reply = mtpBuffer();
-	MTP_messages_dialogs(
+	MTP_messages_dialogsSlice(
+		MTP_int(kMessageCount),
 		MTP_vector<MTPDialog>({MTP_dialog(
 			MTP_flags(0), peerToMTP(peerFromChat(chatId)),
 			MTP_int(kMessageCount), MTP_int(0), MTP_int(0), MTP_int(0),
@@ -9117,7 +9132,8 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	};
 	auto timer = QElapsedTimer();
 	timer.start();
-	result.responseParsed = request->callbacks.done(response);
+	auto done = std::move(request->callbacks.done);
+	result.responseParsed = done && done(response);
 	result.handlerNanoseconds = timer.nsecsElapsed();
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
@@ -9181,10 +9197,17 @@ void RunAuthenticatedCacheSymlinkCases(
 			}
 			return true;
 		};
+		const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
+			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "media-cache-access-no-walk"
 											 : "cache-access-no-walk";
 			nativeLifecycleResults->StartCase(caseName);
+			if (!authenticatedCacheOnly) {
+				nativeLifecycleResults->Skip(caseName,
+											 "dedicated-cache-regression");
+				continue;
+			}
 			const auto guarded = domain.add(MTP::Environment::Production);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
@@ -9198,6 +9221,23 @@ void RunAuthenticatedCacheSymlinkCases(
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
 			auto cacheInitializationTimer = QElapsedTimer();
 			cacheInitializationTimer.start();
+			auto mainThreadHeartbeatClock = QElapsedTimer();
+			mainThreadHeartbeatClock.start();
+			auto lastMainThreadHeartbeatNanoseconds = qint64(0);
+			auto maxMainThreadStallNanoseconds = qint64(0);
+			auto mainThreadHeartbeat = QTimer();
+			mainThreadHeartbeat.setInterval(10);
+			mainThreadHeartbeat.setTimerType(Qt::PreciseTimer);
+			QObject::connect(&mainThreadHeartbeat, &QTimer::timeout,
+							 &mainThreadHeartbeat, [&] {
+								 const auto now
+									 = mainThreadHeartbeatClock.nsecsElapsed();
+								 maxMainThreadStallNanoseconds = std::max(
+									 maxMainThreadStallNanoseconds,
+									 now - lastMainThreadHeartbeatNanoseconds);
+								 lastMainThreadHeartbeatNanoseconds = now;
+							 });
+			mainThreadHeartbeat.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
@@ -9221,6 +9261,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					!= 2) {
 					return false;
 				}
+				if (!data.cacheInitializationFinishedForTesting(mediaCache)) {
+					return false;
+				}
 				auto timer = QElapsedTimer();
 				timer.start();
 				if (!getAllowedCache()) {
@@ -9233,6 +9276,12 @@ void RunAuthenticatedCacheSymlinkCases(
 				firstAccessNanoseconds = timer.nsecsElapsed();
 				return true;
 			});
+			mainThreadHeartbeat.stop();
+			const auto heartbeatAtCompletion
+				= mainThreadHeartbeatClock.nsecsElapsed();
+			maxMainThreadStallNanoseconds = std::max(
+				maxMainThreadStallNanoseconds,
+				heartbeatAtCompletion - lastMainThreadHeartbeatNanoseconds);
 			const auto cacheInitializationNanoseconds
 				= cacheInitializationTimer.nsecsElapsed();
 			const auto first = (firstCache != nullptr);
@@ -9240,9 +9289,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
 			auto chatSwitch = CacheChatSwitchRegressionResult();
 			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
-			const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
-				"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
-			if (!mediaCache && authenticatedCacheOnly) {
+			if (!mediaCache) {
 				dialogsHandler
 					= RunFirstDialogsHandlerLatencyRegression(guarded);
 				std::fprintf(
@@ -9270,9 +9317,12 @@ void RunAuthenticatedCacheSymlinkCases(
 					"Cache chat switch latency regression: "
 					"seeded_directories=125 seeded_files=169 reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
+					"max_hydration_ns=%lld max_switch_ns=%lld "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches,
+					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
+					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
 					 && chatSwitch.maxStallNanoseconds < 50'000'000));
@@ -9328,29 +9378,28 @@ void RunAuthenticatedCacheSymlinkCases(
 			std::fprintf(stderr,
 						 "Cache access latency regression: cache=%s "
 						 "seeded_directories=125 seeded_files=169 "
-						 "cache_initialization_ns=%lld under_100ms=%d "
+						 "cache_initialization_ns=%lld "
+						 "max_main_thread_stall_ns=%lld under_100ms=%d "
 						 "first_access_ns=%lld under_50ms=%d "
 						 "root_swap_refused=%d direct_fallback_closed=%d "
 						 "root_restored=%d startup_walks=%d "
 						 "main_thread_walks=%d.\n",
 						 mediaCache ? "media_cache" : "cache",
 						 static_cast<long long>(cacheInitializationNanoseconds),
-						 (cacheInitializationNanoseconds < 100'000'000),
+						 static_cast<long long>(maxMainThreadStallNanoseconds),
+						 (maxMainThreadStallNanoseconds < 100'000'000),
 						 static_cast<long long>(firstAccessNanoseconds),
 						 (firstAccessNanoseconds < 50'000'000),
 						 swappedRootRefused, directFallbackClosed,
 						 rootRestoreSucceeded, startupWalks, mainThreadWalks);
-			const auto passed
-				= startupScansCompleted && first && second
-				  && (startupWalks == 2) && (mainThreadWalks == 0)
-				  && swappedRootRefused && directFallbackClosed
-				  && rootRestoreSucceeded
-				  && (mediaCache || !authenticatedCacheOnly
-					  || chatSwitch.passed)
-				  && (mediaCache || !authenticatedCacheOnly
-					  || dialogsHandler.passed)
-				  && (cacheInitializationNanoseconds < 100'000'000)
-				  && (firstAccessNanoseconds < 50'000'000);
+			const auto passed = startupScansCompleted && first && second
+								&& (startupWalks == 2) && (mainThreadWalks == 0)
+								&& swappedRootRefused && directFallbackClosed
+								&& rootRestoreSucceeded
+								&& (mediaCache || chatSwitch.passed)
+								&& (mediaCache || dialogsHandler.passed)
+								&& (maxMainThreadStallNanoseconds < 100'000'000)
+								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {

@@ -1355,7 +1355,7 @@ if ! grep -F -q \
 fi
 for cache in cache media_cache; do
 	if ! grep -E -q \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 cache_initialization_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 cache_initialization_ns=[0-9]+ max_main_thread_stall_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
@@ -1370,7 +1370,7 @@ if ! grep -E -q \
 	exit 1
 fi
 if ! grep -E -q \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "cache chat switch latency evidence missing or over 50 ms." >&2
@@ -1474,8 +1474,8 @@ for native_evidence in \
 	'native_lifecycle_case=media-cache-stats-initialization result=PASS' \
 	'native_lifecycle_case=cold-post-open-cache result=PASS' \
 	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
-	'native_lifecycle_case=cache-access-no-walk result=PASS' \
-	'native_lifecycle_case=media-cache-access-no-walk result=PASS' \
+	'native_lifecycle_case=cache-access-no-walk result=SKIP reason=dedicated-cache-regression' \
+	'native_lifecycle_case=media-cache-access-no-walk result=SKIP reason=dedicated-cache-regression' \
 	'native_lifecycle_case=folder-crud result=PASS' \
 	'native_lifecycle_case=stock-basic-group-creator result=PASS' \
 	'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
@@ -1496,15 +1496,6 @@ for cache_evidence in \
 	if ! grep -F -q "$cache_evidence" "$AUTH_LOG"; then
 		cat "$AUTH_LOG" >&2
 		printf 'authenticated lifecycle evidence missing: %s\n' "$cache_evidence" >&2
-		exit 1
-	fi
-done
-for cache in cache media_cache; do
-	if ! grep -E -q \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 cache_initialization_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
-		"$AUTH_LOG"; then
-		cat "$AUTH_LOG" >&2
-		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
 done
