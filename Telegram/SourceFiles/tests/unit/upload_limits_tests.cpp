@@ -93,6 +93,18 @@ TEST_CASE(ServerUploadLimitAllowsFilesWhenConfigIsAbsent) {
 	CHECK(!Storage::details::ExceedsUploadMaxBytes(900'000'000, std::nullopt));
 }
 
+TEST_CASE(ServerUploadPartLimitCapsRequestedPartSize) {
+	CHECK_EQ(Storage::details::UploadPartSizeWithinServerLimit(512 * 1024,
+															   128 * 1024),
+			 128 * 1024);
+}
+
+TEST_CASE(MissingServerUploadPartLimitLeavesPartSizeUnchanged) {
+	CHECK_EQ(Storage::details::UploadPartSizeWithinServerLimit(512 * 1024,
+															   std::nullopt),
+			 512 * 1024);
+}
+
 TEST_CASE(FilePartTooBigErrorIsRecognized) {
 	CHECK(Storage::details::IsFilePartTooBigError(u"FILE_PART_TOO_BIG"_q));
 }

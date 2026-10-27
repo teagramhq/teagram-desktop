@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat_participant_status.h"
 #include "data/data_message_reaction_id.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "history/view/controls/compose_controls_common.h"
@@ -1237,7 +1238,9 @@ void ShortcutMessages::edit(
 	const auto maxTextSize = hasMediaWithCaption
 		? limits.captionLengthCurrent()
 		: limits.messageLengthCurrent();
-	if (!TextUtilities::CutPart(sending, left, maxTextSize)
+	const auto splitLimit
+		= Data::details::InputLengthLimitForSplitting(maxTextSize);
+	if (!TextUtilities::CutPart(sending, left, splitLimit)
 		&& !hasMediaWithCaption) {
 		if (item) {
 			_controller->show(Box<DeleteMessagesBox>(item));
@@ -1245,7 +1248,7 @@ void ShortcutMessages::edit(
 			doSetInnerFocus();
 		}
 		return;
-	} else if (!left.text.isEmpty()) {
+	} else if (!left.text.isEmpty() && maxTextSize > 0) {
 		const auto remove = originalLeftSize - maxTextSize;
 		_controller->showToast(
 			tr::lng_edit_limit_reached(tr::now, lt_count, remove));

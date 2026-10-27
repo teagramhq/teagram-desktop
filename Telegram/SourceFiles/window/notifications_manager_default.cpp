@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/power_saving.h"
 #include "ui/ui_utility.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_forum_topic.h"
@@ -1116,8 +1117,6 @@ void Notification::showReplyField() {
 	_replyArea->moveToLeft(st::notifyBorderWidth, st::notifyMinHeight);
 	_replyArea->show();
 	_replyArea->setFocus();
-	_replyArea->setMaxLength(
-		Data::PremiumLimits(&_item->history()->session()).messageLengthCurrent());
 	_replyArea->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
 	InitMessageFieldHandlers({
 		.session = &_item->history()->session(),
@@ -1150,10 +1149,16 @@ void Notification::showReplyField() {
 
 void Notification::sendReply() {
 	if (!_history) return;
+	const auto text = _replyArea->getTextWithAppliedMarkdown();
+	const auto limit
+		= Data::PremiumLimits(&_history->session()).messageLengthCurrent();
+	if (Data::details::ExceedsInputLengthLimit(
+			Data::details::UnicodeScalarCount(text.text), limit)) {
+		_replyArea->showError();
+		return;
+	}
 
-	manager()->notificationReplied(
-		myId(),
-		_replyArea->getTextWithAppliedMarkdown());
+	manager()->notificationReplied(myId(), text);
 
 	manager()->startAllHiding();
 }

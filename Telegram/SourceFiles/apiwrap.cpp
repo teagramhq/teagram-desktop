@@ -55,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum.h"
 #include "data/data_message_reaction_id.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_saved_messages.h"
 #include "data/data_saved_music.h"
 #include "data/data_saved_sublist.h"
@@ -4656,12 +4657,14 @@ void ApiWrap::sendMessage(
 	const auto messageLengthLimit = Data::PremiumLimits(
 		&history->session()
 	).messageLengthCurrent();
+	const auto splitLengthLimit
+		= Data::details::InputLengthLimitForSplitting(messageLengthLimit);
 
 	const auto exactWebPage = !message.webPage.url.isEmpty();
 	const auto webPageDraft = message.webPage;
 	auto isFirst = true;
-	while (TextUtilities::CutPart(sending, left, messageLengthLimit)
-		|| (isFirst && exactWebPage)) {
+	while (TextUtilities::CutPart(sending, left, splitLengthLimit)
+		   || (isFirst && exactWebPage)) {
 		TextUtilities::Trim(left);
 		const auto isLast = left.empty();
 

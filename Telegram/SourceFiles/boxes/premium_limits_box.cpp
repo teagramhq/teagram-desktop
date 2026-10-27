@@ -953,27 +953,24 @@ void CaptionLimitBox(
 	const auto defaultLimit = float64(limits.captionLengthDefault());
 	const auto premiumLimit = float64(limits.captionLengthPremium());
 	const auto currentLimit = premium ? premiumLimit : defaultLimit;
+	const auto premiumHasLargerLimit = (premiumLimit > defaultLimit);
 	const auto current = std::clamp(
 		remove + currentLimit,
 		defaultLimit,
 		premiumLimit);
 
 	auto text = rpl::combine(
-		tr::lng_caption_limit1(
-			lt_count,
-			rpl::single(currentLimit),
-			tr::rich),
-		(!premiumPossible
-			? rpl::single(TextWithEntities())
-			: tr::lng_caption_limit2(
-				lt_count,
-				rpl::single(premiumLimit),
-				tr::rich))
-	) | rpl::map([](TextWithEntities &&a, TextWithEntities &&b) {
-		return b.text.isEmpty()
-			? a
-			: a.append(QChar(' ')).append(std::move(b));
-	});
+					tr::lng_caption_limit1(lt_count, rpl::single(currentLimit),
+										   tr::rich),
+					(!premiumPossible || !premiumHasLargerLimit
+						 ? rpl::single(TextWithEntities())
+						 : tr::lng_caption_limit2(
+							   lt_count, rpl::single(premiumLimit), tr::rich)))
+				| rpl::map([](TextWithEntities &&a, TextWithEntities &&b) {
+					  return b.text.isEmpty()
+								 ? a
+								 : a.append(QChar(' ')).append(std::move(b));
+				  });
 
 	SimpleLimitBox(
 		box,
@@ -995,7 +992,7 @@ void CaptionLimitReachedBox(
 		.labelStyle = stOverride ? &stOverride->boxLabel : nullptr,
 		.inform = true,
 	});
-	if (!session->premium()) {
+	if (!session->premium() && premiumPossible && premiumHasLargerLimit) {
 		box->addLeftButton(tr::lng_limits_increase(), [=] {
 			box->getDelegate()->showBox(
 				Box(CaptionLimitBox, session, remove, stOverride),

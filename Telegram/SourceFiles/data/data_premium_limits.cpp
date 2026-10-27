@@ -165,10 +165,10 @@ int PremiumLimits::channelsPublicCurrent() const {
 }
 
 int PremiumLimits::captionLengthDefault() const {
-	return appConfigLimit("caption_length_limit_default", 1024);
+	return appConfigLimit("caption_max_length", 0);
 }
 int PremiumLimits::captionLengthPremium() const {
-	return appConfigLimit("caption_length_limit_premium", 2048);
+	return appConfigLimit("caption_max_length", 0);
 }
 int PremiumLimits::captionLengthCurrent() const {
 	return isPremium()
@@ -177,11 +177,11 @@ int PremiumLimits::captionLengthCurrent() const {
 }
 
 int PremiumLimits::messageLengthDefault() const {
-	return appConfigLimit("message_length_limit_default", 4096);
+	return appConfigLimit("message_max_length", 0);
 }
 
 int PremiumLimits::messageLengthPremium() const {
-	return appConfigLimit("message_length_limit_premium", 8192);
+	return appConfigLimit("message_max_length", 0);
 }
 
 int PremiumLimits::messageLengthCurrent() const {
@@ -203,10 +203,10 @@ int PremiumLimits::uploadMaxCurrent() const {
 }
 
 int PremiumLimits::aboutLengthDefault() const {
-	return appConfigLimit("about_length_limit_default", 70);
+	return appConfigLimit("bio_max_length", 0);
 }
 int PremiumLimits::aboutLengthPremium() const {
-	return appConfigLimit("about_length_limit_premium", 140);
+	return appConfigLimit("bio_max_length", 0);
 }
 int PremiumLimits::aboutLengthCurrent() const {
 	return isPremium()

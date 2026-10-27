@@ -132,8 +132,8 @@ struct UsernameCodeCache {
 // A type with no trailing digits yields 0.
 [[nodiscard]] int FloodWaitSeconds(const QString &errorType);
 
-[[nodiscard]] SignupNameValidation ValidateSignupName(
-	const QString &input);
+[[nodiscard]] SignupNameValidation ValidateSignupName(const QString &input,
+													  int maxLength);
 [[nodiscard]] QString NormalizeSignupNameInput(const QString &input);
 
 [[nodiscard]] SignupPasswordValidation ValidateSignupPassword(

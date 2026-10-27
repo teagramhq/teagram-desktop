@@ -33,13 +33,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "apiwrap.h"
 
+#include <limits>
+
 namespace Storage {
 namespace {
 
 // max 1mb uploaded at the same time in each session
 constexpr auto kMaxUploadPerSession = 1024 * 1024;
-
-constexpr auto kDocumentMaxPartsCountDefault = 4000;
 
 // 32kb for tiny document ( < 1mb )
 constexpr auto kDocumentUploadPartSize0 = 32 * 1024;
@@ -87,13 +87,35 @@ void ShowFileSizeLimitBox(not_null<Main::Session *> session, int64 fileSize) {
 			 Ui::LayerOption::KeepOther);
 }
 
+void SplitOversizedUploadParts(std::vector<QByteArray> &parts,
+							   int64 maxPartBytes) {
+	if (maxPartBytes <= 0) {
+		return;
+	}
+	const auto limit
+		= int(std::min<int64>(maxPartBytes, std::numeric_limits<int>::max()));
+	if (ranges::all_of(parts, [=](const QByteArray &part) {
+			return part.size() <= limit;
+		})) {
+		return;
+	}
+	auto result = std::vector<QByteArray>();
+	for (const auto &part : parts) {
+		for (auto offset = 0; offset < part.size(); offset += limit) {
+			result.push_back(part.mid(offset, limit));
+		}
+	}
+	parts = std::move(result);
+}
+
 } // namespace
 
 struct Uploader::Entry {
-	Entry(FullMsgId itemId, const std::shared_ptr<FilePrepareResult> &file);
+	Entry(FullMsgId itemId, const std::shared_ptr<FilePrepareResult> &file,
+		  int maxPartCount = 0, int64 maxPartBytes = 0);
 
-	void setDocSize(int64 size);
-	bool setPartSize(int partSize);
+	void setDocSize(int64 size, int maxPartCount, int64 maxPartBytes);
+	bool setPartSize(int partSize, int maxPartCount, int64 maxPartBytes);
 
 	// const, but non-const for the move-assignment in the
 	FullMsgId itemId;
@@ -129,46 +151,59 @@ struct Uploader::Request {
 	bool nonPremiumDelayed = false;
 };
 
-Uploader::Entry::Entry(
-	FullMsgId itemId,
-	const std::shared_ptr<FilePrepareResult> &file)
-: itemId(itemId)
-, file(file)
-, parts((file->type == SendMediaType::Photo
-	|| file->type == SendMediaType::Secure)
-		? &file->fileparts
-		: &file->thumbparts)
-, partsOfId((file->type == SendMediaType::Photo
-	|| file->type == SendMediaType::Secure)
-		? file->id
-		: file->thumbId) {
+Uploader::Entry::Entry(FullMsgId itemId,
+					   const std::shared_ptr<FilePrepareResult> &file,
+					   int maxPartCount, int64 maxPartBytes)
+	: itemId(itemId), file(file), parts((file->type == SendMediaType::Photo
+										 || file->type == SendMediaType::Secure)
+											? &file->fileparts
+											: &file->thumbparts),
+	  partsOfId((file->type == SendMediaType::Photo
+				 || file->type == SendMediaType::Secure)
+					? file->id
+					: file->thumbId) {
 	if (file->type == SendMediaType::File
 		|| file->type == SendMediaType::ThemeFile
 		|| file->type == SendMediaType::Audio
 		|| file->type == SendMediaType::Round) {
-		setDocSize(file->filesize);
+		setDocSize(file->filesize, maxPartCount, maxPartBytes);
 	}
 }
 
-void Uploader::Entry::setDocSize(int64 size) {
+void Uploader::Entry::setDocSize(int64 size, int maxPartCount,
+								 int64 maxPartBytes) {
 	docSize = size;
 	constexpr auto limit0 = 1024 * 1024;
 	constexpr auto limit1 = 32 * limit0;
-	if (docSize >= limit0 || !setPartSize(kDocumentUploadPartSize0)) {
-		if (docSize > limit1 || !setPartSize(kDocumentUploadPartSize1)) {
-			if (!setPartSize(kDocumentUploadPartSize2)) {
-				if (!setPartSize(kDocumentUploadPartSize3)) {
-					setPartSize(kDocumentUploadPartSize4);
+	if (docSize >= limit0
+		|| !setPartSize(kDocumentUploadPartSize0, maxPartCount, maxPartBytes)) {
+		if (docSize > limit1
+			|| !setPartSize(kDocumentUploadPartSize1, maxPartCount,
+							maxPartBytes)) {
+			if (!setPartSize(kDocumentUploadPartSize2, maxPartCount,
+							 maxPartBytes)) {
+				if (!setPartSize(kDocumentUploadPartSize3, maxPartCount,
+								 maxPartBytes)) {
+					setPartSize(kDocumentUploadPartSize4, maxPartCount,
+								maxPartBytes);
 				}
 			}
 		}
 	}
 }
 
-bool Uploader::Entry::setPartSize(int partSize) {
+bool Uploader::Entry::setPartSize(int partSize, int maxPartCount,
+								  int64 maxPartBytes) {
+	partSize = details::UploadPartSizeWithinServerLimit(
+		partSize,
+		(maxPartBytes > 0) ? std::optional<int64>(maxPartBytes) : std::nullopt);
 	docPartSize = partSize;
-	docPartsCount = (docSize + docPartSize - 1) / docPartSize;
-	return (docPartsCount <= kDocumentMaxPartsCountDefault);
+	const auto count = (docSize + docPartSize - 1) / docPartSize;
+	if (count > std::numeric_limits<ushort>::max()) {
+		return false;
+	}
+	docPartsCount = ushort(count);
+	return maxPartCount <= 0 || count <= maxPartCount;
 }
 
 Uploader::Uploader(not_null<ApiWrap*> api)
@@ -399,7 +434,15 @@ void Uploader::upload(
 		});
 		return;
 	}
-	_queue.push_back({itemId, file});
+	const auto maxPartBytes
+		= session().appConfig().get<int64>(u"upload_max_part_bytes"_q, 0);
+	const auto maxPartCount = session().appConfig().get<int>(
+		session().user()->isPremium() ? u"upload_max_fileparts_premium"_q
+									  : u"upload_max_fileparts_default"_q,
+		0);
+	SplitOversizedUploadParts(file->fileparts, maxPartBytes);
+	SplitOversizedUploadParts(file->thumbparts, maxPartBytes);
+	_queue.push_back({itemId, file, maxPartCount, maxPartBytes});
 	if (!_nextTimer.isActive()) {
 		maybeSend();
 	}

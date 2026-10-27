@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -1955,7 +1956,8 @@ template <typename Accumulator>
 	}
 	const auto lengthLimit = ::Data::PremiumLimits(session)
 		.messageLengthCurrent();
-	return to.length() <= lengthLimit;
+	return !Data::details::ExceedsInputLengthLimit(int(to.length()),
+												   lengthLimit);
 }
 
 [[nodiscard]] bool RichBlockIsPlain(const Block &block) {

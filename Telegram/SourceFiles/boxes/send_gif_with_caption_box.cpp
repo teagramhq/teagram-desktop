@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_groups.h"
 #include "data/data_peer_values.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -116,8 +117,13 @@ void SetupCaptionFieldInBox(
 
 	const auto session = &controller->session();
 	const auto checkCharsLimitation = [=](auto repeat) -> void {
-		const auto remove = Ui::ComputeFieldCharacterCount(field)
-			- Data::PremiumLimits(session).captionLengthCurrent();
+		const auto maxLength
+			= Data::PremiumLimits(session).captionLengthCurrent();
+		if (maxLength <= 0) {
+			state->charsLimitation = nullptr;
+			return;
+		}
+		const auto remove = Ui::ComputeFieldCharacterCount(field) - maxLength;
 		if (remove > 0) {
 			if (!state->charsLimitation) {
 				state->charsLimitation = base::make_unique_q<Limit>(
@@ -416,9 +422,11 @@ void CaptionBox(
 	const auto send = [=, show = controller->uiShow()](
 			Api::SendOptions options) {
 		const auto textWithTags = input->getTextWithTags();
-		const auto remove = Ui::ComputeFieldCharacterCount(input)
-			- Data::PremiumLimits(&show->session()).captionLengthCurrent();
-		if (remove > 0) {
+		const auto limit
+			= Data::PremiumLimits(&show->session()).captionLengthCurrent();
+		const auto length = Ui::ComputeFieldCharacterCount(input);
+		const auto remove = length - limit;
+		if (Data::details::ExceedsInputLengthLimit(length, limit)) {
 			show->showToast(
 				tr::lng_edit_limit_reached(tr::now, lt_count, remove));
 			return;
@@ -548,10 +556,11 @@ void EditCaptionBox(
 			show->showToast(tr::lng_edit_error(tr::now));
 			return;
 		}
-		const auto textLength = textWithTags.text.size();
+		const auto textLength
+			= Data::details::UnicodeScalarCount(textWithTags.text);
 		const auto limit = Data::PremiumLimits(
 			&item->history()->session()).captionLengthCurrent();
-		if (textLength > limit) {
+		if (Data::details::ExceedsInputLengthLimit(textLength, limit)) {
 			show->showToast(tr::lng_edit_limit_reached(
 				tr::now,
 				lt_count,

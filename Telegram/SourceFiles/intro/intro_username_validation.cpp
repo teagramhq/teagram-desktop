@@ -9,28 +9,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 #include "base/qt/qt_string_view.h" // base::StringViewMid
+#include "data/data_input_policy.h"
 
 #include <QtCore/QRegularExpression>
 
 namespace Intro {
 namespace details {
-
-namespace {
-
-int UnicodeScalarCount(const QString &text) {
-	auto result = 0;
-	for (auto i = 0; i != text.size(); ++i) {
-		if (text[i].isHighSurrogate()
-			&& (i + 1) < text.size()
-			&& text[i + 1].isLowSurrogate()) {
-			++i;
-		}
-		++result;
-	}
-	return result;
-}
-
-} // namespace
 
 QString NormalizeUsernameInput(const QString &input) {
 	auto result = input.trimmed();
@@ -50,7 +34,7 @@ bool IsValidUsername(
 	if (normalized.isEmpty()) {
 		return false;
 	}
-	const auto length = UnicodeScalarCount(normalized);
+	const auto length = Data::details::UnicodeScalarCount(normalized);
 	if ((policy.minLength > 0 && length < policy.minLength)
 		|| (policy.maxLength > 0 && length > policy.maxLength)) {
 		return false;
@@ -73,11 +57,12 @@ QString NormalizeSignupNameInput(const QString &input) {
 	return input.trimmed();
 }
 
-SignupNameValidation ValidateSignupName(const QString &input) {
+SignupNameValidation ValidateSignupName(const QString &input, int maxLength) {
 	const auto normalized = NormalizeSignupNameInput(input);
 	if (normalized.isEmpty()) {
 		return SignupNameValidation::Empty;
-	} else if (UnicodeScalarCount(normalized) > 60) {
+	} else if (!Data::details::IsWithinInputLengthPolicy(normalized, 0,
+														 maxLength)) {
 		return SignupNameValidation::TooLong;
 	}
 	return SignupNameValidation::Valid;
@@ -88,7 +73,7 @@ SignupPasswordValidation ValidateSignupPassword(
 		const QString &repeat) {
 	if (password.isEmpty()) {
 		return SignupPasswordValidation::Empty;
-	} else if (UnicodeScalarCount(password) < 8) {
+	} else if (Data::details::UnicodeScalarCount(password) < 8) {
 		return SignupPasswordValidation::TooShort;
 	} else if (repeat.isEmpty()) {
 		return SignupPasswordValidation::RepeatEmpty;

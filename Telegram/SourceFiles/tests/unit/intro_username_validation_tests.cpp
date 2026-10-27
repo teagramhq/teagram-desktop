@@ -7,7 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "data/data_input_policy.h"
 #include "intro/intro_username_validation.h"
+
+#include <limits>
 
 namespace {
 
@@ -103,6 +106,26 @@ TEST_CASE(UsernamePolicyUsesPublishedValues) {
 	};
 	CHECK(!IsValidUsername(u"adam_1"_q, lettersOnly));
 	CHECK(IsValidUsername(u"adam"_q, lettersOnly));
+}
+
+TEST_CASE(ServerTextLengthPolicyUsesPublishedBounds) {
+	CHECK(Data::details::IsWithinInputLengthPolicy(u"ab"_q, 2, 4));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(u"a"_q, 2, 4));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(u"abcde"_q, 2, 4));
+}
+
+TEST_CASE(MissingServerTextLengthPolicyLeavesValidationToServer) {
+	CHECK(Data::details::IsWithinInputLengthPolicy(u"any length"_q, 0, 0));
+	CHECK(Data::details::IsWithinInputLengthPolicy(QString(), 0, 0));
+	CHECK(!Data::details::ExceedsInputLengthLimit(1000, 0));
+	CHECK_EQ(Data::details::InputLengthLimitForSplitting(0),
+			 std::numeric_limits<int>::max());
+}
+
+TEST_CASE(ServerTextLengthPolicyCountsUnicodeScalars) {
+	const auto astral = QString::fromUtf8("\xF0\x9F\x98\x80").repeated(2);
+	CHECK(Data::details::IsWithinInputLengthPolicy(astral, 2, 2));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(astral + u"a"_q, 2, 2));
 }
 
 TEST_CASE(WireFormIsLowercased) {
@@ -212,33 +235,34 @@ TEST_CASE(FloodWaitSecondsReadsDigitsFromTheEnd) {
 }
 
 TEST_CASE(SignupNameValidationTrimsAndCapsInput) {
-	CHECK(
-		ValidateSignupName(u"  Ada Lovelace  "_q)
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(QString(60, QChar('x')))
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(QString(61, QChar('x')))
-		== SignupNameValidation::TooLong);
-	CHECK(
-		ValidateSignupName(u" \t\n"_q)
-		== SignupNameValidation::Empty);
+	CHECK(ValidateSignupName(u"  Ada Lovelace  "_q, 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(60, QChar('x')), 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(61, QChar('x')), 60)
+		  == SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(u" \t\n"_q, 60) == SignupNameValidation::Empty);
 }
 
 TEST_CASE(SignupNameValidationDoesNotImposeCompositionRules) {
-	CHECK(
-		ValidateSignupName(u"  你好\u200f  "_q)
-		== SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(u"  你好\u200f  "_q, 64)
+		  == SignupNameValidation::Valid);
+}
+
+TEST_CASE(SignupNameValidationUsesServerDisplayNameLimit) {
+	CHECK(ValidateSignupName(QString(64, QChar('x')), 64)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(65, QChar('x')), 64)
+		  == SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(QString(65, QChar('x')), 0)
+		  == SignupNameValidation::Valid);
 }
 
 TEST_CASE(SignupNameValidationCountsUnicodeScalars) {
-	CHECK(
-		ValidateSignupName(AstralString(60))
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(AstralString(61))
-		== SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(AstralString(60), 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(AstralString(61), 60)
+		  == SignupNameValidation::TooLong);
 }
 
 TEST_CASE(SignupPasswordValidationReportsTheFirstFix) {

@@ -61,6 +61,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_peer_values.h" // Data::AmPremiumValue.
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/stickers/data_stickers.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "window/window_session_controller.h"
@@ -77,7 +78,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-constexpr auto kMaxMessageLength = 4096;
 constexpr auto kMaxDisplayNameLength = 64;
 
 using Ui::SendFilesWay;
@@ -192,16 +192,6 @@ void EditFileCaptionBox(
 	box->setTitle(tr::lng_context_upload_edit_caption());
 	const auto window = Core::App().findWindow(box);
 	const auto controller = window ? window->sessionController() : nullptr;
-	const auto maxCaptionLength = [&] {
-		if (captionToPeer) {
-			return Data::PremiumLimits(
-				&captionToPeer->session()).captionLengthCurrent();
-		} else if (controller) {
-			return Data::PremiumLimits(
-				&controller->session()).captionLengthCurrent();
-		}
-		return kMaxMessageLength;
-	}();
 	const auto wrap = box->addRow(
 		object_ptr<Ui::RpWidget>(box),
 		st::boxRowPadding);
@@ -210,7 +200,6 @@ void EditFileCaptionBox(
 		st.files.caption,
 		Ui::InputField::Mode::MultiLine,
 		tr::lng_photo_caption());
-	field->setMaxLength(maxCaptionLength);
 	field->setSubmitSettings(Core::App().settings().sendSubmitWay());
 	Ui::ResizeFitChild(wrap, field);
 	if (window) {
@@ -1911,9 +1900,6 @@ void SendFilesBox::setupCaption() {
 	}
 	_caption->setSubmitSettings(
 		Core::App().settings().sendSubmitWay());
-	_caption->setMaxLength(
-		Data::PremiumLimits(&_show->session()).captionLengthCurrent());
-
 	_caption->heightChanges(
 	) | rpl::on_next([=] {
 		captionResized();
@@ -2019,7 +2005,13 @@ TextWithTags SendFilesBox::fieldText() const {
 void SendFilesBox::checkCharsLimitation() {
 	const auto limits = Data::PremiumLimits(&_show->session());
 	const auto caption = fieldText();
-	const auto remove = caption.text.size() - limits.captionLengthCurrent();
+	const auto maxLength = limits.captionLengthCurrent();
+	if (maxLength <= 0) {
+		_charsLimitation = nullptr;
+		return;
+	}
+	const auto remove
+		= Data::details::UnicodeScalarCount(caption.text) - maxLength;
 	if ((remove > 0) && _emojiToggle) {
 		if (!_charsLimitation) {
 			_charsLimitation = base::make_unique_q<CharactersLimitLabel>(
@@ -2408,12 +2400,12 @@ void SendFilesBox::saveSendWaySettings(bool rememberAll) {
 bool SendFilesBox::validateLength(const QString &text) const {
 	const auto session = &_show->session();
 	const auto limit = Data::PremiumLimits(session).captionLengthCurrent();
-	const auto remove = int(text.size()) - limit;
-	if (remove <= 0) {
+	const auto length = Data::details::UnicodeScalarCount(text);
+	const auto remove = length - limit;
+	if (!Data::details::ExceedsInputLengthLimit(length, limit)) {
 		return true;
 	}
-	_show->showBox(
-		Box(CaptionLimitReachedBox, session, remove, &_st.premium));
+	_show->showToast(tr::lng_edit_limit_reached(tr::now, lt_count, remove));
 	return false;
 }
 

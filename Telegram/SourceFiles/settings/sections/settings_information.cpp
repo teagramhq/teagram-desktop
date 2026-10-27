@@ -45,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "info/profile/info_profile_values.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_phone_menu.h"
@@ -709,12 +710,14 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 		return;
 	}
 	const auto limits = Data::PremiumLimits(&self->session());
-	const auto defaultLimit = limits.aboutLengthDefault();
-	const auto premiumLimit = limits.aboutLengthPremium();
+	const auto bioLimit = limits.aboutLengthCurrent();
 	const auto bioStyle = [=] {
 		auto result = st::settingsBio;
-		result.textMargins.setRight(st::boxTextFont->spacew
-			+ st::boxTextFont->width('-' + QString::number(premiumLimit)));
+		if (bioLimit > 0) {
+			result.textMargins.setRight(
+				st::boxTextFont->spacew
+				+ st::boxTextFont->width('-' + QString::number(bioLimit)));
+		}
 		return result;
 	};
 	const auto style = Ui::AttachAsChild(container, bioStyle());
@@ -761,11 +764,15 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 		}
 		state->setEditorBio(text);
 		changed->fire(state->storedBio() != text);
-		const auto limit = self->isPremium() ? premiumLimit : defaultLimit;
-		const auto countLeft = limit - Ui::ComputeFieldCharacterCount(bio);
-		countdown->setText(QString::number(countLeft));
-		countdown->setTextColorOverride(
-			countLeft < 0 ? st::boxTextFgError->c : std::optional<QColor>());
+		countdown->setVisible(bioLimit > 0);
+		if (bioLimit > 0) {
+			const auto countLeft
+				= bioLimit - Data::details::UnicodeScalarCount(text);
+			countdown->setText(QString::number(countLeft));
+			countdown->setTextColorOverride(countLeft < 0
+												? st::boxTextFgError->c
+												: std::optional<QColor>());
+		}
 	};
 	Info::Profile::AboutValue(self)
 		| rpl::on_next(
@@ -786,6 +793,11 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 	const auto weakBio = QPointer<Ui::InputField>(bio);
 	const auto weakController = base::make_weak(controller.get());
 	const auto save = [=] {
+		if (!Data::details::IsWithinInputLengthPolicy(bio->getLastText(), 0,
+													  bioLimit)) {
+			bio->showError();
+			return;
+		}
 		self->session().api().saveSelfBio(
 			TextUtilities::PrepareForSending(bio->getLastText()), [=] {
 				const auto controllerOwnsSession
@@ -820,7 +832,6 @@ void SetupBio(not_null<Ui::VerticalLayout *> container,
 
 	container->lifetime().add([=] { state->saveOnClose(save); });
 
-	bio->setMaxLength(premiumLimit * 2);
 	bio->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
 	auto cursor = bio->textCursor();
 	cursor.setPosition(bio->getLastText().size());
