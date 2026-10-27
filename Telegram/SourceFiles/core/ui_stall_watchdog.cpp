@@ -249,6 +249,15 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 	return u"0x%1"_q.arg(qulonglong(address), 0, 16);
 }
 
+[[nodiscard]] QString FormatRawStack(const std::vector<void *> &frames) {
+	auto result = QStringList();
+	for (const auto frame : frames) {
+		result.push_back(u"0x%1"_q.arg(
+			qulonglong(reinterpret_cast<std::uintptr_t>(frame)), 0, 16));
+	}
+	return result.isEmpty() ? u"stack unavailable"_q : result.join(u" <- "_q);
+}
+
 [[nodiscard]] QString FormatStack(const std::vector<void *> &frames) {
 	auto result = QStringList();
 	for (auto i = 0; i != int(frames.size()); ++i) {
@@ -428,7 +437,7 @@ void UiStallWatchdog::run() {
 				if (_canCaptureStack) {
 					frames = CaptureStack();
 				}
-				stack = FormatStack(frames);
+				stack = FormatRawStack(frames);
 				lock.lock();
 				lock.unlock();
 				const auto loggedDuration = detectedAt - postedAt;
@@ -446,6 +455,7 @@ void UiStallWatchdog::run() {
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
 			lock.unlock();
+			stack = FormatStack(frames);
 			const auto duration = completedAt - postedAt;
 			_log(lineForDuration(duration), true);
 			lastLogged = Clock::now();
