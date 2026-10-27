@@ -826,6 +826,17 @@ void Updates::getDifference() {
 		requestId);
 }
 
+void Updates::getDifferenceAfterReconnect() {
+	clearStaleSyncRequests();
+	_syncRequests.afterReconnect(
+		_ptsWaiter.inited(),
+		[this](mtpRequestId requestId) {
+			session().mtp().cancel(requestId);
+			_ptsWaiter.setRequesting(false);
+		},
+		[this] { requestState(); }, [this] { getDifference(); });
+}
+
 void Updates::getChannelDifference(
 		not_null<ChannelData*> channel,
 		ChannelDifferenceRequest from) {

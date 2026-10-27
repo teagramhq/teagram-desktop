@@ -145,8 +145,10 @@ private:
 	void processDocumentProgress(FullMsgId itemId);
 	void processDocumentFailed(FullMsgId itemId);
 
-	void notifyFailed(const Entry &entry);
-	void failed(FullMsgId itemId);
+	void failLocalMessage(FullMsgId itemId, bool markMessageFailed);
+	void failVideoCover(FullMsgId coverId, bool markMessageFailed);
+	void notifyFailed(const Entry &entry, bool markMessageFailed = true);
+	void failed(FullMsgId itemId, bool markMessageFailed = true);
 	void cancelRequests(FullMsgId itemId);
 	void cancelAllRequests();
 	void clear();

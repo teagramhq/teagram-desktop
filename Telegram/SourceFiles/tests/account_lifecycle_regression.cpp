@@ -43,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
+#include "core/ui_stall_watchdog.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
 #include "data/components/scheduled_messages.h"
@@ -76,15 +77,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
-#include "inline_bots/bot_attach_web_view.h"
+#include "info/peer_gifts/info_peer_gifts_common.h"
+#include "info/profile/info_profile_top_bar.h"
 #include "info/info_controller.h"
 #include "info/info_layer_widget.h"
+#include "info/info_section_widget.h"
 #include "info/info_wrap_widget.h"
-#include "info/profile/info_profile_top_bar.h"
-#include "info/peer_gifts/info_peer_gifts_common.h"
+#include "inline_bots/bot_attach_web_view.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
+#include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
@@ -97,6 +100,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/facade.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
@@ -124,8 +128,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "test/test_widgets.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
+#include "ui/effects/animations.h"
 #include "ui/image/image_location.h"
+#include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
+#include "ui/text/text.h"
+#include "ui/text/text_entity.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/special_fields.h"
@@ -135,6 +143,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/click_handler.h"
+#include "ui/item_text_options.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
@@ -143,6 +153,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller_link_info.h"
 
 #include "styles/style_basic.h"
+#include "styles/style_chat.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QByteArray>
@@ -174,6 +185,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -212,10 +224,14 @@ auto gStockTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 auto gCustomTranslationRpcCounts = TranslationRpcCountsForRegressionTest();
 struct SettingsDeepLinkRouteEventForRegressionTest {
 	const Window::SessionController *controller = nullptr;
+	SettingsDeepLinkRouteForRegressionTest route
+		= SettingsDeepLinkRouteForRegressionTest::MyProfile;
 	bool informationFallback = false;
 };
 auto gSettingsDeepLinkRouteEvents
 	= std::vector<SettingsDeepLinkRouteEventForRegressionTest>();
+SettingsDeepLinkRequestCaptureForRegressionTest
+	*gSettingsDeepLinkRequestCaptureForRegressionTest = nullptr;
 
 struct CapturedChannelSaveRequest {
 	mtpRequestId id = 0;
@@ -538,7 +554,21 @@ void RecordFeatureUnavailableToastForRegressionTest() {
 
 void RecordSettingsMyProfileRouteForRegressionTest(
 	const Window::SessionController *controller, bool informationFallback) {
-	gSettingsDeepLinkRouteEvents.push_back({controller, informationFallback});
+	gSettingsDeepLinkRouteEvents.push_back({
+		controller,
+		SettingsDeepLinkRouteForRegressionTest::MyProfile,
+		informationFallback,
+	});
+}
+
+void RecordSettingsDeepLinkRouteForRegressionTest(
+	const Window::SessionController *controller,
+	SettingsDeepLinkRouteForRegressionTest route) {
+	gSettingsDeepLinkRouteEvents.push_back({
+		controller,
+		route,
+		false,
+	});
 }
 
 SettingsDeepLinkRouteCountsForRegressionTest
@@ -547,11 +577,52 @@ GetSettingsDeepLinkRouteCountsForRegressionTest(
 	auto result = SettingsDeepLinkRouteCountsForRegressionTest();
 	for (const auto &event : gSettingsDeepLinkRouteEvents) {
 		if (event.controller == controller) {
-			++result.myProfileRoute;
-			result.informationFallback += event.informationFallback;
+			if (event.route
+				== SettingsDeepLinkRouteForRegressionTest::MyProfile) {
+				++result.myProfileRoute;
+				result.informationFallback += event.informationFallback;
+			} else {
+				const auto index = static_cast<std::size_t>(event.route) - 1;
+				++result.messageRouteDispatches[index];
+			}
 		}
 	}
 	return result;
+}
+
+SettingsDeepLinkRequestCaptureForRegressionTest *
+SetSettingsDeepLinkRequestCaptureForRegressionTest(
+	SettingsDeepLinkRequestCaptureForRegressionTest *capture) {
+	return std::exchange(gSettingsDeepLinkRequestCaptureForRegressionTest,
+						 capture);
+}
+
+void RecordSettingsDeepLinkRequestForRegressionTest(
+	not_null<MTP::Instance *> instance,
+	const MTP::details::SerializedRequest &request) {
+	const auto capture = gSettingsDeepLinkRequestCaptureForRegressionTest;
+	if (!capture || (capture->instance != instance)) {
+		return;
+	}
+	auto body = mtpBuffer();
+	request.write(body);
+	if (body.isEmpty()) {
+		return;
+	}
+	switch (static_cast<uint32>(body.front())) {
+	case mtpc_payments_getStarsTopupOptions:
+		++capture->counts.starsTopupOptions;
+		break;
+	case mtpc_contacts_getBirthdays:
+		++capture->counts.contactBirthdays;
+		break;
+	case mtpc_payments_getStarGifts:
+		++capture->counts.starGifts;
+		break;
+	case mtpc_payments_getSavedStarGifts:
+		++capture->counts.savedStarGifts;
+		break;
+	}
 }
 
 void RecordLifecycleWriteForRegressionTest(
@@ -704,6 +775,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_messages_getDialogs:
 	case mtpc_upload_saveFilePart:
 	case mtpc_messages_editChatPhoto:
+	case mtpc_updates_getDifference:
 		capture->requests.push_back({
 			.id = requestId,
 			.body = std::move(body),
@@ -713,6 +785,42 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	default:
 		return false;
 	}
+}
+
+[[nodiscard]] bool ReplyToReconnectDifferenceForRegressionTest(
+	ChannelSaveRequestCapture &capture,
+	const MTPupdates_Difference &difference) {
+	if (capture.requests.size() != 1) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: expected one captured "
+			"getDifference request, got %zu.\n",
+			capture.requests.size());
+		return false;
+	}
+	auto &request = capture.requests.front();
+	if (request.body.isEmpty()
+		|| static_cast<uint32>(request.body.front())
+			   != mtpc_updates_getDifference
+		|| !request.callbacks.done) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: captured request was not "
+			"getDifference with a success callback.\n");
+		return false;
+	}
+	auto response = MTP::Response();
+	response.requestId = request.id;
+	difference.write(response.reply);
+	auto done = std::move(request.callbacks.done);
+	if (!done(response)) {
+		std::fprintf(
+			stderr,
+			"Reconnect difference regression failed: the difference response "
+			"could not be parsed.\n");
+		return false;
+	}
+	return true;
 }
 
 MainQueueBarrierResult
@@ -1821,14 +1929,9 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 
 [[nodiscard]] MTP::AuthKeyPtr RegressionAuthKey(int byte) {
 	auto data = MTP::AuthKey::Data();
-	std::fill(
-		data.begin(),
-		data.end(),
-		static_cast<gsl::byte>(byte));
-	return std::make_shared<MTP::AuthKey>(
-		MTP::AuthKey::Type::Generated,
-		2,
-		data);
+	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(byte));
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::Generated, 2,
+										  data);
 }
 
 [[nodiscard]] bool IncompleteStoredSessionStartsPaused(Main::Domain &domain) {
@@ -1880,20 +1983,16 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 		   && !account->mtp().isServerEnrollmentNetworkAllowed();
 }
 
-[[nodiscard]] bool HasAuthKey(
-		not_null<Main::Account*> account,
-		MTP::AuthKey::KeyId keyId) {
+[[nodiscard]] bool HasAuthKey(not_null<Main::Account *> account,
+							  MTP::AuthKey::KeyId keyId) {
 	const auto keys = account->mtp().getKeysForWrite();
-	return std::any_of(keys.begin(), keys.end(), [=](const auto &key) {
-		return key->keyId() == keyId;
-	});
+	return std::any_of(keys.begin(), keys.end(),
+					   [=](const auto &key) { return key->keyId() == keyId; });
 }
 
-[[nodiscard]] bool HasNoAuthorizationState(
-		not_null<Main::Account*> account) {
-	return account->mtp().getKeysForWrite().empty()
-		&& !account->sessionExists()
-		&& (account->willHaveSessionUniqueId(nullptr) == 0);
+[[nodiscard]] bool HasNoAuthorizationState(not_null<Main::Account *> account) {
+	return account->mtp().getKeysForWrite().empty() && !account->sessionExists()
+		   && (account->willHaveSessionUniqueId(nullptr) == 0);
 }
 
 constexpr auto kSyntheticStockCacheBindingForRegression
@@ -2022,33 +2121,30 @@ RestartDomain(Main::Domain &domain,
 	if (account->sessionExists()
 		|| !account->serverCacheBindingMismatchPending()
 		|| account->mtp().isServerEnrollmentNetworkAllowed()
-		|| account->local().checkServerCacheBinding(
-			retainedFingerprint,
-			retainedUserId) != Storage::ServerCacheBindingStatus::Match
-		|| account->local().checkServerCacheBinding(
-			candidateFingerprint,
-			candidateUserId.bare)
-			!= Storage::ServerCacheBindingStatus::Mismatch) {
+		|| account->local().checkServerCacheBinding(retainedFingerprint,
+													retainedUserId)
+			   != Storage::ServerCacheBindingStatus::Match
+		|| account->local().checkServerCacheBinding(candidateFingerprint,
+													candidateUserId.bare)
+			   != Storage::ServerCacheBindingStatus::Mismatch) {
 		return false;
 	}
 	if (account->beginServerReenrollment(
-			Main::details::ServerReenrollmentPrompt::IdentityChange,
-			true)
+			Main::details::ServerReenrollmentPrompt::IdentityChange, true)
 		|| account->beginServerReenrollment(
 			Main::details::ServerReenrollmentPrompt::DestructiveConfirmation,
 			false)
 		|| account->local().serverReenrollmentPending()) {
 		return false;
 	}
-	return account->local().checkServerCacheBinding(
-		retainedFingerprint,
-		retainedUserId) == Storage::ServerCacheBindingStatus::Match;
+	return account->local().checkServerCacheBinding(retainedFingerprint,
+													retainedUserId)
+		   == Storage::ServerCacheBindingStatus::Match;
 }
 
 template <typename Result, typename Start>
-[[nodiscard]] std::optional<Result> AwaitCacheCallback(
-	Start start,
-	int timeoutMs = 5000) {
+[[nodiscard]] std::optional<Result> AwaitCacheCallback(Start start,
+													   int timeoutMs = 5000) {
 	struct State {
 		std::optional<Result> result;
 		QEventLoop *loop = nullptr;
@@ -2085,77 +2181,71 @@ template <typename Result, typename Start>
 }
 
 [[nodiscard]] bool CacheCallbackTimeoutIsSafe() {
-	const auto failure = AwaitCacheCallback<int>([](auto done) {
-		done(-1);
-	});
+	const auto failure = AwaitCacheCallback<int>([](auto done) { done(-1); });
 	if (!failure || (*failure != -1)) {
 		return false;
 	}
 	auto release = std::promise<void>();
 	const auto waitForRelease = release.get_future().share();
 	auto delayed = std::thread();
-	const auto timedOut = AwaitCacheCallback<int>([&](auto done) {
-		delayed = std::thread([done = std::move(done), waitForRelease]() mutable {
-			waitForRelease.wait();
-			done(1);
-		});
-	}, 1);
+	const auto timedOut = AwaitCacheCallback<int>(
+		[&](auto done) {
+			delayed = std::thread(
+				[done = std::move(done), waitForRelease]() mutable {
+					waitForRelease.wait();
+					done(1);
+				});
+		},
+		1);
 	release.set_value();
 	delayed.join();
 	QCoreApplication::processEvents();
 	return !timedOut;
 }
 
-[[nodiscard]] bool CacheOperationSucceeded(
-		const std::optional<Storage::Cache::Error> &result) {
-	return result
-		&& (result->type == Storage::Cache::Error::Type::None);
+[[nodiscard]] bool
+CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
+	return result && (result->type == Storage::Cache::Error::Type::None);
 }
 
-[[nodiscard]] bool OpenCache(
-		Storage::Cache::Database &cache,
-		not_null<Main::Account*> account) {
-	return CacheOperationSucceeded(AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) {
+[[nodiscard]] bool OpenCache(Storage::Cache::Database &cache,
+							 not_null<Main::Account *> account) {
+	return CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 			cache.open(account->local().cacheKey(), std::move(done));
 		}));
 }
 
-[[nodiscard]] bool WriteCachePayload(
-		not_null<Main::Account*> account,
-		const Storage::Cache::Key &key,
-		const QByteArray &payload) {
-	auto cache = Core::App().databases().get(
-		account->local().cachePath(),
-		account->local().cacheSettings());
+[[nodiscard]] bool WriteCachePayload(not_null<Main::Account *> account,
+									 const Storage::Cache::Key &key,
+									 const QByteArray &payload) {
+	auto cache = Core::App().databases().get(account->local().cachePath(),
+											 account->local().cacheSettings());
 	if (!OpenCache(*cache, account)) {
 		return false;
 	}
-	return CacheOperationSucceeded(AwaitCacheCallback<Storage::Cache::Error>(
-		[&](auto done) {
+	return CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 			cache->put(key, QByteArray(payload), std::move(done));
 		}));
 }
 
-[[nodiscard]] bool CachePayloadMatches(
-		Storage::Cache::Database &cache,
-		const Storage::Cache::Key &key,
-		const QByteArray &expected) {
-	const auto payload = AwaitCacheCallback<QByteArray>([&](auto done) {
-		cache.get(key, std::move(done));
-	});
+[[nodiscard]] bool CachePayloadMatches(Storage::Cache::Database &cache,
+									   const Storage::Cache::Key &key,
+									   const QByteArray &expected) {
+	const auto payload = AwaitCacheCallback<QByteArray>(
+		[&](auto done) { cache.get(key, std::move(done)); });
 	return payload && (*payload == expected);
 }
 
-[[nodiscard]] bool PersistedCachePayloadMatches(
-		not_null<Main::Account*> account,
-		const Storage::Cache::Key &key,
-		const QByteArray &expected) {
-	auto cache = Core::App().databases().get(
-		account->local().cachePath(),
-		account->local().cacheSettings());
+[[nodiscard]] bool
+PersistedCachePayloadMatches(not_null<Main::Account *> account,
+							 const Storage::Cache::Key &key,
+							 const QByteArray &expected) {
+	auto cache = Core::App().databases().get(account->local().cachePath(),
+											 account->local().cacheSettings());
 	return OpenCache(*cache, account)
-		&& CachePayloadMatches(*cache, key, expected);
+		   && CachePayloadMatches(*cache, key, expected);
 }
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
@@ -2821,6 +2911,71 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPlong(), MTPlong(), MTPlong());
 }
 
+[[nodiscard]] bool RunMainDcReconnectDifferenceUnreadRegression(
+	not_null<Main::Account *> account) {
+	auto &session = account->session();
+	const auto senderId = UserId(2388);
+	const auto senderPeer = peerFromUser(senderId);
+	const auto messageId = MsgId(2388001);
+	auto history = session.data().history(senderPeer);
+	if (!history->folderKnown()) {
+		history->setFolder(session.data().folder(FolderId(0)));
+	}
+	history->setUnreadCount(0);
+	if (session.data().message(senderPeer, messageId)) {
+		return false;
+	}
+	// Model a signed-in session whose initial updates.getState has completed.
+	session.updates().completeInitialStateForRegressionTest(1);
+	if (session.updates().requestingDifference()) {
+		return false;
+	}
+
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &account->mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	const auto mainDc = account->mtp().mainDcId();
+	const auto restoreConnection = gsl::finally(
+		[&] { account->mtp().onStateChange(mainDc, MTP::DisconnectedState); });
+	account->mtp().onStateChange(mainDc, MTP::ConnectedState);
+	account->mtp().onStateChange(mainDc, MTP::DisconnectedState);
+	account->mtp().onStateChange(mainDc, MTP::ConnectedState);
+
+	const auto flags
+		= MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_silent;
+	const auto missed = MTP_message(
+		MTP_flags(flags), MTP_int(int(messageId.bare)), peerToMTP(senderPeer),
+		MTPint(), MTPstring(), peerToMTP(senderPeer), MTPPeer(),
+		MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(int(base::unixtime::now())),
+		MTP_string(u"message received during reconnect"_q),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(), MTP_int(0), MTP_int(0),
+		MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+	const auto difference = MTP_updates_difference(
+		MTP_vector<MTPMessage>({missed}), MTP_vector<MTPEncryptedMessage>(0),
+		MTP_vector<MTPUpdate>(0), MTP_vector<MTPChat>(0),
+		MTP_vector<MTPUser>({
+			RegressionUser(senderId, false, u"2388"_q),
+		}),
+		MTP_updates_state(MTP_int(1), MTP_int(0),
+						  MTP_int(int(base::unixtime::now())), MTP_int(0),
+						  MTP_int(1)));
+	if (!ReplyToReconnectDifferenceForRegressionTest(capture, difference)) {
+		return false;
+	}
+	const auto item = session.data().message(senderPeer, messageId);
+	return item && item->unread(history) && history->lastMessage() == item
+		   && history->unreadCount() == 1;
+}
+
 [[nodiscard]] bool
 SetRegressionSessionPremium(not_null<Main::Session *> session, UserId selfId,
 							bool premium) {
@@ -3198,6 +3353,8 @@ struct SettingsDeepLinkInfoCounts {
 	int visibleWraps = 0;
 	int notHiddenWraps = 0;
 	int settingsWraps = 0;
+	const void *settingsWrap = nullptr;
+	const void *settingsType = nullptr;
 	int informationWraps = 0;
 	int visibleInformationWraps = 0;
 	int notHiddenInformationWraps = 0;
@@ -3221,6 +3378,9 @@ struct SettingsDeepLinkInfoCounts {
 		const auto &section = wrap->controller()->section();
 		if (section.type() == Info::Section::Type::Settings) {
 			++result.settingsWraps;
+			result.settingsWrap = static_cast<const void *>(wrap);
+			result.settingsType
+				= static_cast<const void *>(section.settingsType().get());
 			if (section.settingsType() == Settings::InformationId()) {
 				++result.informationWraps;
 				result.visibleInformationWraps += visible;
@@ -3514,12 +3674,197 @@ template <typename Condition>
 			  return true;
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		Platform::ActivateThisProcess(window->widget());
 		return ActivateWindowForRegression(app, window);
 	};
 	const auto activationFailed
 		= [](WindowActivationForRegressionResult result) {
 			  return result == WindowActivationForRegressionResult::Failed;
 		  };
+	const auto prepareMessageLinkContext
+		= [&](not_null<Window::SessionController *> target)
+		-> std::optional<std::pair<HistoryWidget *, ClickHandlerContext>> {
+		const auto self = target->session().user();
+		const auto messageId
+			= FullMsgId(target->session().userPeerId(), MsgId(0x7e5704));
+		resetController(target);
+		if (!WaitForRegressionCondition([&] {
+				return !target->content()->isMainSectionShown()
+					   && !target->content()->isThirdSectionShown()
+					   && !target->isLayerShown();
+			})) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: custom window did not "
+				"return to its base section before Saved Messages setup.\n");
+			return std::nullopt;
+		}
+		target->showPeerHistory(self);
+		const auto clickContextReady = [&] {
+			const auto historyWidget
+				= target->content()->historyWidgetForRegressionTest();
+			return historyWidget && (historyWidget->peer() == self.get())
+				   && target->content()->isMainSectionShown()
+				   && !target->content()->isThirdSectionShown()
+				   && !target->isLayerShown()
+				   && !target->content()->animatingShow()
+				   && !target->content()
+						   ->sectionStackCountsForRegressionTest()
+						   .mainSectionAnimating
+				   && (historyWidget
+						   ->prepareClickHandlerContextForRegressionTest(
+							   messageId)
+						   .sessionWindow.get()
+					   == target.get());
+		};
+		if (!WaitForRegressionCondition(clickContextReady)) {
+			const auto historyWidget
+				= target->content()->historyWidgetForRegressionTest();
+			const auto peerMatches
+				= historyWidget && (historyWidget->peer() == self.get());
+			const auto contextMatches
+				= historyWidget
+				  && (historyWidget
+						  ->prepareClickHandlerContextForRegressionTest(
+							  messageId)
+						  .sessionWindow.get()
+					  == target.get());
+			std::fprintf(
+				stderr,
+				"Settings deep link Saved Messages readiness: history=%d "
+				"peer=%d main-section=%d third-section=%d layer-hidden=%d "
+				"click-context=%d window-animating=%d section-animating=%d.\n",
+				historyWidget != nullptr, peerMatches,
+				target->content()->isMainSectionShown(),
+				!target->content()->isThirdSectionShown(),
+				!target->isLayerShown(), contextMatches,
+				target->content()->animatingShow(),
+				target->content()
+					->sectionStackCountsForRegressionTest()
+					.mainSectionAnimating);
+			return std::nullopt;
+		}
+		const auto historyWidget
+			= target->content()->historyWidgetForRegressionTest();
+		const auto context
+			= historyWidget->prepareClickHandlerContextForRegressionTest(
+				messageId);
+		if (context.sessionWindow.get() != target.get()) {
+			return std::nullopt;
+		}
+		return std::pair(historyWidget, context);
+	};
+	const auto makeMessageLinkHandler = [&](const QString &url) {
+		const auto messageText = Ui::Text::String(
+			st::messageTextStyle,
+			TextWithEntities{
+				.text = url,
+				.entities = {
+					EntityInText(EntityType::Url, 0, int(url.size())),
+				},
+			},
+			Ui::ItemTextDefaultOptions(),
+			st::msgMinWidth);
+		const auto width = messageText.maxWidth();
+		const auto height
+			= std::max(messageText.countHeight(width), messageText.minHeight());
+		for (auto y = 0; y != height; ++y) {
+			for (auto x = 0; x != width; ++x) {
+				if (const auto link
+					= messageText.getState(QPoint(x, y), width).link) {
+					return link;
+				}
+			}
+		}
+		return ClickHandlerPtr();
+	};
+	const auto clickMessageLink = [&](const QString &url,
+									  not_null<Window::SessionController *>
+										  target,
+									  not_null<HistoryWidget *> historyWidget,
+									  const ClickHandlerContext &messageContext,
+									  Window::Controller *activeBefore,
+									  bool focusCheckAvailable) {
+		const auto before = std::array{
+			stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			blockedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+		};
+		auto handler = makeMessageLinkHandler(url);
+		if (!handler) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: message link had no "
+				"click handler for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		ActivateClickHandler(historyWidget->window(), handler,
+							 ClickContext{
+								 Qt::LeftButton,
+								 QVariant::fromValue(messageContext),
+							 });
+		const auto dispatched = WaitForRegressionCondition([&] {
+			const auto current = std::array{
+				stockController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+				pinnedController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+				blockedController
+					->featureUnavailableOnServerToastCallsForRegressionTest(),
+			};
+			return current != before;
+		});
+		const auto after = std::array{
+			stockController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			pinnedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+			blockedController
+				->featureUnavailableOnServerToastCallsForRegressionTest(),
+		};
+		const auto toastOnly
+			= after[0] == before[0]
+			  && after[1]
+					 == before[1] + (target.get() == pinnedController.get())
+			  && after[2]
+					 == before[2] + (target.get() == blockedController.get());
+		const auto sameMessageView
+			= target->content()->historyWidgetForRegressionTest()
+				  == historyWidget.get()
+			  && (historyWidget->peer() == target->session().user().get())
+			  && !target->content()->isThirdSectionShown()
+			  && !ShownInfoSectionMatches(
+				  target, [](const Info::Section &) { return true; });
+		const auto unchanged
+			= [&](not_null<Window::SessionController *> controller) {
+				  return (controller.get() == target.get())
+						 || (!controller->content()->isMainSectionShown()
+							 && !controller->isLayerShown());
+			  };
+		const auto otherWindowsUnchanged = unchanged(stockController)
+										   && unchanged(pinnedController)
+										   && unchanged(blockedController);
+		const auto noPaidUiOpen = sameMessageView && !target->isLayerShown()
+								  && otherWindowsUnchanged;
+		const auto activeWindowUnchanged
+			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
+		const auto refused
+			= dispatched && toastOnly && noPaidUiOpen && activeWindowUnchanged;
+		if (!refused) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: clicked message link="
+				"%s toast-only=%d paid-ui-open=%d active=%p expected=%p.\n",
+				url.toUtf8().constData(), toastOnly, !noPaidUiOpen,
+				static_cast<void *>(app.activeWindow()),
+				static_cast<void *>(activeBefore));
+		}
+		return refused;
+	};
 
 	const auto stockWindowActivation
 		= activateSettingsWindow(&stockController->window());
@@ -3567,6 +3912,21 @@ template <typename Condition>
 						pinnedFocusCheckAvailable)) {
 		return false;
 	}
+	const auto messageRoutes = std::vector<QString>{
+		u"tg://settings/premium"_q,
+		u"tg://settings/stars"_q,
+		u"tg://settings/stars/top-up"_q,
+		u"tg://settings/stars/topup"_q,
+		u"tg://settings/stars/stats"_q,
+		u"tg://settings/stars/gift"_q,
+		u"tg://settings/stars/earn"_q,
+		u"tg://settings/ton"_q,
+		u"tg://settings/business"_q,
+		u"tg://settings/business/upgrade"_q,
+		u"tg://settings/business/do-not-hide-ads"_q,
+		u"tg://settings/send-gift"_q,
+		u"tg://settings/send-gift/self"_q,
+	};
 	const auto stockBeforeBlockedActivation
 		= activateSettingsWindow(&stockController->window());
 	if (activationFailed(stockBeforeBlockedActivation)) {
@@ -3930,6 +4290,16 @@ template <typename Condition>
 	const auto stockToastBefore
 		= stockController
 			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto hasStockSettingsSection = [&](Settings::Type type) {
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		const auto infoCounts
+			= CountSettingsDeepLinkInfoSections(stockController);
+		return (counts.mainSettings == 1) && (counts.mainSectionVisible == 1)
+			   && (infoCounts.settingsWraps == 1)
+			   && (infoCounts.settingsType
+				   == static_cast<const void *>(type.get()));
+	};
 	if (!app.openLocalUrl(u"tg://settings/premium"_q,
 						  contextFor(stockController))) {
 		std::fprintf(
@@ -3954,6 +4324,423 @@ template <typename Condition>
 	}
 	stockController->clearSectionStack(
 		Window::SectionShow(anim::type::instant, anim::activation::background));
+	QCoreApplication::processEvents();
+	auto stockMessageState
+		= std::optional<std::pair<HistoryWidget *, ClickHandlerContext>>();
+	const auto hasStockInfoSection = [&](Info::Section::Type type) {
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		auto infoSectionCount = 0;
+		auto matchingInfoSection = false;
+		const auto widgets
+			= stockController->content()->findChildren<QWidget *>();
+		for (const auto widget : widgets) {
+			const auto section = dynamic_cast<Info::SectionWidget *>(widget);
+			if (!section) {
+				continue;
+			}
+			++infoSectionCount;
+			matchingInfoSection
+				= (section->contentSectionForRegressionTest().type() == type);
+		}
+		return (counts.mainInfo == 1) && (counts.mainSectionVisible == 1)
+			   && !stockController->isLayerShown() && (infoSectionCount == 1)
+			   && matchingInfoSection;
+	};
+	const auto hasStockStarRefJoin = [&] {
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		auto infoSectionCount = 0;
+		auto starRefJoinCount = 0;
+		const auto widgets
+			= stockController->content()->findChildren<QWidget *>();
+		for (const auto widget : widgets) {
+			const auto section = dynamic_cast<Info::SectionWidget *>(widget);
+			if (!section) {
+				continue;
+			}
+			++infoSectionCount;
+			if (section->contentSectionForRegressionTest().type()
+				!= Info::Section::Type::BotStarRef) {
+				continue;
+			}
+			const auto children = section->findChildren<QWidget *>();
+			for (const auto child : children) {
+				const auto wrap = dynamic_cast<Info::WrapWidget *>(child);
+				if (wrap
+					&& (wrap->controller()->section().type()
+						== Info::Section::Type::BotStarRef)
+					&& (wrap->controller()->starrefType()
+						== Info::BotStarRef::Type::Join)) {
+					++starRefJoinCount;
+				}
+			}
+		}
+		return (counts.mainInfo == 1) && (counts.mainSectionVisible == 1)
+			   && !stockController->isLayerShown() && (infoSectionCount == 1)
+			   && (starRefJoinCount == 1);
+	};
+	const auto stockSavedMessagesHistoryShown = [&] {
+		const auto historyWidget
+			= stockController->content()->historyWidgetForRegressionTest();
+		const auto counts
+			= stockController->content()->sectionStackCountsForRegressionTest();
+		return (counts.mainHistory == 1)
+			   && !stockController->content()->isThirdSectionShown()
+			   && (historyWidget == stockMessageState->first)
+			   && (historyWidget->peer()
+				   == stockController->session().user().get());
+	};
+	const auto noStockInfoSectionShown = [&] {
+		return !ShownInfoSectionMatches(
+			stockController, [](const Info::Section &) { return true; });
+	};
+	const auto stockCanJoinStarReferrals
+		= stockController->session().appConfig().starrefJoinAllowed();
+	struct ServerDependentStockMessageRoute {
+		QString url;
+		SettingsDeepLinkRouteForRegressionTest route;
+	};
+	auto stockRequestCapture = SettingsDeepLinkRequestCaptureForRegressionTest{
+		.instance = &stockController->session().mtp(),
+	};
+	const auto serverDependentStockMessageRoutes = std::array{
+		ServerDependentStockMessageRoute{
+			u"tg://settings/stars/top-up"_q,
+			SettingsDeepLinkRouteForRegressionTest::StarsTopUp,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/stars/gift"_q,
+			SettingsDeepLinkRouteForRegressionTest::StarsGift,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/send-gift"_q,
+			SettingsDeepLinkRouteForRegressionTest::SendGift,
+		},
+		ServerDependentStockMessageRoute{
+			u"tg://settings/send-gift/self"_q,
+			SettingsDeepLinkRouteForRegressionTest::SendGiftSelf,
+		},
+	};
+	const auto findServerDependentStockMessageRoute = [&](const QString &url) {
+		for (const auto &route : serverDependentStockMessageRoutes) {
+			if (route.url == url) {
+				return &route;
+			}
+		}
+		return static_cast<const ServerDependentStockMessageRoute *>(nullptr);
+	};
+	const auto stockMessageRouteActionStarted
+		= [&](const ServerDependentStockMessageRoute &route,
+			  const SettingsDeepLinkRequestCountsForRegressionTest &before) {
+			  const auto &after = stockRequestCapture.counts;
+			  switch (route.route) {
+			  case SettingsDeepLinkRouteForRegressionTest::StarsTopUp:
+				  return after.starsTopupOptions > before.starsTopupOptions;
+			  case SettingsDeepLinkRouteForRegressionTest::StarsGift:
+				  return stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::SendGift:
+				  return (after.contactBirthdays > before.contactBirthdays)
+						 || stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::SendGiftSelf:
+				  return (after.starGifts > before.starGifts)
+						 || (after.savedStarGifts > before.savedStarGifts)
+						 || stockController->isLayerShown();
+			  case SettingsDeepLinkRouteForRegressionTest::MyProfile:
+				  return false;
+			  }
+			  return false;
+		  };
+	const auto stockMessageRouteStateMatches =
+		[&](const QString &url, bool routeDispatched, bool routeActionStarted) {
+			if (findServerDependentStockMessageRoute(url)) {
+				return routeDispatched && routeActionStarted
+					   && stockSavedMessagesHistoryShown()
+					   && noStockInfoSectionShown();
+			}
+			if (url == u"tg://settings/premium"_q) {
+				return hasStockSettingsSection(Settings::PremiumId());
+			} else if (url == u"tg://settings/stars"_q
+					   || url == u"tg://settings/stars/topup"_q) {
+				return hasStockSettingsSection(Settings::CreditsId());
+			} else if (url == u"tg://settings/stars/stats"_q) {
+				return hasStockInfoSection(Info::Section::Type::BotEarn);
+			} else if (url == u"tg://settings/stars/earn"_q) {
+				return stockCanJoinStarReferrals
+						   ? hasStockStarRefJoin()
+						   : (stockSavedMessagesHistoryShown()
+							  && !stockController->isLayerShown()
+							  && noStockInfoSectionShown());
+			} else if (url == u"tg://settings/ton"_q) {
+				return hasStockSettingsSection(Settings::CurrencyId());
+			} else if (url == u"tg://settings/business"_q
+					   || url == u"tg://settings/business/upgrade"_q) {
+				return hasStockSettingsSection(Settings::BusinessId());
+			} else if (url == u"tg://settings/business/do-not-hide-ads"_q) {
+				return hasStockSettingsSection(Settings::BusinessId())
+					   && (stockController->highlightControlId()
+						   == u"business/sponsored"_q);
+			}
+			return false;
+		};
+	const auto previousStockHighlight = stockController->highlightControlId();
+	const auto restoreStockHighlight = gsl::finally([&] {
+		stockController->setHighlightControlId(previousStockHighlight);
+	});
+	auto stockBaseRestored = false;
+	const auto restoreStockBase = [&] {
+		resetController(stockController);
+		const auto restored = WaitForRegressionCondition([&] {
+			return !stockController->content()->isMainSectionShown()
+				   && !stockController->content()->isThirdSectionShown()
+				   && !stockController->isLayerShown()
+				   && noStockInfoSectionShown();
+		});
+		if (!restored) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: stock window did not "
+				"return to its base state after message routes.\n");
+		}
+		return restored;
+	};
+	const auto restoreStockBaseOnExit = gsl::finally([&] {
+		if (!stockBaseRestored) {
+			stockBaseRestored = restoreStockBase();
+		}
+	});
+	const auto pinnedMessageState = prepareMessageLinkContext(pinnedController);
+	if (!pinnedMessageState) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: could not prepare the "
+			"custom Saved Messages click context.\n");
+		return false;
+	}
+	const auto stockBeforeMessageMatrix
+		= ActivateWindowForRegression(app, &stockController->window());
+	if (activationFailed(stockBeforeMessageMatrix)) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window did not "
+			"activate before the custom message-link matrix.\n");
+		return false;
+	}
+	const auto stockMessageFocusCheckAvailable
+		= (stockBeforeMessageMatrix
+		   == WindowActivationForRegressionResult::Activated);
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &stockController->window(),
+				stockMessageFocusCheckAvailable)) {
+			return false;
+		}
+	}
+	const auto pinnedBeforeMessageMatrix
+		= ActivateWindowForRegression(app, &pinnedController->window());
+	if (activationFailed(pinnedBeforeMessageMatrix)) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: custom window did not "
+			"activate before its message-link matrix.\n");
+		return false;
+	}
+	const auto pinnedMessageFocusCheckAvailable
+		= (pinnedBeforeMessageMatrix
+		   == WindowActivationForRegressionResult::Activated);
+	for (const auto &url : messageRoutes) {
+		if (!clickMessageLink(
+				url, pinnedController,
+				not_null<HistoryWidget *>(pinnedMessageState->first),
+				pinnedMessageState->second, &pinnedController->window(),
+				pinnedMessageFocusCheckAvailable)) {
+			return false;
+		}
+	}
+	resetController(stockController);
+	resetController(pinnedController);
+	resetController(blockedController);
+	QCoreApplication::processEvents();
+	{
+		const auto previousAnimationsDisabled = anim::Disabled();
+		anim::SetDisabled(true);
+		const auto restoreAnimations = gsl::finally(
+			[=] { anim::SetDisabled(previousAnimationsDisabled); });
+		for (const auto &url : messageRoutes) {
+			resetController(stockController);
+			stockController->setHighlightControlId(QString());
+			QCoreApplication::processEvents();
+			const auto stockBeforeMessageRoute
+				= activateSettingsWindow(&stockController->window());
+			if (activationFailed(stockBeforeMessageRoute)) {
+				std::fprintf(stderr,
+							 "Settings deep link regression failed: stock "
+							 "window did not "
+							 "activate before message route=%s.\n",
+							 url.toUtf8().constData());
+				return false;
+			}
+			const auto stockFocusCheckAvailable
+				= (stockBeforeMessageRoute
+				   == WindowActivationForRegressionResult::Activated);
+			stockMessageState = prepareMessageLinkContext(stockController);
+			if (!stockMessageState
+				|| stockMessageState->second.sessionWindow.get()
+					   != stockController.get()) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: could not prepare "
+					"the "
+					"active stock Saved Messages click context for %s.\n",
+					url.toUtf8().constData());
+				return false;
+			}
+			const auto toastBefore
+				= stockController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest();
+			const auto routeDispatchesBefore
+				= GetSettingsDeepLinkRouteCountsForRegressionTest(
+					stockController.get());
+			const auto infoCountsBefore
+				= CountSettingsDeepLinkInfoSections(stockController);
+			const auto handler = makeMessageLinkHandler(url);
+			if (!handler) {
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: stock message link "
+					"had no click handler for %s.\n",
+					url.toUtf8().constData());
+				return false;
+			}
+			const auto serverDependentRoute
+				= findServerDependentStockMessageRoute(url);
+			SettingsDeepLinkRequestCountsForRegressionTest requestCountsBefore;
+			auto routeDispatched = false;
+			auto routeActionStarted = !serverDependentRoute;
+			auto routeStateMatched = false;
+			{
+				const auto previousRequestCapture
+					= SetSettingsDeepLinkRequestCaptureForRegressionTest(
+						&stockRequestCapture);
+				const auto restoreRequestCapture = gsl::finally([=] {
+					static_cast<void>(
+						SetSettingsDeepLinkRequestCaptureForRegressionTest(
+							previousRequestCapture));
+				});
+				requestCountsBefore = stockRequestCapture.counts;
+				anim::SetDisabled(true);
+				ActivateClickHandler(
+					stockMessageState->first->window(), handler,
+					ClickContext{
+						Qt::LeftButton,
+						QVariant::fromValue(stockMessageState->second),
+					});
+				const auto clickDispatchCompleted
+					= WaitForMainQueueBarrierForRegressionTest()
+					  == MainQueueBarrierResult::Completed;
+				if (!clickDispatchCompleted) {
+					std::fprintf(stderr,
+								 "Settings deep link regression failed: stock "
+								 "message click "
+								 "dispatch did not complete for %s.\n",
+								 url.toUtf8().constData());
+					return false;
+				}
+			}
+			routeDispatched = [&] {
+				if (!serverDependentRoute) {
+					return true;
+				}
+				const auto routeDispatchesAfter
+					= GetSettingsDeepLinkRouteCountsForRegressionTest(
+						stockController.get());
+				const auto index
+					= static_cast<std::size_t>(serverDependentRoute->route) - 1;
+				return routeDispatchesAfter.messageRouteDispatches[index]
+					   == routeDispatchesBefore.messageRouteDispatches[index]
+							  + 1;
+			}();
+			routeStateMatched = WaitForRegressionCondition([&] {
+				if (!anim::Disabled()) {
+					anim::SetDisabled(true);
+				}
+				if (serverDependentRoute) {
+					routeActionStarted = stockMessageRouteActionStarted(
+						*serverDependentRoute, requestCountsBefore);
+				}
+				return stockMessageRouteStateMatches(url, routeDispatched,
+													 routeActionStarted);
+			});
+			const auto toastUnchanged
+				= stockController
+					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+				  == toastBefore;
+			const auto otherWindowsUnchanged
+				= !pinnedController->content()->isMainSectionShown()
+				  && !pinnedController->isLayerShown()
+				  && !blockedController->content()->isMainSectionShown()
+				  && !blockedController->isLayerShown();
+			const auto stockWindowActive
+				= !stockFocusCheckAvailable
+				  || (app.activeWindow() == &stockController->window());
+			if (!routeStateMatched || !toastUnchanged || !otherWindowsUnchanged
+				|| !stockWindowActive) {
+				const auto infoCounts
+					= CountSettingsDeepLinkInfoSections(stockController);
+				const auto sectionCounts
+					= stockController->content()
+						  ->sectionStackCountsForRegressionTest();
+				std::fprintf(
+					stderr,
+					"Settings deep link regression failed: stock message "
+					"route=%s "
+					"route-state=%d route-dispatched=%d route-action=%d "
+					"requests=%d/%d/%d/%d "
+					"toast-unchanged=%d "
+					"other-windows-unchanged=%d "
+					"active-window=%d info-wraps=%d visible-wraps=%d "
+					"not-hidden-wraps=%d settings-wraps=%d settings-wrap=%p "
+					"settingsType=%p premiumType=%p "
+					"before-settings-wrap=%p before-settingsType=%p "
+					"main-info=%d main-settings=%d main-visible=%d "
+					"main-animating=%d window-animating=%d "
+					"animations-disabled=%d slow-multiplier=%d history=%d "
+					"stories-wraps=%d.\n",
+					url.toUtf8().constData(), routeStateMatched,
+					routeDispatched, routeActionStarted,
+					stockRequestCapture.counts.starsTopupOptions
+						- requestCountsBefore.starsTopupOptions,
+					stockRequestCapture.counts.contactBirthdays
+						- requestCountsBefore.contactBirthdays,
+					stockRequestCapture.counts.starGifts
+						- requestCountsBefore.starGifts,
+					stockRequestCapture.counts.savedStarGifts
+						- requestCountsBefore.savedStarGifts,
+					toastUnchanged, otherWindowsUnchanged, stockWindowActive,
+					infoCounts.wraps, infoCounts.visibleWraps,
+					infoCounts.notHiddenWraps, infoCounts.settingsWraps,
+					infoCounts.settingsWrap, infoCounts.settingsType,
+					static_cast<const void *>(Settings::PremiumId().get()),
+					infoCountsBefore.settingsWrap,
+					infoCountsBefore.settingsType, sectionCounts.mainInfo,
+					sectionCounts.mainSettings,
+					sectionCounts.mainSectionVisible,
+					sectionCounts.mainSectionAnimating,
+					stockController->content()->animatingShow(),
+					anim::Disabled(), anim::SlowMultiplier(),
+					sectionCounts.mainHistory, infoCounts.storiesWraps);
+				return false;
+			}
+		}
+	}
+	stockBaseRestored = restoreStockBase();
+	stockController->setHighlightControlId(previousStockHighlight);
+	if (!stockBaseRestored) {
+		return false;
+	}
+	resetController(stockController);
 	QCoreApplication::processEvents();
 	std::fprintf(stderr,
 				 "Settings deep link regression passed: paid and story routes "
@@ -9171,6 +9958,75 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
 									 "protected-path-integration-disabled");
 	}
+	if (qEnvironmentVariableIsSet(
+			"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION")) {
+		static auto ran = false;
+		if (!std::exchange(ran, true)) {
+			nativeLifecycleResults->StartCase("cache-path-watchdog-regression");
+			auto passed = false;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			const auto selfId = UserId(1);
+			const auto watched = domain.add(MTP::Environment::Production);
+			watched->mtp().stopForServerEnrollment();
+			watched->setSessionUserId(selfId);
+			passed = watched->createSession(
+				RegressionUser(selfId, true, QString()),
+				std::make_unique<Main::SessionSettings>());
+			const auto cachePath = watched->local().cachePath();
+			const auto fixture
+				= QDir(cachePath).filePath("watchdog-cache-regression");
+			auto seeded = passed && QDir().mkpath(fixture);
+			for (auto i = 0; seeded && i != 125; ++i) {
+				seeded = QDir().mkpath(
+					QDir(fixture).filePath(u"directory-%1"_q.arg(i)));
+			}
+			for (auto i = 0; seeded && i != 169; ++i) {
+				const auto parent
+					= QDir(fixture).filePath(u"directory-%1"_q.arg(i % 125));
+				auto file = QFile(QDir(parent).filePath(u"file-%1"_q.arg(i)));
+				seeded = file.open(QIODevice::WriteOnly)
+						 && (file.write("fixture") == 7);
+			}
+			// Let earlier startup stalls fall outside the watchdog's log rate
+			// limit, then drain queued events without blocking the UI thread.
+			auto cooldown = QEventLoop();
+			QTimer::singleShot(11'000, &cooldown, &QEventLoop::quit);
+			cooldown.exec();
+			QCoreApplication::processEvents();
+			QCoreApplication::sendPostedEvents();
+			QCoreApplication::processEvents();
+			Logs::writeMain("UI stall watchdog cache regression begin");
+			const auto before = Core::UiStallWatchdog::StallCount();
+			auto accesses = 0;
+			auto timer = QElapsedTimer();
+			timer.start();
+			for (auto i = 0; seeded && i != 292; ++i) {
+				if (!watched->session().data().cacheIfAllowed()) {
+					break;
+				}
+				++accesses;
+			}
+			const auto duration = timer.nsecsElapsed();
+			const auto detected = WaitForRegressionCondition([&] {
+				return Core::UiStallWatchdog::StallCount() > before
+					   || duration < 150'000'000;
+			});
+			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
+			Logs::writeMain("UI stall watchdog cache regression end");
+			passed = seeded && (accesses == 292) && detected
+					 && ((duration < 30'000'000 && !stalls)
+						 || (duration >= 150'000'000 && (stalls > 0)));
+			std::fprintf(stderr,
+						 "Cache watchdog regression: seeded_directories=125 "
+						 "seeded_files=169 cache_accesses=%d duration_ns=%lld "
+						 "stalls=%llu.\n",
+						 accesses, static_cast<long long>(duration),
+						 static_cast<unsigned long long>(stalls));
+#endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+			nativeLifecycleResults->Report("cache-path-watchdog-regression",
+										   passed);
+		}
+	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto selfId = UserId(1);
@@ -11565,6 +12421,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	ReportCallRegressionCheckpoint("call start fixtures ready");
 	nativeLifecycleResults->Report("chat-participants-prerequisites", true);
+	nativeLifecycleResults->StartCase("main-dc-reconnect-private-message");
+	const auto reconnectDifferencePassed
+		= RunMainDcReconnectDifferenceUnreadRegression(pinned)
+		  && !shouldInjectFailure("main-dc-reconnect-private-message");
+	nativeLifecycleResults->Report("main-dc-reconnect-private-message",
+								   reconnectDifferencePassed);
 	nativeLifecycleResults->StartCase("call-session-fixtures");
 	nativeLifecycleResults->Report("call-session-fixtures", true);
 	nativeLifecycleResults->StartCase("calls-instance-start");

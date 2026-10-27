@@ -276,6 +276,83 @@ TEST_CASE(StaleStateReplyCannotApplyAfterFreshRequestStarts) {
 	CHECK(!requests.pending());
 }
 
+TEST_CASE(MainDcReconnectRequestsDifferenceForIdleUpdates) {
+	using Type = Api::details::UpdateRequestState::Type;
+	auto initialConnection = Api::details::UpdateConnectionState();
+	CHECK(!initialConnection.update(true));
+
+	auto connection = Api::details::UpdateConnectionState(true);
+	auto requests = Api::details::UpdateRequestState();
+	requests.started(Type::State, 41);
+	auto stateRequests = 0;
+	auto differences = 0;
+	auto cancelled = 0;
+	auto lastCancelled = mtpRequestId(0);
+	const auto stateChanged = [&](bool connected) {
+		if (connection.update(connected)) {
+			requests.afterReconnect(
+				true,
+				[&](mtpRequestId requestId) {
+					++cancelled;
+					lastCancelled = requestId;
+				},
+				[&] { ++stateRequests; },
+				[&] {
+					++differences;
+					requests.started(Type::Difference, 41 + differences);
+				});
+		}
+	};
+
+	stateChanged(true);
+	CHECK_EQ(differences, 0);
+	stateChanged(false);
+	stateChanged(true);
+	CHECK_EQ(differences, 1);
+	CHECK_EQ(cancelled, 1);
+	CHECK_EQ(lastCancelled, mtpRequestId(41));
+	CHECK(!requests.finish(Type::State, 41, [] {}));
+	stateChanged(true);
+	CHECK_EQ(differences, 1);
+	stateChanged(false);
+	stateChanged(true);
+	CHECK_EQ(differences, 2);
+	CHECK_EQ(stateRequests, 0);
+	CHECK_EQ(cancelled, 2);
+	CHECK_EQ(lastCancelled, mtpRequestId(42));
+}
+
+TEST_CASE(MainDcReconnectBeforeInitialStateReissuesGetState) {
+	using Type = Api::details::UpdateRequestState::Type;
+	auto connection = Api::details::UpdateConnectionState(true);
+	auto requests = Api::details::UpdateRequestState();
+	requests.started(Type::State, 41);
+	auto stateRequests = 0;
+	auto differences = 0;
+	auto cancelledState = mtpRequestId(0);
+
+	CHECK(!connection.update(false));
+	CHECK(connection.update(true));
+	requests.afterReconnect(
+		false, [&](mtpRequestId requestId) { cancelledState = requestId; },
+		[&] {
+			++stateRequests;
+			requests.started(Type::State, 42);
+		},
+		[&] { ++differences; });
+	CHECK_EQ(cancelledState, mtpRequestId(41));
+	CHECK_EQ(stateRequests, 1);
+	CHECK_EQ(differences, 0);
+	CHECK(!requests.finish(Type::State, cancelledState, [] {}));
+
+	auto stateInitialized = false;
+	CHECK(requests.finishState(
+		42, [&] { stateInitialized = true; }, [&] { ++differences; }));
+	CHECK(stateInitialized);
+	CHECK_EQ(differences, 0);
+	CHECK(!requests.pending());
+}
+
 TEST_CASE(EnrollmentPausedFailureHasTerminalLocalIdentity) {
 	const auto error = MTP::Error::Local(
 		"SERVER_ENROLLMENT_PAUSED",

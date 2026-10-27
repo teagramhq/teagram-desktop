@@ -2460,6 +2460,7 @@ void Instance::sendRequest(
 		bool needsLayer,
 		mtpRequestId afterRequestId) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordSettingsDeepLinkRequestForRegressionTest(this, request);
 	if (Tests::CaptureChannelSaveRequestForRegressionTest(this, requestId,
 														  request, callbacks)) {
 		return;

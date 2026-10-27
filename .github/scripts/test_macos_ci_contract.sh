@@ -537,7 +537,8 @@ reject_value "$mac_workflow" \
   'clang-format'
 
 require_step_script "$mac_workflow" macos 'Teagram build.' \
-  'if [ "$PROTECTED_PATH_INTEGRATION" = "ON" ]; then' \
+  'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' \
+  '[ "$GITHUB_EVENT_NAME" = "pull_request" ]; then' \
   '-D TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=ON' \
   'CMAKE_C_COMPILER_LAUNCHER=ccache' \
   'ccache_launcher.sh' \

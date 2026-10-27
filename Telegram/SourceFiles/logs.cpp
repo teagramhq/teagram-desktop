@@ -11,8 +11,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/crash_reports.h"
 #include "core/launcher.h"
 #include "core/mac_protected_path_runtime.h"
+#include "core/ui_stall_log_writer.h"
 #include "core/version.h"
 #include "mtproto/facade.h"
+
+#include <QtCore/QByteArray>
+#include <QtCore/QFile>
 
 namespace {
 
@@ -63,6 +67,19 @@ QString _logsFilePath(LogDataType type, const QString &postfix = QString()) {
 [[nodiscard]] bool CheckLogPath(Core::MacProtectedPath::Operation operation,
 								const QString &path, const char *callsite) {
 	return Core::MacProtectedPath::CheckPath(operation, path, callsite);
+}
+
+[[nodiscard]] QString MainLogPrefix() {
+	auto t = time(NULL);
+	struct tm tm = {};
+	mylocaltime(&tm, &t);
+	return QString("[%1.%2.%3 %4:%5:%6] ")
+		.arg(tm.tm_year + 1900)
+		.arg(tm.tm_mon + 1, 2, 10, QChar('0'))
+		.arg(tm.tm_mday, 2, 10, QChar('0'))
+		.arg(tm.tm_hour, 2, 10, QChar('0'))
+		.arg(tm.tm_min, 2, 10, QChar('0'))
+		.arg(tm.tm_sec, 2, 10, QChar('0'));
 }
 
 int32 LogsStartIndexChosen = -1;
@@ -136,8 +153,41 @@ public:
 		file->flush();
 	}
 
-private:
+	void writeMainUiStall(const QString &prefix, const QString &message,
+						  bool update) {
+		QMutexLocker lock(_logsMutex(LogDataMain));
+		WritingEntryScope scope;
+
+		const auto file = files[LogDataMain].get();
+		if (!file || !file->isOpen()
+			|| !CheckLogPath(Core::MacProtectedPath::Operation::Write,
+							 file->fileName(), Q_FUNC_INFO)) {
+			return;
+		}
+		if (update) {
+			const auto uiStallFileName = _uiStallLogWriter.fileName();
+			if (uiStallFileName.isEmpty()
+				|| uiStallFileName != file->fileName()) {
+				return;
+			}
+			auto output = QFile(uiStallFileName);
+			if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
+							  output.fileName(), Q_FUNC_INFO)
+				|| !output.open(QIODevice::ReadWrite)) {
+				_uiStallLogWriter.reset();
+				return;
+			}
+			if (!_uiStallLogWriter.writeUpdate(output, message)) {
+				return;
+			}
+		} else if (!_uiStallLogWriter.writeDetection(*file, prefix, message)) {
+			return;
+		}
+	}
+
+  private:
 	std::unique_ptr<QFile> files[LogDataCount];
+	Core::UiStallLogWriter _uiStallLogWriter;
 
 	int32 part = -1;
 
@@ -569,21 +619,22 @@ void closeMain() {
 }
 
 void writeMain(const QString &v) {
-	time_t t = time(NULL);
-	struct tm tm;
-	mylocaltime(&tm, &t);
-
-	const auto msg = QString("[%1.%2.%3 %4:%5:%6] %7\n"
-	).arg(tm.tm_year + 1900
-	).arg(tm.tm_mon + 1, 2, 10, QChar('0')
-	).arg(tm.tm_mday, 2, 10, QChar('0')
-	).arg(tm.tm_hour, 2, 10, QChar('0')
-	).arg(tm.tm_min, 2, 10, QChar('0')
-	).arg(tm.tm_sec, 2, 10, QChar('0')
-	).arg(v);
+	const auto msg = MainLogPrefix() + v + u"\n"_q;
 	_logsWrite(LogDataMain, msg);
 
 	writeDebug(v);
+}
+
+void writeMainUiStall(const QString &v, bool update) {
+	if (LogsData) {
+		LogsData->writeMainUiStall(update ? QString() : MainLogPrefix(), v,
+								   update);
+		if (!update) {
+			writeDebug(v);
+		}
+	} else if (!update) {
+		writeMain(v);
+	}
 }
 
 void writeDebug(const QString &v) {

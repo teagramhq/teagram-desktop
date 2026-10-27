@@ -22,6 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/update_checker.h"
 #include "core/deadlock_detector.h"
+#include "core/ui_stall_watchdog.h"
+#include "logs.h"
 #ifdef Q_OS_MAC
 #include "core/mac_protected_path_runtime.h"
 #endif // Q_OS_MAC
@@ -330,6 +332,14 @@ void Sandbox::launchApplication() {
 		} else if (_application) {
 			return;
 		}
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+		if (!_uiStallWatchdog) {
+			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
+				[](const QString &line, bool update) {
+					Logs::writeMainUiStall(line, update);
+				});
+		}
+#endif // Q_OS_LINUX || Q_OS_MAC
 		setupScreenScale();
 
 		rpl::single(
