@@ -8,6 +8,11 @@ add_executable(Telegram WIN32 MACOSX_BUNDLE)
 init_non_host_target(Telegram)
 
 if (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_property(TARGET Telegram PROPERTY ENABLE_EXPORTS ON)
+    target_compile_options(Telegram PRIVATE -fno-omit-frame-pointer)
+endif()
+
+if (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(TDESKTOP_TEAGRAM TRUE)
 else()
     set(TDESKTOP_TEAGRAM FALSE)
@@ -76,6 +81,11 @@ include(cmake/generate_appstream_changelog.cmake)
 
 include(cmake/tests_unit.cmake)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(Telegram PRIVATE _GNU_SOURCE)
+    target_compile_definitions(test_unit PRIVATE _GNU_SOURCE)
+endif()
+
 if (DESKTOP_APP_TEST_APPS)
     include(cmake/tests.cmake)
 endif()
@@ -92,6 +102,7 @@ set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 
 target_link_libraries(Telegram
 PRIVATE
+    ${CMAKE_DL_LIBS}
     tdesktop::lib_fido2
     tdesktop::lib_tgcalls
     tdesktop::td_export
@@ -622,6 +633,10 @@ PRIVATE
     core/phone_click_handler.h
     core/sandbox.cpp
     core/sandbox.h
+    core/ui_stall_watchdog.cpp
+    core/ui_stall_watchdog.h
+    core/ui_stall_log_writer.cpp
+    core/ui_stall_log_writer.h
     core/shortcuts.cpp
     core/shortcuts.h
     core/teagram_update_verification.cpp

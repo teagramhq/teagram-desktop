@@ -26,6 +26,18 @@ if(UNIX)
     target_link_libraries(test_unit PRIVATE test_unit_system_resolver)
 endif()
 
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_property(TARGET test_unit PROPERTY ENABLE_EXPORTS ON)
+    target_compile_options(test_unit PRIVATE -fno-omit-frame-pointer)
+    nice_target_sources(test_unit ${src_loc}
+    PRIVATE
+        core/ui_stall_watchdog.cpp
+        core/ui_stall_log_writer.cpp
+        core/ui_stall_log_writer.h
+        tests/unit/ui_stall_watchdog_tests.cpp
+    )
+endif()
+
 target_include_directories(test_unit PRIVATE ${src_loc})
 find_package(Python3 REQUIRED)
 file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" teagram_test_python_executable)
@@ -167,6 +179,7 @@ endif()
 
 target_link_libraries(test_unit
 PRIVATE
+    ${CMAKE_DL_LIBS}
     test_unit_mtproto
     tdesktop::td_scheme
     desktop-app::lib_base

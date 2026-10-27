@@ -1307,6 +1307,7 @@ local AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 local AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
 local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+local PROFILE_LOG="$AUTH_HOME/Library/Application Support/Teagram/log.txt"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 
@@ -1315,6 +1316,7 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
+	TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	cat "$AUTH_LOG" >&2
@@ -1330,6 +1332,7 @@ for native_evidence in \
 	'native_lifecycle_case=chat-participants-prerequisites result=PASS' \
 	'native_lifecycle_case=cache-concurrent-deletion result=PASS' \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
+	'native_lifecycle_case=cache-path-watchdog-regression result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
 	'native_lifecycle_case=protected-cache-cleanup result=PASS' \
@@ -1340,6 +1343,41 @@ for native_evidence in \
 		exit 1
 	fi
 done
+local watchdog_evidence
+watchdog_evidence="$(grep -E \
+	'^Cache watchdog regression: seeded_directories=125 seeded_files=169 cache_accesses=292 duration_ns=[0-9]+ stalls=[0-9]+\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$watchdog_evidence" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "seeded cache watchdog regression evidence missing." >&2
+	exit 1
+fi
+local watchdog_duration
+watchdog_duration="$(sed -E \
+	's/.* duration_ns=([0-9]+) stalls=.*/\1/' <<<"$watchdog_evidence")"
+if (( watchdog_duration >= 150000000 )); then
+	local watchdog_stall
+	watchdog_stall="$(awk '
+/UI stall watchdog cache regression begin/ { inside = 1; next }
+/UI stall watchdog cache regression end/ { inside = 0; next }
+inside && index($0, "UI stall ") && index($0, "CheckCachePath") { print }
+' "$PROFILE_LOG")"
+	if [[ -z "$watchdog_stall" ]]; then
+		cat "$AUTH_LOG" >&2
+		cat "$PROFILE_LOG" >&2
+		echo "slow seeded cache access did not log the CheckCachePath stack." >&2
+		exit 1
+	fi
+	printf 'cache_watchdog_reverted_path=PASS %s\n%s\n' \
+		"$watchdog_evidence" "$watchdog_stall"
+elif (( watchdog_duration < 30000000 )); then
+	printf 'cache_watchdog_responsive_path=PASS %s\n' "$watchdog_evidence"
+else
+	cat "$AUTH_LOG" >&2
+	cat "$PROFILE_LOG" >&2
+	echo "seeded cache watchdog scenario was neither responsive nor a captured CheckCachePath stall." >&2
+	exit 1
+fi
 if ! grep -F -q \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
 	"$AUTH_LOG"; then

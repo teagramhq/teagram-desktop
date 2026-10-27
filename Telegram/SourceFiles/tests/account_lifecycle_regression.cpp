@@ -43,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
+#include "core/ui_stall_watchdog.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
 #include "data/components/scheduled_messages.h"
@@ -84,6 +85,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
+#include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
@@ -180,6 +182,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -9321,6 +9324,75 @@ void RunAuthenticatedCacheSymlinkCases(
 	} else {
 		nativeLifecycleResults->Skip("authenticated-cache-file-symlinks",
 									 "protected-path-integration-disabled");
+	}
+	if (qEnvironmentVariableIsSet(
+			"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION")) {
+		static auto ran = false;
+		if (!std::exchange(ran, true)) {
+			nativeLifecycleResults->StartCase("cache-path-watchdog-regression");
+			auto passed = false;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			const auto selfId = UserId(1);
+			const auto watched = domain.add(MTP::Environment::Production);
+			watched->mtp().stopForServerEnrollment();
+			watched->setSessionUserId(selfId);
+			passed = watched->createSession(
+				RegressionUser(selfId, true, QString()),
+				std::make_unique<Main::SessionSettings>());
+			const auto cachePath = watched->local().cachePath();
+			const auto fixture
+				= QDir(cachePath).filePath("watchdog-cache-regression");
+			auto seeded = passed && QDir().mkpath(fixture);
+			for (auto i = 0; seeded && i != 125; ++i) {
+				seeded = QDir().mkpath(
+					QDir(fixture).filePath(u"directory-%1"_q.arg(i)));
+			}
+			for (auto i = 0; seeded && i != 169; ++i) {
+				const auto parent
+					= QDir(fixture).filePath(u"directory-%1"_q.arg(i % 125));
+				auto file = QFile(QDir(parent).filePath(u"file-%1"_q.arg(i)));
+				seeded = file.open(QIODevice::WriteOnly)
+						 && (file.write("fixture") == 7);
+			}
+			// Let earlier startup stalls fall outside the watchdog's log rate
+			// limit, then drain queued events without blocking the UI thread.
+			auto cooldown = QEventLoop();
+			QTimer::singleShot(11'000, &cooldown, &QEventLoop::quit);
+			cooldown.exec();
+			QCoreApplication::processEvents();
+			QCoreApplication::sendPostedEvents();
+			QCoreApplication::processEvents();
+			Logs::writeMain("UI stall watchdog cache regression begin");
+			const auto before = Core::UiStallWatchdog::StallCount();
+			auto accesses = 0;
+			auto timer = QElapsedTimer();
+			timer.start();
+			for (auto i = 0; seeded && i != 292; ++i) {
+				if (!watched->session().data().cacheIfAllowed()) {
+					break;
+				}
+				++accesses;
+			}
+			const auto duration = timer.nsecsElapsed();
+			const auto detected = WaitForRegressionCondition([&] {
+				return Core::UiStallWatchdog::StallCount() > before
+					   || duration < 150'000'000;
+			});
+			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
+			Logs::writeMain("UI stall watchdog cache regression end");
+			passed = seeded && (accesses == 292) && detected
+					 && ((duration < 30'000'000 && !stalls)
+						 || (duration >= 150'000'000 && (stalls > 0)));
+			std::fprintf(stderr,
+						 "Cache watchdog regression: seeded_directories=125 "
+						 "seeded_files=169 cache_accesses=%d duration_ns=%lld "
+						 "stalls=%llu.\n",
+						 accesses, static_cast<long long>(duration),
+						 static_cast<unsigned long long>(stalls));
+#endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+			nativeLifecycleResults->Report("cache-path-watchdog-regression",
+										   passed);
+		}
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		const auto selfId = UserId(1);

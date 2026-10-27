@@ -428,7 +428,8 @@ jobs:
           cd "$REPO_NAME/Telegram"
 
           BUILD_ARGS=()
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+            || [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             BUILD_ARGS+=(-D TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=ON)
           fi
 
@@ -472,6 +473,36 @@ jobs:
             echo "::error::Teagram build failed for variant=$BUILD_VARIANT exit_status=$build_status; see the retained build log."
             exit "$build_status"
           fi
+
+      - name: Verify UI stall watchdog stack capture.
+        if: env.ONLY_CACHE == 'false'
+        run: |
+          set -Eeuo pipefail
+          test_unit="$REPO_NAME/out/Debug/test_unit"
+          test -x "$test_unit"
+          "$test_unit" --case UiStallWatchdogLogsMainThreadStack
+
+      - name: Verify cache path watchdog regression.
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
+        run: |
+          set -Eeuo pipefail
+          state="$(mktemp -d "$RUNNER_TEMP/teagram-cache-watchdog.XXXXXX")"
+          trap 'rm -rf "$state"' EXIT
+          mkdir -p "$state/home" "$state/tmp"
+          evidence="$REPO_NAME/out/Debug/evidence"
+          mkdir -p "$evidence"
+          executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
+          env HOME="$state/home" TMPDIR="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
+              "$executable" authenticated-cache \
+            2>&1 | tee "$evidence/cache-watchdog-regression.log"
+          {
+            printf '### Cache path watchdog regression\n\n'
+            grep -E '^cache_watchdog_(reverted|responsive)_path=PASS ' \
+              "$evidence/cache-watchdog-regression.log"
+            grep -F 'UI stall ' "$evidence/cache-watchdog-regression.log" || true
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify artifact architecture.
         id: artifact-verification
