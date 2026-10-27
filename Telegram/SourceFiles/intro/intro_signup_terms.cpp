@@ -65,6 +65,8 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 		std::nullopt,
 		data.is_popup(),
 	};
+	TextUtilities::ParseEntities(result.text, TextParseLinks);
+	auto serverEntities = EntitiesInText();
 	const auto add = [&](EntityType type, int offset, int length,
 						 const QString &url = QString()) {
 		if (!IsValidEntityRange(result.text.text, offset, length)) {
@@ -79,7 +81,7 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 		} else if (type == EntityType::Email && !visible.contains(u'@')) {
 			return;
 		}
-		result.text.entities.push_back({type, offset, length, url});
+		serverEntities.push_back({type, offset, length, url});
 	};
 	for (const auto &entity : data.ventities().v) {
 		entity.match(
@@ -97,7 +99,26 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 				// Other server entities are literal text in signup terms.
 			});
 	}
-	TextUtilities::ParseEntities(result.text, TextParseLinks);
+	const auto overlaps
+		= [](const EntityInText &left, const EntityInText &right) {
+			  return (left.offset() < right.offset() + right.length())
+					 && (right.offset() < left.offset() + left.length());
+		  };
+	auto &entities = result.text.entities;
+	entities.erase(std::remove_if(entities.begin(), entities.end(),
+								  [&](const EntityInText &parsed) {
+									  return std::ranges::any_of(
+										  serverEntities,
+										  [&](const EntityInText &server) {
+											  return overlaps(parsed, server);
+										  });
+								  }),
+				   entities.end());
+	entities += serverEntities;
+	std::stable_sort(entities.begin(), entities.end(),
+					 [](const EntityInText &left, const EntityInText &right) {
+						 return left.offset() < right.offset();
+					 });
 	const auto keepSupported = [&](const EntityInText &entity) {
 		if (!IsValidEntityRange(result.text.text, entity.offset(),
 								entity.length())) {
@@ -116,7 +137,6 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 			return false;
 		}
 	};
-	auto &entities = result.text.entities;
 	entities.erase(std::remove_if(entities.begin(), entities.end(),
 								  [&](const EntityInText &entity) {
 									  return !keepSupported(entity);
