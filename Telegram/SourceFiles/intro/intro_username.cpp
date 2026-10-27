@@ -375,6 +375,14 @@ void UsernameWidget::signInDone(const MTPauth_Authorization &result) {
 	}, [&](const MTPDauth_authorizationSignUpRequired &data) {
 		getData()->phone = _sentUsername;
 		getData()->phoneHash = _sentHash;
+		if (const auto terms = data.vterms_of_service()) {
+			terms->match([&](const MTPDhelp_termsOfService &termsData) {
+				getData()->termsLock
+					= Window::TermsLock::FromSignupMTP(termsData);
+			});
+		} else {
+			getData()->termsLock = Window::TermsLock();
+		}
 		getData()->signupName.clear();
 		getData()->usernameError.clear();
 		getData()->signupNameError.clear();

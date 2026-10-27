@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server.h"
 #include "intro/intro_code.h"
 #include "intro/intro_signup_name.h"
+#include "intro/intro_signup_terms.h"
 #include "intro/intro_password_check.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
@@ -47,6 +48,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_intro.h"
 #include "base/qt/qt_common_adapters.h"
+
+#include <memory>
 
 namespace Intro {
 namespace {
@@ -556,8 +559,8 @@ void Widget::appendStep(Step *step) {
 			_api->request(base::take(_nearestDcRequestId)).cancel();
 		}
 	});
-	step->setAcceptTermsCallback([=](Fn<void()> callback) {
-		acceptTerms(callback);
+	step->setSignupTermsCallback([=](Fn<void()> accept, Fn<void()> decline) {
+		showSignupTerms(std::move(accept), std::move(decline));
 	});
 }
 
@@ -574,7 +577,10 @@ void Widget::showTerms() {
 			st::introTermsLabel);
 		_terms.create(this, std::move(entity));
 		_terms->entity()->overrideLinkClickHandler([=] {
-			showTerms(nullptr);
+			const auto box = Ui::show(Box<Window::TermsBox>(
+				getData()->termsLock.text, tr::lng_box_ok(), nullptr));
+			box->setCloseByEscape(false);
+			box->setCloseByOutsideClick(false);
 		});
 		updateControlsGeometry();
 		_terms->hide(anim::type::instant);
@@ -586,57 +592,43 @@ void Widget::showTerms() {
 	}
 }
 
-void Widget::acceptTerms(Fn<void()> callback) {
-	showTerms(callback);
-}
-
-void Widget::showTerms(Fn<void()> callback) {
+void Widget::showSignupTerms(Fn<void()> accept, Fn<void()> decline) {
 	if (getData()->termsLock.text.text.isEmpty()) {
+		if (accept) {
+			accept();
+		}
 		return;
 	}
-	const auto weak = base::make_weak(this);
-	const auto box = Ui::show(callback
-		? Box<Window::TermsBox>(
-			getData()->termsLock,
-			tr::lng_terms_agree(),
-			tr::lng_terms_decline())
-		: Box<Window::TermsBox>(
-			getData()->termsLock.text,
-			tr::lng_box_ok(),
-			nullptr));
+	const auto box = Ui::show(Box<Window::TermsBox>(
+		getData()->termsLock, tr::lng_teagram_terms_accept(),
+		tr::lng_terms_decline(), true));
+	const auto prompt = std::make_shared<SignupTermsPrompt>(std::move(accept),
+															std::move(decline));
 
 	box->setCloseByEscape(false);
 	box->setCloseByOutsideClick(false);
+	box->boxClosing()
+		| rpl::on_next([=] { prompt->boxClosing(); }, box->lifetime());
 
-	box->agreeClicks(
-	) | rpl::on_next([=] {
-		if (callback) {
-			callback();
-		}
-		if (box) {
-			box->closeBox();
-		}
-	}, box->lifetime());
+	box->agreeClicks()
+		| rpl::on_next(
+			[=] {
+				prompt->accept();
+				if (box) {
+					box->closeBox();
+				}
+			},
+			box->lifetime());
 
-	box->cancelClicks(
-	) | rpl::on_next([=] {
-		const auto box = Ui::show(Box<Window::TermsBox>(
-			TextWithEntities{ tr::lng_terms_signup_sorry(tr::now) },
-			tr::lng_intro_finish(),
-			tr::lng_terms_decline()));
-		box->agreeClicks(
-		) | rpl::on_next([=] {
-			if (weak) {
-				showTerms(callback);
-			}
-		}, box->lifetime());
-		box->cancelClicks(
-		) | rpl::on_next([=] {
-			if (box) {
-				box->closeBox();
-			}
-		}, box->lifetime());
-	}, box->lifetime());
+	box->cancelClicks()
+		| rpl::on_next(
+			[=] {
+				prompt->decline();
+				if (box) {
+					box->closeBox();
+				}
+			},
+			box->lifetime());
 }
 
 void ShowServerReenrollmentPrompt(

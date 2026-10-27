@@ -7,7 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/bytes.h"
 #include "intro/intro_step.h"
+#include "intro/intro_signup_terms.h"
 #include "core/core_cloud_password.h"
 
 #include <QtCore/QByteArray>
@@ -56,8 +58,9 @@ private:
 		const QString &text,
 		not_null<Ui::PasswordInput*> field);
 	void showFormError(const QString &text);
+	void requestSignup();
 
-	void signUp();
+	void signUp(SignupTermsPermission, SignupRequestData request);
 	void signUpDone(const MTPauth_Authorization &result);
 	void signUpFail(const MTP::Error &error);
 	void reissueCode();
@@ -87,6 +90,8 @@ private:
 	mtpRequestId _sentRequest = 0;
 	bool _signupDone = false;
 	bool _reissuedOnce = false;
+	SignupTermsGate _termsGate;
+	bool _termsPromptPending = false;
 };
 
 } // namespace details

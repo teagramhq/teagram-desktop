@@ -75,8 +75,8 @@ public:
 	void setStepBelowCallback(Fn<Step*()> callback);
 	void setShowTermsCallback(Fn<void()> callback);
 	void setCancelNearestDcCallback(Fn<void()> callback);
-	void setAcceptTermsCallback(
-		Fn<void(Fn<void()> callback)> callback);
+	void setSignupTermsCallback(
+		Fn<void(Fn<void()> accept, Fn<void()> decline)> callback);
 
 	void prepareShowAnimated(Step *after);
 	virtual void showAnimated(Animate animate);
@@ -178,9 +178,9 @@ protected:
 	void showTerms() {
 		if (_showTermsCallback) _showTermsCallback();
 	}
-	void acceptTerms(Fn<void()> callback) {
-		if (_acceptTermsCallback) {
-			_acceptTermsCallback(callback);
+	void showSignupTerms(Fn<void()> accept, Fn<void()> decline) {
+		if (_showSignupTermsCallback) {
+			_showSignupTermsCallback(std::move(accept), std::move(decline));
 		}
 	}
 	void cancelNearestDcRequest() {
@@ -234,7 +234,7 @@ private:
 	Fn<Step*()> _stepBelowCallback;
 	Fn<void()> _showTermsCallback;
 	Fn<void()> _cancelNearestDcCallback;
-	Fn<void(Fn<void()> callback)> _acceptTermsCallback;
+	Fn<void(Fn<void()> accept, Fn<void()> decline)> _showSignupTermsCallback;
 
 	rpl::variable<QString> _titleText;
 	object_ptr<Ui::FlatLabel> _title;

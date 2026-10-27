@@ -569,6 +569,23 @@ jobs:
               echo "Linux Teagram spaced-path launcher case did not report one passing case."
               exit 1
             fi
+
+            if selected_output=$("$test_unit" --case SignupTermsHappyPathSmoke 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  SignupTermsHappyPathSmoke"; then
+              echo "--case did not run exactly SignupTermsHappyPathSmoke."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Signup terms smoke case did not report one passing case."
+              exit 1
+            fi
           '
 
       - name: Move artifact.

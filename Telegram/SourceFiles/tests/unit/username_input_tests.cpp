@@ -23,20 +23,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
 
-#include <rpl/event_stream.h>
-
 #include <memory>
 #include <utility>
 #include <vector>
-
-namespace crl {
-
-rpl::producer<> on_main_update_requests() {
-	static auto requests = rpl::event_stream<>();
-	return requests.events();
-}
-
-} // namespace crl
 
 namespace {
 

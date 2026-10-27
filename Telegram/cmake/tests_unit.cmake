@@ -98,12 +98,14 @@ PRIVATE
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
+    intro/intro_signup_terms.cpp
     intro/intro_username_validation.cpp
     main/main_account_persistence.cpp
     storage/details/storage_file_utilities.cpp
     storage/storage_account_persistence.cpp
     storage/storage_server_forget_startup.cpp
     storage/storage_domain.cpp
+    tests/unit/crl_on_main_update_requests_stub.cpp
     tests/unit/api_compose_with_ai_tests.cpp
     tests/unit/bio_save_failure_tests.cpp
     tests/unit/data_chat_participants_tests.cpp
@@ -114,6 +116,7 @@ PRIVATE
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
+    tests/unit/intro_signup_terms_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
     tests/unit/mac_menu_text_tests.cpp

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "intro/intro_step.h"
+#include "intro/intro_signup_terms.h"
 
 namespace Ui {
 class RoundButton;
@@ -25,7 +26,6 @@ public:
 		not_null<Main::Account*> account,
 		not_null<Data*> data);
 
-	void finishInit() override;
 	void setInnerFocus() override;
 	void activate() override;
 	void cancelled() override;
@@ -50,8 +50,8 @@ private:
 
 	bool _invertOrder = false;
 
-	bool _termsAccepted = false;
-
+	SignupTermsGate _termsGate;
+	bool _termsPromptPending = false;
 };
 
 } // namespace details
