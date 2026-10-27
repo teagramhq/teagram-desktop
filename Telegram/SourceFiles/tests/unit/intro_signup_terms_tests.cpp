@@ -30,6 +30,16 @@ SignupTermsPayload Terms(QString text, QByteArray id = QByteArray("terms-id")) {
 	};
 }
 
+struct SignupFormState {
+	QString phone = u"+15550100"_q;
+	QByteArray phoneHash = QByteArray("phone-hash");
+	QString username = u"alice"_q;
+	QString firstName = u" Alice "_q;
+	QString lastName = u" Example "_q;
+	QString password = u"long-secret"_q;
+	QString passwordRepeat = u"long-secret"_q;
+};
+
 TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
 	const auto text
 		= u"@admin #tag /help https://terms.example "
@@ -95,72 +105,168 @@ TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
 	}));
 }
 
-TEST_CASE(NameSignupRpcWaitsForTermsAcceptance) {
+TEST_CASE(NameSignupProductionFlowDispatchesFormAfterAcceptance) {
 	auto gate = SignupTermsGate();
 	const auto terms = Terms(u"Terms for this instance"_q);
+	auto form = SignupFormState();
+	auto formReads = 0;
 	auto signupRequests = 0;
+	auto sent = SignupRequestData();
 	Fn<void()> accept;
-	Fn<void()> decline;
 
-	gate.submit(
-		terms,
+	SubmitSignupWithTerms(
+		gate, terms,
+		[&] {
+			++formReads;
+			form.firstName = form.firstName.trimmed();
+			form.lastName = form.lastName.trimmed();
+			return SignupRequestData{
+				form.phone,
+				form.phoneHash,
+				form.firstName,
+				form.lastName,
+			};
+		},
 		[&](Fn<void()> acceptNow, Fn<void()> declineNow) {
 			accept = std::move(acceptNow);
-			decline = std::move(declineNow);
+			CHECK(declineNow != nullptr);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
+		[&](SignupTermsPermission, SignupRequestData request) {
+			++signupRequests;
+			sent = std::move(request);
+		},
+		[] {});
 
+	CHECK_EQ(formReads, 0);
 	CHECK_EQ(signupRequests, 0);
 	accept();
+	CHECK_EQ(formReads, 1);
 	CHECK_EQ(signupRequests, 1);
+	CHECK_EQ(sent.phone, form.phone);
+	CHECK_EQ(sent.phoneHash, form.phoneHash);
+	CHECK_EQ(sent.firstName, u"Alice"_q);
+	CHECK_EQ(sent.lastName, u"Example"_q);
+	CHECK_EQ(form.firstName, u"Alice"_q);
+	CHECK_EQ(form.lastName, u"Example"_q);
 }
 
-TEST_CASE(PasswordSignupRpcWaitsForTermsAcceptance) {
+TEST_CASE(PasswordSignupProductionFlowDispatchesFormAfterAcceptance) {
 	auto gate = SignupTermsGate();
 	const auto terms = Terms(u"Terms for this instance"_q);
+	auto form = SignupFormState();
+	auto formReads = 0;
 	auto signupRequests = 0;
+	auto sent = SignupRequestData();
 	Fn<void()> accept;
-	Fn<void()> decline;
 
-	gate.submit(
-		terms,
+	SubmitSignupWithTerms(
+		gate, terms,
+		[&] {
+			++formReads;
+			return SignupRequestData{
+				form.phone,
+				form.phoneHash,
+				form.username,
+				QString(),
+			};
+		},
 		[&](Fn<void()> acceptNow, Fn<void()> declineNow) {
 			accept = std::move(acceptNow);
-			decline = std::move(declineNow);
+			CHECK(declineNow != nullptr);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
+		[&](SignupTermsPermission, SignupRequestData request) {
+			++signupRequests;
+			sent = std::move(request);
+		},
+		[] {});
 
+	CHECK_EQ(formReads, 0);
 	CHECK_EQ(signupRequests, 0);
 	accept();
+	CHECK_EQ(formReads, 1);
 	CHECK_EQ(signupRequests, 1);
+	CHECK_EQ(sent.phone, form.phone);
+	CHECK_EQ(sent.phoneHash, form.phoneHash);
+	CHECK_EQ(sent.firstName, form.username);
+	CHECK(sent.lastName.isEmpty());
 }
 
-TEST_CASE(SignupTermsDeclinePreservesFormAndSendsNoRpc) {
+TEST_CASE(NameSignupProductionFlowDeclinePreservesForm) {
 	auto gate = SignupTermsGate();
 	const auto terms = Terms(u"Terms for this instance"_q);
-	auto username = u"alice"_q;
-	auto firstName = u"Alice"_q;
-	auto password = u"secret"_q;
+	auto form = SignupFormState();
+	auto formReads = 0;
 	auto signupRequests = 0;
 	auto declined = false;
-	Fn<void()> accept;
 	Fn<void()> decline;
 
-	gate.submit(
-		terms,
-		[&](Fn<void()> acceptNow, Fn<void()> declineNow) {
-			accept = std::move(acceptNow);
+	SubmitSignupWithTerms(
+		gate, terms,
+		[&] {
+			++formReads;
+			return SignupRequestData{
+				form.phone,
+				form.phoneHash,
+				form.firstName,
+				form.lastName,
+			};
+		},
+		[&](Fn<void()>, Fn<void()> declineNow) {
 			decline = std::move(declineNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
+		[&](SignupTermsPermission, SignupRequestData) { ++signupRequests; },
 		[&] { declined = true; });
 	decline();
 
 	CHECK(declined);
+	CHECK_EQ(formReads, 0);
 	CHECK_EQ(signupRequests, 0);
-	CHECK_EQ(username, u"alice"_q);
-	CHECK_EQ(firstName, u"Alice"_q);
-	CHECK_EQ(password, u"secret"_q);
+	CHECK_EQ(form.phone, u"+15550100"_q);
+	CHECK_EQ(form.phoneHash, QByteArray("phone-hash"));
+	CHECK_EQ(form.username, u"alice"_q);
+	CHECK_EQ(form.firstName, u" Alice "_q);
+	CHECK_EQ(form.lastName, u" Example "_q);
+	CHECK_EQ(form.password, u"long-secret"_q);
+	CHECK_EQ(form.passwordRepeat, u"long-secret"_q);
+}
+
+TEST_CASE(PasswordSignupProductionFlowDeclinePreservesForm) {
+	auto gate = SignupTermsGate();
+	const auto terms = Terms(u"Terms for this instance"_q);
+	auto form = SignupFormState();
+	auto formReads = 0;
+	auto signupRequests = 0;
+	auto declined = false;
+	Fn<void()> decline;
+
+	SubmitSignupWithTerms(
+		gate, terms,
+		[&] {
+			++formReads;
+			return SignupRequestData{
+				form.phone,
+				form.phoneHash,
+				form.username,
+				QString(),
+			};
+		},
+		[&](Fn<void()>, Fn<void()> declineNow) {
+			decline = std::move(declineNow);
+		},
+		[&](SignupTermsPermission, SignupRequestData) { ++signupRequests; },
+		[&] { declined = true; });
+	decline();
+
+	CHECK(declined);
+	CHECK_EQ(formReads, 0);
+	CHECK_EQ(signupRequests, 0);
+	CHECK_EQ(form.phone, u"+15550100"_q);
+	CHECK_EQ(form.phoneHash, QByteArray("phone-hash"));
+	CHECK_EQ(form.username, u"alice"_q);
+	CHECK_EQ(form.firstName, u" Alice "_q);
+	CHECK_EQ(form.lastName, u" Example "_q);
+	CHECK_EQ(form.password, u"long-secret"_q);
+	CHECK_EQ(form.passwordRepeat, u"long-secret"_q);
 }
 
 TEST_CASE(SignupTermsEscapeRoutesToDecline) {
@@ -185,6 +291,25 @@ TEST_CASE(SignupTermsEnterRoutesToAccept) {
 		Qt::Key_Return, true, [&] { ++accepts; }, [&] { ++declines; }));
 	CHECK_EQ(accepts, 2);
 	CHECK_EQ(declines, 0);
+}
+
+TEST_CASE(SignupTermsEnterUsesAgeConfirmation) {
+	auto ageConfirmed = false;
+	auto accepts = 0;
+	auto ageErrors = 0;
+	const auto tryAgree = [&] {
+		HandleSignupTermsAccept(
+			true, ageConfirmed, [&] { ++accepts; }, [&] { ++ageErrors; });
+	};
+
+	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, tryAgree, [] {}));
+	CHECK_EQ(accepts, 0);
+	CHECK_EQ(ageErrors, 1);
+
+	ageConfirmed = true;
+	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, tryAgree, [] {}));
+	CHECK_EQ(accepts, 1);
+	CHECK_EQ(ageErrors, 1);
 }
 
 TEST_CASE(SignupTermsEmptyTextSendsWithoutPrompt) {
@@ -254,7 +379,9 @@ TEST_CASE(SignupTermsChangedTextWithSameIdRequiresAcceptanceAgain) {
 
 TEST_CASE(SignupTermsHappyPathSmoke) {
 	auto gate = SignupTermsGate();
-	const auto terms = Terms(u"Terms for this instance"_q);
+	auto terms = Terms(u"Terms for this instance"_q);
+	terms.minAge = 18;
+	auto ageConfirmed = false;
 	auto signupRequests = 0;
 	Fn<void()> accept;
 
@@ -266,7 +393,14 @@ TEST_CASE(SignupTermsHappyPathSmoke) {
 		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(signupRequests, 0);
-	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, [&] { accept(); }, [] {}));
+	const auto tryAgree = [&] {
+		HandleSignupTermsAccept(
+			terms.minAge.has_value(), ageConfirmed, [&] { accept(); }, [] {});
+	};
+	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, tryAgree, [] {}));
+	CHECK_EQ(signupRequests, 0);
+	ageConfirmed = true;
+	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, tryAgree, [] {}));
 	CHECK_EQ(signupRequests, 1);
 }
 

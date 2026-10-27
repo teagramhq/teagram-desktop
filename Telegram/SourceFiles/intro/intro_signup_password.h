@@ -60,7 +60,7 @@ private:
 	void showFormError(const QString &text);
 	void requestSignup();
 
-	void signUp(SignupTermsPermission permission);
+	void signUp(SignupTermsPermission, SignupRequestData request);
 	void signUpDone(const MTPauth_Authorization &result);
 	void signUpFail(const MTP::Error &error);
 	void reissueCode();

@@ -31,7 +31,6 @@ bool IsSupportedTermsLink(const QString &link) {
 	if (!scheme.contains(u'.')) {
 		return false;
 	}
-	// A hostname with a numeric port is still a web address, not an app URI.
 	auto digits = 0;
 	for (auto i = colon + 1; i != link.size(); ++i) {
 		const auto ch = link[i];
@@ -95,9 +94,7 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 				add(EntityType::CustomUrl, d.voffset().v, d.vlength().v,
 					qs(d.vurl()));
 			},
-			[](const auto &) {
-				// Other server entities are literal text in signup terms.
-			});
+			[](const auto &) {});
 	}
 	const auto overlaps
 		= [](const EntityInText &left, const EntityInText &right) {
@@ -160,6 +157,15 @@ bool HandleSignupTermsKey(int key, bool declineOnEscape, Fn<void()> accept,
 	return false;
 }
 
+void HandleSignupTermsAccept(bool ageRequired, bool ageConfirmed,
+							 Fn<void()> accept, Fn<void()> ageUnconfirmed) {
+	if (ageRequired && !ageConfirmed) {
+		ageUnconfirmed();
+	} else {
+		accept();
+	}
+}
+
 void SignupTermsGate::submit(const SignupTermsPayload &terms,
 							 Fn<void(Fn<void()>, Fn<void()>)> showTerms,
 							 Fn<void(SignupTermsPermission)> sendSignup,
@@ -174,6 +180,22 @@ void SignupTermsGate::submit(const SignupTermsPayload &terms,
 		sendSignup(SignupTermsPermission());
 	};
 	showTerms(std::move(accept), std::move(declined));
+}
+
+void SubmitSignupWithTerms(
+	SignupTermsGate &gate, const SignupTermsPayload &terms,
+	Fn<SignupRequestData()> requestData,
+	Fn<void(Fn<void()>, Fn<void()>)> showTerms,
+	Fn<void(SignupTermsPermission, SignupRequestData)> sendSignup,
+	Fn<void()> declined) {
+	gate.submit(
+		terms, std::move(showTerms),
+		[requestData = std::move(requestData),
+		 sendSignup
+		 = std::move(sendSignup)](SignupTermsPermission permission) mutable {
+			sendSignup(std::move(permission), requestData());
+		},
+		std::move(declined));
 }
 
 } // namespace Intro::details

@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <optional>
 
+#include <QtCore/QByteArray>
+
 class MTPDhelp_termsOfService;
 
 namespace Intro::details {
@@ -31,6 +33,8 @@ SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data);
 
 [[nodiscard]] bool HandleSignupTermsKey(int key, bool declineOnEscape,
 										Fn<void()> accept, Fn<void()> decline);
+void HandleSignupTermsAccept(bool ageRequired, bool ageConfirmed,
+							 Fn<void()> accept, Fn<void()> ageUnconfirmed);
 
 class SignupTermsGate;
 
@@ -56,5 +60,19 @@ class SignupTermsGate final {
   private:
 	std::optional<SignupTermsPayload> _accepted;
 };
+
+struct SignupRequestData {
+	QString phone;
+	QByteArray phoneHash;
+	QString firstName;
+	QString lastName;
+};
+
+void SubmitSignupWithTerms(
+	SignupTermsGate &gate, const SignupTermsPayload &terms,
+	Fn<SignupRequestData()> requestData,
+	Fn<void(Fn<void()>, Fn<void()>)> showTerms,
+	Fn<void(SignupTermsPermission, SignupRequestData)> sendSignup,
+	Fn<void()> declined);
 
 } // namespace Intro::details

@@ -428,18 +428,19 @@ void TermsBox::prepare() {
 				st::defaultCheck.duration);
 		}
 	};
+	_tryAgree = [=] {
+		Intro::details::HandleSignupTermsAccept(
+			age != nullptr, age && age->entity()->checked(),
+			[=] { _agreeClicks.fire({}); }, [=] { toggleAgeError(true); });
+	};
 
 	const auto &agreeStyle = _attentionAgree
 		? st::attentionBoxButton
 		: st::defaultBoxButton;
-	addButton(std::move(_agree), [=] {}, agreeStyle)->clicks(
-	) | rpl::filter([=] {
-		if (age && !age->entity()->checked()) {
-			toggleAgeError(true);
-			return false;
-		}
-		return true;
-	}) | rpl::to_empty | rpl::start_to_stream(_agreeClicks, lifetime());
+	addButton(
+		std::move(_agree), [=] {}, agreeStyle)
+			->clicks()
+		| rpl::on_next([=] { _tryAgree(); }, lifetime());
 
 	if (_cancel) {
 		addButton(std::move(_cancel), [] {})->clicks(
@@ -472,7 +473,7 @@ void TermsBox::prepare() {
 
 void TermsBox::keyPressEvent(QKeyEvent *e) {
 	if (!Intro::details::HandleSignupTermsKey(
-			e->key(), _declineOnEscape, [=] { _agreeClicks.fire({}); },
+			e->key(), _declineOnEscape, [=] { _tryAgree(); },
 			[=] {
 				e->accept();
 				_cancelClicks.fire({});

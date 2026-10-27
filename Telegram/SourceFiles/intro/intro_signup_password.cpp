@@ -202,13 +202,23 @@ void SignUpPasswordWidget::submit() {
 
 void SignUpPasswordWidget::requestSignup() {
 	const auto &termsLock = getData()->termsLock;
-	_termsGate.submit(
+	SubmitSignupWithTerms(
+		_termsGate,
 		{
 			termsLock.id,
 			termsLock.text,
 			termsLock.minAge,
 			termsLock.popup,
 		},
+		crl::guard(this,
+				   [=] {
+					   return SignupRequestData{
+						   getData()->phone,
+						   getData()->phoneHash,
+						   getData()->signupName,
+						   QString(),
+					   };
+				   }),
 		[=](Fn<void()> accept, Fn<void()> decline) {
 			_termsPromptPending = true;
 			showSignupTerms(crl::guard(this,
@@ -221,33 +231,38 @@ void SignUpPasswordWidget::requestSignup() {
 								decline();
 							}));
 		},
-		crl::guard(this,
-				   [=](SignupTermsPermission permission) {
-					   signUp(std::move(permission));
-				   }),
+		crl::guard(
+			this,
+			[=](SignupTermsPermission permission, SignupRequestData request) {
+				signUp(std::move(permission), std::move(request));
+			}),
 		crl::guard(this, [=] {
 			showFormError(tr::lng_teagram_terms_declined(tr::now));
 		}));
 }
 
-void SignUpPasswordWidget::signUp(SignupTermsPermission) {
+void SignUpPasswordWidget::signUp(SignupTermsPermission,
+								  SignupRequestData request) {
 	// A successful signUp creates a provisional account that cannot be
 	// recovered without this step. Do not let Back cancel the request before
 	// its outcome is known.
 	_backAvailable = false;
-	_sentRequest = api().request(MTPauth_SignUp(
-		MTP_flags(0),
-		MTP_string(getData()->phone),
-		MTP_bytes(getData()->phoneHash),
-		MTP_string(getData()->signupName),
-		MTP_string(QString())
-	)).done([=](const MTPauth_Authorization &result) {
-		_sentRequest = 0;
-		signUpDone(result);
-	}).fail([=](const MTP::Error &error) {
-		_sentRequest = 0;
-		signUpFail(error);
-	}).handleAllErrors().send();
+	_sentRequest
+		= api()
+			  .request(MTPauth_SignUp(MTP_flags(0), MTP_string(request.phone),
+									  MTP_bytes(request.phoneHash),
+									  MTP_string(request.firstName),
+									  MTP_string(request.lastName)))
+			  .done([=](const MTPauth_Authorization &result) {
+				  _sentRequest = 0;
+				  signUpDone(result);
+			  })
+			  .fail([=](const MTP::Error &error) {
+				  _sentRequest = 0;
+				  signUpFail(error);
+			  })
+			  .handleAllErrors()
+			  .send();
 }
 
 void SignUpPasswordWidget::signUpDone(

@@ -173,31 +173,26 @@ void SignupWidget::submit() {
 		}
 	}
 
-	const auto send = [=](SignupTermsPermission) {
-		hideError();
-
-		_firstName = _first->getLastText().trimmed();
-		_lastName = _last->getLastText().trimmed();
-		_sentRequest = api().request(MTPauth_SignUp(
-			MTP_flags(0),
-			MTP_string(getData()->phone),
-			MTP_bytes(getData()->phoneHash),
-			MTP_string(_firstName),
-			MTP_string(_lastName)
-		)).done([=](const MTPauth_Authorization &result) {
-			nameSubmitDone(result);
-		}).fail([=](const MTP::Error &error) {
-			nameSubmitFail(error);
-		}).handleFloodErrors().send();
-	};
 	const auto &termsLock = getData()->termsLock;
-	_termsGate.submit(
+	SubmitSignupWithTerms(
+		_termsGate,
 		{
 			termsLock.id,
 			termsLock.text,
 			termsLock.minAge,
 			termsLock.popup,
 		},
+		crl::guard(this,
+				   [=] {
+					   _firstName = _first->getLastText().trimmed();
+					   _lastName = _last->getLastText().trimmed();
+					   return SignupRequestData{
+						   getData()->phone,
+						   getData()->phoneHash,
+						   _firstName,
+						   _lastName,
+					   };
+				   }),
 		[=](Fn<void()> accept, Fn<void()> decline) {
 			_termsPromptPending = true;
 			showSignupTerms(crl::guard(this,
@@ -210,10 +205,26 @@ void SignupWidget::submit() {
 								decline();
 							}));
 		},
-		crl::guard(this,
-				   [=](SignupTermsPermission permission) {
-					   send(std::move(permission));
-				   }),
+		crl::guard(
+			this,
+			[=](SignupTermsPermission, SignupRequestData request) {
+				hideError();
+				_sentRequest
+					= api()
+						  .request(MTPauth_SignUp(MTP_flags(0),
+												  MTP_string(request.phone),
+												  MTP_bytes(request.phoneHash),
+												  MTP_string(request.firstName),
+												  MTP_string(request.lastName)))
+						  .done([=](const MTPauth_Authorization &result) {
+							  nameSubmitDone(result);
+						  })
+						  .fail([=](const MTP::Error &error) {
+							  nameSubmitFail(error);
+						  })
+						  .handleFloodErrors()
+						  .send();
+			}),
 		crl::guard(this, [=] {
 			showError(rpl::single(tr::lng_teagram_terms_declined(tr::now)));
 		}));

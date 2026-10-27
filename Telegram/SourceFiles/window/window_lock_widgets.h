@@ -134,6 +134,7 @@ private:
 	TermsLock _data;
 	rpl::producer<QString> _agree;
 	rpl::producer<QString> _cancel;
+	Fn<void()> _tryAgree;
 	rpl::event_stream<> _agreeClicks;
 	rpl::event_stream<> _cancelClicks;
 	QString _lastClickedMention;
