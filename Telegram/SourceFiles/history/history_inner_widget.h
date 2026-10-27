@@ -287,6 +287,9 @@ public:
 	[[nodiscard]] ClickContext prepareClickContext(
 		Qt::MouseButton button,
 		FullMsgId itemId) const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setDropSessionWindowFromClickContextForRegressionTest(bool drop);
+#endif
 
 	[[nodiscard]] auto sendIntroSticker() const
 		-> rpl::producer<not_null<DocumentData*>>;
@@ -588,6 +591,9 @@ private:
 	const not_null<HistoryView::ElementDelegate*> _elementDelegate;
 	const std::unique_ptr<HistoryView::EmojiInteractions> _emojiInteractions;
 	std::shared_ptr<Ui::ChatTheme> _theme;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	bool _dropSessionWindowFromClickContextForRegressionTest = false;
+#endif
 
 	History *_migrated = nullptr;
 	HistoryView::ElementDelegate *_migratedElementDelegate = nullptr;

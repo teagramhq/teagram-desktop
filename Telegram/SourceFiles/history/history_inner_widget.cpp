@@ -6432,12 +6432,25 @@ Fn<HistoryView::ElementDelegate*()> HistoryInner::elementDelegateFactory(
 
 ClickHandlerContext HistoryInner::prepareClickHandlerContext(
 		FullMsgId itemId) const {
-	return ClickHandlerContext{
+	auto result = ClickHandlerContext{
 		.itemId = itemId,
 		.elementDelegate = elementDelegateFactory(itemId),
 		.sessionWindow = base::make_weak(_controller),
 	};
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (_dropSessionWindowFromClickContextForRegressionTest) {
+		result.sessionWindow = {};
+	}
+#endif
+	return result;
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HistoryInner::setDropSessionWindowFromClickContextForRegressionTest(
+	bool drop) {
+	_dropSessionWindowFromClickContextForRegressionTest = drop;
+}
+#endif
 
 ClickContext HistoryInner::prepareClickContext(
 		Qt::MouseButton button,

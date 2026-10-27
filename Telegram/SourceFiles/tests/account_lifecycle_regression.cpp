@@ -3399,7 +3399,8 @@ template <typename Condition>
 												  Window::SessionController *>
 												  target,
 											  not_null<HistoryWidget *>
-												  historyWidget) {
+												  historyWidget,
+											  bool dropSessionWindow) {
 		auto inner = static_cast<HistoryInner *>(nullptr);
 		for (const auto child : historyWidget->findChildren<QWidget *>()) {
 			if (const auto candidate = dynamic_cast<HistoryInner *>(child)) {
@@ -3490,6 +3491,25 @@ template <typename Condition>
 				url.toUtf8().constData());
 			return false;
 		}
+		inner->setDropSessionWindowFromClickContextForRegressionTest(
+			dropSessionWindow);
+		const auto restoreClickContext = gsl::finally([=] {
+			inner->setDropSessionWindowFromClickContextForRegressionTest(false);
+		});
+		const auto clickContext
+			= inner->prepareClickHandlerContext(item->fullId());
+		const auto clickContextMatches
+			= dropSessionWindow
+				  ? !clickContext.sessionWindow.get()
+				  : (clickContext.sessionWindow.get() == target.get());
+		if (!clickContextMatches) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: click context did not "
+				"match the mouse-path fixture for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
 		const auto global = inner->mapToGlobal(*point);
 		QMouseEvent press(QEvent::MouseButtonPress, QPointF(*point),
 						  QPointF(global), Qt::LeftButton, Qt::LeftButton,
@@ -3513,7 +3533,8 @@ template <typename Condition>
 	const auto clickMessageLink = [&](const QString &url,
 									  not_null<Window::SessionController *>
 										  target,
-									  not_null<HistoryWidget *> historyWidget) {
+									  not_null<HistoryWidget *> historyWidget,
+									  bool dropSessionWindow) {
 		const auto activation = activateSettingsWindow(&target->window());
 		if (activationFailed(activation)) {
 			std::fprintf(
@@ -3534,7 +3555,8 @@ template <typename Condition>
 			blockedController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
 		};
-		if (!performMessageMouseClick(url, target, historyWidget)) {
+		if (!performMessageMouseClick(url, target, historyWidget,
+									  dropSessionWindow)) {
 			return false;
 		}
 		const auto dispatched = WaitForRegressionCondition([&] {
@@ -4271,7 +4293,7 @@ template <typename Condition>
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first))) {
+				not_null<HistoryWidget *>(pinnedMessageState->first), true)) {
 			return false;
 		}
 	}
@@ -4298,7 +4320,7 @@ template <typename Condition>
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first))) {
+				not_null<HistoryWidget *>(pinnedMessageState->first), true)) {
 			return false;
 		}
 	}
@@ -4406,7 +4428,7 @@ template <typename Condition>
 				anim::SetDisabled(true);
 				const auto clickSent = performMessageMouseClick(
 					url, stockController,
-					not_null<HistoryWidget *>(stockMessageState->first));
+					not_null<HistoryWidget *>(stockMessageState->first), false);
 				const auto clickDispatchCompleted
 					= clickSent
 					  && (WaitForMainQueueBarrierForRegressionTest()
