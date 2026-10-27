@@ -1945,10 +1945,9 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 	}
 	const auto weak = base::make_weak(this);
 	auto complete = [weak, bigFileCache, closeBefore, path,
-						   identity = std::move(identity),
-						   initializationIdentity, done = std::move(done),
-						   handoff = std::move(handoff)](
-							  Storage::Cache::Error error) mutable {
+					 identity = std::move(identity), initializationIdentity,
+					 done = std::move(done), handoff = std::move(handoff)](
+						Storage::Cache::Error error) mutable {
 		if (initializationIdentity) {
 			identity = *initializationIdentity;
 		}
