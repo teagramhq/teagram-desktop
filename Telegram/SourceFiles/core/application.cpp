@@ -1329,17 +1329,18 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 	if (urlTrimmed.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
 		const auto my = context.value<ClickHandlerContext>();
 		const auto target = my.sessionWindow.get();
-		const auto controllerId = target
-			? QString::number(reinterpret_cast<quintptr>(target), 16)
-			: u"none"_q;
-		const auto sessionId = target
-			? QString::number(reinterpret_cast<quintptr>(&target->session()), 16)
-			: u"none"_q;
+		const auto controllerId
+			= target ? QString::number(reinterpret_cast<quintptr>(target), 16)
+					 : u"none"_q;
+		const auto sessionId
+			= target ? QString::number(
+						   reinterpret_cast<quintptr>(&target->session()), 16)
+					 : u"none"_q;
 		LOG(("SettingsLinkTrace: local.enter convertedUrl=%1 "
-			"controller=%2 session=%3")
-			.arg(urlTrimmed)
-			.arg(controllerId)
-			.arg(sessionId));
+			 "controller=%2 session=%3")
+				.arg(urlTrimmed)
+				.arg(controllerId)
+				.arg(sessionId));
 	}
 	const auto protocol = u"tg://"_q;
 	if (urlTrimmed.startsWith(protocol, Qt::CaseInsensitive)

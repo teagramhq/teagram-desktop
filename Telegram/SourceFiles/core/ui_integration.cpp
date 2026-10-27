@@ -437,8 +437,8 @@ bool UiIntegration::handleUrlClick(
 	if (url.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)
 		|| local.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
 		LOG(("SettingsLinkTrace: url.convert raw=%1 converted=%2")
-			.arg(url)
-			.arg(local));
+				.arg(url)
+				.arg(local));
 	}
 	if (Core::InternalPassportOrOAuthLink(local)) {
 		return true;

@@ -2565,16 +2565,15 @@ void HistoryInner::mouseActionFinish(
 	if (_mouseAction == MouseAction::Dragging || needItemSelectionToggle) {
 		activated = nullptr;
 	} else if (activated) {
-		const auto urlHandler = dynamic_cast<const UrlClickHandler*>(
-			activated.get());
-		const auto rawUrl = urlHandler
-			? urlHandler->originalUrl()
-			: activated->url();
+		const auto urlHandler
+			= dynamic_cast<const UrlClickHandler *>(activated.get());
+		const auto rawUrl
+			= urlHandler ? urlHandler->originalUrl() : activated->url();
 		if (rawUrl.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
 			LOG(("SettingsLinkTrace: history.activate "
-				"widget=HistoryInner type=%1 rawUrl=%2")
-				.arg(QString::fromLatin1(typeid(*activated).name()))
-				.arg(rawUrl));
+				 "widget=HistoryInner type=%1 rawUrl=%2")
+					.arg(QString::fromLatin1(typeid(*activated).name()))
+					.arg(rawUrl));
 		}
 		const auto pressedItemId = pressedItemView
 			? pressedItemView->data()->fullId()
@@ -2684,17 +2683,17 @@ void HistoryInner::mouseActionFinish(
 void HistoryInner::mouseReleaseEvent(QMouseEvent *e) {
 	if (e->button() == Qt::LeftButton) {
 		const auto pressed = ClickHandler::getPressed();
-		const auto urlHandler = pressed
-			? dynamic_cast<const UrlClickHandler*>(pressed.get())
-			: nullptr;
+		const auto urlHandler
+			= pressed ? dynamic_cast<const UrlClickHandler *>(pressed.get())
+					  : nullptr;
 		auto rawUrl = pressed ? pressed->url() : u"none"_q;
 		if (urlHandler) {
 			rawUrl = urlHandler->originalUrl();
 		}
 		LOG(("SettingsLinkTrace: history.release "
-			"widget=HistoryInner pressed=%1 rawUrl=%2")
-			.arg(pressed ? u"yes"_q : u"no"_q)
-			.arg(rawUrl));
+			 "widget=HistoryInner pressed=%1 rawUrl=%2")
+				.arg(pressed ? u"yes"_q : u"no"_q)
+				.arg(rawUrl));
 	}
 	if (_middleClickAutoscroll.finishHold(e->button())) {
 		e->accept();
