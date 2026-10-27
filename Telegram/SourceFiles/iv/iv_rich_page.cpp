@@ -1956,8 +1956,8 @@ template <typename Accumulator>
 	}
 	const auto lengthLimit = ::Data::PremiumLimits(session)
 		.messageLengthCurrent();
-	return !Data::details::ExceedsInputLengthLimit(int(to.length()),
-												   lengthLimit);
+	return !::Data::details::ExceedsInputLengthLimit(int(to.length()),
+													 lengthLimit);
 }
 
 [[nodiscard]] bool RichBlockIsPlain(const Block &block) {

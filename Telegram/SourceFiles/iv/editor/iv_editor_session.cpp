@@ -4545,10 +4545,10 @@ void OfferRichMessagePremiumChoice(
 	const auto flattened = FlattenRichPageToSimpleText(page);
 	const auto lengthLimit = ::Data::PremiumLimits(session)
 		.messageLengthCurrent();
-	const auto sendable
-		= (CountRichPageMedia(page) == 0) && !flattened.text.isEmpty()
-		  && !Data::details::ExceedsInputLengthLimit(int(flattened.text.size()),
-													 lengthLimit);
+	const auto sendable = (CountRichPageMedia(page) == 0)
+						  && !flattened.text.isEmpty()
+						  && !::Data::details::ExceedsInputLengthLimit(
+							  int(flattened.text.size()), lengthLimit);
 	if (!sendable) {
 		ShowRichMessagesPremiumToast(std::move(show));
 		return;

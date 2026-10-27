@@ -437,8 +437,8 @@ void Uploader::upload(
 	const auto maxPartBytes
 		= session().appConfig().get<int64>(u"upload_max_part_bytes"_q, 0);
 	const auto maxPartCount = session().appConfig().get<int>(
-		session().user()->isPremium() ? u"upload_max_fileparts_premium"_q
-									  : u"upload_max_fileparts_default"_q,
+		session().premium() ? u"upload_max_fileparts_premium"_q
+							: u"upload_max_fileparts_default"_q,
 		0);
 	SplitOversizedUploadParts(file->fileparts, maxPartBytes);
 	SplitOversizedUploadParts(file->thumbparts, maxPartBytes);

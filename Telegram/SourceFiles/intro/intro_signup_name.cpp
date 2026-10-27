@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_signup_password.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
+#include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "lang/lang_keys.h"
 #include "ui/widgets/fields/input_field.h"
