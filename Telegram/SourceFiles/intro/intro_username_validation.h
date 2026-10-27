@@ -71,9 +71,8 @@ struct UsernamePolicy {
 // What the user typed stays on screen.
 [[nodiscard]] QString ToWireUsername(const QString &normalized);
 
-[[nodiscard]] bool IsValidUsername(
-	const QString &normalized,
-	const UsernamePolicy &policy);
+[[nodiscard]] bool IsValidUsername(const QString &normalized,
+								   const UsernamePolicy &policy);
 
 // Which server a phone_code_hash came from: address, port and the
 // fingerprint of the pinned key, the same triple the same-account

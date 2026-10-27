@@ -40,19 +40,15 @@ TEST_CASE(NormalizeStripsOneLeadingAt) {
 }
 
 TEST_CASE(ValidUsernamesAtBoundaries) {
-	CHECK(IsValidUsername(
-		u"Ab"_q,
-		kPublishedUsernamePolicy)); // 2 chars, the shortest.
-	CHECK(IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz012345"_q,
-		kPublishedUsernamePolicy)); // 32 chars, the longest.
+	CHECK(IsValidUsername(u"Ab"_q,
+						  kPublishedUsernamePolicy)); // 2 chars, the shortest.
+	CHECK(IsValidUsername(u"abcdefghijklmnopqrstuvwxyz012345"_q,
+						  kPublishedUsernamePolicy)); // 32 chars, the longest.
 	CHECK(IsValidUsername(u"abcd"_q, kPublishedUsernamePolicy));
-	CHECK(!IsValidUsername(
-		u"a"_q,
-		kPublishedUsernamePolicy)); // 1 char, one too short.
-	CHECK(!IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz0123456"_q,
-		kPublishedUsernamePolicy)); // 33 chars.
+	CHECK(!IsValidUsername(u"a"_q,
+						   kPublishedUsernamePolicy)); // 1 char, one too short.
+	CHECK(!IsValidUsername(u"abcdefghijklmnopqrstuvwxyz0123456"_q,
+						   kPublishedUsernamePolicy)); // 33 chars.
 }
 
 TEST_CASE(UsernamesRejectedByPattern) {
@@ -60,9 +56,9 @@ TEST_CASE(UsernamesRejectedByPattern) {
 		u"1alice"_q,
 		kPublishedUsernamePolicy)); // Must start with a letter.
 	CHECK(!IsValidUsername(u"_alice"_q, kPublishedUsernamePolicy));
-	CHECK(!IsValidUsername(
-		u"al-ice"_q,
-		kPublishedUsernamePolicy)); // Dash outside the class.
+	CHECK(
+		!IsValidUsername(u"al-ice"_q,
+						 kPublishedUsernamePolicy)); // Dash outside the class.
 	CHECK(!IsValidUsername(
 		u"al ice"_q,
 		kPublishedUsernamePolicy)); // Inner space is not trimmed away.
@@ -70,9 +66,8 @@ TEST_CASE(UsernamesRejectedByPattern) {
 	CHECK(!IsValidUsername(
 		QString(),
 		kPublishedUsernamePolicy)); // Empty is its own message.
-	CHECK(!IsValidUsername(
-		u"ali\u0441e"_q,
-		kPublishedUsernamePolicy)); // Non-ASCII inside.
+	CHECK(!IsValidUsername(u"ali\u0441e"_q,
+						   kPublishedUsernamePolicy)); // Non-ASCII inside.
 }
 
 TEST_CASE(MissingUsernamePolicyLeavesValidationToServer) {

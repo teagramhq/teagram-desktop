@@ -28,9 +28,7 @@ QString ToWireUsername(const QString &normalized) {
 	return normalized.toLower();
 }
 
-bool IsValidUsername(
-		const QString &normalized,
-		const UsernamePolicy &policy) {
+bool IsValidUsername(const QString &normalized, const UsernamePolicy &policy) {
 	if (normalized.isEmpty()) {
 		return false;
 	}
