@@ -147,21 +147,24 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
-		auto watchdog
-			= Core::UiStallWatchdog([&](const QString &line, bool update) {
-				  const auto lock = std::lock_guard(mutex);
-				  if (update) {
-					  if (!lines.empty()) {
-						  lines.back() = line;
-					  }
-					  completed.store(true, std::memory_order_release);
-				  } else {
-					  lines.push_back(line);
-				  }
-				  if (blockActive.load(std::memory_order_acquire)) {
-					  logged.store(true, std::memory_order_release);
-				  }
-			  });
+		auto watchdog = Core::UiStallWatchdog(
+			[&](const QString &line, bool update) {
+				const auto lock = std::lock_guard(mutex);
+				if (update) {
+					if (!lines.empty()) {
+						lines.back() = line;
+					}
+					const auto duration = line.mid(u"UI stall "_q.size())
+											  .section(u' ', 0, 0)
+											  .toInt();
+					completed.store(duration >= 300, std::memory_order_release);
+				} else {
+					lines.push_back(line);
+				}
+				if (blockActive.load(std::memory_order_acquire)) {
+					logged.store(true, std::memory_order_release);
+				}
+			});
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
 			std::chrono::milliseconds(300), &loop, &logged, &blockActive);
 		watchdog.installEventFilter(&blockFilter);
@@ -188,6 +191,27 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 								  .section(u' ', 0, 0)
 								  .toInt();
 		CHECK(duration >= 300);
+	}
+}
+
+TEST_CASE(UiStallWatchdogSymbolizesStackWhileMainThreadBlocked) {
+	auto blockActive = std::atomic_bool(false);
+	auto symbolizedWhileBlocked = std::atomic_bool(false);
+	{
+		auto loop = QEventLoop();
+		auto watchdog = Core::UiStallWatchdog([&](const QString &line, bool) {
+			if (blockActive.load(std::memory_order_acquire)
+				&& line.contains(u"UiStallWatchdogTestBlock"_q)) {
+				symbolizedWhileBlocked.store(true, std::memory_order_release);
+			}
+		});
+		auto blockFilter = UiStallWatchdogTestBlockFilter(
+			std::chrono::milliseconds(2000), &loop, nullptr, &blockActive);
+		watchdog.installEventFilter(&blockFilter);
+		QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+		loop.exec();
+		CHECK(blockFilter.Blocked());
+		CHECK(symbolizedWhileBlocked.load(std::memory_order_acquire));
 	}
 }
 

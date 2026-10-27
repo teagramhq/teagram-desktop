@@ -445,6 +445,10 @@ void UiStallWatchdog::run() {
 				lastLogged = Clock::now();
 				lastLoggedDuration = loggedDuration;
 				hasLogged = true;
+				if (!frames.empty()) {
+					stack = FormatStack(frames);
+					_log(lineForDuration(loggedDuration), true);
+				}
 				lock.lock();
 			}
 		}
@@ -455,7 +459,6 @@ void UiStallWatchdog::run() {
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
 			lock.unlock();
-			stack = FormatStack(frames);
 			const auto duration = completedAt - postedAt;
 			_log(lineForDuration(duration), true);
 			lastLogged = Clock::now();
