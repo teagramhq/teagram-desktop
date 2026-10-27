@@ -43,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/teagram_icon_choice.h"
+#include "core/ui_integration.h"
 #include "core/ui_stall_watchdog.h"
 #include "crl/crl_on_main.h"
 #include "crl/crl_semaphore.h"
@@ -68,10 +69,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/view/export_view_panel_controller.h"
 #include "history/admin_log/history_admin_log_inner.h"
 #include "history/history.h"
+#include "history/history_inner_widget.h"
 #include "history/history_item.h"
 #include "history/history_item_reply_markup.h"
 #include "history/history_widget.h"
 #include "history/view/history_view_chat_section.h"
+#include "history/view/history_view_element.h"
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
@@ -3390,37 +3393,139 @@ template <typename Condition>
 		}
 		return std::pair(historyWidget, context);
 	};
-	const auto makeMessageLinkHandler = [&](const QString &url) {
-		const auto messageText = Ui::Text::String(
-			st::messageTextStyle,
-			TextWithEntities{
-				.text = url,
-				.entities = {
-					EntityInText(EntityType::Url, 0, int(url.size())),
-				},
-			},
-			Ui::ItemTextDefaultOptions(),
-			st::msgMinWidth);
-		const auto width = messageText.maxWidth();
-		const auto height
-			= std::max(messageText.countHeight(width), messageText.minHeight());
-		for (auto y = 0; y != height; ++y) {
-			for (auto x = 0; x != width; ++x) {
-				if (const auto link
-					= messageText.getState(QPoint(x, y), width).link) {
-					return link;
+	auto nextMessageId = 0x7e5800;
+	const auto performMessageMouseClick = [&](const QString &url,
+											  not_null<
+												  Window::SessionController *>
+												  target,
+											  not_null<HistoryWidget *>
+												  historyWidget) {
+		auto inner = static_cast<HistoryInner *>(nullptr);
+		for (const auto child : historyWidget->findChildren<QWidget *>()) {
+			if (const auto candidate = dynamic_cast<HistoryInner *>(child)) {
+				inner = candidate;
+				break;
+			}
+		}
+		if (!inner) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: Saved Messages has no "
+				"HistoryInner mouse target.\n");
+			return false;
+		}
+		using Flag = MTPDmessage::Flag;
+		const auto id = MsgId(nextMessageId++);
+		const auto data = MTP_message(
+			MTP_flags(Flag::f_from_id | Flag::f_out | Flag::f_entities),
+			MTP_int(int(id.bare)), peerToMTP(target->session().userPeerId()),
+			MTPint(),	 // from_boosts_applied
+			MTPstring(), // from_rank
+			peerToMTP(target->session().userPeerId()),
+			MTPPeer(), // saved_peer_id
+			MTPMessageFwdHeader(),
+			MTP_long(0), // via_bot_id
+			MTPlong(),	 // via_business_bot_id
+			MTPPeer(),	 // guestchat_via_from
+			MTPMessageReplyHeader(),
+			MTP_int(1), // date
+			MTP_string(url), MTP_messageMediaEmpty(), MTPReplyMarkup(),
+			MTP_vector<MTPMessageEntity>({
+				MTP_messageEntityUrl(MTP_int(0), MTP_int(int(url.size()))),
+			}),
+			MTP_int(0), // views
+			MTP_int(0), // forwards
+			MTPMessageReplies(),
+			MTP_int(0), // edit_date
+			MTPstring(), MTPlong(), MTPMessageReactions(),
+			MTPVector<MTPRestrictionReason>(),
+			MTP_int(0), // ttl_period
+			MTPint(),	// quick_reply_shortcut_id
+			MTPlong(),	// effect
+			MTPFactCheck(),
+			MTPint(),  // report_delivery_until_date
+			MTPlong(), // paid_message_stars
+			MTPSuggestedPost(),
+			MTPint(),	 // schedule_repeat_period
+			MTPstring(), // summary_from_language
+			MTPRichMessage());
+		inner->messagesReceivedDown(
+			static_cast<PeerData *>(target->session().user().get()),
+			QVector<MTPMessage>{data});
+		inner->recountHistoryGeometry();
+		const auto item = target->session().data().message(
+			FullMsgId(target->session().userPeerId(), id));
+		const auto view = item ? inner->viewByItem(item) : nullptr;
+		const auto top = view ? inner->itemTop(view) : -1;
+		if (!view || top < 0) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: URL message was not "
+				"laid out in Saved Messages for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		historyWidget->synteticScrollToY(top + view->height());
+		QCoreApplication::processEvents();
+		const auto visible = inner->visibleRegion();
+		auto point = std::optional<QPoint>();
+		auto expectedHandler = ClickHandlerPtr();
+		for (auto y = 0; y != view->height() && !point; ++y) {
+			for (auto x = 0; x != view->width(); ++x) {
+				if (const auto link = view->textState(QPoint(x, y), {}).link) {
+					const auto candidate = QPoint(x, top + y);
+					if (visible.contains(candidate)) {
+						point = candidate;
+						expectedHandler = link;
+						break;
+					}
 				}
 			}
 		}
-		return ClickHandlerPtr();
+		if (!point) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: rendered URL had no "
+				"visible mouse hit point for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		const auto global = inner->mapToGlobal(*point);
+		QMouseEvent press(QEvent::MouseButtonPress, QPointF(*point),
+						  QPointF(global), Qt::LeftButton, Qt::LeftButton,
+						  Qt::NoModifier);
+		QCoreApplication::sendEvent(inner, &press);
+		const auto pressedHandler = ClickHandler::getPressed();
+		QMouseEvent release(QEvent::MouseButtonRelease, QPointF(*point),
+							QPointF(global), Qt::LeftButton, Qt::NoButton,
+							Qt::NoModifier);
+		QCoreApplication::sendEvent(inner, &release);
+		if (pressedHandler != expectedHandler) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: physical press did not "
+				"hit the rendered URL for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		return true;
 	};
 	const auto clickMessageLink = [&](const QString &url,
 									  not_null<Window::SessionController *>
 										  target,
-									  not_null<HistoryWidget *> historyWidget,
-									  const ClickHandlerContext &messageContext,
-									  Window::Controller *activeBefore,
-									  bool focusCheckAvailable) {
+									  not_null<HistoryWidget *> historyWidget) {
+		const auto activation = activateSettingsWindow(&target->window());
+		if (activationFailed(activation)) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: target window did not "
+				"activate before the message click for %s.\n",
+				url.toUtf8().constData());
+			return false;
+		}
+		const auto focusCheckAvailable
+			= (activation == WindowActivationForRegressionResult::Activated);
+		const auto activeBefore = app.activeWindow();
 		const auto before = std::array{
 			stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
@@ -3429,20 +3534,9 @@ template <typename Condition>
 			blockedController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
 		};
-		auto handler = makeMessageLinkHandler(url);
-		if (!handler) {
-			std::fprintf(
-				stderr,
-				"Settings deep link regression failed: message link had no "
-				"click handler for %s.\n",
-				url.toUtf8().constData());
+		if (!performMessageMouseClick(url, target, historyWidget)) {
 			return false;
 		}
-		ActivateClickHandler(historyWidget->window(), handler,
-							 ClickContext{
-								 Qt::LeftButton,
-								 QVariant::fromValue(messageContext),
-							 });
 		const auto dispatched = WaitForRegressionCondition([&] {
 			const auto current = std::array{
 				stockController
@@ -4162,15 +4256,22 @@ template <typename Condition>
 			"activate before the custom message-link matrix.\n");
 		return false;
 	}
-	const auto stockMessageFocusCheckAvailable
+	const auto stockMessageWindowActive
 		= (stockBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
+		   == WindowActivationForRegressionResult::Activated)
+			  ? (app.activeWindow() == &stockController->window())
+			  : true;
+	if (!stockMessageWindowActive) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: stock window was not active "
+			"before the custom message-link matrix.\n");
+		return false;
+	}
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &stockController->window(),
-				stockMessageFocusCheckAvailable)) {
+				not_null<HistoryWidget *>(pinnedMessageState->first))) {
 			return false;
 		}
 	}
@@ -4183,17 +4284,62 @@ template <typename Condition>
 			"activate before its message-link matrix.\n");
 		return false;
 	}
-	const auto pinnedMessageFocusCheckAvailable
+	const auto pinnedMessageWindowActive
 		= (pinnedBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
+		   == WindowActivationForRegressionResult::Activated)
+			  ? (app.activeWindow() == &pinnedController->window())
+			  : true;
+	if (!pinnedMessageWindowActive) {
+		std::fprintf(stderr, "Settings deep link regression failed: custom "
+							 "window was not active "
+							 "before its message-link matrix.\n");
+		return false;
+	}
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
-				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &pinnedController->window(),
-				pinnedMessageFocusCheckAvailable)) {
+				not_null<HistoryWidget *>(pinnedMessageState->first))) {
 			return false;
 		}
+	}
+	const auto contextlessUrl = u"tg://settings/premium"_q;
+	const auto stockToastBeforeContextlessUrl
+		= stockController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto pinnedToastBeforeContextlessUrl
+		= pinnedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto blockedToastBeforeContextlessUrl
+		= blockedController
+			  ->featureUnavailableOnServerToastCallsForRegressionTest();
+	const auto contextlessUrlHandled
+		= Ui::Integration::Instance().handleUrlClick(contextlessUrl, {});
+	const auto contextlessUrlRefused
+		= contextlessUrlHandled
+		  && (stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == stockToastBeforeContextlessUrl)
+		  && (pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == pinnedToastBeforeContextlessUrl + 1)
+		  && (blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  == blockedToastBeforeContextlessUrl)
+		  && !stockController->content()->isMainSectionShown()
+		  && !stockController->isLayerShown()
+		  && !blockedController->content()->isMainSectionShown()
+		  && !blockedController->isLayerShown()
+		  && (pinnedController->content()->historyWidgetForRegressionTest()
+			  == pinnedMessageState->first)
+		  && !pinnedController->content()->isThirdSectionShown()
+		  && !pinnedController->isLayerShown()
+		  && (app.activeWindow() == &pinnedController->window());
+	if (!contextlessUrlRefused) {
+		std::fprintf(
+			stderr,
+			"Settings deep link regression failed: contextless URL click did "
+			"not refuse in the active custom session.\n");
+		return false;
 	}
 	resetController(stockController);
 	resetController(pinnedController);
@@ -4241,15 +4387,6 @@ template <typename Condition>
 					stockController.get());
 			const auto infoCountsBefore
 				= CountSettingsDeepLinkInfoSections(stockController);
-			const auto handler = makeMessageLinkHandler(url);
-			if (!handler) {
-				std::fprintf(
-					stderr,
-					"Settings deep link regression failed: stock message link "
-					"had no click handler for %s.\n",
-					url.toUtf8().constData());
-				return false;
-			}
 			const auto serverDependentRoute
 				= findServerDependentStockMessageRoute(url);
 			SettingsDeepLinkRequestCountsForRegressionTest requestCountsBefore;
@@ -4267,15 +4404,13 @@ template <typename Condition>
 				});
 				requestCountsBefore = stockRequestCapture.counts;
 				anim::SetDisabled(true);
-				ActivateClickHandler(
-					stockMessageState->first->window(), handler,
-					ClickContext{
-						Qt::LeftButton,
-						QVariant::fromValue(stockMessageState->second),
-					});
+				const auto clickSent = performMessageMouseClick(
+					url, stockController,
+					not_null<HistoryWidget *>(stockMessageState->first));
 				const auto clickDispatchCompleted
-					= WaitForMainQueueBarrierForRegressionTest()
-					  == MainQueueBarrierResult::Completed;
+					= clickSent
+					  && (WaitForMainQueueBarrierForRegressionTest()
+						  == MainQueueBarrierResult::Completed);
 				if (!clickDispatchCompleted) {
 					std::fprintf(stderr,
 								 "Settings deep link regression failed: stock "

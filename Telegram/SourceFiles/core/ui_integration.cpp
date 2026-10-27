@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
 #include "core/application.h"
+#include "core/deep_links/deep_links_router.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/bank_card_click_handler.h"
 #include "core/sandbox.h"
@@ -428,11 +429,28 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 bool UiIntegration::handleUrlClick(
 		const QString &url,
 		const QVariant &context) {
-	const auto originController = context.value<ClickHandlerContext>()
-		.sessionWindow.get();
-	const auto local = Core::TryConvertUrlToLocal(
-		url,
-		originController ? &originController->session() : nullptr);
+	const auto hasClickContext = context.canConvert<ClickHandlerContext>();
+	auto clickContext = context.value<ClickHandlerContext>();
+	auto originController = clickContext.sessionWindow.get();
+	auto local = Core::TryConvertUrlToLocal(
+		url, originController ? &originController->session() : nullptr);
+	const auto canFillSessionContext = hasClickContext || !context.isValid();
+	if (!originController && canFillSessionContext
+		&& local.startsWith(u"tg://"_q, Qt::CaseInsensitive)
+		&& DeepLinks::Router::Instance().requiresPaidFeatures(
+			local.mid(u"tg://"_q.size()))) {
+		if (const auto active = Core::App().activeWindow()) {
+			originController = active->sessionController();
+			if (originController) {
+				clickContext.sessionWindow = base::make_weak(originController);
+				local = Core::TryConvertUrlToLocal(
+					url, &originController->session());
+			}
+		}
+	}
+	const auto openContext = originController && canFillSessionContext
+								 ? QVariant::fromValue(clickContext)
+								 : context;
 	if (Core::InternalPassportOrOAuthLink(local)) {
 		return true;
 	}
@@ -441,29 +459,28 @@ bool UiIntegration::handleUrlClick(
 		File::OpenEmailLink(url);
 		return true;
 	} else if (local.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
-		Core::App().openLocalUrl(local, context);
+		Core::App().openLocalUrl(local, openContext);
 		return true;
 	} else if (local.startsWith(u"tonsite://"_q, Qt::CaseInsensitive)) {
-		Core::App().iv().showTonSite(local, context);
+		Core::App().iv().showTonSite(local, openContext);
 		return true;
 	} else if (local.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
-		Core::App().openInternalUrl(local, context);
+		Core::App().openInternalUrl(local, openContext);
 		return true;
-	} else if (Iv::PreferForUri(url)
-		&& !context.value<ClickHandlerContext>().ignoreIv) {
-		const auto my = context.value<ClickHandlerContext>();
+	} else if (Iv::PreferForUri(url) && !clickContext.ignoreIv) {
+		const auto my = clickContext;
 		if (const auto controller = my.sessionWindow.get()) {
-			Core::App().iv().openWithIvPreferred(controller, url, context);
+			Core::App().iv().openWithIvPreferred(controller, url, openContext);
 			return true;
 		}
 	}
 
 	auto parsed = UrlForAutoLogin(url);
 	const auto domain = DomainForAutoLogin(parsed);
-	const auto skip = context.value<ClickHandlerContext>().skipBotAutoLogin;
-	if (skip || !BotAutoLogin(url, domain, context)) {
+	const auto skip = clickContext.skipBotAutoLogin;
+	if (skip || !BotAutoLogin(url, domain, openContext)) {
 		File::OpenUrl(
-			UrlWithAutoLoginToken(url, std::move(parsed), domain, context));
+			UrlWithAutoLoginToken(url, std::move(parsed), domain, openContext));
 	}
 	return true;
 }
