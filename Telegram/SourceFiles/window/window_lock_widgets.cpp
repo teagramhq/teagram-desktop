@@ -323,8 +323,7 @@ TermsLock TermsLock::FromMTP(
 			data.is_popup()};
 }
 
-TermsLock TermsLock::FromSignupMTP(
-		const MTPDhelp_termsOfService &data) {
+TermsLock TermsLock::FromSignupMTP(const MTPDhelp_termsOfService &data) {
 	auto terms = Intro::details::SignupTermsPayloadFromMTP(data);
 	return {
 		std::move(terms.id),
@@ -473,13 +472,11 @@ void TermsBox::prepare() {
 
 void TermsBox::keyPressEvent(QKeyEvent *e) {
 	if (!Intro::details::HandleSignupTermsKey(
-		e->key(),
-		_declineOnEscape,
-		[=] { _agreeClicks.fire({}); },
-		[=] {
-			e->accept();
-			_cancelClicks.fire({});
-		})) {
+			e->key(), _declineOnEscape, [=] { _agreeClicks.fire({}); },
+			[=] {
+				e->accept();
+				_cancelClicks.fire({});
+			})) {
 		BoxContent::keyPressEvent(e);
 	}
 }

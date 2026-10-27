@@ -21,20 +21,19 @@ namespace {
 
 static_assert(!std::is_default_constructible_v<SignupTermsPermission>);
 
-SignupTermsPayload Terms(
-		QString text,
-		QByteArray id = QByteArray("terms-id")) {
+SignupTermsPayload Terms(QString text, QByteArray id = QByteArray("terms-id")) {
 	return {
 		bytes::make_vector(id),
-		{ std::move(text), {} },
+		{std::move(text), {}},
 		std::nullopt,
 		false,
 	};
 }
 
 TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
-	const auto text = u"@admin #tag /help https://terms.example "
-		u"server@example.test bare.example bare@bare.test privacy unsafe"_q;
+	const auto text
+		= u"@admin #tag /help https://terms.example "
+		  u"server@example.test bare.example bare@bare.test privacy unsafe"_q;
 	const auto mention = text.indexOf(u"@admin"_q);
 	const auto hashtag = text.indexOf(u"#tag"_q);
 	const auto command = text.indexOf(u"/help"_q);
@@ -46,61 +45,50 @@ TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
 		MTP_messageEntityMention(MTP_int(mention), MTP_int(6)),
 		MTP_messageEntityHashtag(MTP_int(hashtag), MTP_int(4)),
 		MTP_messageEntityBotCommand(MTP_int(command), MTP_int(5)),
-		MTP_messageEntityMentionName(
-			MTP_int(mention),
-			MTP_int(6),
-			MTP_long(123)),
+		MTP_messageEntityMentionName(MTP_int(mention), MTP_int(6),
+									 MTP_long(123)),
 		MTP_messageEntityUrl(MTP_int(url), MTP_int(21)),
 		MTP_messageEntityEmail(MTP_int(email), MTP_int(19)),
-		MTP_messageEntityTextUrl(
-			MTP_int(textUrl),
-			MTP_int(7),
-			MTP_string("https://privacy.example")),
-		MTP_messageEntityTextUrl(
-			MTP_int(unsafeUrl),
-			MTP_int(6),
-			MTP_string("tg://resolve?domain=admin")),
-		MTP_messageEntityUrl(
-			MTP_int(text.size() + 1),
-			MTP_int(9)),
+		MTP_messageEntityTextUrl(MTP_int(textUrl), MTP_int(7),
+								 MTP_string("https://privacy.example")),
+		MTP_messageEntityTextUrl(MTP_int(unsafeUrl), MTP_int(6),
+								 MTP_string("tg://resolve?domain=admin")),
+		MTP_messageEntityUrl(MTP_int(text.size() + 1), MTP_int(9)),
 	};
 	const auto response = MTP_help_termsOfService(
-		MTP_flags(0),
-		MTP_dataJSON(MTP_bytes(QByteArray("terms-id"))),
-		MTP_string(text),
-		MTP_vector<MTPMessageEntity>(std::move(entities)),
+		MTP_flags(0), MTP_dataJSON(MTP_bytes(QByteArray("terms-id"))),
+		MTP_string(text), MTP_vector<MTPMessageEntity>(std::move(entities)),
 		MTP_int(0));
-	const auto terms = SignupTermsPayloadFromMTP(
-		response.c_help_termsOfService());
+	const auto terms
+		= SignupTermsPayloadFromMTP(response.c_help_termsOfService());
 
 	CHECK(terms.id == bytes::make_vector(QByteArray("terms-id")));
 	CHECK_EQ(terms.text.text, text);
 	CHECK(terms.text.entities.size() >= 5);
 	CHECK(std::ranges::all_of(terms.text.entities, [](const auto &entity) {
 		return (entity.type() == EntityType::Url)
-			|| (entity.type() == EntityType::CustomUrl)
-			|| (entity.type() == EntityType::Email);
+			   || (entity.type() == EntityType::CustomUrl)
+			   || (entity.type() == EntityType::Email);
 	}));
 	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return (entity.type() == EntityType::CustomUrl)
-			&& (entity.offset() == textUrl)
-			&& (entity.data() == u"https://privacy.example"_q);
+			   && (entity.offset() == textUrl)
+			   && (entity.data() == u"https://privacy.example"_q);
 	}));
 	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
-		return (entity.type() == EntityType::Url)
-			&& (entity.offset() == url);
-	}));
-	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
-		return (entity.type() == EntityType::Email)
-			&& (entity.offset() == email);
-	}));
-	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
-		return (entity.type() == EntityType::Url)
-			&& (entity.offset() == text.indexOf(u"bare.example"_q));
+		return (entity.type() == EntityType::Url) && (entity.offset() == url);
 	}));
 	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return (entity.type() == EntityType::Email)
-			&& (entity.offset() == text.indexOf(u"bare@bare.test"_q));
+			   && (entity.offset() == email);
+	}));
+	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
+		return (entity.type() == EntityType::Url)
+			   && (entity.offset() == text.indexOf(u"bare.example"_q));
+	}));
+	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
+		return (entity.type() == EntityType::Email)
+			   && (entity.offset() == text.indexOf(u"bare@bare.test"_q));
 	}));
 	CHECK(!std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return entity.offset() == unsafeUrl;
@@ -120,8 +108,7 @@ TEST_CASE(NameSignupRpcWaitsForTermsAcceptance) {
 			accept = std::move(acceptNow);
 			decline = std::move(declineNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(signupRequests, 0);
 	accept();
@@ -141,8 +128,7 @@ TEST_CASE(PasswordSignupRpcWaitsForTermsAcceptance) {
 			accept = std::move(acceptNow);
 			decline = std::move(declineNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(signupRequests, 0);
 	accept();
@@ -181,17 +167,11 @@ TEST_CASE(SignupTermsEscapeRoutesToDecline) {
 	auto accepts = 0;
 	auto declines = 0;
 	CHECK(HandleSignupTermsKey(
-		Qt::Key_Escape,
-		true,
-		[&] { ++accepts; },
-		[&] { ++declines; }));
+		Qt::Key_Escape, true, [&] { ++accepts; }, [&] { ++declines; }));
 	CHECK_EQ(accepts, 0);
 	CHECK_EQ(declines, 1);
 	CHECK(!HandleSignupTermsKey(
-		Qt::Key_Escape,
-		false,
-		[&] { ++accepts; },
-		[&] { ++declines; }));
+		Qt::Key_Escape, false, [&] { ++accepts; }, [&] { ++declines; }));
 	CHECK_EQ(accepts, 0);
 	CHECK_EQ(declines, 1);
 }
@@ -200,15 +180,9 @@ TEST_CASE(SignupTermsEnterRoutesToAccept) {
 	auto accepts = 0;
 	auto declines = 0;
 	CHECK(HandleSignupTermsKey(
-		Qt::Key_Enter,
-		true,
-		[&] { ++accepts; },
-		[&] { ++declines; }));
+		Qt::Key_Enter, true, [&] { ++accepts; }, [&] { ++declines; }));
 	CHECK(HandleSignupTermsKey(
-		Qt::Key_Return,
-		true,
-		[&] { ++accepts; },
-		[&] { ++declines; }));
+		Qt::Key_Return, true, [&] { ++accepts; }, [&] { ++declines; }));
 	CHECK_EQ(accepts, 2);
 	CHECK_EQ(declines, 0);
 }
@@ -220,10 +194,8 @@ TEST_CASE(SignupTermsEmptyTextSendsWithoutPrompt) {
 	auto signupRequests = 0;
 
 	gate.submit(
-		terms,
-		[&](Fn<void()>, Fn<void()>) { prompted = true; },
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		terms, [&](Fn<void()>, Fn<void()>) { prompted = true; },
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK(!prompted);
 	CHECK_EQ(signupRequests, 1);
@@ -242,14 +214,11 @@ TEST_CASE(SignupTermsSameIdRetryDoesNotReopen) {
 			++prompts;
 			accept = std::move(acceptNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 	accept();
 	gate.submit(
-		terms,
-		[&](Fn<void()>, Fn<void()>) { ++prompts; },
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		terms, [&](Fn<void()>, Fn<void()>) { ++prompts; },
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(prompts, 1);
 	CHECK_EQ(signupRequests, 2);
@@ -268,8 +237,7 @@ TEST_CASE(SignupTermsChangedTextWithSameIdRequiresAcceptanceAgain) {
 			++prompts;
 			accept = std::move(acceptNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 	accept();
 	terms.text.text = u"Changed terms with a reused id"_q;
 	gate.submit(
@@ -278,8 +246,7 @@ TEST_CASE(SignupTermsChangedTextWithSameIdRequiresAcceptanceAgain) {
 			++prompts;
 			accept = std::move(acceptNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(prompts, 2);
 	CHECK_EQ(signupRequests, 1);
@@ -296,15 +263,10 @@ TEST_CASE(SignupTermsHappyPathSmoke) {
 		[&](Fn<void()> acceptNow, Fn<void()>) {
 			accept = std::move(acceptNow);
 		},
-		[&](SignupTermsPermission) { ++signupRequests; },
-		[] {});
+		[&](SignupTermsPermission) { ++signupRequests; }, [] {});
 
 	CHECK_EQ(signupRequests, 0);
-	CHECK(HandleSignupTermsKey(
-		Qt::Key_Return,
-		true,
-		[&] { accept(); },
-		[] {}));
+	CHECK(HandleSignupTermsKey(Qt::Key_Return, true, [&] { accept(); }, [] {}));
 	CHECK_EQ(signupRequests, 1);
 }
 

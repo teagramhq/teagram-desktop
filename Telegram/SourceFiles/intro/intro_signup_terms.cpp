@@ -25,9 +25,7 @@ bool IsSupportedTermsLink(const QString &link) {
 		return true;
 	}
 	const auto scheme = link.left(colon).toLower();
-	if (scheme == u"http"_q
-		|| scheme == u"https"_q
-		|| scheme == u"mailto"_q) {
+	if (scheme == u"http"_q || scheme == u"https"_q || scheme == u"mailto"_q) {
 		return true;
 	}
 	if (!scheme.contains(u'.')) {
@@ -49,31 +47,26 @@ bool IsSupportedTermsLink(const QString &link) {
 }
 
 bool IsValidEntityRange(const QString &text, int offset, int length) {
-	return (offset >= 0)
-		&& (length > 0)
-		&& (offset <= text.size())
-		&& (length <= text.size() - offset);
+	return (offset >= 0) && (length > 0) && (offset <= text.size())
+		   && (length <= text.size() - offset);
 }
 
 } // namespace
 
-bool SignupTermsPayload::hasSameConsent(
-		const SignupTermsPayload &other) const {
-	return (id == other.id)
-		&& (text == other.text)
-		&& (minAge == other.minAge);
+bool SignupTermsPayload::hasSameConsent(const SignupTermsPayload &other) const {
+	return (id == other.id) && (text == other.text) && (minAge == other.minAge);
 }
 
-SignupTermsPayload SignupTermsPayloadFromMTP(
-		const MTPDhelp_termsOfService &data) {
+SignupTermsPayload
+SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data) {
 	auto result = SignupTermsPayload{
 		bytes::make_vector(data.vid().c_dataJSON().vdata().v),
-		{ qs(data.vtext()), {} },
+		{qs(data.vtext()), {}},
 		std::nullopt,
 		data.is_popup(),
 	};
 	const auto add = [&](EntityType type, int offset, int length,
-						const QString &url = QString()) {
+						 const QString &url = QString()) {
 		if (!IsValidEntityRange(result.text.text, offset, length)) {
 			return;
 		}
@@ -81,68 +74,62 @@ SignupTermsPayload SignupTermsPayloadFromMTP(
 		if (type == EntityType::Url && !IsSupportedTermsLink(visible)) {
 			return;
 		} else if (type == EntityType::CustomUrl
-			&& !IsSupportedTermsLink(url)) {
+				   && !IsSupportedTermsLink(url)) {
 			return;
 		} else if (type == EntityType::Email && !visible.contains(u'@')) {
 			return;
 		}
-		result.text.entities.push_back({ type, offset, length, url });
+		result.text.entities.push_back({type, offset, length, url});
 	};
 	for (const auto &entity : data.ventities().v) {
 		entity.match(
 			[&](const MTPDmessageEntityUrl &d) {
 				add(EntityType::Url, d.voffset().v, d.vlength().v);
-			}, [&](const MTPDmessageEntityEmail &d) {
+			},
+			[&](const MTPDmessageEntityEmail &d) {
 				add(EntityType::Email, d.voffset().v, d.vlength().v);
-			}, [&](const MTPDmessageEntityTextUrl &d) {
-				add(
-					EntityType::CustomUrl,
-					d.voffset().v,
-					d.vlength().v,
+			},
+			[&](const MTPDmessageEntityTextUrl &d) {
+				add(EntityType::CustomUrl, d.voffset().v, d.vlength().v,
 					qs(d.vurl()));
-			}, [](const auto &) {
+			},
+			[](const auto &) {
 				// Other server entities are literal text in signup terms.
 			});
 	}
 	TextUtilities::ParseEntities(result.text, TextParseLinks);
 	const auto keepSupported = [&](const EntityInText &entity) {
-		if (!IsValidEntityRange(
-				result.text.text,
-				entity.offset(),
-				entity.length())) {
+		if (!IsValidEntityRange(result.text.text, entity.offset(),
+								entity.length())) {
 			return false;
 		}
 		switch (entity.type()) {
 		case EntityType::Url:
-			return IsSupportedTermsLink(result.text.text.mid(
-				entity.offset(), entity.length()));
+			return IsSupportedTermsLink(
+				result.text.text.mid(entity.offset(), entity.length()));
 		case EntityType::CustomUrl:
 			return IsSupportedTermsLink(entity.data());
 		case EntityType::Email:
-			return result.text.text.mid(
-				entity.offset(), entity.length()).contains(u'@');
+			return result.text.text.mid(entity.offset(), entity.length())
+				.contains(u'@');
 		default:
 			return false;
 		}
 	};
 	auto &entities = result.text.entities;
-	entities.erase(std::remove_if(
-		entities.begin(),
-		entities.end(),
-		[&](const EntityInText &entity) {
-			return !keepSupported(entity);
-		}), entities.end());
+	entities.erase(std::remove_if(entities.begin(), entities.end(),
+								  [&](const EntityInText &entity) {
+									  return !keepSupported(entity);
+								  }),
+				   entities.end());
 	if (const auto minAge = data.vmin_age_confirm()) {
 		result.minAge = minAge->v;
 	}
 	return result;
 }
 
-bool HandleSignupTermsKey(
-		int key,
-		bool declineOnEscape,
-		Fn<void()> accept,
-		Fn<void()> decline) {
+bool HandleSignupTermsKey(int key, bool declineOnEscape, Fn<void()> accept,
+						  Fn<void()> decline) {
 	if (key == Qt::Key_Enter || key == Qt::Key_Return) {
 		accept();
 		return true;
@@ -153,11 +140,10 @@ bool HandleSignupTermsKey(
 	return false;
 }
 
-void SignupTermsGate::submit(
-		const SignupTermsPayload &terms,
-		Fn<void(Fn<void()>, Fn<void()>)> showTerms,
-		Fn<void(SignupTermsPermission)> sendSignup,
-		Fn<void()> declined) {
+void SignupTermsGate::submit(const SignupTermsPayload &terms,
+							 Fn<void(Fn<void()>, Fn<void()>)> showTerms,
+							 Fn<void(SignupTermsPermission)> sendSignup,
+							 Fn<void()> declined) {
 	if (terms.text.text.isEmpty()
 		|| (_accepted && _accepted->hasSameConsent(terms))) {
 		sendSignup(SignupTermsPermission());

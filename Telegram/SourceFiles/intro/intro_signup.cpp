@@ -210,9 +210,11 @@ void SignupWidget::submit() {
 								decline();
 							}));
 		},
-		crl::guard(this, [=](SignupTermsPermission permission) {
-			send(std::move(permission));
-		}), crl::guard(this, [=] {
+		crl::guard(this,
+				   [=](SignupTermsPermission permission) {
+					   send(std::move(permission));
+				   }),
+		crl::guard(this, [=] {
 			showError(rpl::single(tr::lng_teagram_terms_declined(tr::now)));
 		}));
 }

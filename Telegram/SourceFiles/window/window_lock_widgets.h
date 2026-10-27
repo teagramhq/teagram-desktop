@@ -110,9 +110,7 @@ struct TermsLock {
 	static TermsLock FromMTP(
 		Main::Session *session,
 		const MTPDhelp_termsOfService &data);
-	static TermsLock FromSignupMTP(
-		const MTPDhelp_termsOfService &data);
-
+	static TermsLock FromSignupMTP(const MTPDhelp_termsOfService &data);
 };
 
 class TermsBox : public Ui::BoxContent {

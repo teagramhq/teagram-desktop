@@ -221,9 +221,11 @@ void SignUpPasswordWidget::requestSignup() {
 								decline();
 							}));
 		},
-		crl::guard(this, [=](SignupTermsPermission permission) {
-			signUp(std::move(permission));
-		}), crl::guard(this, [=] {
+		crl::guard(this,
+				   [=](SignupTermsPermission permission) {
+					   signUp(std::move(permission));
+				   }),
+		crl::guard(this, [=] {
 			showFormError(tr::lng_teagram_terms_declined(tr::now));
 		}));
 }

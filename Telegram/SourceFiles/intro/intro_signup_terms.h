@@ -23,42 +23,37 @@ struct SignupTermsPayload {
 	std::optional<int> minAge;
 	bool popup = false;
 
-	[[nodiscard]] bool hasSameConsent(
-		const SignupTermsPayload &other) const;
+	[[nodiscard]] bool hasSameConsent(const SignupTermsPayload &other) const;
 };
 
-[[nodiscard]] SignupTermsPayload SignupTermsPayloadFromMTP(
-	const MTPDhelp_termsOfService &data);
+[[nodiscard]] SignupTermsPayload
+SignupTermsPayloadFromMTP(const MTPDhelp_termsOfService &data);
 
-[[nodiscard]] bool HandleSignupTermsKey(
-	int key,
-	bool declineOnEscape,
-	Fn<void()> accept,
-	Fn<void()> decline);
+[[nodiscard]] bool HandleSignupTermsKey(int key, bool declineOnEscape,
+										Fn<void()> accept, Fn<void()> decline);
 
 class SignupTermsGate;
 
 class SignupTermsPermission final {
-public:
+  public:
 	SignupTermsPermission(SignupTermsPermission &&) = default;
 	SignupTermsPermission &operator=(SignupTermsPermission &&) = default;
 	SignupTermsPermission(const SignupTermsPermission &) = delete;
 	SignupTermsPermission &operator=(const SignupTermsPermission &) = delete;
 
-private:
+  private:
 	friend class SignupTermsGate;
 	SignupTermsPermission() = default;
 };
 
 class SignupTermsGate final {
-public:
-	void submit(
-		const SignupTermsPayload &terms,
-		Fn<void(Fn<void()>, Fn<void()>)> showTerms,
-		Fn<void(SignupTermsPermission)> sendSignup,
-		Fn<void()> declined);
+  public:
+	void submit(const SignupTermsPayload &terms,
+				Fn<void(Fn<void()>, Fn<void()>)> showTerms,
+				Fn<void(SignupTermsPermission)> sendSignup,
+				Fn<void()> declined);
 
-private:
+  private:
 	std::optional<SignupTermsPayload> _accepted;
 };
 
