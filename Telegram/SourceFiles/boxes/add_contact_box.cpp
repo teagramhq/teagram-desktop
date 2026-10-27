@@ -1693,11 +1693,14 @@ void EditNameBox::save() {
 	}
 	const auto maxLength = _user->session().appConfig().get<int>(
 		u"display_name_max_length"_q, 0);
-	const auto displayName
-		= last.isEmpty() ? first : (first + QChar(' ') + last);
-	if (!Data::details::IsWithinInputLengthPolicy(displayName, 0, maxLength)) {
-		_first->setFocus();
-		_first->showError();
+	if (!Data::details::AreWithinInputLengthPolicy(first, last, 0, maxLength)) {
+		if (!Data::details::IsWithinInputLengthPolicy(first, 0, maxLength)) {
+			_first->setFocus();
+			_first->showError();
+		} else {
+			_last->setFocus();
+			_last->showError();
+		}
 		return;
 	}
 	_sentName = first;

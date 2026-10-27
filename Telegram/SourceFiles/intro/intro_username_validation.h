@@ -24,7 +24,6 @@ enum class SignupNameValidation {
 enum class SignupPasswordValidation {
 	Valid,
 	Empty,
-	TooShort,
 	RepeatEmpty,
 	Mismatch,
 };

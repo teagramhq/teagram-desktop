@@ -71,8 +71,6 @@ SignupPasswordValidation ValidateSignupPassword(
 		const QString &repeat) {
 	if (password.isEmpty()) {
 		return SignupPasswordValidation::Empty;
-	} else if (Data::details::UnicodeScalarCount(password) < 8) {
-		return SignupPasswordValidation::TooShort;
 	} else if (repeat.isEmpty()) {
 		return SignupPasswordValidation::RepeatEmpty;
 	} else if (password != repeat) {

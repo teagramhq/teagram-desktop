@@ -156,7 +156,8 @@ Data::SendError GetErrorForSending(
 		}
 		if (request.text
 			&& Data::details::ExceedsInputLengthLimit(
-				int(request.text->text.size()), messageLengthLimit)) {
+				Data::details::UnicodeScalarCount(request.text->text),
+				messageLengthLimit)) {
 			return tr::lng_slowmode_too_long(tr::now);
 		} else if ((hasText || request.story) && count > 1) {
 			return tr::lng_slowmode_no_many(tr::now);

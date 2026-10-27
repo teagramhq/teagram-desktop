@@ -37,6 +37,14 @@ IsWithinInputLengthPolicy(const QString &text, int minLength, int maxLength) {
 		   && !ExceedsInputLengthLimit(length, maxLength);
 }
 
+[[nodiscard]] inline bool AreWithinInputLengthPolicy(const QString &first,
+													 const QString &second,
+													 int minLength,
+													 int maxLength) {
+	return IsWithinInputLengthPolicy(first, minLength, maxLength)
+		   && IsWithinInputLengthPolicy(second, minLength, maxLength);
+}
+
 [[nodiscard]] inline int InputLengthLimitForSplitting(int maxLength) {
 	return (maxLength > 0) ? maxLength : std::numeric_limits<int>::max();
 }

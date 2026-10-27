@@ -121,6 +121,18 @@ TEST_CASE(ServerTextLengthPolicyCountsUnicodeScalars) {
 	const auto astral = QString::fromUtf8("\xF0\x9F\x98\x80").repeated(2);
 	CHECK(Data::details::IsWithinInputLengthPolicy(astral, 2, 2));
 	CHECK(!Data::details::IsWithinInputLengthPolicy(astral + u"a"_q, 2, 2));
+	CHECK(!Data::details::ExceedsInputLengthLimit(
+		Data::details::UnicodeScalarCount(astral), 2));
+	CHECK(Data::details::ExceedsInputLengthLimit(
+		Data::details::UnicodeScalarCount(astral + u"a"_q), 2));
+}
+
+TEST_CASE(ServerDisplayNameLengthPolicyChecksFieldsIndividually) {
+	const auto first = QString(40, QChar('x'));
+	const auto last = QString(40, QChar('y'));
+	CHECK(Data::details::AreWithinInputLengthPolicy(first, last, 0, 64));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(first + QChar(' ') + last,
+													0, 64));
 }
 
 TEST_CASE(WireFormIsLowercased) {
@@ -260,13 +272,15 @@ TEST_CASE(SignupNameValidationCountsUnicodeScalars) {
 		  == SignupNameValidation::TooLong);
 }
 
-TEST_CASE(SignupPasswordValidationReportsTheFirstFix) {
+TEST_CASE(SignupPasswordValidationAllowsShortPasswords) {
 	CHECK(
 		ValidateSignupPassword(QString(), QString())
 		== SignupPasswordValidation::Empty);
-	CHECK(
-		ValidateSignupPassword(u"short"_q, u"short"_q)
-		== SignupPasswordValidation::TooShort);
+	CHECK(ValidateSignupPassword(u"short"_q, u"short"_q)
+		  == SignupPasswordValidation::Valid);
+	const auto longPassword = QString(300, QChar('x'));
+	CHECK(ValidateSignupPassword(longPassword, longPassword)
+		  == SignupPasswordValidation::Valid);
 	CHECK(
 		ValidateSignupPassword(u"long enough"_q, QString())
 		== SignupPasswordValidation::RepeatEmpty);
@@ -278,10 +292,9 @@ TEST_CASE(SignupPasswordValidationReportsTheFirstFix) {
 		== SignupPasswordValidation::Valid);
 }
 
-TEST_CASE(SignupPasswordValidationCountsUnicodeScalars) {
-	CHECK(
-		ValidateSignupPassword(AstralString(7), AstralString(7))
-		== SignupPasswordValidation::TooShort);
+TEST_CASE(SignupPasswordValidationHasNoUnicodeLengthMinimum) {
+	CHECK(ValidateSignupPassword(AstralString(1), AstralString(1))
+		  == SignupPasswordValidation::Valid);
 	CHECK(
 		ValidateSignupPassword(AstralString(8), AstralString(8))
 		== SignupPasswordValidation::Valid);
