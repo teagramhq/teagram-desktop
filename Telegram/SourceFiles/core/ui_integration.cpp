@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/application.h"
 #include "core/mac_protected_path_runtime.h"
+#include "core/deep_links/settings_url_logging.h"
 #include "core/bank_card_click_handler.h"
 #include "core/sandbox.h"
 #include "core/click_handler_types.h"
@@ -434,11 +435,13 @@ bool UiIntegration::handleUrlClick(
 	const auto local = Core::TryConvertUrlToLocal(
 		url,
 		originController ? &originController->session() : nullptr);
-	if (url.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)
-		|| local.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+	const auto rawForLog = Core::DeepLinks::SettingsUrlForLogging(url);
+	const auto convertedForLog = Core::DeepLinks::SettingsUrlForLogging(local);
+	if (!rawForLog.isEmpty() || !convertedForLog.isEmpty()) {
 		LOG(("SettingsLinkTrace: url.convert raw=%1 converted=%2")
-				.arg(url)
-				.arg(local));
+				.arg(rawForLog.isEmpty() ? u"non-settings"_q : rawForLog)
+				.arg(convertedForLog.isEmpty() ? u"non-settings"_q
+											   : convertedForLog));
 	}
 	if (Core::InternalPassportOrOAuthLink(local)) {
 		return true;

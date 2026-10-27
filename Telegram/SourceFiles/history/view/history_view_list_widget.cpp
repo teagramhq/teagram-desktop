@@ -44,6 +44,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
+#include "core/deep_links/settings_url_logging.h"
 #include "core/phone_click_handler.h"
 #include "apiwrap.h"
 #include "api/api_who_reacted.h"
@@ -3870,10 +3871,13 @@ void ListWidget::mouseReleaseEvent(QMouseEvent *e) {
 		if (urlHandler) {
 			rawUrl = urlHandler->originalUrl();
 		}
-		LOG(("SettingsLinkTrace: history.release "
-			 "widget=HistoryView::ListWidget pressed=%1 rawUrl=%2")
-				.arg(pressed ? u"yes"_q : u"no"_q)
-				.arg(rawUrl));
+		const auto logUrl = Core::DeepLinks::SettingsUrlForLogging(rawUrl);
+		if (!logUrl.isEmpty()) {
+			LOG(("SettingsLinkTrace: history.release "
+				 "widget=HistoryView::ListWidget pressed=%1 rawUrl=%2")
+					.arg(pressed ? u"yes"_q : u"no"_q)
+					.arg(logUrl));
+		}
 	}
 	if (_middleClickAutoscroll.finishHold(e->button())) {
 		e->accept();
@@ -4321,11 +4325,12 @@ void ListWidget::mouseActionFinish(
 			= dynamic_cast<const UrlClickHandler *>(activated.get());
 		const auto rawUrl
 			= urlHandler ? urlHandler->originalUrl() : activated->url();
-		if (rawUrl.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+		const auto logUrl = Core::DeepLinks::SettingsUrlForLogging(rawUrl);
+		if (!logUrl.isEmpty()) {
 			LOG(("SettingsLinkTrace: history.activate "
 				 "widget=HistoryView::ListWidget type=%1 rawUrl=%2")
 					.arg(QString::fromLatin1(typeid(*activated).name()))
-					.arg(rawUrl));
+					.arg(logUrl));
 		}
 		mouseActionCancel();
 		ActivateClickHandler(window(), activated, {

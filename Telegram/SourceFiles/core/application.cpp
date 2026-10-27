@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/teagram_icon_choice.h"
 #include "core/update_checker.h"
+#include "core/deep_links/settings_url_logging.h"
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 #include "core/teagram_update_install.h"
 #include "core/teagram_update_manager.h"
@@ -1326,7 +1327,8 @@ void Application::checkStartUrls() {
 
 bool Application::openLocalUrl(const QString &url, QVariant context) {
 	const auto urlTrimmed = url.trimmed();
-	if (urlTrimmed.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+	const auto logUrl = Core::DeepLinks::SettingsUrlForLogging(urlTrimmed);
+	if (!logUrl.isEmpty()) {
 		const auto my = context.value<ClickHandlerContext>();
 		const auto target = my.sessionWindow.get();
 		const auto controllerId
@@ -1338,7 +1340,7 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 					 : u"none"_q;
 		LOG(("SettingsLinkTrace: local.enter convertedUrl=%1 "
 			 "controller=%2 session=%3")
-				.arg(urlTrimmed)
+				.arg(logUrl)
 				.arg(controllerId)
 				.arg(sessionId));
 	}

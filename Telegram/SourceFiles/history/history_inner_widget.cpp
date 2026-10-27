@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/file_utilities.h"
 #include "core/click_handler_types.h"
+#include "core/deep_links/settings_url_logging.h"
 #include "core/phone_click_handler.h"
 #include "data/data_chat_participant_status.h"
 #include "history/history_item_helpers.h"
@@ -2569,11 +2570,12 @@ void HistoryInner::mouseActionFinish(
 			= dynamic_cast<const UrlClickHandler *>(activated.get());
 		const auto rawUrl
 			= urlHandler ? urlHandler->originalUrl() : activated->url();
-		if (rawUrl.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+		const auto logUrl = Core::DeepLinks::SettingsUrlForLogging(rawUrl);
+		if (!logUrl.isEmpty()) {
 			LOG(("SettingsLinkTrace: history.activate "
 				 "widget=HistoryInner type=%1 rawUrl=%2")
 					.arg(QString::fromLatin1(typeid(*activated).name()))
-					.arg(rawUrl));
+					.arg(logUrl));
 		}
 		const auto pressedItemId = pressedItemView
 			? pressedItemView->data()->fullId()
@@ -2690,10 +2692,13 @@ void HistoryInner::mouseReleaseEvent(QMouseEvent *e) {
 		if (urlHandler) {
 			rawUrl = urlHandler->originalUrl();
 		}
-		LOG(("SettingsLinkTrace: history.release "
-			 "widget=HistoryInner pressed=%1 rawUrl=%2")
-				.arg(pressed ? u"yes"_q : u"no"_q)
-				.arg(rawUrl));
+		const auto logUrl = Core::DeepLinks::SettingsUrlForLogging(rawUrl);
+		if (!logUrl.isEmpty()) {
+			LOG(("SettingsLinkTrace: history.release "
+				 "widget=HistoryInner pressed=%1 rawUrl=%2")
+					.arg(pressed ? u"yes"_q : u"no"_q)
+					.arg(logUrl));
+		}
 	}
 	if (_middleClickAutoscroll.finishHold(e->button())) {
 		e->accept();
