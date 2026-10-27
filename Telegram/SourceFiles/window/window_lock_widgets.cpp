@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 #include "mainwindow.h"
 #include "core/application.h"
+#include "intro/intro_signup_terms.h"
 #include "api/api_text_entities.h"
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
@@ -313,25 +314,30 @@ TermsLock TermsLock::FromMTP(
 		Main::Session *session,
 		const MTPDhelp_termsOfService &data) {
 	const auto minAge = data.vmin_age_confirm();
+	auto text = TextWithEntities{
+		qs(data.vtext()), Api::EntitiesFromMTP(session, data.ventities().v)};
+	TextUtilities::ParseEntities(text, TextParseLinks);
+	return {bytes::make_vector(data.vid().c_dataJSON().vdata().v),
+			std::move(text),
+			(minAge ? std::make_optional(minAge->v) : std::nullopt),
+			data.is_popup()};
+}
+
+TermsLock TermsLock::FromSignupMTP(const MTPDhelp_termsOfService &data) {
+	auto terms = Intro::details::SignupTermsPayloadFromMTP(data);
 	return {
-		bytes::make_vector(data.vid().c_dataJSON().vdata().v),
-		TextWithEntities {
-			qs(data.vtext()),
-			Api::EntitiesFromMTP(session, data.ventities().v) },
-		(minAge ? std::make_optional(minAge->v) : std::nullopt),
-		data.is_popup()
+		std::move(terms.id),
+		std::move(terms.text),
+		std::move(terms.minAge),
+		terms.popup,
 	};
 }
 
-TermsBox::TermsBox(
-	QWidget*,
-	const TermsLock &data,
-	rpl::producer<QString> agree,
-	rpl::producer<QString> cancel)
-: _data(data)
-, _agree(std::move(agree))
-, _cancel(std::move(cancel)) {
-}
+TermsBox::TermsBox(QWidget *, const TermsLock &data,
+				   rpl::producer<QString> agree, rpl::producer<QString> cancel,
+				   bool declineOnEscape)
+	: _data(data), _agree(std::move(agree)), _cancel(std::move(cancel)),
+	  _declineOnEscape(declineOnEscape) {}
 
 TermsBox::TermsBox(
 	QWidget*,
@@ -422,18 +428,19 @@ void TermsBox::prepare() {
 				st::defaultCheck.duration);
 		}
 	};
+	_tryAgree = [=] {
+		Intro::details::HandleSignupTermsAccept(
+			age != nullptr, age && age->entity()->checked(),
+			[=] { _agreeClicks.fire({}); }, [=] { toggleAgeError(true); });
+	};
 
 	const auto &agreeStyle = _attentionAgree
 		? st::attentionBoxButton
 		: st::defaultBoxButton;
-	addButton(std::move(_agree), [=] {}, agreeStyle)->clicks(
-	) | rpl::filter([=] {
-		if (age && !age->entity()->checked()) {
-			toggleAgeError(true);
-			return false;
-		}
-		return true;
-	}) | rpl::to_empty | rpl::start_to_stream(_agreeClicks, lifetime());
+	addButton(
+		std::move(_agree), [=] {}, agreeStyle)
+			->clicks()
+		| rpl::on_next([=] { _tryAgree(); }, lifetime());
 
 	if (_cancel) {
 		addButton(std::move(_cancel), [] {})->clicks(
@@ -465,9 +472,12 @@ void TermsBox::prepare() {
 }
 
 void TermsBox::keyPressEvent(QKeyEvent *e) {
-	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-		_agreeClicks.fire({});
-	} else {
+	if (!Intro::details::HandleSignupTermsKey(
+			e->key(), _declineOnEscape, [=] { _tryAgree(); },
+			[=] {
+				e->accept();
+				_cancelClicks.fire({});
+			})) {
 		BoxContent::keyPressEvent(e);
 	}
 }

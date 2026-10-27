@@ -172,9 +172,7 @@ void Step::finish(const MTPauth_Authorization &auth, QImage &&photo) {
 	}, [&](const MTPDauth_authorizationSignUpRequired &data) {
 		if (const auto terms = data.vterms_of_service()) {
 			terms->match([&](const MTPDhelp_termsOfService &data) {
-				getData()->termsLock = Window::TermsLock::FromMTP(
-					nullptr,
-					data);
+				getData()->termsLock = Window::TermsLock::FromSignupMTP(data);
 			});
 		} else {
 			getData()->termsLock = Window::TermsLock();
@@ -655,9 +653,9 @@ void Step::setCancelNearestDcCallback(Fn<void()> callback) {
 	_cancelNearestDcCallback = std::move(callback);
 }
 
-void Step::setAcceptTermsCallback(
-		Fn<void(Fn<void()> callback)> callback) {
-	_acceptTermsCallback = std::move(callback);
+void Step::setSignupTermsCallback(
+	Fn<void(Fn<void()> accept, Fn<void()> decline)> callback) {
+	_showSignupTermsCallback = std::move(callback);
 }
 
 void Step::showFast() {

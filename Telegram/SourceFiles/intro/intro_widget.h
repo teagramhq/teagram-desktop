@@ -186,7 +186,7 @@ private:
 	void hideControls();
 
 	void showTerms();
-	void acceptTerms(Fn<void()> callback);
+	void showSignupTerms(Fn<void()> accept, Fn<void()> decline);
 	void hideAndDestroy(object_ptr<Ui::FadeWrap<Ui::RpWidget>> widget);
 
 	[[nodiscard]] details::Step *getStep(int skip = 0) const {
@@ -202,7 +202,6 @@ private:
 		details::Animate animate);
 	void appendStep(details::Step *step);
 
-	void showTerms(Fn<void()> callback);
 	void showServerIdentityChange(
 		const MTP::PinnedServerFailureReport &report);
 	void showServerCacheBindingMismatch();
