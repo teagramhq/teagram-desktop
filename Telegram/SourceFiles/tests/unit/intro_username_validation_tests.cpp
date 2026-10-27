@@ -13,6 +13,12 @@ namespace {
 
 using namespace Intro::details;
 
+const auto kPublishedUsernamePolicy = UsernamePolicy{
+	.minLength = 2,
+	.maxLength = 32,
+	.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+};
+
 QString AstralString(int count) {
 	return QString::fromUtf8("\xF0\x9F\x98\x80").repeated(count);
 }
@@ -31,23 +37,72 @@ TEST_CASE(NormalizeStripsOneLeadingAt) {
 }
 
 TEST_CASE(ValidUsernamesAtBoundaries) {
-	CHECK(IsValidUsername(u"Ab"_q)); // 2 chars, the shortest.
 	CHECK(IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz012345"_q)); // 32 chars, the longest.
-	CHECK(IsValidUsername(u"abcd"_q));
-	CHECK(!IsValidUsername(u"a"_q)); // 1 char, one too short.
+		u"Ab"_q,
+		kPublishedUsernamePolicy)); // 2 chars, the shortest.
+	CHECK(IsValidUsername(
+		u"abcdefghijklmnopqrstuvwxyz012345"_q,
+		kPublishedUsernamePolicy)); // 32 chars, the longest.
+	CHECK(IsValidUsername(u"abcd"_q, kPublishedUsernamePolicy));
 	CHECK(!IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz0123456"_q)); // 33 chars.
+		u"a"_q,
+		kPublishedUsernamePolicy)); // 1 char, one too short.
+	CHECK(!IsValidUsername(
+		u"abcdefghijklmnopqrstuvwxyz0123456"_q,
+		kPublishedUsernamePolicy)); // 33 chars.
 }
 
 TEST_CASE(UsernamesRejectedByPattern) {
-	CHECK(!IsValidUsername(u"1alice"_q)); // Must start with a letter.
-	CHECK(!IsValidUsername(u"_alice"_q));
-	CHECK(!IsValidUsername(u"al-ice"_q)); // Dash outside the class.
-	CHECK(!IsValidUsername(u"al ice"_q)); // Inner space is not trimmed away.
-	CHECK(!IsValidUsername(u"alice!"_q));
-	CHECK(!IsValidUsername(QString())); // Empty is its own message.
-	CHECK(!IsValidUsername(u"ali\u0441e"_q)); // Non-ASCII inside.
+	CHECK(!IsValidUsername(
+		u"1alice"_q,
+		kPublishedUsernamePolicy)); // Must start with a letter.
+	CHECK(!IsValidUsername(u"_alice"_q, kPublishedUsernamePolicy));
+	CHECK(!IsValidUsername(
+		u"al-ice"_q,
+		kPublishedUsernamePolicy)); // Dash outside the class.
+	CHECK(!IsValidUsername(
+		u"al ice"_q,
+		kPublishedUsernamePolicy)); // Inner space is not trimmed away.
+	CHECK(!IsValidUsername(u"alice!"_q, kPublishedUsernamePolicy));
+	CHECK(!IsValidUsername(
+		QString(),
+		kPublishedUsernamePolicy)); // Empty is its own message.
+	CHECK(!IsValidUsername(
+		u"ali\u0441e"_q,
+		kPublishedUsernamePolicy)); // Non-ASCII inside.
+}
+
+TEST_CASE(MissingUsernamePolicyLeavesValidationToServer) {
+	const auto policy = UsernamePolicy();
+	CHECK(IsValidUsername(u"a"_q, policy));
+	CHECK(IsValidUsername(u"not a username"_q, policy));
+	CHECK(!IsValidUsername(QString(), policy));
+}
+
+TEST_CASE(UsernamePolicyUsesPublishedValues) {
+	CHECK(IsValidUsername(u"adam"_q, kPublishedUsernamePolicy));
+
+	const auto minFive = UsernamePolicy{
+		.minLength = 5,
+		.maxLength = 32,
+		.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam"_q, minFive));
+	CHECK(IsValidUsername(u"adams"_q, minFive));
+
+	const auto limited = UsernamePolicy{
+		.minLength = 2,
+		.maxLength = 4,
+		.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam5"_q, limited));
+	CHECK(IsValidUsername(u"adam"_q, limited));
+
+	const auto lettersOnly = UsernamePolicy{
+		.pattern = u"^[a-zA-Z]{2,32}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam_1"_q, lettersOnly));
+	CHECK(IsValidUsername(u"adam"_q, lettersOnly));
 }
 
 TEST_CASE(WireFormIsLowercased) {

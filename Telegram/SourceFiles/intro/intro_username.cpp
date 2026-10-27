@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_widget.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "data/data_user.h"
@@ -71,6 +72,7 @@ UsernameWidget::UsernameWidget(
 	st::introName,
 	tr::lng_intro_username_ph())
 , _checkRequestTimer([=] { checkRequest(); }) {
+	account->appConfig().start();
 	_username->setAccessibleName(tr::lng_intro_username_ph(tr::now));
 
 	setTitleText(tr::lng_intro_username_title());
@@ -235,7 +237,14 @@ void UsernameWidget::submit() {
 	if (normalized.isEmpty()) {
 		fail(tr::lng_intro_username_empty(tr::now));
 		return;
-	} else if (!IsValidUsername(normalized)) {
+	}
+	const auto &appConfig = account().appConfig();
+	const auto policy = UsernamePolicy{
+		.minLength = appConfig.get<int>(u"username_min_length"_q, 0),
+		.maxLength = appConfig.get<int>(u"username_max_length"_q, 0),
+		.pattern = appConfig.get<QString>(u"username_pattern"_q, QString()),
+	};
+	if (!IsValidUsername(normalized, policy)) {
 		fail(tr::lng_intro_username_bad(tr::now));
 		return;
 	}

@@ -44,10 +44,21 @@ QString ToWireUsername(const QString &normalized) {
 	return normalized.toLower();
 }
 
-bool IsValidUsername(const QString &normalized) {
-	static const auto Pattern = QRegularExpression(
-		u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q);
-	return Pattern.match(normalized).hasMatch();
+bool IsValidUsername(
+		const QString &normalized,
+		const UsernamePolicy &policy) {
+	if (normalized.isEmpty()) {
+		return false;
+	}
+	const auto length = UnicodeScalarCount(normalized);
+	if ((policy.minLength > 0 && length < policy.minLength)
+		|| (policy.maxLength > 0 && length > policy.maxLength)) {
+		return false;
+	} else if (policy.pattern.isEmpty()) {
+		return true;
+	}
+	const auto pattern = QRegularExpression(policy.pattern);
+	return !pattern.isValid() || pattern.match(normalized).hasMatch();
 }
 
 int FloodWaitSeconds(const QString &errorType) {

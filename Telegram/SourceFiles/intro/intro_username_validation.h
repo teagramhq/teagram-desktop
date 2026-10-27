@@ -54,6 +54,12 @@ enum class SigninPasswordDataFailure {
 	Other,
 };
 
+struct UsernamePolicy {
+	int minLength = 0;
+	int maxLength = 0;
+	QString pattern;
+};
+
 // Forgiving normalisation of what the user typed: trim surrounding
 // whitespace and strip a single leading '@' (people type "@alice").
 // Neither is a keystroke filter — the field accepts anything and this
@@ -65,10 +71,9 @@ enum class SigninPasswordDataFailure {
 // What the user typed stays on screen.
 [[nodiscard]] QString ToWireUsername(const QString &normalized);
 
-// The server's own username pattern: 2 to 32 characters, ASCII letters,
-// digits and underscore, starting with a letter. Checked before any
-// network call — sendCode is limited to 10 per hour per IP.
-[[nodiscard]] bool IsValidUsername(const QString &normalized);
+[[nodiscard]] bool IsValidUsername(
+	const QString &normalized,
+	const UsernamePolicy &policy);
 
 // Which server a phone_code_hash came from: address, port and the
 // fingerprint of the pinned key, the same triple the same-account
