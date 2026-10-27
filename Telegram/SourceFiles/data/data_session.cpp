@@ -1944,7 +1944,7 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		pause();
 	}
 	const auto weak = base::make_weak(this);
-	const auto complete = [weak, bigFileCache, closeBefore, path,
+	auto complete = [weak, bigFileCache, closeBefore, path,
 						   identity = std::move(identity),
 						   initializationIdentity, done = std::move(done),
 						   handoff = std::move(handoff)](
