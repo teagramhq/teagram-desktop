@@ -646,7 +646,7 @@ fi
 expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" macos "$regression_step" '.if' \
-  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_field "$mac_workflow" macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" macos "$regression_step" \
   'build_dir="$repo/out"' \
@@ -742,6 +742,11 @@ for native_case in \
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+grep -Fq 'queued_ops_before_ready=%d' "$native_harness" \
+  || contract_fail 'The cache lifecycle regression must prove startup cache calls queue before initialization.'
+grep -Fq '&& queuedOperationsPassed' "$native_harness" \
+  && grep -Fq '&& cacheUsableWithinBound' "$native_harness" \
+  || contract_fail 'The cache lifecycle regression must require usable queued cache operations within its bound.'
 grep -Fq 'cacheStatsOnMain' \
   Telegram/SourceFiles/settings/sections/settings_local_storage.cpp \
   || contract_fail 'Local storage must subscribe to cache statistics after initialization.'
@@ -1102,7 +1107,7 @@ require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integra
 require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
 require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
-  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}"
+  "\${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_script "$mac_workflow" macos 'Report skipped full chat info session regression.' \
   'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"

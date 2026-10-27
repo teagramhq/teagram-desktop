@@ -1211,6 +1211,8 @@ private:
 	rpl::variable<bool> _bigFileCacheInitializationReady = false;
 #ifdef Q_OS_MAC
 	Storage::Cache::Database _unavailableCache;
+	bool _cacheInitializationPending = true;
+	bool _bigFileCacheInitializationPending = true;
 	bool _cacheInitializationFinishedForTesting = false;
 	bool _bigFileCacheInitializationFinishedForTesting = false;
 	bool _cacheInitializationAllowedForTesting = false;

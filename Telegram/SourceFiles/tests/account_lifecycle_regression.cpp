@@ -9254,6 +9254,35 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto getCache = [&]() -> Storage::Cache::Database * {
 				return mediaCache ? &data.cacheBigFile() : &data.cache();
 			};
+			constexpr auto kCacheUsableTimeoutMilliseconds = 10'000;
+			constexpr auto kMaxCacheUsableNanoseconds
+				= qint64(kCacheUsableTimeoutMilliseconds) * 1'000'000;
+			const auto initializationPendingAtFirstAccess
+				= !data.cacheInitializationFinishedForTesting(mediaCache);
+			const auto queuedKey = Storage::Cache::Key{
+				0x4341434845515545ULL,
+				mediaCache ? 0x4d45444941524541ULL : 0x4341434845524541ULL,
+			};
+			const auto queuedPayload
+				= QByteArray("cache operation during startup");
+			const auto queuedWrite = AwaitCacheCallback<Storage::Cache::Error>(
+				[&](auto done) {
+					getCache()->put(queuedKey, QByteArray(queuedPayload),
+									std::move(done));
+				},
+				kCacheUsableTimeoutMilliseconds);
+			const auto queuedRead = AwaitCacheCallback<QByteArray>(
+				[&](auto done) {
+					getCache()->get(queuedKey, std::move(done));
+				},
+				kCacheUsableTimeoutMilliseconds);
+			const auto queuedOperationsPassed
+				= CacheOperationSucceeded(queuedWrite) && queuedRead
+				  && (*queuedRead == queuedPayload);
+			const auto cacheUsableNanoseconds
+				= cacheInitializationTimer.nsecsElapsed();
+			const auto cacheUsableWithinBound
+				= cacheUsableNanoseconds < kMaxCacheUsableNanoseconds;
 			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
 			const auto startupScansCompleted = WaitForRegressionCondition([&] {
@@ -9379,6 +9408,8 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "Cache access latency regression: cache=%s "
 						 "seeded_directories=125 seeded_files=169 "
 						 "cache_initialization_ns=%lld "
+						 "queued_ops_before_ready=%d queued_ops_passed=%d "
+						 "cache_usable_ns=%lld under_10s=%d "
 						 "max_main_thread_stall_ns=%lld under_100ms=%d "
 						 "first_access_ns=%lld under_50ms=%d "
 						 "root_swap_refused=%d direct_fallback_closed=%d "
@@ -9386,6 +9417,10 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "main_thread_walks=%d.\n",
 						 mediaCache ? "media_cache" : "cache",
 						 static_cast<long long>(cacheInitializationNanoseconds),
+						 initializationPendingAtFirstAccess,
+						 queuedOperationsPassed,
+						 static_cast<long long>(cacheUsableNanoseconds),
+						 cacheUsableWithinBound,
 						 static_cast<long long>(maxMainThreadStallNanoseconds),
 						 (maxMainThreadStallNanoseconds < 100'000'000),
 						 static_cast<long long>(firstAccessNanoseconds),
@@ -9393,6 +9428,9 @@ void RunAuthenticatedCacheSymlinkCases(
 						 swappedRootRefused, directFallbackClosed,
 						 rootRestoreSucceeded, startupWalks, mainThreadWalks);
 			const auto passed = startupScansCompleted && first && second
+								&& initializationPendingAtFirstAccess
+								&& queuedOperationsPassed
+								&& cacheUsableWithinBound
 								&& (startupWalks == 2) && (mainThreadWalks == 0)
 								&& swappedRootRefused && directFallbackClosed
 								&& rootRestoreSucceeded

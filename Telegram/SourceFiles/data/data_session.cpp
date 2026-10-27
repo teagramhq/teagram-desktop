@@ -274,26 +274,55 @@ Session::Session(not_null<Main::Session *> session)
 	  _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
 #ifdef Q_OS_MAC
 	const auto weak = base::make_weak(this);
-	const auto cachePath = _cachePath;
-	const auto bigFileCachePath = _bigFileCachePath;
-	crl::async([=] {
-		auto cacheIdentity = Core::MacProtectedPath::CachePathIdentity();
-		const auto cacheAllowed
-			= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
-				cachePath, "Data::Session::cache", &cacheIdentity);
-		auto bigFileCacheIdentity = Core::MacProtectedPath::CachePathIdentity();
-		const auto bigFileCacheAllowed
-			= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
-				bigFileCachePath, "Data::Session::cacheBigFile",
-				&bigFileCacheIdentity);
-		crl::on_main(weak, [=] {
-			if (const auto session = weak.get()) {
-				session->initializeCacheDatabases(cacheAllowed, cacheIdentity,
-												  bigFileCacheAllowed,
-												  bigFileCacheIdentity);
-			}
-		});
-	});
+	const auto startCacheOpen = [weak](
+			bool bigFileCache,
+			Storage::Cache::Database *database,
+			const QString &path,
+			Storage::EncryptionKey key,
+			const char *callsite) {
+		auto identity
+			= std::make_shared<Core::MacProtectedPath::CachePathIdentity>();
+		database->openWithChecks(
+			std::move(key),
+			[path, callsite, identity] {
+				return Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+					path, callsite, identity.get())
+					? Storage::Cache::Error::NoError()
+					: Storage::Cache::Error{
+						  Storage::Cache::Error::Type::IO, path };
+			},
+			[path, callsite, identity] {
+				const auto captured
+					= Core::MacProtectedPath::
+						  CaptureCachePathActiveVersionIdentity(
+							  path, callsite, identity.get());
+				return captured
+					? Storage::Cache::Error::NoError()
+					: Storage::Cache::Error{
+						  Storage::Cache::Error::Type::IO, path };
+			},
+			[weak, bigFileCache, identity = std::move(identity)](
+				Storage::Cache::Error error) mutable {
+				const auto allowed
+					= (error.type == Storage::Cache::Error::Type::None);
+				auto cacheIdentity = std::move(*identity);
+				crl::on_main(
+					weak,
+					[weak, bigFileCache, allowed,
+					 cacheIdentity = std::move(cacheIdentity)]() mutable {
+						if (const auto session = weak.get()) {
+							session->finishCacheDatabaseInitialization(
+								bigFileCache, allowed,
+								std::move(cacheIdentity));
+						}
+					});
+			});
+	};
+	startCacheOpen(false, _cache.get(), _cachePath,
+				   _session->local().cacheKey(), "Data::Session::cache");
+	startCacheOpen(true, _bigFileCache.get(), _bigFileCachePath,
+				   _session->local().cacheBigFileKey(),
+				   "Data::Session::cacheBigFile");
 #else
 	auto cacheIdentity = Core::MacProtectedPath::CachePathIdentity();
 	const auto cacheAllowed
@@ -460,59 +489,6 @@ void Session::initializeCacheDatabases(
 	bool cacheAllowed, Core::MacProtectedPath::CachePathIdentity cacheIdentity,
 	bool bigFileCacheAllowed,
 	Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity) {
-#ifdef Q_OS_MAC
-	const auto weak = base::make_weak(this);
-	const auto cachePath = _cachePath;
-	if (cacheAllowed) {
-		_cache->open(
-			_session->local().cacheKey(),
-			[weak, cachePath, identity = std::move(cacheIdentity)](
-				Storage::Cache::Error error) mutable {
-				const auto allowed
-					= (error.type == Storage::Cache::Error::Type::None)
-					  && Core::MacProtectedPath::
-						  CaptureCachePathActiveVersionIdentity(
-							  cachePath, "Data::Session::cache.initialize",
-							  &identity);
-				crl::on_main(weak, [weak, allowed,
-									identity = std::move(identity)]() mutable {
-					if (const auto session = weak.get()) {
-						session->finishCacheDatabaseInitialization(
-							false, allowed, std::move(identity));
-					}
-				});
-			});
-	} else {
-		finishCacheDatabaseInitialization(false, false,
-										  std::move(cacheIdentity));
-	}
-	const auto bigFileCachePath = _bigFileCachePath;
-	if (bigFileCacheAllowed) {
-		_bigFileCache->open(
-			_session->local().cacheBigFileKey(),
-			[weak, bigFileCachePath,
-			 identity = std::move(bigFileCacheIdentity)](
-				Storage::Cache::Error error) mutable {
-				const auto allowed
-					= (error.type == Storage::Cache::Error::Type::None)
-					  && Core::MacProtectedPath::
-						  CaptureCachePathActiveVersionIdentity(
-							  bigFileCachePath,
-							  "Data::Session::cacheBigFile.initialize",
-							  &identity);
-				crl::on_main(weak, [weak, allowed,
-									identity = std::move(identity)]() mutable {
-					if (const auto session = weak.get()) {
-						session->finishCacheDatabaseInitialization(
-							true, allowed, std::move(identity));
-					}
-				});
-			});
-	} else {
-		finishCacheDatabaseInitialization(true, false,
-										  std::move(bigFileCacheIdentity));
-	}
-#else
 	if (cacheAllowed) {
 		_cache->open(_session->local().cacheKey());
 	} else {
@@ -532,7 +508,6 @@ void Session::initializeCacheDatabases(
 	}
 	_cacheInitializationReady = true;
 	_bigFileCacheInitializationReady = true;
-#endif
 }
 
 #ifdef Q_OS_MAC
@@ -551,6 +526,7 @@ void Session::finishCacheDatabaseInitialization(
 		if (bigFileCache) {
 			_bigFileCacheIdentity = std::move(cacheIdentity);
 			_bigFileCacheAllowed = cacheAllowed;
+			_bigFileCacheInitializationPending = false;
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 			_bigFileCacheInitializationFinishedForTesting = true;
 			_bigFileCacheInitializationAllowedForTesting = cacheAllowed;
@@ -558,6 +534,7 @@ void Session::finishCacheDatabaseInitialization(
 		} else {
 			_cacheIdentity = std::move(cacheIdentity);
 			_cacheAllowed = cacheAllowed;
+			_cacheInitializationPending = false;
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 			_cacheInitializationFinishedForTesting = true;
 			_cacheInitializationAllowedForTesting = cacheAllowed;
@@ -2009,6 +1986,9 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 Storage::Cache::Database *Session::cacheIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
 #ifdef Q_OS_MAC
+	if (_cacheInitializationPending) {
+		return _cache.get();
+	}
 	if (_cacheClearPending) {
 		return nullptr;
 	}
@@ -2025,6 +2005,9 @@ Storage::Cache::Database *Session::cacheIfAllowed() {
 Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	QMutexLocker lock(&_cacheMutex);
 #ifdef Q_OS_MAC
+	if (_bigFileCacheInitializationPending) {
+		return _bigFileCache.get();
+	}
 	if (_bigFileCacheClearPending) {
 		return nullptr;
 	}
