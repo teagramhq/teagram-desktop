@@ -2742,8 +2742,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	});
 	{
 		auto cache = Core::App().databases().get(path, settings);
-		const auto key = mediaCache ? guarded->local().cacheBigFileKey()
-									: guarded->local().cacheKey();
+		auto key = mediaCache ? guarded->local().cacheBigFileKey()
+							  : guarded->local().cacheKey();
 		const auto opened = CacheOperationSucceeded(
 			AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 				cache->open(std::move(key), std::move(done));
@@ -2781,8 +2781,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	verification->sync();
 	const auto reopened = CacheOperationSucceeded(
 		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-			const auto key = mediaCache ? guarded->local().cacheBigFileKey()
-										: guarded->local().cacheKey();
+			auto key = mediaCache ? guarded->local().cacheBigFileKey()
+								  : guarded->local().cacheKey();
 			verification->open(std::move(key), std::move(done));
 		}));
 	const auto value = reopened
