@@ -1211,6 +1211,10 @@ private:
 	rpl::variable<bool> _bigFileCacheInitializationReady = false;
 #ifdef Q_OS_MAC
 	Storage::Cache::Database _unavailableCache;
+	std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>
+		_cacheInitializationIdentity;
+	std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>
+		_bigFileCacheInitializationIdentity;
 	bool _cacheInitializationPending = true;
 	bool _bigFileCacheInitializationPending = true;
 	bool _cacheInitializationFinishedForTesting = false;

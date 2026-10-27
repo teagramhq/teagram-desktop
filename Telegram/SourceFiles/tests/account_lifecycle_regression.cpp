@@ -2715,6 +2715,94 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return passed;
 }
 
+[[nodiscard]] bool
+RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
+											 UserId selfId, bool mediaCache) {
+	const auto guarded = domain.add(MTP::Environment::Production);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
+								 : guarded->local().cachePath();
+	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
+									 : guarded->local().cacheSettings();
+	const auto seedKey = Storage::Cache::Key{
+		0x4c4f474f55544341ULL,
+		mediaCache ? 0x4348454d45444941ULL : 0x4348454341434845ULL,
+	};
+	const auto payload = QByteArray("cache must be cleared on pending logout");
+	struct QueueGate {
+		QSemaphore entered;
+		QSemaphore resume;
+	};
+	const auto gate = std::make_shared<QueueGate>();
+	const auto releaseGate = gsl::finally([&] {
+		gate->resume.release();
+		auto drain = Core::App().databases().get(path, settings);
+		drain->sync();
+	});
+	{
+		auto cache = Core::App().databases().get(path, settings);
+		const auto key = mediaCache ? guarded->local().cacheBigFileKey()
+									: guarded->local().cacheKey();
+		const auto opened = CacheOperationSucceeded(
+			AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+				cache->open(std::move(key), std::move(done));
+			}));
+		const auto seeded
+			= opened
+			  && CacheOperationSucceeded(
+				  AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+					  cache->put(seedKey, QByteArray(payload), std::move(done));
+				  }));
+		if (!seeded) {
+			return false;
+		}
+		cache->get(seedKey, [gate](QByteArray &&) {
+			gate->entered.release();
+			gate->resume.acquire();
+		});
+		if (!gate->entered.tryAcquire(1, 10000)) {
+			return false;
+		}
+	}
+	const auto created
+		= guarded->createSession(RegressionUser(selfId, true, QString()),
+								 std::make_unique<Main::SessionSettings>());
+	if (!created) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	const auto initializationPending
+		= !data.cacheInitializationFinishedForTesting(mediaCache);
+	guarded->forcedLogOut();
+	const auto sessionDestroyed = !guarded->sessionExists();
+	auto verification = Core::App().databases().get(path, settings);
+	gate->resume.release();
+	verification->sync();
+	const auto reopened = CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+			const auto key = mediaCache ? guarded->local().cacheBigFileKey()
+										: guarded->local().cacheKey();
+			verification->open(std::move(key), std::move(done));
+		}));
+	const auto value = reopened
+						   ? AwaitCacheCallback<QByteArray>([&](auto done) {
+								 verification->get(seedKey, std::move(done));
+							 })
+						   : std::optional<QByteArray>();
+	const auto cleared = value && value->isEmpty();
+	const auto passed = initializationPending && sessionDestroyed && cleared;
+	if (!passed) {
+		std::fprintf(
+			stderr,
+			"Logout before cache initialization regression failed: media=%d "
+			"pending=%d destroyed=%d cleared=%d path=%s.\n",
+			mediaCache, initializationPending, sessionDestroyed, cleared,
+			qPrintable(path));
+	}
+	return passed;
+}
+
 [[nodiscard]] bool RunFailedCacheInitializationAccessRegression(
 	Main::Domain &domain, UserId selfId, const ProtectedCacheFixtures &fixtures,
 	bool mediaCache) {
@@ -9604,6 +9692,8 @@ struct NativeLifecycleResults {
 			"post-open-media-cache",
 			"post-clear-cache",
 			"post-clear-media-cache",
+			"logout-before-cache-initialization",
+			"logout-before-media-cache-initialization",
 			"failed-init-cache-access",
 			"failed-init-media-cache-access",
 			"cold-post-open-cache",
@@ -10402,6 +10492,15 @@ void RunAuthenticatedCacheSymlinkCases(
 			nativeLifecycleResults->Report(caseName, passed);
 		}
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "logout-before-media-cache-initialization"
+							 : "logout-before-cache-initialization";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunLogoutBeforeCacheInitializationRegression(
+				domain, selfId, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "cold-post-open-media-cache"
 											 : "cold-post-open-cache";
 			nativeLifecycleResults->StartCase(caseName);
@@ -10487,6 +10586,10 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-clear-media-cache",
 									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-media-cache-initialization",
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-cache-access",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-media-cache-access",
@@ -10512,6 +10615,10 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("post-clear-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-clear-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-media-cache-initialization",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("failed-init-cache-access",
 									 "protected-path-integration-disabled");
