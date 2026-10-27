@@ -4543,12 +4543,12 @@ void OfferRichMessagePremiumChoice(
 		return;
 	}
 	const auto flattened = FlattenRichPageToSimpleText(page);
-	const auto lengthLimit = ::Data::PremiumLimits(session)
-		.messageLengthCurrent();
-	const auto sendable = (CountRichPageMedia(page) == 0)
-						  && !flattened.text.isEmpty()
-						  && !::Data::details::ExceedsInputLengthLimit(
-							  int(flattened.text.size()), lengthLimit);
+	const auto lengthLimit
+		= ::Data::PremiumLimits(session).messageLengthCurrent();
+	const auto sendable
+		= (CountRichPageMedia(page) == 0) && !flattened.text.isEmpty()
+		  && !::Data::details::ExceedsInputLengthLimit(flattened.text,
+													   lengthLimit);
 	if (!sendable) {
 		ShowRichMessagesPremiumToast(std::move(show));
 		return;

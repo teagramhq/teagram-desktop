@@ -30,6 +30,11 @@ namespace details {
 	return maxLength > 0 && length > maxLength;
 }
 
+[[nodiscard]] inline bool ExceedsInputLengthLimit(const QString &text,
+												  int maxLength) {
+	return ExceedsInputLengthLimit(UnicodeScalarCount(text), maxLength);
+}
+
 [[nodiscard]] inline bool
 IsWithinInputLengthPolicy(const QString &text, int minLength, int maxLength) {
 	const auto length = UnicodeScalarCount(text);

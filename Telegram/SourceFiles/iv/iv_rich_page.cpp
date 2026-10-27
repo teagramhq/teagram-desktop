@@ -1838,10 +1838,11 @@ void AppendSimpleBlock(
 		int(end - begin));
 	auto start = begin;
 	while ((start - begin) != firstMonospaceOffset
-		&& Ui::Text::IsTrimmed(*start)) {
+		   && Ui::Text::IsTrimmed(*start)) {
 		++start;
 	}
-	return int(end - start);
+	return ::Data::details::UnicodeScalarCount(
+		QString::fromRawData(start, int(end - start)));
 }
 
 // Sinks for SerializeAsSimpleTo(): SimpleTextBuilder builds the actual
@@ -1864,7 +1865,7 @@ struct SimpleTextBuilder {
 			EntityType::Blockquote);
 	}
 	[[nodiscard]] int length() const {
-		return int(result.text.size());
+		return ::Data::details::UnicodeScalarCount(result.text);
 	}
 };
 

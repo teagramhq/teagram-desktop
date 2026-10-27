@@ -55,8 +55,7 @@ bool HasEnoughLinesForAi(
 	}
 	const auto &text = field->getLastText();
 	if (Data::details::ExceedsInputLengthLimit(
-			int(text.size()),
-			Data::PremiumLimits(session).messageLengthCurrent())) {
+			text, Data::PremiumLimits(session).messageLengthCurrent())) {
 		return false;
 	}
 	for (const auto &ch : text) {

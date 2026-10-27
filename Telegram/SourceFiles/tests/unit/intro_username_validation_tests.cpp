@@ -121,6 +121,8 @@ TEST_CASE(ServerTextLengthPolicyCountsUnicodeScalars) {
 	const auto astral = QString::fromUtf8("\xF0\x9F\x98\x80").repeated(2);
 	CHECK(Data::details::IsWithinInputLengthPolicy(astral, 2, 2));
 	CHECK(!Data::details::IsWithinInputLengthPolicy(astral + u"a"_q, 2, 2));
+	CHECK(!Data::details::ExceedsInputLengthLimit(astral, 2));
+	CHECK(Data::details::ExceedsInputLengthLimit(astral + u"a"_q, 2));
 	CHECK(!Data::details::ExceedsInputLengthLimit(
 		Data::details::UnicodeScalarCount(astral), 2));
 	CHECK(Data::details::ExceedsInputLengthLimit(
