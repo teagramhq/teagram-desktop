@@ -9272,9 +9272,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				},
 				kCacheUsableTimeoutMilliseconds);
 			const auto queuedRead = AwaitCacheCallback<QByteArray>(
-				[&](auto done) {
-					getCache()->get(queuedKey, std::move(done));
-				},
+				[&](auto done) { getCache()->get(queuedKey, std::move(done)); },
 				kCacheUsableTimeoutMilliseconds);
 			const auto queuedOperationsPassed
 				= CacheOperationSucceeded(queuedWrite) && queuedRead
@@ -9430,10 +9428,9 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto passed = startupScansCompleted && first && second
 								&& initializationPendingAtFirstAccess
 								&& queuedOperationsPassed
-								&& cacheUsableWithinBound
-								&& (startupWalks == 2) && (mainThreadWalks == 0)
-								&& swappedRootRefused && directFallbackClosed
-								&& rootRestoreSucceeded
+								&& cacheUsableWithinBound && (startupWalks == 2)
+								&& (mainThreadWalks == 0) && swappedRootRefused
+								&& directFallbackClosed && rootRestoreSucceeded
 								&& (mediaCache || chatSwitch.passed)
 								&& (mediaCache || dialogsHandler.passed)
 								&& (maxMainThreadStallNanoseconds < 100'000'000)

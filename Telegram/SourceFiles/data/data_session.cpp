@@ -274,48 +274,43 @@ Session::Session(not_null<Main::Session *> session)
 	  _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
 #ifdef Q_OS_MAC
 	const auto weak = base::make_weak(this);
-	const auto startCacheOpen = [weak](
-			bool bigFileCache,
-			Storage::Cache::Database *database,
-			const QString &path,
-			Storage::EncryptionKey key,
-			const char *callsite) {
+	const auto startCacheOpen = [weak](bool bigFileCache,
+									   Storage::Cache::Database *database,
+									   const QString &path,
+									   Storage::EncryptionKey key,
+									   const char *callsite) {
 		auto identity
 			= std::make_shared<Core::MacProtectedPath::CachePathIdentity>();
 		database->openWithChecks(
 			std::move(key),
 			[path, callsite, identity] {
 				return Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
-					path, callsite, identity.get())
-					? Storage::Cache::Error::NoError()
-					: Storage::Cache::Error{
-						  Storage::Cache::Error::Type::IO, path };
+						   path, callsite, identity.get())
+						   ? Storage::Cache::Error::NoError()
+						   : Storage::Cache::Error{
+								 Storage::Cache::Error::Type::IO, path};
 			},
 			[path, callsite, identity] {
-				const auto captured
-					= Core::MacProtectedPath::
-						  CaptureCachePathActiveVersionIdentity(
-							  path, callsite, identity.get());
-				return captured
-					? Storage::Cache::Error::NoError()
-					: Storage::Cache::Error{
-						  Storage::Cache::Error::Type::IO, path };
+				const auto captured = Core::MacProtectedPath::
+					CaptureCachePathActiveVersionIdentity(path, callsite,
+														  identity.get());
+				return captured ? Storage::Cache::Error::NoError()
+								: Storage::Cache::Error{
+									  Storage::Cache::Error::Type::IO, path};
 			},
 			[weak, bigFileCache, identity = std::move(identity)](
 				Storage::Cache::Error error) mutable {
 				const auto allowed
 					= (error.type == Storage::Cache::Error::Type::None);
 				auto cacheIdentity = std::move(*identity);
-				crl::on_main(
-					weak,
-					[weak, bigFileCache, allowed,
-					 cacheIdentity = std::move(cacheIdentity)]() mutable {
-						if (const auto session = weak.get()) {
-							session->finishCacheDatabaseInitialization(
-								bigFileCache, allowed,
-								std::move(cacheIdentity));
-						}
-					});
+				crl::on_main(weak, [weak, bigFileCache, allowed,
+									cacheIdentity
+									= std::move(cacheIdentity)]() mutable {
+					if (const auto session = weak.get()) {
+						session->finishCacheDatabaseInitialization(
+							bigFileCache, allowed, std::move(cacheIdentity));
+					}
+				});
 			});
 	};
 	startCacheOpen(false, _cache.get(), _cachePath,
