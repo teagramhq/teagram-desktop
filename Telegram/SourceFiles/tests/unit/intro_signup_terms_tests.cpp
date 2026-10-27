@@ -33,7 +33,7 @@ SignupTermsPayload Terms(QString text, QByteArray id = QByteArray("terms-id")) {
 TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
 	const auto text
 		= u"@admin #tag /help https://terms.example "
-		  u"server@example.test bare.example bare@bare.test privacy unsafe"_q;
+		  u"server@example.test bare.org bare@bare.org privacy unsafe"_q;
 	const auto mention = text.indexOf(u"@admin"_q);
 	const auto hashtag = text.indexOf(u"#tag"_q);
 	const auto command = text.indexOf(u"/help"_q);
@@ -84,11 +84,11 @@ TEST_CASE(SignupTermsMtpExtractionKeepsOnlySupportedLinks) {
 	}));
 	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return (entity.type() == EntityType::Url)
-			   && (entity.offset() == text.indexOf(u"bare.example"_q));
+			   && (entity.offset() == text.indexOf(u"bare.org"_q));
 	}));
 	CHECK(std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return (entity.type() == EntityType::Email)
-			   && (entity.offset() == text.indexOf(u"bare@bare.test"_q));
+			   && (entity.offset() == text.indexOf(u"bare@bare.org"_q));
 	}));
 	CHECK(!std::ranges::any_of(terms.text.entities, [&](const auto &entity) {
 		return entity.offset() == unsafeUrl;
