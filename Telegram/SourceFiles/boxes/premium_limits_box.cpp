@@ -992,6 +992,10 @@ void CaptionLimitReachedBox(
 		.labelStyle = stOverride ? &stOverride->boxLabel : nullptr,
 		.inform = true,
 	});
+	const auto premiumPossible = session->premiumPossible();
+	const auto limits = Data::PremiumLimits(session);
+	const auto premiumHasLargerLimit
+		= limits.captionLengthPremium() > limits.captionLengthDefault();
 	if (!session->premium() && premiumPossible && premiumHasLargerLimit) {
 		box->addLeftButton(tr::lng_limits_increase(), [=] {
 			box->getDelegate()->showBox(
