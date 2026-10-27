@@ -61,6 +61,22 @@ class SignupTermsGate final {
 	std::optional<SignupTermsPayload> _accepted;
 };
 
+class SignupTermsPrompt final {
+  public:
+	SignupTermsPrompt(Fn<void()> accepted, Fn<void()> declined);
+
+	void accept();
+	void decline();
+	void boxClosing();
+
+  private:
+	void resolve(Fn<void()> &callback);
+
+	Fn<void()> _accepted;
+	Fn<void()> _declined;
+	bool _resolved = false;
+};
+
 struct SignupRequestData {
 	QString phone;
 	QByteArray phoneHash;

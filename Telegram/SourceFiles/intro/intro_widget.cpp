@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server.h"
 #include "intro/intro_code.h"
 #include "intro/intro_signup_name.h"
+#include "intro/intro_signup_terms.h"
 #include "intro/intro_password_check.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
@@ -47,6 +48,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_intro.h"
 #include "base/qt/qt_common_adapters.h"
+
+#include <memory>
 
 namespace Intro {
 namespace {
@@ -599,16 +602,18 @@ void Widget::showSignupTerms(Fn<void()> accept, Fn<void()> decline) {
 	const auto box = Ui::show(Box<Window::TermsBox>(
 		getData()->termsLock, tr::lng_teagram_terms_accept(),
 		tr::lng_terms_decline(), true));
+	const auto prompt = std::make_shared<SignupTermsPrompt>(std::move(accept),
+															std::move(decline));
 
 	box->setCloseByEscape(false);
 	box->setCloseByOutsideClick(false);
+	box->boxClosing()
+		| rpl::on_next([=] { prompt->boxClosing(); }, box->lifetime());
 
 	box->agreeClicks()
 		| rpl::on_next(
 			[=] {
-				if (accept) {
-					accept();
-				}
+				prompt->accept();
 				if (box) {
 					box->closeBox();
 				}
@@ -618,9 +623,7 @@ void Widget::showSignupTerms(Fn<void()> accept, Fn<void()> decline) {
 	box->cancelClicks()
 		| rpl::on_next(
 			[=] {
-				if (decline) {
-					decline();
-				}
+				prompt->decline();
 				if (box) {
 					box->closeBox();
 				}

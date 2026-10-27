@@ -182,6 +182,25 @@ void SignupTermsGate::submit(const SignupTermsPayload &terms,
 	showTerms(std::move(accept), std::move(declined));
 }
 
+SignupTermsPrompt::SignupTermsPrompt(Fn<void()> accepted, Fn<void()> declined)
+	: _accepted(std::move(accepted)), _declined(std::move(declined)) {}
+
+void SignupTermsPrompt::accept() { resolve(_accepted); }
+
+void SignupTermsPrompt::decline() { resolve(_declined); }
+
+void SignupTermsPrompt::boxClosing() { decline(); }
+
+void SignupTermsPrompt::resolve(Fn<void()> &callback) {
+	if (_resolved) {
+		return;
+	}
+	_resolved = true;
+	if (callback) {
+		callback();
+	}
+}
+
 void SubmitSignupWithTerms(
 	SignupTermsGate &gate, const SignupTermsPayload &terms,
 	Fn<SignupRequestData()> requestData,

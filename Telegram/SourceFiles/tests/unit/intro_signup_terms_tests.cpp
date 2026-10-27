@@ -312,6 +312,30 @@ TEST_CASE(SignupTermsEnterUsesAgeConfirmation) {
 	CHECK_EQ(ageErrors, 1);
 }
 
+TEST_CASE(SignupTermsBoxCloseWithoutChoiceDeclinesOnce) {
+	auto accepts = 0;
+	auto declines = 0;
+	auto prompt = SignupTermsPrompt([&] { ++accepts; }, [&] { ++declines; });
+
+	prompt.boxClosing();
+	prompt.boxClosing();
+
+	CHECK_EQ(accepts, 0);
+	CHECK_EQ(declines, 1);
+}
+
+TEST_CASE(SignupTermsBoxCloseAfterAcceptanceDoesNotDecline) {
+	auto accepts = 0;
+	auto declines = 0;
+	auto prompt = SignupTermsPrompt([&] { ++accepts; }, [&] { ++declines; });
+
+	prompt.accept();
+	prompt.boxClosing();
+
+	CHECK_EQ(accepts, 1);
+	CHECK_EQ(declines, 0);
+}
+
 TEST_CASE(SignupTermsEmptyTextSendsWithoutPrompt) {
 	auto gate = SignupTermsGate();
 	const auto terms = Terms(QString());
