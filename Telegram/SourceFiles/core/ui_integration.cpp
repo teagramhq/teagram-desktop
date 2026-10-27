@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "mainwindow.h"
+#include "base/debug_log.h"
 #include "base/unixtime.h"
 #include "styles/style_chat_helpers.h"
 
@@ -433,6 +434,12 @@ bool UiIntegration::handleUrlClick(
 	const auto local = Core::TryConvertUrlToLocal(
 		url,
 		originController ? &originController->session() : nullptr);
+	if (url.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)
+		|| local.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+		LOG(("SettingsLinkTrace: url.convert raw=%1 converted=%2")
+			.arg(url)
+			.arg(local));
+	}
 	if (Core::InternalPassportOrOAuthLink(local)) {
 		return true;
 	}

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/deep_links/deep_links_router.h"
 
+#include "base/debug_log.h"
 #include "base/qthelp_url.h"
 #include "core/deep_links/deep_links_chats.h"
 #include "core/deep_links/deep_links_contacts.h"
@@ -110,6 +111,32 @@ bool Router::tryHandle(
 		const QString &command) {
 	const auto ctx = ParseCommand(controller, command);
 	const auto [result, skipActivation] = dispatch(ctx);
+	if (ctx.section == u"settings"_q) {
+		const auto resultName = [&] {
+			switch (result) {
+			case Result::Handled: return u"handled"_q;
+			case Result::NeedsAuth: return u"needs-auth"_q;
+			case Result::Unsupported: return u"unsupported"_q;
+			case Result::NotFound: return u"not-found"_q;
+			}
+			return u"unknown"_q;
+		}();
+		const auto controllerId = controller
+			? QString::number(reinterpret_cast<quintptr>(controller), 16)
+			: u"none"_q;
+		const auto sessionId = controller
+			? QString::number(
+				reinterpret_cast<quintptr>(&controller->session()),
+				16)
+			: u"none"_q;
+		LOG(("SettingsLinkTrace: router.match section=%1 path=%2 result=%3 "
+			"controller=%4 session=%5")
+			.arg(ctx.section)
+			.arg(ctx.path)
+			.arg(resultName)
+			.arg(controllerId)
+			.arg(sessionId));
+	}
 
 	switch (result) {
 	case Result::Handled:
@@ -163,9 +190,21 @@ Router::DispatchResult Router::handleSection(
 	if (paidRoute && !ctx.controller) {
 		return {Result::Handled, true};
 	}
-	if (paidRoute && !ctx.controller->session().paidFeaturesSupported()) {
-		ctx.controller->showFeatureUnavailableOnServerToast();
-		return {Result::Handled, true};
+	if (paidRoute && ctx.controller) {
+		const auto supported
+			= ctx.controller->session().paidFeaturesSupported();
+		LOG(("SettingsLinkTrace: router.paidFeaturesSupported "
+			"section=%1 path=%2 value=%3")
+			.arg(section, path)
+			.arg(supported));
+		if (!supported) {
+			LOG(("SettingsLinkTrace: toast.feature-unavailable reached=1 "
+				"section=%1 path=%2")
+				.arg(section)
+				.arg(path));
+			ctx.controller->showFeatureUnavailableOnServerToast();
+			return {Result::Handled, true};
+		}
 	}
 	const auto storiesRoute
 		= ctx.controller
@@ -174,6 +213,12 @@ Router::DispatchResult Router::handleSection(
 							 return IsStoriesFeaturePath(entry, path);
 						 });
 	if (storiesRoute && !ctx.controller->session().storiesSupported()) {
+		if (section == u"settings"_q) {
+			LOG(("SettingsLinkTrace: toast.stories-unavailable reached=1 "
+				"section=%1 path=%2")
+				.arg(section)
+				.arg(path));
+		}
 		ctx.controller->showFeatureUnavailableOnServerToast();
 		return {Result::Handled, true};
 	}
@@ -227,6 +272,12 @@ Router::DispatchResult Router::executeAction(const Action &action,
 				return {Result::NeedsAuth};
 			}
 			if (s.available && !s.available(ctx.controller->session())) {
+				if (ctx.section == u"settings"_q) {
+					LOG(("SettingsLinkTrace: toast.feature-unavailable reached=1 "
+						"section=%1 path=%2")
+						.arg(ctx.section)
+						.arg(ctx.path));
+				}
 				ctx.controller->showFeatureUnavailableOnServerToast();
 				return {Result::Handled, true};
 			}
@@ -250,8 +301,17 @@ void Router::showUnsupportedMessage(
 		const QString &url) {
 	const auto text = u"This link is not supported on Desktop."_q;
 	if (controller) {
+		if (url.startsWith(u"settings/"_q, Qt::CaseInsensitive)) {
+			LOG(("SettingsLinkTrace: toast.unsupported reached=1 path=%1")
+				.arg(url));
+		}
 		controller->showToast(text);
 	} else if (const auto window = Core::App().activeWindow()) {
+		if (url.startsWith(u"settings/"_q, Qt::CaseInsensitive)) {
+			LOG(("SettingsLinkTrace: toast.unsupported reached=1 path=%1 "
+				"destination=active-window")
+				.arg(url));
+		}
 		window->showToast(text);
 	}
 }

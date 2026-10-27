@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_list_widget.h"
 
+#include "base/debug_log.h"
 #include "base/unixtime.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/qt/qt_common_adapters.h"
@@ -97,6 +98,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtWidgets/QApplication>
 #include <QtCore/QMimeData>
+
+#include <typeinfo>
 
 namespace HistoryView {
 namespace {
@@ -3858,6 +3861,20 @@ void ListWidget::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void ListWidget::mouseReleaseEvent(QMouseEvent *e) {
+	if (e->button() == Qt::LeftButton) {
+		const auto pressed = ClickHandler::getPressed();
+		const auto urlHandler = pressed
+			? dynamic_cast<const UrlClickHandler*>(pressed.get())
+			: nullptr;
+		auto rawUrl = pressed ? pressed->url() : u"none"_q;
+		if (urlHandler) {
+			rawUrl = urlHandler->originalUrl();
+		}
+		LOG(("SettingsLinkTrace: history.release "
+			"widget=HistoryView::ListWidget pressed=%1 rawUrl=%2")
+			.arg(pressed ? u"yes"_q : u"no"_q)
+			.arg(rawUrl));
+	}
 	if (_middleClickAutoscroll.finishHold(e->button())) {
 		e->accept();
 		return;
@@ -4300,6 +4317,17 @@ void ListWidget::mouseActionFinish(
 	if (_mouseAction == MouseAction::Dragging || needItemSelectionToggle) {
 		activated = nullptr;
 	} else if (activated) {
+		const auto urlHandler = dynamic_cast<const UrlClickHandler*>(
+			activated.get());
+		const auto rawUrl = urlHandler
+			? urlHandler->originalUrl()
+			: activated->url();
+		if (rawUrl.startsWith(u"tg://settings/"_q, Qt::CaseInsensitive)) {
+			LOG(("SettingsLinkTrace: history.activate "
+				"widget=HistoryView::ListWidget type=%1 rawUrl=%2")
+				.arg(QString::fromLatin1(typeid(*activated).name()))
+				.arg(rawUrl));
+		}
 		mouseActionCancel();
 		ActivateClickHandler(window(), activated, {
 			button,
