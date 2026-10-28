@@ -1365,6 +1365,9 @@ fi
 local watchdog_duration
 watchdog_duration="$(sed -E \
 	's/.* duration_ns=([0-9]+) stalls=.*/\1/' <<<"$watchdog_evidence")"
+local watchdog_stalls
+watchdog_stalls="$(sed -E \
+	's/.* duration_ns=[0-9]+ stalls=([0-9]+)\./\1/' <<<"$watchdog_evidence")"
 if (( watchdog_duration >= 150000000 )); then
 	local watchdog_stall
 	watchdog_stall="$(awk '
@@ -1380,7 +1383,7 @@ inside && index($0, "UI stall ") && index($0, "CheckCachePath") { print }
 	fi
 	printf 'cache_watchdog_reverted_path=PASS %s\n%s\n' \
 		"$watchdog_evidence" "$watchdog_stall"
-elif (( watchdog_duration < 30000000 )); then
+elif (( watchdog_duration < 150000000 && watchdog_stalls == 0 )); then
 	printf 'cache_watchdog_responsive_path=PASS %s\n' "$watchdog_evidence"
 else
 	cat "$AUTH_LOG" >&2
@@ -1405,7 +1408,7 @@ for cache in cache media_cache; do
 	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=1 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2

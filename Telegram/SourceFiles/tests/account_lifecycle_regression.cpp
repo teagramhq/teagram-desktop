@@ -9917,17 +9917,49 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 
 struct FirstDialogsHandlerRegressionResult final {
 	int requests = 0;
+	int processedChats = 0;
+	int processedDialogs = 0;
+	int processedMessages = 0;
+	int processedDocuments = 0;
 	int cacheWalks = -1;
 	qint64 handlerNanoseconds = -1;
 	bool responseParsed = false;
 	bool passed = false;
 };
 
+[[nodiscard]] MTPMessage RegressionDialogsDocumentMessage(ChatId chatId,
+														  int messageId,
+														  int64 documentId) {
+	using MessageFlag = MTPDmessage::Flag;
+	using MediaFlag = MTPDmessageMediaDocument::Flag;
+	return MTP_message(
+		MTP_flags(MessageFlag::f_from_id | MessageFlag::f_media),
+		MTP_int(messageId), peerToMTP(peerFromUser(UserId(1))), MTPint(),
+		MTPstring(), peerToMTP(peerFromChat(chatId)), MTPPeer(),
+		MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(1),
+		MTP_string(u"cache dialog probe"_q),
+		MTP_messageMediaDocument(MTP_flags(MediaFlag::f_document),
+								 RegressionReactionDocument(documentId),
+								 MTPVector<MTPDocument>(), MTPPhoto(), MTPint(),
+								 MTPint()),
+		MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(), MTP_int(0),
+		MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
 [[maybe_unused, nodiscard]] FirstDialogsHandlerRegressionResult
 RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto result = FirstDialogsHandlerRegressionResult();
+	constexpr auto kMessageCount = 73;
+	constexpr auto kDialogUnreadCount = 7;
 	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+	const auto chatId = ChatId(1053);
+	const auto peerId = peerFromChat(chatId);
 	auto &session = account->session();
+	auto &data = session.data();
 	auto capture = ChannelSaveRequestCapture{
 		.instance = &account->mtp(),
 	};
@@ -9951,12 +9983,33 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	if (request == capture.requests.end()) {
 		return result;
 	}
-	// Exercise the actual initial-response handler with the smallest valid
-	// slice; the companion reaction regression covers document hydration.
+	auto messages = QVector<MTPMessage>();
+	messages.reserve(kMessageCount);
+	for (auto i = 0; i != kMessageCount; ++i) {
+		messages.push_back(RegressionDialogsDocumentMessage(
+			chatId, i + 1, int64(300'000 + i)));
+	}
+	const auto notifySettings = MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	auto reply = mtpBuffer();
-	MTP_messages_dialogsSlice(MTP_int(0), MTP_vector<MTPDialog>(),
-							  MTP_vector<MTPMessage>(), MTP_vector<MTPChat>(),
-							  MTP_vector<MTPUser>())
+	MTP_messages_dialogsSlice(
+		MTP_int(1),
+		MTP_vector<MTPDialog>(
+			{MTP_dialog(MTP_flags(0), peerToMTP(peerId), MTP_int(kMessageCount),
+						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
+		MTP_vector<MTPMessage>(std::move(messages)),
+		MTP_vector<MTPChat>({MTP_chat(
+			MTP_flags(MTPDchat::Flags()), MTP_long(chatId.bare),
+			MTP_string(u"Cache dialog regression"_q), MTP_chatPhotoEmpty(),
+			MTP_int(2), MTP_int(1), MTP_int(1), MTPInputChannel(),
+			MTPChatAdminRights(), MTPChatBannedRights())}),
+		MTP_vector<MTPUser>({RegressionUser(UserId(1), true, QString())}))
 		.write(reply);
 	const auto response = MTP::Response{
 		.reply = std::move(reply),
@@ -9967,10 +10020,31 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto done = std::move(request->callbacks.done);
 	result.responseParsed = done && done(response);
 	result.handlerNanoseconds = timer.nsecsElapsed();
+	if (const auto chat = data.chatLoaded(chatId)) {
+		result.processedChats = (chat->name() == u"Cache dialog regression"_q);
+	}
+	const auto history = data.history(peerId);
+	result.processedDialogs
+		= history->folderKnown()
+		  && (history->unreadCount() == kDialogUnreadCount)
+		  && (history->lastMessage()
+			  == data.message(peerId, MsgId(kMessageCount)));
+	for (auto i = 1; i <= kMessageCount; ++i) {
+		if (const auto item = data.message(peerId, MsgId(i))) {
+			++result.processedMessages;
+			if (item->media() && item->media()->document()) {
+				++result.processedDocuments;
+			}
+		}
+	}
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
 #endif
 	result.passed = (result.requests == 1) && result.responseParsed
+					&& (result.processedChats == 1)
+					&& (result.processedDialogs == 1)
+					&& (result.processedMessages == kMessageCount)
+					&& (result.processedDocuments == kMessageCount)
 					&& (result.cacheWalks == 2)
 					&& (result.handlerNanoseconds < kMaxHandlerNanoseconds);
 	return result;
@@ -10225,9 +10299,14 @@ void RunAuthenticatedCacheSymlinkCases(
 					stderr,
 					"First messages.getDialogs handler latency regression: "
 					"seeded_directories=125 seeded_files=169 requests=%d "
-					"parsed=%d cache_walks=%d max_handler_ns=%lld "
+					"parsed=%d chats=%d dialogs=%d messages=%d documents=%d "
+					"cache_walks=%d max_handler_ns=%lld "
 					"under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
+					dialogsHandler.processedChats,
+					dialogsHandler.processedDialogs,
+					dialogsHandler.processedMessages,
+					dialogsHandler.processedDocuments,
 					dialogsHandler.cacheWalks,
 					static_cast<long long>(dialogsHandler.handlerNanoseconds),
 					(dialogsHandler.handlerNanoseconds >= 0
