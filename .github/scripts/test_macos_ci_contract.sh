@@ -285,6 +285,49 @@ require_step_script "$mac_workflow" macos 'Verify Mac App Store variant is unsup
 require_step_script "$mac_workflow" macos 'Launch app smoke test.' '$TESTED_SHA'
 require_step_script "$mac_workflow" macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
 require_step_script "$mac_workflow" macos 'Full chat info session regression.' '$TESTED_SHA'
+media_permissions_step='Grant test app camera and microphone access.'
+require_step_field "$mac_workflow" macos "$media_permissions_step" '.if' \
+  "env.ONLY_CACHE == 'false'"
+require_step_script "$mac_workflow" macos "$media_permissions_step" \
+  'io.teagram.desktop' \
+  'System Integrity Protection status: disabled.' \
+  '/Library/Application Support/com.apple.TCC/TCC.db' \
+  '$HOME/Library/Application Support/com.apple.TCC/TCC.db' \
+  'kTCCServiceMicrophone' 'kTCCServiceCamera' \
+  'INSERT OR REPLACE INTO access VALUES' \
+  'sudo sqlite3' 'sqlite3' 'SELECT auth_value FROM access' \
+  'Verified TCC grant:'
+step_names=()
+while IFS= read -r step_name; do
+  step_names+=("$step_name")
+done < <(yq -r '.jobs.macos.steps[].name' "$mac_workflow")
+find_step_index() {
+  local wanted="$1"
+  for index in "${!step_names[@]}"; do
+    if [[ "${step_names[$index]}" == "$wanted" ]]; then
+      printf '%s\n' "$index"
+      return 0
+    fi
+  done
+  return 1
+}
+if ! media_permissions_index="$(find_step_index "$media_permissions_step")"; then
+  contract_fail "$mac_workflow is missing $media_permissions_step."
+fi
+if ! launch_smoke_index="$(find_step_index 'Launch app smoke test.')"; then
+  contract_fail "$mac_workflow is missing the launch smoke test."
+fi
+if ! profile_ipc_index="$(find_step_index 'Run protected profile and IPC integration tests.')"; then
+  contract_fail "$mac_workflow is missing profile and IPC integration tests."
+fi
+if ! lifecycle_index="$(find_step_index 'Full chat info session regression.')"; then
+  contract_fail "$mac_workflow is missing the full chat info session regression."
+fi
+if (( media_permissions_index >= launch_smoke_index \
+    || media_permissions_index >= profile_ipc_index \
+    || media_permissions_index >= lifecycle_index )); then
+  contract_fail "$mac_workflow must seed TCC before any app launch or lifecycle test."
+fi
 require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.' \
   'oras login ghcr.io' '--password-stdin'
 require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
