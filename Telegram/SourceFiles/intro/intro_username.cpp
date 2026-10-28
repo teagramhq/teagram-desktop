@@ -239,7 +239,7 @@ void UsernameWidget::submit() {
 		return;
 	}
 	const auto policy
-		= Data::details::UsernamePolicyFromAppConfig(account().appConfig());
+		= ::Data::details::UsernamePolicyFromAppConfig(account().appConfig());
 	if (!IsValidUsername(normalized, policy)) {
 		fail(tr::lng_intro_username_bad(tr::now));
 		return;
