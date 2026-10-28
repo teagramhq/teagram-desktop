@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mime_type.h"
 #include "data/data_ai_compose_tones.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "history/view/controls/history_view_compose_ai_button.h"
 #include "lang/lang_keys.h"
@@ -53,7 +54,8 @@ bool HasEnoughLinesForAi(
 		return false;
 	}
 	const auto &text = field->getLastText();
-	if (text.size() > Data::PremiumLimits(session).messageLengthCurrent()) {
+	if (Data::details::ExceedsInputLengthLimit(
+			text, Data::PremiumLimits(session).messageLengthCurrent())) {
 		return false;
 	}
 	for (const auto &ch : text) {
@@ -101,8 +103,12 @@ PreparedList PrepareTextAsFile(const QString &text) {
 constexpr auto kSendAsFilePasteMultiplier = 8;
 
 int SendAsFilePasteThreshold(not_null<Main::Session*> session) {
-	return kSendAsFilePasteMultiplier
-		* Data::PremiumLimits(session).messageLengthCurrent();
+	const auto limit = Data::PremiumLimits(session).messageLengthCurrent();
+	return (limit > 0
+			&& limit <= std::numeric_limits<int>::max()
+							/ kSendAsFilePasteMultiplier)
+			   ? (kSendAsFilePasteMultiplier * limit)
+			   : std::numeric_limits<int>::max();
 }
 
 LargeTextPasteResult CheckLargeTextPaste(

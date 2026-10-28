@@ -125,7 +125,7 @@ void CreateManagedBotBox(
 		initialUsername,
 		QString());
 	username->setPlaceholderHidden(true);
-	username->setMaxLength(Ui::EditPeer::kMaxUsernameLength);
+	username->setMaxLength(Ui::EditPeer::kMaxBotUsernameLength);
 	usernameWrap->widthValue() | rpl::on_next([=](int width) {
 		username->resizeToWidth(width);
 	}, username->lifetime());
@@ -207,8 +207,8 @@ void CreateManagedBotBox(
 		const auto text = username->getLastText();
 		auto fitted = text;
 		while (!fitted.isEmpty()
-			&& (int(fitted.size()) + int(missingSuffix(fitted).size())
-				> Ui::EditPeer::kMaxUsernameLength)) {
+			   && (int(fitted.size()) + int(missingSuffix(fitted).size())
+				   > Ui::EditPeer::kMaxBotUsernameLength)) {
 			fitted.chop(1);
 		}
 		if (fitted != text) {

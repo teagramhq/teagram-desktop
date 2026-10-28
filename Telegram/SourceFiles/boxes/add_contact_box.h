@@ -134,6 +134,7 @@ private:
 		const std::vector<not_null<PeerData*>> &users);
 	void submitName();
 	void submit();
+	[[nodiscard]] bool validateTitle() const;
 	void checkInviteLink();
 	void channelReady();
 

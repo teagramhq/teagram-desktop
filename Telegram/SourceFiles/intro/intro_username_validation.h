@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/basic_types.h"
+#include "data/data_username_policy.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QString>
@@ -24,7 +25,6 @@ enum class SignupNameValidation {
 enum class SignupPasswordValidation {
 	Valid,
 	Empty,
-	TooShort,
 	RepeatEmpty,
 	Mismatch,
 };
@@ -54,6 +54,9 @@ enum class SigninPasswordDataFailure {
 	Other,
 };
 
+using ::Data::details::IsValidUsername;
+using ::Data::details::UsernamePolicy;
+
 // Forgiving normalisation of what the user typed: trim surrounding
 // whitespace and strip a single leading '@' (people type "@alice").
 // Neither is a keystroke filter — the field accepts anything and this
@@ -64,11 +67,6 @@ enum class SigninPasswordDataFailure {
 // anyway; lowercasing here keeps the hash cache keyed consistently.
 // What the user typed stays on screen.
 [[nodiscard]] QString ToWireUsername(const QString &normalized);
-
-// The server's own username pattern: 2 to 32 characters, ASCII letters,
-// digits and underscore, starting with a letter. Checked before any
-// network call — sendCode is limited to 10 per hour per IP.
-[[nodiscard]] bool IsValidUsername(const QString &normalized);
 
 // Which server a phone_code_hash came from: address, port and the
 // fingerprint of the pinned key, the same triple the same-account
@@ -127,8 +125,8 @@ struct UsernameCodeCache {
 // A type with no trailing digits yields 0.
 [[nodiscard]] int FloodWaitSeconds(const QString &errorType);
 
-[[nodiscard]] SignupNameValidation ValidateSignupName(
-	const QString &input);
+[[nodiscard]] SignupNameValidation ValidateSignupName(const QString &input,
+													  int maxLength);
 [[nodiscard]] QString NormalizeSignupNameInput(const QString &input);
 
 [[nodiscard]] SignupPasswordValidation ValidateSignupPassword(

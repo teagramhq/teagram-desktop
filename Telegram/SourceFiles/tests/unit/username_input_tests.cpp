@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_peer_common.h"
+#include "data/data_username_policy.h"
 #include "tests/unit/unit_test.h"
 
 #include "styles/style_widgets.h"
@@ -28,6 +29,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <vector>
 
 namespace {
+
+const auto kPublicUsernamePolicy = Data::details::UsernamePolicy{
+	.minLength = 2,
+	.maxLength = 32,
+	.pattern = u"^[A-Za-z][A-Za-z0-9_]{1,31}$"_q,
+};
 
 class UsernameInputIntegration final : public Ui::Integration {
   public:
@@ -143,6 +150,37 @@ TEST_CASE(UsernameInputStandaloneEventDispatch) {
 	}
 }
 
+TEST_CASE(UsernameInputUsesOptionalUnicodeScalarMaximum) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto fontResource = QResource(u":/gui/fonts/OpenSans-Regular.ttf"_q);
+	CHECK(fontResource.isValid());
+	if (!fontResource.isValid()) {
+		return;
+	}
+
+	auto input
+		= Ui::UsernameInput(nullptr, st::defaultInputField,
+							rpl::single(u"@username"_q), QString(), QString());
+	const auto longValue = QString(40, QChar('x'));
+	input.setTextFromAccessibility(longValue, longValue.size());
+	CHECK_EQ(input.getLastText(), longValue);
+
+	auto limited
+		= Ui::UsernameInput(nullptr, st::defaultInputField,
+							rpl::single(u"@username"_q), QString(), QString());
+	limited.setMaxLength(2);
+	const auto astral = QString::fromUtf8("\xF0\x9F\x98\x80").repeated(3);
+	limited.setTextFromAccessibility(astral, astral.size());
+	CHECK_EQ(limited.getLastText(), astral.left(4));
+}
+
 TEST_CASE(ReadOnlyUsernameInputRejectsWordDeletion) {
 	const auto application
 		= qobject_cast<QApplication *>(QCoreApplication::instance());
@@ -191,8 +229,8 @@ TEST_CASE(ReadOnlyUsernameInputRejectsWordDeletion) {
 			QObject::connect(
 				&input, &Ui::MaskedInputField::changed, &input, [&] {
 					const auto name = input.getLastText();
-					flow.inputChanged(
-						name, Ui::EditPeer::IsValidPublicUsername(name));
+					flow.inputChanged(name, Data::details::IsValidUsername(
+												name, kPublicUsernamePolicy));
 					checkStarted = flow.checkAccount(
 						name, [&](const QString &, auto, auto) { ++requests; },
 						[](bool) {}, [](const QString &, auto, bool) {});

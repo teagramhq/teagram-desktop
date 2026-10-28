@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
+#include "data/data_username_policy.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "export/export_controller.h"
@@ -13476,11 +13477,16 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	input.setReadOnly(true);
 	Ui::EditPeer::UsernameEditorFlow flow;
 	flow.inputChanged(u"operator"_q, true);
+	const auto policy = Data::details::UsernamePolicy{
+		.minLength = 2,
+		.maxLength = 32,
+		.pattern = u"^[A-Za-z][A-Za-z0-9_]{1,31}$"_q,
+	};
 	auto requests = 0;
 	auto checkStarted = false;
 	QObject::connect(&input, &Ui::MaskedInputField::changed, &input, [&] {
 		const auto name = input.getLastText();
-		flow.inputChanged(name, Ui::EditPeer::IsValidPublicUsername(name));
+		flow.inputChanged(name, Data::details::IsValidUsername(name, policy));
 		checkStarted = flow.checkAccount(
 			name, [&](const QString &, auto, auto) { ++requests; }, [](bool) {},
 			[](const QString &, auto, bool) {});

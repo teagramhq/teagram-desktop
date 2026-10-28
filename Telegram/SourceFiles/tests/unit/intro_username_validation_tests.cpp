@@ -7,15 +7,46 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "data/data_input_policy.h"
 #include "intro/intro_username_validation.h"
+
+#include <limits>
+#include <type_traits>
 
 namespace {
 
 using namespace Intro::details;
 
+const auto kPublishedUsernamePolicy = UsernamePolicy{
+	.minLength = 2,
+	.maxLength = 32,
+	.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+};
+
 QString AstralString(int count) {
 	return QString::fromUtf8("\xF0\x9F\x98\x80").repeated(count);
 }
+
+struct TestUsernameAppConfig {
+	int minLength = 0;
+	int maxLength = 0;
+	QString pattern;
+
+	template <typename Type> Type get(const QString &key, Type fallback) const {
+		if constexpr (std::is_same_v<Type, int>) {
+			if (key == u"username_min_length"_q) {
+				return minLength;
+			} else if (key == u"username_max_length"_q) {
+				return maxLength;
+			}
+		} else if constexpr (std::is_same_v<Type, QString>) {
+			if (key == u"username_pattern"_q) {
+				return pattern;
+			}
+		}
+		return fallback;
+	}
+};
 
 TEST_CASE(NormalizeTrimsWhitespace) {
 	CHECK_EQ(NormalizeUsernameInput(u"  alice  "_q), u"alice"_q);
@@ -31,23 +62,115 @@ TEST_CASE(NormalizeStripsOneLeadingAt) {
 }
 
 TEST_CASE(ValidUsernamesAtBoundaries) {
-	CHECK(IsValidUsername(u"Ab"_q)); // 2 chars, the shortest.
-	CHECK(IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz012345"_q)); // 32 chars, the longest.
-	CHECK(IsValidUsername(u"abcd"_q));
-	CHECK(!IsValidUsername(u"a"_q)); // 1 char, one too short.
-	CHECK(!IsValidUsername(
-		u"abcdefghijklmnopqrstuvwxyz0123456"_q)); // 33 chars.
+	CHECK(IsValidUsername(u"Ab"_q,
+						  kPublishedUsernamePolicy)); // 2 chars, the shortest.
+	CHECK(IsValidUsername(u"abcdefghijklmnopqrstuvwxyz012345"_q,
+						  kPublishedUsernamePolicy)); // 32 chars, the longest.
+	CHECK(IsValidUsername(u"abcd"_q, kPublishedUsernamePolicy));
+	CHECK(!IsValidUsername(u"a"_q,
+						   kPublishedUsernamePolicy)); // 1 char, one too short.
+	CHECK(!IsValidUsername(u"abcdefghijklmnopqrstuvwxyz0123456"_q,
+						   kPublishedUsernamePolicy)); // 33 chars.
 }
 
 TEST_CASE(UsernamesRejectedByPattern) {
-	CHECK(!IsValidUsername(u"1alice"_q)); // Must start with a letter.
-	CHECK(!IsValidUsername(u"_alice"_q));
-	CHECK(!IsValidUsername(u"al-ice"_q)); // Dash outside the class.
-	CHECK(!IsValidUsername(u"al ice"_q)); // Inner space is not trimmed away.
-	CHECK(!IsValidUsername(u"alice!"_q));
-	CHECK(!IsValidUsername(QString())); // Empty is its own message.
-	CHECK(!IsValidUsername(u"ali\u0441e"_q)); // Non-ASCII inside.
+	CHECK(!IsValidUsername(
+		u"1alice"_q,
+		kPublishedUsernamePolicy)); // Must start with a letter.
+	CHECK(!IsValidUsername(u"_alice"_q, kPublishedUsernamePolicy));
+	CHECK(
+		!IsValidUsername(u"al-ice"_q,
+						 kPublishedUsernamePolicy)); // Dash outside the class.
+	CHECK(!IsValidUsername(
+		u"al ice"_q,
+		kPublishedUsernamePolicy)); // Inner space is not trimmed away.
+	CHECK(!IsValidUsername(u"alice!"_q, kPublishedUsernamePolicy));
+	CHECK(!IsValidUsername(
+		QString(),
+		kPublishedUsernamePolicy)); // Empty is its own message.
+	CHECK(!IsValidUsername(u"ali\u0441e"_q,
+						   kPublishedUsernamePolicy)); // Non-ASCII inside.
+}
+
+TEST_CASE(MissingUsernamePolicyLeavesValidationToServer) {
+	const auto policy = UsernamePolicy();
+	CHECK(IsValidUsername(u"a"_q, policy));
+	CHECK(IsValidUsername(u"not a username"_q, policy));
+	CHECK(!IsValidUsername(QString(), policy));
+}
+
+TEST_CASE(UsernamePolicyReadsAppConfigValues) {
+	const auto config = TestUsernameAppConfig{
+		.minLength = 3,
+		.maxLength = 12,
+		.pattern = u"^[a-z][a-z0-9_]+$"_q,
+	};
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(config);
+	CHECK_EQ(policy.minLength, 3);
+	CHECK_EQ(policy.maxLength, 12);
+	CHECK_EQ(policy.pattern, u"^[a-z][a-z0-9_]+$"_q);
+	CHECK(!Data::details::IsValidUsername(u"ab"_q, policy));
+	CHECK(Data::details::IsValidUsername(u"abc"_q, policy));
+}
+
+TEST_CASE(UsernamePolicyUsesPublishedValues) {
+	CHECK(IsValidUsername(u"adam"_q, kPublishedUsernamePolicy));
+
+	const auto minFive = UsernamePolicy{
+		.minLength = 5,
+		.maxLength = 32,
+		.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam"_q, minFive));
+	CHECK(IsValidUsername(u"adams"_q, minFive));
+
+	const auto limited = UsernamePolicy{
+		.minLength = 2,
+		.maxLength = 4,
+		.pattern = u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam5"_q, limited));
+	CHECK(IsValidUsername(u"adam"_q, limited));
+
+	const auto lettersOnly = UsernamePolicy{
+		.pattern = u"^[a-zA-Z]{2,32}$"_q,
+	};
+	CHECK(!IsValidUsername(u"adam_1"_q, lettersOnly));
+	CHECK(IsValidUsername(u"adam"_q, lettersOnly));
+}
+
+TEST_CASE(ServerTextLengthPolicyUsesPublishedBounds) {
+	CHECK(Data::details::IsWithinInputLengthPolicy(u"ab"_q, 2, 4));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(u"a"_q, 2, 4));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(u"abcde"_q, 2, 4));
+}
+
+TEST_CASE(MissingServerTextLengthPolicyLeavesValidationToServer) {
+	CHECK(Data::details::IsWithinInputLengthPolicy(u"any length"_q, 0, 0));
+	CHECK(Data::details::IsWithinInputLengthPolicy(QString(), 0, 0));
+	CHECK(!Data::details::ExceedsInputLengthLimit(1000, 0));
+	CHECK_EQ(Data::details::InputLengthLimitForSplitting(0),
+			 std::numeric_limits<int>::max());
+}
+
+TEST_CASE(ServerTextLengthPolicyCountsUnicodeScalars) {
+	const auto astral = QString::fromUtf8("\xF0\x9F\x98\x80").repeated(2);
+	CHECK(Data::details::IsWithinInputLengthPolicy(astral, 2, 2));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(astral + u"a"_q, 2, 2));
+	CHECK(!Data::details::ExceedsInputLengthLimit(astral, 2));
+	CHECK(Data::details::ExceedsInputLengthLimit(astral + u"a"_q, 2));
+	CHECK(!Data::details::ExceedsInputLengthLimit(
+		Data::details::UnicodeScalarCount(astral), 2));
+	CHECK(Data::details::ExceedsInputLengthLimit(
+		Data::details::UnicodeScalarCount(astral + u"a"_q), 2));
+}
+
+TEST_CASE(ServerDisplayNameLengthPolicyChecksFieldsIndividually) {
+	const auto first = QString(40, QChar('x'));
+	const auto last = QString(40, QChar('y'));
+	CHECK(Data::details::AreWithinInputLengthPolicy(first, last, 0, 64));
+	CHECK(!Data::details::IsWithinInputLengthPolicy(first + QChar(' ') + last,
+													0, 64));
 }
 
 TEST_CASE(WireFormIsLowercased) {
@@ -157,45 +280,46 @@ TEST_CASE(FloodWaitSecondsReadsDigitsFromTheEnd) {
 }
 
 TEST_CASE(SignupNameValidationTrimsAndCapsInput) {
-	CHECK(
-		ValidateSignupName(u"  Ada Lovelace  "_q)
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(QString(60, QChar('x')))
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(QString(61, QChar('x')))
-		== SignupNameValidation::TooLong);
-	CHECK(
-		ValidateSignupName(u" \t\n"_q)
-		== SignupNameValidation::Empty);
+	CHECK(ValidateSignupName(u"  Ada Lovelace  "_q, 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(60, QChar('x')), 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(61, QChar('x')), 60)
+		  == SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(u" \t\n"_q, 60) == SignupNameValidation::Empty);
 }
 
 TEST_CASE(SignupNameValidationDoesNotImposeCompositionRules) {
-	CHECK(
-		ValidateSignupName(u"  你好\u200f  "_q)
-		== SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(u"  你好\u200f  "_q, 64)
+		  == SignupNameValidation::Valid);
+}
+
+TEST_CASE(SignupNameValidationUsesServerDisplayNameLimit) {
+	CHECK(ValidateSignupName(QString(64, QChar('x')), 64)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(QString(65, QChar('x')), 64)
+		  == SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(QString(65, QChar('x')), 0)
+		  == SignupNameValidation::Valid);
 }
 
 TEST_CASE(SignupNameValidationCountsUnicodeScalars) {
-	CHECK(
-		ValidateSignupName(AstralString(60))
-		== SignupNameValidation::Valid);
-	CHECK(
-		ValidateSignupName(AstralString(61))
-		== SignupNameValidation::TooLong);
+	CHECK(ValidateSignupName(AstralString(60), 60)
+		  == SignupNameValidation::Valid);
+	CHECK(ValidateSignupName(AstralString(61), 60)
+		  == SignupNameValidation::TooLong);
 }
 
-TEST_CASE(SignupPasswordValidationReportsTheFirstFix) {
-	CHECK(
-		ValidateSignupPassword(QString(), QString())
-		== SignupPasswordValidation::Empty);
-	CHECK(
-		ValidateSignupPassword(u"short"_q, u"short"_q)
-		== SignupPasswordValidation::TooShort);
-	CHECK(
-		ValidateSignupPassword(u"long enough"_q, QString())
-		== SignupPasswordValidation::RepeatEmpty);
+TEST_CASE(SignupPasswordValidationAllowsShortPasswords) {
+	CHECK(ValidateSignupPassword(QString(), QString())
+		  == SignupPasswordValidation::Empty);
+	CHECK(ValidateSignupPassword(u"short"_q, u"short"_q)
+		  == SignupPasswordValidation::Valid);
+	const auto longPassword = QString(300, QChar('x'));
+	CHECK(ValidateSignupPassword(longPassword, longPassword)
+		  == SignupPasswordValidation::Valid);
+	CHECK(ValidateSignupPassword(u"long enough"_q, QString())
+		  == SignupPasswordValidation::RepeatEmpty);
 	CHECK(
 		ValidateSignupPassword(u"long enough"_q, u"different"_q)
 		== SignupPasswordValidation::Mismatch);
@@ -204,13 +328,11 @@ TEST_CASE(SignupPasswordValidationReportsTheFirstFix) {
 		== SignupPasswordValidation::Valid);
 }
 
-TEST_CASE(SignupPasswordValidationCountsUnicodeScalars) {
-	CHECK(
-		ValidateSignupPassword(AstralString(7), AstralString(7))
-		== SignupPasswordValidation::TooShort);
-	CHECK(
-		ValidateSignupPassword(AstralString(8), AstralString(8))
-		== SignupPasswordValidation::Valid);
+TEST_CASE(SignupPasswordValidationHasNoUnicodeLengthMinimum) {
+	CHECK(ValidateSignupPassword(AstralString(1), AstralString(1))
+		  == SignupPasswordValidation::Valid);
+	CHECK(ValidateSignupPassword(AstralString(8), AstralString(8))
+		  == SignupPasswordValidation::Valid);
 }
 
 TEST_CASE(SignupPasswordUpdateKeepsFloodVisible) {

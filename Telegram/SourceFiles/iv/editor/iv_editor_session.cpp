@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -4542,11 +4543,12 @@ void OfferRichMessagePremiumChoice(
 		return;
 	}
 	const auto flattened = FlattenRichPageToSimpleText(page);
-	const auto lengthLimit = ::Data::PremiumLimits(session)
-		.messageLengthCurrent();
-	const auto sendable = (CountRichPageMedia(page) == 0)
-		&& !flattened.text.isEmpty()
-		&& (int(flattened.text.size()) <= lengthLimit);
+	const auto lengthLimit
+		= ::Data::PremiumLimits(session).messageLengthCurrent();
+	const auto sendable
+		= (CountRichPageMedia(page) == 0) && !flattened.text.isEmpty()
+		  && !::Data::details::ExceedsInputLengthLimit(flattened.text,
+													   lengthLimit);
 	if (!sendable) {
 		ShowRichMessagesPremiumToast(std::move(show));
 		return;
