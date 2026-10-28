@@ -9996,8 +9996,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	auto reply = mtpBuffer();
-	MTP_messages_dialogsSlice(
-		MTP_int(1),
+	MTP_messages_dialogs(
 		MTP_vector<MTPDialog>(
 			{MTP_dialog(MTP_flags(0), peerToMTP(peerId), MTP_int(kMessageCount),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
@@ -10210,13 +10209,18 @@ void RunAuthenticatedCacheSymlinkCases(
 									 now - lastMainThreadHeartbeatNanoseconds);
 								 lastMainThreadHeartbeatNanoseconds = now;
 							 });
-			mainThreadHeartbeat.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
+			// Account construction is synchronous setup. Start
+			// measuring once the cache-open check has been queued,
+			// and include its completion below.
+			mainThreadHeartbeatClock.start();
+			lastMainThreadHeartbeatNanoseconds = 0;
+			mainThreadHeartbeat.start();
 			auto &data = guarded->session().data();
 			const auto getAllowedCache = [&] {
 				if (mediaCache) {

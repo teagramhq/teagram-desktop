@@ -1146,17 +1146,16 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 }
 
 [[nodiscard]] bool
-CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
-	qint32 version = 0;
-	if (!CachePathVersionMarkerStillValid(identity, &version)
-		|| (identity.components.empty())) {
+CachePathActiveVersionDirectoryStillValid(const CachePathIdentity &identity) {
+	if (identity.components.empty()) {
 		return false;
 	}
 	if (!identity.rootDescriptor) {
-		return identity.activeVersionDirectory.path.isEmpty();
+		return (identity.version == 0) && (identity.versionName == u"0"_q)
+			   && identity.activeVersionDirectory.path.isEmpty();
 	}
 	if (identity.activeVersionDirectory.path.isEmpty()) {
-		if ((version != 0) || (identity.versionName != u"0"_q)
+		if ((identity.version != 0) || (identity.versionName != u"0"_q)
 			|| !identity.activeVersionName.isEmpty()) {
 			return false;
 		}
@@ -1169,13 +1168,8 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 		|| !identity.activeVersionDescriptor) {
 		return false;
 	}
-	struct stat activeDescriptor = {};
-	if ((::fstat(identity.activeVersionDescriptor->value, &activeDescriptor)
-		 != 0)
-		|| !SameCachePathTargetStat(activeDescriptor,
-									identity.activeVersionDirectory)) {
-		return false;
-	}
+	// The descriptor is immutable while this identity is alive. Checking the
+	// directory entry is enough to detect replacement or a symlink swap.
 	auto current = CachePathComponentIdentity{
 		.path = identity.activeVersionDirectory.path};
 	auto missing = false;
@@ -1186,11 +1180,32 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 										identity.activeVersionDirectory);
 }
 
+[[nodiscard]] bool
+CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
+	qint32 version = 0;
+	return CachePathVersionMarkerStillValid(identity, &version)
+		   && CachePathActiveVersionDirectoryStillValid(identity)
+		   && (version == identity.version);
+}
+
 [[nodiscard]] bool CachePathIdentityStillValid(const QString &path,
 											   const char *callsite,
 											   CachePathIdentity *identity) {
 	if (!CachePathRootStillValid(path, identity)
 		|| !CachePathActiveVersionStillValid(*identity)) {
+		ReportCachePathIdentityRefusal(callsite);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool
+CachePathAccessIdentityStillValid(const QString &path, const char *callsite,
+								  CachePathIdentity *identity) {
+	// The marker is checked when opening and before clearing; ordinary cache
+	// I/O remains on the already-open active version directory.
+	if (!CachePathRootStillValid(path, identity)
+		|| !CachePathActiveVersionDirectoryStillValid(*identity)) {
 		ReportCachePathIdentityRefusal(callsite);
 		return false;
 	}
@@ -1292,6 +1307,17 @@ bool CheckCachePathIdentity(const QString &path, const char *callsite,
 	}
 #endif // TDESKTOP_TEAGRAM
 	return CachePathIdentityStillValid(path, callsite, identity);
+}
+
+bool CheckCachePathAccessIdentity(const QString &path, const char *callsite,
+								  CachePathIdentity *identity) {
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	return identity
+		   && CachePathAccessIdentityStillValid(path, callsite, identity);
 }
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)

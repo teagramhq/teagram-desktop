@@ -74,6 +74,9 @@ CaptureCachePathActiveVersionIdentity(const QString &path, const char *callsite,
 [[nodiscard]] bool CheckCachePathIdentity(const QString &path,
 										  const char *callsite,
 										  CachePathIdentity *identity);
+[[nodiscard]] bool CheckCachePathAccessIdentity(const QString &path,
+												const char *callsite,
+												CachePathIdentity *identity);
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 void ResetCachePathWalkCountForTesting();
@@ -126,6 +129,11 @@ CaptureCachePathActiveVersionIdentity(const QString &, const char *,
 }
 [[nodiscard]] inline bool CheckCachePathIdentity(const QString &, const char *,
 												 CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool CheckCachePathAccessIdentity(const QString &,
+													   const char *,
+													   CachePathIdentity *) {
 	return true;
 }
 [[nodiscard]] inline bool CheckPair(Operation, const QString &, const QString &,

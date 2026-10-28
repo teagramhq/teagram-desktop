@@ -2028,7 +2028,7 @@ Storage::Cache::Database *Session::cacheIfAllowed() {
 	}
 #endif
 	if (_cacheAllowed
-		&& !Core::MacProtectedPath::CheckCachePathIdentity(
+		&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
 			_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
 		_cacheAllowed = false;
 		_cache->close();
@@ -2047,7 +2047,7 @@ Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 	}
 #endif
 	if (_bigFileCacheAllowed
-		&& !Core::MacProtectedPath::CheckCachePathIdentity(
+		&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
 			_bigFileCachePath, "Data::Session::cacheBigFile.access",
 			&_bigFileCacheIdentity)) {
 		_bigFileCacheAllowed = false;
