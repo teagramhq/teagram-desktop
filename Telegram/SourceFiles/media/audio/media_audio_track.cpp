@@ -252,13 +252,11 @@ Instance::Instance(bool initializeDeviceResolvers) {
 	if (initializeDeviceResolvers) {
 		const auto devices = &Core::App().mediaDevices();
 		_playbackDeviceId = std::make_unique<Webrtc::DeviceResolver>(
-			devices,
-			Webrtc::DeviceType::Playback,
+			devices, Webrtc::DeviceType::Playback,
 			Webrtc::DeviceIdOrDefault(
 				Core::App().settings().playbackDeviceIdValue()));
 		_captureDeviceId = std::make_unique<Webrtc::DeviceResolver>(
-			devices,
-			Webrtc::DeviceType::Capture,
+			devices, Webrtc::DeviceType::Capture,
 			Webrtc::DeviceIdOrDefault(
 				Core::App().settings().captureDeviceIdValue()));
 	}
@@ -282,31 +280,31 @@ Instance::Instance(bool initializeDeviceResolvers) {
 	});
 
 	if (_playbackDeviceId) {
-		_playbackDeviceId->changes(
-		) | rpl::on_next([=](Webrtc::DeviceResolvedId id) {
-			if (Player::internal::DetachIfDeviceChanged(this, id)) {
-				_detachFromDeviceForce = false;
-			}
-		}, _lifetime);
+		_playbackDeviceId->changes()
+			| rpl::on_next(
+				[=](Webrtc::DeviceResolvedId id) {
+					if (Player::internal::DetachIfDeviceChanged(this, id)) {
+						_detachFromDeviceForce = false;
+					}
+				},
+				_lifetime);
 	}
 }
 
 Webrtc::DeviceResolvedId Instance::playbackDeviceId() const {
-	return _playbackDeviceId
-		? _playbackDeviceId->threadSafeCurrent()
-		: Webrtc::DeviceResolvedId{
-			.type = Webrtc::DeviceType::Playback,
-			.computedFromDefault = true,
-		};
+	return _playbackDeviceId ? _playbackDeviceId->threadSafeCurrent()
+							 : Webrtc::DeviceResolvedId{
+								   .type = Webrtc::DeviceType::Playback,
+								   .computedFromDefault = true,
+							   };
 }
 
 Webrtc::DeviceResolvedId Instance::captureDeviceId() const {
-	return _captureDeviceId
-		? _captureDeviceId->current()
-		: Webrtc::DeviceResolvedId{
-			.type = Webrtc::DeviceType::Capture,
-			.computedFromDefault = true,
-		};
+	return _captureDeviceId ? _captureDeviceId->current()
+							: Webrtc::DeviceResolvedId{
+								  .type = Webrtc::DeviceType::Capture,
+								  .computedFromDefault = true,
+							  };
 }
 
 std::unique_ptr<Track> Instance::createTrack() {

@@ -168,30 +168,28 @@ struct Application::Private {
 };
 
 Application::Application()
-: QObject()
-, _private(std::make_unique<Private>())
-, _platformIntegration(Platform::Integration::Create())
-, _batterySaving(std::make_unique<base::BatterySaving>())
-, _databases(std::make_unique<Storage::Databases>())
-, _animationsManager(std::make_unique<Ui::Animations::Manager>())
-, _clearEmojiImageLoaderTimer([=] { clearEmojiSourceImages(); })
-, _audio(std::make_unique<Media::Audio::Instance>(
-	!qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-	&& !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")))
-, _fallbackProductionConfig(
-	std::make_unique<MTP::Config>(MTP::Environment::Production))
-, _downloadManager(std::make_unique<Data::DownloadManager>())
-, _domain(std::make_unique<Main::Domain>(cDataFile()))
-, _exportManager(std::make_unique<Export::Manager>())
-, _calls(std::make_unique<Calls::Instance>())
-, _iv(std::make_unique<Iv::Instance>(
-	Ui::CreateChild<Iv::DelegateImpl>(this)))
-, _langpack(std::make_unique<Lang::Instance>())
-, _langCloudManager(std::make_unique<Lang::CloudManager>(langpack()))
-, _emojiKeywords(std::make_unique<ChatHelpers::EmojiKeywords>())
-, _tray(std::make_unique<Tray>())
-, _setupEmailLock(false)
-, _autoLockTimer([=] { checkAutoLock(); }) {
+	: QObject(), _private(std::make_unique<Private>()),
+	  _platformIntegration(Platform::Integration::Create()),
+	  _batterySaving(std::make_unique<base::BatterySaving>()),
+	  _databases(std::make_unique<Storage::Databases>()),
+	  _animationsManager(std::make_unique<Ui::Animations::Manager>()),
+	  _clearEmojiImageLoaderTimer([=] { clearEmojiSourceImages(); }),
+	  _audio(std::make_unique<Media::Audio::Instance>(
+		  !qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
+		  && !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION"))),
+	  _fallbackProductionConfig(
+		  std::make_unique<MTP::Config>(MTP::Environment::Production)),
+	  _downloadManager(std::make_unique<Data::DownloadManager>()),
+	  _domain(std::make_unique<Main::Domain>(cDataFile())),
+	  _exportManager(std::make_unique<Export::Manager>()),
+	  _calls(std::make_unique<Calls::Instance>()),
+	  _iv(std::make_unique<Iv::Instance>(
+		  Ui::CreateChild<Iv::DelegateImpl>(this))),
+	  _langpack(std::make_unique<Lang::Instance>()),
+	  _langCloudManager(std::make_unique<Lang::CloudManager>(langpack())),
+	  _emojiKeywords(std::make_unique<ChatHelpers::EmojiKeywords>()),
+	  _tray(std::make_unique<Tray>()), _setupEmailLock(false),
+	  _autoLockTimer([=] { checkAutoLock(); }) {
 	Ui::Integration::Set(&_private->uiIntegration);
 	_private->proxyRotation = std::make_unique<ProxyRotationManager>();
 
