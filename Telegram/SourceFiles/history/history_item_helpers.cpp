@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reactions.h"
 #include "data/data_poll.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
@@ -89,9 +90,11 @@ int ComputeSendingMessagesCount(
 		const auto messageLengthLimit = Data::PremiumLimits(
 			&history->session()
 		).messageLengthCurrent();
+		const auto splitLengthLimit
+			= Data::details::InputLengthLimitForSplitting(messageLengthLimit);
 		TextUtilities::PrepareForSending(left, prepareFlags);
 
-		while (TextUtilities::CutPart(sending, left, messageLengthLimit)) {
+		while (TextUtilities::CutPart(sending, left, splitLengthLimit)) {
 			++result;
 		}
 		if (!result) {
@@ -151,7 +154,10 @@ Data::SendError GetErrorForSending(
 				return tr::lng_slowmode_no_many(tr::now);
 			}
 		}
-		if (request.text && request.text->text.size() > messageLengthLimit) {
+		if (request.text
+			&& Data::details::ExceedsInputLengthLimit(
+				Data::details::UnicodeScalarCount(request.text->text),
+				messageLengthLimit)) {
 			return tr::lng_slowmode_too_long(tr::now);
 		} else if ((hasText || request.story) && count > 1) {
 			return tr::lng_slowmode_no_many(tr::now);

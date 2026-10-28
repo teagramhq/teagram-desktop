@@ -21,8 +21,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Ui {
 namespace {
 
-constexpr auto kMaxUsernameLength = 32;
-
 class UsernameInputAccessible final : public QAccessibleWidget,
 									  public QAccessibleTextInterface,
 									  public QAccessibleEditableTextInterface {
@@ -270,9 +268,22 @@ void UsernameInput::correctValue(const QString &was, int wasCursor,
 		}
 	}
 	len -= from;
-	const auto maxLength = (_maxLength > 0) ? _maxLength : kMaxUsernameLength;
-	if (len > maxLength) {
-		len = maxLength + (now.at(from) == '@' ? 1 : 0);
+	if (_maxLength > 0) {
+		auto allowed = (len > 0 && now.at(from) == '@') ? 1 : 0;
+		auto scalars = 0;
+		while (allowed < len && scalars < _maxLength) {
+			const auto &ch = now.at(from + allowed);
+			if (ch.isHighSurrogate() && (allowed + 1) < len
+				&& now.at(from + allowed + 1).isLowSurrogate()) {
+				allowed += 2;
+			} else {
+				++allowed;
+			}
+			++scalars;
+		}
+		if (allowed < len) {
+			len = allowed;
+		}
 	}
 	for (int32 to = from + len; to > from;) {
 		--to;

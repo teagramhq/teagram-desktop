@@ -1557,8 +1557,8 @@ void DoubledLimitsPreviewBox(
 			premium,
 		});
 	}
-	{
-		const auto premium = limits.aboutLengthPremium();
+	if (const auto premium = limits.aboutLengthPremium();
+		premium > limits.aboutLengthDefault()) {
 		entries.push_back({
 			tr::lng_premium_double_limits_subtitle_bio(),
 			tr::lng_premium_double_limits_about_bio(
@@ -1567,8 +1567,8 @@ void DoubledLimitsPreviewBox(
 			premium,
 		});
 	}
-	{
-		const auto premium = limits.captionLengthPremium();
+	if (const auto premium = limits.captionLengthPremium();
+		premium > limits.captionLengthDefault()) {
 		entries.push_back({
 			tr::lng_premium_double_limits_subtitle_captions(),
 			tr::lng_premium_double_limits_about_captions(

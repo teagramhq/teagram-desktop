@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_message_reactions.h"
 #include "data/data_peer_values.h"
+#include "data/data_input_policy.h"
 #include "data/data_premium_limits.h"
 #include "data/data_user.h"
 #include "history/admin_log/history_admin_log_section.h"
@@ -898,7 +899,6 @@ object_ptr<Ui::RpWidget> Controller::createTitleEdit() {
 				: tr::lng_dlg_new_channel_name)(),
 			_peer->name()),
 		st::editPeerTitleMargins);
-	result->entity()->setMaxLength(Ui::EditPeer::kMaxGroupChannelTitle);
 	result->entity()->setInstantReplaces(Ui::InstantReplaces::Default());
 	result->entity()->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue(),
@@ -1008,7 +1008,6 @@ object_ptr<Ui::RpWidget> Controller::createDescriptionEdit() {
 			tr::lng_create_group_description(),
 			_peer->about()),
 		st::editPeerDescriptionMargins);
-	result->entity()->setMaxLength(Ui::EditPeer::kMaxChannelDescription);
 	result->entity()->setInstantReplaces(Ui::InstantReplaces::Default());
 	result->entity()->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue(),
@@ -2509,7 +2508,21 @@ bool Controller::validateTitle(Saving &to) const {
 		return true;
 	}
 	const auto title = _controls.title->getLastText().trimmed();
-	if (title.isEmpty()) {
+	const auto &appConfig = _peer->session().appConfig();
+	const auto minLength
+		= _isBot ? 0
+				 : appConfig.get<int>(_peer->isBroadcast()
+										  ? u"channel_title_min_length"_q
+										  : u"group_title_min_length"_q,
+									  0);
+	const auto maxLength = appConfig.get<int>(
+		_isBot ? u"display_name_max_length"_q
+			   : (_peer->isBroadcast() ? u"channel_title_max_length"_q
+									   : u"group_title_max_length"_q),
+		0);
+	if (title.isEmpty()
+		|| !Data::details::IsWithinInputLengthPolicy(title, minLength,
+													 maxLength)) {
 		_controls.title->showError();
 		_box->scrollToWidget(_controls.title);
 		return false;
@@ -2523,6 +2536,18 @@ bool Controller::validateDescription(Saving &to) const {
 		return true;
 	}
 	to.description = _controls.description->getLastText().trimmed();
+	if (!_isBot) {
+		const auto maxLength = _peer->session().appConfig().get<int>(
+			_peer->isBroadcast() ? u"channel_about_max_length"_q
+								 : u"group_about_max_length"_q,
+			0);
+		if (!Data::details::IsWithinInputLengthPolicy(*to.description, 0,
+													  maxLength)) {
+			_controls.description->showError();
+			_box->scrollToWidget(_controls.description);
+			return false;
+		}
+	}
 	return true;
 }
 

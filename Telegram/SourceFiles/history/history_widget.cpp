@@ -103,6 +103,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reactions.h"
 #include "data/data_peer_values.h" // Data::AmPremiumValue.
 #include "data/data_premium_limits.h" // Data::PremiumLimits.
+#include "data/data_input_policy.h"
 #include "data/stickers/data_stickers.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "history/history.h"
@@ -5284,7 +5285,10 @@ void HistoryWidget::saveEditMessage(Api::SendOptions options) {
 		const auto maxTextSize = hasMediaWithCaption
 			? limits.captionLengthCurrent()
 			: limits.messageLengthCurrent();
-		const auto remove = _fieldCharsCountManager.count() - maxTextSize;
+		const auto remove
+			= (maxTextSize > 0)
+				  ? (_fieldCharsCountManager.count() - maxTextSize)
+				  : 0;
 		if (remove > 0) {
 			controller()->showToast(
 				tr::lng_edit_limit_reached(tr::now, lt_count, remove));
@@ -7096,10 +7100,10 @@ bool HistoryWidget::hasEnoughLinesForExpand() const {
 }
 
 bool HistoryWidget::textExceedsMaxSize() const {
-	return _history
-		&& !_voiceRecordBar->isActive()
-		&& (_field->getLastText().size()
-			> Data::PremiumLimits(&session()).messageLengthCurrent());
+	return _history && !_voiceRecordBar->isActive()
+		   && Data::details::ExceedsInputLengthLimit(
+			   Data::details::UnicodeScalarCount(_field->getLastText()),
+			   Data::PremiumLimits(&session()).messageLengthCurrent());
 }
 
 void HistoryWidget::updateAiButtonVisibility() {
@@ -10014,6 +10018,10 @@ void HistoryWidget::checkCharsLimitation() {
 	const auto maxTextSize = hasMediaWithCaption
 		? limits.captionLengthCurrent()
 		: limits.messageLengthCurrent();
+	if (maxTextSize <= 0) {
+		_charsLimitation = nullptr;
+		return;
+	}
 	const auto remove = _fieldCharsCountManager.count() - maxTextSize;
 	if (remove > 0) {
 		if (!_charsLimitation) {

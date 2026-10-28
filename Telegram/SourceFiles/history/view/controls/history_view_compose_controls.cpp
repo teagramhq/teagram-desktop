@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo_media.h"
 #include "data/data_poll.h"
 #include "data/data_premium_limits.h" // Data::PremiumLimits.
+#include "data/data_input_policy.h"
 #include "data/stickers/data_stickers.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/data_web_page.h"
@@ -4469,10 +4470,10 @@ bool ComposeControls::hasEnoughLinesForExpand() const {
 }
 
 bool ComposeControls::textExceedsMaxSize() const {
-	return _history
-		&& !_recording.current()
-		&& (_field->getLastText().size()
-			> Data::PremiumLimits(&session()).messageLengthCurrent());
+	return _history && !_recording.current()
+		   && Data::details::ExceedsInputLengthLimit(
+			   Data::details::UnicodeScalarCount(_field->getLastText()),
+			   Data::PremiumLimits(&session()).messageLengthCurrent());
 }
 
 bool ComposeControls::updateBotCommandShown() {
@@ -5325,6 +5326,10 @@ void ComposeControls::checkCharsLimitation() {
 	const auto maxTextSize = hasMediaWithCaption
 		? limits.captionLengthCurrent()
 		: limits.messageLengthCurrent();
+	if (maxTextSize <= 0) {
+		_charsLimitation = nullptr;
+		return;
+	}
 	const auto remove = Ui::ComputeFieldCharacterCount(_field)
 		- maxTextSize;
 	if (remove > 0) {

@@ -813,8 +813,10 @@ void ScheduledWidget::edit(
 		const auto maxTextSize = hasMediaWithCaption
 			? limits.captionLengthCurrent()
 			: limits.messageLengthCurrent();
-		const auto remove = _composeControls->fieldCharacterCount()
-			- maxTextSize;
+		const auto remove
+			= (maxTextSize > 0)
+				  ? (_composeControls->fieldCharacterCount() - maxTextSize)
+				  : 0;
 		if (remove > 0) {
 			controller()->showToast(
 				tr::lng_edit_limit_reached(tr::now, lt_count, remove));

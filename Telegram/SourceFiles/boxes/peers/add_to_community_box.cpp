@@ -18,9 +18,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
+#include "data/data_input_policy.h"
 #include "lang/lang_hardcoded.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "main/main_app_config.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/controls/userpic_button.h"
@@ -169,7 +171,6 @@ void CommunityIdentityBox::prepare() {
 		this,
 		st::defaultInputField,
 		tr::lng_community_create_name());
-	_title->setMaxLength(Ui::EditPeer::kMaxGroupChannelTitle);
 	_title->setInstantReplaces(Ui::InstantReplaces::Default());
 	_title->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue(),
@@ -237,7 +238,12 @@ void CommunityIdentityBox::paintEvent(QPaintEvent *e) {
 
 void CommunityIdentityBox::submit() {
 	const auto title = _title->getLastText().trimmed();
-	if (title.isEmpty()) {
+	const auto &appConfig = _navigation->session().appConfig();
+	const auto minLength = appConfig.get<int>(u"group_title_min_length"_q, 0);
+	const auto maxLength = appConfig.get<int>(u"group_title_max_length"_q, 0);
+	if (title.isEmpty()
+		|| !Data::details::IsWithinInputLengthPolicy(title, minLength,
+													 maxLength)) {
 		_title->setFocus();
 		_title->showError();
 		return;

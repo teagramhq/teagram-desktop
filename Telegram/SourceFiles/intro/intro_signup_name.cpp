@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_signup_password.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
+#include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "lang/lang_keys.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
@@ -35,10 +37,6 @@ SignUpNameWidget::SignUpNameWidget(
 		getData()->phone));
 	setErrorCentered(false);
 
-	// InputField counts UTF-16 code units. Leave one scalar beyond the
-	// accepted limit so submit() can show the localized length error instead
-	// of truncating it away, including for supplementary characters.
-	_name->setMaxLength(122);
 	_name->setAccessibleName(tr::lng_intro_signup_name_ph(tr::now));
 	_name->setAccessibleDescription(tr::lng_intro_signup_note(tr::now));
 	_note->resizeToWidth(st::introDescription.minWidth);
@@ -123,7 +121,9 @@ void SignUpNameWidget::showNameError(const QString &text) {
 }
 
 void SignUpNameWidget::submit() {
-	switch (ValidateSignupName(_name->getLastText())) {
+	const auto maxLength
+		= account().appConfig().get<int>(u"display_name_max_length"_q, 0);
+	switch (ValidateSignupName(_name->getLastText(), maxLength)) {
 	case SignupNameValidation::Empty:
 		showNameError(tr::lng_intro_signup_name_empty(tr::now));
 		return;

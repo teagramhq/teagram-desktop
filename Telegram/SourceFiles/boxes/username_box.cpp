@@ -13,7 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "data/data_username_policy.h"
 #include "lang/lang_keys.h"
+#include "main/main_app_config.h"
 #include "main/main_app_config_values.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
@@ -70,6 +72,7 @@ private:
 
 	const not_null<PeerData*> _peer;
 	const not_null<Main::Session*> _session;
+	const Data::details::UsernamePolicy _usernamePolicy;
 	const style::margins &_padding;
 	MTP::Sender _api;
 
@@ -84,28 +87,23 @@ private:
 
 	rpl::event_stream<> _saved;
 	rpl::event_stream<UsernameCheckInfo> _checkInfoChanged;
-
 };
 
-UsernameEditor::UsernameEditor(
-	not_null<Ui::RpWidget*>,
-	not_null<PeerData*> peer)
-: _peer(peer)
-, _session(&peer->session())
-, _padding(st::usernamePadding)
-, _api(&_session->mtp())
-, _username(
-	this,
-	st::defaultInputField,
-	rpl::single(u"@username"_q),
-	editableUsername(),
-	QString())
-, _checkTimer([=] { check(); }) {
+UsernameEditor::UsernameEditor(not_null<Ui::RpWidget *>,
+							   not_null<PeerData *> peer)
+	: _peer(peer), _session(&peer->session()),
+	  _usernamePolicy(
+		  Data::details::UsernamePolicyFromAppConfig(_session->appConfig())),
+	  _padding(st::usernamePadding), _api(&_session->mtp()),
+	  _username(this, st::defaultInputField, rpl::single(u"@username"_q),
+				editableUsername(), QString()),
+	  _checkTimer([=] { check(); }) {
 	const auto name = editableUsername();
-	_usernameEditorFlow.inputChanged(name, !name.isEmpty());
-	_goodText = name.isEmpty()
-		? QString()
-		: tr::lng_username_available(tr::now);
+	_username->setMaxLength(_usernamePolicy.maxLength);
+	_usernameEditorFlow.inputChanged(
+		name, Data::details::IsValidUsername(name, _usernamePolicy));
+	_goodText
+		= name.isEmpty() ? QString() : tr::lng_username_available(tr::now);
 
 	connect(_username, &Ui::MaskedInputField::changed, [=] { changed(); });
 
@@ -191,45 +189,44 @@ void UsernameEditor::check() {
 		return;
 	}
 	const auto name = getName();
-	if (name.size() < Ui::EditPeer::kMinUsernameLength) {
+	if (!Data::details::IsValidUsername(name, _usernamePolicy)) {
 		return;
 	}
 	_checkUsername = name;
 	if (!_usernameEditorFlow.checkAccount(
-		name,
-		[=](
-				const QString &checking,
-				auto done,
-				auto fail) {
-			_api.request(base::take(_checkRequestId)).cancel();
-			_checkRequestId = _api.request(MTPaccount_CheckUsername(
-				MTP_string(checking)
-			)).done([=](const MTPBool &result) mutable {
-				done(mtpIsTrue(result) || checking == editableUsername());
-			}).fail([=](const MTP::Error &error) mutable {
-				fail(error.type());
-			}).send();
-		},
-		[=](bool available) {
-			_checkRequestId = 0;
-			_errorText = available
-				? QString()
-				: tr::lng_username_occupied(tr::now);
-			_goodText = _errorText.isEmpty()
-				? tr::lng_username_available(tr::now)
-				: QString();
+			name,
+			[=](const QString &checking, auto done, auto fail) {
+				_api.request(base::take(_checkRequestId)).cancel();
+				_checkRequestId
+					= _api.request(
+							  MTPaccount_CheckUsername(MTP_string(checking)))
+						  .done([=](const MTPBool &result) mutable {
+							  done(mtpIsTrue(result)
+								   || checking == editableUsername());
+						  })
+						  .fail([=](const MTP::Error &error) mutable {
+							  fail(error.type());
+						  })
+						  .send();
+			},
+			[=](bool available) {
+				_checkRequestId = 0;
+				_errorText = available ? QString()
+									   : tr::lng_username_occupied(tr::now);
+				_goodText = _errorText.isEmpty()
+								? tr::lng_username_available(tr::now)
+								: QString();
 
-			checkInfoChange();
-		},
-		[=](
-				const QString &type,
+				checkInfoChange();
+			},
+			[=](const QString &type,
 				Ui::EditPeer::UsernameEditorFlow::FailureResult failure,
 				bool current) {
-			if (current) {
-				_checkRequestId = 0;
-			}
-			checkFail(type, failure);
-		})) {
+				if (current) {
+					_checkRequestId = 0;
+				}
+				checkFail(type, failure);
+			})) {
 		return;
 	}
 }
@@ -250,32 +247,20 @@ void UsernameEditor::changed() {
 		}
 		_checkTimer.cancel();
 	} else {
-		const auto len = int(name.size());
-		for (auto i = 0; i < len; ++i) {
-			const auto ch = name.at(i);
-			if ((ch < 'A' || ch > 'Z')
-				&& (ch < 'a' || ch > 'z')
-				&& (ch < '0' || ch > '9')
-				&& ch != '_'
-				&& (ch != '@' || i > 0)) {
-				if (_errorText != tr::lng_username_bad_symbols(tr::now)) {
-					_errorText = tr::lng_username_bad_symbols(tr::now);
-					checkInfoChange();
-				}
-				_checkTimer.cancel();
-				return;
-			}
-		}
-		if (name.size() < Ui::EditPeer::kMinUsernameLength) {
-			if (_errorText != tr::lng_username_too_short(tr::now)) {
-				_errorText = tr::lng_username_too_short(tr::now);
+		if (!Data::details::IsValidUsername(name, _usernamePolicy)) {
+			const auto tooShort = _usernamePolicy.minLength > 0
+								  && Data::details::UnicodeScalarCount(name)
+										 < _usernamePolicy.minLength;
+			const auto error = tooShort ? tr::lng_username_too_short(tr::now)
+										: tr::lng_username_bad_symbols(tr::now);
+			if (_errorText != error) {
+				_errorText = error;
 				checkInfoChange();
 			}
 			_checkTimer.cancel();
 		} else {
 			_usernameEditorFlow.inputChanged(name, true);
-			if (!_errorText.isEmpty()
-				|| !_goodText.isEmpty()
+			if (!_errorText.isEmpty() || !_goodText.isEmpty()
 				|| _usernameEditorFlow.unavailable()) {
 				_errorText = _goodText = QString();
 				checkInfoChange();

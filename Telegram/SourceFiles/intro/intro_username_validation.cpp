@@ -9,28 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 #include "base/qt/qt_string_view.h" // base::StringViewMid
-
-#include <QtCore/QRegularExpression>
+#include "data/data_input_policy.h"
 
 namespace Intro {
 namespace details {
-
-namespace {
-
-int UnicodeScalarCount(const QString &text) {
-	auto result = 0;
-	for (auto i = 0; i != text.size(); ++i) {
-		if (text[i].isHighSurrogate()
-			&& (i + 1) < text.size()
-			&& text[i + 1].isLowSurrogate()) {
-			++i;
-		}
-		++result;
-	}
-	return result;
-}
-
-} // namespace
 
 QString NormalizeUsernameInput(const QString &input) {
 	auto result = input.trimmed();
@@ -42,12 +24,6 @@ QString NormalizeUsernameInput(const QString &input) {
 
 QString ToWireUsername(const QString &normalized) {
 	return normalized.toLower();
-}
-
-bool IsValidUsername(const QString &normalized) {
-	static const auto Pattern = QRegularExpression(
-		u"^[a-zA-Z][a-zA-Z0-9_]{1,31}$"_q);
-	return Pattern.match(normalized).hasMatch();
 }
 
 int FloodWaitSeconds(const QString &errorType) {
@@ -62,11 +38,12 @@ QString NormalizeSignupNameInput(const QString &input) {
 	return input.trimmed();
 }
 
-SignupNameValidation ValidateSignupName(const QString &input) {
+SignupNameValidation ValidateSignupName(const QString &input, int maxLength) {
 	const auto normalized = NormalizeSignupNameInput(input);
 	if (normalized.isEmpty()) {
 		return SignupNameValidation::Empty;
-	} else if (UnicodeScalarCount(normalized) > 60) {
+	} else if (!Data::details::IsWithinInputLengthPolicy(normalized, 0,
+														 maxLength)) {
 		return SignupNameValidation::TooLong;
 	}
 	return SignupNameValidation::Valid;
@@ -77,8 +54,6 @@ SignupPasswordValidation ValidateSignupPassword(
 		const QString &repeat) {
 	if (password.isEmpty()) {
 		return SignupPasswordValidation::Empty;
-	} else if (UnicodeScalarCount(password) < 8) {
-		return SignupPasswordValidation::TooShort;
 	} else if (repeat.isEmpty()) {
 		return SignupPasswordValidation::RepeatEmpty;
 	} else if (password != repeat) {

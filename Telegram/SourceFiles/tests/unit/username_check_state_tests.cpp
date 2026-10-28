@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "boxes/peers/edit_peer_common.h"
+#include "data/data_username_policy.h"
 
 #include <functional>
 #include <initializer_list>
@@ -20,6 +21,12 @@ using FailureResult = UsernameEditorFlow::FailureResult;
 using Mode = UsernameEditorFlow::Mode;
 using Status = UsernameEditorFlow::Status;
 using SaveFailureOutcome = Ui::EditPeer::UsernameUpdateFailureOutcome;
+
+const auto kPublicUsernamePolicy = Data::details::UsernamePolicy{
+	.minLength = 2,
+	.maxLength = 32,
+	.pattern = u"^[A-Za-z][A-Za-z0-9_]{1,31}$"_q,
+};
 
 class ControlledUsernameApi final {
 public:
@@ -263,8 +270,8 @@ TEST_CASE(GroupChannelFallbackRejectsShortAndSavesValidEdit) {
 }
 
 TEST_CASE(PublicUsernameCanBeRecheckedAfterPrivacyToggle) {
-	CHECK(Ui::EditPeer::IsValidPublicUsername(u"Ab"_q));
-	CHECK(!Ui::EditPeer::IsValidPublicUsername(u"A"_q));
+	CHECK(Data::details::IsValidUsername(u"Ab"_q, kPublicUsernamePolicy));
+	CHECK(!Data::details::IsValidUsername(u"A"_q, kPublicUsernamePolicy));
 
 	for (const auto mode : { Mode::Group, Mode::Channel }) {
 		UsernameEditorFlow flow(mode);
@@ -287,7 +294,7 @@ TEST_CASE(PublicUsernameCanBeRecheckedAfterPrivacyToggle) {
 		auto checkStarted = false;
 		flow.revalidatePublicUsername(
 			u"Ab"_q,
-			Ui::EditPeer::IsValidPublicUsername(u"Ab"_q),
+			Data::details::IsValidUsername(u"Ab"_q, kPublicUsernamePolicy),
 			[&] {
 				wasRefreshed = true;
 				delayedCheckScheduled = true;

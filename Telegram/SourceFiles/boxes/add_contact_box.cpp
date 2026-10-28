@@ -38,12 +38,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
+#include "data/data_input_policy.h"
+#include "data/data_username_policy.h"
 #include "apiwrap.h"
 #include "api/api_invite_links.h"
 #include "api/api_peer_photo.h"
 #include "api/api_self_destruct.h"
 #include "base/call_delayed.h"
 #include "main/main_session.h"
+#include "main/main_app_config.h"
 #include "styles/style_add_contact_box.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
@@ -578,7 +581,6 @@ void GroupInfoBox::prepare() {
 			? tr::lng_dlg_new_channel_name
 			: tr::lng_dlg_new_group_name)(),
 		_initialTitle);
-	_title->setMaxLength(Ui::EditPeer::kMaxGroupChannelTitle);
 	_title->setInstantReplaces(Ui::InstantReplaces::Default());
 	_title->setInstantReplacesEnabled(
 		Core::App().settings().replaceEmojiValue(),
@@ -595,7 +597,6 @@ void GroupInfoBox::prepare() {
 			Ui::InputField::Mode::MultiLine,
 			tr::lng_create_group_description());
 		_description->show();
-		_description->setMaxLength(Ui::EditPeer::kMaxChannelDescription);
 		_description->setInstantReplaces(Ui::InstantReplaces::Default());
 		_description->setInstantReplacesEnabled(
 			Core::App().settings().replaceEmojiValue(),
@@ -712,14 +713,33 @@ void GroupInfoBox::resizeEvent(QResizeEvent *e) {
 }
 
 void GroupInfoBox::submitName() {
-	if (_title->getLastText().trimmed().isEmpty()) {
-		_title->setFocus();
-		_title->showError();
+	if (!validateTitle()) {
+		return;
 	} else if (_description) {
 		_description->setFocus();
 	} else {
 		submit();
 	}
+}
+
+bool GroupInfoBox::validateTitle() const {
+	const auto title = _title->getLastText().trimmed();
+	const auto channel = (_type == Type::Channel);
+	const auto &appConfig = _navigation->session().appConfig();
+	const auto minLength = appConfig.get<int>(
+		channel ? u"channel_title_min_length"_q : u"group_title_min_length"_q,
+		0);
+	const auto maxLength = appConfig.get<int>(
+		channel ? u"channel_title_max_length"_q : u"group_title_max_length"_q,
+		0);
+	if (title.isEmpty()
+		|| !Data::details::IsWithinInputLengthPolicy(title, minLength,
+													 maxLength)) {
+		_title->setFocus();
+		_title->showError();
+		return false;
+	}
+	return true;
 }
 
 TimeId GroupInfoBox::ttlPeriod() const {
@@ -796,10 +816,20 @@ void GroupInfoBox::submit() {
 			_description->getLastText(),
 			TextUtilities::PrepareTextOption::CheckLinks)
 		: QString();
-	if (title.isEmpty()) {
-		_title->setFocus();
-		_title->showError();
+	if (!validateTitle()) {
 		return;
+	}
+	if (_description) {
+		const auto aboutMaxLength = _navigation->session().appConfig().get<int>(
+			(_type == Type::Channel) ? u"channel_about_max_length"_q
+									 : u"group_about_max_length"_q,
+			0);
+		if (!Data::details::IsWithinInputLengthPolicy(description, 0,
+													  aboutMaxLength)) {
+			_description->setFocus();
+			_description->showError();
+			return;
+		}
 	}
 	if (_type != Type::Group) {
 		createChannel(title, description);
@@ -1027,6 +1057,9 @@ SetupChannelBox::SetupChannelBox(
 	channel->username(),
 	channel->session().createInternalLink(QString()))
 , _checkTimer([=] { check(); }) {
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(
+		_channel->session().appConfig());
+	_link->setMaxLength(policy.maxLength);
 	if (_mustBePublic) {
 		_public.destroy();
 		_private.destroy();
@@ -1335,28 +1368,24 @@ void SetupChannelBox::handleChange() {
 		}
 		_checkTimer.cancel();
 	} else {
-		const auto len = int(name.size());
-		for (auto i = 0; i < len; ++i) {
-			const auto ch = name.at(i);
-			if ((ch < 'A' || ch > 'Z')
-				&& (ch < 'a' || ch > 'z')
-				&& (ch < '0' || ch > '9')
-				&& ch != '_') {
-				const auto badSymbols
-					= tr::lng_create_channel_link_bad_symbols(tr::now);
-				if (_errorText != badSymbols) {
-					_errorText = badSymbols;
-					update();
-				}
-				_checkTimer.cancel();
-				return;
-			}
-		}
-		if (name.size() < Ui::EditPeer::kMinUsernameLength) {
+		const auto policy = Data::details::UsernamePolicyFromAppConfig(
+			_channel->session().appConfig());
+		const auto valid = Data::details::IsValidUsername(name, policy);
+		const auto shorterThanPolicy
+			= policy.minLength > 0
+			  && Data::details::UnicodeScalarCount(name) < policy.minLength;
+		if (shorterThanPolicy) {
 			const auto tooShort
 				= tr::lng_create_channel_link_too_short(tr::now);
 			if (_errorText != tooShort) {
 				_errorText = tooShort;
+				update();
+			}
+			_checkTimer.cancel();
+		} else if (!valid) {
+			const auto invalid = tr::lng_create_channel_link_invalid(tr::now);
+			if (_errorText != invalid) {
+				_errorText = invalid;
 				update();
 			}
 			_checkTimer.cancel();
@@ -1375,7 +1404,9 @@ void SetupChannelBox::check() {
 		_api.request(_checkRequestId).cancel();
 	}
 	const auto link = _link->text().trimmed();
-	if (link.size() >= Ui::EditPeer::kMinUsernameLength) {
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(
+		_channel->session().appConfig());
+	if (Data::details::IsValidUsername(link, policy)) {
 		_checkUsername = link;
 		_checkRequestId = _api.request(MTPchannels_CheckUsername(
 			_channel->inputChannel(),
@@ -1580,9 +1611,6 @@ void EditNameBox::prepare() {
 	if (_invertOrder) {
 		setTabOrder(_last, _first);
 	}
-	_first->setMaxLength(Ui::EditPeer::kMaxUserFirstLastName);
-	_last->setMaxLength(Ui::EditPeer::kMaxUserFirstLastName);
-
 	_first->submits(
 	) | rpl::on_next([=] { submit(); }, _first->lifetime());
 	_last->submits(
@@ -1664,6 +1692,18 @@ void EditNameBox::save() {
 	if (first.isEmpty()) {
 		first = last;
 		last = QString();
+	}
+	const auto maxLength = _user->session().appConfig().get<int>(
+		u"display_name_max_length"_q, 0);
+	if (!Data::details::AreWithinInputLengthPolicy(first, last, 0, maxLength)) {
+		if (!Data::details::IsWithinInputLengthPolicy(first, 0, maxLength)) {
+			_first->setFocus();
+			_first->showError();
+		} else {
+			_last->setFocus();
+			_last->showError();
+		}
+		return;
 	}
 	_sentName = first;
 	auto flags = MTPaccount_UpdateProfile::Flag::f_first_name

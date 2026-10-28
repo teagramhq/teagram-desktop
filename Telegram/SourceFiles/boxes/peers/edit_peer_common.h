@@ -17,25 +17,9 @@ namespace Ui::EditPeer {
 constexpr auto kMaxGroupChannelTitle = 128;
 constexpr auto kMaxUserFirstLastName = 64;
 constexpr auto kMaxChannelDescription = 255;
-constexpr auto kMinUsernameLength = 2;
-constexpr auto kMaxUsernameLength = 32;
+constexpr auto kMaxBotUsernameLength = 32;
 constexpr auto kMinBotUsernameLength = 5;
 constexpr auto kUsernameCheckTimeout = crl::time(200);
-
-[[nodiscard]] inline bool IsValidPublicUsername(const QString &username) {
-	if (username.size() < kMinUsernameLength) {
-		return false;
-	}
-	for (const auto ch : username) {
-		if ((ch < 'A' || ch > 'Z')
-			&& (ch < 'a' || ch > 'z')
-			&& (ch < '0' || ch > '9')
-			&& (ch != '_')) {
-			return false;
-		}
-	}
-	return true;
-}
 
 enum class UsernameUpdateFailureOutcome {
 	Saved,

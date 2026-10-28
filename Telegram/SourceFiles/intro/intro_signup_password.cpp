@@ -44,8 +44,6 @@ SignUpPasswordWidget::SignUpPasswordWidget(
 	setDescriptionText(tr::lng_intro_signup_pwd_desc());
 	setErrorCentered(false);
 
-	_password->setMaxLength(256);
-	_repeat->setMaxLength(256);
 	_password->setAccessibleName(tr::lng_intro_signup_pwd_ph(tr::now));
 	_repeat->setAccessibleName(tr::lng_intro_signup_pwd_ph2(tr::now));
 	_password->setAccessibleDescription(
@@ -163,11 +161,6 @@ void SignUpPasswordWidget::submit() {
 	case SignupPasswordValidation::Empty:
 		showPasswordError(
 			tr::lng_intro_signup_pwd_empty(tr::now),
-			_password);
-		return;
-	case SignupPasswordValidation::TooShort:
-		showPasswordError(
-			tr::lng_intro_signup_pwd_short(tr::now),
 			_password);
 		return;
 	case SignupPasswordValidation::RepeatEmpty:

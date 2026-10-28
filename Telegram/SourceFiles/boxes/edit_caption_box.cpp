@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/stickers/data_stickers.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "editor/editor_layer_widget.h"
@@ -1235,12 +1236,13 @@ void EditCaptionBox::setInnerFocus() {
 bool EditCaptionBox::validateLength(const QString &text) const {
 	const auto session = &_controller->session();
 	const auto limit = Data::PremiumLimits(session).captionLengthCurrent();
-	const auto remove = int(text.size()) - limit;
-	if (remove <= 0) {
+	const auto length = Data::details::UnicodeScalarCount(text);
+	const auto remove = length - limit;
+	if (!Data::details::ExceedsInputLengthLimit(length, limit)) {
 		return true;
 	}
-	_controller->show(
-		Box(CaptionLimitReachedBox, session, remove, nullptr));
+	_controller->uiShow()->showToast(
+		tr::lng_edit_limit_reached(tr::now, lt_count, remove));
 	return false;
 }
 

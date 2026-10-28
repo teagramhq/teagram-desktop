@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_premium_limits.h"
+#include "data/data_input_policy.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
@@ -1837,10 +1838,11 @@ void AppendSimpleBlock(
 		int(end - begin));
 	auto start = begin;
 	while ((start - begin) != firstMonospaceOffset
-		&& Ui::Text::IsTrimmed(*start)) {
+		   && Ui::Text::IsTrimmed(*start)) {
 		++start;
 	}
-	return int(end - start);
+	return ::Data::details::UnicodeScalarCount(
+		QString::fromRawData(start, int(end - start)));
 }
 
 // Sinks for SerializeAsSimpleTo(): SimpleTextBuilder builds the actual
@@ -1863,7 +1865,7 @@ struct SimpleTextBuilder {
 			EntityType::Blockquote);
 	}
 	[[nodiscard]] int length() const {
-		return int(result.text.size());
+		return ::Data::details::UnicodeScalarCount(result.text);
 	}
 };
 
@@ -1955,7 +1957,8 @@ template <typename Accumulator>
 	}
 	const auto lengthLimit = ::Data::PremiumLimits(session)
 		.messageLengthCurrent();
-	return to.length() <= lengthLimit;
+	return !::Data::details::ExceedsInputLengthLimit(int(to.length()),
+													 lengthLimit);
 }
 
 [[nodiscard]] bool RichBlockIsPlain(const Block &block) {
