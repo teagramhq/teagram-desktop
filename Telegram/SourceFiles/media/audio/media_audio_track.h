@@ -92,7 +92,7 @@ private:
 class Instance {
 public:
 	// Thread: Main.
-	Instance();
+	explicit Instance(bool initializeDeviceResolvers = true);
 
 	// Thread: Any. Must be locked: AudioMutex.
 	[[nodiscard]] Webrtc::DeviceResolvedId playbackDeviceId() const;
@@ -121,8 +121,8 @@ private:
 
 private:
 	std::set<Track*> _tracks;
-	Webrtc::DeviceResolver _playbackDeviceId;
-	Webrtc::DeviceResolver _captureDeviceId;
+	std::unique_ptr<Webrtc::DeviceResolver> _playbackDeviceId;
+	std::unique_ptr<Webrtc::DeviceResolver> _captureDeviceId;
 
 	base::Timer _updateTimer;
 

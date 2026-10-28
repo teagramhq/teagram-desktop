@@ -172,11 +172,12 @@ Application::Application()
 , _private(std::make_unique<Private>())
 , _platformIntegration(Platform::Integration::Create())
 , _batterySaving(std::make_unique<base::BatterySaving>())
-, _mediaDevices(std::make_unique<Webrtc::Environment>())
 , _databases(std::make_unique<Storage::Databases>())
 , _animationsManager(std::make_unique<Ui::Animations::Manager>())
 , _clearEmojiImageLoaderTimer([=] { clearEmojiSourceImages(); })
-, _audio(std::make_unique<Media::Audio::Instance>())
+, _audio(std::make_unique<Media::Audio::Instance>(
+	!qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
+	&& !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")))
 , _fallbackProductionConfig(
 	std::make_unique<MTP::Config>(MTP::Environment::Production))
 , _downloadManager(std::make_unique<Data::DownloadManager>())
@@ -221,6 +222,13 @@ Application::Application()
 			UpdateChecker().setMtproto(session);
 		}
 	}, _lifetime);
+}
+
+Webrtc::Environment &Application::mediaDevices() {
+	if (!_mediaDevices) {
+		_mediaDevices = std::make_unique<Webrtc::Environment>();
+	}
+	return *_mediaDevices;
 }
 
 void Application::closeAdditionalWindows() {
@@ -444,10 +452,16 @@ void Application::run() {
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		Expects(!_mediaDevices);
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 		regressionResult |= RunSignupControlsRegression();
 	}
 
 	if (qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		Expects(!_mediaDevices);
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 		Tests::RunAccountLifecycleRegression([=](int result) {
 			QCoreApplication::exit(regressionResult | result);
 		});
