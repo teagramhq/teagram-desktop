@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_username_policy.h"
 #include "lang/lang_keys.h"
+#include "main/main_app_config.h"
 #include "main/main_app_config_values.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"

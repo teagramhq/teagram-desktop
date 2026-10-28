@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/peers/edit_peer_type_box.h"
 
+#include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "boxes/add_contact_box.h"
 #include "ui/boxes/confirm_box.h"
