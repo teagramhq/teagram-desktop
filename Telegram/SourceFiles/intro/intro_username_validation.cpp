@@ -11,8 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_string_view.h" // base::StringViewMid
 #include "data/data_input_policy.h"
 
-#include <QtCore/QRegularExpression>
-
 namespace Intro {
 namespace details {
 
@@ -26,21 +24,6 @@ QString NormalizeUsernameInput(const QString &input) {
 
 QString ToWireUsername(const QString &normalized) {
 	return normalized.toLower();
-}
-
-bool IsValidUsername(const QString &normalized, const UsernamePolicy &policy) {
-	if (normalized.isEmpty()) {
-		return false;
-	}
-	const auto length = Data::details::UnicodeScalarCount(normalized);
-	if ((policy.minLength > 0 && length < policy.minLength)
-		|| (policy.maxLength > 0 && length > policy.maxLength)) {
-		return false;
-	} else if (policy.pattern.isEmpty()) {
-		return true;
-	}
-	const auto pattern = QRegularExpression(policy.pattern);
-	return !pattern.isValid() || pattern.match(normalized).hasMatch();
 }
 
 int FloodWaitSeconds(const QString &errorType) {

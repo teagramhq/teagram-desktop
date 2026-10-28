@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_input_policy.h"
+#include "data/data_username_policy.h"
 #include "apiwrap.h"
 #include "api/api_invite_links.h"
 #include "api/api_peer_photo.h"
@@ -1056,6 +1057,9 @@ SetupChannelBox::SetupChannelBox(
 	channel->username(),
 	channel->session().createInternalLink(QString()))
 , _checkTimer([=] { check(); }) {
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(
+		_channel->session().appConfig());
+	_link->setMaxLength(policy.maxLength);
 	if (_mustBePublic) {
 		_public.destroy();
 		_private.destroy();
@@ -1364,28 +1368,24 @@ void SetupChannelBox::handleChange() {
 		}
 		_checkTimer.cancel();
 	} else {
-		const auto len = int(name.size());
-		for (auto i = 0; i < len; ++i) {
-			const auto ch = name.at(i);
-			if ((ch < 'A' || ch > 'Z')
-				&& (ch < 'a' || ch > 'z')
-				&& (ch < '0' || ch > '9')
-				&& ch != '_') {
-				const auto badSymbols
-					= tr::lng_create_channel_link_bad_symbols(tr::now);
-				if (_errorText != badSymbols) {
-					_errorText = badSymbols;
-					update();
-				}
-				_checkTimer.cancel();
-				return;
-			}
-		}
-		if (name.size() < Ui::EditPeer::kMinUsernameLength) {
+		const auto policy = Data::details::UsernamePolicyFromAppConfig(
+			_channel->session().appConfig());
+		const auto valid = Data::details::IsValidUsername(name, policy);
+		const auto shorterThanPolicy
+			= policy.minLength > 0
+			  && Data::details::UnicodeScalarCount(name) < policy.minLength;
+		if (shorterThanPolicy) {
 			const auto tooShort
 				= tr::lng_create_channel_link_too_short(tr::now);
 			if (_errorText != tooShort) {
 				_errorText = tooShort;
+				update();
+			}
+			_checkTimer.cancel();
+		} else if (!valid) {
+			const auto invalid = tr::lng_create_channel_link_invalid(tr::now);
+			if (_errorText != invalid) {
+				_errorText = invalid;
 				update();
 			}
 			_checkTimer.cancel();
@@ -1404,7 +1404,9 @@ void SetupChannelBox::check() {
 		_api.request(_checkRequestId).cancel();
 	}
 	const auto link = _link->text().trimmed();
-	if (link.size() >= Ui::EditPeer::kMinUsernameLength) {
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(
+		_channel->session().appConfig());
+	if (Data::details::IsValidUsername(link, policy)) {
 		_checkUsername = link;
 		_checkRequestId = _api.request(MTPchannels_CheckUsername(
 			_channel->inputChannel(),

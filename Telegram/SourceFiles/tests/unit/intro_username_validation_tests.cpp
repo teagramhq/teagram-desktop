@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_username_validation.h"
 
 #include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -25,6 +26,27 @@ const auto kPublishedUsernamePolicy = UsernamePolicy{
 QString AstralString(int count) {
 	return QString::fromUtf8("\xF0\x9F\x98\x80").repeated(count);
 }
+
+struct TestUsernameAppConfig {
+	int minLength = 0;
+	int maxLength = 0;
+	QString pattern;
+
+	template <typename Type> Type get(const QString &key, Type fallback) const {
+		if constexpr (std::is_same_v<Type, int>) {
+			if (key == u"username_min_length"_q) {
+				return minLength;
+			} else if (key == u"username_max_length"_q) {
+				return maxLength;
+			}
+		} else if constexpr (std::is_same_v<Type, QString>) {
+			if (key == u"username_pattern"_q) {
+				return pattern;
+			}
+		}
+		return fallback;
+	}
+};
 
 TEST_CASE(NormalizeTrimsWhitespace) {
 	CHECK_EQ(NormalizeUsernameInput(u"  alice  "_q), u"alice"_q);
@@ -75,6 +97,20 @@ TEST_CASE(MissingUsernamePolicyLeavesValidationToServer) {
 	CHECK(IsValidUsername(u"a"_q, policy));
 	CHECK(IsValidUsername(u"not a username"_q, policy));
 	CHECK(!IsValidUsername(QString(), policy));
+}
+
+TEST_CASE(UsernamePolicyReadsAppConfigValues) {
+	const auto config = TestUsernameAppConfig{
+		.minLength = 3,
+		.maxLength = 12,
+		.pattern = u"^[a-z][a-z0-9_]+$"_q,
+	};
+	const auto policy = Data::details::UsernamePolicyFromAppConfig(config);
+	CHECK_EQ(policy.minLength, 3);
+	CHECK_EQ(policy.maxLength, 12);
+	CHECK_EQ(policy.pattern, u"^[a-z][a-z0-9_]+$"_q);
+	CHECK(!Data::details::IsValidUsername(u"ab"_q, policy));
+	CHECK(Data::details::IsValidUsername(u"abc"_q, policy));
 }
 
 TEST_CASE(UsernamePolicyUsesPublishedValues) {
@@ -275,17 +311,15 @@ TEST_CASE(SignupNameValidationCountsUnicodeScalars) {
 }
 
 TEST_CASE(SignupPasswordValidationAllowsShortPasswords) {
-	CHECK(
-		ValidateSignupPassword(QString(), QString())
-		== SignupPasswordValidation::Empty);
+	CHECK(ValidateSignupPassword(QString(), QString())
+		  == SignupPasswordValidation::Empty);
 	CHECK(ValidateSignupPassword(u"short"_q, u"short"_q)
 		  == SignupPasswordValidation::Valid);
 	const auto longPassword = QString(300, QChar('x'));
 	CHECK(ValidateSignupPassword(longPassword, longPassword)
 		  == SignupPasswordValidation::Valid);
-	CHECK(
-		ValidateSignupPassword(u"long enough"_q, QString())
-		== SignupPasswordValidation::RepeatEmpty);
+	CHECK(ValidateSignupPassword(u"long enough"_q, QString())
+		  == SignupPasswordValidation::RepeatEmpty);
 	CHECK(
 		ValidateSignupPassword(u"long enough"_q, u"different"_q)
 		== SignupPasswordValidation::Mismatch);
@@ -297,9 +331,8 @@ TEST_CASE(SignupPasswordValidationAllowsShortPasswords) {
 TEST_CASE(SignupPasswordValidationHasNoUnicodeLengthMinimum) {
 	CHECK(ValidateSignupPassword(AstralString(1), AstralString(1))
 		  == SignupPasswordValidation::Valid);
-	CHECK(
-		ValidateSignupPassword(AstralString(8), AstralString(8))
-		== SignupPasswordValidation::Valid);
+	CHECK(ValidateSignupPassword(AstralString(8), AstralString(8))
+		  == SignupPasswordValidation::Valid);
 }
 
 TEST_CASE(SignupPasswordUpdateKeepsFloodVisible) {

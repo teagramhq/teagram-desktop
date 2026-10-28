@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
+#include "data/data_username_policy.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
 #include "mtproto/sender.h"
@@ -214,6 +215,7 @@ private:
 	std::shared_ptr<Ui::Show> _show;
 
 	not_null<PeerData*> _peer;
+	Data::details::UsernamePolicy _usernamePolicy;
 	bool _linkOnly = false;
 
 	MTP::Sender _api;
@@ -238,46 +240,31 @@ private:
 
 };
 
-Controller::Controller(
-	Window::SessionNavigation *navigation,
-	std::shared_ptr<Ui::Show> show,
-	not_null<Ui::VerticalLayout*> container,
-	not_null<PeerData*> peer,
-	bool useLocationPhrases,
-	std::optional<EditPeerTypeData> dataSavedValue)
-: _navigation(navigation)
-, _show(show)
-, _peer(peer)
-, _linkOnly(!dataSavedValue.has_value())
-, _api(&_peer->session().mtp())
-, _dataSavedValue(dataSavedValue)
-, _useLocationPhrases(useLocationPhrases)
-, _isGroup(_peer->isChat() || _peer->isMegagroup())
-, _originalRequestToJoin(_dataSavedValue
-	? _dataSavedValue->requestToJoin
-	: false)
-, _usernameEditorFlow(_isGroup
-	? Ui::EditPeer::UsernameEditorFlow::Mode::Group
-	: Ui::EditPeer::UsernameEditorFlow::Mode::Channel)
-, _wrap(container)
-, _checkUsernameTimer([=] { checkUsernameAvailability(); }) {
-	const auto username = _dataSavedValue
-		? _dataSavedValue->username
-		: (_peer->isChannel()
-			? _peer->asChannel()->editableUsername()
-			: QString());
-	const auto bad = ranges::any_of(username, [](QChar ch) {
-		return (ch < 'A' || ch > 'Z')
-			&& (ch < 'a' || ch > 'z')
-			&& (ch < '0' || ch > '9')
-			&& (ch != '_');
-	});
+Controller::Controller(Window::SessionNavigation *navigation,
+					   std::shared_ptr<Ui::Show> show,
+					   not_null<Ui::VerticalLayout *> container,
+					   not_null<PeerData *> peer, bool useLocationPhrases,
+					   std::optional<EditPeerTypeData> dataSavedValue)
+	: _navigation(navigation), _show(show), _peer(peer),
+	  _usernamePolicy(Data::details::UsernamePolicyFromAppConfig(
+		  _peer->session().appConfig())),
+	  _linkOnly(!dataSavedValue.has_value()), _api(&_peer->session().mtp()),
+	  _dataSavedValue(dataSavedValue), _useLocationPhrases(useLocationPhrases),
+	  _isGroup(_peer->isChat() || _peer->isMegagroup()),
+	  _originalRequestToJoin(_dataSavedValue ? _dataSavedValue->requestToJoin
+											 : false),
+	  _usernameEditorFlow(
+		  _isGroup ? Ui::EditPeer::UsernameEditorFlow::Mode::Group
+				   : Ui::EditPeer::UsernameEditorFlow::Mode::Channel),
+	  _wrap(container),
+	  _checkUsernameTimer([=] { checkUsernameAvailability(); }) {
+	const auto username
+		= _dataSavedValue
+			  ? _dataSavedValue->username
+			  : (_peer->isChannel() ? _peer->asChannel()->editableUsername()
+									: QString());
 	_usernameEditorFlow.inputChanged(
-		username,
-		!username.isEmpty()
-			&& !bad
-			&& (username.size() >= Ui::EditPeer::kMinUsernameLength)
-			&& (username.size() <= Ui::EditPeer::kMaxUsernameLength));
+		username, Data::details::IsValidUsername(username, _usernamePolicy));
 	_usernameEditorFlow.setGood(_dataSavedValue
 		? !_dataSavedValue->username.isEmpty()
 		: (_peer->isChannel()
@@ -648,16 +635,18 @@ object_ptr<Ui::RpWidget> Controller::createUsernameEdit() {
 			nullptr,
 			username,
 			_peer->session().createInternalLink(QString())));
+	_controls.usernameInput->setMaxLength(_usernamePolicy.maxLength);
 	_controls.usernameInput->heightValue(
 	) | rpl::on_next([placeholder](int height) {
 		placeholder->resize(placeholder->width(), height);
 	}, placeholder->lifetime());
-	placeholder->widthValue(
-	) | rpl::on_next([this](int width) {
-		_controls.usernameInput->resize(
-			width,
-			_controls.usernameInput->height());
-	}, placeholder->lifetime());
+	placeholder->widthValue()
+		| rpl::on_next(
+			[this](int width) {
+				_controls.usernameInput->resize(
+					width, _controls.usernameInput->height());
+			},
+			placeholder->lifetime());
 	_controls.usernameInput->move(placeholder->pos());
 
 	AddUsernameCheckLabel(container, _usernameCheckInfo.events());
@@ -721,7 +710,7 @@ void Controller::privacyChanged(Privacy value) {
 			const auto username = getUsernameInput();
 			_usernameEditorFlow.revalidatePublicUsername(
 				username,
-				Ui::EditPeer::IsValidPublicUsername(username),
+				Data::details::IsValidUsername(username, _usernamePolicy),
 				[this] { usernameChanged(true); },
 				[this] { _checkUsernameTimer.cancel(); },
 				[this] { checkUsernameAvailability(); });
@@ -762,18 +751,15 @@ void Controller::checkUsernameAvailability() {
 	const auto checking = initial
 		? u".bad."_q
 		: getUsernameInput();
-	if (checking.size() < Ui::EditPeer::kMinUsernameLength) {
+	if (!initial
+		&& !Data::details::IsValidUsername(checking, _usernamePolicy)) {
 		return;
 	}
 	const auto channel = _peer->migrateToOrMe()->asChannel();
 	const auto username = channel ? channel->editableUsername() : QString();
 	const auto started = _usernameEditorFlow.checkPublicPeer(
-		checking,
-		initial,
-		[=](
-				const QString &name,
-				auto done,
-				auto fail) {
+		checking, initial,
+		[=](const QString &name, auto done, auto fail) {
 			if (_checkUsernameRequestId) {
 				_api.request(base::take(_checkUsernameRequestId)).cancel();
 			}
@@ -797,10 +783,9 @@ void Controller::checkUsernameAvailability() {
 				showUsernameGood();
 			}
 		},
-		[=](
-				const QString &type,
-				Ui::EditPeer::UsernameEditorFlow::FailureResult failure,
-				bool current) {
+		[=](const QString &type,
+			Ui::EditPeer::UsernameEditorFlow::FailureResult failure,
+			bool current) {
 			if (current) {
 				_checkUsernameRequestId = 0;
 			} else {
@@ -853,15 +838,11 @@ void Controller::askUsernameRevoke() {
 
 void Controller::usernameChanged(bool flowStateAlreadyUpdated) {
 	const auto username = getUsernameInput();
-	const auto bad = ranges::any_of(username, [](QChar ch) {
-		return (ch < 'A' || ch > 'Z')
-			&& (ch < 'a' || ch > 'z')
-			&& (ch < '0' || ch > '9')
-			&& (ch != '_');
-	});
-	const auto locallyValid = !username.isEmpty()
-		&& !bad
-		&& (username.size() >= Ui::EditPeer::kMinUsernameLength);
+	const auto locallyValid
+		= Data::details::IsValidUsername(username, _usernamePolicy);
+	const auto tooShort = _usernamePolicy.minLength > 0
+						  && Data::details::UnicodeScalarCount(username)
+								 < _usernamePolicy.minLength;
 	if (!flowStateAlreadyUpdated) {
 		_usernameEditorFlow.inputChanged(username, locallyValid);
 	}
@@ -871,15 +852,15 @@ void Controller::usernameChanged(bool flowStateAlreadyUpdated) {
 		showUsernameEmpty();
 		return;
 	}
-	if (bad) {
-		showUsernameError(tr::lng_create_channel_link_bad_symbols());
-	} else if (username.size() < Ui::EditPeer::kMinUsernameLength) {
+	if (tooShort) {
 		showUsernameError(tr::lng_create_channel_link_too_short());
+	} else if (!locallyValid) {
+		showUsernameError(tr::lng_create_channel_link_invalid());
 	} else if (!_usernameEditorFlow.shouldCheck()) {
 		_usernameCheckInfoLifetime.destroy();
 		_usernameCheckInfo.fire({
 			.type = UsernameCheckInfo::Type::Default,
-			.text = { tr::lng_username_check_unavailable(tr::now) },
+			.text = {tr::lng_username_check_unavailable(tr::now)},
 		});
 	} else {
 		showUsernamePending();
@@ -890,9 +871,7 @@ void Controller::usernameChanged(bool flowStateAlreadyUpdated) {
 void Controller::showUsernameError(rpl::producer<QString> &&error) {
 	_usernameEditorFlow.setGood(false);
 	_usernameCheckInfoLifetime.destroy();
-	std::move(
-		error
-	) | rpl::map([](QString s) {
+	std::move(error) | rpl::map([](QString s) {
 		return UsernameCheckInfo{
 			.type = UsernameCheckInfo::Type::Error,
 			.text = { std::move(s) },

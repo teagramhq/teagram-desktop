@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/basic_types.h"
+#include "data/data_username_policy.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QString>
@@ -53,11 +54,8 @@ enum class SigninPasswordDataFailure {
 	Other,
 };
 
-struct UsernamePolicy {
-	int minLength = 0;
-	int maxLength = 0;
-	QString pattern;
-};
+using ::Data::details::IsValidUsername;
+using ::Data::details::UsernamePolicy;
 
 // Forgiving normalisation of what the user typed: trim surrounding
 // whitespace and strip a single leading '@' (people type "@alice").
@@ -69,9 +67,6 @@ struct UsernamePolicy {
 // anyway; lowercasing here keeps the hash cache keyed consistently.
 // What the user typed stays on screen.
 [[nodiscard]] QString ToWireUsername(const QString &normalized);
-
-[[nodiscard]] bool IsValidUsername(const QString &normalized,
-								   const UsernamePolicy &policy);
 
 // Which server a phone_code_hash came from: address, port and the
 // fingerprint of the pinned key, the same triple the same-account

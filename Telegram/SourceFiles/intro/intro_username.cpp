@@ -238,12 +238,8 @@ void UsernameWidget::submit() {
 		fail(tr::lng_intro_username_empty(tr::now));
 		return;
 	}
-	const auto &appConfig = account().appConfig();
-	const auto policy = UsernamePolicy{
-		.minLength = appConfig.get<int>(u"username_min_length"_q, 0),
-		.maxLength = appConfig.get<int>(u"username_max_length"_q, 0),
-		.pattern = appConfig.get<QString>(u"username_pattern"_q, QString()),
-	};
+	const auto policy
+		= Data::details::UsernamePolicyFromAppConfig(account().appConfig());
 	if (!IsValidUsername(normalized, policy)) {
 		fail(tr::lng_intro_username_bad(tr::now));
 		return;
