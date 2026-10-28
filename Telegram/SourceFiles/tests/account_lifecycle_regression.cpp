@@ -10126,16 +10126,13 @@ void RunAuthenticatedCacheSymlinkCases(
 				++accesses;
 			}
 			const auto duration = timer.nsecsElapsed();
-			const auto detected = WaitForRegressionCondition([&] {
-				return Core::UiStallWatchdog::StallCount() > before
-					   || duration < 150'000'000;
-			});
 			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
 			Logs::writeMain("UI stall watchdog cache regression end");
-			// The 292-access batch has a 150ms budget; interaction probes below
-			// enforce the stricter 50ms handler and chat-switch limits.
-			passed = seeded && (accesses == 292) && detected
-					 && (duration < 150'000'000) && !stalls;
+			// The repeated guard checks must stay below the 30ms budget so a
+			// cache-heavy task cannot spend its UI frame validating path
+			// identity.
+			passed = seeded && (accesses == 292) && (duration < 30'000'000)
+					 && !stalls;
 			std::fprintf(stderr,
 						 "Cache watchdog regression: seeded_directories=125 "
 						 "seeded_files=169 cache_accesses=%d duration_ns=%lld "

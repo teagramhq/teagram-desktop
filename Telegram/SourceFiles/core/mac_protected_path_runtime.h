@@ -10,8 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_policy.h"
 
 #include <functional>
+#include <memory>
 
 namespace Core::MacProtectedPath {
+
+struct CachePathDescriptor;
 
 struct CachePathComponentIdentity final {
 	QString path;
@@ -21,12 +24,25 @@ struct CachePathComponentIdentity final {
 	quint64 targetDevice = 0;
 	quint64 targetInode = 0;
 	quint32 targetType = 0;
+	qint64 size = 0;
+	qint64 modifiedSeconds = 0;
+	qint64 modifiedNanoseconds = 0;
+	qint64 changedSeconds = 0;
+	qint64 changedNanoseconds = 0;
 	bool exists = false;
 };
 
 struct CachePathIdentity final {
 	QString absolutePath;
+	QString resolvedPath;
+	QString versionName;
+	QString activeVersionName;
 	std::vector<CachePathComponentIdentity> components;
+	std::shared_ptr<const CachePathDescriptor> rootDescriptor;
+	std::shared_ptr<const CachePathDescriptor> versionMarkerDescriptor;
+	CachePathComponentIdentity versionMarker;
+	qint32 version = 0;
+	std::shared_ptr<const CachePathDescriptor> activeVersionDescriptor;
 	CachePathComponentIdentity activeVersionDirectory;
 };
 

@@ -1368,27 +1368,12 @@ watchdog_duration="$(sed -E \
 local watchdog_stalls
 watchdog_stalls="$(sed -E \
 	's/.* duration_ns=[0-9]+ stalls=([0-9]+)\./\1/' <<<"$watchdog_evidence")"
-if (( watchdog_duration >= 150000000 )); then
-	local watchdog_stall
-	watchdog_stall="$(awk '
-/UI stall watchdog cache regression begin/ { inside = 1; next }
-/UI stall watchdog cache regression end/ { inside = 0; next }
-inside && index($0, "UI stall ") && index($0, "CheckCachePath") { print }
-' "$PROFILE_LOG")"
-	if [[ -z "$watchdog_stall" ]]; then
-		cat "$AUTH_LOG" >&2
-		cat "$PROFILE_LOG" >&2
-		echo "slow seeded cache access did not log the CheckCachePath stack." >&2
-		exit 1
-	fi
-	printf 'cache_watchdog_reverted_path=PASS %s\n%s\n' \
-		"$watchdog_evidence" "$watchdog_stall"
-elif (( watchdog_duration < 150000000 && watchdog_stalls == 0 )); then
+if (( watchdog_duration < 30000000 && watchdog_stalls == 0 )); then
 	printf 'cache_watchdog_responsive_path=PASS %s\n' "$watchdog_evidence"
 else
 	cat "$AUTH_LOG" >&2
 	cat "$PROFILE_LOG" >&2
-	echo "seeded cache watchdog scenario was neither responsive nor a captured CheckCachePath stall." >&2
+	echo "seeded cache watchdog scenario exceeded the 30ms access budget or reported a UI stall." >&2
 	exit 1
 fi
 if ! grep -F -q \
