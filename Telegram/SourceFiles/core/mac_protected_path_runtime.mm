@@ -758,7 +758,7 @@ SameCachePathTargetStat(const struct stat &info,
 ReadCachePathLinkIdentity(const QString &path,
 						  CachePathComponentIdentity *identity, bool *missing) {
 	const auto native = QFile::encodeName(path);
-	auto link = struct stat();
+	struct stat link = {};
 	if (::lstat(native.constData(), &link) != 0) {
 		if (errno == ENOENT) {
 			*missing = true;
@@ -777,7 +777,7 @@ ReadCachePathLinkIdentity(const QString &path,
 ReadCachePathTargetIdentity(const QString &path,
 							CachePathComponentIdentity *identity) {
 	const auto native = QFile::encodeName(path);
-	auto target = struct stat();
+	struct stat target = {};
 	if (::stat(native.constData(), &target) != 0 || !S_ISDIR(target.st_mode)) {
 		return false;
 	}
@@ -799,7 +799,7 @@ CaptureCachePathRootDescriptor(const QString &path,
 	if (descriptor < 0) {
 		return false;
 	}
-	auto target = struct stat();
+	struct stat target = {};
 	if ((::fstat(descriptor, &target) != 0)
 		|| !SameCachePathTargetStat(target, expected)) {
 		::close(descriptor);
@@ -926,7 +926,7 @@ CaptureCachePathRootDescriptor(const QString &path,
 		if (errno != ENOENT) {
 			return false;
 		}
-		auto current = struct stat();
+		struct stat current = {};
 		if (::lstat(native.constData(), &current) == 0 || errno != ENOENT) {
 			return false;
 		}
@@ -936,8 +936,8 @@ CaptureCachePathRootDescriptor(const QString &path,
 		identity->versionMarker = std::move(marker);
 		return true;
 	}
-	auto opened = struct stat();
-	auto current = struct stat();
+	struct stat opened = {};
+	struct stat current = {};
 	auto version = qint32();
 	const auto openedMatches
 		= (::fstat(descriptor, &opened) == 0) && S_ISREG(opened.st_mode);
@@ -982,7 +982,7 @@ CaptureCachePathActiveVersionDirectory(const QString &path,
 	if (descriptor < 0) {
 		return false;
 	}
-	auto opened = struct stat();
+	struct stat opened = {};
 	const auto openedMatches = (::fstat(descriptor, &opened) == 0)
 							   && SameCachePathTargetStat(opened, active);
 	auto current = CachePathComponentIdentity{.path = path};
@@ -1016,7 +1016,7 @@ CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
 		return true;
 	}
 	const auto native = QFile::encodeName(identity.versionMarker.path);
-	auto current = struct stat();
+	struct stat current = {};
 	if (identity.versionMarker.exists) {
 		if (!identity.versionMarkerDescriptor
 			|| (::lstat(native.constData(), &current) != 0)
@@ -1139,7 +1139,7 @@ void ReportCachePathIdentityRefusal(const char *callsite) {
 	if (expected.type != quint32(S_IFLNK)) {
 		return true;
 	}
-	auto target = struct stat();
+	struct stat target = {};
 	const auto native = QFile::encodeName(absolutePath);
 	return (::stat(native.constData(), &target) == 0)
 		   && SameCachePathTargetStat(target, expected);
@@ -1160,7 +1160,7 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 			|| !identity.activeVersionName.isEmpty()) {
 			return false;
 		}
-		auto zero = struct stat();
+		struct stat zero = {};
 		const auto native
 			= QFile::encodeName(QDir(identity.absolutePath).filePath("0"));
 		return (::lstat(native.constData(), &zero) != 0) && (errno == ENOENT);
@@ -1169,7 +1169,7 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 		|| !identity.activeVersionDescriptor) {
 		return false;
 	}
-	auto activeDescriptor = struct stat();
+	struct stat activeDescriptor = {};
 	if ((::fstat(identity.activeVersionDescriptor->value, &activeDescriptor)
 		 != 0)
 		|| !SameCachePathTargetStat(activeDescriptor,
