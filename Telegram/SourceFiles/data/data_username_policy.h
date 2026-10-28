@@ -25,9 +25,10 @@ template <typename AppConfig>
 [[nodiscard]] UsernamePolicy
 UsernamePolicyFromAppConfig(const AppConfig &appConfig) {
 	return {
-		.minLength = appConfig.get<int>(u"username_min_length"_q, 0),
-		.maxLength = appConfig.get<int>(u"username_max_length"_q, 0),
-		.pattern = appConfig.get<QString>(u"username_pattern"_q, QString()),
+		.minLength = appConfig.template get<int>(u"username_min_length"_q, 0),
+		.maxLength = appConfig.template get<int>(u"username_max_length"_q, 0),
+		.pattern
+		= appConfig.template get<QString>(u"username_pattern"_q, QString()),
 	};
 }
 
