@@ -9957,8 +9957,10 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	constexpr auto kMessageCount = 73;
 	constexpr auto kDialogUnreadCount = 7;
 	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
-	const auto chatId = ChatId(1053);
-	const auto peerId = peerFromChat(chatId);
+	const auto firstChatId = ChatId(1051);
+	const auto secondChatId = ChatId(1052);
+	const auto firstPeerId = peerFromChat(firstChatId);
+	const auto secondPeerId = peerFromChat(secondChatId);
 	auto &session = account->session();
 	auto &data = session.data();
 	auto capture = ChannelSaveRequestCapture{
@@ -9987,6 +9989,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto messages = QVector<MTPMessage>();
 	messages.reserve(kMessageCount);
 	for (auto i = 0; i != kMessageCount; ++i) {
+		const auto chatId = (i % 2) ? secondChatId : firstChatId;
 		messages.push_back(RegressionDialogsDocumentMessage(
 			chatId, i + 1, int64(300'000 + i)));
 	}
@@ -9997,18 +10000,29 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	auto reply = mtpBuffer();
-	MTP_messages_dialogs(
+	MTP_messages_dialogsSlice(
+		MTP_int(2),
 		MTP_vector<MTPDialog>(
-			{MTP_dialog(MTP_flags(0), peerToMTP(peerId), MTP_int(kMessageCount),
+			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint()),
+			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId), MTP_int(72),
+						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
 						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
 						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
 		MTP_vector<MTPMessage>(std::move(messages)),
-		MTP_vector<MTPChat>({MTP_chat(
-			MTP_flags(MTPDchat::Flags()), MTP_long(chatId.bare),
-			MTP_string(u"Cache dialog regression"_q), MTP_chatPhotoEmpty(),
-			MTP_int(2), MTP_int(1), MTP_int(1), MTPInputChannel(),
-			MTPChatAdminRights(), MTPChatBannedRights())}),
+		MTP_vector<MTPChat>(
+			{MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(firstChatId.bare),
+					  MTP_string(u"Cache dialog regression"_q),
+					  MTP_chatPhotoEmpty(), MTP_int(2), MTP_int(1), MTP_int(1),
+					  MTPInputChannel(), MTPChatAdminRights(),
+					  MTPChatBannedRights()),
+			 MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(secondChatId.bare),
+					  MTP_string(u"Cache dialog regression"_q),
+					  MTP_chatPhotoEmpty(), MTP_int(2), MTP_int(1), MTP_int(1),
+					  MTPInputChannel(), MTPChatAdminRights(),
+					  MTPChatBannedRights())}),
 		MTP_vector<MTPUser>({RegressionUser(UserId(1), true, QString())}))
 		.write(reply);
 	const auto response = MTP::Response{
@@ -10020,16 +10034,25 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto done = std::move(request->callbacks.done);
 	result.responseParsed = done && done(response);
 	result.handlerNanoseconds = timer.nsecsElapsed();
-	if (const auto chat = data.chatLoaded(chatId)) {
-		result.processedChats = (chat->name() == u"Cache dialog regression"_q);
+	if (const auto chat = data.chatLoaded(firstChatId)) {
+		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
 	}
-	const auto history = data.history(peerId);
+	if (const auto chat = data.chatLoaded(secondChatId)) {
+		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
+	}
+	const auto firstHistory = data.history(firstPeerId);
+	const auto secondHistory = data.history(secondPeerId);
 	result.processedDialogs
-		= history->folderKnown()
-		  && (history->unreadCount() == kDialogUnreadCount)
-		  && (history->lastMessage()
-			  == data.message(peerId, MsgId(kMessageCount)));
+		= firstHistory->folderKnown()
+		  && (firstHistory->unreadCount() == kDialogUnreadCount)
+		  && (firstHistory->lastMessage()
+			  == data.message(firstPeerId, MsgId(73)))
+		  && secondHistory->folderKnown()
+		  && (secondHistory->unreadCount() == kDialogUnreadCount - 1)
+		  && (secondHistory->lastMessage()
+			  == data.message(secondPeerId, MsgId(72)));
 	for (auto i = 1; i <= kMessageCount; ++i) {
+		const auto peerId = (i % 2) ? firstPeerId : secondPeerId;
 		if (const auto item = data.message(peerId, MsgId(i))) {
 			++result.processedMessages;
 			if (item->media() && item->media()->document()) {
@@ -10041,8 +10064,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
 #endif
 	result.passed = (result.requests == 1) && result.responseParsed
-					&& (result.processedChats == 1)
-					&& (result.processedDialogs == 1)
+					&& (result.processedChats == 2) && result.processedDialogs
 					&& (result.processedMessages == kMessageCount)
 					&& (result.processedDocuments == kMessageCount)
 					&& (result.cacheWalks == 2)

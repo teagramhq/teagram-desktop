@@ -718,6 +718,8 @@ require_step_python "$mac_workflow" macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+require_step_script "$mac_workflow" macos "$regression_step" \
+  'process handle SIGUSR2 -p true -s false -n false'
 regression_step_index="$(job_field "$mac_workflow" macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
 summary_step_index="$(job_field "$mac_workflow" macos \
@@ -738,6 +740,17 @@ grep -Fq "\"$settings_link_evidence" "$profile_harness" \
   || contract_fail "$profile_harness must check the Settings deep link regression success evidence."
 grep -Fq 'First messages\.getDialogs handler latency regression:' "$profile_harness" \
   || contract_fail "$profile_harness must assert seeded first-getDialogs latency output."
+grep -Fq 'requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73' \
+  "$profile_harness" \
+  || contract_fail "$profile_harness must require a parsed two-chat, 73-document getDialogs response."
+for cache_evidence_field in \
+  queued_ops_before_ready \
+  queued_ops_passed \
+  cache_usable_ns \
+  under_10s; do
+  grep -Fq "$cache_evidence_field" "$profile_harness" \
+    || contract_fail "$profile_harness must match cache evidence field $cache_evidence_field."
+done
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \

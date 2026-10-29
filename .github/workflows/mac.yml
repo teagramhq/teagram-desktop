@@ -954,6 +954,8 @@ jobs:
               command.extend(["-o", f"target symbols add {shlex.quote(symbol_file)}"])
           command.extend([
               "-o",
+              "process handle SIGUSR2 -p true -s false -n false",
+              "-o",
               "process launch "
               f"-o {shlex.quote(stdout_path)} "
               f"-e {shlex.quote(stderr_path)} "
