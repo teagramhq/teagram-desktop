@@ -17,15 +17,11 @@ class FlatLabel;
 namespace Intro::details {
 
 class InviteWidget final : public Step {
-public:
-	InviteWidget(
-		QWidget *parent,
-		not_null<Main::Account*> account,
-		not_null<Data*> data);
+  public:
+	InviteWidget(QWidget *parent, not_null<Main::Account *> account,
+				 not_null<Data *> data);
 
-	bool hasBack() const override {
-		return true;
-	}
+	bool hasBack() const override { return true; }
 
 	void activate() override;
 	void cancelled() override;
@@ -37,10 +33,10 @@ public:
 	[[nodiscard]] int errorTop() const override;
 	[[nodiscard]] QWidget *firstTabWidget() const override;
 
-protected:
+  protected:
 	void resizeEvent(QResizeEvent *e) override;
 
-private:
+  private:
 	void showInviteError(const QString &text, bool select);
 	void signInDone(const MTPauth_Authorization &result);
 	void signInFail(const MTP::Error &error);

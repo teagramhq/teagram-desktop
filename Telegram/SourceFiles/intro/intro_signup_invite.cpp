@@ -21,32 +21,32 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro::details {
 
-InviteWidget::InviteWidget(
-		QWidget *parent,
-		not_null<Main::Account*> account,
-		not_null<Data*> data)
-: Step(parent, account, data)
-, _invite(this, st::introName, tr::lng_teagram_invite_field())
-, _note(this, tr::lng_teagram_invite_field_empty(), st::introDescription) {
+InviteWidget::InviteWidget(QWidget *parent, not_null<Main::Account *> account,
+						   not_null<Data *> data)
+	: Step(parent, account, data),
+	  _invite(this, st::introName, tr::lng_teagram_invite_field()),
+	  _note(this, tr::lng_teagram_invite_field_empty(), st::introDescription) {
 	_note->resizeToWidth(st::introDescription.minWidth);
 	setTitleText(tr::lng_teagram_invite_step_title());
-	setDescriptionText(tr::lng_teagram_invite_step_desc(
-		lt_server,
-		getData()->serverEndpoint));
+	setDescriptionText(
+		tr::lng_teagram_invite_step_desc(lt_server, getData()->serverEndpoint));
 	setErrorCentered(false);
 
 	_invite->setAccessibleName(tr::lng_teagram_invite_field(tr::now));
 	_invite->setAccessibleDescription(
 		tr::lng_teagram_invite_field_empty(tr::now));
-	_invite->changes() | rpl::on_next([=] {
-		hideError();
-		_invite->setAccessibleDescription(
-			tr::lng_teagram_invite_field_empty(tr::now));
-		setAccessibleDescription(QString());
-	}, _invite->lifetime());
-	_invite->submits() | rpl::on_next([=](Qt::KeyboardModifiers) {
-		submit();
-	}, _invite->lifetime());
+	_invite->changes()
+		| rpl::on_next(
+			[=] {
+				hideError();
+				_invite->setAccessibleDescription(
+					tr::lng_teagram_invite_field_empty(tr::now));
+				setAccessibleDescription(QString());
+			},
+			_invite->lifetime());
+	_invite->submits()
+		| rpl::on_next([=](Qt::KeyboardModifiers) { submit(); },
+					   _invite->lifetime());
 }
 
 int InviteWidget::nextButtonTop() const {
@@ -57,9 +57,7 @@ int InviteWidget::errorTop() const {
 	return contentTop() + st::introSignUpNameErrorTop;
 }
 
-QWidget *InviteWidget::firstTabWidget() const {
-	return _invite.data();
-}
+QWidget *InviteWidget::firstTabWidget() const { return _invite.data(); }
 
 void InviteWidget::activate() {
 	Step::activate();
@@ -72,9 +70,7 @@ void InviteWidget::activate() {
 	}
 }
 
-void InviteWidget::setInnerFocus() {
-	_invite->setFocusFast();
-}
+void InviteWidget::setInnerFocus() { _invite->setFocusFast(); }
 
 void InviteWidget::showAnimated(Animate animate) {
 	Step::showAnimated(animate);
@@ -87,12 +83,9 @@ void InviteWidget::cancelled() {
 
 void InviteWidget::resizeEvent(QResizeEvent *e) {
 	Step::resizeEvent(e);
-	_invite->moveToLeft(
-		contentLeft(),
-		contentTop() + st::introStepFieldTop);
-	_note->moveToLeft(
-		contentLeft() + st::buttonRadius,
-		contentTop() + st::introSignUpNoteTop);
+	_invite->moveToLeft(contentLeft(), contentTop() + st::introStepFieldTop);
+	_note->moveToLeft(contentLeft() + st::buttonRadius,
+					  contentTop() + st::introSignUpNoteTop);
 }
 
 void InviteWidget::showInviteError(const QString &text, bool select) {
@@ -123,35 +116,38 @@ void InviteWidget::submit() {
 	_invite->setText(secret);
 	hideError();
 	setAccessibleDescription(QString());
-	_sentRequest = api().request(MTPauth_SignIn(
-		MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
-		MTP_string(getData()->phone),
-		MTP_bytes(getData()->phoneHash),
-		MTP_string(secret),
-		MTP_emailVerificationCode(MTP_string(QString()))
-	)).done([=](const MTPauth_Authorization &result) {
-		_sentRequest = 0;
-		signInDone(result);
-	}).fail([=](const MTP::Error &error) {
-		_sentRequest = 0;
-		signInFail(error);
-	}).handleAllErrors().send();
+	_sentRequest = api()
+					   .request(MTPauth_SignIn(
+						   MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
+						   MTP_string(getData()->phone),
+						   MTP_bytes(getData()->phoneHash), MTP_string(secret),
+						   MTP_emailVerificationCode(MTP_string(QString()))))
+					   .done([=](const MTPauth_Authorization &result) {
+						   _sentRequest = 0;
+						   signInDone(result);
+					   })
+					   .fail([=](const MTP::Error &error) {
+						   _sentRequest = 0;
+						   signInFail(error);
+					   })
+					   .handleAllErrors()
+					   .send();
 }
 
 void InviteWidget::signInDone(const MTPauth_Authorization &result) {
-	result.match([&](const MTPDauth_authorization &) {
-		finish(result);
-	}, [&](const MTPDauth_authorizationSignUpRequired &data) {
-		if (const auto terms = data.vterms_of_service()) {
-			terms->match([&](const MTPDhelp_termsOfService &termsData) {
-				getData()->termsLock
-					= Window::TermsLock::FromSignupMTP(termsData);
-			});
-		} else {
-			getData()->termsLock = Window::TermsLock();
-		}
-		goNextOrBack<SignUpNameWidget>();
-	});
+	result.match(
+		[&](const MTPDauth_authorization &) { finish(result); },
+		[&](const MTPDauth_authorizationSignUpRequired &data) {
+			if (const auto terms = data.vterms_of_service()) {
+				terms->match([&](const MTPDhelp_termsOfService &termsData) {
+					getData()->termsLock
+						= Window::TermsLock::FromSignupMTP(termsData);
+				});
+			} else {
+				getData()->termsLock = Window::TermsLock();
+			}
+			goNextOrBack<SignUpNameWidget>();
+		});
 }
 
 void InviteWidget::signInFail(const MTP::Error &error) {
@@ -160,7 +156,7 @@ void InviteWidget::signInFail(const MTP::Error &error) {
 	} else if (error.type() == u"INPUT_REQUEST_INVALID"_q) {
 		showInviteError(tr::lng_intro_signup_closed(tr::now), false);
 	} else if (error.type() == u"PHONE_CODE_INVALID"_q
-		|| error.type() == u"PHONE_CODE_EXPIRED"_q) {
+			   || error.type() == u"PHONE_CODE_EXPIRED"_q) {
 		getData()->usernameCode.drop();
 		goBack();
 	} else {

@@ -582,47 +582,53 @@ void BuildPremiumSection(SectionBuilder &builder) {
 void BuildInviteFriendsEntry(SectionBuilder &builder) {
 	const auto session = builder.session();
 	builder.add([=](const BuildContext &ctx) {
-		v::match(ctx, [&](const WidgetContext &wctx) {
-			auto shown = session->appConfig().value() | rpl::map([=] {
-				return session->appConfig().get<bool>(
-						u"user_invites_enabled"_q,
-						false);
-			});
-			auto nested = SectionBuilder(wctx);
-			nested.scope([&] {
-				nested.addDivider();
-				nested.addSkip();
-				nested.addButton({
-					.id = u"main/invite-friends"_q,
-					.title = tr::lng_teagram_invite_title(),
-					.icon = { &st::menuIconInvite },
-					.onClick = [=] {
-						if (session->appConfig().get<bool>(
-									u"user_invites_enabled"_q,
-									false)) {
-							wctx.showOther(InviteFriendsId());
-						} else {
-							wctx.controller->showToast(
-									tr::lng_teagram_invite_off(tr::now));
-						}
+		v::match(
+			ctx,
+			[&](const WidgetContext &wctx) {
+				auto shown = session->appConfig().value() | rpl::map([=] {
+								 return session->appConfig().get<bool>(
+									 u"user_invites_enabled"_q, false);
+							 });
+				auto nested = SectionBuilder(wctx);
+				nested.scope(
+					[&] {
+						nested.addDivider();
+						nested.addSkip();
+						nested.addButton({
+							.id = u"main/invite-friends"_q,
+							.title = tr::lng_teagram_invite_title(),
+							.icon = {&st::menuIconInvite},
+							.onClick =
+								[=] {
+									if (session->appConfig().get<bool>(
+											u"user_invites_enabled"_q, false)) {
+										wctx.showOther(InviteFriendsId());
+									} else {
+										wctx.controller->showToast(
+											tr::lng_teagram_invite_off(
+												tr::now));
+									}
+								},
+							.keywords = {u"invite"_q, u"link"_q, u"friends"_q,
+										 u"sign up"_q},
+						});
+						nested.addSkip();
 					},
-					.keywords = { u"invite"_q, u"link"_q, u"friends"_q, u"sign up"_q },
-				});
-				nested.addSkip();
-			}, std::move(shown));
-		}, [&](const SearchContext &sctx) {
-			if (session->appConfig().get<bool>(
-						u"user_invites_enabled"_q,
-						false)) {
-				sctx.entries->push_back({
-					.id = u"main/invite-friends"_q,
-					.title = tr::lng_teagram_invite_title(tr::now),
-					.keywords = { u"invite"_q, u"link"_q, u"friends"_q, u"sign up"_q },
-					.section = InviteFriendsId(),
-					.icon = { &st::menuIconInvite },
-				});
-			}
-		});
+					std::move(shown));
+			},
+			[&](const SearchContext &sctx) {
+				if (session->appConfig().get<bool>(u"user_invites_enabled"_q,
+												   false)) {
+					sctx.entries->push_back({
+						.id = u"main/invite-friends"_q,
+						.title = tr::lng_teagram_invite_title(tr::now),
+						.keywords
+						= {u"invite"_q, u"link"_q, u"friends"_q, u"sign up"_q},
+						.section = InviteFriendsId(),
+						.icon = {&st::menuIconInvite},
+					});
+				}
+			});
 	});
 }
 

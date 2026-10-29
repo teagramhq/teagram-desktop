@@ -392,9 +392,9 @@ void UsernameWidget::signInDone(const MTPauth_Authorization &result) {
 		getData()->signupName.clear();
 		getData()->usernameError.clear();
 		getData()->signupNameError.clear();
-		if (account().appConfig().get<QString>(
-				u"registration_mode"_q,
-				QString()) == u"invite"_q) {
+		if (account().appConfig().get<QString>(u"registration_mode"_q,
+											   QString())
+			== u"invite"_q) {
 			goNext<InviteWidget>();
 		} else {
 			goNext<SignUpNameWidget>();

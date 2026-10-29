@@ -73,9 +73,8 @@ void SignUpNameWidget::activate() {
 	ShowSignupControls(this);
 	_name->setFocusFast();
 	if (getData()->signupInviteError) {
-		QMetaObject::invokeMethod(this, [=] {
-			goBack();
-		}, Qt::QueuedConnection);
+		QMetaObject::invokeMethod(
+			this, [=] { goBack(); }, Qt::QueuedConnection);
 		return;
 	}
 
