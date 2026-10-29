@@ -92,25 +92,25 @@ private:
 class Instance {
 public:
 	// Thread: Main.
-	Instance();
+  explicit Instance(bool initializeDeviceResolvers = true);
 
-	// Thread: Any. Must be locked: AudioMutex.
-	[[nodiscard]] Webrtc::DeviceResolvedId playbackDeviceId() const;
+  // Thread: Any. Must be locked: AudioMutex.
+  [[nodiscard]] Webrtc::DeviceResolvedId playbackDeviceId() const;
 
-	// Thread: Main.
-	[[nodiscard]] Webrtc::DeviceResolvedId captureDeviceId() const;
+  // Thread: Main.
+  [[nodiscard]] Webrtc::DeviceResolvedId captureDeviceId() const;
 
-	[[nodiscard]] std::unique_ptr<Track> createTrack();
+  [[nodiscard]] std::unique_ptr<Track> createTrack();
 
-	void detachTracks();
-	void reattachTracks();
-	bool hasActiveTracks() const;
+  void detachTracks();
+  void reattachTracks();
+  bool hasActiveTracks() const;
 
-	void scheduleDetachFromDevice();
-	void scheduleDetachIfNotUsed();
-	void stopDetachIfNotUsed();
+  void scheduleDetachFromDevice();
+  void scheduleDetachIfNotUsed();
+  void stopDetachIfNotUsed();
 
-	~Instance();
+  ~Instance();
 
 private:
 	friend class Track;
@@ -121,8 +121,8 @@ private:
 
 private:
 	std::set<Track*> _tracks;
-	Webrtc::DeviceResolver _playbackDeviceId;
-	Webrtc::DeviceResolver _captureDeviceId;
+	std::unique_ptr<Webrtc::DeviceResolver> _playbackDeviceId;
+	std::unique_ptr<Webrtc::DeviceResolver> _captureDeviceId;
 
 	base::Timer _updateTimer;
 
