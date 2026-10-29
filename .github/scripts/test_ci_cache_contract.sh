@@ -60,7 +60,8 @@ require_permission_map "$linux_workflow" 'workflow: contents=read
 linux-changes: inherit
 linux-libraries: contents=read,packages=write
 linux-build: actions=read,contents=read,packages=read
-linux: inherit'
+linux: inherit
+ci: inherit'
 
 # The build verifies it checked out GITHUB_SHA before compiling.
 verify_index="$(job_field "$linux_workflow" linux-build \
@@ -133,6 +134,48 @@ expect_contains "$linux_workflow job linux-build if" \
   "$(job_field "$linux_workflow" linux-build '.if')" \
   "(needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')" \
   "needs.linux-changes.outputs.required == 'true'"
+
+# The PR aggregate waits for each job that can run on a pull request and
+# rejects failed or cancelled results while allowing only the filtered build
+# skip.
+pr_jobs="$(yq -r '.jobs | keys | map(select(. != "ci" and . != "linux-libraries")) | sort | join(",")' "$linux_workflow")"
+expect_equal "$linux_workflow PR aggregate dependencies" \
+  "$(job_field "$linux_workflow" ci '.needs | sort | join(",")')" \
+  "$pr_jobs"
+require_job_field "$linux_workflow" ci '.if' \
+  "always() && github.event_name == 'pull_request'"
+
+ci_report_script="$temp_dir/ci-report.sh"
+step_script "$linux_workflow" ci 'Report CI result.' > "$ci_report_script"
+run_ci_report() {
+  env CHANGE_RESULT="$1" BUILD_REQUIRED="$2" BUILD_RESULT="$3" \
+    LINUX_RESULT="$4" bash "$ci_report_script" > "$temp_dir/ci-report-output" 2>&1
+}
+expect_ci_report_success() {
+  local scenario="$1"
+  shift
+  if ! run_ci_report "$@"; then
+    contract_fail "$linux_workflow ci result reporting must accept $scenario."
+  fi
+}
+expect_ci_report_failure() {
+  local scenario="$1"
+  shift
+  if run_ci_report "$@"; then
+    contract_fail "$linux_workflow ci result reporting must reject $scenario."
+  fi
+}
+expect_ci_report_success 'a required successful build' success true success success
+expect_ci_report_success 'a path-filtered build skip' success false skipped success
+expect_ci_report_failure 'failed change detection' failure false skipped success
+expect_ci_report_failure 'cancelled change detection' cancelled false skipped success
+expect_ci_report_failure 'a failed Rocky Linux check' success false skipped failure
+expect_ci_report_failure 'a cancelled Rocky Linux check' success false skipped cancelled
+expect_ci_report_failure 'a failed required build' success true failure success
+expect_ci_report_failure 'a cancelled required build' success true cancelled success
+expect_ci_report_failure 'a skipped required build' success true skipped success
+expect_ci_report_failure 'a path-filtered build that ran' success false success success
+expect_ci_report_failure 'an unknown build requirement' success unknown skipped success
 
 # Prune pull request caches. runs with only actions: write, never checks out
 # code, and acts only on a numeric PR number or a trusted dev source run.

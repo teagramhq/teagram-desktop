@@ -680,3 +680,54 @@ jobs:
               exit 1
               ;;
           esac
+
+  ci:
+    name: ci
+    needs:
+      - linux-changes
+      - linux-build
+      - linux
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Report CI result.
+        shell: bash
+        env:
+          CHANGE_RESULT: ${{ needs.linux-changes.result }}
+          BUILD_REQUIRED: ${{ needs.linux-changes.outputs.required }}
+          BUILD_RESULT: ${{ needs.linux-build.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${CHANGE_RESULT}" != "success" ]]; then
+            echo "::error::Unable to determine whether the Linux build is required."
+            exit 1
+          fi
+
+          if [[ "${LINUX_RESULT}" != "success" ]]; then
+            echo "::error::Rocky Linux 8 check did not succeed (result: ${LINUX_RESULT})."
+            exit 1
+          fi
+
+          case "${BUILD_REQUIRED}" in
+            false)
+              if [[ "${BUILD_RESULT}" != "skipped" ]]; then
+                echo "::error::Linux build was not skipped as expected (result: ${BUILD_RESULT})."
+                exit 1
+              fi
+              echo "All required pull request checks passed; Linux build was not required."
+              ;;
+            true)
+              if [[ "${BUILD_RESULT}" != "success" ]]; then
+                echo "::error::Linux build and unit tests did not succeed (result: ${BUILD_RESULT})."
+                exit 1
+              fi
+              echo "All required pull request checks passed."
+              ;;
+            *)
+              echo "::error::Linux build requirement was not reported."
+              exit 1
+              ;;
+          esac
