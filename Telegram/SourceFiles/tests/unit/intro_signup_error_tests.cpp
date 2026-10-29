@@ -65,17 +65,19 @@ TEST_CASE(SignupFailureKeepsRegistrationClosedAndUsernameTakenMessages) {
 	CHECK(taken.backAvailable);
 }
 
-TEST_CASE(SignupInviteAndSessionFailuresStayOnThePasswordStep) {
+TEST_CASE(SignupInviteFailureReturnsToItsInput) {
 	const auto invite = ClassifySignupFailure(
 		u"INVITE_HASH_INVALID"_q,
 		400,
 		false,
 		false);
 	CHECK(invite.message == SignupFailureMessage::InvitationUnavailable);
-	CHECK(invite.destination == SignupFailureDestination::Password);
-	CHECK(invite.action == SignupFailureAction::ShowError);
+	CHECK(invite.destination == SignupFailureDestination::Invite);
+	CHECK(invite.action == SignupFailureAction::ReturnToInput);
 	CHECK(invite.backAvailable);
+}
 
+TEST_CASE(SignupSessionFailureStaysOnThePasswordStep) {
 	const auto session = ClassifySignupFailure(
 		u"SESSION_STATE_INVALID"_q,
 		400,
