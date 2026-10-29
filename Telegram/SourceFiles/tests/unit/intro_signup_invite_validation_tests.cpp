@@ -31,9 +31,10 @@ TEST_CASE(InviteSecretRejectsIncompleteOrMalformedInput) {
 	CHECK(NormalizeInviteSecret(QString()).isEmpty());
 	CHECK(NormalizeInviteSecret(kInviteSecret.left(63)).isEmpty());
 	CHECK(NormalizeInviteSecret(kInviteSecret + u"g"_q).isEmpty());
-	CHECK(NormalizeInviteSecret(
-		u"https://links.example.test/invite"_q).isEmpty());
-	CHECK(NormalizeInviteSecret(u"https://links.example.test/invite#"_q).isEmpty());
+	CHECK(NormalizeInviteSecret(u"https://links.example.test/invite"_q)
+			  .isEmpty());
+	CHECK(NormalizeInviteSecret(u"https://links.example.test/invite#"_q)
+			  .isEmpty());
 }
 
 } // namespace
