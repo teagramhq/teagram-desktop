@@ -28,8 +28,8 @@ InviteWidget::InviteWidget(QWidget *parent, not_null<Main::Account *> account,
 	  _note(this, tr::lng_teagram_invite_field_empty(), st::introDescription) {
 	_note->resizeToWidth(st::introDescription.minWidth);
 	setTitleText(tr::lng_teagram_invite_step_title());
-	setDescriptionText(
-		tr::lng_teagram_invite_step_desc(lt_server, getData()->serverEndpoint));
+	setDescriptionText(tr::lng_teagram_invite_step_desc(
+		tr::now, lt_server, getData()->serverEndpoint));
 	setErrorCentered(false);
 
 	_invite->setAccessibleName(tr::lng_teagram_invite_field(tr::now));

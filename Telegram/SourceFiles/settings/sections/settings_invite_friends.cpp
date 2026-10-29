@@ -156,8 +156,7 @@ class InviteListDelegate final : public PeerListContentDelegateShow {
 };
 
 class InviteFriends final : public PeerListController,
-							public Section<InviteFriends>,
-							public base::has_weak_ptr {
+							public Section<InviteFriends> {
   public:
 	InviteFriends(QWidget *parent,
 				  not_null<Window::SessionController *> controller);
@@ -384,7 +383,7 @@ void InviteFriends::updateAvailability() {
 		_unavailableShown = true;
 		_controller->showToast(tr::lng_teagram_invite_off(tr::now));
 		showOther(MainId());
-		_messageLabel->setText(tr::lng_teagram_invite_off());
+		_messageLabel->setText(tr::lng_teagram_invite_off(tr::now));
 		_messageLabel->show();
 	}
 }
@@ -400,14 +399,14 @@ void InviteFriends::updateSummary() {
 	if (!_createError.isEmpty()) {
 		summary = _createError;
 	} else if (left > 0) {
-		summary = tr::lng_teagram_invite_quota(tr::now, lt_left, left, lt_total,
-											   _quota);
+		summary = tr::lng_teagram_invite_quota(
+			tr::now, lt_count, left, lt_total, QString::number(_quota));
 	} else if (_nextAvailableAt) {
 		summary = tr::lng_teagram_invite_quota_reached(
-			tr::now, lt_total, _quota, lt_date, InviteDate(*_nextAvailableAt));
+			tr::now, lt_count, _quota, lt_date, InviteDate(*_nextAvailableAt));
 	} else {
-		summary = tr::lng_teagram_invite_quota(tr::now, lt_left, int64(0),
-											   lt_total, _quota);
+		summary = tr::lng_teagram_invite_quota(tr::now, lt_count, 0, lt_total,
+											   QString::number(_quota));
 	}
 	_quotaLabel->setText(summary);
 	_quotaLabel->setTextColorOverride(_createError.isEmpty()
@@ -423,22 +422,22 @@ void InviteFriends::updateSummary() {
 void InviteFriends::updateMessage() {
 	_retryButton->hide();
 	if (!_available) {
-		_messageLabel->setText(tr::lng_teagram_invite_off());
+		_messageLabel->setText(tr::lng_teagram_invite_off(tr::now));
 		_messageLabel->show();
 	} else if (_serverDisabled && !_loaded) {
 		_messageLabel->setText(_createError.isEmpty()
-								   ? tr::lng_teagram_invite_off()
+								   ? tr::lng_teagram_invite_off(tr::now)
 								   : _createError);
 		_messageLabel->show();
 	} else if (!_loaded && _loading) {
-		_messageLabel->setText(tr::lng_teagram_invite_loading());
+		_messageLabel->setText(tr::lng_teagram_invite_loading(tr::now));
 		_messageLabel->show();
 	} else if (_listFailed) {
-		_messageLabel->setText(tr::lng_teagram_invite_list_failed());
+		_messageLabel->setText(tr::lng_teagram_invite_list_failed(tr::now));
 		_messageLabel->show();
 		_retryButton->show();
 	} else if (_loaded && !_list->fullRowsCount()) {
-		_messageLabel->setText(tr::lng_teagram_invite_empty());
+		_messageLabel->setText(tr::lng_teagram_invite_empty(tr::now));
 		_messageLabel->show();
 	} else {
 		_messageLabel->hide();
@@ -542,9 +541,9 @@ void InviteFriends::setRows(const MTPDteagram_userInvites &data) {
 	}
 	for (const auto &invite : data.vinvites().v) {
 		invite.match([&](const MTPDteagram_userInvite &item) {
-			const auto row = std::make_unique<InviteRow>(
+			auto row = std::make_unique<InviteRow>(
 				this, InviteData{
-						  .id = item.vid().v,
+						  .id = InviteId(item.vid().v),
 						  .state = qs(item.vstate()),
 						  .createdAt = item.vcreated_at().v,
 						  .expiresAt = item.vexpires_at().v,
@@ -578,9 +577,9 @@ void InviteFriends::createInvite() {
 					  _creatingValue = false;
 					  result.match([&](const MTPDteagram_userInviteLink &data) {
 						  const auto createdAt = base::unixtime::now();
-						  const auto row = std::make_unique<InviteRow>(
+						  auto row = std::make_unique<InviteRow>(
 							  this, InviteData{
-										.id = data.vid().v,
+										.id = InviteId(data.vid().v),
 										.state = u"pending"_q,
 										.createdAt = createdAt,
 										.expiresAt = data.vexpires_at().v,
@@ -595,7 +594,8 @@ void InviteFriends::createInvite() {
 						  }
 						  updateSummary();
 						  updateMessage();
-						  showInviteLink(data.vlink().v, data.vexpires_at().v);
+						  showInviteLink(qs(data.vlink()),
+										 data.vexpires_at().v);
 						  loadInvites();
 					  });
 				  }))
@@ -671,7 +671,7 @@ void InviteFriends::revokeInvite(InviteData data) {
 					= session()
 						  .api()
 						  .request(
-							  MTPteagram_RevokeUserInvite(MTPlong(data.id)))
+							  MTPteagram_RevokeUserInvite(MTP_long(data.id)))
 						  .done(crl::guard(
 							  this,
 							  [=](const MTPBool &result) {
@@ -769,7 +769,7 @@ void InviteFriends::showInviteLink(QString link, TimeId expiresAt) {
 		box->addTopButton(st::boxTitleClose, close);
 		const auto escape = new QShortcut(QKeySequence(Qt::Key_Escape), box);
 		escape->setContext(Qt::WindowShortcut);
-		QObject::connect(escape, &QShortcut::activated, box, close);
+		QObject::connect(escape, &QShortcut::activated, box.get(), close);
 
 		box->addRow(Info::BotStarRef::CreateLinkHeaderIcon(box, _session),
 					st::boxRowPadding + st::confcallLinkHeaderIconPadding);

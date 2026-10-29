@@ -8808,10 +8808,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_invite_create" = "Create invite link";
 "lng_teagram_invite_creating" = "Creating link…";
 "lng_teagram_invite_loading" = "Please wait…";
-"lng_teagram_invite_quota#one" = "{left} of {total} invite left this week. Every invite counts for 7 days, even if you revoke it.";
-"lng_teagram_invite_quota#other" = "{left} of {total} invites left this week. Every invite counts for 7 days, even if you revoke it.";
+"lng_teagram_invite_quota#one" = "{count} of {total} invite left this week. Every invite counts for 7 days, even if you revoke it.";
+"lng_teagram_invite_quota#other" = "{count} of {total} invites left this week. Every invite counts for 7 days, even if you revoke it.";
 "lng_teagram_invite_quota_reached#one" = "You've used your invite for this week. You can create the next one on {date}.";
-"lng_teagram_invite_quota_reached#other" = "You've used all {total} invites for this week. You can create the next one on {date}.";
+"lng_teagram_invite_quota_reached#other" = "You've used all {count} invites for this week. You can create the next one on {date}.";
 "lng_teagram_invite_list" = "Your invites";
 "lng_teagram_invite_empty" = "Invites you create will appear here.";
 "lng_teagram_invite_footer" = "Teagram shows each link only once, when you create it. If you lose one, revoke it and create a new one.";
