@@ -3045,6 +3045,13 @@ stories.getAlbums#25b3eac7 peer:InputPeer hash:long = stories.Albums;
 stories.getAlbumStories#ac806d61 peer:InputPeer album_id:int offset:int limit:int = stories.Stories;
 stories.startLive#d069ccde flags:# pinned:flags.2?true noforwards:flags.4?true rtmp_stream:flags.5?true peer:InputPeer caption:flags.0?string entities:flags.1?Vector<MessageEntity> privacy_rules:Vector<InputPrivacyRule> random_id:long messages_enabled:flags.6?Bool send_paid_messages_stars:flags.7?long = Updates;
 
+teagram.userInviteLink#0078b3b0 id:long link:string expires_at:int = teagram.UserInviteLink;
+teagram.userInvite#ff81dc6c id:long state:string created_at:int expires_at:int = teagram.UserInvite;
+teagram.userInvites#b5cfec46 invites:Vector<teagram.UserInvite> quota:long weekly_count:long flags:# next_available_at:flags.0?long = teagram.UserInvites;
+teagram.createUserInvite#bf4f8b0e = teagram.UserInviteLink;
+teagram.listUserInvites#2ad32052 = teagram.UserInvites;
+teagram.revokeUserInvite#a483022c id:long = Bool;
+
 premium.getBoostsList#60f67660 flags:# gifts:flags.0?true peer:InputPeer offset:string limit:int = premium.BoostsList;
 premium.getMyBoosts#be77b4a = premium.MyBoosts;
 premium.applyBoost#6b7da746 flags:# slots:flags.0?Vector<int> peer:InputPeer = premium.MyBoosts;

@@ -98,6 +98,7 @@ PRIVATE
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
+    intro/intro_signup_invite_validation.cpp
     intro/intro_signup_terms.cpp
     intro/intro_username_validation.cpp
     main/main_account_persistence.cpp
@@ -116,6 +117,7 @@ PRIVATE
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
+    tests/unit/intro_signup_invite_validation_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp

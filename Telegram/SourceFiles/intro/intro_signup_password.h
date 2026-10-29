@@ -75,6 +75,7 @@ private:
 	void passwordUpdateFail(const MTP::Error &error);
 	void passwordSaveFailed();
 	void routeBackWithUsernameError(const QString &text);
+	void routeBackWithInviteError();
 	void routeBackWithNameError(const QString &text);
 
 	object_ptr<Ui::PasswordInput> _password;
