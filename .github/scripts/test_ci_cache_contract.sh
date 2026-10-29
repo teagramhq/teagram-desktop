@@ -60,7 +60,8 @@ require_permission_map "$linux_workflow" 'workflow: contents=read
 linux-changes: inherit
 linux-libraries: contents=read,packages=write
 linux-build: actions=read,contents=read,packages=read
-linux: inherit'
+linux: inherit
+ci: inherit'
 
 # The build verifies it checked out GITHUB_SHA before compiling.
 verify_index="$(job_field "$linux_workflow" linux-build \
