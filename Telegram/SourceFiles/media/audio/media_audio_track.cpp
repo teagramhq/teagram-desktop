@@ -248,17 +248,19 @@ Track::~Track() {
 	_instance->unregisterTrack(this);
 }
 
-Instance::Instance()
-: _playbackDeviceId(
-	&Core::App().mediaDevices(),
-	Webrtc::DeviceType::Playback,
-	Webrtc::DeviceIdOrDefault(
-		Core::App().settings().playbackDeviceIdValue()))
-, _captureDeviceId(
-	&Core::App().mediaDevices(),
-	Webrtc::DeviceType::Capture,
-	Webrtc::DeviceIdOrDefault(
-		Core::App().settings().captureDeviceIdValue())) {
+Instance::Instance(bool initializeDeviceResolvers) {
+	if (initializeDeviceResolvers) {
+		const auto devices = &Core::App().mediaDevices();
+		_playbackDeviceId = std::make_unique<Webrtc::DeviceResolver>(
+			devices, Webrtc::DeviceType::Playback,
+			Webrtc::DeviceIdOrDefault(
+				Core::App().settings().playbackDeviceIdValue()));
+		_captureDeviceId = std::make_unique<Webrtc::DeviceResolver>(
+			devices, Webrtc::DeviceType::Capture,
+			Webrtc::DeviceIdOrDefault(
+				Core::App().settings().captureDeviceIdValue()));
+	}
+
 	_updateTimer.setCallback([this] {
 		auto hasActive = false;
 		for (auto track : _tracks) {
@@ -277,20 +279,32 @@ Instance::Instance()
 		Player::internal::DetachFromDevice(this);
 	});
 
-	_playbackDeviceId.changes(
-	) | rpl::on_next([=](Webrtc::DeviceResolvedId id) {
-		if (Player::internal::DetachIfDeviceChanged(this, id)) {
-			_detachFromDeviceForce = false;
-		}
-	}, _lifetime);
+	if (_playbackDeviceId) {
+		_playbackDeviceId->changes()
+			| rpl::on_next(
+				[=](Webrtc::DeviceResolvedId id) {
+					if (Player::internal::DetachIfDeviceChanged(this, id)) {
+						_detachFromDeviceForce = false;
+					}
+				},
+				_lifetime);
+	}
 }
 
 Webrtc::DeviceResolvedId Instance::playbackDeviceId() const {
-	return _playbackDeviceId.threadSafeCurrent();
+	return _playbackDeviceId ? _playbackDeviceId->threadSafeCurrent()
+							 : Webrtc::DeviceResolvedId{
+								   .type = Webrtc::DeviceType::Playback,
+								   .computedFromDefault = true,
+							   };
 }
 
 Webrtc::DeviceResolvedId Instance::captureDeviceId() const {
-	return _captureDeviceId.current();
+	return _captureDeviceId ? _captureDeviceId->current()
+							: Webrtc::DeviceResolvedId{
+								  .type = Webrtc::DeviceType::Capture,
+								  .computedFromDefault = true,
+							  };
 }
 
 std::unique_ptr<Track> Instance::createTrack() {

@@ -254,9 +254,7 @@ public:
 	[[nodiscard]] Media::Audio::Instance &audio() {
 		return *_audio;
 	}
-	[[nodiscard]] Webrtc::Environment &mediaDevices() {
-		return *_mediaDevices;
-	}
+	[[nodiscard]] Webrtc::Environment &mediaDevices();
 
 	// Langpack and emoji keywords.
 	[[nodiscard]] Lang::Instance &langpack() {
@@ -411,7 +409,7 @@ private:
 	const std::unique_ptr<Private> _private;
 	const std::unique_ptr<Platform::Integration> _platformIntegration;
 	const std::unique_ptr<base::BatterySaving> _batterySaving;
-	const std::unique_ptr<Webrtc::Environment> _mediaDevices;
+	std::unique_ptr<Webrtc::Environment> _mediaDevices;
 
 	const std::unique_ptr<Storage::Databases> _databases;
 	const std::unique_ptr<Ui::Animations::Manager> _animationsManager;
