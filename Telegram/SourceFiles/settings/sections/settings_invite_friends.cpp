@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
@@ -293,7 +294,8 @@ void InviteFriends::setupContent() {
 		->add(object_ptr<Ui::FlatLabel>(
 				  header,
 				  tr::lng_teagram_invite_about(
-					  lt_server, rpl::single(ServerName(_session)), tr::marked),
+					  lt_server, rpl::single(tr::marked(ServerName(_session))),
+					  tr::marked),
 				  st::settingsFilterDividerLabel),
 			  st::settingsFilterDividerLabelPadding, style::al_top)
 		->setTryMakeSimilarLines(true);
@@ -781,7 +783,8 @@ void InviteFriends::showInviteLink(QString link, TimeId expiresAt) {
 			   object_ptr<Ui::FlatLabel>(
 				   box,
 				   tr::lng_teagram_invite_created_text(
-					   lt_date, rpl::single(InviteDate(expiresAt)), tr::marked),
+					   lt_date, rpl::single(tr::marked(InviteDate(expiresAt))),
+					   tr::marked),
 				   st::confcallLinkCenteredText),
 			   st::boxRowPadding + st::confcallLinkTitlePadding, style::al_top)
 			->setTryMakeSimilarLines(true);
