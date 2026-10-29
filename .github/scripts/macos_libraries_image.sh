@@ -87,8 +87,19 @@ case "$operation" in
 
     temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/teagram-macos-libraries.XXXXXX")"
     trap 'rm -rf "$temp_dir"' EXIT
-    if ! oras pull "$image" --output "$temp_dir"; then
-      fail "Unable to pull macOS dependency artifact ${image}."
+    pull_log="${temp_dir}/oras-pull.log"
+    if oras pull "$image" --output "$temp_dir" > "$pull_log" 2>&1; then
+      cat "$pull_log"
+    else
+      pull_status=$?
+      cat "$pull_log" >&2
+      if grep -Eiq 'stream error:.*PROTOCOL_ERROR' "$pull_log"; then
+        printf '::warning::ORAS stream protocol error while pulling %s; falling back to the legacy cache or rebuilding dependencies.\n' \
+          "$image" >&2
+        write_cache_result false
+        exit 0
+      fi
+      fail "Unable to pull macOS dependency artifact ${image} (oras exit ${pull_status})."
     fi
     archive="${temp_dir}/${archive_name}"
     [[ -f "$archive" ]] || fail "macOS dependency artifact did not contain ${archive_name}."

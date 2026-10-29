@@ -192,6 +192,23 @@ env MOCK_ORAS_MANIFEST_STATUS=1 \
 grep -Fqx 'cache-hit=false' "$output" \
   || fail 'A not-found registry response must request a build fallback.'
 
+fallback_workspace="${temp_dir}/pull-fallback"
+mkdir -p "$fallback_workspace"
+: > "$output"
+if ! env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
+  MOCK_ORAS_PULL_OUTPUT='Error: failed to copy content: copy failed: stream error: stream ID 1; PROTOCOL_ERROR; received from peer' \
+  bash "$script" pull "$image" "$fallback_workspace" "$output" \
+  > "${temp_dir}/pull-protocol-error.log" 2>&1; then
+  fail 'A registry stream protocol error must use the dependency fallback.'
+fi
+grep -Fqx 'cache-hit=false' "$output" \
+  || fail 'A registry stream protocol error must report a cache miss.'
+grep -Fq 'falling back to the legacy cache or rebuilding dependencies' \
+  "${temp_dir}/pull-protocol-error.log" \
+  || fail 'A registry stream protocol error must explain the dependency fallback.'
+[[ ! -e "$fallback_workspace/Libraries" && ! -e "$fallback_workspace/ThirdParty" ]] \
+  || fail 'A failed artifact pull must not extract partial dependencies into the workspace.'
+
 : > "$output"
 if env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
   MOCK_ORAS_PULL_OUTPUT='missing layer: 404' \

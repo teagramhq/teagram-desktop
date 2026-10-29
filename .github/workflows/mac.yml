@@ -551,6 +551,54 @@ jobs:
             }
           done | tee evidence/architecture-static.txt
 
+      - name: Grant test app camera and microphone access.
+        if: env.ONLY_CACHE == 'false'
+        run: |
+          set -Eeuo pipefail
+          app="$REPO_NAME/out/Debug/Teagram.app"
+          plist="$app/Contents/Info.plist"
+          bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "$plist")"
+          test "$bundle_id" = io.teagram.desktop
+
+          sip_status="$(csrutil status)"
+          printf '%s\n' "$sip_status"
+          if [[ "$sip_status" != *"System Integrity Protection status: disabled."* ]]; then
+            echo "::error::The macOS test runner must have SIP disabled to seed its TCC database."
+            exit 1
+          fi
+
+          system_tcc_db="/Library/Application Support/com.apple.TCC/TCC.db"
+          user_tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+          test -f "$system_tcc_db"
+          test -f "$user_tcc_db"
+
+          grant_permission() {
+            local db="$1"
+            local service="$2"
+            local timestamp
+            local values
+            local granted
+            timestamp="$(date +%s)"
+            values="'$service','$bundle_id',0,2,4,1,NULL,NULL,NULL,'UNUSED',NULL,0,$timestamp,NULL,NULL,'UNUSED',$timestamp"
+            if [[ "$db" == "$system_tcc_db" ]]; then
+              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access VALUES($values);"
+              granted="$(sudo sqlite3 "$db" "SELECT auth_value FROM access WHERE service='$service' AND client='$bundle_id' AND client_type=0;")"
+            else
+              sqlite3 "$db" "INSERT OR REPLACE INTO access VALUES($values);"
+              granted="$(sqlite3 "$db" "SELECT auth_value FROM access WHERE service='$service' AND client='$bundle_id' AND client_type=0;")"
+            fi
+            if [[ "$granted" != 2 ]]; then
+              echo "::error::TCC did not grant $service to $bundle_id in $db."
+              return 1
+            fi
+            printf 'Verified TCC grant: %s for %s in %s\n' "$service" "$bundle_id" "$db"
+          }
+
+          for service in kTCCServiceMicrophone kTCCServiceCamera; do
+            grant_permission "$system_tcc_db" "$service"
+            grant_permission "$user_tcc_db" "$service"
+          done
+
       - name: Launch app smoke test.
         id: launch-smoke
         if: env.ONLY_CACHE == 'false'
