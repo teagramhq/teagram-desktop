@@ -642,7 +642,7 @@ jobs:
           fi
 
   check-linux:
-    name: 'check: linux'
+    name: Rocky Linux 8
     needs:
       - check-linux-changes
       - test-linux-unit

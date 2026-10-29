@@ -26,7 +26,7 @@ done <<'JOB_NAMES'
 .github/workflows/linux.yml	check-linux-changes	check: linux-changes
 .github/workflows/linux.yml	publish-linux-deps-image	publish: linux-deps-image
 .github/workflows/linux.yml	test-linux-unit	test: linux-unit (${{ matrix.defines || 'default' }})
-.github/workflows/linux.yml	check-linux	check: linux
+.github/workflows/linux.yml	check-linux	Rocky Linux 8
 .github/workflows/linux.yml	ci	ci
 .github/workflows/mac.yml	check-macos-deps-artifact	check: macos-deps-artifact
 .github/workflows/mac.yml	build-macos-deps-artifact	build: macos-deps-artifact
