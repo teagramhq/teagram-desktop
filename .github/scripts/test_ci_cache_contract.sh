@@ -17,6 +17,34 @@ trap 'rm -rf "$temp_dir"' EXIT
 
 require_contract_tests_in_lint
 
+while IFS=$'\t' read -r workflow job expected_name; do
+  require_job_field "$workflow" "$job" '.name' "$expected_name"
+done <<'JOB_NAMES'
+.github/workflows/cpp_format.yml	lint-cpp-format	lint: cpp-format
+.github/workflows/epoch-fixture-toolchain.yml	test-epoch-fixture-conformance	test: epoch-fixture-conformance
+.github/workflows/linux-arm64.yml	build-linux	build: linux (arm64)
+.github/workflows/linux.yml	check-linux-changes	check: linux-changes
+.github/workflows/linux.yml	publish-linux-deps-image	publish: linux-deps-image
+.github/workflows/linux.yml	test-linux-unit	test: linux-unit (${{ matrix.defines || 'default' }})
+.github/workflows/linux.yml	check-linux	check: linux
+.github/workflows/linux.yml	ci	ci
+.github/workflows/mac.yml	check-macos-deps-artifact	check: macos-deps-artifact
+.github/workflows/mac.yml	build-macos-deps-artifact	build: macos-deps-artifact
+.github/workflows/mac.yml	ops-prune-macos-libraries	ops: prune-macos-libraries
+.github/workflows/mac.yml	build-macos	MacOS
+.github/workflows/mac.yml	test-libiconv	test: libiconv (macos-arm64)
+.github/workflows/mac_packaged.yml	build-macos-packaged	MacOS
+.github/workflows/mac_packaged.yml	publish-release	publish: release
+.github/workflows/mac_pr_approval.yml	ops-clear-macos-approval	ops: clear-macos-approval
+.github/workflows/macos_unit_feedback.yml	test-macos-unit	test: macos-unit (arm64)
+.github/workflows/macos_updater_fixtures.yml	test-updater-fixtures	test: updater-fixtures (macos-arm64)
+.github/workflows/pr_cache_cleanup.yml	ops-prune-pr-caches	ops: prune-pr-caches
+.github/workflows/pr_cache_cleanup.yml	ops-prune-dev-macos-ccache	ops: prune-dev-macos-ccache
+.github/workflows/pr_cache_cleanup.yml	ops-prune-dev-linux-ccache	ops: prune-dev-linux-ccache
+.github/workflows/unit_feedback.yml	test-linux-unit-feedback	test: linux-unit-feedback
+.github/workflows/workflow_lint.yml	lint-workflows	lint: workflows
+JOB_NAMES
+
 dependency_hash="\${{ hashFiles('Telegram/build/docker/centos_env/**') }}"
 libraries_image='ghcr.io/teagramhq/teagram-desktop-linux-libraries:${DEPENDENCY_HASH}'
 
@@ -31,7 +59,7 @@ done
 # helper the contract tests source) is in its path filters, so editing a
 # contract test lints it.
 require_workflow_field "$workflow_lint_workflow" '.on.push.branches | join(",")' 'dev'
-lint_scripts="$(job_field "$workflow_lint_workflow" actionlint \
+lint_scripts="$(job_field "$workflow_lint_workflow" lint-workflows \
   '.steps[].run // "" | capture("(?P<path>\.github/scripts/[A-Za-z0-9_.]+)") | .path')"
 lint_scripts+=$'\n.github/scripts/workflow_contract.sh\n.github/scripts/workflow_python_heredocs.py'
 for event in push pull_request; do
@@ -57,88 +85,89 @@ reject_value "$linux_workflow" 'workflow_run' 'head_sha'
 expect_equal "$linux_workflow checkouts that override the ref" \
   "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with.ref != null) | .name' "$linux_workflow")" ''
 require_permission_map "$linux_workflow" 'workflow: contents=read
-linux-changes: inherit
-linux-libraries: contents=read,packages=write
-linux-build: actions=read,contents=read,packages=read
-linux: inherit
+check-linux-changes: inherit
+publish-linux-deps-image: contents=read,packages=write
+test-linux-unit: actions=read,contents=read,packages=read
+check-linux: inherit
 ci: inherit'
 
 # The build verifies it checked out GITHUB_SHA before compiling.
-verify_index="$(job_field "$linux_workflow" linux-build \
+verify_index="$(job_field "$linux_workflow" test-linux-unit \
   '.steps | to_entries[] | select(.value.name == "Verify the checked-out commit.") | .key')"
-build_index="$(job_field "$linux_workflow" linux-build \
+build_index="$(job_field "$linux_workflow" test-linux-unit \
   '.steps | to_entries[] | select(.value.name == "Telegram Desktop build.") | .key')"
 if [[ -z "$verify_index" || -z "$build_index" ]] || ((verify_index > build_index)); then
-  contract_fail "$linux_workflow job linux-build must verify the checked-out commit before 'Telegram Desktop build.'"
+  contract_fail "$linux_workflow job test-linux-unit must verify the checked-out commit before 'Telegram Desktop build.'"
 fi
-require_step_field "$linux_workflow" linux-build 'Verify the checked-out commit.' '.run' \
+require_step_field "$linux_workflow" test-linux-unit 'Verify the checked-out commit.' '.run' \
   'bash .github/scripts/verify_built_sha.sh "$GITHUB_SHA"'
 
-require_step_field "$linux_workflow" linux-build 'Set Linux dependency image tag.' \
+require_step_field "$linux_workflow" test-linux-unit 'Set Linux dependency image tag.' \
   '.env.DEPENDENCY_HASH' "$dependency_hash"
-require_step_script "$linux_workflow" linux-build 'Set Linux dependency image tag.' \
+require_step_script "$linux_workflow" test-linux-unit 'Set Linux dependency image tag.' \
   "LINUX_LIBRARIES_IMAGE=$libraries_image"
-require_step_field "$linux_workflow" linux-build 'Pull shared Linux dependency image.' '.run' \
+require_step_field "$linux_workflow" test-linux-unit 'Pull shared Linux dependency image.' '.run' \
   'bash .github/scripts/linux_libraries_image.sh pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
-require_step_field "$linux_workflow" linux-build 'Restore Telegram Desktop cache.' '.with.key' \
+require_step_field "$linux_workflow" test-linux-unit 'Restore Telegram Desktop cache.' '.with.key' \
   "\${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-\${{ github.run_id }}"
-require_step_field "$linux_workflow" linux-build 'Restore Telegram Desktop cache.' '.with["restore-keys"]' \
+require_step_field "$linux_workflow" test-linux-unit 'Restore Telegram Desktop cache.' '.with["restore-keys"]' \
   "\${{ runner.OS }}-tdesktop-\${{ matrix.defines || 'default' }}-"
-require_step_field "$linux_workflow" linux-build 'Save Telegram Desktop cache.' '.with.key' \
+require_step_field "$linux_workflow" test-linux-unit 'Save Telegram Desktop cache.' '.with.key' \
   '${{ steps.cache-tdesktop.outputs.cache-primary-key }}'
 for step_name in 'Trim Telegram Desktop cache.' 'Save Telegram Desktop cache.'; do
-  expect_equal "$linux_workflow job linux-build step '$step_name' if" \
-    "$(contract_squash "$(step_field "$linux_workflow" linux-build "$step_name" '.if')")" \
+  expect_equal "$linux_workflow job test-linux-unit step '$step_name' if" \
+    "$(contract_squash "$(step_field "$linux_workflow" test-linux-unit "$step_name" '.if')")" \
     "env.ONLY_CACHE == 'false' && github.event_name != 'pull_request' && github.ref == 'refs/heads/dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300"
 done
 expect_equal "$linux_workflow cache writers" "$(cache_writers "$linux_workflow")" \
-  'linux-build / Save Telegram Desktop cache.'
+  'test-linux-unit / Save Telegram Desktop cache.'
 expect_equal "$linux_workflow steps that export a build cache" \
   "$(yq -r '.jobs[].steps[] | select(.with["cache-to"] != null) | .name' "$linux_workflow")" ''
-require_step_field "$linux_workflow" linux-build 'Report Linux Libraries duration.' '.if' 'always()'
-require_step_field "$linux_workflow" linux-build 'Report Actions cache total.' '.if' 'always()'
-require_step_script "$linux_workflow" linux-build 'Report Actions cache total.' \
+require_step_field "$linux_workflow" test-linux-unit 'Report Linux Libraries duration.' '.if' 'always()'
+require_step_field "$linux_workflow" test-linux-unit 'Report Actions cache total.' '.if' 'always()'
+require_step_script "$linux_workflow" test-linux-unit 'Report Actions cache total.' \
   '(( total_bytes >= 9000000000 ))'
 reject_value "$linux_workflow" 'Linux-libs-' 'buildkit-cache-dance'
 
-require_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependency image.' \
+require_step_script "$linux_arm64_workflow" build-linux 'Generate Linux dependency image.' \
   $'DOCKERFILE=$(DEBUG= LTO= poetry run gen_dockerfile);\necho "$DOCKERFILE" > Dockerfile'
-reject_step_script "$linux_arm64_workflow" linux-arm64 'Generate Linux dependency image.' \
+reject_step_script "$linux_arm64_workflow" build-linux 'Generate Linux dependency image.' \
   'DEBUG= LTO= poetry run gen_dockerfile > Dockerfile'
-require_step_script "$linux_arm64_workflow" linux-arm64 \
+require_step_script "$linux_arm64_workflow" build-linux \
   'Verify and stage ELF64 aarch64 Teagram executable.' \
   'executable="out/Debug/Teagram"' \
   'echo "::error::Teagram executable was not produced."' \
   'cp "${executable}" artifact/Teagram'
-reject_step_script "$linux_arm64_workflow" linux-arm64 \
+reject_step_script "$linux_arm64_workflow" build-linux \
   'Verify and stage ELF64 aarch64 Teagram executable.' \
   'out/Debug/Telegram' 'artifact/Telegram'
-require_step_field "$linux_arm64_workflow" linux-arm64 'Upload artifact.' '.with.name' \
+require_step_field "$linux_arm64_workflow" build-linux 'Upload artifact.' '.with.name' \
   'Teagram-Linux-arm64-${{ github.sha }}'
 
-# The linux-libraries job is the only GHCR writer, only for dev pushes in this
+# The publish-linux-deps-image job is the only GHCR writer, only for dev pushes in this
 # repository, and the build waits for it and stops when it fails.
-require_job_field "$linux_workflow" linux-libraries '.if' \
+require_job_field "$linux_workflow" publish-linux-deps-image '.if' \
   "github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'"
-require_step_field "$linux_workflow" linux-libraries 'Set Linux dependency image tag.' \
+require_step_field "$linux_workflow" publish-linux-deps-image 'Set Linux dependency image tag.' \
   '.env.DEPENDENCY_HASH' "$dependency_hash"
-require_step_script "$linux_workflow" linux-libraries 'Set Linux dependency image tag.' \
+require_step_script "$linux_workflow" publish-linux-deps-image 'Set Linux dependency image tag.' \
   "image=\"$libraries_image\""
-require_step_field "$linux_workflow" linux-libraries 'Build and publish Linux dependency image.' \
+require_step_field "$linux_workflow" publish-linux-deps-image 'Build and publish Linux dependency image.' \
   '.uses | sub("@.*", "")' 'docker/build-push-action'
 expect_equal "$linux_workflow steps that push an image" \
   "$(yq -r '.jobs | to_entries[] | .key as $job | .value.steps[] | select(.with.push == true) | $job + " / " + .name' "$linux_workflow")" \
-  'linux-libraries / Build and publish Linux dependency image.'
-require_job_field "$linux_workflow" linux-build '.needs | join(",")' 'linux-changes,linux-libraries'
-expect_contains "$linux_workflow job linux-build if" \
-  "$(job_field "$linux_workflow" linux-build '.if')" \
-  "(needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')" \
-  "needs.linux-changes.outputs.required == 'true'"
+  'publish-linux-deps-image / Build and publish Linux dependency image.'
+require_job_field "$linux_workflow" test-linux-unit '.needs | join(",")' \
+  'check-linux-changes,publish-linux-deps-image'
+expect_contains "$linux_workflow job test-linux-unit if" \
+  "$(job_field "$linux_workflow" test-linux-unit '.if')" \
+  "(needs.publish-linux-deps-image.result == 'success' || needs.publish-linux-deps-image.result == 'skipped')" \
+  "needs.check-linux-changes.outputs.required == 'true'"
 
 # The PR aggregate waits for each job that can run on a pull request and
 # rejects failed or cancelled results while allowing only the filtered build
 # skip.
-pr_jobs="$(yq -r '.jobs | keys | map(select(. != "ci" and . != "linux-libraries")) | sort | join(",")' "$linux_workflow")"
+pr_jobs="$(yq -r '.jobs | keys | map(select(. != "ci" and . != "publish-linux-deps-image")) | sort | join(",")' "$linux_workflow")"
 expect_equal "$linux_workflow PR aggregate dependencies" \
   "$(job_field "$linux_workflow" ci '.needs | sort | join(",")')" \
   "$pr_jobs"
@@ -169,8 +198,8 @@ expect_ci_report_success 'a required successful build' success true success succ
 expect_ci_report_success 'a path-filtered build skip' success false skipped success
 expect_ci_report_failure 'failed change detection' failure false skipped success
 expect_ci_report_failure 'cancelled change detection' cancelled false skipped success
-expect_ci_report_failure 'a failed Rocky Linux check' success false skipped failure
-expect_ci_report_failure 'a cancelled Rocky Linux check' success false skipped cancelled
+expect_ci_report_failure 'a failed Linux check' success false skipped failure
+expect_ci_report_failure 'a cancelled Linux check' success false skipped cancelled
 expect_ci_report_failure 'a failed required build' success true failure success
 expect_ci_report_failure 'a cancelled required build' success true cancelled success
 expect_ci_report_failure 'a skipped required build' success true skipped success
@@ -184,15 +213,15 @@ require_workflow_field "$cache_cleanup_workflow" '.on.pull_request_target.types 
 require_workflow_field "$cache_cleanup_workflow" '.on.workflow_run.workflows | join(",")' 'MacOS.,MacOS Packaged.,Linux.'
 require_workflow_field "$cache_cleanup_workflow" '.on.workflow_run.branches | join(",")' 'dev'
 require_permission_map "$cache_cleanup_workflow" 'workflow: 
-prune: actions=write
-prune-old-dev-macos-ccache: actions=write
-prune-old-dev-linux-ccache: actions=write'
+ops-prune-pr-caches: actions=write
+ops-prune-dev-macos-ccache: actions=write
+ops-prune-dev-linux-ccache: actions=write'
 expect_equal "$cache_cleanup_workflow checkout steps" \
   "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | .name' "$cache_cleanup_workflow")" ''
-require_job_field "$cache_cleanup_workflow" prune '.if' "github.event_name == 'pull_request_target'"
-require_job_field "$cache_cleanup_workflow" prune-old-dev-macos-ccache '.if' \
+require_job_field "$cache_cleanup_workflow" ops-prune-pr-caches '.if' "github.event_name == 'pull_request_target'"
+require_job_field "$cache_cleanup_workflow" ops-prune-dev-macos-ccache '.if' \
   "github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'"
-require_job_field "$cache_cleanup_workflow" prune-old-dev-linux-ccache '.if' \
+require_job_field "$cache_cleanup_workflow" ops-prune-dev-linux-ccache '.if' \
   "github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'"
 
 mkdir -p "$temp_dir/bin"
@@ -204,8 +233,8 @@ chmod +x "$temp_dir/bin/gh"
 gh_calls="$temp_dir/gh-calls.txt"
 
 prune_pr_script="$temp_dir/prune-pr.sh"
-step_field "$cache_cleanup_workflow" prune 'Delete pull request cache scope.' '.run' > "$prune_pr_script"
-require_step_field "$cache_cleanup_workflow" prune 'Delete pull request cache scope.' \
+step_field "$cache_cleanup_workflow" ops-prune-pr-caches 'Delete pull request cache scope.' '.run' > "$prune_pr_script"
+require_step_field "$cache_cleanup_workflow" ops-prune-pr-caches 'Delete pull request cache scope.' \
   '.env.PR_NUMBER' '${{ github.event.pull_request.number }}'
 run_prune_pr() {
   : > "$gh_calls"
@@ -297,7 +326,7 @@ for bypass in 'if: false' 'continue-on-error: true'; do
     contract_fail "A source-trust step with '$bypass' must fail the trust checks."
   fi
 done
-require_step_script "$cache_cleanup_workflow" prune-old-dev-macos-ccache \
+require_step_script "$cache_cleanup_workflow" ops-prune-dev-macos-ccache \
   'Keep the newest compiler cache per profile.' \
   "cache_prefix='macOS-arm64-ccache-dev-'" '--ref refs/heads/dev'
 reject_value "$cache_cleanup_workflow" 'macOS-arm64-ccache-pr-'
@@ -316,27 +345,27 @@ for feedback_workflow in "$unit_feedback_workflow" "$macos_unit_feedback_workflo
 done
 
 require_permission_map "$unit_feedback_workflow" 'workflow: contents=read,packages=read
-unit: inherit'
+test-linux-unit-feedback: inherit'
 expect_equal "$unit_feedback_workflow steps that push an image" \
   "$(yq -r '.jobs[].steps[] | select(.with.push == true) | .name' "$unit_feedback_workflow")" ''
-require_step_field "$unit_feedback_workflow" unit 'Set Linux dependency image tag.' \
+require_step_field "$unit_feedback_workflow" test-linux-unit-feedback 'Set Linux dependency image tag.' \
   '.env.DEPENDENCY_HASH' "$dependency_hash"
-require_step_script "$unit_feedback_workflow" unit 'Set Linux dependency image tag.' \
+require_step_script "$unit_feedback_workflow" test-linux-unit-feedback 'Set Linux dependency image tag.' \
   "LINUX_LIBRARIES_IMAGE=$libraries_image"
-require_step_field "$unit_feedback_workflow" unit 'Pull shared Linux dependency image.' '.run' \
+require_step_field "$unit_feedback_workflow" test-linux-unit-feedback 'Pull shared Linux dependency image.' '.run' \
   'bash "$RUNNER_TEMP/linux_libraries_image.sh" pull "$LINUX_LIBRARIES_IMAGE" "$IMAGE_TAG" "$GITHUB_OUTPUT"'
-require_step_field "$unit_feedback_workflow" unit 'Libraries.' '.if' \
+require_step_field "$unit_feedback_workflow" test-linux-unit-feedback 'Libraries.' '.if' \
   "steps.pull-libraries.outputs.cache-hit != 'true'"
 
 require_permission_map "$macos_unit_feedback_workflow" 'workflow: contents=read,packages=read
-unit: inherit'
-require_step_script "$macos_unit_feedback_workflow" unit 'First set up.' \
+test-macos-unit: inherit'
+require_step_script "$macos_unit_feedback_workflow" test-macos-unit 'First set up.' \
   'HOMEBREW_NO_AUTO_UPDATE=1 brew install "${missing[@]}"'
-require_step_field "$macos_unit_feedback_workflow" unit 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$macos_unit_feedback_workflow" test-macos-unit 'Restore macOS libraries artifact.' '.run' \
   'bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" pull "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"'
-require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$macos_unit_feedback_workflow" test-macos-unit 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$macos_unit_feedback_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
+require_step_field "$macos_unit_feedback_workflow" test-macos-unit 'Restore legacy macOS libraries cache.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true'"
 reject_value "$macos_unit_feedback_workflow" 'brew upgrade' 'brew update' '|| true' 'sed -i'
 

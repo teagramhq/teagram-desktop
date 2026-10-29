@@ -63,8 +63,8 @@ concurrency:
 
 jobs:
 
-  linux-changes:
-    name: Detect Linux changes
+  check-linux-changes:
+    name: 'check: linux-changes'
     runs-on: ubuntu-26.04
     outputs:
       required: ${{ steps.filter.outputs.required }}
@@ -89,8 +89,8 @@ jobs:
         run: bash .github/scripts/detect_linux_changes.sh
 
   # Trust boundary and token scope: see .github/ci-cache-threat-model.md.
-  linux-libraries:
-    name: Publish Linux dependency image
+  publish-linux-deps-image:
+    name: 'publish: linux-deps-image'
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.repository == 'teagramhq/teagram-desktop'
     runs-on: ubuntu-26.04
     permissions:
@@ -150,18 +150,18 @@ jobs:
           tags: ${{ steps.image-tag.outputs.image }}
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
-  linux-build:
-    name: Linux build and unit tests
+  test-linux-unit:
+    name: "test: linux-unit (${{ matrix.defines || 'default' }})"
     # A dev push publishes the dependency image of this commit first, so the
     # build pulls the image for its own recipe. Other events skip the publisher.
     needs:
-      - linux-changes
-      - linux-libraries
+      - check-linux-changes
+      - publish-linux-deps-image
     if: >
       !cancelled()
-        && needs.linux-changes.result == 'success'
-        && needs.linux-changes.outputs.required == 'true'
-        && (needs.linux-libraries.result == 'success' || needs.linux-libraries.result == 'skipped')
+        && needs.check-linux-changes.result == 'success'
+        && needs.check-linux-changes.outputs.required == 'true'
+        && (needs.publish-linux-deps-image.result == 'success' || needs.publish-linux-deps-image.result == 'skipped')
     runs-on: ubuntu-26.04
     permissions:
       actions: read
@@ -641,21 +641,21 @@ jobs:
             echo "::warning::Actions cache total is at or above the 9 GB target (${total_bytes} bytes)."
           fi
 
-  linux:
-    name: Rocky Linux 8
+  check-linux:
+    name: 'check: linux'
     needs:
-      - linux-changes
-      - linux-build
+      - check-linux-changes
+      - test-linux-unit
     if: always()
     runs-on: ubuntu-26.04
 
     steps:
-      - name: Report Rocky Linux 8 result.
+      - name: Report Linux check result.
         shell: bash
         env:
-          CHANGE_RESULT: ${{ needs.linux-changes.result }}
-          BUILD_REQUIRED: ${{ needs.linux-changes.outputs.required }}
-          BUILD_RESULT: ${{ needs.linux-build.result }}
+          CHANGE_RESULT: ${{ needs.check-linux-changes.result }}
+          BUILD_REQUIRED: ${{ needs.check-linux-changes.outputs.required }}
+          BUILD_RESULT: ${{ needs.test-linux-unit.result }}
         run: |
           set -euo pipefail
 
@@ -666,7 +666,7 @@ jobs:
 
           case "${BUILD_REQUIRED}" in
             false)
-              echo "No Linux-relevant files changed; Rocky Linux 8 check passed without a build."
+              echo "No Linux-relevant files changed; Linux check passed without a build."
               ;;
             true)
               if [[ "${BUILD_RESULT}" != "success" ]]; then
@@ -684,9 +684,9 @@ jobs:
   ci:
     name: ci
     needs:
-      - linux-changes
-      - linux-build
-      - linux
+      - check-linux-changes
+      - test-linux-unit
+      - check-linux
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
 
@@ -694,10 +694,10 @@ jobs:
       - name: Report CI result.
         shell: bash
         env:
-          CHANGE_RESULT: ${{ needs.linux-changes.result }}
-          BUILD_REQUIRED: ${{ needs.linux-changes.outputs.required }}
-          BUILD_RESULT: ${{ needs.linux-build.result }}
-          LINUX_RESULT: ${{ needs.linux.result }}
+          CHANGE_RESULT: ${{ needs.check-linux-changes.result }}
+          BUILD_REQUIRED: ${{ needs.check-linux-changes.outputs.required }}
+          BUILD_RESULT: ${{ needs.test-linux-unit.result }}
+          LINUX_RESULT: ${{ needs.check-linux.result }}
         run: |
           set -euo pipefail
 
@@ -707,7 +707,7 @@ jobs:
           fi
 
           if [[ "${LINUX_RESULT}" != "success" ]]; then
-            echo "::error::Rocky Linux 8 check did not succeed (result: ${LINUX_RESULT})."
+            echo "::error::Linux check did not succeed (result: ${LINUX_RESULT})."
             exit 1
           fi
 

@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  updater-fixtures:
-    name: macOS arm64 updater fixtures
+  test-updater-fixtures:
+    name: 'test: updater-fixtures (macos-arm64)'
     runs-on: macos-latest
     timeout-minutes: 180
 

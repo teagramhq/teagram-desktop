@@ -19,8 +19,8 @@ permissions:
   contents: read
 
 jobs:
-  conformance:
-    name: C++ / OpenSSL / Python conformance
+  test-epoch-fixture-conformance:
+    name: 'test: epoch-fixture-conformance'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
 

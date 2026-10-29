@@ -121,46 +121,46 @@ if [[ "$push_group" != "$schedule_group" ]]; then
 fi
 
 require_permission_map "$mac_workflow" 'workflow: inherit
-macos-libraries: contents=read,packages=read
-macos-libraries-build: contents=read,packages=write
-macos-libraries-prune: actions=write,contents=read
-macos: contents=read,packages=read
-libiconv: contents=read'
+check-macos-deps-artifact: contents=read,packages=read
+build-macos-deps-artifact: contents=read,packages=write
+ops-prune-macos-libraries: actions=write,contents=read
+build-macos: contents=read,packages=read
+test-libiconv: contents=read'
 
-require_job_field "$mac_workflow" macos-libraries '.["runs-on"]' 'ubuntu-latest'
-expect_contains "$mac_workflow macos-libraries if" \
-  "$(job_field "$mac_workflow" macos-libraries '.if')" \
+require_job_field "$mac_workflow" check-macos-deps-artifact '.["runs-on"]' 'ubuntu-latest'
+expect_contains "$mac_workflow check-macos-deps-artifact if" \
+  "$(job_field "$mac_workflow" check-macos-deps-artifact '.if')" \
   "github.event_name == 'push' || github.event_name == 'schedule'" \
   "github.ref == 'refs/heads/dev'" \
   "github.repository == 'teagramhq/teagram-desktop'"
-require_step_field "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
+require_step_field "$mac_workflow" check-macos-deps-artifact 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_script "$mac_workflow" macos-libraries 'Set macOS dependency image tag.' \
+require_step_script "$mac_workflow" check-macos-deps-artifact 'Set macOS dependency image tag.' \
   "$macos_libraries_image_script\" set-image"
-require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.uses' \
+require_step_field "$mac_workflow" check-macos-deps-artifact 'Set up ORAS.' '.uses' \
   'oras-project/setup-oras@v2'
-require_step_field "$mac_workflow" macos-libraries 'Set up ORAS.' '.with.version' '1.3.4'
-require_step_field "$mac_workflow" macos-libraries 'Check for an existing dependency artifact.' '.run' \
+require_step_field "$mac_workflow" check-macos-deps-artifact 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" check-macos-deps-artifact 'Check for an existing dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" inspect \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_OUTPUT\""
-require_job_field "$mac_workflow" macos-libraries '.outputs["cache-hit"]' "\${{ steps.image-cache.outputs.cache-hit }}"
+require_job_field "$mac_workflow" check-macos-deps-artifact '.outputs["cache-hit"]' "\${{ steps.image-cache.outputs.cache-hit }}"
 
-require_job_field "$mac_workflow" macos-libraries-build '.needs' 'macos-libraries'
-require_job_field "$mac_workflow" macos-libraries-build '.["runs-on"]' 'macos-latest'
-expect_contains "$mac_workflow macos-libraries-build if" \
-  "$(job_field "$mac_workflow" macos-libraries-build '.if')" \
+require_job_field "$mac_workflow" build-macos-deps-artifact '.needs' 'check-macos-deps-artifact'
+require_job_field "$mac_workflow" build-macos-deps-artifact '.["runs-on"]' 'macos-latest'
+expect_contains "$mac_workflow build-macos-deps-artifact if" \
+  "$(job_field "$mac_workflow" build-macos-deps-artifact '.if')" \
   '!cancelled()' \
   "github.event_name == 'push' || github.event_name == 'schedule'" \
   "github.ref == 'refs/heads/dev'" \
   "github.repository == 'teagramhq/teagram-desktop'" \
-  "needs.macos-libraries.result == 'success'" \
-  "needs.macos-libraries.outputs.cache-hit != 'true'"
-require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.uses' \
+  "needs.check-macos-deps-artifact.result == 'success'" \
+  "needs.check-macos-deps-artifact.outputs.cache-hit != 'true'"
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Set up ORAS.' '.uses' \
   'oras-project/setup-oras@v2'
-require_step_field "$mac_workflow" macos-libraries-build 'Set up ORAS.' '.with.version' '1.3.4'
-require_step_field "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' '.if' \
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Set up ORAS.' '.with.version' '1.3.4'
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Set up dependency build tools.' '.if' \
   "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
-require_step_script "$mac_workflow" macos-libraries-build 'Set up dependency build tools.' \
+require_step_script "$mac_workflow" build-macos-deps-artifact 'Set up dependency build tools.' \
   'bash "$REPO_NAME/.github/scripts/install_macos_build_tools.sh" "$tools" libraries' \
   'echo "$tools/bin" >> "$GITHUB_PATH"'
 dependency_tools_step_index=-1
@@ -172,58 +172,58 @@ while IFS= read -r step_name; do
     'Libraries.') libraries_setup_step_index="$step_index" ;;
   esac
   ((step_index += 1))
-done < <(JOB=macos-libraries-build yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
+done < <(JOB=build-macos-deps-artifact yq -r '.jobs[strenv(JOB)].steps[].name' "$mac_workflow")
 if ((dependency_tools_step_index < 0 || dependency_tools_step_index >= libraries_setup_step_index)); then
   contract_fail "$mac_workflow must install dependency build tools before the cold Libraries build."
 fi
-require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-expect_equal "$mac_workflow macos-libraries-build legacy cache restore if" \
-  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.if')" 'null'
-require_step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key' \
+expect_equal "$mac_workflow build-macos-deps-artifact legacy cache restore if" \
+  "$(step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.if')" 'null'
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.with.key' \
   "macOS-libs-\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
 expect_equal "$mac_workflow legacy cache key" \
-  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')"
-require_step_field "$mac_workflow" macos-libraries-build 'Libraries.' '.if' \
+  "$(step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" build-macos 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Libraries.' '.if' \
   "steps.legacy-cache-libs.outputs.cache-hit != 'true'"
-require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.if' \
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Publish macOS dependency artifact.' '.if' \
   "steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'"
-require_step_script "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' \
+require_step_script "$mac_workflow" build-macos-deps-artifact 'Publish macOS dependency artifact.' \
   "$macos_libraries_image_script\" push"
-require_step_field "$mac_workflow" macos-libraries-build 'Publish macOS dependency artifact.' '.run' \
+require_step_field "$mac_workflow" build-macos-deps-artifact 'Publish macOS dependency artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" push \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\""
 
-require_job_field "$mac_workflow" macos-libraries-prune '.["runs-on"]' 'ubuntu-latest'
-require_job_field "$mac_workflow" macos-libraries-prune '.needs | join(",")' \
-  'macos-libraries,macos-libraries-build'
-expect_contains "$mac_workflow macos-libraries-prune if" \
-  "$(job_field "$mac_workflow" macos-libraries-prune '.if')" \
+require_job_field "$mac_workflow" ops-prune-macos-libraries '.["runs-on"]' 'ubuntu-latest'
+require_job_field "$mac_workflow" ops-prune-macos-libraries '.needs | join(",")' \
+  'check-macos-deps-artifact,build-macos-deps-artifact'
+expect_contains "$mac_workflow ops-prune-macos-libraries if" \
+  "$(job_field "$mac_workflow" ops-prune-macos-libraries '.if')" \
   '!cancelled()' \
-  "needs.macos-libraries.result == 'success'" \
-  "needs.macos-libraries.outputs.cache-hit == 'true'" \
-  "needs.macos-libraries-build.result == 'success'"
-require_step_field "$mac_workflow" macos-libraries-prune 'Prune legacy macOS library caches.' '.run' \
+  "needs.check-macos-deps-artifact.result == 'success'" \
+  "needs.check-macos-deps-artifact.outputs.cache-hit == 'true'" \
+  "needs.build-macos-deps-artifact.result == 'success'"
+require_step_field "$mac_workflow" ops-prune-macos-libraries 'Prune legacy macOS library caches.' '.run' \
   "bash $macos_libraries_image_script prune-legacy-cache"
-require_job_field "$mac_workflow" macos '.needs | join(",")' \
-  'macos-libraries,macos-libraries-build,macos-libraries-prune'
-expect_contains "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" \
+require_job_field "$mac_workflow" build-macos '.needs | join(",")' \
+  'check-macos-deps-artifact,build-macos-deps-artifact,ops-prune-macos-libraries'
+expect_contains "$mac_workflow build-macos if" "$(job_field "$mac_workflow" build-macos '.if')" \
   '!cancelled()' \
-  "needs.macos-libraries.result == 'success'" \
-  "needs.macos-libraries.result == 'skipped'" \
-  "needs.macos-libraries-build.result == 'success'" \
-  "needs.macos-libraries-build.result == 'skipped'" \
-  "needs.macos-libraries-prune.result == 'success'" \
-  "needs.macos-libraries-prune.result == 'skipped'"
-expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" macos '.if')" 'always()'
-require_step_field "$mac_workflow" macos 'Set macOS dependency image tag.' \
+  "needs.check-macos-deps-artifact.result == 'success'" \
+  "needs.check-macos-deps-artifact.result == 'skipped'" \
+  "needs.build-macos-deps-artifact.result == 'success'" \
+  "needs.build-macos-deps-artifact.result == 'skipped'" \
+  "needs.ops-prune-macos-libraries.result == 'success'" \
+  "needs.ops-prune-macos-libraries.result == 'skipped'"
+expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" build-macos '.if')" 'always()'
+require_step_field "$mac_workflow" build-macos 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_field "$mac_workflow" macos 'Clone.' '.with.submodules' 'false'
+require_step_field "$mac_workflow" build-macos 'Clone.' '.with.submodules' 'false'
 merge_dev_step='Merge current dev for dispatched branches.'
-require_step_field "$mac_workflow" macos "$merge_dev_step" '.if' \
+require_step_field "$mac_workflow" build-macos "$merge_dev_step" '.if' \
   "\${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only }}"
-require_step_script "$mac_workflow" macos "$merge_dev_step" \
+require_step_script "$mac_workflow" build-macos "$merge_dev_step" \
   'git -C "$REPO_NAME" fetch --no-tags --quiet origin refs/heads/dev:refs/remotes/origin/dev' \
   'base_sha="$(git -C "$REPO_NAME" rev-parse origin/dev)"' \
   'base_sha=not_fetched' 'tested_sha=not_merged' \
@@ -234,7 +234,7 @@ require_step_script "$mac_workflow" macos "$merge_dev_step" \
   'git -C "$REPO_NAME" diff --name-only --diff-filter=U' \
   'conflicts with dev at $base_sha; update the branch from dev' \
   'tested_sha="$(git -C "$REPO_NAME" rev-parse HEAD)"'
-merge_dev_run="$(step_field "$mac_workflow" macos "$merge_dev_step" '.run')"
+merge_dev_run="$(step_field "$mac_workflow" build-macos "$merge_dev_step" '.run')"
 if ! awk '
   /tested_sha=not_merged/ { unmerged = NR }
   /base_sha="\$\(git -C "\$REPO_NAME" rev-parse origin\/dev\)"/ { fetched_base = NR }
@@ -251,44 +251,44 @@ if ! awk '
   contract_fail "$mac_workflow must emit the fetched dev SHA and not_merged status before merging, then record tested_sha only after a successful merge."
 fi
 submodules_step='Update submodules.'
-require_step_field "$mac_workflow" macos "$submodules_step" '.run' \
+require_step_field "$mac_workflow" build-macos "$submodules_step" '.run' \
   'git -C "$REPO_NAME" submodule update --init --recursive'
-clone_step_index="$(job_field "$mac_workflow" macos \
+clone_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Clone.") | .key')"
-merge_dev_step_index="$(job_field "$mac_workflow" macos \
+merge_dev_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Merge current dev for dispatched branches.") | .key')"
-submodules_step_index="$(job_field "$mac_workflow" macos \
+submodules_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Update submodules.") | .key')"
-dependency_hash_step_index="$(job_field "$mac_workflow" macos \
+dependency_hash_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Set macOS dependency image tag.") | .key')"
 if ((clone_step_index >= merge_dev_step_index || merge_dev_step_index >= submodules_step_index \
     || submodules_step_index >= dependency_hash_step_index)); then
   contract_fail "$mac_workflow must merge dev after Clone and update submodules before hashing dependencies."
 fi
-require_step_field "$mac_workflow" macos 'Initialize workflow evidence.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Initialize workflow evidence.' '.if' \
   "\${{ always() && github.event_name != 'pull_request' }}"
-require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
+require_step_script "$mac_workflow" build-macos 'Initialize workflow evidence.' \
   'head_sha=%s' 'base_sha=%s' 'tested_sha=%s' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
-require_step_script "$mac_workflow" macos 'Initialize workflow evidence.' \
+require_step_script "$mac_workflow" build-macos 'Initialize workflow evidence.' \
   'HEAD_SHA=%s' 'BASE_SHA=%s' 'TESTED_SHA=%s' '$GITHUB_ENV'
-require_job_field "$mac_workflow" macos '.env.HEAD_SHA' "\${{ github.sha }}"
-require_job_field "$mac_workflow" macos '.env.BASE_SHA' 'not_merged'
-require_job_field "$mac_workflow" macos '.env.TESTED_SHA' \
+require_job_field "$mac_workflow" build-macos '.env.HEAD_SHA' "\${{ github.sha }}"
+require_job_field "$mac_workflow" build-macos '.env.BASE_SHA' 'not_merged'
+require_job_field "$mac_workflow" build-macos '.env.TESTED_SHA' \
   "\${{ github.event_name == 'workflow_dispatch' && github.ref_name != 'dev' && !inputs.libiconv_only && 'not_merged' || github.sha }}"
 for metadata_field in HEAD_SHA BASE_SHA TESTED_SHA; do
   expect_equal "$mac_workflow Summarize on-demand validation $metadata_field source" \
-    "$(step_field "$mac_workflow" macos 'Summarize on-demand validation.' ".env.$metadata_field")" 'null'
+    "$(step_field "$mac_workflow" build-macos 'Summarize on-demand validation.' ".env.$metadata_field")" 'null'
 done
-require_step_script "$mac_workflow" macos 'Summarize on-demand validation.' \
+require_step_script "$mac_workflow" build-macos 'Summarize on-demand validation.' \
   'head_sha' 'base_sha' 'tested_sha' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
-require_step_script "$mac_workflow" macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'
-require_step_script "$mac_workflow" macos 'Launch app smoke test.' '$TESTED_SHA'
-require_step_script "$mac_workflow" macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
-require_step_script "$mac_workflow" macos 'Full chat info session regression.' '$TESTED_SHA'
+require_step_script "$mac_workflow" build-macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'
+require_step_script "$mac_workflow" build-macos 'Launch app smoke test.' '$TESTED_SHA'
+require_step_script "$mac_workflow" build-macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
+require_step_script "$mac_workflow" build-macos 'Full chat info session regression.' '$TESTED_SHA'
 media_permissions_step='Grant test app camera and microphone access.'
-require_step_field "$mac_workflow" macos "$media_permissions_step" '.if' \
+require_step_field "$mac_workflow" build-macos "$media_permissions_step" '.if' \
   "env.ONLY_CACHE == 'false'"
-require_step_script "$mac_workflow" macos "$media_permissions_step" \
+require_step_script "$mac_workflow" build-macos "$media_permissions_step" \
   'io.teagram.desktop' \
   'System Integrity Protection status: disabled.' \
   '/Library/Application Support/com.apple.TCC/TCC.db' \
@@ -300,7 +300,7 @@ require_step_script "$mac_workflow" macos "$media_permissions_step" \
 step_names=()
 while IFS= read -r step_name; do
   step_names+=("$step_name")
-done < <(yq -r '.jobs.macos.steps[].name' "$mac_workflow")
+done < <(yq -r '.jobs["build-macos"].steps[].name' "$mac_workflow")
 find_step_index() {
   local wanted="$1"
   for index in "${!step_names[@]}"; do
@@ -328,15 +328,15 @@ if (( media_permissions_index >= launch_smoke_index \
     || media_permissions_index >= lifecycle_index )); then
   contract_fail "$mac_workflow must seed TCC before any app launch or lifecycle test."
 fi
-require_step_script "$mac_workflow" macos 'Log in to GitHub Container Registry.' \
+require_step_script "$mac_workflow" build-macos 'Log in to GitHub Container Registry.' \
   'oras login ghcr.io' '--password-stdin'
-require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$mac_workflow" build-macos 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$mac_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Restore legacy macOS libraries cache.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true'"
-require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # MacOS. builds a PR once its approved head is labeled macos-build; a later
@@ -353,14 +353,14 @@ require_workflow_field "$approval_workflow" '.on.pull_request_target.types | joi
 require_workflow_field "$approval_workflow" '.concurrency.group' \
   '${{ github.workflow }}-${{ github.event.pull_request.number }}'
 require_permission_map "$approval_workflow" 'workflow: 
-clear: actions=write,pull-requests=write'
+ops-clear-macos-approval: actions=write,pull-requests=write'
 expect_equal "$approval_workflow checkout steps" \
   "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | .name' "$approval_workflow")" ''
 reject_value "$approval_workflow" \
   'head.repo.full_name == github.repository' \
   'contains(github.event.pull_request.labels'
 mkdir -p "$temp_dir/approval"
-approval_step="$(step_field "$approval_workflow" clear \
+approval_step="$(step_field "$approval_workflow" ops-clear-macos-approval \
   'Cancel superseded MacOS. builds and clear their approval.' '.run')"
 cat > "$temp_dir/approval/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
@@ -399,7 +399,7 @@ current_head_run='{"id":15,"status":"in_progress","head_sha":"new","head_reposit
 skipped_head_run='{"id":16,"status":"completed","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
 pending_head_run='{"id":17,"status":"queued","head_sha":"new","head_repository":{"full_name":"fork/teagram-desktop"}}'
 printf '%s' '{"jobs":[{"name":"MacOS (non-store)","status":"in_progress","conclusion":null}]}' > "$temp_dir/approval/15.json"
-printf '%s' '{"jobs":[{"name":"MacOS","status":"completed","conclusion":"skipped"},{"name":"Focused libiconv (macOS arm64)","status":"completed","conclusion":"skipped"}]}' > "$temp_dir/approval/16.json"
+printf '%s' '{"jobs":[{"name":"MacOS","status":"completed","conclusion":"skipped"},{"name":"test: libiconv (macos-arm64)","status":"completed","conclusion":"skipped"}]}' > "$temp_dir/approval/16.json"
 run_approval_step() {
   printf '{"workflow_runs":[%s]}' "$1" > "$temp_dir/approval/runs.json"
   printf '%s\n' ${4:-new} > "$temp_dir/approval/live_heads"
@@ -482,10 +482,10 @@ if run_approval_step "$old_head_runs" forbidden present || [[ "$(approval_calls)
 fi
 
 # MacOS. compiler cache: profile selection, keys, and who may save it.
-require_job_field "$mac_workflow" macos '.env.CCACHE_MAXSIZE' '5G'
-require_job_field "$mac_workflow" macos '.env.CCACHE_SLOPPINESS' 'pch_defines,time_macros'
-require_job_field "$mac_workflow" macos '.env.CCACHE_COMPILERCHECK' 'content'
-require_step_field "$mac_workflow" macos 'Select compiler cache profile.' '.run' \
+require_job_field "$mac_workflow" build-macos '.env.CCACHE_MAXSIZE' '5G'
+require_job_field "$mac_workflow" build-macos '.env.CCACHE_SLOPPINESS' 'pch_defines,time_macros'
+require_job_field "$mac_workflow" build-macos '.env.CCACHE_COMPILERCHECK' 'content'
+require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.run' \
   'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
 scheduled_profile="$(bash "$ccache_profile_script" schedule)"
@@ -500,7 +500,7 @@ fi
 if [[ "$dispatch_profile" != $'name=pr-compatible\nprotected_path_integration=ON' ]]; then
   contract_fail 'Protected-path dispatches must share the cache profile while keeping the ON integration define.'
 fi
-require_step_script "$mac_workflow" macos 'First set up.' \
+require_step_script "$mac_workflow" build-macos 'First set up.' \
   "TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=OFF"
 if awk '
   /target_compile_definitions\(Telegram/ { in_target_definitions = 1 }
@@ -524,36 +524,36 @@ for source in \
 done
 hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
 profile_expression="\${{ steps.ccache-profile.outputs.name }}"
-require_step_field "$mac_workflow" macos 'Teagram compiler cache.' '.uses | sub("@.*", "")' \
+require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.uses | sub("@.*", "")' \
   'actions/cache/restore'
-require_step_field "$mac_workflow" macos 'Teagram compiler cache.' '.with.key' \
+require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.with.key' \
   "macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-\${{ github.run_id }}-\${{ github.run_attempt }}"
-require_step_field "$mac_workflow" macos 'Teagram compiler cache.' '.with["restore-keys"]' \
+require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.with["restore-keys"]' \
   "macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-
 macOS-arm64-ccache-dev-${hash_expression}-
 macOS-arm64-ccache-dev-${profile_expression}-"
 # Only a dev push or scheduled seed whose commit is still the dev tip saves the
 # shared compiler cache. The separate trusted job publishes Libraries to GHCR.
 seed_condition="always() && !cancelled() && steps.ccache-stats.outputs.save == 'true' && (github.event_name == 'schedule' || github.event_name == 'push') && github.ref == 'refs/heads/dev'"
-expect_equal "$mac_workflow job macos step 'Check compiler cache seed is current.' if" \
-  "$(contract_squash "$(step_field "$mac_workflow" macos 'Check compiler cache seed is current.' '.if')")" \
+expect_equal "$mac_workflow job build-macos step 'Check compiler cache seed is current.' if" \
+  "$(contract_squash "$(step_field "$mac_workflow" build-macos 'Check compiler cache seed is current.' '.if')")" \
   "$seed_condition"
-require_step_field "$mac_workflow" macos 'Check compiler cache seed is current.' '.id' 'seed-current'
-require_step_script "$mac_workflow" macos 'Check compiler cache seed is current.' \
+require_step_field "$mac_workflow" build-macos 'Check compiler cache seed is current.' '.id' 'seed-current'
+require_step_script "$mac_workflow" build-macos 'Check compiler cache seed is current.' \
   'bash "$REPO_NAME/.github/scripts/ccache_seed_current.sh" "$REPO_NAME" "$GITHUB_SHA" FETCH_HEAD'
-expect_equal "$mac_workflow job macos step 'Save Teagram compiler cache.' if" \
-  "$(contract_squash "$(step_field "$mac_workflow" macos 'Save Teagram compiler cache.' '.if')")" \
+expect_equal "$mac_workflow job build-macos step 'Save Teagram compiler cache.' if" \
+  "$(contract_squash "$(step_field "$mac_workflow" build-macos 'Save Teagram compiler cache.' '.if')")" \
   "$seed_condition && steps.seed-current.outputs.current == 'true'"
-seed_check_index="$(job_field "$mac_workflow" macos \
+seed_check_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Check compiler cache seed is current.") | .key')"
-save_cache_index="$(job_field "$mac_workflow" macos \
+save_cache_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Save Teagram compiler cache.") | .key')"
 ((seed_check_index < save_cache_index)) \
   || contract_fail 'The seed currency check must run before the compiler cache save.'
-require_step_field "$mac_workflow" macos 'Save Teagram compiler cache.' '.with.key' \
+require_step_field "$mac_workflow" build-macos 'Save Teagram compiler cache.' '.with.key' \
   '${{ steps.cache-ccache.outputs.cache-primary-key }}'
 expect_equal "$mac_workflow cache writers" "$(cache_writers "$mac_workflow")" \
-  'macos / Save Teagram compiler cache.'
+  'build-macos / Save Teagram compiler cache.'
 reject_value "$mac_workflow" \
   'macOS-arm64-ccache-pr-' \
   'startsWith(steps.cache-ccache.outputs.cache-matched-key' \
@@ -562,7 +562,7 @@ reject_value "$mac_workflow" \
   'source-format' \
   'clang-format'
 
-require_step_script "$mac_workflow" macos 'Teagram build.' \
+require_step_script "$mac_workflow" build-macos 'Teagram build.' \
   'CMAKE_C_COMPILER_LAUNCHER=ccache' \
   'ccache_launcher.sh' \
   '-Xclang -fno-pch-timestamp' \
@@ -570,18 +570,18 @@ require_step_script "$mac_workflow" macos 'Teagram build.' \
 
 # Compiler cache diagnostics decide the save and warn; they never fail a build.
 stats_step='Report compiler cache hits.'
-require_step_field "$mac_workflow" macos "$stats_step" '.env.BUILD_OUTCOME' '${{ steps.build.outcome }}'
-require_step_script "$mac_workflow" macos "$stats_step" \
+require_step_field "$mac_workflow" build-macos "$stats_step" '.env.BUILD_OUTCOME' '${{ steps.build.outcome }}'
+require_step_script "$mac_workflow" build-macos "$stats_step" \
   'ccache --show-stats' \
   'ccache_hit_count.sh' \
   'ccache_save_decision.sh' \
   '::warning::A restored compiler cache produced no cache hits.' \
   '::warning::ccache did not record any compiler invocations for the Teagram build.'
-reject_step_script "$mac_workflow" macos "$stats_step" '::error::' 'exit 1'
-ccache_stats_script="$(step_script "$mac_workflow" macos "$stats_step")"
+reject_step_script "$mac_workflow" build-macos "$stats_step" '::error::' 'exit 1'
+ccache_stats_script="$(step_script "$mac_workflow" build-macos "$stats_step")"
 # Bash decides what is a comment: a command hidden after `#` never counts as
 # present, while `$#`, `${#name}`, quoted text and heredoc lines do.
-stats_body="$(step_field "$mac_workflow" macos "$stats_step" '.run')"
+stats_body="$(step_field "$mac_workflow" build-macos "$stats_step" '.run')"
 for hiding_prefix in 'true # ' 'true;# ' '(true)# ' "echo \$'can\\'t' # "; do
   hidden_body="$(HIDE="$hiding_prefix" awk '
     /ccache_save_decision\.sh/ { match($0, /^[[:space:]]*/); $0 = substr($0, 1, RLENGTH) ENVIRON["HIDE"] substr($0, RLENGTH + 1) }
@@ -630,14 +630,14 @@ if ((misses_output_offset < 0 || save_decision_offset < 0 || zero_hit_guard_offs
     || misses_output_offset >= zero_hit_guard_offset || save_decision_offset >= zero_hit_guard_offset)); then
   contract_fail 'Compiler cache outputs must be written before the zero-hit warning is reported.'
 fi
-require_step_script "$mac_workflow" macos 'Report MacOS job wall time.' \
+require_step_script "$mac_workflow" build-macos 'Report MacOS job wall time.' \
   '((elapsed_seconds > 1800))' \
   '::warning::Warm-cache MacOS PR build exceeded the 30-minute target ('
-reject_step_script "$mac_workflow" macos 'Report MacOS job wall time.' '::error::' 'exit 1'
+reject_step_script "$mac_workflow" build-macos 'Report MacOS job wall time.' '::error::' 'exit 1'
 reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
-require_step_field "$mac_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$mac_workflow" macos 'Libraries.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
@@ -669,10 +669,10 @@ if ! dwarf_probe_address="$(python3 "$dwarf_address_helper" \
 fi
 expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
-require_step_field "$mac_workflow" macos "$regression_step" '.if' \
+require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
-require_step_field "$mac_workflow" macos "$regression_step" '.timeout-minutes' '20'
-require_step_script "$mac_workflow" macos "$regression_step" \
+require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
@@ -688,26 +688,26 @@ require_step_script "$mac_workflow" macos "$regression_step" \
   'grep -Fq "$dwarf_lookup" "$diagnostics/dwarf-line-summary.txt"' \
   'Deferred switch mutation evidence: mutation=remove-dispatch' \
   'Deferred switch mutation evidence: mutation=duplicate-dispatch'
-reject_step_script "$mac_workflow" macos "$regression_step" \
+reject_step_script "$mac_workflow" build-macos "$regression_step" \
   '--debug-info --arch=arm64' \
   '--debug-line --arch=arm64' \
   'head -n 1'
 # The app bounds and cleanup live in the Python the step runs, so they are
 # read from its syntax tree: a commented-out call does not count.
-require_step_python "$mac_workflow" macos "$regression_step" \
+require_step_python "$mac_workflow" build-macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
-regression_step_index="$(job_field "$mac_workflow" macos \
+regression_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
-summary_step_index="$(job_field "$mac_workflow" macos \
+summary_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Summarize on-demand validation.") | .key')"
 ((summary_step_index > regression_step_index)) \
   || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
 profile_step='Run protected profile and IPC integration tests.'
-require_step_field "$mac_workflow" macos "$profile_step" '.if' \
+require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
   "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}"
-require_step_script "$mac_workflow" macos "$profile_step" \
+require_step_script "$mac_workflow" build-macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
 settings_link_evidence='Settings deep link regression passed: paid and story routes'
@@ -1108,13 +1108,13 @@ grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
   || contract_fail 'The profile harness must verify that a folder failure is collected.'
 grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
   || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
-require_step_field "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Report skipped profile and IPC integration tests.' '.if' \
   "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}"
-require_step_script "$mac_workflow" macos 'Report skipped profile and IPC integration tests.' \
+require_step_script "$mac_workflow" build-macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
-require_step_field "$mac_workflow" macos 'Report skipped full chat info session regression.' '.if' \
+require_step_field "$mac_workflow" build-macos 'Report skipped full chat info session regression.' '.if' \
   "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}"
-require_step_script "$mac_workflow" macos 'Report skipped full chat info session regression.' \
+require_step_script "$mac_workflow" build-macos 'Report skipped full chat info session regression.' \
   'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"
 sed 's/^\( *\)signal_pid(app_pid, "Teagram", cleanup_signal)$/\1# signal_pid(app_pid, "Teagram", cleanup_signal)\n\1pass/' \
@@ -1122,7 +1122,7 @@ sed 's/^\( *\)signal_pid(app_pid, "Teagram", cleanup_signal)$/\1# signal_pid(app
 if cmp -s "$mac_workflow" "$cleanup_mutation"; then
   contract_fail 'The cleanup mutation must change the regression step.'
 fi
-if (require_step_python "$cleanup_mutation" macos "$regression_step" \
+if (require_step_python "$cleanup_mutation" build-macos "$regression_step" \
     "signal_pid(app_pid, 'Teagram', cleanup_signal)") > /dev/null 2>&1; then
   contract_fail 'A commented-out signal_pid call must fail the regression step contract.'
 fi
@@ -1133,7 +1133,7 @@ sed 's/^\( *\)python3 - "$executable"/\1echo python3 - "$executable"/' "$mac_wor
 if cmp -s "$mac_workflow" "$inert_mutation"; then
   contract_fail 'The inert-heredoc mutation must change the regression step.'
 fi
-if (require_step_python "$inert_mutation" macos "$regression_step" \
+if (require_step_python "$inert_mutation" build-macos "$regression_step" \
     "signal_pid(app_pid, 'Teagram', cleanup_signal)") > /dev/null 2>&1; then
   contract_fail 'Python in a heredoc that python3 does not run must fail the regression step contract.'
 fi
@@ -1170,10 +1170,10 @@ reject_value "$mac_workflow" \
   'ninja -C "$repo/out/Debug"' \
   'os.killpg(process.pid, signal.SIGTERM)'
 evidence_step='Upload deferred switch mutation evidence.'
-require_step_field "$mac_workflow" macos "$evidence_step" '.if' \
+require_step_field "$mac_workflow" build-macos "$evidence_step" '.if' \
   "\${{ always() && steps.lifecycle-regression.outcome == 'success' }}"
-require_step_field "$mac_workflow" macos "$evidence_step" '.with["if-no-files-found"]' 'error'
-require_step_field "$mac_workflow" macos "$evidence_step" '.with.path | test("/deferred-switch-mutation-evidence\.txt$")' 'true'
+require_step_field "$mac_workflow" build-macos "$evidence_step" '.with["if-no-files-found"]' 'error'
+require_step_field "$mac_workflow" build-macos "$evidence_step" '.with.path | test("/deferred-switch-mutation-evidence\.txt$")' 'true'
 
 # MacOS Packaged. builds dev and main pushes in one queue and publishes from a
 # protected environment.
@@ -1184,16 +1184,16 @@ require_workflow_field "$packaged_workflow" '.concurrency.group' \
 require_workflow_field "$packaged_workflow" '.concurrency["cancel-in-progress"]' 'false'
 require_workflow_field "$packaged_workflow" '.concurrency.queue' 'null'
 require_permission_map "$packaged_workflow" 'workflow: inherit
-macos: actions=write,contents=read,packages=read
-publish: actions=read,contents=write'
-require_job_field "$packaged_workflow" publish '.if' \
+build-macos-packaged: actions=write,contents=read,packages=read
+publish-release: actions=read,contents=write'
+require_job_field "$packaged_workflow" publish-release '.if' \
   "\${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}"
-require_job_field "$packaged_workflow" publish '.environment.name' 'release'
-require_job_field "$packaged_workflow" macos '.env.CCACHE_MAXSIZE' '5G'
-require_step_field "$packaged_workflow" macos 'Upload Teagram manual QA artifact.' '.with.name' \
+require_job_field "$packaged_workflow" publish-release '.environment.name' 'release'
+require_job_field "$packaged_workflow" build-macos-packaged '.env.CCACHE_MAXSIZE' '5G'
+require_step_field "$packaged_workflow" build-macos-packaged 'Upload Teagram manual QA artifact.' '.with.name' \
   'Teagram-macOS-arm64-QA'
-packaged_build_script="$(step_script "$packaged_workflow" macos 'Teagram build.')"
-expect_script_contains "$packaged_workflow job macos step 'Teagram build.' run" "$packaged_build_script" \
+packaged_build_script="$(step_script "$packaged_workflow" build-macos-packaged 'Teagram build.')"
+expect_script_contains "$packaged_workflow job build-macos-packaged step 'Teagram build.' run" "$packaged_build_script" \
   'openssl pkey -pubin -in "Telegram/build/teagram_update_public_key.pem"'
 public_key_path="$(sed -n 's/.*openssl pkey -pubin -in "\([^"]*\)".*/\1/p' <<< "$packaged_build_script" | sed -n '1p')"
 if [[ -z "$public_key_path" ]] || ! openssl pkey -pubin -in "$public_key_path" -outform DER | shasum -a 256 >/dev/null; then
@@ -1208,26 +1208,26 @@ expect_equal "$packaged_workflow full chat info regression steps" \
 # MacOS Packaged. builds against the same pinned Libraries and build tools as
 # MacOS., never against Homebrew or a moving branch.
 prepare_libraries='./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent'
-require_step_script "$mac_workflow" macos 'Libraries.' "$prepare_libraries"
-require_step_script "$packaged_workflow" macos 'Libraries.' "$prepare_libraries" \
+require_step_script "$mac_workflow" build-macos 'Libraries.' "$prepare_libraries"
+require_step_script "$packaged_workflow" build-macos-packaged 'Libraries.' "$prepare_libraries" \
   'install_macos_build_tools.sh" "$RUNNER_TEMP/build-tools" libraries'
-require_step_script "$packaged_workflow" macos 'First set up.' \
+require_step_script "$packaged_workflow" build-macos-packaged 'First set up.' \
   'install_macos_build_tools.sh" "$tools" client'
-require_step_script "$packaged_workflow" macos 'First set up.' 'for formula in oras zstd'
-require_step_script "$packaged_workflow" macos 'Teagram build.' './configure.sh'
-require_step_field "$packaged_workflow" macos 'Set macOS dependency image tag.' \
+require_step_script "$packaged_workflow" build-macos-packaged 'First set up.' 'for formula in oras zstd'
+require_step_script "$packaged_workflow" build-macos-packaged 'Teagram build.' './configure.sh'
+require_step_field "$packaged_workflow" build-macos-packaged 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_field "$packaged_workflow" macos 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$packaged_workflow" build-macos-packaged 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$packaged_workflow" build-macos-packaged 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.if' \
+require_step_field "$packaged_workflow" build-macos-packaged 'Restore legacy macOS libraries cache.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$packaged_workflow legacy cache key" \
-  "$(step_field "$packaged_workflow" macos 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
-require_step_field "$packaged_workflow" macos 'Libraries.' '.if' \
+  "$(step_field "$packaged_workflow" build-macos-packaged 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$packaged_workflow" build-macos-packaged 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 reject_value "$packaged_workflow" \
   'refs/heads/master' \
@@ -1268,20 +1268,20 @@ require_workflow_field "$unit_workflow" '.concurrency.group' \
   '${{ github.workflow }}-${{ inputs.branch || github.event.pull_request.head.ref || inputs.ref || github.ref_name }}'
 require_workflow_field "$unit_workflow" '.concurrency["cancel-in-progress"]' 'true'
 require_permission_map "$unit_workflow" 'workflow: contents=read,packages=read
-unit: inherit'
-require_step_field "$unit_workflow" unit 'Set macOS dependency image tag.' \
+test-macos-unit: inherit'
+require_step_field "$unit_workflow" test-macos-unit 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_field "$unit_workflow" unit 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$unit_workflow" test-macos-unit 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$unit_workflow" test-macos-unit 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.if' \
+require_step_field "$unit_workflow" test-macos-unit 'Restore legacy macOS libraries cache.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$unit_workflow legacy cache key" \
-  "$(step_field "$unit_workflow" unit 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
-require_step_field "$unit_workflow" unit 'Libraries.' '.if' \
+  "$(step_field "$unit_workflow" test-macos-unit 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$unit_workflow" test-macos-unit 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
 # macOS updater fixtures. tests the exact PR merge ref with read-only package access.
@@ -1298,10 +1298,10 @@ for updater_path in \
     || contract_fail "$updater_workflow on.pull_request.paths must list $updater_path"
 done
 require_permission_map "$updater_workflow" 'workflow: contents=read,packages=read
-updater-fixtures: inherit'
+test-updater-fixtures: inherit'
 require_workflow_field "$updater_workflow" '.concurrency["cancel-in-progress"]' 'true'
-require_job_field "$updater_workflow" updater-fixtures '.["runs-on"]' 'macos-latest'
-require_job_field "$updater_workflow" updater-fixtures '.["timeout-minutes"]' '180'
+require_job_field "$updater_workflow" test-updater-fixtures '.["runs-on"]' 'macos-latest'
+require_job_field "$updater_workflow" test-updater-fixtures '.["timeout-minutes"]' '180'
 expect_contains "$updater_workflow GITHUB_TOKEN reference" \
   "$(workflow_strings "$updater_workflow")" 'secrets.GITHUB_TOKEN'
 reject_value "$updater_workflow" \
@@ -1311,34 +1311,34 @@ reject_value "$updater_workflow" \
   'github.event.pull_request.head.repo.full_name' \
   '"$REPO_NAME/Telegram/out'
 checkout_step='Check out the exact PR merge ref.'
-require_step_field "$updater_workflow" updater-fixtures "$checkout_step" '.with.ref' '${{ github.sha }}'
-require_step_field "$updater_workflow" updater-fixtures "$checkout_step" '.with["fetch-depth"]' '2'
+require_step_field "$updater_workflow" test-updater-fixtures "$checkout_step" '.with.ref' '${{ github.sha }}'
+require_step_field "$updater_workflow" test-updater-fixtures "$checkout_step" '.with["fetch-depth"]' '2'
 
 # The merge ref check passes only for a two-parent merge of the PR head.
 verify_step='Verify the checked out PR merge ref.'
-require_step_field "$updater_workflow" updater-fixtures "$verify_step" '.env.EXPECTED_MERGE_SHA' '${{ github.sha }}'
-require_step_field "$updater_workflow" updater-fixtures "$verify_step" '.env.EXPECTED_HEAD_SHA' \
+require_step_field "$updater_workflow" test-updater-fixtures "$verify_step" '.env.EXPECTED_MERGE_SHA' '${{ github.sha }}'
+require_step_field "$updater_workflow" test-updater-fixtures "$verify_step" '.env.EXPECTED_HEAD_SHA' \
   '${{ github.event.pull_request.head.sha }}'
-require_step_field "$updater_workflow" updater-fixtures 'Set macOS dependency image tag.' \
+require_step_field "$updater_workflow" test-updater-fixtures 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
-require_step_field "$updater_workflow" updater-fixtures 'Restore macOS libraries artifact.' '.run' \
+require_step_field "$updater_workflow" test-updater-fixtures 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
-require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.uses' \
+require_step_field "$updater_workflow" test-updater-fixtures 'Restore legacy macOS libraries cache.' '.uses' \
   'actions/cache/restore@v6'
-require_step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.if' \
+require_step_field "$updater_workflow" test-updater-fixtures 'Restore legacy macOS libraries cache.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true'"
 expect_equal "$updater_workflow legacy cache key" \
-  "$(step_field "$updater_workflow" updater-fixtures 'Restore legacy macOS libraries cache.' '.with.key')" \
-  "$(step_field "$mac_workflow" macos-libraries-build 'Restore legacy macOS libraries cache.' '.with.key')"
-require_step_field "$updater_workflow" updater-fixtures 'Prepare libraries.' '.if' \
+  "$(step_field "$updater_workflow" test-updater-fixtures 'Restore legacy macOS libraries cache.' '.with.key')" \
+  "$(step_field "$mac_workflow" build-macos-deps-artifact 'Restore legacy macOS libraries cache.' '.with.key')"
+require_step_field "$updater_workflow" test-updater-fixtures 'Prepare libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 for libraries_cache_workflow in "$mac_workflow" "$packaged_workflow" "$unit_workflow" "$updater_workflow"; do
   expect_lacks "$libraries_cache_workflow legacy cache writers" \
     "$(cache_writers "$libraries_cache_workflow")" 'Save libraries cache.'
 done
 verify_script="$temp_dir/verify-merge-ref.sh"
-step_field "$updater_workflow" updater-fixtures "$verify_step" '.run' > "$verify_script"
+step_field "$updater_workflow" test-updater-fixtures "$verify_step" '.run' > "$verify_script"
 merge_repo="$temp_dir/merge-repo"
 git_quiet() {
   git -C "$merge_repo" -c user.name=contract -c user.email=contract@example.invalid \
@@ -1370,7 +1370,7 @@ fi
 # Fixture temporary paths are canonical so symlinked /var and /private/var agree.
 canonical_step='Canonicalize the fixture temporary directory.'
 canonical_script="$temp_dir/canonicalize.sh"
-step_field "$updater_workflow" updater-fixtures "$canonical_step" '.run' > "$canonical_script"
+step_field "$updater_workflow" test-updater-fixtures "$canonical_step" '.run' > "$canonical_script"
 mkdir -p "$temp_dir/real-tmp"
 ln -s "$temp_dir/real-tmp" "$temp_dir/linked-tmp"
 env TMPDIR="$temp_dir/linked-tmp" GITHUB_ENV="$temp_dir/github-env" \
@@ -1378,15 +1378,15 @@ env TMPDIR="$temp_dir/linked-tmp" GITHUB_ENV="$temp_dir/github-env" \
 expect_equal "$canonical_step GITHUB_ENV" "$(cat "$temp_dir/github-env")" \
   "TMPDIR=$(cd "$temp_dir/real-tmp" && pwd -P)"
 
-require_step_script "$updater_workflow" updater-fixtures 'Build updater fixture runner.' \
+require_step_script "$updater_workflow" test-updater-fixtures 'Build updater fixture runner.' \
   'cmake --build "$REPO_NAME/out"'
-require_step_script "$updater_workflow" updater-fixtures 'Run focused updater fixtures.' \
+require_step_script "$updater_workflow" test-updater-fixtures 'Run focused updater fixtures.' \
   "bash \"\$REPO_NAME/$updater_runner\"" \
   '"$REPO_NAME/out/Debug/test_unit"'
 diagnostics_step='Upload updater fixture diagnostics.'
-require_step_field "$updater_workflow" updater-fixtures "$diagnostics_step" '.uses | sub("@.*", "")' \
+require_step_field "$updater_workflow" test-updater-fixtures "$diagnostics_step" '.uses | sub("@.*", "")' \
   'actions/upload-artifact'
-require_step_field "$updater_workflow" updater-fixtures "$diagnostics_step" '.with["retention-days"]' '14'
+require_step_field "$updater_workflow" test-updater-fixtures "$diagnostics_step" '.with["retention-days"]' '14'
 
 # The fixture runner runs each registered case once, in its own process, and
 # bounds every case's log.
