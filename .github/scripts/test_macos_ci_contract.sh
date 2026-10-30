@@ -216,6 +216,9 @@ expect_contains "$mac_workflow build-macos if" "$(job_field "$mac_workflow" buil
   "needs.ops-prune-macos-libraries.result == 'success'" \
   "needs.ops-prune-macos-libraries.result == 'skipped'"
 expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" build-macos '.if')" 'always()'
+require_job_field "$mac_workflow" build-macos '.strategy.fail-fast' 'false'
+expect_equal "$mac_workflow in-job run cancellation steps" \
+  "$(yq -r '[.jobs[] | .steps[]? | select(.name == "Cancel PR workflow run after job failure")] | length' "$mac_workflow")" '0'
 require_step_field "$mac_workflow" build-macos 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"

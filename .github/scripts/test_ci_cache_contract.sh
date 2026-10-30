@@ -163,6 +163,11 @@ expect_contains "$linux_workflow job test-linux-unit if" \
   "$(job_field "$linux_workflow" test-linux-unit '.if')" \
   "(needs.publish-linux-deps-image.result == 'success' || needs.publish-linux-deps-image.result == 'skipped')" \
   "needs.check-linux-changes.outputs.required == 'true'"
+expect_equal "$linux_workflow test-linux-unit matrix fail-fast default" \
+  "$(job_field "$linux_workflow" test-linux-unit '.strategy.fail-fast')" 'null'
+
+expect_equal "$linux_workflow in-job run cancellation steps" \
+  "$(yq -r '[.jobs[] | .steps[]? | select(.name == "Cancel PR workflow run after job failure")] | length' "$linux_workflow")" '0'
 
 # The PR aggregate waits for each job that can run on a pull request and
 # rejects failed or cancelled results while allowing only the filtered build
@@ -171,6 +176,8 @@ pr_jobs="$(yq -r '.jobs | keys | map(select(. != "ci" and . != "publish-linux-de
 expect_equal "$linux_workflow PR aggregate dependencies" \
   "$(job_field "$linux_workflow" ci '.needs | sort | join(",")')" \
   "$pr_jobs"
+require_job_field "$linux_workflow" check-linux '.if' \
+  "\${{ (github.event_name == 'pull_request' && !cancelled()) || (github.event_name != 'pull_request' && always()) }}"
 require_job_field "$linux_workflow" ci '.if' \
   "always() && github.event_name == 'pull_request'"
 

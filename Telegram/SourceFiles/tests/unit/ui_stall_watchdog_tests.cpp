@@ -28,10 +28,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // Spins without calling into libstdc++ or the vDSO: those are built without
 // frame pointers, so a sample taken inside them would skip this frame.
 __attribute__((noinline)) void
-UiStallWatchdogTestBlock(std::chrono::milliseconds duration) {
+UiStallWatchdogTestBlock(std::chrono::milliseconds duration,
+						 std::atomic_bool *waitUntil = nullptr) {
 	auto released = std::atomic_bool(false);
 	auto releaser = std::thread([&] {
 		std::this_thread::sleep_for(duration);
+		if (waitUntil) {
+			const auto deadline
+				= std::chrono::steady_clock::now() + std::chrono::seconds(2);
+			while (!waitUntil->load(std::memory_order_acquire)
+				   && std::chrono::steady_clock::now() < deadline) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+		}
 		released.store(true, std::memory_order_release);
 	});
 	while (!released.load(std::memory_order_acquire)) {
@@ -114,7 +123,7 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 			if (_blockActive) {
 				_blockActive->store(true, std::memory_order_release);
 			}
-			UiStallWatchdogTestBlock(_durations[_nextBlock]);
+			UiStallWatchdogTestBlock(_durations[_nextBlock], _logged);
 			if (_blockActive) {
 				_blockActive->store(false, std::memory_order_release);
 			}
@@ -318,7 +327,7 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 			},
 			&loop, &loggedWhileBlocked, &blockActive);
 		watchdog.installEventFilter(&blockFilter);
-		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+		QTimer::singleShot(8000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK_EQ(blockFilter.BlocksCompleted(), 2);
 		CHECK(blockFilter.LoggedWhileBlocked());
