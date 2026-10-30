@@ -179,7 +179,7 @@ class InviteFriends final : public PeerListController,
 
   private:
 	void setupContent();
-	[[nodiscard]] InviteCreateConditions createConditions() const;
+	[[nodiscard]] details::InviteCreateConditions createConditions() const;
 	void updateAvailability();
 	void updateSummary();
 	void updateMessage();
@@ -200,7 +200,7 @@ class InviteFriends final : public PeerListController,
 	mtpRequestId _listRequestId = 0;
 	mtpRequestId _createRequestId = 0;
 	mtpRequestId _revokeRequestId = 0;
-	InviteCreateRequest _createRequest;
+	details::InviteCreateRequest _createRequest;
 	InviteId _revokeId = 0;
 	int64 _quota = 0;
 	int64 _weeklyCount = 0;
@@ -285,7 +285,7 @@ rpl::producer<QString> InviteFriends::title() {
 
 Main::Session &InviteFriends::session() const { return *_session; }
 
-InviteCreateConditions InviteFriends::createConditions() const {
+details::InviteCreateConditions InviteFriends::createConditions() const {
 	return {
 		.available = _available,
 		.loaded = _loaded,
@@ -392,7 +392,7 @@ void InviteFriends::setupContent() {
 
 void InviteFriends::updateAvailability() {
 	_available = UserInvitesEnabled(_session);
-	_createButton->setDisabled(!CanCreateInvite(createConditions()));
+	_createButton->setDisabled(!details::CanCreateInvite(createConditions()));
 	if (!_available && !_unavailableShown) {
 		_unavailableShown = true;
 		_controller->showToast(tr::lng_teagram_invite_off(tr::now));
@@ -408,7 +408,7 @@ void InviteFriends::updateSummary() {
 		_createButton->setDisabled(true);
 		return;
 	}
-	const auto left = InviteQuotaLeft(_quota, _weeklyCount);
+	const auto left = details::InviteQuotaLeft(_quota, _weeklyCount);
 	auto summary = QString();
 	if (!_createError.isEmpty()) {
 		summary = _createError;
@@ -428,7 +428,7 @@ void InviteFriends::updateSummary() {
 										  : st::boxTextFgError->c);
 	_quotaLabel->show();
 	_createButton->setAccessibleDescription(summary);
-	_createButton->setDisabled(!CanCreateInvite(createConditions()));
+	_createButton->setDisabled(!details::CanCreateInvite(createConditions()));
 }
 
 void InviteFriends::updateMessage() {
@@ -511,8 +511,8 @@ void InviteFriends::loadInvites(Fn<void()> done) {
 				  [=](const MTP::Error &error) {
 					  _listRequestId = 0;
 					  _loading = false;
-					  if (ClassifyInviteListFailure(error.type())
-						  == InviteListFailure::Disabled) {
+					  if (details::ClassifyInviteListFailure(error.type())
+						  == details::InviteListFailure::Disabled) {
 						  _serverDisabled = true;
 						  _createBlocked = true;
 						  _createError = tr::lng_teagram_invite_off(tr::now);
@@ -569,7 +569,7 @@ void InviteFriends::setRows(const MTPDteagram_userInvites &data) {
 }
 
 void InviteFriends::createInvite() {
-	if (!_createRequest.begin(CanCreateInvite(createConditions()))) {
+	if (!_createRequest.begin(details::CanCreateInvite(createConditions()))) {
 		return;
 	}
 	_creatingValue = true;
@@ -600,9 +600,10 @@ void InviteFriends::createInvite() {
 									});
 						  delegate()->peerListPrependRow(std::move(row));
 						  delegate()->peerListRefreshRows();
-						  _nextAvailableAt = InviteNextAvailableAtAfterCreate(
-							  _quota, _weeklyCount, _nextAvailableAt,
-							  createdAt);
+						  _nextAvailableAt
+							  = details::InviteNextAvailableAtAfterCreate(
+								  _quota, _weeklyCount, _nextAvailableAt,
+								  createdAt);
 						  ++_weeklyCount;
 						  updateSummary();
 						  updateMessage();
@@ -625,12 +626,12 @@ void InviteFriends::createInvite() {
 }
 
 void InviteFriends::showCreateError(const MTP::Error &error) {
-	const auto failure = ClassifyInviteCreateFailure(
+	const auto failure = details::ClassifyInviteCreateFailure(
 		error.type(),
 		session().appConfig().get<QString>(u"registration_mode"_q, QString())
 			== u"open"_q);
 	switch (failure.kind) {
-	case InviteCreateFailureKind::AccountTooNew:
+	case details::InviteCreateFailureKind::AccountTooNew:
 		_createBlocked = true;
 		if (failure.waitSeconds) {
 			_createError = tr::lng_teagram_invite_too_new(
@@ -640,23 +641,23 @@ void InviteFriends::showCreateError(const MTP::Error &error) {
 			_createError = tr::lng_teagram_invite_too_new_later(tr::now);
 		}
 		break;
-	case InviteCreateFailureKind::RegistrationClosed:
+	case details::InviteCreateFailureKind::RegistrationClosed:
 		_serverDisabled = true;
 		_createBlocked = true;
 		_createError = failure.registrationOpen
 						   ? tr::lng_teagram_invite_open(tr::now)
 						   : tr::lng_teagram_invite_closed(tr::now);
 		break;
-	case InviteCreateFailureKind::InvitesDisabled:
+	case details::InviteCreateFailureKind::InvitesDisabled:
 		_serverDisabled = true;
 		_createBlocked = true;
 		_createError = tr::lng_teagram_invite_off(tr::now);
 		break;
-	case InviteCreateFailureKind::WeeklyLimitReached:
+	case details::InviteCreateFailureKind::WeeklyLimitReached:
 		_createError.clear();
 		loadInvites();
 		break;
-	case InviteCreateFailureKind::Other:
+	case details::InviteCreateFailureKind::Other:
 		_createError = tr::lng_teagram_invite_create_failed(tr::now);
 		break;
 	}
@@ -671,7 +672,7 @@ void InviteFriends::showCreateError(const MTP::Error &error) {
 }
 
 void InviteFriends::revokeInvite(InviteData data) {
-	if (!CanRevokeInvite(data.state, bool(_revokeRequestId))) {
+	if (!details::CanRevokeInvite(data.state, bool(_revokeRequestId))) {
 		return;
 	}
 	_revokeId = data.id;
