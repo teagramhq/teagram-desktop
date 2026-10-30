@@ -10162,7 +10162,9 @@ void RunAuthenticatedCacheSymlinkCases(
 	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
 	const QString &pinnedMediaCachePath,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	const auto accountFallback = not_null<Main::Account *>(&domain.active());
+#endif
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
 		pinned->session().data().cache().sync();
