@@ -337,6 +337,10 @@ void Sandbox::launchApplication() {
 			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
 				[](const QString &line, bool update) {
 					Logs::writeMainUiStall(line, update);
+				},
+				UiStallWatchdog::Settings{
+					.captureShortStalls = qEnvironmentVariableIsSet(
+						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
 				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC

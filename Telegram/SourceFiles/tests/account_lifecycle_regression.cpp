@@ -9844,9 +9844,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 
 	constexpr auto kReactionCount = 73;
 	constexpr auto kDocumentsPerReaction = 4;
-	constexpr auto kReactionsPerChatSwitch = 9;
-	constexpr auto kExpectedChatSwitches
-		= kReactionCount / kReactionsPerChatSwitch;
+	constexpr auto kExpectedChatSwitches = kReactionCount;
 	constexpr auto kMaxStallNanoseconds = qint64(50'000'000);
 	auto reactions = QVector<MTPAvailableReaction>();
 	reactions.reserve(kReactionCount);
@@ -9893,24 +9891,21 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
             .active = active,
         };
 			++result.reactions;
-			if ((result.reactions % kReactionsPerChatSwitch) == 0) {
-				QTimer::singleShot(0, &loop, [&] {
-					const auto target = (result.chatSwitches % 2)
-											? secondHistory
-											: firstHistory;
-					auto switchTimer = QElapsedTimer();
-					switchTimer.start();
-					controller->showPeerHistory(target);
-					result.maxChatSwitchNanoseconds
-						= std::max(result.maxChatSwitchNanoseconds,
-								   switchTimer.nsecsElapsed());
-					result.maxStallNanoseconds
-						= std::max(result.maxHydrationNanoseconds,
-								   result.maxChatSwitchNanoseconds);
-					++result.chatSwitches;
-					maybeFinish();
-				});
-			}
+			QTimer::singleShot(0, &loop, [&] {
+				const auto target
+					= (result.chatSwitches % 2) ? secondHistory : firstHistory;
+				auto switchTimer = QElapsedTimer();
+				switchTimer.start();
+				controller->showPeerHistory(target);
+				result.maxChatSwitchNanoseconds
+					= std::max(result.maxChatSwitchNanoseconds,
+							   switchTimer.nsecsElapsed());
+				result.maxStallNanoseconds
+					= std::max(result.maxHydrationNanoseconds,
+							   result.maxChatSwitchNanoseconds);
+				++result.chatSwitches;
+				maybeFinish();
+			});
 			return parsed;
 		},
 		[&](const auto &reaction) {
@@ -10154,11 +10149,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				seeded = file.open(QIODevice::WriteOnly)
 						 && (file.write("fixture") == 7);
 			}
-			// Let earlier startup stalls fall outside the watchdog's log rate
-			// limit, then drain queued events without blocking the UI thread.
-			auto cooldown = QEventLoop();
-			QTimer::singleShot(11'000, &cooldown, &QEventLoop::quit);
-			cooldown.exec();
+			// Drain earlier startup pings without blocking the UI thread.
 			QCoreApplication::processEvents();
 			QCoreApplication::sendPostedEvents();
 			QCoreApplication::processEvents();

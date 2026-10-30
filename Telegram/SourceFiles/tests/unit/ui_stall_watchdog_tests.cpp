@@ -194,6 +194,62 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	}
 }
 
+TEST_CASE(UiStallWatchdogCapturesShortStalls) {
+	auto lines = std::vector<QString>();
+	auto mutex = std::mutex();
+	auto blockActive = std::atomic_bool(false);
+	auto logged = std::atomic_bool(false);
+	auto completed = std::atomic_bool(false);
+	auto loop = QEventLoop();
+	const auto before = Core::UiStallWatchdog::StallCount();
+	auto watchdog = Core::UiStallWatchdog(
+		[&](const QString &line, bool update) {
+			const auto lock = std::lock_guard(mutex);
+			if (update) {
+				if (!lines.empty()) {
+					lines.back() = line;
+				}
+				const auto duration = line.mid(u"UI stall "_q.size())
+										  .section(u' ', 0, 0)
+										  .toInt();
+				completed.store(duration >= 50, std::memory_order_release);
+			} else {
+				lines.push_back(line);
+			}
+			if (blockActive.load(std::memory_order_acquire)) {
+				logged.store(true, std::memory_order_release);
+			}
+		},
+		{.captureShortStalls = true});
+	auto blockFilter = UiStallWatchdogTestBlockFilter(
+		std::chrono::milliseconds(80), &loop, &logged, &blockActive);
+	watchdog.installEventFilter(&blockFilter);
+	QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(blockFilter.Blocked());
+	CHECK(blockFilter.LoggedWhileBlocked());
+	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
+	const auto deadline
+		= std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (!completed.load(std::memory_order_acquire)
+		   && std::chrono::steady_clock::now() < deadline) {
+		QCoreApplication::processEvents();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	QCoreApplication::processEvents();
+	const auto lock = std::lock_guard(mutex);
+	CHECK_EQ(int(lines.size()), 1);
+	if (!lines.empty()) {
+		CHECK(lines.front().startsWith(u"UI stall "_q));
+		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
+		const auto duration = lines.front()
+								  .mid(u"UI stall "_q.size())
+								  .section(u' ', 0, 0)
+								  .toInt();
+		CHECK(duration >= 50);
+	}
+}
+
 TEST_CASE(UiStallWatchdogSymbolizesStackWhileMainThreadBlocked) {
 	auto blockActive = std::atomic_bool(false);
 	auto symbolizedWhileBlocked = std::atomic_bool(false);

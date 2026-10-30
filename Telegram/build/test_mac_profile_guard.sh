@@ -1310,6 +1310,11 @@ local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.ke
 local PROFILE_LOG="$AUTH_HOME/Library/Application Support/Teagram/log.txt"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+append_ui_stall_diagnostics() {
+	if [[ -f "$PROFILE_LOG" ]]; then
+		grep -F 'UI stall ' "$PROFILE_LOG" >> "$AUTH_LOG" || true
+	fi
+}
 
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
@@ -1318,11 +1323,13 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
 	TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	append_ui_stall_diagnostics
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
+append_ui_stall_diagnostics
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 for native_evidence in \
 	'native_lifecycle_case=account-lifecycle-prerequisites result=PASS' \
@@ -1400,7 +1407,7 @@ if ! grep -E -q \
 	exit 1
 fi
 if ! grep -E -q \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=8 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "cache chat switch latency evidence missing or over 50 ms." >&2
