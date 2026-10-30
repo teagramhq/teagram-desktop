@@ -183,6 +183,7 @@ TEST_CASE(InviteManagementHappyPathSmoke) {
 		if (requestId) {
 			revokeRequestId = *requestId;
 		}
+		return requestId;
 	};
 	CHECK(revokeInvite().has_value());
 	CHECK(!revokeInvite().has_value());
