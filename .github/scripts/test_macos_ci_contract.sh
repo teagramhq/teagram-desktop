@@ -527,8 +527,13 @@ grep -Fq 'APPEND PROPERTY COMPILE_DEFINITIONS' <<< "$protected_path_sources" \
   || contract_fail 'The protected-path define must use source-level compile definitions.'
 grep -Fq 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST' <<< "$protected_path_sources" \
   || contract_fail 'The protected-path define must be enabled for its source consumers.'
+if grep -Fq 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST' \
+    Telegram/SourceFiles/data/data_session.h; then
+  contract_fail 'The source-scoped protected-path define must not change Session declarations.'
+fi
 for source in \
     '"${src_loc}/main.cpp"' \
+    '"${src_loc}/data/data_session.cpp"' \
     '"${src_loc}/core/mac_protected_path_runtime.mm"' \
     '"${src_loc}/tests/account_lifecycle_regression.cpp"'; do
   grep -Fq -- "$source" <<< "$protected_path_sources" \
