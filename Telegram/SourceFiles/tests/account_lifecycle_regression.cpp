@@ -1579,8 +1579,8 @@ template <typename Predicate>
 			"uploads_after=%zu photo=%lld original=%lld).\n",
 			expectServerConfirmation, editClosedBeforeConfirmation,
 			size_t(replacementUploadIndex), size_t(uploadedParts()),
-			static_cast<long long>(chat->userpicPhotoId().bare),
-			static_cast<long long>(originalPhotoId.bare));
+			static_cast<long long>(chat->userpicPhotoId()),
+			static_cast<long long>(originalPhotoId));
 		return false;
 	}
 	if (expectServerConfirmation) {
@@ -10023,12 +10023,12 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_vector<MTPDialog>(
 			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
-						MTP_int(0), MTP_int(0), MTP_int(0), MTP_int(0),
+						MTP_int(0), MTP_int(0), MTP_int(0),
 						notifySettings, MTPint(), MTPDraftMessage(), MTPint(),
 						MTPint()),
 			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId), MTP_int(72),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
-						MTP_int(0), MTP_int(0), MTP_int(0), MTP_int(0),
+						MTP_int(0), MTP_int(0), MTP_int(0),
 						notifySettings, MTPint(), MTPDraftMessage(), MTPint(),
 						MTPint())}),
 		MTP_vector<MTPMessage>(std::move(messages)),
