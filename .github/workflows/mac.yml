@@ -207,7 +207,6 @@ jobs:
         && (needs.build-macos-deps-artifact.result == 'success' || needs.build-macos-deps-artifact.result == 'skipped')
         && (needs.ops-prune-macos-libraries.result == 'success' || needs.ops-prune-macos-libraries.result == 'skipped')
     permissions:
-      actions: write
       contents: read
       packages: read
     # GitHub-hosted macos-latest is Apple Silicon, which is what we ship.
@@ -1340,11 +1339,6 @@ jobs:
             echo "::warning::Warm-cache MacOS PR build exceeded the 30-minute target (${elapsed_seconds}s); the source build result remains authoritative."
           fi
 
-      - name: Cancel PR workflow run after job failure
-        if: ${{ failure() && github.event_name == 'pull_request' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"
   test-libiconv:
     name: 'test: libiconv (macos-arm64)'
     if: ${{ inputs.libiconv_only }}

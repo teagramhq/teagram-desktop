@@ -124,7 +124,7 @@ require_permission_map "$mac_workflow" 'workflow: inherit
 check-macos-deps-artifact: contents=read,packages=read
 build-macos-deps-artifact: contents=read,packages=write
 ops-prune-macos-libraries: actions=write,contents=read
-build-macos: actions=write,contents=read,packages=read
+build-macos: contents=read,packages=read
 test-libiconv: contents=read'
 
 require_job_field "$mac_workflow" check-macos-deps-artifact '.["runs-on"]' 'ubuntu-latest'
@@ -217,14 +217,8 @@ expect_contains "$mac_workflow build-macos if" "$(job_field "$mac_workflow" buil
   "needs.ops-prune-macos-libraries.result == 'skipped'"
 expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" build-macos '.if')" 'always()'
 require_job_field "$mac_workflow" build-macos '.strategy.fail-fast' 'false'
-require_job_field "$mac_workflow" build-macos '.steps[-1].name' \
-  'Cancel PR workflow run after job failure'
-require_step_field "$mac_workflow" build-macos 'Cancel PR workflow run after job failure' '.if' \
-  "\${{ failure() && github.event_name == 'pull_request' }}"
-require_step_field "$mac_workflow" build-macos 'Cancel PR workflow run after job failure' '.env.GH_TOKEN' \
-  '${{ github.token }}'
-require_step_field "$mac_workflow" build-macos 'Cancel PR workflow run after job failure' '.run' \
-  'gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"'
+expect_equal "$mac_workflow in-job run cancellation steps" \
+  "$(yq -r '[.jobs[] | .steps[]? | select(.name == "Cancel PR workflow run after job failure")] | length' "$mac_workflow")" '0'
 require_step_field "$mac_workflow" build-macos 'Set macOS dependency image tag.' \
   '.env.DEPENDENCY_HASH' \
   "\${{ hashFiles(format('{0}/Telegram/build/prepare/prepare.py', env.REPO_NAME), format('{0}/Telegram/build/prepare/mac.sh', env.REPO_NAME), format('{0}/Telegram/build/qt_version.py', env.REPO_NAME)) }}"
