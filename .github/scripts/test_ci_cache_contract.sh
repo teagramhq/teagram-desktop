@@ -85,10 +85,10 @@ reject_value "$linux_workflow" 'workflow_run' 'head_sha'
 expect_equal "$linux_workflow checkouts that override the ref" \
   "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with.ref != null) | .name' "$linux_workflow")" ''
 require_permission_map "$linux_workflow" 'workflow: contents=read
-check-linux-changes: inherit
+check-linux-changes: actions=write,contents=read
 publish-linux-deps-image: contents=read,packages=write
-test-linux-unit: actions=read,contents=read,packages=read
-check-linux: inherit
+test-linux-unit: actions=write,contents=read,packages=read
+check-linux: actions=write,contents=read
 ci: inherit'
 
 # The build verifies it checked out GITHUB_SHA before compiling.
@@ -163,6 +163,19 @@ expect_contains "$linux_workflow job test-linux-unit if" \
   "$(job_field "$linux_workflow" test-linux-unit '.if')" \
   "(needs.publish-linux-deps-image.result == 'success' || needs.publish-linux-deps-image.result == 'skipped')" \
   "needs.check-linux-changes.outputs.required == 'true'"
+expect_equal "$linux_workflow test-linux-unit matrix fail-fast default" \
+  "$(job_field "$linux_workflow" test-linux-unit '.strategy.fail-fast')" 'null'
+
+for job in check-linux-changes test-linux-unit check-linux; do
+  cancel_step='Cancel PR workflow run after job failure'
+  require_job_field "$linux_workflow" "$job" '.steps[-1].name' "$cancel_step"
+  require_step_field "$linux_workflow" "$job" "$cancel_step" '.if' \
+    "\${{ failure() && github.event_name == 'pull_request' }}"
+  require_step_field "$linux_workflow" "$job" "$cancel_step" '.env.GH_TOKEN' \
+    '${{ github.token }}'
+  require_step_field "$linux_workflow" "$job" "$cancel_step" '.run' \
+    'gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"'
+done
 
 # The PR aggregate waits for each job that can run on a pull request and
 # rejects failed or cancelled results while allowing only the filtered build
@@ -171,6 +184,8 @@ pr_jobs="$(yq -r '.jobs | keys | map(select(. != "ci" and . != "publish-linux-de
 expect_equal "$linux_workflow PR aggregate dependencies" \
   "$(job_field "$linux_workflow" ci '.needs | sort | join(",")')" \
   "$pr_jobs"
+require_job_field "$linux_workflow" check-linux '.if' \
+  "\${{ (github.event_name == 'pull_request' && !cancelled()) || (github.event_name != 'pull_request' && always()) }}"
 require_job_field "$linux_workflow" ci '.if' \
   "always() && github.event_name == 'pull_request'"
 

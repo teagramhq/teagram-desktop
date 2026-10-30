@@ -66,6 +66,9 @@ jobs:
   check-linux-changes:
     name: 'check: linux-changes'
     runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+      contents: read
     outputs:
       required: ${{ steps.filter.outputs.required }}
 
@@ -87,6 +90,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: bash .github/scripts/detect_linux_changes.sh
+
+      - name: Cancel PR workflow run after job failure
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"
 
   # Trust boundary and token scope: see .github/ci-cache-threat-model.md.
   publish-linux-deps-image:
@@ -164,7 +173,7 @@ jobs:
         && (needs.publish-linux-deps-image.result == 'success' || needs.publish-linux-deps-image.result == 'skipped')
     runs-on: ubuntu-26.04
     permissions:
-      actions: read
+      actions: write
       contents: read
       packages: read
 
@@ -641,13 +650,22 @@ jobs:
             echo "::warning::Actions cache total is at or above the 9 GB target (${total_bytes} bytes)."
           fi
 
+      - name: Cancel PR workflow run after job failure
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"
+
   check-linux:
     name: Rocky Linux 8
     needs:
       - check-linux-changes
       - test-linux-unit
-    if: always()
+    if: ${{ (github.event_name == 'pull_request' && !cancelled()) || (github.event_name != 'pull_request' && always()) }}
     runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+      contents: read
 
     steps:
       - name: Report Linux check result.
@@ -680,6 +698,12 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Cancel PR workflow run after job failure
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY"
 
   ci:
     name: ci
