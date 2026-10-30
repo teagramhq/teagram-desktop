@@ -28,9 +28,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // Spins without calling into libstdc++ or the vDSO: those are built without
 // frame pointers, so a sample taken inside them would skip this frame.
 __attribute__((noinline)) void
-UiStallWatchdogTestBlock(
-	std::chrono::milliseconds duration,
-	std::atomic_bool *waitUntil = nullptr) {
+UiStallWatchdogTestBlock(std::chrono::milliseconds duration,
+						 std::atomic_bool *waitUntil = nullptr) {
 	auto released = std::atomic_bool(false);
 	auto releaser = std::thread([&] {
 		std::this_thread::sleep_for(duration);
