@@ -9,47 +9,231 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "settings/sections/settings_invite_state.h"
 
+#include <functional>
+#include <utility>
+#include <vector>
+
 namespace {
 
 using namespace Settings::details;
 
-TEST_CASE(InviteManagementCreateAndRevokeHappyPathSmoke) {
-	const auto canCreate = InviteCreateConditions{
-		.available = true,
-		.loaded = true,
-		.quota = 2,
-		.weeklyCount = 1,
+struct FakeInviteListResponse {
+	std::vector<int64> ids;
+	int64 quota = 0;
+	int64 weeklyCount = 0;
+};
+
+struct FakeInviteLinkResponse {
+	int64 id = 0;
+	QString secret;
+};
+
+class FakeInviteTransport final {
+  public:
+	using ListDone = std::function<void(const FakeInviteListResponse &)>;
+	using CreateDone = std::function<void(const FakeInviteLinkResponse &)>;
+	using RevokeDone = std::function<void(const bool &)>;
+	using Fail = std::function<void(const QString &)>;
+
+	mtpRequestId list(ListDone done, [[maybe_unused]] Fail fail) {
+		++listRequests;
+		_listDone = std::move(done);
+		return mtpRequestId(listRequests);
+	}
+
+	mtpRequestId create(CreateDone done, Fail fail) {
+		++createRequests;
+		_createDone = std::move(done);
+		_createFail = std::move(fail);
+		return mtpRequestId(createRequests);
+	}
+
+	mtpRequestId revoke(int64 id, RevokeDone done, [[maybe_unused]] Fail fail) {
+		++revokeRequests;
+		revokedIds.push_back(id);
+		_revokeDone = std::move(done);
+		return mtpRequestId(revokeRequests);
+	}
+
+	void succeedList(FakeInviteListResponse response) {
+		const auto done = std::exchange(_listDone, nullptr);
+		if (done) {
+			done(response);
+		}
+	}
+
+	void succeedCreate(const FakeInviteLinkResponse &response,
+					   int deliveries = 1) {
+		const auto done = _createDone;
+		for (auto i = 0; i != deliveries && done; ++i) {
+			done(response);
+		}
+		_createDone = nullptr;
+		_createFail = nullptr;
+	}
+
+	void failCreate(const QString &error) {
+		const auto fail = std::exchange(_createFail, nullptr);
+		_createDone = nullptr;
+		if (fail) {
+			fail(error);
+		}
+	}
+
+	void succeedRevoke(bool result) {
+		const auto done = std::exchange(_revokeDone, nullptr);
+		if (done) {
+			done(result);
+		}
+	}
+
+	int listRequests = 0;
+	int createRequests = 0;
+	int revokeRequests = 0;
+	std::vector<int64> revokedIds;
+
+  private:
+	ListDone _listDone;
+	CreateDone _createDone;
+	RevokeDone _revokeDone;
+	Fail _createFail;
+};
+
+TEST_CASE(InviteManagementHappyPathSmoke) {
+	auto transport = FakeInviteTransport();
+	auto available = true;
+	auto listRequestId = mtpRequestId(0);
+	auto list = FakeInviteListResponse();
+	const auto loadList = [&] {
+		const auto requestId = RunInviteListRequest(
+			available, listRequestId, [] {},
+			[&](auto done, auto fail) {
+				return transport.list(std::move(done), std::move(fail));
+			},
+			[&](const FakeInviteListResponse &response) {
+				listRequestId = 0;
+				list = response;
+			},
+			[&](const QString &) { listRequestId = 0; });
+		if (requestId) {
+			listRequestId = *requestId;
+		}
 	};
-	CHECK(CanCreateInvite(canCreate));
 
-	auto request = InviteCreateRequest();
-	CHECK(request.begin(CanCreateInvite(canCreate)));
-	CHECK(request.active());
-	CHECK(!request.begin(CanCreateInvite(canCreate)));
-	auto displayedLinkCount = 0;
-	if (request.finish()) {
-		++displayedLinkCount;
-	}
-	if (request.finish()) {
-		++displayedLinkCount;
-	}
-	CHECK_EQ(displayedLinkCount, 1);
-	CHECK(request.begin(CanCreateInvite(canCreate)));
-	CHECK(request.finish());
+	loadList();
+	CHECK_EQ(transport.listRequests, 1);
+	loadList();
+	CHECK_EQ(transport.listRequests, 1);
+	transport.succeedList({.ids = {41}, .quota = 2, .weeklyCount = 0});
+	CHECK_EQ(int(list.ids.size()), 1);
+	CHECK_EQ(list.ids.front(), 41);
 
-	auto afterCreate = canCreate;
-	++afterCreate.weeklyCount;
-	CHECK_EQ(InviteQuotaLeft(afterCreate.quota, afterCreate.weeklyCount), 0);
-	CHECK(!CanCreateInvite(afterCreate));
+	auto conditions = InviteCreateConditions{
+		.available = available,
+		.loaded = true,
+		.quota = list.quota,
+		.weeklyCount = list.weeklyCount,
+	};
+	auto createRequest = InviteCreateRequest();
+	auto creating = false;
+	auto createdInviteId = int64(0);
+	auto displayedLinks = std::vector<QString>();
+	const auto createInvite = [&] {
+		return RunInviteCreateRequest(
+			createRequest, conditions, [&] { creating = true; },
+			[&](auto done, auto fail) {
+				return transport.create(std::move(done), std::move(fail));
+			},
+			[&](const FakeInviteLinkResponse &response) {
+				creating = false;
+				createdInviteId = response.id;
+				++conditions.weeklyCount;
+				displayedLinks.push_back(response.secret);
+				loadList();
+			},
+			[&](const QString &) { creating = false; });
+	};
+	CHECK(createInvite().has_value());
+	CHECK(creating);
+	CHECK(!createInvite().has_value());
+	CHECK_EQ(transport.createRequests, 1);
+	transport.succeedCreate({.id = 42, .secret = u"secret-42"_q}, 2);
+	CHECK(!creating);
+	CHECK_EQ(int(displayedLinks.size()), 1);
+	CHECK_EQ(displayedLinks.front(), u"secret-42"_q);
+	CHECK_EQ(transport.listRequests, 2);
+	transport.succeedList({.ids = {41, 42}, .quota = 2, .weeklyCount = 1});
+	CHECK_EQ(int(list.ids.size()), 2);
 
-	const auto nextAvailableAt = InviteNextAvailableAtAfterCreate(
-		canCreate.quota, canCreate.weeklyCount, std::nullopt, 1000);
-	CHECK(nextAvailableAt.has_value());
-	CHECK_EQ(*nextAvailableAt, 1000 + 7 * 86400);
+	auto revokeRequestId = mtpRequestId(0);
+	const auto revokeInvite = [&] {
+		const auto requestId = RunInviteRevokeRequest(
+			u"pending"_q, bool(revokeRequestId), [] {},
+			[&](auto done, auto fail) {
+				return transport.revoke(createdInviteId, std::move(done),
+										std::move(fail));
+			},
+			[&](const bool &success) {
+				revokeRequestId = 0;
+				if (success) {
+					loadList();
+				}
+			},
+			[&](const QString &) { revokeRequestId = 0; });
+		if (requestId) {
+			revokeRequestId = *requestId;
+		}
+	};
+	CHECK(revokeInvite().has_value());
+	CHECK(!revokeInvite().has_value());
+	CHECK_EQ(transport.revokeRequests, 1);
+	CHECK_EQ(transport.revokedIds.front(), 42);
+	transport.succeedRevoke(true);
+	CHECK_EQ(transport.listRequests, 3);
+	transport.succeedList({.ids = {41}, .quota = 2, .weeklyCount = 1});
+	CHECK_EQ(int(list.ids.size()), 1);
+	CHECK_EQ(list.ids.front(), 41);
+	CHECK_EQ(int(displayedLinks.size()), 1);
+}
 
+TEST_CASE(InviteManagementRevokeEligibility) {
 	CHECK(CanRevokeInvite(u"pending"_q, false));
 	CHECK(!CanRevokeInvite(u"pending"_q, true));
 	CHECK(!CanRevokeInvite(u"used"_q, false));
+}
+
+TEST_CASE(InviteCreateFailureThenRetryShowsOnlySuccessfulLink) {
+	auto transport = FakeInviteTransport();
+	auto request = InviteCreateRequest();
+	auto displayedLinks = std::vector<QString>();
+	auto failures = 0;
+	const auto conditions = InviteCreateConditions{
+		.available = true,
+		.loaded = true,
+		.quota = 2,
+		.weeklyCount = 0,
+	};
+	const auto create = [&] {
+		return RunInviteCreateRequest(
+			request, conditions, [] {},
+			[&](auto done, auto fail) {
+				return transport.create(std::move(done), std::move(fail));
+			},
+			[&](const FakeInviteLinkResponse &response) {
+				displayedLinks.push_back(response.secret);
+			},
+			[&](const QString &) { ++failures; });
+	};
+	CHECK(create().has_value());
+	transport.failCreate(u"NETWORK_TIMEOUT"_q);
+	CHECK_EQ(failures, 1);
+	CHECK(!request.active());
+	CHECK(displayedLinks.empty());
+
+	CHECK(create().has_value());
+	transport.succeedCreate({.id = 43, .secret = u"secret-43"_q});
+	CHECK_EQ(int(displayedLinks.size()), 1);
+	CHECK_EQ(displayedLinks.front(), u"secret-43"_q);
 }
 
 TEST_CASE(InviteManagementQuotaAndUnavailableStates) {

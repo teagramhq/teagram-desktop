@@ -479,68 +479,69 @@ void InviteFriends::prepare() {
 }
 
 void InviteFriends::loadInvites(Fn<void()> done) {
-	if (!_available || _listRequestId) {
-		return;
+	const auto requestId = details::RunInviteListRequest(
+		_available, _listRequestId,
+		[=] {
+			_listFailed = false;
+			_loading = !_loaded;
+			_createError.clear();
+			updateMessage();
+		},
+		[=](auto requestDone, auto requestFail) {
+			return session()
+				.api()
+				.request(MTPteagram_ListUserInvites())
+				.done(crl::guard(this, std::move(requestDone)))
+				.fail(crl::guard(this, std::move(requestFail)))
+				.handleAllErrors()
+				.send();
+		},
+		[=](const MTPteagram_UserInvites &result) {
+			_listRequestId = 0;
+			result.match([&](const MTPDteagram_userInvites &data) {
+				setRows(data);
+				_loaded = true;
+				_loading = false;
+				_listFailed = false;
+				updateSummary();
+				updateMessage();
+				if (done) {
+					done();
+				}
+			});
+		},
+		[=](const MTP::Error &error) {
+			_listRequestId = 0;
+			_loading = false;
+			if (details::ClassifyInviteListFailure(error.type())
+				== details::InviteListFailure::Disabled) {
+				_serverDisabled = true;
+				_createBlocked = true;
+				_createError = tr::lng_teagram_invite_off(tr::now);
+				_listFailed = false;
+				if (!_unavailableShown) {
+					_unavailableShown = true;
+					_controller->showToast(tr::lng_teagram_invite_off(tr::now));
+					showOther(MainId());
+				}
+				for (auto i = 0; i != delegate()->peerListFullRowsCount();
+					 ++i) {
+					static_cast<InviteRow *>(delegate()->peerListRowAt(i).get())
+						->setShowDuration(false);
+				}
+			} else {
+				_listFailed = true;
+			}
+			updateSummary();
+			updateMessage();
+			if (done) {
+				done();
+			}
+		});
+	if (requestId) {
+		_listRequestId = *requestId;
+		_createButton->setDisabled(true);
 	}
-	_listFailed = false;
-	_loading = !_loaded;
-	_createError.clear();
-	updateMessage();
-	_listRequestId
-		= session()
-			  .api()
-			  .request(MTPteagram_ListUserInvites())
-			  .done(crl::guard(
-				  this,
-				  [=](const MTPteagram_UserInvites &result) {
-					  _listRequestId = 0;
-					  result.match([&](const MTPDteagram_userInvites &data) {
-						  setRows(data);
-						  _loaded = true;
-						  _loading = false;
-						  _listFailed = false;
-						  updateSummary();
-						  updateMessage();
-						  if (done) {
-							  done();
-						  }
-					  });
-				  }))
-			  .fail(crl::guard(
-				  this,
-				  [=](const MTP::Error &error) {
-					  _listRequestId = 0;
-					  _loading = false;
-					  if (details::ClassifyInviteListFailure(error.type())
-						  == details::InviteListFailure::Disabled) {
-						  _serverDisabled = true;
-						  _createBlocked = true;
-						  _createError = tr::lng_teagram_invite_off(tr::now);
-						  _listFailed = false;
-						  if (!_unavailableShown) {
-							  _unavailableShown = true;
-							  _controller->showToast(
-								  tr::lng_teagram_invite_off(tr::now));
-							  showOther(MainId());
-						  }
-						  for (auto i = 0;
-							   i != delegate()->peerListFullRowsCount(); ++i) {
-							  static_cast<InviteRow *>(
-								  delegate()->peerListRowAt(i).get())
-								  ->setShowDuration(false);
-						  }
-					  } else {
-						  _listFailed = true;
-					  }
-					  updateSummary();
-					  updateMessage();
-					  if (done) {
-						  done();
-					  }
-				  }))
-			  .handleAllErrors()
-			  .send();
-	_createButton->setDisabled(true);
 }
 
 void InviteFriends::setRows(const MTPDteagram_userInvites &data) {
@@ -569,60 +570,55 @@ void InviteFriends::setRows(const MTPDteagram_userInvites &data) {
 }
 
 void InviteFriends::createInvite() {
-	if (!_createRequest.begin(details::CanCreateInvite(createConditions()))) {
-		return;
+	const auto requestId = details::RunInviteCreateRequest(
+		_createRequest, createConditions(),
+		[=] {
+			_creatingValue = true;
+			_createError.clear();
+			updateSummary();
+			updateMessage();
+		},
+		[=](auto requestDone, auto requestFail) {
+			return session()
+				.api()
+				.request(MTPteagram_CreateUserInvite())
+				.done(crl::guard(this, std::move(requestDone)))
+				.fail(crl::guard(this, std::move(requestFail)))
+				.handleAllErrors()
+				.send();
+		},
+		[=](const MTPteagram_UserInviteLink &result) {
+			_createRequestId = 0;
+			_creatingValue = false;
+			result.match([&](const MTPDteagram_userInviteLink &data) {
+				const auto createdAt = base::unixtime::now();
+				auto row = std::make_unique<InviteRow>(
+					this, InviteData{
+							  .id = InviteId(data.vid().v),
+							  .state = u"pending"_q,
+							  .createdAt = createdAt,
+							  .expiresAt = data.vexpires_at().v,
+							  .showDuration = !_serverDisabled,
+						  });
+				delegate()->peerListPrependRow(std::move(row));
+				delegate()->peerListRefreshRows();
+				_nextAvailableAt = details::InviteNextAvailableAtAfterCreate(
+					_quota, _weeklyCount, _nextAvailableAt, createdAt);
+				++_weeklyCount;
+				updateSummary();
+				updateMessage();
+				showInviteLink(qs(data.vlink()), data.vexpires_at().v);
+				loadInvites();
+			});
+		},
+		[=](const MTP::Error &error) {
+			_createRequestId = 0;
+			_creatingValue = false;
+			showCreateError(error);
+		});
+	if (requestId) {
+		_createRequestId = *requestId;
 	}
-	_creatingValue = true;
-	_createError.clear();
-	updateSummary();
-	updateMessage();
-	_createRequestId
-		= session()
-			  .api()
-			  .request(MTPteagram_CreateUserInvite())
-			  .done(crl::guard(
-				  this,
-				  [=](const MTPteagram_UserInviteLink &result) {
-					  if (!_createRequest.finish()) {
-						  return;
-					  }
-					  _createRequestId = 0;
-					  _creatingValue = false;
-					  result.match([&](const MTPDteagram_userInviteLink &data) {
-						  const auto createdAt = base::unixtime::now();
-						  auto row = std::make_unique<InviteRow>(
-							  this, InviteData{
-										.id = InviteId(data.vid().v),
-										.state = u"pending"_q,
-										.createdAt = createdAt,
-										.expiresAt = data.vexpires_at().v,
-										.showDuration = !_serverDisabled,
-									});
-						  delegate()->peerListPrependRow(std::move(row));
-						  delegate()->peerListRefreshRows();
-						  _nextAvailableAt
-							  = details::InviteNextAvailableAtAfterCreate(
-								  _quota, _weeklyCount, _nextAvailableAt,
-								  createdAt);
-						  ++_weeklyCount;
-						  updateSummary();
-						  updateMessage();
-						  showInviteLink(qs(data.vlink()),
-										 data.vexpires_at().v);
-						  loadInvites();
-					  });
-				  }))
-			  .fail(crl::guard(this,
-							   [=](const MTP::Error &error) {
-								   if (!_createRequest.finish()) {
-									   return;
-								   }
-								   _createRequestId = 0;
-								   _creatingValue = false;
-								   showCreateError(error);
-							   }))
-			  .handleAllErrors()
-			  .send();
 }
 
 void InviteFriends::showCreateError(const MTP::Error &error) {
@@ -687,52 +683,50 @@ void InviteFriends::revokeInvite(InviteData data) {
 		.confirmed = crl::guard(
 			this,
 			[=](Fn<void()> close) {
-				*revokeError = QString();
-				_revokeRequestId
-					= session()
-						  .api()
-						  .request(
-							  MTPteagram_RevokeUserInvite(MTP_long(data.id)))
-						  .done(crl::guard(
-							  this,
-							  [=](const MTPBool &result) {
-								  _revokeRequestId = 0;
-								  if (mtpIsFalse(result)) {
-									  *revokeError = tr::
-										  lng_teagram_invite_revoke_failed(
-											  tr::now);
-									  return;
-								  }
-								  loadInvites(crl::guard(this, [=] {
-									  const auto row
-										  = delegate()->peerListFindRow(
-											  UniqueRowIdFromString(
-												  QString::number(_revokeId)));
-									  const auto used
-										  = row
-											&& static_cast<InviteRow *>(row)
-													   ->data()
-													   .state
-												   == u"used"_q;
-									  _controller->showToast(
-										  used
-											  ? tr::lng_teagram_invite_revoke_used(
-													tr::now)
-											  : tr::lng_teagram_invite_revoked_toast(
-													tr::now));
-								  }));
-								  close();
-							  }))
-						  .fail(crl::guard(
-							  this,
-							  [=](const MTP::Error &) {
-								  _revokeRequestId = 0;
-								  *revokeError
-									  = tr::lng_teagram_invite_revoke_failed(
-										  tr::now);
-							  }))
-						  .handleAllErrors()
-						  .send();
+				const auto requestId = details::RunInviteRevokeRequest(
+					data.state, bool(_revokeRequestId),
+					[=] { *revokeError = QString(); },
+					[=](auto requestDone, auto requestFail) {
+						return session()
+							.api()
+							.request(
+								MTPteagram_RevokeUserInvite(MTP_long(data.id)))
+							.done(crl::guard(this, std::move(requestDone)))
+							.fail(crl::guard(this, std::move(requestFail)))
+							.handleAllErrors()
+							.send();
+					},
+					[=](const MTPBool &result) {
+						_revokeRequestId = 0;
+						if (mtpIsFalse(result)) {
+							*revokeError
+								= tr::lng_teagram_invite_revoke_failed(tr::now);
+							return;
+						}
+						loadInvites(crl::guard(this, [=] {
+							const auto row = delegate()->peerListFindRow(
+								UniqueRowIdFromString(
+									QString::number(_revokeId)));
+							const auto used
+								= row
+								  && static_cast<InviteRow *>(row)->data().state
+										 == u"used"_q;
+							_controller->showToast(
+								used ? tr::lng_teagram_invite_revoke_used(
+										   tr::now)
+									 : tr::lng_teagram_invite_revoked_toast(
+										   tr::now));
+						}));
+						close();
+					},
+					[=](const MTP::Error &) {
+						_revokeRequestId = 0;
+						*revokeError
+							= tr::lng_teagram_invite_revoke_failed(tr::now);
+					});
+				if (requestId) {
+					_revokeRequestId = *requestId;
+				}
 			}),
 		.confirmText = tr::lng_teagram_invite_revoke(),
 		.confirmStyle = &st::attentionBoxButton,
