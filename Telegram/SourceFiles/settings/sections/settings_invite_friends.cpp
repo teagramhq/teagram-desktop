@@ -601,9 +601,7 @@ void InviteFriends::createInvite() {
 						  delegate()->peerListPrependRow(std::move(row));
 						  delegate()->peerListRefreshRows();
 						  _nextAvailableAt = InviteNextAvailableAtAfterCreate(
-							  _quota,
-							  _weeklyCount,
-							  _nextAvailableAt,
+							  _quota, _weeklyCount, _nextAvailableAt,
 							  createdAt);
 						  ++_weeklyCount;
 						  updateSummary();
@@ -636,8 +634,7 @@ void InviteFriends::showCreateError(const MTP::Error &error) {
 		_createBlocked = true;
 		if (failure.waitSeconds) {
 			_createError = tr::lng_teagram_invite_too_new(
-				tr::now,
-				lt_date,
+				tr::now, lt_date,
 				InviteDate(base::unixtime::now() + *failure.waitSeconds));
 		} else {
 			_createError = tr::lng_teagram_invite_too_new_later(tr::now);
