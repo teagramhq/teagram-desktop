@@ -101,6 +101,7 @@ PRIVATE
     intro/intro_signup_invite_validation.cpp
     intro/intro_signup_terms.cpp
     intro/intro_username_validation.cpp
+    settings/sections/settings_invite_state.cpp
     main/main_account_persistence.cpp
     storage/details/storage_file_utilities.cpp
     storage/storage_account_persistence.cpp
@@ -132,6 +133,7 @@ PRIVATE
     tests/unit/server_enrollment_tests.cpp
     tests/unit/session_private_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
+    tests/unit/settings_invite_state_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp

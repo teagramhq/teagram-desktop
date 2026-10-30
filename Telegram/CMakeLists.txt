@@ -1893,6 +1893,8 @@ PRIVATE
     settings/sections/settings_information.h
     settings/sections/settings_invite_friends.cpp
     settings/sections/settings_invite_friends.h
+    settings/sections/settings_invite_state.cpp
+    settings/sections/settings_invite_state.h
     settings/settings_intro.cpp
     settings/settings_intro.h
     settings/sections/settings_local_passcode.cpp
