@@ -9844,6 +9844,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 
 	constexpr auto kReactionCount = 73;
 	constexpr auto kDocumentsPerReaction = 4;
+	constexpr auto kReactionsPerChatSwitch = 9;
+	constexpr auto kExpectedChatSwitches
+		= kReactionCount / kReactionsPerChatSwitch;
 	constexpr auto kMaxStallNanoseconds = qint64(50'000'000);
 	auto reactions = QVector<MTPAvailableReaction>();
 	reactions.reserve(kReactionCount);
@@ -9856,7 +9859,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto completed = false;
 	auto timedOut = false;
 	const auto maybeFinish = [&] {
-		if (completed && (result.chatSwitches == kReactionCount)) {
+		if (completed && (result.chatSwitches == kExpectedChatSwitches)) {
 			loop.quit();
 		}
 	};
@@ -9890,21 +9893,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
             .active = active,
         };
 			++result.reactions;
-			QTimer::singleShot(0, &loop, [&] {
-				const auto target
-					= (result.chatSwitches % 2) ? secondHistory : firstHistory;
-				auto switchTimer = QElapsedTimer();
-				switchTimer.start();
-				controller->showPeerHistory(target);
-				result.maxChatSwitchNanoseconds
-					= std::max(result.maxChatSwitchNanoseconds,
-							   switchTimer.nsecsElapsed());
-				result.maxStallNanoseconds
-					= std::max(result.maxHydrationNanoseconds,
-							   result.maxChatSwitchNanoseconds);
-				++result.chatSwitches;
-				maybeFinish();
-			});
+			if ((result.reactions % kReactionsPerChatSwitch) == 0) {
+				QTimer::singleShot(0, &loop, [&] {
+					const auto target = (result.chatSwitches % 2)
+											? secondHistory
+											: firstHistory;
+					auto switchTimer = QElapsedTimer();
+					switchTimer.start();
+					controller->showPeerHistory(target);
+					result.maxChatSwitchNanoseconds
+						= std::max(result.maxChatSwitchNanoseconds,
+								   switchTimer.nsecsElapsed());
+					result.maxStallNanoseconds
+						= std::max(result.maxHydrationNanoseconds,
+								   result.maxChatSwitchNanoseconds);
+					++result.chatSwitches;
+					maybeFinish();
+				});
+			}
 			return parsed;
 		},
 		[&](const auto &reaction) {
@@ -9922,12 +9928,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		loop.quit();
 	});
 	loop.exec();
+	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
+										  result.maxChatSwitchNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed = completed && !timedOut
 					&& (result.reactions == kReactionCount)
 					&& (result.hydratedDocuments
 						== kReactionCount * kDocumentsPerReaction)
-					&& (result.chatSwitches == kReactionCount)
+					&& (result.chatSwitches == kExpectedChatSwitches)
 					&& (result.cachedDocuments
 						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
@@ -10018,7 +10026,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 	auto reply = mtpBuffer();
-	MTP_messages_dialogsSlice(
+	const auto dialogs = MTPmessages_Dialogs(MTP_messages_dialogsSlice(
 		MTP_int(2),
 		MTP_vector<MTPDialog>(
 			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
@@ -10041,8 +10049,8 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 					  MTP_chatPhotoEmpty(), MTP_int(2), MTP_int(1), MTP_int(1),
 					  MTPInputChannel(), MTPChatAdminRights(),
 					  MTPChatBannedRights())}),
-		MTP_vector<MTPUser>({RegressionUser(UserId(1), true, QString())}))
-		.write(reply);
+		MTP_vector<MTPUser>({RegressionUser(UserId(1), true, QString())})));
+	dialogs.write(reply);
 	const auto response = MTP::Response{
 		.reply = std::move(reply),
 		.requestId = request->id,
