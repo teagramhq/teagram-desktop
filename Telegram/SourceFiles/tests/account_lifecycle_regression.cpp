@@ -2232,6 +2232,59 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 		}));
 }
 
+class RegressionAccountCleanup final {
+  public:
+	RegressionAccountCleanup(Main::Domain &domain,
+							 not_null<Main::Account *> account,
+							 not_null<Main::Account *> fallback)
+		: _domain(domain), _account(base::make_weak(account.get())),
+		  _fallback(base::make_weak(fallback.get())) {}
+
+	RegressionAccountCleanup(const RegressionAccountCleanup &) = delete;
+	RegressionAccountCleanup &operator=(const RegressionAccountCleanup &)
+		= delete;
+
+	~RegressionAccountCleanup() { (void)cleanup(); }
+
+	[[nodiscard]] bool cleanup() {
+		if (_cleaned) {
+			return _released;
+		}
+		_cleaned = true;
+		const auto account = _account.get();
+		if (!account) {
+			_released = true;
+			return true;
+		}
+		const auto guarded = not_null<Main::Account *>(account);
+		if (const auto window = Core::App().separateWindowFor(guarded)) {
+			Core::App().closeWindow(window);
+		}
+		if (const auto current = _account.get();
+			current && current->sessionExists()) {
+			current->forcedLogOut();
+		}
+		if (const auto fallback = _fallback.get();
+			fallback && (&_domain.active() != fallback)) {
+			_domain.activate(not_null<Main::Account *>(fallback));
+		}
+		QCoreApplication::processEvents();
+		_domain.removeRedundantAccounts();
+		QCoreApplication::processEvents();
+		_domain.removeRedundantAccounts();
+		_released = _account.empty();
+		_cleaned = _released;
+		return _released;
+	}
+
+  private:
+	Main::Domain &_domain;
+	base::weak_ptr<Main::Account> _account;
+	base::weak_ptr<Main::Account> _fallback;
+	bool _cleaned = false;
+	bool _released = false;
+};
+
 [[nodiscard]] bool WriteCachePayload(not_null<Main::Account *> account,
 									 const Storage::Cache::Key &key,
 									 const QByteArray &payload) {
@@ -2669,16 +2722,22 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 
 [[nodiscard]] bool RunPendingCacheClearSessionDestructionRegression(
 	Main::Domain &domain, UserId selfId, bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
 	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
 	guarded->mtp().stopForServerEnrollment();
 	guarded->setSessionUserId(selfId);
+	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
+								 : guarded->local().cachePath();
 	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
 								std::make_unique<Main::SessionSettings>())) {
 		return false;
 	}
-	auto cleanup = gsl::finally([&] {
-		if (guarded->sessionExists()) {
-			guarded->forcedLogOut();
+	const auto guardedWeak = base::make_weak(guarded.get());
+	auto cleanup = gsl::finally([guardedWeak] {
+		if (const auto account = guardedWeak.get();
+			account && account->sessionExists()) {
+			account->forcedLogOut();
 		}
 	});
 	auto &data = guarded->session().data();
@@ -2725,16 +2784,17 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 					 "callback_completed=%d callback_on_main=%d path=%s.\n",
 					 mediaCache, mainUpdateQueued, accessStayedBlocked,
 					 sessionDestroyed, callbackCompleted, state->callbackOnMain,
-					 qPrintable(mediaCache ? guarded->local().cacheBigFilePath()
-										   : guarded->local().cachePath()));
+					 qPrintable(path));
 	}
-	return passed;
+	return passed && accountCleanup.cleanup();
 }
 
 [[nodiscard]] bool
 RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 											 UserId selfId, bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
 	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
 	guarded->mtp().stopForServerEnrollment();
 	guarded->setSessionUserId(selfId);
 	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
@@ -2816,13 +2876,15 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 			mediaCache, initializationPending, sessionDestroyed, cleared,
 			qPrintable(path));
 	}
-	return passed;
+	return passed && accountCleanup.cleanup();
 }
 
 [[nodiscard]] bool RunFailedCacheInitializationAccessRegression(
 	Main::Domain &domain, UserId selfId, const ProtectedCacheFixtures &fixtures,
 	bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
 	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
 	guarded->mtp().stopForServerEnrollment();
 	guarded->setSessionUserId(selfId);
 	const auto cachePath = mediaCache ? guarded->local().cacheBigFilePath()
@@ -2923,13 +2985,15 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 				 mediaCache ? "media_cache" : "cache", initializationPending,
 				 directReadRefused, directAccessRefused, targetUnchanged,
 				 initializationFinished, initializationRejected);
-	return passed && cleanup();
+	return passed && cleanup() && accountCleanup.cleanup();
 }
 
 [[nodiscard]] bool
 RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
 										   bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
 	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
 	guarded->mtp().stopForServerEnrollment();
 	guarded->setSessionUserId(selfId);
 	const auto cachePath = mediaCache ? guarded->local().cacheBigFilePath()
@@ -2989,7 +3053,7 @@ RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
 					 mediaCache, subscribedBeforeInitialization,
 					 receivedSeededStats, initializationAllowed);
 	}
-	return passed;
+	return passed && accountCleanup.cleanup();
 }
 #endif
 
@@ -10098,6 +10162,7 @@ void RunAuthenticatedCacheSymlinkCases(
 	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
 	const QString &pinnedMediaCachePath,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+	const auto accountFallback = not_null<Main::Account *>(&domain.active());
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
 		pinned->session().data().cache().sync();
@@ -10129,6 +10194,8 @@ void RunAuthenticatedCacheSymlinkCases(
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 			const auto selfId = UserId(1);
 			const auto watched = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, watched, accountFallback);
 			watched->mtp().stopForServerEnrollment();
 			watched->setSessionUserId(selfId);
 			passed = watched->createSession(
@@ -10178,6 +10245,7 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "stalls=%llu.\n",
 						 accesses, static_cast<long long>(duration),
 						 static_cast<unsigned long long>(stalls));
+			passed = passed && accountCleanup.cleanup();
 #endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
 			nativeLifecycleResults->Report("cache-path-watchdog-regression",
 										   passed);
@@ -10221,6 +10289,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			const auto seeded
@@ -10249,18 +10319,14 @@ void RunAuthenticatedCacheSymlinkCases(
 									 now - lastMainThreadHeartbeatNanoseconds);
 								 lastMainThreadHeartbeatNanoseconds = now;
 							 });
+			mainThreadHeartbeatClock.start();
+			mainThreadHeartbeat.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
-			// Account construction is synchronous setup. Start
-			// measuring once the cache-open check has been queued,
-			// and include its completion below.
-			mainThreadHeartbeatClock.start();
-			lastMainThreadHeartbeatNanoseconds = 0;
-			mainThreadHeartbeat.start();
 			auto &data = guarded->session().data();
 			const auto getAllowedCache = [&] {
 				if (mediaCache) {
@@ -10451,12 +10517,14 @@ void RunAuthenticatedCacheSymlinkCases(
 								&& initializationPendingAtFirstAccess
 								&& queuedOperationsPassed
 								&& cacheUsableWithinBound && (startupWalks == 2)
+								&& (maxMainThreadStallNanoseconds < 100'000'000)
 								&& (mainThreadWalks == 0) && swappedRootRefused
 								&& directFallbackClosed && rootRestoreSucceeded
 								&& (mediaCache || chatSwitch.passed)
 								&& (mediaCache || dialogsHandler.passed)
 								&& (firstAccessNanoseconds < 50'000'000);
-			nativeLifecycleResults->Report(caseName, passed);
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
 		}
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "failed-init-media-cache-access"
@@ -10480,6 +10548,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				= mediaCache ? "post-open-media-cache" : "post-open-cache";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			const auto cachePath = mediaCache
@@ -10520,13 +10590,16 @@ void RunAuthenticatedCacheSymlinkCases(
 										return RunRefusedCacheReaderRegressions(
 											guarded, mediaCache);
 									});
-			nativeLifecycleResults->Report(caseName, passed);
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
 		}
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName
 				= mediaCache ? "post-clear-media-cache" : "post-clear-cache";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			const auto cachePath = mediaCache
@@ -10554,7 +10627,8 @@ void RunAuthenticatedCacheSymlinkCases(
 										return RunRefusedCacheReaderRegressions(
 											guarded, mediaCache);
 									});
-			nativeLifecycleResults->Report(caseName, passed);
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
 		}
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName
@@ -10580,6 +10654,8 @@ void RunAuthenticatedCacheSymlinkCases(
 											 : "cold-post-open-cache";
 			nativeLifecycleResults->StartCase(caseName);
 			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			const auto cachePath = mediaCache
@@ -10650,7 +10726,8 @@ void RunAuthenticatedCacheSymlinkCases(
 						  return RunRefusedCacheReaderRegressions(guarded,
 																  mediaCache);
 					  });
-			nativeLifecycleResults->Report(caseName, passed);
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
 		}
 #else
 		nativeLifecycleResults->Skip("post-open-cache",
