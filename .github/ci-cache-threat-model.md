@@ -17,27 +17,29 @@ cache token could not write the `dev` scope. On the push, the check, the
 checkout and the cache scope all belong to the pushed commit, and the build
 fails before compiling unless the checked-out commit is `GITHUB_SHA`.
 
-The publisher is the `linux-libraries` job of the same run, and the build
-waits for it, so the build pulls the image of its own recipe. It is the only
-job with `packages: write`. The build saves the compiler cache only when the
+The publisher is the `publish-linux-deps-image` job of the same run, and the
+build waits for it, so the build pulls the image of its own recipe. It is the
+only job with `packages: write`. The build saves the compiler cache only when the
 run is not a pull request and its ref is `refs/heads/dev`: a push to `dev`,
 the nightly schedule, or a manual dispatch on `dev`. Each of those runs
 trusted `dev` code. Pull request builds restore that cache and never save.
 
 ## macOS dependency artifact publisher
 
-The `macos-libraries` inspection job runs on `ubuntu-latest` only for a push or
-schedule on `dev` in `teagramhq/teagram-desktop`. It checks out that trusted ref,
-tags the GHCR artifact with the hash of the tracked macOS dependency recipe,
-and reports whether the tag already exists. It receives `packages: read` only.
+The `check-macos-deps-artifact` inspection job runs on `ubuntu-latest` only for
+a push or schedule on `dev` in `teagramhq/teagram-desktop`. It checks out that
+trusted ref, tags the GHCR artifact with the hash of the tracked macOS dependency
+recipe, and reports whether the tag already exists. It receives `packages: read`
+only.
 
-The `macos-libraries-build` job runs on macOS only when the inspection reports a
-missing tag. It is the only job with `packages: write`; it restores the matching
-legacy cache or builds the macOS dependencies, then publishes the artifact.
-Pull request builds cannot publish a package. The macOS build, packaged build,
-updater fixtures, and manual unit-feedback jobs receive `packages: read` only.
+The `build-macos-deps-artifact` job runs on macOS only when the inspection
+reports a missing tag. It is the only job with `packages: write`; it restores
+the matching legacy cache or builds the macOS dependencies, then publishes the
+artifact. Pull request builds cannot publish a package. The macOS build,
+packaged build, updater fixtures, and manual unit-feedback jobs receive
+`packages: read` only.
 
-The `macos-libraries-prune` job runs on `ubuntu-latest` after an artifact hit or
+The `ops-prune-macos-libraries` job runs on `ubuntu-latest` after an artifact hit or
 a successful publish. Its `actions: write` token is used only to delete legacy
 `macOS-libs-` Actions cache entries. Those caches are no longer written by any
 macOS workflow. Consumers read a matching legacy cache only when the GHCR
@@ -79,11 +81,11 @@ prefix. It keeps the newest entry of each profile, including the unprofiled
 key `MacOS Packaged.` saves. PR-controlled workflow runs fail the source validation and cannot
 select a cache key or ID.
 
-The trusted `macos-libraries` publisher deletes the legacy `macOS-libs-` cache
-entries from every ref only after the matching GHCR artifact is present. This
-frees the former 9 GB dependency cache before the app build saves its compiler
-cache. Pull request workflows have no write access to Actions caches or
-packages, so they cannot delete caches or publish artifacts.
+The trusted `ops-prune-macos-libraries` job deletes the legacy `macOS-libs-`
+cache entries from every ref only after the matching GHCR artifact is present.
+This frees the former 9 GB dependency cache before the app build saves its
+compiler cache. Pull request workflows have no write access to Actions caches
+or packages, so they cannot delete caches or publish artifacts.
 
 A completed `Linux.` run triggers a separate job with the same source
 validation and token scope. It lists only the `Linux-tdesktop-default-` key

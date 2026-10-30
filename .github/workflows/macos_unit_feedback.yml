@@ -41,8 +41,8 @@ concurrency:
 
 jobs:
 
-  unit:
-    name: macOS arm64 unit-only feedback
+  test-macos-unit:
+    name: 'test: macos-unit (arm64)'
     runs-on: macos-latest
     timeout-minutes: 180
 

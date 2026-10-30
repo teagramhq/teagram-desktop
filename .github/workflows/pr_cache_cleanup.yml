@@ -13,8 +13,8 @@ permissions:
 
 # Trust boundary and token scope: see .github/ci-cache-threat-model.md.
 jobs:
-  prune:
-    name: Prune closed pull request caches
+  ops-prune-pr-caches:
+    name: 'ops: prune-pr-caches'
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-26.04
     permissions:
@@ -34,8 +34,8 @@ jobs:
           cache_ref="refs/pull/${PR_NUMBER}/merge"
           gh cache delete --all --succeed-on-no-caches --ref "$cache_ref" --repo "$GITHUB_REPOSITORY"
 
-  prune-old-dev-macos-ccache:
-    name: Prune superseded dev compiler caches
+  ops-prune-dev-macos-ccache:
+    name: 'ops: prune-dev-macos-ccache'
     if: github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Linux.'
     runs-on: ubuntu-26.04
     permissions:
@@ -110,8 +110,8 @@ jobs:
             fi
           done < <(printf '%s' "$ranked_entries" | sort -t $'\t' -k1,1nr -k2,2nr)
 
-  prune-old-dev-linux-ccache:
-    name: Prune superseded dev Linux compiler caches
+  ops-prune-dev-linux-ccache:
+    name: 'ops: prune-dev-linux-ccache'
     if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Linux.'
     runs-on: ubuntu-26.04
     permissions:

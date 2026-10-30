@@ -47,8 +47,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cpp-changed-range-format:
-    name: C++ changed-range format
+  lint-cpp-format:
+    name: 'lint: cpp-format'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
 

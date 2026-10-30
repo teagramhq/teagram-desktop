@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
 
-  macos:
+  build-macos-packaged:
     name: MacOS
     runs-on: macos-latest
     permissions:
@@ -457,9 +457,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    name: Sign and publish Teagram release
-    needs: macos
+  publish-release:
+    name: 'publish: release'
+    needs: build-macos-packaged
     if: ${{ github.event_name == 'push' && github.repository == 'teagramhq/teagram-desktop' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     environment:
@@ -469,7 +469,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TEAGRAM_RELEASE_MIN_OS: ${{ needs.macos.outputs.minimum_os }}
+      TEAGRAM_RELEASE_MIN_OS: ${{ needs.build-macos-packaged.outputs.minimum_os }}
 
     steps:
       - name: Clone exact source.

@@ -16,8 +16,8 @@ concurrency:
 # Runs with the base repository token so fork PRs are covered; it never checks
 # out or runs PR code.
 jobs:
-  clear:
-    name: Clear macOS build approval
+  ops-clear-macos-approval:
+    name: 'ops: clear-macos-approval'
     runs-on: ubuntu-26.04
     permissions:
       actions: write

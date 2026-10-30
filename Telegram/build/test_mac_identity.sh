@@ -297,7 +297,7 @@ assert 'name: Verify release tag source.' in packaged_workflow
 assert 'object_sha" != "$GITHUB_SHA"' in packaged_workflow
 assert 'environment:\n      name: release' in packaged_workflow
 assert 'secrets.UPDATE_SIGNING_PRIVATE_KEY' in packaged_workflow
-assert 'secrets.UPDATE_SIGNING_PRIVATE_KEY' not in packaged_workflow.split('  publish:', 1)[0]
+assert 'secrets.UPDATE_SIGNING_PRIVATE_KEY' not in packaged_workflow.split('  publish-release:', 1)[0]
 PY
 fi
 

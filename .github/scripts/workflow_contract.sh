@@ -223,16 +223,16 @@ require_contract_tests_in_lint() {
     test_ci_cache_contract.sh \
     test_macos_libraries_image.sh; do
     command="bash .github/scripts/$test_script"
-    step="$(COMMAND="$command" yq -r '.jobs.actionlint.steps[]
+    step="$(COMMAND="$command" yq -r '.jobs["lint-workflows"].steps[]
       | select(.run == strenv(COMMAND)) | .name' "$lint")"
     if [[ -z "$step" || "$step" == *$'\n'* ]]; then
-      contract_fail "$lint job actionlint must run '$command' in exactly one step."
+      contract_fail "$lint job lint-workflows must run '$command' in exactly one step."
     fi
-    expect_equal "$lint job actionlint step '$step' if and continue-on-error" \
-      "$(step_field "$lint" actionlint "$step" '[.if, .["continue-on-error"]] | map(tostring) | join(",")')" \
+    expect_equal "$lint job lint-workflows step '$step' if and continue-on-error" \
+      "$(step_field "$lint" lint-workflows "$step" '[.if, .["continue-on-error"]] | map(tostring) | join(",")')" \
       'null,null'
   done
-  expect_equal "$lint job actionlint if" "$(job_field "$lint" actionlint '.if')" 'null'
+  expect_equal "$lint job lint-workflows if" "$(job_field "$lint" lint-workflows '.if')" 'null'
   require_triggers "$lint" 'pull_request,push,workflow_dispatch'
 }
 

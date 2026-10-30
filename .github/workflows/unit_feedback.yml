@@ -32,8 +32,8 @@ cache-mode: read
 
 jobs:
 
-  unit:
-    name: Unit-only feedback
+  test-linux-unit-feedback:
+    name: 'test: linux-unit-feedback'
     runs-on: ubuntu-26.04
     timeout-minutes: 240
 
