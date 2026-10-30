@@ -102,8 +102,8 @@ concurrency:
 
 jobs:
 
-  actionlint:
-    name: actionlint
+  lint-workflows:
+    name: 'lint: workflows'
     runs-on: ubuntu-26.04
 
     env:

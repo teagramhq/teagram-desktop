@@ -56,8 +56,8 @@ concurrency:
 
 jobs:
 
-  macos-libraries:
-    name: Inspect macOS dependency artifact
+  check-macos-deps-artifact:
+    name: 'check: macos-deps-artifact'
     if: >-
       (github.event_name == 'push' || github.event_name == 'schedule')
         && github.ref == 'refs/heads/dev'
@@ -99,16 +99,16 @@ jobs:
         id: image-cache
         run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" inspect "$MACOS_LIBRARIES_IMAGE" "$GITHUB_OUTPUT"
 
-  macos-libraries-build:
-    name: Build and publish macOS dependency artifact
-    needs: macos-libraries
+  build-macos-deps-artifact:
+    name: 'build: macos-deps-artifact'
+    needs: check-macos-deps-artifact
     if: >-
       !cancelled()
         && (github.event_name == 'push' || github.event_name == 'schedule')
         && github.ref == 'refs/heads/dev'
         && github.repository == 'teagramhq/teagram-desktop'
-        && needs.macos-libraries.result == 'success'
-        && needs.macos-libraries.outputs.cache-hit != 'true'
+        && needs.check-macos-deps-artifact.result == 'success'
+        && needs.check-macos-deps-artifact.outputs.cache-hit != 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -175,13 +175,13 @@ jobs:
         if: steps.libraries.outcome == 'success' || steps.legacy-cache-libs.outputs.cache-hit == 'true'
         run: bash "$REPO_NAME/.github/scripts/macos_libraries_image.sh" push "$MACOS_LIBRARIES_IMAGE" "$GITHUB_WORKSPACE"
 
-  macos-libraries-prune:
-    name: Prune legacy macOS library caches
-    needs: [macos-libraries, macos-libraries-build]
+  ops-prune-macos-libraries:
+    name: 'ops: prune-macos-libraries'
+    needs: [check-macos-deps-artifact, build-macos-deps-artifact]
     if: >-
       !cancelled()
-        && needs.macos-libraries.result == 'success'
-        && (needs.macos-libraries.outputs.cache-hit == 'true' || needs.macos-libraries-build.result == 'success')
+        && needs.check-macos-deps-artifact.result == 'success'
+        && (needs.check-macos-deps-artifact.outputs.cache-hit == 'true' || needs.build-macos-deps-artifact.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -196,16 +196,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/macos_libraries_image.sh prune-legacy-cache
 
-  macos:
+  build-macos:
     name: MacOS
-    needs: [macos-libraries, macos-libraries-build, macos-libraries-prune]
+    needs: [check-macos-deps-artifact, build-macos-deps-artifact, ops-prune-macos-libraries]
     if: >-
       !cancelled()
         && !inputs.libiconv_only
         && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build')
-        && (needs.macos-libraries.result == 'success' || needs.macos-libraries.result == 'skipped')
-        && (needs.macos-libraries-build.result == 'success' || needs.macos-libraries-build.result == 'skipped')
-        && (needs.macos-libraries-prune.result == 'success' || needs.macos-libraries-prune.result == 'skipped')
+        && (needs.check-macos-deps-artifact.result == 'success' || needs.check-macos-deps-artifact.result == 'skipped')
+        && (needs.build-macos-deps-artifact.result == 'success' || needs.build-macos-deps-artifact.result == 'skipped')
+        && (needs.ops-prune-macos-libraries.result == 'success' || needs.ops-prune-macos-libraries.result == 'skipped')
     permissions:
       contents: read
       packages: read
@@ -1344,8 +1344,8 @@ jobs:
               && ((elapsed_seconds > 1800)); then
             echo "::warning::Warm-cache MacOS PR build exceeded the 30-minute target (${elapsed_seconds}s); the source build result remains authoritative."
           fi
-  libiconv:
-    name: Focused libiconv (macOS arm64)
+  test-libiconv:
+    name: 'test: libiconv (macos-arm64)'
     if: ${{ inputs.libiconv_only }}
     runs-on: macos-latest
     timeout-minutes: 60
