@@ -10023,14 +10023,12 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_vector<MTPDialog>(
 			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
-						MTP_int(0), MTP_int(0), MTP_int(0),
-						notifySettings, MTPint(), MTPDraftMessage(), MTPint(),
-						MTPint()),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint()),
 			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId), MTP_int(72),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
-						MTP_int(0), MTP_int(0), MTP_int(0),
-						notifySettings, MTPint(), MTPDraftMessage(), MTPint(),
-						MTPint())}),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
 		MTP_vector<MTPMessage>(std::move(messages)),
 		MTP_vector<MTPChat>(
 			{MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(firstChatId.bare),
