@@ -57,16 +57,13 @@ class InviteCreateRequest final {
 
 [[nodiscard]] bool CanCreateInvite(const InviteCreateConditions &conditions);
 [[nodiscard]] int64 InviteQuotaLeft(int64 quota, int64 weeklyCount);
-[[nodiscard]] std::optional<TimeId> InviteNextAvailableAtAfterCreate(
-	int64 quota,
-	int64 weeklyCount,
-	std::optional<TimeId> nextAvailableAt,
-	TimeId createdAt);
-[[nodiscard]] InviteListFailure ClassifyInviteListFailure(
-	const QString &type);
-[[nodiscard]] InviteCreateFailure ClassifyInviteCreateFailure(
-	const QString &type,
-	bool registrationOpen);
+[[nodiscard]] std::optional<TimeId>
+InviteNextAvailableAtAfterCreate(int64 quota, int64 weeklyCount,
+								 std::optional<TimeId> nextAvailableAt,
+								 TimeId createdAt);
+[[nodiscard]] InviteListFailure ClassifyInviteListFailure(const QString &type);
+[[nodiscard]] InviteCreateFailure
+ClassifyInviteCreateFailure(const QString &type, bool registrationOpen);
 [[nodiscard]] bool CanRevokeInvite(const QString &state, bool inFlight);
 
 } // namespace Settings::details

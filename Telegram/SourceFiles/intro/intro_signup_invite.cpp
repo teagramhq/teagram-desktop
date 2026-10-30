@@ -116,23 +116,25 @@ void InviteWidget::submit() {
 	_invite->setText(secret);
 	hideError();
 	setAccessibleDescription(QString());
-	_sentRequest = api()
-					   .request(MTPauth_SignIn(
-						   MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
-						   MTP_string(getData()->phone),
-						   MTP_bytes(getData()->phoneHash), MTP_string(secret),
-						   MTP_emailVerificationCode(MTP_string(QString()))))
-					   .done(crl::guard(this,
-						   [=](const MTPauth_Authorization &result) {
-							   _sentRequest = 0;
-							   signInDone(result);
-						   }))
-					   .fail(crl::guard(this, [=](const MTP::Error &error) {
-						   _sentRequest = 0;
-						   signInFail(error);
-					   }))
-					   .handleAllErrors()
-					   .send();
+	_sentRequest
+		= api()
+			  .request(MTPauth_SignIn(
+				  MTP_flags(MTPauth_SignIn::Flag::f_phone_code),
+				  MTP_string(getData()->phone), MTP_bytes(getData()->phoneHash),
+				  MTP_string(secret),
+				  MTP_emailVerificationCode(MTP_string(QString()))))
+			  .done(crl::guard(this,
+							   [=](const MTPauth_Authorization &result) {
+								   _sentRequest = 0;
+								   signInDone(result);
+							   }))
+			  .fail(crl::guard(this,
+							   [=](const MTP::Error &error) {
+								   _sentRequest = 0;
+								   signInFail(error);
+							   }))
+			  .handleAllErrors()
+			  .send();
 }
 
 void InviteWidget::signInDone(const MTPauth_Authorization &result) {
