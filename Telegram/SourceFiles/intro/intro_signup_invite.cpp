@@ -122,14 +122,15 @@ void InviteWidget::submit() {
 						   MTP_string(getData()->phone),
 						   MTP_bytes(getData()->phoneHash), MTP_string(secret),
 						   MTP_emailVerificationCode(MTP_string(QString()))))
-					   .done([=](const MTPauth_Authorization &result) {
-						   _sentRequest = 0;
-						   signInDone(result);
-					   })
-					   .fail([=](const MTP::Error &error) {
+					   .done(crl::guard(this,
+						   [=](const MTPauth_Authorization &result) {
+							   _sentRequest = 0;
+							   signInDone(result);
+						   }))
+					   .fail(crl::guard(this, [=](const MTP::Error &error) {
 						   _sentRequest = 0;
 						   signInFail(error);
-					   })
+					   }))
 					   .handleAllErrors()
 					   .send();
 }
