@@ -21,7 +21,7 @@ if [[ ! "$subject" =~ ^(feat|fix|refactor|perf|docs|style|test|build|ci|chore|re
 	printf '%s\n' 'commit-msg: subject must follow Conventional Commits.' >&2
 	invalid=1
 fi
-if grep -Eq 'MAIN-[0-9]+' "$message_file"; then
+if grep -Eq '(^|[^[:alnum:]_])MAIN-[0-9]+([^[:alnum:]_]|$)' "$message_file"; then
 	printf '%s\n' 'commit-msg: issue keys such as MAIN-123 are not allowed.' >&2
 	invalid=1
 fi

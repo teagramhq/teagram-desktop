@@ -13,6 +13,9 @@ if "$repo_root/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
 	exit 1
 fi
 
+printf '%s\n' 'fix: handle DOMAIN-123 identifiers' > "$message_file"
+"$repo_root/.githooks/commit-msg" "$message_file"
+
 subjects=(
 	"Merge remote-tracking branch 'origin/main' into fix/MAIN-3030"
 	'Revert "old commit"'
