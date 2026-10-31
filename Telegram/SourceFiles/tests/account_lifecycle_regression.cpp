@@ -10430,7 +10430,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				[&](auto done) {
 					auto state = std::make_shared<QueuedCacheOperations>();
 					state->done = std::move(done);
-					const auto finish = [state](bool passed) mutable {
+					const auto finish = [state](bool passed) {
 						state->passed = state->passed && passed;
 						if (++state->completed == 2) {
 							state->done(state->passed);
