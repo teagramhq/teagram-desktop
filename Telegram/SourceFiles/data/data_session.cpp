@@ -94,6 +94,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "spellcheck/spellcheck_highlight_syntax.h"
 
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#include <cstdio>
+#endif
+
 #include <QtCore/QMutexLocker>
 #include <rpl/flatten_latest.h>
 
@@ -307,6 +311,13 @@ Session::Session(not_null<Main::Session *> session)
 			 identity](Storage::Cache::Error error) mutable {
 				const auto allowed
 					= (error.type == Storage::Cache::Error::Type::None);
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+				std::fprintf(
+					stderr,
+					"Cache database initialization: media=%d error_type=%d "
+					"allowed=%d.\n",
+					bigFileCache, int(error.type), allowed);
+#endif
 				auto cacheIdentity = *identity;
 				crl::on_main(weak, [weak, bigFileCache, allowed,
 									cacheIdentity

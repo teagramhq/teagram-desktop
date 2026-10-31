@@ -1038,10 +1038,20 @@ CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
 }
 
 [[nodiscard]] bool CaptureCachePathIdentity(const QString &path,
-											CachePathIdentity *identity) {
+											CachePathIdentity *identity,
+											const char **failureStage) {
+	if (failureStage) {
+		*failureStage = nullptr;
+	}
+	const auto fail = [failureStage](const char *stage) {
+		if (failureStage) {
+			*failureStage = stage;
+		}
+		return false;
+	};
 	const auto absolutePath = AbsoluteCachePath(path);
 	if (absolutePath.isEmpty() || !identity) {
-		return false;
+		return fail("capture-absolute-path");
 	}
 	auto result = CachePathIdentity();
 	result.absolutePath = absolutePath;
@@ -1051,12 +1061,12 @@ CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
 		if (!missingSuffix) {
 			auto missing = false;
 			if (!ReadCachePathLinkIdentity(prefix, &component, &missing)) {
-				return false;
+				return fail("capture-component-link");
 			}
 			missingSuffix = missing;
 			if (component.exists
 				&& !ReadCachePathTargetIdentity(prefix, &component)) {
-				return false;
+				return fail("capture-component-target");
 			}
 		}
 		result.components.push_back(std::move(component));
@@ -1064,26 +1074,26 @@ CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
 	if (result.components.back().exists) {
 		if (!CaptureCachePathRootDescriptor(
 				absolutePath, result.components.back(), &result)) {
-			return false;
+			return fail("capture-root-descriptor");
 		}
 	}
 	if (!CaptureCachePathVersionMarker(&result)) {
-		return false;
+		return fail("capture-version-marker");
 	}
 	const auto activePath = ActiveCacheVersionPath(absolutePath);
 	const auto expectedActivePath
 		= QDir(absolutePath).filePath(result.versionName);
 	if (!activePath.isEmpty() && (activePath != expectedActivePath)) {
-		return false;
+		return fail("capture-active-path-mismatch");
 	}
 	if (activePath.isEmpty() && (result.version != 0)) {
-		return false;
+		return fail("capture-active-path-missing");
 	}
 	result.activeVersionDirectory.path = activePath;
 	if (!result.activeVersionDirectory.path.isEmpty()) {
 		if (!CaptureCachePathActiveVersionDirectory(
 				result.activeVersionDirectory.path, &result)) {
-			return false;
+			return fail("capture-active-directory");
 		}
 	}
 	*identity = std::move(result);
@@ -1097,7 +1107,11 @@ SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
 		   && (left.inode == right.inode) && (left.type == right.type);
 }
 
-void ReportCachePathIdentityRefusal(const char *callsite) {
+void ReportCachePathIdentityRefusal(const char *callsite, const char *stage) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	std::fprintf(stderr, "Cache path identity refusal: stage=%s callsite=%s.\n",
+				 stage, callsite ? callsite : "unknown");
+#endif
 	ReportRefusal({
 		.operation = Operation::OpenDir,
 		.protectedClass = ProtectedClass::Invalid,
@@ -1191,9 +1205,12 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 [[nodiscard]] bool CachePathIdentityStillValid(const QString &path,
 											   const char *callsite,
 											   CachePathIdentity *identity) {
-	if (!CachePathRootStillValid(path, identity)
-		|| !CachePathActiveVersionStillValid(*identity)) {
-		ReportCachePathIdentityRefusal(callsite);
+	if (!CachePathRootStillValid(path, identity)) {
+		ReportCachePathIdentityRefusal(callsite, "identity-root");
+		return false;
+	}
+	if (!CachePathActiveVersionStillValid(*identity)) {
+		ReportCachePathIdentityRefusal(callsite, "identity-active-version");
 		return false;
 	}
 	return true;
@@ -1204,9 +1221,12 @@ CachePathAccessIdentityStillValid(const QString &path, const char *callsite,
 								  CachePathIdentity *identity) {
 	// The marker is checked when opening and before clearing; ordinary cache
 	// I/O remains on the already-open active version directory.
-	if (!CachePathRootStillValid(path, identity)
-		|| !CachePathActiveVersionDirectoryStillValid(*identity)) {
-		ReportCachePathIdentityRefusal(callsite);
+	if (!CachePathRootStillValid(path, identity)) {
+		ReportCachePathIdentityRefusal(callsite, "access-root");
+		return false;
+	}
+	if (!CachePathActiveVersionDirectoryStillValid(*identity)) {
+		ReportCachePathIdentityRefusal(callsite, "access-active-version");
 		return false;
 	}
 	return true;
@@ -1230,10 +1250,13 @@ bool CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
 	}
 #endif // TDESKTOP_TEAGRAM
 	if (!CheckCachePathImpl(path, callsite, {})) {
+		ReportCachePathIdentityRefusal(callsite, "capture-cache-tree");
 		return false;
 	}
-	if (!CaptureCachePathIdentity(path, identity)) {
-		ReportCachePathIdentityRefusal(callsite);
+	auto failureStage = static_cast<const char *>(nullptr);
+	if (!CaptureCachePathIdentity(path, identity, &failureStage)) {
+		ReportCachePathIdentityRefusal(
+			callsite, failureStage ? failureStage : "capture-before-open");
 		return false;
 	}
 	return true;
@@ -1253,18 +1276,18 @@ bool CaptureCachePathActiveVersionIdentity(const QString &path,
 	auto refreshed = *identity;
 	if (refreshed.components.empty()
 		|| (AbsoluteCachePath(path) != refreshed.absolutePath)) {
-		ReportCachePathIdentityRefusal(callsite);
+		ReportCachePathIdentityRefusal(callsite, "capture-path");
 		return false;
 	}
 	if (refreshed.rootDescriptor) {
 		if (!CachePathRootStillValid(path, &refreshed)) {
-			ReportCachePathIdentityRefusal(callsite);
+			ReportCachePathIdentityRefusal(callsite, "capture-root");
 			return false;
 		}
 	} else {
 		const auto absolutePath = AbsoluteCachePath(path);
 		if (refreshed.components.back().exists) {
-			ReportCachePathIdentityRefusal(callsite);
+			ReportCachePathIdentityRefusal(callsite, "capture-missing-root");
 			return false;
 		}
 		auto root = CachePathComponentIdentity{.path = absolutePath};
@@ -1274,13 +1297,13 @@ bool CaptureCachePathActiveVersionIdentity(const QString &path,
 			|| missing || !ReadCachePathTargetIdentity(absolutePath, &root)
 			|| !CaptureCachePathRootDescriptor(absolutePath, root,
 											   &refreshed)) {
-			ReportCachePathIdentityRefusal(callsite);
+			ReportCachePathIdentityRefusal(callsite, "capture-created-root");
 			return false;
 		}
 		refreshed.components.back() = std::move(root);
 	}
 	if (!CaptureCachePathVersionMarker(&refreshed)) {
-		ReportCachePathIdentityRefusal(callsite);
+		ReportCachePathIdentityRefusal(callsite, "capture-version-marker");
 		return false;
 	}
 	const auto activePath = ActiveCacheVersionPath(refreshed.absolutePath);
@@ -1288,11 +1311,11 @@ bool CaptureCachePathActiveVersionIdentity(const QString &path,
 		= QDir(refreshed.absolutePath).filePath(refreshed.versionName);
 	if (activePath.isEmpty() || (activePath != expectedActivePath)
 		|| !CheckPath(Operation::OpenDir, activePath, callsite)) {
-		ReportCachePathIdentityRefusal(callsite);
+		ReportCachePathIdentityRefusal(callsite, "capture-active-path");
 		return false;
 	}
 	if (!CaptureCachePathActiveVersionDirectory(activePath, &refreshed)) {
-		ReportCachePathIdentityRefusal(callsite);
+		ReportCachePathIdentityRefusal(callsite, "capture-active-directory");
 		return false;
 	}
 	*identity = std::move(refreshed);

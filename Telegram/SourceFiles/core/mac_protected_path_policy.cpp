@@ -546,7 +546,11 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 		path.components.begin(),
 		path.components.end());
 	std::vector<QByteArray> resolved;
+	resolved.reserve(path.components.size());
+	Components folded;
+	folded.reserve(path.components.size());
 	std::vector<FileType> resolvedTypes;
+	resolvedTypes.reserve(path.components.size());
 	auto missingSuffix = false;
 	auto symlinkHops = 0;
 
@@ -566,14 +570,15 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 					return {};
 				}
 				resolved.pop_back();
+				folded.pop_back();
 				resolvedTypes.pop_back();
 			}
 			continue;
 		}
 
 		resolved.push_back(component);
-		const auto components = FoldedComponents(resolved);
-		const auto protectedClass = classify(components, pending.empty());
+		folded.push_back(Fold(component));
+		const auto protectedClass = classify(folded, pending.empty());
 		if (protectedClass != ProtectedClass::None) {
 			return {
 				.status = WalkResult::Status::Refused,
@@ -593,7 +598,7 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 		const auto pathBytes = Join(resolved);
 		const auto lstat = filesystem.lstat(pathBytes);
 		if (lstat.error == FileError::Missing) {
-			if (isHome(components)) {
+			if (isHome(folded)) {
 				return {};
 			}
 			if (!allowMissingSuffix) {
@@ -633,8 +638,10 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 						.protectedClass = targetClass};
 			}
 			resolved.pop_back();
+			folded.pop_back();
 			if (target.absolute) {
 				resolved.clear();
+				folded.clear();
 				resolvedTypes.clear();
 			}
 			for (auto i = target.components.rbegin();
@@ -650,7 +657,7 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 		}
 	}
 
-	const auto protectedClass = classify(FoldedComponents(resolved), true);
+	const auto protectedClass = classify(folded, true);
 	if (protectedClass != ProtectedClass::None) {
 		return {
 			.status = WalkResult::Status::Refused,
@@ -1053,24 +1060,21 @@ ProtectedClass MacProtectedPathPolicy::ClassifyComponents(
 		return ProtectedClass::Invalid;
 	}
 
-	const auto library = Fold(QByteArray("Library"));
-	const auto applicationSupport = Fold(QByteArray("Application Support"));
-	const auto containers = Fold(QByteArray("Containers"));
-	const auto groupContainers = Fold(QByteArray("Group Containers"));
-	const auto application = Fold(QByteArray("Telegram Desktop"));
-	const auto containerNames = ComponentsFromAscii({
-		"org.telegram.desktop",
-		"ru.keepcoder.telegram" });
-	const auto bundleParents = ComponentsFromAscii({
-		"preferences",
-		"caches",
-		"httpstorages",
-		"webkit",
-		"saved application state" });
-	const auto bundlePrefixes = ComponentsFromAscii({
-		"com.tdesktop.telegram",
-		"org.telegram.desktop",
-		"ru.keepcoder.telegram" });
+	static const auto library = Fold(QByteArray("Library"));
+	static const auto applicationSupport
+		= Fold(QByteArray("Application Support"));
+	static const auto containers = Fold(QByteArray("Containers"));
+	static const auto groupContainers = Fold(QByteArray("Group Containers"));
+	static const auto application = Fold(QByteArray("Telegram Desktop"));
+	static const auto telegram = Fold(QByteArray("telegram"));
+	static const auto containerNames = ComponentsFromAscii(
+		{"org.telegram.desktop", "ru.keepcoder.telegram"});
+	static const auto bundleParents
+		= ComponentsFromAscii({"preferences", "caches", "httpstorages",
+							   "webkit", "saved application state"});
+	static const auto bundlePrefixes
+		= ComponentsFromAscii({"com.tdesktop.telegram", "org.telegram.desktop",
+							   "ru.keepcoder.telegram"});
 
 	for (const auto &home : _homeRoots) {
 		if (!StartsWith(components, home)
@@ -1093,10 +1097,9 @@ ProtectedClass MacProtectedPathPolicy::ClassifyComponents(
 				components[offset + 2]) != containerNames.end()) {
 			return ProtectedClass::Container;
 		}
-		if (components.size() >= offset + 3
-			&& components[offset] == library
+		if (components.size() >= offset + 3 && components[offset] == library
 			&& components[offset + 1] == groupContainers
-			&& components[offset + 2].contains(Fold(QByteArray("telegram")))) {
+			&& components[offset + 2].contains(telegram)) {
 			return ProtectedClass::GroupContainer;
 		}
 		if (components.size() >= offset + 3
@@ -1119,18 +1122,18 @@ ProtectedClass MacProtectedPathPolicy::ClassifyComponents(
 
 ProtectedClass MacProtectedPathPolicy::ClassifyAncestorComponents(
 		const Components &components) const {
-	const auto library = Fold(QByteArray("Library"));
-	const auto parents = std::vector<std::pair<QString, ProtectedClass>>{
-		{ Fold(QByteArray("Application Support")),
-			ProtectedClass::ApplicationSupport },
-		{ Fold(QByteArray("Containers")), ProtectedClass::Container },
-		{ Fold(QByteArray("Group Containers")), ProtectedClass::GroupContainer },
-		{ Fold(QByteArray("Preferences")), ProtectedClass::BundleKeyed },
-		{ Fold(QByteArray("Caches")), ProtectedClass::BundleKeyed },
-		{ Fold(QByteArray("HTTPStorages")), ProtectedClass::BundleKeyed },
-		{ Fold(QByteArray("WebKit")), ProtectedClass::BundleKeyed },
-		{ Fold(QByteArray("Saved Application State")),
-			ProtectedClass::BundleKeyed } };
+	static const auto library = Fold(QByteArray("Library"));
+	static const auto parents = std::vector<std::pair<QString, ProtectedClass>>{
+		{Fold(QByteArray("Application Support")),
+		 ProtectedClass::ApplicationSupport},
+		{Fold(QByteArray("Containers")), ProtectedClass::Container},
+		{Fold(QByteArray("Group Containers")), ProtectedClass::GroupContainer},
+		{Fold(QByteArray("Preferences")), ProtectedClass::BundleKeyed},
+		{Fold(QByteArray("Caches")), ProtectedClass::BundleKeyed},
+		{Fold(QByteArray("HTTPStorages")), ProtectedClass::BundleKeyed},
+		{Fold(QByteArray("WebKit")), ProtectedClass::BundleKeyed},
+		{Fold(QByteArray("Saved Application State")),
+		 ProtectedClass::BundleKeyed}};
 	for (const auto &home : _homeRoots) {
 		if (StartsWith(home, components)) {
 			return ProtectedClass::ApplicationSupport;

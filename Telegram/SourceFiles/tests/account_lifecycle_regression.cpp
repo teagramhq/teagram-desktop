@@ -3037,7 +3037,9 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 				 mediaCache ? "media_cache" : "cache", initializationPending,
 				 directReadRefused, directAccessRefused, targetUnchanged,
 				 initializationFinished, initializationRejected);
-	return passed && cleanup() && accountCleanup.cleanup();
+	const auto cacheCleaned = cleanup();
+	const auto accountCleaned = accountCleanup.cleanup();
+	return passed && cacheCleaned && accountCleaned;
 }
 
 [[nodiscard]] bool
@@ -10410,28 +10412,46 @@ void RunAuthenticatedCacheSymlinkCases(
 				= qint64(kCacheUsableTimeoutMilliseconds) * 1'000'000;
 			const auto initializationPendingAtFirstAccess
 				= !data.cacheInitializationFinishedForTesting(mediaCache);
+			auto cacheInitializationNanoseconds = qint64(-1);
+			auto cacheUsableNanoseconds = qint64(-1);
+			auto cacheInitializationAllowed = false;
 			const auto queuedKey = Storage::Cache::Key{
 				0x4341434845515545ULL,
 				mediaCache ? 0x4d45444941524541ULL : 0x4341434845524541ULL,
 			};
 			const auto queuedPayload
 				= QByteArray("cache operation during startup");
-			const auto queuedWrite = AwaitCacheCallback<Storage::Cache::Error>(
+			struct QueuedCacheOperations {
+				FnMut<void(bool)> done;
+				int completed = 0;
+				bool passed = true;
+			};
+			const auto queuedOperations = AwaitCacheCallback<bool>(
 				[&](auto done) {
-					getCache()->put(queuedKey, QByteArray(queuedPayload),
-									std::move(done));
+					auto state = std::make_shared<QueuedCacheOperations>();
+					state->done = std::move(done);
+					const auto finish = [state](bool passed) mutable {
+						state->passed = state->passed && passed;
+						if (++state->completed == 2) {
+							state->done(state->passed);
+							state->done = nullptr;
+						}
+					};
+					getCache()->put(
+						queuedKey, QByteArray(queuedPayload),
+						[finish](Storage::Cache::Error error) mutable {
+							finish(error.type
+								   == Storage::Cache::Error::Type::None);
+						});
+					getCache()->get(queuedKey, [finish, queuedPayload](
+												   QByteArray &&value) mutable {
+						finish(value == queuedPayload);
+					});
 				},
 				kCacheUsableTimeoutMilliseconds);
-			const auto queuedRead = AwaitCacheCallback<QByteArray>(
-				[&](auto done) { getCache()->get(queuedKey, std::move(done)); },
-				kCacheUsableTimeoutMilliseconds);
 			const auto queuedOperationsPassed
-				= CacheOperationSucceeded(queuedWrite) && queuedRead
-				  && (*queuedRead == queuedPayload);
-			const auto cacheUsableNanoseconds
-				= cacheInitializationTimer.nsecsElapsed();
-			const auto cacheUsableWithinBound
-				= cacheUsableNanoseconds < kMaxCacheUsableNanoseconds;
+				= queuedOperations && *queuedOperations;
+			auto cacheUsableWithinBound = false;
 			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
 			const auto startupScansCompleted = WaitForRegressionCondition([&] {
@@ -10441,6 +10461,15 @@ void RunAuthenticatedCacheSymlinkCases(
 				}
 				if (!data.cacheInitializationFinishedForTesting(mediaCache)) {
 					return false;
+				}
+				if (cacheInitializationNanoseconds < 0) {
+					cacheInitializationNanoseconds
+						= cacheInitializationTimer.nsecsElapsed();
+				}
+				cacheInitializationAllowed
+					= data.cacheInitializationAllowedForTesting(mediaCache);
+				if (!cacheInitializationAllowed) {
+					return true;
 				}
 				auto timer = QElapsedTimer();
 				timer.start();
@@ -10452,6 +10481,10 @@ void RunAuthenticatedCacheSymlinkCases(
 					return false;
 				}
 				firstAccessNanoseconds = timer.nsecsElapsed();
+				cacheUsableNanoseconds
+					= cacheInitializationTimer.nsecsElapsed();
+				cacheUsableWithinBound
+					= cacheUsableNanoseconds < kMaxCacheUsableNanoseconds;
 				return true;
 			});
 			mainThreadHeartbeat.stop();
@@ -10460,14 +10493,12 @@ void RunAuthenticatedCacheSymlinkCases(
 			maxMainThreadStallNanoseconds = std::max(
 				maxMainThreadStallNanoseconds,
 				heartbeatAtCompletion - lastMainThreadHeartbeatNanoseconds);
-			const auto cacheInitializationNanoseconds
-				= cacheInitializationTimer.nsecsElapsed();
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
 			auto chatSwitch = CacheChatSwitchRegressionResult();
 			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
-			if (!mediaCache) {
+			if (first && !mediaCache) {
 				dialogsHandler
 					= RunFirstDialogsHandlerLatencyRegression(guarded);
 				std::fprintf(
@@ -10518,7 +10549,7 @@ void RunAuthenticatedCacheSymlinkCases(
 									   : guarded->local().cachePath();
 			const auto movedCachePath
 				= cachePath + ".cache-access-identity-backup";
-			{
+			if (first) {
 				auto rootMoved = false;
 				auto protectedSymlinkCreated = false;
 				const auto restoreCachePath = gsl::finally([&] {
@@ -10562,6 +10593,7 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "Cache access latency regression: cache=%s "
 						 "seeded_directories=125 seeded_files=169 "
 						 "cache_initialization_ns=%lld "
+						 "initialization_allowed=%d "
 						 "queued_ops_before_ready=%d queued_ops_passed=%d "
 						 "cache_usable_ns=%lld under_10s=%d "
 						 "max_main_thread_stall_ns=%lld under_100ms=%d "
@@ -10571,6 +10603,7 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "main_thread_walks=%d.\n",
 						 mediaCache ? "media_cache" : "cache",
 						 static_cast<long long>(cacheInitializationNanoseconds),
+						 cacheInitializationAllowed,
 						 initializationPendingAtFirstAccess,
 						 queuedOperationsPassed,
 						 static_cast<long long>(cacheUsableNanoseconds),
@@ -10584,6 +10617,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto passed = startupScansCompleted && first && second
 								&& initializationPendingAtFirstAccess
 								&& queuedOperationsPassed
+								&& cacheInitializationAllowed
 								&& cacheUsableWithinBound && (startupWalks == 2)
 								&& (maxMainThreadStallNanoseconds < 100'000'000)
 								&& (mainThreadWalks == 0) && swappedRootRefused
