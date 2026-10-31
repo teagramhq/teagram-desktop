@@ -52,9 +52,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
+#include "data/data_document.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
+#include "data/data_message_reactions.h"
 #include "data/data_peer_id.h"
 #include "data/data_photo.h"
 #include "data/data_saved_messages.h"
@@ -169,6 +171,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSemaphore>
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QVariant>
 #include <QtGui/QAccessible>
@@ -240,6 +243,7 @@ struct CapturedChannelSaveRequest {
 struct ChannelSaveRequestCapture {
 	not_null<MTP::Instance *> instance;
 	std::vector<CapturedChannelSaveRequest> requests;
+	bool peerPhotoUploadOnly = false;
 };
 
 ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
@@ -760,7 +764,13 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	if (body.isEmpty()) {
 		return false;
 	}
-	switch (static_cast<uint32>(body.front())) {
+	const auto constructor = static_cast<uint32>(body.front());
+	if (capture->peerPhotoUploadOnly
+		&& (constructor != mtpc_upload_saveFilePart)
+		&& (constructor != mtpc_messages_editChatPhoto)) {
+		return true;
+	}
+	switch (constructor) {
 	case mtpc_channels_deactivateAllUsernames:
 	case mtpc_channels_editTitle:
 	case mtpc_channels_setDiscussionGroup:
@@ -770,6 +780,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_account_setGlobalPrivacySettings:
 	case mtpc_channels_getParticipant:
 	case mtpc_messages_createChat:
+	case mtpc_messages_getDialogs:
 	case mtpc_upload_saveFilePart:
 	case mtpc_messages_editChatPhoto:
 	case mtpc_updates_getDifference:
@@ -1323,7 +1334,8 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
+											  int timeoutMs = 5000);
 
 [[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
 	not_null<Window::SessionController *> controller) {
@@ -1466,18 +1478,26 @@ template <typename Predicate>
 	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 	ChannelSaveRequestCapture capture{
 		.instance = &controller->session().mtp(),
+		.peerPhotoUploadOnly = true,
 	};
 	const auto restoreCapture = gsl::finally(
 		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
 			gChannelSaveRequestCapture = previous;
 		});
+	const auto uploadedParts = [&] {
+		return std::count_if(
+			capture.requests.begin(), capture.requests.end(),
+			[](const auto &entry) {
+				return !entry.body.isEmpty()
+					   && (static_cast<uint32>(entry.body.front())
+						   == mtpc_upload_saveFilePart);
+			});
+	};
 	auto previousImage = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	previousImage.fill(Qt::red);
 	controller->session().api().peerPhoto().upload(peer,
 												   {std::move(previousImage)});
-	if (!WaitForRegressionCondition([&] { return !capture.requests.empty(); })
-		|| static_cast<uint32>(capture.requests.front().body.front())
-			   != mtpc_upload_saveFilePart) {
+	if (!WaitForRegressionCondition([&] { return uploadedParts() >= 1; })) {
 		std::fprintf(stderr,
 					 "Peer photo lifecycle regression failed: the first "
 					 "pending upload did not start.\n");
@@ -1487,10 +1507,7 @@ template <typename Predicate>
 	supersededImage.fill(Qt::yellow);
 	controller->session().api().peerPhoto().upload(
 		peer, {std::move(supersededImage)});
-	if (!WaitForRegressionCondition(
-			[&] { return capture.requests.size() == 2; })
-		|| static_cast<uint32>(capture.requests.back().body.front())
-			   != mtpc_upload_saveFilePart) {
+	if (!WaitForRegressionCondition([&] { return uploadedParts() >= 2; })) {
 		std::fprintf(
 			stderr,
 			"Peer photo lifecycle regression failed: replacing a pending "
@@ -1538,11 +1555,11 @@ template <typename Predicate>
 	auto image = QImage(8, 8, QImage::Format_ARGB32_Premultiplied);
 	image.fill(Qt::blue);
 	photo->showCustom(std::move(image));
-	const auto replacementUploadIndex = capture.requests.size();
+	const auto replacementUploadIndex = uploadedParts();
 	Test::Click(save);
 	QCoreApplication::processEvents();
 	if (!WaitForRegressionCondition(
-			[&] { return capture.requests.size() > replacementUploadIndex; })
+			[&] { return uploadedParts() > replacementUploadIndex; })
 		|| (!expectServerConfirmation
 			&& !WaitForRegressionCondition([&] { return !box; }))) {
 		std::fprintf(
@@ -1552,16 +1569,19 @@ template <typename Predicate>
 		return false;
 	}
 	const auto editClosedBeforeConfirmation = !box;
-	if (capture.requests.size() != replacementUploadIndex + 1
-		|| static_cast<uint32>(
-			   capture.requests[replacementUploadIndex].body.front())
-			   != mtpc_upload_saveFilePart
+	if (uploadedParts() != replacementUploadIndex + 1
 		|| chat->userpicPhotoId() != originalPhotoId
 		|| (expectServerConfirmation == editClosedBeforeConfirmation)) {
 		std::fprintf(
 			stderr,
 			"Peer photo lifecycle regression failed: edit box did not follow "
-			"the account's upload completion behavior.\n");
+			"the account's upload completion behavior "
+			"(server_confirmation=%d closed=%d uploads_before=%zu "
+			"uploads_after=%zu photo=%lld original=%lld).\n",
+			expectServerConfirmation, editClosedBeforeConfirmation,
+			size_t(replacementUploadIndex), size_t(uploadedParts()),
+			static_cast<long long>(chat->userpicPhotoId()),
+			static_cast<long long>(originalPhotoId));
 		return false;
 	}
 	if (expectServerConfirmation) {
@@ -2213,6 +2233,90 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 		}));
 }
 
+class RegressionAccountCleanup final {
+  public:
+	RegressionAccountCleanup(Main::Domain &domain,
+							 not_null<Main::Account *> account,
+							 not_null<Main::Account *> fallback)
+		: _domain(domain), _account(base::make_weak(account.get())),
+		  _fallback(base::make_weak(fallback.get())) {}
+
+	RegressionAccountCleanup(const RegressionAccountCleanup &) = delete;
+	RegressionAccountCleanup &operator=(const RegressionAccountCleanup &)
+		= delete;
+
+	~RegressionAccountCleanup() { (void)cleanup(); }
+
+	[[nodiscard]] bool cleanup() {
+		if (_cleaned) {
+			return _released;
+		}
+		_cleaned = true;
+		const auto account = _account.get();
+		if (!account) {
+			_released = true;
+			return true;
+		}
+		const auto guarded = not_null<Main::Account *>(account);
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto cachePath = account->local().cachePath();
+		const auto cacheSettings = account->local().cacheSettings();
+		const auto mediaCachePath = account->local().cacheBigFilePath();
+		const auto mediaCacheSettings = account->local().cacheBigFileSettings();
+		const auto hadSession = account->sessionExists();
+#else
+		auto cache = Core::App().databases().get(
+			account->local().cachePath(), account->local().cacheSettings());
+		auto mediaCache = Core::App().databases().get(
+			account->local().cacheBigFilePath(),
+			account->local().cacheBigFileSettings());
+#endif
+		if (const auto window = Core::App().separateWindowFor(guarded)) {
+			Core::App().closeWindow(window);
+		}
+		if (const auto current = _account.get();
+			current && current->sessionExists()) {
+			current->forcedLogOut();
+		}
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		if (hadSession) {
+			// Reacquire only after logout releases the session's database
+			// leases.
+			auto cache = Core::App().databases().get(cachePath, cacheSettings);
+			auto mediaCache = Core::App().databases().get(mediaCachePath,
+														  mediaCacheSettings);
+			cache->sync();
+			mediaCache->sync();
+		}
+#else
+		if (cache) {
+			cache->sync();
+		}
+		if (mediaCache) {
+			mediaCache->sync();
+		}
+#endif
+		if (const auto fallback = _fallback.get();
+			fallback && (&_domain.active() != fallback)) {
+			_domain.activate(not_null<Main::Account *>(fallback));
+		}
+		QCoreApplication::processEvents();
+		_domain.removeRedundantAccounts();
+		QCoreApplication::processEvents();
+		_domain.removeRedundantAccounts();
+		_released = _account.empty();
+		_cleaned = _released;
+		return _released;
+	}
+
+  private:
+	Main::Domain &_domain;
+	base::weak_ptr<Main::Account> _account;
+	base::weak_ptr<Main::Account> _fallback;
+	bool _cleaned = false;
+	bool _released = false;
+};
+
 [[nodiscard]] bool WriteCachePayload(not_null<Main::Account *> account,
 									 const Storage::Cache::Key &key,
 									 const QByteArray &payload) {
@@ -2245,6 +2349,7 @@ PersistedCachePayloadMatches(not_null<Main::Account *> account,
 		   && CachePayloadMatches(*cache, key, expected);
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 using CacheGetter = Fn<Storage::Cache::Database &()>;
 using CacheClearer = Fn<void()>;
 using CachePointerGetter = Fn<Storage::Cache::Database *()>;
@@ -2407,6 +2512,7 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 		= RunRefusedCacheDownloaderRegression(account, cache);
 	return streaming && downloading;
 }
+#endif
 
 [[nodiscard]] bool RunCacheConcurrentDeletionRegression() {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
@@ -2441,16 +2547,25 @@ RunRefusedCacheReaderRegressions(not_null<Main::Account *> account,
 #endif
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] QString ActiveCacheVersionPath(const QString &path) {
-	const auto directories
-		= QDir(path).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-	for (const auto &directory : directories) {
-		const auto version = QDir(path).filePath(directory);
-		if (QFileInfo(version + "/binlog").isFile()) {
-			return version;
+	auto versionFile = QFile(QDir(path).filePath("version"));
+	auto version = qint32(0);
+	if (versionFile.open(QIODevice::ReadOnly)) {
+		const auto read = versionFile.read(reinterpret_cast<char *>(&version),
+										   qint64(sizeof(version)));
+		if (read < 0) {
+			return {};
+		} else if (read == qint64(sizeof(version)) && version < 0) {
+			return {};
+		} else if (read != qint64(sizeof(version))) {
+			version = 0;
 		}
+	} else if (QFileInfo::exists(versionFile.fileName())) {
+		return {};
 	}
-	return {};
+	const auto active = QDir(path).filePath(QString::number(version));
+	return QFileInfo(active + "/binlog").isFile() ? active : QString();
 }
 
 [[nodiscard]] bool
@@ -2522,6 +2637,479 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	}
 	return passed;
 }
+
+[[nodiscard]] bool RunClearThenCacheSymlinkRegression(
+	not_null<Main::Account *> account, bool mediaCache, const QString &path,
+	const QString &fixture, RefusedCacheReaderRegression cacheRefusal) {
+	auto &data = account->session().data();
+	const auto cache = [&]() -> Storage::Cache::Database & {
+		return mediaCache ? data.cacheBigFile() : data.cache();
+	};
+	const auto cacheIfAllowed = [&] {
+		return mediaCache ? data.cacheBigFileIfAllowed()
+						  : data.cacheIfAllowed();
+	};
+	const auto beforeClear = ActiveCacheVersionPath(path);
+	if (beforeClear.isEmpty()) {
+		return false;
+	}
+	auto paused = false;
+	auto markerRotated = false;
+	auto activeVersionMissing = false;
+	auto blockedDuringClear = false;
+	auto cacheAllowedPreserved = false;
+	const auto writeKey = Storage::Cache::Key{
+		0x434c454152474150ULL,
+		0x4341434845575249ULL,
+	};
+	const auto writePayload = QByteArray("cache clear rotation window");
+	auto blockedWrite = std::optional<Storage::Cache::Error>();
+	auto clearCallbackOnMain = std::atomic_bool(false);
+	data.setCacheClearPauseForTesting(mediaCache, [&] {
+		paused = true;
+		auto version = QFileInfo(beforeClear).fileName().toInt() + 1;
+		while (
+			QFileInfo(QDir(path).filePath(QString::number(version))).exists()) {
+			++version;
+		}
+		const auto nextVersion = qint32(version);
+		auto marker = QFile(QDir(path).filePath("version"));
+		const auto markerWritten
+			= marker.open(QIODevice::WriteOnly | QIODevice::Truncate)
+			  && (marker.write(reinterpret_cast<const char *>(&nextVersion),
+							   sizeof(nextVersion))
+				  == qint64(sizeof(nextVersion)))
+			  && marker.flush();
+		markerRotated = markerWritten
+						&& (QString::number(nextVersion)
+							!= QFileInfo(beforeClear).fileName());
+		activeVersionMissing
+			= markerRotated
+			  && !QFileInfo(QDir(path).filePath(QString::number(nextVersion)))
+					  .exists();
+		blockedDuringClear = cacheIfAllowed() == nullptr;
+		cacheAllowedPreserved = data.cacheAllowedForTesting(mediaCache);
+		blockedWrite
+			= AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+				  cache().put(writeKey, QByteArray(writePayload),
+							  std::move(done));
+			  });
+	});
+	const auto cleared = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) {
+			data.clearCacheDatabase(
+				mediaCache, false,
+				[&,
+				 done = std::move(done)](Storage::Cache::Error error) mutable {
+					clearCallbackOnMain.store(
+						QThread::currentThread()
+							== QCoreApplication::instance()->thread(),
+						std::memory_order_release);
+					done(std::move(error));
+				});
+		},
+		10000);
+	const auto clearCompleted = cleared.has_value();
+	const auto callbackOnMain
+		= clearCallbackOnMain.load(std::memory_order_acquire);
+	const auto blockedWriteRefused
+		= blockedWrite
+		  && (blockedWrite->type != Storage::Cache::Error::Type::None);
+	cache().sync();
+	const auto afterClear = ActiveCacheVersionPath(path);
+	const auto rotated = !afterClear.isEmpty() && (afterClear != beforeClear);
+	const auto allowedAfterClear = cacheIfAllowed() != nullptr;
+	const auto write
+		= AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+			  cache().put(writeKey, QByteArray(writePayload), std::move(done));
+		  });
+	const auto wroteAfterClear
+		= write && (write->type == Storage::Cache::Error::Type::None)
+		  && CachePayloadMatches(cache(), writeKey, writePayload);
+	const auto swapped = rotated && allowedAfterClear
+						 && RunPostOpenCacheSymlinkRegression(
+							 path, fixture, cache, [] {}, cacheRefusal);
+	const auto passed
+		= paused && markerRotated && activeVersionMissing && blockedDuringClear
+		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
+		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
+		  && allowedAfterClear && wroteAfterClear && swapped;
+	if (!passed) {
+		std::fprintf(
+			stderr,
+			"Clear-then-swap cache regression failed: paused=%d "
+			"marker_rotated=%d active_missing=%d blocked_during=%d "
+			"allowed_preserved=%d "
+			"blocked_write_refused=%d clear_completed=%d callback_on_main=%d "
+			"rotated=%d "
+			"allowed_after=%d "
+			"write_after_clear=%d swapped=%d path=%s.\n",
+			paused, markerRotated, activeVersionMissing, blockedDuringClear,
+			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
+			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
+			swapped, qPrintable(path));
+	}
+	return passed;
+}
+
+[[nodiscard]] bool RunPendingCacheClearSessionDestructionRegression(
+	Main::Domain &domain, UserId selfId, bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
+	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
+								 : guarded->local().cachePath();
+	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	const auto guardedWeak = base::make_weak(guarded.get());
+	auto cleanup = gsl::finally([guardedWeak] {
+		if (const auto account = guardedWeak.get();
+			account && account->sessionExists()) {
+			account->forcedLogOut();
+		}
+	});
+	auto &data = guarded->session().data();
+	const auto cacheIfAllowed = [&] {
+		return mediaCache ? data.cacheBigFileIfAllowed()
+						  : data.cacheIfAllowed();
+	};
+	if (!WaitForRegressionCondition(
+			[&] { return cacheIfAllowed() != nullptr; })) {
+		return false;
+	}
+	struct State {
+		QSemaphore mainUpdateQueued;
+		bool completed = false;
+		bool callbackOnMain = false;
+		std::optional<Storage::Cache::Error> error;
+	};
+	const auto state = std::make_shared<State>();
+	data.setCacheClearHandoffForTesting(
+		mediaCache, [state] { state->mainUpdateQueued.release(); });
+	data.clearCacheDatabase(
+		mediaCache, false, [state](Storage::Cache::Error error) {
+			state->callbackOnMain = QThread::currentThread()
+									== QCoreApplication::instance()->thread();
+			state->error = std::move(error);
+			state->completed = true;
+		});
+	const auto mainUpdateQueued = state->mainUpdateQueued.tryAcquire(1, 10000);
+	const auto accessStayedBlocked = mainUpdateQueued
+									 && data.cacheAllowedForTesting(mediaCache)
+									 && (cacheIfAllowed() == nullptr);
+	guarded->forcedLogOut();
+	const auto sessionDestroyed = !guarded->sessionExists();
+	auto cacheDatabase = Core::App().databases().get(
+		guarded->local().cachePath(), guarded->local().cacheSettings());
+	auto mediaCacheDatabase
+		= Core::App().databases().get(guarded->local().cacheBigFilePath(),
+									  guarded->local().cacheBigFileSettings());
+	const auto callbackCompleted
+		= WaitForRegressionCondition([&] { return state->completed; });
+	cacheDatabase->sync();
+	mediaCacheDatabase->sync();
+	const auto passed = mainUpdateQueued && accessStayedBlocked
+						&& sessionDestroyed && callbackCompleted
+						&& state->callbackOnMain
+						&& CacheOperationSucceeded(state->error);
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Pending cache clear logout regression failed: media=%d "
+					 "main_update_queued=%d blocked=%d destroyed=%d "
+					 "callback_completed=%d callback_on_main=%d path=%s.\n",
+					 mediaCache, mainUpdateQueued, accessStayedBlocked,
+					 sessionDestroyed, callbackCompleted, state->callbackOnMain,
+					 qPrintable(path));
+	}
+	return passed && accountCleanup.cleanup();
+}
+
+[[nodiscard]] bool
+RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
+											 UserId selfId, bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
+	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
+								 : guarded->local().cachePath();
+	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
+									 : guarded->local().cacheSettings();
+	const auto seedKey = Storage::Cache::Key{
+		0x4c4f474f55544341ULL,
+		mediaCache ? 0x4348454d45444941ULL : 0x4348454341434845ULL,
+	};
+	const auto payload = QByteArray("cache must be cleared on pending logout");
+	struct QueueGate {
+		QSemaphore entered;
+		QSemaphore resume;
+	};
+	const auto gate = std::make_shared<QueueGate>();
+	const auto releaseGate = gsl::finally([&] {
+		gate->resume.release();
+		auto drain = Core::App().databases().get(path, settings);
+		drain->sync();
+	});
+	{
+		auto cache = Core::App().databases().get(path, settings);
+		auto key = mediaCache ? guarded->local().cacheBigFileKey()
+							  : guarded->local().cacheKey();
+		const auto opened = CacheOperationSucceeded(
+			AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+				cache->open(std::move(key), std::move(done));
+			}));
+		const auto seeded
+			= opened
+			  && CacheOperationSucceeded(
+				  AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+					  cache->put(seedKey, QByteArray(payload), std::move(done));
+				  }));
+		if (!seeded) {
+			return false;
+		}
+		cache->get(seedKey, [gate](QByteArray &&) {
+			gate->entered.release();
+			gate->resume.acquire();
+		});
+		if (!gate->entered.tryAcquire(1, 10000)) {
+			return false;
+		}
+	}
+	const auto created
+		= guarded->createSession(RegressionUser(selfId, true, QString()),
+								 std::make_unique<Main::SessionSettings>());
+	if (!created) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	const auto initializationPending
+		= !data.cacheInitializationFinishedForTesting(mediaCache);
+	guarded->forcedLogOut();
+	const auto sessionDestroyed = !guarded->sessionExists();
+	auto cacheDatabase = Core::App().databases().get(
+		guarded->local().cachePath(), guarded->local().cacheSettings());
+	auto mediaCacheDatabase
+		= Core::App().databases().get(guarded->local().cacheBigFilePath(),
+									  guarded->local().cacheBigFileSettings());
+	auto &verification = mediaCache ? mediaCacheDatabase : cacheDatabase;
+	auto &otherCacheDatabase = mediaCache ? cacheDatabase : mediaCacheDatabase;
+	gate->resume.release();
+	verification->sync();
+	const auto reopened = CacheOperationSucceeded(
+		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+			auto key = mediaCache ? guarded->local().cacheBigFileKey()
+								  : guarded->local().cacheKey();
+			verification->open(std::move(key), std::move(done));
+		}));
+	const auto value = reopened
+						   ? AwaitCacheCallback<QByteArray>([&](auto done) {
+								 verification->get(seedKey, std::move(done));
+							 })
+						   : std::optional<QByteArray>();
+	const auto cleared = value && value->isEmpty();
+	const auto closed = AwaitCacheCallback<int>([&](auto done) {
+		verification->close([done = std::move(done)]() mutable { done(1); });
+	});
+	verification->sync();
+	otherCacheDatabase->close();
+	otherCacheDatabase->sync();
+	const auto passed = initializationPending && sessionDestroyed && cleared
+						&& closed && (*closed == 1);
+	if (!passed) {
+		std::fprintf(
+			stderr,
+			"Logout before cache initialization regression failed: media=%d "
+			"pending=%d destroyed=%d cleared=%d path=%s.\n",
+			mediaCache, initializationPending, sessionDestroyed, cleared,
+			qPrintable(path));
+	}
+	return passed && accountCleanup.cleanup();
+}
+
+[[nodiscard]] bool RunFailedCacheInitializationAccessRegression(
+	Main::Domain &domain, UserId selfId, const ProtectedCacheFixtures &fixtures,
+	bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
+	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto cachePath = mediaCache ? guarded->local().cacheBigFilePath()
+									  : guarded->local().cachePath();
+	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
+									 : guarded->local().cacheSettings();
+	auto opened = Core::App().databases().get(cachePath, settings);
+	if (!OpenCache(*opened, guarded)) {
+		return false;
+	}
+	const auto seedKey = Storage::Cache::Key{
+		0x4641494c4544494eULL,
+		0x495449414c534545ULL,
+	};
+	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+		opened->put(seedKey, QByteArray("pre-open protected cache seed"),
+					std::move(done));
+	});
+	if (!CacheOperationSucceeded(seed)) {
+		return false;
+	}
+	opened->sync();
+	const auto active = ActiveCacheVersionPath(cachePath);
+	const auto protectedTarget
+		= mediaCache ? fixtures.mediaCacheRoot : fixtures.cacheRoot;
+	const auto saved = active + ".failed-init-original";
+	if (active.isEmpty() || QFileInfo::exists(saved)) {
+		return false;
+	}
+	const auto targetEntriesBefore
+		= QDir(protectedTarget)
+			  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+						 | QDir::NoDotAndDotDot);
+	auto moved = false;
+	auto linked = false;
+	auto cleanupDone = false;
+	auto cleanupSucceeded = true;
+	auto cleanup = [&] {
+		if (cleanupDone) {
+			return cleanupSucceeded;
+		}
+		opened->sync();
+		const auto closed = AwaitCacheCallback<int>([&](auto done) {
+			opened->close([done = std::move(done)]() mutable { done(1); });
+		});
+		const auto linkRemoved = !linked || QFile::remove(active);
+		const auto originalRestored = !moved || QDir().rename(saved, active);
+		cleanupSucceeded
+			= closed && (*closed == 1) && linkRemoved && originalRestored;
+		cleanupDone = true;
+		return cleanupSucceeded;
+	};
+	auto cleanupGuard = gsl::finally([&] { cleanup(); });
+	moved = QDir().rename(active, saved);
+	linked = moved && QFile::link(protectedTarget, active);
+	if (!moved || !linked
+		|| !guarded->createSession(RegressionUser(selfId, true, QString()),
+								   std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	const auto initializationPending
+		= !data.cacheInitializationFinishedForTesting(mediaCache);
+	const auto key = Storage::Cache::Key{
+		0x4641494c4544494eULL,
+		mediaCache ? 0x495449414c4d4544ULL : 0x495449414c434143ULL,
+	};
+	auto read = std::optional<QByteArray>();
+	auto write = std::optional<Storage::Cache::Error>();
+	auto &cache = mediaCache ? data.cacheBigFile() : data.cache();
+	cache.get(seedKey, [&](QByteArray &&value) { read = std::move(value); });
+	cache.put(key, QByteArray("must not reach protected cache"),
+			  [&](Storage::Cache::Error error) { write = std::move(error); });
+	cache.sync();
+	const auto directReadRefused = read && read->isEmpty();
+	const auto directAccessRefused
+		= write && (write->type == Storage::Cache::Error::Type::IO);
+	const auto initializationFinished = WaitForRegressionCondition(
+		[&] { return data.cacheInitializationFinishedForTesting(mediaCache); });
+	const auto initializationRejected
+		= initializationFinished
+		  && !data.cacheInitializationAllowedForTesting(mediaCache)
+		  && (mediaCache ? (data.cacheBigFileIfAllowed() == nullptr)
+						 : (data.cacheIfAllowed() == nullptr));
+	const auto targetUnchanged
+		= QDir(protectedTarget)
+			  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+						 | QDir::NoDotAndDotDot)
+		  == targetEntriesBefore;
+	const auto passed = initializationPending && directReadRefused
+						&& directAccessRefused && targetUnchanged
+						&& initializationRejected;
+	std::fprintf(stderr,
+				 "Failed cache initialization access regression: cache=%s "
+				 "pending=%d direct_read_refused=%d direct_write_refused=%d "
+				 "target_unchanged=%d "
+				 "initialization_finished=%d rejected=%d.\n",
+				 mediaCache ? "media_cache" : "cache", initializationPending,
+				 directReadRefused, directAccessRefused, targetUnchanged,
+				 initializationFinished, initializationRejected);
+	const auto cacheCleaned = cleanup();
+	const auto accountCleaned = accountCleanup.cleanup();
+	return passed && cacheCleaned && accountCleaned;
+}
+
+[[nodiscard]] bool
+RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
+										   bool mediaCache) {
+	const auto fallback = not_null<Main::Account *>(&domain.active());
+	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto cachePath = mediaCache ? guarded->local().cacheBigFilePath()
+									  : guarded->local().cachePath();
+	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
+									 : guarded->local().cacheSettings();
+	auto opened = Core::App().databases().get(cachePath, settings);
+	if (!OpenCache(*opened, guarded)) {
+		return false;
+	}
+	const auto seedKey = Storage::Cache::Key{
+		0x4341434845535441ULL,
+		mediaCache ? 0x54534d4544494131ULL : 0x5453434143484531ULL,
+	};
+	constexpr auto kSeedTag = uint8(93);
+	const auto payload = QByteArray("cache statistics initialization seed");
+	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+		opened->put(seedKey,
+					Storage::Cache::Database::TaggedValue(QByteArray(payload),
+														  kSeedTag),
+					std::move(done));
+	});
+	if (!CacheOperationSucceeded(seed)) {
+		return false;
+	}
+	opened->sync();
+	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	auto received = std::optional<Storage::Cache::Database::Stats>();
+	auto lifetime = rpl::lifetime();
+	data.cacheStatsOnMain(mediaCache)
+		| rpl::on_next(
+			[&](Storage::Cache::Database::Stats &&stats) {
+				received = std::move(stats);
+			},
+			lifetime);
+	const auto subscribedBeforeInitialization = !received.has_value();
+	const auto receivedSeededStats = WaitForRegressionCondition([&] {
+		if (!received) {
+			return false;
+		}
+		const auto i = received->tagged.find(kSeedTag);
+		return (i != end(received->tagged)) && (i->second.count > 0)
+			   && (i->second.totalSize >= payload.size());
+	});
+	const auto initializationAllowed
+		= data.cacheInitializationAllowedForTesting(mediaCache);
+	const auto passed = subscribedBeforeInitialization && receivedSeededStats
+						&& initializationAllowed;
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Cache statistics initialization regression failed: "
+					 "media_cache=%d pending=%d stats=%d allowed=%d.\n",
+					 mediaCache, subscribedBeforeInitialization,
+					 receivedSeededStats, initializationAllowed);
+	}
+	return passed && accountCleanup.cleanup();
+}
+#endif
 
 [[nodiscard]] Main::Account *
 FindAuthorizationBlockedAccount(const Main::Domain &domain) {
@@ -2890,7 +3478,8 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
+											  int timeoutMs) {
 	if (condition()) {
 		return true;
 	}
@@ -2906,7 +3495,7 @@ template <typename Predicate>
 	});
 	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 	poll.start();
-	timeout.start(5000);
+	timeout.start(timeoutMs);
 	loop.exec();
 	poll.stop();
 	return condition();
@@ -9239,6 +9828,16 @@ struct NativeLifecycleResults {
 			"authenticated-cache-file-symlinks",
 			"post-open-cache",
 			"post-open-media-cache",
+			"post-clear-cache",
+			"post-clear-media-cache",
+			"logout-before-cache-initialization",
+			"logout-before-media-cache-initialization",
+			"failed-init-cache-access",
+			"failed-init-media-cache-access",
+			"cold-post-open-cache",
+			"cold-post-open-media-cache",
+			"cache-access-no-walk",
+			"media-cache-access-no-walk",
 			"pinned-chat-participants",
 			"folder-crud",
 			"bio-editor-target",
@@ -9299,11 +9898,328 @@ struct NativeLifecycleResults {
 	}
 };
 
+[[nodiscard]] MTPDocument RegressionReactionDocument(int64 id) {
+	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
+						MTP_int(1), MTP_string("application/octet-stream"),
+						MTP_long(0), MTP_vector<MTPPhotoSize>(),
+						MTPVector<MTPVideoSize>(), MTP_int(0),
+						MTP_vector<MTPDocumentAttribute>());
+}
+
+[[nodiscard]] MTPAvailableReaction RegressionAvailableReaction(int index) {
+	using Flag = MTPDavailableReaction::Flag;
+	const auto flags
+		= Flag::f_around_animation | (index % 2 ? Flag::f_inactive : Flag());
+	const auto id = int64(100'000 + index * 10);
+	return MTP_availableReaction(
+		MTP_flags(flags), MTP_string(u"👍"_q),
+		MTP_string(QString::number(index)), RegressionReactionDocument(id + 0),
+		RegressionReactionDocument(id + 1), RegressionReactionDocument(id + 2),
+		RegressionReactionDocument(id + 3), RegressionReactionDocument(id + 4),
+		RegressionReactionDocument(id + 5), RegressionReactionDocument(id + 6));
+}
+
+struct CacheChatSwitchRegressionResult final {
+	int reactions = 0;
+	int hydratedDocuments = 0;
+	int chatSwitches = 0;
+	int cachedDocuments = 0;
+	qint64 maxHydrationNanoseconds = -1;
+	qint64 maxChatSwitchNanoseconds = -1;
+	qint64 maxStallNanoseconds = -1;
+	bool passed = false;
+};
+
+struct CacheReactionProbe final {
+	std::array<DocumentData *, 4> documents = {};
+	bool active = false;
+};
+
+[[maybe_unused, nodiscard]] CacheChatSwitchRegressionResult
+RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
+									Window::Controller *window) {
+	auto result = CacheChatSwitchRegressionResult();
+	const auto controller = window ? window->sessionController() : nullptr;
+	if (!controller || (&controller->session() != &account->session())) {
+		return result;
+	}
+	auto &session = account->session();
+	auto &data = session.data();
+	const auto makeHistory = [&](ChatId id) {
+		const auto chat = data.chat(id);
+		const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+		session.api().processFullPeer(
+			peer, RegressionChatFullReply(id, 1, QString(), UserId(1)));
+		return data.history(peer);
+	};
+	const auto firstHistory = makeHistory(ChatId(1051));
+	const auto secondHistory = makeHistory(ChatId(1052));
+	constexpr auto kWarmupChatSwitches = 8;
+	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
+		const auto target = (i % 2) ? secondHistory : firstHistory;
+		controller->showPeerHistory(target);
+		QCoreApplication::processEvents();
+	}
+
+	constexpr auto kReactionCount = 73;
+	constexpr auto kDocumentsPerReaction = 4;
+	constexpr auto kExpectedChatSwitches = kReactionCount;
+	constexpr auto kMaxStallNanoseconds = qint64(50'000'000);
+	auto reactions = QVector<MTPAvailableReaction>();
+	reactions.reserve(kReactionCount);
+	for (auto i = 0; i != kReactionCount; ++i) {
+		reactions.push_back(RegressionAvailableReaction(i));
+	}
+	auto update = Data::details::IncrementalAvailableReactionsUpdate<
+		MTPAvailableReaction, CacheReactionProbe>();
+	auto loop = QEventLoop();
+	auto completed = false;
+	auto timedOut = false;
+	const auto maybeFinish = [&] {
+		if (completed && (result.chatSwitches == kExpectedChatSwitches)) {
+			loop.quit();
+		}
+	};
+	auto mediaViews = std::vector<std::shared_ptr<Data::DocumentMedia>>();
+	update.start(
+		std::move(reactions),
+		[&](const MTPAvailableReaction &reaction)
+			-> std::optional<CacheReactionProbe> {
+			auto hydrationTimer = QElapsedTimer();
+			hydrationTimer.start();
+			const auto documents
+				= Data::details::HydrateAvailableReactionDocuments(
+					reaction.data(), [&](const MTPDocument &document) {
+						++result.hydratedDocuments;
+						return data.processDocument(document);
+					});
+			result.maxHydrationNanoseconds = std::max(
+				result.maxHydrationNanoseconds, hydrationTimer.nsecsElapsed());
+			if (!documents.centerIcon || !documents.aroundAnimation) {
+				return std::nullopt;
+			}
+			const auto active = !reaction.data().is_inactive();
+			const auto parsed = CacheReactionProbe{
+            .documents =
+                {
+                    documents.appearAnimation.get(),
+                    documents.selectAnimation.get(),
+                    documents.centerIcon->get(),
+                    documents.aroundAnimation->get(),
+                },
+            .active = active,
+        };
+			++result.reactions;
+			QTimer::singleShot(0, &loop, [&] {
+				const auto target
+					= (result.chatSwitches % 2) ? secondHistory : firstHistory;
+				auto switchTimer = QElapsedTimer();
+				switchTimer.start();
+				controller->showPeerHistory(target);
+				result.maxChatSwitchNanoseconds
+					= std::max(result.maxChatSwitchNanoseconds,
+							   switchTimer.nsecsElapsed());
+				result.maxStallNanoseconds
+					= std::max(result.maxHydrationNanoseconds,
+							   result.maxChatSwitchNanoseconds);
+				++result.chatSwitches;
+				maybeFinish();
+			});
+			return parsed;
+		},
+		[&](const auto &reaction) {
+			for (const auto document : reaction.documents) {
+				mediaViews.push_back(document->createMediaView());
+			}
+		},
+		[] { return false; },
+		[&](auto &&, auto &&, crl::time) {
+			completed = true;
+			maybeFinish();
+		});
+	QTimer::singleShot(30'000, &loop, [&] {
+		timedOut = true;
+		loop.quit();
+	});
+	loop.exec();
+	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
+										  result.maxChatSwitchNanoseconds);
+	result.cachedDocuments = int(mediaViews.size());
+	result.passed = completed && !timedOut
+					&& (result.reactions == kReactionCount)
+					&& (result.hydratedDocuments
+						== kReactionCount * kDocumentsPerReaction)
+					&& (result.chatSwitches == kExpectedChatSwitches)
+					&& (result.cachedDocuments
+						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
+	return result;
+}
+
+struct FirstDialogsHandlerRegressionResult final {
+	int requests = 0;
+	int processedChats = 0;
+	int processedDialogs = 0;
+	int processedMessages = 0;
+	int processedDocuments = 0;
+	int cacheWalks = -1;
+	qint64 handlerNanoseconds = -1;
+	bool responseParsed = false;
+	bool passed = false;
+};
+
+[[nodiscard]] MTPMessage RegressionDialogsDocumentMessage(ChatId chatId,
+														  int messageId,
+														  int64 documentId) {
+	using MessageFlag = MTPDmessage::Flag;
+	using MediaFlag = MTPDmessageMediaDocument::Flag;
+	return MTP_message(
+		MTP_flags(MessageFlag::f_from_id | MessageFlag::f_media),
+		MTP_int(messageId), peerToMTP(peerFromUser(UserId(1))), MTPint(),
+		MTPstring(), peerToMTP(peerFromChat(chatId)), MTPPeer(),
+		MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(1),
+		MTP_string(u"cache dialog probe"_q),
+		MTP_messageMediaDocument(MTP_flags(MediaFlag::f_document),
+								 RegressionReactionDocument(documentId),
+								 MTPVector<MTPDocument>(), MTPPhoto(), MTPint(),
+								 MTPint()),
+		MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(), MTP_int(0),
+		MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
+[[maybe_unused, nodiscard]] FirstDialogsHandlerRegressionResult
+RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
+	auto result = FirstDialogsHandlerRegressionResult();
+	constexpr auto kMessageCount = 73;
+	constexpr auto kDialogUnreadCount = 7;
+	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+	const auto firstChatId = ChatId(1051);
+	const auto secondChatId = ChatId(1052);
+	const auto firstPeerId = peerFromChat(firstChatId);
+	const auto secondPeerId = peerFromChat(secondChatId);
+	auto &session = account->session();
+	auto &data = session.data();
+	auto capture = ChannelSaveRequestCapture{
+		.instance = &account->mtp(),
+	};
+	const auto restoreCapture = gsl::finally(
+		[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
+			gChannelSaveRequestCapture = previous;
+		});
+	session.api().requestDialogs(nullptr);
+	const auto request
+		= std::find_if(capture.requests.begin(), capture.requests.end(),
+					   [](const auto &entry) {
+						   return static_cast<uint32>(entry.body.front())
+								  == mtpc_messages_getDialogs;
+					   });
+	result.requests
+		= int(std::count_if(capture.requests.begin(), capture.requests.end(),
+							[](const auto &entry) {
+								return static_cast<uint32>(entry.body.front())
+									   == mtpc_messages_getDialogs;
+							}));
+	if (request == capture.requests.end()) {
+		return result;
+	}
+	auto messages = QVector<MTPMessage>();
+	messages.reserve(kMessageCount);
+	for (auto i = 0; i != kMessageCount; ++i) {
+		const auto chatId = (i % 2) ? secondChatId : firstChatId;
+		messages.push_back(RegressionDialogsDocumentMessage(
+			chatId, i + 1, int64(300'000 + i)));
+	}
+	const auto notifySettings = MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
+	auto reply = mtpBuffer();
+	const auto dialogs = MTPmessages_Dialogs(MTP_messages_dialogsSlice(
+		MTP_int(2),
+		MTP_vector<MTPDialog>(
+			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
+						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint()),
+			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId), MTP_int(72),
+						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
+						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
+		MTP_vector<MTPMessage>(std::move(messages)),
+		MTP_vector<MTPChat>(
+			{MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(firstChatId.bare),
+					  MTP_string(u"Cache dialog regression"_q),
+					  MTP_chatPhotoEmpty(), MTP_int(2), MTP_int(1), MTP_int(1),
+					  MTPInputChannel(), MTPChatAdminRights(),
+					  MTPChatBannedRights()),
+			 MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(secondChatId.bare),
+					  MTP_string(u"Cache dialog regression"_q),
+					  MTP_chatPhotoEmpty(), MTP_int(2), MTP_int(1), MTP_int(1),
+					  MTPInputChannel(), MTPChatAdminRights(),
+					  MTPChatBannedRights())}),
+		MTP_vector<MTPUser>({RegressionUser(UserId(1), true, QString())})));
+	dialogs.write(reply);
+	const auto response = MTP::Response{
+		.reply = std::move(reply),
+		.requestId = request->id,
+	};
+	auto timer = QElapsedTimer();
+	timer.start();
+	auto done = std::move(request->callbacks.done);
+	result.responseParsed = done && done(response);
+	result.handlerNanoseconds = timer.nsecsElapsed();
+	if (const auto chat = data.chatLoaded(firstChatId)) {
+		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
+	}
+	if (const auto chat = data.chatLoaded(secondChatId)) {
+		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
+	}
+	const auto firstHistory = data.history(firstPeerId);
+	const auto secondHistory = data.history(secondPeerId);
+	result.processedDialogs
+		= firstHistory->folderKnown()
+		  && (firstHistory->unreadCount() == kDialogUnreadCount)
+		  && (firstHistory->lastMessage()
+			  == data.message(firstPeerId, MsgId(73)))
+		  && secondHistory->folderKnown()
+		  && (secondHistory->unreadCount() == kDialogUnreadCount - 1)
+		  && (secondHistory->lastMessage()
+			  == data.message(secondPeerId, MsgId(72)));
+	for (auto i = 1; i <= kMessageCount; ++i) {
+		const auto peerId = (i % 2) ? firstPeerId : secondPeerId;
+		if (const auto item = data.message(peerId, MsgId(i))) {
+			++result.processedMessages;
+			if (item->media() && item->media()->document()) {
+				++result.processedDocuments;
+			}
+		}
+	}
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
+#endif
+	result.passed = (result.requests == 1) && result.responseParsed
+					&& (result.processedChats == 2) && result.processedDialogs
+					&& (result.processedMessages == kMessageCount)
+					&& (result.processedDocuments == kMessageCount)
+					&& (result.cacheWalks == 2)
+					&& (result.handlerNanoseconds < kMaxHandlerNanoseconds);
+	return result;
+}
+
 void RunAuthenticatedCacheSymlinkCases(
 	Main::Domain &domain, const ProtectedCacheFixtures &fixtures,
 	not_null<Main::Account *> pinned, const QString &pinnedCachePath,
 	const QString &pinnedMediaCachePath,
 	std::shared_ptr<NativeLifecycleResults> nativeLifecycleResults) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	const auto accountFallback = not_null<Main::Account *>(&domain.active());
+#endif
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
 		nativeLifecycleResults->StartCase("authenticated-cache-file-symlinks");
 		pinned->session().data().cache().sync();
@@ -9335,15 +10251,14 @@ void RunAuthenticatedCacheSymlinkCases(
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 			const auto selfId = UserId(1);
 			const auto watched = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, watched, accountFallback);
 			watched->mtp().stopForServerEnrollment();
 			watched->setSessionUserId(selfId);
-			passed = watched->createSession(
-				RegressionUser(selfId, true, QString()),
-				std::make_unique<Main::SessionSettings>());
 			const auto cachePath = watched->local().cachePath();
 			const auto fixture
 				= QDir(cachePath).filePath("watchdog-cache-regression");
-			auto seeded = passed && QDir().mkpath(fixture);
+			auto seeded = QDir().mkpath(fixture);
 			for (auto i = 0; seeded && i != 125; ++i) {
 				seeded = QDir().mkpath(
 					QDir(fixture).filePath(u"directory-%1"_q.arg(i)));
@@ -9355,11 +10270,23 @@ void RunAuthenticatedCacheSymlinkCases(
 				seeded = file.open(QIODevice::WriteOnly)
 						 && (file.write("fixture") == 7);
 			}
-			// Let earlier startup stalls fall outside the watchdog's log rate
-			// limit, then drain queued events without blocking the UI thread.
-			auto cooldown = QEventLoop();
-			QTimer::singleShot(11'000, &cooldown, &QEventLoop::quit);
-			cooldown.exec();
+			passed = seeded
+					 && watched->createSession(
+						 RegressionUser(selfId, true, QString()),
+						 std::make_unique<Main::SessionSettings>());
+			if (passed) {
+				auto &data = watched->session().data();
+				passed
+					= WaitForRegressionCondition(
+						  [&] {
+							  return data.cacheInitializationFinishedForTesting(
+								  false);
+						  },
+						  10'000)
+					  && data.cacheInitializationAllowedForTesting(false)
+					  && data.cacheIfAllowed();
+			}
+			// Drain earlier startup pings without blocking the UI thread.
 			QCoreApplication::processEvents();
 			QCoreApplication::sendPostedEvents();
 			QCoreApplication::processEvents();
@@ -9368,86 +10295,600 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto accesses = 0;
 			auto timer = QElapsedTimer();
 			timer.start();
-			for (auto i = 0; seeded && i != 292; ++i) {
+			for (auto i = 0; passed && i != 292; ++i) {
 				if (!watched->session().data().cacheIfAllowed()) {
 					break;
 				}
 				++accesses;
 			}
 			const auto duration = timer.nsecsElapsed();
-			const auto detected = WaitForRegressionCondition([&] {
-				return Core::UiStallWatchdog::StallCount() > before
-					   || duration < 150'000'000;
-			});
 			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
 			Logs::writeMain("UI stall watchdog cache regression end");
-			passed = seeded && (accesses == 292) && detected
-					 && ((duration < 30'000'000 && !stalls)
-						 || (duration >= 150'000'000 && (stalls > 0)));
+			// The repeated guard checks must stay below the 30ms budget so a
+			// cache-heavy task cannot spend its UI frame validating path
+			// identity.
+			passed = passed && (accesses == 292) && (duration < 30'000'000)
+					 && !stalls;
 			std::fprintf(stderr,
 						 "Cache watchdog regression: seeded_directories=125 "
 						 "seeded_files=169 cache_accesses=%d duration_ns=%lld "
 						 "stalls=%llu.\n",
 						 accesses, static_cast<long long>(duration),
 						 static_cast<unsigned long long>(stalls));
+			passed = passed && accountCleanup.cleanup();
 #endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
 			nativeLifecycleResults->Report("cache-path-watchdog-regression",
 										   passed);
 		}
 	}
 	if (Core::MacProtectedPath::IntegrationTestActive()) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto selfId = UserId(1);
-		auto postOpenCachePassed = false;
-		auto postOpenMediaCachePassed = false;
+		const auto seedCacheTree = [](const QString &path) {
+			auto directories = std::vector<QString>();
+			for (auto i = 0; i != 125; ++i) {
+				const auto directory = QDir(path).filePath(
+					u"cache-access-regression/%1"_q.arg(i));
+				if (!QDir().mkpath(directory)) {
+					return false;
+				}
+				directories.push_back(directory);
+			}
+			for (auto i = 0; i != 169; ++i) {
+				const auto parent
+					= (i < int(directories.size()))
+						  ? directories[i]
+						  : QDir(path).filePath("cache-access-regression");
+				auto file = QFile(QDir(parent).filePath(u"file-%1"_q.arg(i)));
+				if (!file.open(QIODevice::WriteOnly)
+					|| (file.write("fixture") != 7)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
+			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
 		for (const auto mediaCache : {false, true}) {
-			const auto caseName
-				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			const auto caseName = mediaCache ? "media-cache-access-no-walk"
+											 : "cache-access-no-walk";
 			nativeLifecycleResults->StartCase(caseName);
+			if (!authenticatedCacheOnly) {
+				nativeLifecycleResults->Skip(caseName,
+											 "dedicated-cache-regression");
+				continue;
+			}
 			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
+			const auto seeded
+				= seedCacheTree(guarded->local().cachePath())
+				  && seedCacheTree(guarded->local().cacheBigFilePath());
+			if (!seeded) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			auto cacheInitializationTimer = QElapsedTimer();
+			cacheInitializationTimer.start();
+			auto mainThreadHeartbeatClock = QElapsedTimer();
+			mainThreadHeartbeatClock.start();
+			auto lastMainThreadHeartbeatNanoseconds = qint64(0);
+			auto maxMainThreadStallNanoseconds = qint64(0);
+			auto mainThreadHeartbeat = QTimer();
+			mainThreadHeartbeat.setInterval(10);
+			mainThreadHeartbeat.setTimerType(Qt::PreciseTimer);
+			QObject::connect(&mainThreadHeartbeat, &QTimer::timeout,
+							 &mainThreadHeartbeat, [&] {
+								 const auto now
+									 = mainThreadHeartbeatClock.nsecsElapsed();
+								 maxMainThreadStallNanoseconds = std::max(
+									 maxMainThreadStallNanoseconds,
+									 now - lastMainThreadHeartbeatNanoseconds);
+								 lastMainThreadHeartbeatNanoseconds = now;
+							 });
+			mainThreadHeartbeatClock.start();
+			mainThreadHeartbeat.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
 				nativeLifecycleResults->Report(caseName, false);
 				continue;
 			}
-			const auto cacheGetter
-				= [guarded, mediaCache]() -> Storage::Cache::Database & {
-				auto &data = guarded->session().data();
+			auto &data = guarded->session().data();
+			const auto getAllowedCache = [&] {
+				if (mediaCache) {
+					return data.cacheBigFileIfAllowed();
+				}
+				return data.cacheIfAllowed();
+			};
+			const auto getCache = [&]() -> Storage::Cache::Database * {
+				return mediaCache ? &data.cacheBigFile() : &data.cache();
+			};
+			constexpr auto kCacheUsableTimeoutMilliseconds = 10'000;
+			constexpr auto kMaxCacheUsableNanoseconds
+				= qint64(kCacheUsableTimeoutMilliseconds) * 1'000'000;
+			const auto initializationPendingAtFirstAccess
+				= !data.cacheInitializationFinishedForTesting(mediaCache);
+			auto cacheInitializationNanoseconds = qint64(-1);
+			auto cacheUsableNanoseconds = qint64(-1);
+			auto cacheInitializationAllowed = false;
+			const auto queuedKey = Storage::Cache::Key{
+				0x4341434845515545ULL,
+				mediaCache ? 0x4d45444941524541ULL : 0x4341434845524541ULL,
+			};
+			const auto queuedPayload
+				= QByteArray("cache operation during startup");
+			struct QueuedCacheOperations {
+				FnMut<void(bool)> done;
+				int completed = 0;
+				bool passed = true;
+			};
+			const auto queuedOperations = AwaitCacheCallback<bool>(
+				[&](auto done) {
+					auto state = std::make_shared<QueuedCacheOperations>();
+					state->done = std::move(done);
+					const auto finish = [state](bool passed) mutable {
+						state->passed = state->passed && passed;
+						if (++state->completed == 2) {
+							state->done(state->passed);
+							state->done = nullptr;
+						}
+					};
+					getCache()->put(
+						queuedKey, QByteArray(queuedPayload),
+						[finish](Storage::Cache::Error error) mutable {
+							finish(error.type
+								   == Storage::Cache::Error::Type::None);
+						});
+					getCache()->get(queuedKey, [finish, queuedPayload](
+												   QByteArray &&value) mutable {
+						finish(value == queuedPayload);
+					});
+				},
+				kCacheUsableTimeoutMilliseconds);
+			const auto queuedOperationsPassed
+				= queuedOperations && *queuedOperations;
+			auto cacheUsableWithinBound = false;
+			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
+			auto firstAccessNanoseconds = qint64(-1);
+			const auto startupScansCompleted = WaitForRegressionCondition([&] {
+				if (Core::MacProtectedPath::CachePathWalkCountForTesting()
+					!= 2) {
+					return false;
+				}
+				if (!data.cacheInitializationFinishedForTesting(mediaCache)) {
+					return false;
+				}
+				if (cacheInitializationNanoseconds < 0) {
+					cacheInitializationNanoseconds
+						= cacheInitializationTimer.nsecsElapsed();
+				}
+				cacheInitializationAllowed
+					= data.cacheInitializationAllowedForTesting(mediaCache);
+				if (!cacheInitializationAllowed) {
+					return true;
+				}
+				auto timer = QElapsedTimer();
+				timer.start();
+				if (!getAllowedCache()) {
+					return false;
+				}
+				firstCache = getCache();
+				if (!firstCache) {
+					return false;
+				}
+				firstAccessNanoseconds = timer.nsecsElapsed();
+				cacheUsableNanoseconds
+					= cacheInitializationTimer.nsecsElapsed();
+				cacheUsableWithinBound
+					= cacheUsableNanoseconds < kMaxCacheUsableNanoseconds;
+				return true;
+			});
+			mainThreadHeartbeat.stop();
+			const auto heartbeatAtCompletion
+				= mainThreadHeartbeatClock.nsecsElapsed();
+			maxMainThreadStallNanoseconds = std::max(
+				maxMainThreadStallNanoseconds,
+				heartbeatAtCompletion - lastMainThreadHeartbeatNanoseconds);
+			const auto first = (firstCache != nullptr);
+			const auto second
+				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
+			auto chatSwitch = CacheChatSwitchRegressionResult();
+			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
+			if (first && !mediaCache) {
+				dialogsHandler
+					= RunFirstDialogsHandlerLatencyRegression(guarded);
+				std::fprintf(
+					stderr,
+					"First messages.getDialogs handler latency regression: "
+					"seeded_directories=125 seeded_files=169 requests=%d "
+					"parsed=%d chats=%d dialogs=%d messages=%d documents=%d "
+					"cache_walks=%d max_handler_ns=%lld "
+					"under_50ms=%d.\n",
+					dialogsHandler.requests, dialogsHandler.responseParsed,
+					dialogsHandler.processedChats,
+					dialogsHandler.processedDialogs,
+					dialogsHandler.processedMessages,
+					dialogsHandler.processedDocuments,
+					dialogsHandler.cacheWalks,
+					static_cast<long long>(dialogsHandler.handlerNanoseconds),
+					(dialogsHandler.handlerNanoseconds >= 0
+					 && dialogsHandler.handlerNanoseconds < 50'000'000));
+				auto &app = Core::App();
+				const auto window = app.ensureSeparateWindowFor(guarded);
+				const auto closeWindow = gsl::finally([&] {
+					if (window && app.separateWindowFor(guarded) == window) {
+						app.closeWindow(window);
+					}
+				});
+				chatSwitch
+					= RunCacheChatSwitchLatencyRegression(guarded, window);
+				std::fprintf(
+					stderr,
+					"Cache chat switch latency regression: "
+					"seeded_directories=125 seeded_files=169 reactions=%d "
+					"hydrated_documents=%d chat_switches=%d "
+					"max_hydration_ns=%lld max_switch_ns=%lld "
+					"max_stall_ns=%lld under_50ms=%d.\n",
+					chatSwitch.reactions, chatSwitch.hydratedDocuments,
+					chatSwitch.chatSwitches,
+					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
+					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
+					static_cast<long long>(chatSwitch.maxStallNanoseconds),
+					(chatSwitch.maxStallNanoseconds >= 0
+					 && chatSwitch.maxStallNanoseconds < 50'000'000));
+			}
+			auto swappedRootRefused = false;
+			auto directFallbackClosed = false;
+			auto rootRestoreSucceeded = true;
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			const auto movedCachePath
+				= cachePath + ".cache-access-identity-backup";
+			if (first) {
+				auto rootMoved = false;
+				auto protectedSymlinkCreated = false;
+				const auto restoreCachePath = gsl::finally([&] {
+					if (protectedSymlinkCreated && !QFile::remove(cachePath)) {
+						rootRestoreSucceeded = false;
+					}
+					if (rootMoved
+						&& !QDir().rename(movedCachePath, cachePath)) {
+						rootRestoreSucceeded = false;
+					}
+				});
+				if (!QFileInfo::exists(movedCachePath)) {
+					rootMoved = QDir().rename(cachePath, movedCachePath);
+				}
+				if (rootMoved) {
+					protectedSymlinkCreated
+						= QFile::link(fixtures.cacheRoot, cachePath);
+				}
+				if (rootMoved && protectedSymlinkCreated) {
+					swappedRootRefused = (getAllowedCache() == nullptr);
+					const auto fallback = getCache();
+					const auto directWrite
+						= AwaitCacheCallback<Storage::Cache::Error>(
+							[&](auto done) {
+								fallback->put(
+									Storage::Cache::Key{0xCA5E,
+														uint64(mediaCache)},
+									QByteArray("refused"), std::move(done));
+							});
+					directFallbackClosed
+						= directWrite
+						  && (directWrite->type
+							  == Storage::Cache::Error::Type::IO);
+				}
+			}
+			const auto startupWalks
+				= Core::MacProtectedPath::CachePathWalkCountForTesting();
+			const auto mainThreadWalks = Core::MacProtectedPath::
+				CachePathWalkMainThreadCountForTesting();
+			std::fprintf(stderr,
+						 "Cache access latency regression: cache=%s "
+						 "seeded_directories=125 seeded_files=169 "
+						 "cache_initialization_ns=%lld "
+						 "initialization_allowed=%d "
+						 "queued_ops_before_ready=%d queued_ops_passed=%d "
+						 "cache_usable_ns=%lld under_10s=%d "
+						 "max_main_thread_stall_ns=%lld under_100ms=%d "
+						 "first_access_ns=%lld under_50ms=%d "
+						 "root_swap_refused=%d direct_fallback_closed=%d "
+						 "root_restored=%d startup_walks=%d "
+						 "main_thread_walks=%d.\n",
+						 mediaCache ? "media_cache" : "cache",
+						 static_cast<long long>(cacheInitializationNanoseconds),
+						 cacheInitializationAllowed,
+						 initializationPendingAtFirstAccess,
+						 queuedOperationsPassed,
+						 static_cast<long long>(cacheUsableNanoseconds),
+						 cacheUsableWithinBound,
+						 static_cast<long long>(maxMainThreadStallNanoseconds),
+						 (maxMainThreadStallNanoseconds < 100'000'000),
+						 static_cast<long long>(firstAccessNanoseconds),
+						 (firstAccessNanoseconds < 50'000'000),
+						 swappedRootRefused, directFallbackClosed,
+						 rootRestoreSucceeded, startupWalks, mainThreadWalks);
+			const auto passed = startupScansCompleted && first && second
+								&& initializationPendingAtFirstAccess
+								&& queuedOperationsPassed
+								&& cacheInitializationAllowed
+								&& cacheUsableWithinBound && (startupWalks == 2)
+								&& (maxMainThreadStallNanoseconds < 100'000'000)
+								&& (mainThreadWalks == 0) && swappedRootRefused
+								&& directFallbackClosed && rootRestoreSucceeded
+								&& (mediaCache || chatSwitch.passed)
+								&& (mediaCache || dialogsHandler.passed)
+								&& (firstAccessNanoseconds < 50'000'000);
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache ? "failed-init-media-cache-access"
+											 : "failed-init-cache-access";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunFailedCacheInitializationAccessRegression(
+				domain, selfId, fixtures, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache
+									  ? "media-cache-stats-initialization"
+									  : "cache-stats-initialization";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunCacheStatisticsInitializationRegression(
+				domain, selfId, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-open-media-cache" : "post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			auto opened = Core::App().databases().get(
+				cachePath, mediaCache ? guarded->local().cacheBigFileSettings()
+									  : guarded->local().cacheSettings());
+			const auto preopened = OpenCache(*opened, guarded);
+			if (!preopened
+				|| !guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			auto &data = guarded->session().data();
+			const auto cacheReady = WaitForRegressionCondition([&] {
+				const auto cache = mediaCache ? data.cacheBigFileIfAllowed()
+											  : data.cacheIfAllowed();
+				return cache != nullptr;
+			});
+			const auto cache = [&]() -> Storage::Cache::Database & {
 				return mediaCache ? data.cacheBigFile() : data.cache();
 			};
 			const auto clearCaches = [guarded] {
-				auto &data = guarded->session().data();
-				data.clearLocalStorage();
-				data.cache().sync();
-				data.cacheBigFile().sync();
+				auto &sessionData = guarded->session().data();
+				sessionData.clearLocalStorage();
+				sessionData.cache().sync();
+				sessionData.cacheBigFile().sync();
 			};
-			const auto passed = RunPostOpenCacheSymlinkRegression(
-				mediaCache ? guarded->local().cacheBigFilePath()
-						   : guarded->local().cachePath(),
-				mediaCache ? fixtures.openedMediaCache : fixtures.openedCache,
-				cacheGetter, clearCaches, [guarded, mediaCache] {
-					return RunRefusedCacheReaderRegressions(guarded,
-															mediaCache);
-				});
-			nativeLifecycleResults->Report(caseName, passed);
-			if (mediaCache) {
-				postOpenMediaCachePassed = passed;
-			} else {
-				postOpenCachePassed = passed;
+			const auto passed = cacheReady
+								&& RunPostOpenCacheSymlinkRegression(
+									cachePath,
+									mediaCache ? fixtures.openedMediaCache
+											   : fixtures.openedCache,
+									cache, clearCaches, [guarded, mediaCache] {
+										return RunRefusedCacheReaderRegressions(
+											guarded, mediaCache);
+									});
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "post-clear-media-cache" : "post-clear-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
 			}
+			auto &data = guarded->session().data();
+			const auto cacheIfAllowed = [&] {
+				return mediaCache ? data.cacheBigFileIfAllowed()
+								  : data.cacheIfAllowed();
+			};
+			const auto cacheReady = WaitForRegressionCondition(
+				[&] { return cacheIfAllowed() != nullptr; });
+			const auto passed = cacheReady
+								&& RunClearThenCacheSymlinkRegression(
+									guarded, mediaCache, cachePath,
+									mediaCache ? fixtures.openedMediaCache
+											   : fixtures.openedCache,
+									[guarded, mediaCache] {
+										return RunRefusedCacheReaderRegressions(
+											guarded, mediaCache);
+									});
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
 		}
-		if (postOpenCachePassed && postOpenMediaCachePassed) {
-			std::fprintf(stderr,
-						 "Authenticated cache post-open regression passed: "
-						 "get, put, and "
-						 "clear symlinks refused for cache and media_cache.\n");
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "pending-media-cache-clear-session-destruction"
+							 : "pending-cache-clear-session-destruction";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed
+				= RunPendingCacheClearSessionDestructionRegression(
+					domain, selfId, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
 		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName
+				= mediaCache ? "logout-before-media-cache-initialization"
+							 : "logout-before-cache-initialization";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunLogoutBeforeCacheInitializationRegression(
+				domain, selfId, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache ? "cold-post-open-media-cache"
+											 : "cold-post-open-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto guarded = domain.add(MTP::Environment::Production);
+			auto accountCleanup
+				= RegressionAccountCleanup(domain, guarded, accountFallback);
+			guarded->mtp().stopForServerEnrollment();
+			guarded->setSessionUserId(selfId);
+			const auto cachePath = mediaCache
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
+			const auto versionPath = QDir(cachePath).filePath("version");
+			const auto cacheSettings
+				= mediaCache ? guarded->local().cacheBigFileSettings()
+							 : guarded->local().cacheSettings();
+			auto existing
+				= Core::App().databases().get(cachePath, cacheSettings);
+			auto cacheKey = mediaCache ? guarded->local().cacheBigFileKey()
+									   : guarded->local().cacheKey();
+			const auto opened = CacheOperationSucceeded(
+				AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+					existing->open(std::move(cacheKey), std::move(done));
+				}));
+			const auto seed
+				= opened
+					  ? AwaitCacheCallback<Storage::Cache::Error>(
+							[&](auto done) {
+								existing->put(
+									Storage::Cache::Key{0x4e4f4d41524b4552ULL,
+														uint64(mediaCache)},
+									QByteArray("version marker omitted"),
+									std::move(done));
+							})
+					  : std::optional<Storage::Cache::Error>();
+			existing->close();
+			existing->sync();
+			const auto markerWasRemoved
+				= !QFileInfo::exists(versionPath) || QFile::remove(versionPath);
+			const auto coldBeforeOpen
+				= markerWasRemoved && !QFileInfo::exists(versionPath)
+				  && QFileInfo(QDir(cachePath).filePath("0/binlog")).isFile();
+			if (!guarded->createSession(
+					RegressionUser(selfId, true, QString()),
+					std::make_unique<Main::SessionSettings>())) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
+			auto &data = guarded->session().data();
+			const auto cacheReady = WaitForRegressionCondition([&] {
+				const auto cache = mediaCache ? data.cacheBigFileIfAllowed()
+											  : data.cacheIfAllowed();
+				return cache != nullptr;
+			});
+			const auto cache = [&]() -> Storage::Cache::Database & {
+				return mediaCache ? data.cacheBigFile() : data.cache();
+			};
+			const auto clearCaches = [guarded] {
+				auto &sessionData = guarded->session().data();
+				sessionData.clearLocalStorage();
+				sessionData.cache().sync();
+				sessionData.cacheBigFile().sync();
+			};
+			const auto activeVersion = ActiveCacheVersionPath(cachePath);
+			const auto markerMissingAfterOpen = !QFileInfo::exists(versionPath);
+			const auto passed
+				= opened && CacheOperationSucceeded(seed) && coldBeforeOpen
+				  && cacheReady && markerMissingAfterOpen
+				  && (activeVersion == QDir(cachePath).filePath("0"))
+				  && RunPostOpenCacheSymlinkRegression(
+					  cachePath,
+					  mediaCache ? fixtures.openedMediaCache
+								 : fixtures.openedCache,
+					  cache, clearCaches, [guarded, mediaCache] {
+						  return RunRefusedCacheReaderRegressions(guarded,
+																  mediaCache);
+					  });
+			nativeLifecycleResults->Report(caseName,
+										   passed && accountCleanup.cleanup());
+		}
+#else
+		nativeLifecycleResults->Skip("post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-media-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-media-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cache-stats-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("media-cache-stats-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cache-access-no-walk",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("media-cache-access-no-walk",
+									 "protected-path-integration-disabled");
+#endif
 	} else {
 		nativeLifecycleResults->Skip("post-open-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("post-clear-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("logout-before-media-cache-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("failed-init-media-cache-access",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cache-stats-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("media-cache-stats-initialization",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cold-post-open-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("cache-access-no-walk",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("media-cache-access-no-walk",
 									 "protected-path-integration-disabled");
 	}
 }
@@ -12552,9 +13993,14 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"could not configure the matching server after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
-	if (!forgotten->createSession(RegressionUser(UserId(4242), true, QString()),
-								  std::make_unique<Main::SessionSettings>())
-		|| !forgotten->sessionExists()
+	const auto sessionCreated = forgotten->createSession(
+		RegressionUser(UserId(4242), true, QString()),
+		std::make_unique<Main::SessionSettings>());
+	const auto cacheReady
+		= sessionCreated && WaitForRegressionCondition([&] {
+			  return forgotten->session().data().cacheIfAllowed() != nullptr;
+		  });
+	if (!sessionCreated || !cacheReady || !forgotten->sessionExists()
 		|| forgotten->serverCacheBindingMismatchPending()
 		|| forgotten->local().checkServerCacheBinding(originalFingerprint, 4242)
 			   != Storage::ServerCacheBindingStatus::Match

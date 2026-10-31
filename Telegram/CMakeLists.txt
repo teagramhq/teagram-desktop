@@ -2461,6 +2461,7 @@ if (TDESKTOP_TEAGRAM)
         # changes every compile command and prevents reuse of the shared ccache.
         set_property(SOURCE
             "${src_loc}/main.cpp"
+            "${src_loc}/data/data_session.cpp"
             "${src_loc}/core/mac_protected_path_runtime.mm"
             "${src_loc}/tests/account_lifecycle_regression.cpp"
             APPEND PROPERTY COMPILE_DEFINITIONS

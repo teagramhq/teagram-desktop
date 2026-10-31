@@ -18,12 +18,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMutex>
 #include <QtCore/QMutexLocker>
 #include <QtCore/QSaveFile>
+#include <QtCore/QThread>
 
 #include <Cocoa/Cocoa.h>
 #include <sandbox.h>
 
+#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <pwd.h>
 #include <spawn.h>
 #include <set>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -42,6 +46,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 extern "C" char **environ;
 
 namespace Core::MacProtectedPath {
+
+struct CachePathDescriptor final {
+	explicit CachePathDescriptor(int fd) : value(fd) {}
+	~CachePathDescriptor() {
+		if (value >= 0) {
+			::close(value);
+		}
+	}
+
+	const int value = -1;
+};
+
 namespace {
 
 struct RuntimeState final {
@@ -54,6 +70,13 @@ struct RuntimeState final {
 	std::shared_ptr<const MacProtectedPathPolicy> policy;
 	RefusalLog refusals;
 };
+
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+QMutex CachePathWalkCountMutex;
+auto CachePathWalkCount = 0;
+auto CachePathWalkMainThreadCount = 0;
+Qt::HANDLE CachePathWalkMainThread = nullptr;
+#endif
 
 [[nodiscard]] RuntimeState &State() {
 	static auto result = RuntimeState();
@@ -558,6 +581,15 @@ bool CheckCachePathImpl(
 		return true;
 	}
 #endif // TDESKTOP_TEAGRAM
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	{
+		QMutexLocker lock(&CachePathWalkCountMutex);
+		++CachePathWalkCount;
+		if (QThread::currentThreadId() == CachePathWalkMainThread) {
+			++CachePathWalkMainThreadCount;
+		}
+	}
+#endif
 	if (!CheckPath(Operation::OpenDir, path, callsite)) {
 		return false;
 	}
@@ -639,13 +671,696 @@ bool CheckCachePathImpl(
 	return allowed;
 }
 
+[[nodiscard]] QString AbsoluteCachePath(const QString &path) {
+	if (QDir::isAbsolutePath(path)) {
+		return QDir::cleanPath(path);
+	}
+	const auto profile = ProfileRoot();
+	return profile.isEmpty() ? QString()
+							 : QDir::cleanPath(QDir(profile).filePath(path));
+}
+
+[[nodiscard]] std::vector<QString>
+CachePathPrefixes(const QString &absolutePath) {
+	auto result = std::vector<QString>{u"/"_q};
+	auto prefix = u"/"_q;
+	for (const auto &component : absolutePath.split('/', Qt::SkipEmptyParts)) {
+		if (prefix != u"/"_q) {
+			prefix.append('/');
+		}
+		prefix.append(component);
+		result.push_back(prefix);
+	}
+	return result;
+}
+
+void SetCachePathLinkIdentity(const struct stat &info,
+							  CachePathComponentIdentity *identity) {
+	identity->device = quint64(info.st_dev);
+	identity->inode = quint64(info.st_ino);
+	identity->type = quint32(info.st_mode & S_IFMT);
+	identity->size = qint64(info.st_size);
+	identity->modifiedSeconds = qint64(info.st_mtimespec.tv_sec);
+	identity->modifiedNanoseconds = qint64(info.st_mtimespec.tv_nsec);
+	identity->changedSeconds = qint64(info.st_ctimespec.tv_sec);
+	identity->changedNanoseconds = qint64(info.st_ctimespec.tv_nsec);
+	identity->exists = true;
+}
+
+void SetCachePathTargetIdentity(const struct stat &info,
+								CachePathComponentIdentity *identity) {
+	identity->targetDevice = quint64(info.st_dev);
+	identity->targetInode = quint64(info.st_ino);
+	identity->targetType = quint32(info.st_mode & S_IFMT);
+}
+
+[[nodiscard]] bool
+SameCachePathStat(const struct stat &info,
+				  const CachePathComponentIdentity &identity) {
+	return (quint64(info.st_dev) == identity.device)
+		   && (quint64(info.st_ino) == identity.inode)
+		   && (quint32(info.st_mode & S_IFMT) == identity.type);
+}
+
+// The marker only changes during open or clear; metadata detects those changes
+// in one lstat without reopening and reading it on every cache access.
+[[nodiscard]] bool
+SameCachePathVersionMarkerStat(const struct stat &info,
+							   const CachePathComponentIdentity &identity) {
+	return SameCachePathStat(info, identity)
+		   && (qint64(info.st_size) == identity.size)
+		   && (qint64(info.st_mtimespec.tv_sec) == identity.modifiedSeconds)
+		   && (qint64(info.st_mtimespec.tv_nsec)
+			   == identity.modifiedNanoseconds)
+		   && (qint64(info.st_ctimespec.tv_sec) == identity.changedSeconds)
+		   && (qint64(info.st_ctimespec.tv_nsec)
+			   == identity.changedNanoseconds);
+}
+
+[[nodiscard]] bool
+SameCachePathTargetStat(const struct stat &info,
+						const CachePathComponentIdentity &identity) {
+	return (quint64(info.st_dev) == identity.targetDevice)
+		   && (quint64(info.st_ino) == identity.targetInode)
+		   && (quint32(info.st_mode & S_IFMT) == identity.targetType);
+}
+
+[[nodiscard]] bool CachePathDescriptorPath(int descriptor, QString *path) {
+	auto native = std::array<char, MAXPATHLEN>();
+	if (::fcntl(descriptor, F_GETPATH, native.data()) != 0) {
+		return false;
+	}
+	*path = QFile::decodeName(QByteArray(native.data()));
+	return !path->isEmpty();
+}
+
+[[nodiscard]] bool
+ReadCachePathLinkIdentity(const QString &path,
+						  CachePathComponentIdentity *identity, bool *missing) {
+	const auto native = QFile::encodeName(path);
+	struct stat link = {};
+	if (::lstat(native.constData(), &link) != 0) {
+		if (errno == ENOENT) {
+			*missing = true;
+			return true;
+		}
+		return false;
+	}
+	if (!S_ISDIR(link.st_mode) && !S_ISLNK(link.st_mode)) {
+		return false;
+	}
+	SetCachePathLinkIdentity(link, identity);
+	return true;
+}
+
+[[nodiscard]] bool
+ReadCachePathTargetIdentity(const QString &path,
+							CachePathComponentIdentity *identity) {
+	const auto native = QFile::encodeName(path);
+	struct stat target = {};
+	if (::stat(native.constData(), &target) != 0 || !S_ISDIR(target.st_mode)) {
+		return false;
+	}
+	SetCachePathTargetIdentity(target, identity);
+	return true;
+}
+
+[[nodiscard]] bool
+SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
+						  const CachePathComponentIdentity &right);
+
+[[nodiscard]] bool
+CaptureCachePathRootDescriptor(const QString &path,
+							   const CachePathComponentIdentity &expected,
+							   CachePathIdentity *identity) {
+	const auto native = QFile::encodeName(path);
+	const auto descriptor
+		= ::open(native.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (descriptor < 0) {
+		return false;
+	}
+	struct stat target = {};
+	if ((::fstat(descriptor, &target) != 0)
+		|| !SameCachePathTargetStat(target, expected)) {
+		::close(descriptor);
+		return false;
+	}
+	auto current = CachePathComponentIdentity{.path = path};
+	auto missing = false;
+	if (!ReadCachePathLinkIdentity(path, &current, &missing) || missing
+		|| !SameCachePathLinkIdentity(current, expected)) {
+		::close(descriptor);
+		return false;
+	}
+	auto resolved = QString();
+	if (!CachePathDescriptorPath(descriptor, &resolved)) {
+		::close(descriptor);
+		return false;
+	}
+	identity->rootDescriptor
+		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->resolvedPath = std::move(resolved);
+	return true;
+}
+
+[[nodiscard]] QString ActiveCacheVersionPath(const QString &cachePath) {
+	const auto versionPath = QDir(cachePath).filePath("version");
+	const auto native = QFile::encodeName(versionPath);
+	const auto versionZeroPath = [&] {
+		const auto zeroPath = QDir(cachePath).filePath("0");
+		const auto zeroNative = QFile::encodeName(zeroPath);
+		struct stat zero = {};
+		if (::lstat(zeroNative.constData(), &zero) != 0 && errno == ENOENT) {
+			return QString();
+		}
+		return zeroPath;
+	};
+	const auto descriptor = ::open(
+		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	if (descriptor < 0) {
+		if (errno != ENOENT) {
+			return {};
+		}
+		struct stat marker = {};
+		if (::lstat(native.constData(), &marker) == 0 || errno != ENOENT) {
+			return {};
+		}
+		return versionZeroPath();
+	}
+	const auto close = gsl::finally([=] { ::close(descriptor); });
+	struct stat opened = {};
+	if (::fstat(descriptor, &opened) != 0 || !S_ISREG(opened.st_mode)) {
+		return {};
+	}
+	auto version = qint32();
+	auto complete = false;
+	for (auto offset = size_t(); offset != sizeof(version);) {
+		const auto read
+			= ::read(descriptor, reinterpret_cast<char *>(&version) + offset,
+					 sizeof(version) - offset);
+		if (read < 0 && errno == EINTR) {
+			continue;
+		} else if (read < 0) {
+			return {};
+		} else if (read == 0) {
+			break;
+		}
+		offset += size_t(read);
+		complete = (offset == sizeof(version));
+	}
+	struct stat current = {};
+	if (::lstat(native.constData(), &current) != 0 || !S_ISREG(current.st_mode)
+		|| (opened.st_dev != current.st_dev)
+		|| (opened.st_ino != current.st_ino)) {
+		return {};
+	}
+	if (!complete) {
+		return versionZeroPath();
+	} else if (version < 0) {
+		return {};
+	}
+	return QDir(cachePath).filePath(QString::number(version));
+}
+
+[[nodiscard]] bool ReadCacheVersionDescriptor(int descriptor, qint32 *version) {
+	auto value = qint32();
+	auto complete = false;
+	for (auto offset = size_t(); offset != sizeof(value);) {
+		const auto read
+			= ::pread(descriptor, reinterpret_cast<char *>(&value) + offset,
+					  sizeof(value) - offset, off_t(offset));
+		if (read < 0 && errno == EINTR) {
+			continue;
+		} else if (read < 0) {
+			return false;
+		} else if (read == 0) {
+			break;
+		}
+		offset += size_t(read);
+		complete = (offset == sizeof(value));
+	}
+	if (complete && value < 0) {
+		return false;
+	}
+	*version = complete ? value : 0;
+	return true;
+}
+
+[[nodiscard]] bool CaptureCachePathVersionMarker(CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+	auto marker = CachePathComponentIdentity{
+		.path = QDir(identity->absolutePath).filePath("version")};
+	if (!identity->rootDescriptor) {
+		identity->version = 0;
+		identity->versionName = u"0"_q;
+		identity->versionMarkerDescriptor.reset();
+		identity->versionMarker = std::move(marker);
+		return true;
+	}
+	const auto native = QFile::encodeName(marker.path);
+	const auto descriptor = ::open(
+		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	if (descriptor < 0) {
+		if (errno != ENOENT) {
+			return false;
+		}
+		struct stat current = {};
+		if (::lstat(native.constData(), &current) == 0 || errno != ENOENT) {
+			return false;
+		}
+		identity->version = 0;
+		identity->versionName = u"0"_q;
+		identity->versionMarkerDescriptor.reset();
+		identity->versionMarker = std::move(marker);
+		return true;
+	}
+	struct stat opened = {};
+	struct stat current = {};
+	auto version = qint32();
+	const auto openedMatches
+		= (::fstat(descriptor, &opened) == 0) && S_ISREG(opened.st_mode);
+	if (!openedMatches || !ReadCacheVersionDescriptor(descriptor, &version)) {
+		::close(descriptor);
+		return false;
+	}
+	SetCachePathLinkIdentity(opened, &marker);
+	SetCachePathTargetIdentity(opened, &marker);
+	const auto nativeMatches
+		= (::lstat(native.constData(), &current) == 0)
+		  && S_ISREG(current.st_mode)
+		  && SameCachePathVersionMarkerStat(current, marker);
+	if (!nativeMatches) {
+		::close(descriptor);
+		return false;
+	}
+	identity->versionMarkerDescriptor
+		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->version = version;
+	identity->versionName = QString::number(version);
+	identity->versionMarker = std::move(marker);
+	return true;
+}
+
+[[nodiscard]] bool
+CaptureCachePathActiveVersionDirectory(const QString &path,
+									   CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+	auto active = CachePathComponentIdentity{.path = path};
+	auto missing = false;
+	if (!ReadCachePathLinkIdentity(path, &active, &missing) || missing
+		|| (active.type != quint32(S_IFDIR))
+		|| !ReadCachePathTargetIdentity(path, &active)) {
+		return false;
+	}
+	const auto native = QFile::encodeName(path);
+	const auto descriptor = ::open(
+		native.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (descriptor < 0) {
+		return false;
+	}
+	struct stat opened = {};
+	const auto openedMatches = (::fstat(descriptor, &opened) == 0)
+							   && SameCachePathTargetStat(opened, active);
+	auto current = CachePathComponentIdentity{.path = path};
+	missing = false;
+	const auto pathMatches = ReadCachePathLinkIdentity(path, &current, &missing)
+							 && !missing
+							 && SameCachePathLinkIdentity(current, active);
+	if (!openedMatches || !pathMatches) {
+		::close(descriptor);
+		return false;
+	}
+	identity->activeVersionDescriptor
+		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->activeVersionDirectory = std::move(active);
+	identity->activeVersionName = QFileInfo(path).fileName();
+	return true;
+}
+
+[[nodiscard]] bool
+CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
+								 qint32 *version) {
+	if (identity.components.empty() || !version) {
+		return false;
+	}
+	if (!identity.rootDescriptor) {
+		if (identity.versionMarker.exists || (identity.version != 0)
+			|| !identity.activeVersionDirectory.path.isEmpty()) {
+			return false;
+		}
+		*version = 0;
+		return true;
+	}
+	const auto native = QFile::encodeName(identity.versionMarker.path);
+	struct stat current = {};
+	if (identity.versionMarker.exists) {
+		if (!identity.versionMarkerDescriptor
+			|| (::lstat(native.constData(), &current) != 0)
+			|| !S_ISREG(current.st_mode)
+			|| !SameCachePathVersionMarkerStat(current,
+											   identity.versionMarker)) {
+			return false;
+		}
+		*version = identity.version;
+	} else {
+		if (::lstat(native.constData(), &current) == 0) {
+			return false;
+		} else if (errno != ENOENT) {
+			return false;
+		}
+		*version = 0;
+	}
+	return (*version == identity.version);
+}
+
+[[nodiscard]] bool CaptureCachePathIdentity(const QString &path,
+											CachePathIdentity *identity,
+											const char **failureStage) {
+	if (failureStage) {
+		*failureStage = nullptr;
+	}
+	const auto fail = [failureStage](const char *stage) {
+		if (failureStage) {
+			*failureStage = stage;
+		}
+		return false;
+	};
+	const auto absolutePath = AbsoluteCachePath(path);
+	if (absolutePath.isEmpty() || !identity) {
+		return fail("capture-absolute-path");
+	}
+	auto result = CachePathIdentity();
+	result.absolutePath = absolutePath;
+	auto missingSuffix = false;
+	for (const auto &prefix : CachePathPrefixes(absolutePath)) {
+		auto component = CachePathComponentIdentity{.path = prefix};
+		if (!missingSuffix) {
+			auto missing = false;
+			if (!ReadCachePathLinkIdentity(prefix, &component, &missing)) {
+				return fail("capture-component-link");
+			}
+			missingSuffix = missing;
+			if (component.exists
+				&& !ReadCachePathTargetIdentity(prefix, &component)) {
+				return fail("capture-component-target");
+			}
+		}
+		result.components.push_back(std::move(component));
+	}
+	if (result.components.back().exists) {
+		if (!CaptureCachePathRootDescriptor(
+				absolutePath, result.components.back(), &result)) {
+			return fail("capture-root-descriptor");
+		}
+	}
+	if (!CaptureCachePathVersionMarker(&result)) {
+		return fail("capture-version-marker");
+	}
+	const auto activePath = ActiveCacheVersionPath(absolutePath);
+	const auto expectedActivePath
+		= QDir(absolutePath).filePath(result.versionName);
+	if (!activePath.isEmpty() && (activePath != expectedActivePath)) {
+		return fail("capture-active-path-mismatch");
+	}
+	if (activePath.isEmpty() && (result.version != 0)) {
+		return fail("capture-active-path-missing");
+	}
+	result.activeVersionDirectory.path = activePath;
+	if (!result.activeVersionDirectory.path.isEmpty()) {
+		if (!CaptureCachePathActiveVersionDirectory(
+				result.activeVersionDirectory.path, &result)) {
+			return fail("capture-active-directory");
+		}
+	}
+	*identity = std::move(result);
+	return true;
+}
+
+[[nodiscard]] bool
+SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
+						  const CachePathComponentIdentity &right) {
+	return left.exists && right.exists && (left.device == right.device)
+		   && (left.inode == right.inode) && (left.type == right.type);
+}
+
+void ReportCachePathIdentityRefusal(const char *callsite, const char *stage) {
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+	std::fprintf(stderr, "Cache path identity refusal: stage=%s callsite=%s.\n",
+				 stage, callsite ? callsite : "unknown");
+#endif
+	ReportRefusal({
+		.operation = Operation::OpenDir,
+		.protectedClass = ProtectedClass::Invalid,
+		.callsite = callsite ? QString::fromUtf8(callsite) : QString(),
+	});
+}
+
+[[nodiscard]] bool CachePathRootStillValid(const QString &path,
+										   CachePathIdentity *identity) {
+	const auto absolutePath = AbsoluteCachePath(path);
+	if (!identity || absolutePath.isEmpty()
+		|| (absolutePath != identity->absolutePath)
+		|| identity->components.empty()) {
+		return false;
+	}
+	const auto &expected = identity->components.back();
+	if (!identity->rootDescriptor) {
+		auto actual = CachePathComponentIdentity{.path = absolutePath};
+		auto missing = false;
+		return !expected.exists
+			   && ReadCachePathLinkIdentity(absolutePath, &actual, &missing)
+			   && missing;
+	}
+	if (!expected.exists || (expected.path != absolutePath)
+		|| identity->resolvedPath.isEmpty()) {
+		return false;
+	}
+	// F_GETPATH detects an ancestor rename or redirect without walking each
+	// prefix for every cache access.
+	auto current = CachePathComponentIdentity{.path = absolutePath};
+	auto missing = false;
+	auto resolved = QString();
+	if (!ReadCachePathLinkIdentity(absolutePath, &current, &missing) || missing
+		|| !SameCachePathLinkIdentity(current, expected)
+		|| !CachePathDescriptorPath(identity->rootDescriptor->value, &resolved)
+		|| (resolved != identity->resolvedPath)) {
+		return false;
+	}
+	if (expected.type != quint32(S_IFLNK)) {
+		return true;
+	}
+	struct stat target = {};
+	const auto native = QFile::encodeName(absolutePath);
+	return (::stat(native.constData(), &target) == 0)
+		   && SameCachePathTargetStat(target, expected);
+}
+
+[[nodiscard]] bool
+CachePathActiveVersionDirectoryStillValid(const CachePathIdentity &identity) {
+	if (identity.components.empty()) {
+		return false;
+	}
+	if (!identity.rootDescriptor) {
+		return (identity.version == 0) && (identity.versionName == u"0"_q)
+			   && identity.activeVersionDirectory.path.isEmpty();
+	}
+	if (identity.activeVersionDirectory.path.isEmpty()) {
+		if ((identity.version != 0) || (identity.versionName != u"0"_q)
+			|| !identity.activeVersionName.isEmpty()) {
+			return false;
+		}
+		struct stat zero = {};
+		const auto native
+			= QFile::encodeName(QDir(identity.absolutePath).filePath("0"));
+		return (::lstat(native.constData(), &zero) != 0) && (errno == ENOENT);
+	}
+	if ((identity.activeVersionName != identity.versionName)
+		|| !identity.activeVersionDescriptor) {
+		return false;
+	}
+	// The descriptor is immutable while this identity is alive. Checking the
+	// directory entry is enough to detect replacement or a symlink swap.
+	auto current = CachePathComponentIdentity{
+		.path = identity.activeVersionDirectory.path};
+	auto missing = false;
+	return ReadCachePathLinkIdentity(identity.activeVersionDirectory.path,
+									 &current, &missing)
+		   && !missing
+		   && SameCachePathLinkIdentity(current,
+										identity.activeVersionDirectory);
+}
+
+[[nodiscard]] bool
+CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
+	qint32 version = 0;
+	return CachePathVersionMarkerStillValid(identity, &version)
+		   && CachePathActiveVersionDirectoryStillValid(identity)
+		   && (version == identity.version);
+}
+
+[[nodiscard]] bool CachePathIdentityStillValid(const QString &path,
+											   const char *callsite,
+											   CachePathIdentity *identity) {
+	if (!CachePathRootStillValid(path, identity)) {
+		ReportCachePathIdentityRefusal(callsite, "identity-root");
+		return false;
+	}
+	if (!CachePathActiveVersionStillValid(*identity)) {
+		ReportCachePathIdentityRefusal(callsite, "identity-active-version");
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool
+CachePathAccessIdentityStillValid(const QString &path, const char *callsite,
+								  CachePathIdentity *identity) {
+	// The marker is checked when opening and before clearing; ordinary cache
+	// I/O remains on the already-open active version directory.
+	if (!CachePathRootStillValid(path, identity)) {
+		ReportCachePathIdentityRefusal(callsite, "access-root");
+		return false;
+	}
+	if (!CachePathActiveVersionDirectoryStillValid(*identity)) {
+		ReportCachePathIdentityRefusal(callsite, "access-active-version");
+		return false;
+	}
+	return true;
+}
+
 } // namespace
 
 bool CheckCachePath(const QString &path, const char *callsite) {
 	return CheckCachePathImpl(path, callsite, {});
 }
 
+bool CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
+									  CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		*identity = CachePathIdentity();
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	if (!CheckCachePathImpl(path, callsite, {})) {
+		ReportCachePathIdentityRefusal(callsite, "capture-cache-tree");
+		return false;
+	}
+	auto failureStage = static_cast<const char *>(nullptr);
+	if (!CaptureCachePathIdentity(path, identity, &failureStage)) {
+		ReportCachePathIdentityRefusal(
+			callsite, failureStage ? failureStage : "capture-before-open");
+		return false;
+	}
+	return true;
+}
+
+bool CaptureCachePathActiveVersionIdentity(const QString &path,
+										   const char *callsite,
+										   CachePathIdentity *identity) {
+	if (!identity) {
+		return false;
+	}
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	auto refreshed = *identity;
+	if (refreshed.components.empty()
+		|| (AbsoluteCachePath(path) != refreshed.absolutePath)) {
+		ReportCachePathIdentityRefusal(callsite, "capture-path");
+		return false;
+	}
+	if (refreshed.rootDescriptor) {
+		if (!CachePathRootStillValid(path, &refreshed)) {
+			ReportCachePathIdentityRefusal(callsite, "capture-root");
+			return false;
+		}
+	} else {
+		const auto absolutePath = AbsoluteCachePath(path);
+		if (refreshed.components.back().exists) {
+			ReportCachePathIdentityRefusal(callsite, "capture-missing-root");
+			return false;
+		}
+		auto root = CachePathComponentIdentity{.path = absolutePath};
+		auto missing = false;
+		if (!CheckPath(Operation::OpenDir, absolutePath, callsite)
+			|| !ReadCachePathLinkIdentity(absolutePath, &root, &missing)
+			|| missing || !ReadCachePathTargetIdentity(absolutePath, &root)
+			|| !CaptureCachePathRootDescriptor(absolutePath, root,
+											   &refreshed)) {
+			ReportCachePathIdentityRefusal(callsite, "capture-created-root");
+			return false;
+		}
+		refreshed.components.back() = std::move(root);
+	}
+	if (!CaptureCachePathVersionMarker(&refreshed)) {
+		ReportCachePathIdentityRefusal(callsite, "capture-version-marker");
+		return false;
+	}
+	const auto activePath = ActiveCacheVersionPath(refreshed.absolutePath);
+	const auto expectedActivePath
+		= QDir(refreshed.absolutePath).filePath(refreshed.versionName);
+	if (activePath.isEmpty() || (activePath != expectedActivePath)
+		|| !CheckPath(Operation::OpenDir, activePath, callsite)) {
+		ReportCachePathIdentityRefusal(callsite, "capture-active-path");
+		return false;
+	}
+	if (!CaptureCachePathActiveVersionDirectory(activePath, &refreshed)) {
+		ReportCachePathIdentityRefusal(callsite, "capture-active-directory");
+		return false;
+	}
+	*identity = std::move(refreshed);
+	return CachePathIdentityStillValid(path, callsite, identity);
+}
+
+bool CheckCachePathIdentity(const QString &path, const char *callsite,
+							CachePathIdentity *identity) {
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	return CachePathIdentityStillValid(path, callsite, identity);
+}
+
+bool CheckCachePathAccessIdentity(const QString &path, const char *callsite,
+								  CachePathIdentity *identity) {
+#ifndef TDESKTOP_TEAGRAM
+	if (!IntegrationTestActive()) {
+		return true;
+	}
+#endif // TDESKTOP_TEAGRAM
+	return identity
+		   && CachePathAccessIdentityStillValid(path, callsite, identity);
+}
+
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+void ResetCachePathWalkCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
+	CachePathWalkCount = 0;
+	CachePathWalkMainThreadCount = 0;
+	CachePathWalkMainThread = QThread::currentThreadId();
+}
+
+int CachePathWalkCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
+	return CachePathWalkCount;
+}
+
+int CachePathWalkMainThreadCountForTesting() {
+	QMutexLocker lock(&CachePathWalkCountMutex);
+	return CachePathWalkMainThreadCount;
+}
+
 int RunNotificationSoundProbe() {
 	if (!IntegrationTestActive()) {
 		return 1;

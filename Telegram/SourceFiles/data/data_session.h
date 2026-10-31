@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "core/mac_protected_path_runtime.h"
 #include "storage/storage_databases.h"
 #include "dialogs/dialogs_main_list.h"
 #include "data/data_groups.h"
@@ -14,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_star_gift.h"
 #include "history/history_location_manager.h"
 #include "base/timer.h"
+#include "base/weak_ptr.h"
 
 #include <QtCore/QMutex>
 
@@ -166,8 +168,8 @@ struct ViewRemoval {
 	ViewRemovalReason reason = ViewRemovalReason::Removed;
 };
 
-class Session final {
-public:
+class Session final : public base::has_weak_ptr {
+  public:
 	using ViewElement = HistoryView::Element;
 
 	struct SentData {
@@ -270,6 +272,18 @@ public:
 	[[nodiscard]] Storage::Cache::Database &cacheBigFile();
 	[[nodiscard]] Storage::Cache::Database *cacheIfAllowed();
 	[[nodiscard]] Storage::Cache::Database *cacheBigFileIfAllowed();
+	void clearCacheDatabase(bool bigFileCache, bool closeBefore = false,
+							FnMut<void(Storage::Cache::Error)> &&done
+							= nullptr);
+	[[nodiscard]] rpl::producer<Storage::Cache::Database::Stats>
+	cacheStatsOnMain(bool bigFileCache);
+#ifdef Q_OS_MAC
+	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
+	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
+	[[nodiscard]] bool cacheAllowedForTesting(bool bigFileCache);
+	void setCacheClearPauseForTesting(bool bigFileCache, Fn<void()> pause);
+	void setCacheClearHandoffForTesting(bool bigFileCache, Fn<void()> handoff);
+#endif
 
 	[[nodiscard]] not_null<PeerData*> peer(PeerId id);
 	[[nodiscard]] not_null<PeerData*> peer(UserId id) = delete;
@@ -1028,6 +1042,16 @@ private:
 	};
 
 	void suggestStartExport();
+	void initializeCacheDatabases(
+		bool cacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity cacheIdentity,
+		bool bigFileCacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity);
+#ifdef Q_OS_MAC
+	void finishCacheDatabaseInitialization(
+		bool bigFileCache, bool cacheAllowed,
+		Core::MacProtectedPath::CachePathIdentity cacheIdentity);
+#endif
 
 	void setupMigrationViewer();
 	void setupChannelLeavingViewer();
@@ -1183,9 +1207,34 @@ private:
 	const QString _bigFileCachePath;
 	Storage::DatabasePointer _cache;
 	Storage::DatabasePointer _bigFileCache;
+	rpl::variable<bool> _cacheInitializationReady = false;
+	rpl::variable<bool> _bigFileCacheInitializationReady = false;
+#ifdef Q_OS_MAC
+	Storage::Cache::Database _unavailableCache;
+	std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>
+		_cacheInitializationIdentity;
+	std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>
+		_bigFileCacheInitializationIdentity;
+	bool _cacheInitializationPending = true;
+	bool _bigFileCacheInitializationPending = true;
+	bool _cacheInitializationFinishedForTesting = false;
+	bool _bigFileCacheInitializationFinishedForTesting = false;
+	bool _cacheInitializationAllowedForTesting = false;
+	bool _bigFileCacheInitializationAllowedForTesting = false;
+#endif
 	QMutex _cacheMutex;
+	Core::MacProtectedPath::CachePathIdentity _cacheIdentity;
+	Core::MacProtectedPath::CachePathIdentity _bigFileCacheIdentity;
 	bool _cacheAllowed = false;
 	bool _bigFileCacheAllowed = false;
+#ifdef Q_OS_MAC
+	bool _cacheClearPending = false;
+	bool _bigFileCacheClearPending = false;
+	Fn<void()> _cacheClearPauseForTesting;
+	Fn<void()> _bigFileCacheClearPauseForTesting;
+	Fn<void()> _cacheClearHandoffForTesting;
+	Fn<void()> _bigFileCacheClearHandoffForTesting;
+#endif
 
 	TimeId _exportAvailableAt = 0;
 	base::weak_qptr<Ui::BoxContent> _exportSuggestion;
@@ -1431,7 +1480,6 @@ private:
 	rpl::event_stream<RecentJoinChat> _recentJoinChat;
 
 	rpl::lifetime _lifetime;
-
 };
 
 } // namespace Data

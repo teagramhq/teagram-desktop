@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (( $# != 1 )); then
-  printf 'Usage: %s <pull_request|push|schedule|workflow_dispatch>\n' "${0##*/}" >&2
+if (( $# < 1 || $# > 2 )); then
+  printf 'Usage: %s <pull_request|push|schedule|workflow_dispatch> [label]\n' "${0##*/}" >&2
   exit 2
 fi
 
@@ -10,6 +10,10 @@ case "$1" in
   pull_request|push|schedule)
     profile=pr-compatible
     protected_path_integration=OFF
+    if [[ "$1" == "pull_request" && "${2:-}" == "macos-build" ]]; then
+      profile=protected
+      protected_path_integration=ON
+    fi
     ;;
   workflow_dispatch)
     profile=pr-compatible
