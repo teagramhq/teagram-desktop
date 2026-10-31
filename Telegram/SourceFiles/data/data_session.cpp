@@ -1858,6 +1858,10 @@ bool Session::cacheAllowedForTesting(bool bigFileCache) {
 	return bigFileCache ? _bigFileCacheAllowed : _cacheAllowed;
 }
 
+Storage::Cache::Database *Session::cacheDatabaseForTesting(bool bigFileCache) {
+	return bigFileCache ? _bigFileCache.get() : _cache.get();
+}
+
 void Session::setCacheClearPauseForTesting(bool bigFileCache,
 										   Fn<void()> pause) {
 	QMutexLocker lock(&_cacheMutex);

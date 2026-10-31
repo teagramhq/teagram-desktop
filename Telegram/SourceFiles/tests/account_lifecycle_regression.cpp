@@ -2258,11 +2258,22 @@ class RegressionAccountCleanup final {
 			return true;
 		}
 		const auto guarded = not_null<Main::Account *>(account);
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		auto cache = static_cast<Storage::Cache::Database *>(nullptr);
+		auto mediaCache = static_cast<Storage::Cache::Database *>(nullptr);
+		if (account->sessionExists()) {
+			auto &data = account->session().data();
+			// The session owns these database leases; do not reacquire them.
+			cache = data.cacheDatabaseForTesting(false);
+			mediaCache = data.cacheDatabaseForTesting(true);
+		}
+#else
 		auto cache = Core::App().databases().get(
 			account->local().cachePath(), account->local().cacheSettings());
 		auto mediaCache = Core::App().databases().get(
 			account->local().cacheBigFilePath(),
 			account->local().cacheBigFileSettings());
+#endif
 		if (const auto window = Core::App().separateWindowFor(guarded)) {
 			Core::App().closeWindow(window);
 		}
@@ -2270,8 +2281,12 @@ class RegressionAccountCleanup final {
 			current && current->sessionExists()) {
 			current->forcedLogOut();
 		}
-		cache->sync();
-		mediaCache->sync();
+		if (cache) {
+			cache->sync();
+		}
+		if (mediaCache) {
+			mediaCache->sync();
+		}
 		if (const auto fallback = _fallback.get();
 			fallback && (&_domain.active() != fallback)) {
 			_domain.activate(not_null<Main::Account *>(fallback));
@@ -2749,6 +2764,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		}
 	});
 	auto &data = guarded->session().data();
+	const auto cacheDatabase = data.cacheDatabaseForTesting(false);
+	const auto mediaCacheDatabase = data.cacheDatabaseForTesting(true);
 	const auto cacheIfAllowed = [&] {
 		return mediaCache ? data.cacheBigFileIfAllowed()
 						  : data.cacheIfAllowed();
@@ -2781,6 +2798,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto sessionDestroyed = !guarded->sessionExists();
 	const auto callbackCompleted
 		= WaitForRegressionCondition([&] { return state->completed; });
+	cacheDatabase->sync();
+	mediaCacheDatabase->sync();
 	const auto passed = mainUpdateQueued && accessStayedBlocked
 						&& sessionDestroyed && callbackCompleted
 						&& state->callbackOnMain
@@ -2856,6 +2875,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		return false;
 	}
 	auto &data = guarded->session().data();
+	const auto cacheDatabase = data.cacheDatabaseForTesting(false);
+	const auto mediaCacheDatabase = data.cacheDatabaseForTesting(true);
 	const auto initializationPending
 		= !data.cacheInitializationFinishedForTesting(mediaCache);
 	guarded->forcedLogOut();
@@ -2875,7 +2896,14 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 							 })
 						   : std::optional<QByteArray>();
 	const auto cleared = value && value->isEmpty();
-	const auto passed = initializationPending && sessionDestroyed && cleared;
+	const auto closed = AwaitCacheCallback<int>([&](auto done) {
+		verification->close([done = std::move(done)]() mutable { done(1); });
+	});
+	verification->sync();
+	cacheDatabase->sync();
+	mediaCacheDatabase->sync();
+	const auto passed = initializationPending && sessionDestroyed && cleared
+						&& closed && (*closed == 1);
 	if (!passed) {
 		std::fprintf(
 			stderr,
