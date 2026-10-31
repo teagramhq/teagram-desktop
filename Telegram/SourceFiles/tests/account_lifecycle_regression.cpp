@@ -10371,33 +10371,33 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			const auto cachePath = mediaCache
-								   ? guarded->local().cacheBigFilePath()
-								   : guarded->local().cachePath();
+									   ? guarded->local().cacheBigFilePath()
+									   : guarded->local().cachePath();
 			const auto cacheSettings
 				= mediaCache ? guarded->local().cacheBigFileSettings()
 							 : guarded->local().cacheSettings();
-			auto existing = Core::App().databases().get(
-				cachePath, cacheSettings);
+			auto existing
+				= Core::App().databases().get(cachePath, cacheSettings);
 			const auto cacheOpened = OpenCache(*existing, guarded);
 			existing->close();
 			existing->sync();
 			const auto closedClear = CacheOperationSucceeded(
-				AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-					existing->clear(std::move(done));
-				}));
+				AwaitCacheCallback<Storage::Cache::Error>(
+					[&](auto done) { existing->clear(std::move(done)); }));
 			auto markerVersion = qint32(-1);
 			auto marker = QFile(QDir(cachePath).filePath("version"));
-			const auto markerWritten = marker.open(QIODevice::ReadOnly)
-				&& (marker.read(reinterpret_cast<char *>(&markerVersion),
-								qint64(sizeof(markerVersion)))
-						== qint64(sizeof(markerVersion)));
+			const auto markerWritten
+				= marker.open(QIODevice::ReadOnly)
+				  && (marker.read(reinterpret_cast<char *>(&markerVersion),
+								  qint64(sizeof(markerVersion)))
+					  == qint64(sizeof(markerVersion)));
 			marker.close();
 			const auto missingActiveVersionBeforeOpen
 				= cacheOpened && closedClear && markerWritten
 				  && (markerVersion >= 0)
 				  && !QFileInfo(QDir(cachePath).filePath(
-								 QString::number(markerVersion)))
-						 .exists();
+									QString::number(markerVersion)))
+						  .exists();
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
 			auto cacheInitializationTimer = QElapsedTimer();
 			cacheInitializationTimer.start();
