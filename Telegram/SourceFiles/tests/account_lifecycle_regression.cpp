@@ -10224,16 +10224,21 @@ void RunAuthenticatedCacheSymlinkCases(
 				seeded = file.open(QIODevice::WriteOnly)
 						 && (file.write("fixture") == 7);
 			}
-			passed = seeded && watched->createSession(
-				RegressionUser(selfId, true, QString()),
-				std::make_unique<Main::SessionSettings>());
+			passed = seeded
+					 && watched->createSession(
+						 RegressionUser(selfId, true, QString()),
+						 std::make_unique<Main::SessionSettings>());
 			if (passed) {
 				auto &data = watched->session().data();
-				passed = WaitForRegressionCondition([&] {
-					return data.cacheInitializationFinishedForTesting(false);
-				}, 10'000)
-					   && data.cacheInitializationAllowedForTesting(false)
-					   && data.cacheIfAllowed();
+				passed
+					= WaitForRegressionCondition(
+						  [&] {
+							  return data.cacheInitializationFinishedForTesting(
+								  false);
+						  },
+						  10'000)
+					  && data.cacheInitializationAllowedForTesting(false)
+					  && data.cacheIfAllowed();
 			}
 			// Drain earlier startup pings without blocking the UI thread.
 			QCoreApplication::processEvents();
@@ -10256,8 +10261,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			// The repeated guard checks must stay below the 30ms budget so a
 			// cache-heavy task cannot spend its UI frame validating path
 			// identity.
-			passed = passed && (accesses == 292)
-					 && (duration < 30'000'000)
+			passed = passed && (accesses == 292) && (duration < 30'000'000)
 					 && !stalls;
 			std::fprintf(stderr,
 						 "Cache watchdog regression: seeded_directories=125 "
