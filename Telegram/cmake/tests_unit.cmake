@@ -98,8 +98,10 @@ PRIVATE
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
+    intro/intro_signup_invite_validation.cpp
     intro/intro_signup_terms.cpp
     intro/intro_username_validation.cpp
+    settings/sections/settings_invite_state.cpp
     main/main_account_persistence.cpp
     storage/details/storage_file_utilities.cpp
     storage/storage_account_persistence.cpp
@@ -116,6 +118,7 @@ PRIVATE
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
+    tests/unit/intro_signup_invite_validation_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
@@ -130,6 +133,7 @@ PRIVATE
     tests/unit/server_enrollment_tests.cpp
     tests/unit/session_private_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
+    tests/unit/settings_invite_state_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
     tests/unit/storage_domain_restart_support.cpp
     tests/unit/teagram_icon_render_tests.cpp

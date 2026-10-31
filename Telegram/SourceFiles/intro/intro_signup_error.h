@@ -26,6 +26,7 @@ enum class SignupFailureMessage {
 
 enum class SignupFailureDestination {
 	Username,
+	Invite,
 	Name,
 	Password,
 };

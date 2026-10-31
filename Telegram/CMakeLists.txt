@@ -1430,6 +1430,10 @@ PRIVATE
     intro/intro_signup_terms.h
     intro/intro_signup_name.cpp
     intro/intro_signup_name.h
+    intro/intro_signup_invite.cpp
+    intro/intro_signup_invite.h
+    intro/intro_signup_invite_validation.cpp
+    intro/intro_signup_invite_validation.h
     intro/intro_signup_password.cpp
     intro/intro_signup_password.h
     intro/intro_server.cpp
@@ -1887,6 +1891,10 @@ PRIVATE
     settings/sections/settings_global_ttl.h
     settings/sections/settings_information.cpp
     settings/sections/settings_information.h
+    settings/sections/settings_invite_friends.cpp
+    settings/sections/settings_invite_friends.h
+    settings/sections/settings_invite_state.cpp
+    settings/sections/settings_invite_state.h
     settings/settings_intro.cpp
     settings/settings_intro.h
     settings/sections/settings_local_passcode.cpp
