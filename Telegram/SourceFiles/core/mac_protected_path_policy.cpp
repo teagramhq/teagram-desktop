@@ -547,7 +547,7 @@ Walk(const ParsedPath &path, const FileSystem &filesystem, Classify &&classify,
 		path.components.end());
 	std::vector<QByteArray> resolved;
 	resolved.reserve(path.components.size());
-	Components folded;
+	MacProtectedPathPolicy::Components folded;
 	folded.reserve(path.components.size());
 	std::vector<FileType> resolvedTypes;
 	resolvedTypes.reserve(path.components.size());
