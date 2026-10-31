@@ -1334,7 +1334,8 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition);
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
+											  int timeoutMs = 5000);
 
 [[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
 	not_null<Window::SessionController *> controller) {
@@ -2257,6 +2258,11 @@ class RegressionAccountCleanup final {
 			return true;
 		}
 		const auto guarded = not_null<Main::Account *>(account);
+		auto cache = Core::App().databases().get(
+			account->local().cachePath(), account->local().cacheSettings());
+		auto mediaCache = Core::App().databases().get(
+			account->local().cacheBigFilePath(),
+			account->local().cacheBigFileSettings());
 		if (const auto window = Core::App().separateWindowFor(guarded)) {
 			Core::App().closeWindow(window);
 		}
@@ -2264,6 +2270,8 @@ class RegressionAccountCleanup final {
 			current && current->sessionExists()) {
 			current->forcedLogOut();
 		}
+		cache->sync();
+		mediaCache->sync();
 		if (const auto fallback = _fallback.get();
 			fallback && (&_domain.active() != fallback)) {
 			_domain.activate(not_null<Main::Account *>(fallback));
@@ -3424,7 +3432,8 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 }
 
 template <typename Predicate>
-[[nodiscard]] bool WaitForRegressionCondition(Predicate condition) {
+[[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
+											  int timeoutMs) {
 	if (condition()) {
 		return true;
 	}
@@ -3440,7 +3449,7 @@ template <typename Predicate>
 	});
 	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
 	poll.start();
-	timeout.start(5000);
+	timeout.start(timeoutMs);
 	loop.exec();
 	poll.stop();
 	return condition();
@@ -10200,13 +10209,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				= RegressionAccountCleanup(domain, watched, accountFallback);
 			watched->mtp().stopForServerEnrollment();
 			watched->setSessionUserId(selfId);
-			passed = watched->createSession(
-				RegressionUser(selfId, true, QString()),
-				std::make_unique<Main::SessionSettings>());
 			const auto cachePath = watched->local().cachePath();
 			const auto fixture
 				= QDir(cachePath).filePath("watchdog-cache-regression");
-			auto seeded = passed && QDir().mkpath(fixture);
+			auto seeded = QDir().mkpath(fixture);
 			for (auto i = 0; seeded && i != 125; ++i) {
 				seeded = QDir().mkpath(
 					QDir(fixture).filePath(u"directory-%1"_q.arg(i)));
@@ -10218,6 +10224,17 @@ void RunAuthenticatedCacheSymlinkCases(
 				seeded = file.open(QIODevice::WriteOnly)
 						 && (file.write("fixture") == 7);
 			}
+			passed = seeded && watched->createSession(
+				RegressionUser(selfId, true, QString()),
+				std::make_unique<Main::SessionSettings>());
+			if (passed) {
+				auto &data = watched->session().data();
+				passed = WaitForRegressionCondition([&] {
+					return data.cacheInitializationFinishedForTesting(false);
+				}, 10'000)
+					   && data.cacheInitializationAllowedForTesting(false)
+					   && data.cacheIfAllowed();
+			}
 			// Drain earlier startup pings without blocking the UI thread.
 			QCoreApplication::processEvents();
 			QCoreApplication::sendPostedEvents();
@@ -10227,7 +10244,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto accesses = 0;
 			auto timer = QElapsedTimer();
 			timer.start();
-			for (auto i = 0; seeded && i != 292; ++i) {
+			for (auto i = 0; passed && i != 292; ++i) {
 				if (!watched->session().data().cacheIfAllowed()) {
 					break;
 				}
@@ -10239,7 +10256,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			// The repeated guard checks must stay below the 30ms budget so a
 			// cache-heavy task cannot spend its UI frame validating path
 			// identity.
-			passed = seeded && (accesses == 292) && (duration < 30'000'000)
+			passed = passed && (accesses == 292)
+					 && (duration < 30'000'000)
 					 && !stalls;
 			std::fprintf(stderr,
 						 "Cache watchdog regression: seeded_directories=125 "
