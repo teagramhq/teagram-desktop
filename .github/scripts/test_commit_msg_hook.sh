@@ -13,6 +13,34 @@ if "$repo_root/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
 	exit 1
 fi
 
+printf '%s\n' \
+	'# Please enter the commit message.' \
+	'# On branch fix/MAIN-123' \
+	'' \
+	'feat: accept an edited commit template' \
+	'# Co-Authored-By: comment only' \
+	'# Generated with comment only' \
+	'# ------------------------ >8 ------------------------' \
+	'diff --git a/source.txt b/source.txt' \
+	'@@ -1,1 +1,1 @@' \
+	' Co-Authored-By: diff context' > "$message_file"
+if ! "$repo_root/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
+	printf '%s\n' 'Git comments and verbose diff content must be ignored.' >&2
+	exit 1
+fi
+
+printf '%s\n' 'feat: reject a real trailer' '' 'Co-Authored-By: contributor' > "$message_file"
+if "$repo_root/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
+	printf '%s\n' 'A real Co-Authored-By trailer must be rejected.' >&2
+	exit 1
+fi
+
+printf '%s\n' 'feat: reject a generated line' '' 'Generated with an editor' > "$message_file"
+if "$repo_root/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
+	printf '%s\n' 'A real Generated with line must be rejected.' >&2
+	exit 1
+fi
+
 printf '%s\n' 'fix: handle DOMAIN-123 identifiers' > "$message_file"
 "$repo_root/.githooks/commit-msg" "$message_file"
 
@@ -58,6 +86,31 @@ git -C "$test_repo" merge --no-edit --no-ff main
 parent_count="$(git -C "$test_repo" rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')"
 if [[ "$parent_count" != 2 ]]; then
 	printf '%s\n' 'The diverged main branch was not merged into feature.' >&2
+	exit 1
+fi
+
+printf '%s\n' before 'Co-Authored-By: contributor' after > "$test_repo/verbose.txt"
+git -C "$test_repo" add verbose.txt
+git -C "$test_repo" commit --quiet -m 'chore: add verbose fixture'
+printf '%s\n' changed 'Co-Authored-By: contributor' after > "$test_repo/verbose.txt"
+git -C "$test_repo" add verbose.txt
+verbose_editor="$temporary_dir/commit-editor"
+cat > "$verbose_editor" <<'EDITOR'
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:?commit message file is required}"
+temporary_file="${message_file}.edited"
+{
+	printf '%s\n' 'feat: allow editor commit' '# On branch fix/MAIN-123'
+	cat "$message_file"
+} > "$temporary_file"
+mv -- "$temporary_file" "$message_file"
+EDITOR
+chmod +x "$verbose_editor"
+GIT_EDITOR="$verbose_editor" git -C "$test_repo" commit --quiet --verbose
+if [[ "$(git -C "$test_repo" log -1 --format=%s)" != 'feat: allow editor commit' ]]; then
+	printf '%s\n' 'An editor commit with template comments and a verbose diff failed.' >&2
 	exit 1
 fi
 
