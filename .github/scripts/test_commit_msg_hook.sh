@@ -61,4 +61,42 @@ if [[ "$parent_count" != 2 ]]; then
 	exit 1
 fi
 
-printf '%s\n' 'commit message hook merge regression passed.'
+clang_format="$(command -v clang-format || true)"
+git_clang_format="$(command -v git-clang-format || true)"
+python3_bin="$(command -v python3 || true)"
+required_version="$(sed -n -E 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*Install clang-format ([0-9.]+)\.$/\1/p' "$repo_root/.github/workflows/cpp_format.yml" | head -n 1)"
+if [[ -z "$clang_format" || -z "$git_clang_format" || -z "$python3_bin" ]]; then
+	printf '%s\n' 'The pre-commit regression requires clang-format, git-clang-format, and python3.' >&2
+	exit 1
+fi
+actual_version="$("$clang_format" --version 2>/dev/null || true)"
+if [[ -z "$required_version" || "$actual_version" != "clang-format version $required_version" ]]; then
+	printf 'The pre-commit regression requires clang-format %s (found %s).\n' \
+		"${required_version:-from .github/workflows/cpp_format.yml}" \
+		"${actual_version:-unavailable}" >&2
+	exit 1
+fi
+
+format_repo="$temporary_dir/format-repo"
+git init --quiet "$format_repo"
+git -C "$format_repo" config user.name 'Hook Regression'
+git -C "$format_repo" config user.email 'hook-regression@example.invalid'
+git -C "$format_repo" config core.hooksPath "$repo_root/.githooks"
+mkdir -p "$format_repo/.github/workflows" "$format_repo/.github/scripts"
+cp "$repo_root/.github/workflows/cpp_format.yml" "$format_repo/.github/workflows/"
+cp "$repo_root/.github/scripts/check_cpp_format.py" "$format_repo/.github/scripts/"
+git -C "$format_repo" add .github/workflows/cpp_format.yml .github/scripts/check_cpp_format.py
+git -C "$format_repo" commit --quiet -m 'chore: add format check'
+format_base="$(git -C "$format_repo" rev-parse HEAD)"
+
+printf '%s\n' 'int add(int left,int right){return left+right;}' > "$format_repo/format.cpp"
+git -C "$format_repo" add format.cpp
+git -C "$format_repo" commit --quiet -m 'test: exercise staged C++ formatting'
+format_head="$(git -C "$format_repo" rev-parse HEAD)"
+"$python3_bin" "$repo_root/.github/scripts/check_cpp_format.py" \
+	--repo-root "$format_repo" \
+	--formatter "$clang_format" \
+	--tested-head "$format_head" \
+	--source-range pre-commit "$format_base" "$format_head"
+
+printf '%s\n' 'commit-msg and staged C++ pre-commit regressions passed.'
