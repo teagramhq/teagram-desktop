@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+cpp_files=()
+cpp_modes=()
+while IFS= read -r -d '' path; do
+	case "$path" in
+		*.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.hxx|*.m|*.mm)
+			staged_entry="$(git --literal-pathspecs ls-files --stage -- "$path" | awk 'NR == 1 { print $1, $2 }')"
+			staged_mode="${staged_entry%% *}"
+			case "$staged_mode" in
+				100644|100755)
+					cpp_files+=("$path")
+					cpp_modes+=("$staged_mode")
+					;;
+			esac
+			;;
+	esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if ((${#cpp_files[@]} == 0)); then
+	exit 0
+fi
+
+clang_format="$(command -v clang-format || true)"
+git_clang_format="$(command -v git-clang-format || true)"
+python3_bin="$(command -v python3 || true)"
+if [[ -z "$clang_format" || -z "$git_clang_format" || -z "$python3_bin" ]]; then
+	printf '%s\n' 'warning: pre-commit skipped C++ formatting because clang-format, git-clang-format, and python3 are required.' >&2
+	exit 0
+fi
+
+temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/teagram-pre-commit.XXXXXX")"
+trap 'rm -rf -- "$temporary_dir"' EXIT
+git show :.github/workflows/cpp_format.yml > "$temporary_dir/cpp_format.yml"
+git show :.github/scripts/check_cpp_format.py > "$temporary_dir/check_cpp_format.py"
+
+required_version="$(sed -n -E 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*Install clang-format ([0-9.]+)\.$/\1/p' "$temporary_dir/cpp_format.yml" | head -n 1)"
+if [[ -z "$required_version" ]]; then
+	printf '%s\n' 'pre-commit: could not read the clang-format version from .github/workflows/cpp_format.yml.' >&2
+	exit 1
+fi
+actual_version="$("$clang_format" --version 2>/dev/null || true)"
+if [[ "$actual_version" != "clang-format version $required_version" ]]; then
+	printf 'warning: pre-commit skipped C++ formatting because CI requires clang-format %s (found %s).\n' "$required_version" "${actual_version:-unavailable}" >&2
+	exit 0
+fi
+
+format_style="$("$python3_bin" - "$temporary_dir/check_cpp_format.py" <<'PY'
+import ast
+import pathlib
+import sys
+
+tree = ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "FORMAT_STYLE"
+        for target in node.targets
+    ):
+        print(ast.literal_eval(node.value))
+        break
+else:
+    raise SystemExit("FORMAT_STYLE was not found")
+PY
+)"
+
+mkdir -p "$temporary_dir/worktree"
+if [[ -n "${GIT_INDEX_FILE:-}" ]]; then
+	case "$GIT_INDEX_FILE" in
+		/*) index_path="$GIT_INDEX_FILE" ;;
+		*) index_path="$repo_root/$GIT_INDEX_FILE" ;;
+	esac
+else
+	index_path="$(git rev-parse --path-format=absolute --git-path index)"
+fi
+git_dir="$(git rev-parse --absolute-git-dir)"
+cp "$index_path" "$temporary_dir/index"
+
+clean_files=()
+for index in "${!cpp_files[@]}"; do
+	path="${cpp_files[index]}"
+	staged_entry="$(git --literal-pathspecs ls-files --stage -- "$path" | awk 'NR == 1 { print $1, $2 }')"
+	staged_oid="${staged_entry#* }"
+	path_dir="${path%/*}"
+	if [[ "$path_dir" == "$path" ]]; then
+		path_dir=.
+	fi
+	mkdir -p "$temporary_dir/worktree/$path_dir"
+	git cat-file blob "$staged_oid" > "$temporary_dir/worktree/$path"
+	if [[ "${cpp_modes[index]}" == 100755 ]]; then
+		chmod +x "$temporary_dir/worktree/$path"
+	fi
+	if git --literal-pathspecs diff --quiet -- "$path"; then
+		clean_files+=("$path")
+	fi
+done
+
+(
+	export GIT_DIR="$git_dir"
+	export GIT_WORK_TREE="$temporary_dir/worktree"
+	export GIT_INDEX_FILE="$temporary_dir/index"
+	format_status=0
+	git -C "$temporary_dir/worktree" clang-format \
+		--staged \
+		--force \
+		--binary "$clang_format" \
+		--style="$format_style" \
+		-- "${cpp_files[@]}" || format_status=$?
+	if ((format_status > 1)); then
+		exit "$format_status"
+	fi
+	git -C "$temporary_dir/worktree" --literal-pathspecs add -- "${cpp_files[@]}"
+)
+
+index_swap="$(mktemp "${index_path}.format.XXXXXX")"
+cp "$temporary_dir/index" "$index_swap"
+mv -f -- "$index_swap" "$index_path"
+
+for path in "${clean_files[@]}"; do
+	cat "$temporary_dir/worktree/$path" > "$repo_root/$path"
+done

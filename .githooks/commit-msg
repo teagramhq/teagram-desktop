@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:?commit message file is required}"
+subject="$(sed -n '1p' "$message_file")"
+invalid=0
+
+if [[ ! "$subject" =~ ^(feat|fix|refactor|perf|docs|style|test|build|ci|chore|revert)(\([[:alnum:]._/-]+\))?!?:\ .+ ]]; then
+	printf '%s\n' 'commit-msg: subject must follow Conventional Commits.' >&2
+	invalid=1
+fi
+if grep -Eq 'MAIN-[0-9]+' "$message_file"; then
+	printf '%s\n' 'commit-msg: issue keys such as MAIN-123 are not allowed.' >&2
+	invalid=1
+fi
+if grep -Eiq '^[[:space:]]*Co-Authored-By:' "$message_file"; then
+	printf '%s\n' 'commit-msg: Co-Authored-By trailers are not allowed.' >&2
+	invalid=1
+fi
+if grep -Eiq '^[[:space:]]*Generated with([[:space:]]|$)' "$message_file"; then
+	printf '%s\n' 'commit-msg: Generated with lines are not allowed.' >&2
+	invalid=1
+fi
+
+exit "$invalid"
