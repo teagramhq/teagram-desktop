@@ -2259,14 +2259,11 @@ class RegressionAccountCleanup final {
 		}
 		const auto guarded = not_null<Main::Account *>(account);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		auto cache = static_cast<Storage::Cache::Database *>(nullptr);
-		auto mediaCache = static_cast<Storage::Cache::Database *>(nullptr);
-		if (account->sessionExists()) {
-			auto &data = account->session().data();
-			// The session owns these database leases; do not reacquire them.
-			cache = data.cacheDatabaseForTesting(false);
-			mediaCache = data.cacheDatabaseForTesting(true);
-		}
+		const auto cachePath = account->local().cachePath();
+		const auto cacheSettings = account->local().cacheSettings();
+		const auto mediaCachePath = account->local().cacheBigFilePath();
+		const auto mediaCacheSettings = account->local().cacheBigFileSettings();
+		const auto hadSession = account->sessionExists();
 #else
 		auto cache = Core::App().databases().get(
 			account->local().cachePath(), account->local().cacheSettings());
@@ -2281,12 +2278,24 @@ class RegressionAccountCleanup final {
 			current && current->sessionExists()) {
 			current->forcedLogOut();
 		}
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		if (hadSession) {
+			// Reacquire only after logout releases the session's database
+			// leases.
+			auto cache = Core::App().databases().get(cachePath, cacheSettings);
+			auto mediaCache = Core::App().databases().get(mediaCachePath,
+														  mediaCacheSettings);
+			cache->sync();
+			mediaCache->sync();
+		}
+#else
 		if (cache) {
 			cache->sync();
 		}
 		if (mediaCache) {
 			mediaCache->sync();
 		}
+#endif
 		if (const auto fallback = _fallback.get();
 			fallback && (&_domain.active() != fallback)) {
 			_domain.activate(not_null<Main::Account *>(fallback));
@@ -2764,8 +2773,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		}
 	});
 	auto &data = guarded->session().data();
-	const auto cacheDatabase = data.cacheDatabaseForTesting(false);
-	const auto mediaCacheDatabase = data.cacheDatabaseForTesting(true);
 	const auto cacheIfAllowed = [&] {
 		return mediaCache ? data.cacheBigFileIfAllowed()
 						  : data.cacheIfAllowed();
@@ -2796,6 +2803,11 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 									 && (cacheIfAllowed() == nullptr);
 	guarded->forcedLogOut();
 	const auto sessionDestroyed = !guarded->sessionExists();
+	auto cacheDatabase = Core::App().databases().get(
+		guarded->local().cachePath(), guarded->local().cacheSettings());
+	auto mediaCacheDatabase
+		= Core::App().databases().get(guarded->local().cacheBigFilePath(),
+									  guarded->local().cacheBigFileSettings());
 	const auto callbackCompleted
 		= WaitForRegressionCondition([&] { return state->completed; });
 	cacheDatabase->sync();
@@ -2875,13 +2887,17 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		return false;
 	}
 	auto &data = guarded->session().data();
-	const auto cacheDatabase = data.cacheDatabaseForTesting(false);
-	const auto mediaCacheDatabase = data.cacheDatabaseForTesting(true);
 	const auto initializationPending
 		= !data.cacheInitializationFinishedForTesting(mediaCache);
 	guarded->forcedLogOut();
 	const auto sessionDestroyed = !guarded->sessionExists();
-	auto verification = Core::App().databases().get(path, settings);
+	auto cacheDatabase = Core::App().databases().get(
+		guarded->local().cachePath(), guarded->local().cacheSettings());
+	auto mediaCacheDatabase
+		= Core::App().databases().get(guarded->local().cacheBigFilePath(),
+									  guarded->local().cacheBigFileSettings());
+	auto &verification = mediaCache ? mediaCacheDatabase : cacheDatabase;
+	auto &otherCacheDatabase = mediaCache ? cacheDatabase : mediaCacheDatabase;
 	gate->resume.release();
 	verification->sync();
 	const auto reopened = CacheOperationSucceeded(
@@ -2900,8 +2916,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		verification->close([done = std::move(done)]() mutable { done(1); });
 	});
 	verification->sync();
-	cacheDatabase->sync();
-	mediaCacheDatabase->sync();
+	otherCacheDatabase->close();
+	otherCacheDatabase->sync();
 	const auto passed = initializationPending && sessionDestroyed && cleared
 						&& closed && (*closed == 1);
 	if (!passed) {

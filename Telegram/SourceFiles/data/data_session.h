@@ -281,8 +281,6 @@ class Session final : public base::has_weak_ptr {
 	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheAllowedForTesting(bool bigFileCache);
-	[[nodiscard]] Storage::Cache::Database *
-	cacheDatabaseForTesting(bool bigFileCache);
 	void setCacheClearPauseForTesting(bool bigFileCache, Fn<void()> pause);
 	void setCacheClearHandoffForTesting(bool bigFileCache, Fn<void()> handoff);
 #endif
