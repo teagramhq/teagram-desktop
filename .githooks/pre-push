@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+remote_name="${1:-origin}"
+base_ref="refs/remotes/${remote_name}/dev"
+if ! git rev-parse --verify -q "${base_ref}^{commit}" >/dev/null; then
+	base_ref=refs/remotes/origin/dev
+fi
+if ! git rev-parse --verify -q "${base_ref}^{commit}" >/dev/null; then
+	printf 'pre-push: cannot resolve the base branch %s.\n' "$base_ref" >&2
+	exit 1
+fi
+
+temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/teagram-pre-push.XXXXXX")"
+trap 'rm -rf -- "$temporary_dir"' EXIT
+
+commit_ranges=()
+shellcheck_warned=0
+actionlint_warned=0
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+	[[ -n "$local_ref" && -n "$remote_ref" && -n "$local_sha" ]] || continue
+	if [[ ! "$local_sha" =~ [^0] ]]; then
+		continue
+	fi
+
+	if ! git cat-file -e "${local_sha}^{commit}" 2>/dev/null; then
+		printf 'pre-push: cannot resolve pushed commit %s.\n' "$local_sha" >&2
+		exit 1
+	fi
+
+	merge_base="$(git merge-base "$base_ref" "$local_sha")"
+	snapshot_dir="$temporary_dir/$local_sha"
+	mkdir -p "$snapshot_dir"
+	shell_files=()
+	workflow_files=()
+	while IFS= read -r -d '' path; do
+		path_dir="${path%/*}"
+		if [[ "$path_dir" == "$path" ]]; then
+			path_dir=.
+		fi
+		case "$path" in
+			*.sh)
+				mkdir -p "$snapshot_dir/$path_dir"
+				git show "$local_sha:$path" > "$snapshot_dir/$path"
+				shell_files+=("$path")
+				;;
+		esac
+		case "$path" in
+			.github/workflows/*.yml|.github/workflows/*.yaml)
+				mkdir -p "$snapshot_dir/$path_dir"
+				git show "$local_sha:$path" > "$snapshot_dir/$path"
+				workflow_files+=("$path")
+				;;
+		esac
+	done < <(git diff --name-only --diff-filter=ACMRT -z "$merge_base" "$local_sha")
+
+	if ((${#workflow_files[@]})) && git cat-file -e "$local_sha:.github/actionlint.yaml" 2>/dev/null; then
+		mkdir -p "$snapshot_dir/.github"
+		git show "$local_sha:.github/actionlint.yaml" > "$snapshot_dir/.github/actionlint.yaml"
+	fi
+	if ((${#shell_files[@]})) && git cat-file -e "$local_sha:.shellcheckrc" 2>/dev/null; then
+		git show "$local_sha:.shellcheckrc" > "$snapshot_dir/.shellcheckrc"
+	fi
+
+	if ((${#shell_files[@]})); then
+		if command -v shellcheck >/dev/null 2>&1; then
+			(cd "$snapshot_dir" && shellcheck -- "${shell_files[@]}")
+		elif ((shellcheck_warned == 0)); then
+			printf '%s\n' 'warning: pre-push skipped shellcheck because shellcheck is not installed.' >&2
+			shellcheck_warned=1
+		fi
+	fi
+
+	if ((${#workflow_files[@]})); then
+		if command -v actionlint >/dev/null 2>&1; then
+			if [[ -f "$snapshot_dir/.github/actionlint.yaml" ]]; then
+				(cd "$snapshot_dir" && actionlint -config-file .github/actionlint.yaml -shellcheck= -pyflakes= "${workflow_files[@]}")
+			else
+				(cd "$snapshot_dir" && actionlint -shellcheck= -pyflakes= "${workflow_files[@]}")
+			fi
+		elif ((actionlint_warned == 0)); then
+			printf '%s\n' 'warning: pre-push skipped actionlint because actionlint is not installed.' >&2
+			actionlint_warned=1
+		fi
+	fi
+
+	if [[ "$remote_sha" =~ [^0] ]]; then
+		push_base="$remote_sha"
+	else
+		push_base="$merge_base"
+	fi
+	if [[ "$push_base" != "$local_sha" ]]; then
+		commit_ranges+=("$push_base..$local_sha")
+	fi
+done
+
+if ((${#commit_ranges[@]})); then
+	if command -v gitleaks >/dev/null 2>&1; then
+		for commit_range in "${commit_ranges[@]}"; do
+			gitleaks --no-banner git --log-opts="$commit_range"
+		done
+	else
+		printf '%s\n' 'warning: pre-push skipped gitleaks because gitleaks is not installed.' >&2
+	fi
+fi

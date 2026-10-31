@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:?commit message file is required}"
+clean_message="$(
+	awk '/^.[[:space:]]*-+[[:space:]]*>8[[:space:]]*-+[[:space:]]*$/ { exit } { print }' \
+		"$message_file" |
+		git stripspace --strip-comments
+)"
+subject="${clean_message%%$'\n'*}"
+merge_head="$(git rev-parse --path-format=absolute --git-path MERGE_HEAD)"
+
+if [[ -e "$merge_head" ]]; then
+	exit 0
+fi
+
+case "$subject" in
+	'Merge '*|'Revert "'*|'fixup! '*|'squash! '*|'amend! '*)
+		exit 0
+		;;
+esac
+
+invalid=0
+
+if [[ ! "$subject" =~ ^(feat|fix|refactor|perf|docs|style|test|build|ci|chore|revert)(\([[:alnum:]._/-]+\))?!?:\ .+ ]]; then
+	printf '%s\n' 'commit-msg: subject must follow Conventional Commits.' >&2
+	invalid=1
+fi
+if grep -Eq '(^|[^[:alnum:]_])MAIN-[0-9]+([^[:alnum:]_]|$)' <<< "$clean_message"; then
+	printf '%s\n' 'commit-msg: issue keys such as MAIN-123 are not allowed.' >&2
+	invalid=1
+fi
+if grep -Eiq '^[[:space:]]*Co-Authored-By:' <<< "$clean_message"; then
+	printf '%s\n' 'commit-msg: Co-Authored-By trailers are not allowed.' >&2
+	invalid=1
+fi
+if grep -Eiq '^[[:space:]]*Generated with([[:space:]]|$)' <<< "$clean_message"; then
+	printf '%s\n' 'commit-msg: Generated with lines are not allowed.' >&2
+	invalid=1
+fi
+
+exit "$invalid"
