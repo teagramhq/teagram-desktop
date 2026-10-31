@@ -3,6 +3,18 @@ set -euo pipefail
 
 message_file="${1:?commit message file is required}"
 subject="$(sed -n '1p' "$message_file")"
+merge_head="$(git rev-parse --path-format=absolute --git-path MERGE_HEAD)"
+
+if [[ -e "$merge_head" ]]; then
+	exit 0
+fi
+
+case "$subject" in
+	'Merge '*|'Revert "'*|'fixup! '*|'squash! '*|'amend! '*)
+		exit 0
+		;;
+esac
+
 invalid=0
 
 if [[ ! "$subject" =~ ^(feat|fix|refactor|perf|docs|style|test|build|ci|chore|revert)(\([[:alnum:]._/-]+\))?!?:\ .+ ]]; then
