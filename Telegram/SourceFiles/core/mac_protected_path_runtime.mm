@@ -1089,10 +1089,14 @@ CachePathVersionMarkerStillValid(const CachePathIdentity &identity,
 	if (activePath.isEmpty() && (result.version != 0)) {
 		return fail("capture-active-path-missing");
 	}
-	result.activeVersionDirectory.path = activePath;
-	if (!result.activeVersionDirectory.path.isEmpty()) {
-		if (!CaptureCachePathActiveVersionDirectory(
-				result.activeVersionDirectory.path, &result)) {
+	if (!activePath.isEmpty()) {
+		auto active = CachePathComponentIdentity{.path = activePath};
+		auto missing = false;
+		if (!ReadCachePathLinkIdentity(activePath, &active, &missing)) {
+			return fail("capture-active-directory");
+		}
+		if (!missing
+			&& !CaptureCachePathActiveVersionDirectory(activePath, &result)) {
 			return fail("capture-active-directory");
 		}
 	}
