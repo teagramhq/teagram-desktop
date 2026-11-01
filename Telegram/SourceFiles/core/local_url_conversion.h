@@ -17,7 +17,7 @@ namespace Core {
 
 struct StickerSetInstallTarget {
 	QString shortName;
-	StickerImportType type;
+	StickerImportType type = StickerImportType::Stickers;
 };
 
 [[nodiscard]] QString TryConvertUrlToLocal(QString url);

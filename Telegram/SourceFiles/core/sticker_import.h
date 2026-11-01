@@ -56,7 +56,7 @@ enum class StickerImportProblem {
 struct StickerImportFile {
 	QString name;
 	QByteArray bytes;
-	StickerImportFormat format;
+	StickerImportFormat format = StickerImportFormat::Webp;
 	QSize dimensions;
 };
 

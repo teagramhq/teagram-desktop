@@ -247,6 +247,10 @@ struct HttpsOrigin {
 		} else if (const auto confirmPhoneMatch = regex_match(u"^confirmphone/?\\?(.+)"_q, query, matchOptions)) {
 			return u"tg://confirmphone?"_q + confirmPhoneMatch->captured(1);
 		} else if (const auto ivMatch = regex_match(u"^iv/?\\?(.+)(#|$)"_q, query, matchOptions)) {
+			//
+			// We need to show our t.me page, not the url directly.
+			//
+
 			//auto params = url_parse_params(ivMatch->captured(1), UrlParamNameTransform::ToLower);
 			//auto previewedUrl = params.value(u"url"_q);
 			//if (previewedUrl.startsWith(u"http://"_q, Qt::CaseInsensitive)
