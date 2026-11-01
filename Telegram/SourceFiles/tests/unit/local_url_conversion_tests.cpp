@@ -97,6 +97,34 @@ TEST_CASE(PinnedServerPublicMessageLinkOpensMessage) {
 		u"tg://resolve?domain=example&post=123"_q);
 }
 
+TEST_CASE(StickerSetLinksRejectNamesOutsideTheShareLinkContract) {
+	const auto links = std::vector<QString>{
+		u"https://t.me/addstickers/cats.pack"_q,
+		u"https://telegram-server.tailaa4918.ts.net/addemoji/cats.pack"_q,
+		u"https://t.me/addstickers/"_q + QString(65, 'a'),
+	};
+	for (const auto &link : links) {
+		CHECK_EQ(
+			Core::TryConvertUrlToLocal(link, kServerPrefix, true),
+			link);
+	}
+}
+
+TEST_CASE(PinnedServerStickerSetLinksOpenTheMatchingSetType) {
+	CHECK_EQ(
+		Core::TryConvertUrlToLocal(
+			u"https://telegram-server.tailaa4918.ts.net/addstickers/cats_a"_q,
+			kServerPrefix,
+			true),
+		u"tg://addstickers?set=cats_a"_q);
+	CHECK_EQ(
+		Core::TryConvertUrlToLocal(
+			u"https://telegram-server.tailaa4918.ts.net/addemoji/emoji_2"_q,
+			kServerPrefix,
+			true),
+		u"tg://addemoji?set=emoji_2"_q);
+}
+
 TEST_CASE(PinnedServerPrivateMessageLinkOpensMessage) {
 	CHECK_EQ(
 		Core::TryConvertUrlToLocal(

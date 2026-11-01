@@ -239,6 +239,8 @@ PRIVATE
     api/api_statistics_sender.h
     api/api_stickers_creator.cpp
     api/api_stickers_creator.h
+    api/api_sticker_set_import.cpp
+    api/api_sticker_set_import.h
     api/api_suggest_post.cpp
     api/api_suggest_post.h
     api/api_text_entities.cpp
@@ -436,6 +438,8 @@ PRIVATE
     boxes/star_gift_resale_box.h
     boxes/sticker_creator_box.cpp
     boxes/sticker_creator_box.h
+    boxes/sticker_import_box.cpp
+    boxes/sticker_import_box.h
     boxes/sticker_set_box.cpp
     boxes/sticker_set_box.h
     boxes/stickers_box.cpp
@@ -625,6 +629,8 @@ PRIVATE
     core/launcher.h
     core/local_url_conversion.cpp
     core/local_url_conversion.h
+    core/sticker_import.cpp
+    core/sticker_import.h
     core/local_url_handlers.cpp
     core/local_url_handlers.h
     core/mac_protected_path_policy.cpp

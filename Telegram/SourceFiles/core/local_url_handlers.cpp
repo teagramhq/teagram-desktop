@@ -1774,7 +1774,7 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			JoinFilterBySlug
 		},
 		{
-			u"^(addstickers|addemoji)/?\\?set=([a-zA-Z0-9\\.\\_]+)(&|$)"_q,
+			u"^(addstickers|addemoji)/?\\?set=([A-Za-z0-9_]{1,64})(&|$)"_q,
 			ShowStickerSet
 		},
 		{

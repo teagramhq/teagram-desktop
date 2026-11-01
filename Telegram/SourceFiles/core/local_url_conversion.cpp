@@ -223,7 +223,7 @@ struct HttpsOrigin {
 			return u"tg://join?invite="_q + url_encode(joinChatMatch->captured(2));
 		} else if (const auto joinFilterMatch = regex_match(u"^(addlist/)([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addlist?slug="_q + url_encode(joinFilterMatch->captured(2));
-		} else if (const auto stickerSetMatch = regex_match(u"^(addstickers|addemoji)/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
+		} else if (const auto stickerSetMatch = regex_match(u"^(addstickers|addemoji)/([A-Za-z0-9_]{1,64})(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://"_q + stickerSetMatch->captured(1) + "?set=" + url_encode(stickerSetMatch->captured(2));
 		} else if (const auto themeMatch = regex_match(u"^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addtheme?slug="_q + url_encode(themeMatch->captured(1));
