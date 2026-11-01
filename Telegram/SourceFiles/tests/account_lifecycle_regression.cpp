@@ -2225,6 +2225,19 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 	return result && (result->type == Storage::Cache::Error::Type::None);
 }
 
+[[nodiscard]] bool WaitForCacheCleaner(Storage::Cache::Database &cache) {
+	cache.sync();
+	const auto finished = AwaitCacheCallback<bool>([&](auto done) {
+		cache.waitForCleaner(
+			[done = std::move(done)]() mutable { done(true); });
+	});
+	if (!finished || !*finished) {
+		return false;
+	}
+	cache.sync();
+	return true;
+}
+
 [[nodiscard]] bool OpenCache(Storage::Cache::Database &cache,
 							 not_null<Main::Account *> account) {
 	return CacheOperationSucceeded(
@@ -2253,7 +2266,7 @@ class RegressionAccountCleanup final {
 
 	[[nodiscard]] bool cleanup() {
 		if (_cleaned) {
-			return _released;
+			return _released && _cacheCleanupPassed;
 		}
 		_cleaned = true;
 		const auto account = _account.get();
@@ -2263,11 +2276,14 @@ class RegressionAccountCleanup final {
 		}
 		const auto guarded = not_null<Main::Account *>(account);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		const auto cachePath = account->local().cachePath();
-		const auto cacheSettings = account->local().cacheSettings();
-		const auto mediaCachePath = account->local().cacheBigFilePath();
-		const auto mediaCacheSettings = account->local().cacheBigFileSettings();
 		const auto hadSession = account->sessionExists();
+		if (hadSession) {
+			auto &data = guarded->session().data();
+			const auto cacheFinished = WaitForCacheCleaner(data.cache());
+			const auto mediaCacheFinished
+				= WaitForCacheCleaner(data.cacheBigFile());
+			_cacheCleanupPassed = cacheFinished && mediaCacheFinished;
+		}
 #else
 		auto cache = Core::App().databases().get(
 			account->local().cachePath(), account->local().cacheSettings());
@@ -2278,26 +2294,22 @@ class RegressionAccountCleanup final {
 		if (const auto window = Core::App().separateWindowFor(guarded)) {
 			Core::App().closeWindow(window);
 		}
+#if !defined(Q_OS_MAC) || !defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		if (const auto current = _account.get();
 			current && current->sessionExists()) {
 			current->forcedLogOut();
 		}
-#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		if (hadSession) {
-			// Reacquire only after logout releases the session's database
-			// leases.
-			auto cache = Core::App().databases().get(cachePath, cacheSettings);
-			auto mediaCache = Core::App().databases().get(mediaCachePath,
-														  mediaCacheSettings);
-			cache->sync();
-			mediaCache->sync();
-		}
-#else
 		if (cache) {
 			cache->sync();
 		}
 		if (mediaCache) {
 			mediaCache->sync();
+		}
+#endif
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		if (const auto current = _account.get();
+			current && current->sessionExists()) {
+			current->forcedLogOut();
 		}
 #endif
 		if (const auto fallback = _fallback.get();
@@ -2310,7 +2322,7 @@ class RegressionAccountCleanup final {
 		_domain.removeRedundantAccounts();
 		_released = _account.empty();
 		_cleaned = _released;
-		return _released;
+		return _released && _cacheCleanupPassed;
 	}
 
   private:
@@ -2319,6 +2331,7 @@ class RegressionAccountCleanup final {
 	base::weak_ptr<Main::Account> _fallback;
 	bool _cleaned = false;
 	bool _released = false;
+	bool _cacheCleanupPassed = true;
 };
 
 [[nodiscard]] bool WriteCachePayload(not_null<Main::Account *> account,
@@ -10381,22 +10394,28 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto cacheSettings
 				= mediaCache ? guarded->local().cacheBigFileSettings()
 							 : guarded->local().cacheSettings();
-			auto existing
-				= Core::App().databases().get(closedCachePath, cacheSettings);
-			const auto cacheOpened = OpenCache(*existing, guarded);
-			existing->close();
-			existing->sync();
-			const auto closedClear = CacheOperationSucceeded(
-				AwaitCacheCallback<Storage::Cache::Error>(
-					[&](auto done) { existing->clear(std::move(done)); }));
 			auto markerVersion = qint32(-1);
-			auto marker = QFile(QDir(closedCachePath).filePath("version"));
-			const auto markerWritten
-				= marker.open(QIODevice::ReadOnly)
-				  && (marker.read(reinterpret_cast<char *>(&markerVersion),
-								  qint64(sizeof(markerVersion)))
-					  == qint64(sizeof(markerVersion)));
-			marker.close();
+			auto cacheOpened = false;
+			auto closedClear = false;
+			auto markerWritten = false;
+			{
+				auto existing
+					= Storage::Cache::Database(closedCachePath, cacheSettings);
+				cacheOpened = OpenCache(existing, guarded);
+				existing.close();
+				existing.sync();
+				closedClear = CacheOperationSucceeded(
+					AwaitCacheCallback<Storage::Cache::Error>(
+						[&](auto done) { existing.clear(std::move(done)); }));
+				closedClear = closedClear && WaitForCacheCleaner(existing);
+				auto marker = QFile(QDir(closedCachePath).filePath("version"));
+				markerWritten
+					= marker.open(QIODevice::ReadOnly)
+					  && (marker.read(reinterpret_cast<char *>(&markerVersion),
+									  qint64(sizeof(markerVersion)))
+						  == qint64(sizeof(markerVersion)));
+				marker.close();
+			}
 			const auto missingActiveVersionBeforeOpen
 				= cacheOpened && closedClear && markerWritten
 				  && (markerVersion >= 0)
