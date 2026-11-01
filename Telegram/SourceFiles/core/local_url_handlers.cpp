@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/sticker_import.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "boxes/background_preview_box.h"
 #include "ui/boxes/confirm_box.h"
@@ -284,13 +285,15 @@ bool ShowStickerSet(
 	if (!controller) {
 		return false;
 	}
+	const auto shortName = match->captured(2);
+	if (!Core::IsValidStickerSetShortName(shortName)) {
+		return false;
+	}
 	Core::App().hideMediaView();
 	controller->show(Box<StickerSetBox>(
-		controller->uiShow(),
-		StickerSetIdentifier{ .shortName = match->captured(2) },
-		(match->captured(1) == "addemoji"
-			? Data::StickersType::Emoji
-			: Data::StickersType::Stickers)));
+		controller->uiShow(), StickerSetIdentifier{.shortName = shortName},
+		(match->captured(1) == "addemoji" ? Data::StickersType::Emoji
+										  : Data::StickersType::Stickers)));
 	controller->window().activate();
 	return true;
 }
@@ -1774,7 +1777,7 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			JoinFilterBySlug
 		},
 		{
-			u"^(addstickers|addemoji)/?\\?set=([A-Za-z0-9_]{1,64})(&|$)"_q,
+			u"^(addstickers|addemoji)/?\\?set=([a-zA-Z0-9\\.\\_]+)(&|$)"_q,
 			ShowStickerSet
 		},
 		{

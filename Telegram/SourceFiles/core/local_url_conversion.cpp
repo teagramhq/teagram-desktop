@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/qthelp_regex.h"
 #include "base/qthelp_url.h"
+#include "core/sticker_import.h"
 
 #include <QtCore/QStringList>
 #include <QtCore/QUrl>
@@ -184,9 +185,19 @@ struct HttpsOrigin {
 		+ url.mid(queryEnd);
 }
 
+[[nodiscard]] bool IsInvalidStickerSetLink(const QString &url) {
+	const auto match = regex_match(
+		u"^(https?://)?(www\\.)?(telegram\\.(me|dog)|t\\.me)/(addstickers|addemoji)/([^/?]+)(\\?|$)"_q,
+		url, RegExOption::CaseInsensitive);
+	return match && !IsValidStickerSetShortName(match->captured(6));
+}
+
 [[nodiscard]] QString ConvertLegacyUrlToLocal(QString url) {
 	if (url.size() > 8192) {
 		url = url.mid(0, 8192);
+	}
+	if (IsInvalidStickerSetLink(url)) {
+		return url;
 	}
 
 	using namespace qthelp;
@@ -223,13 +234,8 @@ struct HttpsOrigin {
 			return u"tg://join?invite="_q + url_encode(joinChatMatch->captured(2));
 		} else if (const auto joinFilterMatch = regex_match(u"^(addlist/)([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addlist?slug="_q + url_encode(joinFilterMatch->captured(2));
-		} else if (const auto stickerSetMatch = regex_match(
-					   u"^(addstickers|addemoji)/([A-Za-z0-9_]{1,64})(\\?|$)"_q,
-					   query, matchOptions)) {
+		} else if (const auto stickerSetMatch = regex_match(u"^(addstickers|addemoji)/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://"_q + stickerSetMatch->captured(1) + "?set=" + url_encode(stickerSetMatch->captured(2));
-		} else if (regex_match(u"^(addstickers|addemoji)(/|\\?|$)"_q, query,
-							   matchOptions)) {
-			return url;
 		} else if (const auto themeMatch = regex_match(u"^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addtheme?slug="_q + url_encode(themeMatch->captured(1));
 		} else if (const auto addStyleMatch = regex_match(u"^addstyle/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {

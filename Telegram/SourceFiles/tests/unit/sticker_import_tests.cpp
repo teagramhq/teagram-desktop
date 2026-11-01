@@ -189,16 +189,16 @@ TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
 
 TEST_CASE(StickerImportZipRejectsMalformedEndOfCentralDirectory) {
 	const auto archive = QByteArray("PK\x05\x06", 4) + QByteArray(19, '\0');
-	const auto result
-		= Core::ScanStickerImportZip(archive, Core::StickerImportType::Stickers);
+	const auto result = Core::ScanStickerImportZip(
+		archive, Core::StickerImportType::Stickers);
 	CHECK(result.problem == Core::StickerImportProblem::InvalidArchive);
 }
 
 TEST_CASE(StickerImportZipRejectsTruncatedEndOfCentralDirectory) {
 	auto archive = MakeZip({});
 	archive.chop(1);
-	const auto result
-		= Core::ScanStickerImportZip(archive, Core::StickerImportType::Stickers);
+	const auto result = Core::ScanStickerImportZip(
+		archive, Core::StickerImportType::Stickers);
 	CHECK(result.problem == Core::StickerImportProblem::InvalidArchive);
 }
 
@@ -214,27 +214,26 @@ TEST_CASE(StickerImportZipRejectsLocalHeaderCrcMismatch) {
 TEST_CASE(StickerImportValidatesMediaFormats) {
 	const auto scan = [](const QByteArray &name, const QByteArray &bytes,
 						 Core::StickerImportType type) {
-		return Core::ScanStickerImportZip(
-			MakeZip({{name, bytes}}), type);
+		return Core::ScanStickerImportZip(MakeZip({{name, bytes}}), type);
 	};
 	const auto accepted = [](const Core::StickerImportScan &result) {
 		return (result.problem == Core::StickerImportProblem::None)
-			&& (result.files.size() == 1);
+			   && (result.files.size() == 1);
 	};
 	const auto rejectedAs = [](const Core::StickerImportScan &result,
-								Core::StickerImportProblem problem) {
+							   Core::StickerImportProblem problem) {
 		return (result.files.empty()) && (result.issues.size() == 1)
-			&& (result.issues.front().problem == problem);
+			   && (result.issues.front().problem == problem);
 	};
 
 	const auto stickerWebp = WebpImage(QSize(512, 512));
 	const auto emojiWebp = WebpImage(QSize(100, 100));
 	CHECK(!stickerWebp.isEmpty());
 	CHECK(!emojiWebp.isEmpty());
-	CHECK(accepted(scan("sticker.webp", stickerWebp,
-						Core::StickerImportType::Stickers)));
-	CHECK(accepted(scan("emoji.webp", emojiWebp,
-						Core::StickerImportType::Emoji)));
+	CHECK(accepted(
+		scan("sticker.webp", stickerWebp, Core::StickerImportType::Stickers)));
+	CHECK(accepted(
+		scan("emoji.webp", emojiWebp, Core::StickerImportType::Emoji)));
 	CHECK(rejectedAs(scan("wrong-sticker-size.webp", emojiWebp,
 						  Core::StickerImportType::Stickers),
 					 Core::StickerImportProblem::InvalidDimensions));
@@ -243,15 +242,15 @@ TEST_CASE(StickerImportValidatesMediaFormats) {
 					 Core::StickerImportProblem::InvalidDimensions));
 
 	const auto tgs = ValidStickerTGS();
-	CHECK(accepted(scan("sticker.tgs", tgs,
-						Core::StickerImportType::Stickers)));
+	CHECK(
+		accepted(scan("sticker.tgs", tgs, Core::StickerImportType::Stickers)));
 	CHECK(rejectedAs(scan("invalid.tgs", QByteArray("not gzip"),
 						  Core::StickerImportType::Stickers),
 					 Core::StickerImportProblem::InvalidMedia));
 
 	const auto webm = QByteArray("\x1a\x45\xdf\xa3", 4) + "webm";
-	CHECK(accepted(scan("sticker.webm", webm,
-						Core::StickerImportType::Stickers)));
+	CHECK(accepted(
+		scan("sticker.webm", webm, Core::StickerImportType::Stickers)));
 	CHECK(rejectedAs(scan("invalid.webm", QByteArray("not webm"),
 						  Core::StickerImportType::Stickers),
 					 Core::StickerImportProblem::InvalidMedia));

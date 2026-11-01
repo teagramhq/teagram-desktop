@@ -68,8 +68,8 @@ struct ZipEntry {
 	return name.mid(name.lastIndexOf(QChar('/')) + 1);
 }
 
-[[nodiscard]] std::optional<StickerImportFormat> FormatForName(
-	const QString &name) {
+[[nodiscard]] std::optional<StickerImportFormat>
+FormatForName(const QString &name) {
 	const auto extension = QFileInfo(name).suffix().toLower();
 	if (extension == u"webp"_q) {
 		return StickerImportFormat::Webp;
@@ -96,10 +96,9 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 	result.problem = problem;
 }
 
-[[nodiscard]] StickerImportProblem ValidateBytes(
-													 const QByteArray &bytes,
+[[nodiscard]] StickerImportProblem ValidateBytes(const QByteArray &bytes,
 												 StickerImportType type,
-													 StickerImportFormat format,
+												 StickerImportFormat format,
 												 QSize *dimensions) {
 	if (bytes.isEmpty()) {
 		return StickerImportProblem::InvalidMedia;
@@ -261,8 +260,8 @@ void AddBytes(StickerImportScan &result, QString name, QByteArray bytes,
 			break;
 		}
 		endOffset = (endOffset > 0)
-			? archive.lastIndexOf(signature, endOffset - 1)
-			: -1;
+						? archive.lastIndexOf(signature, endOffset - 1)
+						: -1;
 	}
 	if (endOffset < qsizetype(searchStart)) {
 		return false;

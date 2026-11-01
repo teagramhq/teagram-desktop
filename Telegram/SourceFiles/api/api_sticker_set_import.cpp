@@ -253,8 +253,8 @@ void StickerSetImport::uploadProgressed() {
 
 void StickerSetImport::createSet() {
 	const auto source = (_source == Core::StickerImportSource::Folder)
-		? u"folder"_q
-		: u"zip"_q;
+							? u"folder"_q
+							: u"zip"_q;
 	auto flags = MTPstickers_CreateStickerSet::Flags(
 		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (_type == Data::StickersType::Emoji) {
