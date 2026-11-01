@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_sticker_set_import.h"
 #include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "boxes/sticker_set_box.h"
 #include "core/file_utilities.h"
 #include "core/sticker_import.h"
@@ -41,7 +42,7 @@ namespace {
 const auto kImportModeKey = u"sticker_import_mode"_q;
 constexpr auto kShortNameCheckDelay = crl::time(400);
 
-struct ImportFormState {
+struct ImportFormState final : base::has_weak_ptr {
 	explicit ImportFormState(not_null<Main::Session *> session)
 		: api(&session->mtp()) {}
 
@@ -54,6 +55,7 @@ struct ImportFormState {
 	mtpRequestId preflightRequestId = 0;
 	std::unique_ptr<base::Timer> nameCheckTimer;
 	std::unique_ptr<Api::StickerSetImport> importer;
+	bool scanPending = false;
 	QPointer<Ui::RoundButton> createButton;
 	QPointer<Ui::RoundButton> suggestButton;
 };
@@ -205,7 +207,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		const auto title = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
 			rpl::single(u"Title"_q)));
-		title->setMaxLength(64);
+		title->setMaxLength(128);
 
 		const auto shortName = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
@@ -248,17 +250,34 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			}
 		};
 		const auto updateScan = [=] {
-			if (state->sourcePath.isEmpty()) {
+			if (state->sourcePath.isEmpty() || state->scanPending) {
 				return;
 			}
+			const auto path = state->sourcePath;
+			const auto fromFolder = state->sourceType == u"folder"_q;
 			const auto type = customEmoji->checked()
 								  ? Core::StickerImportType::Emoji
 								  : Core::StickerImportType::Stickers;
-			state->scan
-				= (state->sourceType == u"folder"_q)
-					  ? Core::ScanStickerImportFolder(state->sourcePath, type)
-					  : Core::ScanStickerImportZipFile(state->sourcePath, type);
-			files->setText(ScanDescription(state->scan));
+			state->scanPending = true;
+			setPending(true);
+			files->setText(u"Scanning files…"_q);
+			const auto weak = QPointer<Ui::GenericBox>(box.get());
+			const auto weakState = base::make_weak(state);
+			crl::async([=] {
+				auto scan = fromFolder
+								? Core::ScanStickerImportFolder(path, type)
+								: Core::ScanStickerImportZipFile(path, type);
+				crl::on_main([=, scan = std::move(scan)]() mutable {
+					const auto current = weakState.get();
+					if (!weak || !current) {
+						return;
+					}
+					current->scan = std::move(scan);
+					current->scanPending = false;
+					files->setText(ScanDescription(current->scan));
+					setPending(false);
+				});
+			});
 		};
 		const auto checkShortName = [=] {
 			const auto name = shortName->getLastText().trimmed();
@@ -377,11 +396,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				session, state->scan, titleText, name, type, sourceType);
 			state->importer->start(
 				[=](MTPmessages_StickerSet) {
-					const auto part = (type == Data::StickersType::Emoji)
-										  ? u"addemoji"_q
-										  : u"addstickers"_q;
-					const auto link
-						= session->createInternalLinkFull(part + '/' + name);
+					const auto importType
+						= (type == Data::StickersType::Emoji)
+							  ? Core::StickerImportType::Emoji
+							  : Core::StickerImportType::Stickers;
+					const auto link = session->createInternalLinkFull(
+						Core::StickerImportShareLinkPath(importType, name));
 					box->closeBox();
 					controller->show(Box<StickerSetBox>(
 						controller->uiShow(),
@@ -397,13 +417,16 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		state
 			->createButton = box->addButton(rpl::single(u"Import pack"_q), [=] {
 			error->setText(QString());
+			if (state->scanPending) {
+				return;
+			}
 			if (!rights->checked()) {
 				error->setText(
 					u"Confirm that you have the right to share this pack."_q);
 				return;
 			}
 			const auto titleText = title->getLastText().trimmed();
-			if (titleText.isEmpty() || titleText.toUtf8().size() > 64) {
+			if (!Core::IsValidStickerSetTitle(titleText)) {
 				error->setText(u"The title must be 1 to 64 characters."_q);
 				return;
 			}

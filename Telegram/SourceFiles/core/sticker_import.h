@@ -60,6 +60,9 @@ struct StickerImportScan {
 													 StickerImportType type);
 [[nodiscard]] StickerImportScan
 ScanStickerImportZipFile(const QString &path, StickerImportType type);
+[[nodiscard]] QString StickerImportShareLinkPath(StickerImportType type,
+												 const QString &shortName);
+[[nodiscard]] bool IsValidStickerSetTitle(const QString &title);
 [[nodiscard]] bool IsValidStickerSetShortName(const QString &name);
 
 } // namespace Core

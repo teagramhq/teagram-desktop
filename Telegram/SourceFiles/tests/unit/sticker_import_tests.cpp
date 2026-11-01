@@ -7,7 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
+
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QTemporaryDir>
 
 #include <zlib.h>
 
@@ -20,6 +25,7 @@ struct ZipEntry {
 	QByteArray data;
 	quint32 externalAttributes = 0;
 	quint16 method = 0;
+	quint32 advertisedExpandedSize = 0;
 };
 
 void Append16(QByteArray &bytes, quint16 value) {
@@ -58,6 +64,9 @@ void Append32(QByteArray &bytes, quint32 value) {
 	for (const auto &entry : entries) {
 		const auto compressed
 			= (entry.method == 8) ? DeflateRaw(entry.data) : entry.data;
+		const auto expandedSize = entry.advertisedExpandedSize
+									  ? entry.advertisedExpandedSize
+									  : quint32(entry.data.size());
 		const auto crc
 			= crc32(0, reinterpret_cast<const Bytef *>(entry.data.constData()),
 					uInt(entry.data.size()));
@@ -70,7 +79,7 @@ void Append32(QByteArray &bytes, quint32 value) {
 		Append16(archive, 0);
 		Append32(archive, quint32(crc));
 		Append32(archive, quint32(compressed.size()));
-		Append32(archive, quint32(entry.data.size()));
+		Append32(archive, expandedSize);
 		Append16(archive, quint16(entry.name.size()));
 		Append16(archive, 0);
 		archive.append(entry.name);
@@ -85,7 +94,7 @@ void Append32(QByteArray &bytes, quint32 value) {
 		Append16(directory, 0);
 		Append32(directory, quint32(crc));
 		Append32(directory, quint32(compressed.size()));
-		Append32(directory, quint32(entry.data.size()));
+		Append32(directory, expandedSize);
 		Append16(directory, quint16(entry.name.size()));
 		Append16(directory, 0);
 		Append16(directory, 0);
@@ -106,6 +115,11 @@ void Append32(QByteArray &bytes, quint32 value) {
 	Append32(archive, directoryOffset);
 	Append16(archive, 0);
 	return archive;
+}
+
+[[nodiscard]] bool WriteFile(const QString &path, const QByteArray &bytes) {
+	auto file = QFile(path);
+	return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
 }
 
 TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
@@ -160,12 +174,111 @@ TEST_CASE(StickerImportZipRejectsEntryCountAboveLimit) {
 	CHECK(result.files.empty());
 }
 
+TEST_CASE(StickerImportZipStopsWhenInflatedEntryExceedsItsLimit) {
+	const auto zip = MakeZip({
+		{"expanded.webp", QByteArray(512 * 1024 + 1, 'x'), 0, 8, 512 * 1024},
+	});
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
+	CHECK(result.files.empty());
+	CHECK_EQ(int(result.issues.size()), 1);
+	if (!result.issues.empty()) {
+		CHECK(result.issues.front().problem
+			  == Core::StickerImportProblem::InvalidArchive);
+	}
+}
+
+TEST_CASE(StickerImportZipStopsBeforeAggregateExpansionLimit) {
+	auto entries = std::vector<ZipEntry>();
+	for (auto i = 0; i != 111; ++i) {
+		entries.push_back({
+			QByteArray("item") + QByteArray::number(i) + ".webp",
+			"x",
+			0,
+			8,
+			1024 * 1024,
+		});
+	}
+	const auto zip = MakeZip(entries);
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
+	CHECK(result.problem == Core::StickerImportProblem::TotalSizeLimit);
+	CHECK(result.files.empty());
+}
+
+TEST_CASE(StickerImportFolderDoesNotFollowSymlinkDirectories) {
+	const auto temporary = QTemporaryDir();
+	CHECK(temporary.isValid());
+	if (!temporary.isValid()) {
+		return;
+	}
+	const auto folder = temporary.filePath("pack");
+	const auto outside = temporary.filePath("outside");
+	if (!QDir().mkpath(folder) || !QDir().mkpath(outside)) {
+		CHECK(false);
+		return;
+	}
+	const auto bytes = QByteArray("\x1f\x8b", 2) + "tgs-bytes";
+	if (!WriteFile(QDir(folder).filePath("inside.tgs"), bytes)
+		|| !WriteFile(QDir(outside).filePath("outside.tgs"), bytes)) {
+		CHECK(false);
+		return;
+	}
+	const auto linked = QDir(folder).filePath("linked");
+	const auto linkedSuccessfully = QFile::link(outside, linked);
+	CHECK(linkedSuccessfully);
+	if (!linkedSuccessfully) {
+		return;
+	}
+	const auto result = Core::ScanStickerImportFolder(
+		folder, Core::StickerImportType::Stickers);
+	CHECK_EQ(int(result.files.size()), 1);
+	CHECK_EQ(int(result.issues.size()), 1);
+	if (!result.issues.empty()) {
+		CHECK(result.issues.front().problem
+			  == Core::StickerImportProblem::SymbolicLink);
+	}
+}
+
 TEST_CASE(StickerImportShortNamesMatchServerRules) {
 	CHECK(Core::IsValidStickerSetShortName(u"Cats_2"_q));
 	CHECK(Core::IsValidStickerSetShortName(u"a"_q));
 	CHECK(!Core::IsValidStickerSetShortName(u"2cats"_q));
 	CHECK(!Core::IsValidStickerSetShortName(u"cats.pack"_q));
 	CHECK(!Core::IsValidStickerSetShortName(QString(65, 'a')));
+}
+
+TEST_CASE(StickerImportTitlesUseUnicodeCharacterLimit) {
+	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
+	CHECK(Core::IsValidStickerSetTitle(QString(64, QChar(0x00E9))));
+	CHECK(!Core::IsValidStickerSetTitle(QString(65, QChar(0x00E9))));
+	auto astral = QString();
+	for (auto i = 0; i != 64; ++i) {
+		astral += u"😀"_q;
+	}
+	CHECK(Core::IsValidStickerSetTitle(astral));
+	CHECK(!Core::IsValidStickerSetTitle(astral + u"😀"_q));
+}
+
+TEST_CASE(StickerImportHappyPathSmoke) {
+	const auto zip
+		= MakeZip({{"cats.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes"}});
+	const auto scan
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
+	CHECK_EQ(int(scan.files.size()), 1);
+	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
+	CHECK(Core::IsValidStickerSetShortName(u"cats_a"_q));
+	const auto prefix = u"https://server.example/"_q;
+	const auto shareLink = prefix
+						   + Core::StickerImportShareLinkPath(
+							   Core::StickerImportType::Stickers, u"cats_a"_q);
+	CHECK_EQ(Core::TryConvertUrlToLocal(shareLink, prefix, true),
+			 u"tg://addstickers?set=cats_a"_q);
+	const auto emojiLink = prefix
+						   + Core::StickerImportShareLinkPath(
+							   Core::StickerImportType::Emoji, u"cats_a"_q);
+	CHECK_EQ(Core::TryConvertUrlToLocal(emojiLink, prefix, true),
+			 u"tg://addemoji?set=cats_a"_q);
 }
 
 } // namespace

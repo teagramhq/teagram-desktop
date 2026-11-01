@@ -32,6 +32,7 @@ constexpr auto kMaximumEntryBytes = 512 * 1024;
 constexpr auto kMaximumArchiveNameBytes = 4096;
 constexpr auto kMaximumStickerCount = 120;
 constexpr auto kMaximumEmojiCount = 200;
+constexpr auto kMaximumStickerSetTitleLength = 64;
 constexpr auto kMaximumShortNameLength = 64;
 constexpr auto kCentralSignature = quint32(0x02014B50);
 constexpr auto kLocalSignature = quint32(0x04034B50);
@@ -541,6 +542,13 @@ StickerImportScan ScanStickerImportZipFile(const QString &path,
 	return ScanStickerImportZip(bytes, type);
 }
 
+QString StickerImportShareLinkPath(StickerImportType type,
+								   const QString &shortName) {
+	const auto prefix
+		= (type == StickerImportType::Emoji) ? u"addemoji"_q : u"addstickers"_q;
+	return prefix + '/' + shortName;
+}
+
 bool IsValidStickerSetShortName(const QString &name) {
 	if (name.isEmpty() || name.size() > kMaximumShortNameLength
 		|| !((name.front() >= 'a' && name.front() <= 'z')
@@ -551,6 +559,11 @@ bool IsValidStickerSetShortName(const QString &name) {
 		return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 			   || (ch >= '0' && ch <= '9') || ch == '_';
 	});
+}
+
+bool IsValidStickerSetTitle(const QString &title) {
+	const auto length = title.toUcs4().size();
+	return (length > 0) && (length <= kMaximumStickerSetTitleLength);
 }
 
 } // namespace Core
