@@ -17,6 +17,5 @@ namespace Window {
 class SessionController;
 } // namespace Window
 
-[[nodiscard]] bool StickerImportEnabled(not_null<Main::Session*> session);
-void ShowStickerImportBox(
-	not_null<Window::SessionController*> controller);
+[[nodiscard]] bool StickerImportEnabled(not_null<Main::Session *> session);
+void ShowStickerImportBox(not_null<Window::SessionController *> controller);

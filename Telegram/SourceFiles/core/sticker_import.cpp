@@ -60,13 +60,12 @@ struct FileFormat {
 }
 
 [[nodiscard]] quint16 U16(const QByteArray &bytes, quint64 offset) {
-	return quint16(U8(bytes, offset))
-		| (quint16(U8(bytes, offset + 1)) << 8);
+	return quint16(U8(bytes, offset)) | (quint16(U8(bytes, offset + 1)) << 8);
 }
 
 [[nodiscard]] quint32 U32(const QByteArray &bytes, quint64 offset) {
 	return quint32(U16(bytes, offset))
-		| (quint32(U16(bytes, offset + 2)) << 16);
+		   | (quint32(U16(bytes, offset + 2)) << 16);
 }
 
 [[nodiscard]] QString BaseName(QString name) {
@@ -74,8 +73,7 @@ struct FileFormat {
 	return name.mid(name.lastIndexOf(QChar('/')) + 1);
 }
 
-[[nodiscard]] std::optional<FileFormat> FormatForName(
-		const QString &name) {
+[[nodiscard]] std::optional<FileFormat> FormatForName(const QString &name) {
 	const auto extension = QFileInfo(name).suffix().toLower();
 	if (extension == u"webp"_q) {
 		return FileFormat{
@@ -98,16 +96,13 @@ struct FileFormat {
 }
 
 [[nodiscard]] int MaximumItems(StickerImportType type) {
-	return (type == StickerImportType::Emoji)
-		? kMaximumEmojiCount
-		: kMaximumStickerCount;
+	return (type == StickerImportType::Emoji) ? kMaximumEmojiCount
+											  : kMaximumStickerCount;
 }
 
-void AddIssue(
-		StickerImportScan &result,
-		const QString &name,
-		StickerImportProblem problem) {
-	result.issues.push_back({ name, problem });
+void AddIssue(StickerImportScan &result, const QString &name,
+			  StickerImportProblem problem) {
+	result.issues.push_back({name, problem});
 }
 
 void Fail(StickerImportScan &result, StickerImportProblem problem) {
@@ -115,12 +110,11 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 	result.problem = problem;
 }
 
-[[nodiscard]] StickerImportProblem ValidateBytes(
-		const QString &name,
-		const QByteArray &bytes,
-		StickerImportType type,
-		const FileFormat &format,
-		QSize *dimensions) {
+[[nodiscard]] StickerImportProblem ValidateBytes(const QString &name,
+												 const QByteArray &bytes,
+												 StickerImportType type,
+												 const FileFormat &format,
+												 QSize *dimensions) {
 	if (bytes.isEmpty()) {
 		return StickerImportProblem::InvalidMedia;
 	}
@@ -136,11 +130,11 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 		if (!reader.canRead() || size.isEmpty()) {
 			return StickerImportProblem::InvalidMedia;
 		}
-		const auto valid = (type == StickerImportType::Emoji)
-			? (size.width() == 100 && size.height() == 100)
-			: (size.width() <= 512
-				&& size.height() <= 512
-				&& (size.width() == 512 || size.height() == 512));
+		const auto valid
+			= (type == StickerImportType::Emoji)
+				  ? (size.width() == 100 && size.height() == 100)
+				  : (size.width() <= 512 && size.height() <= 512
+					 && (size.width() == 512 || size.height() == 512));
 		if (!valid) {
 			return StickerImportProblem::InvalidDimensions;
 		}
@@ -155,12 +149,8 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 	return StickerImportProblem::None;
 }
 
-void AddBytes(
-		StickerImportScan &result,
-		QString name,
-		QByteArray bytes,
-		StickerImportType type,
-		quint64 *totalBytes) {
+void AddBytes(StickerImportScan &result, QString name, QByteArray bytes,
+			  StickerImportType type, quint64 *totalBytes) {
 	name = BaseName(std::move(name));
 	const auto format = FormatForName(name);
 	if (!format) {
@@ -171,12 +161,7 @@ void AddBytes(
 		return;
 	}
 	auto dimensions = QSize();
-	const auto problem = ValidateBytes(
-		name,
-		bytes,
-		type,
-		*format,
-		&dimensions);
+	const auto problem = ValidateBytes(name, bytes, type, *format, &dimensions);
 	if (problem != StickerImportProblem::None) {
 		AddIssue(result, name, problem);
 		return;
@@ -196,10 +181,8 @@ void AddBytes(
 	});
 }
 
-[[nodiscard]] bool ReadFileBytes(
-		const QString &path,
-		quint64 maximumBytes,
-		QByteArray *bytes) {
+[[nodiscard]] bool ReadFileBytes(const QString &path, quint64 maximumBytes,
+								 QByteArray *bytes) {
 	if (!bytes) {
 		return false;
 	}
@@ -209,47 +192,38 @@ void AddBytes(
 	}
 	*bytes = file.read(qsizetype(maximumBytes + 1));
 	return file.error() == QFileDevice::NoError
-		&& quint64(bytes->size()) <= maximumBytes
-		&& file.atEnd();
+		   && quint64(bytes->size()) <= maximumBytes && file.atEnd();
 }
 
-[[nodiscard]] bool InflateEntry(
-		const QByteArray &archive,
-		const ZipEntry &entry,
-		QByteArray *bytes) {
-	if (!bytes
-		|| entry.expandedSize > kMaximumEntryBytes
+[[nodiscard]] bool InflateEntry(const QByteArray &archive,
+								const ZipEntry &entry, QByteArray *bytes) {
+	if (!bytes || entry.expandedSize > kMaximumEntryBytes
 		|| entry.dataOffset > quint64(archive.size())
-		|| entry.compressedSize
-			> quint64(archive.size()) - entry.dataOffset) {
+		|| entry.compressedSize > quint64(archive.size()) - entry.dataOffset) {
 		return false;
 	}
 	if (entry.method == 0) {
 		if (entry.compressedSize != entry.expandedSize) {
 			return false;
 		}
-		*bytes = archive.mid(
-			qsizetype(entry.dataOffset),
-			qsizetype(entry.compressedSize));
+		*bytes = archive.mid(qsizetype(entry.dataOffset),
+							 qsizetype(entry.compressedSize));
 	} else if (entry.method == 8) {
 		auto stream = z_stream();
 		if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
 			return false;
 		}
-		stream.next_in = reinterpret_cast<Bytef*>(
-			const_cast<char*>(archive.constData()
-				+ qsizetype(entry.dataOffset)));
+		stream.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(
+			archive.constData() + qsizetype(entry.dataOffset)));
 		stream.avail_in = uInt(entry.compressedSize);
 		bytes->clear();
 		bytes->reserve(int(entry.expandedSize));
 		auto output = std::array<Bytef, 16 * 1024>();
 		auto status = Z_OK;
 		while (status == Z_OK) {
-			const auto remaining = entry.expandedSize
-				- quint64(bytes->size());
-			const auto capacity = std::min<quint64>(
-				output.size(),
-				remaining + 1);
+			const auto remaining = entry.expandedSize - quint64(bytes->size());
+			const auto capacity
+				= std::min<quint64>(output.size(), remaining + 1);
 			stream.next_out = output.data();
 			stream.avail_out = uInt(capacity);
 			status = inflate(&stream, Z_NO_FLUSH);
@@ -258,17 +232,16 @@ void AddBytes(
 				status = Z_DATA_ERROR;
 				break;
 			}
-			bytes->append(
-				reinterpret_cast<const char*>(output.data()),
-				qsizetype(produced));
+			bytes->append(reinterpret_cast<const char *>(output.data()),
+						  qsizetype(produced));
 			if ((status == Z_OK) && !produced && !stream.avail_in) {
 				status = Z_DATA_ERROR;
 				break;
 			}
 		}
 		const auto valid = status == Z_STREAM_END
-			&& quint64(bytes->size()) == entry.expandedSize
-			&& stream.total_in == entry.compressedSize;
+						   && quint64(bytes->size()) == entry.expandedSize
+						   && stream.total_in == entry.compressedSize;
 		inflateEnd(&stream);
 		if (!valid) {
 			return false;
@@ -276,18 +249,16 @@ void AddBytes(
 	} else {
 		return false;
 	}
-	const auto crc = crc32(
-		0,
-		reinterpret_cast<const Bytef*>(bytes->constData()),
-		uInt(bytes->size()));
+	const auto crc
+		= crc32(0, reinterpret_cast<const Bytef *>(bytes->constData()),
+				uInt(bytes->size()));
 	return quint32(crc) == entry.crc;
 }
 
-[[nodiscard]] bool ParseZipDirectory(
-		const QByteArray &archive,
-		quint64 *directoryOffset,
-		quint64 *directorySize,
-		quint16 *entryCount) {
+[[nodiscard]] bool ParseZipDirectory(const QByteArray &archive,
+									 quint64 *directoryOffset,
+									 quint64 *directorySize,
+									 quint16 *entryCount) {
 	if (archive.size() < 22) {
 		return false;
 	}
@@ -307,8 +278,7 @@ void AddBytes(
 		return false;
 	}
 	const auto offset = quint64(endOffset);
-	if (U16(archive, offset + 4) != 0
-		|| U16(archive, offset + 6) != 0
+	if (U16(archive, offset + 4) != 0 || U16(archive, offset + 6) != 0
 		|| U16(archive, offset + 8) != U16(archive, offset + 10)) {
 		return false;
 	}
@@ -316,17 +286,15 @@ void AddBytes(
 	*directorySize = U32(archive, offset + 12);
 	*directoryOffset = U32(archive, offset + 16);
 	return (*directoryOffset <= size)
-		&& (*directorySize <= size - *directoryOffset)
-		&& (*directoryOffset + *directorySize == offset);
+		   && (*directorySize <= size - *directoryOffset)
+		   && (*directoryOffset + *directorySize == offset);
 }
 
-[[nodiscard]] bool ParseZipEntries(
-		const QByteArray &archive,
-		quint64 directoryOffset,
-		quint64 directorySize,
-		quint16 entryCount,
-		std::vector<ZipEntry> *entries,
-		quint64 *expandedBytes) {
+[[nodiscard]] bool ParseZipEntries(const QByteArray &archive,
+								   quint64 directoryOffset,
+								   quint64 directorySize, quint16 entryCount,
+								   std::vector<ZipEntry> *entries,
+								   quint64 *expandedBytes) {
 	if (!entries || !expandedBytes) {
 		return false;
 	}
@@ -352,32 +320,25 @@ void AddBytes(
 		const auto disk = U16(archive, offset + 34);
 		const auto externalAttributes = U32(archive, offset + 38);
 		const auto localOffset = U32(archive, offset + 42);
-		const auto recordSize = quint64(46)
-			+ nameSize
-			+ extraSize
-			+ commentSize;
+		const auto recordSize
+			= quint64(46) + nameSize + extraSize + commentSize;
 		if (recordSize > directoryEnd - offset
-			|| nameSize > kMaximumArchiveNameBytes
-			|| disk != 0
+			|| nameSize > kMaximumArchiveNameBytes || disk != 0
 			|| compressedSize == std::numeric_limits<quint32>::max()
 			|| expandedSize == std::numeric_limits<quint32>::max()
 			|| localOffset == std::numeric_limits<quint32>::max()) {
 			return false;
 		}
-		const auto nameBytes = archive.mid(
-			qsizetype(offset + 46),
-			nameSize);
+		const auto nameBytes = archive.mid(qsizetype(offset + 46), nameSize);
 		if (nameBytes.contains('\0')) {
 			return false;
 		}
-		auto name = (flags & (1 << 11))
-			? QString::fromUtf8(nameBytes)
-			: QString::fromLatin1(nameBytes);
+		auto name = (flags & (1 << 11)) ? QString::fromUtf8(nameBytes)
+										: QString::fromLatin1(nameBytes);
 		const auto isDirectory = name.endsWith('/') || name.endsWith('\\');
 		const auto host = quint8(madeBy >> 8);
 		const auto mode = quint32(externalAttributes >> 16);
-		const auto symbolicLink = (host == 3)
-			&& ((mode & 0170000) == 0120000);
+		const auto symbolicLink = (host == 3) && ((mode & 0170000) == 0120000);
 		if (!isDirectory) {
 			if (quint64(expandedSize)
 				> kMaximumExpandedBytes - *expandedBytes) {
@@ -399,8 +360,7 @@ void AddBytes(
 		};
 		if (!isDirectory) {
 			const auto local = quint64(localOffset);
-			if (local > directoryOffset
-				|| directoryOffset - local < 30
+			if (local > directoryOffset || directoryOffset - local < 30
 				|| U32(archive, local) != kLocalSignature) {
 				return false;
 			}
@@ -409,13 +369,11 @@ void AddBytes(
 			const auto localNameSize = U16(archive, local + 26);
 			const auto localExtraSize = U16(archive, local + 28);
 			const auto dataOffset = local + 30 + localNameSize + localExtraSize;
-			if (localFlags != flags
-				|| localMethod != method
-				|| localNameSize != nameSize
-				|| dataOffset > directoryOffset
+			if (localFlags != flags || localMethod != method
+				|| localNameSize != nameSize || dataOffset > directoryOffset
 				|| quint64(compressedSize) > directoryOffset - dataOffset
 				|| archive.mid(qsizetype(local + 30), localNameSize)
-					!= nameBytes) {
+					   != nameBytes) {
 				return false;
 			}
 			if (!(flags & (1 << 3))
@@ -432,11 +390,9 @@ void AddBytes(
 	return offset == directoryEnd;
 }
 
-void ReadZipEntries(
-		const QByteArray &archive,
-		const std::vector<ZipEntry> &entries,
-		StickerImportType type,
-		StickerImportScan *result) {
+void ReadZipEntries(const QByteArray &archive,
+					const std::vector<ZipEntry> &entries,
+					StickerImportType type, StickerImportScan *result) {
 	auto totalBytes = quint64(0);
 	for (const auto &entry : entries) {
 		if (entry.directory) {
@@ -474,16 +430,16 @@ void ReadZipEntries(
 			return;
 		}
 	}
-	if (result->files.empty() && result->problem == StickerImportProblem::None) {
+	if (result->files.empty()
+		&& result->problem == StickerImportProblem::None) {
 		result->problem = StickerImportProblem::NoFiles;
 	}
 }
 
 } // namespace
 
-StickerImportScan ScanStickerImportFolder(
-		const QString &path,
-		StickerImportType type) {
+StickerImportScan ScanStickerImportFolder(const QString &path,
+										  StickerImportType type) {
 	auto result = StickerImportScan();
 	const auto root = QFileInfo(path);
 	if (!root.isDir() || root.isSymLink()) {
@@ -492,14 +448,9 @@ StickerImportScan ScanStickerImportFolder(
 	}
 	auto entries = 0;
 	auto totalBytes = quint64(0);
-	const auto filters = QDir::AllEntries
-		| QDir::NoDotAndDotDot
-		| QDir::Hidden
-		| QDir::System;
-	auto iterator = QDirIterator(
-		path,
-		filters,
-		QDirIterator::Subdirectories);
+	const auto filters
+		= QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System;
+	auto iterator = QDirIterator(path, filters, QDirIterator::Subdirectories);
 	while (iterator.hasNext()) {
 		const auto entryPath = iterator.next();
 		if (++entries > kMaximumEntries) {
@@ -519,7 +470,7 @@ StickerImportScan ScanStickerImportFolder(
 			AddIssue(result, name, StickerImportProblem::UnsupportedFormat);
 			continue;
 		} else if (info.size() < 0
-			|| quint64(info.size()) > format->maximumBytes) {
+				   || quint64(info.size()) > format->maximumBytes) {
 			AddIssue(result, name, StickerImportProblem::FileTooLarge);
 			continue;
 		} else if (int(result.files.size()) >= MaximumItems(type)) {
@@ -542,9 +493,8 @@ StickerImportScan ScanStickerImportFolder(
 	return result;
 }
 
-StickerImportScan ScanStickerImportZip(
-		const QByteArray &bytes,
-		StickerImportType type) {
+StickerImportScan ScanStickerImportZip(const QByteArray &bytes,
+									   StickerImportType type) {
 	auto result = StickerImportScan();
 	if (quint64(bytes.size()) > kMaximumArchiveBytes) {
 		result.problem = StickerImportProblem::TotalSizeLimit;
@@ -553,11 +503,8 @@ StickerImportScan ScanStickerImportZip(
 	auto directoryOffset = quint64(0);
 	auto directorySize = quint64(0);
 	auto entryCount = quint16(0);
-	if (!ParseZipDirectory(
-			bytes,
-			&directoryOffset,
-			&directorySize,
-			&entryCount)) {
+	if (!ParseZipDirectory(bytes, &directoryOffset, &directorySize,
+						   &entryCount)) {
 		result.problem = StickerImportProblem::InvalidArchive;
 		return result;
 	} else if (entryCount > kMaximumEntries) {
@@ -566,16 +513,11 @@ StickerImportScan ScanStickerImportZip(
 	}
 	auto entries = std::vector<ZipEntry>();
 	auto expandedBytes = quint64(0);
-	if (!ParseZipEntries(
-			bytes,
-			directoryOffset,
-			directorySize,
-			entryCount,
-			&entries,
-			&expandedBytes)) {
+	if (!ParseZipEntries(bytes, directoryOffset, directorySize, entryCount,
+						 &entries, &expandedBytes)) {
 		result.problem = (expandedBytes > kMaximumExpandedBytes)
-			? StickerImportProblem::TotalSizeLimit
-			: StickerImportProblem::InvalidArchive;
+							 ? StickerImportProblem::TotalSizeLimit
+							 : StickerImportProblem::InvalidArchive;
 		return result;
 	} else if (expandedBytes > kMaximumExpandedBytes) {
 		result.problem = StickerImportProblem::TotalSizeLimit;
@@ -585,33 +527,29 @@ StickerImportScan ScanStickerImportZip(
 	return result;
 }
 
-StickerImportScan ScanStickerImportZipFile(
-		const QString &path,
-		StickerImportType type) {
+StickerImportScan ScanStickerImportZipFile(const QString &path,
+										   StickerImportType type) {
 	auto bytes = QByteArray();
 	const auto info = QFileInfo(path);
 	if (!info.isFile() || info.isSymLink() || info.size() < 0) {
-		return { .problem = StickerImportProblem::InvalidSource };
+		return {.problem = StickerImportProblem::InvalidSource};
 	} else if (quint64(info.size()) > kMaximumArchiveBytes) {
-		return { .problem = StickerImportProblem::TotalSizeLimit };
+		return {.problem = StickerImportProblem::TotalSizeLimit};
 	} else if (!ReadFileBytes(path, kMaximumArchiveBytes, &bytes)) {
-		return { .problem = StickerImportProblem::ReadFailed };
+		return {.problem = StickerImportProblem::ReadFailed};
 	}
 	return ScanStickerImportZip(bytes, type);
 }
 
 bool IsValidStickerSetShortName(const QString &name) {
-	if (name.isEmpty()
-		|| name.size() > kMaximumShortNameLength
+	if (name.isEmpty() || name.size() > kMaximumShortNameLength
 		|| !((name.front() >= 'a' && name.front() <= 'z')
-			|| (name.front() >= 'A' && name.front() <= 'Z'))) {
+			 || (name.front() >= 'A' && name.front() <= 'Z'))) {
 		return false;
 	}
 	return std::all_of(name.cbegin(), name.cend(), [](QChar ch) {
-		return (ch >= 'a' && ch <= 'z')
-			|| (ch >= 'A' && ch <= 'Z')
-			|| (ch >= '0' && ch <= '9')
-			|| ch == '_';
+		return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+			   || (ch >= '0' && ch <= '9') || ch == '_';
 	});
 }
 

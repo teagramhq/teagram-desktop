@@ -1777,33 +1777,29 @@ void SetupStickersEmoji(
 	}
 
 	const auto importEnabled = StickerImportEnabled(session);
-	const auto importLabel = inner->lifetime().make_state<rpl::variable<QString>>(
-		importEnabled
-			? QString()
-			: u"Disabled by this server"_q);
+	const auto importLabel
+		= inner->lifetime().make_state<rpl::variable<QString>>(
+			importEnabled ? QString() : u"Disabled by this server"_q);
 	const auto importButton = AddButtonWithLabel(
-		inner,
-		rpl::single(u"Import pack"_q),
-		importLabel->value(),
-		st::settingsButton,
-		{ &st::menuIconStickers });
+		inner, rpl::single(u"Import pack"_q), importLabel->value(),
+		st::settingsButton, {&st::menuIconStickers});
 	importButton->setDisabled(!importEnabled);
-	importButton->addClickHandler([=] {
-		ShowStickerImportBox(controller);
-	});
-	session->appConfig().value(
-	) | rpl::on_next([=] {
-		const auto enabled = StickerImportEnabled(session);
-		importButton->setDisabled(!enabled);
-		*importLabel = enabled
-			? QString()
-			: u"Disabled by this server"_q;
-	}, inner->lifetime());
+	importButton->addClickHandler([=] { ShowStickerImportBox(controller); });
+	session->appConfig().value()
+		| rpl::on_next(
+			[=] {
+				const auto enabled = StickerImportEnabled(session);
+				importButton->setDisabled(!enabled);
+				*importLabel
+					= enabled ? QString() : u"Disabled by this server"_q;
+			},
+			inner->lifetime());
 	if (highlights) {
-		highlights->push_back({ u"chat/import-sticker-pack"_q, {
-			importButton.get(),
-			{ .rippleShape = true },
-		} });
+		highlights->push_back({u"chat/import-sticker-pack"_q,
+							   {
+								   importButton.get(),
+								   {.rippleShape = true},
+							   }});
 	}
 
 	Ui::AddSkip(container, st::settingsCheckboxesSkip);

@@ -104,9 +104,7 @@ TEST_CASE(StickerSetLinksRejectNamesOutsideTheShareLinkContract) {
 		u"https://t.me/addstickers/"_q + QString(65, 'a'),
 	};
 	for (const auto &link : links) {
-		CHECK_EQ(
-			Core::TryConvertUrlToLocal(link, kServerPrefix, true),
-			link);
+		CHECK_EQ(Core::TryConvertUrlToLocal(link, kServerPrefix, true), link);
 	}
 }
 
@@ -114,14 +112,12 @@ TEST_CASE(PinnedServerStickerSetLinksOpenTheMatchingSetType) {
 	CHECK_EQ(
 		Core::TryConvertUrlToLocal(
 			u"https://telegram-server.tailaa4918.ts.net/addstickers/cats_a"_q,
-			kServerPrefix,
-			true),
+			kServerPrefix, true),
 		u"tg://addstickers?set=cats_a"_q);
 	CHECK_EQ(
 		Core::TryConvertUrlToLocal(
 			u"https://telegram-server.tailaa4918.ts.net/addemoji/emoji_2"_q,
-			kServerPrefix,
-			true),
+			kServerPrefix, true),
 		u"tg://addemoji?set=emoji_2"_q);
 }
 

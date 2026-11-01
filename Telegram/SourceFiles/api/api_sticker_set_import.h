@@ -19,23 +19,18 @@ class Session;
 namespace Api {
 
 class StickerSetImport final : public base::has_weak_ptr {
-public:
-	StickerSetImport(
-		not_null<Main::Session*> session,
-		Core::StickerImportScan scan,
-		QString title,
-		QString shortName,
-		Data::StickersType type,
-		QString source);
+  public:
+	StickerSetImport(not_null<Main::Session *> session,
+					 Core::StickerImportScan scan, QString title,
+					 QString shortName, Data::StickersType type,
+					 QString source);
 	~StickerSetImport();
 
-	void start(
-		Fn<void(MTPmessages_StickerSet)> done,
-		Fn<void(QString)> fail,
-		Fn<void(int)> progress = nullptr);
+	void start(Fn<void(MTPmessages_StickerSet)> done, Fn<void(QString)> fail,
+			   Fn<void(int)> progress = nullptr);
 	void cancel();
 
-private:
+  private:
 	void uploadNext();
 	void uploadReady(const MTPInputFile &file);
 	void uploadFailed();
@@ -43,7 +38,7 @@ private:
 	void createSet();
 	void fail(QString error);
 
-	const not_null<Main::Session*> _session;
+	const not_null<Main::Session *> _session;
 	Core::StickerImportScan _scan;
 	const QString _title;
 	const QString _shortName;

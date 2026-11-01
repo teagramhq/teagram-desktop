@@ -54,15 +54,12 @@ struct StickerImportScan {
 	StickerImportProblem problem = StickerImportProblem::None;
 };
 
-[[nodiscard]] StickerImportScan ScanStickerImportFolder(
-	const QString &path,
-	StickerImportType type);
-[[nodiscard]] StickerImportScan ScanStickerImportZip(
-	const QByteArray &bytes,
-	StickerImportType type);
-[[nodiscard]] StickerImportScan ScanStickerImportZipFile(
-	const QString &path,
-	StickerImportType type);
+[[nodiscard]] StickerImportScan ScanStickerImportFolder(const QString &path,
+														StickerImportType type);
+[[nodiscard]] StickerImportScan ScanStickerImportZip(const QByteArray &bytes,
+													 StickerImportType type);
+[[nodiscard]] StickerImportScan
+ScanStickerImportZipFile(const QString &path, StickerImportType type);
 [[nodiscard]] bool IsValidStickerSetShortName(const QString &name);
 
 } // namespace Core

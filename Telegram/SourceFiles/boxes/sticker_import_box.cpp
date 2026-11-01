@@ -41,9 +41,8 @@ constexpr auto kImportModeKey = u"sticker_import_mode"_q;
 constexpr auto kShortNameCheckDelay = crl::time(400);
 
 struct ImportFormState {
-	explicit ImportFormState(not_null<Main::Session*> session)
-	: api(&session->mtp()) {
-	}
+	explicit ImportFormState(not_null<Main::Session *> session)
+		: api(&session->mtp()) {}
 
 	MTP::Sender api;
 	QString sourcePath;
@@ -59,32 +58,32 @@ struct ImportFormState {
 };
 
 [[nodiscard]] bool StickerImportEnabled(const MTPhelp_AppConfig &config) {
-	return config.match([&](const MTPDhelp_appConfig &data) {
-		const auto &value = data.vconfig();
-		if (value.type() != mtpc_jsonObject) {
-			return false;
-		}
-		for (const auto &element : value.c_jsonObject().vvalue().v) {
-			const auto enabled = element.match([&](const MTPDjsonObjectValue &item) {
-				if (qs(item.vkey()) != kImportModeKey) {
-					return false;
-				}
-				return item.vvalue().match([&](const MTPDjsonString &text) {
-					return qs(text.vvalue()) == u"on"_q;
-				}, [](const auto &) {
-					return false;
-				});
-			}, [](const auto &) {
+	return config.match(
+		[&](const MTPDhelp_appConfig &data) {
+			const auto &value = data.vconfig();
+			if (value.type() != mtpc_jsonObject) {
 				return false;
-			});
-			if (enabled) {
-				return true;
 			}
-		}
-		return false;
-	}, [](const MTPDhelp_appConfigNotModified &) {
-		return false;
-	});
+			for (const auto &element : value.c_jsonObject().vvalue().v) {
+				const auto enabled = element.match(
+					[&](const MTPDjsonObjectValue &item) {
+						if (qs(item.vkey()) != kImportModeKey) {
+							return false;
+						}
+						return item.vvalue().match(
+							[&](const MTPDjsonString &text) {
+								return qs(text.vvalue()) == u"on"_q;
+							},
+							[](const auto &) { return false; });
+					},
+					[](const auto &) { return false; });
+				if (enabled) {
+					return true;
+				}
+			}
+			return false;
+		},
+		[](const MTPDhelp_appConfigNotModified &) { return false; });
 }
 
 [[nodiscard]] QString ScanProblemText(Core::StickerImportProblem problem) {
@@ -123,13 +122,14 @@ struct ImportFormState {
 	auto lines = QStringList();
 	if (!scan.files.empty()) {
 		lines.push_back(QString(u"%1 supported file(s) ready to import."_q)
-			.arg(int(scan.files.size())));
+							.arg(int(scan.files.size())));
 	}
 	if (scan.problem != Core::StickerImportProblem::None) {
 		lines.push_back(ScanProblemText(scan.problem));
 	}
 	for (const auto &issue : scan.issues) {
-		lines.push_back(u"%1: %2"_q.arg(issue.name, ScanProblemText(issue.problem)));
+		lines.push_back(
+			u"%1: %2"_q.arg(issue.name, ScanProblemText(issue.problem)));
 	}
 	return lines.join('\n');
 }
@@ -156,7 +156,7 @@ struct ImportFormState {
 	} else if (error == u"STICKER_VIDEO_DURATION"_q) {
 		return u"A video sticker can't be longer than 3 seconds."_q;
 	} else if (error == u"STICKER_FILE_INVALID"_q
-		|| error == u"STICKER_DOCUMENT_INVALID"_q) {
+			   || error == u"STICKER_DOCUMENT_INVALID"_q) {
 		return u"The server couldn't use one of these files. Check the listed formats and limits."_q;
 	} else if (error.startsWith(u"FLOOD_WAIT_"_q)) {
 		return u"Please wait a little before creating another set."_q;
@@ -166,86 +166,72 @@ struct ImportFormState {
 	return u"The server couldn't import this pack. Please try again."_q;
 }
 
-void ShowCreatedSetLink(
-		not_null<Window::SessionController*> controller,
-		const QString &url) {
-	controller->show(Box<Ui::GenericBox>([=](not_null<Ui::GenericBox*> box) {
-		box->setTitle(u"Sticker pack created"_q);
-		box->addRow(
-			object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
-		box->addButton(u"Copy link"_q, [=] {
-			QGuiApplication::clipboard()->setText(url);
-			controller->showToast(u"Link copied"_q);
-			box->closeBox();
-		});
-		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
-	}), Ui::LayerOption::KeepOther);
+void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
+						const QString &url) {
+	controller->show(
+		Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
+			box->setTitle(u"Sticker pack created"_q);
+			box->addRow(object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
+			box->addButton(u"Copy link"_q, [=] {
+				QGuiApplication::clipboard()->setText(url);
+				controller->showToast(u"Link copied"_q);
+				box->closeBox();
+			});
+			box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+		}),
+		Ui::LayerOption::KeepOther);
 }
 
 } // namespace
 
-bool StickerImportEnabled(not_null<Main::Session*> session) {
+bool StickerImportEnabled(not_null<Main::Session *> session) {
 	return session->appConfig().get<QString>(kImportModeKey, u"off"_q)
-		== u"on"_q;
+		   == u"on"_q;
 }
 
-void ShowStickerImportBox(
-		not_null<Window::SessionController*> controller) {
+void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 	const auto session = &controller->session();
 	if (!StickerImportEnabled(session)) {
 		controller->show(Ui::MakeInformBox(
 			u"This server has disabled sticker pack imports."_q));
 		return;
 	}
-	controller->show(Box<Ui::GenericBox>([=](not_null<Ui::GenericBox*> box) {
+	controller->show(Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
 		box->setTitle(u"Import pack"_q);
 		box->setWidth(st::boxWideWidth);
 		const auto state = box->lifetime().make_state<ImportFormState>(session);
 
 		const auto title = box->addRow(object_ptr<Ui::InputField>(
-			box,
-			st::defaultInputField,
-			Ui::InputField::Mode::SingleLine,
+			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
 			rpl::single(u"Title"_q)));
 		title->setMaxLength(64);
 
 		const auto shortName = box->addRow(object_ptr<Ui::InputField>(
-			box,
-			st::defaultInputField,
-			Ui::InputField::Mode::SingleLine,
+			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
 			rpl::single(u"Short name"_q)));
 		shortName->setMaxLength(64);
 
-		const auto availability = box->addRow(
-			object_ptr<Ui::FlatLabel>(box, st::boxLabel));
-		const auto source = box->addRow(
-			object_ptr<Ui::FlatLabel>(box, st::boxLabel));
-		const auto files = box->addRow(
-			object_ptr<Ui::FlatLabel>(box, st::boxLabel));
-		const auto error = box->addRow(
-			object_ptr<Ui::FlatLabel>(box, st::boxLabel));
+		const auto availability
+			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
+		const auto source
+			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
+		const auto files
+			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
+		const auto error
+			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
 
 		const auto customEmoji = box->addRow(object_ptr<Ui::Checkbox>(
-			box,
-			u"Create a custom emoji set"_q,
-			false,
-			st::settingsCheckbox));
+			box, u"Create a custom emoji set"_q, false, st::settingsCheckbox));
 		const auto rights = box->addRow(object_ptr<Ui::Checkbox>(
-			box,
-			u"I have the right to share this pack."_q,
-			false,
+			box, u"I have the right to share this pack."_q, false,
 			st::settingsCheckbox));
 
 		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
-			box,
-			rpl::single(u"Choose folder"_q),
-			st::settingsButton,
-			{ &st::menuIconStickers }));
+			box, rpl::single(u"Choose folder"_q), st::settingsButton,
+			{&st::menuIconStickers}));
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
-			box,
-			rpl::single(u"Choose ZIP file"_q),
-			st::settingsButton,
-			{ &st::menuIconStickers }));
+			box, rpl::single(u"Choose ZIP file"_q), st::settingsButton,
+			{&st::menuIconStickers}));
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
 			shortName->setDisabled(pending);
@@ -265,11 +251,12 @@ void ShowStickerImportBox(
 				return;
 			}
 			const auto type = customEmoji->checked()
-				? Core::StickerImportType::Emoji
-				: Core::StickerImportType::Stickers;
-			state->scan = (state->sourceType == u"folder"_q)
-				? Core::ScanStickerImportFolder(state->sourcePath, type)
-				: Core::ScanStickerImportZipFile(state->sourcePath, type);
+								  ? Core::StickerImportType::Emoji
+								  : Core::StickerImportType::Stickers;
+			state->scan
+				= (state->sourceType == u"folder"_q)
+					  ? Core::ScanStickerImportFolder(state->sourcePath, type)
+					  : Core::ScanStickerImportZipFile(state->sourcePath, type);
 			files->setText(ScanDescription(state->scan));
 		};
 		const auto checkShortName = [=] {
@@ -283,36 +270,45 @@ void ShowStickerImportBox(
 				return;
 			}
 			availability->setText(u"Checking availability…"_q);
-			state->nameCheckRequestId = state->api.request(
-				MTPstickers_CheckShortName(MTP_string(name))
-			).done(crl::guard(box, [=](const MTPBool &result) {
-				state->nameCheckRequestId = 0;
-				if (name != shortName->getLastText().trimmed()) {
-					return;
-				}
-				availability->setText(mtpIsTrue(result)
-					? u"Available"_q
-					: u"This short name is already in use."_q);
-			})).fail(crl::guard(box, [=] {
-				state->nameCheckRequestId = 0;
-				availability->setText(u"Availability couldn't be checked."_q);
-			})).send();
+			state->nameCheckRequestId
+				= state->api
+					  .request(MTPstickers_CheckShortName(MTP_string(name)))
+					  .done(crl::guard(
+						  box,
+						  [=](const MTPBool &result) {
+							  state->nameCheckRequestId = 0;
+							  if (name != shortName->getLastText().trimmed()) {
+								  return;
+							  }
+							  availability->setText(
+								  mtpIsTrue(result)
+									  ? u"Available"_q
+									  : u"This short name is already in use."_q);
+						  }))
+					  .fail(crl::guard(
+						  box,
+						  [=] {
+							  state->nameCheckRequestId = 0;
+							  availability->setText(
+								  u"Availability couldn't be checked."_q);
+						  }))
+					  .send();
 		};
-		state->nameCheckTimer = std::make_unique<base::Timer>([=] {
-			checkShortName();
-		});
-		shortName->changes() | rpl::on_next([=] {
-			state->api.request(
-				base::take(state->nameCheckRequestId)).cancel();
-			availability->setText(QString());
-			state->nameCheckTimer->callOnce(kShortNameCheckDelay);
-		}, shortName->lifetime());
+		state->nameCheckTimer
+			= std::make_unique<base::Timer>([=] { checkShortName(); });
+		shortName->changes()
+			| rpl::on_next(
+				[=] {
+					state->api.request(base::take(state->nameCheckRequestId))
+						.cancel();
+					availability->setText(QString());
+					state->nameCheckTimer->callOnce(kShortNameCheckDelay);
+				},
+				shortName->lifetime());
 
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
-				box.get(),
-				u"Choose sticker pack folder"_q,
-				QString(),
+				box.get(), u"Choose sticker pack folder"_q, QString(),
 				crl::guard(box, [=](QString &&path) {
 					if (path.isEmpty()) {
 						return;
@@ -327,8 +323,7 @@ void ShowStickerImportBox(
 		folderButton->addClickHandler(chooseFolder);
 		zipButton->addClickHandler([=] {
 			FileDialog::GetOpenPath(
-				box.get(),
-				u"Choose sticker pack ZIP"_q,
+				box.get(), u"Choose sticker pack ZIP"_q,
 				u"ZIP archives (*.zip)"_q,
 				crl::guard(box, [=](FileDialog::OpenResult &&result) {
 					if (result.paths.isEmpty()) {
@@ -341,18 +336,24 @@ void ShowStickerImportBox(
 					updateScan();
 				}));
 		});
-		customEmoji->checkedChanges() | rpl::on_next([=](bool) {
-			updateScan();
-		}, customEmoji->lifetime());
+		customEmoji->checkedChanges()
+			| rpl::on_next([=](bool) { updateScan(); },
+						   customEmoji->lifetime());
 
-		box->boxClosing() | rpl::on_next([=] {
-			state->api.request(base::take(state->nameCheckRequestId)).cancel();
-			state->api.request(base::take(state->suggestionRequestId)).cancel();
-			state->api.request(base::take(state->preflightRequestId)).cancel();
-			if (state->importer) {
-				state->importer->cancel();
-			}
-		}, box->lifetime());
+		box->boxClosing()
+			| rpl::on_next(
+				[=] {
+					state->api.request(base::take(state->nameCheckRequestId))
+						.cancel();
+					state->api.request(base::take(state->suggestionRequestId))
+						.cancel();
+					state->api.request(base::take(state->preflightRequestId))
+						.cancel();
+					if (state->importer) {
+						state->importer->cancel();
+					}
+				},
+				box->lifetime());
 
 		const auto failImport = [=](QString message) {
 			if (state->importer) {
@@ -360,41 +361,35 @@ void ShowStickerImportBox(
 				state->importer.reset();
 			}
 			setPending(false);
-			error->setText(message.isEmpty()
-				? u"The upload failed. Check your connection and try again."_q
-				: ServerErrorText(message));
+			error->setText(
+				message.isEmpty()
+					? u"The upload failed. Check your connection and try again."_q
+					: ServerErrorText(message));
 		};
 		const auto startUpload = [=](const QString &name) {
 			const auto type = customEmoji->checked()
-				? Data::StickersType::Emoji
-				: Data::StickersType::Stickers;
+								  ? Data::StickersType::Emoji
+								  : Data::StickersType::Stickers;
 			const auto titleText = title->getLastText().trimmed();
 			const auto sourceType = state->sourceType;
 			state->importer = std::make_unique<Api::StickerSetImport>(
-				session,
-				state->scan,
-				titleText,
-				name,
-				type,
-				sourceType);
+				session, state->scan, titleText, name, type, sourceType);
 			state->importer->start(
 				[=](MTPmessages_StickerSet) {
 					const auto part = (type == Data::StickersType::Emoji)
-						? u"addemoji"_q
-						: u"addstickers"_q;
-					const auto link = session->createInternalLinkFull(
-						part + '/' + name);
+										  ? u"addemoji"_q
+										  : u"addstickers"_q;
+					const auto link
+						= session->createInternalLinkFull(part + '/' + name);
 					box->closeBox();
 					controller->show(Box<StickerSetBox>(
 						controller->uiShow(),
-						StickerSetIdentifier{ .shortName = name },
-						type));
+						StickerSetIdentifier{.shortName = name}, type));
 					ShowCreatedSetLink(controller, link);
 				},
 				failImport,
 				[=](int percent) {
-					error->setText(
-						QString(u"Uploading: %1%"_q).arg(percent));
+					error->setText(QString(u"Uploading: %1%"_q).arg(percent));
 				});
 		};
 
@@ -422,46 +417,65 @@ void ShowStickerImportBox(
 			if (state->scan.files.empty()
 				|| state->scan.problem != Core::StickerImportProblem::None) {
 				error->setText(state->scan.files.empty()
-					? ScanDescription(state->scan)
-					: ScanProblemText(state->scan.problem));
+								   ? ScanDescription(state->scan)
+								   : ScanProblemText(state->scan.problem));
 				return;
 			}
 			setPending(true);
 			availability->setText(u"Checking server import settings…"_q);
-			state->preflightRequestId = state->api.request(
-				MTPhelp_GetAppConfig(MTP_int(0))
-			).done(crl::guard(box, [=](const MTPhelp_AppConfig &config) {
-				state->preflightRequestId = 0;
-				if (!StickerImportEnabled(config)) {
-					setPending(false);
-					availability->setText(
-						u"This server has disabled sticker pack imports."_q);
-					return;
-				}
-				availability->setText(u"Checking availability…"_q);
-				state->preflightRequestId = state->api.request(
-					MTPstickers_CheckShortName(MTP_string(name))
-				).done(crl::guard(box, [=](const MTPBool &available) {
-					state->preflightRequestId = 0;
-					if (!mtpIsTrue(available)) {
-						setPending(false);
-						availability->setText(
-							u"This short name is already in use. Choose another one."_q);
-						return;
-					}
-					availability->setText(u"Available"_q);
-					startUpload(name);
-				})).fail(crl::guard(box, [=](const MTP::Error &requestError) {
-					state->preflightRequestId = 0;
-					setPending(false);
-					availability->setText(ServerErrorText(requestError.type()));
-				})).send();
-			})).fail(crl::guard(box, [=](const MTP::Error &) {
-				state->preflightRequestId = 0;
-				setPending(false);
-				availability->setText(
-					u"Couldn't check whether this server allows imports. Try again."_q);
-			})).send();
+			state->preflightRequestId
+				= state->api.request(MTPhelp_GetAppConfig(MTP_int(0)))
+					  .done(crl::guard(
+						  box,
+						  [=](const MTPhelp_AppConfig &config) {
+							  state->preflightRequestId = 0;
+							  if (!StickerImportEnabled(config)) {
+								  setPending(false);
+								  availability->setText(
+									  u"This server has disabled sticker pack imports."_q);
+								  return;
+							  }
+							  availability->setText(
+								  u"Checking availability…"_q);
+							  state->preflightRequestId
+								  = state->api
+										.request(MTPstickers_CheckShortName(
+											MTP_string(name)))
+										.done(crl::guard(
+											box,
+											[=](const MTPBool &available) {
+												state->preflightRequestId = 0;
+												if (!mtpIsTrue(available)) {
+													setPending(false);
+													availability->setText(
+														u"This short name is already in use. Choose another one."_q);
+													return;
+												}
+												availability->setText(
+													u"Available"_q);
+												startUpload(name);
+											}))
+										.fail(crl::guard(
+											box,
+											[=](const MTP::Error
+													&requestError) {
+												state->preflightRequestId = 0;
+												setPending(false);
+												availability->setText(
+													ServerErrorText(
+														requestError.type()));
+											}))
+										.send();
+						  }))
+					  .fail(crl::guard(
+						  box,
+						  [=](const MTP::Error &) {
+							  state->preflightRequestId = 0;
+							  setPending(false);
+							  availability->setText(
+								  u"Couldn't check whether this server allows imports. Try again."_q);
+						  }))
+					  .send();
 		});
 		state->suggestButton = box->addLeftButton(u"Suggest short name"_q, [=] {
 			const auto titleText = title->getLastText().trimmed();
@@ -470,19 +484,33 @@ void ShowStickerImportBox(
 				return;
 			}
 			state->api.request(base::take(state->suggestionRequestId)).cancel();
-			state->suggestionRequestId = state->api.request(
-				MTPstickers_SuggestShortName(MTP_string(titleText))
-			).done(crl::guard(box, [=](const MTPstickers_SuggestedShortName &result) {
-				state->suggestionRequestId = 0;
-				result.match([&](const MTPDstickers_suggestedShortName &data) {
-					shortName->setText(qs(data.vshort_name()));
-				}, [&](const auto &) {
-					error->setText(u"Couldn't suggest a short name."_q);
-				});
-			})).fail(crl::guard(box, [=](const MTP::Error &) {
-				state->suggestionRequestId = 0;
-				error->setText(u"Couldn't suggest a short name."_q);
-			})).send();
+			state->suggestionRequestId
+				= state->api
+					  .request(
+						  MTPstickers_SuggestShortName(MTP_string(titleText)))
+					  .done(crl::guard(
+						  box,
+						  [=](const MTPstickers_SuggestedShortName &result) {
+							  state->suggestionRequestId = 0;
+							  result.match(
+								  [&](const MTPDstickers_suggestedShortName
+										  &data) {
+									  shortName->setText(
+										  qs(data.vshort_name()));
+								  },
+								  [&](const auto &) {
+									  error->setText(
+										  u"Couldn't suggest a short name."_q);
+								  });
+						  }))
+					  .fail(crl::guard(
+						  box,
+						  [=](const MTP::Error &) {
+							  state->suggestionRequestId = 0;
+							  error->setText(
+								  u"Couldn't suggest a short name."_q);
+						  }))
+					  .send();
 		});
 		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	}));

@@ -37,20 +37,17 @@ void Append32(QByteArray &bytes, quint32 value) {
 
 [[nodiscard]] QByteArray DeflateRaw(const QByteArray &data) {
 	auto stream = z_stream();
-	if (deflateInit2(
-			&stream,
-			Z_BEST_COMPRESSION,
-			Z_DEFLATED,
-			-MAX_WBITS,
-			8,
-			Z_DEFAULT_STRATEGY) != Z_OK) {
+	if (deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8,
+					 Z_DEFAULT_STRATEGY)
+		!= Z_OK) {
 		return QByteArray();
 	}
-	auto result = QByteArray(int(deflateBound(&stream, uLong(data.size()))), '\0');
-	stream.next_in = reinterpret_cast<Bytef*>(
-		const_cast<char*>(data.constData()));
+	auto result
+		= QByteArray(int(deflateBound(&stream, uLong(data.size()))), '\0');
+	stream.next_in
+		= reinterpret_cast<Bytef *>(const_cast<char *>(data.constData()));
 	stream.avail_in = uInt(data.size());
-	stream.next_out = reinterpret_cast<Bytef*>(result.data());
+	stream.next_out = reinterpret_cast<Bytef *>(result.data());
 	stream.avail_out = uInt(result.size());
 	const auto status = deflate(&stream, Z_FINISH);
 	result.resize(qsizetype(stream.total_out));
@@ -62,13 +59,11 @@ void Append32(QByteArray &bytes, quint32 value) {
 	auto archive = QByteArray();
 	auto directory = QByteArray();
 	for (const auto &entry : entries) {
-		const auto compressed = (entry.method == 8)
-			? DeflateRaw(entry.data)
-			: entry.data;
-		const auto crc = crc32(
-			0,
-			reinterpret_cast<const Bytef*>(entry.data.constData()),
-			uInt(entry.data.size()));
+		const auto compressed
+			= (entry.method == 8) ? DeflateRaw(entry.data) : entry.data;
+		const auto crc
+			= crc32(0, reinterpret_cast<const Bytef *>(entry.data.constData()),
+					uInt(entry.data.size()));
 		const auto offset = quint32(archive.size());
 		Append32(archive, 0x04034B50);
 		Append16(archive, 20);
@@ -116,9 +111,8 @@ void Append32(QByteArray &bytes, quint32 value) {
 	return archive;
 }
 
-[[nodiscard]] QString WriteZip(
-		const QString &path,
-		const std::vector<ZipEntry> &entries) {
+[[nodiscard]] QString WriteZip(const QString &path,
+							   const std::vector<ZipEntry> &entries) {
 	auto file = QFile(path);
 	if (!file.open(QIODevice::WriteOnly)) {
 		return QString();
@@ -135,17 +129,15 @@ TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
 	CHECK(directory.isValid());
 	const auto zipPath = WriteZip(
 		directory.filePath(u"pack.zip"_q),
-		{ { "../../outside.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes" } });
+		{{"../../outside.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes"}});
 	CHECK(!zipPath.isEmpty());
 	const auto result = Core::ScanStickerImportZip(
-		zipPath,
-		Core::StickerImportType::Stickers);
+		zipPath, Core::StickerImportType::Stickers);
 	CHECK_EQ(result.files.size(), 1);
 	if (!result.files.empty()) {
 		CHECK_EQ(result.files.front().name, u"outside.tgs"_q);
-		CHECK_EQ(
-			result.files.front().bytes,
-			QByteArray("\x1f\x8b", 2) + "tgs-bytes");
+		CHECK_EQ(result.files.front().bytes,
+				 QByteArray("\x1f\x8b", 2) + "tgs-bytes");
 	}
 }
 
@@ -154,16 +146,14 @@ TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
 	CHECK(directory.isValid());
 	const auto zipPath = WriteZip(
 		directory.filePath(u"pack.zip"_q),
-		{ { "compressed.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", 0, 8 } });
+		{{"compressed.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", 0, 8}});
 	CHECK(!zipPath.isEmpty());
 	const auto result = Core::ScanStickerImportZip(
-		zipPath,
-		Core::StickerImportType::Stickers);
+		zipPath, Core::StickerImportType::Stickers);
 	CHECK_EQ(result.files.size(), 1);
 	if (!result.files.empty()) {
-		CHECK_EQ(
-			result.files.front().bytes,
-			QByteArray("\x1f\x8b", 2) + "tgs-bytes");
+		CHECK_EQ(result.files.front().bytes,
+				 QByteArray("\x1f\x8b", 2) + "tgs-bytes");
 	}
 }
 
@@ -173,16 +163,14 @@ TEST_CASE(StickerImportZipSkipsSymlinkEntries) {
 	const auto mode = quint32(0120000 | 0777) << 16;
 	const auto zipPath = WriteZip(
 		directory.filePath(u"pack.zip"_q),
-		{ { "linked.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", mode } });
+		{{"linked.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", mode}});
 	const auto result = Core::ScanStickerImportZip(
-		zipPath,
-		Core::StickerImportType::Stickers);
+		zipPath, Core::StickerImportType::Stickers);
 	CHECK(result.files.empty());
 	CHECK_EQ(result.issues.size(), 1);
 	if (!result.issues.empty()) {
-		CHECK_EQ(
-			result.issues.front().problem,
-			Core::StickerImportProblem::SymbolicLink);
+		CHECK_EQ(result.issues.front().problem,
+				 Core::StickerImportProblem::SymbolicLink);
 	}
 }
 
@@ -191,19 +179,13 @@ TEST_CASE(StickerImportZipRejectsEntryCountAboveLimit) {
 	CHECK(directory.isValid());
 	auto entries = std::vector<ZipEntry>();
 	for (auto i = 0; i != 202; ++i) {
-		entries.push_back({
-			QByteArray("item") + QByteArray::number(i) + ".tgs",
-			QByteArray("\x1f\x8b", 2) + "tgs-bytes" });
+		entries.push_back({QByteArray("item") + QByteArray::number(i) + ".tgs",
+						   QByteArray("\x1f\x8b", 2) + "tgs-bytes"});
 	}
-	const auto zipPath = WriteZip(
-		directory.filePath(u"pack.zip"_q),
-		entries);
+	const auto zipPath = WriteZip(directory.filePath(u"pack.zip"_q), entries);
 	const auto result = Core::ScanStickerImportZip(
-		zipPath,
-		Core::StickerImportType::Stickers);
-	CHECK_EQ(
-		result.problem,
-		Core::StickerImportProblem::TooManyEntries);
+		zipPath, Core::StickerImportType::Stickers);
+	CHECK_EQ(result.problem, Core::StickerImportProblem::TooManyEntries);
 	CHECK(result.files.empty());
 }
 
