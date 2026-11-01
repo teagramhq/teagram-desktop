@@ -2750,8 +2750,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto rootSwapMarkerContents = QByteArray("protected cache root");
 	const auto rootSwapTargetPrepared
 		= !QFileInfo::exists(rootSwapSaved)
-		  && !QFileInfo::exists(rootSwapTarget)
-		  && QDir().mkpath(rootSwapTarget)
+		  && !QFileInfo::exists(rootSwapTarget) && QDir().mkpath(rootSwapTarget)
 		  && WriteFixtureFile(rootSwapMarker, rootSwapMarkerContents);
 	auto rootMoved = false;
 	auto rootLinked = false;
@@ -2761,11 +2760,12 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			rootLinked = rootMoved && QFile::link(rootSwapTarget, path);
 		});
 	}
-	const auto rootSwapClear = rootSwapTargetPrepared && rootMoved
-		? AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-			  data.clearCacheDatabase(mediaCache, false, std::move(done));
-		  })
-		: std::optional<Storage::Cache::Error>();
+	const auto rootSwapClear
+		= rootSwapTargetPrepared && rootMoved
+			  ? AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+					data.clearCacheDatabase(mediaCache, false, std::move(done));
+				})
+			  : std::optional<Storage::Cache::Error>();
 	const auto rootSwapRefused
 		= rootSwapClear
 		  && (rootSwapClear->type != Storage::Cache::Error::Type::None);
@@ -2788,8 +2788,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
 		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
 		  && allowedAfterClear && wroteAfterClear && swapped
-		  && rootSwapTargetPrepared && rootMoved && rootLinked && rootSwapRefused
-		  && rootSwapMarkerUnchanged && rootRestored;
+		  && rootSwapTargetPrepared && rootMoved && rootLinked
+		  && rootSwapRefused && rootSwapMarkerUnchanged && rootRestored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
@@ -2807,8 +2807,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
 			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
 			swapped, rootSwapTargetPrepared, rootMoved, rootLinked,
-			rootSwapRefused,
-			rootSwapMarkerUnchanged, rootRestored, qPrintable(path));
+			rootSwapRefused, rootSwapMarkerUnchanged, rootRestored,
+			qPrintable(path));
 	}
 	return passed;
 }

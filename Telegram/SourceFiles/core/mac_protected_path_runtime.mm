@@ -938,8 +938,8 @@ CaptureCachePathRootDescriptor(const QString &path,
 	struct stat opened = {};
 	struct stat current = {};
 	auto version = qint32();
-	const auto openedMatches = (::fstat(descriptor->value, &opened) == 0)
-							   && S_ISREG(opened.st_mode);
+	const auto openedMatches
+		= (::fstat(descriptor->value, &opened) == 0) && S_ISREG(opened.st_mode);
 	if (!openedMatches
 		|| !ReadCacheVersionDescriptor(descriptor->value, &version)) {
 		return false;
@@ -1109,8 +1109,8 @@ SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
 void ReportCachePathIdentityRefusal(const char *callsite, const char *stage) {
 	LOG(("App Warning: Mac protected cache path identity refused: stage=%1 "
 		 "callsite=%2")
-		.arg(QString::fromLatin1(stage ? stage : "unknown"))
-		.arg(QString::fromLatin1(callsite ? callsite : "unknown")));
+			.arg(QString::fromLatin1(stage ? stage : "unknown"))
+			.arg(QString::fromLatin1(callsite ? callsite : "unknown")));
 	ReportRefusal({
 		.operation = Operation::OpenDir,
 		.protectedClass = ProtectedClass::Invalid,

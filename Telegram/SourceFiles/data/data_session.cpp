@@ -312,22 +312,22 @@ Session::Session(not_null<Main::Session *> session)
 								: Storage::Cache::Error{
 									  Storage::Cache::Error::Type::IO, path};
 			},
-			[weak, bigFileCache, path,
-			 identity, identityRefused](Storage::Cache::Error error) mutable {
+			[weak, bigFileCache, path, identity,
+			 identityRefused](Storage::Cache::Error error) mutable {
 				const auto allowed
 					= (error.type == Storage::Cache::Error::Type::None);
 				if (!allowed) {
 					if (*identityRefused) {
 						LOG(("App Warning: Cache path identity refused during "
 							 "initialization: media=%1 path=%2")
-							.arg(bigFileCache)
-							.arg(path));
+								.arg(bigFileCache)
+								.arg(path));
 					} else {
 						LOG(("App Error: Cache database open failed: media=%1 "
 							 "error_type=%2 path=%3")
-							.arg(bigFileCache)
-							.arg(int(error.type))
-							.arg(error.path));
+								.arg(bigFileCache)
+								.arg(int(error.type))
+								.arg(error.path));
 					}
 				}
 				auto cacheIdentity = *identity;
@@ -1948,7 +1948,7 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 										  : _cacheInitializationPending;
 		if (initializationPending && !clearPending) {
 			identity = bigFileCache ? _bigFileCacheInitializationIdentity
-									 : _cacheInitializationIdentity;
+									: _cacheInitializationIdentity;
 			if (identity) {
 				clearPending = true;
 				queuedAfterInitialization = true;
@@ -1981,7 +1981,7 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 				database->close();
 				LOG(("App Warning: Cache clear refused after identity failure: "
 					 "path=%1")
-					.arg(path));
+						.arg(path));
 			}
 		}
 	}
@@ -1999,18 +1999,17 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		pause();
 	}
 	const auto weak = base::make_weak(this);
-	const auto callsite = bigFileCache
-		? "Data::Session::cacheBigFile.clear"
-		: "Data::Session::cache.clear";
+	const auto callsite = bigFileCache ? "Data::Session::cacheBigFile.clear"
+									   : "Data::Session::cache.clear";
 	auto complete = [weak, bigFileCache, closeBefore, path, callsite,
-					 identity = std::move(identity),
-					 done = std::move(done), handoff = std::move(handoff)](
+					 identity = std::move(identity), done = std::move(done),
+					 handoff = std::move(handoff)](
 						Storage::Cache::Error error) mutable {
 		auto allowed = false;
 		if (!closeBefore && (error.type == Storage::Cache::Error::Type::None)) {
-			allowed = Core::MacProtectedPath::
-				CaptureCachePathActiveVersionIdentity(path, callsite,
-													 identity.get());
+			allowed
+				= Core::MacProtectedPath::CaptureCachePathActiveVersionIdentity(
+					path, callsite, identity.get());
 		}
 		if (error.type != Storage::Cache::Error::Type::None) {
 			LOG(("App Error: Cache clear failed: error_type=%1 path=%2")
@@ -2019,11 +2018,10 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		} else if (!closeBefore && !allowed) {
 			LOG(("App Warning: Cache clear identity refused after rotation: "
 				 "path=%1")
-				.arg(path));
+					.arg(path));
 		}
 		auto result = std::move(error);
-		if (!closeBefore
-			&& (result.type == Storage::Cache::Error::Type::None)
+		if (!closeBefore && (result.type == Storage::Cache::Error::Type::None)
 			&& !allowed) {
 			result = {Storage::Cache::Error::Type::IO, path};
 		}
@@ -2067,9 +2065,9 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		[path, callsite, identity] {
 			return Core::MacProtectedPath::CheckCachePathIdentity(
 					   path, callsite, identity.get())
-				   ? Storage::Cache::Error::NoError()
-				   : Storage::Cache::Error{
-						 Storage::Cache::Error::Type::IO, path};
+					   ? Storage::Cache::Error::NoError()
+					   : Storage::Cache::Error{Storage::Cache::Error::Type::IO,
+											   path};
 		},
 		std::move(complete));
 #else
@@ -2101,7 +2099,7 @@ Storage::Cache::Database *Session::cacheIfAllowed() {
 			refused = true;
 			LOG(("App Warning: Cache database disabled after identity refusal: "
 				 "path=%1")
-				.arg(_cachePath));
+					.arg(_cachePath));
 		}
 		result = _cacheAllowed ? _cache.get() : nullptr;
 	}
@@ -2133,7 +2131,7 @@ Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
 			refused = true;
 			LOG(("App Warning: Cache database disabled after identity refusal: "
 				 "path=%1")
-				.arg(_bigFileCachePath));
+					.arg(_bigFileCachePath));
 		}
 		result = _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 	}

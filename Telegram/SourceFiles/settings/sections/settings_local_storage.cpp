@@ -1892,8 +1892,7 @@ void LocalStorage::startClearing() {
 	if (_allSelected.current()) {
 		if (_db()) {
 			_session->data().clearCacheDatabase(
-				false,
-				false,
+				false, false,
 				crl::guard(this, [=](Storage::Cache::Error error) {
 					if (error.type != Storage::Cache::Error::Type::None) {
 						crl::on_main(crl::guard(this, [=] {
@@ -1905,9 +1904,7 @@ void LocalStorage::startClearing() {
 		}
 		if (_dbBig()) {
 			_session->data().clearCacheDatabase(
-				true,
-				false,
-				crl::guard(this, [=](Storage::Cache::Error error) {
+				true, false, crl::guard(this, [=](Storage::Cache::Error error) {
 					if (error.type != Storage::Cache::Error::Type::None) {
 						crl::on_main(crl::guard(this, [=] {
 							controller()->showToast(
@@ -1927,13 +1924,13 @@ void LocalStorage::startClearing() {
 		if (tag == kFakeMediaCacheTag) {
 			if (_dbBig()) {
 				_session->data().clearCacheDatabase(
-					true,
-					false,
+					true, false,
 					crl::guard(this, [=](Storage::Cache::Error error) {
 						if (error.type != Storage::Cache::Error::Type::None) {
 							crl::on_main(crl::guard(this, [=] {
 								controller()->showToast(
-									tr::lng_local_storage_clear_failed(tr::now));
+									tr::lng_local_storage_clear_failed(
+										tr::now));
 							}));
 						}
 					}));
@@ -1996,10 +1993,12 @@ void LocalStorage::setupContent() {
 			content->lifetime());
 	_session->data().cacheUnavailable()
 		| rpl::filter([](bool unavailable) { return unavailable; })
-		| rpl::on_next([=] {
-			  controller()->showToast(
-				  tr::lng_local_storage_cache_unavailable(tr::now));
-		  }, content->lifetime());
+		| rpl::on_next(
+			[=] {
+				controller()->showToast(
+					tr::lng_local_storage_cache_unavailable(tr::now));
+			},
+			content->lifetime());
 
 	Ui::ResizeFitChild(this, content);
 }
