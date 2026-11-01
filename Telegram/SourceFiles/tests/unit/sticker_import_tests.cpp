@@ -58,6 +58,30 @@ void Append32(QByteArray &bytes, quint32 value) {
 	return (status == Z_STREAM_END) ? result : QByteArray();
 }
 
+[[nodiscard]] QByteArray Gzip(const QByteArray &data) {
+	auto stream = z_stream();
+	if (deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS + 16, 8,
+					 Z_DEFAULT_STRATEGY)
+		!= Z_OK) {
+		return QByteArray();
+	}
+	auto result
+		= QByteArray(int(deflateBound(&stream, uLong(data.size()))), '\0');
+	stream.next_in
+		= reinterpret_cast<Bytef *>(const_cast<char *>(data.constData()));
+	stream.avail_in = uInt(data.size());
+	stream.next_out = reinterpret_cast<Bytef *>(result.data());
+	stream.avail_out = uInt(result.size());
+	const auto status = deflate(&stream, Z_FINISH);
+	result.resize(qsizetype(stream.total_out));
+	deflateEnd(&stream);
+	return (status == Z_STREAM_END) ? result : QByteArray();
+}
+
+[[nodiscard]] QByteArray ValidStickerTGS() {
+	return Gzip(R"({"tgs":1,"w":512,"h":512,"fr":30,"ip":0,"op":60})");
+}
+
 [[nodiscard]] QByteArray MakeZip(const std::vector<ZipEntry> &entries) {
 	auto archive = QByteArray();
 	auto directory = QByteArray();
@@ -260,12 +284,17 @@ TEST_CASE(StickerImportTitlesUseUnicodeCharacterLimit) {
 	CHECK(!Core::IsValidStickerSetTitle(astral + u"😀"_q));
 }
 
-TEST_CASE(StickerImportHappyPathSmoke) {
-	const auto zip
-		= MakeZip({{"cats.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes"}});
+TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
+	const auto sticker = ValidStickerTGS();
+	CHECK(!sticker.isEmpty());
+	const auto zip = MakeZip({{"cats.tgs", sticker}});
 	const auto scan
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(int(scan.files.size()), 1);
+	if (!scan.files.empty()) {
+		CHECK_EQ(scan.files.front().mimeType, u"application/x-tgsticker"_q);
+		CHECK_EQ(scan.files.front().bytes, sticker);
+	}
 	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
 	CHECK(Core::IsValidStickerSetShortName(u"cats_a"_q));
 	const auto prefix = u"https://server.example/"_q;

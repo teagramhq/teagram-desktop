@@ -443,6 +443,22 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout sticker set API smoke source.
+        if: env.ONLY_CACHE == 'false'
+        uses: actions/checkout@v7
+        with:
+          repository: teagramhq/teagram-server
+          ref: 24629944686a53619a56872963c43512d2605b38
+          path: server-source
+          persist-credentials: false
+
+      - name: Set up Go for sticker set API smoke.
+        if: env.ONLY_CACHE == 'false'
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: server-source/go.mod
+          cache: false
+
       # Runs in the same image the client was built in, so the test binary
       # links against the libraries it was compiled against. The build above
       # already produced it, so this only executes it: seconds, not a second
@@ -587,7 +603,7 @@ jobs:
               exit 1
             fi
 
-            if selected_output=$("$test_unit" --case StickerImportHappyPathSmoke 2>&1); then
+            if selected_output=$("$test_unit" --case StickerImportSourceAndShareLinkSmoke 2>&1); then
               printf "%s\n" "$selected_output"
             else
               TEST_STATUS=$?
@@ -595,15 +611,26 @@ jobs:
               exit "$TEST_STATUS"
             fi
             case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
-            if test "$case_runs" != "run  StickerImportHappyPathSmoke"; then
+            if test "$case_runs" != "run  StickerImportSourceAndShareLinkSmoke"; then
               echo "--case did not run exactly StickerImportHappyPathSmoke."
               exit 1
             fi
             if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
-              echo "Sticker import smoke case did not report one passing case."
+              echo "Sticker import source and share-link smoke did not report one passing case."
               exit 1
             fi
           '
+
+      - name: Sticker set API smoke.
+        if: env.ONLY_CACHE == 'false'
+        working-directory: server-source
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pull-base-images.sh --image mirror.gcr.io/library/postgres:18-alpine
+          docker tag mirror.gcr.io/library/postgres:18-alpine postgres:18-alpine
+          go test -count=1 -v -run '^(TestCreateStickerSetUsesStoredBytesAndReturnsOwnerView|TestUserStickerSetListsDownloadsSendsAndForwards)$' ./internal/api
 
       - name: Move artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
