@@ -575,7 +575,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_sticker_import_file_issue" = "{name}: {reason}";
 "lng_teagram_sticker_import_scan_invalid_source" = "Choose a folder or ZIP archive.";
 "lng_teagram_sticker_import_scan_invalid_archive" = "The ZIP archive is invalid or uses unsupported compression.";
-"lng_teagram_sticker_import_scan_too_many_entries" = "The pack contains more than {count} entries.";
+"lng_teagram_sticker_import_scan_too_many_entries#one" = "The pack contains more than {count} entry.";
+"lng_teagram_sticker_import_scan_too_many_entries#other" = "The pack contains more than {count} entries.";
 "lng_teagram_sticker_import_scan_total_size" = "The pack exceeds the 110 MB uncompressed size limit.";
 "lng_teagram_sticker_import_scan_no_files" = "No supported sticker files were found.";
 "lng_teagram_sticker_import_scan_file_too_large" = "The file is larger than the server limit for this format.";
