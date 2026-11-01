@@ -9,9 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/sticker_import.h"
 
-#include <QtCore/QFile>
-#include <QtCore/QTemporaryDir>
-
 #include <zlib.h>
 
 #include <vector>
@@ -111,28 +108,11 @@ void Append32(QByteArray &bytes, quint32 value) {
 	return archive;
 }
 
-[[nodiscard]] QString WriteZip(const QString &path,
-							   const std::vector<ZipEntry> &entries) {
-	auto file = QFile(path);
-	if (!file.open(QIODevice::WriteOnly)) {
-		return QString();
-	}
-	const auto bytes = MakeZip(entries);
-	if (file.write(bytes) != bytes.size()) {
-		return QString();
-	}
-	return path;
-}
-
 TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
-	auto directory = QTemporaryDir();
-	CHECK(directory.isValid());
-	const auto zipPath = WriteZip(
-		directory.filePath(u"pack.zip"_q),
+	const auto zip = MakeZip(
 		{{"../../outside.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes"}});
-	CHECK(!zipPath.isEmpty());
-	const auto result = Core::ScanStickerImportZip(
-		zipPath, Core::StickerImportType::Stickers);
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(result.files.size(), 1);
 	if (!result.files.empty()) {
 		CHECK_EQ(result.files.front().name, u"outside.tgs"_q);
@@ -142,14 +122,10 @@ TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
 }
 
 TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
-	auto directory = QTemporaryDir();
-	CHECK(directory.isValid());
-	const auto zipPath = WriteZip(
-		directory.filePath(u"pack.zip"_q),
+	const auto zip = MakeZip(
 		{{"compressed.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", 0, 8}});
-	CHECK(!zipPath.isEmpty());
-	const auto result = Core::ScanStickerImportZip(
-		zipPath, Core::StickerImportType::Stickers);
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(result.files.size(), 1);
 	if (!result.files.empty()) {
 		CHECK_EQ(result.files.front().bytes,
@@ -158,34 +134,29 @@ TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
 }
 
 TEST_CASE(StickerImportZipSkipsSymlinkEntries) {
-	auto directory = QTemporaryDir();
-	CHECK(directory.isValid());
 	const auto mode = quint32(0120000 | 0777) << 16;
-	const auto zipPath = WriteZip(
-		directory.filePath(u"pack.zip"_q),
+	const auto zip = MakeZip(
 		{{"linked.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", mode}});
-	const auto result = Core::ScanStickerImportZip(
-		zipPath, Core::StickerImportType::Stickers);
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK(result.files.empty());
 	CHECK_EQ(result.issues.size(), 1);
 	if (!result.issues.empty()) {
-		CHECK_EQ(result.issues.front().problem,
-				 Core::StickerImportProblem::SymbolicLink);
+		CHECK(result.issues.front().problem
+			  == Core::StickerImportProblem::SymbolicLink);
 	}
 }
 
 TEST_CASE(StickerImportZipRejectsEntryCountAboveLimit) {
-	auto directory = QTemporaryDir();
-	CHECK(directory.isValid());
 	auto entries = std::vector<ZipEntry>();
 	for (auto i = 0; i != 202; ++i) {
 		entries.push_back({QByteArray("item") + QByteArray::number(i) + ".tgs",
 						   QByteArray("\x1f\x8b", 2) + "tgs-bytes"});
 	}
-	const auto zipPath = WriteZip(directory.filePath(u"pack.zip"_q), entries);
-	const auto result = Core::ScanStickerImportZip(
-		zipPath, Core::StickerImportType::Stickers);
-	CHECK_EQ(result.problem, Core::StickerImportProblem::TooManyEntries);
+	const auto zip = MakeZip(entries);
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
+	CHECK(result.problem == Core::StickerImportProblem::TooManyEntries);
 	CHECK(result.files.empty());
 }
 

@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers.h"
 #include "main/main_session.h"
 #include "storage/file_upload.h"
+#include "storage/localimageloader.h"
 
 namespace Api {
 namespace {
@@ -249,10 +250,10 @@ void StickerSetImport::uploadProgressed() {
 }
 
 void StickerSetImport::createSet() {
-	auto flags = MTPDstickers_createStickerSet::Flags(
-		MTPDstickers_createStickerSet::Flag::f_software);
+	auto flags = MTPstickers_CreateStickerSet::Flags(
+		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (_type == Data::StickersType::Emoji) {
-		flags |= MTPDstickers_createStickerSet::Flag::f_emojis;
+		flags |= MTPstickers_CreateStickerSet::Flag::f_emojis;
 	}
 	auto items = QVector<MTPInputStickerSetItem>();
 	items.reserve(int(_items.size()));
