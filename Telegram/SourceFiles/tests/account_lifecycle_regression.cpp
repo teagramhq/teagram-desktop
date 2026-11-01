@@ -2239,7 +2239,11 @@ class RegressionAccountCleanup final {
 							 not_null<Main::Account *> account,
 							 not_null<Main::Account *> fallback)
 		: _domain(domain), _account(base::make_weak(account.get())),
-		  _fallback(base::make_weak(fallback.get())) {}
+		  _fallback(base::make_weak(fallback.get())) {
+		// Cache fixtures can pump the event loop before creating a session.
+		// Keep the temporary account alive while queued cleanup callbacks run.
+		_domain.activate(account);
+	}
 
 	RegressionAccountCleanup(const RegressionAccountCleanup &) = delete;
 	RegressionAccountCleanup &operator=(const RegressionAccountCleanup &)
@@ -10361,6 +10365,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto guarded = domain.add(MTP::Environment::Production);
 			auto accountCleanup
 				= RegressionAccountCleanup(domain, guarded, accountFallback);
+			const auto guardedWeak = base::make_weak(guarded.get());
 			guarded->mtp().stopForServerEnrollment();
 			guarded->setSessionUserId(selfId);
 			const auto seeded
@@ -10398,6 +10403,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				  && !QFileInfo(QDir(closedCachePath)
 									.filePath(QString::number(markerVersion)))
 						  .exists();
+			if (guardedWeak.empty()) {
+				nativeLifecycleResults->Report(caseName, false);
+				continue;
+			}
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
 			auto cacheInitializationTimer = QElapsedTimer();
 			cacheInitializationTimer.start();
