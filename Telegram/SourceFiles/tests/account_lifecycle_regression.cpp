@@ -2654,15 +2654,21 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 
 [[nodiscard]] bool RunClearThenCacheSymlinkRegression(
 	not_null<Main::Account *> account, bool mediaCache, const QString &path,
-	const QString &fixture, RefusedCacheReaderRegression cacheRefusal) {
+	const QString &fixture, const QString &otherFixture,
+	RefusedCacheReaderRegression otherCacheRefusal) {
 	auto &data = account->session().data();
 	const auto cache = [&]() -> Storage::Cache::Database & {
 		return mediaCache ? data.cacheBigFile() : data.cache();
+	};
+	const auto otherCache = [&]() -> Storage::Cache::Database & {
+		return mediaCache ? data.cache() : data.cacheBigFile();
 	};
 	const auto cacheIfAllowed = [&] {
 		return mediaCache ? data.cacheBigFileIfAllowed()
 						  : data.cacheIfAllowed();
 	};
+	const auto otherCachePath
+		= mediaCache ? data.cachePath() : data.cacheBigFilePath();
 	const auto beforeClear = ActiveCacheVersionPath(path);
 	if (beforeClear.isEmpty()) {
 		return false;
@@ -2740,9 +2746,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto wroteAfterClear
 		= write && (write->type == Storage::Cache::Error::Type::None)
 		  && CachePayloadMatches(cache(), writeKey, writePayload);
-	const auto swapped = rotated && allowedAfterClear
-						 && RunPostOpenCacheSymlinkRegression(
-							 path, fixture, cache, [] {}, cacheRefusal);
 	const auto rootSwapTarget = QDir(fixture).filePath(
 		u"clear-root-swap-%1"_q.arg(QCoreApplication::applicationPid()));
 	const auto rootSwapSaved = path + ".clear-root-swap-original";
@@ -2761,7 +2764,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		});
 	}
 	const auto rootSwapClear
-		= rootSwapTargetPrepared && rootMoved
+		= rootSwapTargetPrepared
 			  ? AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 					data.clearCacheDatabase(mediaCache, false, std::move(done));
 				})
@@ -2783,6 +2786,10 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (QFileInfo::exists(rootSwapTarget)) {
 		QDir(rootSwapTarget).removeRecursively();
 	}
+	const auto swapped = rotated && allowedAfterClear
+						 && RunPostOpenCacheSymlinkRegression(
+							 otherCachePath, otherFixture, otherCache, [] {},
+							 otherCacheRefusal);
 	const auto passed
 		= paused && markerRotated && activeVersionMissing && blockedDuringClear
 		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
@@ -10824,9 +10831,11 @@ void RunAuthenticatedCacheSymlinkCases(
 									guarded, mediaCache, cachePath,
 									mediaCache ? fixtures.openedMediaCache
 											   : fixtures.openedCache,
+									mediaCache ? fixtures.openedCache
+											   : fixtures.openedMediaCache,
 									[guarded, mediaCache] {
 										return RunRefusedCacheReaderRegressions(
-											guarded, mediaCache);
+											guarded, !mediaCache);
 									});
 			nativeLifecycleResults->Report(caseName,
 										   passed && accountCleanup.cleanup());
