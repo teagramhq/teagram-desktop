@@ -1779,9 +1779,11 @@ void SetupStickersEmoji(
 	const auto importEnabled = StickerImportEnabled(session);
 	const auto importLabel
 		= container->lifetime().make_state<rpl::variable<QString>>(
-			importEnabled ? QString() : u"Disabled by this server"_q);
+			importEnabled
+				? QString()
+				: tr::lng_teagram_sticker_import_disabled_short(tr::now));
 	const auto importButton = AddButtonWithLabel(
-		container, rpl::single(u"Import pack"_q), importLabel->value(),
+		container, tr::lng_teagram_sticker_import_title(), importLabel->value(),
 		st::settingsButton, {&st::menuIconStickers});
 	importButton->setDisabled(!importEnabled);
 	importButton->addClickHandler([=] { ShowStickerImportBox(controller); });
@@ -1791,7 +1793,9 @@ void SetupStickersEmoji(
 				const auto enabled = StickerImportEnabled(session);
 				importButton->setDisabled(!enabled);
 				*importLabel
-					= enabled ? QString() : u"Disabled by this server"_q;
+					= enabled ? QString()
+							  : tr::lng_teagram_sticker_import_disabled_short(
+									tr::now);
 			},
 			container->lifetime());
 	if (highlights) {

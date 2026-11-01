@@ -57,6 +57,7 @@ struct ImportFormState final : base::has_weak_ptr {
 	std::unique_ptr<base::Timer> nameCheckTimer;
 	std::unique_ptr<Api::StickerSetImport> importer;
 	bool scanPending = false;
+	bool rightsError = false;
 	QPointer<Ui::RoundButton> createButton;
 	QPointer<Ui::RoundButton> suggestButton;
 };
@@ -95,29 +96,30 @@ struct ImportFormState final : base::has_weak_ptr {
 	case Core::StickerImportProblem::None:
 		return QString();
 	case Core::StickerImportProblem::InvalidSource:
-		return u"Choose a folder or ZIP archive."_q;
+		return tr::lng_teagram_sticker_import_scan_invalid_source(tr::now);
 	case Core::StickerImportProblem::InvalidArchive:
-		return u"The ZIP archive is invalid or uses unsupported compression."_q;
+		return tr::lng_teagram_sticker_import_scan_invalid_archive(tr::now);
 	case Core::StickerImportProblem::TooManyEntries:
-		return u"The pack contains more than 201 entries."_q;
+		return tr::lng_teagram_sticker_import_scan_too_many_entries(
+			tr::now, lt_count, 201);
 	case Core::StickerImportProblem::TotalSizeLimit:
-		return u"The pack exceeds the 110 MB uncompressed size limit."_q;
+		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
 	case Core::StickerImportProblem::NoFiles:
-		return u"No supported sticker files were found."_q;
+		return tr::lng_teagram_sticker_import_scan_no_files(tr::now);
 	case Core::StickerImportProblem::FileTooLarge:
-		return u"The file is larger than the server limit for this format."_q;
+		return tr::lng_teagram_sticker_import_scan_file_too_large(tr::now);
 	case Core::StickerImportProblem::UnsupportedFormat:
-		return u"Use WEBP, TGS or WEBM files."_q;
+		return tr::lng_teagram_sticker_import_scan_unsupported_format(tr::now);
 	case Core::StickerImportProblem::InvalidMedia:
-		return u"The file isn't valid sticker or emoji media."_q;
+		return tr::lng_teagram_sticker_import_scan_invalid_media(tr::now);
 	case Core::StickerImportProblem::InvalidDimensions:
-		return u"The image dimensions don't meet this pack type's limits."_q;
+		return tr::lng_teagram_sticker_import_scan_invalid_dimensions(tr::now);
 	case Core::StickerImportProblem::TooManyItems:
-		return u"The set exceeds its item limit: 120 stickers or 200 custom emoji."_q;
+		return tr::lng_teagram_sticker_import_scan_too_many_items(tr::now);
 	case Core::StickerImportProblem::ReadFailed:
-		return u"The file couldn't be read."_q;
+		return tr::lng_teagram_sticker_import_scan_read_failed(tr::now);
 	case Core::StickerImportProblem::SymbolicLink:
-		return u"Symbolic links are skipped for safety."_q;
+		return tr::lng_teagram_sticker_import_scan_symbolic_link(tr::now);
 	}
 	Unexpected("Sticker import scan problem.");
 }
@@ -125,62 +127,68 @@ struct ImportFormState final : base::has_weak_ptr {
 [[nodiscard]] QString ScanDescription(const Core::StickerImportScan &scan) {
 	auto lines = QStringList();
 	if (!scan.files.empty()) {
-		lines.push_back(QString(u"%1 supported file(s) ready to import."_q)
-							.arg(int(scan.files.size())));
+		lines.push_back(tr::lng_teagram_sticker_import_files_ready(
+			tr::now, lt_count, int(scan.files.size())));
 	}
 	if (scan.problem != Core::StickerImportProblem::None) {
 		lines.push_back(ScanProblemText(scan.problem));
 	}
 	for (const auto &issue : scan.issues) {
-		lines.push_back(
-			u"%1: %2"_q.arg(issue.name, ScanProblemText(issue.problem)));
+		lines.push_back(tr::lng_teagram_sticker_import_file_issue(
+			tr::now, lt_name, issue.name, lt_reason,
+			ScanProblemText(issue.problem)));
 	}
 	return lines.join('\n');
 }
 
 [[nodiscard]] QString ServerErrorText(const QString &error) {
 	if (error == u"SHORT_NAME_INVALID"_q) {
-		return u"Use a letter first, followed by letters, numbers or underscores (up to 64 characters)."_q;
+		return tr::lng_teagram_sticker_import_short_name_invalid(tr::now);
 	} else if (error == u"SHORT_NAME_OCCUPIED"_q) {
-		return u"This short name is already in use. Choose another one."_q;
+		return tr::lng_teagram_sticker_import_short_name_occupied(tr::now);
 	} else if (error == u"TITLE_INVALID"_q) {
-		return u"The title must be 1 to 64 characters."_q;
+		return tr::lng_teagram_sticker_import_title_invalid(tr::now);
 	} else if (error == u"STICKERS_TOO_MUCH"_q) {
-		return u"This set is at its sticker or emoji limit."_q;
+		return tr::lng_teagram_sticker_import_server_too_many_items(tr::now);
 	} else if (error == u"STICKERS_EMPTY"_q) {
-		return u"Choose at least one supported file."_q;
+		return tr::lng_teagram_sticker_import_server_no_files(tr::now);
 	} else if (error == u"STICKER_FILE_SIZE"_q) {
-		return u"A file is larger than the server limit for its format."_q;
+		return tr::lng_teagram_sticker_import_server_file_too_large(tr::now);
 	} else if (error == u"STICKER_PNG_DIMENSIONS"_q) {
-		return u"A file's dimensions don't meet the server requirements."_q;
+		return tr::lng_teagram_sticker_import_server_invalid_dimensions(
+			tr::now);
 	} else if (error == u"STICKER_TGS_NOTGS"_q) {
-		return u"A TGS file isn't a valid animated sticker."_q;
+		return tr::lng_teagram_sticker_import_server_invalid_tgs(tr::now);
 	} else if (error == u"STICKER_VIDEO_NOWEBM"_q) {
-		return u"A WEBM file isn't a valid video sticker."_q;
+		return tr::lng_teagram_sticker_import_server_invalid_webm(tr::now);
 	} else if (error == u"STICKER_VIDEO_DURATION"_q) {
-		return u"A video sticker can't be longer than 3 seconds."_q;
+		return tr::lng_teagram_sticker_import_server_video_duration(tr::now);
 	} else if (error == u"STICKER_FILE_INVALID"_q
 			   || error == u"STICKER_DOCUMENT_INVALID"_q) {
-		return u"The server couldn't use one of these files. Check the listed formats and limits."_q;
+		return tr::lng_teagram_sticker_import_server_invalid_file(tr::now);
 	} else if (error.startsWith(u"FLOOD_WAIT_"_q)) {
-		return u"Please wait a little before creating another set."_q;
+		return tr::lng_teagram_sticker_import_server_flood_wait(tr::now);
 	} else if (error == u"STICKERSET_INVALID"_q) {
-		return u"The server rejected this sticker set."_q;
+		return tr::lng_teagram_sticker_import_server_set_invalid(tr::now);
 	}
-	return u"The server couldn't import this pack (%1)."_q.arg(error);
+	return tr::lng_teagram_sticker_import_server_error(tr::now, lt_error,
+													   error);
 }
 
 void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
 						const QString &url) {
 	controller->show(
 		Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
-			box->setTitle(u"Sticker pack created"_q);
+			box->setTitle(tr::lng_teagram_sticker_import_created(tr::now));
 			box->addRow(object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
-			box->addButton(rpl::single(u"Copy link"_q), [=] {
-				QGuiApplication::clipboard()->setText(url);
-				controller->showToast(u"Link copied"_q);
-				box->closeBox();
-			});
+			box->addButton(
+				rpl::single(tr::lng_teagram_sticker_import_copy_link(tr::now)),
+				[=] {
+					QGuiApplication::clipboard()->setText(url);
+					controller->showToast(
+						tr::lng_teagram_sticker_import_link_copied(tr::now));
+					box->closeBox();
+				});
 			box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		}),
 		Ui::LayerOption::KeepOther);
@@ -197,22 +205,24 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 	const auto session = &controller->session();
 	if (!StickerImportEnabled(session)) {
 		controller->show(Ui::MakeInformBox(
-			u"This server has disabled sticker pack imports."_q));
+			tr::lng_teagram_sticker_import_disabled(tr::now)));
 		return;
 	}
 	controller->show(Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
-		box->setTitle(u"Import pack"_q);
+		box->setTitle(tr::lng_teagram_sticker_import_title(tr::now));
 		box->setWidth(st::boxWideWidth);
 		const auto state = box->lifetime().make_state<ImportFormState>(session);
 
 		const auto title = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
-			rpl::single(u"Title"_q)));
+			rpl::single(
+				tr::lng_teagram_sticker_import_title_placeholder(tr::now))));
 		title->setMaxLength(128);
 
 		const auto shortName = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
-			rpl::single(u"Short name"_q)));
+			rpl::single(tr::lng_teagram_sticker_import_short_name_placeholder(
+				tr::now))));
 		shortName->setMaxLength(64);
 
 		const auto availability
@@ -225,17 +235,32 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
 
 		const auto customEmoji = box->addRow(object_ptr<Ui::Checkbox>(
-			box, u"Create a custom emoji set"_q, false, st::settingsCheckbox));
-		const auto rights = box->addRow(object_ptr<Ui::Checkbox>(
-			box, u"I have the right to share this pack."_q, false,
+			box, tr::lng_teagram_sticker_import_custom_emoji(tr::now), false,
 			st::settingsCheckbox));
+		const auto rights = box->addRow(object_ptr<Ui::Checkbox>(
+			box, tr::lng_teagram_sticker_import_rights(tr::now), false,
+			st::settingsCheckbox));
+		const auto rightsErrorText
+			= tr::lng_teagram_sticker_import_rights_error(tr::now);
+		rights->checkedChanges()
+			| rpl::on_next(
+				[=](bool checked) {
+					if (checked && state->rightsError) {
+						state->rightsError = false;
+						rights->setAccessibleDescription(QString());
+						error->setText(QString());
+					}
+				},
+				rights->lifetime());
 
 		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
-			box, rpl::single(u"Choose folder"_q), st::settingsButton,
-			{&st::menuIconStickers}));
+			box,
+			rpl::single(tr::lng_teagram_sticker_import_choose_folder(tr::now)),
+			st::settingsButton, {&st::menuIconStickers}));
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
-			box, rpl::single(u"Choose ZIP file"_q), st::settingsButton,
-			{&st::menuIconStickers}));
+			box,
+			rpl::single(tr::lng_teagram_sticker_import_choose_zip(tr::now)),
+			st::settingsButton, {&st::menuIconStickers}));
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
 			shortName->setDisabled(pending);
@@ -262,7 +287,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 								  : Core::StickerImportType::Stickers;
 			state->scanPending = true;
 			setPending(true);
-			files->setText(u"Scanning files…"_q);
+			files->setText(tr::lng_teagram_sticker_import_scanning(tr::now));
 			const auto weak = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
 			crl::async([=] {
@@ -288,10 +313,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				availability->setText(
 					name.isEmpty()
 						? QString()
-						: u"Use a letter first, followed by letters, numbers or underscores (up to 64 characters)."_q);
+						: tr::lng_teagram_sticker_import_short_name_invalid(
+							  tr::now));
 				return;
 			}
-			availability->setText(u"Checking availability…"_q);
+			availability->setText(
+				tr::lng_teagram_sticker_import_availability_checking(tr::now));
 			state->nameCheckRequestId
 				= state->api
 					  .request(MTPstickers_CheckShortName(MTP_string(name)))
@@ -304,15 +331,18 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 							  }
 							  availability->setText(
 								  mtpIsTrue(result)
-									  ? u"Available"_q
-									  : u"This short name is already in use."_q);
+									  ? tr::lng_teagram_sticker_import_availability_available(
+											tr::now)
+									  : tr::lng_teagram_sticker_import_short_name_occupied(
+											tr::now));
 						  }))
 					  .fail(crl::guard(
 						  box,
 						  [=] {
 							  state->nameCheckRequestId = 0;
 							  availability->setText(
-								  u"Availability couldn't be checked."_q);
+								  tr::lng_teagram_sticker_import_availability_failed(
+									  tr::now));
 						  }))
 					  .send();
 		};
@@ -330,30 +360,35 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
-				box.get(), u"Choose sticker pack folder"_q, QString(),
-				crl::guard(box, [=](QString &&path) {
+				box.get(),
+				tr::lng_teagram_sticker_import_choose_folder_dialog(tr::now),
+				QString(), crl::guard(box, [=](QString &&path) {
 					if (path.isEmpty()) {
 						return;
 					}
 					state->sourcePath = std::move(path);
 					state->sourceType = Core::StickerImportSource::Folder;
-					source->setText(u"Folder: %1"_q.arg(
-						QFileInfo(state->sourcePath).fileName()));
+					source->setText(
+						tr::lng_teagram_sticker_import_source_folder(
+							tr::now, lt_name,
+							QFileInfo(state->sourcePath).fileName()));
 					updateScan();
 				}));
 		};
 		folderButton->addClickHandler(chooseFolder);
 		zipButton->addClickHandler([=] {
 			FileDialog::GetOpenPath(
-				box.get(), u"Choose sticker pack ZIP"_q,
-				u"ZIP archives (*.zip)"_q,
+				box.get(),
+				tr::lng_teagram_sticker_import_choose_zip_dialog(tr::now),
+				tr::lng_teagram_sticker_import_zip_filter(tr::now),
 				crl::guard(box, [=](FileDialog::OpenResult &&result) {
 					if (result.paths.isEmpty()) {
 						return;
 					}
 					state->sourcePath = result.paths.front();
 					state->sourceType = Core::StickerImportSource::Zip;
-					source->setText(u"ZIP file: %1"_q.arg(
+					source->setText(tr::lng_teagram_sticker_import_source_zip(
+						tr::now, lt_name,
 						QFileInfo(state->sourcePath).fileName()));
 					updateScan();
 				}));
@@ -385,7 +420,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			setPending(false);
 			error->setText(
 				message.isEmpty()
-					? u"The upload failed. Check your connection and try again."_q
+					? tr::lng_teagram_sticker_import_upload_failed(tr::now)
 					: ServerErrorText(message));
 		};
 		const auto startUpload = [=](const QString &name) {
@@ -412,103 +447,123 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				},
 				failImport,
 				[=](int percent) {
-					error->setText(QString(u"Uploading: %1%"_q).arg(percent));
+					error->setText(tr::lng_teagram_sticker_import_uploading(
+						tr::now, lt_percent, percent));
 				});
 		};
 
-		state
-			->createButton = box->addButton(rpl::single(u"Import pack"_q), [=] {
-			error->setText(QString());
-			if (state->scanPending) {
-				return;
-			}
-			if (!rights->checked()) {
-				error->setText(
-					u"Confirm that you have the right to share this pack."_q);
-				return;
-			}
-			const auto titleText = title->getLastText().trimmed();
-			if (!Core::IsValidStickerSetTitle(titleText)) {
-				error->setText(u"The title must be 1 to 64 characters."_q);
-				return;
-			}
-			const auto name = shortName->getLastText().trimmed();
-			if (!Core::IsValidStickerSetShortName(name)) {
-				error->setText(ServerErrorText(u"SHORT_NAME_INVALID"_q));
-				return;
-			}
-			if (state->sourcePath.isEmpty()) {
-				error->setText(u"Choose a folder or ZIP archive."_q);
-				return;
-			}
-			if (state->scan.files.empty()
-				|| state->scan.problem != Core::StickerImportProblem::None) {
-				error->setText(state->scan.files.empty()
-								   ? ScanDescription(state->scan)
-								   : ScanProblemText(state->scan.problem));
-				return;
-			}
-			setPending(true);
-			availability->setText(u"Checking server import settings…"_q);
-			state->preflightRequestId
-				= state->api.request(MTPhelp_GetAppConfig(MTP_int(0)))
-					  .done(crl::guard(
-						  box,
-						  [=](const MTPhelp_AppConfig &config) {
-							  state->preflightRequestId = 0;
-							  if (!StickerImportEnabled(config)) {
-								  setPending(false);
+		state->createButton = box->addButton(
+			rpl::single(tr::lng_teagram_sticker_import_title(tr::now)), [=] {
+				error->setText(QString());
+				state->rightsError = false;
+				rights->setAccessibleDescription(QString());
+				if (state->scanPending) {
+					return;
+				}
+				if (!rights->checked()) {
+					state->rightsError = true;
+					error->setText(rightsErrorText);
+					rights->setAccessibleDescription(rightsErrorText);
+					return;
+				}
+				const auto titleText = title->getLastText().trimmed();
+				if (!Core::IsValidStickerSetTitle(titleText)) {
+					error->setText(
+						tr::lng_teagram_sticker_import_title_invalid(tr::now));
+					return;
+				}
+				const auto name = shortName->getLastText().trimmed();
+				if (!Core::IsValidStickerSetShortName(name)) {
+					error->setText(ServerErrorText(u"SHORT_NAME_INVALID"_q));
+					return;
+				}
+				if (state->sourcePath.isEmpty()) {
+					error->setText(
+						tr::lng_teagram_sticker_import_scan_invalid_source(
+							tr::now));
+					return;
+				}
+				if (state->scan.files.empty()
+					|| state->scan.problem
+						   != Core::StickerImportProblem::None) {
+					error->setText(state->scan.files.empty()
+									   ? ScanDescription(state->scan)
+									   : ScanProblemText(state->scan.problem));
+					return;
+				}
+				setPending(true);
+				availability->setText(
+					tr::lng_teagram_sticker_import_preflight_checking(tr::now));
+				state->preflightRequestId
+					= state->api.request(MTPhelp_GetAppConfig(MTP_int(0)))
+						  .done(crl::guard(
+							  box,
+							  [=](const MTPhelp_AppConfig &config) {
+								  state->preflightRequestId = 0;
+								  if (!StickerImportEnabled(config)) {
+									  setPending(false);
+									  availability->setText(
+										  tr::lng_teagram_sticker_import_disabled(
+											  tr::now));
+									  return;
+								  }
 								  availability->setText(
-									  u"This server has disabled sticker pack imports."_q);
-								  return;
-							  }
-							  availability->setText(
-								  u"Checking availability…"_q);
-							  state->preflightRequestId
-								  = state->api
-										.request(MTPstickers_CheckShortName(
-											MTP_string(name)))
-										.done(crl::guard(
-											box,
-											[=](const MTPBool &available) {
-												state->preflightRequestId = 0;
-												if (!mtpIsTrue(available)) {
+									  tr::lng_teagram_sticker_import_availability_checking(
+										  tr::now));
+								  state->preflightRequestId
+									  = state->api
+											.request(MTPstickers_CheckShortName(
+												MTP_string(name)))
+											.done(crl::guard(
+												box,
+												[=](const MTPBool &available) {
+													state->preflightRequestId
+														= 0;
+													if (!mtpIsTrue(available)) {
+														setPending(false);
+														availability->setText(
+															tr::lng_teagram_sticker_import_short_name_occupied(
+																tr::now));
+														return;
+													}
+													availability->setText(
+														tr::lng_teagram_sticker_import_availability_available(
+															tr::now));
+													startUpload(name);
+												}))
+											.fail(crl::guard(
+												box,
+												[=](const MTP::Error
+														&requestError) {
+													state->preflightRequestId
+														= 0;
 													setPending(false);
 													availability->setText(
-														u"This short name is already in use. Choose another one."_q);
-													return;
-												}
-												availability->setText(
-													u"Available"_q);
-												startUpload(name);
-											}))
-										.fail(crl::guard(
-											box,
-											[=](const MTP::Error
-													&requestError) {
-												state->preflightRequestId = 0;
-												setPending(false);
-												availability->setText(
-													ServerErrorText(
-														requestError.type()));
-											}))
-										.send();
-						  }))
-					  .fail(crl::guard(
-						  box,
-						  [=](const MTP::Error &) {
-							  state->preflightRequestId = 0;
-							  setPending(false);
-							  availability->setText(
-								  u"Couldn't check whether this server allows imports. Try again."_q);
-						  }))
-					  .send();
-		});
+														ServerErrorText(
+															requestError
+																.type()));
+												}))
+											.send();
+							  }))
+						  .fail(crl::guard(
+							  box,
+							  [=](const MTP::Error &) {
+								  state->preflightRequestId = 0;
+								  setPending(false);
+								  availability->setText(
+									  tr::lng_teagram_sticker_import_preflight_failed(
+										  tr::now));
+							  }))
+						  .send();
+			});
 		state->suggestButton = box->addLeftButton(
-			rpl::single(u"Suggest short name"_q), [=] {
+			rpl::single(
+				tr::lng_teagram_sticker_import_suggest_short_name(tr::now)),
+			[=] {
 				const auto titleText = title->getLastText().trimmed();
 				if (titleText.isEmpty()) {
-					error->setText(u"Enter a title first."_q);
+					error->setText(
+						tr::lng_teagram_sticker_import_enter_title(tr::now));
 					return;
 				}
 				state->api.request(base::take(state->suggestionRequestId))
@@ -530,7 +585,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 									  },
 									  [&](const auto &) {
 										  error->setText(
-											  u"Couldn't suggest a short name."_q);
+											  tr::lng_teagram_sticker_import_suggestion_failed(
+												  tr::now));
 									  });
 							  }))
 						  .fail(crl::guard(
@@ -538,7 +594,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 							  [=](const MTP::Error &) {
 								  state->suggestionRequestId = 0;
 								  error->setText(
-									  u"Couldn't suggest a short name."_q);
+									  tr::lng_teagram_sticker_import_suggestion_failed(
+										  tr::now));
 							  }))
 						  .send();
 			});
