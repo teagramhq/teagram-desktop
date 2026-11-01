@@ -2225,6 +2225,7 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 	return result && (result->type == Storage::Cache::Error::Type::None);
 }
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] bool WaitForCacheCleaner(Storage::Cache::Database &cache) {
 	cache.sync();
 	const auto finished = AwaitCacheCallback<bool>([&](auto done) {
@@ -2237,6 +2238,7 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 	cache.sync();
 	return true;
 }
+#endif
 
 [[nodiscard]] bool OpenCache(Storage::Cache::Database &cache,
 							 not_null<Main::Account *> account) {
