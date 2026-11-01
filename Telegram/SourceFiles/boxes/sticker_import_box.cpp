@@ -448,7 +448,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				failImport,
 				[=](int percent) {
 					error->setText(tr::lng_teagram_sticker_import_uploading(
-						tr::now, lt_percent, percent));
+						tr::now, lt_percent, QString::number(percent)));
 				});
 		};
 
