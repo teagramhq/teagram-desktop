@@ -113,7 +113,7 @@ TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
 		{{"../../outside.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes"}});
 	const auto result
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
-	CHECK_EQ(result.files.size(), 1);
+	CHECK_EQ(int(result.files.size()), 1);
 	if (!result.files.empty()) {
 		CHECK_EQ(result.files.front().name, u"outside.tgs"_q);
 		CHECK_EQ(result.files.front().bytes,
@@ -126,7 +126,7 @@ TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
 		{{"compressed.tgs", QByteArray("\x1f\x8b", 2) + "tgs-bytes", 0, 8}});
 	const auto result
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
-	CHECK_EQ(result.files.size(), 1);
+	CHECK_EQ(int(result.files.size()), 1);
 	if (!result.files.empty()) {
 		CHECK_EQ(result.files.front().bytes,
 				 QByteArray("\x1f\x8b", 2) + "tgs-bytes");
@@ -140,7 +140,7 @@ TEST_CASE(StickerImportZipSkipsSymlinkEntries) {
 	const auto result
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK(result.files.empty());
-	CHECK_EQ(result.issues.size(), 1);
+	CHECK_EQ(int(result.issues.size()), 1);
 	if (!result.issues.empty()) {
 		CHECK(result.issues.front().problem
 			  == Core::StickerImportProblem::SymbolicLink);
