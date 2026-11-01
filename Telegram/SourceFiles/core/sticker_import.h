@@ -20,6 +20,23 @@ enum class StickerImportType {
 	Emoji,
 };
 
+enum class StickerImportFormat {
+	Webp,
+	Tgs,
+	Webm,
+};
+
+struct StickerImportFormatInfo {
+	QString mimeType;
+	QString extension;
+	quint64 maximumBytes = 0;
+};
+
+enum class StickerImportSource {
+	Folder,
+	Zip,
+};
+
 enum class StickerImportProblem {
 	None,
 	InvalidSource,
@@ -39,7 +56,7 @@ enum class StickerImportProblem {
 struct StickerImportFile {
 	QString name;
 	QByteArray bytes;
-	QString mimeType;
+	StickerImportFormat format;
 	QSize dimensions;
 };
 
@@ -60,6 +77,8 @@ struct StickerImportScan {
 													 StickerImportType type);
 [[nodiscard]] StickerImportScan
 ScanStickerImportZipFile(const QString &path, StickerImportType type);
+[[nodiscard]] StickerImportFormatInfo
+StickerImportFormatDetails(StickerImportFormat format);
 [[nodiscard]] QString StickerImportShareLinkPath(StickerImportType type,
 												 const QString &shortName);
 [[nodiscard]] bool IsValidStickerSetTitle(const QString &title);

@@ -1765,22 +1765,62 @@ bool TryRouterForLocalUrl(
 
 const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 	static auto Result = std::vector<LocalUrlHandler>{
-		{u"^join/?\\?invite=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q, JoinGroupByHash},
-		{u"^addlist/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q, JoinFilterBySlug},
-		{u"^(addstickers|addemoji)/?\\?set=([A-Za-z0-9_]{1,64})(&|$)"_q,
-		 ShowStickerSet},
-		{u"^addtheme/?\\?slug=([a-zA-Z0-9\\.\\_]+)(&|$)"_q, ShowTheme},
-		{u"^addstyle/?\\?slug=([a-zA-Z0-9\\.\\_]+)(&|$)"_q, ShowAiStyle},
-		{u"^setlanguage/?(\\?lang=([a-zA-Z0-9\\.\\_\\-]+))?(&|$)"_q,
-		 SetLanguage},
-		{u"^msg_url/?\\?(.+)(#|$)"_q, ShareUrl},
-		{u"^confirmphone/?\\?(.+)(#|$)"_q, ConfirmPhone},
-		{u"^socks/?\\?(.+)(#|$)"_q, ApplySocksProxy},
-		{u"^proxy/?\\?(.+)(#|$)"_q, ApplyMtprotoProxy},
-		{u"^passport/?\\?(.+)(#|$)"_q, ShowPassport},
-		{u"^bg/?\\?(.+)(#|$)"_q, ShowWallPaper},
-		{u"^resolve/?\\?(.+)(#|$)"_q, ResolveUsernameOrPhone},
-		{u"^privatepost/?\\?(.+)(#|$)"_q, ResolvePrivatePost},
+		{
+			u"^join/?\\?invite=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			JoinGroupByHash
+		},
+		{
+			u"^addlist/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			JoinFilterBySlug
+		},
+		{
+			u"^(addstickers|addemoji)/?\\?set=([A-Za-z0-9_]{1,64})(&|$)"_q,
+			ShowStickerSet
+		},
+		{
+			u"^addtheme/?\\?slug=([a-zA-Z0-9\\.\\_]+)(&|$)"_q,
+			ShowTheme
+		},
+		{
+			u"^addstyle/?\\?slug=([a-zA-Z0-9\\.\\_]+)(&|$)"_q,
+			ShowAiStyle
+		},
+		{
+			u"^setlanguage/?(\\?lang=([a-zA-Z0-9\\.\\_\\-]+))?(&|$)"_q,
+			SetLanguage
+		},
+		{
+			u"^msg_url/?\\?(.+)(#|$)"_q,
+			ShareUrl
+		},
+		{
+			u"^confirmphone/?\\?(.+)(#|$)"_q,
+			ConfirmPhone
+		},
+		{
+			u"^socks/?\\?(.+)(#|$)"_q,
+			ApplySocksProxy
+		},
+		{
+			u"^proxy/?\\?(.+)(#|$)"_q,
+			ApplyMtprotoProxy
+		},
+		{
+			u"^passport/?\\?(.+)(#|$)"_q,
+			ShowPassport
+		},
+		{
+			u"^bg/?\\?(.+)(#|$)"_q,
+			ShowWallPaper
+		},
+		{
+			u"^resolve/?\\?(.+)(#|$)"_q,
+			ResolveUsernameOrPhone
+		},
+		{
+			u"^privatepost/?\\?(.+)(#|$)"_q,
+			ResolvePrivatePost
+		},
 		{
 			u"^test_chat_theme/?\\?(.+)(#|$)"_q,
 			ResolveTestChatTheme,
@@ -1797,22 +1837,50 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 			u"^premium_multigift/?\\?(.+)(#|$)"_q,
 			ResolvePremiumMultigift,
 		},
-		{u"^login/?(\\?code=([0-9]+))(&|$)"_q, ResolveLoginCode},
+		{
+			u"^login/?(\\?code=([0-9]+))(&|$)"_q,
+			ResolveLoginCode
+		},
 		{
 			u"^boost/?\\?(.+)(#|$)"_q,
 			ResolveBoost,
 		},
-		{u"^message/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q, ResolveChatLink},
-		{u"^stars_topup/?\\?(.+)(#|$)"_q, ResolveTopUp},
-		{u"^nft/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q, ResolveUniqueGift},
-		{u"^stargift_auction/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
-		 ResolveGiftAuction},
-		{u"^call/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
-		 ResolveConferenceCall},
-		{u"^stars/?(^\\?.*)?(#|$)"_q, ResolveStarsSettings},
-		{u"^(ton|grams)/?(^\\?.*)?(#|$)"_q, ResolveTonSettings},
-		{u"^oauth/?\\?(.+)(#|$)"_q, ResolveOAuth},
-		{u"^([^\\?]+)(\\?|#|$)"_q, HandleUnknown},
+		{
+			u"^message/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			ResolveChatLink
+		},
+		{
+			u"^stars_topup/?\\?(.+)(#|$)"_q,
+			ResolveTopUp
+		},
+		{
+			u"^nft/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			ResolveUniqueGift
+		},
+		{
+			u"^stargift_auction/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			ResolveGiftAuction
+		},
+		{
+			u"^call/?\\?slug=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
+			ResolveConferenceCall
+		},
+		{
+			u"^stars/?(^\\?.*)?(#|$)"_q,
+			ResolveStarsSettings
+		},
+		{
+			u"^(ton|grams)/?(^\\?.*)?(#|$)"_q,
+			ResolveTonSettings
+		},
+		{
+			u"^oauth/?\\?(.+)(#|$)"_q,
+			ResolveOAuth
+		},
+		{
+			u"^([^\\?]+)(\\?|#|$)"_q,
+			HandleUnknown
+		},
 	};
 	return Result;
 }

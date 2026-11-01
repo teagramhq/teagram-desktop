@@ -50,12 +50,6 @@ struct ZipEntry {
 	bool symbolicLink = false;
 };
 
-struct FileFormat {
-	QString mimeType;
-	quint64 maximumBytes = 0;
-	bool webp = false;
-};
-
 [[nodiscard]] quint8 U8(const QByteArray &bytes, quint64 offset) {
 	return quint8(uchar(bytes.at(qsizetype(offset))));
 }
@@ -74,24 +68,15 @@ struct FileFormat {
 	return name.mid(name.lastIndexOf(QChar('/')) + 1);
 }
 
-[[nodiscard]] std::optional<FileFormat> FormatForName(const QString &name) {
+[[nodiscard]] std::optional<StickerImportFormat> FormatForName(
+	const QString &name) {
 	const auto extension = QFileInfo(name).suffix().toLower();
 	if (extension == u"webp"_q) {
-		return FileFormat{
-			.mimeType = u"image/webp"_q,
-			.maximumBytes = 512 * 1024,
-			.webp = true,
-		};
+		return StickerImportFormat::Webp;
 	} else if (extension == u"tgs"_q) {
-		return FileFormat{
-			.mimeType = u"application/x-tgsticker"_q,
-			.maximumBytes = 64 * 1024,
-		};
+		return StickerImportFormat::Tgs;
 	} else if (extension == u"webm"_q) {
-		return FileFormat{
-			.mimeType = u"video/webm"_q,
-			.maximumBytes = 256 * 1024,
-		};
+		return StickerImportFormat::Webm;
 	}
 	return std::nullopt;
 }
@@ -111,15 +96,15 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 	result.problem = problem;
 }
 
-[[nodiscard]] StickerImportProblem ValidateBytes(const QString &name,
-												 const QByteArray &bytes,
+[[nodiscard]] StickerImportProblem ValidateBytes(
+													 const QByteArray &bytes,
 												 StickerImportType type,
-												 const FileFormat &format,
+													 StickerImportFormat format,
 												 QSize *dimensions) {
 	if (bytes.isEmpty()) {
 		return StickerImportProblem::InvalidMedia;
 	}
-	if (format.webp) {
+	if (format == StickerImportFormat::Webp) {
 		auto buffer = QBuffer();
 		buffer.setData(bytes);
 		if (!buffer.open(QIODevice::ReadOnly)) {
@@ -140,7 +125,7 @@ void Fail(StickerImportScan &result, StickerImportProblem problem) {
 			return StickerImportProblem::InvalidDimensions;
 		}
 		*dimensions = size;
-	} else if (format.mimeType == u"application/x-tgsticker"_q) {
+	} else if (format == StickerImportFormat::Tgs) {
 		if (!bytes.startsWith(QByteArray("\x1f\x8b", 2))) {
 			return StickerImportProblem::InvalidMedia;
 		}
@@ -157,12 +142,14 @@ void AddBytes(StickerImportScan &result, QString name, QByteArray bytes,
 	if (!format) {
 		AddIssue(result, name, StickerImportProblem::UnsupportedFormat);
 		return;
-	} else if (quint64(bytes.size()) > format->maximumBytes) {
+	}
+	const auto details = StickerImportFormatDetails(*format);
+	if (quint64(bytes.size()) > details.maximumBytes) {
 		AddIssue(result, name, StickerImportProblem::FileTooLarge);
 		return;
 	}
 	auto dimensions = QSize();
-	const auto problem = ValidateBytes(name, bytes, type, *format, &dimensions);
+	const auto problem = ValidateBytes(bytes, type, *format, &dimensions);
 	if (problem != StickerImportProblem::None) {
 		AddIssue(result, name, problem);
 		return;
@@ -177,7 +164,7 @@ void AddBytes(StickerImportScan &result, QString name, QByteArray bytes,
 	result.files.push_back({
 		.name = std::move(name),
 		.bytes = std::move(bytes),
-		.mimeType = format->mimeType,
+		.format = *format,
 		.dimensions = dimensions,
 	});
 }
@@ -273,7 +260,9 @@ void AddBytes(StickerImportScan &result, QString name, QByteArray bytes,
 			&& offset + 22 + U16(archive, offset + 20) == size) {
 			break;
 		}
-		endOffset = archive.lastIndexOf(signature, endOffset - 1);
+		endOffset = (endOffset > 0)
+			? archive.lastIndexOf(signature, endOffset - 1)
+			: -1;
 	}
 	if (endOffset < qsizetype(searchStart)) {
 		return false;
@@ -408,7 +397,9 @@ void ReadZipEntries(const QByteArray &archive,
 		if (!format) {
 			AddIssue(*result, name, StickerImportProblem::UnsupportedFormat);
 			continue;
-		} else if (entry.expandedSize > format->maximumBytes) {
+		}
+		const auto details = StickerImportFormatDetails(*format);
+		if (entry.expandedSize > details.maximumBytes) {
 			AddIssue(*result, name, StickerImportProblem::FileTooLarge);
 			continue;
 		} else if (entry.flags & 1) {
@@ -438,6 +429,18 @@ void ReadZipEntries(const QByteArray &archive,
 }
 
 } // namespace
+
+StickerImportFormatInfo StickerImportFormatDetails(StickerImportFormat format) {
+	switch (format) {
+	case StickerImportFormat::Webp:
+		return {u"image/webp"_q, u"webp"_q, 512 * 1024};
+	case StickerImportFormat::Tgs:
+		return {u"application/x-tgsticker"_q, u"tgs"_q, 64 * 1024};
+	case StickerImportFormat::Webm:
+		return {u"video/webm"_q, u"webm"_q, 256 * 1024};
+	}
+	Unexpected("Format in StickerImportFormatDetails.");
+}
 
 StickerImportScan ScanStickerImportFolder(const QString &path,
 										  StickerImportType type) {
@@ -470,8 +473,9 @@ StickerImportScan ScanStickerImportFolder(const QString &path,
 		if (!format) {
 			AddIssue(result, name, StickerImportProblem::UnsupportedFormat);
 			continue;
-		} else if (info.size() < 0
-				   || quint64(info.size()) > format->maximumBytes) {
+		}
+		const auto details = StickerImportFormatDetails(*format);
+		if (info.size() < 0 || quint64(info.size()) > details.maximumBytes) {
 			AddIssue(result, name, StickerImportProblem::FileTooLarge);
 			continue;
 		} else if (int(result.files.size()) >= MaximumItems(type)) {
@@ -479,7 +483,7 @@ StickerImportScan ScanStickerImportFolder(const QString &path,
 			continue;
 		}
 		auto bytes = QByteArray();
-		if (!ReadFileBytes(entryPath, format->maximumBytes, &bytes)) {
+		if (!ReadFileBytes(entryPath, details.maximumBytes, &bytes)) {
 			AddIssue(result, name, StickerImportProblem::ReadFailed);
 			continue;
 		}

@@ -23,7 +23,7 @@ class StickerSetImport final : public base::has_weak_ptr {
 	StickerSetImport(not_null<Main::Session *> session,
 					 Core::StickerImportScan scan, QString title,
 					 QString shortName, Data::StickersType type,
-					 QString source);
+					 Core::StickerImportSource source);
 	~StickerSetImport();
 
 	void start(Fn<void(MTPmessages_StickerSet)> done, Fn<void(QString)> fail,
@@ -43,7 +43,7 @@ class StickerSetImport final : public base::has_weak_ptr {
 	const QString _title;
 	const QString _shortName;
 	const Data::StickersType _type;
-	const QString _source;
+	const Core::StickerImportSource _source;
 	MTP::Sender _api;
 	rpl::lifetime _uploadLifetime;
 	FullMsgId _uploadId;

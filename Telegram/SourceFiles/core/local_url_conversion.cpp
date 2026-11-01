@@ -230,29 +230,17 @@ struct HttpsOrigin {
 		} else if (regex_match(u"^(addstickers|addemoji)(/|\\?|$)"_q, query,
 							   matchOptions)) {
 			return url;
-		} else if (const auto themeMatch
-				   = regex_match(u"^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q,
-								 query, matchOptions)) {
+		} else if (const auto themeMatch = regex_match(u"^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addtheme?slug="_q + url_encode(themeMatch->captured(1));
-		} else if (const auto addStyleMatch
-				   = regex_match(u"^addstyle/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q,
-								 query, matchOptions)) {
+		} else if (const auto addStyleMatch = regex_match(u"^addstyle/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://addstyle?slug="_q + url_encode(addStyleMatch->captured(1));
-		} else if (const auto languageMatch = regex_match(
-					   u"^setlanguage/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query,
-					   matchOptions)) {
+		} else if (const auto languageMatch = regex_match(u"^setlanguage/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			return u"tg://setlanguage?lang="_q + url_encode(languageMatch->captured(1));
-		} else if (const auto shareUrlMatch = regex_match(
-					   u"^share/url/?\\?(.+)$"_q, query, matchOptions)) {
+		} else if (const auto shareUrlMatch = regex_match(u"^share/url/?\\?(.+)$"_q, query, matchOptions)) {
 			return u"tg://msg_url?"_q + shareUrlMatch->captured(1);
-		} else if (const auto confirmPhoneMatch = regex_match(
-					   u"^confirmphone/?\\?(.+)"_q, query, matchOptions)) {
+		} else if (const auto confirmPhoneMatch = regex_match(u"^confirmphone/?\\?(.+)"_q, query, matchOptions)) {
 			return u"tg://confirmphone?"_q + confirmPhoneMatch->captured(1);
-		} else if (const auto ivMatch
-				   = regex_match(u"^iv/?\\?(.+)(#|$)"_q, query, matchOptions)) {
-			//
-			// We need to show our t.me page, not the url directly.
-			//
+		} else if (const auto ivMatch = regex_match(u"^iv/?\\?(.+)(#|$)"_q, query, matchOptions)) {
 			//auto params = url_parse_params(ivMatch->captured(1), UrlParamNameTransform::ToLower);
 			//auto previewedUrl = params.value(u"url"_q);
 			//if (previewedUrl.startsWith(u"http://"_q, Qt::CaseInsensitive)
@@ -260,19 +248,13 @@ struct HttpsOrigin {
 			//	return previewedUrl;
 			//}
 			return url;
-		} else if (const auto socksMatch = regex_match(
-					   u"^socks/?\\?(.+)(#|$)"_q, query, matchOptions)) {
+		} else if (const auto socksMatch = regex_match(u"^socks/?\\?(.+)(#|$)"_q, query, matchOptions)) {
 			return u"tg://socks?"_q + socksMatch->captured(1);
-		} else if (const auto proxyMatch = regex_match(
-					   u"^proxy/?\\?(.+)(#|$)"_q, query, matchOptions)) {
+		} else if (const auto proxyMatch = regex_match(u"^proxy/?\\?(.+)(#|$)"_q, query, matchOptions)) {
 			return u"tg://proxy?"_q + proxyMatch->captured(1);
-		} else if (const auto invoiceMatch = regex_match(
-					   u"^(invoice/|\\$)([a-zA-Z0-9_\\-]+)(\\?|#|$)"_q, query,
-					   matchOptions)) {
+		} else if (const auto invoiceMatch = regex_match(u"^(invoice/|\\$)([a-zA-Z0-9_\\-]+)(\\?|#|$)"_q, query, matchOptions)) {
 			return u"tg://invoice?slug="_q + invoiceMatch->captured(2);
-		} else if (const auto bgMatch = regex_match(
-					   u"^bg/([a-zA-Z0-9\\.\\_\\-\\~]+)(\\?(.+)?)?$"_q, query,
-					   matchOptions)) {
+		} else if (const auto bgMatch = regex_match(u"^bg/([a-zA-Z0-9\\.\\_\\-\\~]+)(\\?(.+)?)?$"_q, query, matchOptions)) {
 			const auto params = bgMatch->captured(3);
 			const auto bg = bgMatch->captured(1);
 			const auto type = regex_match(u"^[a-fA-F0-9]{6}^"_q, bg)
@@ -282,30 +264,19 @@ struct HttpsOrigin {
 				? "gradient"
 				: "slug";
 			return u"tg://bg?"_q + type + '=' + bg + (params.isEmpty() ? QString() : '&' + params);
-		} else if (const auto chatlinkMatch
-				   = regex_match(u"^m/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query,
-								 matchOptions)) {
+		} else if (const auto chatlinkMatch = regex_match(u"^m/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			const auto slug = chatlinkMatch->captured(1);
 			return u"tg://message?slug="_q + slug;
-		} else if (const auto nftMatch
-				   = regex_match(u"^nft/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q,
-								 query, matchOptions)) {
+		} else if (const auto nftMatch = regex_match(u"^nft/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			const auto slug = nftMatch->captured(1);
 			return u"tg://nft?slug="_q + slug;
-		} else if (const auto auctionMatch
-				   = regex_match(u"^auction/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q,
-								 query, matchOptions)) {
+		} else if (const auto auctionMatch = regex_match(u"^auction/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			const auto slug = auctionMatch->captured(1);
 			return u"tg://stargift_auction?slug="_q + slug;
-		} else if (const auto callMatch
-				   = regex_match(u"^call/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q,
-								 query, matchOptions)) {
+		} else if (const auto callMatch = regex_match(u"^call/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"_q, query, matchOptions)) {
 			const auto slug = callMatch->captured(1);
 			return u"tg://call?slug="_q + slug;
-		} else if (
-			const auto newbotMatch = regex_match(
-				u"^newbot/([a-zA-Z0-9\\.\\_]+)(/([a-zA-Z0-9\\.\\_]*))?(/?\\?(.+))?$"_q,
-				query, matchOptions)) {
+		} else if (const auto newbotMatch = regex_match(u"^newbot/([a-zA-Z0-9\\.\\_]+)(/([a-zA-Z0-9\\.\\_]*))?(/?\\?(.+))?$"_q, query, matchOptions)) {
 			const auto manager = newbotMatch->captured(1);
 			const auto username = newbotMatch->captured(3);
 			const auto params = newbotMatch->captured(5);
@@ -318,14 +289,13 @@ struct HttpsOrigin {
 			}
 			return result;
 		} else if (const auto privateMatch = regex_match(u"^"
-														 "c/(\\-?\\d+)"
-														 "("
-														 "/?\\?|"
-														 "/?$|"
-														 "/\\d+/?(\\?|$)|"
-														 "/\\d+/\\d+/?(\\?|$)"
-														 ")"_q,
-														 query, matchOptions)) {
+			"c/(\\-?\\d+)"
+			"("
+				"/?\\?|"
+				"/?$|"
+				"/\\d+/?(\\?|$)|"
+				"/\\d+/\\d+/?(\\?|$)"
+			")"_q, query, matchOptions)) {
 			const auto channel = privateMatch->captured(1);
 			const auto params = query.mid(privateMatch->captured(0).size()).toString();
 			if (params.indexOf("boost", 0, Qt::CaseInsensitive) >= 0
@@ -340,20 +310,18 @@ struct HttpsOrigin {
 				added = u"&post="_q + postMatch->captured(1);
 			}
 			return base + added + (params.isEmpty() ? QString() : '&' + params);
-		} else if (const auto usernameMatch
-				   = regex_match(u"^"
-								 "([a-zA-Z0-9\\.\\_]+)"
-								 "("
-								 "/?\\?|"
-								 "/?$|"
-								 "/[a-zA-Z0-9\\.\\_\\-]+/?(\\?|$)|"
-								 "/\\d+/?(\\?|$)|"
-								 "/s/(\\d+|live)/?(\\?|$)|"
-								 "/a/\\d+/?(\\?|$)|"
-								 "/c/\\d+/?(\\?|$)|"
-								 "/\\d+/\\d+/?(\\?|$)"
-								 ")"_q,
-								 query, matchOptions)) {
+		} else if (const auto usernameMatch = regex_match(u"^"
+			"([a-zA-Z0-9\\.\\_]+)"
+			"("
+				"/?\\?|"
+				"/?$|"
+				"/[a-zA-Z0-9\\.\\_\\-]+/?(\\?|$)|"
+				"/\\d+/?(\\?|$)|"
+				"/s/(\\d+|live)/?(\\?|$)|"
+				"/a/\\d+/?(\\?|$)|"
+				"/c/\\d+/?(\\?|$)|"
+				"/\\d+/\\d+/?(\\?|$)"
+			")"_q, query, matchOptions)) {
 			const auto domain = usernameMatch->captured(1);
 			const auto params = query.mid(usernameMatch->captured(0).size()).toString();
 			if (params.indexOf("boost", 0, Qt::CaseInsensitive) >= 0

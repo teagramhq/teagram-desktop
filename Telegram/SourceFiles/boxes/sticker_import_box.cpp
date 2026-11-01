@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
@@ -48,7 +49,7 @@ struct ImportFormState final : base::has_weak_ptr {
 
 	MTP::Sender api;
 	QString sourcePath;
-	QString sourceType;
+	Core::StickerImportSource sourceType = Core::StickerImportSource::Folder;
 	Core::StickerImportScan scan;
 	mtpRequestId nameCheckRequestId = 0;
 	mtpRequestId suggestionRequestId = 0;
@@ -166,7 +167,7 @@ struct ImportFormState final : base::has_weak_ptr {
 	} else if (error == u"STICKERSET_INVALID"_q) {
 		return u"The server rejected this sticker set."_q;
 	}
-	return u"The server couldn't import this pack. Please try again."_q;
+	return u"The server couldn't import this pack (%1)."_q.arg(error);
 }
 
 void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
@@ -254,7 +255,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				return;
 			}
 			const auto path = state->sourcePath;
-			const auto fromFolder = state->sourceType == u"folder"_q;
+			const auto fromFolder
+				= state->sourceType == Core::StickerImportSource::Folder;
 			const auto type = customEmoji->checked()
 								  ? Core::StickerImportType::Emoji
 								  : Core::StickerImportType::Stickers;
@@ -334,7 +336,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						return;
 					}
 					state->sourcePath = std::move(path);
-					state->sourceType = u"folder"_q;
+					state->sourceType = Core::StickerImportSource::Folder;
 					source->setText(u"Folder: %1"_q.arg(
 						QFileInfo(state->sourcePath).fileName()));
 					updateScan();
@@ -350,7 +352,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						return;
 					}
 					state->sourcePath = result.paths.front();
-					state->sourceType = u"zip"_q;
+					state->sourceType = Core::StickerImportSource::Zip;
 					source->setText(u"ZIP file: %1"_q.arg(
 						QFileInfo(state->sourcePath).fileName()));
 					updateScan();

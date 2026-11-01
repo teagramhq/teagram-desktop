@@ -9,9 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/random.h"
 #include "base/unixtime.h"
+#include "data/stickers/data_stickers.h"
 #include "data/data_document.h"
 #include "data/data_session.h"
-#include "data/stickers/data_stickers.h"
 #include "main/main_session.h"
 #include "storage/file_upload.h"
 #include "storage/localimageloader.h"
@@ -21,17 +21,15 @@ namespace {
 
 [[nodiscard]] QString SafeUploadName(const Core::StickerImportFile &file,
 									 int index) {
-	const auto extension = (file.mimeType == u"image/webp"_q) ? u"webp"_q
-						   : (file.mimeType == u"application/x-tgsticker"_q)
-							   ? u"tgs"_q
-							   : u"webm"_q;
-	return u"sticker_%1.%2"_q.arg(index + 1).arg(extension);
+	const auto format = Core::StickerImportFormatDetails(file.format);
+	return u"sticker_%1.%2"_q.arg(index + 1).arg(format.extension);
 }
 
 [[nodiscard]] std::shared_ptr<FilePrepareResult>
 PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 						 const Core::StickerImportFile &file, int index) {
 	const auto filename = SafeUploadName(file, index);
+	const auto format = Core::StickerImportFormatDetails(file.format);
 	auto attributes = QVector<MTPDocumentAttribute>(
 		1, MTP_documentAttributeFilename(MTP_string(filename)));
 	if (!file.dimensions.isEmpty()) {
@@ -39,9 +37,9 @@ PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 			MTP_documentAttributeImageSize(MTP_int(file.dimensions.width()),
 										   MTP_int(file.dimensions.height())));
 	}
-	if (file.mimeType == u"application/x-tgsticker"_q) {
+	if (file.format == Core::StickerImportFormat::Tgs) {
 		attributes.push_back(MTP_documentAttributeAnimated());
-	} else if (file.mimeType == u"video/webm"_q) {
+	} else if (file.format == Core::StickerImportFormat::Webm) {
 		attributes.push_back(MTP_documentAttributeVideo(
 			MTP_flags(0), MTP_double(0.), MTP_int(0), MTP_int(0), MTPint(),
 			MTPdouble(), MTPstring()));
@@ -55,13 +53,13 @@ PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 		.type = SendMediaType::File,
 	});
 	result->filename = filename;
-	result->filemime = file.mimeType;
+	result->filemime = format.mimeType;
 	result->content = file.bytes;
 	result->filesize = file.bytes.size();
 	result->setFileData(file.bytes);
 	result->document = MTP_document(
 		MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
-		MTP_int(base::unixtime::now()), MTP_string(file.mimeType),
+		MTP_int(base::unixtime::now()), MTP_string(format.mimeType),
 		MTP_long(file.bytes.size()), MTP_vector<MTPPhotoSize>(),
 		MTPVector<MTPVideoSize>(), MTP_int(dcId),
 		MTP_vector<MTPDocumentAttribute>(std::move(attributes)));
@@ -90,10 +88,13 @@ PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 StickerSetImport::StickerSetImport(not_null<Main::Session *> session,
 								   Core::StickerImportScan scan, QString title,
 								   QString shortName, Data::StickersType type,
-								   QString source)
+								   Core::StickerImportSource source)
 	: _session(session), _scan(std::move(scan)), _title(std::move(title)),
-	  _shortName(std::move(shortName)), _type(type), _source(std::move(source)),
-	  _api(&session->mtp()) {}
+	  _shortName(std::move(shortName)), _type(type), _source(source),
+	  _api(&session->mtp()) {
+	Expects(Core::IsValidStickerSetTitle(_title));
+	Expects(Core::IsValidStickerSetShortName(_shortName));
+}
 
 StickerSetImport::~StickerSetImport() { cancel(); }
 
@@ -173,15 +174,16 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 	auto attributes = QVector<MTPDocumentAttribute>();
 	const auto &source = _scan.files[_index];
 	const auto filename = SafeUploadName(source, _index);
+	const auto format = Core::StickerImportFormatDetails(source.format);
 	attributes.push_back(MTP_documentAttributeFilename(MTP_string(filename)));
 	if (!source.dimensions.isEmpty()) {
 		attributes.push_back(MTP_documentAttributeImageSize(
 			MTP_int(source.dimensions.width()),
 			MTP_int(source.dimensions.height())));
 	}
-	if (source.mimeType == u"application/x-tgsticker"_q) {
+	if (source.format == Core::StickerImportFormat::Tgs) {
 		attributes.push_back(MTP_documentAttributeAnimated());
-	} else if (source.mimeType == u"video/webm"_q) {
+	} else if (source.format == Core::StickerImportFormat::Webm) {
 		attributes.push_back(MTP_documentAttributeVideo(
 			MTP_flags(0), MTP_double(0.), MTP_int(0), MTP_int(0), MTPint(),
 			MTPdouble(), MTPstring()));
@@ -191,7 +193,7 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 		MTPMaskCoords()));
 
 	const auto media = MTP_inputMediaUploadedDocument(
-		MTP_flags(0), file, MTPInputFile(), MTP_string(source.mimeType),
+		MTP_flags(0), file, MTPInputFile(), MTP_string(format.mimeType),
 		MTP_vector<MTPDocumentAttribute>(std::move(attributes)),
 		MTP_vector<MTPInputDocument>(), MTPInputPhoto(), MTP_int(0),
 		MTP_int(0));
@@ -205,7 +207,7 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 					  _requestId = 0;
 					  const auto document = UploadedDocument(result);
 					  if (document.type() != mtpc_inputDocument) {
-						  fail(QString());
+						  fail(u"STICKER_DOCUMENT_INVALID"_q);
 						  return;
 					  }
 					  _items.push_back(MTP_inputStickerSetItem(
@@ -250,6 +252,9 @@ void StickerSetImport::uploadProgressed() {
 }
 
 void StickerSetImport::createSet() {
+	const auto source = (_source == Core::StickerImportSource::Folder)
+		? u"folder"_q
+		: u"zip"_q;
 	auto flags = MTPstickers_CreateStickerSet::Flags(
 		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (_type == Data::StickersType::Emoji) {
@@ -266,7 +271,7 @@ void StickerSetImport::createSet() {
 				  MTP_flags(flags), MTP_inputUserSelf(), MTP_string(_title),
 				  MTP_string(_shortName), MTPInputDocument(),
 				  MTP_vector<MTPInputStickerSetItem>(std::move(items)),
-				  MTP_string(_source)))
+				  MTP_string(source)))
 			  .done(crl::guard(
 				  this,
 				  [=](const MTPmessages_StickerSet &result) {

@@ -10,9 +10,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
 
+#include <QtCore/QBuffer>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QTemporaryDir>
+#include <QtGui/QImage>
+#include <QtGui/QImageWriter>
 
 #include <zlib.h>
 
@@ -26,6 +29,7 @@ struct ZipEntry {
 	quint32 externalAttributes = 0;
 	quint16 method = 0;
 	quint32 advertisedExpandedSize = 0;
+	bool localCrcMismatch = false;
 };
 
 void Append16(QByteArray &bytes, quint16 value) {
@@ -82,6 +86,18 @@ void Append32(QByteArray &bytes, quint32 value) {
 	return Gzip(R"({"tgs":1,"w":512,"h":512,"fr":30,"ip":0,"op":60})");
 }
 
+[[nodiscard]] QByteArray WebpImage(QSize size) {
+	auto image = QImage(size, QImage::Format_ARGB32);
+	image.fill(Qt::transparent);
+	auto result = QByteArray();
+	auto buffer = QBuffer(&result);
+	if (!buffer.open(QIODevice::WriteOnly)) {
+		return {};
+	}
+	auto writer = QImageWriter(&buffer, "webp");
+	return writer.write(image) ? result : QByteArray();
+}
+
 [[nodiscard]] QByteArray MakeZip(const std::vector<ZipEntry> &entries) {
 	auto archive = QByteArray();
 	auto directory = QByteArray();
@@ -101,7 +117,7 @@ void Append32(QByteArray &bytes, quint32 value) {
 		Append16(archive, entry.method);
 		Append16(archive, 0);
 		Append16(archive, 0);
-		Append32(archive, quint32(crc));
+		Append32(archive, quint32(crc) ^ (entry.localCrcMismatch ? 1U : 0U));
 		Append32(archive, quint32(compressed.size()));
 		Append32(archive, expandedSize);
 		Append16(archive, quint16(entry.name.size()));
@@ -169,6 +185,91 @@ TEST_CASE(StickerImportZipInflatesDeflatedEntries) {
 		CHECK_EQ(result.files.front().bytes,
 				 QByteArray("\x1f\x8b", 2) + "tgs-bytes");
 	}
+}
+
+TEST_CASE(StickerImportZipRejectsMalformedEndOfCentralDirectory) {
+	const auto archive = QByteArray("PK\x05\x06", 4) + QByteArray(19, '\0');
+	const auto result
+		= Core::ScanStickerImportZip(archive, Core::StickerImportType::Stickers);
+	CHECK(result.problem == Core::StickerImportProblem::InvalidArchive);
+}
+
+TEST_CASE(StickerImportZipRejectsTruncatedEndOfCentralDirectory) {
+	auto archive = MakeZip({});
+	archive.chop(1);
+	const auto result
+		= Core::ScanStickerImportZip(archive, Core::StickerImportType::Stickers);
+	CHECK(result.problem == Core::StickerImportProblem::InvalidArchive);
+}
+
+TEST_CASE(StickerImportZipRejectsLocalHeaderCrcMismatch) {
+	const auto zip = MakeZip({
+		{"sticker.tgs", ValidStickerTGS(), 0, 0, 0, true},
+	});
+	const auto result
+		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
+	CHECK(result.problem == Core::StickerImportProblem::InvalidArchive);
+}
+
+TEST_CASE(StickerImportValidatesMediaFormats) {
+	const auto scan = [](const QByteArray &name, const QByteArray &bytes,
+						 Core::StickerImportType type) {
+		return Core::ScanStickerImportZip(
+			MakeZip({{name, bytes}}), type);
+	};
+	const auto accepted = [](const Core::StickerImportScan &result) {
+		return (result.problem == Core::StickerImportProblem::None)
+			&& (result.files.size() == 1);
+	};
+	const auto rejectedAs = [](const Core::StickerImportScan &result,
+								Core::StickerImportProblem problem) {
+		return (result.files.empty()) && (result.issues.size() == 1)
+			&& (result.issues.front().problem == problem);
+	};
+
+	const auto stickerWebp = WebpImage(QSize(512, 512));
+	const auto emojiWebp = WebpImage(QSize(100, 100));
+	CHECK(!stickerWebp.isEmpty());
+	CHECK(!emojiWebp.isEmpty());
+	CHECK(accepted(scan("sticker.webp", stickerWebp,
+						Core::StickerImportType::Stickers)));
+	CHECK(accepted(scan("emoji.webp", emojiWebp,
+						Core::StickerImportType::Emoji)));
+	CHECK(rejectedAs(scan("wrong-sticker-size.webp", emojiWebp,
+						  Core::StickerImportType::Stickers),
+					 Core::StickerImportProblem::InvalidDimensions));
+	CHECK(rejectedAs(scan("wrong-emoji-size.webp", stickerWebp,
+						  Core::StickerImportType::Emoji),
+					 Core::StickerImportProblem::InvalidDimensions));
+
+	const auto tgs = ValidStickerTGS();
+	CHECK(accepted(scan("sticker.tgs", tgs,
+						Core::StickerImportType::Stickers)));
+	CHECK(rejectedAs(scan("invalid.tgs", QByteArray("not gzip"),
+						  Core::StickerImportType::Stickers),
+					 Core::StickerImportProblem::InvalidMedia));
+
+	const auto webm = QByteArray("\x1a\x45\xdf\xa3", 4) + "webm";
+	CHECK(accepted(scan("sticker.webm", webm,
+						Core::StickerImportType::Stickers)));
+	CHECK(rejectedAs(scan("invalid.webm", QByteArray("not webm"),
+						  Core::StickerImportType::Stickers),
+					 Core::StickerImportProblem::InvalidMedia));
+}
+
+TEST_CASE(StickerImportFormatDetailsPairMimeAndExtension) {
+	const auto webp
+		= Core::StickerImportFormatDetails(Core::StickerImportFormat::Webp);
+	CHECK_EQ(webp.mimeType, u"image/webp"_q);
+	CHECK_EQ(webp.extension, u"webp"_q);
+	const auto tgs
+		= Core::StickerImportFormatDetails(Core::StickerImportFormat::Tgs);
+	CHECK_EQ(tgs.mimeType, u"application/x-tgsticker"_q);
+	CHECK_EQ(tgs.extension, u"tgs"_q);
+	const auto webm
+		= Core::StickerImportFormatDetails(Core::StickerImportFormat::Webm);
+	CHECK_EQ(webm.mimeType, u"video/webm"_q);
+	CHECK_EQ(webm.extension, u"webm"_q);
 }
 
 TEST_CASE(StickerImportZipSkipsSymlinkEntries) {
@@ -292,7 +393,7 @@ TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(int(scan.files.size()), 1);
 	if (!scan.files.empty()) {
-		CHECK_EQ(scan.files.front().mimeType, u"application/x-tgsticker"_q);
+		CHECK(scan.files.front().format == Core::StickerImportFormat::Tgs);
 		CHECK_EQ(scan.files.front().bytes, sticker);
 	}
 	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
