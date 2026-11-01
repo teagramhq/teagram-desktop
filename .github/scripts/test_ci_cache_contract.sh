@@ -82,8 +82,24 @@ require_workflow_field "$linux_workflow" \
 require_workflow_field "$linux_workflow" '.concurrency["cancel-in-progress"]' \
   "\${{ github.ref != 'refs/heads/dev' }}"
 reject_value "$linux_workflow" 'workflow_run' 'head_sha'
+# The only ref override is a pinned server checkout for the API smoke test.
+server_smoke_checkout='Checkout sticker set API smoke source.'
 expect_equal "$linux_workflow checkouts that override the ref" \
-  "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with.ref != null) | .name' "$linux_workflow")" ''
+  "$(yq -r '.jobs[].steps[] | select(.uses // "" | test("^actions/checkout@")) | select(.with.ref != null) | .name' "$linux_workflow")" \
+  "$server_smoke_checkout"
+require_step_field "$linux_workflow" test-linux-unit "$server_smoke_checkout" \
+  '.uses' 'actions/checkout@v7'
+require_step_field "$linux_workflow" test-linux-unit "$server_smoke_checkout" \
+  '.with.repository' 'teagramhq/teagram-server'
+require_step_field "$linux_workflow" test-linux-unit "$server_smoke_checkout" \
+  '.with.path' 'server-source'
+require_step_field "$linux_workflow" test-linux-unit "$server_smoke_checkout" \
+  '.with.persist-credentials' 'false'
+server_smoke_ref="$(step_field "$linux_workflow" test-linux-unit \
+  "$server_smoke_checkout" '.with.ref')"
+if [[ ! "$server_smoke_ref" =~ ^[0-9a-f]{40}$ ]]; then
+  contract_fail "$linux_workflow job test-linux-unit step '$server_smoke_checkout' must pin a full commit SHA."
+fi
 require_permission_map "$linux_workflow" 'workflow: contents=read
 check-linux-changes: inherit
 publish-linux-deps-image: contents=read,packages=write
