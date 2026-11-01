@@ -2277,21 +2277,18 @@ class RegressionAccountCleanup final {
 			return true;
 		}
 		const auto guarded = not_null<Main::Account *>(account);
-#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		const auto hadSession = account->sessionExists();
-		if (hadSession) {
-			auto &data = guarded->session().data();
-			const auto cacheFinished = WaitForCacheCleaner(data.cache());
-			const auto mediaCacheFinished
-				= WaitForCacheCleaner(data.cacheBigFile());
-			_cacheCleanupPassed = cacheFinished && mediaCacheFinished;
-		}
-#else
 		auto cache = Core::App().databases().get(
 			account->local().cachePath(), account->local().cacheSettings());
 		auto mediaCache = Core::App().databases().get(
 			account->local().cacheBigFilePath(),
 			account->local().cacheBigFileSettings());
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+		const auto hadSession = account->sessionExists();
+		if (hadSession) {
+			const auto cacheFinished = WaitForCacheCleaner(*cache);
+			const auto mediaCacheFinished = WaitForCacheCleaner(*mediaCache);
+			_cacheCleanupPassed = cacheFinished && mediaCacheFinished;
+		}
 #endif
 		if (const auto window = Core::App().separateWindowFor(guarded)) {
 			Core::App().closeWindow(window);
