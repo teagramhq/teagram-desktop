@@ -285,6 +285,7 @@ Session::Session(not_null<Main::Session *> session)
 											 const char *callsite) {
 		auto identity
 			= std::make_shared<Core::MacProtectedPath::CachePathIdentity>();
+		auto identityRefused = std::make_shared<bool>(false);
 		if (bigFileCache) {
 			_bigFileCacheInitializationIdentity = identity;
 		} else {
@@ -292,32 +293,43 @@ Session::Session(not_null<Main::Session *> session)
 		}
 		database->openWithChecks(
 			std::move(key),
-			[path, callsite, identity] {
-				return Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
-						   path, callsite, identity.get())
-						   ? Storage::Cache::Error::NoError()
-						   : Storage::Cache::Error{
-								 Storage::Cache::Error::Type::IO, path};
+			[path, callsite, identity, identityRefused] {
+				const auto allowed
+					= Core::MacProtectedPath::CheckCachePathAndCaptureIdentity(
+						path, callsite, identity.get());
+				*identityRefused = !allowed;
+				if (allowed) {
+					return Storage::Cache::Error::NoError();
+				}
+				return {Storage::Cache::Error::Type::IO, path};
 			},
-			[path, callsite, identity] {
+			[path, callsite, identity, identityRefused] {
 				const auto captured = Core::MacProtectedPath::
 					CaptureCachePathActiveVersionIdentity(path, callsite,
 														  identity.get());
+				*identityRefused = !captured;
 				return captured ? Storage::Cache::Error::NoError()
 								: Storage::Cache::Error{
 									  Storage::Cache::Error::Type::IO, path};
 			},
-			[weak, bigFileCache,
-			 identity](Storage::Cache::Error error) mutable {
+			[weak, bigFileCache, path,
+			 identity, identityRefused](Storage::Cache::Error error) mutable {
 				const auto allowed
 					= (error.type == Storage::Cache::Error::Type::None);
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-				std::fprintf(
-					stderr,
-					"Cache database initialization: media=%d error_type=%d "
-					"allowed=%d.\n",
-					bigFileCache, int(error.type), allowed);
-#endif
+				if (!allowed) {
+					if (*identityRefused) {
+						LOG(("App Warning: Cache path identity refused during "
+							 "initialization: media=%1 path=%2")
+							.arg(bigFileCache)
+							.arg(path));
+					} else {
+						LOG(("App Error: Cache database open failed: media=%1 "
+							 "error_type=%2 path=%3")
+							.arg(bigFileCache)
+							.arg(int(error.type))
+							.arg(error.path));
+					}
+				}
 				auto cacheIdentity = *identity;
 				crl::on_main(weak, [weak, bigFileCache, allowed,
 									cacheIdentity
@@ -521,6 +533,27 @@ void Session::initializeCacheDatabases(
 	_bigFileCacheInitializationReady = true;
 }
 
+rpl::producer<bool> Session::cacheUnavailable() const {
+	return _cacheUnavailable.value();
+}
+
+void Session::markCacheUnavailable() {
+	auto notify = false;
+	{
+		QMutexLocker lock(&_cacheMutex);
+		notify = !_cacheUnavailableNotified;
+		_cacheUnavailableNotified = true;
+	}
+	if (notify) {
+		const auto weak = base::make_weak(this);
+		crl::on_main(weak, [weak] {
+			if (const auto session = weak.get()) {
+				session->_cacheUnavailable = true;
+			}
+		});
+	}
+}
+
 #ifdef Q_OS_MAC
 void Session::finishCacheDatabaseInitialization(
 	bool bigFileCache, bool cacheAllowed,
@@ -551,6 +584,9 @@ void Session::finishCacheDatabaseInitialization(
 			_cacheInitializationAllowedForTesting = cacheAllowed;
 #endif
 		}
+	}
+	if (!cacheAllowed) {
+		markCacheUnavailable();
 	}
 	if (bigFileCache) {
 		_bigFileCacheInitializationReady = true;
@@ -1895,13 +1931,13 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 	auto database = bigFileCache ? _bigFileCache.get() : _cache.get();
 	const auto path = bigFileCache ? _bigFileCachePath : _cachePath;
 #ifdef Q_OS_MAC
-	auto identity = Core::MacProtectedPath::CachePathIdentity();
-	auto initializationIdentity
+	auto identity
 		= std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>();
 	auto pause = Fn<void()>();
 	auto handoff = Fn<void()>();
 	auto canClear = false;
 	auto queuedAfterInitialization = false;
+	auto cacheAccessRefused = false;
 	{
 		QMutexLocker lock(&_cacheMutex);
 		auto &allowed = bigFileCache ? _bigFileCacheAllowed : _cacheAllowed;
@@ -1911,10 +1947,9 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 										  ? _bigFileCacheInitializationPending
 										  : _cacheInitializationPending;
 		if (initializationPending && !clearPending) {
-			initializationIdentity = bigFileCache
-										 ? _bigFileCacheInitializationIdentity
-										 : _cacheInitializationIdentity;
-			if (initializationIdentity) {
+			identity = bigFileCache ? _bigFileCacheInitializationIdentity
+									 : _cacheInitializationIdentity;
+			if (identity) {
 				clearPending = true;
 				queuedAfterInitialization = true;
 				canClear = true;
@@ -1928,7 +1963,8 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 								 : "Data::Session::cache.clear",
 					&currentIdentity)) {
 				clearPending = true;
-				identity = currentIdentity;
+				identity = std::make_shared<
+					Core::MacProtectedPath::CachePathIdentity>(currentIdentity);
 				canClear = true;
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 				if (bigFileCache) {
@@ -1941,11 +1977,19 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 #endif
 			} else {
 				allowed = false;
+				cacheAccessRefused = true;
 				database->close();
+				LOG(("App Warning: Cache clear refused after identity failure: "
+					 "path=%1")
+					.arg(path));
 			}
 		}
 	}
+	if (cacheAccessRefused) {
+		markCacheUnavailable();
+	}
 	if (!canClear) {
+		LOG(("App Warning: Cache clear refused: path=%1").arg(path));
 		if (done) {
 			done({Storage::Cache::Error::Type::IO, path});
 		}
@@ -1955,22 +1999,36 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 		pause();
 	}
 	const auto weak = base::make_weak(this);
-	auto complete = [weak, bigFileCache, closeBefore, path,
-					 identity = std::move(identity), initializationIdentity,
+	const auto callsite = bigFileCache
+		? "Data::Session::cacheBigFile.clear"
+		: "Data::Session::cache.clear";
+	auto complete = [weak, bigFileCache, closeBefore, path, callsite,
+					 identity = std::move(identity),
 					 done = std::move(done), handoff = std::move(handoff)](
 						Storage::Cache::Error error) mutable {
-		if (initializationIdentity) {
-			identity = *initializationIdentity;
+		auto allowed = false;
+		if (!closeBefore && (error.type == Storage::Cache::Error::Type::None)) {
+			allowed = Core::MacProtectedPath::
+				CaptureCachePathActiveVersionIdentity(path, callsite,
+													 identity.get());
 		}
-		const auto allowed
-			= !closeBefore && (error.type == Storage::Cache::Error::Type::None)
-			  && Core::MacProtectedPath::CaptureCachePathActiveVersionIdentity(
-				  path,
-				  bigFileCache ? "Data::Session::cacheBigFile.clear"
-							   : "Data::Session::cache.clear",
-				  &identity);
-		crl::on_main(weak, [weak, bigFileCache, allowed,
-							identity = std::move(identity)]() mutable {
+		if (error.type != Storage::Cache::Error::Type::None) {
+			LOG(("App Error: Cache clear failed: error_type=%1 path=%2")
+					.arg(int(error.type))
+					.arg(error.path));
+		} else if (!closeBefore && !allowed) {
+			LOG(("App Warning: Cache clear identity refused after rotation: "
+				 "path=%1")
+				.arg(path));
+		}
+		auto result = std::move(error);
+		if (!closeBefore
+			&& (result.type == Storage::Cache::Error::Type::None)
+			&& !allowed) {
+			result = {Storage::Cache::Error::Type::IO, path};
+		}
+		crl::on_main(weak, [weak, bigFileCache, allowed, closeBefore,
+							identity = *identity]() mutable {
 			if (const auto session = weak.get()) {
 				{
 					QMutexLocker lock(&session->_cacheMutex);
@@ -1989,37 +2047,31 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 								  : session->_cache.get())
 						->close();
 				}
+				if (!allowed && !closeBefore) {
+					session->markCacheUnavailable();
+				}
 			}
 		});
 		if (done) {
 			crl::on_main(
-				[done = std::move(done), error = std::move(error)]() mutable {
-					done(std::move(error));
+				[done = std::move(done), result = std::move(result)]() mutable {
+					done(std::move(result));
 				});
 		}
 		if (handoff) {
 			handoff();
 		}
 	};
-	if (queuedAfterInitialization) {
-		const auto callsite = bigFileCache ? "Data::Session::cacheBigFile.clear"
-										   : "Data::Session::cache.clear";
-		database->clearWithChecks(
-			closeBefore,
-			[path, callsite, initializationIdentity] {
-				return Core::MacProtectedPath::CheckCachePathIdentity(
-						   path, callsite, initializationIdentity.get())
-						   ? Storage::Cache::Error::NoError()
-						   : Storage::Cache::Error{
-								 Storage::Cache::Error::Type::IO, path};
-			},
-			std::move(complete));
-	} else {
-		if (closeBefore) {
-			database->close();
-		}
-		database->clear(std::move(complete));
-	}
+	database->clearWithChecks(
+		closeBefore,
+		[path, callsite, identity] {
+			return Core::MacProtectedPath::CheckCachePathIdentity(
+					   path, callsite, identity.get())
+				   ? Storage::Cache::Error::NoError()
+				   : Storage::Cache::Error{
+						 Storage::Cache::Error::Type::IO, path};
+		},
+		std::move(complete));
 #else
 	if (closeBefore) {
 		database->close();
@@ -2029,42 +2081,66 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 }
 
 Storage::Cache::Database *Session::cacheIfAllowed() {
-	QMutexLocker lock(&_cacheMutex);
+	auto refused = false;
+	auto result = static_cast<Storage::Cache::Database *>(nullptr);
+	{
+		QMutexLocker lock(&_cacheMutex);
 #ifdef Q_OS_MAC
-	if (_cacheClearPending) {
-		return nullptr;
-	}
-	if (_cacheInitializationPending) {
-		return _cache.get();
-	}
+		if (_cacheClearPending) {
+			return nullptr;
+		}
+		if (_cacheInitializationPending) {
+			return _cache.get();
+		}
 #endif
-	if (_cacheAllowed
-		&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
-			_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
-		_cacheAllowed = false;
-		_cache->close();
+		if (_cacheAllowed
+			&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
+				_cachePath, "Data::Session::cache.access", &_cacheIdentity)) {
+			_cacheAllowed = false;
+			_cache->close();
+			refused = true;
+			LOG(("App Warning: Cache database disabled after identity refusal: "
+				 "path=%1")
+				.arg(_cachePath));
+		}
+		result = _cacheAllowed ? _cache.get() : nullptr;
 	}
-	return _cacheAllowed ? _cache.get() : nullptr;
+	if (refused) {
+		markCacheUnavailable();
+	}
+	return result;
 }
 
 Storage::Cache::Database *Session::cacheBigFileIfAllowed() {
-	QMutexLocker lock(&_cacheMutex);
+	auto refused = false;
+	auto result = static_cast<Storage::Cache::Database *>(nullptr);
+	{
+		QMutexLocker lock(&_cacheMutex);
 #ifdef Q_OS_MAC
-	if (_bigFileCacheClearPending) {
-		return nullptr;
-	}
-	if (_bigFileCacheInitializationPending) {
-		return _bigFileCache.get();
-	}
+		if (_bigFileCacheClearPending) {
+			return nullptr;
+		}
+		if (_bigFileCacheInitializationPending) {
+			return _bigFileCache.get();
+		}
 #endif
-	if (_bigFileCacheAllowed
-		&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
-			_bigFileCachePath, "Data::Session::cacheBigFile.access",
-			&_bigFileCacheIdentity)) {
-		_bigFileCacheAllowed = false;
-		_bigFileCache->close();
+		if (_bigFileCacheAllowed
+			&& !Core::MacProtectedPath::CheckCachePathAccessIdentity(
+				_bigFileCachePath, "Data::Session::cacheBigFile.access",
+				&_bigFileCacheIdentity)) {
+			_bigFileCacheAllowed = false;
+			_bigFileCache->close();
+			refused = true;
+			LOG(("App Warning: Cache database disabled after identity refusal: "
+				 "path=%1")
+				.arg(_bigFileCachePath));
+		}
+		result = _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
 	}
-	return _bigFileCacheAllowed ? _bigFileCache.get() : nullptr;
+	if (refused) {
+		markCacheUnavailable();
+	}
+	return result;
 }
 
 rpl::producer<Storage::Cache::Database::Stats>
@@ -6222,12 +6298,17 @@ rpl::producer<RecentJoinChat> Session::recentJoinChat() const {
 }
 
 void Session::clearLocalStorage() {
+#ifdef Q_OS_MAC
+	clearCacheDatabase(false, true);
+	clearCacheDatabase(true, true);
+#else
 	if (cacheIfAllowed()) {
 		clearCacheDatabase(false, true);
 	}
 	if (cacheBigFileIfAllowed()) {
 		clearCacheDatabase(true, true);
 	}
+#endif
 }
 
 void Session::fillMessagePeer(FullMsgId fullId, PeerId peerId) {

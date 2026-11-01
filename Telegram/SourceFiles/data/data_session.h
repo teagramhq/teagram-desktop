@@ -277,6 +277,7 @@ class Session final : public base::has_weak_ptr {
 							= nullptr);
 	[[nodiscard]] rpl::producer<Storage::Cache::Database::Stats>
 	cacheStatsOnMain(bool bigFileCache);
+	[[nodiscard]] rpl::producer<bool> cacheUnavailable() const;
 #ifdef Q_OS_MAC
 	[[nodiscard]] bool cacheInitializationFinishedForTesting(bool bigFileCache);
 	[[nodiscard]] bool cacheInitializationAllowedForTesting(bool bigFileCache);
@@ -1047,6 +1048,7 @@ private:
 		Core::MacProtectedPath::CachePathIdentity cacheIdentity,
 		bool bigFileCacheAllowed,
 		Core::MacProtectedPath::CachePathIdentity bigFileCacheIdentity);
+	void markCacheUnavailable();
 #ifdef Q_OS_MAC
 	void finishCacheDatabaseInitialization(
 		bool bigFileCache, bool cacheAllowed,
@@ -1209,6 +1211,7 @@ private:
 	Storage::DatabasePointer _bigFileCache;
 	rpl::variable<bool> _cacheInitializationReady = false;
 	rpl::variable<bool> _bigFileCacheInitializationReady = false;
+	rpl::variable<bool> _cacheUnavailable = false;
 #ifdef Q_OS_MAC
 	Storage::Cache::Database _unavailableCache;
 	std::shared_ptr<Core::MacProtectedPath::CachePathIdentity>
@@ -1223,6 +1226,7 @@ private:
 	bool _bigFileCacheInitializationAllowedForTesting = false;
 #endif
 	QMutex _cacheMutex;
+	bool _cacheUnavailableNotified = false;
 	Core::MacProtectedPath::CachePathIdentity _cacheIdentity;
 	Core::MacProtectedPath::CachePathIdentity _bigFileCacheIdentity;
 	bool _cacheAllowed = false;

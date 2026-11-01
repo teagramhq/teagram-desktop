@@ -1891,10 +1891,30 @@ void LocalStorage::clearSelected() {
 void LocalStorage::startClearing() {
 	if (_allSelected.current()) {
 		if (_db()) {
-			_session->data().clearCacheDatabase(false);
+			_session->data().clearCacheDatabase(
+				false,
+				false,
+				crl::guard(this, [=](Storage::Cache::Error error) {
+					if (error.type != Storage::Cache::Error::Type::None) {
+						crl::on_main(crl::guard(this, [=] {
+							controller()->showToast(
+								tr::lng_local_storage_clear_failed(tr::now));
+						}));
+					}
+				}));
 		}
 		if (_dbBig()) {
-			_session->data().clearCacheDatabase(true);
+			_session->data().clearCacheDatabase(
+				true,
+				false,
+				crl::guard(this, [=](Storage::Cache::Error error) {
+					if (error.type != Storage::Cache::Error::Type::None) {
+						crl::on_main(crl::guard(this, [=] {
+							controller()->showToast(
+								tr::lng_local_storage_clear_failed(tr::now));
+						}));
+					}
+				}));
 		}
 		Ui::Emoji::ClearIrrelevantCache();
 		return;
@@ -1906,7 +1926,17 @@ void LocalStorage::startClearing() {
 		const auto tag = kChartTags[i];
 		if (tag == kFakeMediaCacheTag) {
 			if (_dbBig()) {
-				_session->data().clearCacheDatabase(true);
+				_session->data().clearCacheDatabase(
+					true,
+					false,
+					crl::guard(this, [=](Storage::Cache::Error error) {
+						if (error.type != Storage::Cache::Error::Type::None) {
+							crl::on_main(crl::guard(this, [=] {
+								controller()->showToast(
+									tr::lng_local_storage_clear_failed(tr::now));
+							}));
+						}
+					}));
 			}
 		} else {
 			if (const auto cache = _db()) {
@@ -1964,6 +1994,12 @@ void LocalStorage::setupContent() {
 				update(std::move(stats), std::move(statsBig));
 			},
 			content->lifetime());
+	_session->data().cacheUnavailable()
+		| rpl::filter([](bool unavailable) { return unavailable; })
+		| rpl::on_next([=] {
+			  controller()->showToast(
+				  tr::lng_local_storage_cache_unavailable(tr::now));
+		  }, content->lifetime());
 
 	Ui::ResizeFitChild(this, content);
 }

@@ -52,7 +52,7 @@ concurrency:
   # Nightly and push seeds share one group and never cancel each other, so
   # only one seed writer runs at a time; a newer pending seed replaces an older one.
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref && format('pr/{0}/{1}', github.event.pull_request.head.repo.full_name || github.repository, github.event.pull_request.head.ref) || inputs.pull_request_branch && format('pr/{0}/{1}', inputs.pull_request_repository || github.repository, inputs.pull_request_branch) || (github.event_name == 'schedule' || github.event_name == 'push') && format('seed/{0}', github.ref_name) || format('ref/{0}', inputs.branch || github.ref_name) }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-build') }}
 
 jobs:
 
@@ -202,7 +202,7 @@ jobs:
     if: >-
       !cancelled()
         && !inputs.libiconv_only
-        && (github.event_name != 'pull_request' || github.event.label.name == 'macos-build')
+        && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos-build'))
         && (needs.check-macos-deps-artifact.result == 'success' || needs.check-macos-deps-artifact.result == 'skipped')
         && (needs.build-macos-deps-artifact.result == 'success' || needs.build-macos-deps-artifact.result == 'skipped')
         && (needs.ops-prune-macos-libraries.result == 'success' || needs.ops-prune-macos-libraries.result == 'skipped')
@@ -737,7 +737,7 @@ jobs:
       - name: Full chat info session regression.
         id: lifecycle-regression
         timeout-minutes: 20
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'macos-build'))) }}
         run: |
           set -Eeuo pipefail
           report_lifecycle_failure() {
@@ -1126,7 +1126,7 @@ jobs:
             "$TESTED_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report skipped full chat info session regression.
-        if: ${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}
+        if: ${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'macos-build'))) }}
         env:
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |

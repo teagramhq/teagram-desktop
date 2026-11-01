@@ -2255,8 +2255,6 @@ class RegressionAccountCleanup final {
 							 not_null<Main::Account *> fallback)
 		: _domain(domain), _account(base::make_weak(account.get())),
 		  _fallback(base::make_weak(fallback.get())) {
-		// Cache fixtures can pump the event loop before creating a session.
-		// Keep the temporary account alive while queued cleanup callbacks run.
 		_domain.activate(account);
 	}
 
@@ -2745,11 +2743,53 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto swapped = rotated && allowedAfterClear
 						 && RunPostOpenCacheSymlinkRegression(
 							 path, fixture, cache, [] {}, cacheRefusal);
+	const auto rootSwapTarget = QDir(fixture).filePath(
+		u"clear-root-swap-%1"_q.arg(QCoreApplication::applicationPid()));
+	const auto rootSwapSaved = path + ".clear-root-swap-original";
+	const auto rootSwapMarker = QDir(rootSwapTarget).filePath("version");
+	const auto rootSwapMarkerContents = QByteArray("protected cache root");
+	const auto rootSwapTargetPrepared
+		= !QFileInfo::exists(rootSwapSaved)
+		  && !QFileInfo::exists(rootSwapTarget)
+		  && QDir().mkpath(rootSwapTarget)
+		  && WriteFixtureFile(rootSwapMarker, rootSwapMarkerContents);
+	auto rootMoved = false;
+	auto rootLinked = false;
+	if (rootSwapTargetPrepared) {
+		data.setCacheClearPauseForTesting(mediaCache, [&] {
+			rootMoved = QDir().rename(path, rootSwapSaved);
+			rootLinked = rootMoved && QFile::link(rootSwapTarget, path);
+		});
+	}
+	const auto rootSwapClear = rootSwapTargetPrepared && rootMoved
+		? AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
+			  data.clearCacheDatabase(mediaCache, false, std::move(done));
+		  })
+		: std::optional<Storage::Cache::Error>();
+	const auto rootSwapRefused
+		= rootSwapClear
+		  && (rootSwapClear->type != Storage::Cache::Error::Type::None);
+	auto rootSwapMarkerUnchanged = false;
+	if (rootSwapTargetPrepared) {
+		auto marker = QFile(rootSwapMarker);
+		rootSwapMarkerUnchanged
+			= marker.open(QIODevice::ReadOnly)
+			  && (marker.readAll() == rootSwapMarkerContents)
+			  && !QFileInfo::exists(QDir(rootSwapTarget).filePath("0"));
+	}
+	const auto rootLinkRemoved = !rootLinked || QFile::remove(path);
+	const auto rootRestored
+		= rootMoved && rootLinkRemoved && QDir().rename(rootSwapSaved, path);
+	if (QFileInfo::exists(rootSwapTarget)) {
+		QDir(rootSwapTarget).removeRecursively();
+	}
 	const auto passed
 		= paused && markerRotated && activeVersionMissing && blockedDuringClear
 		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
 		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
-		  && allowedAfterClear && wroteAfterClear && swapped;
+		  && allowedAfterClear && wroteAfterClear && swapped
+		  && rootSwapTargetPrepared && rootMoved && rootLinked && rootSwapRefused
+		  && rootSwapMarkerUnchanged && rootRestored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
@@ -2759,11 +2799,16 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			"blocked_write_refused=%d clear_completed=%d callback_on_main=%d "
 			"rotated=%d "
 			"allowed_after=%d "
-			"write_after_clear=%d swapped=%d path=%s.\n",
+			"write_after_clear=%d swapped=%d root_swap_prepared=%d "
+			"root_moved=%d root_linked=%d "
+			"root_swap_refused=%d root_marker_unchanged=%d "
+			"root_restored=%d path=%s.\n",
 			paused, markerRotated, activeVersionMissing, blockedDuringClear,
 			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
 			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
-			swapped, qPrintable(path));
+			swapped, rootSwapTargetPrepared, rootMoved, rootLinked,
+			rootSwapRefused,
+			rootSwapMarkerUnchanged, rootRestored, qPrintable(path));
 	}
 	return passed;
 }
@@ -10302,7 +10347,6 @@ void RunAuthenticatedCacheSymlinkCases(
 					  && data.cacheInitializationAllowedForTesting(false)
 					  && data.cacheIfAllowed();
 			}
-			// Drain earlier startup pings without blocking the UI thread.
 			QCoreApplication::processEvents();
 			QCoreApplication::sendPostedEvents();
 			QCoreApplication::processEvents();
@@ -10320,9 +10364,6 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto duration = timer.nsecsElapsed();
 			const auto stalls = Core::UiStallWatchdog::StallCount() - before;
 			Logs::writeMain("UI stall watchdog cache regression end");
-			// The repeated guard checks must stay below the 30ms budget so a
-			// cache-heavy task cannot spend its UI frame validating path
-			// identity.
 			passed = passed && (accesses == 292) && (duration < 30'000'000)
 					 && !stalls;
 			std::fprintf(stderr,

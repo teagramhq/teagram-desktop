@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/mac_protected_path_runtime.h"
 
+#include "base/debug_log.h"
 #include "core/mac_protected_path_access.h"
 #include "settings.h"
 
@@ -49,6 +50,10 @@ namespace Core::MacProtectedPath {
 
 struct CachePathDescriptor final {
 	explicit CachePathDescriptor(int fd) : value(fd) {}
+	CachePathDescriptor(const CachePathDescriptor &) = delete;
+	CachePathDescriptor &operator=(const CachePathDescriptor &) = delete;
+	CachePathDescriptor(CachePathDescriptor &&) = delete;
+	CachePathDescriptor &operator=(CachePathDescriptor &&) = delete;
 	~CachePathDescriptor() {
 		if (value >= 0) {
 			::close(value);
@@ -722,8 +727,6 @@ SameCachePathStat(const struct stat &info,
 		   && (quint32(info.st_mode & S_IFMT) == identity.type);
 }
 
-// The marker only changes during open or clear; metadata detects those changes
-// in one lstat without reopening and reading it on every cache access.
 [[nodiscard]] bool
 SameCachePathVersionMarkerStat(const struct stat &info,
 							   const CachePathComponentIdentity &identity) {
@@ -794,31 +797,27 @@ CaptureCachePathRootDescriptor(const QString &path,
 							   const CachePathComponentIdentity &expected,
 							   CachePathIdentity *identity) {
 	const auto native = QFile::encodeName(path);
-	const auto descriptor
-		= ::open(native.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (descriptor < 0) {
+	const auto descriptor = std::make_shared<CachePathDescriptor>(
+		::open(native.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+	if (descriptor->value < 0) {
 		return false;
 	}
 	struct stat target = {};
-	if ((::fstat(descriptor, &target) != 0)
+	if ((::fstat(descriptor->value, &target) != 0)
 		|| !SameCachePathTargetStat(target, expected)) {
-		::close(descriptor);
 		return false;
 	}
 	auto current = CachePathComponentIdentity{.path = path};
 	auto missing = false;
 	if (!ReadCachePathLinkIdentity(path, &current, &missing) || missing
 		|| !SameCachePathLinkIdentity(current, expected)) {
-		::close(descriptor);
 		return false;
 	}
 	auto resolved = QString();
-	if (!CachePathDescriptorPath(descriptor, &resolved)) {
-		::close(descriptor);
+	if (!CachePathDescriptorPath(descriptor->value, &resolved)) {
 		return false;
 	}
-	identity->rootDescriptor
-		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->rootDescriptor = descriptor;
 	identity->resolvedPath = std::move(resolved);
 	return true;
 }
@@ -920,9 +919,9 @@ CaptureCachePathRootDescriptor(const QString &path,
 		return true;
 	}
 	const auto native = QFile::encodeName(marker.path);
-	const auto descriptor = ::open(
-		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-	if (descriptor < 0) {
+	const auto descriptor = std::make_shared<CachePathDescriptor>(::open(
+		native.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
+	if (descriptor->value < 0) {
 		if (errno != ENOENT) {
 			return false;
 		}
@@ -939,10 +938,10 @@ CaptureCachePathRootDescriptor(const QString &path,
 	struct stat opened = {};
 	struct stat current = {};
 	auto version = qint32();
-	const auto openedMatches
-		= (::fstat(descriptor, &opened) == 0) && S_ISREG(opened.st_mode);
-	if (!openedMatches || !ReadCacheVersionDescriptor(descriptor, &version)) {
-		::close(descriptor);
+	const auto openedMatches = (::fstat(descriptor->value, &opened) == 0)
+							   && S_ISREG(opened.st_mode);
+	if (!openedMatches
+		|| !ReadCacheVersionDescriptor(descriptor->value, &version)) {
 		return false;
 	}
 	SetCachePathLinkIdentity(opened, &marker);
@@ -952,11 +951,9 @@ CaptureCachePathRootDescriptor(const QString &path,
 		  && S_ISREG(current.st_mode)
 		  && SameCachePathVersionMarkerStat(current, marker);
 	if (!nativeMatches) {
-		::close(descriptor);
 		return false;
 	}
-	identity->versionMarkerDescriptor
-		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->versionMarkerDescriptor = descriptor;
 	identity->version = version;
 	identity->versionName = QString::number(version);
 	identity->versionMarker = std::move(marker);
@@ -977,13 +974,13 @@ CaptureCachePathActiveVersionDirectory(const QString &path,
 		return false;
 	}
 	const auto native = QFile::encodeName(path);
-	const auto descriptor = ::open(
-		native.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-	if (descriptor < 0) {
+	const auto descriptor = std::make_shared<CachePathDescriptor>(::open(
+		native.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+	if (descriptor->value < 0) {
 		return false;
 	}
 	struct stat opened = {};
-	const auto openedMatches = (::fstat(descriptor, &opened) == 0)
+	const auto openedMatches = (::fstat(descriptor->value, &opened) == 0)
 							   && SameCachePathTargetStat(opened, active);
 	auto current = CachePathComponentIdentity{.path = path};
 	missing = false;
@@ -991,11 +988,9 @@ CaptureCachePathActiveVersionDirectory(const QString &path,
 							 && !missing
 							 && SameCachePathLinkIdentity(current, active);
 	if (!openedMatches || !pathMatches) {
-		::close(descriptor);
 		return false;
 	}
-	identity->activeVersionDescriptor
-		= std::make_shared<CachePathDescriptor>(descriptor);
+	identity->activeVersionDescriptor = descriptor;
 	identity->activeVersionDirectory = std::move(active);
 	identity->activeVersionName = QFileInfo(path).fileName();
 	return true;
@@ -1112,10 +1107,10 @@ SameCachePathLinkIdentity(const CachePathComponentIdentity &left,
 }
 
 void ReportCachePathIdentityRefusal(const char *callsite, const char *stage) {
-#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-	std::fprintf(stderr, "Cache path identity refusal: stage=%s callsite=%s.\n",
-				 stage, callsite ? callsite : "unknown");
-#endif
+	LOG(("App Warning: Mac protected cache path identity refused: stage=%1 "
+		 "callsite=%2")
+		.arg(QString::fromLatin1(stage ? stage : "unknown"))
+		.arg(QString::fromLatin1(callsite ? callsite : "unknown")));
 	ReportRefusal({
 		.operation = Operation::OpenDir,
 		.protectedClass = ProtectedClass::Invalid,
@@ -1143,8 +1138,6 @@ void ReportCachePathIdentityRefusal(const char *callsite, const char *stage) {
 		|| identity->resolvedPath.isEmpty()) {
 		return false;
 	}
-	// F_GETPATH detects an ancestor rename or redirect without walking each
-	// prefix for every cache access.
 	auto current = CachePathComponentIdentity{.path = absolutePath};
 	auto missing = false;
 	auto resolved = QString();
@@ -1186,8 +1179,6 @@ CachePathActiveVersionDirectoryStillValid(const CachePathIdentity &identity) {
 		|| !identity.activeVersionDescriptor) {
 		return false;
 	}
-	// The descriptor is immutable while this identity is alive. Checking the
-	// directory entry is enough to detect replacement or a symlink swap.
 	auto current = CachePathComponentIdentity{
 		.path = identity.activeVersionDirectory.path};
 	auto missing = false;
@@ -1223,8 +1214,6 @@ CachePathActiveVersionStillValid(const CachePathIdentity &identity) {
 [[nodiscard]] bool
 CachePathAccessIdentityStillValid(const QString &path, const char *callsite,
 								  CachePathIdentity *identity) {
-	// The marker is checked when opening and before clearing; ordinary cache
-	// I/O remains on the already-open active version directory.
 	if (!CachePathRootStillValid(path, identity)) {
 		ReportCachePathIdentityRefusal(callsite, "access-root");
 		return false;
