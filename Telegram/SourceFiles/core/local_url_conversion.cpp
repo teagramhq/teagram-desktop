@@ -227,6 +227,10 @@ struct HttpsOrigin {
 					   u"^(addstickers|addemoji)/([A-Za-z0-9_]{1,64})(\\?|$)"_q,
 					   query, matchOptions)) {
 			return u"tg://"_q + stickerSetMatch->captured(1) + "?set=" + url_encode(stickerSetMatch->captured(2));
+		} else if (regex_match(u"^(addstickers|addemoji)(/|\\?|$)"_q, query,
+							   matchOptions)) {
+			// Not a valid set name: never fall through to the username rule.
+			return url;
 		} else if (const auto themeMatch
 				   = regex_match(u"^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"_q,
 								 query, matchOptions)) {
