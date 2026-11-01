@@ -285,15 +285,18 @@ bool ShowStickerSet(
 	if (!controller) {
 		return false;
 	}
-	const auto shortName = match->captured(2);
-	if (!Core::IsValidStickerSetShortName(shortName)) {
+	const auto target = Core::StickerSetInstallTargetFromLocalUrl(
+		u"tg://"_q + match->captured(1) + u"?set="_q + match->captured(2));
+	if (!target) {
 		return false;
 	}
 	Core::App().hideMediaView();
-	controller->show(Box<StickerSetBox>(
-		controller->uiShow(), StickerSetIdentifier{.shortName = shortName},
-		(match->captured(1) == "addemoji" ? Data::StickersType::Emoji
-										  : Data::StickersType::Stickers)));
+	controller->show(
+		Box<StickerSetBox>(controller->uiShow(),
+						   StickerSetIdentifier{.shortName = target->shortName},
+						   (target->type == Core::StickerImportType::Emoji
+								? Data::StickersType::Emoji
+								: Data::StickersType::Stickers)));
 	controller->window().activate();
 	return true;
 }

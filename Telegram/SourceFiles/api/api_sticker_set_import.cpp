@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_sticker_set_import.h"
+#include "api/api_sticker_set_import_requests.h"
 
 #include "base/random.h"
 #include "base/unixtime.h"
@@ -19,34 +20,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Api {
 namespace {
 
-[[nodiscard]] QString SafeUploadName(const Core::StickerImportFile &file,
-									 int index) {
-	const auto format = Core::StickerImportFormatDetails(file.format);
-	return u"sticker_%1.%2"_q.arg(index + 1).arg(format.extension);
-}
-
 [[nodiscard]] std::shared_ptr<FilePrepareResult>
 PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 						 const Core::StickerImportFile &file, int index) {
-	const auto filename = SafeUploadName(file, index);
+	const auto filename = details::StickerImportFileName(file, index);
 	const auto format = Core::StickerImportFormatDetails(file.format);
-	auto attributes = QVector<MTPDocumentAttribute>(
-		1, MTP_documentAttributeFilename(MTP_string(filename)));
-	if (!file.dimensions.isEmpty()) {
-		attributes.push_back(
-			MTP_documentAttributeImageSize(MTP_int(file.dimensions.width()),
-										   MTP_int(file.dimensions.height())));
-	}
-	if (file.format == Core::StickerImportFormat::Tgs) {
-		attributes.push_back(MTP_documentAttributeAnimated());
-	} else if (file.format == Core::StickerImportFormat::Webm) {
-		attributes.push_back(MTP_documentAttributeVideo(
-			MTP_flags(0), MTP_double(0.), MTP_int(0), MTP_int(0), MTPint(),
-			MTPdouble(), MTPstring()));
-	}
-	attributes.push_back(MTP_documentAttributeSticker(
-		MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
-		MTPMaskCoords()));
+	auto attributes = details::StickerImportFileAttributes(file, index);
 
 	auto result = MakePreparedFile({
 		.id = id,
@@ -171,36 +150,10 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 	_uploadLifetime.destroy();
 	_uploadId = FullMsgId();
 
-	auto attributes = QVector<MTPDocumentAttribute>();
 	const auto &source = _scan.files[_index];
-	const auto filename = SafeUploadName(source, _index);
-	const auto format = Core::StickerImportFormatDetails(source.format);
-	attributes.push_back(MTP_documentAttributeFilename(MTP_string(filename)));
-	if (!source.dimensions.isEmpty()) {
-		attributes.push_back(MTP_documentAttributeImageSize(
-			MTP_int(source.dimensions.width()),
-			MTP_int(source.dimensions.height())));
-	}
-	if (source.format == Core::StickerImportFormat::Tgs) {
-		attributes.push_back(MTP_documentAttributeAnimated());
-	} else if (source.format == Core::StickerImportFormat::Webm) {
-		attributes.push_back(MTP_documentAttributeVideo(
-			MTP_flags(0), MTP_double(0.), MTP_int(0), MTP_int(0), MTPint(),
-			MTPdouble(), MTPstring()));
-	}
-	attributes.push_back(MTP_documentAttributeSticker(
-		MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
-		MTPMaskCoords()));
-
-	const auto media = MTP_inputMediaUploadedDocument(
-		MTP_flags(0), file, MTPInputFile(), MTP_string(format.mimeType),
-		MTP_vector<MTPDocumentAttribute>(std::move(attributes)),
-		MTP_vector<MTPInputDocument>(), MTPInputPhoto(), MTP_int(0),
-		MTP_int(0));
-
 	_requestId
-		= _api.request(MTPmessages_UploadMedia(MTP_flags(0), MTPstring(),
-											   MTP_inputPeerSelf(), media))
+		= _api.request(details::StickerImportUploadMediaRequest(file, source,
+																_index))
 			  .done(crl::guard(
 				  this,
 				  [=](const MTPMessageMedia &result) {
@@ -252,14 +205,6 @@ void StickerSetImport::uploadProgressed() {
 }
 
 void StickerSetImport::createSet() {
-	const auto source = (_source == Core::StickerImportSource::Folder)
-							? u"folder"_q
-							: u"zip"_q;
-	auto flags = MTPstickers_CreateStickerSet::Flags(
-		MTPstickers_CreateStickerSet::Flag::f_software);
-	if (_type == Data::StickersType::Emoji) {
-		flags |= MTPstickers_CreateStickerSet::Flag::f_emojis;
-	}
 	auto items = QVector<MTPInputStickerSetItem>();
 	items.reserve(int(_items.size()));
 	for (const auto &item : _items) {
@@ -267,11 +212,8 @@ void StickerSetImport::createSet() {
 	}
 	_requestId
 		= _api
-			  .request(MTPstickers_CreateStickerSet(
-				  MTP_flags(flags), MTP_inputUserSelf(), MTP_string(_title),
-				  MTP_string(_shortName), MTPInputDocument(),
-				  MTP_vector<MTPInputStickerSetItem>(std::move(items)),
-				  MTP_string(source)))
+			  .request(details::StickerImportCreateSetRequest(
+				  _title, _shortName, _type, _source, std::move(items)))
 			  .done(crl::guard(
 				  this,
 				  [=](const MTPmessages_StickerSet &result) {

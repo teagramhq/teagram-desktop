@@ -7,8 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "api/api_sticker_set_import_requests.h"
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
+#include "mtproto/details/mtproto_serialized_request.h"
 
 #include <QtCore/QBuffer>
 #include <QtCore/QDir>
@@ -19,6 +21,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <zlib.h>
 
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -160,6 +164,14 @@ void Append32(QByteArray &bytes, quint32 value) {
 [[nodiscard]] bool WriteFile(const QString &path, const QByteArray &bytes) {
 	auto file = QFile(path);
 	return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+}
+
+template <typename Request>
+[[nodiscard]] QByteArray SerializeRequest(const Request &request) {
+	const auto serialized = MTP::details::SerializedRequest::Serialize(request);
+	const auto &buffer = *serialized;
+	return QByteArray(reinterpret_cast<const char *>(buffer.constData()),
+					  int(buffer.size() * sizeof(mtpPrime)));
 }
 
 TEST_CASE(StickerImportZipReadsUnsafeNamesOnlyAsLabels) {
@@ -395,19 +407,90 @@ TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
 		CHECK(scan.files.front().format == Core::StickerImportFormat::Tgs);
 		CHECK_EQ(scan.files.front().bytes, sticker);
 	}
+	if (!scan.files.empty()) {
+		const auto inputFile = MTP_inputFile(MTP_long(1), MTP_int(1),
+											 MTP_string(u"sticker_1.tgs"_q),
+											 MTP_string(u"checksum"_q));
+		const auto upload = Api::details::StickerImportUploadMediaRequest(
+			inputFile, scan.files.front(), 0);
+		auto attributes = QVector<MTPDocumentAttribute>();
+		attributes.push_back(
+			MTP_documentAttributeFilename(MTP_string(u"sticker_1.tgs"_q)));
+		attributes.push_back(MTP_documentAttributeAnimated());
+		attributes.push_back(MTP_documentAttributeSticker(
+			MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
+			MTPMaskCoords()));
+		const auto expectedUpload = MTPmessages_UploadMedia(
+			MTP_flags(0), MTPstring(), MTP_inputPeerSelf(),
+			MTP_inputMediaUploadedDocument(
+				MTP_flags(0), inputFile, MTPInputFile(),
+				MTP_string(u"application/x-tgsticker"_q),
+				MTP_vector<MTPDocumentAttribute>(std::move(attributes)),
+				MTP_vector<MTPInputDocument>(), MTPInputPhoto(), MTP_int(0),
+				MTP_int(0)));
+		CHECK_EQ(SerializeRequest(upload), SerializeRequest(expectedUpload));
+	}
 	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
 	CHECK(Core::IsValidStickerSetShortName(u"cats_a"_q));
+	const auto item = MTP_inputStickerSetItem(
+		MTP_flags(0), MTP_inputDocument(MTP_long(1), MTP_long(2), MTP_bytes()),
+		MTP_string(u"⭐"_q), MTPMaskCoords(), MTPstring());
+	for (const auto &[source, sourceText, type, emoji] : {
+			 std::tuple{
+				 Core::StickerImportSource::Folder,
+				 u"folder"_q,
+				 Data::StickersType::Stickers,
+				 false,
+			 },
+			 std::tuple{
+				 Core::StickerImportSource::Zip,
+				 u"zip"_q,
+				 Data::StickersType::Emoji,
+				 true,
+			 },
+		 }) {
+		auto items = QVector<MTPInputStickerSetItem>{item};
+		const auto request = Api::details::StickerImportCreateSetRequest(
+			u"Cats"_q, u"cats_a"_q, type, source, items);
+		auto flags = MTPstickers_CreateStickerSet::Flags(
+			MTPstickers_CreateStickerSet::Flag::f_software);
+		if (emoji) {
+			flags |= MTPstickers_CreateStickerSet::Flag::f_emojis;
+		}
+		const auto expected = MTPstickers_CreateStickerSet(
+			MTP_flags(flags), MTP_inputUserSelf(), MTP_string(u"Cats"_q),
+			MTP_string(u"cats_a"_q), MTPInputDocument(),
+			MTP_vector<MTPInputStickerSetItem>(std::move(items)),
+			MTP_string(sourceText));
+		CHECK_EQ(SerializeRequest(request), SerializeRequest(expected));
+	}
 	const auto prefix = u"https://server.example/"_q;
 	const auto shareLink = prefix
 						   + Core::StickerImportShareLinkPath(
 							   Core::StickerImportType::Stickers, u"cats_a"_q);
-	CHECK_EQ(Core::TryConvertUrlToLocal(shareLink, prefix, true),
-			 u"tg://addstickers?set=cats_a"_q);
+	const auto localStickerLink
+		= Core::TryConvertUrlToLocal(shareLink, prefix, true);
+	CHECK_EQ(localStickerLink, u"tg://addstickers?set=cats_a"_q);
+	const auto stickerTarget
+		= Core::StickerSetInstallTargetFromLocalUrl(localStickerLink);
+	CHECK(stickerTarget.has_value());
+	if (stickerTarget) {
+		CHECK_EQ(stickerTarget->shortName, u"cats_a"_q);
+		CHECK(stickerTarget->type == Core::StickerImportType::Stickers);
+	}
 	const auto emojiLink = prefix
 						   + Core::StickerImportShareLinkPath(
 							   Core::StickerImportType::Emoji, u"cats_a"_q);
-	CHECK_EQ(Core::TryConvertUrlToLocal(emojiLink, prefix, true),
-			 u"tg://addemoji?set=cats_a"_q);
+	const auto localEmojiLink
+		= Core::TryConvertUrlToLocal(emojiLink, prefix, true);
+	CHECK_EQ(localEmojiLink, u"tg://addemoji?set=cats_a"_q);
+	const auto emojiTarget
+		= Core::StickerSetInstallTargetFromLocalUrl(localEmojiLink);
+	CHECK(emojiTarget.has_value());
+	if (emojiTarget) {
+		CHECK_EQ(emojiTarget->shortName, u"cats_a"_q);
+		CHECK(emojiTarget->type == Core::StickerImportType::Emoji);
+	}
 }
 
 } // namespace

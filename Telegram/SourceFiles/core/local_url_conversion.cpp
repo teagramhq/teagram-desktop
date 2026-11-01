@@ -363,6 +363,24 @@ struct HttpsOrigin {
 
 } // namespace
 
+std::optional<StickerSetInstallTarget>
+StickerSetInstallTargetFromLocalUrl(const QString &url) {
+	const auto match = qthelp::regex_match(
+		u"^tg://(addstickers|addemoji)\\?set=([A-Za-z0-9_]{1,64})$"_q, url,
+		qthelp::RegExOption::CaseInsensitive);
+	if (!match || !IsValidStickerSetShortName(match->captured(2))) {
+		return std::nullopt;
+	}
+	const auto type
+		= (match->captured(1).compare(u"addemoji"_q, Qt::CaseInsensitive) == 0)
+			  ? StickerImportType::Emoji
+			  : StickerImportType::Stickers;
+	return StickerSetInstallTarget{
+		.shortName = match->captured(2),
+		.type = type,
+	};
+}
+
 QString TryConvertUrlToLocal(QString url) {
 	return ConvertLegacyUrlToLocal(std::move(url));
 }
