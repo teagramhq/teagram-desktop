@@ -188,7 +188,7 @@ struct HttpsOrigin {
 [[nodiscard]] bool IsInvalidStickerSetLink(const QString &url) {
 	const auto match = regex_match(
 		u"^(https?://)?(www\\.)?(telegram\\.(me|dog)|t\\.me)/(addstickers|addemoji)/([^/?]+)(\\?|$)"_q,
-		url, RegExOption::CaseInsensitive);
+		url, qthelp::RegExOption::CaseInsensitive);
 	return match && !IsValidStickerSetShortName(match->captured(6));
 }
 
