@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "settings/settings_common.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
@@ -37,7 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-constexpr auto kImportModeKey = u"sticker_import_mode"_q;
+const auto kImportModeKey = u"sticker_import_mode"_q;
 constexpr auto kShortNameCheckDelay = crl::time(400);
 
 struct ImportFormState {
@@ -172,7 +173,7 @@ void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
 		Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
 			box->setTitle(u"Sticker pack created"_q);
 			box->addRow(object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
-			box->addButton(u"Copy link"_q, [=] {
+			box->addButton(rpl::single(u"Copy link"_q), [=] {
 				QGuiApplication::clipboard()->setText(url);
 				controller->showToast(u"Link copied"_q);
 				box->closeBox();
@@ -393,7 +394,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				});
 		};
 
-		state->createButton = box->addButton(u"Import pack"_q, [=] {
+		state
+			->createButton = box->addButton(rpl::single(u"Import pack"_q), [=] {
 			error->setText(QString());
 			if (!rights->checked()) {
 				error->setText(
@@ -477,41 +479,44 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						  }))
 					  .send();
 		});
-		state->suggestButton = box->addLeftButton(u"Suggest short name"_q, [=] {
-			const auto titleText = title->getLastText().trimmed();
-			if (titleText.isEmpty()) {
-				error->setText(u"Enter a title first."_q);
-				return;
-			}
-			state->api.request(base::take(state->suggestionRequestId)).cancel();
-			state->suggestionRequestId
-				= state->api
-					  .request(
-						  MTPstickers_SuggestShortName(MTP_string(titleText)))
-					  .done(crl::guard(
-						  box,
-						  [=](const MTPstickers_SuggestedShortName &result) {
-							  state->suggestionRequestId = 0;
-							  result.match(
-								  [&](const MTPDstickers_suggestedShortName
-										  &data) {
-									  shortName->setText(
-										  qs(data.vshort_name()));
-								  },
-								  [&](const auto &) {
-									  error->setText(
-										  u"Couldn't suggest a short name."_q);
-								  });
-						  }))
-					  .fail(crl::guard(
-						  box,
-						  [=](const MTP::Error &) {
-							  state->suggestionRequestId = 0;
-							  error->setText(
-								  u"Couldn't suggest a short name."_q);
-						  }))
-					  .send();
-		});
+		state->suggestButton = box->addLeftButton(
+			rpl::single(u"Suggest short name"_q), [=] {
+				const auto titleText = title->getLastText().trimmed();
+				if (titleText.isEmpty()) {
+					error->setText(u"Enter a title first."_q);
+					return;
+				}
+				state->api.request(base::take(state->suggestionRequestId))
+					.cancel();
+				state->suggestionRequestId
+					= state->api
+						  .request(MTPstickers_SuggestShortName(
+							  MTP_string(titleText)))
+						  .done(crl::guard(
+							  box,
+							  [=](const MTPstickers_SuggestedShortName
+									  &result) {
+								  state->suggestionRequestId = 0;
+								  result.match(
+									  [&](const MTPDstickers_suggestedShortName
+											  &data) {
+										  shortName->setText(
+											  qs(data.vshort_name()));
+									  },
+									  [&](const auto &) {
+										  error->setText(
+											  u"Couldn't suggest a short name."_q);
+									  });
+							  }))
+						  .fail(crl::guard(
+							  box,
+							  [=](const MTP::Error &) {
+								  state->suggestionRequestId = 0;
+								  error->setText(
+									  u"Couldn't suggest a short name."_q);
+							  }))
+						  .send();
+			});
 		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	}));
 }

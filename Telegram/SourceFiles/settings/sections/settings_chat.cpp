@@ -1778,10 +1778,10 @@ void SetupStickersEmoji(
 
 	const auto importEnabled = StickerImportEnabled(session);
 	const auto importLabel
-		= inner->lifetime().make_state<rpl::variable<QString>>(
+		= container->lifetime().make_state<rpl::variable<QString>>(
 			importEnabled ? QString() : u"Disabled by this server"_q);
 	const auto importButton = AddButtonWithLabel(
-		inner, rpl::single(u"Import pack"_q), importLabel->value(),
+		container, rpl::single(u"Import pack"_q), importLabel->value(),
 		st::settingsButton, {&st::menuIconStickers});
 	importButton->setDisabled(!importEnabled);
 	importButton->addClickHandler([=] { ShowStickerImportBox(controller); });
@@ -1793,7 +1793,7 @@ void SetupStickersEmoji(
 				*importLabel
 					= enabled ? QString() : u"Disabled by this server"_q;
 			},
-			inner->lifetime());
+			container->lifetime());
 	if (highlights) {
 		highlights->push_back({u"chat/import-sticker-pack"_q,
 							   {
