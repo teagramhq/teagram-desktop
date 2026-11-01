@@ -296,7 +296,7 @@ jobs:
       - name: Select compiler cache profile.
         id: ccache-profile
         env:
-          EVENT_LABEL: ${{ github.event.label.name || '' }}
+          EVENT_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'macos-build') && 'macos-build' || '' }}
         run: bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"
 
       - name: Verify PR merge head.

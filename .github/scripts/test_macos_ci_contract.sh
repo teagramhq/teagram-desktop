@@ -489,7 +489,7 @@ require_job_field "$mac_workflow" build-macos '.env.CCACHE_COMPILERCHECK' 'conte
 require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.run' \
   'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"'
 require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.env.EVENT_LABEL' \
-  "\${{ github.event.label.name || '' }}"
+  "\${{ contains(github.event.pull_request.labels.*.name, 'macos-build') && 'macos-build' || '' }}"
 require_step_field "$mac_workflow" build-macos 'Teagram build.' '.env.PROTECTED_PATH_INTEGRATION' \
   '${{ steps.ccache-profile.outputs.protected_path_integration }}'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"

@@ -301,7 +301,8 @@ Session::Session(not_null<Main::Session *> session)
 				if (allowed) {
 					return Storage::Cache::Error::NoError();
 				}
-				return {Storage::Cache::Error::Type::IO, path};
+				return Storage::Cache::Error{Storage::Cache::Error::Type::IO,
+											 path};
 			},
 			[path, callsite, identity, identityRefused] {
 				const auto captured = Core::MacProtectedPath::
@@ -2001,6 +2002,7 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 	const auto weak = base::make_weak(this);
 	const auto callsite = bigFileCache ? "Data::Session::cacheBigFile.clear"
 									   : "Data::Session::cache.clear";
+	const auto checkIdentity = identity;
 	auto complete = [weak, bigFileCache, closeBefore, path, callsite,
 					 identity = std::move(identity), done = std::move(done),
 					 handoff = std::move(handoff)](
@@ -2062,9 +2064,9 @@ void Session::clearCacheDatabase(bool bigFileCache, bool closeBefore,
 	};
 	database->clearWithChecks(
 		closeBefore,
-		[path, callsite, identity] {
+		[path, callsite, checkIdentity] {
 			return Core::MacProtectedPath::CheckCachePathIdentity(
-					   path, callsite, identity.get())
+					   path, callsite, checkIdentity.get())
 					   ? Storage::Cache::Error::NoError()
 					   : Storage::Cache::Error{Storage::Cache::Error::Type::IO,
 											   path};
