@@ -2667,8 +2667,9 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		return mediaCache ? data.cacheBigFileIfAllowed()
 						  : data.cacheIfAllowed();
 	};
-	const auto otherCachePath
-		= mediaCache ? data.cachePath() : data.cacheBigFilePath();
+	const auto otherCachePath = mediaCache
+									? account->local().cachePath()
+									: account->local().cacheBigFilePath();
 	const auto beforeClear = ActiveCacheVersionPath(path);
 	if (beforeClear.isEmpty()) {
 		return false;
@@ -2786,7 +2787,15 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	if (QFileInfo::exists(rootSwapTarget)) {
 		QDir(rootSwapTarget).removeRecursively();
 	}
-	const auto swapped = rotated && allowedAfterClear
+	const auto otherCleared = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) {
+			data.clearCacheDatabase(!mediaCache, false, std::move(done));
+		},
+		10000);
+	otherCache().sync();
+	const auto otherClearSucceeded
+		= otherCleared && CacheOperationSucceeded(otherCleared);
+	const auto swapped = rotated && allowedAfterClear && otherClearSucceeded
 						 && RunPostOpenCacheSymlinkRegression(
 							 otherCachePath, otherFixture, otherCache, [] {},
 							 otherCacheRefusal);
@@ -2806,15 +2815,16 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			"blocked_write_refused=%d clear_completed=%d callback_on_main=%d "
 			"rotated=%d "
 			"allowed_after=%d "
-			"write_after_clear=%d swapped=%d root_swap_prepared=%d "
+			"write_after_clear=%d other_clear=%d swapped=%d "
+			"root_swap_prepared=%d "
 			"root_moved=%d root_linked=%d "
 			"root_swap_refused=%d root_marker_unchanged=%d "
 			"root_restored=%d path=%s.\n",
 			paused, markerRotated, activeVersionMissing, blockedDuringClear,
 			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
 			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
-			swapped, rootSwapTargetPrepared, rootMoved, rootLinked,
-			rootSwapRefused, rootSwapMarkerUnchanged, rootRestored,
+			otherClearSucceeded, swapped, rootSwapTargetPrepared, rootMoved,
+			rootLinked, rootSwapRefused, rootSwapMarkerUnchanged, rootRestored,
 			qPrintable(path));
 	}
 	return passed;
