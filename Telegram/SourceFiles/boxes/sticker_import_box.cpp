@@ -181,14 +181,12 @@ void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
 		Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
 			box->setTitle(tr::lng_teagram_sticker_import_created());
 			box->addRow(object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
-			box->addButton(
-				tr::lng_teagram_sticker_import_copy_link(),
-				[=] {
-					QGuiApplication::clipboard()->setText(url);
-					controller->showToast(
-						tr::lng_teagram_sticker_import_link_copied(tr::now));
-					box->closeBox();
-				});
+			box->addButton(tr::lng_teagram_sticker_import_copy_link(), [=] {
+				QGuiApplication::clipboard()->setText(url);
+				controller->showToast(
+					tr::lng_teagram_sticker_import_link_copied(tr::now));
+				box->closeBox();
+			});
 			box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 		}),
 		Ui::LayerOption::KeepOther);
@@ -252,12 +250,10 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				rights->lifetime());
 
 		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
-			box,
-			tr::lng_teagram_sticker_import_choose_folder(),
+			box, tr::lng_teagram_sticker_import_choose_folder(),
 			st::settingsButton, {&st::menuIconStickers}));
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
-			box,
-			tr::lng_teagram_sticker_import_choose_zip(),
+			box, tr::lng_teagram_sticker_import_choose_zip(),
 			st::settingsButton, {&st::menuIconStickers}));
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
@@ -450,113 +446,108 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				});
 		};
 
-		state->createButton = box->addButton(
-			tr::lng_teagram_sticker_import_title(), [=] {
-				error->setText(QString());
-				state->rightsError = false;
-				rights->setAccessibleDescription(QString());
-				if (state->scanPending) {
-					return;
-				}
-				if (!rights->checked()) {
-					state->rightsError = true;
-					error->setText(rightsErrorText);
-					rights->setAccessibleDescription(rightsErrorText);
-					return;
-				}
-				const auto titleText = title->getLastText().trimmed();
-				if (!Core::IsValidStickerSetTitle(titleText)) {
-					error->setText(
-						tr::lng_teagram_sticker_import_title_invalid(tr::now));
-					return;
-				}
-				const auto name = shortName->getLastText().trimmed();
-				if (!Core::IsValidStickerSetShortName(name)) {
-					error->setText(ServerErrorText(u"SHORT_NAME_INVALID"_q));
-					return;
-				}
-				if (state->sourcePath.isEmpty()) {
-					error->setText(
-						tr::lng_teagram_sticker_import_scan_invalid_source(
-							tr::now));
-					return;
-				}
-				if (state->scan.files.empty()
-					|| state->scan.problem
-						   != Core::StickerImportProblem::None) {
-					error->setText(state->scan.files.empty()
-									   ? ScanDescription(state->scan)
-									   : ScanProblemText(state->scan.problem));
-					return;
-				}
-				setPending(true);
-				availability->setText(
-					tr::lng_teagram_sticker_import_preflight_checking(tr::now));
-				state->preflightRequestId
-					= state->api.request(MTPhelp_GetAppConfig(MTP_int(0)))
-						  .done(crl::guard(
-							  box,
-							  [=](const MTPhelp_AppConfig &config) {
-								  state->preflightRequestId = 0;
-								  if (!StickerImportEnabled(config)) {
-									  setPending(false);
-									  availability->setText(
-										  tr::lng_teagram_sticker_import_disabled(
-											  tr::now));
-									  return;
-								  }
-								  availability->setText(
-									  tr::lng_teagram_sticker_import_availability_checking(
-										  tr::now));
-								  state->preflightRequestId
-									  = state->api
-											.request(MTPstickers_CheckShortName(
-												MTP_string(name)))
-											.done(crl::guard(
-												box,
-												[=](const MTPBool &available) {
-													state->preflightRequestId
-														= 0;
-													if (!mtpIsTrue(available)) {
-														setPending(false);
-														availability->setText(
-															tr::lng_teagram_sticker_import_short_name_occupied(
-																tr::now));
-														return;
-													}
-													availability->setText(
-														tr::lng_teagram_sticker_import_availability_available(
-															tr::now));
-													startUpload(name);
-												}))
-											.fail(crl::guard(
-												box,
-												[=](const MTP::Error
-														&requestError) {
-													state->preflightRequestId
-														= 0;
-													setPending(false);
-													availability->setText(
-														ServerErrorText(
-															requestError
-																.type()));
-												}))
-											.send();
-							  }))
-						  .fail(crl::guard(
-							  box,
-							  [=](const MTP::Error &) {
-								  state->preflightRequestId = 0;
+		state
+			->createButton = box->addButton(tr::lng_teagram_sticker_import_title(), [=] {
+			error->setText(QString());
+			state->rightsError = false;
+			rights->setAccessibleDescription(QString());
+			if (state->scanPending) {
+				return;
+			}
+			if (!rights->checked()) {
+				state->rightsError = true;
+				error->setText(rightsErrorText);
+				rights->setAccessibleDescription(rightsErrorText);
+				return;
+			}
+			const auto titleText = title->getLastText().trimmed();
+			if (!Core::IsValidStickerSetTitle(titleText)) {
+				error->setText(
+					tr::lng_teagram_sticker_import_title_invalid(tr::now));
+				return;
+			}
+			const auto name = shortName->getLastText().trimmed();
+			if (!Core::IsValidStickerSetShortName(name)) {
+				error->setText(ServerErrorText(u"SHORT_NAME_INVALID"_q));
+				return;
+			}
+			if (state->sourcePath.isEmpty()) {
+				error->setText(
+					tr::lng_teagram_sticker_import_scan_invalid_source(
+						tr::now));
+				return;
+			}
+			if (state->scan.files.empty()
+				|| state->scan.problem != Core::StickerImportProblem::None) {
+				error->setText(state->scan.files.empty()
+								   ? ScanDescription(state->scan)
+								   : ScanProblemText(state->scan.problem));
+				return;
+			}
+			setPending(true);
+			availability->setText(
+				tr::lng_teagram_sticker_import_preflight_checking(tr::now));
+			state->preflightRequestId
+				= state->api.request(MTPhelp_GetAppConfig(MTP_int(0)))
+					  .done(crl::guard(
+						  box,
+						  [=](const MTPhelp_AppConfig &config) {
+							  state->preflightRequestId = 0;
+							  if (!StickerImportEnabled(config)) {
 								  setPending(false);
 								  availability->setText(
-									  tr::lng_teagram_sticker_import_preflight_failed(
+									  tr::lng_teagram_sticker_import_disabled(
 										  tr::now));
-							  }))
-						  .send();
-			});
+								  return;
+							  }
+							  availability->setText(
+								  tr::lng_teagram_sticker_import_availability_checking(
+									  tr::now));
+							  state->preflightRequestId
+								  = state->api
+										.request(MTPstickers_CheckShortName(
+											MTP_string(name)))
+										.done(crl::guard(
+											box,
+											[=](const MTPBool &available) {
+												state->preflightRequestId = 0;
+												if (!mtpIsTrue(available)) {
+													setPending(false);
+													availability->setText(
+														tr::lng_teagram_sticker_import_short_name_occupied(
+															tr::now));
+													return;
+												}
+												availability->setText(
+													tr::lng_teagram_sticker_import_availability_available(
+														tr::now));
+												startUpload(name);
+											}))
+										.fail(crl::guard(
+											box,
+											[=](const MTP::Error
+													&requestError) {
+												state->preflightRequestId = 0;
+												setPending(false);
+												availability->setText(
+													ServerErrorText(
+														requestError.type()));
+											}))
+										.send();
+						  }))
+					  .fail(crl::guard(
+						  box,
+						  [=](const MTP::Error &) {
+							  state->preflightRequestId = 0;
+							  setPending(false);
+							  availability->setText(
+								  tr::lng_teagram_sticker_import_preflight_failed(
+									  tr::now));
+						  }))
+					  .send();
+		});
 		state->suggestButton = box->addLeftButton(
-			tr::lng_teagram_sticker_import_suggest_short_name(),
-			[=] {
+			tr::lng_teagram_sticker_import_suggest_short_name(), [=] {
 				const auto titleText = title->getLastText().trimmed();
 				if (titleText.isEmpty()) {
 					error->setText(
