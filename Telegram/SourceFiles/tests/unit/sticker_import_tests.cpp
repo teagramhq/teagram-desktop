@@ -438,8 +438,9 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 	}
 	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
 	CHECK(Core::IsValidStickerSetShortName(u"cats_a"_q));
+	const auto fileReference = MTP_bytes(QByteArray("file-reference"));
 	const auto uploadedDocument = MTP_document(
-		MTP_flags(0), MTP_long(1), MTP_long(2), MTP_bytes(), MTP_int(1),
+		MTP_flags(0), MTP_long(1), MTP_long(2), fileReference, MTP_int(1),
 		MTP_string(u"application/x-tgsticker"_q), MTP_long(sticker.size()),
 		MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
 		MTP_vector<MTPDocumentAttribute>());
@@ -453,6 +454,10 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 		return;
 	}
 	const auto item = *itemFromUpload;
+	const auto expectedItem = MTP_inputStickerSetItem(
+		MTP_flags(0),
+		MTP_inputDocument(MTP_long(1), MTP_long(2), fileReference),
+		MTP_string(u"⭐"_q), MTPMaskCoords(), MTPstring());
 	for (const auto &[source, sourceText, type, emoji] : {
 			 std::tuple{
 				 Core::StickerImportSource::Folder,
@@ -474,6 +479,7 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 			 },
 		 }) {
 		auto items = QVector<MTPInputStickerSetItem>{item};
+		auto expectedItems = QVector<MTPInputStickerSetItem>{expectedItem};
 		const auto request = Api::details::StickerImportCreateSetRequest(
 			u"Cats"_q, u"cats_a"_q, type, source, items);
 		auto flags = MTPstickers_CreateStickerSet::Flags(
@@ -484,7 +490,7 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 		const auto expected = MTPstickers_CreateStickerSet(
 			MTP_flags(flags), MTP_inputUserSelf(), MTP_string(u"Cats"_q),
 			MTP_string(u"cats_a"_q), MTPInputDocument(),
-			MTP_vector<MTPInputStickerSetItem>(std::move(items)),
+			MTP_vector<MTPInputStickerSetItem>(std::move(expectedItems)),
 			MTP_string(sourceText));
 		CHECK_EQ(SerializeRequest(request), SerializeRequest(expected));
 	}
