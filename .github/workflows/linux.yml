@@ -603,7 +603,7 @@ jobs:
               exit 1
             fi
 
-            if selected_output=$("$test_unit" --case StickerImportSourceAndShareLinkSmoke 2>&1); then
+            if selected_output=$("$test_unit" --case StickerImportConsentZipShareInstallSmoke 2>&1); then
               printf "%s\n" "$selected_output"
             else
               TEST_STATUS=$?
@@ -611,12 +611,12 @@ jobs:
               exit "$TEST_STATUS"
             fi
             case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
-            if test "$case_runs" != "run  StickerImportSourceAndShareLinkSmoke"; then
-              echo "--case did not run exactly StickerImportSourceAndShareLinkSmoke."
+            if test "$case_runs" != "run  StickerImportConsentZipShareInstallSmoke"; then
+              echo "--case did not run exactly StickerImportConsentZipShareInstallSmoke."
               exit 1
             fi
             if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
-              echo "Sticker import source and share-link smoke did not report one passing case."
+              echo "Sticker import consent, ZIP share-link, and install smoke did not report one passing case."
               exit 1
             fi
           '

@@ -54,6 +54,29 @@ StickerImportUploadMediaRequest(const MTPInputFile &inputFile,
 								   MTP_inputPeerSelf(), media);
 }
 
+std::optional<MTPInputStickerSetItem>
+StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
+	auto document = MTPInputDocument();
+	media.match(
+		[&](const MTPDmessageMediaDocument &data) {
+			if (const auto value = data.vdocument()) {
+				value->match(
+					[&](const MTPDdocument &d) {
+						document = MTP_inputDocument(d.vid(), d.vaccess_hash(),
+													 d.vfile_reference());
+					},
+					[](const auto &) {});
+			}
+		},
+		[](const auto &) {});
+	if (document.type() != mtpc_inputDocument) {
+		return std::nullopt;
+	}
+	return MTP_inputStickerSetItem(MTP_flags(0), std::move(document),
+								   MTP_string(u"⭐"_q), MTPMaskCoords(),
+								   MTPstring());
+}
+
 MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 	QString title, QString shortName, Data::StickersType type,
 	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items) {
@@ -70,6 +93,11 @@ MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 		MTP_string(shortName), MTPInputDocument(),
 		MTP_vector<MTPInputStickerSetItem>(std::move(items)),
 		MTP_string(sourceText));
+}
+
+MTPmessages_InstallStickerSet
+StickerImportInstallSetRequest(MTPInputStickerSet set) {
+	return MTPmessages_InstallStickerSet(std::move(set), MTP_bool(false));
 }
 
 } // namespace Api::details

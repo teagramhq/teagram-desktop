@@ -396,13 +396,19 @@ TEST_CASE(StickerImportTitlesUseUnicodeCharacterLimit) {
 	CHECK(!Core::IsValidStickerSetTitle(astral + u"😀"_q));
 }
 
-TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
+TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 	const auto sticker = ValidStickerTGS();
 	CHECK(!sticker.isEmpty());
 	const auto zip = MakeZip({{"cats.tgs", sticker}});
 	const auto scan
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(int(scan.files.size()), 1);
+	CHECK(Core::ValidateStickerImportStart(false, false, u"Cats"_q, u"cats_a"_q,
+										   true, scan)
+		  == Core::StickerImportValidation::RightsNotConfirmed);
+	CHECK(Core::ValidateStickerImportStart(false, true, u"Cats"_q, u"cats_a"_q,
+										   true, scan)
+		  == Core::StickerImportValidation::Ready);
 	if (!scan.files.empty()) {
 		CHECK(scan.files.front().format == Core::StickerImportFormat::Tgs);
 		CHECK_EQ(scan.files.front().bytes, sticker);
@@ -432,13 +438,31 @@ TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
 	}
 	CHECK(Core::IsValidStickerSetTitle(u"Cats"_q));
 	CHECK(Core::IsValidStickerSetShortName(u"cats_a"_q));
-	const auto item = MTP_inputStickerSetItem(
-		MTP_flags(0), MTP_inputDocument(MTP_long(1), MTP_long(2), MTP_bytes()),
-		MTP_string(u"⭐"_q), MTPMaskCoords(), MTPstring());
+	const auto uploadedDocument = MTP_document(
+		MTP_flags(0), MTP_long(1), MTP_long(2), MTP_bytes(), MTP_int(1),
+		MTP_string(u"application/x-tgsticker"_q), MTP_long(sticker.size()),
+		MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
+		MTP_vector<MTPDocumentAttribute>());
+	const auto uploadedMedia = MTP_messageMediaDocument(
+		MTP_flags(MTPDmessageMediaDocument::Flag::f_document), uploadedDocument,
+		MTPVector<MTPDocument>(), MTPPhoto(), MTPint(), MTPint());
+	const auto itemFromUpload
+		= Api::details::StickerImportSetItemFromUploadMedia(uploadedMedia);
+	CHECK(itemFromUpload.has_value());
+	if (!itemFromUpload) {
+		return;
+	}
+	const auto item = *itemFromUpload;
 	for (const auto &[source, sourceText, type, emoji] : {
 			 std::tuple{
 				 Core::StickerImportSource::Folder,
 				 u"folder"_q,
+				 Data::StickersType::Stickers,
+				 false,
+			 },
+			 std::tuple{
+				 Core::StickerImportSource::Zip,
+				 u"zip"_q,
 				 Data::StickersType::Stickers,
 				 false,
 			 },
@@ -477,6 +501,12 @@ TEST_CASE(StickerImportSourceAndShareLinkSmoke) {
 	if (stickerTarget) {
 		CHECK_EQ(stickerTarget->shortName, u"cats_a"_q);
 		CHECK(stickerTarget->type == Core::StickerImportType::Stickers);
+		const auto install = Api::details::StickerImportInstallSetRequest(
+			MTP_inputStickerSetShortName(MTP_string(stickerTarget->shortName)));
+		const auto expectedInstall = MTPmessages_InstallStickerSet(
+			MTP_inputStickerSetShortName(MTP_string(u"cats_a"_q)),
+			MTP_bool(false));
+		CHECK_EQ(SerializeRequest(install), SerializeRequest(expectedInstall));
 	}
 	const auto emojiLink = prefix
 						   + Core::StickerImportShareLinkPath(

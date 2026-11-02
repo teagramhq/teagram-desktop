@@ -45,23 +45,6 @@ PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 	return result;
 }
 
-[[nodiscard]] MTPInputDocument UploadedDocument(const MTPMessageMedia &media) {
-	auto result = MTPInputDocument();
-	media.match(
-		[&](const MTPDmessageMediaDocument &data) {
-			if (const auto document = data.vdocument()) {
-				document->match(
-					[&](const MTPDdocument &d) {
-						result = MTP_inputDocument(d.vid(), d.vaccess_hash(),
-												   d.vfile_reference());
-					},
-					[](const auto &) {});
-			}
-		},
-		[](const auto &) {});
-	return result;
-}
-
 } // namespace
 
 StickerSetImport::StickerSetImport(not_null<Main::Session *> session,
@@ -158,14 +141,14 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 				  this,
 				  [=](const MTPMessageMedia &result) {
 					  _requestId = 0;
-					  const auto document = UploadedDocument(result);
-					  if (document.type() != mtpc_inputDocument) {
+					  const auto item
+						  = details::StickerImportSetItemFromUploadMedia(
+							  result);
+					  if (!item) {
 						  fail(u"STICKER_DOCUMENT_INVALID"_q);
 						  return;
 					  }
-					  _items.push_back(MTP_inputStickerSetItem(
-						  MTP_flags(0), document, MTP_string(u"⭐"_q),
-						  MTPMaskCoords(), MTPstring()));
+					  _items.push_back(*item);
 					  ++_index;
 					  if (_progress) {
 						  _progress((_index * 100) / int(_scan.files.size()));

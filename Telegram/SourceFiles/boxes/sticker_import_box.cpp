@@ -451,38 +451,37 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			error->setText(QString());
 			state->rightsError = false;
 			rights->setAccessibleDescription(QString());
-			if (state->scanPending) {
+			const auto titleText = title->getLastText().trimmed();
+			const auto name = shortName->getLastText().trimmed();
+			switch (Core::ValidateStickerImportStart(
+				state->scanPending, rights->checked(), titleText, name,
+				!state->sourcePath.isEmpty(), state->scan)) {
+			case Core::StickerImportValidation::ScanPending:
 				return;
-			}
-			if (!rights->checked()) {
+			case Core::StickerImportValidation::RightsNotConfirmed:
 				state->rightsError = true;
 				error->setText(rightsErrorText);
 				rights->setAccessibleDescription(rightsErrorText);
 				return;
-			}
-			const auto titleText = title->getLastText().trimmed();
-			if (!Core::IsValidStickerSetTitle(titleText)) {
+			case Core::StickerImportValidation::InvalidTitle:
 				error->setText(
 					tr::lng_teagram_sticker_import_title_invalid(tr::now));
 				return;
-			}
-			const auto name = shortName->getLastText().trimmed();
-			if (!Core::IsValidStickerSetShortName(name)) {
+			case Core::StickerImportValidation::InvalidShortName:
 				error->setText(ServerErrorText(u"SHORT_NAME_INVALID"_q));
 				return;
-			}
-			if (state->sourcePath.isEmpty()) {
+			case Core::StickerImportValidation::InvalidSource:
 				error->setText(
 					tr::lng_teagram_sticker_import_scan_invalid_source(
 						tr::now));
 				return;
-			}
-			if (state->scan.files.empty()
-				|| state->scan.problem != Core::StickerImportProblem::None) {
+			case Core::StickerImportValidation::InvalidScan:
 				error->setText(state->scan.files.empty()
 								   ? ScanDescription(state->scan)
 								   : ScanProblemText(state->scan.problem));
 				return;
+			case Core::StickerImportValidation::Ready:
+				break;
 			}
 			setPending(true);
 			availability->setText(

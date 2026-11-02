@@ -569,4 +569,25 @@ bool IsValidStickerSetTitle(const QString &title) {
 	return (length > 0) && (length <= kMaximumStickerSetTitleLength);
 }
 
+StickerImportValidation
+ValidateStickerImportStart(bool scanPending, bool rightsConfirmed,
+						   const QString &title, const QString &shortName,
+						   bool hasSource, const StickerImportScan &scan) {
+	if (scanPending) {
+		return StickerImportValidation::ScanPending;
+	} else if (!rightsConfirmed) {
+		return StickerImportValidation::RightsNotConfirmed;
+	} else if (!IsValidStickerSetTitle(title)) {
+		return StickerImportValidation::InvalidTitle;
+	} else if (!IsValidStickerSetShortName(shortName)) {
+		return StickerImportValidation::InvalidShortName;
+	} else if (!hasSource) {
+		return StickerImportValidation::InvalidSource;
+	} else if (scan.files.empty()
+			   || scan.problem != StickerImportProblem::None) {
+		return StickerImportValidation::InvalidScan;
+	}
+	return StickerImportValidation::Ready;
+}
+
 } // namespace Core

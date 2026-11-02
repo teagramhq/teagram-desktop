@@ -71,6 +71,16 @@ struct StickerImportScan {
 	StickerImportProblem problem = StickerImportProblem::None;
 };
 
+enum class StickerImportValidation {
+	Ready,
+	ScanPending,
+	RightsNotConfirmed,
+	InvalidTitle,
+	InvalidShortName,
+	InvalidSource,
+	InvalidScan,
+};
+
 [[nodiscard]] StickerImportScan ScanStickerImportFolder(const QString &path,
 														StickerImportType type);
 [[nodiscard]] StickerImportScan ScanStickerImportZip(const QByteArray &bytes,
@@ -83,5 +93,9 @@ StickerImportFormatDetails(StickerImportFormat format);
 												 const QString &shortName);
 [[nodiscard]] bool IsValidStickerSetTitle(const QString &title);
 [[nodiscard]] bool IsValidStickerSetShortName(const QString &name);
+[[nodiscard]] StickerImportValidation
+ValidateStickerImportStart(bool scanPending, bool rightsConfirmed,
+						   const QString &title, const QString &shortName,
+						   bool hasSource, const StickerImportScan &scan);
 
 } // namespace Core
