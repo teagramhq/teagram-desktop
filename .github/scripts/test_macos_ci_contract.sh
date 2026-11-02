@@ -213,7 +213,7 @@ expect_contains "$mac_workflow build-macos if" "$(job_field "$mac_workflow" buil
   "needs.check-macos-deps-artifact.result == 'skipped'" \
   "needs.build-macos-deps-artifact.result == 'success'" \
   "needs.build-macos-deps-artifact.result == 'skipped'" \
-  "contains(github.event.pull_request.labels.*.name, 'macos-build')" \
+  "github.event.label.name == 'macos-build'" \
   "needs.ops-prune-macos-libraries.result == 'success'" \
   "needs.ops-prune-macos-libraries.result == 'skipped'"
 expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" build-macos '.if')" 'always()'
@@ -347,7 +347,7 @@ require_workflow_field "$mac_workflow" '(.on.pull_request.types // []) | join(",
 # check saves before a later push seed runs; dispatches and approved PR builds
 # replace their older run.
 require_workflow_field "$mac_workflow" '.concurrency["cancel-in-progress"]' \
-  "\${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-build') }}"
+  "\${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'macos-build' }}"
 require_triggers "$approval_workflow" 'pull_request_target'
 require_workflow_field "$approval_workflow" '.on.pull_request_target.branches | join(",")' 'dev'
 require_workflow_field "$approval_workflow" '.on.pull_request_target.types | join(",")' 'synchronize'
@@ -489,7 +489,7 @@ require_job_field "$mac_workflow" build-macos '.env.CCACHE_COMPILERCHECK' 'conte
 require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.run' \
   'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"'
 require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.env.EVENT_LABEL' \
-  "\${{ contains(github.event.pull_request.labels.*.name, 'macos-build') && 'macos-build' || '' }}"
+  "\${{ github.event.label.name == 'macos-build' && 'macos-build' || '' }}"
 require_step_field "$mac_workflow" build-macos 'Teagram build.' '.env.PROTECTED_PATH_INTEGRATION' \
   '${{ steps.ccache-profile.outputs.protected_path_integration }}'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
@@ -691,7 +691,7 @@ fi
 expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
-  "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'macos-build'))) }}"
+  "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'build_dir="$repo/out"' \
@@ -1165,7 +1165,7 @@ require_step_field "$mac_workflow" build-macos 'Report skipped profile and IPC i
 require_step_script "$mac_workflow" build-macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
 require_step_field "$mac_workflow" build-macos 'Report skipped full chat info session regression.' '.if' \
-  "\${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'macos-build'))) }}"
+  "\${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_script "$mac_workflow" build-macos 'Report skipped full chat info session regression.' \
   'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"
