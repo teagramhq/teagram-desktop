@@ -179,10 +179,10 @@ void ShowCreatedSetLink(not_null<Window::SessionController *> controller,
 						const QString &url) {
 	controller->show(
 		Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
-			box->setTitle(tr::lng_teagram_sticker_import_created(tr::now));
+			box->setTitle(tr::lng_teagram_sticker_import_created());
 			box->addRow(object_ptr<Ui::FlatLabel>(box, url, st::boxLabel));
 			box->addButton(
-				rpl::single(tr::lng_teagram_sticker_import_copy_link(tr::now)),
+				tr::lng_teagram_sticker_import_copy_link(),
 				[=] {
 					QGuiApplication::clipboard()->setText(url);
 					controller->showToast(
@@ -209,20 +209,18 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		return;
 	}
 	controller->show(Box<Ui::GenericBox>([=](not_null<Ui::GenericBox *> box) {
-		box->setTitle(tr::lng_teagram_sticker_import_title(tr::now));
+		box->setTitle(tr::lng_teagram_sticker_import_title());
 		box->setWidth(st::boxWideWidth);
 		const auto state = box->lifetime().make_state<ImportFormState>(session);
 
 		const auto title = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
-			rpl::single(
-				tr::lng_teagram_sticker_import_title_placeholder(tr::now))));
+			tr::lng_teagram_sticker_import_title_placeholder()));
 		title->setMaxLength(128);
 
 		const auto shortName = box->addRow(object_ptr<Ui::InputField>(
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
-			rpl::single(tr::lng_teagram_sticker_import_short_name_placeholder(
-				tr::now))));
+			tr::lng_teagram_sticker_import_short_name_placeholder()));
 		shortName->setMaxLength(64);
 
 		const auto availability
@@ -255,11 +253,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 
 		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
 			box,
-			rpl::single(tr::lng_teagram_sticker_import_choose_folder(tr::now)),
+			tr::lng_teagram_sticker_import_choose_folder(),
 			st::settingsButton, {&st::menuIconStickers}));
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
 			box,
-			rpl::single(tr::lng_teagram_sticker_import_choose_zip(tr::now)),
+			tr::lng_teagram_sticker_import_choose_zip(),
 			st::settingsButton, {&st::menuIconStickers}));
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
@@ -453,7 +451,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		};
 
 		state->createButton = box->addButton(
-			rpl::single(tr::lng_teagram_sticker_import_title(tr::now)), [=] {
+			tr::lng_teagram_sticker_import_title(), [=] {
 				error->setText(QString());
 				state->rightsError = false;
 				rights->setAccessibleDescription(QString());
@@ -557,8 +555,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						  .send();
 			});
 		state->suggestButton = box->addLeftButton(
-			rpl::single(
-				tr::lng_teagram_sticker_import_suggest_short_name(tr::now)),
+			tr::lng_teagram_sticker_import_suggest_short_name(),
 			[=] {
 				const auto titleText = title->getLastText().trimmed();
 				if (titleText.isEmpty()) {
