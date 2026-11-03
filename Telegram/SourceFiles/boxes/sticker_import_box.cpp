@@ -228,15 +228,21 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
 		const auto files
 			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
-		const auto error
-			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
-
 		const auto customEmoji = box->addRow(object_ptr<Ui::Checkbox>(
 			box, tr::lng_teagram_sticker_import_custom_emoji(tr::now), false,
 			st::settingsCheckbox));
+
+		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
+			box, tr::lng_teagram_sticker_import_choose_folder(),
+			st::settingsButton, {&st::menuIconStickers}));
+		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
+			box, tr::lng_teagram_sticker_import_choose_zip(),
+			st::settingsButton, {&st::menuIconStickers}));
 		const auto rights = box->addRow(object_ptr<Ui::Checkbox>(
 			box, tr::lng_teagram_sticker_import_rights(tr::now), false,
 			st::settingsCheckbox));
+		const auto error
+			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
 		const auto rightsErrorText
 			= tr::lng_teagram_sticker_import_rights_error(tr::now);
 		rights->checkedChanges()
@@ -249,13 +255,6 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 				},
 				rights->lifetime());
-
-		const auto folderButton = box->addRow(Settings::CreateButtonWithIcon(
-			box, tr::lng_teagram_sticker_import_choose_folder(),
-			st::settingsButton, {&st::menuIconStickers}));
-		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
-			box, tr::lng_teagram_sticker_import_choose_zip(),
-			st::settingsButton, {&st::menuIconStickers}));
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
 			shortName->setDisabled(pending);
@@ -360,6 +359,14 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				},
 				shortName->lifetime());
 
+		const auto resetRights = [=] {
+			rights->setChecked(false);
+			if (state->rightsError) {
+				state->rightsError = false;
+				rights->setAccessibleDescription(QString());
+				error->setText(QString());
+			}
+		};
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
 				box.get(),
@@ -370,6 +377,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					state->sourcePath = std::move(path);
 					state->sourceType = Core::StickerImportSource::Folder;
+					resetRights();
 					source->setText(
 						tr::lng_teagram_sticker_import_source_folder(
 							tr::now, lt_name,
@@ -389,6 +397,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					state->sourcePath = result.paths.front();
 					state->sourceType = Core::StickerImportSource::Zip;
+					resetRights();
 					source->setText(tr::lng_teagram_sticker_import_source_zip(
 						tr::now, lt_name,
 						QFileInfo(state->sourcePath).fileName()));
