@@ -2241,10 +2241,13 @@ CacheOperationSucceeded(const std::optional<Storage::Cache::Error> &result) {
 #endif
 
 [[nodiscard]] bool OpenCache(Storage::Cache::Database &cache,
-							 not_null<Main::Account *> account) {
+							 not_null<Main::Account *> account,
+							 bool mediaCache = false) {
 	return CacheOperationSucceeded(
 		AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-			cache.open(account->local().cacheKey(), std::move(done));
+			cache.open(mediaCache ? account->local().cacheBigFileKey()
+								  : account->local().cacheKey(),
+					   std::move(done));
 		}));
 }
 
@@ -2275,16 +2278,17 @@ class RegressionAccountCleanup final {
 			return true;
 		}
 		const auto guarded = not_null<Main::Account *>(account);
-		auto cache = Core::App().databases().get(
-			account->local().cachePath(), account->local().cacheSettings());
-		auto mediaCache = Core::App().databases().get(
-			account->local().cacheBigFilePath(),
-			account->local().cacheBigFileSettings());
-#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		const auto hadSession = account->sessionExists();
+		auto cache
+			= hadSession ? account->session().data().cacheIfAllowed() : nullptr;
+		auto mediaCache
+			= hadSession ? account->session().data().cacheBigFileIfAllowed()
+						 : nullptr;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 		if (hadSession) {
-			const auto cacheFinished = WaitForCacheCleaner(*cache);
-			const auto mediaCacheFinished = WaitForCacheCleaner(*mediaCache);
+			const auto cacheFinished = !cache || WaitForCacheCleaner(*cache);
+			const auto mediaCacheFinished
+				= !mediaCache || WaitForCacheCleaner(*mediaCache);
 			_cacheCleanupPassed = cacheFinished && mediaCacheFinished;
 		}
 #endif
@@ -2292,15 +2296,15 @@ class RegressionAccountCleanup final {
 			Core::App().closeWindow(window);
 		}
 #if !defined(Q_OS_MAC) || !defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		if (const auto current = _account.get();
-			current && current->sessionExists()) {
-			current->forcedLogOut();
-		}
 		if (cache) {
 			cache->sync();
 		}
 		if (mediaCache) {
 			mediaCache->sync();
+		}
+		if (const auto current = _account.get();
+			current && current->sessionExists()) {
+			current->forcedLogOut();
 		}
 #endif
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
@@ -3021,8 +3025,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 									  : guarded->local().cachePath();
 	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
 									 : guarded->local().cacheSettings();
-	auto opened = Core::App().databases().get(cachePath, settings);
-	if (!OpenCache(*opened, guarded)) {
+	auto opened = Storage::Cache::Database(cachePath, settings);
+	if (!OpenCache(opened, guarded, mediaCache)) {
 		return false;
 	}
 	const auto seedKey = Storage::Cache::Key{
@@ -3030,13 +3034,20 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		0x495449414c534545ULL,
 	};
 	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-		opened->put(seedKey, QByteArray("pre-open protected cache seed"),
-					std::move(done));
+		opened.put(seedKey, QByteArray("pre-open protected cache seed"),
+				   std::move(done));
 	});
 	if (!CacheOperationSucceeded(seed)) {
 		return false;
 	}
-	opened->sync();
+	opened.sync();
+	const auto closed = AwaitCacheCallback<int>([&](auto done) {
+		opened.close([done = std::move(done)]() mutable { done(1); });
+	});
+	opened.sync();
+	if (!closed || (*closed != 1)) {
+		return false;
+	}
 	const auto active = ActiveCacheVersionPath(cachePath);
 	const auto protectedTarget
 		= mediaCache ? fixtures.mediaCacheRoot : fixtures.cacheRoot;
@@ -3056,14 +3067,9 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		if (cleanupDone) {
 			return cleanupSucceeded;
 		}
-		opened->sync();
-		const auto closed = AwaitCacheCallback<int>([&](auto done) {
-			opened->close([done = std::move(done)]() mutable { done(1); });
-		});
 		const auto linkRemoved = !linked || QFile::remove(active);
 		const auto originalRestored = !moved || QDir().rename(saved, active);
-		cleanupSucceeded
-			= closed && (*closed == 1) && linkRemoved && originalRestored;
+		cleanupSucceeded = linkRemoved && originalRestored;
 		cleanupDone = true;
 		return cleanupSucceeded;
 	};
@@ -3132,8 +3138,8 @@ RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
 									  : guarded->local().cachePath();
 	const auto settings = mediaCache ? guarded->local().cacheBigFileSettings()
 									 : guarded->local().cacheSettings();
-	auto opened = Core::App().databases().get(cachePath, settings);
-	if (!OpenCache(*opened, guarded)) {
+	auto opened = Storage::Cache::Database(cachePath, settings);
+	if (!OpenCache(opened, guarded, mediaCache)) {
 		return false;
 	}
 	const auto seedKey = Storage::Cache::Key{
@@ -3143,15 +3149,22 @@ RunCacheStatisticsInitializationRegression(Main::Domain &domain, UserId selfId,
 	constexpr auto kSeedTag = uint8(93);
 	const auto payload = QByteArray("cache statistics initialization seed");
 	const auto seed = AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-		opened->put(seedKey,
-					Storage::Cache::Database::TaggedValue(QByteArray(payload),
-														  kSeedTag),
-					std::move(done));
+		opened.put(seedKey,
+				   Storage::Cache::Database::TaggedValue(QByteArray(payload),
+														 kSeedTag),
+				   std::move(done));
 	});
 	if (!CacheOperationSucceeded(seed)) {
 		return false;
 	}
-	opened->sync();
+	opened.sync();
+	const auto closed = AwaitCacheCallback<int>([&](auto done) {
+		opened.close([done = std::move(done)]() mutable { done(1); });
+	});
+	opened.sync();
+	if (!closed || (*closed != 1)) {
+		return false;
+	}
 	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
 								std::make_unique<Main::SessionSettings>())) {
 		return false;
@@ -10458,7 +10471,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			{
 				auto existing
 					= Storage::Cache::Database(closedCachePath, cacheSettings);
-				cacheOpened = OpenCache(existing, guarded);
+				cacheOpened = OpenCache(existing, guarded, mediaCache);
 				existing.close();
 				existing.sync();
 				closedClear = CacheOperationSucceeded(
@@ -10773,11 +10786,18 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto cachePath = mediaCache
 									   ? guarded->local().cacheBigFilePath()
 									   : guarded->local().cachePath();
-			auto opened = Core::App().databases().get(
+			auto opened = Storage::Cache::Database(
 				cachePath, mediaCache ? guarded->local().cacheBigFileSettings()
 									  : guarded->local().cacheSettings());
-			const auto preopened = OpenCache(*opened, guarded);
-			if (!preopened
+			const auto preopened = OpenCache(opened, guarded, mediaCache);
+			const auto closed
+				= preopened ? AwaitCacheCallback<int>([&](auto done) {
+					  opened.close(
+						  [done = std::move(done)]() mutable { done(1); });
+				  })
+							: std::optional<int>();
+			opened.sync();
+			if (!preopened || !closed || (*closed != 1)
 				|| !guarded->createSession(
 					RegressionUser(selfId, true, QString()),
 					std::make_unique<Main::SessionSettings>())) {
@@ -10885,27 +10905,28 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto cacheSettings
 				= mediaCache ? guarded->local().cacheBigFileSettings()
 							 : guarded->local().cacheSettings();
-			auto existing
-				= Core::App().databases().get(cachePath, cacheSettings);
+			auto existing = Storage::Cache::Database(cachePath, cacheSettings);
 			auto cacheKey = mediaCache ? guarded->local().cacheBigFileKey()
 									   : guarded->local().cacheKey();
 			const auto opened = CacheOperationSucceeded(
 				AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
-					existing->open(std::move(cacheKey), std::move(done));
+					existing.open(std::move(cacheKey), std::move(done));
 				}));
 			const auto seed
 				= opened
 					  ? AwaitCacheCallback<Storage::Cache::Error>(
 							[&](auto done) {
-								existing->put(
+								existing.put(
 									Storage::Cache::Key{0x4e4f4d41524b4552ULL,
 														uint64(mediaCache)},
 									QByteArray("version marker omitted"),
 									std::move(done));
 							})
 					  : std::optional<Storage::Cache::Error>();
-			existing->close();
-			existing->sync();
+			const auto existingClosed = AwaitCacheCallback<int>([&](auto done) {
+				existing.close([done = std::move(done)]() mutable { done(1); });
+			});
+			existing.sync();
 			const auto markerWasRemoved
 				= !QFileInfo::exists(versionPath) || QFile::remove(versionPath);
 			const auto coldBeforeOpen
@@ -10935,8 +10956,9 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto activeVersion = ActiveCacheVersionPath(cachePath);
 			const auto markerMissingAfterOpen = !QFileInfo::exists(versionPath);
 			const auto passed
-				= opened && CacheOperationSucceeded(seed) && coldBeforeOpen
-				  && cacheReady && markerMissingAfterOpen
+				= opened && CacheOperationSucceeded(seed) && existingClosed
+				  && (*existingClosed == 1) && coldBeforeOpen && cacheReady
+				  && markerMissingAfterOpen
 				  && (activeVersion == QDir(cachePath).filePath("0"))
 				  && RunPostOpenCacheSymlinkRegression(
 					  cachePath,
