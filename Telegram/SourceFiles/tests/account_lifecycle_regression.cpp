@@ -2751,15 +2751,14 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto wroteAfterClear
 		= write && (write->type == Storage::Cache::Error::Type::None)
 		  && CachePayloadMatches(cache(), writeKey, writePayload);
-	const auto rootSwapTarget = QDir(fixture).filePath(
-		u"clear-root-swap-%1"_q.arg(QCoreApplication::applicationPid()));
+	const auto rootSwapTarget = fixture;
 	const auto rootSwapSaved = path + ".clear-root-swap-original";
-	const auto rootSwapMarker = QDir(rootSwapTarget).filePath("version");
-	const auto rootSwapMarkerContents = QByteArray("protected cache root");
-	const auto rootSwapTargetPrepared
-		= !QFileInfo::exists(rootSwapSaved)
-		  && !QFileInfo::exists(rootSwapTarget) && QDir().mkpath(rootSwapTarget)
-		  && WriteFixtureFile(rootSwapMarker, rootSwapMarkerContents);
+	const auto rootSwapMarker = QDir(rootSwapTarget).filePath("marker");
+	const auto rootSwapMarkerContents
+		= QByteArray("synthetic protected fixture");
+	const auto rootSwapTargetPrepared = !QFileInfo::exists(rootSwapSaved)
+										&& QFileInfo(rootSwapTarget).isDir()
+										&& QFileInfo(rootSwapMarker).isFile();
 	auto rootMoved = false;
 	auto rootLinked = false;
 	if (rootSwapTargetPrepared) {
@@ -2780,17 +2779,19 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	auto rootSwapMarkerUnchanged = false;
 	if (rootSwapTargetPrepared) {
 		auto marker = QFile(rootSwapMarker);
+		const auto targetEntries
+			= QDir(rootSwapTarget)
+				  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
+							 | QDir::NoDotAndDotDot);
 		rootSwapMarkerUnchanged
 			= marker.open(QIODevice::ReadOnly)
 			  && (marker.readAll() == rootSwapMarkerContents)
-			  && !QFileInfo::exists(QDir(rootSwapTarget).filePath("0"));
+			  && (targetEntries.size() == 1)
+			  && (targetEntries.front() == u"marker"_q);
 	}
 	const auto rootLinkRemoved = !rootLinked || QFile::remove(path);
 	const auto rootRestored
 		= rootMoved && rootLinkRemoved && QDir().rename(rootSwapSaved, path);
-	if (QFileInfo::exists(rootSwapTarget)) {
-		QDir(rootSwapTarget).removeRecursively();
-	}
 	const auto otherCleared = AwaitCacheCallback<Storage::Cache::Error>(
 		[&](auto done) {
 			data.clearCacheDatabase(!mediaCache, false, std::move(done));
