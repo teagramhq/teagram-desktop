@@ -2756,10 +2756,9 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto rootSwapMarker = QDir(rootSwapTarget).filePath("marker");
 	const auto rootSwapMarkerContents
 		= QByteArray("synthetic protected fixture");
-	const auto rootSwapTargetPrepared = !QFileInfo::exists(rootSwapSaved)
-										&& QDir().mkpath(rootSwapTarget)
-										&& WriteFixtureFile(rootSwapMarker,
-															rootSwapMarkerContents);
+	const auto rootSwapTargetPrepared
+		= !QFileInfo::exists(rootSwapSaved) && QDir().mkpath(rootSwapTarget)
+		  && WriteFixtureFile(rootSwapMarker, rootSwapMarkerContents);
 	auto rootMoved = false;
 	auto rootLinked = false;
 	if (rootSwapTargetPrepared) {
@@ -10858,7 +10857,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			};
 			const auto cacheReady = WaitForRegressionCondition([&] {
 				return data.cacheInitializationFinishedForTesting(mediaCache)
-					&& (cacheIfAllowed() != nullptr);
+					   && (cacheIfAllowed() != nullptr);
 			});
 			const auto passed = cacheReady
 								&& RunClearThenCacheSymlinkRegression(
