@@ -51,6 +51,7 @@ struct ImportFormState final : base::has_weak_ptr {
 	QString sourcePath;
 	Core::StickerImportSource sourceType = Core::StickerImportSource::Folder;
 	Core::StickerImportScan scan;
+	Core::StickerImportSuggestionGuard suggestionGuard;
 	mtpRequestId nameCheckRequestId = 0;
 	mtpRequestId suggestionRequestId = 0;
 	mtpRequestId preflightRequestId = 0;
@@ -342,9 +343,16 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		};
 		state->nameCheckTimer
 			= std::make_unique<base::Timer>([=] { checkShortName(); });
+		const auto invalidateSuggestion = [=] {
+			state->suggestionGuard.invalidate();
+			state->api.request(base::take(state->suggestionRequestId)).cancel();
+		};
+		title->changes()
+			| rpl::on_next([=] { invalidateSuggestion(); }, title->lifetime());
 		shortName->changes()
 			| rpl::on_next(
 				[=] {
+					invalidateSuggestion();
 					state->api.request(base::take(state->nameCheckRequestId))
 						.cancel();
 					availability->setText(QString());
@@ -553,6 +561,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						tr::lng_teagram_sticker_import_enter_title(tr::now));
 					return;
 				}
+				const auto request = state->suggestionGuard.begin(
+					titleText, shortName->getLastText().trimmed());
 				state->api.request(base::take(state->suggestionRequestId))
 					.cancel();
 				state->suggestionRequestId
@@ -563,6 +573,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 							  box,
 							  [=](const MTPstickers_SuggestedShortName
 									  &result) {
+								  if (!state->suggestionGuard.isCurrent(
+										  request,
+										  title->getLastText().trimmed(),
+										  shortName->getLastText().trimmed())) {
+									  return;
+								  }
 								  state->suggestionRequestId = 0;
 								  result.match(
 									  [&](const MTPDstickers_suggestedShortName
@@ -579,6 +595,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						  .fail(crl::guard(
 							  box,
 							  [=](const MTP::Error &) {
+								  if (!state->suggestionGuard.isCurrent(
+										  request,
+										  title->getLastText().trimmed(),
+										  shortName->getLastText().trimmed())) {
+									  return;
+								  }
 								  state->suggestionRequestId = 0;
 								  error->setText(
 									  tr::lng_teagram_sticker_import_suggestion_failed(

@@ -590,4 +590,22 @@ ValidateStickerImportStart(bool scanPending, bool rightsConfirmed,
 	return StickerImportValidation::Ready;
 }
 
+StickerImportSuggestionGuard::Request
+StickerImportSuggestionGuard::begin(QString title, QString shortName) {
+	return {
+		.generation = ++_generation,
+		.title = std::move(title),
+		.shortName = std::move(shortName),
+	};
+}
+
+void StickerImportSuggestionGuard::invalidate() { ++_generation; }
+
+bool StickerImportSuggestionGuard::isCurrent(const Request &request,
+											 const QString &title,
+											 const QString &shortName) const {
+	return (request.generation == _generation) && (request.title == title)
+		   && (request.shortName == shortName);
+}
+
 } // namespace Core

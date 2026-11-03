@@ -81,6 +81,23 @@ enum class StickerImportValidation {
 	InvalidScan,
 };
 
+class StickerImportSuggestionGuard final {
+  public:
+	struct Request {
+		quint64 generation = 0;
+		QString title;
+		QString shortName;
+	};
+
+	[[nodiscard]] Request begin(QString title, QString shortName);
+	void invalidate();
+	[[nodiscard]] bool isCurrent(const Request &request, const QString &title,
+								 const QString &shortName) const;
+
+  private:
+	quint64 _generation = 0;
+};
+
 [[nodiscard]] StickerImportScan ScanStickerImportFolder(const QString &path,
 														StickerImportType type);
 [[nodiscard]] StickerImportScan ScanStickerImportZip(const QByteArray &bytes,

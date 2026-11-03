@@ -396,6 +396,19 @@ TEST_CASE(StickerImportTitlesUseUnicodeCharacterLimit) {
 	CHECK(!Core::IsValidStickerSetTitle(astral + u"😀"_q));
 }
 
+TEST_CASE(StickerImportSuggestionsIgnoreDelayedResponses) {
+	auto guard = Core::StickerImportSuggestionGuard();
+	const auto request = guard.begin(u"Cats"_q, u"cats_a"_q);
+	CHECK(guard.isCurrent(request, u"Cats"_q, u"cats_a"_q));
+	CHECK(!guard.isCurrent(request, u"Dogs"_q, u"cats_a"_q));
+	CHECK(!guard.isCurrent(request, u"Cats"_q, u"typed_name"_q));
+	guard.invalidate();
+	CHECK(!guard.isCurrent(request, u"Cats"_q, u"cats_a"_q));
+	const auto newerRequest = guard.begin(u"Cats"_q, u"cats_a"_q);
+	CHECK(!guard.isCurrent(request, u"Cats"_q, u"cats_a"_q));
+	CHECK(guard.isCurrent(newerRequest, u"Cats"_q, u"cats_a"_q));
+}
+
 TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 	const auto sticker = ValidStickerTGS();
 	CHECK(!sticker.isEmpty());
