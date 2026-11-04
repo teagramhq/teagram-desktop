@@ -948,6 +948,7 @@ jobs:
           command = ["arch", "-arm64", "lldb", "--batch"]
           if symbol_file:
               command.extend(["-o", f"target symbols add {shlex.quote(symbol_file)}"])
+          command.extend(["-o", "process handle SIGUSR2 -s false -n false -p true"])
           command.extend([
               "-o",
               "process launch "

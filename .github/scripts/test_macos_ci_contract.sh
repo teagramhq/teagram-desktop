@@ -698,6 +698,7 @@ reject_step_script "$mac_workflow" build-macos "$regression_step" \
 # The app bounds and cleanup live in the Python the step runs, so they are
 # read from its syntax tree: a commented-out call does not count.
 require_step_python "$mac_workflow" build-macos "$regression_step" \
+  "command.extend(['-o', 'process handle SIGUSR2 -s false -n false -p true'])" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
