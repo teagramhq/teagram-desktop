@@ -1310,6 +1310,7 @@ local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.ke
 local PROFILE_LOG="$AUTH_HOME/Library/Application Support/Teagram/log.txt"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 append_ui_stall_diagnostics() {
 	if [[ -f "$PROFILE_LOG" ]]; then
 		grep -F 'UI stall ' "$PROFILE_LOG" >> "$AUTH_LOG" || true
@@ -1451,6 +1452,7 @@ local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
 local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \

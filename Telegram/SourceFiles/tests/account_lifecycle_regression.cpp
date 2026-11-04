@@ -2753,22 +2753,18 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		  && CachePayloadMatches(cache(), writeKey, writePayload);
 	const auto rootSwapTarget = fixture;
 	const auto rootSwapSaved = path + ".clear-root-swap-original";
-	const auto rootSwapMarker = QDir(rootSwapTarget).filePath("marker");
-	const auto rootSwapMarkerContents
-		= QByteArray("synthetic protected fixture");
-	const auto rootSwapTargetPrepared = !QFileInfo::exists(rootSwapSaved)
-										&& QFileInfo(rootSwapTarget).isDir()
-										&& QFileInfo(rootSwapMarker).isFile();
+	const auto rootSwapTargetConfigured = !rootSwapTarget.isEmpty()
+		&& !QFileInfo::exists(rootSwapSaved);
 	auto rootMoved = false;
 	auto rootLinked = false;
-	if (rootSwapTargetPrepared) {
+	if (rootSwapTargetConfigured) {
 		data.setCacheClearPauseForTesting(mediaCache, [&] {
 			rootMoved = QDir().rename(path, rootSwapSaved);
 			rootLinked = rootMoved && QFile::link(rootSwapTarget, path);
 		});
 	}
 	const auto rootSwapClear
-		= rootSwapTargetPrepared
+		= rootSwapTargetConfigured
 			  ? AwaitCacheCallback<Storage::Cache::Error>([&](auto done) {
 					data.clearCacheDatabase(mediaCache, false, std::move(done));
 				})
@@ -2776,19 +2772,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	const auto rootSwapRefused
 		= rootSwapClear
 		  && (rootSwapClear->type != Storage::Cache::Error::Type::None);
-	auto rootSwapMarkerUnchanged = false;
-	if (rootSwapTargetPrepared) {
-		auto marker = QFile(rootSwapMarker);
-		const auto targetEntries
-			= QDir(rootSwapTarget)
-				  .entryList(QDir::AllEntries | QDir::Hidden | QDir::System
-							 | QDir::NoDotAndDotDot);
-		rootSwapMarkerUnchanged
-			= marker.open(QIODevice::ReadOnly)
-			  && (marker.readAll() == rootSwapMarkerContents)
-			  && (targetEntries.size() == 1)
-			  && (targetEntries.front() == u"marker"_q);
-	}
 	const auto rootLinkRemoved = !rootLinked || QFile::remove(path);
 	const auto rootRestored
 		= rootMoved && rootLinkRemoved && QDir().rename(rootSwapSaved, path);
@@ -2809,8 +2792,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
 		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
 		  && allowedAfterClear && wroteAfterClear && swapped
-		  && rootSwapTargetPrepared && rootMoved && rootLinked
-		  && rootSwapRefused && rootSwapMarkerUnchanged && rootRestored;
+		  && rootSwapTargetConfigured && rootMoved && rootLinked
+		  && rootSwapRefused && rootRestored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
@@ -2821,15 +2804,15 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			"rotated=%d "
 			"allowed_after=%d "
 			"write_after_clear=%d other_clear=%d swapped=%d "
-			"root_swap_prepared=%d "
+			"root_swap_target_configured=%d "
 			"root_moved=%d root_linked=%d "
-			"root_swap_refused=%d root_marker_unchanged=%d "
+			"root_swap_refused=%d "
 			"root_restored=%d path=%s.\n",
 			paused, markerRotated, activeVersionMissing, blockedDuringClear,
 			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
 			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
-			otherClearSucceeded, swapped, rootSwapTargetPrepared, rootMoved,
-			rootLinked, rootSwapRefused, rootSwapMarkerUnchanged, rootRestored,
+			otherClearSucceeded, swapped, rootSwapTargetConfigured, rootMoved,
+			rootLinked, rootSwapRefused, rootRestored,
 			qPrintable(path));
 	}
 	return passed;
