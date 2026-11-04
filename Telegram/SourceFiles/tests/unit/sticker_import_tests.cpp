@@ -416,6 +416,49 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 	const auto scan
 		= Core::ScanStickerImportZip(zip, Core::StickerImportType::Stickers);
 	CHECK_EQ(int(scan.files.size()), 1);
+	const auto temporary = QTemporaryDir();
+	CHECK(temporary.isValid());
+	if (!temporary.isValid()) {
+		return;
+	}
+	const auto folderPath = temporary.filePath(u"folder"_q);
+	const auto folderCreated = QDir().mkpath(folderPath);
+	CHECK(folderCreated);
+	if (!folderCreated) {
+		return;
+	}
+	const auto folderFile = QDir(folderPath).filePath(u"cats.tgs"_q);
+	const auto folderWritten = WriteFile(folderFile, sticker);
+	CHECK(folderWritten);
+	const auto zipPath = temporary.filePath(u"cats.zip"_q);
+	const auto zipWritten = WriteFile(zipPath, zip);
+	CHECK(zipWritten);
+	if (!folderWritten || !zipWritten) {
+		return;
+	}
+	const auto folderScan = Core::ScanStickerImportFolder(
+		folderPath, Core::StickerImportType::Stickers);
+	CHECK_EQ(int(folderScan.files.size()), 1);
+	auto selection = Core::StickerImportSelection();
+	selection.selectSource(Core::StickerImportSource::Folder, folderPath);
+	selection.setRightsConfirmed(true);
+	CHECK(selection.type() == Core::StickerImportSource::Folder);
+	CHECK(Core::ValidateStickerImportStart(
+			  false, selection.rightsConfirmed(), u"Cats"_q, u"cats_a"_q,
+			  !selection.path().isEmpty(), folderScan)
+		  == Core::StickerImportValidation::Ready);
+	selection.selectSource(Core::StickerImportSource::Zip, zipPath);
+	CHECK(selection.type() == Core::StickerImportSource::Zip);
+	CHECK(!selection.rightsConfirmed());
+	CHECK(Core::ValidateStickerImportStart(false, selection.rightsConfirmed(),
+										   u"Cats"_q, u"cats_a"_q,
+										   !selection.path().isEmpty(), scan)
+		  == Core::StickerImportValidation::RightsNotConfirmed);
+	selection.setRightsConfirmed(true);
+	CHECK(Core::ValidateStickerImportStart(false, selection.rightsConfirmed(),
+										   u"Cats"_q, u"cats_a"_q,
+										   !selection.path().isEmpty(), scan)
+		  == Core::StickerImportValidation::Ready);
 	CHECK(Core::ValidateStickerImportStart(false, false, u"Cats"_q, u"cats_a"_q,
 										   true, scan)
 		  == Core::StickerImportValidation::RightsNotConfirmed);

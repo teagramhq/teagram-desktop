@@ -569,6 +569,25 @@ bool IsValidStickerSetTitle(const QString &title) {
 	return (length > 0) && (length <= kMaximumStickerSetTitleLength);
 }
 
+void StickerImportSelection::selectSource(StickerImportSource type,
+										  QString path) {
+	_path = std::move(path);
+	_type = type;
+	_rightsConfirmed = false;
+}
+
+void StickerImportSelection::setRightsConfirmed(bool confirmed) {
+	_rightsConfirmed = confirmed;
+}
+
+const QString &StickerImportSelection::path() const { return _path; }
+
+StickerImportSource StickerImportSelection::type() const { return _type; }
+
+bool StickerImportSelection::rightsConfirmed() const {
+	return _rightsConfirmed;
+}
+
 StickerImportValidation
 ValidateStickerImportStart(bool scanPending, bool rightsConfirmed,
 						   const QString &title, const QString &shortName,

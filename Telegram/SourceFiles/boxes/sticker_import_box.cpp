@@ -48,8 +48,7 @@ struct ImportFormState final : base::has_weak_ptr {
 		: api(&session->mtp()) {}
 
 	MTP::Sender api;
-	QString sourcePath;
-	Core::StickerImportSource sourceType = Core::StickerImportSource::Folder;
+	Core::StickerImportSelection selection;
 	Core::StickerImportScan scan;
 	Core::StickerImportSuggestionGuard suggestionGuard;
 	mtpRequestId nameCheckRequestId = 0;
@@ -248,6 +247,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		rights->checkedChanges()
 			| rpl::on_next(
 				[=](bool checked) {
+					state->selection.setRightsConfirmed(checked);
 					if (checked && state->rightsError) {
 						state->rightsError = false;
 						rights->setAccessibleDescription(QString());
@@ -270,12 +270,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			}
 		};
 		const auto updateScan = [=] {
-			if (state->sourcePath.isEmpty() || state->scanPending) {
+			if (state->selection.path().isEmpty() || state->scanPending) {
 				return;
 			}
-			const auto path = state->sourcePath;
+			const auto path = state->selection.path();
 			const auto fromFolder
-				= state->sourceType == Core::StickerImportSource::Folder;
+				= state->selection.type() == Core::StickerImportSource::Folder;
 			const auto type = customEmoji->checked()
 								  ? Core::StickerImportType::Emoji
 								  : Core::StickerImportType::Stickers;
@@ -359,14 +359,16 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				},
 				shortName->lifetime());
 
-		const auto resetRights = [=] {
-			rights->setChecked(false);
-			if (state->rightsError) {
-				state->rightsError = false;
-				rights->setAccessibleDescription(QString());
-				error->setText(QString());
-			}
-		};
+		const auto selectSource
+			= [=](Core::StickerImportSource type, QString path) {
+				  state->selection.selectSource(type, std::move(path));
+				  rights->setChecked(false);
+				  if (state->rightsError) {
+					  state->rightsError = false;
+					  rights->setAccessibleDescription(QString());
+					  error->setText(QString());
+				  }
+			  };
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
 				box.get(),
@@ -375,13 +377,12 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					if (path.isEmpty()) {
 						return;
 					}
-					state->sourcePath = std::move(path);
-					state->sourceType = Core::StickerImportSource::Folder;
-					resetRights();
+					selectSource(Core::StickerImportSource::Folder,
+								 std::move(path));
 					source->setText(
 						tr::lng_teagram_sticker_import_source_folder(
 							tr::now, lt_name,
-							QFileInfo(state->sourcePath).fileName()));
+							QFileInfo(state->selection.path()).fileName()));
 					updateScan();
 				}));
 		};
@@ -395,12 +396,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					if (result.paths.isEmpty()) {
 						return;
 					}
-					state->sourcePath = result.paths.front();
-					state->sourceType = Core::StickerImportSource::Zip;
-					resetRights();
+					selectSource(Core::StickerImportSource::Zip,
+								 result.paths.front());
 					source->setText(tr::lng_teagram_sticker_import_source_zip(
 						tr::now, lt_name,
-						QFileInfo(state->sourcePath).fileName()));
+						QFileInfo(state->selection.path()).fileName()));
 					updateScan();
 				}));
 		});
@@ -439,7 +439,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 								  ? Data::StickersType::Emoji
 								  : Data::StickersType::Stickers;
 			const auto titleText = title->getLastText().trimmed();
-			const auto sourceType = state->sourceType;
+			const auto sourceType = state->selection.type();
 			state->importer = std::make_unique<Api::StickerSetImport>(
 				session, state->scan, titleText, name, type, sourceType);
 			state->importer->start(
@@ -471,8 +471,9 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			const auto titleText = title->getLastText().trimmed();
 			const auto name = shortName->getLastText().trimmed();
 			switch (Core::ValidateStickerImportStart(
-				state->scanPending, rights->checked(), titleText, name,
-				!state->sourcePath.isEmpty(), state->scan)) {
+				state->scanPending, state->selection.rightsConfirmed(),
+				titleText, name, !state->selection.path().isEmpty(),
+				state->scan)) {
 			case Core::StickerImportValidation::ScanPending:
 				return;
 			case Core::StickerImportValidation::RightsNotConfirmed:

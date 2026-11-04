@@ -71,6 +71,21 @@ struct StickerImportScan {
 	StickerImportProblem problem = StickerImportProblem::None;
 };
 
+class StickerImportSelection final {
+  public:
+	void selectSource(StickerImportSource type, QString path);
+	void setRightsConfirmed(bool confirmed);
+
+	[[nodiscard]] const QString &path() const;
+	[[nodiscard]] StickerImportSource type() const;
+	[[nodiscard]] bool rightsConfirmed() const;
+
+  private:
+	QString _path;
+	StickerImportSource _type = StickerImportSource::Folder;
+	bool _rightsConfirmed = false;
+};
+
 enum class StickerImportValidation {
 	Ready,
 	ScanPending,
