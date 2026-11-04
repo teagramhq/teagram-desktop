@@ -2794,6 +2794,93 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	return passed;
 }
 
+[[nodiscard]] bool
+RunCacheVersionMarkerRewriteRegression(Main::Domain &domain, UserId selfId,
+									   not_null<Main::Account *> fallback,
+									   bool mediaCache) {
+	const auto guarded = domain.add(MTP::Environment::Production);
+	auto accountCleanup = RegressionAccountCleanup(domain, guarded, fallback);
+	guarded->mtp().stopForServerEnrollment();
+	guarded->setSessionUserId(selfId);
+	const auto path = mediaCache ? guarded->local().cacheBigFilePath()
+								 : guarded->local().cachePath();
+	if (!guarded->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto &data = guarded->session().data();
+	const auto cacheIfAllowed = [&] {
+		return mediaCache ? data.cacheBigFileIfAllowed()
+						  : data.cacheIfAllowed();
+	};
+	if (!WaitForRegressionCondition([&] {
+			return data.cacheInitializationFinishedForTesting(mediaCache)
+				   && (cacheIfAllowed() != nullptr);
+		})) {
+		return false;
+	}
+	const auto cleared = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) {
+			data.clearCacheDatabase(mediaCache, false, std::move(done));
+		},
+		10000);
+	const auto database = cacheIfAllowed();
+	if (!CacheOperationSucceeded(cleared) || !database) {
+		return false;
+	}
+	database->sync();
+	const auto active = ActiveCacheVersionPath(path);
+	const auto markerPath = QDir(path).filePath("version");
+	auto marker = QFile(markerPath);
+	if (active.isEmpty() || !marker.open(QIODevice::ReadOnly)) {
+		return false;
+	}
+	const auto originalMarker = marker.readAll();
+	marker.close();
+	if (originalMarker.size() != qint64(sizeof(qint32))) {
+		return false;
+	}
+	const auto rewrittenVersion
+		= qint32(QFileInfo(active).fileName().toInt() + 1);
+	const auto rewrittenMarker
+		= QByteArray(reinterpret_cast<const char *>(&rewrittenVersion),
+					 int(sizeof(rewrittenVersion)));
+	if (rewrittenMarker == originalMarker) {
+		return false;
+	}
+	auto markerRewriteSucceeded = false;
+	data.setCacheClearPauseForTesting(mediaCache, [&] {
+		auto rewritten = QFile(markerPath);
+		markerRewriteSucceeded
+			= rewritten.open(QIODevice::WriteOnly | QIODevice::Truncate)
+			  && (rewritten.write(rewrittenMarker) == rewrittenMarker.size())
+			  && rewritten.flush();
+	});
+	const auto rejected = AwaitCacheCallback<Storage::Cache::Error>(
+		[&](auto done) {
+			data.clearCacheDatabase(mediaCache, false, std::move(done));
+		},
+		10000);
+	auto unchanged = QFile(markerPath);
+	const auto markerBytesUnchanged
+		= unchanged.open(QIODevice::ReadOnly)
+		  && (unchanged.readAll() == rewrittenMarker);
+	const auto clearRefused
+		= rejected && (rejected->type == Storage::Cache::Error::Type::IO);
+	const auto cacheRefused = cacheIfAllowed() == nullptr;
+	const auto passed = markerRewriteSucceeded && clearRefused && cacheRefused
+						&& markerBytesUnchanged;
+	if (!passed) {
+		std::fprintf(
+			stderr,
+			"Cache version marker rewrite regression failed: rewrite=%d "
+			"clear_refused=%d cache_refused=%d marker_unchanged=%d path=%s.\n",
+			markerRewriteSucceeded, clearRefused, cacheRefused,
+			markerBytesUnchanged, qPrintable(path));
+	}
+	return passed && accountCleanup.cleanup();
+}
+
 [[nodiscard]] bool RunPendingCacheClearSessionDestructionRegression(
 	Main::Domain &domain, UserId selfId, bool mediaCache) {
 	const auto fallback = not_null<Main::Account *>(&domain.active());
@@ -9881,6 +9968,8 @@ struct NativeLifecycleResults {
 			"post-open-media-cache",
 			"post-clear-cache",
 			"post-clear-media-cache",
+			"clear-marker-rewrite-cache",
+			"clear-marker-rewrite-media-cache",
 			"logout-before-cache-initialization",
 			"logout-before-media-cache-initialization",
 			"failed-init-cache-access",
@@ -10833,6 +10922,15 @@ void RunAuthenticatedCacheSymlinkCases(
 										   passed && accountCleanup.cleanup());
 		}
 		for (const auto mediaCache : {false, true}) {
+			const auto caseName = mediaCache
+									  ? "clear-marker-rewrite-media-cache"
+									  : "clear-marker-rewrite-cache";
+			nativeLifecycleResults->StartCase(caseName);
+			const auto passed = RunCacheVersionMarkerRewriteRegression(
+				domain, selfId, accountFallback, mediaCache);
+			nativeLifecycleResults->Report(caseName, passed);
+		}
+		for (const auto mediaCache : {false, true}) {
 			const auto caseName
 				= mediaCache ? "pending-media-cache-clear-session-destruction"
 							 : "pending-cache-clear-session-destruction";
@@ -10942,6 +11040,10 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-clear-media-cache",
 									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("clear-marker-rewrite-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("clear-marker-rewrite-media-cache",
+									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("logout-before-cache-initialization",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("logout-before-media-cache-initialization",
@@ -10971,6 +11073,10 @@ void RunAuthenticatedCacheSymlinkCases(
 		nativeLifecycleResults->Skip("post-clear-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("post-clear-media-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("clear-marker-rewrite-cache",
+									 "protected-path-integration-disabled");
+		nativeLifecycleResults->Skip("clear-marker-rewrite-media-cache",
 									 "protected-path-integration-disabled");
 		nativeLifecycleResults->Skip("logout-before-cache-initialization",
 									 "protected-path-integration-disabled");

@@ -1343,6 +1343,8 @@ for native_evidence in \
 	'native_lifecycle_case=cache-path-watchdog-regression result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=clear-marker-rewrite-cache result=PASS' \
+	'native_lifecycle_case=clear-marker-rewrite-media-cache result=PASS' \
 	'native_lifecycle_case=logout-before-cache-initialization result=PASS' \
 	'native_lifecycle_case=logout-before-media-cache-initialization result=PASS' \
 	'native_lifecycle_case=failed-init-cache-access result=PASS' \
