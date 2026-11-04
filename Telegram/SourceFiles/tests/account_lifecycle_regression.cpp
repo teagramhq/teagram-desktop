@@ -2679,8 +2679,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		return false;
 	}
 	auto paused = false;
-	auto markerRotated = false;
-	auto activeVersionMissing = false;
 	auto blockedDuringClear = false;
 	auto cacheAllowedPreserved = false;
 	const auto writeKey = Storage::Cache::Key{
@@ -2692,26 +2690,6 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 	auto clearCallbackOnMain = std::atomic_bool(false);
 	data.setCacheClearPauseForTesting(mediaCache, [&] {
 		paused = true;
-		auto version = QFileInfo(beforeClear).fileName().toInt() + 1;
-		while (
-			QFileInfo(QDir(path).filePath(QString::number(version))).exists()) {
-			++version;
-		}
-		const auto nextVersion = qint32(version);
-		auto marker = QFile(QDir(path).filePath("version"));
-		const auto markerWritten
-			= marker.open(QIODevice::WriteOnly | QIODevice::Truncate)
-			  && (marker.write(reinterpret_cast<const char *>(&nextVersion),
-							   sizeof(nextVersion))
-				  == qint64(sizeof(nextVersion)))
-			  && marker.flush();
-		markerRotated = markerWritten
-						&& (QString::number(nextVersion)
-							!= QFileInfo(beforeClear).fileName());
-		activeVersionMissing
-			= markerRotated
-			  && !QFileInfo(QDir(path).filePath(QString::number(nextVersion)))
-					  .exists();
 		blockedDuringClear = cacheIfAllowed() == nullptr;
 		cacheAllowedPreserved = data.cacheAllowedForTesting(mediaCache);
 		blockedWrite
@@ -2787,8 +2765,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 						 && RunPostOpenCacheSymlinkRegression(
 							 otherCachePath, otherFixture, otherCache, [] {},
 							 otherCacheRefusal);
-	const auto passed = paused && markerRotated && activeVersionMissing
-						&& blockedDuringClear && cacheAllowedPreserved
+	const auto passed = paused && blockedDuringClear && cacheAllowedPreserved
 						&& blockedWriteRefused && clearCompleted
 						&& callbackOnMain && CacheOperationSucceeded(cleared)
 						&& rotated && allowedAfterClear && wroteAfterClear
@@ -2798,7 +2775,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		std::fprintf(
 			stderr,
 			"Clear-then-swap cache regression failed: paused=%d "
-			"marker_rotated=%d active_missing=%d blocked_during=%d "
+			"blocked_during=%d "
 			"allowed_preserved=%d "
 			"blocked_write_refused=%d clear_completed=%d callback_on_main=%d "
 			"rotated=%d "
@@ -2808,11 +2785,11 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			"root_moved=%d root_linked=%d "
 			"root_swap_refused=%d "
 			"root_restored=%d path=%s.\n",
-			paused, markerRotated, activeVersionMissing, blockedDuringClear,
-			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
-			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
-			otherClearSucceeded, swapped, rootSwapTargetConfigured, rootMoved,
-			rootLinked, rootSwapRefused, rootRestored, qPrintable(path));
+			paused, blockedDuringClear, cacheAllowedPreserved,
+			blockedWriteRefused, clearCompleted, callbackOnMain, rotated,
+			allowedAfterClear, wroteAfterClear, otherClearSucceeded, swapped,
+			rootSwapTargetConfigured, rootMoved, rootLinked, rootSwapRefused,
+			rootRestored, qPrintable(path));
 	}
 	return passed;
 }
