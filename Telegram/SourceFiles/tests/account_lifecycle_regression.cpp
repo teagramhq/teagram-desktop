@@ -10838,8 +10838,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				return mediaCache ? data.cacheBigFileIfAllowed()
 								  : data.cacheIfAllowed();
 			};
-			const auto cacheReady = WaitForRegressionCondition(
-				[&] { return cacheIfAllowed() != nullptr; });
+			const auto cacheReady = WaitForRegressionCondition([&] {
+				return data.cacheInitializationFinishedForTesting(mediaCache)
+					   && (cacheIfAllowed() != nullptr);
+			});
 			const auto passed = cacheReady
 								&& RunClearThenCacheSymlinkRegression(
 									guarded, mediaCache, cachePath,
