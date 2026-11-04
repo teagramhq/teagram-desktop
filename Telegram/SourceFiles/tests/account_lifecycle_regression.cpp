@@ -2753,8 +2753,8 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 		  && CachePayloadMatches(cache(), writeKey, writePayload);
 	const auto rootSwapTarget = fixture;
 	const auto rootSwapSaved = path + ".clear-root-swap-original";
-	const auto rootSwapTargetConfigured = !rootSwapTarget.isEmpty()
-		&& !QFileInfo::exists(rootSwapSaved);
+	const auto rootSwapTargetConfigured
+		= !rootSwapTarget.isEmpty() && !QFileInfo::exists(rootSwapSaved);
 	auto rootMoved = false;
 	auto rootLinked = false;
 	if (rootSwapTargetConfigured) {
@@ -2787,13 +2787,13 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 						 && RunPostOpenCacheSymlinkRegression(
 							 otherCachePath, otherFixture, otherCache, [] {},
 							 otherCacheRefusal);
-	const auto passed
-		= paused && markerRotated && activeVersionMissing && blockedDuringClear
-		  && cacheAllowedPreserved && blockedWriteRefused && clearCompleted
-		  && callbackOnMain && CacheOperationSucceeded(cleared) && rotated
-		  && allowedAfterClear && wroteAfterClear && swapped
-		  && rootSwapTargetConfigured && rootMoved && rootLinked
-		  && rootSwapRefused && rootRestored;
+	const auto passed = paused && markerRotated && activeVersionMissing
+						&& blockedDuringClear && cacheAllowedPreserved
+						&& blockedWriteRefused && clearCompleted
+						&& callbackOnMain && CacheOperationSucceeded(cleared)
+						&& rotated && allowedAfterClear && wroteAfterClear
+						&& swapped && rootSwapTargetConfigured && rootMoved
+						&& rootLinked && rootSwapRefused && rootRestored;
 	if (!passed) {
 		std::fprintf(
 			stderr,
@@ -2812,8 +2812,7 @@ RunPostOpenCacheSymlinkRegression(const QString &path, const QString &fixture,
 			cacheAllowedPreserved, blockedWriteRefused, clearCompleted,
 			callbackOnMain, rotated, allowedAfterClear, wroteAfterClear,
 			otherClearSucceeded, swapped, rootSwapTargetConfigured, rootMoved,
-			rootLinked, rootSwapRefused, rootRestored,
-			qPrintable(path));
+			rootLinked, rootSwapRefused, rootRestored, qPrintable(path));
 	}
 	return passed;
 }
