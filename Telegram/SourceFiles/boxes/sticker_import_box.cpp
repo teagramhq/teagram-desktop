@@ -38,6 +38,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
+#include <optional>
+
 namespace {
 
 const auto kImportModeKey = u"sticker_import_mode"_q;
@@ -56,6 +58,8 @@ struct ImportFormState final : base::has_weak_ptr {
 	mtpRequestId preflightRequestId = 0;
 	std::unique_ptr<base::Timer> nameCheckTimer;
 	std::unique_ptr<Api::StickerSetImport> importer;
+	rpl::lifetime rightsErrorLifetime;
+	Fn<void()> showRightsError;
 	bool scanPending = false;
 	bool rightsError = false;
 	QPointer<Ui::RoundButton> createButton;
@@ -237,9 +241,21 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
 			box, tr::lng_teagram_sticker_import_choose_zip(),
 			st::settingsButton, {&st::menuIconStickers}));
-		const auto rights = box->addRow(object_ptr<Ui::Checkbox>(
-			box, tr::lng_teagram_sticker_import_rights(tr::now), false,
-			st::settingsCheckbox));
+		const auto rights
+			= box->addRow(object_ptr<Ui::Checkbox>(
+							  box, tr::lng_teagram_sticker_import_rights(),
+							  false, st::defaultBoxCheckbox),
+						  {
+							  st::boxRowPadding.left(),
+							  st::boxRowPadding.left(),
+							  st::boxRowPadding.right(),
+							  st::defaultBoxCheckbox.margin.bottom(),
+						  });
+		rights->setAllowTextLines(5);
+		const auto check
+			= static_cast<Ui::CheckView *>(rights->checkView().get());
+		state->showRightsError = Ui::CheckView::PrepareNonToggledError(
+			check, state->rightsErrorLifetime);
 		const auto error
 			= box->addRow(object_ptr<Ui::FlatLabel>(box, st::boxLabel));
 		const auto rightsErrorText
@@ -252,9 +268,23 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 						state->rightsError = false;
 						rights->setAccessibleDescription(QString());
 						error->setText(QString());
+						error->setTextColorOverride(std::nullopt);
 					}
 				},
 				rights->lifetime());
+		const auto clearRightsError = [=] {
+			if (!state->rightsError) {
+				return;
+			}
+			state->rightsError = false;
+			rights->setAccessibleDescription(QString());
+			error->setText(QString());
+			error->setTextColorOverride(std::nullopt);
+			state->rightsErrorLifetime = rpl::lifetime();
+			check->setUntoggledOverride(std::nullopt);
+			state->showRightsError = Ui::CheckView::PrepareNonToggledError(
+				check, state->rightsErrorLifetime);
+		};
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
 			shortName->setDisabled(pending);
@@ -362,12 +392,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		const auto selectSource
 			= [=](Core::StickerImportSource type, QString path) {
 				  state->selection.selectSource(type, std::move(path));
+				  clearRightsError();
 				  rights->setChecked(false);
-				  if (state->rightsError) {
-					  state->rightsError = false;
-					  rights->setAccessibleDescription(QString());
-					  error->setText(QString());
-				  }
 			  };
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
@@ -466,6 +492,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		state
 			->createButton = box->addButton(tr::lng_teagram_sticker_import_title(), [=] {
 			error->setText(QString());
+			error->setTextColorOverride(std::nullopt);
 			state->rightsError = false;
 			rights->setAccessibleDescription(QString());
 			const auto titleText = title->getLastText().trimmed();
@@ -478,6 +505,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				return;
 			case Core::StickerImportValidation::RightsNotConfirmed:
 				state->rightsError = true;
+				state->showRightsError();
+				error->setTextColorOverride(st::boxTextFgError->c);
 				error->setText(rightsErrorText);
 				rights->setAccessibleDescription(rightsErrorText);
 				return;
