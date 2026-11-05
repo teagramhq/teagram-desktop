@@ -75,15 +75,15 @@ struct StickerImportScan {
 
 class StickerImportSelection final {
   public:
-	void selectSource(StickerImportSource type, QString path);
+	void selectSource(StickerImportSource type, QString location);
 	void setRightsConfirmed(bool confirmed);
 
-	[[nodiscard]] const QString &path() const;
+	[[nodiscard]] const QString &location() const;
 	[[nodiscard]] StickerImportSource type() const;
 	[[nodiscard]] bool rightsConfirmed() const;
 
   private:
-	QString _path;
+	QString _location;
 	StickerImportSource _type = StickerImportSource::Folder;
 	bool _rightsConfirmed = false;
 };

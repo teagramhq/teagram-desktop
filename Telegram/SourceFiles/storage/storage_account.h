@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers_set.h"
 #include "data/data_drafts.h"
 #include "core/file_location.h"
+#include "core/telegram_sticker_import.h"
 #include "webview/webview_common.h"
 
 #include <QtCore/QStringList>
@@ -147,9 +148,10 @@ public:
 		uint64 userId) const;
 
 	void writeSessionSettings();
-	// Bot API credentials are kept in the account's encrypted preferences.
-	[[nodiscard]] QString telegramStickerBotToken() const;
-	[[nodiscard]] bool writeTelegramStickerBotToken(const QString &token);
+	[[nodiscard]] std::optional<Core::TelegramBotToken>
+	telegramStickerBotToken() const;
+	[[nodiscard]] bool
+	writeTelegramStickerBotToken(const Core::TelegramBotToken &token);
 	[[nodiscard]] bool clearTelegramStickerBotToken();
 	// The durable authorization boundary used by post-auth and clean teardown.
 	// Both the pin marker/config and the current authorization snapshot are

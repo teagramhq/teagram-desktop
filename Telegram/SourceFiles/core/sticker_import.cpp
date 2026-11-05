@@ -596,8 +596,8 @@ bool IsValidStickerSetTitle(const QString &title) {
 }
 
 void StickerImportSelection::selectSource(StickerImportSource type,
-										  QString path) {
-	_path = std::move(path);
+										  QString location) {
+	_location = std::move(location);
 	_type = type;
 	_rightsConfirmed = false;
 }
@@ -606,7 +606,7 @@ void StickerImportSelection::setRightsConfirmed(bool confirmed) {
 	_rightsConfirmed = confirmed;
 }
 
-const QString &StickerImportSelection::path() const { return _path; }
+const QString &StickerImportSelection::location() const { return _location; }
 
 StickerImportSource StickerImportSelection::type() const { return _type; }
 

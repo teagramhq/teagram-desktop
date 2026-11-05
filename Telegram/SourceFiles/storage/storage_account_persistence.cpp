@@ -1144,20 +1144,18 @@ std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) const {
 	return (i != end(_prefs)) ? i->second : std::optional<QByteArray>();
 }
 
-QString Account::telegramStickerBotToken() const {
+std::optional<Core::TelegramBotToken> Account::telegramStickerBotToken() const {
 	if (const auto value = readPrefGeneric(kTelegramStickerBotTokenPref)) {
-		return QString::fromUtf8(*value);
+		return Core::TelegramBotToken::Create(QString::fromUtf8(*value));
 	}
-	return QString();
+	return std::nullopt;
 }
 
-bool Account::writeTelegramStickerBotToken(const QString &token) {
+bool Account::writeTelegramStickerBotToken(
+	const Core::TelegramBotToken &token) {
 	Expects(_localKey != nullptr);
-	if (token.isEmpty()) {
-		return clearTelegramStickerBotToken();
-	}
 	const auto previous = readPrefGeneric(kTelegramStickerBotTokenPref);
-	writePrefGeneric(kTelegramStickerBotTokenPref, token.toUtf8());
+	writePrefGeneric(kTelegramStickerBotTokenPref, token._value.toUtf8());
 	if (writePrefs(true)) {
 		_telegramStickerBotTokenClearPending = false;
 		return true;

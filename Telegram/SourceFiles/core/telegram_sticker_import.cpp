@@ -10,9 +10,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/basic_types.h"
 
 #include <QtCore/QRegularExpression>
+#include <openssl/crypto.h>
+
+#include <utility>
 
 namespace Core {
 namespace {
+
+[[nodiscard]] bool IsValidTelegramStickerBotToken(const QString &token);
+[[nodiscard]] QString RedactTelegramStickerBotToken(QString text,
+													const QString &token);
+[[nodiscard]] std::optional<QUrl>
+TelegramStickerBotApiUrl(const QString &token, const QString &method);
+[[nodiscard]] std::optional<QUrl>
+TelegramStickerBotFileUrl(const QString &token, const QString &filePath);
 
 [[nodiscard]] bool IsValidPackName(const QString &name) {
 	static const auto expression
@@ -21,6 +32,54 @@ namespace {
 }
 
 } // namespace
+
+TelegramBotToken::TelegramBotToken(QString value) : _value(std::move(value)) {
+	_value.detach();
+}
+
+TelegramBotToken::TelegramBotToken(TelegramBotToken &&other) noexcept
+	: _value(std::move(other._value)) {}
+
+TelegramBotToken &
+TelegramBotToken::operator=(TelegramBotToken &&other) noexcept {
+	if (this != &other) {
+		wipe();
+		_value = std::move(other._value);
+	}
+	return *this;
+}
+
+TelegramBotToken::~TelegramBotToken() { wipe(); }
+
+void TelegramBotToken::wipe() {
+	if (!_value.isEmpty()) {
+		OPENSSL_cleanse(_value.data(), size_t(_value.size()) * sizeof(QChar));
+		_value.clear();
+	}
+}
+
+std::optional<TelegramBotToken> TelegramBotToken::Create(QString value) {
+	if (!IsValidTelegramStickerBotToken(value)) {
+		return std::nullopt;
+	}
+	return TelegramBotToken(std::move(value));
+}
+
+TelegramBotToken TelegramBotToken::clone() const {
+	return TelegramBotToken(_value);
+}
+
+QString TelegramBotToken::redact(QString text) const {
+	return RedactTelegramStickerBotToken(std::move(text), _value);
+}
+
+std::optional<QUrl> TelegramBotToken::apiUrl(const QString &method) const {
+	return TelegramStickerBotApiUrl(_value, method);
+}
+
+std::optional<QUrl> TelegramBotToken::fileUrl(const QString &path) const {
+	return TelegramStickerBotFileUrl(_value, path);
+}
 
 std::optional<TelegramStickerPackLink>
 ParseTelegramStickerPackLink(const QString &link) {
@@ -50,8 +109,11 @@ ParseTelegramStickerPackLink(const QString &link) {
 	return TelegramStickerPackLink{
 		.type = type,
 		.name = name,
-		.canonicalUrl = TelegramStickerPackCanonicalUrl(type, name),
 	};
+}
+
+QString TelegramStickerPackLink::canonicalUrl() const {
+	return TelegramStickerPackCanonicalUrl(type, name);
 }
 
 QString TelegramStickerPackCanonicalUrl(StickerImportType type,
@@ -64,11 +126,13 @@ QString TelegramStickerPackCanonicalUrl(StickerImportType type,
 	return u"https://t.me/%1/%2"_q.arg(route, name);
 }
 
+namespace {
 bool IsValidTelegramStickerBotToken(const QString &token) {
 	static const auto expression
 		= QRegularExpression(QStringLiteral("\\A\\d+:[A-Za-z0-9_-]{30,}\\z"));
 	return expression.match(token).hasMatch();
 }
+} // namespace
 
 bool IsValidTelegramStickerFilePath(const QString &path) {
 	if (path.isEmpty() || path.size() > 1024 || path.contains(u".."_q)) {
@@ -79,6 +143,7 @@ bool IsValidTelegramStickerFilePath(const QString &path) {
 	return expression.match(path).hasMatch();
 }
 
+namespace {
 QString RedactTelegramStickerBotToken(QString text, const QString &token) {
 	if (!token.isEmpty()) {
 		text.replace(token, u"[redacted]"_q, Qt::CaseSensitive);
@@ -127,4 +192,5 @@ std::optional<QUrl> TelegramStickerBotFileUrl(const QString &token,
 	return result;
 }
 
+} // namespace
 } // namespace Core

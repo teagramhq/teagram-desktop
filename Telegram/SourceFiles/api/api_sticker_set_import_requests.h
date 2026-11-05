@@ -42,6 +42,8 @@ class StickerSetImportFlow final : public base::has_weak_ptr {
 	void cancel();
 
   private:
+	enum class State { Idle, Running, Finished, Cancelled };
+	void transition(State state);
 	void uploadNext();
 	void uploadReady(MTPInputFile file);
 	void uploadMediaReady(MTPMessageMedia result);
@@ -62,8 +64,7 @@ class StickerSetImportFlow final : public base::has_weak_ptr {
 	Fn<void(MTPmessages_StickerSet)> _done;
 	Fn<void(QString)> _fail;
 	Fn<void(int)> _progress;
-	bool _cancelled = false;
-	bool _finished = false;
+	State _state = State::Idle;
 };
 
 [[nodiscard]] QString StickerImportFileName(const Core::StickerImportFile &file,

@@ -33,6 +33,7 @@ enum class TelegramStickerPackDownloadError {
 	UnsafeFilePath,
 	TooManyFiles,
 	FileTooLarge,
+	TotalTooLarge,
 	UnsupportedFormat,
 };
 
@@ -44,7 +45,7 @@ class TelegramStickerPackDownloader final : public QObject,
 	using Progress = Fn<void(int, int)>;
 
 	TelegramStickerPackDownloader(Core::TelegramStickerPackLink link,
-								  QString token,
+								  Core::TelegramBotToken token,
 								  QNetworkAccessManager *network = nullptr);
 	~TelegramStickerPackDownloader();
 
@@ -52,6 +53,10 @@ class TelegramStickerPackDownloader final : public QObject,
 	void cancel();
 
   private:
+#ifdef TDESKTOP_UNIT_TESTS
+	friend struct TelegramStickerPackDownloaderTestPeer;
+#endif
+	enum class State { Idle, Running, Finished, Cancelled };
 	struct Sticker {
 		QString fileId;
 		QString customEmojiId;
@@ -69,10 +74,12 @@ class TelegramStickerPackDownloader final : public QObject,
 	void handleCustomEmojiStickers(QJsonObject result);
 	void downloadNextSticker();
 	void downloadStickerFile(QJsonObject file);
-	void fail(TelegramStickerPackDownloadError error, QString detail = {});
+	void transition(State state);
+	void fail(TelegramStickerPackDownloadError error,
+			  QString detail = QString(), QString diagnostic = QString());
 
 	Core::TelegramStickerPackLink _link;
-	QString _token;
+	std::optional<Core::TelegramBotToken> _token;
 	QNetworkAccessManager *_network = nullptr;
 	QPointer<QNetworkReply> _reply;
 	Done _done;
@@ -83,9 +90,7 @@ class TelegramStickerPackDownloader final : public QObject,
 	std::vector<Core::StickerImportFile> _files;
 	int _index = 0;
 	quint64 _totalDownloaded = 0;
-	bool _started = false;
-	bool _finished = false;
-	bool _cancelled = false;
+	State _state = State::Idle;
 };
 
 } // namespace Api

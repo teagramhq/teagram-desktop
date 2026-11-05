@@ -29,29 +29,35 @@ StickerSetImportFlow::StickerSetImportFlow(
 void StickerSetImportFlow::start(Fn<void(MTPmessages_StickerSet)> done,
 								 Fn<void(QString)> failCallback,
 								 Fn<void(int)> progress) {
-	Expects(!_done && !_fail && !_cancelled && !_finished);
-	if (_scan.files.empty()) {
-		if (failCallback) {
-			failCallback(u"Choose a pack with supported sticker files."_q);
-		}
-		return;
-	}
+	Expects(_state == State::Idle);
+	_state = State::Running;
 	_done = std::move(done);
 	_fail = std::move(failCallback);
 	_progress = std::move(progress);
+	if (_scan.files.empty()) {
+		fail(u"Choose a pack with supported sticker files."_q);
+		return;
+	}
 	_items.reserve(_scan.files.size());
 	uploadNext();
 }
 
 void StickerSetImportFlow::cancel() {
-	_cancelled = true;
+	if (_state == State::Finished || _state == State::Cancelled) {
+		return;
+	}
+	transition(State::Cancelled);
+}
+
+void StickerSetImportFlow::transition(State state) {
+	_state = state;
 	_done = nullptr;
 	_fail = nullptr;
 	_progress = nullptr;
 }
 
 void StickerSetImportFlow::uploadNext() {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	} else if (_index >= int(_scan.files.size())) {
 		createSet();
@@ -62,10 +68,11 @@ void StickerSetImportFlow::uploadNext() {
 	if (_progress) {
 		reportProgress = [weak](int percent) {
 			if (const auto self = weak.get();
-				self && self->_progress
+				self && self->_state == State::Running && self->_progress
 				&& percent != self->_lastReportedPercent) {
 				self->_lastReportedPercent = percent;
-				self->_progress(percent);
+				const auto progress = self->_progress;
+				progress(percent);
 			}
 		};
 	}
@@ -85,7 +92,7 @@ void StickerSetImportFlow::uploadNext() {
 }
 
 void StickerSetImportFlow::uploadReady(MTPInputFile file) {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	}
 	auto request
@@ -106,7 +113,7 @@ void StickerSetImportFlow::uploadReady(MTPInputFile file) {
 }
 
 void StickerSetImportFlow::uploadMediaReady(MTPMessageMedia result) {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	}
 	const auto item = StickerImportSetItemFromUploadMedia(
@@ -117,14 +124,17 @@ void StickerSetImportFlow::uploadMediaReady(MTPMessageMedia result) {
 	}
 	_items.push_back(*item);
 	++_index;
-	if (_progress) {
+	const auto weak = base::make_weak(this);
+	if (const auto progress = _progress) {
 		const auto percent = (_index * 100) / int(_scan.files.size());
 		if (percent != _lastReportedPercent) {
 			_lastReportedPercent = percent;
-			_progress(percent);
+			progress(percent);
 		}
 	}
-	uploadNext();
+	if (const auto self = weak.get()) {
+		self->uploadNext();
+	}
 }
 
 void StickerSetImportFlow::createSet() {
@@ -152,26 +162,22 @@ void StickerSetImportFlow::createSet() {
 }
 
 void StickerSetImportFlow::createSetReady(MTPmessages_StickerSet result) {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	}
-	_finished = true;
-	_fail = nullptr;
-	_progress = nullptr;
 	const auto done = std::move(_done);
+	transition(State::Finished);
 	if (done) {
 		done(std::move(result));
 	}
 }
 
 void StickerSetImportFlow::fail(QString error) {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	}
-	_finished = true;
-	_done = nullptr;
-	_progress = nullptr;
 	const auto failCallback = std::move(_fail);
+	transition(State::Finished);
 	if (failCallback) {
 		failCallback(std::move(error));
 	}

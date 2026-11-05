@@ -59,10 +59,38 @@ FormatForPath(const QString &path) {
 	return value.isString() ? value.toString() : QString();
 }
 
+[[nodiscard]] QString ErrorName(TelegramStickerPackDownloadError error) {
+	switch (error) {
+	case TelegramStickerPackDownloadError::InvalidToken:
+		return u"InvalidToken"_q;
+	case TelegramStickerPackDownloadError::InvalidLink:
+		return u"InvalidLink"_q;
+	case TelegramStickerPackDownloadError::PackNotFound:
+		return u"PackNotFound"_q;
+	case TelegramStickerPackDownloadError::BotApi:
+		return u"BotApi"_q;
+	case TelegramStickerPackDownloadError::Network:
+		return u"Network"_q;
+	case TelegramStickerPackDownloadError::InvalidResponse:
+		return u"InvalidResponse"_q;
+	case TelegramStickerPackDownloadError::UnsafeFilePath:
+		return u"UnsafeFilePath"_q;
+	case TelegramStickerPackDownloadError::TooManyFiles:
+		return u"TooManyFiles"_q;
+	case TelegramStickerPackDownloadError::FileTooLarge:
+		return u"FileTooLarge"_q;
+	case TelegramStickerPackDownloadError::TotalTooLarge:
+		return u"TotalTooLarge"_q;
+	case TelegramStickerPackDownloadError::UnsupportedFormat:
+		return u"UnsupportedFormat"_q;
+	}
+	Unexpected("Telegram sticker download error.");
+}
+
 } // namespace
 
 TelegramStickerPackDownloader::TelegramStickerPackDownloader(
-	Core::TelegramStickerPackLink link, QString token,
+	Core::TelegramStickerPackLink link, Core::TelegramBotToken token,
 	QNetworkAccessManager *network)
 	: _link(std::move(link)), _token(std::move(token)),
 	  _network(network ? network : new QNetworkAccessManager(this)) {}
@@ -71,16 +99,13 @@ TelegramStickerPackDownloader::~TelegramStickerPackDownloader() { cancel(); }
 
 void TelegramStickerPackDownloader::start(Done done, Fail failCallback,
 										  Progress progress) {
-	Expects(!_started);
-	_started = true;
+	Expects(_state == State::Idle);
+	_state = State::Running;
 	_done = std::move(done);
 	_fail = std::move(failCallback);
 	_progress = std::move(progress);
-	if (!Core::IsValidTelegramStickerBotToken(_token)) {
-		fail(TelegramStickerPackDownloadError::InvalidToken);
-		return;
-	}
-	const auto parsed = Core::ParseTelegramStickerPackLink(_link.canonicalUrl);
+	const auto parsed
+		= Core::ParseTelegramStickerPackLink(_link.canonicalUrl());
 	if (!parsed || parsed->name != _link.name || parsed->type != _link.type) {
 		fail(TelegramStickerPackDownloadError::InvalidLink);
 		return;
@@ -91,19 +116,14 @@ void TelegramStickerPackDownloader::start(Done done, Fail failCallback,
 }
 
 void TelegramStickerPackDownloader::cancel() {
-	if (_finished || _cancelled) {
+	if (_state == State::Finished || _state == State::Cancelled) {
 		return;
 	}
-	_cancelled = true;
-	_finished = true;
-	_done = nullptr;
-	_fail = nullptr;
-	_progress = nullptr;
+	transition(State::Cancelled);
 	_files.clear();
 	_stickers.clear();
 	_title.clear();
-	_token.fill(QChar(0));
-	_token.clear();
+	_token.reset();
 	if (const auto reply = _reply.data()) {
 		_reply = nullptr;
 		reply->abort();
@@ -111,9 +131,16 @@ void TelegramStickerPackDownloader::cancel() {
 	}
 }
 
+void TelegramStickerPackDownloader::transition(State state) {
+	_state = state;
+	_done = nullptr;
+	_fail = nullptr;
+	_progress = nullptr;
+}
+
 void TelegramStickerPackDownloader::requestJson(QString method, Query query,
 												Fn<void(QJsonObject)> done) {
-	const auto maybeUrl = Core::TelegramStickerBotApiUrl(_token, method);
+	const auto maybeUrl = _token->apiUrl(method);
 	if (!maybeUrl) {
 		fail(TelegramStickerPackDownloadError::InvalidToken);
 		return;
@@ -136,9 +163,10 @@ void TelegramStickerPackDownloader::requestJson(QString method, Query query,
 void TelegramStickerPackDownloader::requestBytes(
 	QUrl url, quint64 maximumBytes, TelegramStickerPackDownloadError tooLarge,
 	bool jsonResponse, Fn<void(QByteArray)> done) {
-	if (_cancelled || _finished || _reply) {
+	if (_state != State::Running) {
 		return;
 	}
+	Expects(!_reply);
 	if (url.scheme() != u"https"_q || url.host() != u"api.telegram.org"_q
 		|| url.port(-1) != -1 || !url.userName().isEmpty()
 		|| !url.password().isEmpty()) {
@@ -163,10 +191,11 @@ void TelegramStickerPackDownloader::requestBytes(
 	auto reply = _network->get(request);
 	_reply = reply;
 	const auto readAvailable = [=, this] {
-		if (_cancelled || _reply != reply) {
+		if (_state != State::Running || _reply != reply) {
 			return false;
 		}
-		const auto chunk = reply->readAll();
+		const auto chunk
+			= reply->read(qint64(maximumBytes - quint64(response->size()) + 1));
 		if (quint64(response->size()) + quint64(chunk.size()) > maximumBytes) {
 			fail(tooLarge);
 			return false;
@@ -176,7 +205,7 @@ void TelegramStickerPackDownloader::requestBytes(
 	};
 	connect(reply, &QIODevice::readyRead, this, [=] { readAvailable(); });
 	connect(reply, &QNetworkReply::metaDataChanged, this, [=] {
-		if (_cancelled || _reply != reply) {
+		if (_state != State::Running || _reply != reply) {
 			return;
 		}
 		const auto length = reply->header(QNetworkRequest::ContentLengthHeader);
@@ -189,7 +218,7 @@ void TelegramStickerPackDownloader::requestBytes(
 		}
 	});
 	connect(reply, &QNetworkReply::finished, this, [=, this] {
-		if (_cancelled || _reply != reply) {
+		if (_state != State::Running || _reply != reply) {
 			reply->deleteLater();
 			return;
 		}
@@ -210,16 +239,20 @@ void TelegramStickerPackDownloader::requestBytes(
 			  && responseUrl.port(-1) == -1 && responseUrl.userName().isEmpty()
 			  && responseUrl.password().isEmpty() && responseUrl == url;
 		const auto networkError = reply->error();
+		const auto errorString = reply->errorString();
 		reply->deleteLater();
 		if (!safeOrigin || redirected || (status >= 300 && status < 400)) {
-			fail(TelegramStickerPackDownloadError::Network);
+			fail(TelegramStickerPackDownloadError::Network,
+				 u"HTTP %1, host %2"_q.arg(status).arg(responseUrl.host()),
+				 errorString);
 			return;
 		} else if (jsonResponse && status >= 400) {
 			done(std::move(*response));
 			return;
 		} else if (networkError != QNetworkReply::NoError || status < 200
 				   || status >= 300) {
-			fail(TelegramStickerPackDownloadError::Network);
+			fail(TelegramStickerPackDownloadError::Network, QString(),
+				 u"HTTP %1: %2"_q.arg(status).arg(errorString));
 			return;
 		}
 		done(std::move(*response));
@@ -247,7 +280,8 @@ void TelegramStickerPackDownloader::handleApiResponse(
 			fail(TelegramStickerPackDownloadError::PackNotFound);
 		} else {
 			fail(TelegramStickerPackDownloadError::BotApi,
-				 Core::RedactTelegramStickerBotToken(description, _token));
+				 description.isEmpty() ? QString::number(code)
+									   : _token->redact(description));
 		}
 		return;
 	}
@@ -279,7 +313,7 @@ void TelegramStickerPackDownloader::handleStickerSet(QJsonObject set) {
 		fail(TelegramStickerPackDownloadError::TooManyFiles);
 		return;
 	}
-	_title = Core::RedactTelegramStickerBotToken(title, _token);
+	_title = _token->redact(title);
 	_stickers.reserve(size_t(stickers.size()));
 	for (const auto &value : stickers) {
 		if (!value.isObject()) {
@@ -290,7 +324,7 @@ void TelegramStickerPackDownloader::handleStickerSet(QJsonObject set) {
 		const auto fileId = JsonString(object, u"file_id"_q);
 		const auto emoji = JsonString(object, u"emoji"_q);
 		const auto customEmojiId = JsonString(object, u"custom_emoji_id"_q);
-		if (fileId.isEmpty()
+		if (fileId.isEmpty() || emoji.isEmpty()
 			|| (_link.type == Core::StickerImportType::Emoji
 				&& customEmojiId.isEmpty())) {
 			fail(TelegramStickerPackDownloadError::InvalidResponse);
@@ -299,7 +333,7 @@ void TelegramStickerPackDownloader::handleStickerSet(QJsonObject set) {
 		_stickers.push_back({
 			.fileId = fileId,
 			.customEmojiId = customEmojiId,
-			.emoji = Core::RedactTelegramStickerBotToken(emoji, _token),
+			.emoji = _token->redact(emoji),
 		});
 	}
 	if (_link.type == Core::StickerImportType::Emoji) {
@@ -354,21 +388,20 @@ void TelegramStickerPackDownloader::handleCustomEmojiStickers(
 		sticker.fileId = fileId;
 		const auto emoji = JsonString(*i, u"emoji"_q);
 		if (!emoji.isEmpty()) {
-			sticker.emoji = Core::RedactTelegramStickerBotToken(emoji, _token);
+			sticker.emoji = _token->redact(emoji);
 		}
 	}
 	downloadNextSticker();
 }
 
 void TelegramStickerPackDownloader::downloadNextSticker() {
-	if (_cancelled || _finished) {
+	if (_state != State::Running) {
 		return;
 	}
 	if (_index >= int(_stickers.size())) {
 		const auto weak = base::make_weak(this);
 		const auto type = _link.type;
-		_token.fill(QChar(0));
-		_token.clear();
+		_token.reset();
 		crl::async([weak, files = std::move(_files), type]() mutable {
 			auto scan = std::make_shared<Core::StickerImportScan>(
 				Core::ScanStickerImportFiles(std::move(files), type));
@@ -376,15 +409,12 @@ void TelegramStickerPackDownloader::downloadNextSticker() {
 				QCoreApplication::instance(),
 				[weak, scan] {
 					const auto self = weak.get();
-					if (!self || self->_cancelled || self->_finished) {
+					if (!self || self->_state != State::Running) {
 						return;
 					}
-					self->_finished = true;
-					self->_token.fill(QChar(0));
-					self->_token.clear();
-					self->_fail = nullptr;
-					self->_progress = nullptr;
+					self->_token.reset();
 					const auto done = std::move(self->_done);
+					self->transition(State::Finished);
 					if (done) {
 						done(std::move(self->_title), std::move(*scan));
 					}
@@ -393,8 +423,12 @@ void TelegramStickerPackDownloader::downloadNextSticker() {
 		});
 		return;
 	}
-	if (_progress) {
-		_progress(_index, int(_stickers.size()));
+	const auto weak = base::make_weak(this);
+	if (const auto progress = _progress) {
+		progress(_index, int(_stickers.size()));
+		if (!weak.get() || weak.get()->_state != State::Running) {
+			return;
+		}
 	}
 	const auto fileId = _stickers[size_t(_index)].fileId;
 	requestJson(u"getFile"_q, {{u"file_id"_q, fileId}}, [=](QJsonObject file) {
@@ -427,19 +461,21 @@ void TelegramStickerPackDownloader::downloadStickerFile(QJsonObject file) {
 		}
 	}
 	if (_totalDownloaded >= kMaximumDownloadedBytes) {
-		fail(TelegramStickerPackDownloadError::FileTooLarge);
+		fail(TelegramStickerPackDownloadError::TotalTooLarge);
 		return;
 	}
 	const auto remaining = kMaximumDownloadedBytes - _totalDownloaded;
 	const auto maximumBytes = std::min(maximumFileBytes, remaining);
-	const auto url = Core::TelegramStickerBotFileUrl(_token, path);
+	const auto url = _token->fileUrl(path);
 	if (!url) {
 		fail(TelegramStickerPackDownloadError::UnsafeFilePath);
 		return;
 	}
 	requestBytes(*url, maximumBytes,
-				 TelegramStickerPackDownloadError::FileTooLarge, false,
-				 [=](QByteArray bytes) {
+				 (remaining < maximumFileBytes)
+					 ? TelegramStickerPackDownloadError::TotalTooLarge
+					 : TelegramStickerPackDownloadError::FileTooLarge,
+				 false, [=](QByteArray bytes) {
 					 _totalDownloaded += quint64(bytes.size());
 					 const auto suffix
 						 = Core::StickerImportFormatDetails(*format).extension;
@@ -451,39 +487,46 @@ void TelegramStickerPackDownloader::downloadStickerFile(QJsonObject file) {
 						 .name = name,
 						 .bytes = std::move(bytes),
 						 .format = *format,
-						 .emoji = emoji.isEmpty() ? u"⭐"_q : emoji,
+						 .emoji = emoji,
 					 });
 					 ++_index;
-					 if (_progress) {
-						 _progress(_index, int(_stickers.size()));
+					 const auto weak = base::make_weak(this);
+					 if (const auto progress = _progress) {
+						 progress(_index, int(_stickers.size()));
 					 }
-					 downloadNextSticker();
+					 if (const auto self = weak.get()) {
+						 self->downloadNextSticker();
+					 }
 				 });
 }
 
 void TelegramStickerPackDownloader::fail(TelegramStickerPackDownloadError error,
-										 QString detail) {
-	if (_finished || _cancelled) {
+										 QString detail, QString diagnostic) {
+	if (_state != State::Running) {
 		return;
 	}
-	_finished = true;
-	_done = nullptr;
-	_progress = nullptr;
+	const auto failCallback = std::move(_fail);
+	transition(State::Finished);
 	_files.clear();
 	_stickers.clear();
 	_title.clear();
-	detail = Core::RedactTelegramStickerBotToken(std::move(detail), _token);
-	LOG(("Telegram sticker pack download failed (%1): %2")
-			.arg(int(error))
-			.arg(detail));
-	_token.fill(QChar(0));
-	_token.clear();
+	if (_token) {
+		detail = _token->redact(std::move(detail));
+		diagnostic = _token->redact(std::move(diagnostic));
+	}
+	static const auto urlPattern
+		= QRegularExpression(QStringLiteral("\\bhttps?://\\S+"));
+	diagnostic.replace(urlPattern, u"[redacted]"_q);
+	LOG(("Telegram sticker pack download failed (%1): %2 %3")
+			.arg(ErrorName(error))
+			.arg(detail)
+			.arg(diagnostic));
+	_token.reset();
 	if (const auto reply = _reply.data()) {
 		_reply = nullptr;
 		reply->abort();
 		reply->deleteLater();
 	}
-	const auto failCallback = std::move(_fail);
 	if (failCallback) {
 		failCallback(error, std::move(detail));
 	}
