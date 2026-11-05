@@ -297,22 +297,21 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			box, tr::lng_teagram_sticker_import_telegram_token_info(tr::now),
 			st::boxLabel));
 		auto telegramTokenContainer = object_ptr<Ui::RpWidget>(box);
-		telegramTokenContainer->resize(
-			telegramTokenContainer->width(),
-			st::defaultInputField.heightMin);
+		telegramTokenContainer->resize(telegramTokenContainer->width(),
+									   st::defaultInputField.heightMin);
 		const auto telegramTokenInput = Ui::CreateChild<Ui::PasswordInput>(
-			telegramTokenContainer.data(),
-			st::defaultInputField,
+			telegramTokenContainer.data(), st::defaultInputField,
 			tr::lng_teagram_sticker_import_telegram_token_placeholder());
-		telegramTokenContainer->geometryValue(
-		) | rpl::on_next([=](const QRect &r) {
-			telegramTokenInput->resize(
-				r.width(),
-				telegramTokenInput->height());
-			telegramTokenInput->move(0, 0);
-		}, telegramTokenContainer->lifetime());
-		const auto telegramTokenRow = box->addRow(
-			std::move(telegramTokenContainer));
+		telegramTokenContainer->geometryValue()
+			| rpl::on_next(
+				[=](const QRect &r) {
+					telegramTokenInput->resize(r.width(),
+											   telegramTokenInput->height());
+					telegramTokenInput->move(0, 0);
+				},
+				telegramTokenContainer->lifetime());
+		const auto telegramTokenRow
+			= box->addRow(std::move(telegramTokenContainer));
 		telegramTokenInput->setMaxLength(256);
 		telegramTokenInput->setEchoMode(QLineEdit::Password);
 		telegramTokenInput->setCompleter(nullptr);
@@ -580,10 +579,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			source->setText(tr::lng_teagram_sticker_import_telegram_source(
 				tr::now, lt_link, parsed->canonicalUrl));
 			files->setText(tr::lng_teagram_sticker_import_telegram_downloading(
-				tr::now,
-				lt_current,
-				QString::number(0),
-				lt_total,
+				tr::now, lt_current, QString::number(0), lt_total,
 				QString::number(0)));
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
@@ -621,11 +617,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					files->setText(
 						tr::lng_teagram_sticker_import_telegram_downloading(
-							tr::now,
-							lt_current,
-							QString::number(count),
-							lt_total,
-							QString::number(total)));
+							tr::now, lt_current, QString::number(count),
+							lt_total, QString::number(total)));
 				});
 		});
 		const auto chooseFolder = [=] {
