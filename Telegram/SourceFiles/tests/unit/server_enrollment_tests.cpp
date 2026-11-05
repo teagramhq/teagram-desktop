@@ -49,6 +49,10 @@ struct AccountTestPeer {
 		account.readPrefs();
 	}
 
+	static bool WritePrefs(Account &account, bool sync = false) {
+		return account.writePrefs(sync);
+	}
+
 	static void ReadStoredCustomServerPin(Account &account) {
 		account.readStoredCustomServerPin();
 	}
@@ -472,7 +476,7 @@ TEST_CASE(TelegramBotTokenPreferenceIsEncryptedAndRemovable) {
 	auto account = MakeEnrollmentStorageAccount(basePath, key);
 	const auto token = QByteArray("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef");
 	account->writePref<QByteArray>(Core::kTelegramBotTokenPreference, token);
-	CHECK(account->writePrefs(true));
+	CHECK(Storage::AccountTestPeer::WritePrefs(*account, true));
 	CHECK_EQ(account->readPref<QByteArray>(Core::kTelegramBotTokenPreference),
 			 token);
 
@@ -491,7 +495,7 @@ TEST_CASE(TelegramBotTokenPreferenceIsEncryptedAndRemovable) {
 	CHECK(!filesContainToken());
 
 	account->clearPref(Core::kTelegramBotTokenPreference);
-	CHECK(account->writePrefs(true));
+	CHECK(Storage::AccountTestPeer::WritePrefs(*account, true));
 	CHECK(account->readPref<QByteArray>(Core::kTelegramBotTokenPreference)
 			  .isEmpty());
 	CHECK(!filesContainToken());
