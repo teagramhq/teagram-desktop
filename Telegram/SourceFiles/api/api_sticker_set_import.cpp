@@ -52,55 +52,46 @@ StickerSetImport::StickerSetImport(not_null<Main::Session *> session,
 								   QString shortName, Data::StickersType type,
 								   Core::StickerImportSource source,
 								   QString telegramPackName)
-	: _session(session), _scan(std::move(scan)), _title(std::move(title)),
-	  _shortName(std::move(shortName)), _type(type), _source(source),
-	  _telegramPackName(std::move(telegramPackName)), _api(&session->mtp()) {
-	Expects(Core::IsValidStickerSetTitle(_title));
-	Expects(Core::IsValidStickerSetShortName(_shortName));
+	: _session(session), _type(type), _api(&session->mtp()) {
+	Expects(Core::IsValidStickerSetTitle(title));
+	Expects(Core::IsValidStickerSetShortName(shortName));
+	_flow = std::make_unique<details::StickerSetImportFlow>(
+		std::move(scan), std::move(title), std::move(shortName), type, source,
+		std::move(telegramPackName),
+		details::StickerSetImportFlowCallbacks{
+			.upload =
+				[=](const Core::StickerImportFile &file, int index, int total,
+					Fn<void(MTPInputFile)> done, Fn<void()> failed,
+					Fn<void(int)> progress) {
+					uploadFile(file, index, total, std::move(done),
+							   std::move(failed), std::move(progress));
+				},
+			.uploadMedia =
+				[=](MTPmessages_UploadMedia request,
+					Fn<void(MTPMessageMedia)> done, Fn<void(QString)> failed) {
+					sendUploadMedia(std::move(request), std::move(done),
+									std::move(failed));
+				},
+			.createSet =
+				[=](MTPstickers_CreateStickerSet request,
+					Fn<void(MTPmessages_StickerSet)> done,
+					Fn<void(QString)> failed) {
+					sendCreateSet(std::move(request), std::move(done),
+								  std::move(failed));
+				},
+		});
 }
 
 StickerSetImport::~StickerSetImport() { cancel(); }
 
-void StickerSetImport::start(Fn<void(MTPmessages_StickerSet)> done,
-							 Fn<void(QString)> fail, Fn<void(int)> progress) {
-	Expects(!_done && !_fail && !_requestId && !_uploadId);
-	if (_scan.files.empty()) {
-		if (fail) {
-			fail(u"Choose a pack with supported sticker files."_q);
-		}
-		return;
-	}
-	_done = std::move(done);
-	_fail = std::move(fail);
-	_progress = std::move(progress);
-	_items.reserve(_scan.files.size());
-	uploadNext();
-}
-
-void StickerSetImport::cancel() {
-	if (_uploadId) {
-		_session->uploader().cancel(_uploadId);
-		_uploadId = FullMsgId();
-	}
-	if (_requestId) {
-		_api.request(_requestId).cancel();
-		_requestId = 0;
-	}
-	_uploadLifetime.destroy();
-	_done = nullptr;
-	_fail = nullptr;
-	_progress = nullptr;
-}
-
-void StickerSetImport::uploadNext() {
-	if (_index >= int(_scan.files.size())) {
-		createSet();
-		return;
-	}
+void StickerSetImport::uploadFile(const Core::StickerImportFile &file,
+								  int index, int total,
+								  Fn<void(MTPInputFile)> done,
+								  Fn<void()> failed, Fn<void(int)> progress) {
 	_documentId = base::RandomValue<DocumentId>();
 	_uploadLifetime = rpl::lifetime();
-	auto prepared = PrepareStickerImportFile(
-		_session->mtp().mainDcId(), _documentId, _scan.files[_index], _index);
+	auto prepared = PrepareStickerImportFile(_session->mtp().mainDcId(),
+											 _documentId, file, index);
 	_uploadId = FullMsgId(_session->userPeerId(),
 						  _session->data().nextLocalMessageId());
 
@@ -114,90 +105,69 @@ void StickerSetImport::uploadNext() {
 		  })
 		| rpl::on_next(
 			[=](const Storage::UploadedMedia &data) {
-				uploadReady(data.info.file);
+				_uploadLifetime.destroy();
+				_uploadId = FullMsgId();
+				done(data.info.file);
 			},
 			_uploadLifetime);
 
 	_session->uploader().documentFailed()
 		| rpl::filter([=](const FullMsgId &id) { return id == _uploadId; })
-		| rpl::on_next([=] { uploadFailed(); }, _uploadLifetime);
+		| rpl::on_next(
+			[=] {
+				_uploadLifetime.destroy();
+				failed();
+			},
+			_uploadLifetime);
 
-	if (_progress) {
+	if (progress) {
 		_session->uploader().documentProgress()
 			| rpl::filter([=](const FullMsgId &id) { return id == _uploadId; })
-			| rpl::on_next([=] { uploadProgressed(); }, _uploadLifetime);
+			| rpl::on_next(
+				[=] {
+					const auto document
+						= _session->data().document(_documentId);
+					if (!document->uploading() || !document->uploadingData) {
+						return;
+					}
+					const auto size = document->uploadingData->size;
+					if (size <= 0) {
+						return;
+					}
+					const auto percent
+						= int(((index * 100)
+							   + (document->uploadingData->offset * 100) / size)
+							  / total);
+					progress(percent);
+				},
+				_uploadLifetime);
 	}
 	_session->uploader().upload(_uploadId, prepared);
 }
 
-void StickerSetImport::uploadReady(const MTPInputFile &file) {
-	_uploadLifetime.destroy();
-	_uploadId = FullMsgId();
-
-	const auto &source = _scan.files[_index];
-	_requestId
-		= _api.request(details::StickerImportUploadMediaRequest(file, source,
-																_index))
-			  .done(crl::guard(
-				  this,
-				  [=](const MTPMessageMedia &result) {
-					  _requestId = 0;
-					  const auto item
-						  = details::StickerImportSetItemFromUploadMedia(
-							  result, _scan.files[_index].emoji);
-					  if (!item) {
-						  fail(u"STICKER_DOCUMENT_INVALID"_q);
-						  return;
-					  }
-					  _items.push_back(*item);
-					  ++_index;
-					  if (_progress) {
-						  _progress((_index * 100) / int(_scan.files.size()));
-					  }
-					  uploadNext();
-				  }))
-			  .fail(crl::guard(this,
-							   [=](const MTP::Error &error) {
-								   _requestId = 0;
-								   fail(error.type());
-							   }))
-			  .handleFloodErrors()
-			  .send();
+void StickerSetImport::sendUploadMedia(MTPmessages_UploadMedia request,
+									   Fn<void(MTPMessageMedia)> done,
+									   Fn<void(QString)> failed) {
+	_requestId = _api.request(std::move(request))
+					 .done(crl::guard(this,
+									  [=](const MTPMessageMedia &result) {
+										  _requestId = 0;
+										  done(result);
+									  }))
+					 .fail(crl::guard(this,
+									  [=](const MTP::Error &error) {
+										  _requestId = 0;
+										  failed(error.type());
+									  }))
+					 .handleFloodErrors()
+					 .send();
 }
 
-void StickerSetImport::uploadFailed() { fail(QString()); }
-
-void StickerSetImport::uploadProgressed() {
-	if (!_progress) {
-		return;
-	}
-	const auto document = _session->data().document(_documentId);
-	if (!document->uploading() || !document->uploadingData) {
-		return;
-	}
-	const auto size = document->uploadingData->size;
-	if (size <= 0) {
-		return;
-	}
-	const auto percent
-		= int(((_index * 100) + (document->uploadingData->offset * 100) / size)
-			  / int(_scan.files.size()));
-	if (percent != _lastReportedPercent) {
-		_lastReportedPercent = percent;
-		_progress(percent);
-	}
-}
-
-void StickerSetImport::createSet() {
-	auto items = QVector<MTPInputStickerSetItem>();
-	items.reserve(int(_items.size()));
-	for (const auto &item : _items) {
-		items.push_back(item);
-	}
+void StickerSetImport::sendCreateSet(MTPstickers_CreateStickerSet request,
+									 Fn<void(MTPmessages_StickerSet)> done,
+									 Fn<void(QString)> failed) {
 	_requestId
-		= _api.request(details::StickerImportCreateSetRequest(
-						   _title, _shortName, _type, _source, std::move(items),
-						   _telegramPackName))
+		= _api.request(std::move(request))
 			  .done(crl::guard(
 				  this,
 				  [=](const MTPmessages_StickerSet &result) {
@@ -208,27 +178,47 @@ void StickerSetImport::createSet() {
 							  _session->data().stickers().notifyUpdated(_type);
 						  },
 						  [](const auto &) {});
-					  const auto done = std::move(_done);
-					  cancel();
-					  if (done) {
-						  done(result);
-					  }
+					  done(result);
 				  }))
 			  .fail(crl::guard(this,
 							   [=](const MTP::Error &error) {
 								   _requestId = 0;
-								   fail(error.type());
+								   failed(error.type());
 							   }))
 			  .handleFloodErrors()
 			  .send();
 }
 
-void StickerSetImport::fail(QString error) {
-	const auto failed = std::move(_fail);
-	cancel();
-	if (failed) {
-		failed(std::move(error));
+void StickerSetImport::start(Fn<void(MTPmessages_StickerSet)> done,
+							 Fn<void(QString)> fail, Fn<void(int)> progress) {
+	Expects(!_requestId && !_uploadId);
+	_flow->start(
+		[=](MTPmessages_StickerSet result) {
+			cancel();
+			if (done) {
+				done(std::move(result));
+			}
+		},
+		[=](QString error) {
+			cancel();
+			if (fail) {
+				fail(std::move(error));
+			}
+		},
+		std::move(progress));
+}
+
+void StickerSetImport::cancel() {
+	_flow->cancel();
+	if (_uploadId) {
+		_session->uploader().cancel(_uploadId);
+		_uploadId = FullMsgId();
 	}
+	if (_requestId) {
+		_api.request(_requestId).cancel();
+		_requestId = 0;
+	}
+	_uploadLifetime.destroy();
 }
 
 } // namespace Api

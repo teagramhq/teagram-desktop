@@ -12,11 +12,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers.h"
 #include "mtproto/sender.h"
 
+#include <memory>
+
 namespace Main {
 class Session;
 } // namespace Main
 
 namespace Api {
+
+namespace details {
+class StickerSetImportFlow;
+} // namespace details
 
 class StickerSetImport final : public base::has_weak_ptr {
   public:
@@ -32,31 +38,24 @@ class StickerSetImport final : public base::has_weak_ptr {
 	void cancel();
 
   private:
-	void uploadNext();
-	void uploadReady(const MTPInputFile &file);
-	void uploadFailed();
-	void uploadProgressed();
-	void createSet();
-	void fail(QString error);
+	void uploadFile(const Core::StickerImportFile &file, int index, int total,
+					Fn<void(MTPInputFile)> done, Fn<void()> fail,
+					Fn<void(int)> progress);
+	void sendUploadMedia(MTPmessages_UploadMedia request,
+						 Fn<void(MTPMessageMedia)> done,
+						 Fn<void(QString)> fail);
+	void sendCreateSet(MTPstickers_CreateStickerSet request,
+					   Fn<void(MTPmessages_StickerSet)> done,
+					   Fn<void(QString)> fail);
 
 	const not_null<Main::Session *> _session;
-	Core::StickerImportScan _scan;
-	const QString _title;
-	const QString _shortName;
 	const Data::StickersType _type;
-	const Core::StickerImportSource _source;
-	const QString _telegramPackName;
+	std::unique_ptr<details::StickerSetImportFlow> _flow;
 	MTP::Sender _api;
 	rpl::lifetime _uploadLifetime;
 	FullMsgId _uploadId;
 	DocumentId _documentId = 0;
 	mtpRequestId _requestId = 0;
-	std::vector<MTPInputStickerSetItem> _items;
-	int _index = 0;
-	int _lastReportedPercent = -1;
-	Fn<void(MTPmessages_StickerSet)> _done;
-	Fn<void(QString)> _fail;
-	Fn<void(int)> _progress;
 };
 
 } // namespace Api

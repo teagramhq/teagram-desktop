@@ -7,13 +7,64 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/weak_ptr.h"
 #include "core/sticker_import.h"
 #include "data/stickers/data_stickers.h"
 #include "mtproto/sender.h"
 
 #include <optional>
+#include <vector>
 
 namespace Api::details {
+
+struct StickerSetImportFlowCallbacks {
+	Fn<void(const Core::StickerImportFile &, int, int, Fn<void(MTPInputFile)>,
+			Fn<void()>, Fn<void(int)>)>
+		upload;
+	Fn<void(MTPmessages_UploadMedia, Fn<void(MTPMessageMedia)>,
+			Fn<void(QString)>)>
+		uploadMedia;
+	Fn<void(MTPstickers_CreateStickerSet, Fn<void(MTPmessages_StickerSet)>,
+			Fn<void(QString)>)>
+		createSet;
+};
+
+class StickerSetImportFlow final : public base::has_weak_ptr {
+  public:
+	StickerSetImportFlow(Core::StickerImportScan scan, QString title,
+						 QString shortName, Data::StickersType type,
+						 Core::StickerImportSource source,
+						 QString telegramPackName,
+						 StickerSetImportFlowCallbacks callbacks);
+
+	void start(Fn<void(MTPmessages_StickerSet)> done, Fn<void(QString)> fail,
+			   Fn<void(int)> progress = nullptr);
+	void cancel();
+
+  private:
+	void uploadNext();
+	void uploadReady(MTPInputFile file);
+	void uploadMediaReady(MTPMessageMedia result);
+	void createSet();
+	void createSetReady(MTPmessages_StickerSet result);
+	void fail(QString error);
+
+	Core::StickerImportScan _scan;
+	const QString _title;
+	const QString _shortName;
+	const Data::StickersType _type;
+	const Core::StickerImportSource _source;
+	const QString _telegramPackName;
+	StickerSetImportFlowCallbacks _callbacks;
+	std::vector<MTPInputStickerSetItem> _items;
+	int _index = 0;
+	int _lastReportedPercent = -1;
+	Fn<void(MTPmessages_StickerSet)> _done;
+	Fn<void(QString)> _fail;
+	Fn<void(int)> _progress;
+	bool _cancelled = false;
+	bool _finished = false;
+};
 
 [[nodiscard]] QString StickerImportFileName(const Core::StickerImportFile &file,
 											int index);

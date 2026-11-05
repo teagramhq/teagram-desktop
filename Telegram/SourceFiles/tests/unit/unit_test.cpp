@@ -48,10 +48,6 @@ std::mutex CapturedLogMutex;
 bool CaptureLogs = false;
 QStringList CapturedLogMessages;
 
-// The code under test logs through base::Integration, and lib_base's
-// LogWriteDebug asserts when it is missing. Swallow the output: a
-// deserialization case deliberately feeds bad input and its LOG() lines
-// are noise, not results.
 class Integration final : public base::Integration {
 public:
 	using base::Integration::Integration;
@@ -60,9 +56,14 @@ public:
 		method();
 	}
 	bool logSkipDebug() override {
-		return true;
+		const auto lock = std::lock_guard(CapturedLogMutex);
+		return !CaptureLogs;
 	}
 	void logMessageDebug(const QString &message) override {
+		const auto lock = std::lock_guard(CapturedLogMutex);
+		if (CaptureLogs) {
+			CapturedLogMessages.push_back(message);
+		}
 	}
 	void logMessage(const QString &message) override {
 		const auto lock = std::lock_guard(CapturedLogMutex);

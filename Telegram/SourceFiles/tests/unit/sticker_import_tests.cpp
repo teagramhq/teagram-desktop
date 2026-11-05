@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
 #include "core/telegram_sticker_import.h"
+#include "logs.h"
 #include "mtproto/details/mtproto_serialized_request.h"
 
 #include <QtCore/QBuffer>
@@ -604,7 +605,8 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 	fileResultObject.insert(u"ok"_q, true);
 	fileResultObject.insert(u"result"_q, fileInfo);
 	auto loop = QEventLoop();
-	auto completed = false;
+	auto downloadCompleted = false;
+	auto createRequestCaptured = false;
 	auto markerRanBeforeCompletion = false;
 	auto network = StickerImportNetwork([&](const QUrl &url) {
 		if (url.path().endsWith(u"/getStickerSet"_q)) {
@@ -616,55 +618,66 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 		auto response = StickerImportNetwork::Response{200, sticker};
 		response.beforeFinish = [&] {
 			QMetaObject::invokeMethod(
-				&loop, [&] { markerRanBeforeCompletion = !completed; },
+				&loop, [&] { markerRanBeforeCompletion = !downloadCompleted; },
 				Qt::QueuedConnection);
 		};
 		return response;
 	});
+	auto title = QString();
+	auto outgoing = std::vector<QByteArray>();
+	auto uploadPayloads = std::vector<QByteArray>();
+	auto failure = QString();
+	const auto uploadedDocument = MTP_document(
+		MTP_flags(0), MTP_long(1), MTP_long(2),
+		MTP_bytes(QByteArray("file-reference")), MTP_int(1),
+		MTP_string(u"application/x-tgsticker"_q), MTP_long(sticker.size()),
+		MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
+		MTP_vector<MTPDocumentAttribute>());
+	const auto uploadedMedia = MTP_messageMediaDocument(
+		MTP_flags(MTPDmessageMediaDocument::Flag::f_document), uploadedDocument,
+		MTPVector<MTPDocument>(), MTPPhoto(), MTPint(), MTPint());
+	auto transport = Api::details::StickerSetImportFlowCallbacks{
+		.upload =
+			[&](const Core::StickerImportFile &file, int, int,
+				Fn<void(MTPInputFile)> done, Fn<void()>, Fn<void(int)>) {
+				uploadPayloads.push_back(file.bytes);
+				done(MTP_inputFile(MTP_long(1), MTP_int(1),
+								   MTP_string(u"sticker_1.tgs"_q),
+								   MTP_string(u"checksum"_q)));
+			},
+		.uploadMedia =
+			[&](MTPmessages_UploadMedia request, Fn<void(MTPMessageMedia)> done,
+				Fn<void(QString)>) {
+				outgoing.push_back(SerializeRequest(request));
+				done(uploadedMedia);
+			},
+		.createSet =
+			[&](MTPstickers_CreateStickerSet request,
+				Fn<void(MTPmessages_StickerSet)>, Fn<void(QString)>) {
+				outgoing.push_back(SerializeRequest(request));
+				createRequestCaptured = true;
+				loop.quit();
+			},
+	};
+	auto importer = std::unique_ptr<Api::details::StickerSetImportFlow>();
 	auto downloader
 		= Api::TelegramStickerPackDownloader(*link, token, &network);
 	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
-	auto title = QString();
-	auto outgoing = std::vector<QByteArray>();
-	auto failure = QString();
 	downloader.start(
 		[&](QString packTitle, Core::StickerImportScan scan) {
-			completed = true;
+			downloadCompleted = true;
 			title = std::move(packTitle);
 			CHECK_EQ(int(scan.files.size()), 1);
-			if (!scan.files.empty()) {
-				const auto inputFile = MTP_inputFile(
-					MTP_long(1), MTP_int(1), MTP_string(u"sticker_1.tgs"_q),
-					MTP_string(u"checksum"_q));
-				const auto upload
-					= Api::details::StickerImportUploadMediaRequest(
-						inputFile, scan.files.front(), 0);
-				outgoing.push_back(SerializeRequest(upload));
-				const auto uploadedDocument = MTP_document(
-					MTP_flags(0), MTP_long(1), MTP_long(2),
-					MTP_bytes(QByteArray("file-reference")), MTP_int(1),
-					MTP_string(u"application/x-tgsticker"_q),
-					MTP_long(sticker.size()), MTP_vector<MTPPhotoSize>(),
-					MTPVector<MTPVideoSize>(), MTP_int(2),
-					MTP_vector<MTPDocumentAttribute>());
-				const auto uploadedMedia = MTP_messageMediaDocument(
-					MTP_flags(MTPDmessageMediaDocument::Flag::f_document),
-					uploadedDocument, MTPVector<MTPDocument>(), MTPPhoto(),
-					MTPint(), MTPint());
-				const auto item
-					= Api::details::StickerImportSetItemFromUploadMedia(
-						uploadedMedia, scan.files.front().emoji);
-				CHECK(item.has_value());
-				if (item) {
-					const auto create
-						= Api::details::StickerImportCreateSetRequest(
-							title, u"cats_a"_q, Data::StickersType::Stickers,
-							Core::StickerImportSource::Telegram,
-							QVector<MTPInputStickerSetItem>{*item}, link->name);
-					outgoing.push_back(SerializeRequest(create));
-				}
-			}
-			loop.quit();
+			importer = std::make_unique<Api::details::StickerSetImportFlow>(
+				std::move(scan), title, u"cats_a"_q,
+				Data::StickersType::Stickers,
+				Core::StickerImportSource::Telegram, link->name,
+				std::move(transport));
+			importer->start([](const MTPmessages_StickerSet &) {},
+							[&](QString detail) {
+								failure = std::move(detail);
+								loop.quit();
+							});
 		},
 		[&](Api::TelegramStickerPackDownloadError, QString detail) {
 			failure = std::move(detail);
@@ -672,7 +685,11 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 		},
 		nullptr);
 	loop.exec();
-	CHECK(completed);
+	if (importer) {
+		importer->cancel();
+	}
+	CHECK(downloadCompleted);
+	CHECK(createRequestCaptured);
 	CHECK(failure.isEmpty());
 	CHECK(!title.contains(token));
 	CHECK_EQ(int(network.requests.size()), 3);
@@ -680,6 +697,9 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 	CHECK(markerRanBeforeCompletion);
 	for (const auto &request : outgoing) {
 		CHECK(!request.contains(token.toUtf8()));
+	}
+	for (const auto &payload : uploadPayloads) {
+		CHECK(!payload.contains(token.toUtf8()));
 	}
 }
 
@@ -692,6 +712,7 @@ TEST_CASE(TelegramStickerPackFailedDownloadLogsRedactBotTokenAndUrl) {
 		return;
 	}
 	auto network = StickerImportNetwork([&](const QUrl &url) {
+		DEBUG_LOG(("Sticker import debug capture sentinel."));
 		auto result = QJsonObject();
 		result.insert(u"ok"_q, false);
 		result.insert(u"error_code"_q, 500);
@@ -718,6 +739,7 @@ TEST_CASE(TelegramStickerPackFailedDownloadLogsRedactBotTokenAndUrl) {
 	CHECK_EQ(int(network.requests.size()), 1);
 	CHECK(logs.contains(u"Telegram sticker pack download failed"_q));
 	CHECK(logs.contains(u"failed request"_q));
+	CHECK(logs.contains(u"Sticker import debug capture sentinel."_q));
 	CHECK(failure.contains(u"[redacted]"_q));
 	CHECK(logs.contains(u"[redacted]"_q));
 	CHECK(!failure.contains(token));
