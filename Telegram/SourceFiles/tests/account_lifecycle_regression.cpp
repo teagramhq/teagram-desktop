@@ -10727,10 +10727,11 @@ void RunAuthenticatedCacheSymlinkCases(
 					"Cache chat switch latency regression: "
 					"seeded_directories=125 seeded_files=169 reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
+					"minimized_restore=%d "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
-					chatSwitch.chatSwitches,
+					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
