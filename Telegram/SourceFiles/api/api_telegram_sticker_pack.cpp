@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_telegram_sticker_pack.h"
 
 #include "core/sticker_import.h"
+#include "logs.h"
 
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
@@ -59,8 +60,10 @@ FormatForPath(const QString &path) {
 } // namespace
 
 TelegramStickerPackDownloader::TelegramStickerPackDownloader(
-	Core::TelegramStickerPackLink link, QString token)
-	: _link(std::move(link)), _token(std::move(token)) {}
+	Core::TelegramStickerPackLink link, QString token,
+	QNetworkAccessManager *network)
+	: _link(std::move(link)), _token(std::move(token)),
+	  _network(network ? network : new QNetworkAccessManager(this)) {}
 
 TelegramStickerPackDownloader::~TelegramStickerPackDownloader() { cancel(); }
 
@@ -155,7 +158,7 @@ void TelegramStickerPackDownloader::requestBytes(
 	request.setRawHeader("Accept", jsonResponse ? "application/json"
 												: "application/octet-stream");
 	auto response = std::make_shared<QByteArray>();
-	auto reply = _network.get(request);
+	auto reply = _network->get(request);
 	_reply = reply;
 	const auto readAvailable = [=, this] {
 		if (_cancelled || _reply != reply) {
@@ -360,16 +363,31 @@ void TelegramStickerPackDownloader::downloadNextSticker() {
 		return;
 	}
 	if (_index >= int(_stickers.size())) {
-		auto scan = Core::ScanStickerImportFiles(std::move(_files), _link.type);
-		_finished = true;
+		const auto weak = base::make_weak(this);
+		const auto type = _link.type;
 		_token.fill(QChar(0));
 		_token.clear();
-		_fail = nullptr;
-		_progress = nullptr;
-		const auto done = std::move(_done);
-		if (done) {
-			done(std::move(_title), std::move(scan));
-		}
+		crl::async([
+				weak,
+				files = std::move(_files),
+				type]() mutable {
+			auto scan = Core::ScanStickerImportFiles(std::move(files), type);
+			crl::on_main(weak, [=, scan = std::move(scan)]() mutable {
+				const auto self = weak.get();
+				if (!self || self->_cancelled || self->_finished) {
+					return;
+				}
+				self->_finished = true;
+				self->_token.fill(QChar(0));
+				self->_token.clear();
+				self->_fail = nullptr;
+				self->_progress = nullptr;
+				const auto done = std::move(self->_done);
+				if (done) {
+					done(std::move(self->_title), std::move(scan));
+				}
+			});
+		});
 		return;
 	}
 	if (_progress) {
@@ -452,6 +470,9 @@ void TelegramStickerPackDownloader::fail(TelegramStickerPackDownloadError error,
 	_stickers.clear();
 	_title.clear();
 	detail = Core::RedactTelegramStickerBotToken(std::move(detail), _token);
+	LOG(("Telegram sticker pack download failed (%1): %2")
+		 .arg(int(error))
+		 .arg(detail));
 	_token.fill(QChar(0));
 	_token.clear();
 	if (const auto reply = _reply.data()) {

@@ -89,6 +89,7 @@ PRIVATE
     core/local_url_conversion.cpp
     core/sticker_import.cpp
     core/telegram_sticker_import.cpp
+    api/api_telegram_sticker_pack.cpp
     api/api_sticker_set_import_requests.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.

@@ -24,6 +24,9 @@ struct Registrar {
 
 void Fail(const char *file, int line, const QString &what);
 
+void ClearCapturedLogs();
+[[nodiscard]] QString TakeCapturedLogs();
+
 [[nodiscard]] QString Describe(qint64 value);
 [[nodiscard]] QString Describe(quint64 value);
 [[nodiscard]] QString Describe(int value);

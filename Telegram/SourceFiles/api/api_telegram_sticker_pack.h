@@ -36,14 +36,16 @@ enum class TelegramStickerPackDownloadError {
 	UnsupportedFormat,
 };
 
-class TelegramStickerPackDownloader final : public QObject {
+class TelegramStickerPackDownloader final : public QObject,
+											  public base::has_weak_ptr {
   public:
 	using Done = Fn<void(QString, Core::StickerImportScan)>;
 	using Fail = Fn<void(TelegramStickerPackDownloadError, QString)>;
 	using Progress = Fn<void(int, int)>;
 
 	TelegramStickerPackDownloader(Core::TelegramStickerPackLink link,
-								  QString token);
+								  QString token,
+								  QNetworkAccessManager *network = nullptr);
 	~TelegramStickerPackDownloader();
 
 	void start(Done done, Fail fail, Progress progress);
@@ -71,7 +73,7 @@ class TelegramStickerPackDownloader final : public QObject {
 
 	Core::TelegramStickerPackLink _link;
 	QString _token;
-	QNetworkAccessManager _network;
+	QNetworkAccessManager *_network = nullptr;
 	QPointer<QNetworkReply> _reply;
 	Done _done;
 	Fail _fail;

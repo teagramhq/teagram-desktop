@@ -55,6 +55,10 @@ struct AccountTestPeer {
 	static FileKey PrefsKey(const Account &account) {
 		return account._prefsKey;
 	}
+
+	static bool HasTelegramStickerBotTokenPreference(const Account &account) {
+		return account.readPrefGeneric("telegram_sticker_bot_token").has_value();
+	}
 };
 
 } // namespace Storage
@@ -1536,8 +1540,19 @@ TEST_CASE(TelegramStickerBotTokenUsesEncryptedAccountPreferences) {
 		auto restarted = MakeEnrollmentStorageAccount(basePath, key);
 		Storage::AccountTestPeer::ReadPrefs(*restarted, prefsKey);
 		CHECK(restarted->telegramStickerBotToken() == token);
+		CHECK(Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*restarted));
 		CHECK(restarted->clearTelegramStickerBotToken());
 		CHECK(restarted->telegramStickerBotToken().isEmpty());
+		CHECK(!Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*restarted));
+	}
+	{
+		auto reopened = MakeEnrollmentStorageAccount(basePath, key);
+		Storage::AccountTestPeer::ReadPrefs(*reopened, prefsKey);
+		CHECK(reopened->telegramStickerBotToken().isEmpty());
+		CHECK(!Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*reopened));
 	}
 	auto iterator
 		= QDirIterator(basePath, QDir::Files | QDir::Hidden | QDir::System,

@@ -12,12 +12,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QCoreApplication>
 #include <QtCore/QResource>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 #include <QtCore/QtPlugin>
 #ifdef Q_OS_LINUX
 #include <QtWidgets/QApplication>
 #endif // Q_OS_LINUX
 
 #include <cstdio>
+#include <mutex>
 #include <string_view>
 #include <vector>
 
@@ -42,6 +44,9 @@ std::vector<Case> &Cases() {
 
 int CurrentFailures = 0;
 int TotalFailures = 0;
+std::mutex CapturedLogMutex;
+bool CaptureLogs = false;
+QStringList CapturedLogMessages;
 
 // The code under test logs through base::Integration, and lib_base's
 // LogWriteDebug asserts when it is missing. Swallow the output: a
@@ -60,6 +65,10 @@ public:
 	void logMessageDebug(const QString &message) override {
 	}
 	void logMessage(const QString &message) override {
+		const auto lock = std::lock_guard(CapturedLogMutex);
+		if (CaptureLogs) {
+			CapturedLogMessages.push_back(message);
+		}
 	}
 };
 
@@ -78,6 +87,20 @@ void Fail(const char *file, int line, const QString &what) {
 		file,
 		line,
 		what.toUtf8().constData());
+}
+
+void ClearCapturedLogs() {
+	const auto lock = std::lock_guard(CapturedLogMutex);
+	CapturedLogMessages.clear();
+	CaptureLogs = true;
+}
+
+QString TakeCapturedLogs() {
+	const auto lock = std::lock_guard(CapturedLogMutex);
+	const auto result = CapturedLogMessages.join(u'\n');
+	CapturedLogMessages.clear();
+	CaptureLogs = false;
+	return result;
 }
 
 QString Describe(qint64 value) {
