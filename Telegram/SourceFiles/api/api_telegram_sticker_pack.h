@@ -37,7 +37,7 @@ enum class TelegramStickerPackDownloadError {
 };
 
 class TelegramStickerPackDownloader final : public QObject,
-											  public base::has_weak_ptr {
+											public base::has_weak_ptr {
   public:
 	using Done = Fn<void(QString, Core::StickerImportScan)>;
 	using Fail = Fn<void(TelegramStickerPackDownloadError, QString)>;

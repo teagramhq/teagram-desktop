@@ -89,13 +89,10 @@ class StickerImportNetworkReply final : public QNetworkReply {
 		emit finished();
 	}
 
-	bool isSequential() const override {
-		return true;
-	}
+	bool isSequential() const override { return true; }
 
 	qint64 bytesAvailable() const override {
-		return qint64(_body.size() - _offset)
-			+ QNetworkReply::bytesAvailable();
+		return qint64(_body.size() - _offset) + QNetworkReply::bytesAvailable();
 	}
 
   protected:
@@ -103,8 +100,8 @@ class StickerImportNetworkReply final : public QNetworkReply {
 		if (_offset >= _body.size()) {
 			return -1;
 		}
-		const auto count = std::min<qint64>(
-			maximum, qint64(_body.size() - _offset));
+		const auto count
+			= std::min<qint64>(maximum, qint64(_body.size() - _offset));
 		memcpy(data, _body.constData() + _offset, size_t(count));
 		_offset += qsizetype(count);
 		return count;
@@ -138,9 +135,9 @@ class StickerImportNetwork final : public QNetworkAccessManager {
 								 QIODevice *) override {
 		requests.push_back(request.url());
 		const auto response = _respond(request.url());
-		return new StickerImportNetworkReply(
-			request, operation, response.status, response.body,
-			response.beforeFinish, this);
+		return new StickerImportNetworkReply(request, operation,
+											 response.status, response.body,
+											 response.beforeFinish, this);
 	}
 
   private:
@@ -611,22 +608,21 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 	auto markerRanBeforeCompletion = false;
 	auto network = StickerImportNetwork([&](const QUrl &url) {
 		if (url.path().endsWith(u"/getStickerSet"_q)) {
-			return StickerImportNetwork::Response{ 200, JsonBytes(setResult) };
+			return StickerImportNetwork::Response{200, JsonBytes(setResult)};
 		} else if (url.path().endsWith(u"/getFile"_q)) {
-			return StickerImportNetwork::Response{
-				200, JsonBytes(fileResultObject) };
+			return StickerImportNetwork::Response{200,
+												  JsonBytes(fileResultObject)};
 		}
-		auto response = StickerImportNetwork::Response{ 200, sticker };
+		auto response = StickerImportNetwork::Response{200, sticker};
 		response.beforeFinish = [&] {
 			QMetaObject::invokeMethod(
-				&loop,
-				[&] { markerRanBeforeCompletion = !completed; },
+				&loop, [&] { markerRanBeforeCompletion = !completed; },
 				Qt::QueuedConnection);
 		};
 		return response;
 	});
-	auto downloader = Api::TelegramStickerPackDownloader(
-		*link, token, &network);
+	auto downloader
+		= Api::TelegramStickerPackDownloader(*link, token, &network);
 	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
 	auto title = QString();
 	auto outgoing = std::vector<QByteArray>();
@@ -640,8 +636,9 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 				const auto inputFile = MTP_inputFile(
 					MTP_long(1), MTP_int(1), MTP_string(u"sticker_1.tgs"_q),
 					MTP_string(u"checksum"_q));
-				const auto upload = Api::details::StickerImportUploadMediaRequest(
-					inputFile, scan.files.front(), 0);
+				const auto upload
+					= Api::details::StickerImportUploadMediaRequest(
+						inputFile, scan.files.front(), 0);
 				outgoing.push_back(SerializeRequest(upload));
 				const auto uploadedDocument = MTP_document(
 					MTP_flags(0), MTP_long(1), MTP_long(2),
@@ -654,14 +651,16 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 					MTP_flags(MTPDmessageMediaDocument::Flag::f_document),
 					uploadedDocument, MTPVector<MTPDocument>(), MTPPhoto(),
 					MTPint(), MTPint());
-				const auto item = Api::details::StickerImportSetItemFromUploadMedia(
-					uploadedMedia, scan.files.front().emoji);
+				const auto item
+					= Api::details::StickerImportSetItemFromUploadMedia(
+						uploadedMedia, scan.files.front().emoji);
 				CHECK(item.has_value());
 				if (item) {
-					const auto create = Api::details::StickerImportCreateSetRequest(
-						title, u"cats_a"_q, Data::StickersType::Stickers,
-						Core::StickerImportSource::Telegram,
-						QVector<MTPInputStickerSetItem>{ *item }, link->name);
+					const auto create
+						= Api::details::StickerImportCreateSetRequest(
+							title, u"cats_a"_q, Data::StickersType::Stickers,
+							Core::StickerImportSource::Telegram,
+							QVector<MTPInputStickerSetItem>{*item}, link->name);
 					outgoing.push_back(SerializeRequest(create));
 				}
 			}
@@ -697,12 +696,11 @@ TEST_CASE(TelegramStickerPackFailedDownloadLogsRedactBotTokenAndUrl) {
 		result.insert(u"ok"_q, false);
 		result.insert(u"error_code"_q, 500);
 		result.insert(u"description"_q,
-					  u"failed request: "_q
-						  + url.toString(QUrl::FullyEncoded));
-		return StickerImportNetwork::Response{ 500, JsonBytes(result) };
+					  u"failed request: "_q + url.toString(QUrl::FullyEncoded));
+		return StickerImportNetwork::Response{500, JsonBytes(result)};
 	});
-	auto downloader = Api::TelegramStickerPackDownloader(
-		*link, token, &network);
+	auto downloader
+		= Api::TelegramStickerPackDownloader(*link, token, &network);
 	auto loop = QEventLoop();
 	auto failure = QString();
 	Test::Unit::ClearCapturedLogs();

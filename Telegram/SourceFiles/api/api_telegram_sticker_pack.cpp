@@ -367,10 +367,7 @@ void TelegramStickerPackDownloader::downloadNextSticker() {
 		const auto type = _link.type;
 		_token.fill(QChar(0));
 		_token.clear();
-		crl::async([
-				weak,
-				files = std::move(_files),
-				type]() mutable {
+		crl::async([weak, files = std::move(_files), type]() mutable {
 			auto scan = Core::ScanStickerImportFiles(std::move(files), type);
 			crl::on_main(weak, [=, scan = std::move(scan)]() mutable {
 				const auto self = weak.get();
@@ -471,8 +468,8 @@ void TelegramStickerPackDownloader::fail(TelegramStickerPackDownloadError error,
 	_title.clear();
 	detail = Core::RedactTelegramStickerBotToken(std::move(detail), _token);
 	LOG(("Telegram sticker pack download failed (%1): %2")
-		 .arg(int(error))
-		 .arg(detail));
+			.arg(int(error))
+			.arg(detail));
 	_token.fill(QChar(0));
 	_token.clear();
 	if (const auto reply = _reply.data()) {

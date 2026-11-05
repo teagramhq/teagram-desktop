@@ -57,7 +57,8 @@ struct AccountTestPeer {
 	}
 
 	static bool HasTelegramStickerBotTokenPreference(const Account &account) {
-		return account.readPrefGeneric("telegram_sticker_bot_token").has_value();
+		return account.readPrefGeneric("telegram_sticker_bot_token")
+			.has_value();
 	}
 };
 
