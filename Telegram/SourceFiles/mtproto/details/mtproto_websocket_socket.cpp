@@ -280,7 +280,13 @@ void WebSocketSocket::handleHandshake() {
 		return;
 	case WebSocketUpgradeResult::Accepted:
 		_state = State::Connected;
-		_connected.fire({});
+		// Like errors, notifications may end with the owner destroying this
+		// socket, so they are delivered after frame parsing has returned.
+		InvokeQueued(this, [=] {
+			if (_state == State::Connected) {
+				_connected.fire({});
+			}
+		});
 		return;
 	}
 }
@@ -392,7 +398,16 @@ void WebSocketSocket::appendMessage(QByteArray payload, bool final) {
 	}
 	_readBuffer += _message;
 	_message.clear();
-	_readyRead.fire({});
+	if (_readyReadQueued) {
+		return;
+	}
+	_readyReadQueued = true;
+	InvokeQueued(this, [=] {
+		_readyReadQueued = false;
+		if (_state == State::Connected) {
+			_readyRead.fire({});
+		}
+	});
 }
 
 void WebSocketSocket::sendFrame(uchar opcode, const QByteArray &payload) {

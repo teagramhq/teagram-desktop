@@ -44,6 +44,10 @@ class WebSocketSocket final : public AbstractSocket {
 	QString debugPostfix() const override;
 
   private:
+#ifdef TDESKTOP_UNIT_TESTS
+	friend struct WebSocketSocketTestAccess;
+#endif
+
 	enum class State {
 		NotConnected,
 		Connecting,
@@ -70,6 +74,7 @@ class WebSocketSocket final : public AbstractSocket {
 	QByteArray _readBuffer;
 	int _readOffset = 0;
 	bool _fragmentedMessage = false;
+	bool _readyReadQueued = false;
 };
 
 } // namespace MTP::details

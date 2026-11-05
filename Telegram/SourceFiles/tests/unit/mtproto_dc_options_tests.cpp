@@ -129,6 +129,14 @@ namespace MTP::details {
 
 DcOptions *UnitProxyCheckOptions = nullptr;
 
+struct WebSocketSocketTestAccess {
+	static void Receive(WebSocketSocket &socket, const QByteArray &frames) {
+		socket._state = WebSocketSocket::State::Connected;
+		socket._incoming += frames;
+		socket.handleFrames();
+	}
+};
+
 } // namespace MTP::details
 
 namespace MTP {
@@ -715,6 +723,35 @@ TEST_CASE(WebSocketSocketDeliversErrorsAfterTheFailingCallReturns) {
 	QTimer::singleShot(0, &loop, &QEventLoop::quit);
 	loop.exec();
 	CHECK_EQ(errors, 1);
+	CHECK(socket == nullptr);
+}
+
+// A consumer that destroys the socket from its ready-read handler must not
+// leave frame parsing running on freed memory.
+TEST_CASE(WebSocketSocketDeliversDataAfterFrameParsingReturns) {
+	auto socket = std::make_unique<details::WebSocketSocket>(
+		not_null<QThread *>(QThread::currentThread()),
+		u"wss://transport.example.com/apiws"_q, QString(), QNetworkProxy(),
+		false);
+	auto notifications = 0;
+	auto lifetime = rpl::lifetime();
+	socket->readyRead()
+		| rpl::on_next(
+			[&] {
+				++notifications;
+				socket.reset();
+			},
+			lifetime);
+	const auto frame = QByteArray("\x82\x03"
+								  "abc",
+								  5);
+	details::WebSocketSocketTestAccess::Receive(*socket, frame + frame);
+	CHECK_EQ(notifications, 0);
+	CHECK(socket != nullptr);
+	QEventLoop loop;
+	QTimer::singleShot(0, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK_EQ(notifications, 1);
 	CHECK(socket == nullptr);
 }
 
