@@ -10108,19 +10108,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	mainWindow.updateIsActive();
 	const auto activeBeforeMinimize = mainWindow.isActive();
-	mainWindow.setWindowState(
-		mainWindow.windowState() | Qt::WindowMinimized);
+	mainWindow.setWindowState(mainWindow.windowState() | Qt::WindowMinimized);
 	const auto cachedActiveAfterMinimize = mainWindow.isActive();
 	auto minimizedSwitchTimer = QElapsedTimer();
 	minimizedSwitchTimer.start();
 	controller->showPeerHistory(firstHistory);
 	result.maxChatSwitchNanoseconds = std::max(
-		result.maxChatSwitchNanoseconds,
-		minimizedSwitchTimer.nsecsElapsed());
-	result.minimizedRestore = activeBeforeMinimize
-		&& cachedActiveAfterMinimize
-		&& mainWindow.isVisible()
-		&& !(mainWindow.windowState() & Qt::WindowMinimized);
+		result.maxChatSwitchNanoseconds, minimizedSwitchTimer.nsecsElapsed());
+	result.minimizedRestore
+		= activeBeforeMinimize && cachedActiveAfterMinimize
+		  && mainWindow.isVisible()
+		  && !(mainWindow.windowState() & Qt::WindowMinimized);
 	QCoreApplication::processEvents();
 
 	constexpr auto kReactionCount = 73;
