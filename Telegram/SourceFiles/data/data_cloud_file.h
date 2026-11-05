@@ -91,6 +91,11 @@ void UpdateCloudFile(
 	Fn<void(FileOrigin)> restartLoader,
 	Fn<void(QImage, QByteArray)> usePreloaded = nullptr);
 
+void UpdateCloudFile(CloudFile &file, const ImageWithLocation &data,
+					 Fn<Storage::Cache::Database &()> cache, uint8 cacheTag,
+					 Fn<void(FileOrigin)> restartLoader,
+					 Fn<void(QImage, QByteArray)> usePreloaded = nullptr);
+
 void LoadCloudFile(
 	not_null<Main::Session*> session,
 	CloudFile &file,

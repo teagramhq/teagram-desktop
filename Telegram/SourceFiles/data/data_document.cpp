@@ -832,9 +832,7 @@ void DocumentData::updateThumbnails(
 		}
 	}
 	Data::UpdateCloudFile(
-		_thumbnail,
-		thumbnail,
-		owner().cache(),
+		_thumbnail, thumbnail, [this] { return owner().cache(); },
 		Data::kImageCacheTag,
 		[&](Data::FileOrigin origin) { loadThumbnail(origin); },
 		[&](QImage preloaded, QByteArray) {
@@ -843,9 +841,7 @@ void DocumentData::updateThumbnails(
 			}
 		});
 	Data::UpdateCloudFile(
-		_videoThumbnail,
-		videoThumbnail,
-		owner().cache(),
+		_videoThumbnail, videoThumbnail, [this] { return owner().cache(); },
 		Data::kAnimationCacheTag,
 		[&](Data::FileOrigin origin) { loadVideoThumbnail(origin); });
 }

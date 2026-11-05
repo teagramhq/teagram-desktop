@@ -2906,8 +2906,10 @@ RunCacheVersionMarkerRewriteRegression(Main::Domain &domain, UserId selfId,
 		return mediaCache ? data.cacheBigFileIfAllowed()
 						  : data.cacheIfAllowed();
 	};
-	if (!WaitForRegressionCondition(
-			[&] { return cacheIfAllowed() != nullptr; })) {
+	if (!WaitForRegressionCondition([&] {
+			return data.cacheInitializationFinishedForTesting(mediaCache)
+				   && (cacheIfAllowed() != nullptr);
+		})) {
 		return false;
 	}
 	struct State {

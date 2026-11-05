@@ -166,6 +166,15 @@ void UpdateCloudFile(
 		uint8 cacheTag,
 		Fn<void(FileOrigin)> restartLoader,
 		Fn<void(QImage, QByteArray)> usePreloaded) {
+	UpdateCloudFile(
+		file, data, [&cache] { return cache; }, cacheTag,
+		std::move(restartLoader), std::move(usePreloaded));
+}
+
+void UpdateCloudFile(CloudFile &file, const ImageWithLocation &data,
+					 Fn<Storage::Cache::Database &()> cache, uint8 cacheTag,
+					 Fn<void(FileOrigin)> restartLoader,
+					 Fn<void(QImage, QByteArray)> usePreloaded) {
 	if (!data.location.valid()) {
 		if (data.progressivePartSize && !file.location.valid()) {
 			file.progressivePartSize = data.progressivePartSize;
@@ -208,11 +217,8 @@ void UpdateCloudFile(
 		: QByteArray();
 	if (!cacheBytes.isEmpty()) {
 		if (const auto cacheKey = data.location.file().cacheKey()) {
-			cache.putIfEmpty(
-				cacheKey,
-				Storage::Cache::Database::TaggedValue(
-					std::move(cacheBytes),
-					cacheTag));
+			cache().putIfEmpty(cacheKey, Storage::Cache::Database::TaggedValue(
+											 std::move(cacheBytes), cacheTag));
 		}
 	}
 	file.location = data.location;
