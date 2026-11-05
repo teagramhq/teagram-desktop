@@ -10106,6 +10106,8 @@ struct NativeLifecycleResults {
 		RegressionReactionDocument(id + 5), RegressionReactionDocument(id + 6));
 }
 
+constexpr auto kMaxMinimizedRestoreNanoseconds = qint64(50'000'000);
+
 struct CacheChatSwitchRegressionResult final {
 	int reactions = 0;
 	int hydratedDocuments = 0;
@@ -10160,6 +10162,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	minimizedSwitchTimer.start();
 	controller->showPeerHistory(firstHistory);
 	result.minimizedSwitchNanoseconds = minimizedSwitchTimer.nsecsElapsed();
+	result.maxChatSwitchNanoseconds = std::max(
+		result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds);
 	result.minimizedRestore
 		= activeBeforeMinimize && cachedActiveAfterMinimize
 		  && mainWindow.isVisible()
@@ -10250,15 +10254,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
 										  result.maxChatSwitchNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
-	result.passed = completed && !timedOut
-					&& (result.reactions == kReactionCount)
-					&& (result.hydratedDocuments
-						== kReactionCount * kDocumentsPerReaction)
-					&& (result.chatSwitches == kExpectedChatSwitches)
-					&& (result.cachedDocuments
-						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
-					&& result.minimizedRestore
-					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
+	result.passed
+		= completed && !timedOut && (result.reactions == kReactionCount)
+		  && (result.hydratedDocuments
+			  == kReactionCount * kDocumentsPerReaction)
+		  && (result.chatSwitches == kExpectedChatSwitches)
+		  && (result.cachedDocuments
+			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
+		  && (result.minimizedSwitchNanoseconds
+			  < kMaxMinimizedRestoreNanoseconds)
+		  && (result.maxStallNanoseconds < kMaxStallNanoseconds);
 	return result;
 }
 
@@ -10780,12 +10786,14 @@ void RunAuthenticatedCacheSymlinkCases(
 					"seeded_directories=125 seeded_files=169 reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
 					"minimized_restore=%d minimized_switch_ns=%lld "
+					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
 					static_cast<long long>(
 						chatSwitch.minimizedSwitchNanoseconds),
+					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),

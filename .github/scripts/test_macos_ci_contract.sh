@@ -744,6 +744,10 @@ grep -Fq 'First messages\.getDialogs handler latency regression:' "$profile_harn
 grep -Fq 'requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73' \
   "$profile_harness" \
   || contract_fail "$profile_harness must require a parsed two-chat, 73-document getDialogs response."
+grep -Fq 'minimized_restore_budget_ns=50000000' "$profile_harness" \
+  || contract_fail "$profile_harness must pin the minimized restore budget to 50 ms."
+grep -Fq 'minimized_switch_ns >= minimized_switch_budget_ns' "$profile_harness" \
+  || contract_fail "$profile_harness must reject minimized restores at or above the numeric budget."
 for cache_evidence_field in \
   queued_ops_before_ready \
   queued_ops_passed \
@@ -773,6 +777,14 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
+grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
+  "$native_harness" \
+  || contract_fail 'The minimized restore regression must retain its 50 ms budget.'
+grep -Fq 'result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds' \
+  "$native_harness" \
+  || contract_fail 'The minimized restore sample must contribute to the max switch gate.'
+grep -Fq '< kMaxMinimizedRestoreNanoseconds' "$native_harness" \
+  || contract_fail 'The minimized restore regression must fail at its budget.'
 for native_case in \
   settings-search \
   session-window-lifecycle \

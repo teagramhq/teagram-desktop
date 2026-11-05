@@ -1421,11 +1421,27 @@ if ! grep -E -q \
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
 	exit 1
 fi
-if ! grep -E -q \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
-	"$AUTH_LOG"; then
+local chat_switch_evidence
+chat_switch_evidence="$(grep -E \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
 	echo "cache chat switch latency evidence missing or over 50 ms." >&2
+	exit 1
+fi
+local minimized_switch_ns
+minimized_switch_ns="$(sed -E \
+	's/.* minimized_switch_ns=([0-9]+) .*/\1/' \
+	<<<"$chat_switch_evidence")"
+local minimized_switch_budget_ns
+minimized_switch_budget_ns="$(sed -E \
+	's/.* minimized_restore_budget_ns=([0-9]+) .*/\1/' \
+	<<<"$chat_switch_evidence")"
+if (( minimized_switch_budget_ns != 50000000 \
+	|| minimized_switch_ns >= minimized_switch_budget_ns )); then
+	cat "$AUTH_LOG" >&2
+	echo "minimized chat restore exceeded its pinned 50 ms budget." >&2
 	exit 1
 fi
 if ! grep -F -q \
