@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/sticker_set_box.h"
 
 #include "api/api_common.h"
+#include "api/api_sticker_set_import_requests.h"
 #include "api/api_stickers_creator.h"
 #include "api/api_toggling_media.h"
 #include "apiwrap.h"
@@ -2397,14 +2398,14 @@ void StickerSetBox::Inner::install() {
 	if (_installRequest) {
 		return;
 	}
-	_installRequest = _api.request(MTPmessages_InstallStickerSet(
-		Data::InputStickerSet(_input),
-		MTP_bool(false)
-	)).done([=](const MTPmessages_StickerSetInstallResult &result) {
-		installDone(result);
-	}).fail([=] {
-		_errors.fire(Error::NotFound);
-	}).send();
+	_installRequest
+		= _api.request(Api::details::StickerImportInstallSetRequest(
+						   Data::InputStickerSet(_input)))
+			  .done([=](const MTPmessages_StickerSetInstallResult &result) {
+				  installDone(result);
+			  })
+			  .fail([=] { _errors.fire(Error::NotFound); })
+			  .send();
 }
 
 void StickerSetBox::Inner::archiveStickers() {

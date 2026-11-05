@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/qthelp_regex.h"
 #include "base/qthelp_url.h"
+#include "core/sticker_import.h"
 
 #include <QtCore/QStringList>
 #include <QtCore/QUrl>
@@ -184,9 +185,19 @@ struct HttpsOrigin {
 		+ url.mid(queryEnd);
 }
 
+[[nodiscard]] bool IsInvalidStickerSetLink(const QString &url) {
+	const auto match = regex_match(
+		u"^(https?://)?(www\\.)?(telegram\\.(me|dog)|t\\.me)/(addstickers|addemoji)/([^/?]+)(\\?|$)"_q,
+		url, qthelp::RegExOption::CaseInsensitive);
+	return match && !IsValidStickerSetShortName(match->captured(6));
+}
+
 [[nodiscard]] QString ConvertLegacyUrlToLocal(QString url) {
 	if (url.size() > 8192) {
 		url = url.mid(0, 8192);
+	}
+	if (IsInvalidStickerSetLink(url)) {
+		return url;
 	}
 
 	using namespace qthelp;
@@ -239,6 +250,7 @@ struct HttpsOrigin {
 			//
 			// We need to show our t.me page, not the url directly.
 			//
+
 			//auto params = url_parse_params(ivMatch->captured(1), UrlParamNameTransform::ToLower);
 			//auto previewedUrl = params.value(u"url"_q);
 			//if (previewedUrl.startsWith(u"http://"_q, Qt::CaseInsensitive)
@@ -354,6 +366,24 @@ struct HttpsOrigin {
 }
 
 } // namespace
+
+std::optional<StickerSetInstallTarget>
+StickerSetInstallTargetFromLocalUrl(const QString &url) {
+	const auto match = qthelp::regex_match(
+		u"^tg://(addstickers|addemoji)\\?set=([A-Za-z0-9_]{1,64})$"_q, url,
+		qthelp::RegExOption::CaseInsensitive);
+	if (!match || !IsValidStickerSetShortName(match->captured(2))) {
+		return std::nullopt;
+	}
+	const auto type
+		= (match->captured(1).compare(u"addemoji"_q, Qt::CaseInsensitive) == 0)
+			  ? StickerImportType::Emoji
+			  : StickerImportType::Stickers;
+	return StickerSetInstallTarget{
+		.shortName = match->captured(2),
+		.type = type,
+	};
+}
 
 QString TryConvertUrlToLocal(QString url) {
 	return ConvertLegacyUrlToLocal(std::move(url));

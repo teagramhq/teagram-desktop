@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/auto_download_box.h"
 #include "boxes/reactions_settings_box.h"
 #include "boxes/stickers_box.h"
+#include "boxes/sticker_import_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "boxes/background_box.h"
 #include "boxes/background_preview_box.h"
@@ -84,6 +85,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "support/support_common.h"
 #include "support/support_templates.h"
 #include "main/main_session.h"
+#include "main/main_app_config.h"
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
 #include "styles/style_chat_helpers.h" // stickersRemove
@@ -1772,6 +1774,36 @@ void SetupStickersEmoji(
 			emojiSetsButton.get(),
 			{ .rippleShape = true },
 		} });
+	}
+
+	const auto importEnabled = StickerImportEnabled(session);
+	const auto importLabel
+		= container->lifetime().make_state<rpl::variable<QString>>(
+			importEnabled
+				? QString()
+				: tr::lng_teagram_sticker_import_disabled_short(tr::now));
+	const auto importButton = AddButtonWithLabel(
+		container, tr::lng_teagram_sticker_import_title(), importLabel->value(),
+		st::settingsButton, {&st::menuIconStickers});
+	importButton->setDisabled(!importEnabled);
+	importButton->addClickHandler([=] { ShowStickerImportBox(controller); });
+	session->appConfig().value()
+		| rpl::on_next(
+			[=] {
+				const auto enabled = StickerImportEnabled(session);
+				importButton->setDisabled(!enabled);
+				*importLabel
+					= enabled ? QString()
+							  : tr::lng_teagram_sticker_import_disabled_short(
+									tr::now);
+			},
+			container->lifetime());
+	if (highlights) {
+		highlights->push_back({u"chat/import-sticker-pack"_q,
+							   {
+								   importButton.get(),
+								   {.rippleShape = true},
+							   }});
 	}
 
 	Ui::AddSkip(container, st::settingsCheckboxesSkip);

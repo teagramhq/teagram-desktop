@@ -87,6 +87,8 @@ PRIVATE
     core/teagram_update_state.cpp
     core/teagram_update_download.cpp
     core/local_url_conversion.cpp
+    core/sticker_import.cpp
+    api/api_sticker_set_import_requests.cpp
     # Compiled in the application target only, so the test links it
     # directly: the code under test is the shipped code.
     passport/passport_encryption.cpp
@@ -119,6 +121,7 @@ PRIVATE
     tests/unit/intro_signup_terms_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/sticker_import_tests.cpp
     tests/unit/mac_menu_text_tests.cpp
     tests/unit/mac_protected_path_policy_tests.cpp
     tests/unit/mtproto_custom_server_input_tests.cpp
