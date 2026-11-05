@@ -64,6 +64,9 @@ WebSocketSocket::WebSocketSocket(not_null<QThread *> thread,
 	using Error = QAbstractSocket::SocketError;
 	connect(&_socket, &QSslSocket::encrypted, wrap([=] { sendHandshake(); }));
 	connect(&_socket, &QSslSocket::disconnected, wrap([=] {
+		if (_state == State::Error) {
+			return;
+		}
 		_state = State::NotConnected;
 		_disconnected.fire({});
 	}));
@@ -79,10 +82,11 @@ void WebSocketSocket::connectToHost(const QString &, int) {
 		return;
 	}
 	_state = State::Connecting;
-	_socket.setPeerVerifyName(_url.host());
+	// Dial the vetted address, but verify the certificate against the
+	// endpoint host name, never against the address.
 	_socket.connectToHostEncrypted(
 		_resolvedAddress.isEmpty() ? _url.host() : _resolvedAddress,
-		quint16(_url.port(443)));
+		quint16(_url.port(443)), _url.host());
 }
 
 bool WebSocketSocket::isGoodStartNonce(bytes::const_span) { return true; }
@@ -178,6 +182,9 @@ void WebSocketSocket::sendHandshake() {
 }
 
 void WebSocketSocket::handleReadyRead() {
+	if (_state == State::Error) {
+		return;
+	}
 	_incoming += _socket.readAll();
 	if (_incoming.size() > kMaxBufferedBytes + kMaxHandshakeBytes) {
 		fail(u"WSS receive buffer exceeded its limit."_q);
@@ -191,59 +198,65 @@ void WebSocketSocket::handleReadyRead() {
 	}
 }
 
-void WebSocketSocket::handleHandshake() {
-	const auto end = _incoming.indexOf("\r\n\r\n");
+WebSocketUpgradeResult ParseWebSocketUpgrade(QByteArray &incoming,
+											 const QByteArray &key,
+											 QString &error) {
+	const auto end = incoming.indexOf("\r\n\r\n");
 	if (end < 0) {
-		if (_incoming.size() > kMaxHandshakeBytes) {
-			fail(u"WSS upgrade response is too large."_q);
+		if (incoming.size() > kMaxHandshakeBytes) {
+			error = u"WSS upgrade response is too large."_q;
+			return WebSocketUpgradeResult::Rejected;
 		}
-		return;
+		return WebSocketUpgradeResult::Incomplete;
 	}
 	if (end > kMaxHandshakeBytes) {
-		fail(u"WSS upgrade response is too large."_q);
-		return;
+		error = u"WSS upgrade response is too large."_q;
+		return WebSocketUpgradeResult::Rejected;
 	}
-	const auto response = _incoming.left(end);
-	_incoming.remove(0, end + 4);
+	// Keep the CRLF that terminates the last header, so that every line
+	// below ends in CRLF; the empty tail after the last LF is dropped.
+	const auto response = incoming.left(end + 2);
+	incoming.remove(0, end + 4);
 	auto lines = response.split('\n');
+	lines.removeLast();
 	if (lines.isEmpty()) {
-		fail(u"WSS upgrade response is empty."_q);
-		return;
+		error = u"WSS upgrade response is empty."_q;
+		return WebSocketUpgradeResult::Rejected;
 	}
 	auto status = lines.takeFirst();
 	if (!status.endsWith('\r')) {
-		fail(u"WSS upgrade status line is malformed."_q);
-		return;
+		error = u"WSS upgrade status line is malformed."_q;
+		return WebSocketUpgradeResult::Rejected;
 	}
 	status.chop(1);
 	const auto statusParts = status.split(' ');
 	if (statusParts.size() < 2 || statusParts[0] != "HTTP/1.1"
 		|| statusParts[1] != "101") {
-		fail(u"WSS upgrade was refused."_q);
-		return;
+		error = u"WSS upgrade was refused."_q;
+		return WebSocketUpgradeResult::Rejected;
 	}
 	auto headers = QMap<QByteArray, QByteArray>();
 	for (auto line : lines) {
 		if (!line.endsWith('\r')) {
-			fail(u"WSS upgrade header is malformed."_q);
-			return;
+			error = u"WSS upgrade header is malformed."_q;
+			return WebSocketUpgradeResult::Rejected;
 		}
 		line.chop(1);
 		const auto separator = line.indexOf(':');
 		if (separator <= 0) {
-			fail(u"WSS upgrade header is malformed."_q);
-			return;
+			error = u"WSS upgrade header is malformed."_q;
+			return WebSocketUpgradeResult::Rejected;
 		}
 		const auto name = line.left(separator).trimmed().toLower();
 		const auto value = line.mid(separator + 1).trimmed();
 		if (headers.contains(name)) {
-			fail(u"WSS upgrade contains duplicate headers."_q);
-			return;
+			error = u"WSS upgrade contains duplicate headers."_q;
+			return WebSocketUpgradeResult::Rejected;
 		}
 		headers.insert(name, value);
 	}
 	const auto expectedAccept
-		= QCryptographicHash::hash(_handshakeKey + kWebSocketGuid,
+		= QCryptographicHash::hash(key + kWebSocketGuid,
 								   QCryptographicHash::Sha1)
 			  .toBase64();
 	if (headers.value("upgrade").compare("websocket", Qt::CaseInsensitive) != 0
@@ -251,11 +264,25 @@ void WebSocketSocket::handleHandshake() {
 		|| headers.value("sec-websocket-accept") != expectedAccept
 		|| headers.value("sec-websocket-protocol") != "binary"
 		|| headers.contains("sec-websocket-extensions")) {
-		fail(u"WSS upgrade response failed validation."_q);
+		error = u"WSS upgrade response failed validation."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	return WebSocketUpgradeResult::Accepted;
+}
+
+void WebSocketSocket::handleHandshake() {
+	auto error = QString();
+	switch (ParseWebSocketUpgrade(_incoming, _handshakeKey, error)) {
+	case WebSocketUpgradeResult::Incomplete:
+		return;
+	case WebSocketUpgradeResult::Rejected:
+		fail(error);
+		return;
+	case WebSocketUpgradeResult::Accepted:
+		_state = State::Connected;
+		_connected.fire({});
 		return;
 	}
-	_state = State::Connected;
-	_connected.fire({});
 }
 
 void WebSocketSocket::handleFrames() {
@@ -406,8 +433,10 @@ void WebSocketSocket::fail(const QString &message) {
 	}
 	logError(QAbstractSocket::UnknownSocketError, message);
 	_state = State::Error;
-	_error.fire({});
 	_socket.abort();
+	// The owner destroys this socket from the error handler, so deliver the
+	// error only after the current parsing / write stack has unwound.
+	InvokeQueued(this, [=] { _error.fire({}); });
 }
 
 } // namespace MTP::details

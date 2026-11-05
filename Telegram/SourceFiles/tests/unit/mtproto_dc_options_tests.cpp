@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <atomic>
 #include <iterator>
+#include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/translate_provider_selection.h"
 #include "main/session_feature_support.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/details/mtproto_websocket_socket.h"
 #include "mtproto/connection_server_resolving.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_server_enrollment.h"
@@ -37,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonObject>
 #include <QtCore/QPointer>
 #include <QtCore/QTimer>
+#include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QHostInfo>
 
 namespace MTP::details {
@@ -331,6 +334,124 @@ private:
 
 };
 
+struct ScriptedTransportLog {
+	std::vector<QString> endpoints;
+	std::vector<QString> addresses;
+	bool tcpSucceeds = false;
+	bool webSocketSucceeds = false;
+};
+
+// Reports the outcome from the event loop, like a real socket, so the
+// resolving connection never sees a child fail inside connectToServer().
+class ScriptedConnection final : public details::AbstractConnection {
+  public:
+	ScriptedConnection(QThread *thread, const ProxyData &proxy,
+					   const QString &webSocketEndpoint,
+					   ScriptedTransportLog *log)
+		: details::AbstractConnection(thread, proxy),
+		  _webSocketEndpoint(webSocketEndpoint), _log(log) {}
+
+	details::ConnectionPointer clone(const ProxyData &) override {
+		return nullptr;
+	}
+
+	crl::time pingTime() const override { return 0; }
+
+	crl::time fullConnectTimeout() const override { return 0; }
+
+	void sendData(mtpBuffer &&) override {}
+
+	void disconnectFromServer() override {}
+
+	void connectToServer(const QString &address, int, const bytes::vector &,
+						 int16, bool) override {
+		_log->endpoints.push_back(_webSocketEndpoint);
+		_log->addresses.push_back(address);
+		const auto succeeds = _webSocketEndpoint.isEmpty()
+								  ? _log->tcpSucceeds
+								  : _log->webSocketSucceeds;
+		QTimer::singleShot(0, this, [=] {
+			if (succeeds) {
+				_connected = true;
+				connected();
+			} else {
+				error(kErrorCodeOther);
+			}
+		});
+	}
+
+	bool isConnected() const override { return _connected; }
+
+	int32 debugState() const override { return 0; }
+
+	QString transport() const override { return u"test"_q; }
+
+	QString tag() const override { return u"test"_q; }
+
+  private:
+	QString _webSocketEndpoint;
+	ScriptedTransportLog *_log = nullptr;
+	bool _connected = false;
+};
+
+struct ScriptedOutcome {
+	ScriptedTransportLog log;
+	int lookups = 0;
+	bool connected = false;
+	bool failed = false;
+};
+
+[[nodiscard]] ScriptedOutcome
+RunScriptedServerConnection(bool tcpSucceeds, bool webSocketSucceeds,
+							const QString &webSocketEndpoint,
+							ProxyData::Type proxyType = ProxyData::Type::None) {
+	auto result = ScriptedOutcome();
+	result.log.tcpSucceeds = tcpSucceeds;
+	result.log.webSocketSucceeds = webSocketSucceeds;
+	UnitHostResolver resolver;
+	resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
+	resolver.add({.addresses = {QHostAddress(u"8.8.4.4"_q)}});
+	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
+	const details::UnitConnectionFactory factory
+		= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
+			  QThread *thread, const bytes::vector &, const ProxyData &data,
+			  const QString &endpoint) {
+			  return details::ConnectionPointer::New<ScriptedConnection>(
+				  thread, data, endpoint, &result.log);
+		  };
+	details::UnitConnectionFactoryInstance = &factory;
+	auto proxy = ProxyData();
+	proxy.type = proxyType;
+	auto connection = details::CreateServerConnection(
+		not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
+		QThread::currentThread(), bytes::vector(), proxy, u"demo.example.com"_q,
+		false, resolver.resolver(), webSocketEndpoint, u"demo.example.com"_q,
+		false);
+	QEventLoop loop;
+	QTimer guard;
+	guard.setSingleShot(true);
+	QObject::connect(&guard, &QTimer::timeout, &loop, &QEventLoop::quit);
+	QObject::connect(connection.get(), &details::AbstractConnection::connected,
+					 &loop, [&] {
+						 result.connected = true;
+						 loop.quit();
+					 });
+	QObject::connect(connection.get(), &details::AbstractConnection::error,
+					 &loop, [&](qint32) {
+						 result.failed = true;
+						 loop.quit();
+					 });
+	guard.start(5000);
+	connection->connectToServer(QString(), 443, {}, 2, false);
+	if (!result.connected && !result.failed) {
+		loop.exec();
+	}
+	result.lookups = resolver.lookups();
+	connection.reset();
+	details::UnitConnectionFactoryInstance = nullptr;
+	return result;
+}
+
 } // namespace
 
 // The discovered key must match the fingerprint the server logs at startup,
@@ -438,6 +559,163 @@ TEST_CASE(WebSocketFallbackWaitsForTcpExhaustion) {
 	CHECK(
 		!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Socks5));
 	CHECK(!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Http));
+}
+
+TEST_CASE(ServerConnectionFallsBackToWebSocketAfterTcpFails) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, true, endpoint);
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 2);
+	if (result.log.endpoints.size() != 2) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.log.addresses[0], u"8.8.8.88"_q);
+	CHECK_EQ(result.log.endpoints[1], endpoint);
+	CHECK_EQ(result.log.addresses[1], u"8.8.4.4"_q);
+}
+
+TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, false, endpoint);
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 2);
+	if (result.log.endpoints.size() != 2) {
+		return;
+	}
+	CHECK_EQ(result.log.endpoints[1], endpoint);
+}
+
+TEST_CASE(ServerConnectionNeverAttemptsWebSocketWhenTcpConnects) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(true, true, endpoint);
+	CHECK(result.connected);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.lookups, 1);
+}
+
+TEST_CASE(ServerConnectionWithoutWebSocketEndpointStaysOnTcp) {
+	const auto result = RunScriptedServerConnection(false, true, QString());
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.lookups, 1);
+}
+
+TEST_CASE(ServerConnectionThroughProxyNeverAttemptsWebSocket) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, true, endpoint,
+													ProxyData::Type::Socks5);
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	for (const auto &used : result.log.endpoints) {
+		CHECK(used.isEmpty());
+	}
+}
+
+TEST_CASE(WebSocketUpgradeAcceptsAValidResponse) {
+	const auto key = QByteArray("dGhlIHNhbXBsZSBub25jZQ==");
+	const auto frame = QByteArray("\x82\x01\x2a", 3);
+	auto incoming
+		= QByteArray("HTTP/1.1 101 Switching Protocols\r\n"
+					 "Upgrade: websocket\r\n"
+					 "Connection: Upgrade\r\n"
+					 "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+					 "Sec-WebSocket-Protocol: binary\r\n"
+					 "\r\n")
+		  + frame;
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, key, error)
+		  == details::WebSocketUpgradeResult::Accepted);
+	CHECK(error.isEmpty());
+	CHECK(incoming == frame);
+}
+
+TEST_CASE(WebSocketUpgradeWaitsForTheWholeResponse) {
+	const auto key = QByteArray("dGhlIHNhbXBsZSBub25jZQ==");
+	auto incoming = QByteArray("HTTP/1.1 101 Switching Protocols\r\n"
+							   "Upgrade: websocket\r\n");
+	const auto before = incoming;
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, key, error)
+		  == details::WebSocketUpgradeResult::Incomplete);
+	CHECK(incoming == before);
+}
+
+TEST_CASE(WebSocketUpgradeRejectsBadResponses) {
+	const auto key = QByteArray("dGhlIHNhbXBsZSBub25jZQ==");
+	const auto valid
+		= QByteArray("HTTP/1.1 101 Switching Protocols\r\n"
+					 "Upgrade: websocket\r\n"
+					 "Connection: Upgrade\r\n"
+					 "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+					 "Sec-WebSocket-Protocol: binary\r\n"
+					 "\r\n");
+	auto check = [&](QByteArray response) {
+		auto error = QString();
+		const auto result
+			= details::ParseWebSocketUpgrade(response, key, error);
+		return (result == details::WebSocketUpgradeResult::Rejected)
+			   && !error.isEmpty();
+	};
+	auto refused = valid;
+	refused.replace("101 Switching Protocols", "403 Forbidden");
+	CHECK(check(refused));
+	auto wrongAccept = valid;
+	wrongAccept.replace("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+						"AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+	CHECK(check(wrongAccept));
+	auto wrongProtocol = valid;
+	wrongProtocol.replace("binary", "chat");
+	CHECK(check(wrongProtocol));
+	auto extension = valid;
+	extension.replace(
+		"\r\n\r\n", "\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n");
+	CHECK(check(extension));
+	auto duplicate = valid;
+	duplicate.replace("\r\n\r\n", "\r\nUpgrade: websocket\r\n\r\n");
+	CHECK(check(duplicate));
+	auto bareLf = valid;
+	bareLf.replace("Connection: Upgrade\r\n", "Connection: Upgrade\n");
+	CHECK(check(bareLf));
+	CHECK(check(QByteArray(20000, 'a')));
+}
+
+// The owner destroys the socket from its error handler. The error has to
+// arrive after the failing call has returned, or the socket would be used
+// after it was freed.
+TEST_CASE(WebSocketSocketDeliversErrorsAfterTheFailingCallReturns) {
+	auto socket = std::make_unique<details::WebSocketSocket>(
+		not_null<QThread *>(QThread::currentThread()),
+		u"ws://transport.example.com/apiws"_q, QString(), QNetworkProxy(),
+		false);
+	auto errors = 0;
+	auto lifetime = rpl::lifetime();
+	socket->error()
+		| rpl::on_next(
+			[&] {
+				++errors;
+				socket.reset();
+			},
+			lifetime);
+	socket->connectToHost(QString(), 443);
+	CHECK_EQ(errors, 0);
+	CHECK(socket != nullptr);
+	QEventLoop loop;
+	QTimer::singleShot(0, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK_EQ(errors, 1);
+	CHECK(socket == nullptr);
 }
 
 TEST_CASE(ServerAddressFamiliesInterleaveInPreferredOrder) {

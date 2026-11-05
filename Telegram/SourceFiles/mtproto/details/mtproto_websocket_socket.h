@@ -14,6 +14,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace MTP::details {
 
+enum class WebSocketUpgradeResult {
+	Incomplete,
+	Accepted,
+	Rejected,
+};
+
+// Consumes a complete upgrade response from `incoming` and validates it
+// against the handshake `key`. Bytes after the response are kept.
+[[nodiscard]] WebSocketUpgradeResult
+ParseWebSocketUpgrade(QByteArray &incoming, const QByteArray &key,
+					  QString &error);
+
 class WebSocketSocket final : public AbstractSocket {
   public:
 	WebSocketSocket(not_null<QThread *> thread, const QString &endpoint,
