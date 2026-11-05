@@ -23,10 +23,12 @@ StickerImportFileAttributes(const Core::StickerImportFile &file, int index);
 StickerImportUploadMediaRequest(const MTPInputFile &inputFile,
 								const Core::StickerImportFile &file, int index);
 [[nodiscard]] std::optional<MTPInputStickerSetItem>
-StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media);
+StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media,
+									QString emoji = QString());
 [[nodiscard]] MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 	QString title, QString shortName, Data::StickersType type,
-	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items);
+	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items,
+	QString sourceUrl = QString());
 [[nodiscard]] MTPmessages_InstallStickerSet
 StickerImportInstallSetRequest(MTPInputStickerSet set);
 

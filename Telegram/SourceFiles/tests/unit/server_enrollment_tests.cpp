@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "config.h"
+#include "core/sticker_import.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -24,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QDirIterator>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
@@ -457,6 +459,42 @@ TEST_CASE(EnrollmentPersistsReadableMapBeforeConfig) {
 	CHECK(committed);
 	CHECK(HasReadableEnrollmentMap(basePath, key));
 	CHECK(HasReadableEnrollmentConfig(basePath, key));
+}
+
+TEST_CASE(TelegramBotTokenPreferenceIsEncryptedAndRemovable) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.path() + QDir::separator();
+	const auto key = MakeEnrollmentStorageKey();
+	auto account = MakeEnrollmentStorageAccount(basePath, key);
+	const auto token = QByteArray("123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef");
+	account->writePref<QByteArray>(Core::kTelegramBotTokenPreference, token);
+	CHECK(account->writePrefs(true));
+	CHECK_EQ(account->readPref<QByteArray>(Core::kTelegramBotTokenPreference),
+			 token);
+
+	const auto filesContainToken = [&] {
+		for (auto iterator = QDirIterator(directory.path(), QDir::Files,
+										  QDirIterator::Subdirectories);
+			 iterator.hasNext();) {
+			auto file = QFile(iterator.next());
+			if (file.open(QIODevice::ReadOnly)
+				&& file.readAll().contains(token)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	CHECK(!filesContainToken());
+
+	account->clearPref(Core::kTelegramBotTokenPreference);
+	CHECK(account->writePrefs(true));
+	CHECK(account->readPref<QByteArray>(Core::kTelegramBotTokenPreference)
+			  .isEmpty());
+	CHECK(!filesContainToken());
 }
 
 TEST_CASE(EnrollmentRestartRestoresBoundServerStep) {

@@ -34,8 +34,8 @@ StickerImportFileAttributes(const Core::StickerImportFile &file, int index) {
 			MTPdouble(), MTPstring()));
 	}
 	attributes.push_back(MTP_documentAttributeSticker(
-		MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
-		MTPMaskCoords()));
+		MTP_flags(0), MTP_string(file.emoji.isEmpty() ? u"⭐"_q : file.emoji),
+		MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 	return attributes;
 }
 
@@ -55,7 +55,8 @@ StickerImportUploadMediaRequest(const MTPInputFile &inputFile,
 }
 
 std::optional<MTPInputStickerSetItem>
-StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
+StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media,
+									QString emoji) {
 	auto document = MTPInputDocument();
 	media.match(
 		[&](const MTPDmessageMediaDocument &data) {
@@ -72,17 +73,24 @@ StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
 	if (document.type() != mtpc_inputDocument) {
 		return std::nullopt;
 	}
-	return MTP_inputStickerSetItem(MTP_flags(0), std::move(document),
-								   MTP_string(u"⭐"_q), MTPMaskCoords(),
-								   MTPstring());
+	return MTP_inputStickerSetItem(
+		MTP_flags(0), std::move(document),
+		MTP_string(emoji.isEmpty() ? u"⭐"_q : emoji), MTPMaskCoords(),
+		MTPstring());
 }
 
 MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 	QString title, QString shortName, Data::StickersType type,
-	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items) {
-	const auto sourceText = (source == Core::StickerImportSource::Folder)
-								? u"folder"_q
-								: u"zip"_q;
+	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items,
+	QString sourceUrl) {
+	const auto sourceText
+		= (source == Core::StickerImportSource::Folder) ? u"folder"_q
+		  : (source == Core::StickerImportSource::Zip)	? u"zip"_q
+														: sourceUrl;
+	if (source == Core::StickerImportSource::Telegram) {
+		const auto parsed = Core::ParseTelegramStickerPackLink(sourceUrl);
+		Expects(parsed.has_value() && parsed->sourceUrl == sourceUrl);
+	}
 	auto flags = MTPstickers_CreateStickerSet::Flags(
 		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (type == Data::StickersType::Emoji) {

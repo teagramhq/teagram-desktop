@@ -50,10 +50,11 @@ PrepareStickerImportFile(MTP::DcId dcId, DocumentId id,
 StickerSetImport::StickerSetImport(not_null<Main::Session *> session,
 								   Core::StickerImportScan scan, QString title,
 								   QString shortName, Data::StickersType type,
-								   Core::StickerImportSource source)
+								   Core::StickerImportSource source,
+								   QString sourceUrl)
 	: _session(session), _scan(std::move(scan)), _title(std::move(title)),
 	  _shortName(std::move(shortName)), _type(type), _source(source),
-	  _api(&session->mtp()) {
+	  _sourceUrl(std::move(sourceUrl)), _api(&session->mtp()) {
 	Expects(Core::IsValidStickerSetTitle(_title));
 	Expects(Core::IsValidStickerSetShortName(_shortName));
 }
@@ -143,7 +144,7 @@ void StickerSetImport::uploadReady(const MTPInputFile &file) {
 					  _requestId = 0;
 					  const auto item
 						  = details::StickerImportSetItemFromUploadMedia(
-							  result);
+							  result, source.emoji);
 					  if (!item) {
 						  fail(u"STICKER_DOCUMENT_INVALID"_q);
 						  return;
@@ -194,9 +195,9 @@ void StickerSetImport::createSet() {
 		items.push_back(item);
 	}
 	_requestId
-		= _api
-			  .request(details::StickerImportCreateSetRequest(
-				  _title, _shortName, _type, _source, std::move(items)))
+		= _api.request(details::StickerImportCreateSetRequest(
+						   _title, _shortName, _type, _source, std::move(items),
+						   _sourceUrl))
 			  .done(crl::guard(
 				  this,
 				  [=](const MTPmessages_StickerSet &result) {

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "api/api_telegram_sticker_pack_import.h"
 #include "api/api_sticker_set_import_requests.h"
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
@@ -583,6 +584,182 @@ TEST_CASE(StickerImportConsentZipShareInstallSmoke) {
 		CHECK_EQ(emojiTarget->shortName, u"cats_a"_q);
 		CHECK(emojiTarget->type == Core::StickerImportType::Emoji);
 	}
+}
+
+TEST_CASE(TelegramStickerPackLinksAreCanonicalAndPublic) {
+	const auto stickers = Core::ParseTelegramStickerPackLink(
+		u"https://t.me/addstickers/SomePack"_q);
+	CHECK(stickers.has_value());
+	if (stickers) {
+		CHECK_EQ(stickers->name, u"SomePack"_q);
+		CHECK(stickers->type == Core::StickerImportType::Stickers);
+		CHECK_EQ(stickers->sourceUrl, u"https://t.me/addstickers/SomePack"_q);
+	}
+	const auto emoji
+		= Core::ParseTelegramStickerPackLink(u"t.me/addemoji/SomePack"_q);
+	CHECK(emoji.has_value());
+	if (emoji) {
+		CHECK(emoji->type == Core::StickerImportType::Emoji);
+		CHECK_EQ(emoji->sourceUrl, u"https://t.me/addemoji/SomePack"_q);
+	}
+	for (const auto &value : {
+			 u"http://t.me/addstickers/SomePack"_q,
+			 u"https://t.me.evil/addstickers/SomePack"_q,
+			 u"https://t.me/addstickers/SomePack?start=secret"_q,
+			 u"https://t.me/addstickers/%2e%2e"_q,
+			 u"https://t.me/addstickers/a-b"_q,
+		 }) {
+		CHECK(!Core::ParseTelegramStickerPackLink(value));
+	}
+}
+
+TEST_CASE(TelegramBotTokensAndFilePathsAreValidatedBeforeUrlBuild) {
+	const auto token = u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"_q;
+	CHECK(Api::details::IsValidTelegramBotToken(token));
+	CHECK(!Api::details::IsValidTelegramBotToken(
+		u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcde"_q));
+	CHECK(!Api::details::IsValidTelegramBotToken(
+		u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef/"_q));
+	CHECK(
+		Api::details::IsSafeTelegramStickerFilePath(u"stickers/file_1.tgs"_q));
+	CHECK(!Api::details::IsSafeTelegramStickerFilePath(
+		u"stickers/../file.tgs"_q));
+	CHECK(!Api::details::IsSafeTelegramStickerFilePath(
+		u"stickers/%2e%2e/file.tgs"_q));
+	CHECK(!Api::details::IsSafeTelegramStickerFilePath(
+		u"https%3A%2F%2Felsewhere.example/file.tgs"_q));
+	CHECK(!Api::details::IsSafeTelegramStickerFilePath(
+		u"https://elsewhere.example/file.tgs"_q));
+
+	const auto method
+		= Api::details::TelegramBotApiMethodUrl(token, u"getStickerSet"_q);
+	CHECK_EQ(method.scheme(), u"https"_q);
+	CHECK_EQ(method.host(), u"api.telegram.org"_q);
+	CHECK_EQ(method.path(),
+			 u"/bot123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef/getStickerSet"_q);
+	const auto file
+		= Api::details::TelegramBotApiFileUrl(token, u"stickers/file_1.tgs"_q);
+	CHECK(file.has_value());
+	if (file) {
+		CHECK_EQ(file->scheme(), u"https"_q);
+		CHECK_EQ(file->host(), u"api.telegram.org"_q);
+		CHECK(file->path().contains(u"/file/bot123456789:"_q));
+	}
+	CHECK(
+		!Api::details::TelegramBotApiFileUrl(token, u"../outside/file.tgs"_q));
+}
+
+TEST_CASE(TelegramStickerImportPreservesPackOrderEmojiAndCanonicalSource) {
+	const auto scan = Core::ScanTelegramStickerImportFiles(
+		{
+			{
+				.name = u"first.tgs"_q,
+				.bytes = ValidStickerTGS(),
+				.format = Core::StickerImportFormat::Tgs,
+				.emoji = u"🦊"_q,
+			},
+			{
+				.name = u"second.tgs"_q,
+				.bytes = ValidStickerTGS(),
+				.format = Core::StickerImportFormat::Tgs,
+				.emoji = u"🌿"_q,
+			},
+		},
+		Core::StickerImportType::Emoji);
+	CHECK(scan.problem == Core::StickerImportProblem::None);
+	CHECK_EQ(int(scan.files.size()), 2);
+	if (scan.files.size() == 2) {
+		CHECK_EQ(scan.files[0].emoji, u"🦊"_q);
+		CHECK_EQ(scan.files[1].emoji, u"🌿"_q);
+		CHECK(scan.files[0].format == Core::StickerImportFormat::Tgs);
+		const auto inputFile = MTP_inputFile(MTP_long(1), MTP_int(1),
+											 MTP_string(u"sticker_1.tgs"_q),
+											 MTP_string(u"checksum"_q));
+		const auto upload = Api::details::StickerImportUploadMediaRequest(
+			inputFile, scan.files[0], 0);
+		CHECK(SerializeRequest(upload).contains(u"🦊"_q.toUtf8()));
+		CHECK(!SerializeRequest(upload).contains(u"⭐"_q.toUtf8()));
+		const auto uploadedDocument = MTP_document(
+			MTP_flags(0), MTP_long(1), MTP_long(2),
+			MTP_bytes(QByteArray("file-reference")), MTP_int(1),
+			MTP_string(u"application/x-tgsticker"_q), MTP_long(1),
+			MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
+			MTP_vector<MTPDocumentAttribute>());
+		const auto uploadedMedia = MTP_messageMediaDocument(
+			MTP_flags(MTPDmessageMediaDocument::Flag::f_document),
+			uploadedDocument, MTPVector<MTPDocument>(), MTPPhoto(), MTPint(),
+			MTPint());
+		const auto item = Api::details::StickerImportSetItemFromUploadMedia(
+			uploadedMedia, scan.files[0].emoji);
+		CHECK(item.has_value());
+		if (item) {
+			const auto request = Api::details::StickerImportCreateSetRequest(
+				u"Foxes"_q, u"foxes_pack"_q, Data::StickersType::Emoji,
+				Core::StickerImportSource::Telegram,
+				QVector<MTPInputStickerSetItem>{*item},
+				u"https://t.me/addemoji/FoxesPack"_q);
+			CHECK(SerializeRequest(request).contains(u"🦊"_q.toUtf8()));
+		}
+	}
+
+	const auto token = u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"_q;
+	const auto link = Core::ParseTelegramStickerPackLink(
+		u"https://t.me/addemoji/SomePack"_q);
+	CHECK(link.has_value());
+	if (link && !scan.files.empty()) {
+		const auto item = MTP_inputStickerSetItem(
+			MTP_flags(0),
+			MTP_inputDocument(MTP_long(1), MTP_long(2),
+							  MTP_bytes(QByteArray("file-reference"))),
+			MTP_string(u"🦊"_q), MTPMaskCoords(), MTPstring());
+		const auto request = Api::details::StickerImportCreateSetRequest(
+			u"Some Pack"_q, u"some_pack"_q, Data::StickersType::Emoji,
+			Core::StickerImportSource::Telegram,
+			QVector<MTPInputStickerSetItem>{item}, link->sourceUrl);
+		const auto serialized = SerializeRequest(request);
+		CHECK(serialized.contains(link->sourceUrl.toUtf8()));
+		CHECK(!serialized.contains(token.toUtf8()));
+	}
+}
+
+TEST_CASE(TelegramEmojiStickersAreMatchedBackToPackOrder) {
+	const auto set = Api::details::ParseTelegramStickerSetResponse(
+		QByteArray(
+			R"({"ok":true,"result":{"name":"EmojiPack","title":"Foxes","sticker_type":"custom_emoji","stickers":[{"file_id":"set-file-1","file_unique_id":"unique-1","type":"custom_emoji","width":512,"height":512,"is_animated":true,"is_video":false,"emoji":"🦊","custom_emoji_id":"101"},{"file_id":"set-file-2","file_unique_id":"unique-2","type":"custom_emoji","width":512,"height":512,"is_animated":false,"is_video":false,"emoji":"🌿","custom_emoji_id":"202"}]}})"),
+		Core::StickerImportType::Emoji);
+	CHECK(set.has_value());
+	if (!set) {
+		return;
+	}
+	CHECK_EQ(set->title, u"Foxes"_q);
+	CHECK_EQ(int(set->stickers.size()), 2);
+	if (set->stickers.size() == 2) {
+		CHECK_EQ(set->stickers[0].customEmojiId, u"101"_q);
+		CHECK_EQ(set->stickers[0].emoji, u"🦊"_q);
+		CHECK(set->stickers[0].format == Core::StickerImportFormat::Tgs);
+		CHECK_EQ(set->stickers[1].customEmojiId, u"202"_q);
+		CHECK(set->stickers[1].format == Core::StickerImportFormat::Webp);
+	}
+	const auto details = Api::details::ParseTelegramCustomEmojiStickersResponse(
+		QByteArray(
+			R"({"ok":true,"result":[{"file_id":"emoji-file-202","file_unique_id":"emoji-unique-202","type":"custom_emoji","width":100,"height":100,"is_animated":false,"is_video":false,"emoji":"🌿","custom_emoji_id":"202"},{"file_id":"emoji-file-101","file_unique_id":"emoji-unique-101","type":"custom_emoji","width":512,"height":512,"is_animated":true,"is_video":false,"emoji":"🦊","custom_emoji_id":"101"}]})"),
+		set->stickers);
+	CHECK(details.has_value());
+	if (details) {
+		CHECK_EQ((*details)[0].fileId, u"emoji-file-101"_q);
+		CHECK_EQ((*details)[1].fileId, u"emoji-file-202"_q);
+		CHECK_EQ((*details)[0].emoji, u"🦊"_q);
+		CHECK((*details)[0].format == Core::StickerImportFormat::Tgs);
+	}
+}
+
+TEST_CASE(TelegramBotApiErrorsRedactTheToken) {
+	const auto token = u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"_q;
+	const auto text = Api::details::RedactTelegramBotApiError(
+		u"Unauthorized: https://api.telegram.org/bot123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef/getStickerSet"_q,
+		token);
+	CHECK(!text.contains(token));
+	CHECK(!text.contains(u"/bot123456789:"_q));
 }
 
 } // namespace

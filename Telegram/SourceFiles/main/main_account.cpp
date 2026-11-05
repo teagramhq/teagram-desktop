@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
+#include "core/sticker_import.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
 #include "storage/serialize_common.h"
@@ -1000,6 +1001,11 @@ void Account::loggedOut() {
 	} else {
 		discardStaleAuthorizationState();
 		_mtpFields.keys.clear();
+	}
+	local().clearPref(Core::kTelegramBotTokenPreference);
+	if (!local().writePrefs(true)) {
+		LOG(("App Error: could not synchronously remove the saved Telegram bot "
+			 "token."));
 	}
 	local().reset();
 	cSetOtherOnline(0);

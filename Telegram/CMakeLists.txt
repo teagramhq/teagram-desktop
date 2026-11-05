@@ -243,6 +243,10 @@ PRIVATE
     api/api_sticker_set_import.h
     api/api_sticker_set_import_requests.cpp
     api/api_sticker_set_import_requests.h
+    api/api_telegram_sticker_pack_import.cpp
+    api/api_telegram_sticker_pack_import.h
+    api/api_telegram_sticker_pack_import_requests.cpp
+    api/api_telegram_sticker_pack_import_requests.h
     api/api_suggest_post.cpp
     api/api_suggest_post.h
     api/api_text_entities.cpp

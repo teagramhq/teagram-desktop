@@ -12,6 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDirIterator>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QUrl>
 #include <QtGui/QImageReader>
 
 #include <zlib.h>
@@ -495,6 +497,96 @@ StickerImportScan ScanStickerImportFolder(const QString &path,
 		result.problem = StickerImportProblem::NoFiles;
 	}
 	return result;
+}
+
+StickerImportScan
+ScanTelegramStickerImportFiles(std::vector<StickerImportFile> files,
+							   StickerImportType type) {
+	auto result = StickerImportScan();
+	if (files.size() > kMaximumEntries) {
+		result.problem = StickerImportProblem::TooManyEntries;
+		return result;
+	}
+	if (files.empty()) {
+		result.problem = StickerImportProblem::NoFiles;
+		return result;
+	}
+	auto totalBytes = quint64(0);
+	result.files.reserve(files.size());
+	for (auto &file : files) {
+		file.name = BaseName(std::move(file.name));
+		const auto format = FormatForName(file.name);
+		if (!format || *format != file.format) {
+			result.issues.push_back({
+				file.name,
+				StickerImportProblem::UnsupportedFormat,
+			});
+			Fail(result, StickerImportProblem::UnsupportedFormat);
+			return result;
+		}
+		const auto details = StickerImportFormatDetails(file.format);
+		if (quint64(file.bytes.size()) > details.maximumBytes) {
+			result.issues.push_back({
+				file.name,
+				StickerImportProblem::FileTooLarge,
+			});
+			Fail(result, StickerImportProblem::FileTooLarge);
+			return result;
+		}
+		auto dimensions = QSize();
+		const auto problem
+			= ValidateBytes(file.bytes, type, file.format, &dimensions);
+		if (problem != StickerImportProblem::None) {
+			result.issues.push_back({file.name, problem});
+			Fail(result, problem);
+			return result;
+		} else if (int(result.files.size()) >= MaximumItems(type)) {
+			result.issues.push_back({
+				file.name,
+				StickerImportProblem::TooManyItems,
+			});
+			Fail(result, StickerImportProblem::TooManyItems);
+			return result;
+		} else if (quint64(file.bytes.size())
+				   > kMaximumExpandedBytes - totalBytes) {
+			Fail(result, StickerImportProblem::TotalSizeLimit);
+			return result;
+		}
+		totalBytes += quint64(file.bytes.size());
+		file.dimensions = dimensions;
+		result.files.push_back(std::move(file));
+	}
+	return result;
+}
+
+std::optional<TelegramStickerPackLink>
+ParseTelegramStickerPackLink(const QString &url) {
+	auto text = url.trimmed();
+	if (text.startsWith(u"t.me/"_q)) {
+		text = u"https://"_q + text;
+	}
+	const auto parsed = QUrl(text, QUrl::StrictMode);
+	if (!parsed.isValid() || parsed.scheme() != u"https"_q
+		|| parsed.host() != u"t.me"_q || parsed.port(-1) != -1
+		|| !parsed.userInfo().isEmpty() || parsed.hasQuery()
+		|| parsed.hasFragment()) {
+		return std::nullopt;
+	}
+	static const auto pathPattern = QRegularExpression(
+		u"^/(addstickers|addemoji)/([A-Za-z0-9_]{1,64})$"_q);
+	const auto match = pathPattern.match(parsed.path(QUrl::FullyDecoded));
+	if (!match.hasMatch()) {
+		return std::nullopt;
+	}
+	const auto type = (match.captured(1) == u"addemoji"_q)
+						  ? StickerImportType::Emoji
+						  : StickerImportType::Stickers;
+	const auto name = match.captured(2);
+	return TelegramStickerPackLink{
+		.name = name,
+		.type = type,
+		.sourceUrl = u"https://t.me/%1/%2"_q.arg(match.captured(1), name),
+	};
 }
 
 StickerImportScan ScanStickerImportZip(const QByteArray &bytes,

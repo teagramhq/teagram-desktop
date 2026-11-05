@@ -11,9 +11,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QSize>
 #include <QtCore/QString>
 
+#include <optional>
+#include <string_view>
 #include <vector>
 
 namespace Core {
+
+inline constexpr auto kTelegramBotTokenPreference
+	= std::string_view("teagram_telegram_bot_token");
 
 enum class StickerImportType {
 	Stickers,
@@ -35,6 +40,13 @@ struct StickerImportFormatInfo {
 enum class StickerImportSource {
 	Folder,
 	Zip,
+	Telegram,
+};
+
+struct TelegramStickerPackLink {
+	QString name;
+	StickerImportType type = StickerImportType::Stickers;
+	QString sourceUrl;
 };
 
 enum class StickerImportProblem {
@@ -58,6 +70,7 @@ struct StickerImportFile {
 	QByteArray bytes;
 	StickerImportFormat format = StickerImportFormat::Webp;
 	QSize dimensions;
+	QString emoji;
 };
 
 struct StickerImportIssue {
@@ -115,6 +128,11 @@ class StickerImportSuggestionGuard final {
 
 [[nodiscard]] StickerImportScan ScanStickerImportFolder(const QString &path,
 														StickerImportType type);
+[[nodiscard]] StickerImportScan
+ScanTelegramStickerImportFiles(std::vector<StickerImportFile> files,
+							   StickerImportType type);
+[[nodiscard]] std::optional<TelegramStickerPackLink>
+ParseTelegramStickerPackLink(const QString &url);
 [[nodiscard]] StickerImportScan ScanStickerImportZip(const QByteArray &bytes,
 													 StickerImportType type);
 [[nodiscard]] StickerImportScan
