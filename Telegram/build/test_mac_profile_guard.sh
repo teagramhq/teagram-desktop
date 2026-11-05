@@ -1399,7 +1399,7 @@ if ! grep -F -q \
 	exit 1
 fi
 if ! grep -F -q \
-	"Open log descriptor symlink regression: passed=1." \
+	"Open log descriptor symlink regression: passed=1 debug_passed=1." \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "open log descriptor symlink regression did not report coverage." >&2
@@ -1559,7 +1559,7 @@ for native_evidence in \
 done
 for cache_evidence in \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
-	"Open log descriptor symlink regression: passed=1." \
+	"Open log descriptor symlink regression: passed=1 debug_passed=1." \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
 	"Chat participants regression passed." \

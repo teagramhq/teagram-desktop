@@ -145,11 +145,11 @@ public:
 		if (!file || !file->isOpen()) {
 			return;
 		}
-		// The main log path is checked when it is opened. Each write uses the
-		// already-open descriptor, so a replacement symlink cannot redirect it.
-		// Rechecking the path only repeats the protected-path walk for every
-		// main-log message.
-		if (type != LogDataMain
+		// Main and debug log paths are checked when opened. Their writes use
+		// those open descriptors, so replacing a path with a symlink cannot
+		// redirect an existing stream. Debug rotation checks the new path
+		// before opening the next descriptor.
+		if (type == LogDataMtp
 			&& !CheckLogPath(Core::MacProtectedPath::Operation::Write,
 							 file->fileName(), Q_FUNC_INFO)) {
 			return;

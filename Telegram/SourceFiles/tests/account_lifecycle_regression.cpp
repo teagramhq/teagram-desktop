@@ -1336,12 +1336,34 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 }
 
 [[nodiscard]] bool
-RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget) {
+RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
+										bool debug) {
 	if (!Core::MacProtectedPath::IntegrationTestActive()) {
 		return true;
 	}
-	const auto logPath
+	auto logPath
 		= QDir(Core::MacProtectedPath::ProfileRoot()).filePath("log.txt");
+	if (debug) {
+		if (!Logs::DebugEnabled()) {
+			return false;
+		}
+		constexpr auto setup = "open debug descriptor setup";
+		Logs::writeDebug(QString::fromLatin1(setup));
+		const auto directory
+			= QDir(Core::MacProtectedPath::ProfileRoot()).filePath("DebugLogs");
+		logPath.clear();
+		for (const auto &info : QDir(directory).entryInfoList(
+				 QStringList() << "log_*.txt", QDir::Files)) {
+			auto candidate = QFile(info.filePath());
+			if (candidate.open(QIODevice::ReadOnly)
+				&& candidate.readAll().contains(setup)) {
+				if (!logPath.isEmpty()) {
+					return false;
+				}
+				logPath = info.filePath();
+			}
+		}
+	}
 	const auto backupPath = logPath + ".opened-descriptor-regression";
 	if (!QFileInfo(logPath).isFile() || QFileInfo::exists(backupPath)
 		|| !QFile::rename(logPath, backupPath)) {
@@ -1365,7 +1387,11 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget) {
 		return false;
 	}
 	constexpr auto marker = "open log descriptor write regression";
-	Logs::writeMain(QString::fromLatin1(marker));
+	if (debug) {
+		Logs::writeDebug(QString::fromLatin1(marker));
+	} else {
+		Logs::writeMain(QString::fromLatin1(marker));
+	}
 	if (!QFile::remove(logPath)) {
 		return false;
 	}
@@ -10442,13 +10468,19 @@ void RunAuthenticatedCacheSymlinkCases(
 			= !Core::MacProtectedPath::CheckCachePath(
 				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
 		const auto openedLogStaysOnAuthorizedFile
-			= RunOpenedLogDescriptorSymlinkRegression(fixtures.logWriteTarget
-													  + "/marker");
+			= RunOpenedLogDescriptorSymlinkRegression(
+				fixtures.logWriteTarget + "/marker", false);
+		const auto openedDebugLogStaysOnAuthorizedFile
+			= RunOpenedLogDescriptorSymlinkRegression(
+				fixtures.logWriteTarget + "/marker", true);
 		std::fprintf(stderr,
-					 "Open log descriptor symlink regression: passed=%d.\n",
-					 openedLogStaysOnAuthorizedFile);
+					 "Open log descriptor symlink regression: passed=%d "
+					 "debug_passed=%d.\n",
+					 openedLogStaysOnAuthorizedFile,
+					 openedDebugLogStaysOnAuthorizedFile);
 		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
-									  && openedLogStaysOnAuthorizedFile;
+									  && openedLogStaysOnAuthorizedFile
+									  && openedDebugLogStaysOnAuthorizedFile;
 		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
 									   cacheFilesPassed);
 		if (cacheFilesPassed) {
