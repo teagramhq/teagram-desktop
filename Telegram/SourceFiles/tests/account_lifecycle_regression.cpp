@@ -10069,6 +10069,7 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 maxHydrationNanoseconds = -1;
 	qint64 maxChatSwitchNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
+	bool minimizedRestore = false;
 	bool passed = false;
 };
 
@@ -10102,6 +10103,25 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		controller->showPeerHistory(target);
 		QCoreApplication::processEvents();
 	}
+	auto &mainWindow = *window->widget();
+	mainWindow.activate();
+	QCoreApplication::processEvents();
+	mainWindow.updateIsActive();
+	const auto activeBeforeMinimize = mainWindow.isActive();
+	mainWindow.setWindowState(
+		mainWindow.windowState() | Qt::WindowMinimized);
+	const auto cachedActiveAfterMinimize = mainWindow.isActive();
+	auto minimizedSwitchTimer = QElapsedTimer();
+	minimizedSwitchTimer.start();
+	controller->showPeerHistory(firstHistory);
+	result.maxChatSwitchNanoseconds = std::max(
+		result.maxChatSwitchNanoseconds,
+		minimizedSwitchTimer.nsecsElapsed());
+	result.minimizedRestore = activeBeforeMinimize
+		&& cachedActiveAfterMinimize
+		&& mainWindow.isVisible()
+		&& !(mainWindow.windowState() & Qt::WindowMinimized);
+	QCoreApplication::processEvents();
 
 	constexpr auto kReactionCount = 73;
 	constexpr auto kDocumentsPerReaction = 4;
@@ -10194,6 +10214,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					&& (result.chatSwitches == kExpectedChatSwitches)
 					&& (result.cachedDocuments
 						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+					&& result.minimizedRestore
 					&& (result.maxStallNanoseconds < kMaxStallNanoseconds);
 	return result;
 }

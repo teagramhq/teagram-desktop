@@ -1452,7 +1452,10 @@ void MainWidget::showHistory(
 		MsgId showAtMsgId) {
 	const auto activateWindow = [&] {
 		auto &window = _controller->window();
-		if (window.widget()->isActive()) {
+		const auto widget = window.widget();
+		if (widget->isActiveWindow()
+			&& widget->isVisible()
+			&& !(widget->windowState() & Qt::WindowMinimized)) {
 			window.updateIsActiveFocus();
 		} else {
 			window.activate();
