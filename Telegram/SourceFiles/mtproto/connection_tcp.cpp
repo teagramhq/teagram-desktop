@@ -244,17 +244,17 @@ auto TcpConnection::Protocol::Create(bytes::const_span secret)
 	Unexpected("Secret bytes in TcpConnection::Protocol::Create.");
 }
 
-TcpConnection::TcpConnection(
-	not_null<Instance*> instance,
-	QThread *thread,
-	const ProxyData &proxy)
-: AbstractConnection(thread, proxy)
-, _instance(instance)
-, _checkNonce(base::RandomValue<MTPint128>()) {
-}
+TcpConnection::TcpConnection(not_null<Instance *> instance, QThread *thread,
+							 const ProxyData &proxy,
+							 const QString &webSocketEndpoint)
+	: AbstractConnection(thread, proxy), _instance(instance),
+	  _webSocketEndpoint(webSocketEndpoint),
+	  _checkNonce(base::RandomValue<MTPint128>()) {}
 
 ConnectionPointer TcpConnection::clone(const ProxyData &proxy) {
-	return ConnectionPointer::New<TcpConnection>(_instance, thread(), proxy);
+	return ConnectionPointer::New<TcpConnection>(
+		_instance, thread(), proxy,
+		(proxy.type == ProxyData::Type::None) ? _webSocketEndpoint : QString());
 }
 
 void TcpConnection::ensureAvailableInBuffer(int amount) {
@@ -526,11 +526,10 @@ void TcpConnection::connectToServer(
 		_port = port;
 		_protocol = Protocol::Create(secret);
 	}
-	_socket = AbstractSocket::Create(
-		thread(),
-		secret,
-		ToNetworkProxy(_proxy),
-		protocolForFiles);
+	_socket = AbstractSocket::Create(thread(), secret, ToNetworkProxy(_proxy),
+									 protocolForFiles, _webSocketEndpoint,
+									 _webSocketEndpoint.isEmpty() ? QString()
+																  : _address);
 	_protocolDcId = protocolDcId;
 
 	const auto postfix = _socket->debugPostfix();
@@ -637,6 +636,9 @@ QString TcpConnection::transport() const {
 	if (!isConnected()) {
 		return QString();
 	}
+	if (!_webSocketEndpoint.isEmpty()) {
+		return u"WSS"_q;
+	}
 	auto result = u"TCP"_q;
 	if (qthelp::is_ipv6(_address)) {
 		result += u"/IPv6"_q;
@@ -645,6 +647,9 @@ QString TcpConnection::transport() const {
 }
 
 QString TcpConnection::tag() const {
+	if (!_webSocketEndpoint.isEmpty()) {
+		return u"WSS"_q;
+	}
 	auto result = u"TCP"_q;
 	if (qthelp::is_ipv6(_address)) {
 		result += u"/IPv6"_q;

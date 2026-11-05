@@ -19,7 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace MTP {
 namespace {
 
-constexpr auto kVersion = 7;
+constexpr auto kVersion = 8;
 
 using namespace details;
 
@@ -86,9 +86,8 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		return false;
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::Legacy) {
-		return server.serverSelection.empty()
-			&& server.discoveryOrigin.empty()
-			&& !hasHostname;
+		return server.serverSelection.empty() && server.discoveryOrigin.empty()
+			   && server.webSocketEndpoint.empty() && !hasHostname;
 	}
 	if (server.serverSelection.empty() || server.discoveryOrigin.empty()) {
 		return false;
@@ -123,6 +122,18 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 			  : QString();
 	if (storedOrigin != expectedOrigin && storedOrigin != legacyPublicOrigin) {
 		return false;
+	}
+	if (!server.webSocketEndpoint.empty()) {
+		auto normalizedWebSocketEndpoint = std::optional<QString>();
+		if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps) {
+			normalizedWebSocketEndpoint = NormalizePublicWebSocketEndpoint(
+				QString::fromStdString(server.webSocketEndpoint), selection);
+		}
+		if (!normalizedWebSocketEndpoint
+			|| *normalizedWebSocketEndpoint
+				   != QString::fromStdString(server.webSocketEndpoint)) {
+			return false;
+		}
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
 		&& hasHostname) {
@@ -206,14 +217,12 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 bool SameCustomServerPin(
 		const CustomServer &a,
 		const CustomServer &b) {
-	if (a.dcId != b.dcId
-		|| a.hostname != b.hostname
-		|| a.ip != b.ip
-		|| a.port != b.port
-		|| a.ipv6 != b.ipv6
+	if (a.dcId != b.dcId || a.hostname != b.hostname || a.ip != b.ip
+		|| a.port != b.port || a.ipv6 != b.ipv6
 		|| a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
-		|| a.discoveryOrigin != b.discoveryOrigin) {
+		|| a.discoveryOrigin != b.discoveryOrigin
+		|| a.webSocketEndpoint != b.webSocketEndpoint) {
 		return false;
 	} else if (!a.key || !b.key) {
 		return false;
@@ -238,6 +247,18 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		: (u"local:"_q + selection.normalizedSelection);
 	if (result.origin != expectedOrigin || result.dcId <= 0) {
 		return std::nullopt;
+	}
+	auto webSocketEndpoint = QString();
+	if (!result.webSocketEndpoint.isEmpty()) {
+		auto normalized = std::optional<QString>();
+		if (result.policy == ServerDiscoveryPolicy::PublicHttps) {
+			normalized = NormalizePublicWebSocketEndpoint(
+				result.webSocketEndpoint, selection);
+		}
+		if (!normalized || *normalized != result.webSocketEndpoint) {
+			return std::nullopt;
+		}
+		webSocketEndpoint = *normalized;
 	}
 	const auto endpoint = CheckServerSelection(result.endpoint);
 	const auto endpointAllowed = (result.policy
@@ -295,6 +316,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		.serverSelection = selection.normalizedSelection.toStdString(),
 		.discoveryPolicy = result.policy,
 		.discoveryOrigin = result.origin.toStdString(),
+		.webSocketEndpoint = webSocketEndpoint.toStdString(),
 	};
 }
 
@@ -723,8 +745,9 @@ QByteArray DcOptions::serialize() const {
 	}
 
 	// Pinned custom server. Literal endpoint identity (dcId, ip, port)
-	// and the key bytes are persisted here; v7 adds the hostname field
-	// after the unenrolled marker. The fingerprint is recomputed on load.
+	// and the key bytes are persisted here; v7 adds the hostname and v8 adds
+	// the optional WebSocket endpoint after the unenrolled marker.
+	// The fingerprint is recomputed on load.
 	// Without dcId the CDN-shadowing control cannot match and the pin is
 	// silently ineffective.
 	bool pinned = false;
@@ -734,6 +757,7 @@ QByteArray DcOptions::serialize() const {
 	bytes::vector customKeyN, customKeyE;
 	auto customSelection = std::string();
 	auto customOrigin = std::string();
+	auto customWebSocketEndpoint = std::string();
 	auto customPolicy = ServerDiscoveryPolicy::Legacy;
 	if (_customServer.key) {
 		pinned = true;
@@ -746,6 +770,7 @@ QByteArray DcOptions::serialize() const {
 		customSelection = _customServer.serverSelection;
 		customPolicy = _customServer.discoveryPolicy;
 		customOrigin = _customServer.discoveryOrigin;
+		customWebSocketEndpoint = _customServer.webSocketEndpoint;
 	}
 	size += sizeof(qint32); // pinned
 	if (pinned) {
@@ -764,6 +789,7 @@ QByteArray DcOptions::serialize() const {
 	}
 	size += sizeof(qint32); // unenrolled
 	size += sizeof(qint32) + customHostname.size();
+	size += sizeof(qint32) + customWebSocketEndpoint.size();
 
 	auto result = QByteArray();
 	result.reserve(size);
@@ -831,6 +857,9 @@ QByteArray DcOptions::serialize() const {
 		stream << qint32(_unenrolled ? 1 : 0);
 		stream << qint32(customHostname.size());
 		stream.writeRawData(customHostname.data(), customHostname.size());
+		stream << qint32(customWebSocketEndpoint.size());
+		stream.writeRawData(customWebSocketEndpoint.data(),
+							customWebSocketEndpoint.size());
 	}
 	return result;
 }
@@ -1108,6 +1137,31 @@ bool DcOptions::constructFromSerialized(const QByteArray &serialized) {
 			return false;
 		}
 		_customServer.hostname = std::move(hostname);
+	}
+	if (version > 7) {
+		qint32 endpointSize = 0;
+		if (stream.atEnd()) {
+			LOG(("MTP Error: Missing custom server WebSocket endpoint in "
+				 "DcOptions::constructFromSerialized()"));
+			return false;
+		}
+		stream >> endpointSize;
+		constexpr auto kMaxWebSocketEndpointSize = 2048;
+		if (endpointSize < 0 || endpointSize > kMaxWebSocketEndpointSize
+			|| stream.status() != QDataStream::Ok) {
+			LOG(("MTP Error: Bad custom server WebSocket endpoint in "
+				 "DcOptions::constructFromSerialized()"));
+			return false;
+		}
+		auto endpoint = std::string(endpointSize, ' ');
+		stream.readRawData(endpoint.data(), endpointSize);
+		if (stream.status() != QDataStream::Ok
+			|| (!_customServer.key && !endpoint.empty())) {
+			LOG(("MTP Error: Truncated or unpinned WebSocket endpoint in "
+				 "DcOptions::constructFromSerialized()"));
+			return false;
+		}
+		_customServer.webSocketEndpoint = std::move(endpoint);
 	}
 	if (_customServer.key) {
 		if (const auto problem = CustomServerProblem(

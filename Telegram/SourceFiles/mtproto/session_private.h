@@ -156,12 +156,11 @@ public:
 	// _sessionDataMutex must be locked for read.
 	bool setState(int state, int ifState = kUpdateStateAlways);
 
-	void appendTestConnection(
-		DcOptions::Variants::Protocol protocol,
-		const QString &ip,
-		int port,
-		const bytes::vector &protocolSecret,
-		bool ipv6 = false);
+	void appendTestConnection(DcOptions::Variants::Protocol protocol,
+							  const QString &ip, int port,
+							  const bytes::vector &protocolSecret,
+							  bool ipv6 = false,
+							  bool bothAddressFamilies = false);
 
 	// if badTime received - search for ids in sessionData->haveSent and sessionData->wereAcked and sync time/salt, return true if found
 	bool requestsFixTimeSalt(const QVector<MTPlong> &ids, const OuterInfo &info);

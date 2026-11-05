@@ -411,6 +411,56 @@ TEST_CASE(AuthorizationStateCannotCrossServerPin) {
 	auto changed = original;
 	changed.port += 1;
 	CHECK(!SameCustomServerPin(original, changed));
+
+	changed = original;
+	changed.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(!SameCustomServerPin(original, changed));
+}
+
+TEST_CASE(CustomServerWebSocketEndpointSurvivesSerialization) {
+	auto options = DcOptions(Environment::Production);
+	auto server = MakeCustomServer();
+	server.ip = "8.8.8.88";
+	server.serverSelection = "server.example.com";
+	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	server.discoveryOrigin
+		= "https://server.example.com/.well-known/teagramd/client";
+	server.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(options.setCustomServer(server));
+
+	auto restored = DcOptions(Environment::Production);
+	CHECK(restored.constructFromSerialized(options.serialize()));
+	CHECK_EQ(restored.customServer().webSocketEndpoint,
+			 server.webSocketEndpoint);
+}
+
+TEST_CASE(WebSocketFallbackWaitsForTcpExhaustion) {
+	using ProxyType = ProxyData::Type;
+	CHECK(!ShouldAttemptWebSocketFallback(false, true, false, ProxyType::None));
+	CHECK(!ShouldAttemptWebSocketFallback(true, false, false, ProxyType::None));
+	CHECK(!ShouldAttemptWebSocketFallback(true, true, true, ProxyType::None));
+	CHECK(
+		!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Mtproto));
+	CHECK(ShouldAttemptWebSocketFallback(true, true, false, ProxyType::None));
+	CHECK(
+		!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Socks5));
+	CHECK(!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Http));
+}
+
+TEST_CASE(ServerAddressFamiliesInterleaveInPreferredOrder) {
+	const auto preferred = QList<QHostAddress>{
+		QHostAddress(u"2001:4860:4860::8888"_q),
+		QHostAddress(u"2001:4860:4860::8844"_q),
+	};
+	const auto other = QList<QHostAddress>{
+		QHostAddress(u"8.8.8.8"_q),
+		QHostAddress(u"8.8.4.4"_q),
+	};
+	const auto result = InterleaveServerAddressFamilies(preferred, other, 3);
+	CHECK_EQ(result.size(), 3);
+	CHECK(result.at(0) == preferred.at(0));
+	CHECK(result.at(1) == other.at(0));
+	CHECK(result.at(2) == preferred.at(1));
 }
 
 // Address-only discovery stores the normalized selection and the origin that
@@ -523,17 +573,22 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 		u"8.8.8.88:8443"_q,
 		u"mtproto.example.com:8443"_q,
 	}) {
-		const auto json = QJsonDocument(QJsonObject{
-			{ u"version"_q, 1 },
-			{ u"mtproto"_q, QJsonObject{
-				{ u"endpoint"_q, endpoint },
-				{ u"dc_id"_q, 2 },
-				{ u"rsa_spki"_q, encoded }
-			} }
-		}).toJson(QJsonDocument::Compact);
+		const auto json
+			= QJsonDocument(
+				  QJsonObject{
+					  {u"version"_q, 1},
+					  {u"websocket"_q,
+					   QJsonObject{{u"endpoint"_q,
+									u"wss://transport.example.com/apiws"_q}}},
+					  {u"mtproto"_q, QJsonObject{{u"endpoint"_q, endpoint},
+												 {u"dc_id"_q, 2},
+												 {u"rsa_spki"_q, encoded}}}})
+				  .toJson(QJsonDocument::Compact);
 		auto result = ParsePublicDiscoveryResponse(selection, json);
 		CHECK(result.valid());
 		CHECK_EQ(result.endpoint, endpoint);
+		CHECK_EQ(result.webSocketEndpoint,
+				 u"wss://transport.example.com/apiws"_q);
 		CHECK(result.policy == ServerDiscoveryPolicy::PublicHttps);
 		result.resolvedAddress = u"8.8.8.88"_q;
 		const auto server = BuildCustomServerFromDiscovery(selection, result);
@@ -542,6 +597,8 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 			continue;
 		}
 		CHECK_EQ(server->ip, "8.8.8.88");
+		CHECK_EQ(server->webSocketEndpoint,
+				 "wss://transport.example.com/apiws");
 		CHECK_EQ(server->serverSelection, "server.example.com");
 		CHECK(server->discoveryPolicy == ServerDiscoveryPolicy::PublicHttps);
 		CHECK_EQ(server->discoveryOrigin,
@@ -555,6 +612,7 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 		const auto got = restored.customServer();
 		CHECK_EQ(got.ip, "8.8.8.88");
 		CHECK_EQ(got.port, 8443);
+		CHECK_EQ(got.webSocketEndpoint, "wss://transport.example.com/apiws");
 		CHECK(got.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps);
 		CHECK_EQ(got.discoveryOrigin, server->discoveryOrigin);
 		CHECK(got.key != nullptr);
@@ -740,24 +798,23 @@ TEST_CASE(HistoricalLiteralBindingsRestoreUnchanged) {
 	CHECK(options.setCustomServer(server));
 
 	const auto serialized = options.serialize();
-	const auto historicalTail = int(sizeof(qint32) * 6
-		+ server.serverSelection.size()
-		+ server.discoveryOrigin.size());
+	const auto historicalTail
+		= int(sizeof(qint32) * 6 + sizeof(qint32)
+			  + server.serverSelection.size() + server.discoveryOrigin.size());
 	const auto customBlockEnd = serialized.size() - historicalTail;
 	for (const auto &[version, tail] : {
-		std::pair{ 3, 0 },
-		std::pair{ 4, int(sizeof(qint32)) },
-		std::pair{
-			5,
-			int(sizeof(qint32) * 4)
-				+ int(server.serverSelection.size())
-				+ int(server.discoveryOrigin.size())},
-		std::pair{
-			6,
-			int(sizeof(qint32) * 5)
-				+ int(server.serverSelection.size())
-				+ int(server.discoveryOrigin.size())},
-	}) {
+			 std::pair{3, 0},
+			 std::pair{4, int(sizeof(qint32))},
+			 std::pair{5, int(sizeof(qint32) * 4)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+			 std::pair{6, int(sizeof(qint32) * 5)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+			 std::pair{7, int(sizeof(qint32) * 6)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+		 }) {
 		auto fixture = serialized.left(customBlockEnd + tail);
 		QDataStream stream(&fixture, QIODevice::ReadWrite);
 		stream.setVersion(QDataStream::Qt_5_1);
@@ -771,6 +828,7 @@ TEST_CASE(HistoricalLiteralBindingsRestoreUnchanged) {
 		CHECK_EQ(got.ip, server.ip);
 		CHECK_EQ(got.port, server.port);
 		CHECK(got.hostname.empty());
+		CHECK(got.webSocketEndpoint.empty());
 		CHECK(got.key != nullptr);
 		if (got.key) {
 			CHECK_EQ(qint64(got.key->fingerprint()), kProductionKeyFingerprint);

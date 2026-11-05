@@ -68,12 +68,11 @@ public:
 	virtual ~AbstractConnection() = default;
 
 	// virtual constructor
-	[[nodiscard]] static ConnectionPointer Create(
-		not_null<Instance*> instance,
-		DcOptions::Variants::Protocol protocol,
-		QThread *thread,
-		const bytes::vector &secret,
-		const ProxyData &proxy);
+	[[nodiscard]] static ConnectionPointer
+	Create(not_null<Instance *> instance,
+		   DcOptions::Variants::Protocol protocol, QThread *thread,
+		   const bytes::vector &secret, const ProxyData &proxy,
+		   const QString &webSocketEndpoint = {});
 
 	[[nodiscard]] virtual ConnectionPointer clone(const ProxyData &proxy) = 0;
 

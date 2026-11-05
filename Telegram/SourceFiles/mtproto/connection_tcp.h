@@ -17,32 +17,27 @@ class AbstractSocket;
 
 class TcpConnection : public AbstractConnection {
 public:
-	TcpConnection(
-		not_null<Instance*> instance,
-		QThread *thread,
-		const ProxyData &proxy);
+  TcpConnection(not_null<Instance *> instance, QThread *thread,
+				const ProxyData &proxy, const QString &webSocketEndpoint = {});
 
-	ConnectionPointer clone(const ProxyData &proxy) override;
+  ConnectionPointer clone(const ProxyData &proxy) override;
 
-	crl::time pingTime() const override;
-	crl::time fullConnectTimeout() const override;
-	void sendData(mtpBuffer &&buffer) override;
-	void disconnectFromServer() override;
-	void connectToServer(
-		const QString &address,
-		int port,
-		const bytes::vector &protocolSecret,
-		int16 protocolDcId,
-		bool protocolForFiles) override;
-	void timedOut() override;
-	bool isConnected() const override;
+  crl::time pingTime() const override;
+  crl::time fullConnectTimeout() const override;
+  void sendData(mtpBuffer &&buffer) override;
+  void disconnectFromServer() override;
+  void connectToServer(const QString &address, int port,
+					   const bytes::vector &protocolSecret, int16 protocolDcId,
+					   bool protocolForFiles) override;
+  void timedOut() override;
+  bool isConnected() const override;
 
-	int32 debugState() const override;
+  int32 debugState() const override;
 
-	QString transport() const override;
-	QString tag() const override;
+  QString transport() const override;
+  QString tag() const override;
 
-	~TcpConnection();
+  ~TcpConnection();
 
 private:
 	enum class Status {
@@ -68,6 +63,7 @@ private:
 	}
 
 	const not_null<Instance*> _instance;
+	const QString _webSocketEndpoint;
 	std::unique_ptr<AbstractSocket> _socket;
 	bool _connectionStarted = false;
 

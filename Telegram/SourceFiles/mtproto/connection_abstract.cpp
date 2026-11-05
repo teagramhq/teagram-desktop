@@ -171,17 +171,13 @@ AbstractConnection::AbstractConnection(
 }
 
 ConnectionPointer AbstractConnection::Create(
-		not_null<Instance*> instance,
-		DcOptions::Variants::Protocol protocol,
-		QThread *thread,
-		const bytes::vector &secret,
-		const ProxyData &proxy) {
+	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
+	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
+	const QString &webSocketEndpoint) {
 	auto result = [&] {
 		if (protocol == DcOptions::Variants::Tcp) {
 			return ConnectionPointer::New<TcpConnection>(
-				instance,
-				thread,
-				proxy);
+				instance, thread, proxy, webSocketEndpoint);
 		} else {
 			return ConnectionPointer::New<HttpConnection>(thread, proxy);
 		}

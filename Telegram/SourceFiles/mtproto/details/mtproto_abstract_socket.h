@@ -14,24 +14,20 @@ namespace MTP::details {
 
 class AbstractSocket : protected QObject {
 public:
-	static std::unique_ptr<AbstractSocket> Create(
-		not_null<QThread*> thread,
-		const bytes::vector &secret,
-		const QNetworkProxy &proxy,
-		bool protocolForFiles);
+  static std::unique_ptr<AbstractSocket>
+  Create(not_null<QThread *> thread, const bytes::vector &secret,
+		 const QNetworkProxy &proxy, bool protocolForFiles,
+		 const QString &webSocketEndpoint = {},
+		 const QString &webSocketAddress = {});
 
-	void setDebugId(const QString &id) {
-		_debugId = id;
-	}
+  void setDebugId(const QString &id) { _debugId = id; }
 
-	explicit AbstractSocket(not_null<QThread*> thread) {
-		moveToThread(thread);
-	}
-	virtual ~AbstractSocket() = default;
+  explicit AbstractSocket(not_null<QThread *> thread) { moveToThread(thread); }
+  virtual ~AbstractSocket() = default;
 
-	[[nodiscard]] rpl::producer<> connected() const {
-		return _connected.events();
-	}
+  [[nodiscard]] rpl::producer<> connected() const {
+	  return _connected.events();
+  }
 	[[nodiscard]] rpl::producer<> disconnected() const {
 		return _disconnected.events();
 	}

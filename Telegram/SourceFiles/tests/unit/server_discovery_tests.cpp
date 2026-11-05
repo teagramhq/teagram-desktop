@@ -161,6 +161,15 @@ void CloseNativeTestSocket(NativeTestSocket socket) {
 		int(der.size())).toBase64());
 }
 
+[[nodiscard]] QByteArray
+PublicResponseWithWebSocket(const QString &endpoint,
+							const QString &webSocketEndpoint) {
+	auto root = QJsonDocument::fromJson(PublicResponse(endpoint)).object();
+	root.insert(u"websocket"_q,
+				QJsonObject{{u"endpoint"_q, webSocketEndpoint}});
+	return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
 TEST_CASE(PublicSelectionDefaultsToHttps) {
 	const auto result = CheckServerSelection(u" Example.COM. "_q);
 	CHECK(result.valid());
@@ -1539,6 +1548,37 @@ TEST_CASE(DiscoveryJsonRejectsMalformedResponse) {
 	CHECK(result.status == ServerDiscoveryResponseStatus::InvalidJson);
 }
 
+TEST_CASE(DiscoveryJsonRejectsNonWssWebSocketEndpoint) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithWebSocket(u"mtproto.example.com:443"_q,
+									u"https://demo.example.com/apiws"_q));
+	CHECK(result.status == ServerDiscoveryResponseStatus::UnsafeEndpoint);
+}
+
+TEST_CASE(DiscoveryJsonAcceptsWssWebSocketEndpoint) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithWebSocket(u"mtproto.example.com:443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	CHECK_EQ(result.webSocketEndpoint, u"wss://transport.example.com/apiws"_q);
+}
+
+TEST_CASE(DiscoveryJsonRejectsUnsafeWssWebSocketEndpoint) {
+	for (const auto &endpoint : {
+			 u"wss://user@transport.example.com/apiws"_q,
+			 u"wss://127.0.0.1/apiws"_q,
+			 u"wss://transport.example.com/apiws?token=secret"_q,
+		 }) {
+		const auto result = ParsePublicDiscoveryResponse(
+			CheckServerSelection(u"server.example.com"_q),
+			PublicResponseWithWebSocket(u"mtproto.example.com:443"_q,
+										endpoint));
+		CHECK(result.status == ServerDiscoveryResponseStatus::UnsafeEndpoint);
+	}
+}
+
 TEST_CASE(DiscoveryJsonRejectsDuplicateKeys) {
 	const auto result = ParsePublicDiscoveryResponse(
 		CheckServerSelection(u"server.example.com"_q),
@@ -1629,6 +1669,7 @@ TEST_CASE(DiscoveryJsonPreservesVerifiedBinding) {
 	CHECK_EQ(result.endpoint, u"mtproto.example.com:443"_q);
 	CHECK_EQ(result.dcId, 2);
 	CHECK(result.policy == ServerDiscoveryPolicy::PublicHttps);
+	CHECK(result.webSocketEndpoint.isEmpty());
 }
 
 TEST_CASE(DiscoveryJsonRejectsConstrainedPortConflict) {
