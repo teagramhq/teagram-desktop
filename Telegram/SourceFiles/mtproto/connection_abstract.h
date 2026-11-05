@@ -78,6 +78,11 @@ public:
 
 	[[nodiscard]] virtual crl::time pingTime() const = 0;
 	[[nodiscard]] virtual crl::time fullConnectTimeout() const = 0;
+	// How long the session has to wait on its very first attempt before
+	// it may give up on this connection. Zero means no special need.
+	[[nodiscard]] virtual crl::time firstPassConnectTimeout() const {
+		return 0;
+	}
 	virtual void sendData(mtpBuffer &&buffer) = 0;
 	virtual void disconnectFromServer() = 0;
 	virtual void connectToServer(

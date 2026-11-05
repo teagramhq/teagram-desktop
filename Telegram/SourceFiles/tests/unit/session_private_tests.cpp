@@ -198,6 +198,14 @@ class SessionPrivateTestAccess final {
 		session.setState(ConnectingState);
 	}
 
+	static crl::time ArmConnectedTimer(SessionPrivate &session,
+									   ConnectionPointer connection) {
+		session._testConnections.clear();
+		session._testConnections.push_back({std::move(connection), 0});
+		session.armConnectedTimer();
+		return session._waitForConnected;
+	}
+
 	static void Receive(SessionPrivate &session, mtpBuffer packet) {
 		session._connection->received().push_back(std::move(packet));
 		session.handleReceived();
@@ -248,14 +256,19 @@ struct TransportLog final {
 class FakeTransport final : public AbstractConnection {
   public:
 	FakeTransport(QThread *thread, const ProxyData &proxy,
-				  std::shared_ptr<TransportLog> log)
-		: AbstractConnection(thread, proxy), _log(std::move(log)) {}
+				  std::shared_ptr<TransportLog> log,
+				  crl::time firstPassTimeout = 0)
+		: AbstractConnection(thread, proxy), _log(std::move(log)),
+		  _firstPassTimeout(firstPassTimeout) {}
 
 	[[nodiscard]] ConnectionPointer clone(const ProxyData &proxy) override {
 		return ConnectionPointer::New<FakeTransport>(thread(), proxy, _log);
 	}
 	[[nodiscard]] crl::time pingTime() const override { return 0; }
 	[[nodiscard]] crl::time fullConnectTimeout() const override { return 0; }
+	[[nodiscard]] crl::time firstPassConnectTimeout() const override {
+		return _firstPassTimeout;
+	}
 	void sendData(mtpBuffer &&buffer) override {
 		_log->sent.push_back(std::move(buffer));
 	}
@@ -273,6 +286,7 @@ class FakeTransport final : public AbstractConnection {
 
   private:
 	std::shared_ptr<TransportLog> _log;
+	crl::time _firstPassTimeout = 0;
 	bool _connected = true;
 };
 
@@ -560,4 +574,25 @@ TEST_CASE(DuplicateOddSeqnoReplyIsAcknowledgedAfterReconnect) {
 	CHECK(
 		!SessionPrivateTestAccess::HasPendingAck(*session, duplicateMessageId));
 	CHECK(!log->sent.empty());
+}
+
+// The session destroys a connection when its connect deadline passes, so a
+// connection that has to exhaust TCP before it may use WSS needs a first
+// deadline long enough for that; otherwise every retry restarts at TCP.
+TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto session = SessionPrivateTestAccess::Create(data);
+	auto log = std::make_shared<TransportLog>();
+
+	const auto plain = SessionPrivateTestAccess::ArmConnectedTimer(
+		*session, ConnectionPointer::New<FakeTransport>(
+					  QThread::currentThread(), ProxyData(), log));
+	CHECK_EQ(int(plain), 1000);
+
+	const auto withFallback = SessionPrivateTestAccess::ArmConnectedTimer(
+		*session,
+		ConnectionPointer::New<FakeTransport>(
+			QThread::currentThread(), ProxyData(), log, crl::time(30000)));
+	CHECK_EQ(int(withFallback), 30000);
 }

@@ -1238,6 +1238,14 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	_pingId = _pingMsgId = _pingIdToSend = _pingSendAt = 0;
 	_pingSender.cancel();
 
+	armConnectedTimer();
+}
+
+void SessionPrivate::armConnectedTimer() {
+	for (const auto &connection : _testConnections) {
+		accumulate_max(_waitForConnected,
+					   connection.data->firstPassConnectTimeout());
+	}
 	_waitForConnectedTimer.callOnce(_waitForConnected);
 }
 

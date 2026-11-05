@@ -755,6 +755,23 @@ TEST_CASE(WebSocketSocketDeliversDataAfterFrameParsingReturns) {
 	CHECK(socket == nullptr);
 }
 
+TEST_CASE(WebSocketFallbackAsksForAFirstAttemptLongEnoughToReachIt) {
+	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
+	const auto make = [&](const QString &endpoint) {
+		return details::CreateServerConnection(
+			not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
+			QThread::currentThread(), bytes::vector(), ProxyData(),
+			u"demo.example.com"_q, false, {}, endpoint, u"demo.example.com"_q,
+			false);
+	};
+	const auto withFallback = make(u"wss://transport.example.com/apiws"_q);
+	const auto withoutFallback = make(QString());
+	CHECK(withFallback->firstPassConnectTimeout() > 0);
+	CHECK_EQ(int(withFallback->firstPassConnectTimeout()),
+			 int(withFallback->fullConnectTimeout()));
+	CHECK_EQ(int(withoutFallback->firstPassConnectTimeout()), 0);
+}
+
 TEST_CASE(ServerAddressFamiliesInterleaveInPreferredOrder) {
 	using details::InterleaveServerAddressFamilies;
 	const auto preferred = QList<QHostAddress>{

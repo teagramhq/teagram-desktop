@@ -79,6 +79,7 @@ public:
 
   crl::time pingTime() const override;
   crl::time fullConnectTimeout() const override;
+  crl::time firstPassConnectTimeout() const override;
   void sendData(mtpBuffer &&buffer) override;
   void disconnectFromServer() override;
   void connectToServer(const QString &address, int port,

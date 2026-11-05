@@ -212,6 +212,7 @@ public:
 
 	ConnectionPointer _connection;
 	std::vector<TestConnection> _testConnections;
+	void armConnectedTimer();
 	crl::time _startedConnectingAt = 0;
 
 	base::Timer _retryTimer; // exp retry timer

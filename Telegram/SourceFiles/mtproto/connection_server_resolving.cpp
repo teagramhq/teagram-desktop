@@ -435,6 +435,13 @@ crl::time ServerResolvingConnection::fullConnectTimeout() const {
 				  : kLookupTimeout + kWebSocketTimeout * maxAddresses);
 }
 
+// With a WebSocket fallback the session must not cut the first attempt short:
+// it destroys this connection when its deadline passes, and the next attempt
+// would walk the same unreachable TCP addresses again before WSS is tried.
+crl::time ServerResolvingConnection::firstPassConnectTimeout() const {
+	return _webSocketEndpoint.isEmpty() ? crl::time(0) : fullConnectTimeout();
+}
+
 void ServerResolvingConnection::sendData(mtpBuffer &&buffer) {
 	Expects(_child != nullptr);
 	_child->sendData(std::move(buffer));
