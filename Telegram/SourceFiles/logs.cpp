@@ -145,8 +145,13 @@ public:
 		if (!file || !file->isOpen()) {
 			return;
 		}
-		if (!CheckLogPath(Core::MacProtectedPath::Operation::Write,
-						  file->fileName(), Q_FUNC_INFO)) {
+		// The main log path is checked when it is opened. Each write uses the
+		// already-open descriptor, so a replacement symlink cannot redirect it.
+		// Rechecking the path only repeats the protected-path walk for every
+		// main-log message.
+		if (type != LogDataMain
+			&& !CheckLogPath(Core::MacProtectedPath::Operation::Write,
+							 file->fileName(), Q_FUNC_INFO)) {
 			return;
 		}
 		file->write(msg.toUtf8());

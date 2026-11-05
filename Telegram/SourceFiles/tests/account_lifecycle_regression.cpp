@@ -1245,6 +1245,7 @@ struct ProtectedCacheFixtures {
 	QString openedCache;
 	QString openedMediaCache;
 	QString cleanupRoot;
+	QString logWriteTarget;
 };
 
 [[nodiscard]] bool WriteFixtureFile(const QString &path,
@@ -1330,7 +1331,51 @@ SetProtectedCacheFixturePaths(ProtectedCacheFixtures *fixtures) {
 	fixtures->openedCache = fixtures->root + "/opened-cache";
 	fixtures->openedMediaCache = fixtures->root + "/opened-media-cache";
 	fixtures->cleanupRoot = fixtures->root + "/legacy-cleanup";
+	fixtures->logWriteTarget = fixtures->root + "/log-write-target";
 	return true;
+}
+
+[[nodiscard]] bool
+RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget) {
+	if (!Core::MacProtectedPath::IntegrationTestActive()) {
+		return true;
+	}
+	const auto logPath
+		= QDir(Core::MacProtectedPath::ProfileRoot()).filePath("log.txt");
+	const auto backupPath = logPath + ".opened-descriptor-regression";
+	if (!QFileInfo(logPath).isFile() || QFileInfo::exists(backupPath)
+		|| !QFile::rename(logPath, backupPath)) {
+		return false;
+	}
+	auto moved = true;
+	auto linked = false;
+	const auto restore = gsl::finally([&] {
+		if (linked) {
+			QFile::remove(logPath);
+		}
+		if (moved) {
+			QFile::rename(backupPath, logPath);
+		}
+	});
+	if (!QFile::link(protectedTarget, logPath)) {
+		return false;
+	}
+	linked = true;
+	if (!QFileInfo(logPath).isSymLink()) {
+		return false;
+	}
+	constexpr auto marker = "open log descriptor write regression";
+	Logs::writeMain(QString::fromLatin1(marker));
+	if (!QFile::remove(logPath)) {
+		return false;
+	}
+	linked = false;
+	if (!QFile::rename(backupPath, logPath)) {
+		return false;
+	}
+	moved = false;
+	auto log = QFile(logPath);
+	return log.open(QIODevice::ReadOnly) && log.readAll().contains(marker);
 }
 
 template <typename Predicate>
@@ -10067,6 +10112,7 @@ struct CacheChatSwitchRegressionResult final {
 	int chatSwitches = 0;
 	int cachedDocuments = 0;
 	qint64 maxHydrationNanoseconds = -1;
+	qint64 minimizedSwitchNanoseconds = -1;
 	qint64 maxChatSwitchNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	bool minimizedRestore = false;
@@ -10113,8 +10159,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto minimizedSwitchTimer = QElapsedTimer();
 	minimizedSwitchTimer.start();
 	controller->showPeerHistory(firstHistory);
-	result.maxChatSwitchNanoseconds = std::max(
-		result.maxChatSwitchNanoseconds, minimizedSwitchTimer.nsecsElapsed());
+	result.minimizedSwitchNanoseconds = minimizedSwitchTimer.nsecsElapsed();
 	result.minimizedRestore
 		= activeBeforeMinimize && cachedActiveAfterMinimize
 		  && mainWindow.isVisible()
@@ -10390,7 +10435,14 @@ void RunAuthenticatedCacheSymlinkCases(
 		const auto mediaCacheFileRefused
 			= !Core::MacProtectedPath::CheckCachePath(
 				pinnedMediaCachePath, "Tests::ProtectedCache::media-file");
-		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused;
+		const auto openedLogStaysOnAuthorizedFile
+			= RunOpenedLogDescriptorSymlinkRegression(fixtures.logWriteTarget
+													  + "/marker");
+		std::fprintf(stderr,
+					 "Open log descriptor symlink regression: passed=%d.\n",
+					 openedLogStaysOnAuthorizedFile);
+		const auto cacheFilesPassed = cacheFileRefused && mediaCacheFileRefused
+									  && openedLogStaysOnAuthorizedFile;
 		nativeLifecycleResults->Report("authenticated-cache-file-symlinks",
 									   cacheFilesPassed);
 		if (cacheFilesPassed) {
@@ -10727,11 +10779,13 @@ void RunAuthenticatedCacheSymlinkCases(
 					"Cache chat switch latency regression: "
 					"seeded_directories=125 seeded_files=169 reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
-					"minimized_restore=%d "
+					"minimized_restore=%d minimized_switch_ns=%lld "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
+					static_cast<long long>(
+						chatSwitch.minimizedSwitchNanoseconds),
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),

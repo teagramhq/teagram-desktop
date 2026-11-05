@@ -1257,6 +1257,7 @@ prepare_authenticated_storage_fixtures() {
 		media-cache-leaf \
 		opened-cache \
 		opened-media-cache \
+		log-write-target \
 		legacy-cleanup; do
 		mkdir -p "$storage_fixture_root/$fixture"
 		printf '%s' 'synthetic protected fixture' \
@@ -1289,6 +1290,10 @@ verify_protected_storage_fixtures() {
 			return 1
 		fi
 	done
+	if ! verify_storage_fixture "$storage_fixture_root/log-write-target"; then
+		echo "protected_storage_fixture=FAIL fixture=log-write-target"
+		return 1
+	fi
 	local cleanup="$storage_fixture_root/legacy-cleanup"
 	local expected="$(printf '%s\n%s\n' \
 		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
@@ -1299,7 +1304,7 @@ verify_protected_storage_fixtures() {
 		echo "protected_storage_fixture=FAIL fixture=legacy-cleanup"
 		return 1
 	fi
-	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
+	echo "protected_storage_fixtures=PASS cache=6 log_write_target=1 legacy_cleanup=1"
 }
 
 run_authenticated_cache_regression() {
@@ -1393,6 +1398,13 @@ if ! grep -F -q \
 	echo "authenticated cache regression did not report coverage." >&2
 	exit 1
 fi
+if ! grep -F -q \
+	"Open log descriptor symlink regression: passed=1." \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "open log descriptor symlink regression did not report coverage." >&2
+	exit 1
+fi
 for cache in cache media_cache; do
 	if ! grep -E -q \
 		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_stall_ns=[0-9]+ under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
@@ -1410,7 +1422,7 @@ if ! grep -E -q \
 	exit 1
 fi
 if ! grep -E -q \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "cache chat switch latency evidence missing or over 50 ms." >&2
@@ -1531,6 +1543,7 @@ for native_evidence in \
 done
 for cache_evidence in \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
+	"Open log descriptor symlink regression: passed=1." \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
 	"Chat participants regression passed." \
@@ -1810,18 +1823,24 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
-	bash "$REPO_ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
-		"$TEST_HOME/cases" \
-		profile-ipc \
-		spoiler-cache-emoji \
-		spoiler-cache-spoiler \
-		spoiler-cache-text \
-		spoiler-cache-image \
-		authenticated-lifecycle \
-		authenticated-cache \
-		native-failure-continuation \
-		folder-fault-barrier-timeout \
+	lifecycle_cases=(
+		profile-ipc
+		spoiler-cache-emoji
+		spoiler-cache-spoiler
+		spoiler-cache-text
+		spoiler-cache-image
+		authenticated-lifecycle
+	)
+	if [[ "${TDESKTOP_MAC_CACHE_REGRESSION_ALREADY_RUN:-0}" != 1 ]]; then
+		lifecycle_cases+=(authenticated-cache)
+	fi
+	lifecycle_cases+=(
+		native-failure-continuation
+		folder-fault-barrier-timeout
 		folder-fault-cross-session-presence
+	)
+	bash "$REPO_ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
+		"$TEST_HOME/cases" "${lifecycle_cases[@]}"
 	;;
 profile-ipc)
 	run_protected_profile_ipc_case

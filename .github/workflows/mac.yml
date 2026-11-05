@@ -493,6 +493,7 @@ jobs:
           state="$(mktemp -d "$RUNNER_TEMP/teagram-cache-watchdog.XXXXXX")"
           trap 'rm -rf "$state"' EXIT
           mkdir -p "$state/home" "$state/tmp"
+          printf 'TDESKTOP_MAC_CACHE_REGRESSION_ALREADY_RUN=1\n' >> "$GITHUB_ENV"
           evidence="$REPO_NAME/out/Debug/evidence"
           mkdir -p "$evidence"
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
