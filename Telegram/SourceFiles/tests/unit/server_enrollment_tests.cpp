@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QDirIterator>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
@@ -49,6 +50,10 @@ struct AccountTestPeer {
 
 	static void ReadStoredCustomServerPin(Account &account) {
 		account.readStoredCustomServerPin();
+	}
+
+	static FileKey PrefsKey(const Account &account) {
+		return account._prefsKey;
 	}
 };
 
@@ -1507,6 +1512,42 @@ TEST_CASE(QueuedStopRunsOnlyForTheCurrentEnrollment) {
 		Qt::BlockingQueuedConnection);
 	sessionThread.quit();
 	sessionThread.wait();
+}
+
+TEST_CASE(TelegramStickerBotTokenUsesEncryptedAccountPreferences) {
+	const auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.path() + u"/account"_q;
+	CHECK(QDir().mkpath(basePath));
+	const auto key = MakeEnrollmentStorageKey();
+	const auto token = u"12345:AbCdEf0123456789012345678901234567890"_q;
+	auto prefsKey = Storage::FileKey(0);
+	{
+		auto account = MakeEnrollmentStorageAccount(basePath, key);
+		CHECK(account->writeTelegramStickerBotToken(token));
+		CHECK(account->telegramStickerBotToken() == token);
+		prefsKey = Storage::AccountTestPeer::PrefsKey(*account);
+	}
+	CHECK(prefsKey != 0);
+	{
+		auto restarted = MakeEnrollmentStorageAccount(basePath, key);
+		Storage::AccountTestPeer::ReadPrefs(*restarted, prefsKey);
+		CHECK(restarted->telegramStickerBotToken() == token);
+		CHECK(restarted->clearTelegramStickerBotToken());
+		CHECK(restarted->telegramStickerBotToken().isEmpty());
+	}
+	auto iterator
+		= QDirIterator(basePath, QDir::Files | QDir::Hidden | QDir::System,
+					   QDirIterator::Subdirectories);
+	while (iterator.hasNext()) {
+		auto file = QFile(iterator.next());
+		if (file.open(QIODevice::ReadOnly)) {
+			CHECK(!file.readAll().contains(token.toUtf8()));
+		}
+	}
 }
 
 } // namespace

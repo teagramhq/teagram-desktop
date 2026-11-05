@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_sticker_set_import_requests.h"
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
+#include "core/telegram_sticker_import.h"
 #include "mtproto/details/mtproto_serialized_request.h"
 
 #include <QtCore/QBuffer>
@@ -382,6 +383,152 @@ TEST_CASE(StickerImportShortNamesMatchServerRules) {
 	CHECK(!Core::IsValidStickerSetShortName(u"2cats"_q));
 	CHECK(!Core::IsValidStickerSetShortName(u"cats.pack"_q));
 	CHECK(!Core::IsValidStickerSetShortName(QString(65, 'a')));
+}
+
+TEST_CASE(TelegramStickerPackLinksAreParsedAndCanonicalized) {
+	const auto stickers = Core::ParseTelegramStickerPackLink(
+		u"https://t.me/addstickers/Cats_2026"_q);
+	CHECK(stickers.has_value());
+	CHECK(stickers->type == Core::StickerImportType::Stickers);
+	CHECK(stickers->name == u"Cats_2026"_q);
+	CHECK(stickers->canonicalUrl == u"https://t.me/addstickers/Cats_2026"_q);
+	const auto emoji
+		= Core::ParseTelegramStickerPackLink(u"t.me/addemoji/Emoji_pack"_q);
+	CHECK(emoji.has_value());
+	CHECK(emoji->type == Core::StickerImportType::Emoji);
+	CHECK(emoji->canonicalUrl == u"https://t.me/addemoji/Emoji_pack"_q);
+	for (const auto &invalid : {
+			 u"https://evil.example/addstickers/Cats"_q,
+			 u"https://t.me/addstickers/Cats?start=secret"_q,
+			 u"https://t.me/addstickers/a/other"_q,
+			 u"https://t.me/addstickers/../private"_q,
+			 u"https://t.me:443/addstickers/Cats"_q,
+			 u"https://user@t.me/addstickers/Cats"_q,
+			 u"https://t.me/addstickers/Cats#fragment"_q,
+			 u"https://t.me/addstickers/"_q,
+		 }) {
+		CHECK(!Core::ParseTelegramStickerPackLink(invalid));
+	}
+}
+
+TEST_CASE(TelegramStickerBotTokensAndFilePathsAreValidated) {
+	CHECK(Core::IsValidTelegramStickerBotToken(
+		u"12345:AbCdEf0123456789012345678901234567890"_q));
+	CHECK(!Core::IsValidTelegramStickerBotToken(u"12345:short"_q));
+	CHECK(!Core::IsValidTelegramStickerBotToken(
+		u"12345:AbCdEf0123456789012345678901234567890\n"_q));
+	CHECK(!Core::IsValidTelegramStickerBotToken(
+		u"12345:AbCdEf0123456789012345678901234567890/extra"_q));
+	const auto apiUrl = Core::TelegramStickerBotApiUrl(
+		u"12345:AbCdEf0123456789012345678901234567890"_q, u"getStickerSet"_q);
+	CHECK(apiUrl.has_value());
+	if (apiUrl) {
+		CHECK(apiUrl->scheme() == u"https"_q);
+		CHECK(apiUrl->host() == u"api.telegram.org"_q);
+		CHECK(apiUrl->path(QUrl::FullyDecoded).startsWith(u"/bot12345:"_q));
+	}
+	const auto fileUrl = Core::TelegramStickerBotFileUrl(
+		u"12345:AbCdEf0123456789012345678901234567890"_q,
+		u"stickers/file_name.webp"_q);
+	CHECK(fileUrl.has_value());
+	if (fileUrl) {
+		CHECK(fileUrl->scheme() == u"https"_q);
+		CHECK(fileUrl->host() == u"api.telegram.org"_q);
+		CHECK(fileUrl->path(QUrl::FullyDecoded).contains(u"/file/bot12345:"_q));
+	}
+	CHECK(Core::IsValidTelegramStickerFilePath(u"stickers/file_name.webp"_q));
+	for (const auto &invalid : {
+			 u"../file.webp"_q,
+			 u"stickers/../file.webp"_q,
+			 u"https://evil.example/file.webp"_q,
+			 u"/file.webp"_q,
+			 u"stickers\\file.webp"_q,
+			 u"stickers/file.webp?x=1"_q,
+			 u""_q,
+		 }) {
+		CHECK(!Core::IsValidTelegramStickerFilePath(invalid));
+	}
+}
+
+TEST_CASE(TelegramStickerBotErrorsRedactSecrets) {
+	const auto token = u"12345:AbCdEf0123456789012345678901234567890"_q;
+	const auto description = u"Request failed for bot%1/getFile"_q.arg(token);
+	const auto redacted
+		= Core::RedactTelegramStickerBotToken(description, token);
+	CHECK(!redacted.contains(token));
+	CHECK(redacted.contains(u"[redacted]"_q));
+	const auto encoded = QString::fromLatin1(QUrl::toPercentEncoding(token));
+	CHECK(!Core::RedactTelegramStickerBotToken(
+			   u"Failed URL: bot%1"_q.arg(encoded), token)
+			   .contains(encoded));
+	const auto otherToken
+		= u"98765:"_q + u"ZyXwVu9876543210"_q + u"98765432109876543210"_q;
+	CHECK(!Core::RedactTelegramStickerBotToken(
+			   u"Bad token %1"_q.arg(otherToken), token)
+			   .contains(otherToken));
+}
+
+TEST_CASE(TelegramStickerImportKeepsEmojiAndNeverSendsTheBotToken) {
+	auto files = std::vector<Core::StickerImportFile>{
+		{
+			.name = u"sticker.tgs"_q,
+			.bytes = ValidStickerTGS(),
+			.emoji = u"😺"_q,
+		},
+	};
+	const auto scan = Core::ScanStickerImportFiles(
+		std::move(files), Core::StickerImportType::Stickers);
+	CHECK_EQ(int(scan.files.size()), 1);
+	if (scan.files.empty()) {
+		return;
+	}
+	CHECK(scan.files.front().emoji == u"😺"_q);
+
+	const auto token = u"12345:AbCdEf0123456789012345678901234567890"_q;
+	const auto inputFile
+		= MTP_inputFile(MTP_long(1), MTP_int(1), MTP_string(u"sticker_1.tgs"_q),
+						MTP_string(u"checksum"_q));
+	const auto upload = Api::details::StickerImportUploadMediaRequest(
+		inputFile, scan.files.front(), 0);
+	auto attributes = QVector<MTPDocumentAttribute>();
+	attributes.push_back(
+		MTP_documentAttributeFilename(MTP_string(u"sticker_1.tgs"_q)));
+	attributes.push_back(MTP_documentAttributeAnimated());
+	attributes.push_back(MTP_documentAttributeSticker(
+		MTP_flags(0), MTP_string(u"😺"_q), MTP_inputStickerSetEmpty(),
+		MTPMaskCoords()));
+	const auto expectedUpload = MTPmessages_UploadMedia(
+		MTP_flags(0), MTPstring(), MTP_inputPeerSelf(),
+		MTP_inputMediaUploadedDocument(
+			MTP_flags(0), inputFile, MTPInputFile(),
+			MTP_string(u"application/x-tgsticker"_q),
+			MTP_vector<MTPDocumentAttribute>(std::move(attributes)),
+			MTP_vector<MTPInputDocument>(), MTPInputPhoto(), MTP_int(0),
+			MTP_int(0)));
+	CHECK_EQ(SerializeRequest(upload), SerializeRequest(expectedUpload));
+
+	const auto item = MTP_inputStickerSetItem(
+		MTP_flags(0),
+		MTP_inputDocument(MTP_long(1), MTP_long(2),
+						  MTP_bytes(QByteArray("file-reference"))),
+		MTP_string(u"😺"_q), MTPMaskCoords(), MTPstring());
+	const auto request = Api::details::StickerImportCreateSetRequest(
+		u"Cats"_q, u"cats_a"_q, Data::StickersType::Stickers,
+		Core::StickerImportSource::Telegram,
+		QVector<MTPInputStickerSetItem>{item}, u"SomePack"_q);
+	const auto expected = MTPstickers_CreateStickerSet(
+		MTP_flags(MTPstickers_CreateStickerSet::Flag::f_software),
+		MTP_inputUserSelf(), MTP_string(u"Cats"_q), MTP_string(u"cats_a"_q),
+		MTPInputDocument(),
+		MTP_vector<MTPInputStickerSetItem>(
+			QVector<MTPInputStickerSetItem>{item}),
+		MTP_string(u"https://t.me/addstickers/SomePack"_q));
+	CHECK_EQ(SerializeRequest(request), SerializeRequest(expected));
+	const auto invalid = Api::details::StickerImportCreateSetRequest(
+		u"Cats"_q, u"cats_a"_q, Data::StickersType::Stickers,
+		Core::StickerImportSource::Telegram,
+		QVector<MTPInputStickerSetItem>{item}, token);
+	CHECK(!SerializeRequest(invalid).contains(token.toUtf8()));
 }
 
 TEST_CASE(StickerImportTitlesUseUnicodeCharacterLimit) {

@@ -243,6 +243,8 @@ PRIVATE
     api/api_sticker_set_import.h
     api/api_sticker_set_import_requests.cpp
     api/api_sticker_set_import_requests.h
+    api/api_telegram_sticker_pack.cpp
+    api/api_telegram_sticker_pack.h
     api/api_suggest_post.cpp
     api/api_suggest_post.h
     api/api_text_entities.cpp
@@ -633,6 +635,8 @@ PRIVATE
     core/local_url_conversion.h
     core/sticker_import.cpp
     core/sticker_import.h
+    core/telegram_sticker_import.cpp
+    core/telegram_sticker_import.h
     core/local_url_handlers.cpp
     core/local_url_handlers.h
     core/mac_protected_path_policy.cpp

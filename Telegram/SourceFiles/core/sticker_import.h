@@ -35,6 +35,7 @@ struct StickerImportFormatInfo {
 enum class StickerImportSource {
 	Folder,
 	Zip,
+	Telegram,
 };
 
 enum class StickerImportProblem {
@@ -58,6 +59,7 @@ struct StickerImportFile {
 	QByteArray bytes;
 	StickerImportFormat format = StickerImportFormat::Webp;
 	QSize dimensions;
+	QString emoji = QStringLiteral("⭐");
 };
 
 struct StickerImportIssue {
@@ -119,6 +121,9 @@ class StickerImportSuggestionGuard final {
 													 StickerImportType type);
 [[nodiscard]] StickerImportScan
 ScanStickerImportZipFile(const QString &path, StickerImportType type);
+[[nodiscard]] StickerImportScan
+ScanStickerImportFiles(std::vector<StickerImportFile> files,
+					   StickerImportType type);
 [[nodiscard]] StickerImportFormatInfo
 StickerImportFormatDetails(StickerImportFormat format);
 [[nodiscard]] QString StickerImportShareLinkPath(StickerImportType type,

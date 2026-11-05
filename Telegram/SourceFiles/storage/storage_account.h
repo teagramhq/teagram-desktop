@@ -147,6 +147,10 @@ public:
 		uint64 userId) const;
 
 	void writeSessionSettings();
+	// Bot API credentials are kept in the account's encrypted preferences.
+	[[nodiscard]] QString telegramStickerBotToken() const;
+	[[nodiscard]] bool writeTelegramStickerBotToken(const QString &token);
+	[[nodiscard]] bool clearTelegramStickerBotToken();
 	// The durable authorization boundary used by post-auth and clean teardown.
 	// Both the pin marker/config and the current authorization snapshot are
 	// written synchronously before either lifecycle path exposes or closes it.
@@ -422,6 +426,7 @@ private:
 
 	MTP::AuthKeyPtr _localKey;
 	bool _prefsReadFailed = false;
+	bool _telegramStickerBotTokenClearPending = false;
 	bool _hasStoredCustomServer = false;
 	bool _customServerPinUnknown = false;
 	bool _mtpAuthorizationWriteFailed = false;

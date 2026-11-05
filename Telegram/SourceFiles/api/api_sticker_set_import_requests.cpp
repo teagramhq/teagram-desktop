@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_sticker_set_import_requests.h"
 
+#include "core/telegram_sticker_import.h"
+
 #include <utility>
 
 namespace Api::details {
@@ -34,8 +36,8 @@ StickerImportFileAttributes(const Core::StickerImportFile &file, int index) {
 			MTPdouble(), MTPstring()));
 	}
 	attributes.push_back(MTP_documentAttributeSticker(
-		MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
-		MTPMaskCoords()));
+		MTP_flags(0), MTP_string(file.emoji.isEmpty() ? u"⭐"_q : file.emoji),
+		MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 	return attributes;
 }
 
@@ -55,7 +57,8 @@ StickerImportUploadMediaRequest(const MTPInputFile &inputFile,
 }
 
 std::optional<MTPInputStickerSetItem>
-StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
+StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media,
+									QString emoji) {
 	auto document = MTPInputDocument();
 	media.match(
 		[&](const MTPDmessageMediaDocument &data) {
@@ -72,17 +75,25 @@ StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
 	if (document.type() != mtpc_inputDocument) {
 		return std::nullopt;
 	}
-	return MTP_inputStickerSetItem(MTP_flags(0), std::move(document),
-								   MTP_string(u"⭐"_q), MTPMaskCoords(),
-								   MTPstring());
+	return MTP_inputStickerSetItem(
+		MTP_flags(0), std::move(document),
+		MTP_string(emoji.isEmpty() ? u"⭐"_q : emoji), MTPMaskCoords(),
+		MTPstring());
 }
 
 MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 	QString title, QString shortName, Data::StickersType type,
-	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items) {
+	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items,
+	QString telegramPackName) {
 	const auto sourceText = (source == Core::StickerImportSource::Folder)
 								? u"folder"_q
-								: u"zip"_q;
+							: (source == Core::StickerImportSource::Zip)
+								? u"zip"_q
+								: Core::TelegramStickerPackCanonicalUrl(
+									  (type == Data::StickersType::Emoji)
+										  ? Core::StickerImportType::Emoji
+										  : Core::StickerImportType::Stickers,
+									  telegramPackName);
 	auto flags = MTPstickers_CreateStickerSet::Flags(
 		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (type == Data::StickersType::Emoji) {

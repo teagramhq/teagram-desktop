@@ -545,6 +545,32 @@ StickerImportScan ScanStickerImportZipFile(const QString &path,
 	return ScanStickerImportZip(bytes, type);
 }
 
+StickerImportScan ScanStickerImportFiles(std::vector<StickerImportFile> files,
+										 StickerImportType type) {
+	auto result = StickerImportScan();
+	if (files.size() > kMaximumEntries) {
+		result.problem = StickerImportProblem::TooManyEntries;
+		return result;
+	}
+	auto totalBytes = quint64(0);
+	for (auto &file : files) {
+		const auto before = result.files.size();
+		AddBytes(result, file.name, std::move(file.bytes), type, &totalBytes);
+		if (result.problem != StickerImportProblem::None) {
+			return result;
+		} else if (result.files.size() != before) {
+			result.files.back().emoji = std::move(file.emoji);
+		}
+	}
+	if (result.files.empty() && result.issues.empty()) {
+		result.problem = StickerImportProblem::NoFiles;
+	} else if (!result.issues.empty()) {
+		result.problem = result.issues.front().problem;
+		result.files.clear();
+	}
+	return result;
+}
+
 QString StickerImportShareLinkPath(StickerImportType type,
 								   const QString &shortName) {
 	const auto prefix
