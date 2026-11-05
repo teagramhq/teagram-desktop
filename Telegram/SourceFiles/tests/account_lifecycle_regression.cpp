@@ -1365,8 +1365,12 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
 		}
 	}
 	const auto backupPath = logPath + ".opened-descriptor-regression";
-	if (!QFileInfo(logPath).isFile() || QFileInfo::exists(backupPath)
-		|| !QFile::rename(logPath, backupPath)) {
+	const auto logInfo = QFileInfo(logPath);
+	if (!logInfo.isFile() || QFileInfo::exists(backupPath)) {
+		return false;
+	}
+	const auto initialSize = logInfo.size();
+	if (!QFile::rename(logPath, backupPath)) {
 		return false;
 	}
 	auto moved = true;
@@ -1386,7 +1390,14 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
 	if (!QFileInfo(logPath).isSymLink()) {
 		return false;
 	}
-	constexpr auto marker = "open log descriptor write regression";
+	if (debug
+		&& Core::MacProtectedPath::CheckPath(
+			Core::MacProtectedPath::Operation::Write, logPath,
+			"Tests::OpenedDebugLogDescriptor")) {
+		return false;
+	}
+	const auto marker = debug ? "open debug descriptor write regression"
+							  : "open main descriptor write regression";
 	if (debug) {
 		Logs::writeDebug(QString::fromLatin1(marker));
 	} else {
@@ -1401,7 +1412,8 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
 	}
 	moved = false;
 	auto log = QFile(logPath);
-	return log.open(QIODevice::ReadOnly) && log.readAll().contains(marker);
+	return log.open(QIODevice::ReadOnly) && log.seek(initialSize)
+		   && log.readAll().contains(marker);
 }
 
 template <typename Predicate>
