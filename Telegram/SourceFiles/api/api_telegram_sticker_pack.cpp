@@ -10,11 +10,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sticker_import.h"
 #include "logs.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonParseError>
+#include <QtCore/QMetaObject>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QUrlQuery>
 #include <QtNetwork/QNetworkReply>
@@ -368,22 +370,26 @@ void TelegramStickerPackDownloader::downloadNextSticker() {
 		_token.fill(QChar(0));
 		_token.clear();
 		crl::async([weak, files = std::move(_files), type]() mutable {
-			auto scan = Core::ScanStickerImportFiles(std::move(files), type);
-			crl::on_main(weak, [=, scan = std::move(scan)]() mutable {
-				const auto self = weak.get();
-				if (!self || self->_cancelled || self->_finished) {
-					return;
-				}
-				self->_finished = true;
-				self->_token.fill(QChar(0));
-				self->_token.clear();
-				self->_fail = nullptr;
-				self->_progress = nullptr;
-				const auto done = std::move(self->_done);
-				if (done) {
-					done(std::move(self->_title), std::move(scan));
-				}
-			});
+			auto scan = std::make_shared<Core::StickerImportScan>(
+				Core::ScanStickerImportFiles(std::move(files), type));
+			QMetaObject::invokeMethod(
+				QCoreApplication::instance(),
+				[weak, scan] {
+					const auto self = weak.get();
+					if (!self || self->_cancelled || self->_finished) {
+						return;
+					}
+					self->_finished = true;
+					self->_token.fill(QChar(0));
+					self->_token.clear();
+					self->_fail = nullptr;
+					self->_progress = nullptr;
+					const auto done = std::move(self->_done);
+					if (done) {
+						done(std::move(self->_title), std::move(*scan));
+					}
+				},
+				Qt::QueuedConnection);
 		});
 		return;
 	}
