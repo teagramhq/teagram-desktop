@@ -565,7 +565,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			source->setText(tr::lng_teagram_sticker_import_telegram_source(
 				tr::now, lt_link, parsed->canonicalUrl));
 			files->setText(tr::lng_teagram_sticker_import_telegram_downloading(
-				tr::now, lt_count, 0, lt_total, 0));
+				tr::now, lt_current, 0, lt_total, 0));
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
@@ -602,7 +602,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					files->setText(
 						tr::lng_teagram_sticker_import_telegram_downloading(
-							tr::now, lt_count, count, lt_total, total));
+							tr::now, lt_current, count, lt_total, total));
 				});
 		});
 		const auto chooseFolder = [=] {

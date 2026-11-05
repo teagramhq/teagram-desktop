@@ -575,7 +575,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_sticker_import_telegram_token_remove_failed" = "The saved bot token couldn't be removed. Try again.";
 "lng_teagram_sticker_import_telegram_download" = "Download from Telegram";
 "lng_teagram_sticker_import_telegram_source" = "Telegram pack: {link}";
-"lng_teagram_sticker_import_telegram_downloading" = "Downloading from Telegram: {count} of {total}";
+"lng_teagram_sticker_import_telegram_downloading" = "Downloading from Telegram: {current} of {total}";
 "lng_teagram_sticker_import_telegram_link_invalid" = "Use a t.me/addstickers or t.me/addemoji pack link.";
 "lng_teagram_sticker_import_telegram_token_rejected" = "Telegram rejected this bot token. Check it and try again.";
 "lng_teagram_sticker_import_telegram_pack_missing" = "Telegram couldn't find this public sticker or emoji pack.";

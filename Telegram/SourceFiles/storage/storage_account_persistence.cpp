@@ -1139,7 +1139,7 @@ void Account::writePrefGeneric(
 	writePrefsDelayed();
 }
 
-std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) {
+std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) const {
 	const auto i = _prefs.find(QByteArray(key.data(), key.size()));
 	return (i != end(_prefs)) ? i->second : std::optional<QByteArray>();
 }

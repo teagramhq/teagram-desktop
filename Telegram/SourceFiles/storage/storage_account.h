@@ -414,8 +414,8 @@ private:
 	[[nodiscard]] std::optional<Type> readPrefImpl(std::string_view key);
 
 	void writePrefGeneric(std::string_view key, const QByteArray &value);
-	[[nodiscard]] std::optional<QByteArray> readPrefGeneric(
-		std::string_view key);
+	[[nodiscard]] std::optional<QByteArray>
+	readPrefGeneric(std::string_view key) const;
 
 	Main::Account *const _owner;
 	const QString _dataName;
