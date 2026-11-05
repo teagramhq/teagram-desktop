@@ -66,16 +66,16 @@ class StickerImportNetworkReply final : public QNetworkReply {
 				  QVariant::fromValue(qint64(_body.size())));
 		open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 		QTimer::singleShot(0, this, [this] {
-			emit metaDataChanged();
+			Q_EMIT metaDataChanged();
 			if (_aborted) {
 				return;
 			}
-			emit readyRead();
+			Q_EMIT readyRead();
 			if (_beforeFinish) {
 				_beforeFinish();
 			}
 			setFinished(true);
-			emit finished();
+			Q_EMIT finished();
 		});
 	}
 
@@ -86,7 +86,7 @@ class StickerImportNetworkReply final : public QNetworkReply {
 		_aborted = true;
 		setError(QNetworkReply::OperationCanceledError, QString());
 		setFinished(true);
-		emit finished();
+		Q_EMIT finished();
 	}
 
 	bool isSequential() const override { return true; }
