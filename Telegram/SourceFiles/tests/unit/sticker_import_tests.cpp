@@ -650,6 +650,7 @@ TEST_CASE(TelegramBotTokensAndFilePathsAreValidatedBeforeUrlBuild) {
 }
 
 TEST_CASE(TelegramStickerImportPreservesPackOrderEmojiAndCanonicalSource) {
+	const auto token = u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"_q;
 	const auto scan = Core::ScanTelegramStickerImportFiles(
 		{
 			{
@@ -677,8 +678,10 @@ TEST_CASE(TelegramStickerImportPreservesPackOrderEmojiAndCanonicalSource) {
 											 MTP_string(u"checksum"_q));
 		const auto upload = Api::details::StickerImportUploadMediaRequest(
 			inputFile, scan.files[0], 0);
-		CHECK(SerializeRequest(upload).contains(u"🦊"_q.toUtf8()));
-		CHECK(!SerializeRequest(upload).contains(u"⭐"_q.toUtf8()));
+		const auto serializedUpload = SerializeRequest(upload);
+		CHECK(serializedUpload.contains(u"🦊"_q.toUtf8()));
+		CHECK(!serializedUpload.contains(u"⭐"_q.toUtf8()));
+		CHECK(!serializedUpload.contains(token.toUtf8()));
 		const auto uploadedDocument = MTP_document(
 			MTP_flags(0), MTP_long(1), MTP_long(2),
 			MTP_bytes(QByteArray("file-reference")), MTP_int(1),
@@ -702,7 +705,6 @@ TEST_CASE(TelegramStickerImportPreservesPackOrderEmojiAndCanonicalSource) {
 		}
 	}
 
-	const auto token = u"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef"_q;
 	const auto link = Core::ParseTelegramStickerPackLink(
 		u"https://t.me/addemoji/SomePack"_q);
 	CHECK(link.has_value());
