@@ -1450,6 +1450,14 @@ void MainWidget::showHistory(
 		PeerId peerId,
 		const SectionShow &params,
 		MsgId showAtMsgId) {
+	const auto activateWindow = [&] {
+		auto &window = _controller->window();
+		if (window.widget()->isActive()) {
+			window.updateIsActiveFocus();
+		} else {
+			window.activate();
+		}
+	};
 	if (peerId && _controller->window().locked()) {
 		if (params.activation != anim::activation::background) {
 			_controller->window().activate();
@@ -1479,7 +1487,7 @@ void MainWidget::showHistory(
 		&& _mainSection->showMessage(peerId, params, showAtMsgId)) {
 		session().data().hideShownSpoilers();
 		if (params.activation != anim::activation::background) {
-			_controller->window().activate();
+			activateWindow();
 		}
 		return;
 	} else if (showHistoryInDifferentWindow(peerId, params, showAtMsgId)) {
@@ -1488,7 +1496,7 @@ void MainWidget::showHistory(
 
 	if (peerId && params.activation != anim::activation::background) {
 		Core::App().hideMediaView();
-		_controller->window().activate();
+		activateWindow();
 	}
 
 	const auto alreadyThatPeer = _history->peer()
