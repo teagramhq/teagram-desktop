@@ -51,7 +51,8 @@ using UnitConnectionFactory = Fn<ConnectionPointer(
 	DcOptions::Variants::Protocol protocol,
 	QThread *thread,
 	const bytes::vector &secret,
-	const ProxyData &proxy)>;
+	const ProxyData &proxy,
+	const QString &webSocketEndpoint)>;
 
 const UnitConnectionFactory *UnitConnectionFactoryInstance = nullptr;
 
@@ -118,14 +119,16 @@ ConnectionPointer AbstractConnection::Create(
 		DcOptions::Variants::Protocol protocol,
 		QThread *thread,
 		const bytes::vector &secret,
-		const ProxyData &proxy) {
+		const ProxyData &proxy,
+		const QString &webSocketEndpoint) {
 	Expects(UnitConnectionFactoryInstance != nullptr);
 	return (*UnitConnectionFactoryInstance)(
 		instance,
 		protocol,
 		thread,
 		secret,
-		proxy);
+		proxy,
+		webSocketEndpoint);
 }
 
 } // namespace MTP::details
@@ -435,6 +438,7 @@ TEST_CASE(CustomServerWebSocketEndpointSurvivesSerialization) {
 }
 
 TEST_CASE(WebSocketFallbackWaitsForTcpExhaustion) {
+	using details::ShouldAttemptWebSocketFallback;
 	using ProxyType = ProxyData::Type;
 	CHECK(!ShouldAttemptWebSocketFallback(false, true, false, ProxyType::None));
 	CHECK(!ShouldAttemptWebSocketFallback(true, false, false, ProxyType::None));
@@ -448,6 +452,7 @@ TEST_CASE(WebSocketFallbackWaitsForTcpExhaustion) {
 }
 
 TEST_CASE(ServerAddressFamiliesInterleaveInPreferredOrder) {
+	using details::InterleaveServerAddressFamilies;
 	const auto preferred = QList<QHostAddress>{
 		QHostAddress(u"2001:4860:4860::8888"_q),
 		QHostAddress(u"2001:4860:4860::8844"_q),
@@ -949,7 +954,8 @@ TEST_CASE(StartProxyCheckUsesVettedLiteralForAllTransportPaths) {
 			DcOptions::Variants::Protocol protocol,
 			QThread *thread,
 			const bytes::vector &secret,
-			const ProxyData &data) {
+			const ProxyData &data,
+			const QString &) {
 			CHECK(protocol == DcOptions::Variants::Tcp);
 			return details::ConnectionPointer::New<ProxyCheckObserver>(
 				thread,
@@ -1027,7 +1033,8 @@ TEST_CASE(StartProxyCheckRejectsFailedHostnameResolution) {
 			DcOptions::Variants::Protocol,
 			QThread *thread,
 			const bytes::vector &,
-			const ProxyData &data) {
+			const ProxyData &data,
+			const QString &) {
 			++factoryCalls;
 			return details::ConnectionPointer::New<ProxyCheckObserver>(
 				thread,
@@ -1072,7 +1079,8 @@ TEST_CASE(StartProxyCheckRejectsFailedHostnameResolution) {
 		DcOptions::Variants::Protocol,
 		QThread *thread,
 		const bytes::vector &,
-		const ProxyData &data) {
+		const ProxyData &data,
+		const QString &) {
 		++factoryCalls;
 		return details::ConnectionPointer::New<ProxyCheckObserver>(
 			thread,
@@ -1139,7 +1147,8 @@ TEST_CASE(HostnameConnectionRetriesWithFreshResolution) {
 			DcOptions::Variants::Protocol,
 			QThread *thread,
 			const bytes::vector &,
-			const ProxyData &data) {
+			const ProxyData &data,
+			const QString &) {
 			return details::ConnectionPointer::New<ProxyCheckObserver>(
 				thread,
 				data,
@@ -1207,7 +1216,8 @@ TEST_CASE(DefaultHostnameResolverDoesNotReusePreviousAnswer) {
 			DcOptions::Variants::Protocol,
 			QThread *thread,
 			const bytes::vector &,
-			const ProxyData &data) {
+			const ProxyData &data,
+			const QString &) {
 			return details::ConnectionPointer::New<ProxyCheckObserver>(
 				thread,
 				data,
@@ -1298,7 +1308,8 @@ TEST_CASE(DefaultHostnameResolverUsesSystemResolver) {
 				DcOptions::Variants::Protocol protocol,
 				QThread *thread,
 				const bytes::vector &,
-				const ProxyData &data) {
+				const ProxyData &data,
+				const QString &) {
 				CHECK(protocol == DcOptions::Variants::Tcp);
 				return details::ConnectionPointer::New<ProxyCheckObserver>(
 					thread,
