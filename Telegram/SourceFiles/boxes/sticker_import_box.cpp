@@ -21,8 +21,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "settings/settings_common.h"
+#include "storage/storage_account.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
+#include "ui/rp_widget.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
@@ -291,13 +293,26 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
 			tr::lng_teagram_sticker_import_telegram_link_placeholder()));
 		telegramLink->setMaxLength(256);
-		const auto telegramTokenInfo = box->addRow(object_ptr<Ui::FlatLabel>(
+		box->addRow(object_ptr<Ui::FlatLabel>(
 			box, tr::lng_teagram_sticker_import_telegram_token_info(tr::now),
 			st::boxLabel));
-		const auto telegramTokenInput
-			= box->addRow(object_ptr<Ui::PasswordInput>(
-				box, st::defaultInputField,
-				tr::lng_teagram_sticker_import_telegram_token_placeholder()));
+		auto telegramTokenContainer = object_ptr<Ui::RpWidget>(box);
+		telegramTokenContainer->resize(
+			telegramTokenContainer->width(),
+			st::defaultInputField.heightMin);
+		const auto telegramTokenInput = Ui::CreateChild<Ui::PasswordInput>(
+			telegramTokenContainer.data(),
+			st::defaultInputField,
+			tr::lng_teagram_sticker_import_telegram_token_placeholder());
+		telegramTokenContainer->geometryValue(
+		) | rpl::on_next([=](const QRect &r) {
+			telegramTokenInput->resize(
+				r.width(),
+				telegramTokenInput->height());
+			telegramTokenInput->move(0, 0);
+		}, telegramTokenContainer->lifetime());
+		const auto telegramTokenRow = box->addRow(
+			std::move(telegramTokenContainer));
 		telegramTokenInput->setMaxLength(256);
 		telegramTokenInput->setEchoMode(QLineEdit::Password);
 		telegramTokenInput->setCompleter(nullptr);
@@ -386,7 +401,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		};
 		const auto updateTelegramTokenControls = [=] {
 			const auto saved = !state->telegramBotToken.isEmpty();
-			telegramTokenInput->setVisible(!saved);
+			telegramTokenRow->setVisible(!saved);
 			saveTelegramTokenButton->setVisible(!saved);
 			telegramTokenSaved->setVisible(saved);
 			removeTelegramTokenButton->setVisible(saved);
@@ -565,7 +580,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			source->setText(tr::lng_teagram_sticker_import_telegram_source(
 				tr::now, lt_link, parsed->canonicalUrl));
 			files->setText(tr::lng_teagram_sticker_import_telegram_downloading(
-				tr::now, lt_current, 0, lt_total, 0));
+				tr::now,
+				lt_current,
+				QString::number(0),
+				lt_total,
+				QString::number(0)));
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
@@ -602,7 +621,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					files->setText(
 						tr::lng_teagram_sticker_import_telegram_downloading(
-							tr::now, lt_current, count, lt_total, total));
+							tr::now,
+							lt_current,
+							QString::number(count),
+							lt_total,
+							QString::number(total)));
 				});
 		});
 		const auto chooseFolder = [=] {
