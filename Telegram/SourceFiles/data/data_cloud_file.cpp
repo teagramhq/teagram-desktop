@@ -159,16 +159,13 @@ void CloudImage::setToActive(
 	}
 }
 
-void UpdateCloudFile(
-		CloudFile &file,
-		const ImageWithLocation &data,
-		Storage::Cache::Database &cache,
-		uint8 cacheTag,
-		Fn<void(FileOrigin)> restartLoader,
-		Fn<void(QImage, QByteArray)> usePreloaded) {
+void UpdateCloudFile(CloudFile &file, const ImageWithLocation &data,
+					 Storage::Cache::Database &cache, uint8 cacheTag,
+					 Fn<void(FileOrigin)> restartLoader,
+					 Fn<void(QImage, QByteArray)> usePreloaded) {
 	UpdateCloudFile(
-		file, data, [&cache] { return cache; }, cacheTag,
-		std::move(restartLoader), std::move(usePreloaded));
+		file, data, [&cache]() -> Storage::Cache::Database & { return cache; },
+		cacheTag, std::move(restartLoader), std::move(usePreloaded));
 }
 
 void UpdateCloudFile(CloudFile &file, const ImageWithLocation &data,
