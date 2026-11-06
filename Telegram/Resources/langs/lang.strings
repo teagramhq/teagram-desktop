@@ -1415,6 +1415,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_local_storage_device_usage" = "Telegram uses {percent} of your device storage.";
 "lng_local_storage_clearing_about" = "Please keep this window open while the cache is being cleared.";
 "lng_local_storage_cleared" = "{size} freed on your device!";
+"lng_local_storage_clear_failed" = "The cache could not be cleared. Please try again.";
+"lng_local_storage_cache_unavailable" = "The cache is unavailable.";
 "lng_local_storage_about" = "All media will stay in the Telegram cloud and can be re-downloaded if you need them again.";
 "lng_local_storage_manage_title" = "Manage limits";
 "lng_local_storage_max_size_about" = "If your cache size exceeds this limit, the oldest unused media will be removed from the device.";

@@ -1890,11 +1890,28 @@ void LocalStorage::clearSelected() {
 
 void LocalStorage::startClearing() {
 	if (_allSelected.current()) {
-		if (const auto cache = _db()) {
-			cache->clear();
+		if (_db()) {
+			_session->data().clearCacheDatabase(
+				false, false,
+				crl::guard(this, [=](Storage::Cache::Error error) {
+					if (error.type != Storage::Cache::Error::Type::None) {
+						crl::on_main(crl::guard(this, [=] {
+							controller()->showToast(
+								tr::lng_local_storage_clear_failed(tr::now));
+						}));
+					}
+				}));
 		}
-		if (const auto cache = _dbBig()) {
-			cache->clear();
+		if (_dbBig()) {
+			_session->data().clearCacheDatabase(
+				true, false, crl::guard(this, [=](Storage::Cache::Error error) {
+					if (error.type != Storage::Cache::Error::Type::None) {
+						crl::on_main(crl::guard(this, [=] {
+							controller()->showToast(
+								tr::lng_local_storage_clear_failed(tr::now));
+						}));
+					}
+				}));
 		}
 		Ui::Emoji::ClearIrrelevantCache();
 		return;
@@ -1905,8 +1922,18 @@ void LocalStorage::startClearing() {
 		}
 		const auto tag = kChartTags[i];
 		if (tag == kFakeMediaCacheTag) {
-			if (const auto cache = _dbBig()) {
-				cache->clear();
+			if (_dbBig()) {
+				_session->data().clearCacheDatabase(
+					true, false,
+					crl::guard(this, [=](Storage::Cache::Error error) {
+						if (error.type != Storage::Cache::Error::Type::None) {
+							crl::on_main(crl::guard(this, [=] {
+								controller()->showToast(
+									tr::lng_local_storage_clear_failed(
+										tr::now));
+							}));
+						}
+					}));
 			}
 		} else {
 			if (const auto cache = _db()) {
@@ -1957,11 +1984,19 @@ void LocalStorage::setupContent() {
 
 	setupControls(content);
 
-	rpl::combine(_session->data().cache().statsOnMain(),
-				 _session->data().cacheBigFile().statsOnMain())
+	rpl::combine(_session->data().cacheStatsOnMain(false),
+				 _session->data().cacheStatsOnMain(true))
 		| rpl::on_next(
 			[=](Database::Stats &&stats, Database::Stats &&statsBig) {
 				update(std::move(stats), std::move(statsBig));
+			},
+			content->lifetime());
+	_session->data().cacheUnavailable()
+		| rpl::filter([](bool unavailable) { return unavailable; })
+		| rpl::on_next(
+			[=] {
+				controller()->showToast(
+					tr::lng_local_storage_cache_unavailable(tr::now));
 			},
 			content->lifetime());
 

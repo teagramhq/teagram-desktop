@@ -1257,6 +1257,7 @@ prepare_authenticated_storage_fixtures() {
 		media-cache-leaf \
 		opened-cache \
 		opened-media-cache \
+		log-write-target \
 		legacy-cleanup; do
 		mkdir -p "$storage_fixture_root/$fixture"
 		printf '%s' 'synthetic protected fixture' \
@@ -1289,6 +1290,10 @@ verify_protected_storage_fixtures() {
 			return 1
 		fi
 	done
+	if ! verify_storage_fixture "$storage_fixture_root/log-write-target"; then
+		echo "protected_storage_fixture=FAIL fixture=log-write-target"
+		return 1
+	fi
 	local cleanup="$storage_fixture_root/legacy-cleanup"
 	local expected="$(printf '%s\n%s\n' \
 		"$cleanup/marker" "$cleanup/unrecognized-legacy-file" | LC_ALL=C sort)"
@@ -1299,7 +1304,7 @@ verify_protected_storage_fixtures() {
 		echo "protected_storage_fixture=FAIL fixture=legacy-cleanup"
 		return 1
 	fi
-	echo "protected_storage_fixtures=PASS cache=6 legacy_cleanup=1"
+	echo "protected_storage_fixtures=PASS cache=6 log_write_target=1 legacy_cleanup=1"
 }
 
 run_authenticated_cache_regression() {
@@ -1310,6 +1315,12 @@ local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.ke
 local PROFILE_LOG="$AUTH_HOME/Library/Application Support/Teagram/log.txt"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+append_ui_stall_diagnostics() {
+	if [[ -f "$PROFILE_LOG" ]]; then
+		grep -F 'UI stall ' "$PROFILE_LOG" >> "$AUTH_LOG" || true
+	fi
+}
 
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
@@ -1318,11 +1329,13 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
 	TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1 \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+	append_ui_stall_diagnostics
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	cat "$AUTH_LOG" >&2
 	echo "authenticated cache and cleanup regression failed." >&2
 	exit 1
 fi
+append_ui_stall_diagnostics
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 for native_evidence in \
 	'native_lifecycle_case=account-lifecycle-prerequisites result=PASS' \
@@ -1335,6 +1348,18 @@ for native_evidence in \
 	'native_lifecycle_case=cache-path-watchdog-regression result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=clear-marker-rewrite-cache result=PASS' \
+	'native_lifecycle_case=clear-marker-rewrite-media-cache result=PASS' \
+	'native_lifecycle_case=logout-before-cache-initialization result=PASS' \
+	'native_lifecycle_case=logout-before-media-cache-initialization result=PASS' \
+	'native_lifecycle_case=failed-init-cache-access result=PASS' \
+	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
+	'native_lifecycle_case=cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=media-cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=cold-post-open-cache result=PASS' \
+	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
+	'native_lifecycle_case=cache-access-no-walk result=PASS' \
+	'native_lifecycle_case=media-cache-access-no-walk result=PASS' \
 	'native_lifecycle_case=protected-cache-cleanup result=PASS' \
 	'native_lifecycle_cases_failed=none'; do
 	if ! grep -F -q "$native_evidence" "$AUTH_LOG"; then
@@ -1355,27 +1380,15 @@ fi
 local watchdog_duration
 watchdog_duration="$(sed -E \
 	's/.* duration_ns=([0-9]+) stalls=.*/\1/' <<<"$watchdog_evidence")"
-if (( watchdog_duration >= 150000000 )); then
-	local watchdog_stall
-	watchdog_stall="$(awk '
-/UI stall watchdog cache regression begin/ { inside = 1; next }
-/UI stall watchdog cache regression end/ { inside = 0; next }
-inside && index($0, "UI stall ") && index($0, "CheckCachePath") { print }
-' "$PROFILE_LOG")"
-	if [[ -z "$watchdog_stall" ]]; then
-		cat "$AUTH_LOG" >&2
-		cat "$PROFILE_LOG" >&2
-		echo "slow seeded cache access did not log the CheckCachePath stack." >&2
-		exit 1
-	fi
-	printf 'cache_watchdog_reverted_path=PASS %s\n%s\n' \
-		"$watchdog_evidence" "$watchdog_stall"
-elif (( watchdog_duration < 30000000 )); then
+local watchdog_stalls
+watchdog_stalls="$(sed -E \
+	's/.* duration_ns=[0-9]+ stalls=([0-9]+)\./\1/' <<<"$watchdog_evidence")"
+if (( watchdog_duration < 30000000 && watchdog_stalls == 0 )); then
 	printf 'cache_watchdog_responsive_path=PASS %s\n' "$watchdog_evidence"
 else
 	cat "$AUTH_LOG" >&2
 	cat "$PROFILE_LOG" >&2
-	echo "seeded cache watchdog scenario was neither responsive nor a captured CheckCachePath stall." >&2
+	echo "seeded cache watchdog scenario exceeded the 30ms access budget or reported a UI stall." >&2
 	exit 1
 fi
 if ! grep -F -q \
@@ -1386,12 +1399,38 @@ if ! grep -F -q \
 	exit 1
 fi
 if ! grep -F -q \
-	"Authenticated cache post-open regression passed: get, put, and clear symlinks refused for cache and media_cache." \
+	"Open log descriptor symlink regression: passed=1 debug_passed=1." \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
-	echo "post-open authenticated cache regression did not report coverage." >&2
+	echo "open log descriptor symlink regression did not report coverage." >&2
 	exit 1
 fi
+for cache in cache media_cache; do
+	if ! grep -E \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_stall_ns=[0-9]+ under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
+		exit 1
+	fi
+done
+if ! grep -E -q \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	"$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
+	exit 1
+fi
+local chat_switch_evidence
+chat_switch_evidence="$(grep -E \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=[01]\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$chat_switch_evidence" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "cache chat switch latency evidence missing." >&2
+	exit 1
+fi
+printf '%s\n' "$chat_switch_evidence"
 if ! grep -F -q \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"$AUTH_LOG"; then
@@ -1430,6 +1469,7 @@ local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
 local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 
 if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
@@ -1484,6 +1524,16 @@ for native_evidence in \
 	'native_lifecycle_case=authenticated-cache-file-symlinks result=PASS' \
 	'native_lifecycle_case=post-open-cache result=PASS' \
 	'native_lifecycle_case=post-open-media-cache result=PASS' \
+	'native_lifecycle_case=logout-before-cache-initialization result=PASS' \
+	'native_lifecycle_case=logout-before-media-cache-initialization result=PASS' \
+	'native_lifecycle_case=failed-init-cache-access result=PASS' \
+	'native_lifecycle_case=failed-init-media-cache-access result=PASS' \
+	'native_lifecycle_case=cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=media-cache-stats-initialization result=PASS' \
+	'native_lifecycle_case=cold-post-open-cache result=PASS' \
+	'native_lifecycle_case=cold-post-open-media-cache result=PASS' \
+	'native_lifecycle_case=cache-access-no-walk result=SKIP reason=dedicated-cache-regression' \
+	'native_lifecycle_case=media-cache-access-no-walk result=SKIP reason=dedicated-cache-regression' \
 	'native_lifecycle_case=folder-crud result=PASS' \
 	'native_lifecycle_case=stock-basic-group-creator result=PASS' \
 	'native_lifecycle_case=pinned-basic-group-creator result=PASS' \
@@ -1496,7 +1546,7 @@ for native_evidence in \
 done
 for cache_evidence in \
 	"Authenticated cache regression passed: root, directory, and file symlinks refused for cache and media_cache." \
-	"Authenticated cache post-open regression passed: get, put, and clear symlinks refused for cache and media_cache." \
+	"Open log descriptor symlink regression: passed=1 debug_passed=1." \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"Mac protected path refusal: operation=read class=group-container callsite=download-history.resolve" \
 	"Chat participants regression passed." \
@@ -1560,10 +1610,12 @@ run_native_failure_continuation_case() {
 		'native_lifecycle_case=passport-link-refusal result=PASS' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks status=START' \
 		'native_lifecycle_case=authenticated-cache-file-symlinks result=' \
-		'native_lifecycle_case=post-open-cache status=START' \
-		'native_lifecycle_case=post-open-cache result=' \
-		'native_lifecycle_case=post-open-media-cache status=START' \
-		'native_lifecycle_case=post-open-media-cache result=' \
+		'native_lifecycle_case=cache-access-no-walk status=START' \
+		'native_lifecycle_case=cache-access-no-walk result=' \
+		'native_lifecycle_case=media-cache-access-no-walk status=START' \
+		'native_lifecycle_case=media-cache-access-no-walk result=' \
+		'native_lifecycle_case=logout-before-cache-initialization result=PASS' \
+		'native_lifecycle_case=logout-before-media-cache-initialization result=PASS' \
 		'native_lifecycle_case=calls-instance-start result=PASS' \
 		'native_lifecycle_case=stock-incoming-call-answer status=START' \
 		'native_lifecycle_case=stock-incoming-call-answer result=FAIL' \
@@ -1632,10 +1684,10 @@ run_native_failure_continuation_case() {
 /native_lifecycle_case=passport-link-refusal result=PASS/ && step == 26 { step = 27; next }
 /native_lifecycle_case=authenticated-cache-file-symlinks status=START/ && step == 27 { step = 28; next }
 /native_lifecycle_case=authenticated-cache-file-symlinks result=/ && step == 28 { step = 29; next }
-/native_lifecycle_case=post-open-cache status=START/ && step == 29 { step = 30; next }
-/native_lifecycle_case=post-open-cache result=/ && step == 30 { step = 31; next }
-/native_lifecycle_case=post-open-media-cache status=START/ && step == 31 { step = 32; next }
-/native_lifecycle_case=post-open-media-cache result=/ && step == 32 { step = 33; next }
+/native_lifecycle_case=cache-access-no-walk status=START/ && step == 29 { step = 30; next }
+/native_lifecycle_case=cache-access-no-walk result=/ && step == 30 { step = 31; next }
+/native_lifecycle_case=media-cache-access-no-walk status=START/ && step == 31 { step = 32; next }
+/native_lifecycle_case=media-cache-access-no-walk result=/ && step == 32 { step = 33; next }
 /native_lifecycle_case=folder-crud status=START/ && step == 33 { step = 34; next }
 /native_lifecycle_case=folder-crud result=FAIL/ && step == 34 { step = 35; next }
 /native_lifecycle_case=admin-session-identities status=START/ && step == 35 { step = 36; next }
@@ -1654,7 +1706,7 @@ END { exit step != 45 }
 		echo "native lifecycle cases did not continue around the early and late failures." >&2
 		return 1
 	fi
-	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,post-open-cache,post-open-media-cache,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
+	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,failed-init-cache-access,failed-init-media-cache-access,cold-post-open-cache,cold-post-open-media-cache,cache-access-no-walk,media-cache-access-no-walk,logout-before-cache-initialization,logout-before-media-cache-initialization,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
 	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \
@@ -1774,18 +1826,24 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
-	bash "$REPO_ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
-		"$TEST_HOME/cases" \
-		profile-ipc \
-		spoiler-cache-emoji \
-		spoiler-cache-spoiler \
-		spoiler-cache-text \
-		spoiler-cache-image \
-		authenticated-lifecycle \
-		authenticated-cache \
-		native-failure-continuation \
-		folder-fault-barrier-timeout \
+	lifecycle_cases=(
+		profile-ipc
+		spoiler-cache-emoji
+		spoiler-cache-spoiler
+		spoiler-cache-text
+		spoiler-cache-image
+		authenticated-lifecycle
+	)
+	if [[ "${TDESKTOP_MAC_CACHE_REGRESSION_ALREADY_RUN:-0}" != 1 ]]; then
+		lifecycle_cases+=(authenticated-cache)
+	fi
+	lifecycle_cases+=(
+		native-failure-continuation
+		folder-fault-barrier-timeout
 		folder-fault-cross-session-presence
+	)
+	bash "$REPO_ROOT/Telegram/build/run_mac_lifecycle_cases.sh" "$0" "$APP" \
+		"$TEST_HOME/cases" "${lifecycle_cases[@]}"
 	;;
 profile-ipc)
 	run_protected_profile_ipc_case

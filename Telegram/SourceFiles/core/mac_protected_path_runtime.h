@@ -10,8 +10,41 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_policy.h"
 
 #include <functional>
+#include <memory>
 
 namespace Core::MacProtectedPath {
+
+struct CachePathDescriptor;
+
+struct CachePathComponentIdentity final {
+	QString path;
+	quint64 device = 0;
+	quint64 inode = 0;
+	quint32 type = 0;
+	quint64 targetDevice = 0;
+	quint64 targetInode = 0;
+	quint32 targetType = 0;
+	qint64 size = 0;
+	qint64 modifiedSeconds = 0;
+	qint64 modifiedNanoseconds = 0;
+	qint64 changedSeconds = 0;
+	qint64 changedNanoseconds = 0;
+	bool exists = false;
+};
+
+struct CachePathIdentity final {
+	QString absolutePath;
+	QString resolvedPath;
+	QString versionName;
+	QString activeVersionName;
+	std::vector<CachePathComponentIdentity> components;
+	std::shared_ptr<const CachePathDescriptor> rootDescriptor;
+	std::shared_ptr<const CachePathDescriptor> versionMarkerDescriptor;
+	CachePathComponentIdentity versionMarker;
+	qint32 version = 0;
+	std::shared_ptr<const CachePathDescriptor> activeVersionDescriptor;
+	CachePathComponentIdentity activeVersionDirectory;
+};
 
 #ifdef Q_OS_MAC
 [[nodiscard]] bool InitializeProfile();
@@ -32,8 +65,23 @@ namespace Core::MacProtectedPath {
 									 const char *callsite);
 
 [[nodiscard]] bool CheckCachePath(const QString &path, const char *callsite);
+[[nodiscard]] bool
+CheckCachePathAndCaptureIdentity(const QString &path, const char *callsite,
+								 CachePathIdentity *identity);
+[[nodiscard]] bool
+CaptureCachePathActiveVersionIdentity(const QString &path, const char *callsite,
+									  CachePathIdentity *identity);
+[[nodiscard]] bool CheckCachePathIdentity(const QString &path,
+										  const char *callsite,
+										  CachePathIdentity *identity);
+[[nodiscard]] bool CheckCachePathAccessIdentity(const QString &path,
+												const char *callsite,
+												CachePathIdentity *identity);
 
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+void ResetCachePathWalkCountForTesting();
+[[nodiscard]] int CachePathWalkCountForTesting();
+[[nodiscard]] int CachePathWalkMainThreadCountForTesting();
 [[nodiscard]] bool
 CheckCachePathForTesting(const QString &path, const char *callsite,
 						 std::function<void(const QString &)> beforeEntryStat);
@@ -67,6 +115,25 @@ CheckCachePathForTesting(const QString &path, const char *callsite,
 	return true;
 }
 [[nodiscard]] inline bool CheckCachePath(const QString &, const char *) {
+	return true;
+}
+[[nodiscard]] inline bool
+CheckCachePathAndCaptureIdentity(const QString &, const char *,
+								 CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool
+CaptureCachePathActiveVersionIdentity(const QString &, const char *,
+									  CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool CheckCachePathIdentity(const QString &, const char *,
+												 CachePathIdentity *) {
+	return true;
+}
+[[nodiscard]] inline bool CheckCachePathAccessIdentity(const QString &,
+													   const char *,
+													   CachePathIdentity *) {
 	return true;
 }
 [[nodiscard]] inline bool CheckPair(Operation, const QString &, const QString &,

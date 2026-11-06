@@ -21,8 +21,14 @@ namespace Core {
 
 class UiStallWatchdog final : public QObject {
   public:
+	struct Settings {
+		bool captureShortStalls = false;
+	};
+
 	explicit UiStallWatchdog(
 		std::function<void(const QString &, bool update)> log);
+	UiStallWatchdog(std::function<void(const QString &, bool update)> log,
+					Settings settings);
 	~UiStallWatchdog() override;
 
 	UiStallWatchdog(const UiStallWatchdog &) = delete;
@@ -37,6 +43,10 @@ class UiStallWatchdog final : public QObject {
 	void run();
 
 	std::function<void(const QString &, bool update)> _log;
+	std::chrono::milliseconds _pingInterval;
+	std::chrono::milliseconds _countThreshold;
+	std::chrono::milliseconds _logThreshold;
+	std::chrono::milliseconds _logRateLimit;
 	std::thread _thread;
 	std::mutex _mutex;
 	std::condition_variable _condition;

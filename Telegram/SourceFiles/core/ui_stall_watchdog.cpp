@@ -44,6 +44,8 @@ constexpr auto kCountThreshold = 50ms;
 constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
+constexpr auto kShortPingInterval = 10ms;
+constexpr auto kShortLogThreshold = 40ms;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
 
@@ -287,7 +289,17 @@ class PingEvent final : public QEvent {
 
 UiStallWatchdog::UiStallWatchdog(
 	std::function<void(const QString &, bool update)> log)
-	: QObject(nullptr), _log(std::move(log)) {
+	: UiStallWatchdog(std::move(log), Settings()) {}
+
+UiStallWatchdog::UiStallWatchdog(
+	std::function<void(const QString &, bool update)> log, Settings settings)
+	: QObject(nullptr), _log(std::move(log)),
+	  _pingInterval(settings.captureShortStalls ? kShortPingInterval
+												: kPingInterval),
+	  _countThreshold(kCountThreshold),
+	  _logThreshold(settings.captureShortStalls ? kShortLogThreshold
+												: kLogThreshold),
+	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
 	try {
@@ -379,31 +391,31 @@ void UiStallWatchdog::run() {
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
-		if (_condition.wait_until(lock, postedAt + kCountThreshold,
+		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
 			if (_stopping) {
 				return;
 			}
 			const auto duration = _acknowledgedAt - postedAt;
-			if (duration >= kCountThreshold) {
+			if (duration >= _countThreshold) {
 				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			}
-			if (duration >= kLogThreshold) {
+			if (duration >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
 			}
 		} else {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (!_condition.wait_until(lock, postedAt + kLogThreshold,
+			if (!_condition.wait_until(lock, postedAt + _logThreshold,
 									   acknowledged)) {
 				detectedAt = Clock::now();
 			} else if (_stopping) {
 				return;
-			} else if (_acknowledgedAt - postedAt >= kLogThreshold) {
+			} else if (_acknowledgedAt - postedAt >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
 			}
 		}
 		if (detectedAt != Clock::time_point() && _log) {
-			const auto rateLimitedUntil = lastLogged + kLogRateLimit;
+			const auto rateLimitedUntil = lastLogged + _logRateLimit;
 			const auto rateLimited
 				= hasLogged && Clock::now() < rateLimitedUntil;
 			const auto observedDuration = detectedAt - postedAt;
@@ -465,7 +477,7 @@ void UiStallWatchdog::run() {
 			lastLoggedDuration = duration;
 			lock.lock();
 		}
-		_condition.wait_until(lock, _acknowledgedAt + kPingInterval,
+		_condition.wait_until(lock, _acknowledgedAt + _pingInterval,
 							  [this] { return _stopping; });
 		if (_stopping) {
 			return;

@@ -213,6 +213,7 @@ expect_contains "$mac_workflow build-macos if" "$(job_field "$mac_workflow" buil
   "needs.check-macos-deps-artifact.result == 'skipped'" \
   "needs.build-macos-deps-artifact.result == 'success'" \
   "needs.build-macos-deps-artifact.result == 'skipped'" \
+  "github.event.label.name == 'macos-build'" \
   "needs.ops-prune-macos-libraries.result == 'success'" \
   "needs.ops-prune-macos-libraries.result == 'skipped'"
 expect_lacks "$mac_workflow macos if" "$(job_field "$mac_workflow" build-macos '.if')" 'always()'
@@ -489,8 +490,13 @@ require_job_field "$mac_workflow" build-macos '.env.CCACHE_MAXSIZE' '5G'
 require_job_field "$mac_workflow" build-macos '.env.CCACHE_SLOPPINESS' 'pch_defines,time_macros'
 require_job_field "$mac_workflow" build-macos '.env.CCACHE_COMPILERCHECK' 'content'
 require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.run' \
-  'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"'
+  'bash "$REPO_NAME/.github/scripts/mac_ccache_profile.sh" "$GITHUB_EVENT_NAME" "$EVENT_LABEL" >> "$GITHUB_OUTPUT"'
+require_step_field "$mac_workflow" build-macos 'Select compiler cache profile.' '.env.EVENT_LABEL' \
+  "\${{ github.event.label.name == 'macos-build' && 'macos-build' || '' }}"
+require_step_field "$mac_workflow" build-macos 'Teagram build.' '.env.PROTECTED_PATH_INTEGRATION' \
+  '${{ steps.ccache-profile.outputs.protected_path_integration }}'
 pull_request_profile="$(bash "$ccache_profile_script" pull_request)"
+approved_pull_request_profile="$(bash "$ccache_profile_script" pull_request macos-build)"
 scheduled_profile="$(bash "$ccache_profile_script" schedule)"
 push_profile="$(bash "$ccache_profile_script" push)"
 dispatch_profile="$(bash "$ccache_profile_script" workflow_dispatch)"
@@ -498,7 +504,14 @@ if [[ "$pull_request_profile" != "$scheduled_profile" || "$pull_request_profile"
   contract_fail 'MacOS PR, scheduled and dev push builds must share one ccache profile.'
 fi
 if [[ "$pull_request_profile" != $'name=pr-compatible\nprotected_path_integration=OFF' ]]; then
-  contract_fail 'MacOS PR and scheduled builds must use the PR-compatible OFF profile.'
+  contract_fail 'Unapproved MacOS PR and scheduled builds must use the PR-compatible OFF profile.'
+fi
+if [[ "$approved_pull_request_profile" != $'name=protected\nprotected_path_integration=ON' ]]; then
+  contract_fail 'Approved MacOS PR builds must use the protected ON ccache profile.'
+fi
+other_label_profile="$(bash "$ccache_profile_script" pull_request unrelated-label)"
+if [[ "$other_label_profile" != "$pull_request_profile" ]]; then
+  contract_fail 'Only the approved macos-build PR label may enable the protected profile.'
 fi
 if [[ "$dispatch_profile" != $'name=pr-compatible\nprotected_path_integration=ON' ]]; then
   contract_fail 'Protected-path dispatches must share the cache profile while keeping the ON integration define.'
@@ -518,8 +531,13 @@ grep -Fq 'APPEND PROPERTY COMPILE_DEFINITIONS' <<< "$protected_path_sources" \
   || contract_fail 'The protected-path define must use source-level compile definitions.'
 grep -Fq 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST' <<< "$protected_path_sources" \
   || contract_fail 'The protected-path define must be enabled for its source consumers.'
+if grep -Fq 'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST' \
+    Telegram/SourceFiles/data/data_session.h; then
+  contract_fail 'The source-scoped protected-path define must not change Session declarations.'
+fi
 for source in \
     '"${src_loc}/main.cpp"' \
+    '"${src_loc}/data/data_session.cpp"' \
     '"${src_loc}/core/mac_protected_path_runtime.mm"' \
     '"${src_loc}/tests/account_lifecycle_regression.cpp"'; do
   grep -Fq -- "$source" <<< "$protected_path_sources" \
@@ -566,6 +584,9 @@ reject_value "$mac_workflow" \
   'clang-format'
 
 require_step_script "$mac_workflow" build-macos 'Teagram build.' \
+  '[ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' \
+  '[ "$GITHUB_EVENT_NAME" = "pull_request" ]; then' \
+  '-D TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=ON' \
   'CMAKE_C_COMPILER_LAUNCHER=ccache' \
   'ccache_launcher.sh' \
   '-Xclang -fno-pch-timestamp' \
@@ -673,7 +694,7 @@ fi
 expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
-  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'build_dir="$repo/out"' \
@@ -702,6 +723,8 @@ require_step_python "$mac_workflow" build-macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'process handle SIGUSR2 -p true -s false -n false'
 regression_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
 summary_step_index="$(job_field "$mac_workflow" build-macos \
@@ -710,7 +733,7 @@ summary_step_index="$(job_field "$mac_workflow" build-macos \
   || contract_fail 'On-demand validation summary must run after the lifecycle regression outcome exists.'
 profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
-  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
@@ -720,6 +743,93 @@ grep -Fq "$settings_link_evidence" \
   || contract_fail 'The Settings deep link regression must report its current success evidence.'
 grep -Fq "\"$settings_link_evidence" "$profile_harness" \
   || contract_fail "$profile_harness must check the Settings deep link regression success evidence."
+grep -Fq 'First messages\.getDialogs handler latency regression:' "$profile_harness" \
+  || contract_fail "$profile_harness must assert seeded first-getDialogs latency output."
+grep -Fq 'requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73' \
+  "$profile_harness" \
+  || contract_fail "$profile_harness must require a parsed two-chat, 73-document getDialogs response."
+grep -Fq 'minimized_restore_budget_ns=50000000' "$profile_harness" \
+  || contract_fail "$profile_harness must retain the minimized restore budget in the report."
+awk '
+  /^local watchdog_evidence$/ { copy = 1 }
+  copy && /^if ! grep -F -q/ { exit }
+  copy { print }
+' "$profile_harness" > "$temp_dir/cache-watchdog-check.sh"
+[[ -s "$temp_dir/cache-watchdog-check.sh" ]] \
+  || contract_fail 'The cache watchdog evidence checks were not found.'
+printf '%s\n' \
+  'Cache watchdog regression: seeded_directories=125 seeded_files=169 cache_accesses=292 duration_ns=29999999 stalls=0.' \
+  > "$temp_dir/cache-watchdog.log"
+: > "$temp_dir/cache-profile.log"
+check_cache_watchdog_evidence() (
+  local AUTH_LOG="$1"
+  local PROFILE_LOG="$temp_dir/cache-profile.log"
+  source "$temp_dir/cache-watchdog-check.sh"
+)
+check_cache_watchdog_evidence "$temp_dir/cache-watchdog.log" >/dev/null 2>&1 \
+  || contract_fail 'The 292-access watchdog evidence must pass below 30 ms.'
+sed 's/duration_ns=29999999/duration_ns=30000000/' \
+  "$temp_dir/cache-watchdog.log" > "$temp_dir/cache-watchdog-over-budget.log"
+if check_cache_watchdog_evidence "$temp_dir/cache-watchdog-over-budget.log" >/dev/null 2>&1; then
+  contract_fail 'The 292-access watchdog budget must remain a gate.'
+fi
+sed 's/stalls=0/stalls=1/' \
+  "$temp_dir/cache-watchdog.log" > "$temp_dir/cache-watchdog-stall.log"
+if check_cache_watchdog_evidence "$temp_dir/cache-watchdog-stall.log" >/dev/null 2>&1; then
+  contract_fail 'The 292-access watchdog stall check must remain a gate.'
+fi
+awk '
+  /^for cache in cache media_cache; do$/ { copy = 1 }
+  copy && /^if ! grep -F -q/ { exit }
+  copy { print }
+' "$profile_harness" > "$temp_dir/cache-latency-check.sh"
+[[ -s "$temp_dir/cache-latency-check.sh" ]] \
+  || contract_fail 'The cache latency evidence checks were not found.'
+cat > "$temp_dir/cache-latency.log" <<'EOF'
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_stall_ns=230059167 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_stall_ns=48247625 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=51000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0.
+EOF
+check_cache_latency_evidence() (
+  local AUTH_LOG="$1"
+  source "$temp_dir/cache-latency-check.sh"
+)
+cache_latency_report="$(check_cache_latency_evidence "$temp_dir/cache-latency.log" 2>/dev/null)" \
+  || contract_fail 'Chat switch and startup-gap timing must be report-only.'
+[[ "$cache_latency_report" == *'max_main_thread_stall_ns=230059167 under_100ms=0'* \
+  && "$cache_latency_report" == *'max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0'* ]] \
+  || contract_fail 'The report-only timings must appear in the workflow log.'
+for field in reactions=73 hydrated_documents=292 chat_switches=73; do
+  sed "s/$field/${field%%=*}=0/" \
+    "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-incomplete-switch.log"
+  if check_cache_latency_evidence "$temp_dir/cache-latency-incomplete-switch.log" >/dev/null 2>&1; then
+    contract_fail "Incomplete $field must remain a gate."
+  fi
+done
+sed 's/minimized_restore=1/minimized_restore=0/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-unrestored.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-unrestored.log" >/dev/null 2>&1; then
+  contract_fail 'The minimized window must be restored.'
+fi
+sed 's/max_handler_ns=9893666 under_50ms=1/max_handler_ns=9893666 under_50ms=0/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-dialogs.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-bad-dialogs.log" >/dev/null 2>&1; then
+  contract_fail 'The first getDialogs timing must remain a gate.'
+fi
+sed 's/root_swap_refused=1/root_swap_refused=0/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-protection.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-bad-protection.log" >/dev/null 2>&1; then
+  contract_fail 'The cache root-swap protection must remain a gate.'
+fi
+for cache_evidence_field in \
+  queued_ops_before_ready \
+  queued_ops_passed \
+  cache_usable_ns \
+  under_10s; do
+  grep -Fq "$cache_evidence_field" "$profile_harness" \
+    || contract_fail "$profile_harness must match cache evidence field $cache_evidence_field."
+done
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
@@ -741,6 +851,21 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
+grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
+  "$native_harness" \
+  || contract_fail 'The minimized restore regression must retain its 50 ms budget.'
+grep -Fq 'result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds' \
+  "$native_harness" \
+  || contract_fail 'The minimized restore sample must contribute to the max switch report.'
+if grep -Fq '&& (maxMainThreadStallNanoseconds <' "$native_harness" \
+  || grep -Fq '< kMaxMinimizedRestoreNanoseconds' "$native_harness" \
+  || grep -Fq '&& (result.maxStallNanoseconds <' "$native_harness"; then
+  contract_fail 'Chat switch and startup-gap timing must not fail the cache case.'
+fi
+grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
+  || contract_fail 'The chat switch completion and restore checks must remain a gate.'
+grep -Fq 'completed && !timedOut' "$native_harness" \
+  || contract_fail 'The chat switch regression must require completion without a timeout.'
 for native_case in \
   settings-search \
   session-window-lifecycle \
@@ -755,11 +880,27 @@ for native_case in \
   stock-basic-group-creator \
   pinned-basic-group-creator \
   authenticated-cache-file-symlinks \
+  failed-init-cache-access \
+  failed-init-media-cache-access \
+  cache-stats-initialization \
+  media-cache-stats-initialization \
+  cold-post-open-cache \
+  cold-post-open-media-cache \
+  cache-access-no-walk \
+  media-cache-access-no-walk \
   post-open-cache \
   post-open-media-cache; do
   grep -Fq "\"$native_case\"" "$native_harness" \
     || contract_fail "$native_harness must report native lifecycle case $native_case."
 done
+grep -Fq 'queued_ops_before_ready=%d' "$native_harness" \
+  || contract_fail 'The cache lifecycle regression must prove startup cache calls queue before initialization.'
+grep -Fq '&& queuedOperationsPassed' "$native_harness" \
+  && grep -Fq '&& cacheUsableWithinBound' "$native_harness" \
+  || contract_fail 'The cache lifecycle regression must require usable queued cache operations within its bound.'
+grep -Fq 'cacheStatsOnMain' \
+  Telegram/SourceFiles/settings/sections/settings_local_storage.cpp \
+  || contract_fail 'Local storage must subscribe to cache statistics after initialization.'
 for native_case in \
   settings-deep-link \
   messages-privacy \
@@ -1113,11 +1254,11 @@ grep -Fq 'native_lifecycle_case=folder-crud result=FAIL' "$profile_harness" \
 grep -Fq 'native_lifecycle_case=stock-basic-group-creator result=' "$profile_harness" \
   || contract_fail 'The profile harness must verify later native checks after folder CRUD.'
 require_step_field "$mac_workflow" build-macos 'Report skipped profile and IPC integration tests.' '.if' \
-  "\${{ !cancelled() && github.event_name == 'workflow_dispatch' && steps.build.outcome != 'success' }}"
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome != 'success' }}"
 require_step_script "$mac_workflow" build-macos 'Report skipped profile and IPC integration tests.' \
   'Profile and IPC cases skipped: Teagram build did not succeed'
 require_step_field "$mac_workflow" build-macos 'Report skipped full chat info session regression.' '.if' \
-  "\${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && steps.build.outcome != 'success' }}"
+  "\${{ !cancelled() && steps.build.outcome != 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_script "$mac_workflow" build-macos 'Report skipped full chat info session regression.' \
   'Full chat info session regression skipped: Teagram build did not succeed'
 cleanup_mutation="$temp_dir/mac-without-cleanup.yml"
