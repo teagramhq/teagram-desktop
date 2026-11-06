@@ -86,8 +86,12 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		return false;
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::Legacy) {
-		return server.serverSelection.empty() && server.discoveryOrigin.empty()
-			   && server.webSocketEndpoint.empty() && !hasHostname;
+		if (!server.webSocketEndpoint.empty()) {
+			return false;
+		}
+		return server.serverSelection.empty()
+			&& server.discoveryOrigin.empty()
+			&& !hasHostname;
 	}
 	if (server.serverSelection.empty() || server.discoveryOrigin.empty()) {
 		return false;
@@ -217,12 +221,17 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 bool SameCustomServerPin(
 		const CustomServer &a,
 		const CustomServer &b) {
-	if (a.dcId != b.dcId || a.hostname != b.hostname || a.ip != b.ip
-		|| a.port != b.port || a.ipv6 != b.ipv6
+	if (a.webSocketEndpoint != b.webSocketEndpoint) {
+		return false;
+	}
+	if (a.dcId != b.dcId
+		|| a.hostname != b.hostname
+		|| a.ip != b.ip
+		|| a.port != b.port
+		|| a.ipv6 != b.ipv6
 		|| a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
-		|| a.discoveryOrigin != b.discoveryOrigin
-		|| a.webSocketEndpoint != b.webSocketEndpoint) {
+		|| a.discoveryOrigin != b.discoveryOrigin) {
 		return false;
 	} else if (!a.key || !b.key) {
 		return false;

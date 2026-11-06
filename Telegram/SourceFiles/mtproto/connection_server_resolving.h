@@ -65,34 +65,37 @@ void SetServerHostnameResolverTestLookup(
 #endif
 
 class ServerResolvingConnection final : public AbstractConnection {
-public:
-  ServerResolvingConnection(not_null<Instance *> instance, QThread *thread,
-							const ProxyData &proxy,
-							DcOptions::Variants::Protocol protocol, bool ipv6,
-							const QString &hostname,
-							ServerHostnameResolver resolver,
-							const QString &webSocketEndpoint,
-							const QString &webSocketSelection,
-							bool bothAddressFamilies);
+  public:
+	ServerResolvingConnection(not_null<Instance *> instance, QThread *thread,
+							  const ProxyData &proxy,
+							  DcOptions::Variants::Protocol protocol, bool ipv6,
+							  const QString &hostname,
+							  ServerHostnameResolver resolver,
+							  const QString &webSocketEndpoint,
+							  const QString &webSocketSelection,
+							  bool bothAddressFamilies);
 
-  ConnectionPointer clone(const ProxyData &proxy) override;
+	ConnectionPointer clone(const ProxyData &proxy) override;
 
-  crl::time pingTime() const override;
-  crl::time fullConnectTimeout() const override;
-  crl::time firstPassConnectTimeout() const override;
-  void sendData(mtpBuffer &&buffer) override;
-  void disconnectFromServer() override;
-  void connectToServer(const QString &address, int port,
-					   const bytes::vector &protocolSecret, int16 protocolDcId,
-					   bool protocolForFiles) override;
-  void timedOut() override;
-  bool isConnected() const override;
+	crl::time pingTime() const override;
+	crl::time fullConnectTimeout() const override;
+	crl::time firstPassConnectTimeout() const override;
+	void sendData(mtpBuffer &&buffer) override;
+	void disconnectFromServer() override;
+	void connectToServer(
+		const QString &address,
+		int port,
+		const bytes::vector &protocolSecret,
+		int16 protocolDcId,
+		bool protocolForFiles) override;
+	void timedOut() override;
+	bool isConnected() const override;
 
-  int32 debugState() const override;
+	int32 debugState() const override;
 
-  QString transport() const override;
-  QString tag() const override;
-  QString endpoint() const override;
+	QString transport() const override;
+	QString tag() const override;
+	QString endpoint() const override;
 
 private:
 	void lookupFinished(const QHostInfo &info);
@@ -135,7 +138,6 @@ private:
 	bool _lookingUpWebSocket = false;
 	base::Timer _lookupTimeoutTimer;
 	base::Timer _addressTimeoutTimer;
-
 };
 
 [[nodiscard]] inline bool ShouldResolveServerHostname(

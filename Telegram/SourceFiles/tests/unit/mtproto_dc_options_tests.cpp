@@ -50,11 +50,18 @@ int UnitConnectionCounter = 0;
 } // namespace
 
 using UnitConnectionFactory = Fn<ConnectionPointer(
-	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
-	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
-	const QString &webSocketEndpoint)>;
+	not_null<Instance*> instance,
+	DcOptions::Variants::Protocol protocol,
+	QThread *thread,
+	const bytes::vector &secret,
+	const ProxyData &proxy)>;
 
 const UnitConnectionFactory *UnitConnectionFactoryInstance = nullptr;
+
+using UnitWebSocketConnectionFactory = Fn<ConnectionPointer(
+	QThread *thread, const ProxyData &proxy, const QString &webSocketEndpoint)>;
+
+const UnitWebSocketConnectionFactory *UnitWebSocketFactoryInstance = nullptr;
 
 ConnectionPointer::ConnectionPointer() = default;
 
@@ -118,9 +125,17 @@ ConnectionPointer AbstractConnection::Create(
 	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
 	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
 	const QString &webSocketEndpoint) {
+	if (UnitWebSocketFactoryInstance) {
+		return (*UnitWebSocketFactoryInstance)(thread, proxy,
+											   webSocketEndpoint);
+	}
 	Expects(UnitConnectionFactoryInstance != nullptr);
-	return (*UnitConnectionFactoryInstance)(instance, protocol, thread, secret,
-											proxy, webSocketEndpoint);
+	return (*UnitConnectionFactoryInstance)(
+		instance,
+		protocol,
+		thread,
+		secret,
+		proxy);
 }
 
 } // namespace MTP::details
@@ -418,14 +433,12 @@ RunScriptedServerConnection(bool tcpSucceeds, bool webSocketSucceeds,
 	resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
 	resolver.add({.addresses = {QHostAddress(u"8.8.4.4"_q)}});
 	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
-	const details::UnitConnectionFactory factory
-		= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
-			  QThread *thread, const bytes::vector &, const ProxyData &data,
-			  const QString &endpoint) {
+	const details::UnitWebSocketConnectionFactory factory
+		= [&](QThread *thread, const ProxyData &data, const QString &endpoint) {
 			  return details::ConnectionPointer::New<ScriptedConnection>(
 				  thread, data, endpoint, &result.log);
 		  };
-	details::UnitConnectionFactoryInstance = &factory;
+	details::UnitWebSocketFactoryInstance = &factory;
 	auto proxy = ProxyData();
 	proxy.type = proxyType;
 	auto connection = details::CreateServerConnection(
@@ -454,7 +467,7 @@ RunScriptedServerConnection(bool tcpSucceeds, bool webSocketSucceeds,
 	}
 	result.lookups = resolver.lookups();
 	connection.reset();
-	details::UnitConnectionFactoryInstance = nullptr;
+	details::UnitWebSocketFactoryInstance = nullptr;
 	return result;
 }
 
@@ -1437,14 +1450,18 @@ TEST_CASE(StartProxyCheckUsesVettedLiteralForAllTransportPaths) {
 		bool failed = false;
 		ProxyCheckConnection v4;
 		ProxyCheckConnection v6;
-		const details::UnitConnectionFactory factory
-			= [&](not_null<Instance *>, DcOptions::Variants::Protocol protocol,
-				  QThread *thread, const bytes::vector &secret,
-				  const ProxyData &data, const QString &) {
-				  CHECK(protocol == DcOptions::Variants::Tcp);
-				  return details::ConnectionPointer::New<ProxyCheckObserver>(
-					  thread, data, &observation);
-			  };
+		const details::UnitConnectionFactory factory = [&](
+			not_null<Instance*>,
+			DcOptions::Variants::Protocol protocol,
+			QThread *thread,
+			const bytes::vector &secret,
+			const ProxyData &data) {
+			CHECK(protocol == DcOptions::Variants::Tcp);
+			return details::ConnectionPointer::New<ProxyCheckObserver>(
+				thread,
+				data,
+				&observation);
+		};
 		details::UnitConnectionFactoryInstance = &factory;
 		StartProxyCheck(
 			not_null<Instance*>(fakeInstance),
@@ -1511,14 +1528,18 @@ TEST_CASE(StartProxyCheckRejectsFailedHostnameResolution) {
 		bool failed = false;
 		ProxyCheckConnection v4;
 		ProxyCheckConnection v6;
-		const details::UnitConnectionFactory factory
-			= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
-				  QThread *thread, const bytes::vector &, const ProxyData &data,
-				  const QString &) {
-				  ++factoryCalls;
-				  return details::ConnectionPointer::New<ProxyCheckObserver>(
-					  thread, data, &observation);
-			  };
+		const details::UnitConnectionFactory factory = [&](
+			not_null<Instance*>,
+			DcOptions::Variants::Protocol,
+			QThread *thread,
+			const bytes::vector &,
+			const ProxyData &data) {
+			++factoryCalls;
+			return details::ConnectionPointer::New<ProxyCheckObserver>(
+				thread,
+				data,
+				&observation);
+		};
 		details::UnitConnectionFactoryInstance = &factory;
 		StartProxyCheck(
 			not_null<Instance*>(fakeInstance),
@@ -1552,14 +1573,18 @@ TEST_CASE(StartProxyCheckRejectsFailedHostnameResolution) {
 	bool failed = false;
 	ProxyCheckConnection v4;
 	ProxyCheckConnection v6;
-	const details::UnitConnectionFactory factory
-		= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
-			  QThread *thread, const bytes::vector &, const ProxyData &data,
-			  const QString &) {
-			  ++factoryCalls;
-			  return details::ConnectionPointer::New<ProxyCheckObserver>(
-				  thread, data, &observation);
-		  };
+	const details::UnitConnectionFactory factory = [&](
+		not_null<Instance*>,
+		DcOptions::Variants::Protocol,
+		QThread *thread,
+		const bytes::vector &,
+		const ProxyData &data) {
+		++factoryCalls;
+		return details::ConnectionPointer::New<ProxyCheckObserver>(
+			thread,
+			data,
+			&observation);
+	};
 	details::UnitConnectionFactoryInstance = &factory;
 	StartProxyCheck(
 		not_null<Instance*>(fakeInstance),
@@ -1615,13 +1640,17 @@ TEST_CASE(HostnameConnectionRetriesWithFreshResolution) {
 		bool failed = false;
 		ProxyCheckConnection v4;
 		ProxyCheckConnection v6;
-		const details::UnitConnectionFactory factory
-			= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
-				  QThread *thread, const bytes::vector &, const ProxyData &data,
-				  const QString &) {
-				  return details::ConnectionPointer::New<ProxyCheckObserver>(
-					  thread, data, &observation);
-			  };
+		const details::UnitConnectionFactory factory = [&](
+			not_null<Instance*>,
+			DcOptions::Variants::Protocol,
+			QThread *thread,
+			const bytes::vector &,
+			const ProxyData &data) {
+			return details::ConnectionPointer::New<ProxyCheckObserver>(
+				thread,
+				data,
+				&observation);
+		};
 		details::UnitConnectionFactoryInstance = &factory;
 		StartProxyCheck(
 			not_null<Instance*>(fakeInstance),
@@ -1679,13 +1708,17 @@ TEST_CASE(DefaultHostnameResolverDoesNotReusePreviousAnswer) {
 		bool failed = false;
 		ProxyCheckConnection v4;
 		ProxyCheckConnection v6;
-		const details::UnitConnectionFactory factory
-			= [&](not_null<Instance *>, DcOptions::Variants::Protocol,
-				  QThread *thread, const bytes::vector &, const ProxyData &data,
-				  const QString &) {
-				  return details::ConnectionPointer::New<ProxyCheckObserver>(
-					  thread, data, &observation);
-			  };
+		const details::UnitConnectionFactory factory = [&](
+			not_null<Instance*>,
+			DcOptions::Variants::Protocol,
+			QThread *thread,
+			const bytes::vector &,
+			const ProxyData &data) {
+			return details::ConnectionPointer::New<ProxyCheckObserver>(
+				thread,
+				data,
+				&observation);
+		};
 		details::UnitConnectionFactoryInstance = &factory;
 		QEventLoop loop;
 		StartProxyCheck(
@@ -1766,15 +1799,18 @@ TEST_CASE(DefaultHostnameResolverUsesSystemResolver) {
 			bool failed = false;
 			ProxyCheckConnection v4;
 			ProxyCheckConnection v6;
-			const details::UnitConnectionFactory factory =
-				[&](not_null<Instance *>,
-					DcOptions::Variants::Protocol protocol, QThread *thread,
-					const bytes::vector &, const ProxyData &data,
-					const QString &) {
-					CHECK(protocol == DcOptions::Variants::Tcp);
-					return details::ConnectionPointer::New<ProxyCheckObserver>(
-						thread, data, &observation);
-				};
+			const details::UnitConnectionFactory factory = [&](
+				not_null<Instance*>,
+				DcOptions::Variants::Protocol protocol,
+				QThread *thread,
+				const bytes::vector &,
+				const ProxyData &data) {
+				CHECK(protocol == DcOptions::Variants::Tcp);
+				return details::ConnectionPointer::New<ProxyCheckObserver>(
+					thread,
+					data,
+					&observation);
+			};
 			details::UnitConnectionFactoryInstance = &factory;
 			QEventLoop loop;
 			StartProxyCheck(
