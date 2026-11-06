@@ -541,17 +541,20 @@ void ServerWidget::beginPublicDiscovery() {
 			return;
 		}
 		if (!DiscoveryHeadersWithinBound(reply)) {
+			LOG(("Server discovery response headers are too large."));
 			discoveryFailed(false);
 			return;
 		}
 		const auto contentLength = reply->header(
 			QNetworkRequest::ContentLengthHeader).toLongLong();
 		if (contentLength > kMaxDiscoveryBody) {
+			LOG(("Server discovery response is too large."));
 			discoveryFailed(false);
 			return;
 		}
 		_publicResponse += reply->readAll();
 		if (_publicResponse.size() > kMaxDiscoveryBody) {
+			LOG(("Server discovery response is too large."));
 			discoveryFailed(false);
 		}
 	});
@@ -566,6 +569,7 @@ void ServerWidget::beginPublicDiscovery() {
 	});
 	connect(reply, &QNetworkReply::redirected, this, [=](const QUrl &) {
 		if (_connecting && _reply == reply) {
+			LOG(("Server discovery was redirected."));
 			discoveryFailed(false);
 		}
 	});
@@ -574,10 +578,13 @@ void ServerWidget::beginPublicDiscovery() {
 			return;
 		}
 		if (reply->error() != QNetworkReply::NoError) {
+			LOG(("Server discovery request failed: %1")
+					.arg(reply->errorString()));
 			discoveryFailed(true);
 			return;
 		}
 		if (!DiscoveryHeadersWithinBound(reply)) {
+			LOG(("Server discovery response headers are too large."));
 			discoveryFailed(false);
 			return;
 		}
