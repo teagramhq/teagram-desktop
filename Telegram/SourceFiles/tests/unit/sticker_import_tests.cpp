@@ -23,8 +23,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QMetaObject>
+#include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtCore/QUrlQuery>
 #include <QtCore/QVariant>
 #include <QtGui/QImage>
 #include <QtGui/QImageWriter>
@@ -637,11 +639,10 @@ StickerTestToken(QString value
 	return std::move(*token);
 }
 
-[[nodiscard]] StickerDownloadFailure
-RunStickerDownloadFailure(StickerImportNetwork::Respond respond,
-						  quint64 initialBytes = 0) {
-	const auto link = Core::ParseTelegramStickerPackLink(
-		u"https://t.me/addstickers/Cats"_q);
+[[nodiscard]] StickerDownloadFailure RunStickerDownloadFailure(
+	StickerImportNetwork::Respond respond, quint64 initialBytes = 0,
+	QString linkText = u"https://t.me/addstickers/Cats"_q) {
+	const auto link = Core::ParseTelegramStickerPackLink(linkText);
 	Expects(link.has_value());
 	auto network = StickerImportNetwork(std::move(respond));
 	auto downloader = Api::TelegramStickerPackDownloader(
@@ -664,17 +665,68 @@ RunStickerDownloadFailure(StickerImportNetwork::Respond respond,
 	return result;
 }
 
-[[nodiscard]] QByteArray StickerSetResponse(QString emoji) {
+[[nodiscard]] QByteArray StickerSetResponse(QString emoji,
+											QString type = u"regular"_q,
+											QString customId = QString()) {
 	auto sticker = QJsonObject();
 	sticker.insert(u"file_id"_q, u"file-1"_q);
+	sticker.insert(u"file_unique_id"_q, u"unique-1"_q);
+	sticker.insert(u"type"_q, type == u"custom_emoji"_q ? u"custom_emoji"_q
+							  : type == u"mask"_q		? u"mask"_q
+														: u"regular"_q);
+	sticker.insert(u"width"_q, 100);
+	sticker.insert(u"height"_q, 100);
+	sticker.insert(u"is_animated"_q, true);
+	sticker.insert(u"is_video"_q, false);
 	sticker.insert(u"emoji"_q, emoji);
+	if (!customId.isEmpty()) {
+		sticker.insert(u"custom_emoji_id"_q, customId);
+	}
 	auto set = QJsonObject();
+	set.insert(u"name"_q, u"Cats"_q);
 	set.insert(u"title"_q, u"Cats"_q);
+	if (!type.isNull()) {
+		set.insert(u"sticker_type"_q, type);
+	}
 	set.insert(u"stickers"_q, QJsonArray{sticker});
 	auto response = QJsonObject();
 	response.insert(u"ok"_q, true);
 	response.insert(u"result"_q, set);
 	return JsonBytes(response);
+}
+
+TEST_CASE(TelegramStickerPackRejectsMismatchedOrUnsupportedTypes) {
+	using Error = Api::TelegramStickerPackDownloadError;
+	struct Case {
+		QString link;
+		QString type;
+		Error expected;
+	};
+	for (const auto &test : {
+			 Case{u"https://t.me/addstickers/Cats"_q, u"custom_emoji"_q,
+				  Error::UnsupportedPackType},
+			 Case{u"https://t.me/addemoji/Cats"_q, u"regular"_q,
+				  Error::UnsupportedPackType},
+			 Case{u"https://t.me/addstickers/Cats"_q, u"mask"_q,
+				  Error::UnsupportedPackType},
+			 Case{u"https://t.me/addemoji/Cats"_q, u"mask"_q,
+				  Error::UnsupportedPackType},
+			 Case{u"https://t.me/addstickers/Cats"_q, u"other"_q,
+				  Error::InvalidResponse},
+			 Case{u"https://t.me/addstickers/Cats"_q, u""_q,
+				  Error::InvalidResponse},
+			 Case{u"https://t.me/addstickers/Cats"_q, QString(),
+				  Error::InvalidResponse},
+		 }) {
+		const auto result = RunStickerDownloadFailure(
+			[&](const QUrl &) {
+				return StickerImportNetwork::Response{
+					200, StickerSetResponse(u"🐈"_q, test.type, u"101"_q)};
+			},
+			0, test.link);
+		CHECK(result.error == test.expected);
+		CHECK_EQ(result.requestCount, 1);
+	}
 }
 
 TEST_CASE(TelegramStickerPackRejectsMissingEmojiBeforeFileDownload) {
@@ -895,9 +947,17 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 	}
 	const auto sticker = ValidStickerTGS();
 	auto set = QJsonObject();
+	set.insert(u"name"_q, u"Cats"_q);
 	set.insert(u"title"_q, u"Cats "_q + token);
+	set.insert(u"sticker_type"_q, u"regular"_q);
 	auto stickerInfo = QJsonObject();
 	stickerInfo.insert(u"file_id"_q, u"file-1"_q);
+	stickerInfo.insert(u"file_unique_id"_q, u"unique-1"_q);
+	stickerInfo.insert(u"type"_q, u"regular"_q);
+	stickerInfo.insert(u"width"_q, 512);
+	stickerInfo.insert(u"height"_q, 512);
+	stickerInfo.insert(u"is_animated"_q, true);
+	stickerInfo.insert(u"is_video"_q, false);
 	stickerInfo.insert(u"emoji"_q, token);
 	set.insert(u"stickers"_q, QJsonArray{stickerInfo});
 	auto setResult = QJsonObject();
@@ -1005,6 +1065,196 @@ TEST_CASE(TelegramStickerPackImportFlowKeepsTokenOffTeagramAndYieldsToUi) {
 	}
 	for (const auto &payload : uploadPayloads) {
 		CHECK(!payload.contains(token.toUtf8()));
+	}
+}
+
+TEST_CASE(TelegramCustomEmojiImportPreservesOrderAndSource) {
+	const auto token = u"12345:AbCdEf0123456789012345678901234567890"_q;
+	const auto link
+		= Core::ParseTelegramStickerPackLink(u"t.me/addemoji/Emoji_pack"_q);
+	CHECK(link.has_value());
+	if (!link) {
+		return;
+	}
+	const auto firstBytes = Gzip(
+		R"({"tgs":1,"w":100,"h":100,"fr":30,"ip":0,"op":60,"nm":"first"})");
+	const auto secondBytes = Gzip(
+		R"({"tgs":1,"w":100,"h":100,"fr":30,"ip":0,"op":60,"nm":"second"})");
+	const auto sticker = [](QString id, QString file, QString emoji) {
+		auto result = QJsonObject();
+		result.insert(u"custom_emoji_id"_q, id);
+		result.insert(u"file_id"_q, file);
+		result.insert(u"file_unique_id"_q, u"unique-"_q + id);
+		result.insert(u"type"_q, u"custom_emoji"_q);
+		result.insert(u"width"_q, 100);
+		result.insert(u"height"_q, 100);
+		result.insert(u"is_animated"_q, true);
+		result.insert(u"is_video"_q, false);
+		result.insert(u"emoji"_q, emoji);
+		return result;
+	};
+	auto set = QJsonObject();
+	set.insert(u"name"_q, u"Emoji_pack"_q);
+	set.insert(u"title"_q, u"Pack "_q + token);
+	set.insert(u"sticker_type"_q, u"custom_emoji"_q);
+	set.insert(u"stickers"_q, QJsonArray{
+								  sticker(u"101"_q, u"old-first"_q, u"🐱"_q),
+								  sticker(u"202"_q, u"old-second"_q, u"🐶"_q),
+							  });
+	const auto response = [](QJsonValue result) {
+		auto object = QJsonObject();
+		object.insert(u"ok"_q, true);
+		object.insert(u"result"_q, result);
+		return JsonBytes(object);
+	};
+	auto requestedIds = QJsonArray();
+	auto requestedFiles = QStringList();
+	auto network = StickerImportNetwork([&](const QUrl &url) {
+		const auto path = url.path();
+		if (path.endsWith(u"/getStickerSet"_q)) {
+			return StickerImportNetwork::Response{200, response(set)};
+		} else if (path.endsWith(u"/getCustomEmojiStickers"_q)) {
+			const auto ids = QUrlQuery(url).queryItemValue(
+				u"custom_emoji_ids"_q, QUrl::FullyDecoded);
+			requestedIds = QJsonDocument::fromJson(ids.toUtf8()).array();
+			return StickerImportNetwork::Response{
+				200, response(QJsonArray{
+						 sticker(u"202"_q, u"resolved-second"_q, u"🐶"_q),
+						 sticker(u"101"_q, u"resolved-first"_q, u"😺"_q),
+					 })};
+		} else if (path.endsWith(u"/getFile"_q)) {
+			const auto fileId = QUrlQuery(url).queryItemValue(
+				u"file_id"_q, QUrl::FullyDecoded);
+			requestedFiles.push_back(fileId);
+			auto file = QJsonObject();
+			if (fileId == u"resolved-first"_q) {
+				file.insert(u"file_path"_q, u"stickers/first.tgs"_q);
+				file.insert(u"file_size"_q, int(firstBytes.size()));
+			} else if (fileId == u"resolved-second"_q) {
+				file.insert(u"file_path"_q, u"stickers/second.tgs"_q);
+				file.insert(u"file_size"_q, int(secondBytes.size()));
+			} else {
+				return StickerImportNetwork::Response{500, {}};
+			}
+			return StickerImportNetwork::Response{200, response(file)};
+		} else if (path.endsWith(u"/stickers/first.tgs"_q)) {
+			return StickerImportNetwork::Response{200, firstBytes};
+		} else if (path.endsWith(u"/stickers/second.tgs"_q)) {
+			return StickerImportNetwork::Response{200, secondBytes};
+		}
+		return StickerImportNetwork::Response{500, {}};
+	});
+	auto loop = QEventLoop();
+	auto outgoing = std::vector<QByteArray>();
+	auto uploadedBytes = std::vector<QByteArray>();
+	auto uploadedEmoji = std::vector<QString>();
+	auto failure = QString();
+	auto created = false;
+	auto transport = Api::details::StickerSetImportFlowCallbacks{
+		.upload =
+			[&](const Core::StickerImportFile &file, int index, int,
+				Fn<void(MTPInputFile)> done, Fn<void()>, Fn<void(int)>) {
+				uploadedBytes.push_back(file.bytes);
+				uploadedEmoji.push_back(file.emoji);
+				done(MTP_inputFile(MTP_long(index + 1), MTP_int(1),
+								   MTP_string(u"file.tgs"_q),
+								   MTP_string(u"hash"_q)));
+			},
+		.uploadMedia =
+			[&](MTPmessages_UploadMedia request, Fn<void(MTPMessageMedia)> done,
+				Fn<void(QString)>) {
+				outgoing.push_back(SerializeRequest(request));
+				const auto documentId = (outgoing.size() == 1) ? 101 : 202;
+				const auto document = MTP_document(
+					MTP_flags(0), MTP_long(documentId), MTP_long(777),
+					MTP_bytes(QByteArray("reference")), MTP_int(1),
+					MTP_string(u"application/x-tgsticker"_q), MTP_long(1),
+					MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(),
+					MTP_int(2), MTP_vector<MTPDocumentAttribute>());
+				done(MTP_messageMediaDocument(
+					MTP_flags(MTPDmessageMediaDocument::Flag::f_document),
+					document, MTPVector<MTPDocument>(), MTPPhoto(), MTPint(),
+					MTPint()));
+			},
+		.createSet =
+			[&](MTPstickers_CreateStickerSet request,
+				Fn<void(MTPmessages_StickerSet)>, Fn<void(QString)>) {
+				outgoing.push_back(SerializeRequest(request));
+				created = true;
+				loop.quit();
+			},
+	};
+	auto importer = std::unique_ptr<Api::details::StickerSetImportFlow>();
+	auto downloader = Api::TelegramStickerPackDownloader(
+		*link, StickerTestToken(token), &network);
+	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+	downloader.start(
+		[&](QString title, Core::StickerImportScan scan) {
+			CHECK(scan.problem == Core::StickerImportProblem::None);
+			CHECK_EQ(int(scan.files.size()), 2);
+			importer = std::make_unique<Api::details::StickerSetImportFlow>(
+				std::move(scan), std::move(title), u"cats_a"_q,
+				Data::StickersType::Emoji, Core::StickerImportSource::Telegram,
+				link->name, std::move(transport));
+			importer->start([](MTPmessages_StickerSet) {},
+							[&](QString error) {
+								failure = std::move(error);
+								loop.quit();
+							});
+		},
+		[&](Api::TelegramStickerPackDownloadError, QString error) {
+			failure = std::move(error);
+			loop.quit();
+		},
+		nullptr);
+	loop.exec();
+	if (importer) {
+		importer->cancel();
+	}
+	CHECK(created);
+	CHECK(failure.isEmpty());
+	CHECK_EQ(int(network.requests.size()), 6);
+	const auto expectedIds = QJsonArray{u"101"_q, u"202"_q};
+	CHECK(requestedIds == expectedIds);
+	const auto expectedFiles
+		= QStringList{u"resolved-first"_q, u"resolved-second"_q};
+	CHECK(requestedFiles == expectedFiles);
+	CHECK_EQ(int(uploadedBytes.size()), 2);
+	CHECK_EQ(int(uploadedEmoji.size()), 2);
+	if (uploadedBytes.size() == 2 && uploadedEmoji.size() == 2) {
+		CHECK_EQ(uploadedBytes[0], firstBytes);
+		CHECK_EQ(uploadedBytes[1], secondBytes);
+		CHECK_EQ(uploadedEmoji[0], u"😺"_q);
+		CHECK_EQ(uploadedEmoji[1], u"🐶"_q);
+	}
+	const auto firstItem = MTP_inputStickerSetItem(
+		MTP_flags(0),
+		MTP_inputDocument(MTP_long(101), MTP_long(777),
+						  MTP_bytes(QByteArray("reference"))),
+		MTP_string(u"😺"_q), MTPMaskCoords(), MTPstring());
+	const auto secondItem = MTP_inputStickerSetItem(
+		MTP_flags(0),
+		MTP_inputDocument(MTP_long(202), MTP_long(777),
+						  MTP_bytes(QByteArray("reference"))),
+		MTP_string(u"🐶"_q), MTPMaskCoords(), MTPstring());
+	auto flags = MTPstickers_CreateStickerSet::Flags(
+		MTPstickers_CreateStickerSet::Flag::f_software);
+	flags |= MTPstickers_CreateStickerSet::Flag::f_emojis;
+	const auto expected = MTPstickers_CreateStickerSet(
+		MTP_flags(flags), MTP_inputUserSelf(), MTP_string(u"Pack [redacted]"_q),
+		MTP_string(u"cats_a"_q), MTPInputDocument(),
+		MTP_vector<MTPInputStickerSetItem>(
+			QVector<MTPInputStickerSetItem>{firstItem, secondItem}),
+		MTP_string(u"https://t.me/addemoji/Emoji_pack"_q));
+	CHECK_EQ(int(outgoing.size()), 3);
+	if (outgoing.size() == 3) {
+		CHECK_EQ(outgoing.back(), SerializeRequest(expected));
+	}
+	for (const auto &request : outgoing) {
+		CHECK(!request.contains(token.toUtf8()));
+	}
+	for (const auto &bytes : uploadedBytes) {
+		CHECK(!bytes.contains(token.toUtf8()));
 	}
 }
 

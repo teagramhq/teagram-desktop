@@ -26,6 +26,7 @@ namespace Api {
 enum class TelegramStickerPackDownloadError {
 	InvalidToken,
 	InvalidLink,
+	UnsupportedPackType,
 	PackNotFound,
 	BotApi,
 	Network,

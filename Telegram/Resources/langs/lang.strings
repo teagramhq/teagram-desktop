@@ -577,6 +577,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_teagram_sticker_import_telegram_source" = "Telegram pack: {link}";
 "lng_teagram_sticker_import_telegram_downloading" = "Downloading from Telegram: {current} of {total}";
 "lng_teagram_sticker_import_telegram_link_invalid" = "Use a t.me/addstickers or t.me/addemoji pack link.";
+"lng_teagram_sticker_import_telegram_type_mismatch" = "This pack's type doesn't match the link, or it contains masks. Use a regular sticker or custom emoji pack link.";
 "lng_teagram_sticker_import_telegram_token_rejected" = "Telegram rejected this bot token. Check it and try again.";
 "lng_teagram_sticker_import_telegram_pack_missing" = "Telegram couldn't find this public sticker or emoji pack.";
 "lng_teagram_sticker_import_telegram_api_error" = "Telegram couldn't download this pack ({error}).";

@@ -65,6 +65,8 @@ FormatForPath(const QString &path) {
 		return u"InvalidToken"_q;
 	case TelegramStickerPackDownloadError::InvalidLink:
 		return u"InvalidLink"_q;
+	case TelegramStickerPackDownloadError::UnsupportedPackType:
+		return u"UnsupportedPackType"_q;
 	case TelegramStickerPackDownloadError::PackNotFound:
 		return u"PackNotFound"_q;
 	case TelegramStickerPackDownloadError::BotApi:
@@ -299,9 +301,19 @@ void TelegramStickerPackDownloader::handleApiResponse(
 
 void TelegramStickerPackDownloader::handleStickerSet(QJsonObject set) {
 	const auto title = JsonString(set, u"title"_q);
+	const auto stickerType = JsonString(set, u"sticker_type"_q);
 	const auto array = set.value(u"stickers"_q);
-	if (title.isEmpty() || !array.isArray()) {
+	if (title.isEmpty() || !array.isArray()
+		|| (stickerType != u"regular"_q && stickerType != u"custom_emoji"_q
+			&& stickerType != u"mask"_q)) {
 		fail(TelegramStickerPackDownloadError::InvalidResponse);
+		return;
+	}
+	const auto expectedType = (_link.type == Core::StickerImportType::Emoji)
+								  ? u"custom_emoji"_q
+								  : u"regular"_q;
+	if (stickerType != expectedType) {
+		fail(TelegramStickerPackDownloadError::UnsupportedPackType);
 		return;
 	}
 	const auto stickers = array.toArray();

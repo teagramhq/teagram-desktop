@@ -82,6 +82,8 @@ TelegramDownloadErrorText(Api::TelegramStickerPackDownloadError error,
 		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
 	case Api::TelegramStickerPackDownloadError::InvalidLink:
 		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
+	case Api::TelegramStickerPackDownloadError::UnsupportedPackType:
+		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
 	case Api::TelegramStickerPackDownloadError::PackNotFound:
 		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
 	case Api::TelegramStickerPackDownloadError::BotApi:
