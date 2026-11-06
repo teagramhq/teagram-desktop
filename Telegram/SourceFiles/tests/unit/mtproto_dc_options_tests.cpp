@@ -422,16 +422,22 @@ struct ScriptedOutcome {
 	bool failed = false;
 };
 
-[[nodiscard]] ScriptedOutcome
-RunScriptedServerConnection(bool tcpSucceeds, bool webSocketSucceeds,
-							const QString &webSocketEndpoint,
-							ProxyData::Type proxyType = ProxyData::Type::None) {
+[[nodiscard]] ScriptedOutcome RunScriptedServerConnection(
+	bool tcpSucceeds, bool webSocketSucceeds, const QString &webSocketEndpoint,
+	ProxyData::Type proxyType = ProxyData::Type::None,
+	const QString &hostname = u"demo.example.com"_q, bool ipv6 = false,
+	bool bothAddressFamilies = false,
+	QList<QHostAddress> webSocketAnswers = {QHostAddress(u"8.8.4.4"_q)}) {
 	auto result = ScriptedOutcome();
 	result.log.tcpSucceeds = tcpSucceeds;
 	result.log.webSocketSucceeds = webSocketSucceeds;
 	UnitHostResolver resolver;
-	resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
-	resolver.add({.addresses = {QHostAddress(u"8.8.4.4"_q)}});
+	if (!QHostAddress(hostname).isNull()) {
+		resolver.add({.addresses = webSocketAnswers});
+	} else {
+		resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
+		resolver.add({.addresses = webSocketAnswers});
+	}
 	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
 	const details::UnitWebSocketConnectionFactory factory
 		= [&](QThread *thread, const ProxyData &data, const QString &endpoint) {
@@ -443,9 +449,9 @@ RunScriptedServerConnection(bool tcpSucceeds, bool webSocketSucceeds,
 	proxy.type = proxyType;
 	auto connection = details::CreateServerConnection(
 		not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
-		QThread::currentThread(), bytes::vector(), proxy, u"demo.example.com"_q,
-		false, resolver.resolver(), webSocketEndpoint, u"demo.example.com"_q,
-		false);
+		QThread::currentThread(), bytes::vector(), proxy, hostname, ipv6,
+		resolver.resolver(), webSocketEndpoint, u"demo.example.com"_q,
+		bothAddressFamilies);
 	QEventLoop loop;
 	QTimer guard;
 	guard.setSingleShot(true);
@@ -692,6 +698,81 @@ TEST_CASE(ServerConnectionThroughProxyNeverAttemptsWebSocket) {
 	for (const auto &used : result.log.endpoints) {
 		CHECK(used.isEmpty());
 	}
+}
+
+TEST_CASE(LiteralPinFallsBackToWebSocketAcrossAddressFamilies) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto v6 = QHostAddress(u"2001:4860:4860::8888"_q);
+	const auto v4 = QHostAddress(u"8.8.4.4"_q);
+	const auto run = [&](const QString &literal, bool ipv6, bool both,
+						 const QHostAddress &answer) {
+		return RunScriptedServerConnection(false, true, endpoint,
+										   ProxyData::Type::None, literal, ipv6,
+										   both, {answer});
+	};
+
+	const auto fromV4 = run(u"8.8.8.88"_q, false, true, v6);
+	CHECK(fromV4.connected);
+	CHECK_EQ(int(fromV4.log.endpoints.size()), 2);
+	if (fromV4.log.endpoints.size() == 2) {
+		CHECK_EQ(fromV4.log.addresses[0], u"8.8.8.88"_q);
+		CHECK_EQ(fromV4.log.endpoints[1], endpoint);
+		CHECK_EQ(fromV4.log.addresses[1], v6.toString());
+	}
+
+	const auto fromV6 = run(u"2001:4860:4860::8844"_q, true, true, v4);
+	CHECK(fromV6.connected);
+	CHECK_EQ(int(fromV6.log.endpoints.size()), 2);
+	if (fromV6.log.endpoints.size() == 2) {
+		CHECK_EQ(fromV6.log.endpoints[1], endpoint);
+		CHECK_EQ(fromV6.log.addresses[1], u"8.8.4.4"_q);
+	}
+
+	const auto sameFamily = run(u"8.8.8.88"_q, false, false, v4);
+	CHECK(sameFamily.connected);
+	const auto otherFamilyOff = run(u"8.8.8.88"_q, false, false, v6);
+	CHECK(otherFamilyOff.failed);
+	CHECK_EQ(int(otherFamilyOff.log.endpoints.size()), 1);
+}
+
+TEST_CASE(WebSocketUsesBothFamiliesOnlyWhenBothAreEnabledWithoutProxy) {
+	using details::WebSocketUsesBothAddressFamilies;
+	using ProxyType = ProxyData::Type;
+	CHECK(WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, true,
+										   true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::Socks5, true, true, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, false, true, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, false, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, false,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, true,
+											false));
+}
+
+TEST_CASE(ObfuscatedStartNonceRejectsReservedPrefixes) {
+	const auto nonce = [](uint32 first, uint32 second) {
+		auto result = bytes::vector(64, bytes::type(0x55));
+		memcpy(result.data(), &first, sizeof(first));
+		memcpy(result.data() + sizeof(first), &second, sizeof(second));
+		return result;
+	};
+	auto socket = MakeWebSocketSocket();
+	const auto good = [&](uint32 first, uint32 second) {
+		const auto bytes = nonce(first, second);
+		return socket->isGoodStartNonce(bytes::make_span(bytes));
+	};
+	CHECK(good(0x12345678U, 0x9ABCDEF0U));
+	CHECK(!good(0x123456EFU, 0x9ABCDEF0U));
+	CHECK(!good(0x44414548U, 0x9ABCDEF0U));
+	CHECK(!good(0x54534F50U, 0x9ABCDEF0U));
+	CHECK(!good(0x20544547U, 0x9ABCDEF0U));
+	CHECK(!good(0xEEEEEEEEU, 0x9ABCDEF0U));
+	CHECK(!good(0xDDDDDDDDU, 0x9ABCDEF0U));
+	CHECK(!good(0x02010316U, 0x9ABCDEF0U));
+	CHECK(!good(0x12345678U, 0x00000000U));
 }
 
 TEST_CASE(WebSocketFallbackAsksForAFirstAttemptLongEnoughToReachIt) {

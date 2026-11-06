@@ -154,6 +154,14 @@ ShouldAttemptWebSocketFallback(bool tcpAttemptsExhausted,
 		   && proxyType == ProxyData::Type::None;
 }
 
+[[nodiscard]] inline bool
+WebSocketUsesBothAddressFamilies(ProxyData::Type proxyType, bool useTcp,
+								 bool hasWebSocketEndpoint, bool useIPv4,
+								 bool useIPv6) {
+	return proxyType == ProxyData::Type::None && useTcp && hasWebSocketEndpoint
+		   && useIPv4 && useIPv6;
+}
+
 [[nodiscard]] ConnectionPointer CreateServerConnection(
 	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
 	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,

@@ -234,7 +234,9 @@ void WebSocketSocket::connectToHost(const QString &, int) {
 		quint16(_url.port(443)), _url.host());
 }
 
-bool WebSocketSocket::isGoodStartNonce(bytes::const_span) { return true; }
+bool WebSocketSocket::isGoodStartNonce(bytes::const_span nonce) {
+	return IsGoodObfuscatedStartNonce(nonce);
+}
 
 void WebSocketSocket::timedOut() { fail(u"WSS connection timed out."_q); }
 

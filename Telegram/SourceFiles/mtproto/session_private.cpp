@@ -1165,9 +1165,11 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 		const auto useTcp = special ? true : _options->useTcp;
 		const auto useHttp = special ? false : _options->useHttp;
 		const auto bothAddressFamiliesForWebSocket
-			= _options->proxy.type == ProxyData::Type::None && useTcp
-			  && !pin.hostname.empty() && !pin.webSocketEndpoint.empty()
-			  && useIPv4 && useIPv6;
+			= WebSocketUsesBothAddressFamilies(_options->proxy.type, useTcp,
+											   !pin.webSocketEndpoint.empty(),
+											   useIPv4, useIPv6);
+		const auto hostnameCoversBothFamilies
+			= bothAddressFamiliesForWebSocket && !pin.hostname.empty();
 		const auto preferredAddress
 			= OptionPreferIPv6.value() ? Variants::IPv6 : Variants::IPv4;
 		const auto skipAddress = !useIPv4
@@ -1184,8 +1186,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 			if (address == skipAddress) {
 				continue;
 			}
-			if (bothAddressFamiliesForWebSocket
-				&& address != preferredAddress) {
+			if (hostnameCoversBothFamilies && address != preferredAddress) {
 				continue;
 			}
 			for (auto protocol = 0; protocol != Variants::ProtocolCount; ++protocol) {
