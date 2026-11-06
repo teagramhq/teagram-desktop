@@ -24,6 +24,7 @@ namespace {
 constexpr auto kMaxWebSocketMessage = 16 * 1024 * 1024 + 64;
 constexpr auto kMaxBufferedBytes = 2 * kMaxWebSocketMessage;
 constexpr auto kMaxHandshakeBytes = 16 * 1024;
+constexpr auto kMaxControlPayload = 125;
 constexpr auto kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 [[nodiscard]] bool HasToken(QByteArray value, QByteArray token) {
@@ -37,6 +38,151 @@ constexpr auto kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 }
 
 } // namespace
+
+WebSocketUpgradeResult ParseWebSocketUpgrade(QByteArray &incoming,
+											 const QByteArray &key,
+											 QString &error) {
+	const auto end = incoming.indexOf("\r\n\r\n");
+	if (end < 0) {
+		if (incoming.size() > kMaxHandshakeBytes) {
+			error = u"WSS upgrade response is too large."_q;
+			return WebSocketUpgradeResult::Rejected;
+		}
+		return WebSocketUpgradeResult::Incomplete;
+	}
+	if (end > kMaxHandshakeBytes) {
+		error = u"WSS upgrade response is too large."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	const auto response = incoming.left(end + 2);
+	incoming.remove(0, end + 4);
+	auto lines = response.split('\n');
+	lines.removeLast();
+	if (lines.isEmpty()) {
+		error = u"WSS upgrade response is empty."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	auto status = lines.takeFirst();
+	if (!status.endsWith('\r')) {
+		error = u"WSS upgrade status line is malformed."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	status.chop(1);
+	const auto statusParts = status.split(' ');
+	if (statusParts.size() < 2 || statusParts[0] != "HTTP/1.1"
+		|| statusParts[1] != "101") {
+		error = u"WSS upgrade was refused."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	auto headers = QMap<QByteArray, QByteArray>();
+	for (auto line : lines) {
+		if (!line.endsWith('\r')) {
+			error = u"WSS upgrade header is malformed."_q;
+			return WebSocketUpgradeResult::Rejected;
+		}
+		line.chop(1);
+		const auto separator = line.indexOf(':');
+		if (separator <= 0) {
+			error = u"WSS upgrade header is malformed."_q;
+			return WebSocketUpgradeResult::Rejected;
+		}
+		const auto name = line.left(separator).trimmed().toLower();
+		const auto value = line.mid(separator + 1).trimmed();
+		if (headers.contains(name)) {
+			error = u"WSS upgrade contains duplicate headers."_q;
+			return WebSocketUpgradeResult::Rejected;
+		}
+		headers.insert(name, value);
+	}
+	const auto expectedAccept
+		= QCryptographicHash::hash(key + kWebSocketGuid,
+								   QCryptographicHash::Sha1)
+			  .toBase64();
+	if (headers.value("upgrade").compare("websocket", Qt::CaseInsensitive) != 0
+		|| !HasToken(headers.value("connection"), "upgrade")
+		|| headers.value("sec-websocket-accept") != expectedAccept
+		|| headers.value("sec-websocket-protocol") != "binary"
+		|| headers.contains("sec-websocket-extensions")) {
+		error = u"WSS upgrade response failed validation."_q;
+		return WebSocketUpgradeResult::Rejected;
+	}
+	return WebSocketUpgradeResult::Accepted;
+}
+
+WebSocketFrameStatus ParseWebSocketServerFrame(const QByteArray &incoming,
+											   WebSocketFrame &frame) {
+	if (incoming.size() < 2) {
+		return WebSocketFrameStatus::Incomplete;
+	}
+	const auto first = uchar(incoming[0]);
+	const auto second = uchar(incoming[1]);
+	const auto final = (first & 0x80) != 0;
+	const auto opcode = uchar(first & 0x0F);
+	const auto masked = (second & 0x80) != 0;
+	if ((first & 0x70) != 0 || masked) {
+		return WebSocketFrameStatus::Invalid;
+	}
+	quint64 length = second & 0x7F;
+	auto headerSize = 2;
+	if (length == 126) {
+		if (incoming.size() < 4) {
+			return WebSocketFrameStatus::Incomplete;
+		}
+		length = qFromBigEndian<quint16>(
+			reinterpret_cast<const uchar *>(incoming.constData() + 2));
+		headerSize = 4;
+	} else if (length == 127) {
+		if (incoming.size() < 10) {
+			return WebSocketFrameStatus::Incomplete;
+		}
+		length = qFromBigEndian<quint64>(
+			reinterpret_cast<const uchar *>(incoming.constData() + 2));
+		if (length & (quint64(1) << 63)) {
+			return WebSocketFrameStatus::Invalid;
+		}
+		headerSize = 10;
+	}
+	const auto control = (opcode & 0x08) != 0;
+	if (length > kMaxWebSocketMessage
+		|| (control && (!final || length > kMaxControlPayload))) {
+		return WebSocketFrameStatus::Invalid;
+	}
+	if (length > quint64(incoming.size() - headerSize)) {
+		return WebSocketFrameStatus::Incomplete;
+	}
+	frame.opcode = opcode;
+	frame.final = final;
+	frame.payload = incoming.mid(headerSize, int(length));
+	frame.size = headerSize + int(length);
+	return WebSocketFrameStatus::Complete;
+}
+
+QByteArray EncodeWebSocketClientFrame(uchar opcode, const QByteArray &payload,
+									  bytes::const_span mask) {
+	Expects(mask.size() == 4);
+
+	auto frame = QByteArray();
+	frame.reserve(payload.size() + 14);
+	frame.append(char(0x80 | opcode));
+	if (payload.size() < 126) {
+		frame.append(char(0x80 | payload.size()));
+	} else if (payload.size() <= 0xFFFF) {
+		frame.append(char(0x80 | 126));
+		const auto length = qToBigEndian(quint16(payload.size()));
+		frame.append(reinterpret_cast<const char *>(&length), sizeof(length));
+	} else {
+		frame.append(char(0x80 | 127));
+		const auto length = qToBigEndian(quint64(payload.size()));
+		frame.append(reinterpret_cast<const char *>(&length), sizeof(length));
+	}
+	frame.append(reinterpret_cast<const char *>(mask.data()), mask.size());
+	const auto offset = frame.size();
+	frame.resize(offset + payload.size());
+	for (auto i = 0; i != payload.size(); ++i) {
+		frame[offset + i] = payload[i] ^ char(mask[i % 4]);
+	}
+	return frame;
+}
 
 WebSocketSocket::WebSocketSocket(not_null<QThread *> thread,
 								 const QString &endpoint,
@@ -77,13 +223,12 @@ WebSocketSocket::WebSocketSocket(not_null<QThread *> thread,
 
 void WebSocketSocket::connectToHost(const QString &, int) {
 	Expects(_state == State::NotConnected);
+
 	if (!_url.isValid() || _url.scheme() != u"wss"_q || _url.host().isEmpty()) {
 		fail(u"Invalid WSS endpoint."_q);
 		return;
 	}
 	_state = State::Connecting;
-	// Dial the vetted address, but verify the certificate against the
-	// endpoint host name, never against the address.
 	_socket.connectToHostEncrypted(
 		_resolvedAddress.isEmpty() ? _url.host() : _resolvedAddress,
 		quint16(_url.port(443)), _url.host());
@@ -124,6 +269,7 @@ int64 WebSocketSocket::read(bytes::span buffer) {
 void WebSocketSocket::write(bytes::const_span prefix,
 							bytes::const_span buffer) {
 	Expects(!buffer.empty());
+
 	if (!isConnected()) {
 		return;
 	}
@@ -198,78 +344,6 @@ void WebSocketSocket::handleReadyRead() {
 	}
 }
 
-WebSocketUpgradeResult ParseWebSocketUpgrade(QByteArray &incoming,
-											 const QByteArray &key,
-											 QString &error) {
-	const auto end = incoming.indexOf("\r\n\r\n");
-	if (end < 0) {
-		if (incoming.size() > kMaxHandshakeBytes) {
-			error = u"WSS upgrade response is too large."_q;
-			return WebSocketUpgradeResult::Rejected;
-		}
-		return WebSocketUpgradeResult::Incomplete;
-	}
-	if (end > kMaxHandshakeBytes) {
-		error = u"WSS upgrade response is too large."_q;
-		return WebSocketUpgradeResult::Rejected;
-	}
-	// Keep the CRLF that terminates the last header, so that every line
-	// below ends in CRLF; the empty tail after the last LF is dropped.
-	const auto response = incoming.left(end + 2);
-	incoming.remove(0, end + 4);
-	auto lines = response.split('\n');
-	lines.removeLast();
-	if (lines.isEmpty()) {
-		error = u"WSS upgrade response is empty."_q;
-		return WebSocketUpgradeResult::Rejected;
-	}
-	auto status = lines.takeFirst();
-	if (!status.endsWith('\r')) {
-		error = u"WSS upgrade status line is malformed."_q;
-		return WebSocketUpgradeResult::Rejected;
-	}
-	status.chop(1);
-	const auto statusParts = status.split(' ');
-	if (statusParts.size() < 2 || statusParts[0] != "HTTP/1.1"
-		|| statusParts[1] != "101") {
-		error = u"WSS upgrade was refused."_q;
-		return WebSocketUpgradeResult::Rejected;
-	}
-	auto headers = QMap<QByteArray, QByteArray>();
-	for (auto line : lines) {
-		if (!line.endsWith('\r')) {
-			error = u"WSS upgrade header is malformed."_q;
-			return WebSocketUpgradeResult::Rejected;
-		}
-		line.chop(1);
-		const auto separator = line.indexOf(':');
-		if (separator <= 0) {
-			error = u"WSS upgrade header is malformed."_q;
-			return WebSocketUpgradeResult::Rejected;
-		}
-		const auto name = line.left(separator).trimmed().toLower();
-		const auto value = line.mid(separator + 1).trimmed();
-		if (headers.contains(name)) {
-			error = u"WSS upgrade contains duplicate headers."_q;
-			return WebSocketUpgradeResult::Rejected;
-		}
-		headers.insert(name, value);
-	}
-	const auto expectedAccept
-		= QCryptographicHash::hash(key + kWebSocketGuid,
-								   QCryptographicHash::Sha1)
-			  .toBase64();
-	if (headers.value("upgrade").compare("websocket", Qt::CaseInsensitive) != 0
-		|| !HasToken(headers.value("connection"), "upgrade")
-		|| headers.value("sec-websocket-accept") != expectedAccept
-		|| headers.value("sec-websocket-protocol") != "binary"
-		|| headers.contains("sec-websocket-extensions")) {
-		error = u"WSS upgrade response failed validation."_q;
-		return WebSocketUpgradeResult::Rejected;
-	}
-	return WebSocketUpgradeResult::Accepted;
-}
-
 void WebSocketSocket::handleHandshake() {
 	auto error = QString();
 	switch (ParseWebSocketUpgrade(_incoming, _handshakeKey, error)) {
@@ -280,8 +354,6 @@ void WebSocketSocket::handleHandshake() {
 		return;
 	case WebSocketUpgradeResult::Accepted:
 		_state = State::Connected;
-		// Like errors, notifications may end with the owner destroying this
-		// socket, so they are delivered after frame parsing has returned.
 		InvokeQueued(this, [=] {
 			if (_state == State::Connected) {
 				_connected.fire({});
@@ -293,57 +365,22 @@ void WebSocketSocket::handleHandshake() {
 
 void WebSocketSocket::handleFrames() {
 	while (_state == State::Connected) {
-		if (_incoming.size() < 2) {
+		auto frame = WebSocketFrame();
+		const auto status = ParseWebSocketServerFrame(_incoming, frame);
+		if (status == WebSocketFrameStatus::Incomplete) {
+			return;
+		} else if (status == WebSocketFrameStatus::Invalid) {
+			fail(u"WSS server frame is invalid."_q);
 			return;
 		}
-		const auto first = uchar(_incoming[0]);
-		const auto second = uchar(_incoming[1]);
-		const auto final = (first & 0x80) != 0;
-		const auto opcode = first & 0x0F;
-		const auto masked = (second & 0x80) != 0;
-		if ((first & 0x70) != 0 || masked) {
-			fail(u"WSS server frame has invalid flags."_q);
-			return;
-		}
-		quint64 length = second & 0x7F;
-		auto headerSize = 2;
-		if (length == 126) {
-			if (_incoming.size() < 4) {
-				return;
-			}
-			length = qFromBigEndian<quint16>(
-				reinterpret_cast<const uchar *>(_incoming.constData() + 2));
-			headerSize = 4;
-		} else if (length == 127) {
-			if (_incoming.size() < 10) {
-				return;
-			}
-			length = qFromBigEndian<quint64>(
-				reinterpret_cast<const uchar *>(_incoming.constData() + 2));
-			if (length & (quint64(1) << 63)) {
-				fail(u"WSS server frame length is invalid."_q);
-				return;
-			}
-			headerSize = 10;
-		}
-		const auto control = (opcode & 0x08) != 0;
-		if (length > kMaxWebSocketMessage
-			|| (control && (!final || length > 125))) {
-			fail(u"WSS server frame exceeds its limit."_q);
-			return;
-		}
-		if (length > quint64(_incoming.size() - headerSize)) {
-			return;
-		}
-		const auto payload = _incoming.mid(headerSize, int(length));
-		_incoming.remove(0, headerSize + int(length));
-		switch (opcode) {
+		_incoming.remove(0, frame.size);
+		switch (frame.opcode) {
 		case 0x0:
 			if (!_fragmentedMessage) {
 				fail(u"Unexpected WSS continuation frame."_q);
 				return;
 			}
-			appendMessage(payload, final);
+			appendMessage(frame.payload, frame.final);
 			break;
 		case 0x1:
 			fail(u"WSS text frames are not supported."_q);
@@ -353,18 +390,18 @@ void WebSocketSocket::handleFrames() {
 				fail(u"Nested WSS data frame."_q);
 				return;
 			}
-			appendMessage(payload, final);
+			appendMessage(frame.payload, frame.final);
 			break;
 		case 0x8:
-			if (payload.size() == 1) {
+			if (frame.payload.size() == 1) {
 				fail(u"WSS close frame is malformed."_q);
 				return;
 			}
-			sendFrame(0x8, payload);
+			sendFrame(0x8, frame.payload);
 			_socket.disconnectFromHost();
 			return;
 		case 0x9:
-			sendFrame(0xA, payload);
+			sendFrame(0xA, frame.payload);
 			break;
 		case 0xA:
 			break;
@@ -415,28 +452,10 @@ void WebSocketSocket::sendFrame(uchar opcode, const QByteArray &payload) {
 		fail(u"WSS frame exceeds the transport limit."_q);
 		return;
 	}
-	auto frame = QByteArray();
-	frame.reserve(payload.size() + 14);
-	frame.append(char(0x80 | opcode));
-	if (payload.size() < 126) {
-		frame.append(char(0x80 | payload.size()));
-	} else if (payload.size() <= 0xFFFF) {
-		frame.append(char(0x80 | 126));
-		const auto length = qToBigEndian(quint16(payload.size()));
-		frame.append(reinterpret_cast<const char *>(&length), sizeof(length));
-	} else {
-		frame.append(char(0x80 | 127));
-		const auto length = qToBigEndian(quint64(payload.size()));
-		frame.append(reinterpret_cast<const char *>(&length), sizeof(length));
-	}
 	auto mask = bytes::vector(4);
 	bytes::set_random(bytes::make_span(mask));
-	frame.append(reinterpret_cast<const char *>(mask.data()), int(mask.size()));
-	const auto offset = frame.size();
-	frame.resize(offset + payload.size());
-	for (auto i = 0; i != payload.size(); ++i) {
-		frame[offset + i] = payload[i] ^ char(mask[i % 4]);
-	}
+	const auto frame
+		= EncodeWebSocketClientFrame(opcode, payload, bytes::make_span(mask));
 	if (_socket.write(frame) != frame.size()) {
 		fail(_socket.errorString());
 	}
@@ -449,8 +468,6 @@ void WebSocketSocket::fail(const QString &message) {
 	logError(QAbstractSocket::UnknownSocketError, message);
 	_state = State::Error;
 	_socket.abort();
-	// The owner destroys this socket from the error handler, so deliver the
-	// error only after the current parsing / write stack has unwound.
 	InvokeQueued(this, [=] { _error.fire({}); });
 }
 

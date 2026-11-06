@@ -111,8 +111,6 @@ FilterPublicDiscoveryAddresses(const ServerSelectionCheck &origin,
 	const ServerSelectionCheck &endpoint,
 	const ServerSelectionCheck &origin);
 
-// A delegated transport URL is normalized and accepted only when it is a
-// public WSS endpoint without credentials, query parameters or fragments.
 [[nodiscard]] std::optional<QString>
 NormalizePublicWebSocketEndpoint(const QString &endpoint,
 								 const ServerSelectionCheck &origin);

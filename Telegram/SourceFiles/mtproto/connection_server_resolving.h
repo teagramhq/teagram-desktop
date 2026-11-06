@@ -135,6 +135,7 @@ private:
 	bool _lookingUpWebSocket = false;
 	base::Timer _lookupTimeoutTimer;
 	base::Timer _addressTimeoutTimer;
+
 };
 
 [[nodiscard]] inline bool ShouldResolveServerHostname(

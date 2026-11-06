@@ -30,6 +30,20 @@ int MaxResolvedAddresses(bool bothAddressFamilies) {
 	return bothAddressFamilies ? 2 * kMaxAddresses : kMaxAddresses;
 }
 
+QList<QHostAddress>
+PublicDiscoveryAddresses(const ServerSelectionCheck &origin,
+						 const QList<QHostAddress> &addresses, bool ipv6,
+						 bool bothAddressFamilies) {
+	const auto preferred
+		= FilterPublicDiscoveryAddresses(origin, addresses, ipv6);
+	if (!bothAddressFamilies) {
+		return preferred;
+	}
+	return InterleaveServerAddressFamilies(
+		preferred, FilterPublicDiscoveryAddresses(origin, addresses, !ipv6),
+		MaxResolvedAddresses(bothAddressFamilies));
+}
+
 #ifdef TDESKTOP_UNIT_TESTS
 ServerHostnameResolverTestLookup TestLookup;
 #endif
@@ -212,17 +226,9 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 			emitError(kErrorCodeOther);
 			return;
 		}
-		const auto origin = CheckServerSelection(_webSocketSelection);
-		const auto preferred
-			= FilterPublicDiscoveryAddresses(origin, info.addresses(), _ipv6);
-		_webSocketAddresses
-			= _bothAddressFamilies
-				  ? InterleaveServerAddressFamilies(
-						preferred,
-						FilterPublicDiscoveryAddresses(origin, info.addresses(),
-													   !_ipv6),
-						MaxResolvedAddresses(_bothAddressFamilies))
-				  : preferred;
+		_webSocketAddresses = PublicDiscoveryAddresses(
+			CheckServerSelection(_webSocketSelection), info.addresses(), _ipv6,
+			_bothAddressFamilies);
 		_nextWebSocketAddress = 0;
 		if (_webSocketAddresses.isEmpty()) {
 			emitError(kErrorCodeOther);
@@ -244,10 +250,6 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 							   _hostname, info.addresses(), !_ipv6),
 						   MaxResolvedAddresses(_bothAddressFamilies))
 					 : preferred;
-	if (_addresses.isEmpty()) {
-		tryNextAddress();
-		return;
-	}
 	tryNextAddress();
 }
 
@@ -313,16 +315,8 @@ void ServerResolvingConnection::startWebSocketFallback() {
 	}
 	auto literal = QHostAddress();
 	if (literal.setAddress(url.host())) {
-		const auto preferred
-			= FilterPublicDiscoveryAddresses(origin, {literal}, _ipv6);
-		_webSocketAddresses
-			= _bothAddressFamilies
-				  ? InterleaveServerAddressFamilies(
-						preferred,
-						FilterPublicDiscoveryAddresses(origin, {literal},
-													   !_ipv6),
-						MaxResolvedAddresses(_bothAddressFamilies))
-				  : preferred;
+		_webSocketAddresses = PublicDiscoveryAddresses(origin, {literal}, _ipv6,
+													   _bothAddressFamilies);
 		_nextWebSocketAddress = 0;
 		if (_webSocketAddresses.isEmpty()) {
 			emitError(kErrorCodeOther);
@@ -435,9 +429,6 @@ crl::time ServerResolvingConnection::fullConnectTimeout() const {
 				  : kLookupTimeout + kWebSocketTimeout * maxAddresses);
 }
 
-// With a WebSocket fallback the session must not cut the first attempt short:
-// it destroys this connection when its deadline passes, and the next attempt
-// would walk the same unreachable TCP addresses again before WSS is tried.
 crl::time ServerResolvingConnection::firstPassConnectTimeout() const {
 	return _webSocketEndpoint.isEmpty() ? crl::time(0) : fullConnectTimeout();
 }
@@ -482,16 +473,9 @@ void ServerResolvingConnection::connectToServer(
 	_protocolForFiles = protocolForFiles;
 	auto literal = QHostAddress();
 	if (!_webSocketEndpoint.isEmpty() && literal.setAddress(_hostname)) {
-		const auto origin = CheckServerSelection(_webSocketSelection);
-		const auto preferred
-			= FilterPublicDiscoveryAddresses(origin, {literal}, _ipv6);
-		_addresses = _bothAddressFamilies
-						 ? InterleaveServerAddressFamilies(
-							   preferred,
-							   FilterPublicDiscoveryAddresses(origin, {literal},
-															  !_ipv6),
-							   MaxResolvedAddresses(_bothAddressFamilies))
-						 : preferred;
+		_addresses = PublicDiscoveryAddresses(
+			CheckServerSelection(_webSocketSelection), {literal}, _ipv6,
+			_bothAddressFamilies);
 		tryNextAddress();
 		return;
 	}

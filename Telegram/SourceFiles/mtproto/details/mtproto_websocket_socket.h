@@ -20,11 +20,29 @@ enum class WebSocketUpgradeResult {
 	Rejected,
 };
 
-// Consumes a complete upgrade response from `incoming` and validates it
-// against the handshake `key`. Bytes after the response are kept.
 [[nodiscard]] WebSocketUpgradeResult
 ParseWebSocketUpgrade(QByteArray &incoming, const QByteArray &key,
 					  QString &error);
+
+enum class WebSocketFrameStatus {
+	Incomplete,
+	Complete,
+	Invalid,
+};
+
+struct WebSocketFrame {
+	uchar opcode = 0;
+	bool final = false;
+	QByteArray payload;
+	int size = 0;
+};
+
+[[nodiscard]] WebSocketFrameStatus
+ParseWebSocketServerFrame(const QByteArray &incoming, WebSocketFrame &frame);
+
+[[nodiscard]] QByteArray EncodeWebSocketClientFrame(uchar opcode,
+													const QByteArray &payload,
+													bytes::const_span mask);
 
 class WebSocketSocket final : public AbstractSocket {
   public:
