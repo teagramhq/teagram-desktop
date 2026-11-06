@@ -118,14 +118,14 @@ StickerImportNetworkReply::StickerImportNetworkReply(
 										  : response.responseUrl);
 	setOperation(operation);
 	setAttribute(QNetworkRequest::HttpStatusCodeAttribute, response.status);
-	if (response.networkError != QNetworkReply::NoError) {
-		setError(response.networkError, response.errorString);
-	}
 	if (response.contentLength) {
 		setHeader(QNetworkRequest::ContentLengthHeader,
 				  QVariant::fromValue(*response.contentLength));
 	}
 	open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+	if (response.networkError != QNetworkReply::NoError) {
+		setError(response.networkError, response.errorString);
+	}
 	QTimer::singleShot(0, this, [this] {
 		Q_EMIT metaDataChanged();
 		if (_aborted) {
