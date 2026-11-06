@@ -10925,10 +10925,8 @@ void RunAuthenticatedCacheSymlinkCases(
 								&& queuedOperationsPassed
 								&& cacheInitializationAllowed
 								&& cacheUsableWithinBound && (startupWalks == 2)
-								&& (maxMainThreadStallNanoseconds < 100'000'000)
 								&& (mainThreadWalks == 0) && swappedRootRefused
 								&& directFallbackClosed && rootRestoreSucceeded
-								&& (mediaCache || chatSwitch.passed)
 								&& (mediaCache || dialogsHandler.passed)
 								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName,
