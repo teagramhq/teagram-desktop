@@ -1423,7 +1423,7 @@ if ! grep -E -q \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=[0-9]+ hydrated_documents=[0-9]+ chat_switches=[0-9]+ minimized_restore=[01] minimized_switch_ns=-?[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=-?[0-9]+ max_switch_ns=-?[0-9]+ max_stall_ns=-?[0-9]+ under_50ms=[01]\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2

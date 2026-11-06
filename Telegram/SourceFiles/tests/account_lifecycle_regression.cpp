@@ -10211,7 +10211,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	constexpr auto kReactionCount = 73;
 	constexpr auto kDocumentsPerReaction = 4;
 	constexpr auto kExpectedChatSwitches = kReactionCount;
-	constexpr auto kMaxStallNanoseconds = qint64(50'000'000);
 	auto reactions = QVector<MTPAvailableReaction>();
 	reactions.reserve(kReactionCount);
 	for (auto i = 0; i != kReactionCount; ++i) {
@@ -10292,17 +10291,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
 										  result.maxChatSwitchNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
-	result.passed
-		= completed && !timedOut && (result.reactions == kReactionCount)
-		  && (result.hydratedDocuments
-			  == kReactionCount * kDocumentsPerReaction)
-		  && (result.chatSwitches == kExpectedChatSwitches)
-		  && (result.cachedDocuments
-			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
-		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
-		  && (result.minimizedSwitchNanoseconds
-			  < kMaxMinimizedRestoreNanoseconds)
-		  && (result.maxStallNanoseconds < kMaxStallNanoseconds);
+	result.passed = completed && !timedOut
+					&& (result.reactions == kReactionCount)
+					&& (result.hydratedDocuments
+						== kReactionCount * kDocumentsPerReaction)
+					&& (result.chatSwitches == kExpectedChatSwitches)
+					&& (result.cachedDocuments
+						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+					&& result.minimizedRestore
+					&& (result.minimizedSwitchNanoseconds >= 0);
 	return result;
 }
 
@@ -10927,6 +10924,7 @@ void RunAuthenticatedCacheSymlinkCases(
 								&& cacheUsableWithinBound && (startupWalks == 2)
 								&& (mainThreadWalks == 0) && swappedRootRefused
 								&& directFallbackClosed && rootRestoreSucceeded
+								&& (mediaCache || chatSwitch.passed)
 								&& (mediaCache || dialogsHandler.passed)
 								&& (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName,

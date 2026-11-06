@@ -796,10 +796,18 @@ cache_latency_report="$(check_cache_latency_evidence "$temp_dir/cache-latency.lo
 [[ "$cache_latency_report" == *'max_main_thread_stall_ns=230059167 under_100ms=0'* \
   && "$cache_latency_report" == *'max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0'* ]] \
   || contract_fail 'The report-only timings must appear in the workflow log.'
-sed 's/reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=51000000/reactions=0 hydrated_documents=0 chat_switches=0 minimized_restore=0 minimized_switch_ns=-1/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-incomplete-switch.log"
-check_cache_latency_evidence "$temp_dir/cache-latency-incomplete-switch.log" >/dev/null 2>&1 \
-  || contract_fail 'Incomplete chat switch measurements must remain report-only.'
+for field in reactions=73 hydrated_documents=292 chat_switches=73; do
+  sed "s/$field/${field%%=*}=0/" \
+    "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-incomplete-switch.log"
+  if check_cache_latency_evidence "$temp_dir/cache-latency-incomplete-switch.log" >/dev/null 2>&1; then
+    contract_fail "Incomplete $field must remain a gate."
+  fi
+done
+sed 's/minimized_restore=1/minimized_restore=0/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-unrestored.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-unrestored.log" >/dev/null 2>&1; then
+  contract_fail 'The minimized window must be restored.'
+fi
 sed 's/max_handler_ns=9893666 under_50ms=1/max_handler_ns=9893666 under_50ms=0/' \
   "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-dialogs.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-dialogs.log" >/dev/null 2>&1; then
@@ -846,9 +854,14 @@ grep -Fq 'result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds' \
   "$native_harness" \
   || contract_fail 'The minimized restore sample must contribute to the max switch report.'
 if grep -Fq '&& (maxMainThreadStallNanoseconds <' "$native_harness" \
-  || grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness"; then
+  || grep -Fq '< kMaxMinimizedRestoreNanoseconds' "$native_harness" \
+  || grep -Fq '&& (result.maxStallNanoseconds <' "$native_harness"; then
   contract_fail 'Chat switch and startup-gap timing must not fail the cache case.'
 fi
+grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
+  || contract_fail 'The chat switch completion and restore checks must remain a gate.'
+grep -Fq 'completed && !timedOut' "$native_harness" \
+  || contract_fail 'The chat switch regression must require completion without a timeout.'
 for native_case in \
   settings-search \
   session-window-lifecycle \
