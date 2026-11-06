@@ -555,8 +555,12 @@ void ServerWidget::beginPublicDiscovery() {
 			discoveryFailed(false);
 		}
 	});
-	connect(reply, &QNetworkReply::sslErrors, this, [=](const auto &) {
+	connect(reply, &QNetworkReply::sslErrors, this, [=](const auto &errors) {
 		if (_connecting && _reply == reply) {
+			for (const auto &error : errors) {
+				LOG(("Server discovery TLS error: %1")
+						.arg(error.errorString()));
+			}
 			discoveryFailed(false);
 		}
 	});
@@ -590,6 +594,13 @@ void ServerWidget::beginPublicDiscovery() {
 				Qt::CaseInsensitive) != 0
 			|| !reply->rawHeader("Content-Encoding").isEmpty()
 			|| _publicResponse.size() > kMaxDiscoveryBody) {
+			LOG(("Server discovery rejected: status %1, type %2, encoding %3, "
+				 "size %4.")
+					.arg(status)
+					.arg(contentType)
+					.arg(QString::fromLatin1(
+						reply->rawHeader("Content-Encoding")))
+					.arg(_publicResponse.size()));
 			discoveryFailed(false);
 			return;
 		}
@@ -677,6 +688,8 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 		return;
 	}
 	if (!result) {
+		LOG(("Server discovery response invalid: status %1.")
+				.arg(int(result.status)));
 		discoveryFailed(false);
 		return;
 	}
@@ -697,6 +710,7 @@ void ServerWidget::resolvePublicEndpoint(
 		MTP::ServerDiscoveryResult result) {
 	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
 	if (!MTP::IsPublicDiscoveryEndpoint(endpoint, _selection)) {
+		LOG(("Server discovery endpoint is not public."));
 		discoveryFailed(false);
 		return;
 	}
@@ -756,6 +770,7 @@ void ServerWidget::publicEndpointResolved(
 		commitBinding(std::move(result));
 		return;
 	}
+	LOG(("Server discovery found no public address for the endpoint."));
 	discoveryFailed(false);
 }
 
@@ -857,6 +872,7 @@ void ServerWidget::commitBinding(
 		_selection,
 		result);
 	if (!server) {
+		LOG(("Server discovery result could not be bound to a server."));
 		discoveryFailed(false);
 		return;
 	}

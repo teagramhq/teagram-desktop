@@ -1502,6 +1502,14 @@ TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
 	CHECK_EQ(userAgent, QByteArrayLiteral("-"));
 }
 
+TEST_CASE(PublicDiscoveryRequestsAskForAnUncompressedResponse) {
+	const auto selection = CheckServerSelection(u"example.com"_q);
+	QNetworkRequest request(QUrl(PublicDiscoveryUrl(selection)));
+	ConfigurePublicDiscoveryRequest(request);
+	CHECK_EQ(request.rawHeader(QByteArray("Accept-Encoding")),
+			 QByteArrayLiteral("identity"));
+}
+
 TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	CHECK_EQ(PublicDiscoveryUrl(selection),
