@@ -116,25 +116,21 @@ Step::Step(
 	}, lifetime());
 }
 
-Step::~Step() {
-	closeTurnstileChallenge();
-}
+Step::~Step() { closeTurnstileChallenge(); }
 
-bool Step::showTurnstileChallenge(
-		TurnstileChallenge challenge,
-		Fn<void(QString)> token,
-		Fn<void()> failed,
-		Fn<void(QString)> unavailable) {
+bool Step::showTurnstileChallenge(TurnstileChallenge challenge,
+								  Fn<void(QString)> token, Fn<void()> failed,
+								  Fn<void(QString)> unavailable) {
 	closeTurnstileChallenge();
 	auto result = OpenTurnstilePanel(
 		std::move(challenge),
-		crl::guard(this, [this, token = std::move(token)](
-				QString value) mutable {
-			_closeTurnstileChallenge = nullptr;
-			if (token) {
-				token(std::move(value));
-			}
-		}),
+		crl::guard(this,
+				   [this, token = std::move(token)](QString value) mutable {
+					   _closeTurnstileChallenge = nullptr;
+					   if (token) {
+						   token(std::move(value));
+					   }
+				   }),
 		crl::guard(this, [this, failed = std::move(failed)]() mutable {
 			_closeTurnstileChallenge = nullptr;
 			if (failed) {
@@ -726,9 +722,7 @@ void Step::activate() {
 	}
 }
 
-void Step::cancelled() {
-	closeTurnstileChallenge();
-}
+void Step::cancelled() { closeTurnstileChallenge(); }
 
 void Step::finished() {
 	closeTurnstileChallenge();

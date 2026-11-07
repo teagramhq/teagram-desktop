@@ -297,18 +297,11 @@ void UsernameWidget::submit() {
 void UsernameWidget::requestCode(QString token, bool retried) {
 	_sentRequest = SendAuthRequest(
 		api(),
-		MTPauth_SendCode(
-			MTP_string(_sentUsername),
-			MTP_int(ApiId),
-			MTP_string(ApiHash),
-			MTP_codeSettings(
-				MTP_flags(0),
-				MTPVector<MTPbytes>(),
-				MTPstring(),
-				MTPBool())
-		),
-		std::move(token),
-		false,
+		MTPauth_SendCode(MTP_string(_sentUsername), MTP_int(ApiId),
+						 MTP_string(ApiHash),
+						 MTP_codeSettings(MTP_flags(0), MTPVector<MTPbytes>(),
+										  MTPstring(), MTPBool())),
+		std::move(token), false,
 		[=](const MTPauth_SentCode &result) {
 			_sentRequest = 0;
 			sendCodeDone(result);
@@ -365,9 +358,7 @@ void UsernameWidget::sendCodeDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void UsernameWidget::requestFail(
-		const MTP::Error &error,
-		bool retried) {
+void UsernameWidget::requestFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		_checkRequestTimer.cancel();
 		_sentRequest = 0;
@@ -386,12 +377,8 @@ void UsernameWidget::requestFail(
 				_checkRequestTimer.callEach(1000);
 				requestCode(std::move(token), true);
 			},
-			[=] {
-				fail(tr::lng_intro_retry(tr::now));
-			},
-			[=](QString error) {
-				fail(error);
-			});
+			[=] { fail(tr::lng_intro_retry(tr::now)); },
+			[=](QString error) { fail(error); });
 		return;
 	}
 	LOG(("Intro Username Error: sendCode failed with %1 (%2)"

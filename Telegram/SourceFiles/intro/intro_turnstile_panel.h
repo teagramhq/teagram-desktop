@@ -20,9 +20,8 @@ struct TurnstilePanelResult {
 	QString error;
 };
 
-[[nodiscard]] TurnstilePanelResult OpenTurnstilePanel(
-	TurnstileChallenge challenge,
-	Fn<void(QString)> token,
-	Fn<void()> failed);
+[[nodiscard]] TurnstilePanelResult
+OpenTurnstilePanel(TurnstileChallenge challenge, Fn<void(QString)> token,
+				   Fn<void()> failed);
 
 } // namespace Intro::details

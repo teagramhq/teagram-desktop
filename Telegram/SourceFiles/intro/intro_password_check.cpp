@@ -137,10 +137,9 @@ void PasswordCheckWidget::pwdSubmitDone(
 	finish(result);
 }
 
-void PasswordCheckWidget::pwdSubmitFail(
-		const MTP::Error &error,
-		MTPInputCheckPasswordSRP check,
-		bool retried) {
+void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error,
+										MTPInputCheckPasswordSRP check,
+										bool retried) {
 	_sentRequest = 0;
 	if (IsTurnstileChallengeError(error.type())) {
 		if (retried) {
@@ -265,20 +264,13 @@ void PasswordCheckWidget::passwordChecked() {
 	sendPasswordCheck(check.result);
 }
 
-void PasswordCheckWidget::sendPasswordCheck(
-		MTPInputCheckPasswordSRP check,
-		QString token,
-		bool retried) {
+void PasswordCheckWidget::sendPasswordCheck(MTPInputCheckPasswordSRP check,
+											QString token, bool retried) {
 	const auto retryCheck = check;
 	auto request = MTPauth_CheckPassword(std::move(check));
 	_sentRequest = SendAuthRequest(
-		api(),
-		std::move(request),
-		std::move(token),
-		false,
-		[=](const MTPauth_Authorization &result) {
-			pwdSubmitDone(result);
-		},
+		api(), std::move(request), std::move(token), false,
+		[=](const MTPauth_Authorization &result) { pwdSubmitDone(result); },
 		[=](const MTP::Error &error) {
 			pwdSubmitFail(error, retryCheck, retried);
 		});

@@ -245,20 +245,15 @@ void SignUpPasswordWidget::signUp(SignupTermsPermission,
 	sendSignup(std::move(request));
 }
 
-void SignUpPasswordWidget::sendSignup(
-		SignupRequestData request,
-		QString token,
-		bool retried) {
+void SignUpPasswordWidget::sendSignup(SignupRequestData request, QString token,
+									  bool retried) {
 	_sentRequest = SendAuthRequest(
 		api(),
-		MTPauth_SignUp(
-			MTP_flags(0),
-			MTP_string(request.phone),
-			MTP_bytes(request.phoneHash),
-			MTP_string(request.firstName),
-			MTP_string(request.lastName)),
-		std::move(token),
-		false,
+		MTPauth_SignUp(MTP_flags(0), MTP_string(request.phone),
+					   MTP_bytes(request.phoneHash),
+					   MTP_string(request.firstName),
+					   MTP_string(request.lastName)),
+		std::move(token), false,
 		[=](const MTPauth_Authorization &result) {
 			_sentRequest = 0;
 			_turnstilePending = false;
@@ -281,10 +276,8 @@ void SignUpPasswordWidget::signUpDone(
 	requestPasswordData();
 }
 
-void SignUpPasswordWidget::signUpFail(
-		const MTP::Error &error,
-		SignupRequestData request,
-		bool retried) {
+void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
+									  SignupRequestData request, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		if (retried) {
 			_turnstilePending = false;
@@ -400,17 +393,11 @@ void SignUpPasswordWidget::reissueCode(QString token, bool retried) {
 	getData()->usernameCode.drop();
 	_sentRequest = SendAuthRequest(
 		api(),
-		MTPauth_SendCode(
-			MTP_string(getData()->phone),
-			MTP_int(ApiId),
-			MTP_string(ApiHash),
-			MTP_codeSettings(
-				MTP_flags(0),
-				MTPVector<MTPbytes>(),
-				MTPstring(),
-				MTPBool())),
-		std::move(token),
-		false,
+		MTPauth_SendCode(MTP_string(getData()->phone), MTP_int(ApiId),
+						 MTP_string(ApiHash),
+						 MTP_codeSettings(MTP_flags(0), MTPVector<MTPbytes>(),
+										  MTPstring(), MTPBool())),
+		std::move(token), false,
 		[=](const MTPauth_SentCode &result) {
 			_sentRequest = 0;
 			reissueDone(result);
@@ -437,9 +424,7 @@ void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void SignUpPasswordWidget::reissueFail(
-		const MTP::Error &error,
-		bool retried) {
+void SignUpPasswordWidget::reissueFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		if (retried) {
 			showFormError(tr::lng_intro_server_error(tr::now));

@@ -25,11 +25,8 @@ namespace {
 	}
 	for (const auto ch : siteKey) {
 		const auto code = ch.unicode();
-		if (!((code >= 'A' && code <= 'Z')
-			|| (code >= 'a' && code <= 'z')
-			|| (code >= '0' && code <= '9')
-			|| code == '_'
-			|| code == '-')) {
+		if (!((code >= 'A' && code <= 'Z') || (code >= 'a' && code <= 'z')
+			  || (code >= '0' && code <= '9') || code == '_' || code == '-')) {
 			return false;
 		}
 	}
@@ -44,38 +41,33 @@ namespace {
 	return QUrl(value.toString(), QUrl::StrictMode);
 }
 
-[[nodiscard]] bool IsHttpsHostOnDefaultPort(
-		const QUrl &url,
-		QStringView host) {
+[[nodiscard]] bool IsHttpsHostOnDefaultPort(const QUrl &url, QStringView host) {
 	return url.isValid()
-		&& (url.scheme().compare(u"https"_q, Qt::CaseInsensitive) == 0)
-		&& (url.host().compare(host, Qt::CaseInsensitive) == 0)
-		&& (url.port(443) == 443)
-		&& url.userInfo().isEmpty()
-		&& !url.authority().contains('@');
+		   && (url.scheme().compare(u"https"_q, Qt::CaseInsensitive) == 0)
+		   && (url.host().compare(host, Qt::CaseInsensitive) == 0)
+		   && (url.port(443) == 443) && url.userInfo().isEmpty()
+		   && !url.authority().contains('@');
 }
 
 [[nodiscard]] bool IsAllowedLinuxSubframeUrl(QStringView value) {
 	if (value == u"about:blank" || value == u"about:srcdoc") {
 		return true;
 	}
-	return IsHttpsHostOnDefaultPort(
-		ParseUrl(value),
-		u"challenges.cloudflare.com");
+	return IsHttpsHostOnDefaultPort(ParseUrl(value),
+									u"challenges.cloudflare.com");
 }
 
-[[nodiscard]] bool IsSameInitialUrl(
-		QStringView candidate,
-		QStringView expected) {
+[[nodiscard]] bool IsSameInitialUrl(QStringView candidate,
+									QStringView expected) {
 	const auto actualUrl = ParseUrl(candidate);
 	const auto expectedUrl = ParseUrl(expected);
 	return IsTurnstileMainFrameUrl(candidate)
-		&& IsTurnstileMainFrameUrl(expected)
-		&& (actualUrl.path() == expectedUrl.path())
-		&& (actualUrl.query(QUrl::FullyEncoded)
-			== expectedUrl.query(QUrl::FullyEncoded))
-		&& (actualUrl.fragment(QUrl::FullyEncoded)
-			== expectedUrl.fragment(QUrl::FullyEncoded));
+		   && IsTurnstileMainFrameUrl(expected)
+		   && (actualUrl.path() == expectedUrl.path())
+		   && (actualUrl.query(QUrl::FullyEncoded)
+			   == expectedUrl.query(QUrl::FullyEncoded))
+		   && (actualUrl.fragment(QUrl::FullyEncoded)
+			   == expectedUrl.fragment(QUrl::FullyEncoded));
 }
 
 [[nodiscard]] bool IsPrintableAscii(QStringView value) {
@@ -91,8 +83,8 @@ namespace {
 	return true;
 }
 
-[[nodiscard]] std::optional<QJsonObject> ParsePayloadObject(
-		const QString &payload) {
+[[nodiscard]] std::optional<QJsonObject>
+ParsePayloadObject(const QString &payload) {
 	auto error = QJsonParseError();
 	const auto document = QJsonDocument::fromJson(payload.toUtf8(), &error);
 	if (error.error != QJsonParseError::NoError || !document.isObject()) {
@@ -103,13 +95,14 @@ namespace {
 
 } // namespace
 
-std::optional<TurnstileChallenge> ParseTurnstileChallenge(
-		QStringView errorType) {
+std::optional<TurnstileChallenge>
+ParseTurnstileChallenge(QStringView errorType) {
 	constexpr auto kPrefix = u"RECAPTCHA_CHECK_";
 	if (!errorType.startsWith(kPrefix)) {
 		return std::nullopt;
 	}
-	const auto parameters = errorType.mid(sizeof(kPrefix) / sizeof(char16_t) - 1);
+	const auto parameters
+		= errorType.mid(sizeof(kPrefix) / sizeof(char16_t) - 1);
 	const auto separator = parameters.indexOf(u"__");
 	if (separator <= 0) {
 		return std::nullopt;
@@ -130,28 +123,27 @@ bool IsTurnstileChallengeError(QStringView errorType) {
 }
 
 QString TurnstileUrl(const TurnstileChallenge &challenge) {
-	const auto siteKey = QString::fromLatin1(
-		QUrl::toPercentEncoding(challenge.siteKey));
-	const auto action = QString::fromLatin1(
-		QUrl::toPercentEncoding(challenge.action));
-	return u"https://web.teagram.io/turnstile.html#sitekey=%1&action=%2"_q
-		.arg(siteKey, action);
+	const auto siteKey
+		= QString::fromLatin1(QUrl::toPercentEncoding(challenge.siteKey));
+	const auto action
+		= QString::fromLatin1(QUrl::toPercentEncoding(challenge.action));
+	return u"https://web.teagram.io/turnstile.html#sitekey=%1&action=%2"_q.arg(
+		siteKey, action);
 }
 
 bool IsTurnstileMainFrameUrl(QStringView value) {
 	const auto url = ParseUrl(value);
 	return IsHttpsHostOnDefaultPort(url, u"web.teagram.io")
-		&& (url.path() == u"/turnstile.html");
+		   && (url.path() == u"/turnstile.html");
 }
 
-TurnstileMessageResult ParseTurnstileMessage(
-		std::string_view bytes,
-		QStringView pendingAction,
-		bool challengePending,
-		bool navigationDone,
-		QStringView mainFrameUrl) {
+TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
+											 QStringView pendingAction,
+											 bool challengePending,
+											 bool navigationDone,
+											 QStringView mainFrameUrl) {
 	const auto reject = [](TurnstileMessageRejection reason) {
-		return TurnstileMessageResult{ .rejection = reason };
+		return TurnstileMessageResult{.rejection = reason};
 	};
 	if (bytes.size() > Ui::kMaxNativeMessageBytes) {
 		return reject(TurnstileMessageRejection::PayloadTooLarge);
@@ -165,16 +157,14 @@ TurnstileMessageResult ParseTurnstileMessage(
 
 	auto error = QJsonParseError();
 	const auto document = QJsonDocument::fromJson(
-		QByteArray(bytes.data(), int(bytes.size())),
-		&error);
+		QByteArray(bytes.data(), int(bytes.size())), &error);
 	if (error.error != QJsonParseError::NoError) {
 		return reject(TurnstileMessageRejection::InvalidJson);
 	} else if (!document.isArray()) {
 		return reject(TurnstileMessageRejection::InvalidEnvelope);
 	}
 	const auto envelope = document.array();
-	if (envelope.size() != 2
-		|| !envelope[0].isString()
+	if (envelope.size() != 2 || !envelope[0].isString()
 		|| !envelope[1].isString()) {
 		return reject(TurnstileMessageRejection::InvalidEnvelope);
 	}
@@ -191,8 +181,7 @@ TurnstileMessageResult ParseTurnstileMessage(
 	}
 
 	const auto object = ParsePayloadObject(payload);
-	if (!object
-		|| !object->value(u"token").isString()
+	if (!object || !object->value(u"token").isString()
 		|| !object->value(u"action").isString()) {
 		return reject(TurnstileMessageRejection::InvalidPayload);
 	}
@@ -210,18 +199,15 @@ TurnstileMessageResult ParseTurnstileMessage(
 	};
 }
 
-TurnstileNavigationDecision CheckTurnstileNavigation(
-		QStringView url,
-		QStringView initialUrl,
-		bool initialNavigationPending,
-		bool newWindow,
-		bool allowLinuxSubframes) {
+TurnstileNavigationDecision
+CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
+						 bool initialNavigationPending, bool newWindow,
+						 bool allowLinuxSubframes) {
 	if (newWindow) {
 		return {
 			.rejection = TurnstileNavigationRejection::NewWindow,
 		};
-	} else if (initialNavigationPending
-		&& IsSameInitialUrl(url, initialUrl)) {
+	} else if (initialNavigationPending && IsSameInitialUrl(url, initialUrl)) {
 		return {
 			.allowed = true,
 			.initialNavigation = true,
@@ -238,8 +224,7 @@ TurnstileNavigationDecision CheckTurnstileNavigation(
 	};
 }
 
-QString TurnstileMessageRejectionText(
-		TurnstileMessageRejection rejection) {
+QString TurnstileMessageRejectionText(TurnstileMessageRejection rejection) {
 	switch (rejection) {
 	case TurnstileMessageRejection::None:
 		return u"none"_q;
@@ -267,8 +252,8 @@ QString TurnstileMessageRejectionText(
 	Unexpected("Unknown Turnstile message rejection.");
 }
 
-QString TurnstileNavigationRejectionText(
-		TurnstileNavigationRejection rejection) {
+QString
+TurnstileNavigationRejectionText(TurnstileNavigationRejection rejection) {
 	switch (rejection) {
 	case TurnstileNavigationRejection::None:
 		return u"none"_q;

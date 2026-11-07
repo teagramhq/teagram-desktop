@@ -118,20 +118,15 @@ void SignupWidget::nameSubmitDone(const MTPauth_Authorization &result) {
 	finish(result);
 }
 
-void SignupWidget::sendSignup(
-		SignupRequestData request,
-		QString token,
-		bool retried) {
+void SignupWidget::sendSignup(SignupRequestData request, QString token,
+							  bool retried) {
 	_sentRequest = SendAuthRequest(
 		api(),
-		MTPauth_SignUp(
-			MTP_flags(0),
-			MTP_string(request.phone),
-			MTP_bytes(request.phoneHash),
-			MTP_string(request.firstName),
-			MTP_string(request.lastName)),
-		std::move(token),
-		true,
+		MTPauth_SignUp(MTP_flags(0), MTP_string(request.phone),
+					   MTP_bytes(request.phoneHash),
+					   MTP_string(request.firstName),
+					   MTP_string(request.lastName)),
+		std::move(token), true,
 		[=](const MTPauth_Authorization &result) {
 			_sentRequest = 0;
 			nameSubmitDone(result);
@@ -142,10 +137,8 @@ void SignupWidget::sendSignup(
 		});
 }
 
-void SignupWidget::nameSubmitFail(
-		const MTP::Error &error,
-		SignupRequestData request,
-		bool retried) {
+void SignupWidget::nameSubmitFail(const MTP::Error &error,
+								  SignupRequestData request, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		if (retried) {
 			_turnstilePending = false;

@@ -51,14 +51,10 @@ private:
 	void showPasswordError(const QString &text);
 
 	void pwdSubmitDone(const MTPauth_Authorization &result);
-	void sendPasswordCheck(
-		MTPInputCheckPasswordSRP check,
-		QString token = QString(),
-		bool retried = false);
-	void pwdSubmitFail(
-		const MTP::Error &error,
-		MTPInputCheckPasswordSRP check,
-		bool retried);
+	void sendPasswordCheck(MTPInputCheckPasswordSRP check,
+						   QString token = QString(), bool retried = false);
+	void pwdSubmitFail(const MTP::Error &error, MTPInputCheckPasswordSRP check,
+					   bool retried);
 
 	void handleSrpIdInvalid();
 	void requestPasswordData();
@@ -76,7 +72,6 @@ private:
 	object_ptr<Ui::FlatLabel> _noReset;
 	mtpRequestId _sentRequest = 0;
 	bool _turnstilePending = false;
-
 };
 
 } // namespace details

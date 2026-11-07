@@ -55,10 +55,10 @@ enum class TurnstileNavigationRejection {
 	UnexpectedNavigation,
 };
 
-[[nodiscard]] QString TurnstileMessageRejectionText(
-	TurnstileMessageRejection rejection);
-[[nodiscard]] QString TurnstileNavigationRejectionText(
-	TurnstileNavigationRejection rejection);
+[[nodiscard]] QString
+TurnstileMessageRejectionText(TurnstileMessageRejection rejection);
+[[nodiscard]] QString
+TurnstileNavigationRejectionText(TurnstileNavigationRejection rejection);
 
 struct TurnstileNavigationDecision {
 	bool allowed = false;
@@ -67,22 +67,18 @@ struct TurnstileNavigationDecision {
 		= TurnstileNavigationRejection::UnexpectedNavigation;
 };
 
-[[nodiscard]] std::optional<TurnstileChallenge> ParseTurnstileChallenge(
-	QStringView errorType);
+[[nodiscard]] std::optional<TurnstileChallenge>
+ParseTurnstileChallenge(QStringView errorType);
 [[nodiscard]] bool IsTurnstileChallengeError(QStringView errorType);
 [[nodiscard]] QString TurnstileUrl(const TurnstileChallenge &challenge);
 [[nodiscard]] bool IsTurnstileMainFrameUrl(QStringView url);
-[[nodiscard]] TurnstileMessageResult ParseTurnstileMessage(
-	std::string_view bytes,
-	QStringView pendingAction,
-	bool challengePending,
-	bool navigationDone,
-	QStringView mainFrameUrl);
-[[nodiscard]] TurnstileNavigationDecision CheckTurnstileNavigation(
-	QStringView url,
-	QStringView initialUrl,
-	bool initialNavigationPending,
-	bool newWindow,
-	bool allowLinuxSubframes);
+[[nodiscard]] TurnstileMessageResult
+ParseTurnstileMessage(std::string_view bytes, QStringView pendingAction,
+					  bool challengePending, bool navigationDone,
+					  QStringView mainFrameUrl);
+[[nodiscard]] TurnstileNavigationDecision
+CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
+						 bool initialNavigationPending, bool newWindow,
+						 bool allowLinuxSubframes);
 
 } // namespace Intro::details

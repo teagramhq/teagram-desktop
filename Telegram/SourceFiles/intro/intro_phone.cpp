@@ -210,24 +210,13 @@ void PhoneWidget::sendCode(QString token, bool retried) {
 	_checkRequestTimer.callEach(1000);
 	_sentRequest = SendAuthRequest(
 		api(),
-		MTPauth_SendCode(
-			MTP_string(_sentPhone),
-			MTP_int(ApiId),
-			MTP_string(ApiHash),
-			MTP_codeSettings(
-				MTP_flags(0),
-				MTPVector<MTPbytes>(),
-				MTPstring(),
-				MTPBool())
-		),
-		std::move(token),
-		true,
-		[=](const MTPauth_SentCode &result) {
-			phoneSubmitDone(result);
-		},
-		[=](const MTP::Error &error) {
-			phoneSubmitFail(error, retried);
-		});
+		MTPauth_SendCode(MTP_string(_sentPhone), MTP_int(ApiId),
+						 MTP_string(ApiHash),
+						 MTP_codeSettings(MTP_flags(0), MTPVector<MTPbytes>(),
+										  MTPstring(), MTPBool())),
+		std::move(token), true,
+		[=](const MTPauth_SentCode &result) { phoneSubmitDone(result); },
+		[=](const MTP::Error &error) { phoneSubmitFail(error, retried); });
 }
 
 void PhoneWidget::stopCheck() {
@@ -275,9 +264,7 @@ void PhoneWidget::phoneSubmitDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void PhoneWidget::phoneSubmitFail(
-		const MTP::Error &error,
-		bool retried) {
+void PhoneWidget::phoneSubmitFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		stopCheck();
 		_sentRequest = 0;

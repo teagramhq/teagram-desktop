@@ -41,8 +41,7 @@ namespace {
 	return result;
 }
 
-[[nodiscard]] QString UnavailableText(
-		const Webview::Available &available) {
+[[nodiscard]] QString UnavailableText(const Webview::Available &available) {
 	auto result = tr::lng_bot_no_webview(tr::now);
 	result += u"\n\n";
 	result += Ui::BotWebView::ErrorText(available).text;
@@ -53,24 +52,18 @@ namespace {
 	static const auto result = [] {
 		return Webview::StorageId{
 			.path = cWorkingDir() + u"tdata/webview-turnstile"_q,
-			.token = QByteArray::fromStdString(
-				Webview::GenerateStorageToken()),
+			.token = QByteArray::fromStdString(Webview::GenerateStorageToken()),
 		};
 	}();
 	return result;
 }
 
 class TurnstileBox final : public Ui::BoxContent {
-public:
-	TurnstileBox(
-		QWidget*,
-		TurnstileChallenge challenge,
-		Fn<void(QString)> token,
-		Fn<void()> failed)
-	: _challenge(std::move(challenge))
-	, _token(std::move(token))
-	, _failed(std::move(failed)) {
-	}
+  public:
+	TurnstileBox(QWidget *, TurnstileChallenge challenge,
+				 Fn<void(QString)> token, Fn<void()> failed)
+		: _challenge(std::move(challenge)), _token(std::move(token)),
+		  _failed(std::move(failed)) {}
 
 	~TurnstileBox() override {
 		_finished = true;
@@ -88,23 +81,22 @@ public:
 		closeBox();
 	}
 
-	[[nodiscard]] QString error() const {
-		return _error;
-	}
+	[[nodiscard]] QString error() const { return _error; }
 
-protected:
+  protected:
 	void prepare() override {
 		setNoContentMargin(true);
-		addButton(tr::lng_cancel(), [=] {
-			closeBox();
-		});
+		addButton(tr::lng_cancel(), [=] { closeBox(); });
 		setDimensions(st::boxWideWidth, st::boxMaxListHeight);
 
-		boxClosing() | rpl::on_next([=] {
-			if (!_finished) {
-				finishFailed(false);
-			}
-		}, lifetime());
+		boxClosing()
+			| rpl::on_next(
+				[=] {
+					if (!_finished) {
+						finishFailed(false);
+					}
+				},
+				lifetime());
 
 		const auto available = TurnstileAvailability();
 		if (available.error != Webview::Available::Error::None) {
@@ -113,36 +105,26 @@ protected:
 		}
 
 		_window = std::make_unique<Webview::Window>(
-			this,
-			Webview::WindowConfig{
-				.opaqueBg = st::windowBg->c,
-				.storageId = TurnstileStorageId(),
-			});
+			this, Webview::WindowConfig{
+					  .opaqueBg = st::windowBg->c,
+					  .storageId = TurnstileStorageId(),
+				  });
 		const auto raw = _window.get();
 		if (!raw->widget()) {
 			_window.reset();
 			_error = tr::lng_bot_webview_failed(tr::now);
 			return;
 		}
-		QObject::connect(
-			raw->widget(),
-			&QObject::destroyed,
-			this,
-			[=] {
-				if (!_finished) {
-					finishFailed();
-				}
-			});
+		QObject::connect(raw->widget(), &QObject::destroyed, this, [=] {
+			if (!_finished) {
+				finishFailed();
+			}
+		});
 
 		const auto initialUrl = TurnstileUrl(_challenge);
-		raw->setNavigationStartHandler([=](
-				const QString &url,
-				bool newWindow) {
+		raw->setNavigationStartHandler([=](const QString &url, bool newWindow) {
 			const auto decision = CheckTurnstileNavigation(
-				url,
-				initialUrl,
-				_initialNavigationPending,
-				newWindow,
+				url, initialUrl, _initialNavigationPending, newWindow,
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 				true
 #else
@@ -154,8 +136,8 @@ protected:
 			}
 			if (!decision.allowed) {
 				LOG(("Intro Turnstile navigation rejected: %1")
-					.arg(TurnstileNavigationRejectionText(
-						decision.rejection)));
+						.arg(TurnstileNavigationRejectionText(
+							decision.rejection)));
 			}
 			return decision.allowed;
 		});
@@ -165,26 +147,25 @@ protected:
 				finishFailed();
 			}
 		});
-		raw->navigationHistoryState(
-		) | rpl::on_next([=](Webview::NavigationHistoryState state) {
-			_mainFrameUrl = QString::fromStdString(state.url);
-		}, lifetime());
+		raw->navigationHistoryState()
+			| rpl::on_next(
+				[=](Webview::NavigationHistoryState state) {
+					_mainFrameUrl = QString::fromStdString(state.url);
+				},
+				lifetime());
 		raw->setMessageHandler([=](Webview::Message message) {
 			if (_finished) {
 				return;
 			}
 			const auto parsed = ParseTurnstileMessage(
-				message.text,
-				_challenge.action,
-				_pending,
-				_navigationDone,
+				message.text, _challenge.action, _pending, _navigationDone,
 				_mainFrameUrl);
 			if (!parsed.message) {
 				if (parsed.rejection != TurnstileMessageRejection::None) {
 					LOG(("Intro Turnstile message rejected: %1 (%2 bytes)")
-						.arg(TurnstileMessageRejectionText(
-							parsed.rejection))
-						.arg(quint64(message.text.size())));
+							.arg(
+								TurnstileMessageRejectionText(parsed.rejection))
+							.arg(quint64(message.text.size())));
 				}
 				return;
 			} else if (parsed.message->type == TurnstileMessageType::Error) {
@@ -233,7 +214,7 @@ postEvent: function(eventType, eventData) {
 		}
 	}
 
-private:
+  private:
 	void finishFailed(bool close = true) {
 		if (_finished) {
 			return;
@@ -264,30 +245,28 @@ private:
 
 } // namespace
 
-TurnstilePanelResult OpenTurnstilePanel(
-		TurnstileChallenge challenge,
-		Fn<void(QString)> token,
-		Fn<void()> failed) {
+TurnstilePanelResult OpenTurnstilePanel(TurnstileChallenge challenge,
+										Fn<void(QString)> token,
+										Fn<void()> failed) {
 	const auto available = TurnstileAvailability();
 	if (available.error != Webview::Available::Error::None) {
-		return { .error = UnavailableText(available) };
+		return {.error = UnavailableText(available)};
 	}
 
 	auto weak = Ui::show(Ui::Box<TurnstileBox>(
-		std::move(challenge),
-		std::move(token),
-		std::move(failed)));
+		std::move(challenge), std::move(token), std::move(failed)));
 	if (weak && !weak->error().isEmpty()) {
 		const auto error = weak->error();
 		weak->closeSilently();
-		return { .error = error };
+		return {.error = error};
 	}
 	return {
-		.closeSilently = [weak] {
-			if (weak) {
-				weak->closeSilently();
-			}
-		},
+		.closeSilently =
+			[weak] {
+				if (weak) {
+					weak->closeSilently();
+				}
+			},
 	};
 }
 

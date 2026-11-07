@@ -61,15 +61,11 @@ private:
 	void requestSignup();
 
 	void signUp(SignupTermsPermission, SignupRequestData request);
-	void sendSignup(
-		SignupRequestData request,
-		QString token = QString(),
-		bool retried = false);
+	void sendSignup(SignupRequestData request, QString token = QString(),
+					bool retried = false);
 	void signUpDone(const MTPauth_Authorization &result);
-	void signUpFail(
-		const MTP::Error &error,
-		SignupRequestData request,
-		bool retried);
+	void signUpFail(const MTP::Error &error, SignupRequestData request,
+					bool retried);
 	void reissueCode(QString token = QString(), bool retried = false);
 	void reissueDone(const MTPauth_SentCode &result);
 	void reissueFail(const MTP::Error &error, bool retried);
