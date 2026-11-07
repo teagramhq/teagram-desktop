@@ -84,6 +84,7 @@ struct TurnstileNavigationDecision {
 class TurnstileLinuxNavigationGuard final {
   public:
 	void initialLoadCompleted();
+	[[nodiscard]] bool rejectedNavigationAfterInitialLoad();
 	[[nodiscard]] bool mainFrameUrlUpdated(QStringView url,
 										   QStringView challengeUrl);
 	void finish();

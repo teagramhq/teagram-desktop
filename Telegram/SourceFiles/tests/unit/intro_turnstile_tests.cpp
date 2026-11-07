@@ -272,6 +272,29 @@ TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
 	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
 }
 
+TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeWhenPolicyRejectsLoad) {
+	auto guard = TurnstileLinuxNavigationGuard();
+	CHECK(!guard.rejectedNavigationAfterInitialLoad());
+
+	guard.initialLoadCompleted();
+	const auto decision
+		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
+								   kInitialUrl, false, false, true);
+	CHECK(decision.rejection.has_value());
+	CHECK(*decision.rejection
+		  == TurnstileNavigationRejection::UnexpectedNavigation);
+
+	const auto ended = guard.rejectedNavigationAfterInitialLoad();
+	CHECK(ended);
+	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
+	CHECK(!guard.rejectedNavigationAfterInitialLoad());
+
+	const auto message = ParseMessage(TokenMessage("token", "signup"),
+									  TurnstileAction::SignUp, !ended);
+	CHECK(std::get<TurnstileMessageRejection>(message)
+		  == TurnstileMessageRejection::NoChallengePending);
+}
+
 TEST_CASE(TurnstileLinuxNavigationGuardIgnoresEventsAfterFinish) {
 	auto guard = TurnstileLinuxNavigationGuard();
 	guard.initialLoadCompleted();
