@@ -103,6 +103,20 @@ TEST_CASE(SignupCodeTicketIsReissuedAtMostOnce) {
 	}
 }
 
+TEST_CASE(WrappedSignupFailureShowsErrorBeforeManualCodeRetry) {
+	const auto wrapped = ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400,
+											   false, false, true);
+	CHECK(wrapped.message == SignupFailureMessage::CodeTicketExpired);
+	CHECK(wrapped.action == SignupFailureAction::ShowError);
+
+	const auto submittedAgain
+		= ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400, false, false);
+	CHECK(submittedAgain.action == SignupFailureAction::ReissueCode);
+	CHECK(ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__public_key-1"_q,
+								   false)
+			  .has_value());
+}
+
 TEST_CASE(ClassifiesOnlyFirstValidTurnstileChallengeForRetry) {
 	const auto first = ClassifyTurnstileFailure(
 		u"RECAPTCHA_CHECK_signup__public_key-1"_q, false);

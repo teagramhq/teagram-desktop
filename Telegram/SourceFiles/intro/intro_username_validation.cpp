@@ -88,8 +88,8 @@ SigninPasswordDataFailure ClassifySigninPasswordDataFailure(
 		: SigninPasswordDataFailure::Other;
 }
 
-SigninPasswordFailure ClassifySigninPasswordFailure(
-		const QString &errorType) {
+SigninPasswordFailure ClassifySigninPasswordFailure(const QString &errorType,
+													bool retried) {
 	if (ClassifySigninPasswordDataFailure(errorType)
 		== SigninPasswordDataFailure::Flood) {
 		return SigninPasswordFailure::Flood;
@@ -101,7 +101,8 @@ SigninPasswordFailure ClassifySigninPasswordFailure(
 	} else if (errorType == u"AUTH_KEY_UNREGISTERED"_q) {
 		return SigninPasswordFailure::AuthKeyUnregistered;
 	} else if (errorType == u"SRP_ID_INVALID"_q) {
-		return SigninPasswordFailure::SrpIdInvalid;
+		return retried ? SigninPasswordFailure::Other
+					   : SigninPasswordFailure::SrpIdInvalid;
 	}
 	return SigninPasswordFailure::Other;
 }

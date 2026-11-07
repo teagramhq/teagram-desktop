@@ -308,9 +308,9 @@ void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
 			});
 		return;
 	}
-	const auto decision = ClassifySignupFailure(error.type(), error.code(),
-												MTP::IsFloodError(error),
-												_codeReissue.wasReissuedOnce());
+	const auto decision = ClassifySignupFailure(
+		error.type(), error.code(), MTP::IsFloodError(error),
+		_codeReissue.wasReissuedOnce(), retried);
 	_backAvailable = decision.backAvailable;
 
 	auto text = QString();

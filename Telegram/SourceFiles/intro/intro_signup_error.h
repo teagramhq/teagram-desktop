@@ -73,11 +73,9 @@ class SignupCodeReissueState final {
 	bool _reissuedOnce = false;
 };
 
-[[nodiscard]] SignupFailureDecision ClassifySignupFailure(
-	const QString &errorType,
-	int errorCode,
-	bool floodError,
-	bool reissuedOnce);
+[[nodiscard]] SignupFailureDecision
+ClassifySignupFailure(const QString &errorType, int errorCode, bool floodError,
+					  bool reissuedOnce, bool retried = false);
 
 [[nodiscard]] std::optional<TurnstileChallenge>
 ClassifyTurnstileFailure(QStringView errorType, bool retried);

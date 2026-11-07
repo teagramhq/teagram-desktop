@@ -139,8 +139,8 @@ ClassifySignupPasswordUpdateFailure(const QString &errorType);
 [[nodiscard]] SigninPasswordValidation ValidateSigninPassword(
 	const QString &input);
 
-[[nodiscard]] SigninPasswordFailure ClassifySigninPasswordFailure(
-	const QString &errorType);
+[[nodiscard]] SigninPasswordFailure
+ClassifySigninPasswordFailure(const QString &errorType, bool retried = false);
 
 [[nodiscard]] SigninPasswordDataFailure
 ClassifySigninPasswordDataFailure(const QString &errorType);

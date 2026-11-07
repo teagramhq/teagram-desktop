@@ -169,7 +169,7 @@ void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error,
 		return;
 	}
 	const auto &type = error.type();
-	switch (ClassifySigninPasswordFailure(type)) {
+	switch (ClassifySigninPasswordFailure(type, retried)) {
 	case SigninPasswordFailure::Flood:
 		showPasswordError(tr::lng_intro_signin_flood(
 			tr::now,

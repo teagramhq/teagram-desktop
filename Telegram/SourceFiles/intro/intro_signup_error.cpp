@@ -12,11 +12,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro::details {
 
-SignupFailureDecision ClassifySignupFailure(
-		const QString &errorType,
-		int errorCode,
-		bool floodError,
-		bool reissuedOnce) {
+SignupFailureDecision ClassifySignupFailure(const QString &errorType,
+											int errorCode, bool floodError,
+											bool reissuedOnce, bool retried) {
 	auto result = SignupFailureDecision();
 	result.backAvailable = errorCode >= 400 && errorCode < 500;
 	if (!result.backAvailable) {
@@ -48,7 +46,7 @@ SignupFailureDecision ClassifySignupFailure(
 	} else if (errorType == u"PHONE_CODE_INVALID"_q
 		|| errorType == u"PHONE_CODE_EXPIRED"_q) {
 		result.message = SignupFailureMessage::CodeTicketExpired;
-		if (!reissuedOnce) {
+		if (!reissuedOnce && !retried) {
 			result.action = SignupFailureAction::ReissueCode;
 		}
 	}
