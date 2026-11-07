@@ -623,7 +623,7 @@ bool ShowReactPremiumError(
 		.reactionsAreTags = item->reactionsAreTags(),
 		.canReact = item->canReact(),
 		.premium = controller->session().premium(),
-		.customReaction = id.custom(),
+		.customReaction = bool(id.custom()),
 		.reactionAlreadyAdded
 		= ranges::contains(item->reactions(), id, &Data::MessageReaction::id),
 		.broadcast = item->history()->peer->isBroadcast(),
