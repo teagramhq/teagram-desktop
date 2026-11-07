@@ -152,7 +152,7 @@ TEST_CASE(CustomEmojiActionPremiumGatesStayScoped) {
 	auto pickerOpened = false;
 	auto premiumPreviewShown = false;
 	Data::details::RunEmojiStatusPickerAction(
-		false, false, false, false, [&] { pickerOpened = true; },
+		true, false, false, false, [&] { pickerOpened = true; },
 		[&] { premiumPreviewShown = true; });
 	CHECK(!pickerOpened);
 	CHECK(premiumPreviewShown);
