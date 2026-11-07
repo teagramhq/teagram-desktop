@@ -13,7 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro::details {
 
-struct TurnstileChallenge;
+class TurnstileChallenge;
 
 struct TurnstilePanelResult {
 	Fn<void()> closeSilently;

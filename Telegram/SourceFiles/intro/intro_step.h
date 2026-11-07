@@ -33,7 +33,7 @@ namespace Intro {
 namespace details {
 
 struct Data;
-struct TurnstileChallenge;
+class TurnstileChallenge;
 enum class StackAction;
 enum class Animate;
 
