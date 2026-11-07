@@ -304,7 +304,7 @@ TEST_CASE(BuildsWrappedAuthRequestOnlyWhenTokenIsPresent) {
 	const auto bytes = QByteArray(
 		reinterpret_cast<const char *>(buffer.constData() + bodyOffset),
 		int((buffer.size() - bodyOffset) * sizeof(mtpPrime)));
-	CHECK_EQ(bytes.left(4), QByteArray("\x94\xf0\xbb\xad", 4));
+	CHECK_EQ(bytes.left(4), QByteArray("\x94\x0f\xbb\xad", 4));
 	CHECK(bytes.contains("challenge-token"));
 
 	const auto plain = BuildAuthRequest(MTPaccount_GetPassword(), QString());
