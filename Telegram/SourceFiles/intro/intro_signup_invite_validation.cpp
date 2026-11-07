@@ -32,10 +32,11 @@ InviteSignInFailure ClassifyInviteSignInFailure(const QString &type,
 												bool floodError) {
 	if (floodError) {
 		return InviteSignInFailure::FloodWait;
-	} else if (type == u"INVITE_HASH_INVALID"_q
-			   || type == u"PHONE_CODE_INVALID"_q
-			   || type == u"PHONE_CODE_EXPIRED"_q) {
+	} else if (type == u"INVITE_HASH_INVALID"_q) {
 		return InviteSignInFailure::Unusable;
+	} else if (type == u"PHONE_CODE_INVALID"_q
+			   || type == u"PHONE_CODE_EXPIRED"_q) {
+		return InviteSignInFailure::UsernameCodeExpired;
 	} else if (type == u"INPUT_REQUEST_INVALID"_q) {
 		return InviteSignInFailure::RegistrationClosed;
 	}

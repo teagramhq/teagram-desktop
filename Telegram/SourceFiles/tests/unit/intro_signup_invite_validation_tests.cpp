@@ -42,16 +42,19 @@ TEST_CASE(InviteSecretRejectsIncompleteOrMalformedInput) {
 TEST_CASE(InviteSignInFailuresKeepInviteErrorsOnTheInviteStep) {
 	CHECK(ClassifyInviteSignInFailure(u"INVITE_HASH_INVALID"_q, false)
 		  == InviteSignInFailure::Unusable);
-	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_INVALID"_q, false)
-		  == InviteSignInFailure::Unusable);
-	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_EXPIRED"_q, false)
-		  == InviteSignInFailure::Unusable);
 	CHECK(ClassifyInviteSignInFailure(u"INPUT_REQUEST_INVALID"_q, false)
 		  == InviteSignInFailure::RegistrationClosed);
 	CHECK(ClassifyInviteSignInFailure(u"FLOOD_WAIT_30"_q, true)
 		  == InviteSignInFailure::FloodWait);
 	CHECK(ClassifyInviteSignInFailure(u"SERVER_UNAVAILABLE"_q, false)
 		  == InviteSignInFailure::Other);
+}
+
+TEST_CASE(ExpiredUsernameCodeOnInviteStepReturnsToUsernameEntry) {
+	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_INVALID"_q, false)
+		  == InviteSignInFailure::UsernameCodeExpired);
+	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_EXPIRED"_q, false)
+		  == InviteSignInFailure::UsernameCodeExpired);
 }
 
 } // namespace

@@ -156,6 +156,10 @@ void InviteWidget::signInFail(const MTP::Error &error) {
 	case InviteSignInFailure::Unusable:
 		showInviteError(tr::lng_intro_signup_invite_unusable(tr::now), true);
 		break;
+	case InviteSignInFailure::UsernameCodeExpired:
+		getData()->usernameCode.drop();
+		goBack();
+		break;
 	case InviteSignInFailure::RegistrationClosed:
 		showInviteError(tr::lng_intro_signup_closed(tr::now), false);
 		break;

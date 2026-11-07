@@ -13,6 +13,7 @@ namespace Intro::details {
 
 enum class InviteSignInFailure {
 	Unusable,
+	UsernameCodeExpired,
 	RegistrationClosed,
 	FloodWait,
 	Other,
