@@ -16,11 +16,10 @@ namespace details {
 class AbstractSocket;
 
 class TcpConnection : public AbstractConnection {
-public:
-	TcpConnection(
-		not_null<Instance*> instance,
-		QThread *thread,
-		const ProxyData &proxy);
+  public:
+	TcpConnection(not_null<Instance *> instance, QThread *thread,
+				  const ProxyData &proxy,
+				  const QString &webSocketEndpoint = {});
 
 	ConnectionPointer clone(const ProxyData &proxy) override;
 
@@ -68,6 +67,7 @@ private:
 	}
 
 	const not_null<Instance*> _instance;
+	const QString _webSocketEndpoint;
 	std::unique_ptr<AbstractSocket> _socket;
 	bool _connectionStarted = false;
 

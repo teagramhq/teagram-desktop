@@ -853,7 +853,17 @@ QList<QHostAddress> FilterPinnedServerAddresses(
 		|| origin.host != hostname) {
 		return {};
 	}
+	return FilterPublicDiscoveryAddresses(origin, addresses, ipv6);
+}
 
+QList<QHostAddress>
+FilterPublicDiscoveryAddresses(const ServerSelectionCheck &origin,
+							   const QList<QHostAddress> &addresses,
+							   bool ipv6) {
+	if (!origin.valid()
+		|| origin.policy != ServerDiscoveryPolicy::PublicHttps) {
+		return {};
+	}
 	constexpr auto kMaxAddresses = 8;
 	auto result = QList<QHostAddress>();
 	for (const auto &address : addresses) {
@@ -892,6 +902,41 @@ bool IsPublicDiscoveryEndpoint(
 		&& endpoint.policy == ServerDiscoveryPolicy::PublicHttps;
 }
 
+std::optional<QString>
+NormalizePublicWebSocketEndpoint(const QString &endpoint,
+								 const ServerSelectionCheck &origin) {
+	if (!origin.valid() || origin.policy != ServerDiscoveryPolicy::PublicHttps
+		|| endpoint.toUtf8().size() > 2048) {
+		return std::nullopt;
+	}
+	const auto url = QUrl(endpoint, QUrl::StrictMode);
+	if (!url.isValid()
+		|| url.scheme().compare(u"wss"_q, Qt::CaseInsensitive) != 0
+		|| url.host().isEmpty()
+		|| url.authority().contains(QChar::fromLatin1('@'))
+		|| !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()
+		|| url.path().toUtf8().size() > 1024) {
+		return std::nullopt;
+	}
+	const auto port = url.port(443);
+	const auto host = url.host();
+	const auto bracketedHost = host.contains(QChar::fromLatin1(':'))
+								   ? (u"["_q + host + u"]"_q)
+								   : host;
+	const auto endpointCheck
+		= CheckServerSelection(bracketedHost + u":"_q + QString::number(port));
+	if (!IsPublicDiscoveryEndpoint(endpointCheck, origin)) {
+		return std::nullopt;
+	}
+	auto normalized = url;
+	normalized.setScheme(u"wss"_q);
+	normalized.setHost(endpointCheck.host);
+	if (normalized.path().isEmpty()) {
+		normalized.setPath(u"/"_q);
+	}
+	return normalized.toString(QUrl::FullyEncoded);
+}
+
 QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 	if (!selection.valid()
 		|| selection.policy != ServerDiscoveryPolicy::PublicHttps) {
@@ -902,6 +947,7 @@ QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 	request.setRawHeader("User-Agent", QByteArrayLiteral("-"));
+	request.setRawHeader("Accept-Encoding", QByteArrayLiteral("identity"));
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::ManualRedirectPolicy);
@@ -968,6 +1014,24 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 			!= selection.normalizedSelection) {
 		return Invalid(ServerDiscoveryResponseStatus::EndpointMismatch);
 	}
+	auto webSocketEndpoint = QString();
+	if (root.contains(u"websocket"_q)) {
+		const auto websocket = root.value(u"websocket"_q);
+		if (!websocket.isObject()) {
+			return Invalid(ServerDiscoveryResponseStatus::InvalidSchema);
+		}
+		const auto websocketObject = websocket.toObject();
+		if (!HasRequiredKeys(websocketObject, {"endpoint"})
+			|| !websocketObject.value(u"endpoint"_q).isString()) {
+			return Invalid(ServerDiscoveryResponseStatus::InvalidSchema);
+		}
+		const auto normalized = NormalizePublicWebSocketEndpoint(
+			websocketObject.value(u"endpoint"_q).toString(), selection);
+		if (!normalized) {
+			return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
+		}
+		webSocketEndpoint = *normalized;
+	}
 
 	const auto encoded = mtproto.value(u"rsa_spki"_q).toString().toLatin1();
 	if (encoded.isEmpty()) {
@@ -985,6 +1049,7 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 	return {
 		.status = ServerDiscoveryResponseStatus::Valid,
 		.endpoint = endpointCheck.normalizedSelection,
+		.webSocketEndpoint = webSocketEndpoint,
 		.dcId = int(dcIdValue),
 		.key = *key,
 		.policy = selection.policy,

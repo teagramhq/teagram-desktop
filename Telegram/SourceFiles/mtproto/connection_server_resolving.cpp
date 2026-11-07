@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_server_discovery.h"
 
 #include <QtCore/QThread>
+#include <QtCore/QUrl>
 #include <QtNetwork/QHostInfo>
 
 #include <atomic>
@@ -22,7 +23,26 @@ namespace {
 
 constexpr auto kAddressTimeout = crl::time(4000);
 constexpr auto kLookupTimeout = crl::time(8000);
+constexpr auto kWebSocketTimeout = crl::time(12000);
 constexpr auto kMaxAddresses = 8;
+
+int MaxResolvedAddresses(bool bothAddressFamilies) {
+	return bothAddressFamilies ? 2 * kMaxAddresses : kMaxAddresses;
+}
+
+QList<QHostAddress>
+PublicDiscoveryAddresses(const ServerSelectionCheck &origin,
+						 const QList<QHostAddress> &addresses, bool ipv6,
+						 bool bothAddressFamilies) {
+	const auto preferred
+		= FilterPublicDiscoveryAddresses(origin, addresses, ipv6);
+	if (!bothAddressFamilies) {
+		return preferred;
+	}
+	return InterleaveServerAddressFamilies(
+		preferred, FilterPublicDiscoveryAddresses(origin, addresses, !ipv6),
+		MaxResolvedAddresses(bothAddressFamilies));
+}
 
 #ifdef TDESKTOP_UNIT_TESTS
 ServerHostnameResolverTestLookup TestLookup;
@@ -117,28 +137,27 @@ void SetServerHostnameResolverTestLookup(
 #endif
 
 ConnectionPointer CreateServerConnection(
-		not_null<Instance*> instance,
-		DcOptions::Variants::Protocol protocol,
-		QThread *thread,
-		const bytes::vector &secret,
-		const ProxyData &proxy,
-		const QString &hostname,
-		bool ipv6,
-		ServerHostnameResolver resolver) {
-	if (ShouldResolveServerHostname(hostname, proxy.type)) {
+	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
+	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
+	const QString &hostname, bool ipv6, ServerHostnameResolver resolver,
+	const QString &webSocketEndpoint, const QString &webSocketSelection,
+	bool bothAddressFamilies) {
+	const auto useWebSocketFallback = protocol == DcOptions::Variants::Tcp
+									  && proxy.type == ProxyData::Type::None
+									  && !webSocketEndpoint.isEmpty();
+	if (ShouldResolveServerHostname(hostname, proxy.type)
+		|| useWebSocketFallback) {
 		if (!resolver.lookup) {
 			resolver = DefaultServerHostnameResolver();
 		} else if (!resolver.abort) {
 			resolver.abort = AbortServerHostnameLookup;
 		}
 		return ConnectionPointer::New<ServerResolvingConnection>(
-			instance,
-			thread,
-			proxy,
-			protocol,
-			ipv6,
-			hostname,
-			std::move(resolver));
+			instance, thread, proxy, protocol, ipv6, hostname,
+			std::move(resolver),
+			useWebSocketFallback ? webSocketEndpoint : QString(),
+			useWebSocketFallback ? webSocketSelection : QString(),
+			useWebSocketFallback && bothAddressFamilies);
 	}
 	return AbstractConnection::Create(
 		instance,
@@ -149,22 +168,17 @@ ConnectionPointer CreateServerConnection(
 }
 
 ServerResolvingConnection::ServerResolvingConnection(
-		not_null<Instance*> instance,
-		QThread *thread,
-		const ProxyData &proxy,
-		DcOptions::Variants::Protocol protocol,
-		bool ipv6,
-		const QString &hostname,
-		ServerHostnameResolver resolver)
-: AbstractConnection(thread, proxy)
-, _instance(instance)
-, _protocol(protocol)
-, _ipv6(ipv6)
-, _hostname(hostname)
-, _resolver(std::move(resolver))
-, _lookupTimeoutTimer([=] { emitError(kErrorCodeOther); })
-, _addressTimeoutTimer([=] { handleError(kErrorCodeOther); }) {
-}
+	not_null<Instance *> instance, QThread *thread, const ProxyData &proxy,
+	DcOptions::Variants::Protocol protocol, bool ipv6, const QString &hostname,
+	ServerHostnameResolver resolver, const QString &webSocketEndpoint,
+	const QString &webSocketSelection, bool bothAddressFamilies)
+	: AbstractConnection(thread, proxy), _instance(instance),
+	  _protocol(protocol), _ipv6(ipv6), _hostname(hostname),
+	  _resolver(std::move(resolver)), _webSocketEndpoint(webSocketEndpoint),
+	  _webSocketSelection(webSocketSelection),
+	  _bothAddressFamilies(bothAddressFamilies),
+	  _lookupTimeoutTimer([=] { lookupTimedOut(); }),
+	  _addressTimeoutTimer([=] { handleError(kErrorCodeOther); }) {}
 
 ConnectionPointer ServerResolvingConnection::clone(const ProxyData &proxy) {
 	Unexpected("ServerResolvingConnection::clone call.");
@@ -206,18 +220,36 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 	_lookupId = -1;
 	_lookupActive = false;
 	_lookupTimeoutTimer.cancel();
+	if (_lookingUpWebSocket) {
+		_lookingUpWebSocket = false;
+		if (info.error() != QHostInfo::NoError) {
+			emitError(kErrorCodeOther);
+			return;
+		}
+		_webSocketAddresses = PublicDiscoveryAddresses(
+			CheckServerSelection(_webSocketSelection), info.addresses(), _ipv6,
+			_bothAddressFamilies);
+		_nextWebSocketAddress = 0;
+		if (_webSocketAddresses.isEmpty()) {
+			emitError(kErrorCodeOther);
+		} else {
+			tryNextWebSocketAddress();
+		}
+		return;
+	}
 	if (info.error() != QHostInfo::NoError) {
-		emitError(kErrorCodeOther);
+		tryNextAddress();
 		return;
 	}
-	_addresses = FilterPinnedServerAddresses(
-		_hostname,
-		info.addresses(),
-		_ipv6);
-	if (_addresses.isEmpty()) {
-		emitError(kErrorCodeOther);
-		return;
-	}
+	const auto preferred
+		= FilterPinnedServerAddresses(_hostname, info.addresses(), _ipv6);
+	_addresses = _bothAddressFamilies
+					 ? InterleaveServerAddressFamilies(
+						   preferred,
+						   FilterPinnedServerAddresses(
+							   _hostname, info.addresses(), !_ipv6),
+						   MaxResolvedAddresses(_bothAddressFamilies))
+					 : preferred;
 	tryNextAddress();
 }
 
@@ -226,6 +258,16 @@ void ServerResolvingConnection::tryNextAddress() {
 		return;
 	}
 	if (_nextAddress >= _addresses.size()) {
+		if (ShouldAttemptWebSocketFallback(true, !_webSocketEndpoint.isEmpty(),
+										   _webSocketFallbackStarted,
+										   _proxy.type)) {
+			startWebSocketFallback();
+			return;
+		}
+		if (_webSocketFallbackStarted) {
+			tryNextWebSocketAddress();
+			return;
+		}
 		emitError(_lastErrorCode);
 		return;
 	}
@@ -245,6 +287,81 @@ void ServerResolvingConnection::tryNextAddress() {
 		_protocolSecret,
 		_protocolDcId,
 		_protocolForFiles);
+}
+
+void ServerResolvingConnection::lookupTimedOut() {
+	++_lookupGeneration;
+	if (_lookupActive && _lookupId >= 0) {
+		_resolver.abort(_lookupId);
+		_lookupId = -1;
+	}
+	_lookupActive = false;
+	if (_lookingUpWebSocket) {
+		_lookingUpWebSocket = false;
+		emitError(kErrorCodeOther);
+	} else {
+		tryNextAddress();
+	}
+}
+
+void ServerResolvingConnection::startWebSocketFallback() {
+	_webSocketFallbackStarted = true;
+	const auto url = QUrl(_webSocketEndpoint, QUrl::StrictMode);
+	const auto origin = CheckServerSelection(_webSocketSelection);
+	if (!url.isValid() || !origin.valid()
+		|| origin.policy != ServerDiscoveryPolicy::PublicHttps) {
+		emitError(kErrorCodeOther);
+		return;
+	}
+	auto literal = QHostAddress();
+	if (literal.setAddress(url.host())) {
+		_webSocketAddresses = PublicDiscoveryAddresses(origin, {literal}, _ipv6,
+													   _bothAddressFamilies);
+		_nextWebSocketAddress = 0;
+		if (_webSocketAddresses.isEmpty()) {
+			emitError(kErrorCodeOther);
+		} else {
+			tryNextWebSocketAddress();
+		}
+		return;
+	}
+	_lookingUpWebSocket = true;
+	_lookupActive = true;
+	const auto lookupGeneration = ++_lookupGeneration;
+	_lookupId
+		= _resolver.lookup(url.host(), this, _ipv6, [=](const QHostInfo &info) {
+			  if (lookupGeneration == _lookupGeneration) {
+				  lookupFinished(info);
+			  }
+		  });
+	if (!_lookupActive) {
+		_lookupId = -1;
+	} else if (_lookupId < 0) {
+		_lookingUpWebSocket = false;
+		_lookupActive = false;
+		emitError(kErrorCodeOther);
+	} else {
+		_lookupTimeoutTimer.callOnce(kLookupTimeout);
+	}
+}
+
+void ServerResolvingConnection::tryNextWebSocketAddress() {
+	if (_connected || _errorEmitted || _lookingUpWebSocket) {
+		return;
+	}
+	if (_nextWebSocketAddress >= _webSocketAddresses.size()) {
+		emitError(_lastErrorCode);
+		return;
+	}
+	const auto address = _webSocketAddresses.at(_nextWebSocketAddress++);
+	const auto url = QUrl(_webSocketEndpoint, QUrl::StrictMode);
+	_dialledAddress = address.toString();
+	setChild(AbstractConnection::Create(_instance, DcOptions::Variants::Tcp,
+										thread(), _protocolSecret, _proxy,
+										_webSocketEndpoint));
+	_addressTimeoutTimer.callOnce(kWebSocketTimeout);
+	_child->connectToServer(_dialledAddress, url.port(443), _protocolSecret,
+							_protocolDcId, _protocolForFiles);
 }
 
 void ServerResolvingConnection::emitError(int errorCode) {
@@ -305,7 +422,15 @@ crl::time ServerResolvingConnection::pingTime() const {
 }
 
 crl::time ServerResolvingConnection::fullConnectTimeout() const {
-	return kLookupTimeout + kAddressTimeout * kMaxAddresses;
+	const auto maxAddresses = MaxResolvedAddresses(_bothAddressFamilies);
+	return kLookupTimeout + kAddressTimeout * maxAddresses
+		   + (_webSocketEndpoint.isEmpty()
+				  ? crl::time(0)
+				  : kLookupTimeout + kWebSocketTimeout * maxAddresses);
+}
+
+crl::time ServerResolvingConnection::firstPassConnectTimeout() const {
+	return _webSocketEndpoint.isEmpty() ? crl::time(0) : fullConnectTimeout();
 }
 
 void ServerResolvingConnection::sendData(mtpBuffer &&buffer) {
@@ -322,7 +447,11 @@ void ServerResolvingConnection::disconnectFromServer() {
 	_lookupTimeoutTimer.cancel();
 	_addressTimeoutTimer.cancel();
 	_addresses.clear();
+	_webSocketAddresses.clear();
 	_nextAddress = 0;
+	_nextWebSocketAddress = 0;
+	_webSocketFallbackStarted = false;
+	_lookingUpWebSocket = false;
 	_connected = false;
 	_child = nullptr;
 	_lookupActive = false;
@@ -342,6 +471,14 @@ void ServerResolvingConnection::connectToServer(
 	_protocolSecret = protocolSecret;
 	_protocolDcId = protocolDcId;
 	_protocolForFiles = protocolForFiles;
+	auto literal = QHostAddress();
+	if (!_webSocketEndpoint.isEmpty() && literal.setAddress(_hostname)) {
+		_addresses = PublicDiscoveryAddresses(
+			CheckServerSelection(_webSocketSelection), {literal}, _ipv6,
+			_bothAddressFamilies);
+		tryNextAddress();
+		return;
+	}
 	const auto lookupGeneration = ++_lookupGeneration;
 	_lookupActive = true;
 	_lookupId = _resolver.lookup(
@@ -356,7 +493,8 @@ void ServerResolvingConnection::connectToServer(
 	if (!_lookupActive) {
 		_lookupId = -1;
 	} else if (_lookupId < 0) {
-		emitError(kErrorCodeOther);
+		_lookupActive = false;
+		tryNextAddress();
 	} else {
 		_lookupTimeoutTimer.callOnce(kLookupTimeout);
 	}

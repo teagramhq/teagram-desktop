@@ -217,25 +217,32 @@ SessionPrivate::~SessionPrivate() {
 }
 
 void SessionPrivate::appendTestConnection(
-		DcOptions::Variants::Protocol protocol,
-		const QString &ip,
-		int port,
-		const bytes::vector &protocolSecret,
-		bool ipv6) {
+	DcOptions::Variants::Protocol protocol, const QString &ip, int port,
+	const bytes::vector &protocolSecret, bool ipv6, bool bothAddressFamilies) {
 	QWriteLocker lock(&_stateMutex);
 
 	const auto pin = _instance->dcOptions().customServer();
 	const auto priority = (ipv6 ? (OptionPreferIPv6.value() ? 2 : 0) : 1)
 		+ (protocol == DcOptions::Variants::Tcp ? 1 : 0)
 		+ (protocolSecret.empty() ? 0 : 1);
+	const auto webSocketEndpoint
+		= (protocol == DcOptions::Variants::Tcp)
+			  ? QString::fromStdString(pin.webSocketEndpoint)
+			  : QString();
+	const auto webSocketSelection
+		= !webSocketEndpoint.isEmpty()
+			  ? QString::fromStdString(pin.serverSelection)
+			  : QString();
+	const auto connectionHostname
+		= (!webSocketEndpoint.isEmpty()
+		   && _options->proxy.type == ProxyData::Type::None
+		   && pin.hostname.empty())
+			  ? QString::fromStdString(pin.ip)
+			  : QString::fromStdString(pin.hostname);
 	auto connection = CreateServerConnection(
-		_instance,
-		protocol,
-		thread(),
-		protocolSecret,
-		_options->proxy,
-		QString::fromStdString(pin.hostname),
-		ipv6);
+		_instance, protocol, thread(), protocolSecret, _options->proxy,
+		connectionHostname, ipv6, {}, webSocketEndpoint, webSocketSelection,
+		bothAddressFamilies);
 	_testConnections.push_back({
 		std::move(connection),
 		priority
@@ -1148,6 +1155,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	} else {
 		using Variants = DcOptions::Variants;
 		const auto special = (_currentDcType == DcType::Temporary);
+		const auto pin = _instance->dcOptions().customServer();
 		const auto variants = _instance->dcOptions().lookup(
 			bareDc,
 			_currentDcType,
@@ -1156,6 +1164,14 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 		const auto useIPv6 = special ? false : _options->useIPv6;
 		const auto useTcp = special ? true : _options->useTcp;
 		const auto useHttp = special ? false : _options->useHttp;
+		const auto bothAddressFamiliesForWebSocket
+			= WebSocketUsesBothAddressFamilies(_options->proxy.type, useTcp,
+											   !pin.webSocketEndpoint.empty(),
+											   useIPv4, useIPv6);
+		const auto hostnameCoversBothFamilies
+			= bothAddressFamiliesForWebSocket && !pin.hostname.empty();
+		const auto preferredAddress
+			= OptionPreferIPv6.value() ? Variants::IPv6 : Variants::IPv4;
 		const auto skipAddress = !useIPv4
 			? Variants::IPv4
 			: !useIPv6
@@ -1170,6 +1186,9 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 			if (address == skipAddress) {
 				continue;
 			}
+			if (hostnameCoversBothFamilies && address != preferredAddress) {
+				continue;
+			}
 			for (auto protocol = 0; protocol != Variants::ProtocolCount; ++protocol) {
 				if (protocol == skipProtocol) {
 					continue;
@@ -1177,10 +1196,9 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 				for (const auto &endpoint : variants.data[address][protocol]) {
 					appendTestConnection(
 						static_cast<Variants::Protocol>(protocol),
-						QString::fromStdString(endpoint.ip),
-						endpoint.port,
-						endpoint.secret,
-						address == Variants::IPv6);
+						QString::fromStdString(endpoint.ip), endpoint.port,
+						endpoint.secret, address == Variants::IPv6,
+						bothAddressFamiliesForWebSocket);
 				}
 			}
 		}
@@ -1221,6 +1239,14 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	_pingId = _pingMsgId = _pingIdToSend = _pingSendAt = 0;
 	_pingSender.cancel();
 
+	armConnectedTimer();
+}
+
+void SessionPrivate::armConnectedTimer() {
+	for (const auto &connection : _testConnections) {
+		accumulate_max(_waitForConnected,
+					   connection.data->firstPassConnectTimeout());
+	}
 	_waitForConnectedTimer.callOnce(_waitForConnected);
 }
 

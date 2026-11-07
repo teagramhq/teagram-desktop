@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 
 #include <QtCore/QList>
+#include <QtNetwork/QHostAddress>
 
 #ifdef TDESKTOP_UNIT_TESTS
 #include <QtNetwork/QHostInfo>
@@ -19,6 +20,31 @@ class QHostInfo;
 #endif
 
 namespace MTP::details {
+
+[[nodiscard]] inline QList<QHostAddress>
+InterleaveServerAddressFamilies(const QList<QHostAddress> &preferred,
+								const QList<QHostAddress> &other, int maximum) {
+	auto result = QList<QHostAddress>();
+	auto preferredIndex = 0;
+	auto otherIndex = 0;
+	while (
+		result.size() < maximum
+		&& (preferredIndex < preferred.size() || otherIndex < other.size())) {
+		if (preferredIndex < preferred.size()) {
+			const auto &address = preferred.at(preferredIndex++);
+			if (!result.contains(address)) {
+				result.push_back(address);
+			}
+		}
+		if (result.size() < maximum && otherIndex < other.size()) {
+			const auto &address = other.at(otherIndex++);
+			if (!result.contains(address)) {
+				result.push_back(address);
+			}
+		}
+	}
+	return result;
+}
 
 struct ServerHostnameResolver {
 	Fn<qint64(
@@ -39,20 +65,21 @@ void SetServerHostnameResolverTestLookup(
 #endif
 
 class ServerResolvingConnection final : public AbstractConnection {
-public:
-	ServerResolvingConnection(
-		not_null<Instance*> instance,
-		QThread *thread,
-		const ProxyData &proxy,
-		DcOptions::Variants::Protocol protocol,
-		bool ipv6,
-		const QString &hostname,
-		ServerHostnameResolver resolver);
+  public:
+	ServerResolvingConnection(not_null<Instance *> instance, QThread *thread,
+							  const ProxyData &proxy,
+							  DcOptions::Variants::Protocol protocol, bool ipv6,
+							  const QString &hostname,
+							  ServerHostnameResolver resolver,
+							  const QString &webSocketEndpoint,
+							  const QString &webSocketSelection,
+							  bool bothAddressFamilies);
 
 	ConnectionPointer clone(const ProxyData &proxy) override;
 
 	crl::time pingTime() const override;
 	crl::time fullConnectTimeout() const override;
+	crl::time firstPassConnectTimeout() const override;
 	void sendData(mtpBuffer &&buffer) override;
 	void disconnectFromServer() override;
 	void connectToServer(
@@ -72,8 +99,11 @@ public:
 
 private:
 	void lookupFinished(const QHostInfo &info);
+	void lookupTimedOut();
 	void setChild(ConnectionPointer &&child);
 	void tryNextAddress();
+	void startWebSocketFallback();
+	void tryNextWebSocketAddress();
 	void emitError(int errorCode);
 	void handleError(int errorCode);
 	void handleConnected();
@@ -85,23 +115,29 @@ private:
 	const bool _ipv6 = false;
 	const QString _hostname;
 	const ServerHostnameResolver _resolver;
+	const QString _webSocketEndpoint;
+	const QString _webSocketSelection;
+	const bool _bothAddressFamilies = false;
 	ConnectionPointer _child;
 	QList<QHostAddress> _addresses;
+	QList<QHostAddress> _webSocketAddresses;
 	QString _dialledAddress;
 	bytes::vector _protocolSecret;
 	int _port = 0;
 	int16 _protocolDcId = 0;
 	bool _protocolForFiles = false;
 	int _nextAddress = 0;
+	int _nextWebSocketAddress = 0;
 	qint64 _lookupId = -1;
 	quint64 _lookupGeneration = 0;
 	bool _lookupActive = false;
 	int _lastErrorCode = kErrorCodeOther;
 	bool _connected = false;
 	bool _errorEmitted = false;
+	bool _webSocketFallbackStarted = false;
+	bool _lookingUpWebSocket = false;
 	base::Timer _lookupTimeoutTimer;
 	base::Timer _addressTimeoutTimer;
-
 };
 
 [[nodiscard]] inline bool ShouldResolveServerHostname(
@@ -110,14 +146,27 @@ private:
 	return !hostname.isEmpty() && proxyType != ProxyData::Type::Mtproto;
 }
 
+[[nodiscard]] inline bool
+ShouldAttemptWebSocketFallback(bool tcpAttemptsExhausted,
+							   bool hasWebSocketEndpoint, bool alreadyAttempted,
+							   ProxyData::Type proxyType) {
+	return tcpAttemptsExhausted && hasWebSocketEndpoint && !alreadyAttempted
+		   && proxyType == ProxyData::Type::None;
+}
+
+[[nodiscard]] inline bool
+WebSocketUsesBothAddressFamilies(ProxyData::Type proxyType, bool useTcp,
+								 bool hasWebSocketEndpoint, bool useIPv4,
+								 bool useIPv6) {
+	return proxyType == ProxyData::Type::None && useTcp && hasWebSocketEndpoint
+		   && useIPv4 && useIPv6;
+}
+
 [[nodiscard]] ConnectionPointer CreateServerConnection(
-	not_null<Instance*> instance,
-	DcOptions::Variants::Protocol protocol,
-	QThread *thread,
-	const bytes::vector &secret,
-	const ProxyData &proxy,
-	const QString &hostname,
-	bool ipv6,
-	ServerHostnameResolver resolver = {});
+	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
+	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
+	const QString &hostname, bool ipv6, ServerHostnameResolver resolver = {},
+	const QString &webSocketEndpoint = {},
+	const QString &webSocketSelection = {}, bool bothAddressFamilies = false);
 
 } // namespace MTP::details

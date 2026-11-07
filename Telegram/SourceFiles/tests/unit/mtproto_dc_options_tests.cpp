@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <atomic>
 #include <iterator>
+#include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/translate_provider_selection.h"
 #include "main/session_feature_support.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/details/mtproto_websocket_socket.h"
 #include "mtproto/connection_server_resolving.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_server_enrollment.h"
@@ -38,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QPointer>
 #include <QtCore/QTimer>
 #include <QtNetwork/QHostInfo>
+#include <QtNetwork/QNetworkProxy>
 
 namespace MTP::details {
 namespace {
@@ -54,6 +57,11 @@ using UnitConnectionFactory = Fn<ConnectionPointer(
 	const ProxyData &proxy)>;
 
 const UnitConnectionFactory *UnitConnectionFactoryInstance = nullptr;
+
+using UnitWebSocketConnectionFactory = Fn<ConnectionPointer(
+	QThread *thread, const ProxyData &proxy, const QString &webSocketEndpoint)>;
+
+const UnitWebSocketConnectionFactory *UnitWebSocketFactoryInstance = nullptr;
 
 ConnectionPointer::ConnectionPointer() = default;
 
@@ -114,11 +122,13 @@ AbstractConnection::AbstractConnection(
 }
 
 ConnectionPointer AbstractConnection::Create(
-		not_null<Instance*> instance,
-		DcOptions::Variants::Protocol protocol,
-		QThread *thread,
-		const bytes::vector &secret,
-		const ProxyData &proxy) {
+	not_null<Instance *> instance, DcOptions::Variants::Protocol protocol,
+	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
+	const QString &webSocketEndpoint) {
+	if (UnitWebSocketFactoryInstance) {
+		return (*UnitWebSocketFactoryInstance)(thread, proxy,
+											   webSocketEndpoint);
+	}
 	Expects(UnitConnectionFactoryInstance != nullptr);
 	return (*UnitConnectionFactoryInstance)(
 		instance,
@@ -133,6 +143,14 @@ ConnectionPointer AbstractConnection::Create(
 namespace MTP::details {
 
 DcOptions *UnitProxyCheckOptions = nullptr;
+
+struct WebSocketSocketTestAccess {
+	static void Receive(WebSocketSocket &socket, const QByteArray &frames) {
+		socket._state = WebSocketSocket::State::Connected;
+		socket._incoming += frames;
+		socket.handleFrames();
+	}
+};
 
 } // namespace MTP::details
 
@@ -339,6 +357,178 @@ private:
 
 };
 
+struct ScriptedTransportLog {
+	std::vector<QString> endpoints;
+	std::vector<QString> addresses;
+	bool tcpSucceeds = false;
+	bool webSocketSucceeds = false;
+};
+
+class ScriptedConnection final : public details::AbstractConnection {
+  public:
+	ScriptedConnection(QThread *thread, const ProxyData &proxy,
+					   const QString &webSocketEndpoint,
+					   ScriptedTransportLog *log)
+		: details::AbstractConnection(thread, proxy),
+		  _webSocketEndpoint(webSocketEndpoint), _log(log) {}
+
+	details::ConnectionPointer clone(const ProxyData &) override {
+		return nullptr;
+	}
+
+	crl::time pingTime() const override { return 0; }
+
+	crl::time fullConnectTimeout() const override { return 0; }
+
+	void sendData(mtpBuffer &&) override {}
+
+	void disconnectFromServer() override {}
+
+	void connectToServer(const QString &address, int, const bytes::vector &,
+						 int16, bool) override {
+		_log->endpoints.push_back(_webSocketEndpoint);
+		_log->addresses.push_back(address);
+		const auto succeeds = _webSocketEndpoint.isEmpty()
+								  ? _log->tcpSucceeds
+								  : _log->webSocketSucceeds;
+		QTimer::singleShot(0, this, [=] {
+			if (succeeds) {
+				_connected = true;
+				connected();
+			} else {
+				error(kErrorCodeOther);
+			}
+		});
+	}
+
+	bool isConnected() const override { return _connected; }
+
+	int32 debugState() const override { return 0; }
+
+	QString transport() const override { return u"test"_q; }
+
+	QString tag() const override { return u"test"_q; }
+
+  private:
+	QString _webSocketEndpoint;
+	ScriptedTransportLog *_log = nullptr;
+	bool _connected = false;
+};
+
+struct ScriptedOutcome {
+	ScriptedTransportLog log;
+	int lookups = 0;
+	bool connected = false;
+	bool failed = false;
+};
+
+[[nodiscard]] ScriptedOutcome RunScriptedServerConnection(
+	bool tcpSucceeds, bool webSocketSucceeds, const QString &webSocketEndpoint,
+	ProxyData::Type proxyType = ProxyData::Type::None,
+	const QString &hostname = u"demo.example.com"_q, bool ipv6 = false,
+	bool bothAddressFamilies = false,
+	QList<QHostAddress> webSocketAnswers = {QHostAddress(u"8.8.4.4"_q)}) {
+	auto result = ScriptedOutcome();
+	result.log.tcpSucceeds = tcpSucceeds;
+	result.log.webSocketSucceeds = webSocketSucceeds;
+	UnitHostResolver resolver;
+	if (!QHostAddress(hostname).isNull()) {
+		resolver.add({.addresses = webSocketAnswers});
+	} else {
+		resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
+		resolver.add({.addresses = webSocketAnswers});
+	}
+	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
+	const details::UnitWebSocketConnectionFactory factory
+		= [&](QThread *thread, const ProxyData &data, const QString &endpoint) {
+			  return details::ConnectionPointer::New<ScriptedConnection>(
+				  thread, data, endpoint, &result.log);
+		  };
+	details::UnitWebSocketFactoryInstance = &factory;
+	auto proxy = ProxyData();
+	proxy.type = proxyType;
+	auto connection = details::CreateServerConnection(
+		not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
+		QThread::currentThread(), bytes::vector(), proxy, hostname, ipv6,
+		resolver.resolver(), webSocketEndpoint, u"demo.example.com"_q,
+		bothAddressFamilies);
+	QEventLoop loop;
+	QTimer guard;
+	guard.setSingleShot(true);
+	QObject::connect(&guard, &QTimer::timeout, &loop, &QEventLoop::quit);
+	QObject::connect(connection.get(), &details::AbstractConnection::connected,
+					 &loop, [&] {
+						 result.connected = true;
+						 loop.quit();
+					 });
+	QObject::connect(connection.get(), &details::AbstractConnection::error,
+					 &loop, [&](qint32) {
+						 result.failed = true;
+						 loop.quit();
+					 });
+	guard.start(5000);
+	connection->connectToServer(QString(), 443, {}, 2, false);
+	if (!result.connected && !result.failed) {
+		loop.exec();
+	}
+	result.lookups = resolver.lookups();
+	connection.reset();
+	details::UnitWebSocketFactoryInstance = nullptr;
+	return result;
+}
+
+[[nodiscard]] std::unique_ptr<details::WebSocketSocket> MakeWebSocketSocket() {
+	return std::make_unique<details::WebSocketSocket>(
+		not_null<QThread *>(QThread::currentThread()),
+		u"wss://transport.example.com/apiws"_q, QString(), QNetworkProxy(),
+		false);
+}
+
+void RunEventLoopOnce() {
+	QEventLoop loop;
+	QTimer::singleShot(0, &loop, &QEventLoop::quit);
+	loop.exec();
+}
+
+[[nodiscard]] bool ServerFramesFailTheSocket(const QByteArray &frames) {
+	auto socket = MakeWebSocketSocket();
+	auto errors = 0;
+	auto lifetime = rpl::lifetime();
+	socket->error() | rpl::on_next([&] { ++errors; }, lifetime);
+	details::WebSocketSocketTestAccess::Receive(*socket, frames);
+	RunEventLoopOnce();
+	return errors == 1 && !socket->hasBytesAvailable();
+}
+
+[[nodiscard]] QByteArray ServerFrame(uchar first, const QByteArray &payload) {
+	Expects(payload.size() < 126);
+
+	auto result = QByteArray();
+	result.append(char(first));
+	result.append(char(payload.size()));
+	result.append(payload);
+	return result;
+}
+
+const auto kUpgradeKey = QByteArray("dGhlIHNhbXBsZSBub25jZQ==");
+
+[[nodiscard]] QByteArray ValidUpgradeResponse() {
+	return QByteArray("HTTP/1.1 101 Switching Protocols\r\n"
+					  "Upgrade: websocket\r\n"
+					  "Connection: Upgrade\r\n"
+					  "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+					  "Sec-WebSocket-Protocol: binary\r\n"
+					  "\r\n");
+}
+
+[[nodiscard]] bool UpgradeIsRejected(QByteArray response) {
+	auto error = QString();
+	const auto result
+		= details::ParseWebSocketUpgrade(response, kUpgradeKey, error);
+	return result == details::WebSocketUpgradeResult::Rejected
+		   && !error.isEmpty();
+}
+
 } // namespace
 
 // The discovered key must match the fingerprint the server logs at startup,
@@ -411,6 +601,453 @@ TEST_CASE(AuthorizationStateCannotCrossServerPin) {
 	auto changed = original;
 	changed.port += 1;
 	CHECK(!SameCustomServerPin(original, changed));
+
+	changed = original;
+	changed.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(!SameCustomServerPin(original, changed));
+}
+
+TEST_CASE(CustomServerWebSocketEndpointSurvivesSerialization) {
+	auto options = DcOptions(Environment::Production);
+	auto server = MakeCustomServer();
+	server.ip = "8.8.8.88";
+	server.serverSelection = "server.example.com";
+	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	server.discoveryOrigin
+		= "https://server.example.com/.well-known/teagramd/client";
+	server.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(options.setCustomServer(server));
+
+	auto restored = DcOptions(Environment::Production);
+	CHECK(restored.constructFromSerialized(options.serialize()));
+	CHECK_EQ(restored.customServer().webSocketEndpoint,
+			 server.webSocketEndpoint);
+}
+
+TEST_CASE(WebSocketFallbackWaitsForTcpExhaustion) {
+	using details::ShouldAttemptWebSocketFallback;
+	using ProxyType = ProxyData::Type;
+	CHECK(!ShouldAttemptWebSocketFallback(false, true, false, ProxyType::None));
+	CHECK(!ShouldAttemptWebSocketFallback(true, false, false, ProxyType::None));
+	CHECK(!ShouldAttemptWebSocketFallback(true, true, true, ProxyType::None));
+	CHECK(
+		!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Mtproto));
+	CHECK(ShouldAttemptWebSocketFallback(true, true, false, ProxyType::None));
+	CHECK(
+		!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Socks5));
+	CHECK(!ShouldAttemptWebSocketFallback(true, true, false, ProxyType::Http));
+}
+
+TEST_CASE(ServerConnectionFallsBackToWebSocketAfterTcpFails) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, true, endpoint);
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 2);
+	if (result.log.endpoints.size() != 2) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.log.addresses[0], u"8.8.8.88"_q);
+	CHECK_EQ(result.log.endpoints[1], endpoint);
+	CHECK_EQ(result.log.addresses[1], u"8.8.4.4"_q);
+}
+
+TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, false, endpoint);
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 2);
+	if (result.log.endpoints.size() != 2) {
+		return;
+	}
+	CHECK_EQ(result.log.endpoints[1], endpoint);
+}
+
+TEST_CASE(ServerConnectionNeverAttemptsWebSocketWhenTcpConnects) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(true, true, endpoint);
+	CHECK(result.connected);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.lookups, 1);
+}
+
+TEST_CASE(ServerConnectionWithoutWebSocketEndpointStaysOnTcp) {
+	const auto result = RunScriptedServerConnection(false, true, QString());
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.lookups, 1);
+}
+
+TEST_CASE(ServerConnectionThroughProxyNeverAttemptsWebSocket) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(false, true, endpoint,
+													ProxyData::Type::Socks5);
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	for (const auto &used : result.log.endpoints) {
+		CHECK(used.isEmpty());
+	}
+}
+
+TEST_CASE(LiteralPinFallsBackToWebSocketAcrossAddressFamilies) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto v6 = QHostAddress(u"2001:4860:4860::8888"_q);
+	const auto v4 = QHostAddress(u"8.8.4.4"_q);
+	const auto run = [&](const QString &literal, bool ipv6, bool both,
+						 const QHostAddress &answer) {
+		return RunScriptedServerConnection(false, true, endpoint,
+										   ProxyData::Type::None, literal, ipv6,
+										   both, {answer});
+	};
+
+	const auto fromV4 = run(u"8.8.8.88"_q, false, true, v6);
+	CHECK(fromV4.connected);
+	CHECK_EQ(int(fromV4.log.endpoints.size()), 2);
+	if (fromV4.log.endpoints.size() == 2) {
+		CHECK_EQ(fromV4.log.addresses[0], u"8.8.8.88"_q);
+		CHECK_EQ(fromV4.log.endpoints[1], endpoint);
+		CHECK_EQ(fromV4.log.addresses[1], v6.toString());
+	}
+
+	const auto fromV6 = run(u"2001:4860:4860::8844"_q, true, true, v4);
+	CHECK(fromV6.connected);
+	CHECK_EQ(int(fromV6.log.endpoints.size()), 2);
+	if (fromV6.log.endpoints.size() == 2) {
+		CHECK_EQ(fromV6.log.endpoints[1], endpoint);
+		CHECK_EQ(fromV6.log.addresses[1], u"8.8.4.4"_q);
+	}
+
+	const auto sameFamily = run(u"8.8.8.88"_q, false, false, v4);
+	CHECK(sameFamily.connected);
+	const auto otherFamilyOff = run(u"8.8.8.88"_q, false, false, v6);
+	CHECK(otherFamilyOff.failed);
+	CHECK_EQ(int(otherFamilyOff.log.endpoints.size()), 1);
+}
+
+TEST_CASE(WebSocketUsesBothFamiliesOnlyWhenBothAreEnabledWithoutProxy) {
+	using details::WebSocketUsesBothAddressFamilies;
+	using ProxyType = ProxyData::Type;
+	CHECK(WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, true,
+										   true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::Socks5, true, true, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, false, true, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, false, true,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, false,
+											true));
+	CHECK(!WebSocketUsesBothAddressFamilies(ProxyType::None, true, true, true,
+											false));
+}
+
+TEST_CASE(ObfuscatedStartNonceRejectsReservedPrefixes) {
+	const auto nonce = [](uint32 first, uint32 second) {
+		auto result = bytes::vector(64, bytes::type(0x55));
+		memcpy(result.data(), &first, sizeof(first));
+		memcpy(result.data() + sizeof(first), &second, sizeof(second));
+		return result;
+	};
+	auto socket = MakeWebSocketSocket();
+	const auto good = [&](uint32 first, uint32 second) {
+		const auto bytes = nonce(first, second);
+		return socket->isGoodStartNonce(bytes::make_span(bytes));
+	};
+	CHECK(good(0x12345678U, 0x9ABCDEF0U));
+	CHECK(!good(0x123456EFU, 0x9ABCDEF0U));
+	CHECK(!good(0x44414548U, 0x9ABCDEF0U));
+	CHECK(!good(0x54534F50U, 0x9ABCDEF0U));
+	CHECK(!good(0x20544547U, 0x9ABCDEF0U));
+	CHECK(!good(0xEEEEEEEEU, 0x9ABCDEF0U));
+	CHECK(!good(0xDDDDDDDDU, 0x9ABCDEF0U));
+	CHECK(!good(0x02010316U, 0x9ABCDEF0U));
+	CHECK(!good(0x12345678U, 0x00000000U));
+}
+
+TEST_CASE(WebSocketFallbackAsksForAFirstAttemptLongEnoughToReachIt) {
+	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
+	const auto make = [&](const QString &endpoint) {
+		return details::CreateServerConnection(
+			not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
+			QThread::currentThread(), bytes::vector(), ProxyData(),
+			u"demo.example.com"_q, false, {}, endpoint, u"demo.example.com"_q,
+			false);
+	};
+	const auto withFallback = make(u"wss://transport.example.com/apiws"_q);
+	const auto withoutFallback = make(QString());
+	CHECK(withFallback->firstPassConnectTimeout() > 0);
+	CHECK_EQ(int(withFallback->firstPassConnectTimeout()),
+			 int(withFallback->fullConnectTimeout()));
+	CHECK_EQ(int(withoutFallback->firstPassConnectTimeout()), 0);
+}
+
+TEST_CASE(WebSocketUpgradeAcceptsAValidResponseAndKeepsFollowingBytes) {
+	const auto frame = QByteArray("\x82\x01\x2a", 3);
+	auto incoming = ValidUpgradeResponse() + frame;
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
+		  == details::WebSocketUpgradeResult::Accepted);
+	CHECK(error.isEmpty());
+	CHECK(incoming == frame);
+}
+
+TEST_CASE(WebSocketUpgradeWaitsForTheWholeResponse) {
+	auto incoming = QByteArray("HTTP/1.1 101 Switching Protocols\r\n"
+							   "Upgrade: websocket\r\n");
+	const auto before = incoming;
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
+		  == details::WebSocketUpgradeResult::Incomplete);
+	CHECK(incoming == before);
+}
+
+TEST_CASE(WebSocketUpgradeRejectsRefusalAndBadHeaders) {
+	const auto valid = ValidUpgradeResponse();
+	auto refused = valid;
+	refused.replace("101 Switching Protocols", "403 Forbidden");
+	CHECK(UpgradeIsRejected(refused));
+	auto wrongAccept = valid;
+	wrongAccept.replace("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+						"AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+	CHECK(UpgradeIsRejected(wrongAccept));
+	auto wrongProtocol = valid;
+	wrongProtocol.replace("binary", "chat");
+	CHECK(UpgradeIsRejected(wrongProtocol));
+	auto extension = valid;
+	extension.replace(
+		"\r\n\r\n", "\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n");
+	CHECK(UpgradeIsRejected(extension));
+	auto duplicate = valid;
+	duplicate.replace("\r\n\r\n", "\r\nUpgrade: websocket\r\n\r\n");
+	CHECK(UpgradeIsRejected(duplicate));
+	auto bareLf = valid;
+	bareLf.replace("Connection: Upgrade\r\n", "Connection: Upgrade\n");
+	CHECK(UpgradeIsRejected(bareLf));
+	CHECK(UpgradeIsRejected(QByteArray(20000, 'a')));
+}
+
+TEST_CASE(WebSocketServerFrameParsesShortMediumAndLongLengths) {
+	using details::ParseWebSocketServerFrame;
+	using details::WebSocketFrame;
+	using details::WebSocketFrameStatus;
+	const auto lengths = std::array{3, 125, 126, 65535, 65536};
+	for (const auto length : lengths) {
+		const auto payload = QByteArray(length, 'x');
+		auto incoming = QByteArray();
+		incoming.append(char(0x82));
+		auto headerSize = 2;
+		if (length < 126) {
+			incoming.append(char(length));
+		} else if (length <= 0xFFFF) {
+			incoming.append(char(126));
+			incoming.append(char(length >> 8));
+			incoming.append(char(length & 0xFF));
+			headerSize = 4;
+		} else {
+			incoming.append(char(127));
+			for (auto shift = 56; shift >= 0; shift -= 8) {
+				incoming.append(char((quint64(length) >> shift) & 0xFF));
+			}
+			headerSize = 10;
+		}
+		incoming.append(payload);
+		incoming.append("tail");
+		auto frame = WebSocketFrame();
+		CHECK(ParseWebSocketServerFrame(incoming, frame)
+			  == WebSocketFrameStatus::Complete);
+		CHECK_EQ(int(frame.opcode), 2);
+		CHECK(frame.final);
+		CHECK(frame.payload == payload);
+		CHECK_EQ(frame.size, headerSize + length);
+	}
+}
+
+TEST_CASE(WebSocketServerFrameWaitsForMoreBytes) {
+	using details::ParseWebSocketServerFrame;
+	using details::WebSocketFrame;
+	using details::WebSocketFrameStatus;
+	auto frame = WebSocketFrame();
+	CHECK(ParseWebSocketServerFrame(QByteArray("\x82", 1), frame)
+		  == WebSocketFrameStatus::Incomplete);
+	CHECK(ParseWebSocketServerFrame(QByteArray("\x82\x03"
+											   "ab",
+											   4),
+									frame)
+		  == WebSocketFrameStatus::Incomplete);
+	CHECK(ParseWebSocketServerFrame(QByteArray("\x82\x7e\x01", 3), frame)
+		  == WebSocketFrameStatus::Incomplete);
+	CHECK(ParseWebSocketServerFrame(QByteArray("\x82\x7f\x00", 3), frame)
+		  == WebSocketFrameStatus::Incomplete);
+}
+
+TEST_CASE(WebSocketServerFrameRejectsMaskedReservedAndOversizeFrames) {
+	using details::ParseWebSocketServerFrame;
+	using details::WebSocketFrame;
+	using details::WebSocketFrameStatus;
+	auto frame = WebSocketFrame();
+	const auto invalid = [&](const QByteArray &incoming) {
+		return ParseWebSocketServerFrame(incoming, frame)
+			   == WebSocketFrameStatus::Invalid;
+	};
+	CHECK(invalid(QByteArray("\x82\x83\x01\x02\x03\x04"
+							 "abc",
+							 9)));
+	CHECK(invalid(QByteArray("\xc2\x01x", 3)));
+	CHECK(invalid(QByteArray("\xa2\x01x", 3)));
+	CHECK(invalid(QByteArray("\x92\x01x", 3)));
+	CHECK(invalid(QByteArray("\x82\x7f\x80\x00\x00\x00\x00\x00\x00\x01", 10)));
+	CHECK(invalid(QByteArray("\x82\x7f\x00\x00\x00\x00\x01\x00\x00\x41", 10)));
+	CHECK(invalid(QByteArray("\x09\x00", 2)));
+	CHECK(invalid(QByteArray("\x89\x7e\x00\x7e", 4)));
+}
+
+TEST_CASE(WebSocketServerFrameCarriesControlOpcodesAndPayloads) {
+	using details::ParseWebSocketServerFrame;
+	using details::WebSocketFrame;
+	using details::WebSocketFrameStatus;
+	auto frame = WebSocketFrame();
+	CHECK(ParseWebSocketServerFrame(ServerFrame(0x89, "ping"), frame)
+		  == WebSocketFrameStatus::Complete);
+	CHECK_EQ(int(frame.opcode), 9);
+	CHECK(frame.payload == QByteArray("ping"));
+	CHECK(ParseWebSocketServerFrame(
+			  ServerFrame(0x88, QByteArray("\x03\xe8", 2)), frame)
+		  == WebSocketFrameStatus::Complete);
+	CHECK_EQ(int(frame.opcode), 8);
+	CHECK_EQ(frame.payload.size(), 2);
+	CHECK(ParseWebSocketServerFrame(ServerFrame(0x02, "ab"), frame)
+		  == WebSocketFrameStatus::Complete);
+	CHECK(!frame.final);
+}
+
+TEST_CASE(WebSocketClientFrameMasksPayloadAndEncodesLengths) {
+	const auto mask = bytes::vector{
+		bytes::type(0x01),
+		bytes::type(0x02),
+		bytes::type(0x03),
+		bytes::type(0x04),
+	};
+	const auto encode = [&](uchar opcode, const QByteArray &payload) {
+		return details::EncodeWebSocketClientFrame(opcode, payload,
+												   bytes::make_span(mask));
+	};
+
+	CHECK(encode(0x2, QByteArray("abc"))
+		  == QByteArray("\x82\x83\x01\x02\x03\x04\x60\x60\x60", 9));
+	CHECK(encode(0xA, QByteArray("ping"))
+		  == QByteArray("\x8a\x84\x01\x02\x03\x04\x71\x6b\x6d\x63", 10));
+	CHECK(encode(0x8, QByteArray())
+		  == QByteArray("\x88\x80\x01\x02\x03\x04", 6));
+
+	const auto medium = encode(0x2, QByteArray(300, '\0'));
+	CHECK_EQ(medium.size(), 4 + 4 + 300);
+	CHECK_EQ(int(uchar(medium[0])), 0x82);
+	CHECK_EQ(int(uchar(medium[1])), 0x80 | 126);
+	CHECK_EQ(int(uchar(medium[2])), 0x01);
+	CHECK_EQ(int(uchar(medium[3])), 0x2c);
+	CHECK_EQ(int(uchar(medium[8])), 0x01);
+	CHECK_EQ(int(uchar(medium[9])), 0x02);
+
+	const auto large = encode(0x2, QByteArray(70000, '\0'));
+	CHECK_EQ(large.size(), 10 + 4 + 70000);
+	CHECK_EQ(int(uchar(large[1])), 0x80 | 127);
+	CHECK_EQ(int(uchar(large[7])), 0x01);
+	CHECK_EQ(int(uchar(large[8])), 0x11);
+	CHECK_EQ(int(uchar(large[9])), 0x70);
+}
+
+TEST_CASE(WebSocketSocketReassemblesFragmentedMessages) {
+	auto socket = MakeWebSocketSocket();
+	const auto frames = ServerFrame(0x02, "ab") + ServerFrame(0x00, "cd")
+						+ ServerFrame(0x80, "ef");
+	details::WebSocketSocketTestAccess::Receive(*socket, frames);
+	auto buffer = bytes::vector(16);
+	const auto count = socket->read(bytes::make_span(buffer));
+	CHECK_EQ(int(count), 6);
+	CHECK(QByteArray(reinterpret_cast<const char *>(buffer.data()), int(count))
+		  == QByteArray("abcdef"));
+}
+
+TEST_CASE(WebSocketSocketFailsOnProtocolViolations) {
+	CHECK(ServerFramesFailTheSocket(ServerFrame(0x80, "ab")));
+	CHECK(ServerFramesFailTheSocket(ServerFrame(0x02, "ab")
+									+ ServerFrame(0x82, "cd")));
+	CHECK(ServerFramesFailTheSocket(ServerFrame(0x81, "text")));
+	CHECK(ServerFramesFailTheSocket(ServerFrame(0x88, "x")));
+	CHECK(ServerFramesFailTheSocket(ServerFrame(0x83, "ab")));
+	CHECK(ServerFramesFailTheSocket(QByteArray("\x82\x83"
+											   "abcdef",
+											   8)));
+}
+
+TEST_CASE(WebSocketSocketDeliversErrorsAfterTheFailingCallReturns) {
+	auto socket = std::make_unique<details::WebSocketSocket>(
+		not_null<QThread *>(QThread::currentThread()),
+		u"ws://transport.example.com/apiws"_q, QString(), QNetworkProxy(),
+		false);
+	auto errors = 0;
+	auto lifetime = rpl::lifetime();
+	socket->error()
+		| rpl::on_next(
+			[&] {
+				++errors;
+				socket.reset();
+			},
+			lifetime);
+	socket->connectToHost(QString(), 443);
+	CHECK_EQ(errors, 0);
+	CHECK(socket != nullptr);
+	RunEventLoopOnce();
+	CHECK_EQ(errors, 1);
+	CHECK(socket == nullptr);
+}
+
+TEST_CASE(WebSocketSocketDeliversDataAfterFrameParsingReturns) {
+	auto socket = MakeWebSocketSocket();
+	auto notifications = 0;
+	auto lifetime = rpl::lifetime();
+	socket->readyRead()
+		| rpl::on_next(
+			[&] {
+				++notifications;
+				socket.reset();
+			},
+			lifetime);
+	const auto frame = ServerFrame(0x82, "abc");
+	details::WebSocketSocketTestAccess::Receive(*socket, frame + frame);
+	CHECK_EQ(notifications, 0);
+	CHECK(socket != nullptr);
+	RunEventLoopOnce();
+	CHECK_EQ(notifications, 1);
+	CHECK(socket == nullptr);
+}
+
+TEST_CASE(ServerAddressFamiliesInterleaveInPreferredOrder) {
+	using details::InterleaveServerAddressFamilies;
+	const auto preferred = QList<QHostAddress>{
+		QHostAddress(u"2001:4860:4860::8888"_q),
+		QHostAddress(u"2001:4860:4860::8844"_q),
+	};
+	const auto other = QList<QHostAddress>{
+		QHostAddress(u"8.8.8.8"_q),
+		QHostAddress(u"8.8.4.4"_q),
+	};
+	const auto result = InterleaveServerAddressFamilies(preferred, other, 3);
+	CHECK_EQ(result.size(), 3);
+	CHECK(result.at(0) == preferred.at(0));
+	CHECK(result.at(1) == other.at(0));
+	CHECK(result.at(2) == preferred.at(1));
 }
 
 // Address-only discovery stores the normalized selection and the origin that
@@ -523,17 +1160,22 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 		u"8.8.8.88:8443"_q,
 		u"mtproto.example.com:8443"_q,
 	}) {
-		const auto json = QJsonDocument(QJsonObject{
-			{ u"version"_q, 1 },
-			{ u"mtproto"_q, QJsonObject{
-				{ u"endpoint"_q, endpoint },
-				{ u"dc_id"_q, 2 },
-				{ u"rsa_spki"_q, encoded }
-			} }
-		}).toJson(QJsonDocument::Compact);
+		const auto json
+			= QJsonDocument(
+				  QJsonObject{
+					  {u"version"_q, 1},
+					  {u"websocket"_q,
+					   QJsonObject{{u"endpoint"_q,
+									u"wss://transport.example.com/apiws"_q}}},
+					  {u"mtproto"_q, QJsonObject{{u"endpoint"_q, endpoint},
+												 {u"dc_id"_q, 2},
+												 {u"rsa_spki"_q, encoded}}}})
+				  .toJson(QJsonDocument::Compact);
 		auto result = ParsePublicDiscoveryResponse(selection, json);
 		CHECK(result.valid());
 		CHECK_EQ(result.endpoint, endpoint);
+		CHECK_EQ(result.webSocketEndpoint,
+				 u"wss://transport.example.com/apiws"_q);
 		CHECK(result.policy == ServerDiscoveryPolicy::PublicHttps);
 		result.resolvedAddress = u"8.8.8.88"_q;
 		const auto server = BuildCustomServerFromDiscovery(selection, result);
@@ -542,6 +1184,8 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 			continue;
 		}
 		CHECK_EQ(server->ip, "8.8.8.88");
+		CHECK_EQ(server->webSocketEndpoint,
+				 "wss://transport.example.com/apiws");
 		CHECK_EQ(server->serverSelection, "server.example.com");
 		CHECK(server->discoveryPolicy == ServerDiscoveryPolicy::PublicHttps);
 		CHECK_EQ(server->discoveryOrigin,
@@ -555,6 +1199,7 @@ TEST_CASE(PublicHttpsDiscoveryEnrollsWithPublicResolvedAddress) {
 		const auto got = restored.customServer();
 		CHECK_EQ(got.ip, "8.8.8.88");
 		CHECK_EQ(got.port, 8443);
+		CHECK_EQ(got.webSocketEndpoint, "wss://transport.example.com/apiws");
 		CHECK(got.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps);
 		CHECK_EQ(got.discoveryOrigin, server->discoveryOrigin);
 		CHECK(got.key != nullptr);
@@ -740,24 +1385,23 @@ TEST_CASE(HistoricalLiteralBindingsRestoreUnchanged) {
 	CHECK(options.setCustomServer(server));
 
 	const auto serialized = options.serialize();
-	const auto historicalTail = int(sizeof(qint32) * 6
-		+ server.serverSelection.size()
-		+ server.discoveryOrigin.size());
+	const auto historicalTail
+		= int(sizeof(qint32) * 7 + server.serverSelection.size()
+			  + server.discoveryOrigin.size());
 	const auto customBlockEnd = serialized.size() - historicalTail;
 	for (const auto &[version, tail] : {
-		std::pair{ 3, 0 },
-		std::pair{ 4, int(sizeof(qint32)) },
-		std::pair{
-			5,
-			int(sizeof(qint32) * 4)
-				+ int(server.serverSelection.size())
-				+ int(server.discoveryOrigin.size())},
-		std::pair{
-			6,
-			int(sizeof(qint32) * 5)
-				+ int(server.serverSelection.size())
-				+ int(server.discoveryOrigin.size())},
-	}) {
+			 std::pair{3, 0},
+			 std::pair{4, int(sizeof(qint32))},
+			 std::pair{5, int(sizeof(qint32) * 4)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+			 std::pair{6, int(sizeof(qint32) * 5)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+			 std::pair{7, int(sizeof(qint32) * 6)
+							  + int(server.serverSelection.size())
+							  + int(server.discoveryOrigin.size())},
+		 }) {
 		auto fixture = serialized.left(customBlockEnd + tail);
 		QDataStream stream(&fixture, QIODevice::ReadWrite);
 		stream.setVersion(QDataStream::Qt_5_1);
@@ -771,6 +1415,7 @@ TEST_CASE(HistoricalLiteralBindingsRestoreUnchanged) {
 		CHECK_EQ(got.ip, server.ip);
 		CHECK_EQ(got.port, server.port);
 		CHECK(got.hostname.empty());
+		CHECK(got.webSocketEndpoint.empty());
 		CHECK(got.key != nullptr);
 		if (got.key) {
 			CHECK_EQ(qint64(got.key->fingerprint()), kProductionKeyFingerprint);

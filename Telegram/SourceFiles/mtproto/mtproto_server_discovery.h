@@ -99,6 +99,9 @@ struct ServerSelectionCheck {
 	const QString &hostname,
 	const QList<QHostAddress> &addresses,
 	bool ipv6);
+[[nodiscard]] QList<QHostAddress>
+FilterPublicDiscoveryAddresses(const ServerSelectionCheck &origin,
+							   const QList<QHostAddress> &addresses, bool ipv6);
 
 // A delegated public endpoint must be an explicit-port public DNS name or a
 // safe IP literal for the selected HTTPS origin. Local IP selections retain
@@ -107,6 +110,10 @@ struct ServerSelectionCheck {
 [[nodiscard]] bool IsPublicDiscoveryEndpoint(
 	const ServerSelectionCheck &endpoint,
 	const ServerSelectionCheck &origin);
+
+[[nodiscard]] std::optional<QString>
+NormalizePublicWebSocketEndpoint(const QString &endpoint,
+								 const ServerSelectionCheck &origin);
 
 // This URL is derived only from a valid public selection. It never carries a
 // query, fragment, credentials, or a user-supplied path.
@@ -133,6 +140,7 @@ struct ServerDiscoveryResult {
 	ServerDiscoveryResponseStatus status
 		= ServerDiscoveryResponseStatus::InvalidJson;
 	QString endpoint;
+	QString webSocketEndpoint;
 	// A public delegated endpoint is resolved and classified before it is
 	// committed. The selected address is kept separately so later MTProto
 	// connections do not perform an unvetted DNS lookup again.
