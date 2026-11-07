@@ -214,9 +214,8 @@ PossibleItemReactionsRef LookupPossibleReactions(
 	const auto limit = UniqueReactionsLimit(peer);
 	const auto premiumPossible = session->premiumPossible();
 	const auto customEmojiRequiresPremium
-		= Data::details::CustomEmojiRequiresPremium(
-			premiumPossible,
-			peer->usesCustomServer());
+		= Data::details::CustomEmojiRequiresPremium(premiumPossible,
+													peer->usesCustomServer());
 	const auto limited = (all.size() >= limit) && [&] {
 		const auto my = item->chosenReactions();
 		if (my.empty()) {
@@ -279,10 +278,10 @@ PossibleItemReactionsRef LookupPossibleReactions(
 			if (id.custom() && customEmojiRequiresPremium) {
 				return false;
 			} else if ((allowed.type == AllowedReactionsType::Some)
-				&& !ranges::contains(allowed.some, id)) {
+					   && !ranges::contains(allowed.some, id)) {
 				return false;
 			} else if (id.custom()
-				&& allowed.type == AllowedReactionsType::Default) {
+					   && allowed.type == AllowedReactionsType::Default) {
 				return false;
 			}
 			return true;
@@ -297,7 +296,7 @@ PossibleItemReactionsRef LookupPossibleReactions(
 			}
 		}
 		result.customAllowed = (allowed.type == AllowedReactionsType::All)
-			&& !customEmojiRequiresPremium;
+							   && !customEmojiRequiresPremium;
 
 		const auto favoriteId = reactions->favoriteId();
 		if (favoriteId.custom()
@@ -346,8 +345,7 @@ PossibleItemReactionsRef LookupPossibleReactions(
 	const auto premiumPossible = session->premiumPossible();
 	const auto customEmojiRequiresPremium
 		= Data::details::CustomEmojiRequiresPremium(
-			premiumPossible,
-			session->mtp().dcOptions().hasCustomServer());
+			premiumPossible, session->mtp().dcOptions().hasCustomServer());
 	auto added = base::flat_set<ReactionId>();
 	result.recent.reserve(full.size());
 	for (const auto &reaction : ranges::views::concat(top, recent, full)) {

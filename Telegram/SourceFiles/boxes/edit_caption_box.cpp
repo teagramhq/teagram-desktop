@@ -574,9 +574,9 @@ void EditCaptionBox::rebuildPreview() {
 
 void EditCaptionBox::setupField() {
 	const auto peer = _historyItem->history()->peer;
-	const auto allow = [=](not_null<DocumentData*> emoji) {
+	const auto allow = [=](not_null<DocumentData *> emoji) {
 		return Data::AllowEmojiWithoutPremium(peer, emoji)
-			|| peer->usesCustomServer();
+			   || peer->usesCustomServer();
 	};
 	const auto chatStyle = InitMessageFieldHandlers({
 		.session = &_controller->session(),
@@ -1023,9 +1023,7 @@ void EditCaptionBox::setupEmojiPanel() {
 		st::emojiPanMinHeight / 2,
 		st::emojiPanMinHeight);
 	_emojiPanel->hide();
-	_emojiPanel->selector()->setCurrentPeer(
-		peer,
-		true);
+	_emojiPanel->selector()->setCurrentPeer(peer, true);
 	_emojiPanel->selector()->emojiChosen(
 	) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
 		Ui::InsertEmojiAtCursor(_field->textCursor(), data.emoji);
@@ -1033,10 +1031,8 @@ void EditCaptionBox::setupEmojiPanel() {
 	_emojiPanel->selector()->customEmojiChosen(
 	) | rpl::on_next([=](ChatHelpers::FileChosen data) {
 		const auto info = data.document->sticker();
-		if (info
-			&& info->setType == Data::StickersType::Emoji
-			&& !_controller->session().premium()
-			&& !peer->usesCustomServer()) {
+		if (info && info->setType == Data::StickersType::Emoji
+			&& !_controller->session().premium() && !peer->usesCustomServer()) {
 			ShowPremiumPreviewBox(
 				_controller,
 				PremiumFeature::AnimatedEmoji);

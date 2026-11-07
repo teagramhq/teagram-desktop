@@ -107,8 +107,7 @@ constexpr auto kLinkProtocols = {
 				} else if (!session->premium()) {
 					const auto document = session->data().document(emoji);
 					if (document->isPremiumEmoji()) {
-						if (!allowPremiumEmoji
-							|| premiumSkipped
+						if (!allowPremiumEmoji || premiumSkipped
 							|| Data::details::CustomEmojiRequiresPremium(
 								session->premiumPossible(),
 								session->mtp().dcOptions().hasCustomServer())

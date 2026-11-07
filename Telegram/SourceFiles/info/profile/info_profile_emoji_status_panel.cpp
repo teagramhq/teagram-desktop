@@ -323,10 +323,11 @@ bool EmojiStatusPanel::filter(
 	const auto session = &controller->session();
 	if (_chooseFilter) {
 		return _chooseFilter(chosenId);
-	} else if (chosenId && Data::details::EmojiStatusRequiresPremium(
-			session->premium(),
-			session->mtp().dcOptions().hasCustomServer(),
-			chosenId.collectible != nullptr)) {
+	} else if (chosenId
+			   && Data::details::EmojiStatusRequiresPremium(
+				   session->premium(),
+				   session->mtp().dcOptions().hasCustomServer(),
+				   chosenId.collectible != nullptr)) {
 		ShowPremiumPreviewBox(controller, PremiumFeature::EmojiStatus);
 		return false;
 	}

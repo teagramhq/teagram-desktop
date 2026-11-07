@@ -391,7 +391,7 @@ void MessageField::createControls(PeerData *peer) {
 	}, _field->lifetime());
 
 	const auto show = _show;
-	const auto allow = [=](not_null<DocumentData*> emoji) {
+	const auto allow = [=](not_null<DocumentData *> emoji) {
 		if (peer
 			&& (Data::AllowEmojiWithoutPremium(peer, emoji)
 				|| peer->usesCustomServer())) {

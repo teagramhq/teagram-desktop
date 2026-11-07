@@ -89,8 +89,7 @@ void SetupCaptionFieldInBox(
 		st::emojiPanMinHeight);
 	emojiPanel->hide();
 	emojiPanel->selector()->setCurrentPeer(
-		panelPeer ? panelPeer : controller->session().user(),
-		true);
+		panelPeer ? panelPeer : controller->session().user(), true);
 	emojiPanel->selector()->emojiChosen(
 	) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
 		Ui::InsertEmojiAtCursor(field->textCursor(), data.emoji);
@@ -294,10 +293,10 @@ struct State final {
 	return state;
 }
 
-[[nodiscard]] not_null<Ui::InputField*> AddInputField(
-		not_null<Ui::GenericBox*> box,
-		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer) {
+[[nodiscard]] not_null<Ui::InputField *>
+AddInputField(not_null<Ui::GenericBox *> box,
+			  not_null<Window::SessionController *> controller,
+			  not_null<PeerData *> peer) {
 	const auto bottomContainer = box->setPinnedToBottomContent(
 		object_ptr<Ui::VerticalLayout>(box));
 	const auto wrap = bottomContainer->add(
@@ -310,13 +309,8 @@ struct State final {
 		tr::lng_photo_caption());
 	Ui::ResizeFitChild(wrap, input);
 	SetupCaptionFieldInBox(
-		box,
-		controller,
-		input,
-		peer,
-		[=](not_null<DocumentData*>) {
-			return peer->usesCustomServer();
-		},
+		box, controller, input, peer,
+		[=](not_null<DocumentData *>) { return peer->usesCustomServer(); },
 		PremiumFeature::AnimatedEmoji);
 
 	return input;

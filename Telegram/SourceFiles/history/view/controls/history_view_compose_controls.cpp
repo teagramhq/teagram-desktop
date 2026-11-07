@@ -1241,9 +1241,7 @@ void ComposeControls::setHistory(SetHistoryArgs &&args) {
 	_header->setHistory(args);
 	trackThreadFieldVisibility();
 	registerDraftSource();
-	_selector->setCurrentPeer(
-		history ? history->peer.get() : nullptr,
-		true);
+	_selector->setCurrentPeer(history ? history->peer.get() : nullptr, true);
 	initFieldAutocomplete();
 	initWebpageProcess();
 	initWriteRestriction();
@@ -2628,17 +2626,18 @@ void ComposeControls::initField() {
 		_field->setEnabled(shown);
 	}, _field->lifetime());
 #endif // Q_OS_MAC
-	_chatStyle = InitMessageField(_show, _field, [=](not_null<DocumentData*> emoji) {
-		if (_history
-			&& (Data::AllowEmojiWithoutPremium(_history->peer, emoji)
-				|| _history->peer->usesCustomServer())) {
-			return true;
-		}
-		if (_unavailableEmojiPasted) {
-			_unavailableEmojiPasted(emoji);
-		}
-		return false;
-	});
+	_chatStyle
+		= InitMessageField(_show, _field, [=](not_null<DocumentData *> emoji) {
+			  if (_history
+				  && (Data::AllowEmojiWithoutPremium(_history->peer, emoji)
+					  || _history->peer->usesCustomServer())) {
+				  return true;
+			  }
+			  if (_unavailableEmojiPasted) {
+				  _unavailableEmojiPasted(emoji);
+			  }
+			  return false;
+		  });
 	InitMessageFieldFade(_field, _st.field.textBg);
 	_field->setEditLinkCallback(
 		DefaultEditLinkCallback(_show, _field, &_st.boxField));
@@ -2707,9 +2706,9 @@ void ComposeControls::initFieldAutocomplete() {
 			_sendCommandRequests.fire_copy(command);
 		},
 	});
-	const auto allow = [=](not_null<DocumentData*> emoji) {
+	const auto allow = [=](not_null<DocumentData *> emoji) {
 		return Data::AllowEmojiWithoutPremium(_history->peer, emoji)
-			|| _history->peer->usesCustomServer();
+			   || _history->peer->usesCustomServer();
 	};
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		_panelsParent,
@@ -3243,12 +3242,10 @@ void ComposeControls::initTabbedSelector() {
 	) | rpl::on_next([=](ChatHelpers::FileChosen &&data) {
 		if (const auto info = data.document->sticker()
 			; info && info->setType == Data::StickersType::Emoji) {
-			if (data.document->isPremiumEmoji()
-				&& !session().premium()
+			if (data.document->isPremiumEmoji() && !session().premium()
 				&& (!_history
-					|| (!Data::AllowEmojiWithoutPremium(
-						_history->peer,
-						data.document)
+					|| (!Data::AllowEmojiWithoutPremium(_history->peer,
+														data.document)
 						&& !_history->peer->usesCustomServer()))) {
 				if (_unavailableEmojiPasted) {
 					_unavailableEmojiPasted(data.document);

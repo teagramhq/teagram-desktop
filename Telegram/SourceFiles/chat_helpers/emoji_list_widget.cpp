@@ -3074,9 +3074,8 @@ void EmojiListWidget::selectEmoji(EmojiChosen data) {
 void EmojiListWidget::selectCustom(FileChosen data) {
 	const auto document = data.document;
 	const auto skip = document->isPremiumEmoji()
-		&& Data::details::CustomEmojiRequiresPremium(
-			session().premium(),
-			_allowWithoutPremium);
+					  && Data::details::CustomEmojiRequiresPremium(
+						  session().premium(), _allowWithoutPremium);
 	if (!skip && _mode == Mode::Full) {
 		auto &settings = Core::App().settings();
 		settings.incrementRecentEmoji({ RecentEmojiDocument{
@@ -3512,9 +3511,8 @@ void EmojiListWidget::refreshCustom() {
 	const auto session = &this->session();
 	const auto premiumPossible = session->premiumPossible();
 	const auto onlyUnicodeEmoji = _onlyUnicodeEmoji
-		|| Data::details::CustomEmojiRequiresPremium(
-			premiumPossible,
-			_allowWithoutPremium);
+								  || Data::details::CustomEmojiRequiresPremium(
+									  premiumPossible, _allowWithoutPremium);
 	const auto premiumMayBeBought = (!onlyUnicodeEmoji)
 		&& premiumPossible
 		&& !session->premium()

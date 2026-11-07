@@ -158,9 +158,8 @@ public:
 	void setAllowEmojiWithoutPremium(bool allow);
 	void setRoundRadius(int radius);
 	void refreshStickers();
-	void setCurrentPeer(
-		PeerData *peer,
-		bool allowCustomEmojiOnCustomServer = false);
+	void setCurrentPeer(PeerData *peer,
+						bool allowCustomEmojiOnCustomServer = false);
 	void provideRecentEmoji(
 		const std::vector<EmojiStatusId> &customRecentList);
 	void setMarkedCustomIds(const base::flat_set<DocumentId> &ids);

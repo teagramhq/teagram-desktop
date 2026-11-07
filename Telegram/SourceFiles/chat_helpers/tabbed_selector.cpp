@@ -1094,9 +1094,8 @@ void TabbedSelector::afterShown() {
 	}
 }
 
-void TabbedSelector::setCurrentPeer(
-		PeerData *peer,
-		bool allowCustomEmojiOnCustomServer) {
+void TabbedSelector::setCurrentPeer(PeerData *peer,
+									bool allowCustomEmojiOnCustomServer) {
 	if (hasGifsTab()) {
 		gifs()->setInlineQueryPeer(peer);
 	}
@@ -1111,8 +1110,7 @@ void TabbedSelector::setCurrentPeer(
 	setAllowEmojiWithoutPremium(
 		peer
 		&& (Data::AllowEmojiWithoutPremium(peer)
-			|| (allowCustomEmojiOnCustomServer
-				&& peer->usesCustomServer())));
+			|| (allowCustomEmojiOnCustomServer && peer->usesCustomServer())));
 }
 
 void TabbedSelector::provideRecentEmoji(
