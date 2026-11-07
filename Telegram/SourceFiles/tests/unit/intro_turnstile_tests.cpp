@@ -267,27 +267,39 @@ TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
 	auto guard = TurnstileLinuxNavigationGuard();
 	guard.initialLoadCompleted();
 
-	const auto changed = guard.mainFrameUrlUpdated(
-		u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q, kInitialUrl);
-	const auto outcome
-		= ResolveTurnstileNavigationOutcome(std::nullopt, changed);
-	CHECK(outcome.endsChallenge);
+	CHECK(guard.mainFrameUrlUpdated(
+		u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q, kInitialUrl));
 	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
 }
 
 TEST_CASE(TurnstileLinuxPolicyRejectionKeepsChallengePending) {
-	const auto decision
+	const auto topLevelDecision = CheckTurnstileNavigation(
+		kInitialUrl, kInitialUrl, false, false, true);
+	const auto topLevelOutcome
+		= ResolveTurnstileNavigationOutcome(topLevelDecision);
+	CHECK(topLevelDecision.rejection.has_value());
+	CHECK(!topLevelOutcome.allowed);
+	CHECK(!topLevelOutcome.endsChallenge);
+	const auto topLevelMessage
+		= ParseMessage(TokenMessage("token"), TurnstileAction::SignIn,
+					   !topLevelOutcome.endsChallenge);
+	CHECK(std::holds_alternative<TurnstileMessage>(topLevelMessage));
+	CHECK(std::get<TurnstileMessage>(topLevelMessage).type
+		  == TurnstileMessageType::Token);
+
+	const auto iframeDecision
 		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
 								   kInitialUrl, false, false, true);
-	const auto outcome
-		= ResolveTurnstileNavigationOutcome(decision.rejection, false);
-	CHECK(!outcome.allowed);
-	CHECK(!outcome.endsChallenge);
-
-	const auto message = ParseMessage(
-		TokenMessage("token"), TurnstileAction::SignIn, !outcome.endsChallenge);
-	CHECK(std::holds_alternative<TurnstileMessage>(message));
-	CHECK(std::get<TurnstileMessage>(message).type
+	const auto iframeOutcome
+		= ResolveTurnstileNavigationOutcome(iframeDecision);
+	CHECK(iframeDecision.rejection.has_value());
+	CHECK(!iframeOutcome.allowed);
+	CHECK(!iframeOutcome.endsChallenge);
+	const auto iframeMessage
+		= ParseMessage(TokenMessage("token"), TurnstileAction::SignIn,
+					   !iframeOutcome.endsChallenge);
+	CHECK(std::holds_alternative<TurnstileMessage>(iframeMessage));
+	CHECK(std::get<TurnstileMessage>(iframeMessage).type
 		  == TurnstileMessageType::Token);
 }
 

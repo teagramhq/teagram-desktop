@@ -113,8 +113,7 @@ ParseTurnstileMessage(std::string_view bytes, TurnstileAction pendingAction,
 CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 						 bool initialNavigationPending, bool newWindow,
 						 bool allowLinuxSubframes);
-[[nodiscard]] TurnstileNavigationOutcome ResolveTurnstileNavigationOutcome(
-	std::optional<TurnstileNavigationRejection> rejection,
-	bool mainFrameUrlChanged);
+[[nodiscard]] TurnstileNavigationOutcome
+ResolveTurnstileNavigationOutcome(const TurnstileNavigationDecision &decision);
 
 } // namespace Intro::details

@@ -269,12 +269,11 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 	};
 }
 
-TurnstileNavigationOutcome ResolveTurnstileNavigationOutcome(
-	std::optional<TurnstileNavigationRejection> rejection,
-	bool mainFrameUrlChanged) {
+TurnstileNavigationOutcome
+ResolveTurnstileNavigationOutcome(const TurnstileNavigationDecision &decision) {
 	return {
-		.allowed = !rejection.has_value(),
-		.endsChallenge = mainFrameUrlChanged,
+		.allowed = !decision.rejection.has_value(),
+		.endsChallenge = false,
 	};
 }
 
