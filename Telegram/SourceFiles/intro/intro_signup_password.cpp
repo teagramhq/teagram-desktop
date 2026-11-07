@@ -8,6 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_signup_password.h"
 
 #include "config.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "intro/intro_signup_controls.h"
 #include "intro/intro_signup_error.h"
 #include "intro/intro_signup_terms.h"
@@ -151,7 +153,7 @@ void SignUpPasswordWidget::showFormError(const QString &text) {
 }
 
 void SignUpPasswordWidget::submit() {
-	if (_sentRequest || _termsPromptPending) {
+	if (_sentRequest || _termsPromptPending || _turnstilePending) {
 		return;
 	}
 
@@ -240,22 +242,32 @@ void SignUpPasswordWidget::signUp(SignupTermsPermission,
 	// recovered without this step. Do not let Back cancel the request before
 	// its outcome is known.
 	_backAvailable = false;
-	_sentRequest
-		= api()
-			  .request(MTPauth_SignUp(MTP_flags(0), MTP_string(request.phone),
-									  MTP_bytes(request.phoneHash),
-									  MTP_string(request.firstName),
-									  MTP_string(request.lastName)))
-			  .done([=](const MTPauth_Authorization &result) {
-				  _sentRequest = 0;
-				  signUpDone(result);
-			  })
-			  .fail([=](const MTP::Error &error) {
-				  _sentRequest = 0;
-				  signUpFail(error);
-			  })
-			  .handleAllErrors()
-			  .send();
+	sendSignup(std::move(request));
+}
+
+void SignUpPasswordWidget::sendSignup(
+		SignupRequestData request,
+		QString token,
+		bool retried) {
+	_sentRequest = SendAuthRequest(
+		api(),
+		MTPauth_SignUp(
+			MTP_flags(0),
+			MTP_string(request.phone),
+			MTP_bytes(request.phoneHash),
+			MTP_string(request.firstName),
+			MTP_string(request.lastName)),
+		std::move(token),
+		false,
+		[=](const MTPauth_Authorization &result) {
+			_sentRequest = 0;
+			_turnstilePending = false;
+			signUpDone(result);
+		},
+		[=](const MTP::Error &error) {
+			_sentRequest = 0;
+			signUpFail(error, request, retried);
+		});
 }
 
 void SignUpPasswordWidget::signUpDone(
@@ -269,7 +281,42 @@ void SignUpPasswordWidget::signUpDone(
 	requestPasswordData();
 }
 
-void SignUpPasswordWidget::signUpFail(const MTP::Error &error) {
+void SignUpPasswordWidget::signUpFail(
+		const MTP::Error &error,
+		SignupRequestData request,
+		bool retried) {
+	if (IsTurnstileChallengeError(error.type())) {
+		if (retried) {
+			_turnstilePending = false;
+			_backAvailable = true;
+			showFormError(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		const auto challenge = ParseTurnstileChallenge(error.type());
+		if (!challenge) {
+			_backAvailable = true;
+			showFormError(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		_turnstilePending = true;
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_turnstilePending = false;
+				sendSignup(request, std::move(token), true);
+			},
+			[=] {
+				_turnstilePending = false;
+				_backAvailable = true;
+				showFormError(tr::lng_intro_retry(tr::now));
+			},
+			[=](QString error) {
+				_turnstilePending = false;
+				_backAvailable = true;
+				showFormError(error);
+			});
+		return;
+	}
 	const auto decision = ClassifySignupFailure(
 		error.type(),
 		error.code(),
@@ -342,29 +389,36 @@ void SignUpPasswordWidget::signUpFail(const MTP::Error &error) {
 	showFormError(text);
 }
 
-void SignUpPasswordWidget::reissueCode() {
-	if (_reissuedOnce) {
+void SignUpPasswordWidget::reissueCode(QString token, bool retried) {
+	if (_reissuedOnce && !retried) {
 		showFormError(tr::lng_intro_signup_expired(tr::now));
 		return;
 	}
-	_reissuedOnce = true;
+	if (!retried) {
+		_reissuedOnce = true;
+	}
 	getData()->usernameCode.drop();
-	_sentRequest = api().request(MTPauth_SendCode(
-		MTP_string(getData()->phone),
-		MTP_int(ApiId),
-		MTP_string(ApiHash),
-		MTP_codeSettings(
-			MTP_flags(0),
-			MTPVector<MTPbytes>(),
-			MTPstring(),
-			MTPBool())
-	)).done([=](const MTPauth_SentCode &result) {
-		_sentRequest = 0;
-		reissueDone(result);
-	}).fail([=](const MTP::Error &error) {
-		_sentRequest = 0;
-		reissueFail(error);
-	}).handleAllErrors().send();
+	_sentRequest = SendAuthRequest(
+		api(),
+		MTPauth_SendCode(
+			MTP_string(getData()->phone),
+			MTP_int(ApiId),
+			MTP_string(ApiHash),
+			MTP_codeSettings(
+				MTP_flags(0),
+				MTPVector<MTPbytes>(),
+				MTPstring(),
+				MTPBool())),
+		std::move(token),
+		false,
+		[=](const MTPauth_SentCode &result) {
+			_sentRequest = 0;
+			reissueDone(result);
+		},
+		[=](const MTP::Error &error) {
+			_sentRequest = 0;
+			reissueFail(error, retried);
+		});
 }
 
 void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
@@ -383,7 +437,36 @@ void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void SignUpPasswordWidget::reissueFail(const MTP::Error &error) {
+void SignUpPasswordWidget::reissueFail(
+		const MTP::Error &error,
+		bool retried) {
+	if (IsTurnstileChallengeError(error.type())) {
+		if (retried) {
+			showFormError(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		const auto challenge = ParseTurnstileChallenge(error.type());
+		if (!challenge) {
+			showFormError(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		_turnstilePending = true;
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_turnstilePending = false;
+				reissueCode(std::move(token), true);
+			},
+			[=] {
+				_turnstilePending = false;
+				showFormError(tr::lng_intro_retry(tr::now));
+			},
+			[=](QString error) {
+				_turnstilePending = false;
+				showFormError(error);
+			});
+		return;
+	}
 	if (MTP::IsFloodError(error)) {
 		showFormError(tr::lng_intro_signup_flood(
 			tr::now,
@@ -519,6 +602,8 @@ void SignUpPasswordWidget::routeBackWithNameError(
 }
 
 void SignUpPasswordWidget::cancelled() {
+	_turnstilePending = false;
+	Step::cancelled();
 	if (_sentRequest) {
 		api().request(base::take(_sentRequest)).cancel();
 	}

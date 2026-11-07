@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/abstract_box.h"
 #include "intro/intro_widget.h"
 #include "intro/intro_signup_terms.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "core/file_utilities.h"
 #include "ui/boxes/confirm_box.h"
 #include "lang/lang_keys.h"
@@ -106,14 +108,72 @@ void SignupWidget::activate() {
 }
 
 void SignupWidget::cancelled() {
+	_turnstilePending = false;
+	Step::cancelled();
 	api().request(base::take(_sentRequest)).cancel();
 }
 
 void SignupWidget::nameSubmitDone(const MTPauth_Authorization &result) {
+	_turnstilePending = false;
 	finish(result);
 }
 
-void SignupWidget::nameSubmitFail(const MTP::Error &error) {
+void SignupWidget::sendSignup(
+		SignupRequestData request,
+		QString token,
+		bool retried) {
+	_sentRequest = SendAuthRequest(
+		api(),
+		MTPauth_SignUp(
+			MTP_flags(0),
+			MTP_string(request.phone),
+			MTP_bytes(request.phoneHash),
+			MTP_string(request.firstName),
+			MTP_string(request.lastName)),
+		std::move(token),
+		true,
+		[=](const MTPauth_Authorization &result) {
+			_sentRequest = 0;
+			nameSubmitDone(result);
+		},
+		[=](const MTP::Error &error) {
+			_sentRequest = 0;
+			nameSubmitFail(error, request, retried);
+		});
+}
+
+void SignupWidget::nameSubmitFail(
+		const MTP::Error &error,
+		SignupRequestData request,
+		bool retried) {
+	if (IsTurnstileChallengeError(error.type())) {
+		if (retried) {
+			_turnstilePending = false;
+			showError(tr::lng_intro_server_error());
+			return;
+		}
+		const auto challenge = ParseTurnstileChallenge(error.type());
+		if (!challenge) {
+			showError(tr::lng_intro_server_error());
+			return;
+		}
+		_turnstilePending = true;
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_turnstilePending = false;
+				sendSignup(request, std::move(token), true);
+			},
+			[=] {
+				_turnstilePending = false;
+				showError(tr::lng_intro_retry());
+			},
+			[=](QString error) {
+				_turnstilePending = false;
+				showError(rpl::single(std::move(error)));
+			});
+		return;
+	}
 	if (MTP::IsFloodError(error)) {
 		showError(tr::lng_flood_error());
 		if (_invertOrder) {
@@ -151,7 +211,7 @@ void SignupWidget::nameSubmitFail(const MTP::Error &error) {
 }
 
 void SignupWidget::submit() {
-	if (_sentRequest || _termsPromptPending) {
+	if (_sentRequest || _termsPromptPending || _turnstilePending) {
 		return;
 	}
 	hideError();
@@ -209,21 +269,7 @@ void SignupWidget::submit() {
 			this,
 			[=](SignupTermsPermission, SignupRequestData request) {
 				hideError();
-				_sentRequest
-					= api()
-						  .request(MTPauth_SignUp(MTP_flags(0),
-												  MTP_string(request.phone),
-												  MTP_bytes(request.phoneHash),
-												  MTP_string(request.firstName),
-												  MTP_string(request.lastName)))
-						  .done([=](const MTPauth_Authorization &result) {
-							  nameSubmitDone(result);
-						  })
-						  .fail([=](const MTP::Error &error) {
-							  nameSubmitFail(error);
-						  })
-						  .handleFloodErrors()
-						  .send();
+				sendSignup(std::move(request));
 			}),
 		crl::guard(this, [=] {
 			showError(rpl::single(tr::lng_teagram_terms_declined(tr::now)));

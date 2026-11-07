@@ -9,12 +9,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/flat_map.h"
 
+#include <cstddef>
+
 namespace tr {
 template <typename ...Tags>
 struct phrase;
 } // namespace tr
 
 namespace Ui {
+
+inline constexpr auto kMaxNativeMessageBytes = size_t(1024 * 1024);
 
 [[nodiscard]] QByteArray ComputeStyles(
 	const base::flat_map<QByteArray, const style::color*> &colors,

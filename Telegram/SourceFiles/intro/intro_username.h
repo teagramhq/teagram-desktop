@@ -52,10 +52,10 @@ protected:
 
 private:
 	void usernameChanged();
-	void requestCode();
+	void requestCode(QString token = QString(), bool retried = false);
 	void signIn();
 	void sendCodeDone(const MTPauth_SentCode &result);
-	void requestFail(const MTP::Error &error);
+	void requestFail(const MTP::Error &error, bool retried);
 	void signInDone(const MTPauth_Authorization &result);
 	void signInFail(const MTP::Error &error);
 	void carryForwardAndFinish(const MTPauth_Authorization &result);

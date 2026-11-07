@@ -33,6 +33,7 @@ namespace Intro {
 namespace details {
 
 struct Data;
+struct TurnstileChallenge;
 enum class StackAction;
 enum class Animate;
 
@@ -126,6 +127,11 @@ public:
 
 	void setErrorCentered(bool centered);
 	void showError(rpl::producer<QString> text);
+	[[nodiscard]] bool showTurnstileChallenge(
+		TurnstileChallenge challenge,
+		Fn<void(QString)> token,
+		Fn<void()> failed,
+		Fn<void(QString)> unavailable);
 	void hideError() {
 		showError(rpl::single(QString()));
 	}
@@ -221,6 +227,7 @@ private:
 	[[nodiscard]] QPixmap prepareContentSnapshot();
 	[[nodiscard]] QPixmap prepareSlideAnimation();
 	void showFinished();
+	void closeTurnstileChallenge();
 
 	void prepareCoverMask();
 	void paintCover(QPainter &p, int top);
@@ -235,6 +242,7 @@ private:
 	Fn<void()> _showTermsCallback;
 	Fn<void()> _cancelNearestDcCallback;
 	Fn<void(Fn<void()> accept, Fn<void()> decline)> _showSignupTermsCallback;
+	Fn<void()> _closeTurnstileChallenge;
 
 	rpl::variable<QString> _titleText;
 	object_ptr<Ui::FlatLabel> _title;
