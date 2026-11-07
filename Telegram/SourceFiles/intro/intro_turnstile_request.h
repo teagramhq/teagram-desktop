@@ -21,11 +21,11 @@ SendAuthRequest(MTP::Sender &sender, Request request, QString token,
 								  : configured.handleAllErrors())
 			.send();
 	};
-	const auto result
-		= token.isEmpty()
-			  ? send(sender.request(std::move(request)))
-			  : send(sender.requestWrapped<Request>(MTPinvokeWithReCaptcha(
-					MTP_string(token), std::move(request))));
+	const auto result = token.isEmpty()
+							? send(sender.request(std::move(request)))
+							: send(sender.requestWrapped<Request>(
+								  MTPInvokeWithReCaptcha<Request>(
+									  MTP_string(token), std::move(request))));
 	token.fill(QChar(0));
 	token.clear();
 	return result;
