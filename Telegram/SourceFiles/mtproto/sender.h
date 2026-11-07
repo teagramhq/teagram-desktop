@@ -206,16 +206,15 @@ public:
 		return *_instance;
 	}
 
-	template <typename Request>
+	template <typename Request, typename WrappedRequest = Request>
 	class SpecificRequestBuilder : public RequestBuilder {
-	private:
+	  private:
 		friend class Sender;
-		SpecificRequestBuilder(not_null<Sender*> sender, Request &&request) noexcept
-		: RequestBuilder(sender)
-		, _request(std::move(request)) {
-		}
+		SpecificRequestBuilder(not_null<Sender *> sender,
+							   WrappedRequest &&request) noexcept
+			: RequestBuilder(sender), _request(std::move(request)) {}
 
-	public:
+	  public:
 		SpecificRequestBuilder(SpecificRequestBuilder &&other) = default;
 
 		[[nodiscard]] SpecificRequestBuilder &toDC(ShiftedDcId dcId) noexcept {
@@ -314,8 +313,7 @@ public:
 		}
 
 	private:
-		Request _request;
-
+	  WrappedRequest _request;
 	};
 
 	class SentRequestWrap {
@@ -342,6 +340,11 @@ public:
 		typename = std::enable_if_t<!std::is_reference_v<Request>>,
 		typename = typename Request::Unboxed>
 	[[nodiscard]] SpecificRequestBuilder<Request> request(Request &&request) noexcept;
+	template <typename Request, typename WrappedRequest,
+			  typename = std::enable_if_t<!std::is_reference_v<Request>>,
+			  typename = typename Request::Unboxed>
+	[[nodiscard]] SpecificRequestBuilder<Request, WrappedRequest>
+	requestWrapped(WrappedRequest &&request) noexcept;
 
 	[[nodiscard]] SentRequestWrap request(mtpRequestId requestId) noexcept;
 
@@ -468,6 +471,13 @@ private:
 template <typename Request, typename, typename>
 Sender::SpecificRequestBuilder<Request> Sender::request(Request &&request) noexcept {
 	return SpecificRequestBuilder<Request>(this, std::move(request));
+}
+
+template <typename Request, typename WrappedRequest, typename, typename>
+Sender::SpecificRequestBuilder<Request, WrappedRequest>
+Sender::requestWrapped(WrappedRequest &&request) noexcept {
+	return SpecificRequestBuilder<Request, WrappedRequest>(this,
+														   std::move(request));
 }
 
 inline Sender::SentRequestWrap Sender::request(mtpRequestId requestId) noexcept {

@@ -15,16 +15,16 @@ template <typename Request, typename Done, typename Fail>
 [[nodiscard]] mtpRequestId
 SendAuthRequest(MTP::Sender &sender, Request request, QString token,
 				bool handleFloodErrors, Done done, Fail fail) {
-	const auto send = [&](auto request) {
-		auto builder = sender.request(std::move(request));
+	const auto send = [&](auto builder) {
 		builder.done(done).fail(fail);
 		return handleFloodErrors ? builder.handleFloodErrors().send()
 								 : builder.handleAllErrors().send();
 	};
-	const auto result = token.isEmpty()
-							? send(std::move(request))
-							: send(MTPinvokeWithReCaptcha(MTP_string(token),
-														  std::move(request)));
+	const auto result
+		= token.isEmpty()
+			  ? send(sender.request(std::move(request)))
+			  : send(sender.requestWrapped<Request>(MTPinvokeWithReCaptcha(
+					MTP_string(token), std::move(request))));
 	token.fill(QChar(0));
 	token.clear();
 	return result;
