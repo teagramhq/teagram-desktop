@@ -184,6 +184,7 @@ class InviteFriends final : public PeerListController,
 	void updateSummary();
 	void updateMessage();
 	void loadInvites(Fn<void()> done = nullptr);
+	void loadQueuedInvites();
 	void createInvite();
 	void revokeInvite(InviteData data);
 	void showInviteLink(QString link, TimeId expiresAt);
@@ -199,6 +200,7 @@ class InviteFriends final : public PeerListController,
 	Ui::FlatLabel *_messageLabel = nullptr;
 	PeerListContent *_list = nullptr;
 	mtpRequestId _listRequestId = 0;
+	details::InviteListRefresh _listRefresh;
 	mtpRequestId _createRequestId = 0;
 	mtpRequestId _revokeRequestId = 0;
 	details::InviteCreateRequest _createRequest;
@@ -484,6 +486,10 @@ void InviteFriends::prepare() {
 }
 
 void InviteFriends::loadInvites(Fn<void()> done) {
+	if (details::QueueInviteListRefreshIfActive(
+			_listRefresh, _available, _listRequestId, std::move(done))) {
+		return;
+	}
 	const auto requestId = details::RunInviteListRequest(
 		_available, _listRequestId,
 		[=] {
@@ -513,6 +519,7 @@ void InviteFriends::loadInvites(Fn<void()> done) {
 				if (done) {
 					done();
 				}
+				loadQueuedInvites();
 			});
 		},
 		[=](const MTP::Error &error) {
@@ -542,11 +549,18 @@ void InviteFriends::loadInvites(Fn<void()> done) {
 			if (done) {
 				done();
 			}
+			loadQueuedInvites();
 		});
 	if (requestId) {
 		_listRequestId = *requestId;
 		_createButton->setDisabled(true);
 	}
+}
+
+void InviteFriends::loadQueuedInvites() {
+	(void)details::RunQueuedInviteListRefresh(
+		_listRefresh, _listRequestId,
+		[=](Fn<void()> done) { loadInvites(std::move(done)); });
 }
 
 void InviteFriends::setRows(const MTPDteagram_userInvites &data) {

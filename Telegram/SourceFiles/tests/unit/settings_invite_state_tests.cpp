@@ -203,6 +203,72 @@ TEST_CASE(InviteManagementRevokeEligibility) {
 	CHECK(!CanRevokeInvite(u"used"_q, false));
 }
 
+TEST_CASE(InviteListRefreshQueuedBehindActiveRequest) {
+	auto transport = FakeInviteTransport();
+	auto refresh = InviteListRefresh();
+	auto requestId = mtpRequestId(0);
+	auto list = FakeInviteListResponse();
+	auto listRequests = 0;
+	auto listResponses = 0;
+	auto resultToasts = 0;
+	auto startList = std::function<void(Fn<void()>)>();
+	startList = [&](Fn<void()> done) {
+		++listRequests;
+		requestId = transport.list(
+			[&, done](const FakeInviteListResponse &response) {
+				requestId = 0;
+				list = response;
+				++listResponses;
+				if (done) {
+					done();
+				}
+				const auto queued = RunQueuedInviteListRefresh(
+					refresh, requestId, [&](Fn<void()> queuedDone) {
+						startList(std::move(queuedDone));
+					});
+				if (listResponses == 1) {
+					CHECK(queued);
+				} else {
+					CHECK(!queued);
+				}
+			},
+			[](const QString &) {});
+	};
+
+	startList(nullptr);
+	CHECK_EQ(listRequests, 1);
+	const auto revokeRequest = RunInviteRevokeRequest(
+		u"pending"_q, false, [] {},
+		[&](auto done, auto fail) {
+			return transport.revoke(42, std::move(done), std::move(fail));
+		},
+		[&](const bool &success) {
+			CHECK(success);
+			CHECK(QueueInviteListRefreshIfActive(refresh, true, requestId, [&] {
+				if (list.ids.empty()) {
+					++resultToasts;
+				}
+			}));
+		},
+		[](const QString &) {});
+	CHECK(revokeRequest.has_value());
+	CHECK_EQ(transport.revokeRequests, 1);
+	CHECK_EQ(listRequests, 1);
+	CHECK_EQ(resultToasts, 0);
+
+	transport.succeedRevoke(true);
+	CHECK_EQ(listRequests, 1);
+	CHECK_EQ(resultToasts, 0);
+	transport.succeedList({.ids = {42}});
+	CHECK_EQ(listRequests, 2);
+	CHECK_EQ(resultToasts, 0);
+	CHECK_EQ(list.ids.size(), 1U);
+
+	transport.succeedList({});
+	CHECK_EQ(list.ids.size(), 0U);
+	CHECK_EQ(resultToasts, 1);
+}
+
 TEST_CASE(InviteListTitleMatchesVisibleContent) {
 	CHECK(ShouldShowInviteListTitle(false, false, false));
 	CHECK(ShouldShowInviteListTitle(false, true, false));
