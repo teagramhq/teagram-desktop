@@ -64,6 +64,7 @@ namespace {
 enum class TurnstileFailureReason {
 	WidgetDestroyed,
 	NavigationFailed,
+	NavigationRejected,
 	MainFrameUrlChanged,
 	ChallengeError,
 	WindowClosed,
@@ -77,6 +78,8 @@ TurnstileFailureReasonText(TurnstileFailureReason reason) {
 		return u"web view widget destroyed"_q;
 	case TurnstileFailureReason::NavigationFailed:
 		return u"engine navigation failed"_q;
+	case TurnstileFailureReason::NavigationRejected:
+		return u"Linux navigation rejected"_q;
 	case TurnstileFailureReason::MainFrameUrlChanged:
 		return u"Linux main-frame URL changed"_q;
 	case TurnstileFailureReason::ChallengeError:
@@ -244,6 +247,8 @@ bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
 		false
 #endif
 	);
+	const auto outcome
+		= ResolveTurnstileNavigationOutcome(decision.rejection, false);
 	if (decision.initialNavigation) {
 		_initialNavigationPending = false;
 	}
@@ -251,7 +256,10 @@ bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
 		LOG(("Intro Turnstile navigation rejected: %1")
 				.arg(TurnstileNavigationRejectionText(*decision.rejection)));
 	}
-	return !decision.rejection.has_value();
+	if (outcome.endsChallenge) {
+		finishFailed(TurnstileFailureReason::NavigationRejected, true, true);
+	}
+	return outcome.allowed;
 }
 
 void TurnstileBox::navigationDone(bool success) {
@@ -272,7 +280,10 @@ void TurnstileBox::navigationStateUpdated(
 	}
 	const auto url = QString::fromStdString(state.url);
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
-	if (_linuxNavigationGuard.mainFrameUrlUpdated(url, _initialUrl)) {
+	const auto outcome = ResolveTurnstileNavigationOutcome(
+		std::nullopt,
+		_linuxNavigationGuard.mainFrameUrlUpdated(url, _initialUrl));
+	if (outcome.endsChallenge) {
 		finishFailed(TurnstileFailureReason::MainFrameUrlChanged, true, true);
 		return;
 	}

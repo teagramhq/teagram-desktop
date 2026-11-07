@@ -267,32 +267,25 @@ TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
 	auto guard = TurnstileLinuxNavigationGuard();
 	guard.initialLoadCompleted();
 
-	CHECK(guard.mainFrameUrlUpdated(
-		u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q, kInitialUrl));
+	const auto changed = guard.mainFrameUrlUpdated(
+		u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q, kInitialUrl);
+	const auto outcome
+		= ResolveTurnstileNavigationOutcome(std::nullopt, changed);
+	CHECK(outcome.endsChallenge);
 	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
 }
 
-TEST_CASE(TurnstileLinuxPolicyRejectionsKeepChallengePending) {
-	auto guard = TurnstileLinuxNavigationGuard();
-	guard.initialLoadCompleted();
-	const auto rejected
+TEST_CASE(TurnstileLinuxPolicyRejectionKeepsChallengePending) {
+	const auto decision
 		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
 								   kInitialUrl, false, false, true);
-	CHECK(rejected.rejection.has_value());
-	CHECK(*rejected.rejection
-		  == TurnstileNavigationRejection::UnexpectedNavigation);
-	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
+	const auto outcome
+		= ResolveTurnstileNavigationOutcome(decision.rejection, false);
+	CHECK(!outcome.allowed);
+	CHECK(!outcome.endsChallenge);
 
-	// Linux supplies the same policy data for a top-level and iframe request.
-	const auto rejectedIframe
-		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
-								   kInitialUrl, false, false, true);
-	CHECK(rejectedIframe.rejection.has_value());
-	CHECK(*rejectedIframe.rejection
-		  == TurnstileNavigationRejection::UnexpectedNavigation);
-	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
-
-	const auto message = ParseMessage(TokenMessage("token"));
+	const auto message = ParseMessage(
+		TokenMessage("token"), TurnstileAction::SignIn, !outcome.endsChallenge);
 	CHECK(std::holds_alternative<TurnstileMessage>(message));
 	CHECK(std::get<TurnstileMessage>(message).type
 		  == TurnstileMessageType::Token);

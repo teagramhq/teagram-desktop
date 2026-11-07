@@ -269,6 +269,15 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 	};
 }
 
+TurnstileNavigationOutcome ResolveTurnstileNavigationOutcome(
+	std::optional<TurnstileNavigationRejection> rejection,
+	bool mainFrameUrlChanged) {
+	return {
+		.allowed = !rejection.has_value(),
+		.endsChallenge = mainFrameUrlChanged,
+	};
+}
+
 QString TurnstileMessageRejectionText(TurnstileMessageRejection rejection) {
 	switch (rejection) {
 	case TurnstileMessageRejection::PayloadTooLarge:
