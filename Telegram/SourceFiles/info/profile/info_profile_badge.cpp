@@ -63,14 +63,10 @@ Ui::RpWidget *Badge::widget() const {
 }
 
 void Badge::setContent(Content content) {
-	if (!(_allowed & content.badge)
-		|| (!_session->premiumBadgesShown()
-			&& content.badge == BadgeType::Premium)) {
-		content.badge = BadgeType::None;
-	}
-	if (!(_allowed & content.badge)) {
-		content.badge = BadgeType::None;
-	}
+	content = details::FilterBadgeContent(
+		content,
+		bool(_allowed & content.badge),
+		_session->premiumBadgesShown());
 	if (_content == content) {
 		return;
 	}
@@ -93,6 +89,8 @@ void Badge::setContent(Content content) {
 				return tr::lng_profile_bot_emoji_status_access(tr::now);
 			}
 			return tr::lng_premium_summary_title(tr::now);
+		case BadgeType::EmojiStatus:
+			return tr::lng_profile_bot_emoji_status_access(tr::now);
 		case BadgeType::Scam:
 			return tr::lng_scam_badge(tr::now);
 		case BadgeType::Fake:
@@ -106,7 +104,8 @@ void Badge::setContent(Content content) {
 	switch (_content.badge) {
 	case BadgeType::Verified:
 	case BadgeType::BotVerified:
-	case BadgeType::Premium: {
+	case BadgeType::Premium:
+	case BadgeType::EmojiStatus: {
 		const auto id = _content.emojiStatusId;
 		const auto emoji = id
 			? (Data::FrameSizeFromTag(sizeTag())
@@ -115,7 +114,7 @@ void Badge::setContent(Content content) {
 		const auto &style = st();
 		const auto icon = (_content.badge == BadgeType::Verified)
 			? &style.verified
-			: id
+			: (id || _content.badge == BadgeType::EmojiStatus)
 			? nullptr
 			: &style.premium;
 		const auto iconForeground = (_content.badge == BadgeType::Verified)
@@ -210,7 +209,11 @@ void Badge::setContent(Content content) {
 	} break;
 	}
 
-	if (!HasPremiumClick(_content) || !_premiumClickCallback) {
+	if (_content.badge == BadgeType::EmojiStatus
+		&& _emojiStatusClickCallback) {
+		_view->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+		_view->setClickedCallback(_emojiStatusClickCallback);
+	} else if (!HasPremiumClick(_content) || !_premiumClickCallback) {
 		_view->setAttribute(Qt::WA_TransparentForMouseEvents);
 	} else {
 		_view->setClickedCallback(_premiumClickCallback);
@@ -227,6 +230,18 @@ void Badge::setPremiumClickCallback(Fn<void()> callback) {
 		} else {
 			_view->setAttribute(Qt::WA_TransparentForMouseEvents, false);
 			_view->setClickedCallback(_premiumClickCallback);
+		}
+	}
+}
+
+void Badge::setEmojiStatusClickCallback(Fn<void()> callback) {
+	_emojiStatusClickCallback = std::move(callback);
+	if (_view && _content.badge == BadgeType::EmojiStatus) {
+		if (!_emojiStatusClickCallback) {
+			_view->setAttribute(Qt::WA_TransparentForMouseEvents);
+		} else {
+			_view->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+			_view->setClickedCallback(_emojiStatusClickCallback);
 		}
 	}
 }
@@ -275,23 +290,15 @@ Data::CustomEmojiSizeTag Badge::sizeTag() const {
 }
 
 rpl::producer<Badge::Content> BadgeContentForPeer(not_null<PeerData*> peer) {
-	const auto statusOnlyForPremium = peer->isUser();
 	return rpl::combine(
 		BadgeValue(peer),
 		EmojiStatusIdValue(peer)
 	) | rpl::map([=](BadgeType badge, EmojiStatusId emojiStatusId) {
-		if (emojiStatusId.collectible && (badge == BadgeType::Verified)) {
-			return Badge::Content{ BadgeType::Premium, emojiStatusId };
-		}
-		if (badge == BadgeType::Verified) {
-			badge = BadgeType::None;
-		}
-		if (statusOnlyForPremium && badge != BadgeType::Premium) {
-			emojiStatusId = EmojiStatusId();
-		} else if (emojiStatusId && badge == BadgeType::None) {
-			badge = BadgeType::Premium;
-		}
-		return Badge::Content{ badge, emojiStatusId };
+		return details::ResolveBadgeContentForPeer(
+			badge,
+			emojiStatusId,
+			peer->isUser(),
+			peer->usesCustomServer());
 	});
 }
 

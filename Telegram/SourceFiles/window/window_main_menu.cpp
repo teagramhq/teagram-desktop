@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "info/info_memento.h"
 #include "info/profile/info_profile_badge.h"
 #include "settings/settings_common.h"
@@ -324,7 +325,8 @@ MainMenu::MainMenu(
 	_emojiStatusPanel.get(),
 	[=] { return controller->isGifPausedAtLeastFor(GifPauseReason::Layer); },
 	kPlayStatusLimit,
-	Info::Profile::BadgeType::Premium))
+	Info::Profile::BadgeType::Premium
+		| Info::Profile::BadgeType::EmojiStatus))
 , _scroll(this, st::defaultSolidScroll)
 , _inner(_scroll->setOwnedWidget(
 	object_ptr<Ui::VerticalLayout>(_scroll.data())))
@@ -460,6 +462,9 @@ MainMenu::MainMenu(
 		moveBadge();
 	}, lifetime());
 	_badge->setPremiumClickCallback([=] {
+		chooseEmojiStatus();
+	});
+	_badge->setEmojiStatusClickCallback([=] {
 		chooseEmojiStatus();
 	});
 
@@ -671,7 +676,10 @@ void MainMenu::setupAccountsToggle() {
 }
 
 void MainMenu::setupSetEmojiStatus() {
-	if (!_controller->session().paidFeaturesSupported()) {
+	const auto &session = _controller->session();
+	if (!Data::details::EmojiStatusEntryVisible(
+			session.paidFeaturesSupported(),
+			session.mtp().dcOptions().hasCustomServer())) {
 		_setEmojiStatus->hide();
 		return;
 	}
@@ -898,14 +906,33 @@ void MainMenu::updateInnerControlsGeometry() {
 }
 
 void MainMenu::chooseEmojiStatus() {
-	if (!_controller->session().paidFeaturesSupported()
-		|| _controller->showFrozenError()) {
+	const auto &session = _controller->session();
+	const auto paidFeaturesSupported = session.paidFeaturesSupported();
+	const auto customServer = session.mtp().dcOptions().hasCustomServer();
+	if (!Data::details::EmojiStatusEntryVisible(
+			paidFeaturesSupported,
+			customServer)) {
 		return;
-	} else if (const auto widget = _badge->widget()) {
+	}
+	const auto action = Data::details::ResolveEmojiStatusPickerAction(
+		paidFeaturesSupported,
+		customServer,
+		_controller->showFrozenError(),
+		_badge->widget() != nullptr);
+	switch (action) {
+	case Data::details::EmojiStatusPickerAction::NoAction:
+		return;
+	case Data::details::EmojiStatusPickerAction::OpenPicker:
 		setupEmojiStatusDismiss();
-		_emojiStatusPanel->show(_controller, widget, _badge->sizeTag());
-	} else {
+		if (const auto widget = _badge->widget()) {
+			_emojiStatusPanel->show(_controller, widget, _badge->sizeTag());
+		} else {
+			_emojiStatusPanel->show(_controller, _setEmojiStatus);
+		}
+		return;
+	case Data::details::EmojiStatusPickerAction::PremiumPreview:
 		ShowPremiumPreviewBox(_controller, PremiumFeature::EmojiStatus);
+		return;
 	}
 }
 

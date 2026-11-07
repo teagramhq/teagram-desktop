@@ -153,7 +153,8 @@ Cover::Cover(
 			Window::GifPauseReason::Layer);
 	},
 	0, // customStatusLoopsLimit
-	Info::Profile::BadgeType::Premium)
+	Info::Profile::BadgeType::Premium
+		| Info::Profile::BadgeType::EmojiStatus)
 , _userpic(
 	this,
 	controller,
@@ -209,6 +210,12 @@ Cover::Cover(
 	});
 
 	_badge.setPremiumClickCallback([=] {
+		_emojiStatusPanel.show(
+			_controller,
+			_badge.widget(),
+			_badge.sizeTag());
+	});
+	_badge.setEmojiStatusClickCallback([=] {
 		_emojiStatusPanel.show(
 			_controller,
 			_badge.widget(),

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "data/stickers/data_custom_emoji_policy.h"
+#include "info/profile/info_profile_badge.h"
 
 TEST_CASE(CustomEmojiPremiumGateCanBeOverriddenWithoutPremium) {
 	CHECK(Data::details::CustomEmojiRequiresPremium(false, false));
@@ -23,8 +24,13 @@ TEST_CASE(CustomServerStatusKeepsCollectiblesPremiumOnly) {
 }
 
 TEST_CASE(CustomEmojiCustomServerActionsHappyPathSmoke) {
-	CHECK(!Data::details::MessageCustomEmojiRequiresPremium(false, true, true));
-	CHECK(Data::details::ResolveReactActionGate({
+	const auto messageAction = Data::details::ResolveMessageCustomEmojiAction(
+		false,
+		true,
+		true);
+	CHECK(messageAction == Data::details::MessageCustomEmojiAction::Keep);
+
+	const auto reactionAction = Data::details::ResolveReactActionGate({
 			  .reactionsAreTags = false,
 			  .canReact = true,
 			  .premium = false,
@@ -32,13 +38,45 @@ TEST_CASE(CustomEmojiCustomServerActionsHappyPathSmoke) {
 			  .reactionAlreadyAdded = false,
 			  .broadcast = false,
 			  .customServer = true,
-		  })
-		  == Data::details::ReactActionGate::Allowed);
-	CHECK(!Data::details::EmojiStatusRequiresPremium(false, true, false));
+		  });
+	CHECK(reactionAction == Data::details::ReactActionGate::Allowed);
+
+	CHECK(Data::details::ResolveEmojiStatusPickerAction(
+			  false,
+			  true,
+			  false,
+			  false)
+		  == Data::details::EmojiStatusPickerAction::OpenPicker);
+	CHECK(Data::details::EmojiStatusEntryVisible(false, true));
+	const auto chosenStatus = EmojiStatusId{ .documentId = 42 };
+	const auto statusBadge = Info::Profile::details::ResolveBadgeContentForPeer(
+		Info::Profile::BadgeType::None,
+		chosenStatus,
+		true,
+		true);
+	CHECK(statusBadge.badge == Info::Profile::BadgeType::EmojiStatus);
+	CHECK(statusBadge.emojiStatusId == chosenStatus);
+	const auto renderedStatus = Info::Profile::details::FilterBadgeContent(
+		statusBadge,
+		true,
+		false);
+	CHECK(renderedStatus == statusBadge);
+	const auto stockStatus = Info::Profile::details::ResolveBadgeContentForPeer(
+		Info::Profile::BadgeType::None,
+		chosenStatus,
+		true,
+		false);
+	CHECK(stockStatus.badge == Info::Profile::BadgeType::None);
+	CHECK(!stockStatus.emojiStatusId);
 }
 
 TEST_CASE(CustomEmojiActionPremiumGatesStayScoped) {
-	CHECK(Data::details::MessageCustomEmojiRequiresPremium(true, false, false));
+	CHECK(
+		Data::details::ResolveMessageCustomEmojiAction(true, false, false)
+		== Data::details::MessageCustomEmojiAction::PremiumGate);
+	CHECK(
+		Data::details::ResolveMessageCustomEmojiAction(false, true, false)
+		== Data::details::MessageCustomEmojiAction::PremiumGate);
 	CHECK(Data::details::ResolveReactActionGate({
 			  .reactionsAreTags = false,
 			  .canReact = true,
@@ -71,4 +109,29 @@ TEST_CASE(CustomEmojiActionPremiumGatesStayScoped) {
 		  == Data::details::ReactActionGate::Restricted);
 	CHECK(Data::details::EmojiStatusRequiresPremium(false, true, true));
 	CHECK(!Data::details::EmojiStatusRequiresPremium(true, false, true));
+	CHECK(Data::details::ResolveEmojiStatusPickerAction(
+			  false,
+			  false,
+			  false,
+			  false)
+		  == Data::details::EmojiStatusPickerAction::NoAction);
+	CHECK(!Data::details::EmojiStatusEntryVisible(false, false));
+	CHECK(Data::details::ResolveEmojiStatusPickerAction(
+			  true,
+			  false,
+			  false,
+			  false)
+		  == Data::details::EmojiStatusPickerAction::PremiumPreview);
+	CHECK(Data::details::ResolveEmojiStatusPickerAction(
+			  false,
+			  true,
+			  true,
+			  false)
+		  == Data::details::EmojiStatusPickerAction::NoAction);
+
+	const auto hiddenPremiumBadge = Info::Profile::details::FilterBadgeContent(
+		{ Info::Profile::BadgeType::Premium },
+		true,
+		false);
+	CHECK(hiddenPremiumBadge.badge == Info::Profile::BadgeType::None);
 }

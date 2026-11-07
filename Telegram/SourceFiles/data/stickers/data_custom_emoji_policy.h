@@ -21,6 +21,46 @@ MessageCustomEmojiRequiresPremium(bool premiumPossible, bool customServer,
 		   || !peerAllowsWithoutPremium;
 }
 
+enum class MessageCustomEmojiAction {
+	Keep,
+	PremiumGate,
+};
+
+[[nodiscard]] constexpr MessageCustomEmojiAction
+ResolveMessageCustomEmojiAction(bool premiumPossible, bool customServer,
+								bool peerAllowsWithoutPremium) {
+	return MessageCustomEmojiRequiresPremium(
+		premiumPossible,
+		customServer,
+		peerAllowsWithoutPremium)
+		? MessageCustomEmojiAction::PremiumGate
+		: MessageCustomEmojiAction::Keep;
+}
+
+enum class EmojiStatusPickerAction {
+	NoAction,
+	OpenPicker,
+	PremiumPreview,
+};
+
+[[nodiscard]] constexpr bool
+EmojiStatusEntryVisible(bool paidFeaturesSupported, bool customServer) {
+	return paidFeaturesSupported || customServer;
+}
+
+[[nodiscard]] constexpr EmojiStatusPickerAction
+ResolveEmojiStatusPickerAction(bool paidFeaturesSupported, bool customServer,
+							   bool frozen, bool badgeVisible) {
+	if (frozen) {
+		return EmojiStatusPickerAction::NoAction;
+	} else if (customServer || (paidFeaturesSupported && badgeVisible)) {
+		return EmojiStatusPickerAction::OpenPicker;
+	} else if (paidFeaturesSupported) {
+		return EmojiStatusPickerAction::PremiumPreview;
+	}
+	return EmojiStatusPickerAction::NoAction;
+}
+
 enum class ReactActionGate {
 	Allowed,
 	Restricted,
