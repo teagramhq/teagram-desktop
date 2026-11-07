@@ -310,11 +310,9 @@ void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
 			});
 		return;
 	}
-	const auto decision = ClassifySignupFailure(
-		error.type(),
-		error.code(),
-		MTP::IsFloodError(error),
-		_reissuedOnce);
+	const auto decision = ClassifySignupFailure(error.type(), error.code(),
+												MTP::IsFloodError(error),
+												_codeReissue.wasReissuedOnce());
 	_backAvailable = decision.backAvailable;
 
 	auto text = QString();
@@ -383,12 +381,9 @@ void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
 }
 
 void SignUpPasswordWidget::reissueCode(QString token, bool retried) {
-	if (_reissuedOnce && !retried) {
+	if (!_codeReissue.begin(retried)) {
 		showFormError(tr::lng_intro_signup_expired(tr::now));
 		return;
-	}
-	if (!retried) {
-		_reissuedOnce = true;
 	}
 	getData()->usernameCode.drop();
 	_sentRequest = SendAuthRequest(
@@ -444,10 +439,12 @@ void SignUpPasswordWidget::reissueFail(const MTP::Error &error, bool retried) {
 			},
 			[=] {
 				_turnstilePending = false;
+				_codeReissue.challengeAborted();
 				showFormError(tr::lng_intro_retry(tr::now));
 			},
 			[=](QString error) {
 				_turnstilePending = false;
+				_codeReissue.challengeAborted();
 				showFormError(error);
 			});
 		return;

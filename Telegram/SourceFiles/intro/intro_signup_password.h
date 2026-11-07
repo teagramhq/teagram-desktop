@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/bytes.h"
 #include "intro/intro_step.h"
+#include "intro/intro_signup_error.h"
 #include "intro/intro_signup_terms.h"
 #include "core/core_cloud_password.h"
 
@@ -92,7 +93,7 @@ private:
 	rpl::variable<bool> _backAvailable = true;
 	mtpRequestId _sentRequest = 0;
 	bool _signupDone = false;
-	bool _reissuedOnce = false;
+	SignupCodeReissueState _codeReissue;
 	bool _turnstilePending = false;
 	SignupTermsGate _termsGate;
 	bool _termsPromptPending = false;

@@ -44,6 +44,25 @@ struct SignupFailureDecision {
 	int floodWaitSeconds = 0;
 };
 
+class SignupCodeReissueState final {
+  public:
+	[[nodiscard]] bool begin(bool retried) {
+		if (_reissuedOnce && !retried) {
+			return false;
+		} else if (!retried) {
+			_reissuedOnce = true;
+		}
+		return true;
+	}
+
+	[[nodiscard]] bool wasReissuedOnce() const { return _reissuedOnce; }
+
+	void challengeAborted() { _reissuedOnce = false; }
+
+  private:
+	bool _reissuedOnce = false;
+};
+
 [[nodiscard]] SignupFailureDecision ClassifySignupFailure(
 	const QString &errorType,
 	int errorCode,
