@@ -99,7 +99,7 @@ class FakeInviteTransport final {
 	Fail _createFail;
 };
 
-TEST_CASE(InviteManagementHappyPathSmoke) {
+TEST_CASE(InviteManagementRequestHelperModel) {
 	auto transport = FakeInviteTransport();
 	auto available = true;
 	auto listRequestId = mtpRequestId(0);
@@ -168,7 +168,7 @@ TEST_CASE(InviteManagementHappyPathSmoke) {
 	auto revokeRequestId = mtpRequestId(0);
 	const auto revokeInvite = [&] {
 		const auto requestId = RunInviteRevokeRequest(
-			u"pending"_q, bool(revokeRequestId), [] {},
+			InviteState::Pending, bool(revokeRequestId), [] {},
 			[&](auto done, auto fail) {
 				return transport.revoke(createdInviteId, std::move(done),
 										std::move(fail));
@@ -198,9 +198,17 @@ TEST_CASE(InviteManagementHappyPathSmoke) {
 }
 
 TEST_CASE(InviteManagementRevokeEligibility) {
-	CHECK(CanRevokeInvite(u"pending"_q, false));
-	CHECK(!CanRevokeInvite(u"pending"_q, true));
-	CHECK(!CanRevokeInvite(u"used"_q, false));
+	CHECK(CanRevokeInvite(InviteState::Pending, false));
+	CHECK(!CanRevokeInvite(InviteState::Pending, true));
+	CHECK(!CanRevokeInvite(InviteState::Used, false));
+}
+
+TEST_CASE(InviteStatesAreParsedOnceAndUnknownStatesRejected) {
+	CHECK(ParseInviteState(u"pending"_q) == InviteState::Pending);
+	CHECK(ParseInviteState(u"used"_q) == InviteState::Used);
+	CHECK(ParseInviteState(u"expired"_q) == InviteState::Expired);
+	CHECK(ParseInviteState(u"revoked"_q) == InviteState::Revoked);
+	CHECK(!ParseInviteState(u"future-state"_q));
 }
 
 TEST_CASE(
@@ -260,7 +268,7 @@ TEST_CASE(
 			CHECK_EQ(transport.listRequests, 1);
 		}
 		const auto revokeRequest = RunInviteRevokeRequest(
-			u"pending"_q, false, [] {},
+			InviteState::Pending, false, [] {},
 			[&](auto done, auto fail) {
 				return transport.revoke(42, std::move(done), std::move(fail));
 			},
@@ -394,6 +402,7 @@ TEST_CASE(InviteManagementClassifiesCreateFailures) {
 	CHECK(waited.kind == InviteCreateFailureKind::AccountTooNew);
 	CHECK(waited.waitSeconds.has_value());
 	CHECK_EQ(*waited.waitSeconds, 3600);
+	CHECK(!waited.blocksCreate);
 
 	const auto unknownWait = ClassifyInviteCreateFailure(
 		u"USER_INVITE_ACCOUNT_TOO_NEW_WAIT_unknown"_q, false);
@@ -404,6 +413,7 @@ TEST_CASE(InviteManagementClassifiesCreateFailures) {
 		u"USER_INVITE_REGISTRATION_CLOSED"_q, false);
 	CHECK(closed.kind == InviteCreateFailureKind::RegistrationClosed);
 	CHECK(!closed.registrationOpen);
+	CHECK(closed.blocksCreate);
 
 	const auto open = ClassifyInviteCreateFailure(
 		u"USER_INVITE_REGISTRATION_CLOSED"_q, true);
@@ -412,10 +422,14 @@ TEST_CASE(InviteManagementClassifiesCreateFailures) {
 
 	CHECK(ClassifyInviteCreateFailure(u"USER_INVITES_DISABLED"_q, false).kind
 		  == InviteCreateFailureKind::InvitesDisabled);
+	CHECK(ClassifyInviteCreateFailure(u"USER_INVITES_DISABLED"_q, false)
+			  .blocksCreate);
 	CHECK(ClassifyInviteCreateFailure(u"USER_INVITE_WEEKLY_LIMIT_REACHED"_q,
 									  false)
 			  .kind
 		  == InviteCreateFailureKind::WeeklyLimitReached);
+	CHECK(ClassifyInviteCreateFailure(u"FLOOD_WAIT_30"_q, false, true).kind
+		  == InviteCreateFailureKind::FloodWait);
 	CHECK(ClassifyInviteCreateFailure(u"NETWORK_TIMEOUT"_q, false).kind
 		  == InviteCreateFailureKind::Other);
 }

@@ -53,8 +53,25 @@ InviteListFailure ClassifyInviteListFailure(const QString &type) {
 	return InviteListFailure::Retry;
 }
 
+std::optional<InviteState> ParseInviteState(const QString &state) {
+	if (state == u"pending"_q) {
+		return InviteState::Pending;
+	} else if (state == u"used"_q) {
+		return InviteState::Used;
+	} else if (state == u"expired"_q) {
+		return InviteState::Expired;
+	} else if (state == u"revoked"_q) {
+		return InviteState::Revoked;
+	}
+	return std::nullopt;
+}
+
 InviteCreateFailure ClassifyInviteCreateFailure(const QString &type,
-												bool registrationOpen) {
+												bool registrationOpen,
+												bool floodError) {
+	if (floodError) {
+		return {.kind = InviteCreateFailureKind::FloodWait};
+	}
 	const auto waitPrefix = u"USER_INVITE_ACCOUNT_TOO_NEW_WAIT_"_q;
 	if (type.startsWith(waitPrefix)) {
 		bool ok = false;
@@ -68,17 +85,21 @@ InviteCreateFailure ClassifyInviteCreateFailure(const QString &type,
 		return {
 			.kind = InviteCreateFailureKind::RegistrationClosed,
 			.registrationOpen = registrationOpen,
+			.blocksCreate = true,
 		};
 	} else if (type == u"USER_INVITES_DISABLED"_q) {
-		return {.kind = InviteCreateFailureKind::InvitesDisabled};
+		return {
+			.kind = InviteCreateFailureKind::InvitesDisabled,
+			.blocksCreate = true,
+		};
 	} else if (type == u"USER_INVITE_WEEKLY_LIMIT_REACHED"_q) {
 		return {.kind = InviteCreateFailureKind::WeeklyLimitReached};
 	}
 	return {.kind = InviteCreateFailureKind::Other};
 }
 
-bool CanRevokeInvite(const QString &state, bool inFlight) {
-	return (state == u"pending"_q) && !inFlight;
+bool CanRevokeInvite(InviteState state, bool inFlight) {
+	return (state == InviteState::Pending) && !inFlight;
 }
 
 void InviteListRefresh::queue(Fn<void()> done) {

@@ -11,6 +11,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro::details {
 
+enum class InviteSignInFailure {
+	Unusable,
+	RegistrationClosed,
+	FloodWait,
+	Other,
+};
+
 [[nodiscard]] QString NormalizeInviteSecret(const QString &input);
+[[nodiscard]] InviteSignInFailure
+ClassifyInviteSignInFailure(const QString &type, bool floodError);
 
 } // namespace Intro::details

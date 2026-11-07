@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+using Intro::details::ClassifyInviteSignInFailure;
+using Intro::details::InviteSignInFailure;
 using Intro::details::NormalizeInviteSecret;
 
 const auto kInviteSecret
@@ -35,6 +37,21 @@ TEST_CASE(InviteSecretRejectsIncompleteOrMalformedInput) {
 			  .isEmpty());
 	CHECK(NormalizeInviteSecret(u"https://links.example.test/invite#"_q)
 			  .isEmpty());
+}
+
+TEST_CASE(InviteSignInFailuresKeepInviteErrorsOnTheInviteStep) {
+	CHECK(ClassifyInviteSignInFailure(u"INVITE_HASH_INVALID"_q, false)
+		  == InviteSignInFailure::Unusable);
+	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_INVALID"_q, false)
+		  == InviteSignInFailure::Unusable);
+	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_EXPIRED"_q, false)
+		  == InviteSignInFailure::Unusable);
+	CHECK(ClassifyInviteSignInFailure(u"INPUT_REQUEST_INVALID"_q, false)
+		  == InviteSignInFailure::RegistrationClosed);
+	CHECK(ClassifyInviteSignInFailure(u"FLOOD_WAIT_30"_q, true)
+		  == InviteSignInFailure::FloodWait);
+	CHECK(ClassifyInviteSignInFailure(u"SERVER_UNAVAILABLE"_q, false)
+		  == InviteSignInFailure::Other);
 }
 
 } // namespace

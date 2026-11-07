@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_invite_links.h"
 #include "info/bot/starref/info_bot_starref_common.h"
 #include "lang/lang_keys.h"
+#include "logs.h"
 #include "main/main_app_config.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
@@ -62,7 +63,7 @@ using InviteId = int64;
 
 struct InviteData {
 	InviteId id = 0;
-	QString state;
+	details::InviteState state = details::InviteState::Pending;
 	TimeId createdAt = 0;
 	TimeId expiresAt = 0;
 	bool showDuration = true;
@@ -101,20 +102,23 @@ struct InviteData {
 }
 
 [[nodiscard]] QString StateTitle(const InviteData &data) {
-	if (data.state == u"used"_q) {
+	switch (data.state) {
+	case details::InviteState::Pending:
+		return tr::lng_teagram_invite_pending(tr::now);
+	case details::InviteState::Used:
 		return tr::lng_teagram_invite_used(tr::now);
-	} else if (data.state == u"expired"_q) {
+	case details::InviteState::Expired:
 		return tr::lng_teagram_invite_expired(tr::now);
-	} else if (data.state == u"revoked"_q) {
+	case details::InviteState::Revoked:
 		return tr::lng_teagram_invite_revoked(tr::now);
 	}
-	return tr::lng_teagram_invite_pending(tr::now);
+	return QString();
 }
 
 [[nodiscard]] QString StateStatus(const InviteData &data) {
 	const auto created = tr::lng_settings_passkeys_created(
 		tr::now, lt_date, InviteDate(data.createdAt));
-	if (data.state != u"pending"_q || !data.showDuration) {
+	if (data.state != details::InviteState::Pending || !data.showDuration) {
 		return created;
 	}
 	const auto remaining
@@ -237,12 +241,13 @@ PaintRoundImageCallback InviteRow::generatePaintUserpicCallback(bool) {
 }
 
 QSize InviteRow::rightActionSize() const {
-	return (_data.state == u"pending"_q) ? st::inviteLinkThreeDotsIcon.size()
-										 : QSize();
+	return (_data.state == details::InviteState::Pending)
+			   ? st::inviteLinkThreeDotsIcon.size()
+			   : QSize();
 }
 
 QMargins InviteRow::rightActionMargins() const {
-	if (_data.state != u"pending"_q) {
+	if (_data.state != details::InviteState::Pending) {
 		return QMargins();
 	}
 	return QMargins(
@@ -252,7 +257,7 @@ QMargins InviteRow::rightActionMargins() const {
 
 void InviteRow::rightActionPaint(Painter &p, int x, int y, int outerWidth,
 								 bool selected, bool actionSelected) {
-	if (_data.state != u"pending"_q) {
+	if (_data.state != details::InviteState::Pending) {
 		return;
 	}
 	(selected || actionSelected ? st::inviteLinkThreeDotsIconOver
@@ -525,6 +530,9 @@ void InviteFriends::loadInvites(Fn<void()> done) {
 		[=](const MTP::Error &error) {
 			_listRequestId = 0;
 			_loading = false;
+			LOG(("Invite list failed with %1 (%2).")
+					.arg(error.type())
+					.arg(error.code()));
 			if (details::ClassifyInviteListFailure(error.type())
 				== details::InviteListFailure::Disabled) {
 				_serverDisabled = true;
@@ -574,10 +582,16 @@ void InviteFriends::setRows(const MTPDteagram_userInvites &data) {
 	}
 	for (const auto &invite : data.vinvites().v) {
 		invite.match([&](const MTPDteagram_userInvite &item) {
+			const auto stateText = qs(item.vstate());
+			const auto state = details::ParseInviteState(stateText);
+			if (!state) {
+				LOG(("Invite list returned unknown state %1.").arg(stateText));
+				return;
+			}
 			auto row = std::make_unique<InviteRow>(
 				this, InviteData{
 						  .id = InviteId(item.vid().v),
-						  .state = qs(item.vstate()),
+						  .state = *state,
 						  .createdAt = item.vcreated_at().v,
 						  .expiresAt = item.vexpires_at().v,
 						  .showDuration = !_serverDisabled,
@@ -614,7 +628,7 @@ void InviteFriends::createInvite() {
 				auto row = std::make_unique<InviteRow>(
 					this, InviteData{
 							  .id = InviteId(data.vid().v),
-							  .state = u"pending"_q,
+							  .state = details::InviteState::Pending,
 							  .createdAt = createdAt,
 							  .expiresAt = data.vexpires_at().v,
 							  .showDuration = !_serverDisabled,
@@ -641,13 +655,17 @@ void InviteFriends::createInvite() {
 }
 
 void InviteFriends::showCreateError(const MTP::Error &error) {
+	LOG(("Invite create failed with %1 (%2).")
+			.arg(error.type())
+			.arg(error.code()));
 	const auto failure = details::ClassifyInviteCreateFailure(
 		error.type(),
 		session().appConfig().get<QString>(u"registration_mode"_q, QString())
-			== u"open"_q);
+			== u"open"_q,
+		MTP::IsFloodError(error));
+	_createBlocked = failure.blocksCreate;
 	switch (failure.kind) {
 	case details::InviteCreateFailureKind::AccountTooNew:
-		_createBlocked = true;
 		if (failure.waitSeconds) {
 			_createError = tr::lng_teagram_invite_too_new(
 				tr::now, lt_date,
@@ -658,19 +676,20 @@ void InviteFriends::showCreateError(const MTP::Error &error) {
 		break;
 	case details::InviteCreateFailureKind::RegistrationClosed:
 		_serverDisabled = true;
-		_createBlocked = true;
 		_createError = failure.registrationOpen
 						   ? tr::lng_teagram_invite_open(tr::now)
 						   : tr::lng_teagram_invite_closed(tr::now);
 		break;
 	case details::InviteCreateFailureKind::InvitesDisabled:
 		_serverDisabled = true;
-		_createBlocked = true;
 		_createError = tr::lng_teagram_invite_off(tr::now);
 		break;
 	case details::InviteCreateFailureKind::WeeklyLimitReached:
 		_createError.clear();
 		loadInvites();
+		break;
+	case details::InviteCreateFailureKind::FloodWait:
+		_createError = tr::lng_flood_error(tr::now);
 		break;
 	case details::InviteCreateFailureKind::Other:
 		_createError = tr::lng_teagram_invite_create_failed(tr::now);
@@ -729,7 +748,7 @@ void InviteFriends::revokeInvite(InviteData data) {
 							const auto used
 								= row
 								  && static_cast<InviteRow *>(row)->data().state
-										 == u"used"_q;
+										 == details::InviteState::Used;
 							_controller->showToast(
 								used ? tr::lng_teagram_invite_revoke_used(
 										   tr::now)
@@ -738,10 +757,16 @@ void InviteFriends::revokeInvite(InviteData data) {
 						}));
 						close();
 					},
-					[=](const MTP::Error &) {
+					[=](const MTP::Error &error) {
 						_revokeRequestId = 0;
+						LOG(("Invite revoke failed with %1 (%2).")
+								.arg(error.type())
+								.arg(error.code()));
 						*revokeError
-							= tr::lng_teagram_invite_revoke_failed(tr::now);
+							= MTP::IsFloodError(error)
+								  ? tr::lng_flood_error(tr::now)
+								  : tr::lng_teagram_invite_revoke_failed(
+										tr::now);
 					});
 				if (requestId) {
 					_revokeRequestId = *requestId;
@@ -833,7 +858,7 @@ void InviteFriends::showInviteLink(QString link, TimeId expiresAt) {
 		});
 		Ui::AddSkip(box->verticalLayout());
 		box->addRow(object_ptr<Ui::FlatLabel>(
-						box, tr::lng_teagram_invite_created_note(tr::marked),
+						box, tr::lng_teagram_invite_created_note(tr::rich),
 						st::confcallLinkCenteredText),
 					style::al_top)
 			->setTryMakeSimilarLines(true);
@@ -852,13 +877,15 @@ void InviteFriends::showInviteLink(QString link, TimeId expiresAt) {
 }
 
 void InviteFriends::rowClicked(not_null<PeerListRow *> row) {
-	if (static_cast<InviteRow *>(row.get())->data().state == u"pending"_q) {
+	if (static_cast<InviteRow *>(row.get())->data().state
+		== details::InviteState::Pending) {
 		delegate()->peerListShowRowMenu(row, true);
 	}
 }
 
 void InviteFriends::rowRightActionClicked(not_null<PeerListRow *> row) {
-	if (static_cast<InviteRow *>(row.get())->data().state == u"pending"_q) {
+	if (static_cast<InviteRow *>(row.get())->data().state
+		== details::InviteState::Pending) {
 		delegate()->peerListShowRowMenu(row, true);
 	}
 }
@@ -866,7 +893,7 @@ void InviteFriends::rowRightActionClicked(not_null<PeerListRow *> row) {
 base::unique_qptr<Ui::PopupMenu>
 InviteFriends::rowContextMenu(QWidget *parent, not_null<PeerListRow *> row) {
 	const auto data = static_cast<InviteRow *>(row.get())->data();
-	if (data.state != u"pending"_q) {
+	if (data.state != details::InviteState::Pending) {
 		return nullptr;
 	}
 	auto result
@@ -889,8 +916,8 @@ void InviteFriends::rowPaintIcon(QPainter &p, int x, int y, int size,
 	const auto skip = st::inviteLinkIconSkip;
 	const auto inner = size - 2 * skip;
 	const auto stroke = st::inviteLinkIconStroke;
-	const auto revoked = (data.state == u"revoked"_q);
-	const auto pending = (data.state == u"pending"_q);
+	const auto revoked = (data.state == details::InviteState::Revoked);
+	const auto pending = (data.state == details::InviteState::Pending);
 	const auto total = data.expiresAt - data.createdAt;
 	const auto now = base::unixtime::now();
 	const auto progress
@@ -898,9 +925,9 @@ void InviteFriends::rowPaintIcon(QPainter &p, int x, int y, int size,
 					: 0.;
 	const auto expiringSoon = pending && progress >= .75;
 	const auto bg = pending ? (expiringSoon ? &st::msgFile4Bg : &st::msgFile2Bg)
-					: data.state == u"used"_q ? &st::msgFile1Bg
-					: revoked				  ? &st::windowSubTextFg
-											  : &st::msgFile3Bg;
+					: data.state == details::InviteState::Used ? &st::msgFile1Bg
+					: revoked ? &st::windowSubTextFg
+							  : &st::msgFile3Bg;
 	p.setPen(Qt::NoPen);
 	p.setBrush(*bg);
 	{

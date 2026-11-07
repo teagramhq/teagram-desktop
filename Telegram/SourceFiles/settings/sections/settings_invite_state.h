@@ -34,11 +34,19 @@ enum class InviteListFailure {
 	Disabled,
 };
 
+enum class InviteState {
+	Pending,
+	Used,
+	Expired,
+	Revoked,
+};
+
 enum class InviteCreateFailureKind {
 	AccountTooNew,
 	RegistrationClosed,
 	InvitesDisabled,
 	WeeklyLimitReached,
+	FloodWait,
 	Other,
 };
 
@@ -46,10 +54,12 @@ struct InviteCreateFailure {
 	InviteCreateFailureKind kind = InviteCreateFailureKind::Other;
 	std::optional<int> waitSeconds;
 	bool registrationOpen = false;
+	bool blocksCreate = false;
 };
 
 [[nodiscard]] bool CanCreateInvite(const InviteCreateConditions &conditions);
-[[nodiscard]] bool CanRevokeInvite(const QString &state, bool inFlight);
+[[nodiscard]] std::optional<InviteState> ParseInviteState(const QString &state);
+[[nodiscard]] bool CanRevokeInvite(InviteState state, bool inFlight);
 [[nodiscard]] bool ShouldShowInviteListTitle(bool loaded, bool failed,
 											 bool hasRows);
 
@@ -130,7 +140,7 @@ template <typename Started, typename Send, typename Done, typename Fail>
 
 template <typename Started, typename Send, typename Done, typename Fail>
 [[nodiscard]] std::optional<mtpRequestId>
-RunInviteRevokeRequest(const QString &state, bool inFlight, Started &&started,
+RunInviteRevokeRequest(InviteState state, bool inFlight, Started &&started,
 					   Send &&send, Done &&done, Fail &&fail) {
 	if (!CanRevokeInvite(state, inFlight)) {
 		return std::nullopt;
@@ -147,5 +157,6 @@ InviteNextAvailableAtAfterCreate(int64 quota, int64 weeklyCount,
 								 TimeId createdAt);
 [[nodiscard]] InviteListFailure ClassifyInviteListFailure(const QString &type);
 [[nodiscard]] InviteCreateFailure
-ClassifyInviteCreateFailure(const QString &type, bool registrationOpen);
+ClassifyInviteCreateFailure(const QString &type, bool registrationOpen,
+							bool floodError = false);
 } // namespace Settings::details

@@ -10,11 +10,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_signup_invite_validation.h"
 #include "intro/intro_signup_name.h"
 #include "intro/intro_signup_controls.h"
+#include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
 #include "lang/lang_keys.h"
+#include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "mtproto/mtproto_response.h"
+#include "ui/text/format_values.h"
 #include "ui/widgets/fields/input_field.h"
 #include "styles/style_intro.h"
 
@@ -148,16 +151,26 @@ void InviteWidget::signInDone(const MTPauth_Authorization &result) {
 }
 
 void InviteWidget::signInFail(const MTP::Error &error) {
-	if (error.type() == u"INVITE_HASH_INVALID"_q) {
+	const auto &type = error.type();
+	switch (ClassifyInviteSignInFailure(type, MTP::IsFloodError(error))) {
+	case InviteSignInFailure::Unusable:
 		showInviteError(tr::lng_intro_signup_invite_unusable(tr::now), true);
-	} else if (error.type() == u"INPUT_REQUEST_INVALID"_q) {
+		break;
+	case InviteSignInFailure::RegistrationClosed:
 		showInviteError(tr::lng_intro_signup_closed(tr::now), false);
-	} else if (error.type() == u"PHONE_CODE_INVALID"_q
-			   || error.type() == u"PHONE_CODE_EXPIRED"_q) {
-		getData()->usernameCode.drop();
-		goBack();
-	} else {
+		break;
+	case InviteSignInFailure::FloodWait:
+		showInviteError(tr::lng_intro_username_flood(
+							tr::now, lt_duration,
+							Ui::FormatDurationWords(FloodWaitSeconds(type))),
+						false);
+		break;
+	case InviteSignInFailure::Other:
+		LOG(("Intro Signup Invite Error: signIn failed with %1 (%2)")
+				.arg(type)
+				.arg(error.code()));
 		showInviteError(tr::lng_intro_server_error(tr::now), false);
+		break;
 	}
 }
 
