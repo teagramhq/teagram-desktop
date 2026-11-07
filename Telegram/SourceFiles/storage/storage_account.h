@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers_set.h"
 #include "data/data_drafts.h"
 #include "core/file_location.h"
+#include "core/telegram_sticker_import.h"
 #include "webview/webview_common.h"
 
 #include <QtCore/QStringList>
@@ -147,6 +148,11 @@ public:
 		uint64 userId) const;
 
 	void writeSessionSettings();
+	[[nodiscard]] std::optional<Core::TelegramBotToken>
+	telegramStickerBotToken() const;
+	[[nodiscard]] bool
+	writeTelegramStickerBotToken(const Core::TelegramBotToken &token);
+	[[nodiscard]] bool clearTelegramStickerBotToken();
 	// The durable authorization boundary used by post-auth and clean teardown.
 	// Both the pin marker/config and the current authorization snapshot are
 	// written synchronously before either lifecycle path exposes or closes it.
@@ -410,8 +416,8 @@ private:
 	[[nodiscard]] std::optional<Type> readPrefImpl(std::string_view key);
 
 	void writePrefGeneric(std::string_view key, const QByteArray &value);
-	[[nodiscard]] std::optional<QByteArray> readPrefGeneric(
-		std::string_view key);
+	[[nodiscard]] std::optional<QByteArray>
+	readPrefGeneric(std::string_view key) const;
 
 	Main::Account *const _owner;
 	const QString _dataName;
@@ -422,6 +428,7 @@ private:
 
 	MTP::AuthKeyPtr _localKey;
 	bool _prefsReadFailed = false;
+	bool _telegramStickerBotTokenClearPending = false;
 	bool _hasStoredCustomServer = false;
 	bool _customServerPinUnknown = false;
 	bool _mtpAuthorizationWriteFailed = false;

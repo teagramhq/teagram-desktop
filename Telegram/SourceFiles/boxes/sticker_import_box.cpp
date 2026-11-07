@@ -8,22 +8,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/sticker_import_box.h"
 
 #include "api/api_sticker_set_import.h"
+#include "api/api_telegram_sticker_pack.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
 #include "boxes/sticker_set_box.h"
 #include "core/file_utilities.h"
 #include "core/sticker_import.h"
+#include "core/telegram_sticker_import.h"
 #include "data/data_session.h"
 #include "lang/lang_keys.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "settings/settings_common.h"
+#include "storage/storage_account.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
+#include "ui/rp_widget.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/fields/password_input.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
@@ -47,8 +52,8 @@ constexpr auto kShortNameCheckDelay = crl::time(400);
 
 struct ImportFormState final : base::has_weak_ptr {
 	explicit ImportFormState(not_null<Main::Session *> session)
-		: api(&session->mtp()) {}
-
+		: api(&session->mtp()),
+		  telegramBotToken(session->local().telegramStickerBotToken()) {}
 	MTP::Sender api;
 	Core::StickerImportSelection selection;
 	Core::StickerImportScan scan;
@@ -58,6 +63,9 @@ struct ImportFormState final : base::has_weak_ptr {
 	mtpRequestId preflightRequestId = 0;
 	std::unique_ptr<base::Timer> nameCheckTimer;
 	std::unique_ptr<Api::StickerSetImport> importer;
+	std::unique_ptr<Api::TelegramStickerPackDownloader> telegramDownloader;
+	std::optional<Core::TelegramStickerPackLink> telegramPack;
+	std::optional<Core::TelegramBotToken> telegramBotToken;
 	rpl::lifetime rightsErrorLifetime;
 	Fn<void()> showRightsError;
 	bool scanPending = false;
@@ -65,6 +73,49 @@ struct ImportFormState final : base::has_weak_ptr {
 	QPointer<Ui::RoundButton> createButton;
 	QPointer<Ui::RoundButton> suggestButton;
 };
+
+[[nodiscard]] QString
+TelegramDownloadErrorText(Api::TelegramStickerPackDownloadError error,
+						  const QString &detail) {
+	switch (error) {
+	case Api::TelegramStickerPackDownloadError::InvalidToken:
+		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
+	case Api::TelegramStickerPackDownloadError::InvalidLink:
+		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
+	case Api::TelegramStickerPackDownloadError::UnsupportedPackType:
+		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
+	case Api::TelegramStickerPackDownloadError::PackNotFound:
+		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
+	case Api::TelegramStickerPackDownloadError::BotApi:
+		return detail.isEmpty()
+				   ? tr::lng_teagram_sticker_import_telegram_response_invalid(
+						 tr::now)
+				   : tr::lng_teagram_sticker_import_telegram_api_error(
+						 tr::now, lt_error, detail);
+	case Api::TelegramStickerPackDownloadError::Network:
+		return detail.isEmpty()
+				   ? tr::lng_teagram_sticker_import_telegram_network_error(
+						 tr::now)
+				   : tr::lng_teagram_sticker_import_telegram_api_error(
+						 tr::now, lt_error, detail);
+	case Api::TelegramStickerPackDownloadError::InvalidResponse:
+		return tr::lng_teagram_sticker_import_telegram_response_invalid(
+			tr::now);
+	case Api::TelegramStickerPackDownloadError::UnsafeFilePath:
+		return tr::lng_teagram_sticker_import_telegram_file_path_invalid(
+			tr::now);
+	case Api::TelegramStickerPackDownloadError::TooManyFiles:
+		return tr::lng_teagram_sticker_import_telegram_too_many_files(tr::now);
+	case Api::TelegramStickerPackDownloadError::FileTooLarge:
+		return tr::lng_teagram_sticker_import_telegram_file_too_large(tr::now);
+	case Api::TelegramStickerPackDownloadError::TotalTooLarge:
+		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
+	case Api::TelegramStickerPackDownloadError::UnsupportedFormat:
+		return tr::lng_teagram_sticker_import_telegram_format_unsupported(
+			tr::now);
+	}
+	Unexpected("Telegram sticker download error.");
+}
 
 [[nodiscard]] bool StickerImportEnabled(const MTPhelp_AppConfig &config) {
 	return config.match(
@@ -241,6 +292,49 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		const auto zipButton = box->addRow(Settings::CreateButtonWithIcon(
 			box, tr::lng_teagram_sticker_import_choose_zip(),
 			st::settingsButton, {&st::menuIconStickers}));
+		const auto telegramLink = box->addRow(object_ptr<Ui::InputField>(
+			box, st::defaultInputField, Ui::InputField::Mode::SingleLine,
+			tr::lng_teagram_sticker_import_telegram_link_placeholder()));
+		telegramLink->setMaxLength(256);
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box, tr::lng_teagram_sticker_import_telegram_token_info(tr::now),
+			st::boxLabel));
+		auto telegramTokenContainer = object_ptr<Ui::RpWidget>(box);
+		telegramTokenContainer->resize(telegramTokenContainer->width(),
+									   st::defaultInputField.heightMin);
+		const auto telegramTokenInput = Ui::CreateChild<Ui::PasswordInput>(
+			telegramTokenContainer.data(), st::defaultInputField,
+			tr::lng_teagram_sticker_import_telegram_token_placeholder());
+		telegramTokenContainer->geometryValue()
+			| rpl::on_next(
+				[=](const QRect &r) {
+					telegramTokenInput->resize(r.width(),
+											   telegramTokenInput->height());
+					telegramTokenInput->move(0, 0);
+				},
+				telegramTokenContainer->lifetime());
+		const auto telegramTokenRow
+			= box->addRow(std::move(telegramTokenContainer));
+		telegramTokenInput->setMaxLength(256);
+		telegramTokenInput->setEchoMode(QLineEdit::Password);
+		telegramTokenInput->setCompleter(nullptr);
+		telegramTokenInput->setInputMethodHints(Qt::ImhNoPredictiveText
+												| Qt::ImhNoAutoUppercase);
+		const auto telegramTokenSaved = box->addRow(object_ptr<Ui::FlatLabel>(
+			box, tr::lng_teagram_sticker_import_telegram_token_saved(tr::now),
+			st::boxLabel));
+		const auto saveTelegramTokenButton
+			= box->addRow(Settings::CreateButtonWithIcon(
+				box, tr::lng_teagram_sticker_import_telegram_token_save(),
+				st::settingsButton, {&st::menuIconStickers}));
+		const auto removeTelegramTokenButton
+			= box->addRow(Settings::CreateButtonWithIcon(
+				box, tr::lng_teagram_sticker_import_telegram_token_remove(),
+				st::settingsButton, {&st::menuIconStickers}));
+		const auto telegramDownloadButton
+			= box->addRow(Settings::CreateButtonWithIcon(
+				box, tr::lng_teagram_sticker_import_telegram_download(),
+				st::settingsButton, {&st::menuIconStickers}));
 		const auto rights
 			= box->addRow(object_ptr<Ui::Checkbox>(
 							  box, tr::lng_teagram_sticker_import_rights(),
@@ -288,10 +382,18 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		const auto setPending = [=](bool pending) {
 			title->setDisabled(pending);
 			shortName->setDisabled(pending);
-			customEmoji->setDisabled(pending);
+			customEmoji->setDisabled(
+				pending
+				|| state->selection.type()
+					   == Core::StickerImportSource::Telegram);
 			rights->setDisabled(pending);
 			folderButton->setDisabled(pending);
 			zipButton->setDisabled(pending);
+			telegramLink->setDisabled(pending);
+			telegramTokenInput->setDisabled(pending);
+			saveTelegramTokenButton->setDisabled(pending);
+			removeTelegramTokenButton->setDisabled(pending);
+			telegramDownloadButton->setDisabled(pending);
 			if (state->createButton) {
 				state->createButton->setDisabled(pending);
 			}
@@ -299,11 +401,21 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				state->suggestButton->setDisabled(pending);
 			}
 		};
+		const auto updateTelegramTokenControls = [=] {
+			const auto saved = state->telegramBotToken.has_value();
+			telegramTokenRow->setVisible(!saved);
+			saveTelegramTokenButton->setVisible(!saved);
+			telegramTokenSaved->setVisible(saved);
+			removeTelegramTokenButton->setVisible(saved);
+		};
+		updateTelegramTokenControls();
 		const auto updateScan = [=] {
-			if (state->selection.path().isEmpty() || state->scanPending) {
+			if (state->selection.location().isEmpty() || state->scanPending
+				|| state->selection.type()
+					   == Core::StickerImportSource::Telegram) {
 				return;
 			}
-			const auto path = state->selection.path();
+			const auto path = state->selection.location();
 			const auto fromFolder
 				= state->selection.type() == Core::StickerImportSource::Folder;
 			const auto type = customEmoji->checked()
@@ -391,10 +503,125 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 
 		const auto selectSource
 			= [=](Core::StickerImportSource type, QString path) {
+				  state->telegramDownloader.reset();
+				  state->telegramPack.reset();
+				  state->scan = {};
+				  state->scanPending = false;
 				  state->selection.selectSource(type, std::move(path));
 				  clearRightsError();
 				  rights->setChecked(false);
 			  };
+		const auto saveTelegramToken = [=] {
+			auto text = telegramTokenInput->text().trimmed();
+			auto token = Core::TelegramBotToken::Create(text);
+			text.fill(QChar(0));
+			if (!token) {
+				telegramTokenInput->showError();
+				error->setTextColorOverride(std::nullopt);
+				error->setText(
+					tr::lng_teagram_sticker_import_telegram_token_invalid(
+						tr::now));
+				return false;
+			}
+			if (!session->local().writeTelegramStickerBotToken(*token)) {
+				error->setTextColorOverride(std::nullopt);
+				error->setText(
+					tr::lng_teagram_sticker_import_telegram_token_save_failed(
+						tr::now));
+				return false;
+			}
+			state->telegramBotToken = std::move(token);
+			telegramTokenInput->clear();
+			telegramTokenInput->hideError();
+			updateTelegramTokenControls();
+			error->setText(QString());
+			return true;
+		};
+		saveTelegramTokenButton->addClickHandler([=] { saveTelegramToken(); });
+		removeTelegramTokenButton->addClickHandler([=] {
+			state->telegramBotToken.reset();
+			const auto removed
+				= session->local().clearTelegramStickerBotToken();
+			updateTelegramTokenControls();
+			error->setTextColorOverride(std::nullopt);
+			error->setText(
+				removed
+					? QString()
+					: tr::lng_teagram_sticker_import_telegram_token_remove_failed(
+						  tr::now));
+		});
+		telegramDownloadButton->addClickHandler([=] {
+			error->setText(QString());
+			error->setTextColorOverride(std::nullopt);
+			const auto parsed = Core::ParseTelegramStickerPackLink(
+				telegramLink->getLastText().trimmed());
+			if (!parsed) {
+				error->setText(
+					tr::lng_teagram_sticker_import_telegram_link_invalid(
+						tr::now));
+				return;
+			}
+			if (!state->telegramBotToken && !saveTelegramToken()) {
+				return;
+			}
+			state->telegramDownloader.reset();
+			state->telegramPack = *parsed;
+			state->selection.selectSource(Core::StickerImportSource::Telegram,
+										  parsed->canonicalUrl());
+			state->selection.setRightsConfirmed(false);
+			clearRightsError();
+			rights->setChecked(false);
+			customEmoji->setChecked(parsed->type
+									== Core::StickerImportType::Emoji);
+			state->scan = {};
+			state->scanPending = true;
+			title->setText(QString());
+			source->setText(tr::lng_teagram_sticker_import_telegram_source(
+				tr::now, lt_link, parsed->canonicalUrl()));
+			files->setText(tr::lng_teagram_sticker_import_telegram_downloading(
+				tr::now, lt_current, QString::number(0), lt_total,
+				QString::number(0)));
+			setPending(true);
+			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
+			const auto weakState = base::make_weak(state);
+			state->telegramDownloader
+				= std::make_unique<Api::TelegramStickerPackDownloader>(
+					*parsed, state->telegramBotToken->clone());
+			state->telegramDownloader->start(
+				[=](QString packTitle, Core::StickerImportScan scan) mutable {
+					const auto current = weakState.get();
+					if (!weakBox || !current) {
+						return;
+					}
+					current->scan = std::move(scan);
+					current->scanPending = false;
+					title->setText(packTitle);
+					files->setText(ScanDescription(current->scan));
+					setPending(false);
+				},
+				[=](Api::TelegramStickerPackDownloadError downloadError,
+					QString detail) {
+					const auto current = weakState.get();
+					if (!weakBox || !current) {
+						return;
+					}
+					current->scan = {};
+					current->scanPending = false;
+					setPending(false);
+					error->setTextColorOverride(st::boxTextFgError->c);
+					error->setText(
+						TelegramDownloadErrorText(downloadError, detail));
+				},
+				[=](int count, int total) {
+					if (!weakBox || !weakState.get()) {
+						return;
+					}
+					files->setText(
+						tr::lng_teagram_sticker_import_telegram_downloading(
+							tr::now, lt_current, QString::number(count),
+							lt_total, QString::number(total)));
+				});
+		});
 		const auto chooseFolder = [=] {
 			FileDialog::GetFolder(
 				box.get(),
@@ -408,7 +635,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					source->setText(
 						tr::lng_teagram_sticker_import_source_folder(
 							tr::now, lt_name,
-							QFileInfo(state->selection.path()).fileName()));
+							QFileInfo(state->selection.location()).fileName()));
 					updateScan();
 				}));
 		};
@@ -426,7 +653,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 								 result.paths.front());
 					source->setText(tr::lng_teagram_sticker_import_source_zip(
 						tr::now, lt_name,
-						QFileInfo(state->selection.path()).fileName()));
+						QFileInfo(state->selection.location()).fileName()));
 					updateScan();
 				}));
 		});
@@ -437,6 +664,9 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		box->boxClosing()
 			| rpl::on_next(
 				[=] {
+					if (state->telegramDownloader) {
+						state->telegramDownloader->cancel();
+					}
 					state->api.request(base::take(state->nameCheckRequestId))
 						.cancel();
 					state->api.request(base::take(state->suggestionRequestId))
@@ -466,8 +696,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 								  : Data::StickersType::Stickers;
 			const auto titleText = title->getLastText().trimmed();
 			const auto sourceType = state->selection.type();
+			const auto telegramPackName
+				= state->telegramPack ? state->telegramPack->name : QString();
 			state->importer = std::make_unique<Api::StickerSetImport>(
-				session, state->scan, titleText, name, type, sourceType);
+				session, state->scan, titleText, name, type, sourceType,
+				telegramPackName);
 			state->importer->start(
 				[=](MTPmessages_StickerSet) {
 					const auto importType
@@ -499,7 +732,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			const auto name = shortName->getLastText().trimmed();
 			switch (Core::ValidateStickerImportStart(
 				state->scanPending, state->selection.rightsConfirmed(),
-				titleText, name, !state->selection.path().isEmpty(),
+				titleText, name, !state->selection.location().isEmpty(),
 				state->scan)) {
 			case Core::StickerImportValidation::ScanPending:
 				return;

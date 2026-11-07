@@ -979,6 +979,9 @@ void Account::forcedLogOut() {
 
 void Account::loggedOut() {
 	_loggingOut = false;
+	if (!local().clearTelegramStickerBotToken()) {
+		LOG(("Failed to remove saved Telegram sticker bot token at logout."));
+	}
 	Media::Player::mixer()->stopAndClear();
 	destroySession(DestroyReason::LoggedOut);
 	if (_mtp) {

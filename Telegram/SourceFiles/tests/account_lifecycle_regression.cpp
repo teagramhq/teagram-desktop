@@ -161,6 +161,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDataStream>
 #include <QtCore/QDir>
+#include <QtCore/QDirIterator>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
@@ -12164,7 +12165,36 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	const auto discardedServerCacheBindingFiles
 		= discarded->local().serverCacheBindingFilesForRegressionTest();
+	const auto tokenText
+		= QByteArray("12345:AbCdEf0123456789012345678901234567890");
+	const auto token
+		= Core::TelegramBotToken::Create(QString::fromLatin1(tokenText));
+	if (!token || !discarded->local().writeTelegramStickerBotToken(*token)
+		|| !discarded->local().telegramStickerBotToken()) {
+		return failPrerequisite(
+			"could not store the logout regression bot token");
+	}
+	const auto accountPath
+		= QFileInfo(discardedServerCacheBindingFiles.front()).absolutePath();
 	discarded->forcedLogOut();
+	if (discarded->local().telegramStickerBotToken()) {
+		return failPrerequisite("logout retained the Telegram bot token");
+	}
+	auto accountFiles
+		= QDirIterator(accountPath, QDir::Files | QDir::Hidden | QDir::System,
+					   QDirIterator::Subdirectories);
+	while (accountFiles.hasNext()) {
+		auto file = QFile(accountFiles.next());
+		if (!file.open(QIODevice::ReadOnly)) {
+			if (!QFileInfo::exists(file.fileName())) {
+				continue;
+			}
+			return failPrerequisite("could not inspect logout account data");
+		}
+		if (file.readAll().contains(tokenText)) {
+			return failPrerequisite("logout retained readable bot token data");
+		}
+	}
 	if (!teardownDispatchesRemainBounded("after destroyed-session logout")) {
 		return failPrerequisite(
 			"destroyed-session logout enqueued an extra live-session update");

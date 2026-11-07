@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QDirIterator>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
@@ -49,6 +50,18 @@ struct AccountTestPeer {
 
 	static void ReadStoredCustomServerPin(Account &account) {
 		account.readStoredCustomServerPin();
+	}
+
+	static FileKey PrefsKey(const Account &account) {
+		return account._prefsKey;
+	}
+
+	static bool HasTelegramStickerBotTokenPreference(const Account &account) {
+		return account.readPrefGeneric("telegram_sticker_bot_token")
+			.has_value();
+	}
+	static bool TokenClearPending(const Account &account) {
+		return account._telegramStickerBotTokenClearPending;
 	}
 };
 
@@ -1507,6 +1520,114 @@ TEST_CASE(QueuedStopRunsOnlyForTheCurrentEnrollment) {
 		Qt::BlockingQueuedConnection);
 	sessionThread.quit();
 	sessionThread.wait();
+}
+
+TEST_CASE(TelegramStickerBotTokenUsesEncryptedAccountPreferences) {
+	const auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.path() + u"/account"_q;
+	CHECK(QDir().mkpath(basePath));
+	const auto key = MakeEnrollmentStorageKey();
+	const auto token = u"12345:AbCdEf0123456789012345678901234567890"_q;
+	const auto tokenValue = Core::TelegramBotToken::Create(token);
+	CHECK(tokenValue.has_value());
+	if (!tokenValue) {
+		return;
+	}
+	const auto expectedUrl = tokenValue->apiUrl(u"getStickerSet"_q);
+	auto prefsKey = Storage::FileKey(0);
+	{
+		auto account = MakeEnrollmentStorageAccount(basePath, key);
+		CHECK(account->writeTelegramStickerBotToken(*tokenValue));
+		const auto saved = account->telegramStickerBotToken();
+		CHECK(saved && saved->apiUrl(u"getStickerSet"_q) == expectedUrl);
+		prefsKey = Storage::AccountTestPeer::PrefsKey(*account);
+	}
+	CHECK(prefsKey != 0);
+	{
+		auto restarted = MakeEnrollmentStorageAccount(basePath, key);
+		Storage::AccountTestPeer::ReadPrefs(*restarted, prefsKey);
+		const auto saved = restarted->telegramStickerBotToken();
+		CHECK(saved && saved->apiUrl(u"getStickerSet"_q) == expectedUrl);
+		CHECK(Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*restarted));
+		CHECK(restarted->clearTelegramStickerBotToken());
+		CHECK(!restarted->telegramStickerBotToken().has_value());
+		CHECK(!Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*restarted));
+	}
+	{
+		auto reopened = MakeEnrollmentStorageAccount(basePath, key);
+		Storage::AccountTestPeer::ReadPrefs(*reopened, prefsKey);
+		CHECK(!reopened->telegramStickerBotToken().has_value());
+		CHECK(!Storage::AccountTestPeer::HasTelegramStickerBotTokenPreference(
+			*reopened));
+	}
+	auto iterator
+		= QDirIterator(basePath, QDir::Files | QDir::Hidden | QDir::System,
+					   QDirIterator::Subdirectories);
+	while (iterator.hasNext()) {
+		auto file = QFile(iterator.next());
+		if (file.open(QIODevice::ReadOnly)) {
+			CHECK(!file.readAll().contains(token.toUtf8()));
+		}
+	}
+}
+
+TEST_CASE(TelegramStickerBotTokenRetriesFailedPreferenceWrites) {
+	const auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.filePath(u"account"_q);
+	const auto movedPath = directory.filePath(u"saved-account"_q);
+	CHECK(QDir().mkpath(basePath));
+	const auto key = MakeEnrollmentStorageKey();
+	const auto oldToken = Core::TelegramBotToken::Create(
+		u"12345:AbCdEf0123456789012345678901234567890"_q);
+	const auto newToken = Core::TelegramBotToken::Create(
+		u"45678:AbCdEf0123456789012345678901234567890"_q);
+	CHECK(oldToken.has_value());
+	CHECK(newToken.has_value());
+	if (!oldToken || !newToken) {
+		return;
+	}
+	auto account = MakeEnrollmentStorageAccount(basePath, key);
+	CHECK(account->writeTelegramStickerBotToken(*oldToken));
+	CHECK(QDir().rename(basePath, movedPath));
+	auto blocker = QFile(basePath);
+	CHECK(blocker.open(QIODevice::WriteOnly));
+	blocker.close();
+	CHECK(!account->writeTelegramStickerBotToken(*newToken));
+	const auto restored = account->telegramStickerBotToken();
+	CHECK(restored
+		  && restored->apiUrl(u"getStickerSet"_q)
+				 == oldToken->apiUrl(u"getStickerSet"_q));
+	CHECK(!account->clearTelegramStickerBotToken());
+	CHECK(!account->telegramStickerBotToken().has_value());
+	CHECK(Storage::AccountTestPeer::TokenClearPending(*account));
+	CHECK(blocker.remove());
+	CHECK(QDir().rename(movedPath, basePath));
+	CHECK(account->clearTelegramStickerBotToken());
+	CHECK(!Storage::AccountTestPeer::TokenClearPending(*account));
+	CHECK(!account->telegramStickerBotToken().has_value());
+
+	const auto freshPath = directory.filePath(u"fresh"_q);
+	auto freshBlocker = QFile(freshPath);
+	CHECK(freshBlocker.open(QIODevice::WriteOnly));
+	freshBlocker.close();
+	auto fresh = MakeEnrollmentStorageAccount(freshPath, key);
+	CHECK(!fresh->writeTelegramStickerBotToken(*newToken));
+	CHECK(!fresh->telegramStickerBotToken().has_value());
+	CHECK(Storage::AccountTestPeer::TokenClearPending(*fresh));
+	CHECK(freshBlocker.remove());
+	CHECK(QDir().mkpath(freshPath));
+	CHECK(fresh->clearTelegramStickerBotToken());
+	CHECK(!Storage::AccountTestPeer::TokenClearPending(*fresh));
 }
 
 } // namespace

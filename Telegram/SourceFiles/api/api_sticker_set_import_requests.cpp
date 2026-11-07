@@ -7,9 +7,181 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_sticker_set_import_requests.h"
 
+#include "core/telegram_sticker_import.h"
+
 #include <utility>
 
 namespace Api::details {
+
+StickerSetImportFlow::StickerSetImportFlow(
+	Core::StickerImportScan scan, QString title, QString shortName,
+	Data::StickersType type, Core::StickerImportSource source,
+	QString telegramPackName, StickerSetImportFlowCallbacks callbacks)
+	: _scan(std::move(scan)), _title(std::move(title)),
+	  _shortName(std::move(shortName)), _type(type), _source(source),
+	  _telegramPackName(std::move(telegramPackName)),
+	  _callbacks(std::move(callbacks)) {
+	Expects(!!_callbacks.upload);
+	Expects(!!_callbacks.uploadMedia);
+	Expects(!!_callbacks.createSet);
+}
+
+void StickerSetImportFlow::start(Fn<void(MTPmessages_StickerSet)> done,
+								 Fn<void(QString)> failCallback,
+								 Fn<void(int)> progress) {
+	Expects(_state == State::Idle);
+	_state = State::Running;
+	_done = std::move(done);
+	_fail = std::move(failCallback);
+	_progress = std::move(progress);
+	if (_scan.files.empty()) {
+		fail(u"Choose a pack with supported sticker files."_q);
+		return;
+	}
+	_items.reserve(_scan.files.size());
+	uploadNext();
+}
+
+void StickerSetImportFlow::cancel() {
+	if (_state == State::Finished || _state == State::Cancelled) {
+		return;
+	}
+	transition(State::Cancelled);
+}
+
+void StickerSetImportFlow::transition(State state) {
+	_state = state;
+	_done = nullptr;
+	_fail = nullptr;
+	_progress = nullptr;
+}
+
+void StickerSetImportFlow::uploadNext() {
+	if (_state != State::Running) {
+		return;
+	} else if (_index >= int(_scan.files.size())) {
+		createSet();
+		return;
+	}
+	const auto weak = base::make_weak(this);
+	auto reportProgress = Fn<void(int)>();
+	if (_progress) {
+		reportProgress = [weak](int percent) {
+			if (const auto self = weak.get();
+				self && self->_state == State::Running && self->_progress
+				&& percent != self->_lastReportedPercent) {
+				self->_lastReportedPercent = percent;
+				const auto progress = self->_progress;
+				progress(percent);
+			}
+		};
+	}
+	_callbacks.upload(
+		_scan.files[_index], _index, int(_scan.files.size()),
+		[weak](MTPInputFile file) {
+			if (const auto self = weak.get()) {
+				self->uploadReady(std::move(file));
+			}
+		},
+		[weak] {
+			if (const auto self = weak.get()) {
+				self->fail(QString());
+			}
+		},
+		std::move(reportProgress));
+}
+
+void StickerSetImportFlow::uploadReady(MTPInputFile file) {
+	if (_state != State::Running) {
+		return;
+	}
+	auto request
+		= StickerImportUploadMediaRequest(file, _scan.files[_index], _index);
+	const auto weak = base::make_weak(this);
+	_callbacks.uploadMedia(
+		std::move(request),
+		[weak](MTPMessageMedia result) {
+			if (const auto self = weak.get()) {
+				self->uploadMediaReady(std::move(result));
+			}
+		},
+		[weak](QString error) {
+			if (const auto self = weak.get()) {
+				self->fail(std::move(error));
+			}
+		});
+}
+
+void StickerSetImportFlow::uploadMediaReady(MTPMessageMedia result) {
+	if (_state != State::Running) {
+		return;
+	}
+	const auto item = StickerImportSetItemFromUploadMedia(
+		result, _scan.files[_index].emoji);
+	if (!item) {
+		fail(u"STICKER_DOCUMENT_INVALID"_q);
+		return;
+	}
+	_items.push_back(*item);
+	++_index;
+	const auto weak = base::make_weak(this);
+	if (const auto progress = _progress) {
+		const auto percent = (_index * 100) / int(_scan.files.size());
+		if (percent != _lastReportedPercent) {
+			_lastReportedPercent = percent;
+			progress(percent);
+		}
+	}
+	if (const auto self = weak.get()) {
+		self->uploadNext();
+	}
+}
+
+void StickerSetImportFlow::createSet() {
+	auto items = QVector<MTPInputStickerSetItem>();
+	items.reserve(int(_items.size()));
+	for (const auto &item : _items) {
+		items.push_back(item);
+	}
+	auto request
+		= StickerImportCreateSetRequest(_title, _shortName, _type, _source,
+										std::move(items), _telegramPackName);
+	const auto weak = base::make_weak(this);
+	_callbacks.createSet(
+		std::move(request),
+		[weak](MTPmessages_StickerSet result) {
+			if (const auto self = weak.get()) {
+				self->createSetReady(std::move(result));
+			}
+		},
+		[weak](QString error) {
+			if (const auto self = weak.get()) {
+				self->fail(std::move(error));
+			}
+		});
+}
+
+void StickerSetImportFlow::createSetReady(MTPmessages_StickerSet result) {
+	if (_state != State::Running) {
+		return;
+	}
+	const auto done = std::move(_done);
+	transition(State::Finished);
+	if (done) {
+		done(std::move(result));
+	}
+}
+
+void StickerSetImportFlow::fail(QString error) {
+	if (_state != State::Running) {
+		return;
+	}
+	const auto failCallback = std::move(_fail);
+	transition(State::Finished);
+	if (failCallback) {
+		failCallback(std::move(error));
+	}
+}
 
 QString StickerImportFileName(const Core::StickerImportFile &file, int index) {
 	const auto format = Core::StickerImportFormatDetails(file.format);
@@ -34,8 +206,8 @@ StickerImportFileAttributes(const Core::StickerImportFile &file, int index) {
 			MTPdouble(), MTPstring()));
 	}
 	attributes.push_back(MTP_documentAttributeSticker(
-		MTP_flags(0), MTP_string(u"⭐"_q), MTP_inputStickerSetEmpty(),
-		MTPMaskCoords()));
+		MTP_flags(0), MTP_string(file.emoji.isEmpty() ? u"⭐"_q : file.emoji),
+		MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 	return attributes;
 }
 
@@ -55,7 +227,8 @@ StickerImportUploadMediaRequest(const MTPInputFile &inputFile,
 }
 
 std::optional<MTPInputStickerSetItem>
-StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
+StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media,
+									QString emoji) {
 	auto document = MTPInputDocument();
 	media.match(
 		[&](const MTPDmessageMediaDocument &data) {
@@ -72,17 +245,25 @@ StickerImportSetItemFromUploadMedia(const MTPMessageMedia &media) {
 	if (document.type() != mtpc_inputDocument) {
 		return std::nullopt;
 	}
-	return MTP_inputStickerSetItem(MTP_flags(0), std::move(document),
-								   MTP_string(u"⭐"_q), MTPMaskCoords(),
-								   MTPstring());
+	return MTP_inputStickerSetItem(
+		MTP_flags(0), std::move(document),
+		MTP_string(emoji.isEmpty() ? u"⭐"_q : emoji), MTPMaskCoords(),
+		MTPstring());
 }
 
 MTPstickers_CreateStickerSet StickerImportCreateSetRequest(
 	QString title, QString shortName, Data::StickersType type,
-	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items) {
+	Core::StickerImportSource source, QVector<MTPInputStickerSetItem> items,
+	QString telegramPackName) {
 	const auto sourceText = (source == Core::StickerImportSource::Folder)
 								? u"folder"_q
-								: u"zip"_q;
+							: (source == Core::StickerImportSource::Zip)
+								? u"zip"_q
+								: Core::TelegramStickerPackCanonicalUrl(
+									  (type == Data::StickersType::Emoji)
+										  ? Core::StickerImportType::Emoji
+										  : Core::StickerImportType::Stickers,
+									  telegramPackName);
 	auto flags = MTPstickers_CreateStickerSet::Flags(
 		MTPstickers_CreateStickerSet::Flag::f_software);
 	if (type == Data::StickersType::Emoji) {

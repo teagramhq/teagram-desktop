@@ -75,6 +75,7 @@ enum { // Local Storage Keys
 
 constexpr auto kCustomServerPinnedPref = "mtp_custom_server_pinned"_cs;
 constexpr auto kCustomServerPinUnknownPref = "mtp_custom_server_unknown"_cs;
+constexpr auto kTelegramStickerBotTokenPref = "telegram_sticker_bot_token"_cs;
 constexpr auto kMtpAuthorizationWriteFailedPref
 	= "mtp_authorization_write_failed"_cs;
 const auto kMtpAuthorizationWriteFailedFile
@@ -1138,9 +1139,50 @@ void Account::writePrefGeneric(
 	writePrefsDelayed();
 }
 
-std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) {
+std::optional<QByteArray> Account::readPrefGeneric(std::string_view key) const {
 	const auto i = _prefs.find(QByteArray(key.data(), key.size()));
 	return (i != end(_prefs)) ? i->second : std::optional<QByteArray>();
+}
+
+std::optional<Core::TelegramBotToken> Account::telegramStickerBotToken() const {
+	if (const auto value = readPrefGeneric(kTelegramStickerBotTokenPref)) {
+		return Core::TelegramBotToken::Create(QString::fromUtf8(*value));
+	}
+	return std::nullopt;
+}
+
+bool Account::writeTelegramStickerBotToken(
+	const Core::TelegramBotToken &token) {
+	Expects(_localKey != nullptr);
+	const auto previous = readPrefGeneric(kTelegramStickerBotTokenPref);
+	writePrefGeneric(kTelegramStickerBotTokenPref, token._value.toUtf8());
+	if (writePrefs(true)) {
+		_telegramStickerBotTokenClearPending = false;
+		return true;
+	}
+	if (previous) {
+		writePrefGeneric(kTelegramStickerBotTokenPref, *previous);
+	} else {
+		clearPref(kTelegramStickerBotTokenPref);
+		_telegramStickerBotTokenClearPending = true;
+	}
+	return false;
+}
+
+bool Account::clearTelegramStickerBotToken() {
+	Expects(_localKey != nullptr);
+	if (!readPrefGeneric(kTelegramStickerBotTokenPref)
+		&& !_telegramStickerBotTokenClearPending) {
+		return true;
+	}
+	clearPref(kTelegramStickerBotTokenPref);
+	if (writePrefs(true)) {
+		_telegramStickerBotTokenClearPending = false;
+		return true;
+	}
+	_telegramStickerBotTokenClearPending = true;
+	writePrefsDelayed();
+	return false;
 }
 
 void Account::writePrefsDelayed() {
