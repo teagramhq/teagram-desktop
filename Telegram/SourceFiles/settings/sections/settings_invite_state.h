@@ -66,7 +66,7 @@ class InviteListRefresh final {
 [[nodiscard]] bool QueueInviteListRefreshIfActive(InviteListRefresh &refresh,
 												  bool available,
 												  mtpRequestId activeRequest,
-												  Fn<void()> done);
+												  Fn<void()> &done);
 
 template <typename Start>
 [[nodiscard]] bool RunQueuedInviteListRefresh(InviteListRefresh &refresh,

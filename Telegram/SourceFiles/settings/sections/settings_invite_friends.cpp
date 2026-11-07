@@ -486,8 +486,8 @@ void InviteFriends::prepare() {
 }
 
 void InviteFriends::loadInvites(Fn<void()> done) {
-	if (details::QueueInviteListRefreshIfActive(
-			_listRefresh, _available, _listRequestId, std::move(done))) {
+	if (details::QueueInviteListRefreshIfActive(_listRefresh, _available,
+												_listRequestId, done)) {
 		return;
 	}
 	const auto requestId = details::RunInviteListRequest(

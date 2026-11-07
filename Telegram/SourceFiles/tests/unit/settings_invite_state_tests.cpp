@@ -203,70 +203,95 @@ TEST_CASE(InviteManagementRevokeEligibility) {
 	CHECK(!CanRevokeInvite(u"used"_q, false));
 }
 
-TEST_CASE(InviteListRefreshQueuedBehindActiveRequest) {
-	auto transport = FakeInviteTransport();
-	auto refresh = InviteListRefresh();
-	auto requestId = mtpRequestId(0);
-	auto list = FakeInviteListResponse();
-	auto listRequests = 0;
-	auto listResponses = 0;
-	auto resultToasts = 0;
-	auto startList = std::function<void(Fn<void()>)>();
-	startList = [&](Fn<void()> done) {
-		++listRequests;
-		requestId = transport.list(
-			[&, done](const FakeInviteListResponse &response) {
-				requestId = 0;
-				list = response;
-				++listResponses;
-				if (done) {
-					done();
-				}
-				const auto queued = RunQueuedInviteListRefresh(
-					refresh, requestId, [&](Fn<void()> queuedDone) {
-						startList(std::move(queuedDone));
-					});
-				if (listResponses == 1) {
-					CHECK(queued);
-				} else {
-					CHECK(!queued);
-				}
+TEST_CASE(
+	InviteListRefreshPreservesRevokeCompletionForDirectAndQueuedRequests) {
+	const auto run = [](bool listRequestAlreadyActive) {
+		auto transport = FakeInviteTransport();
+		auto refresh = InviteListRefresh();
+		auto available = true;
+		auto listRequestId = mtpRequestId(0);
+		auto list = FakeInviteListResponse();
+		auto listResponses = 0;
+		auto resultToasts = 0;
+		auto loadInvites = std::function<void(Fn<void()>)>();
+		loadInvites = [&](Fn<void()> done) {
+			if (QueueInviteListRefreshIfActive(refresh, available,
+											   listRequestId, done)) {
+				return;
+			}
+			const auto requestId = RunInviteListRequest(
+				available, listRequestId, [] {},
+				[&](auto requestDone, auto requestFail) {
+					return transport.list(
+						[&, requestDone = std::move(requestDone)](
+							const FakeInviteListResponse &response) mutable {
+							listRequestId = 0;
+							requestDone(response);
+							++listResponses;
+							const auto queued = RunQueuedInviteListRefresh(
+								refresh, listRequestId,
+								[&](Fn<void()> queuedDone) {
+									loadInvites(std::move(queuedDone));
+								});
+							if (listRequestAlreadyActive
+								&& listResponses == 1) {
+								CHECK(queued);
+							} else {
+								CHECK(!queued);
+							}
+						},
+						std::move(requestFail));
+				},
+				[&, done = std::move(done)](
+					const FakeInviteListResponse &response) mutable {
+					list = response;
+					if (done) {
+						done();
+					}
+				},
+				[&](const QString &) { listRequestId = 0; });
+			if (requestId) {
+				listRequestId = *requestId;
+			}
+		};
+
+		if (listRequestAlreadyActive) {
+			loadInvites(nullptr);
+			CHECK_EQ(transport.listRequests, 1);
+		}
+		const auto revokeRequest = RunInviteRevokeRequest(
+			u"pending"_q, false, [] {},
+			[&](auto done, auto fail) {
+				return transport.revoke(42, std::move(done), std::move(fail));
+			},
+			[&](const bool &success) {
+				CHECK(success);
+				loadInvites([&] {
+					if (list.ids.empty()) {
+						++resultToasts;
+					}
+				});
 			},
 			[](const QString &) {});
+		CHECK(revokeRequest.has_value());
+		CHECK_EQ(transport.revokeRequests, 1);
+		transport.succeedRevoke(true);
+		CHECK_EQ(transport.listRequests, 1);
+		CHECK_EQ(resultToasts, 0);
+
+		if (listRequestAlreadyActive) {
+			transport.succeedList({.ids = {42}});
+			CHECK_EQ(transport.listRequests, 2);
+			CHECK_EQ(resultToasts, 0);
+			CHECK_EQ(int(list.ids.size()), 1);
+		}
+		transport.succeedList({});
+		CHECK_EQ(int(list.ids.size()), 0);
+		CHECK_EQ(resultToasts, 1);
 	};
 
-	startList(nullptr);
-	CHECK_EQ(listRequests, 1);
-	const auto revokeRequest = RunInviteRevokeRequest(
-		u"pending"_q, false, [] {},
-		[&](auto done, auto fail) {
-			return transport.revoke(42, std::move(done), std::move(fail));
-		},
-		[&](const bool &success) {
-			CHECK(success);
-			CHECK(QueueInviteListRefreshIfActive(refresh, true, requestId, [&] {
-				if (list.ids.empty()) {
-					++resultToasts;
-				}
-			}));
-		},
-		[](const QString &) {});
-	CHECK(revokeRequest.has_value());
-	CHECK_EQ(transport.revokeRequests, 1);
-	CHECK_EQ(listRequests, 1);
-	CHECK_EQ(resultToasts, 0);
-
-	transport.succeedRevoke(true);
-	CHECK_EQ(listRequests, 1);
-	CHECK_EQ(resultToasts, 0);
-	transport.succeedList({.ids = {42}});
-	CHECK_EQ(listRequests, 2);
-	CHECK_EQ(resultToasts, 0);
-	CHECK_EQ(int(list.ids.size()), 1);
-
-	transport.succeedList({});
-	CHECK_EQ(int(list.ids.size()), 0);
-	CHECK_EQ(resultToasts, 1);
+	run(false);
+	run(true);
 }
 
 TEST_CASE(InviteListTitleMatchesVisibleContent) {

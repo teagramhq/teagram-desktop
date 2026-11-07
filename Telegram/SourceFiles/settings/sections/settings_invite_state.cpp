@@ -110,7 +110,7 @@ bool InviteListRefresh::take(Fn<void()> &done) {
 
 bool QueueInviteListRefreshIfActive(InviteListRefresh &refresh, bool available,
 									mtpRequestId activeRequest,
-									Fn<void()> done) {
+									Fn<void()> &done) {
 	if (!available || !activeRequest) {
 		return false;
 	}
