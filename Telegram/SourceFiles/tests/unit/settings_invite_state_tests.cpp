@@ -203,6 +203,14 @@ TEST_CASE(InviteManagementRevokeEligibility) {
 	CHECK(!CanRevokeInvite(u"used"_q, false));
 }
 
+TEST_CASE(InviteListTitleMatchesVisibleContent) {
+	CHECK(ShouldShowInviteListTitle(false, false, false));
+	CHECK(ShouldShowInviteListTitle(false, true, false));
+	CHECK(ShouldShowInviteListTitle(true, false, true));
+	CHECK(ShouldShowInviteListTitle(true, true, false));
+	CHECK(!ShouldShowInviteListTitle(true, false, false));
+}
+
 TEST_CASE(InviteCreateFailureThenRetryShowsOnlySuccessfulLink) {
 	auto transport = FakeInviteTransport();
 	auto request = InviteCreateRequest();

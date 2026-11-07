@@ -195,6 +195,7 @@ class InviteFriends final : public PeerListController,
 	Ui::SettingsButton *_createButton = nullptr;
 	Ui::SettingsButton *_retryButton = nullptr;
 	Ui::FlatLabel *_quotaLabel = nullptr;
+	Ui::FlatLabel *_listTitle = nullptr;
 	Ui::FlatLabel *_messageLabel = nullptr;
 	PeerListContent *_list = nullptr;
 	mtpRequestId _listRequestId = 0;
@@ -331,7 +332,9 @@ void InviteFriends::setupContent() {
 	_quotaLabel = quota.get();
 	_quotaLabel->hide();
 
-	Ui::AddSubsectionTitle(content, tr::lng_teagram_invite_list());
+	const auto listTitle = Ui::AddSubsectionTitle(
+		content, tr::lng_teagram_invite_list());
+	_listTitle = listTitle.get();
 
 	auto message
 		= object_ptr<Ui::FlatLabel>(content, QString(), st::dialogsEmptyLabel);
@@ -432,6 +435,8 @@ void InviteFriends::updateSummary() {
 }
 
 void InviteFriends::updateMessage() {
+	_listTitle->setVisible(details::ShouldShowInviteListTitle(
+		_loaded, _listFailed, bool(_list->fullRowsCount())));
 	_retryButton->hide();
 	if (!_available) {
 		_messageLabel->setText(tr::lng_teagram_invite_off(tr::now));

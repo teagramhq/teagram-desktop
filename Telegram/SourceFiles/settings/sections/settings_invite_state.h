@@ -49,6 +49,10 @@ struct InviteCreateFailure {
 
 [[nodiscard]] bool CanCreateInvite(const InviteCreateConditions &conditions);
 [[nodiscard]] bool CanRevokeInvite(const QString &state, bool inFlight);
+[[nodiscard]] bool ShouldShowInviteListTitle(
+	bool loaded,
+	bool failed,
+	bool hasRows);
 
 class InviteCreateRequest final {
   public:
