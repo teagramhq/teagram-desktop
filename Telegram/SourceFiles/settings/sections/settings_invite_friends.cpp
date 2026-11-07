@@ -346,24 +346,23 @@ void InviteFriends::setupContent() {
 		= Ui::AddSubsectionTitle(content, tr::lng_teagram_invite_list());
 	_listTitle = listTitle.get();
 
-	_messageWrap = content->add(
-		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
-			content,
-			object_ptr<Ui::FlatLabel>(
-				content,
-				QString(),
-				st::dialogsEmptyLabel),
-			st::peerAppearanceCoverLabelMargin))->setDuration(0);
+	_messageWrap = content
+					   ->add(object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+						   content,
+						   object_ptr<Ui::FlatLabel>(content, QString(),
+													 st::dialogsEmptyLabel),
+						   st::peerAppearanceCoverLabelMargin))
+					   ->setDuration(0);
 	_messageLabel = _messageWrap->entity();
 	_messageLabel->setTryMakeSimilarLines(true);
 
-	_retryWrap = content->add(
-		object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
-			content,
-			object_ptr<Ui::SettingsButton>(
-				content,
-				tr::lng_teagram_invite_try_again(),
-				st::settingsButtonLightNoIcon)))->setDuration(0);
+	_retryWrap
+		= content
+			  ->add(object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
+				  content, object_ptr<Ui::SettingsButton>(
+							   content, tr::lng_teagram_invite_try_again(),
+							   st::settingsButtonLightNoIcon)))
+			  ->setDuration(0);
 	_retryButton = _retryWrap->entity();
 	_retryButton->setClickedCallback([=] { loadInvites(); });
 
