@@ -273,31 +273,28 @@ TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
 }
 
 TEST_CASE(TurnstileLinuxPolicyRejectionKeepsChallengePending) {
-	const auto topLevelDecision = CheckTurnstileNavigation(
+	const auto topLevelReloadDecision = CheckTurnstileNavigation(
 		kInitialUrl, kInitialUrl, false, false, true);
-	const auto topLevelOutcome
-		= ResolveTurnstileNavigationOutcome(topLevelDecision);
-	CHECK(topLevelDecision.rejection.has_value());
-	CHECK(!topLevelOutcome.allowed);
-	CHECK(!topLevelOutcome.endsChallenge);
+	const auto topLevelReloadState = NextStateOnNavigationStart(
+		TurnstileBoxState::Pending, topLevelReloadDecision);
+	CHECK(topLevelReloadDecision.rejection.has_value());
+	CHECK(topLevelReloadState == TurnstileBoxState::Pending);
 	const auto topLevelMessage
 		= ParseMessage(TokenMessage("token"), TurnstileAction::SignIn,
-					   !topLevelOutcome.endsChallenge);
+					   topLevelReloadState == TurnstileBoxState::Pending);
 	CHECK(std::holds_alternative<TurnstileMessage>(topLevelMessage));
 	CHECK(std::get<TurnstileMessage>(topLevelMessage).type
 		  == TurnstileMessageType::Token);
 
-	const auto iframeDecision
-		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
-								   kInitialUrl, false, false, true);
-	const auto iframeOutcome
-		= ResolveTurnstileNavigationOutcome(iframeDecision);
+	const auto iframeDecision = CheckTurnstileNavigation(
+		u"https://evil.example/iframe.html"_q, kInitialUrl, false, false, true);
+	const auto iframeState = NextStateOnNavigationStart(
+		TurnstileBoxState::Pending, iframeDecision);
 	CHECK(iframeDecision.rejection.has_value());
-	CHECK(!iframeOutcome.allowed);
-	CHECK(!iframeOutcome.endsChallenge);
+	CHECK(iframeState == TurnstileBoxState::Pending);
 	const auto iframeMessage
 		= ParseMessage(TokenMessage("token"), TurnstileAction::SignIn,
-					   !iframeOutcome.endsChallenge);
+					   iframeState == TurnstileBoxState::Pending);
 	CHECK(std::holds_alternative<TurnstileMessage>(iframeMessage));
 	CHECK(std::get<TurnstileMessage>(iframeMessage).type
 		  == TurnstileMessageType::Token);

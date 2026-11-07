@@ -81,9 +81,10 @@ struct TurnstileNavigationDecision {
 		= TurnstileNavigationRejection::UnexpectedNavigation;
 };
 
-struct TurnstileNavigationOutcome {
-	bool allowed = false;
-	bool endsChallenge = false;
+enum class TurnstileBoxState {
+	Loading,
+	Pending,
+	Finished,
 };
 
 class TurnstileLinuxNavigationGuard final {
@@ -113,7 +114,8 @@ ParseTurnstileMessage(std::string_view bytes, TurnstileAction pendingAction,
 CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 						 bool initialNavigationPending, bool newWindow,
 						 bool allowLinuxSubframes);
-[[nodiscard]] TurnstileNavigationOutcome
-ResolveTurnstileNavigationOutcome(const TurnstileNavigationDecision &decision);
+[[nodiscard]] TurnstileBoxState
+NextStateOnNavigationStart(TurnstileBoxState state,
+						   const TurnstileNavigationDecision &decision);
 
 } // namespace Intro::details

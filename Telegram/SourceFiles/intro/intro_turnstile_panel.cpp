@@ -103,12 +103,6 @@ class TurnstileBox final : public Ui::BoxContent {
 	void resizeEvent(QResizeEvent *e) override;
 
   private:
-	enum class State {
-		Loading,
-		Pending,
-		Finished,
-	};
-
 	[[nodiscard]] bool navigationStarted(const QString &url, bool newWindow);
 	void navigationDone(bool success);
 	void navigationStateUpdated(Webview::NavigationHistoryState state);
@@ -128,7 +122,7 @@ class TurnstileBox final : public Ui::BoxContent {
 	QString _mainFrameUrl;
 	QString _error;
 	TurnstileLinuxNavigationGuard _linuxNavigationGuard;
-	State _state = State::Loading;
+	TurnstileBoxState _state = TurnstileBoxState::Loading;
 	bool _initialNavigationPending = true;
 };
 
@@ -138,15 +132,15 @@ TurnstileBox::TurnstileBox(QWidget *, TurnstileChallenge challenge,
 	  _token(std::move(token)), _failed(std::move(failed)) {}
 
 TurnstileBox::~TurnstileBox() {
-	_state = State::Finished;
+	_state = TurnstileBoxState::Finished;
 	_window.reset();
 }
 
 void TurnstileBox::closeSilently() {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return;
 	}
-	_state = State::Finished;
+	_state = TurnstileBoxState::Finished;
 	_linuxNavigationGuard.finish();
 	_window.reset();
 	closeBox();
@@ -162,7 +156,7 @@ void TurnstileBox::prepare() {
 	boxClosing()
 		| rpl::on_next(
 			[=] {
-				if (_state != State::Finished) {
+				if (_state != TurnstileBoxState::Finished) {
 					finishFailed(TurnstileFailureReason::Cancelled, false);
 				}
 			},
@@ -233,7 +227,7 @@ void TurnstileBox::resizeEvent(QResizeEvent *e) {
 }
 
 bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return false;
 	}
 	const auto decision = CheckTurnstileNavigation(
@@ -244,7 +238,7 @@ bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
 		false
 #endif
 	);
-	const auto outcome = ResolveTurnstileNavigationOutcome(decision);
+	_state = NextStateOnNavigationStart(_state, decision);
 	if (decision.initialNavigation) {
 		_initialNavigationPending = false;
 	}
@@ -252,14 +246,14 @@ bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
 		LOG(("Intro Turnstile navigation rejected: %1")
 				.arg(TurnstileNavigationRejectionText(*decision.rejection)));
 	}
-	return outcome.allowed;
+	return !decision.rejection.has_value();
 }
 
 void TurnstileBox::navigationDone(bool success) {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return;
 	} else if (success) {
-		_state = State::Pending;
+		_state = TurnstileBoxState::Pending;
 		_linuxNavigationGuard.initialLoadCompleted();
 	} else {
 		finishFailed(TurnstileFailureReason::NavigationFailed, true, true);
@@ -268,7 +262,7 @@ void TurnstileBox::navigationDone(bool success) {
 
 void TurnstileBox::navigationStateUpdated(
 	Webview::NavigationHistoryState state) {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return;
 	}
 	const auto url = QString::fromStdString(state.url);
@@ -282,12 +276,13 @@ void TurnstileBox::navigationStateUpdated(
 }
 
 void TurnstileBox::messageReceived(Webview::Message message) {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return;
 	}
-	auto parsed = ParseTurnstileMessage(
-		message.text, _challenge.action(), _state != State::Finished,
-		_state == State::Pending, _mainFrameUrl);
+	auto parsed = ParseTurnstileMessage(message.text, _challenge.action(),
+										_state != TurnstileBoxState::Finished,
+										_state == TurnstileBoxState::Pending,
+										_mainFrameUrl);
 	if (const auto rejection
 		= std::get_if<TurnstileMessageRejection>(&parsed)) {
 		LOG(("Intro Turnstile message rejected: %1 (%2 bytes)")
@@ -304,19 +299,19 @@ void TurnstileBox::messageReceived(Webview::Message message) {
 }
 
 void TurnstileBox::widgetDestroyed() {
-	if (_state != State::Finished) {
+	if (_state != TurnstileBoxState::Finished) {
 		finishFailed(TurnstileFailureReason::WidgetDestroyed, true, true);
 	}
 }
 
 void TurnstileBox::externalWindowClosed() {
-	if (_state != State::Finished) {
+	if (_state != TurnstileBoxState::Finished) {
 		finishFailed(TurnstileFailureReason::WindowClosed, true, true);
 	}
 }
 
 void TurnstileBox::finishToken(QString token) {
-	_state = State::Finished;
+	_state = TurnstileBoxState::Finished;
 	_linuxNavigationGuard.finish();
 	auto callback = std::move(_token);
 	deferWindowDestruction(true, [callback = std::move(callback),
@@ -342,11 +337,11 @@ void TurnstileBox::deferWindowDestruction(bool close, Fn<void()> callback) {
 
 void TurnstileBox::finishFailed(TurnstileFailureReason reason, bool close,
 								bool fromEngineCallback) {
-	if (_state == State::Finished) {
+	if (_state == TurnstileBoxState::Finished) {
 		return;
 	}
 	LOG(("Intro Turnstile failed: %1").arg(TurnstileFailureReasonText(reason)));
-	_state = State::Finished;
+	_state = TurnstileBoxState::Finished;
 	_linuxNavigationGuard.finish();
 	auto callback = std::move(_failed);
 	if (fromEngineCallback) {

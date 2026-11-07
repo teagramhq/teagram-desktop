@@ -269,12 +269,16 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 	};
 }
 
-TurnstileNavigationOutcome
-ResolveTurnstileNavigationOutcome(const TurnstileNavigationDecision &decision) {
-	return {
-		.allowed = !decision.rejection.has_value(),
-		.endsChallenge = false,
-	};
+TurnstileBoxState
+NextStateOnNavigationStart(TurnstileBoxState state,
+						   const TurnstileNavigationDecision &decision) {
+	if (decision.rejection) {
+		return state;
+	}
+	if (decision.initialNavigation && state == TurnstileBoxState::Loading) {
+		return TurnstileBoxState::Loading;
+	}
+	return state;
 }
 
 QString TurnstileMessageRejectionText(TurnstileMessageRejection rejection) {
