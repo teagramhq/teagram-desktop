@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
+#include "mtproto/details/mtproto_serialized_request.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
@@ -295,7 +296,14 @@ TEST_CASE(BuildsWrappedAuthRequestOnlyWhenTokenIsPresent) {
 		= BuildAuthRequest(MTPaccount_GetPassword(), u"challenge-token"_q);
 	using Wrapped = MTPInvokeWithReCaptcha<MTPaccount_GetPassword>;
 	CHECK(std::holds_alternative<Wrapped>(wrapped));
-	CHECK_EQ(std::get<Wrapped>(wrapped).vtoken().v, u"challenge-token"_q);
+	const auto serialized = MTP::details::SerializedRequest::Serialize(
+		std::get<Wrapped>(wrapped));
+	const auto &buffer = *serialized;
+	const auto bytes
+		= QByteArray(reinterpret_cast<const char *>(buffer.constData()),
+					 int(buffer.size() * sizeof(mtpPrime)));
+	CHECK_EQ(bytes.left(4), QByteArray("\x94\xf0\xbb\xad", 4));
+	CHECK(bytes.contains("challenge-token"));
 
 	const auto plain = BuildAuthRequest(MTPaccount_GetPassword(), QString());
 	CHECK(std::holds_alternative<MTPaccount_GetPassword>(plain));
