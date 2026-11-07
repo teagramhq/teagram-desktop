@@ -332,8 +332,8 @@ void InviteFriends::setupContent() {
 	_quotaLabel = quota.get();
 	_quotaLabel->hide();
 
-	const auto listTitle = Ui::AddSubsectionTitle(
-		content, tr::lng_teagram_invite_list());
+	const auto listTitle
+		= Ui::AddSubsectionTitle(content, tr::lng_teagram_invite_list());
 	_listTitle = listTitle.get();
 
 	auto message
