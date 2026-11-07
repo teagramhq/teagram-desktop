@@ -213,6 +213,10 @@ PossibleItemReactionsRef LookupPossibleReactions(
 	const auto &allowed = PeerAllowedReactions(peer);
 	const auto limit = UniqueReactionsLimit(peer);
 	const auto premiumPossible = session->premiumPossible();
+	const auto customEmojiRequiresPremium
+		= Data::details::CustomEmojiRequiresPremium(
+			premiumPossible,
+			peer->usesCustomServer());
 	const auto limited = (all.size() >= limit) && [&] {
 		const auto my = item->chosenReactions();
 		if (my.empty()) {
@@ -272,7 +276,7 @@ PossibleItemReactionsRef LookupPossibleReactions(
 		}
 		add([&](const Reaction &reaction) {
 			const auto id = reaction.id;
-			if (id.custom() && !premiumPossible) {
+			if (id.custom() && customEmojiRequiresPremium) {
 				return false;
 			} else if ((allowed.type == AllowedReactionsType::Some)
 				&& !ranges::contains(allowed.some, id)) {
@@ -293,7 +297,7 @@ PossibleItemReactionsRef LookupPossibleReactions(
 			}
 		}
 		result.customAllowed = (allowed.type == AllowedReactionsType::All)
-			&& premiumPossible;
+			&& !customEmojiRequiresPremium;
 
 		const auto favoriteId = reactions->favoriteId();
 		if (favoriteId.custom()
@@ -340,16 +344,20 @@ PossibleItemReactionsRef LookupPossibleReactions(
 	const auto &top = reactions->list(Reactions::Type::Top);
 	const auto &recent = reactions->list(Reactions::Type::Recent);
 	const auto premiumPossible = session->premiumPossible();
+	const auto customEmojiRequiresPremium
+		= Data::details::CustomEmojiRequiresPremium(
+			premiumPossible,
+			session->mtp().dcOptions().hasCustomServer());
 	auto added = base::flat_set<ReactionId>();
 	result.recent.reserve(full.size());
 	for (const auto &reaction : ranges::views::concat(top, recent, full)) {
-		if (premiumPossible || !reaction.id.custom()) {
+		if (!customEmojiRequiresPremium || !reaction.id.custom()) {
 			if (added.emplace(reaction.id).second) {
 				result.recent.push_back(&reaction);
 			}
 		}
 	}
-	result.customAllowed = premiumPossible;
+	result.customAllowed = !customEmojiRequiresPremium;
 	const auto i = ranges::find(
 		result.recent,
 		reactions->favoriteId(),

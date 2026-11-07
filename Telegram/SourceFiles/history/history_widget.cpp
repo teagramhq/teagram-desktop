@@ -551,7 +551,9 @@ HistoryWidget::HistoryWidget(
 
 	_fieldChatStyle = InitMessageField(controller, _field, [=](
 			not_null<DocumentData*> document) {
-		if (_peer && Data::AllowEmojiWithoutPremium(_peer, document)) {
+		if (_peer
+			&& (Data::AllowEmojiWithoutPremium(_peer, document)
+				|| _peer->usesCustomServer())) {
 			return true;
 		}
 		showPremiumToast(document);
@@ -2327,9 +2329,10 @@ void HistoryWidget::fileChosen(ChatHelpers::FileChosen &&data) {
 		if (data.document->isPremiumEmoji()
 			&& !session().premium()
 			&& (!_peer
-				|| !Data::AllowEmojiWithoutPremium(
+				|| (!Data::AllowEmojiWithoutPremium(
 					_peer,
-					data.document))) {
+					data.document)
+					&& !_peer->usesCustomServer()))) {
 			showPremiumToast(data.document);
 		} else if (!_field->isHidden()) {
 			Data::InsertCustomEmoji(_field.data(), data.document);
@@ -3121,7 +3124,7 @@ void HistoryWidget::showHistory(
 			}, _businessBotStatus->bar().lifetime());
 		}
 		orderWidgets();
-		controller()->tabbedSelector()->setCurrentPeer(_peer);
+		controller()->tabbedSelector()->setCurrentPeer(_peer, true);
 	}
 	refreshTabbedPanel();
 	initFieldAutocomplete();

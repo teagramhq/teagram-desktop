@@ -1241,7 +1241,9 @@ void ComposeControls::setHistory(SetHistoryArgs &&args) {
 	_header->setHistory(args);
 	trackThreadFieldVisibility();
 	registerDraftSource();
-	_selector->setCurrentPeer(history ? history->peer.get() : nullptr);
+	_selector->setCurrentPeer(
+		history ? history->peer.get() : nullptr,
+		true);
 	initFieldAutocomplete();
 	initWebpageProcess();
 	initWriteRestriction();
@@ -2628,7 +2630,8 @@ void ComposeControls::initField() {
 #endif // Q_OS_MAC
 	_chatStyle = InitMessageField(_show, _field, [=](not_null<DocumentData*> emoji) {
 		if (_history
-			&& Data::AllowEmojiWithoutPremium(_history->peer, emoji)) {
+			&& (Data::AllowEmojiWithoutPremium(_history->peer, emoji)
+				|| _history->peer->usesCustomServer())) {
 			return true;
 		}
 		if (_unavailableEmojiPasted) {
@@ -2705,7 +2708,8 @@ void ComposeControls::initFieldAutocomplete() {
 		},
 	});
 	const auto allow = [=](not_null<DocumentData*> emoji) {
-		return Data::AllowEmojiWithoutPremium(_history->peer, emoji);
+		return Data::AllowEmojiWithoutPremium(_history->peer, emoji)
+			|| _history->peer->usesCustomServer();
 	};
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		_panelsParent,
@@ -3242,9 +3246,10 @@ void ComposeControls::initTabbedSelector() {
 			if (data.document->isPremiumEmoji()
 				&& !session().premium()
 				&& (!_history
-					|| !Data::AllowEmojiWithoutPremium(
+					|| (!Data::AllowEmojiWithoutPremium(
 						_history->peer,
-						data.document))) {
+						data.document)
+						&& !_history->peer->usesCustomServer()))) {
 				if (_unavailableEmojiPasted) {
 					_unavailableEmojiPasted(data.document);
 				}

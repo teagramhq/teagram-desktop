@@ -392,7 +392,9 @@ void MessageField::createControls(PeerData *peer) {
 
 	const auto show = _show;
 	const auto allow = [=](not_null<DocumentData*> emoji) {
-		if (peer && Data::AllowEmojiWithoutPremium(peer, emoji)) {
+		if (peer
+			&& (Data::AllowEmojiWithoutPremium(peer, emoji)
+				|| peer->usesCustomServer())) {
 			return true;
 		}
 		return false;
@@ -450,7 +452,7 @@ void MessageField::createControls(PeerData *peer) {
 		st::emojiPanMinHeight / 2,
 		st::emojiPanMinHeight);
 	panel->hide();
-	panel->selector()->setCurrentPeer(peer);
+	panel->selector()->setCurrentPeer(peer, true);
 	panel->selector()->emojiChosen(
 	) | rpl::on_next([=](ChatHelpers::EmojiChosen data) {
 		Ui::InsertEmojiAtCursor(_field->textCursor(), data.emoji);

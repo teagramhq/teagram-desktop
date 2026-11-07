@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "data/stickers/data_stickers_set.h"
 #include "ui/text/custom_emoji_instance.h"
 #include "base/timer.h"

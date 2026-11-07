@@ -205,7 +205,8 @@ void EditFileCaptionBox(
 	if (window) {
 		const auto allow = [=](not_null<DocumentData*> emoji) {
 			return captionToPeer
-				&& Data::AllowEmojiWithoutPremium(captionToPeer, emoji);
+				&& (Data::AllowEmojiWithoutPremium(captionToPeer, emoji)
+					|| captionToPeer->usesCustomServer());
 		};
 		Ui::SetupCaptionFieldInBox(
 			box,
@@ -359,7 +360,7 @@ SendFilesLimits DefaultLimitsForPeer(not_null<PeerData*> peer) {
 	};
 	return Flag()
 		| (peer->slowmodeApplied() ? Flag::OnlyOne : Flag())
-		| (Data::AllowEmojiWithoutPremium(peer)
+		| ((Data::AllowEmojiWithoutPremium(peer) || peer->usesCustomServer())
 			? Flag::EmojiWithoutPremium
 			: Flag())
 		| allowByRestriction(Restriction::SendPhotos, Flag::Photos)
@@ -1865,7 +1866,8 @@ void SendFilesBox::updateSendWayControls() {
 
 void SendFilesBox::setupCaption() {
 	const auto allow = [=](not_null<DocumentData*> emoji) {
-		return Data::AllowEmojiWithoutPremium(_toPeer, emoji);
+		return Data::AllowEmojiWithoutPremium(_toPeer, emoji)
+			|| _toPeer->usesCustomServer();
 	};
 	const auto show = _show;
 	const auto chatStyle = InitMessageFieldHandlers({
@@ -2057,7 +2059,7 @@ void SendFilesBox::setupEmojiPanel() {
 		st::emojiPanMinHeight / 2,
 		st::emojiPanMinHeight);
 	_emojiPanel->hide();
-	_emojiPanel->selector()->setCurrentPeer(_toPeer);
+	_emojiPanel->selector()->setCurrentPeer(_toPeer, true);
 	_emojiPanel->selector()->setAllowEmojiWithoutPremium(
 		_limits & SendFilesAllow::EmojiWithoutPremium);
 	_emojiPanel->selector()->emojiChosen(
@@ -2070,7 +2072,8 @@ void SendFilesBox::setupEmojiPanel() {
 		if (info
 			&& info->setType == Data::StickersType::Emoji
 			&& !_show->session().premium()
-			&& !Data::AllowEmojiWithoutPremium(_toPeer, data.document)) {
+			&& !Data::AllowEmojiWithoutPremium(_toPeer, data.document)
+			&& !_toPeer->usesCustomServer()) {
 			ShowPremiumPreviewBox(_show, PremiumFeature::AnimatedEmoji);
 		} else {
 			Data::InsertCustomEmoji(_caption.data(), data.document);
