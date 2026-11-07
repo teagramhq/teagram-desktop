@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "intro/intro_turnstile.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -202,6 +203,15 @@ TEST_CASE(RefusesSecondAndNewWindowNavigations) {
 	CHECK(newWindow.rejection == TurnstileNavigationRejection::NewWindow);
 }
 
+TEST_CASE(RefusesTurnstileReloadOnLinuxPolicyPath) {
+	const auto initial = kInitialUrl.toString();
+	const auto reload
+		= CheckTurnstileNavigation(initial, initial, false, false, true);
+	CHECK(!reload.allowed);
+	CHECK(reload.rejection
+		  == TurnstileNavigationRejection::UnexpectedNavigation);
+}
+
 TEST_CASE(AllowsOnlyTurnstileSubframeDestinationsOnLinux) {
 	for (const auto &url : {
 			 u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q,
@@ -246,4 +256,12 @@ TEST_CASE(TurnstileLinuxNavigationGuardIgnoresEventsAfterFinish) {
 	guard.finish();
 
 	CHECK(!guard.mainFrameUrlUpdated(u"about:blank"_q, kInitialUrl));
+}
+
+TEST_CASE(DefersTurnstileCallbackUntilTheEventLoopRuns) {
+	auto called = false;
+	DeferTurnstileCallback([&] { called = true; });
+	CHECK(!called);
+	QCoreApplication::processEvents();
+	CHECK(called);
 }

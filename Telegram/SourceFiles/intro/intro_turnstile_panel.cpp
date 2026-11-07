@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // Q_OS_WIN
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtGui/QResizeEvent>
 #include <QtWidgets/QWidget>
 
@@ -118,7 +119,7 @@ class TurnstileBox final : public Ui::BoxContent {
 		}
 		QObject::connect(raw->widget(), &QObject::destroyed, this, [=] {
 			if (!_finished) {
-				finishFailed();
+				finishFailed(true, true);
 			}
 		});
 
@@ -148,7 +149,7 @@ class TurnstileBox final : public Ui::BoxContent {
 				_linuxNavigationGuard.initialLoadCompleted();
 			}
 			if (!success && !_finished) {
-				finishFailed();
+				finishFailed(true, true);
 			}
 		});
 		raw->navigationHistoryState()
@@ -159,7 +160,7 @@ class TurnstileBox final : public Ui::BoxContent {
 					if (!_finished
 						&& _linuxNavigationGuard.mainFrameUrlUpdated(
 							url, initialUrl)) {
-						finishFailed();
+						finishFailed(true, true);
 						return;
 					}
 #endif // !Q_OS_WIN && !Q_OS_MAC
@@ -182,7 +183,7 @@ class TurnstileBox final : public Ui::BoxContent {
 				}
 				return;
 			} else if (parsed.message->type == TurnstileMessageType::Error) {
-				finishFailed();
+				finishFailed(true, true);
 				return;
 			}
 
@@ -191,15 +192,16 @@ class TurnstileBox final : public Ui::BoxContent {
 			_finished = true;
 			_pending = false;
 			_linuxNavigationGuard.finish();
-			_window.reset();
-			closeBox();
-			if (callback) {
-				callback(std::move(token));
-			}
+			deferWindowDestruction(true, [callback = std::move(callback),
+										  token = std::move(token)]() mutable {
+				if (callback) {
+					callback(std::move(token));
+				}
+			});
 		});
 		raw->setExternalWindowCloseHandler([=] {
 			if (!_finished) {
-				finishFailed();
+				finishFailed(true, true);
 			}
 		});
 
@@ -229,7 +231,25 @@ postEvent: function(eventType, eventData) {
 	}
 
   private:
-	void finishFailed(bool close = true) {
+	void deferWindowDestruction(bool close, Fn<void()> callback) {
+		auto window = std::shared_ptr<Webview::Window>(_window.release());
+		const auto weak = QPointer<TurnstileBox>(this);
+		DeferTurnstileCallback([weak, window = std::move(window), close,
+								callback = std::move(callback)]() mutable {
+			window.reset();
+			if (!weak) {
+				return;
+			}
+			if (close) {
+				weak->closeBox();
+			}
+			if (callback) {
+				callback();
+			}
+		});
+	}
+
+	void finishFailed(bool close = true, bool fromEngineCallback = false) {
 		if (_finished) {
 			return;
 		}
@@ -237,6 +257,10 @@ postEvent: function(eventType, eventData) {
 		_pending = false;
 		_linuxNavigationGuard.finish();
 		auto callback = std::move(_failed);
+		if (fromEngineCallback) {
+			deferWindowDestruction(close, std::move(callback));
+			return;
+		}
 		_window.reset();
 		if (close) {
 			closeBox();

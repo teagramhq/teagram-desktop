@@ -118,6 +118,20 @@ TEST_CASE(SignupCodeReissueCanBeRetriedAfterChallengeCancellation) {
 	CHECK(state.wasReissuedOnce());
 }
 
+TEST_CASE(SignupCodeReissueCanBeRetriedWhenWrappedRequestIsChallengedAgain) {
+	auto state = SignupCodeReissueState();
+	CHECK(state.begin(false));
+	CHECK(state.handleChallengeError(false));
+	CHECK(state.begin(true));
+	CHECK(!state.handleChallengeError(true));
+	CHECK(!state.wasReissuedOnce());
+
+	const auto expired = ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400,
+											   false, state.wasReissuedOnce());
+	CHECK(expired.action == SignupFailureAction::ReissueCode);
+	CHECK(state.begin(false));
+}
+
 TEST_CASE(SignupFloodAndUnexpectedErrorsKeepTheirRecoveryBehavior) {
 	const auto flood = ClassifySignupFailure(
 		u"FLOOD_WAIT_3600"_q,

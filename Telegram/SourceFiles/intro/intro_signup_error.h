@@ -57,6 +57,14 @@ class SignupCodeReissueState final {
 
 	[[nodiscard]] bool wasReissuedOnce() const { return _reissuedOnce; }
 
+	[[nodiscard]] bool handleChallengeError(bool retried) {
+		if (retried) {
+			_reissuedOnce = false;
+			return false;
+		}
+		return true;
+	}
+
 	void challengeAborted() { _reissuedOnce = false; }
 
   private:

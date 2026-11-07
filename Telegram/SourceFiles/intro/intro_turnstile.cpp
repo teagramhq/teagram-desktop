@@ -10,10 +10,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/basic_types.h"
 #include "ui/webview_limits.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonParseError>
+#include <QtCore/QTimer>
 #include <QtCore/QUrl>
 
 namespace Intro::details {
@@ -153,6 +155,10 @@ bool TurnstileLinuxNavigationGuard::mainFrameUrlUpdated(
 }
 
 void TurnstileLinuxNavigationGuard::finish() { _finished = true; }
+
+void DeferTurnstileCallback(Fn<void()> callback) {
+	QTimer::singleShot(0, QCoreApplication::instance(), std::move(callback));
+}
 
 TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 											 QStringView pendingAction,

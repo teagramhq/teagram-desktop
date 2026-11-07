@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/basic_types.h"
+
 #include <QtCore/QString>
 #include <QtCore/QStringView>
 
@@ -78,6 +80,8 @@ class TurnstileLinuxNavigationGuard final {
 	bool _initialLoadCompleted = false;
 	bool _finished = false;
 };
+
+void DeferTurnstileCallback(Fn<void()> callback);
 
 [[nodiscard]] std::optional<TurnstileChallenge>
 ParseTurnstileChallenge(QStringView errorType);

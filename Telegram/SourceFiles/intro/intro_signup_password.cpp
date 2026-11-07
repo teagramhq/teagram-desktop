@@ -421,7 +421,7 @@ void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
 
 void SignUpPasswordWidget::reissueFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
-		if (retried) {
+		if (!_codeReissue.handleChallengeError(retried)) {
 			showFormError(tr::lng_intro_server_error(tr::now));
 			return;
 		}
