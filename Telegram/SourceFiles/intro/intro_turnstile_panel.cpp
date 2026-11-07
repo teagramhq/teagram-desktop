@@ -64,7 +64,6 @@ namespace {
 enum class TurnstileFailureReason {
 	WidgetDestroyed,
 	NavigationFailed,
-	NavigationRejected,
 	MainFrameUrlChanged,
 	ChallengeError,
 	WindowClosed,
@@ -78,8 +77,6 @@ TurnstileFailureReasonText(TurnstileFailureReason reason) {
 		return u"web view widget destroyed"_q;
 	case TurnstileFailureReason::NavigationFailed:
 		return u"engine navigation failed"_q;
-	case TurnstileFailureReason::NavigationRejected:
-		return u"Linux navigation rejected"_q;
 	case TurnstileFailureReason::MainFrameUrlChanged:
 		return u"Linux main-frame URL changed"_q;
 	case TurnstileFailureReason::ChallengeError:
@@ -253,14 +250,6 @@ bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
 	if (decision.rejection) {
 		LOG(("Intro Turnstile navigation rejected: %1")
 				.arg(TurnstileNavigationRejectionText(*decision.rejection)));
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
-		if (*decision.rejection
-				== TurnstileNavigationRejection::UnexpectedNavigation
-			&& _linuxNavigationGuard.rejectedNavigationAfterInitialLoad()) {
-			finishFailed(TurnstileFailureReason::NavigationRejected, true,
-						 true);
-		}
-#endif // !Q_OS_WIN && !Q_OS_MAC
 	}
 	return !decision.rejection.has_value();
 }

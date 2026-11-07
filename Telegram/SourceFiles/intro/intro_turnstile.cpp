@@ -164,14 +164,6 @@ void TurnstileLinuxNavigationGuard::initialLoadCompleted() {
 	}
 }
 
-bool TurnstileLinuxNavigationGuard::rejectedNavigationAfterInitialLoad() {
-	if (!_initialLoadCompleted || _finished) {
-		return false;
-	}
-	_finished = true;
-	return true;
-}
-
 bool TurnstileLinuxNavigationGuard::mainFrameUrlUpdated(
 	QStringView url, QStringView challengeUrl) {
 	if (!_initialLoadCompleted || _finished

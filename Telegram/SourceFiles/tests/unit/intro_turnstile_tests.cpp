@@ -272,27 +272,30 @@ TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
 	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
 }
 
-TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeWhenPolicyRejectsLoad) {
+TEST_CASE(TurnstileLinuxPolicyRejectionsKeepChallengePending) {
 	auto guard = TurnstileLinuxNavigationGuard();
-	CHECK(!guard.rejectedNavigationAfterInitialLoad());
-
 	guard.initialLoadCompleted();
-	const auto decision
+	const auto rejected
 		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
 								   kInitialUrl, false, false, true);
-	CHECK(decision.rejection.has_value());
-	CHECK(*decision.rejection
+	CHECK(rejected.rejection.has_value());
+	CHECK(*rejected.rejection
 		  == TurnstileNavigationRejection::UnexpectedNavigation);
-
-	const auto ended = guard.rejectedNavigationAfterInitialLoad();
-	CHECK(ended);
 	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
-	CHECK(!guard.rejectedNavigationAfterInitialLoad());
 
-	const auto message = ParseMessage(TokenMessage("token", "signup"),
-									  TurnstileAction::SignUp, !ended);
-	CHECK(std::get<TurnstileMessageRejection>(message)
-		  == TurnstileMessageRejection::NoChallengePending);
+	// Linux supplies the same policy data for a top-level and iframe request.
+	const auto rejectedIframe
+		= CheckTurnstileNavigation(u"https://web.teagram.io/other.html"_q,
+								   kInitialUrl, false, false, true);
+	CHECK(rejectedIframe.rejection.has_value());
+	CHECK(*rejectedIframe.rejection
+		  == TurnstileNavigationRejection::UnexpectedNavigation);
+	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
+
+	const auto message = ParseMessage(TokenMessage("token"));
+	CHECK(std::holds_alternative<TurnstileMessage>(message));
+	CHECK(std::get<TurnstileMessage>(message).type
+		  == TurnstileMessageType::Token);
 }
 
 TEST_CASE(TurnstileLinuxNavigationGuardIgnoresEventsAfterFinish) {
