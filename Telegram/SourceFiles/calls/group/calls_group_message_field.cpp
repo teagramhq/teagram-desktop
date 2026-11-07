@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_document.h"
+#include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/view/reactions/history_view_reactions_selector.h"
 #include "history/view/reactions/history_view_reactions_strip.h"
