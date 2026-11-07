@@ -7,18 +7,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_turnstile_panel.h"
 
-#include "intro/intro_turnstile.h"
 #include "ui/chat/attach/attach_bot_webview.h"
 #include "boxes/abstract_box.h"
-#include "settings.h"
+#include "intro/intro_turnstile.h"
 #include "ui/layers/box_content.h"
-#include "lang/lang_keys.h"
-#include "styles/style_layers.h"
-#include "styles/style_window.h"
 #include "webview/webview_embed.h"
 #if defined Q_OS_WIN
 #include "webview/platform/win/webview_windows_edge_chromium.h"
 #endif // Q_OS_WIN
+
+#include "lang/lang_keys.h"
+#include "settings.h"
+
+#include "styles/style_layers.h"
+#include "styles/style_window.h"
 
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
@@ -59,153 +61,152 @@ namespace {
 	return result;
 }
 
+enum class TurnstileFailureReason {
+	WidgetDestroyed,
+	NavigationFailed,
+	MainFrameUrlChanged,
+	ChallengeError,
+	WindowClosed,
+	Cancelled,
+};
+
+[[nodiscard]] QString
+TurnstileFailureReasonText(TurnstileFailureReason reason) {
+	switch (reason) {
+	case TurnstileFailureReason::WidgetDestroyed:
+		return u"web view widget destroyed"_q;
+	case TurnstileFailureReason::NavigationFailed:
+		return u"engine navigation failed"_q;
+	case TurnstileFailureReason::MainFrameUrlChanged:
+		return u"Linux main-frame URL changed"_q;
+	case TurnstileFailureReason::ChallengeError:
+		return u"challenge reported an error"_q;
+	case TurnstileFailureReason::WindowClosed:
+		return u"web view window closed"_q;
+	case TurnstileFailureReason::Cancelled:
+		return u"challenge cancelled"_q;
+	}
+	Unexpected("Unknown Turnstile failure reason.");
+}
+
 class TurnstileBox final : public Ui::BoxContent {
   public:
 	TurnstileBox(QWidget *, TurnstileChallenge challenge,
-				 Fn<void(QString)> token, Fn<void()> failed)
-		: _challenge(std::move(challenge)), _token(std::move(token)),
-		  _failed(std::move(failed)) {}
+				 Fn<void(QString)> token, Fn<void()> failed);
+	~TurnstileBox() override;
 
-	~TurnstileBox() override {
-		_finished = true;
-		_pending = false;
-		_window.reset();
-	}
-
-	void closeSilently() {
-		if (_finished) {
-			return;
-		}
-		_finished = true;
-		_pending = false;
-		_linuxNavigationGuard.finish();
-		_window.reset();
-		closeBox();
-	}
-
-	[[nodiscard]] QString error() const { return _error; }
+	void closeSilently();
+	[[nodiscard]] QString error() const;
 
   protected:
-	void prepare() override {
-		setNoContentMargin(true);
-		addButton(tr::lng_cancel(), [=] { closeBox(); });
-		setDimensions(st::boxWideWidth, st::boxMaxListHeight);
+	void prepare() override;
+	void resizeEvent(QResizeEvent *e) override;
 
-		boxClosing()
-			| rpl::on_next(
-				[=] {
-					if (!_finished) {
-						finishFailed(false);
-					}
-				},
-				lifetime());
+  private:
+	enum class State {
+		Loading,
+		Pending,
+		Finished,
+	};
 
-		const auto available = TurnstileAvailability();
-		if (available.error != Webview::Available::Error::None) {
-			_error = UnavailableText(available);
-			return;
-		}
+	[[nodiscard]] bool navigationStarted(const QString &url, bool newWindow);
+	void navigationDone(bool success);
+	void navigationStateUpdated(Webview::NavigationHistoryState state);
+	void messageReceived(Webview::Message message);
+	void widgetDestroyed();
+	void externalWindowClosed();
+	void finishToken(QString token);
+	void deferWindowDestruction(bool close, Fn<void()> callback);
+	void finishFailed(TurnstileFailureReason reason, bool close = true,
+					  bool fromEngineCallback = false);
 
-		_window = std::make_unique<Webview::Window>(
-			this, Webview::WindowConfig{
-					  .opaqueBg = st::windowBg->c,
-					  .storageId = TurnstileStorageId(),
-				  });
-		const auto raw = _window.get();
-		if (!raw->widget()) {
-			_window.reset();
-			_error = tr::lng_bot_webview_failed(tr::now);
-			return;
-		}
-		QObject::connect(raw->widget(), &QObject::destroyed, this, [=] {
-			if (!_finished) {
-				finishFailed(true, true);
-			}
-		});
+	const TurnstileChallenge _challenge;
+	const QString _initialUrl;
+	Fn<void(QString)> _token;
+	Fn<void()> _failed;
+	std::unique_ptr<Webview::Window> _window;
+	QString _mainFrameUrl;
+	QString _error;
+	TurnstileLinuxNavigationGuard _linuxNavigationGuard;
+	State _state = State::Loading;
+	bool _initialNavigationPending = true;
+};
 
-		const auto initialUrl = TurnstileUrl(_challenge);
-		raw->setNavigationStartHandler([=](const QString &url, bool newWindow) {
-			const auto decision = CheckTurnstileNavigation(
-				url, initialUrl, _initialNavigationPending, newWindow,
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
-				true
-#else
-				false
-#endif
-			);
-			if (decision.initialNavigation) {
-				_initialNavigationPending = false;
-			}
-			if (!decision.allowed) {
-				LOG(("Intro Turnstile navigation rejected: %1")
-						.arg(TurnstileNavigationRejectionText(
-							decision.rejection)));
-			}
-			return decision.allowed;
-		});
-		raw->setNavigationDoneHandler([=](bool success) {
-			_navigationDone = success;
-			if (success) {
-				_linuxNavigationGuard.initialLoadCompleted();
-			}
-			if (!success && !_finished) {
-				finishFailed(true, true);
-			}
-		});
-		raw->navigationHistoryState()
-			| rpl::on_next(
-				[=](Webview::NavigationHistoryState state) {
-					const auto url = QString::fromStdString(state.url);
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
-					if (!_finished
-						&& _linuxNavigationGuard.mainFrameUrlUpdated(
-							url, initialUrl)) {
-						finishFailed(true, true);
-						return;
-					}
-#endif // !Q_OS_WIN && !Q_OS_MAC
-					_mainFrameUrl = url;
-				},
-				lifetime());
-		raw->setMessageHandler([=](Webview::Message message) {
-			if (_finished) {
-				return;
-			}
-			auto parsed = ParseTurnstileMessage(message.text, _challenge.action,
-												_pending, _navigationDone,
-												_mainFrameUrl);
-			if (!parsed.message) {
-				if (parsed.rejection != TurnstileMessageRejection::None) {
-					LOG(("Intro Turnstile message rejected: %1 (%2 bytes)")
-							.arg(
-								TurnstileMessageRejectionText(parsed.rejection))
-							.arg(quint64(message.text.size())));
+TurnstileBox::TurnstileBox(QWidget *, TurnstileChallenge challenge,
+						   Fn<void(QString)> token, Fn<void()> failed)
+	: _challenge(std::move(challenge)), _initialUrl(TurnstileUrl(_challenge)),
+	  _token(std::move(token)), _failed(std::move(failed)) {}
+
+TurnstileBox::~TurnstileBox() {
+	_state = State::Finished;
+	_window.reset();
+}
+
+void TurnstileBox::closeSilently() {
+	if (_state == State::Finished) {
+		return;
+	}
+	_state = State::Finished;
+	_linuxNavigationGuard.finish();
+	_window.reset();
+	closeBox();
+}
+
+QString TurnstileBox::error() const { return _error; }
+
+void TurnstileBox::prepare() {
+	setNoContentMargin(true);
+	addButton(tr::lng_cancel(), [=] { closeBox(); });
+	setDimensions(st::boxWideWidth, st::boxMaxListHeight);
+
+	boxClosing()
+		| rpl::on_next(
+			[=] {
+				if (_state != State::Finished) {
+					finishFailed(TurnstileFailureReason::Cancelled, false);
 				}
-				return;
-			} else if (parsed.message->type == TurnstileMessageType::Error) {
-				finishFailed(true, true);
-				return;
-			}
+			},
+			lifetime());
 
-			auto token = std::move(parsed.message->token);
-			auto callback = std::move(_token);
-			_finished = true;
-			_pending = false;
-			_linuxNavigationGuard.finish();
-			deferWindowDestruction(true, [callback = std::move(callback),
-										  token = std::move(token)]() mutable {
-				if (callback) {
-					callback(std::move(token));
-				}
-			});
-		});
-		raw->setExternalWindowCloseHandler([=] {
-			if (!_finished) {
-				finishFailed(true, true);
-			}
-		});
+	const auto available = TurnstileAvailability();
+	if (available.error != Webview::Available::Error::None) {
+		LOG(("Intro Turnstile: web view unavailable, error %1")
+				.arg(int(available.error)));
+		_error = UnavailableText(available);
+		return;
+	}
 
-		raw->init(R"(
+	_window = std::make_unique<Webview::Window>(
+		this, Webview::WindowConfig{
+				  .opaqueBg = st::windowBg->c,
+				  .storageId = TurnstileStorageId(),
+			  });
+	const auto raw = _window.get();
+	if (!raw->widget()) {
+		LOG(("Intro Turnstile: web view widget creation failed"));
+		_window.reset();
+		_error = tr::lng_bot_webview_failed(tr::now);
+		return;
+	}
+	QObject::connect(raw->widget(), &QObject::destroyed, this,
+					 [=] { widgetDestroyed(); });
+
+	raw->setNavigationStartHandler([=](const QString &url, bool newWindow) {
+		return navigationStarted(url, newWindow);
+	});
+	raw->setNavigationDoneHandler(
+		[=](bool success) { navigationDone(success); });
+	raw->navigationHistoryState()
+		| rpl::on_next(
+			[=](Webview::NavigationHistoryState state) {
+				navigationStateUpdated(std::move(state));
+			},
+			lifetime());
+	raw->setMessageHandler(
+		[=](Webview::Message message) { messageReceived(std::move(message)); });
+	raw->setExternalWindowCloseHandler([=] { externalWindowClosed(); });
+
+	raw->init(R"(
 window.TelegramWebviewProxy = {
 postEvent: function(eventType, eventData) {
 	if (window.external && window.external.invoke) {
@@ -213,75 +214,152 @@ postEvent: function(eventType, eventData) {
 	}
 }
 };)");
-		if (!_window) {
-			_error = tr::lng_bot_webview_failed(tr::now);
-			return;
-		}
-
-		raw->widget()->setGeometry(rect());
-		raw->widget()->show();
-		raw->navigate(initialUrl);
+	if (!_window) {
+		LOG(("Intro Turnstile: web view initialization failed"));
+		_error = tr::lng_bot_webview_failed(tr::now);
+		return;
 	}
 
-	void resizeEvent(QResizeEvent *e) override {
-		BoxContent::resizeEvent(e);
-		if (_window && _window->widget()) {
-			_window->widget()->setGeometry(rect());
-		}
-	}
+	raw->widget()->setGeometry(rect());
+	raw->widget()->show();
+	raw->navigate(_initialUrl);
+}
 
-  private:
-	void deferWindowDestruction(bool close, Fn<void()> callback) {
-		auto window = std::shared_ptr<Webview::Window>(_window.release());
-		const auto weak = QPointer<TurnstileBox>(this);
-		DeferTurnstileCallback([weak, window = std::move(window), close,
-								callback = std::move(callback)]() mutable {
+void TurnstileBox::resizeEvent(QResizeEvent *e) {
+	BoxContent::resizeEvent(e);
+	if (_window && _window->widget()) {
+		_window->widget()->setGeometry(rect());
+	}
+}
+
+bool TurnstileBox::navigationStarted(const QString &url, bool newWindow) {
+	if (_state == State::Finished) {
+		return false;
+	}
+	const auto decision = CheckTurnstileNavigation(
+		url, _initialUrl, _initialNavigationPending, newWindow,
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+		true
+#else
+		false
+#endif
+	);
+	if (decision.initialNavigation) {
+		_initialNavigationPending = false;
+	}
+	if (decision.rejection) {
+		LOG(("Intro Turnstile navigation rejected: %1")
+				.arg(TurnstileNavigationRejectionText(*decision.rejection)));
+	}
+	return !decision.rejection.has_value();
+}
+
+void TurnstileBox::navigationDone(bool success) {
+	if (_state == State::Finished) {
+		return;
+	} else if (success) {
+		_state = State::Pending;
+		_linuxNavigationGuard.initialLoadCompleted();
+	} else {
+		finishFailed(TurnstileFailureReason::NavigationFailed, true, true);
+	}
+}
+
+void TurnstileBox::navigationStateUpdated(
+	Webview::NavigationHistoryState state) {
+	if (_state == State::Finished) {
+		return;
+	}
+	const auto url = QString::fromStdString(state.url);
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+	if (_linuxNavigationGuard.mainFrameUrlUpdated(url, _initialUrl)) {
+		finishFailed(TurnstileFailureReason::MainFrameUrlChanged, true, true);
+		return;
+	}
+#endif // !Q_OS_WIN && !Q_OS_MAC
+	_mainFrameUrl = url;
+}
+
+void TurnstileBox::messageReceived(Webview::Message message) {
+	if (_state == State::Finished) {
+		return;
+	}
+	auto parsed = ParseTurnstileMessage(
+		message.text, _challenge.action(), _state == State::Pending,
+		_state == State::Pending, _mainFrameUrl);
+	if (const auto rejection
+		= std::get_if<TurnstileMessageRejection>(&parsed)) {
+		LOG(("Intro Turnstile message rejected: %1 (%2 bytes)")
+				.arg(TurnstileMessageRejectionText(*rejection))
+				.arg(quint64(message.text.size())));
+		return;
+	}
+	auto &parsedMessage = std::get<TurnstileMessage>(parsed);
+	if (parsedMessage.type == TurnstileMessageType::Error) {
+		finishFailed(TurnstileFailureReason::ChallengeError, true, true);
+		return;
+	}
+	finishToken(std::move(parsedMessage.token));
+}
+
+void TurnstileBox::widgetDestroyed() {
+	if (_state != State::Finished) {
+		finishFailed(TurnstileFailureReason::WidgetDestroyed, true, true);
+	}
+}
+
+void TurnstileBox::externalWindowClosed() {
+	if (_state != State::Finished) {
+		finishFailed(TurnstileFailureReason::WindowClosed, true, true);
+	}
+}
+
+void TurnstileBox::finishToken(QString token) {
+	_state = State::Finished;
+	_linuxNavigationGuard.finish();
+	auto callback = std::move(_token);
+	deferWindowDestruction(true, [callback = std::move(callback),
+								  token = std::move(token)]() mutable {
+		if (callback) {
+			callback(std::move(token));
+		}
+	});
+}
+
+void TurnstileBox::deferWindowDestruction(bool close, Fn<void()> callback) {
+	auto window = std::shared_ptr<Webview::Window>(_window.release());
+	const auto weak = QPointer<TurnstileBox>(this);
+	DeferTurnstileCallback(
+		[weak, window = std::move(window), close]() mutable {
 			window.reset();
-			if (!weak) {
-				return;
-			}
-			if (close) {
+			if (weak && close) {
 				weak->closeBox();
 			}
-			if (callback) {
-				callback();
-			}
-		});
-	}
+		},
+		std::move(callback));
+}
 
-	void finishFailed(bool close = true, bool fromEngineCallback = false) {
-		if (_finished) {
-			return;
-		}
-		_finished = true;
-		_pending = false;
-		_linuxNavigationGuard.finish();
-		auto callback = std::move(_failed);
-		if (fromEngineCallback) {
-			deferWindowDestruction(close, std::move(callback));
-			return;
-		}
-		_window.reset();
-		if (close) {
-			closeBox();
-		}
-		if (callback) {
-			callback();
-		}
+void TurnstileBox::finishFailed(TurnstileFailureReason reason, bool close,
+								bool fromEngineCallback) {
+	if (_state == State::Finished) {
+		return;
 	}
-
-	const TurnstileChallenge _challenge;
-	Fn<void(QString)> _token;
-	Fn<void()> _failed;
-	std::unique_ptr<Webview::Window> _window;
-	QString _mainFrameUrl;
-	QString _error;
-	TurnstileLinuxNavigationGuard _linuxNavigationGuard;
-	bool _initialNavigationPending = true;
-	bool _navigationDone = false;
-	bool _pending = true;
-	bool _finished = false;
-};
+	LOG(("Intro Turnstile failed: %1").arg(TurnstileFailureReasonText(reason)));
+	_state = State::Finished;
+	_linuxNavigationGuard.finish();
+	auto callback = std::move(_failed);
+	if (fromEngineCallback) {
+		deferWindowDestruction(close, std::move(callback));
+		return;
+	}
+	_window.reset();
+	if (close) {
+		closeBox();
+	}
+	if (callback) {
+		callback();
+	}
+}
 
 } // namespace
 
@@ -290,6 +368,8 @@ TurnstilePanelResult OpenTurnstilePanel(TurnstileChallenge challenge,
 										Fn<void()> failed) {
 	const auto available = TurnstileAvailability();
 	if (available.error != Webview::Available::Error::None) {
+		LOG(("Intro Turnstile: web view unavailable, error %1")
+				.arg(int(available.error)));
 		return {.error = UnavailableText(available)};
 	}
 

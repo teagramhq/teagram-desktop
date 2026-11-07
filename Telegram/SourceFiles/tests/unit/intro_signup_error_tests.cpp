@@ -103,6 +103,20 @@ TEST_CASE(SignupCodeTicketIsReissuedAtMostOnce) {
 	}
 }
 
+TEST_CASE(ClassifiesOnlyFirstValidTurnstileChallengeForRetry) {
+	const auto first = ClassifyTurnstileFailure(
+		u"RECAPTCHA_CHECK_signup__public_key-1"_q, false);
+	CHECK(first.has_value());
+	CHECK(first->action() == TurnstileAction::SignUp);
+	CHECK_EQ(first->siteKey(), u"public_key-1"_q);
+
+	CHECK(!ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__bad.key"_q, false)
+			   .has_value());
+	CHECK(!ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__public_key-1"_q,
+									true)
+			   .has_value());
+}
+
 TEST_CASE(SignupCodeReissueCanBeRetriedAfterChallengeCancellation) {
 	auto state = SignupCodeReissueState();
 	CHECK(state.begin(false));

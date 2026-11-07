@@ -8,10 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_signup.h"
 
 #include "boxes/abstract_box.h"
-#include "intro/intro_widget.h"
+#include "intro/intro_signup_error.h"
 #include "intro/intro_signup_terms.h"
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
+#include "intro/intro_widget.h"
 #include "core/file_utilities.h"
 #include "ui/boxes/confirm_box.h"
 #include "lang/lang_keys.h"
@@ -140,13 +141,11 @@ void SignupWidget::sendSignup(SignupRequestData request, QString token,
 void SignupWidget::nameSubmitFail(const MTP::Error &error,
 								  SignupRequestData request, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
-		if (retried) {
-			_turnstilePending = false;
-			showError(tr::lng_intro_server_error());
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
 		if (!challenge) {
+			LOG(("Intro Sign-up Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			_turnstilePending = false;
 			showError(tr::lng_intro_server_error());
 			return;
 		}

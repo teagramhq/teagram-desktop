@@ -14,12 +14,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <optional>
 #include <string_view>
+#include <utility>
+#include <variant>
 
 namespace Intro::details {
 
-struct TurnstileChallenge {
-	QString siteKey;
-	QString action;
+enum class TurnstileAction {
+	SignIn,
+	SignUp,
+};
+
+class TurnstileChallenge final {
+  public:
+	[[nodiscard]] const QString &siteKey() const { return _siteKey; }
+	[[nodiscard]] TurnstileAction action() const { return _action; }
+
+  private:
+	friend struct TurnstileChallengeParser;
+
+	TurnstileChallenge(QString siteKey, TurnstileAction action)
+		: _siteKey(std::move(siteKey)), _action(action) {}
+
+	QString _siteKey;
+	TurnstileAction _action;
 };
 
 enum class TurnstileMessageType {
@@ -33,7 +50,6 @@ struct TurnstileMessage {
 };
 
 enum class TurnstileMessageRejection {
-	None,
 	PayloadTooLarge,
 	NoChallengePending,
 	NavigationNotComplete,
@@ -46,13 +62,10 @@ enum class TurnstileMessageRejection {
 	InvalidToken,
 };
 
-struct TurnstileMessageResult {
-	std::optional<TurnstileMessage> message;
-	TurnstileMessageRejection rejection = TurnstileMessageRejection::None;
-};
+using TurnstileMessageResult
+	= std::variant<TurnstileMessage, TurnstileMessageRejection>;
 
 enum class TurnstileNavigationRejection {
-	None,
 	NewWindow,
 	UnexpectedNavigation,
 };
@@ -63,10 +76,8 @@ TurnstileMessageRejectionText(TurnstileMessageRejection rejection);
 TurnstileNavigationRejectionText(TurnstileNavigationRejection rejection);
 
 struct TurnstileNavigationDecision {
-	bool allowed = false;
 	bool initialNavigation = false;
-	TurnstileNavigationRejection rejection
-		= TurnstileNavigationRejection::UnexpectedNavigation;
+	std::optional<TurnstileNavigationRejection> rejection;
 };
 
 class TurnstileLinuxNavigationGuard final {
@@ -81,7 +92,7 @@ class TurnstileLinuxNavigationGuard final {
 	bool _finished = false;
 };
 
-void DeferTurnstileCallback(Fn<void()> callback);
+void DeferTurnstileCallback(Fn<void()> beforeCallback, Fn<void()> callback);
 
 [[nodiscard]] std::optional<TurnstileChallenge>
 ParseTurnstileChallenge(QStringView errorType);
@@ -89,7 +100,7 @@ ParseTurnstileChallenge(QStringView errorType);
 [[nodiscard]] QString TurnstileUrl(const TurnstileChallenge &challenge);
 [[nodiscard]] bool IsTurnstileMainFrameUrl(QStringView url);
 [[nodiscard]] TurnstileMessageResult
-ParseTurnstileMessage(std::string_view bytes, QStringView pendingAction,
+ParseTurnstileMessage(std::string_view bytes, TurnstileAction pendingAction,
 					  bool challengePending, bool navigationDone,
 					  QStringView mainFrameUrl);
 [[nodiscard]] TurnstileNavigationDecision

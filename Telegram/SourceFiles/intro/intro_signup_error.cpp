@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_signup_error.h"
 
+#include "intro/intro_turnstile.h"
 #include "intro/intro_username_validation.h"
 
 namespace Intro::details {
@@ -52,6 +53,11 @@ SignupFailureDecision ClassifySignupFailure(
 		}
 	}
 	return result;
+}
+
+std::optional<TurnstileChallenge>
+ClassifyTurnstileFailure(QStringView errorType, bool retried) {
+	return retried ? std::nullopt : ParseTurnstileChallenge(errorType);
 }
 
 } // namespace Intro::details

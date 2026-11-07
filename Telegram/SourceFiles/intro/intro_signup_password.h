@@ -8,10 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/bytes.h"
-#include "intro/intro_step.h"
+#include "core/core_cloud_password.h"
 #include "intro/intro_signup_error.h"
 #include "intro/intro_signup_terms.h"
-#include "core/core_cloud_password.h"
+#include "intro/intro_step.h"
 
 #include <QtCore/QByteArray>
 

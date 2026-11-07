@@ -8,12 +8,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QObject>
+#include <QtCore/QPointer>
 
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -24,11 +28,10 @@ using namespace Intro::details;
 constexpr auto kInitialUrl = QStringView(
 	u"https://web.teagram.io/turnstile.html#sitekey=abc_123&action=signup");
 
-[[nodiscard]] TurnstileMessageResult
-ParseMessage(std::string_view message, QStringView action = u"signin",
-			 bool pending = true, bool navigationDone = true,
-			 QStringView mainFrameUrl
-			 = u"https://web.teagram.io/turnstile.html") {
+[[nodiscard]] TurnstileMessageResult ParseMessage(
+	std::string_view message, TurnstileAction action = TurnstileAction::SignIn,
+	bool pending = true, bool navigationDone = true,
+	QStringView mainFrameUrl = u"https://web.teagram.io/turnstile.html") {
 	return ParseTurnstileMessage(message, action, pending, navigationDone,
 								 mainFrameUrl);
 }
@@ -56,13 +59,13 @@ TEST_CASE(ParsesTurnstileChallengeFromServerError) {
 	const auto signIn
 		= ParseTurnstileChallenge(u"RECAPTCHA_CHECK_signin__site_key-123"_q);
 	CHECK(signIn.has_value());
-	CHECK_EQ(signIn->action, u"signin"_q);
-	CHECK_EQ(signIn->siteKey, u"site_key-123"_q);
+	CHECK(signIn->action() == TurnstileAction::SignIn);
+	CHECK_EQ(signIn->siteKey(), u"site_key-123"_q);
 
 	const auto signUp
 		= ParseTurnstileChallenge(u"RECAPTCHA_CHECK_signup__demoKey"_q);
 	CHECK(signUp.has_value());
-	CHECK_EQ(signUp->action, u"signup"_q);
+	CHECK(signUp->action() == TurnstileAction::SignUp);
 }
 
 TEST_CASE(RejectsMalformedTurnstileChallengeErrors) {
@@ -86,10 +89,8 @@ TEST_CASE(RejectsMalformedTurnstileChallengeErrors) {
 }
 
 TEST_CASE(BuildsHardcodedTurnstileUrlWithFragmentParameters) {
-	const auto challenge = TurnstileChallenge{
-		u"key_-123"_q,
-		u"signup"_q,
-	};
+	const auto challenge
+		= *ParseTurnstileChallenge(u"RECAPTCHA_CHECK_signup__key_-123"_q);
 	CHECK_EQ(
 		TurnstileUrl(challenge),
 		u"https://web.teagram.io/turnstile.html#sitekey=key_-123&action=signup"_q);
@@ -112,14 +113,16 @@ TEST_CASE(AcceptsOnlyTheTurnstileMainFrameUrl) {
 
 TEST_CASE(AcceptsTokenOnlyForCompletedPendingChallenge) {
 	const auto result = ParseMessage(TokenMessage("token 123~"));
-	CHECK(result.message.has_value());
-	CHECK(result.rejection == TurnstileMessageRejection::None);
-	CHECK(result.message->type == TurnstileMessageType::Token);
-	CHECK_EQ(result.message->token, u"token 123~"_q);
+	CHECK(std::holds_alternative<TurnstileMessage>(result));
+	const auto &message = std::get<TurnstileMessage>(result);
+	CHECK(message.type == TurnstileMessageType::Token);
+	CHECK_EQ(message.token, u"token 123~"_q);
 
-	CHECK(ParseMessage(TokenMessage("token"), u"signin", false).rejection
+	CHECK(std::get<TurnstileMessageRejection>(ParseMessage(
+			  TokenMessage("token"), TurnstileAction::SignIn, false))
 		  == TurnstileMessageRejection::NoChallengePending);
-	CHECK(ParseMessage(TokenMessage("token"), u"signin", true, false).rejection
+	CHECK(std::get<TurnstileMessageRejection>(ParseMessage(
+			  TokenMessage("token"), TurnstileAction::SignIn, true, false))
 		  == TurnstileMessageRejection::NavigationNotComplete);
 }
 
@@ -129,86 +132,96 @@ TEST_CASE(RejectsBridgeEventsOutsideTheChallengeMainFrame) {
 			 u"https://evil.example/turnstile.html"_q,
 			 u"https://web.teagram.io/other.html"_q,
 		 }) {
-		CHECK(ParseMessage(TokenMessage("token"), u"signin", true, true, url)
-				  .rejection
+		CHECK(std::get<TurnstileMessageRejection>(
+				  ParseMessage(TokenMessage("token"), TurnstileAction::SignIn,
+							   true, true, url))
 			  == TurnstileMessageRejection::InvalidMainFrameUrl);
 	}
 }
 
 TEST_CASE(RejectsTokenActionDifferentFromPendingChallenge) {
 	const auto result = ParseMessage(TokenMessage("token", "signup"));
-	CHECK(!result.message.has_value());
-	CHECK(result.rejection == TurnstileMessageRejection::ActionMismatch);
+	CHECK(std::get<TurnstileMessageRejection>(result)
+		  == TurnstileMessageRejection::ActionMismatch);
 }
 
 TEST_CASE(RejectsOversizedOrMalformedTurnstileTokens) {
 	const auto oversized = ParseMessage(TokenMessage(std::string(2049, 'x')));
-	CHECK(oversized.rejection == TurnstileMessageRejection::InvalidToken);
+	CHECK(std::get<TurnstileMessageRejection>(oversized)
+		  == TurnstileMessageRejection::InvalidToken);
 
 	const auto empty = ParseMessage(TokenMessage(""));
-	CHECK(empty.rejection == TurnstileMessageRejection::InvalidToken);
+	CHECK(std::get<TurnstileMessageRejection>(empty)
+		  == TurnstileMessageRejection::InvalidToken);
 
 	const auto control = ParseMessage(TokenMessage("bad\x01token"));
-	CHECK(control.rejection == TurnstileMessageRejection::InvalidToken);
+	CHECK(std::get<TurnstileMessageRejection>(control)
+		  == TurnstileMessageRejection::InvalidToken);
 
 	const auto unicode = ParseMessage(TokenMessage("token \xF0\x9F\x8C\x8D"));
-	CHECK(unicode.rejection == TurnstileMessageRejection::InvalidToken);
+	CHECK(std::get<TurnstileMessageRejection>(unicode)
+		  == TurnstileMessageRejection::InvalidToken);
 }
 
 TEST_CASE(RejectsOversizedAndMalformedBridgeMessages) {
 	const auto oversized = ParseMessage(std::string(1024 * 1024 + 1, 'x'));
-	CHECK(oversized.rejection == TurnstileMessageRejection::PayloadTooLarge);
+	CHECK(std::get<TurnstileMessageRejection>(oversized)
+		  == TurnstileMessageRejection::PayloadTooLarge);
 
-	CHECK(ParseMessage("not-json").rejection
+	CHECK(std::get<TurnstileMessageRejection>(ParseMessage("not-json"))
 		  == TurnstileMessageRejection::InvalidJson);
-	CHECK(ParseMessage(R"(["turnstile_token",{}])").rejection
+	CHECK(std::get<TurnstileMessageRejection>(
+			  ParseMessage(R"(["turnstile_token",{}])"))
 		  == TurnstileMessageRejection::InvalidEnvelope);
-	CHECK(ParseMessage(R"(["web_app_close","{}"])").rejection
+	CHECK(std::get<TurnstileMessageRejection>(
+			  ParseMessage(R"(["web_app_close","{}"])"))
 		  == TurnstileMessageRejection::UnknownEvent);
 }
 
 TEST_CASE(AcceptsTurnstileErrorEventsWithoutDisplayingPageText) {
 	const auto error
 		= ParseMessage(R"(["turnstile_error","{\"code\":\"expired\"}"])");
-	CHECK(error.message.has_value());
-	CHECK(error.message->type == TurnstileMessageType::Error);
-	CHECK(error.message->token.isEmpty());
+	CHECK(std::holds_alternative<TurnstileMessage>(error));
+	const auto &message = std::get<TurnstileMessage>(error);
+	CHECK(message.type == TurnstileMessageType::Error);
+	CHECK(message.token.isEmpty());
 
 	const auto unknownCode
 		= ParseMessage(R"(["turnstile_error","{\"code\":\"raw-page-text\"}"])");
-	CHECK(unknownCode.message.has_value());
-	CHECK(unknownCode.message->type == TurnstileMessageType::Error);
+	CHECK(std::holds_alternative<TurnstileMessage>(unknownCode));
+	CHECK(std::get<TurnstileMessage>(unknownCode).type
+		  == TurnstileMessageType::Error);
 }
 
 TEST_CASE(RefusesSecondAndNewWindowNavigations) {
 	const auto initial = kInitialUrl.toString();
 	const auto first
 		= CheckTurnstileNavigation(initial, initial, true, false, false);
-	CHECK(first.allowed);
+	CHECK(!first.rejection.has_value());
 	CHECK(first.initialNavigation);
 
 	const auto second
 		= CheckTurnstileNavigation(initial, initial, false, false, false);
-	CHECK(!second.allowed);
-	CHECK(second.rejection
+	CHECK(second.rejection.has_value());
+	CHECK(*second.rejection
 		  == TurnstileNavigationRejection::UnexpectedNavigation);
 
 	const auto sameOriginPath = CheckTurnstileNavigation(
 		u"https://web.teagram.io/other.html"_q, initial, false, false, false);
-	CHECK(!sameOriginPath.allowed);
+	CHECK(sameOriginPath.rejection.has_value());
 
 	const auto newWindow
 		= CheckTurnstileNavigation(initial, initial, true, true, false);
-	CHECK(!newWindow.allowed);
-	CHECK(newWindow.rejection == TurnstileNavigationRejection::NewWindow);
+	CHECK(newWindow.rejection.has_value());
+	CHECK(*newWindow.rejection == TurnstileNavigationRejection::NewWindow);
 }
 
 TEST_CASE(RefusesTurnstileReloadOnLinuxPolicyPath) {
 	const auto initial = kInitialUrl.toString();
 	const auto reload
 		= CheckTurnstileNavigation(initial, initial, false, false, true);
-	CHECK(!reload.allowed);
-	CHECK(reload.rejection
+	CHECK(reload.rejection.has_value());
+	CHECK(*reload.rejection
 		  == TurnstileNavigationRejection::UnexpectedNavigation);
 }
 
@@ -218,16 +231,16 @@ TEST_CASE(AllowsOnlyTurnstileSubframeDestinationsOnLinux) {
 			 u"about:blank"_q,
 			 u"about:srcdoc"_q,
 		 }) {
-		CHECK(CheckTurnstileNavigation(url, kInitialUrl, false, false, true)
-				  .allowed);
+		CHECK(!CheckTurnstileNavigation(url, kInitialUrl, false, false, true)
+				   .rejection.has_value());
 	}
-	CHECK(!CheckTurnstileNavigation(
-			   u"https://challenges.cloudflare.com.evil.example/"_q,
-			   kInitialUrl, false, false, true)
-			   .allowed);
-	CHECK(!CheckTurnstileNavigation(u"https://challenges.cloudflare.com/"_q,
-									kInitialUrl, false, false, false)
-			   .allowed);
+	CHECK(CheckTurnstileNavigation(
+			  u"https://challenges.cloudflare.com.evil.example/"_q, kInitialUrl,
+			  false, false, true)
+			  .rejection.has_value());
+	CHECK(CheckTurnstileNavigation(u"https://challenges.cloudflare.com/"_q,
+								   kInitialUrl, false, false, false)
+			  .rejection.has_value());
 }
 
 TEST_CASE(TurnstileLinuxNavigationGuardAllowsOnlyTheChallengeMainFrameUrl) {
@@ -258,10 +271,32 @@ TEST_CASE(TurnstileLinuxNavigationGuardIgnoresEventsAfterFinish) {
 	CHECK(!guard.mainFrameUrlUpdated(u"about:blank"_q, kInitialUrl));
 }
 
-TEST_CASE(DefersTurnstileCallbackUntilTheEventLoopRuns) {
+TEST_CASE(InvokesTurnstileCallbackWhenBoxIsGone) {
+	auto owner = std::make_unique<QObject>();
+	const auto weak = QPointer<QObject>(owner.get());
+	auto closed = false;
 	auto called = false;
-	DeferTurnstileCallback([&] { called = true; });
+	DeferTurnstileCallback(
+		[&] {
+			if (weak) {
+				closed = true;
+			}
+		},
+		[&] { called = true; });
 	CHECK(!called);
+	owner.reset();
 	QCoreApplication::processEvents();
 	CHECK(called);
+	CHECK(!closed);
+}
+
+TEST_CASE(BuildsWrappedAuthRequestOnlyWhenTokenIsPresent) {
+	const auto wrapped
+		= BuildAuthRequest(MTPaccount_GetPassword(), u"challenge-token"_q);
+	using Wrapped = MTPInvokeWithReCaptcha<MTPaccount_GetPassword>;
+	CHECK(std::holds_alternative<Wrapped>(wrapped));
+	CHECK_EQ(std::get<Wrapped>(wrapped).vtoken().v, u"challenge-token"_q);
+
+	const auto plain = BuildAuthRequest(MTPaccount_GetPassword(), QString());
+	CHECK(std::holds_alternative<MTPaccount_GetPassword>(plain));
 }

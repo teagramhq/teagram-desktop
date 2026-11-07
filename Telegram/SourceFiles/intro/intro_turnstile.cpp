@@ -35,8 +35,24 @@ namespace {
 	return true;
 }
 
-[[nodiscard]] bool IsTurnstileAction(QStringView action) {
-	return (action == u"signin") || (action == u"signup");
+[[nodiscard]] std::optional<TurnstileAction>
+ParseTurnstileAction(QStringView action) {
+	if (action == u"signin") {
+		return TurnstileAction::SignIn;
+	} else if (action == u"signup") {
+		return TurnstileAction::SignUp;
+	}
+	return std::nullopt;
+}
+
+[[nodiscard]] QStringView TurnstileActionText(TurnstileAction action) {
+	switch (action) {
+	case TurnstileAction::SignIn:
+		return u"signin";
+	case TurnstileAction::SignUp:
+		return u"signup";
+	}
+	Unexpected("Unknown Turnstile action.");
 }
 
 [[nodiscard]] QUrl ParseUrl(QStringView value) {
@@ -97,6 +113,13 @@ ParsePayloadObject(const QString &payload) {
 
 } // namespace
 
+struct TurnstileChallengeParser final {
+	[[nodiscard]] static TurnstileChallenge Make(QString siteKey,
+												 TurnstileAction action) {
+		return TurnstileChallenge(std::move(siteKey), action);
+	}
+};
+
 std::optional<TurnstileChallenge>
 ParseTurnstileChallenge(QStringView errorType) {
 	constexpr auto kPrefix = QStringView(u"RECAPTCHA_CHECK_");
@@ -108,15 +131,12 @@ ParseTurnstileChallenge(QStringView errorType) {
 	if (separator <= 0) {
 		return std::nullopt;
 	}
-	const auto action = parameters.left(separator);
+	const auto action = ParseTurnstileAction(parameters.left(separator));
 	const auto siteKey = parameters.mid(separator + 2);
-	if (!IsTurnstileAction(action) || !IsValidSiteKey(siteKey)) {
+	if (!action || !IsValidSiteKey(siteKey)) {
 		return std::nullopt;
 	}
-	return TurnstileChallenge{
-		siteKey.toString(),
-		action.toString(),
-	};
+	return TurnstileChallengeParser::Make(siteKey.toString(), *action);
 }
 
 bool IsTurnstileChallengeError(QStringView errorType) {
@@ -125,9 +145,9 @@ bool IsTurnstileChallengeError(QStringView errorType) {
 
 QString TurnstileUrl(const TurnstileChallenge &challenge) {
 	const auto siteKey
-		= QString::fromLatin1(QUrl::toPercentEncoding(challenge.siteKey));
-	const auto action
-		= QString::fromLatin1(QUrl::toPercentEncoding(challenge.action));
+		= QString::fromLatin1(QUrl::toPercentEncoding(challenge.siteKey()));
+	const auto action = QString::fromLatin1(QUrl::toPercentEncoding(
+		TurnstileActionText(challenge.action()).toString()));
 	return u"https://web.teagram.io/turnstile.html#sitekey=%1&action=%2"_q.arg(
 		siteKey, action);
 }
@@ -156,18 +176,25 @@ bool TurnstileLinuxNavigationGuard::mainFrameUrlUpdated(
 
 void TurnstileLinuxNavigationGuard::finish() { _finished = true; }
 
-void DeferTurnstileCallback(Fn<void()> callback) {
-	QTimer::singleShot(0, QCoreApplication::instance(), std::move(callback));
+void DeferTurnstileCallback(Fn<void()> beforeCallback, Fn<void()> callback) {
+	QTimer::singleShot(0, QCoreApplication::instance(),
+					   [beforeCallback = std::move(beforeCallback),
+						callback = std::move(callback)]() mutable {
+						   if (beforeCallback) {
+							   beforeCallback();
+						   }
+						   if (callback) {
+							   callback();
+						   }
+					   });
 }
 
 TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
-											 QStringView pendingAction,
+											 TurnstileAction pendingAction,
 											 bool challengePending,
 											 bool navigationDone,
 											 QStringView mainFrameUrl) {
-	const auto reject = [](TurnstileMessageRejection reason) {
-		return TurnstileMessageResult{.rejection = reason};
-	};
+	const auto reject = [](TurnstileMessageRejection reason) { return reason; };
 	if (bytes.size() > Ui::kMaxNativeMessageBytes) {
 		return reject(TurnstileMessageRejection::PayloadTooLarge);
 	} else if (!challengePending) {
@@ -194,10 +221,8 @@ TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 	const auto eventName = envelope[0].toString();
 	const auto payload = envelope[1].toString();
 	if (eventName == u"turnstile_error"_q) {
-		return {
-			.message = TurnstileMessage{
-				.type = TurnstileMessageType::Error,
-			},
+		return TurnstileMessage{
+			.type = TurnstileMessageType::Error,
 		};
 	} else if (eventName != u"turnstile_token"_q) {
 		return reject(TurnstileMessageRejection::UnknownEvent);
@@ -209,16 +234,15 @@ TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 		return reject(TurnstileMessageRejection::InvalidPayload);
 	}
 	const auto token = object->value(u"token"_q).toString();
-	if (object->value(u"action"_q).toString() != pendingAction.toString()) {
+	if (object->value(u"action"_q).toString()
+		!= TurnstileActionText(pendingAction).toString()) {
 		return reject(TurnstileMessageRejection::ActionMismatch);
 	} else if (!IsPrintableAscii(token)) {
 		return reject(TurnstileMessageRejection::InvalidToken);
 	}
-	return {
-		.message = TurnstileMessage{
-			.type = TurnstileMessageType::Token,
-			.token = token,
-		},
+	return TurnstileMessage{
+		.type = TurnstileMessageType::Token,
+		.token = token,
 	};
 }
 
@@ -232,15 +256,10 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 		};
 	} else if (initialNavigationPending && IsSameInitialUrl(url, initialUrl)) {
 		return {
-			.allowed = true,
 			.initialNavigation = true,
-			.rejection = TurnstileNavigationRejection::None,
 		};
 	} else if (allowLinuxSubframes && IsAllowedLinuxSubframeUrl(url)) {
-		return {
-			.allowed = true,
-			.rejection = TurnstileNavigationRejection::None,
-		};
+		return {};
 	}
 	return {
 		.rejection = TurnstileNavigationRejection::UnexpectedNavigation,
@@ -249,8 +268,6 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 
 QString TurnstileMessageRejectionText(TurnstileMessageRejection rejection) {
 	switch (rejection) {
-	case TurnstileMessageRejection::None:
-		return u"none"_q;
 	case TurnstileMessageRejection::PayloadTooLarge:
 		return u"payload too large"_q;
 	case TurnstileMessageRejection::NoChallengePending:
@@ -278,8 +295,6 @@ QString TurnstileMessageRejectionText(TurnstileMessageRejection rejection) {
 QString
 TurnstileNavigationRejectionText(TurnstileNavigationRejection rejection) {
 	switch (rejection) {
-	case TurnstileNavigationRejection::None:
-		return u"none"_q;
 	case TurnstileNavigationRejection::NewWindow:
 		return u"new-window request"_q;
 	case TurnstileNavigationRejection::UnexpectedNavigation:

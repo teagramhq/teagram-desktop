@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "intro/intro_turnstile.h"
+
 #include <QtCore/QString>
 
 namespace Intro::details {
@@ -76,5 +78,8 @@ class SignupCodeReissueState final {
 	int errorCode,
 	bool floodError,
 	bool reissuedOnce);
+
+[[nodiscard]] std::optional<TurnstileChallenge>
+ClassifyTurnstileFailure(QStringView errorType, bool retried);
 
 } // namespace Intro::details

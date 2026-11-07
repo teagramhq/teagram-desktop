@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_password_check.h"
 
+#include "intro/intro_signup_error.h"
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
 #include "intro/intro_username_validation.h"
@@ -142,13 +143,11 @@ void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error,
 										bool retried) {
 	_sentRequest = 0;
 	if (IsTurnstileChallengeError(error.type())) {
-		if (retried) {
-			_turnstilePending = false;
-			showPasswordError(tr::lng_intro_server_error(tr::now));
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
 		if (!challenge) {
+			LOG(("Intro Password Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			_turnstilePending = false;
 			showPasswordError(tr::lng_intro_server_error(tr::now));
 			return;
 		}

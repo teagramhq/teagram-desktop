@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "config.h"
 #include "intro/intro_password_check.h"
+#include "intro/intro_signup_error.h"
 #include "intro/intro_signup_name.h"
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
@@ -362,12 +363,10 @@ void UsernameWidget::requestFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		_checkRequestTimer.cancel();
 		_sentRequest = 0;
-		if (retried) {
-			fail(tr::lng_intro_server_error(tr::now));
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
 		if (!challenge) {
+			LOG(("Intro Username Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
 			fail(tr::lng_intro_server_error(tr::now));
 			return;
 		}

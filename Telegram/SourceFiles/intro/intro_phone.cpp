@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_code.h"
 #include "intro/intro_email.h"
 #include "intro/intro_qr.h"
+#include "intro/intro_signup_error.h"
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
 #include "styles/style_intro.h"
@@ -268,12 +269,10 @@ void PhoneWidget::phoneSubmitFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
 		stopCheck();
 		_sentRequest = 0;
-		if (retried) {
-			showPhoneError(tr::lng_intro_server_error());
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
 		if (!challenge) {
+			LOG(("Intro Phone Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
 			showPhoneError(tr::lng_intro_server_error());
 			return;
 		}

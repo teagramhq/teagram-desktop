@@ -7,22 +7,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_signup_password.h"
 
+#include "base/bytes.h"
+#include "base/random.h"
 #include "config.h"
-#include "intro/intro_turnstile.h"
-#include "intro/intro_turnstile_request.h"
 #include "intro/intro_signup_controls.h"
 #include "intro/intro_signup_error.h"
 #include "intro/intro_signup_terms.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "mtproto/type_utils.h"
-#include "ui/widgets/fields/password_input.h"
-#include "styles/style_intro.h"
-#include "base/bytes.h"
-#include "base/random.h"
 #include "ui/text/format_values.h"
+#include "ui/widgets/fields/password_input.h"
+
+#include "styles/style_intro.h"
 
 #include <variant>
 
@@ -279,14 +280,11 @@ void SignUpPasswordWidget::signUpDone(
 void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
 									  SignupRequestData request, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
-		if (retried) {
-			_turnstilePending = false;
-			_backAvailable = true;
-			showFormError(tr::lng_intro_server_error(tr::now));
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
 		if (!challenge) {
+			LOG(("Intro Sign-up Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			_turnstilePending = false;
 			_backAvailable = true;
 			showFormError(tr::lng_intro_server_error(tr::now));
 			return;
@@ -421,12 +419,12 @@ void SignUpPasswordWidget::reissueDone(const MTPauth_SentCode &result) {
 
 void SignUpPasswordWidget::reissueFail(const MTP::Error &error, bool retried) {
 	if (IsTurnstileChallengeError(error.type())) {
-		if (!_codeReissue.handleChallengeError(retried)) {
-			showFormError(tr::lng_intro_server_error(tr::now));
-			return;
-		}
-		const auto challenge = ParseTurnstileChallenge(error.type());
+		const auto retryAllowed = _codeReissue.handleChallengeError(retried);
+		const auto challenge
+			= ClassifyTurnstileFailure(error.type(), !retryAllowed || retried);
 		if (!challenge) {
+			LOG(("Intro Sign-up Error: code reissue challenge rejected with %1")
+					.arg(error.type()));
 			showFormError(tr::lng_intro_server_error(tr::now));
 			return;
 		}
