@@ -136,6 +136,17 @@ FilterBadgeContent(Badge::Content content, bool allowed,
 	return content;
 }
 
+template <typename Present>
+[[nodiscard]] inline Badge::Content
+PresentBadgeContent(Badge::Content content, bool allowed,
+					bool premiumBadgesShown, Present present) {
+	content = FilterBadgeContent(content, allowed, premiumBadgesShown);
+	if (content.badge != BadgeType::None) {
+		present(content);
+	}
+	return content;
+}
+
 } // namespace details
 
 [[nodiscard]] rpl::producer<Badge::Content> BadgeContentForPeer(

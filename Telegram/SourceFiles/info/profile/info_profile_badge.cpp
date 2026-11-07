@@ -63,16 +63,17 @@ Ui::RpWidget *Badge::widget() const {
 }
 
 void Badge::setContent(Content content) {
-	content
-		= details::FilterBadgeContent(content, bool(_allowed & content.badge),
-									  _session->premiumBadgesShown());
+	auto present = false;
+	content = details::PresentBadgeContent(
+		content, bool(_allowed & content.badge), _session->premiumBadgesShown(),
+		[&](Content) { present = true; });
 	if (_content == content) {
 		return;
 	}
 	_content = content;
 	_emojiStatus = nullptr;
 	_view.destroy();
-	if (_content.badge == BadgeType::None) {
+	if (!present) {
 		_updated.fire({});
 		return;
 	}

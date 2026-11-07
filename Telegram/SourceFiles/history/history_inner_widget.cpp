@@ -556,16 +556,15 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 			viewByItem(item),
 			HistoryReactionSource::Selector);
 		return;
-	} else if (Window::ShowReactPremiumError(
-			_controller,
-			item,
-			reaction.id)) {
+	} else if (!Window::TryReactAction(_controller, item, reaction.id, [=] {
+				   item->toggleReaction(reaction.id,
+										HistoryReactionSource::Selector);
+			   })) {
 		if (_menu) {
 			_menu->hideMenu();
 		}
 		return;
 	}
-	item->toggleReaction(reaction.id, HistoryReactionSource::Selector);
 	if (!ranges::contains(item->chosenReactions(), reaction.id)) {
 		return;
 	} else if (const auto view = viewByItem(item)) {

@@ -279,6 +279,10 @@ private:
 	not_null<SessionController*> controller,
 	not_null<HistoryItem*> item,
 	const Data::ReactionId &id);
+[[nodiscard]] bool TryReactAction(not_null<SessionController *> controller,
+								  not_null<HistoryItem *> item,
+								  const Data::ReactionId &id,
+								  Fn<void()> action);
 
 [[nodiscard]] rpl::producer<const Data::WallPaper*> WallPaperResolved(
 	not_null<Data::Session*> owner,

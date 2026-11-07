@@ -25,7 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
-#include "data/stickers/data_custom_emoji_policy.h"
+#include "data/stickers/data_custom_emoji_actions.h"
 #include "info/info_memento.h"
 #include "info/profile/info_profile_badge.h"
 #include "settings/settings_common.h"
@@ -902,24 +902,20 @@ void MainMenu::chooseEmojiStatus() {
 												customServer)) {
 		return;
 	}
-	const auto action = Data::details::ResolveEmojiStatusPickerAction(
+	Data::details::RunEmojiStatusPickerAction(
 		paidFeaturesSupported, customServer, _controller->showFrozenError(),
-		_badge->widget() != nullptr);
-	switch (action) {
-	case Data::details::EmojiStatusPickerAction::NoAction:
-		return;
-	case Data::details::EmojiStatusPickerAction::OpenPicker:
-		setupEmojiStatusDismiss();
-		if (const auto widget = _badge->widget()) {
-			_emojiStatusPanel->show(_controller, widget, _badge->sizeTag());
-		} else {
-			_emojiStatusPanel->show(_controller, _setEmojiStatus);
-		}
-		return;
-	case Data::details::EmojiStatusPickerAction::PremiumPreview:
-		ShowPremiumPreviewBox(_controller, PremiumFeature::EmojiStatus);
-		return;
-	}
+		_badge->widget() != nullptr,
+		[=] {
+			setupEmojiStatusDismiss();
+			if (const auto widget = _badge->widget()) {
+				_emojiStatusPanel->show(_controller, widget, _badge->sizeTag());
+			} else {
+				_emojiStatusPanel->show(_controller, _setEmojiStatus);
+			}
+		},
+		[=] {
+			ShowPremiumPreviewBox(_controller, PremiumFeature::EmojiStatus);
+		});
 }
 
 void MainMenu::setupEmojiStatusDismiss() {

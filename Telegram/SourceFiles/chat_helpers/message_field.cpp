@@ -40,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_document.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "data/stickers/data_custom_emoji_actions.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
 #include "history/view/controls/compose_controls_common.h"
 #include "window/window_session_controller.h"
@@ -107,19 +108,17 @@ constexpr auto kLinkProtocols = {
 				} else if (!session->premium()) {
 					const auto document = session->data().document(emoji);
 					if (document->isPremiumEmoji()) {
-						if (!allowPremiumEmoji || premiumSkipped
-							|| (Data::details::ResolveMessageCustomEmojiAction(
-									session->premiumPossible(),
-									session->mtp()
-										.dcOptions()
-										.hasCustomServer(),
-									allowPremiumEmoji(document))
-								== Data::details::MessageCustomEmojiAction::
-									PremiumGate)) {
+						const auto allowed = allowPremiumEmoji
+											 && !premiumSkipped
+											 && allowPremiumEmoji(document);
+						if (!Data::details::RunMessageCustomEmojiAction(
+								session->premiumPossible(),
+								session->mtp().dcOptions().hasCustomServer(),
+								allowed, [&] { ++i; })) {
 							premiumSkipped = document;
 							i = all.erase(i);
-							continue;
 						}
+						continue;
 					}
 				}
 			}
