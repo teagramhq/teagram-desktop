@@ -143,6 +143,9 @@ public:
 	void accessibilityChildActivate(quintptr identity) override;
 
 	[[nodiscard]] Main::Session &session() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void chooseReactionForRegressionTest(ChosenReaction reaction);
+#endif
 	[[nodiscard]] not_null<Ui::ChatTheme*> theme() const {
 		return _theme.get();
 	}
@@ -552,9 +555,6 @@ private:
 	-> HistoryView::ReplyButton::ButtonParameters;
 	void toggleFavoriteReaction(not_null<Element*> view) const;
 	void reactionChosen(const ChosenReaction &reaction);
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	void chooseReactionForRegressionTest(ChosenReaction reaction);
-#endif
 
 	void setupSharingDisallowed();
 	void setupSwipeReplyAndBack();
