@@ -136,6 +136,24 @@ bool IsTurnstileMainFrameUrl(QStringView value) {
 		   && (url.path() == u"/turnstile.html"_q);
 }
 
+void TurnstileLinuxNavigationGuard::initialLoadCompleted() {
+	if (!_finished) {
+		_initialLoadCompleted = true;
+	}
+}
+
+bool TurnstileLinuxNavigationGuard::mainFrameUrlUpdated(
+	QStringView url, QStringView challengeUrl) {
+	if (!_initialLoadCompleted || _finished
+		|| IsSameInitialUrl(url, challengeUrl)) {
+		return false;
+	}
+	_finished = true;
+	return true;
+}
+
+void TurnstileLinuxNavigationGuard::finish() { _finished = true; }
+
 TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 											 QStringView pendingAction,
 											 bool challengePending,

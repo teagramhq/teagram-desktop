@@ -77,6 +77,7 @@ class TurnstileBox final : public Ui::BoxContent {
 		}
 		_finished = true;
 		_pending = false;
+		_linuxNavigationGuard.finish();
 		_window.reset();
 		closeBox();
 	}
@@ -143,6 +144,9 @@ class TurnstileBox final : public Ui::BoxContent {
 		});
 		raw->setNavigationDoneHandler([=](bool success) {
 			_navigationDone = success;
+			if (success) {
+				_linuxNavigationGuard.initialLoadCompleted();
+			}
 			if (!success && !_finished) {
 				finishFailed();
 			}
@@ -150,7 +154,16 @@ class TurnstileBox final : public Ui::BoxContent {
 		raw->navigationHistoryState()
 			| rpl::on_next(
 				[=](Webview::NavigationHistoryState state) {
-					_mainFrameUrl = QString::fromStdString(state.url);
+					const auto url = QString::fromStdString(state.url);
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+					if (!_finished
+						&& _linuxNavigationGuard.mainFrameUrlUpdated(
+							url, initialUrl)) {
+						finishFailed();
+						return;
+					}
+#endif // !Q_OS_WIN && !Q_OS_MAC
+					_mainFrameUrl = url;
 				},
 				lifetime());
 		raw->setMessageHandler([=](Webview::Message message) {
@@ -177,6 +190,7 @@ class TurnstileBox final : public Ui::BoxContent {
 			auto callback = std::move(_token);
 			_finished = true;
 			_pending = false;
+			_linuxNavigationGuard.finish();
 			_window.reset();
 			closeBox();
 			if (callback) {
@@ -221,6 +235,7 @@ postEvent: function(eventType, eventData) {
 		}
 		_finished = true;
 		_pending = false;
+		_linuxNavigationGuard.finish();
 		auto callback = std::move(_failed);
 		_window.reset();
 		if (close) {
@@ -237,6 +252,7 @@ postEvent: function(eventType, eventData) {
 	std::unique_ptr<Webview::Window> _window;
 	QString _mainFrameUrl;
 	QString _error;
+	TurnstileLinuxNavigationGuard _linuxNavigationGuard;
 	bool _initialNavigationPending = true;
 	bool _navigationDone = false;
 	bool _pending = true;

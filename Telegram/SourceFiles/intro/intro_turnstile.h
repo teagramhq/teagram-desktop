@@ -67,6 +67,18 @@ struct TurnstileNavigationDecision {
 		= TurnstileNavigationRejection::UnexpectedNavigation;
 };
 
+class TurnstileLinuxNavigationGuard final {
+  public:
+	void initialLoadCompleted();
+	[[nodiscard]] bool mainFrameUrlUpdated(QStringView url,
+										   QStringView challengeUrl);
+	void finish();
+
+  private:
+	bool _initialLoadCompleted = false;
+	bool _finished = false;
+};
+
 [[nodiscard]] std::optional<TurnstileChallenge>
 ParseTurnstileChallenge(QStringView errorType);
 [[nodiscard]] bool IsTurnstileChallengeError(QStringView errorType);

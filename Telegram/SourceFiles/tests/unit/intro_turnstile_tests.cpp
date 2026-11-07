@@ -219,3 +219,31 @@ TEST_CASE(AllowsOnlyTurnstileSubframeDestinationsOnLinux) {
 									kInitialUrl, false, false, false)
 			   .allowed);
 }
+
+TEST_CASE(TurnstileLinuxNavigationGuardAllowsOnlyTheChallengeMainFrameUrl) {
+	auto guard = TurnstileLinuxNavigationGuard();
+	CHECK(!guard.mainFrameUrlUpdated(u"about:blank"_q, kInitialUrl));
+
+	guard.initialLoadCompleted();
+	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
+	CHECK(!guard.mainFrameUrlUpdated(
+		u"https://WEB.TEAGRAM.IO:443/turnstile.html#sitekey=abc_123&action=signup"_q,
+		kInitialUrl));
+}
+
+TEST_CASE(TurnstileLinuxNavigationGuardEndsChallengeOnDifferentMainFrameUrl) {
+	auto guard = TurnstileLinuxNavigationGuard();
+	guard.initialLoadCompleted();
+
+	CHECK(guard.mainFrameUrlUpdated(
+		u"https://challenges.cloudflare.com/cdn-cgi/challenge"_q, kInitialUrl));
+	CHECK(!guard.mainFrameUrlUpdated(kInitialUrl, kInitialUrl));
+}
+
+TEST_CASE(TurnstileLinuxNavigationGuardIgnoresEventsAfterFinish) {
+	auto guard = TurnstileLinuxNavigationGuard();
+	guard.initialLoadCompleted();
+	guard.finish();
+
+	CHECK(!guard.mainFrameUrlUpdated(u"about:blank"_q, kInitialUrl));
+}
