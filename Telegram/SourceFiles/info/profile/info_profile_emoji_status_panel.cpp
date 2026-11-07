@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_document.h"
 #include "data/data_emoji_statuses.h"
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "lang/lang_keys.h"
 #include "menu/menu_send.h" // SendMenu::Type.
 #include "ui/boxes/confirm_box.h"
@@ -319,9 +320,14 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 bool EmojiStatusPanel::filter(
 		not_null<Window::SessionController*> controller,
 		EmojiStatusId chosenId) const {
+	const auto session = &controller->session();
 	if (_chooseFilter) {
 		return _chooseFilter(chosenId);
-	} else if (chosenId && !controller->session().premium()) {
+	} else if (chosenId
+			   && Data::details::EmojiStatusRequiresPremium(
+				   session->premium(),
+				   session->mtp().dcOptions().hasCustomServer(),
+				   chosenId.collectible != nullptr)) {
 		ShowPremiumPreviewBox(controller, PremiumFeature::EmojiStatus);
 		return false;
 	}

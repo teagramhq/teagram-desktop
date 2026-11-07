@@ -113,6 +113,7 @@ PRIVATE
     tests/unit/api_compose_with_ai_tests.cpp
     tests/unit/bio_save_failure_tests.cpp
     tests/unit/data_chat_participants_tests.cpp
+    tests/unit/data_custom_emoji_tests.cpp
     tests/unit/data_download_manager_tests.cpp
     tests/unit/data_message_reactions_tests.cpp
     tests/unit/debug_mode_tests.cpp
