@@ -262,10 +262,10 @@ TEST_CASE(InviteListRefreshQueuedBehindActiveRequest) {
 	transport.succeedList({.ids = {42}});
 	CHECK_EQ(listRequests, 2);
 	CHECK_EQ(resultToasts, 0);
-	CHECK_EQ(list.ids.size(), 1U);
+	CHECK_EQ(int(list.ids.size()), 1);
 
 	transport.succeedList({});
-	CHECK_EQ(list.ids.size(), 0U);
+	CHECK_EQ(int(list.ids.size()), 0);
 	CHECK_EQ(resultToasts, 1);
 }
 
