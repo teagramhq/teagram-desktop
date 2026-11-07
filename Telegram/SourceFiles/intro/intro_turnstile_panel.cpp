@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_turnstile_panel.h"
 
-#include "ui/chat/attach/attach_bot_webview.h"
 #include "boxes/abstract_box.h"
 #include "intro/intro_turnstile.h"
+#include "ui/chat/attach/attach_bot_webview.h"
 #include "ui/layers/box_content.h"
 #include "webview/webview_embed.h"
 #if defined Q_OS_WIN
@@ -285,7 +285,7 @@ void TurnstileBox::messageReceived(Webview::Message message) {
 		return;
 	}
 	auto parsed = ParseTurnstileMessage(
-		message.text, _challenge.action(), _state == State::Pending,
+		message.text, _challenge.action(), _state != State::Finished,
 		_state == State::Pending, _mainFrameUrl);
 	if (const auto rejection
 		= std::get_if<TurnstileMessageRejection>(&parsed)) {

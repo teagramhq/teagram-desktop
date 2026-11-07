@@ -77,7 +77,8 @@ TurnstileNavigationRejectionText(TurnstileNavigationRejection rejection);
 
 struct TurnstileNavigationDecision {
 	bool initialNavigation = false;
-	std::optional<TurnstileNavigationRejection> rejection;
+	std::optional<TurnstileNavigationRejection> rejection
+		= TurnstileNavigationRejection::UnexpectedNavigation;
 };
 
 class TurnstileLinuxNavigationGuard final {

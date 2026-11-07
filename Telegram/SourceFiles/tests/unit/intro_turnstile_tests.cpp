@@ -217,6 +217,14 @@ TEST_CASE(RefusesSecondAndNewWindowNavigations) {
 	CHECK(*newWindow.rejection == TurnstileNavigationRejection::NewWindow);
 }
 
+TEST_CASE(TurnstileNavigationDecisionDefaultsToReject) {
+	const auto decision = TurnstileNavigationDecision{};
+	CHECK(!decision.initialNavigation);
+	CHECK(decision.rejection.has_value());
+	CHECK(*decision.rejection
+		  == TurnstileNavigationRejection::UnexpectedNavigation);
+}
+
 TEST_CASE(RefusesTurnstileReloadOnLinuxPolicyPath) {
 	const auto initial = kInitialUrl.toString();
 	const auto reload

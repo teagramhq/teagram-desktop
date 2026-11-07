@@ -257,9 +257,12 @@ CheckTurnstileNavigation(QStringView url, QStringView initialUrl,
 	} else if (initialNavigationPending && IsSameInitialUrl(url, initialUrl)) {
 		return {
 			.initialNavigation = true,
+			.rejection = std::nullopt,
 		};
 	} else if (allowLinuxSubframes && IsAllowedLinuxSubframeUrl(url)) {
-		return {};
+		return {
+			.rejection = std::nullopt,
+		};
 	}
 	return {
 		.rejection = TurnstileNavigationRejection::UnexpectedNavigation,
