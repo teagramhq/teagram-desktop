@@ -127,10 +127,9 @@ public:
 
 	void setErrorCentered(bool centered);
 	void showError(rpl::producer<QString> text);
-	[[nodiscard]] bool showTurnstileChallenge(TurnstileChallenge challenge,
-											  Fn<void(QString)> token,
-											  Fn<void()> failed,
-											  Fn<void(QString)> unavailable);
+	bool showTurnstileChallenge(TurnstileChallenge challenge,
+								Fn<void(QString)> token, Fn<void()> failed,
+								Fn<void(QString)> unavailable);
 	void hideError() {
 		showError(rpl::single(QString()));
 	}

@@ -16,9 +16,10 @@ template <typename Request, typename Done, typename Fail>
 SendAuthRequest(MTP::Sender &sender, Request request, QString token,
 				bool handleFloodErrors, Done done, Fail fail) {
 	const auto send = [&](auto builder) {
-		builder.done(done).fail(fail);
-		return handleFloodErrors ? builder.handleFloodErrors().send()
-								 : builder.handleAllErrors().send();
+		auto &configured = builder.done(done).fail(fail);
+		return (handleFloodErrors ? configured.handleFloodErrors()
+								  : configured.handleAllErrors())
+			.send();
 	};
 	const auto result
 		= token.isEmpty()

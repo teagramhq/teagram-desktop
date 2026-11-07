@@ -440,7 +440,7 @@ private:
 
 	};
 
-	template <typename Request>
+	template <typename Request, typename WrappedRequest>
 	friend class SpecificRequestBuilder;
 	friend class RequestBuilder;
 	friend class RequestWrap;

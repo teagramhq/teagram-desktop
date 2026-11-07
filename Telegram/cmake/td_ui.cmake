@@ -651,6 +651,7 @@ PRIVATE
     ui/userpic_view.h
     ui/webview_helpers.cpp
     ui/webview_helpers.h
+    ui/webview_limits.h
 
     window/window_slide_animation.cpp
     window/window_slide_animation.h

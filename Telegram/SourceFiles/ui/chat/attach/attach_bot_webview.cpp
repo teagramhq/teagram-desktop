@@ -28,7 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
-#include "ui/webview_helpers.h"
+#include "ui/webview_limits.h"
 #include "lang/lang_keys.h"
 #include "core/file_utilities.h"
 #include "webview/webview_embed.h"

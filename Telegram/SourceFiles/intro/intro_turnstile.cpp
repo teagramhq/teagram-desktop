@@ -8,7 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_turnstile.h"
 
 #include "base/basic_types.h"
-#include "ui/webview_helpers.h"
+#include "ui/webview_limits.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -46,7 +46,7 @@ namespace {
 		   && (url.scheme().compare(u"https"_q, Qt::CaseInsensitive) == 0)
 		   && (url.host().compare(host, Qt::CaseInsensitive) == 0)
 		   && (url.port(443) == 443) && url.userInfo().isEmpty()
-		   && !url.authority().contains('@');
+		   && !url.authority().contains(u'@');
 }
 
 [[nodiscard]] bool IsAllowedLinuxSubframeUrl(QStringView value) {
@@ -97,12 +97,11 @@ ParsePayloadObject(const QString &payload) {
 
 std::optional<TurnstileChallenge>
 ParseTurnstileChallenge(QStringView errorType) {
-	constexpr auto kPrefix = u"RECAPTCHA_CHECK_";
+	constexpr auto kPrefix = QStringView(u"RECAPTCHA_CHECK_");
 	if (!errorType.startsWith(kPrefix)) {
 		return std::nullopt;
 	}
-	const auto parameters
-		= errorType.mid(sizeof(kPrefix) / sizeof(char16_t) - 1);
+	const auto parameters = errorType.mid(kPrefix.size());
 	const auto separator = parameters.indexOf(u"__");
 	if (separator <= 0) {
 		return std::nullopt;
@@ -119,7 +118,7 @@ ParseTurnstileChallenge(QStringView errorType) {
 }
 
 bool IsTurnstileChallengeError(QStringView errorType) {
-	return errorType.startsWith(u"RECAPTCHA_CHECK_");
+	return errorType.startsWith(QStringView(u"RECAPTCHA_CHECK_"));
 }
 
 QString TurnstileUrl(const TurnstileChallenge &challenge) {
@@ -134,7 +133,7 @@ QString TurnstileUrl(const TurnstileChallenge &challenge) {
 bool IsTurnstileMainFrameUrl(QStringView value) {
 	const auto url = ParseUrl(value);
 	return IsHttpsHostOnDefaultPort(url, u"web.teagram.io")
-		   && (url.path() == u"/turnstile.html");
+		   && (url.path() == u"/turnstile.html"_q);
 }
 
 TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
@@ -170,23 +169,23 @@ TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 	}
 	const auto eventName = envelope[0].toString();
 	const auto payload = envelope[1].toString();
-	if (eventName == u"turnstile_error") {
+	if (eventName == u"turnstile_error"_q) {
 		return {
 			.message = TurnstileMessage{
 				.type = TurnstileMessageType::Error,
 			},
 		};
-	} else if (eventName != u"turnstile_token") {
+	} else if (eventName != u"turnstile_token"_q) {
 		return reject(TurnstileMessageRejection::UnknownEvent);
 	}
 
 	const auto object = ParsePayloadObject(payload);
-	if (!object || !object->value(u"token").isString()
-		|| !object->value(u"action").isString()) {
+	if (!object || !object->value(u"token"_q).isString()
+		|| !object->value(u"action"_q).isString()) {
 		return reject(TurnstileMessageRejection::InvalidPayload);
 	}
-	const auto token = object->value(u"token").toString();
-	if (object->value(u"action").toString() != pendingAction.toString()) {
+	const auto token = object->value(u"token"_q).toString();
+	if (object->value(u"action"_q).toString() != pendingAction.toString()) {
 		return reject(TurnstileMessageRejection::ActionMismatch);
 	} else if (!IsPrintableAscii(token)) {
 		return reject(TurnstileMessageRejection::InvalidToken);

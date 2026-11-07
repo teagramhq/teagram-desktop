@@ -7,10 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_turnstile_panel.h"
 
-#include "config.h"
 #include "intro/intro_turnstile.h"
 #include "ui/chat/attach/attach_bot_webview.h"
-#include "ui/boxes/abstract_box.h"
+#include "boxes/abstract_box.h"
+#include "settings.h"
 #include "ui/layers/box_content.h"
 #include "lang/lang_keys.h"
 #include "styles/style_layers.h"
@@ -43,7 +43,7 @@ namespace {
 
 [[nodiscard]] QString UnavailableText(const Webview::Available &available) {
 	auto result = tr::lng_bot_no_webview(tr::now);
-	result += u"\n\n";
+	result += u"\n\n"_q;
 	result += Ui::BotWebView::ErrorText(available).text;
 	return result;
 }
@@ -157,9 +157,9 @@ class TurnstileBox final : public Ui::BoxContent {
 			if (_finished) {
 				return;
 			}
-			const auto parsed = ParseTurnstileMessage(
-				message.text, _challenge.action, _pending, _navigationDone,
-				_mainFrameUrl);
+			auto parsed = ParseTurnstileMessage(message.text, _challenge.action,
+												_pending, _navigationDone,
+												_mainFrameUrl);
 			if (!parsed.message) {
 				if (parsed.rejection != TurnstileMessageRejection::None) {
 					LOG(("Intro Turnstile message rejected: %1 (%2 bytes)")
@@ -253,7 +253,7 @@ TurnstilePanelResult OpenTurnstilePanel(TurnstileChallenge challenge,
 		return {.error = UnavailableText(available)};
 	}
 
-	auto weak = Ui::show(Ui::Box<TurnstileBox>(
+	auto weak = Ui::show(Box<TurnstileBox>(
 		std::move(challenge), std::move(token), std::move(failed)));
 	if (weak && !weak->error().isEmpty()) {
 		const auto error = weak->error();

@@ -20,8 +20,8 @@ namespace {
 
 using namespace Intro::details;
 
-constexpr auto kInitialUrl
-	= u"https://web.teagram.io/turnstile.html#sitekey=abc_123&action=signup";
+constexpr auto kInitialUrl = QStringView(
+	u"https://web.teagram.io/turnstile.html#sitekey=abc_123&action=signup");
 
 [[nodiscard]] TurnstileMessageResult
 ParseMessage(std::string_view message, QStringView action = u"signin",
@@ -180,7 +180,7 @@ TEST_CASE(AcceptsTurnstileErrorEventsWithoutDisplayingPageText) {
 }
 
 TEST_CASE(RefusesSecondAndNewWindowNavigations) {
-	const auto initial = QString(kInitialUrl);
+	const auto initial = kInitialUrl.toString();
 	const auto first
 		= CheckTurnstileNavigation(initial, initial, true, false, false);
 	CHECK(first.allowed);
@@ -208,16 +208,14 @@ TEST_CASE(AllowsOnlyTurnstileSubframeDestinationsOnLinux) {
 			 u"about:blank"_q,
 			 u"about:srcdoc"_q,
 		 }) {
-		CHECK(CheckTurnstileNavigation(url, QStringView(kInitialUrl), false,
-									   false, true)
+		CHECK(CheckTurnstileNavigation(url, kInitialUrl, false, false, true)
 				  .allowed);
 	}
 	CHECK(!CheckTurnstileNavigation(
 			   u"https://challenges.cloudflare.com.evil.example/"_q,
-			   QStringView(kInitialUrl), false, false, true)
+			   kInitialUrl, false, false, true)
 			   .allowed);
 	CHECK(!CheckTurnstileNavigation(u"https://challenges.cloudflare.com/"_q,
-									QStringView(kInitialUrl), false, false,
-									false)
+									kInitialUrl, false, false, false)
 			   .allowed);
 }

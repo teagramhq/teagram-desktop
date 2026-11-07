@@ -122,21 +122,21 @@ bool Step::showTurnstileChallenge(TurnstileChallenge challenge,
 								  Fn<void(QString)> token, Fn<void()> failed,
 								  Fn<void(QString)> unavailable) {
 	closeTurnstileChallenge();
-	auto result = OpenTurnstilePanel(
-		std::move(challenge),
-		crl::guard(this,
-				   [this, token = std::move(token)](QString value) mutable {
-					   _closeTurnstileChallenge = nullptr;
-					   if (token) {
-						   token(std::move(value));
-					   }
-				   }),
-		crl::guard(this, [this, failed = std::move(failed)]() mutable {
-			_closeTurnstileChallenge = nullptr;
-			if (failed) {
-				failed();
-			}
-		}));
+	auto result = OpenTurnstilePanel(std::move(challenge),
+									 crl::guard(this,
+												[this, token](QString value) {
+													_closeTurnstileChallenge
+														= nullptr;
+													if (token) {
+														token(std::move(value));
+													}
+												}),
+									 crl::guard(this, [this, failed] {
+										 _closeTurnstileChallenge = nullptr;
+										 if (failed) {
+											 failed();
+										 }
+									 }));
 	if (!result.error.isEmpty()) {
 		if (unavailable) {
 			unavailable(std::move(result.error));
