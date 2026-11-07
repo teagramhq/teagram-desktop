@@ -299,9 +299,11 @@ TEST_CASE(BuildsWrappedAuthRequestOnlyWhenTokenIsPresent) {
 	const auto serialized = MTP::details::SerializedRequest::Serialize(
 		std::get<Wrapped>(wrapped));
 	const auto &buffer = *serialized;
-	const auto bytes
-		= QByteArray(reinterpret_cast<const char *>(buffer.constData()),
-					 int(buffer.size() * sizeof(mtpPrime)));
+	const auto bodyOffset
+		= MTP::details::SerializedRequest::kMessageBodyPosition;
+	const auto bytes = QByteArray(
+		reinterpret_cast<const char *>(buffer.constData() + bodyOffset),
+		int((buffer.size() - bodyOffset) * sizeof(mtpPrime)));
 	CHECK_EQ(bytes.left(4), QByteArray("\x94\xf0\xbb\xad", 4));
 	CHECK(bytes.contains("challenge-token"));
 
