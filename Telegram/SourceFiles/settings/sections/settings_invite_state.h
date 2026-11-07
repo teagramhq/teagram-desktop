@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace Settings::details {
 
@@ -51,6 +52,36 @@ struct InviteCreateFailure {
 [[nodiscard]] bool CanRevokeInvite(const QString &state, bool inFlight);
 [[nodiscard]] bool ShouldShowInviteListTitle(bool loaded, bool failed,
 											 bool hasRows);
+
+class InviteListRefresh final {
+  public:
+	void queue(Fn<void()> done);
+	[[nodiscard]] bool take(Fn<void()> &done);
+
+  private:
+	bool _pending = false;
+	std::vector<Fn<void()>> _callbacks;
+};
+
+[[nodiscard]] bool QueueInviteListRefreshIfActive(InviteListRefresh &refresh,
+												  bool available,
+												  mtpRequestId activeRequest,
+												  Fn<void()> done);
+
+template <typename Start>
+[[nodiscard]] bool RunQueuedInviteListRefresh(InviteListRefresh &refresh,
+											  mtpRequestId activeRequest,
+											  Start &&start) {
+	if (activeRequest) {
+		return false;
+	}
+	auto done = Fn<void()>();
+	if (!refresh.take(done)) {
+		return false;
+	}
+	std::forward<Start>(start)(std::move(done));
+	return true;
+}
 
 class InviteCreateRequest final {
   public:

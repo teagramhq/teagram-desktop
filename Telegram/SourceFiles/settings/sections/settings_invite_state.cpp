@@ -81,6 +81,43 @@ bool CanRevokeInvite(const QString &state, bool inFlight) {
 	return (state == u"pending"_q) && !inFlight;
 }
 
+void InviteListRefresh::queue(Fn<void()> done) {
+	_pending = true;
+	if (done) {
+		_callbacks.push_back(std::move(done));
+	}
+}
+
+bool InviteListRefresh::take(Fn<void()> &done) {
+	if (!_pending) {
+		return false;
+	}
+	_pending = false;
+	done = nullptr;
+	auto callbacks = std::move(_callbacks);
+	_callbacks.clear();
+	if (!callbacks.empty()) {
+		done = [callbacks = std::move(callbacks)]() mutable {
+			for (auto &callback : callbacks) {
+				if (callback) {
+					callback();
+				}
+			}
+		};
+	}
+	return true;
+}
+
+bool QueueInviteListRefreshIfActive(InviteListRefresh &refresh, bool available,
+									mtpRequestId activeRequest,
+									Fn<void()> done) {
+	if (!available || !activeRequest) {
+		return false;
+	}
+	refresh.queue(std::move(done));
+	return true;
+}
+
 bool ShouldShowInviteListTitle(bool loaded, bool failed, bool hasRows) {
 	return !loaded || failed || hasRows;
 }
