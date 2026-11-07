@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
 #include "styles/style_calls.h"
@@ -199,9 +200,11 @@ class InviteFriends final : public PeerListController,
 	const not_null<Main::Session *> _session;
 	Ui::SettingsButton *_createButton = nullptr;
 	Ui::SettingsButton *_retryButton = nullptr;
+	Ui::SlideWrap<Ui::SettingsButton> *_retryWrap = nullptr;
 	Ui::FlatLabel *_quotaLabel = nullptr;
 	Ui::FlatLabel *_listTitle = nullptr;
 	Ui::FlatLabel *_messageLabel = nullptr;
+	Ui::SlideWrap<Ui::FlatLabel> *_messageWrap = nullptr;
 	PeerListContent *_list = nullptr;
 	mtpRequestId _listRequestId = 0;
 	details::InviteListRefresh _listRefresh;
@@ -343,18 +346,26 @@ void InviteFriends::setupContent() {
 		= Ui::AddSubsectionTitle(content, tr::lng_teagram_invite_list());
 	_listTitle = listTitle.get();
 
-	auto message
-		= object_ptr<Ui::FlatLabel>(content, QString(), st::dialogsEmptyLabel);
-	_messageLabel = message.data();
+	_messageWrap = content->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+			content,
+			object_ptr<Ui::FlatLabel>(
+				content,
+				QString(),
+				st::dialogsEmptyLabel),
+			st::peerAppearanceCoverLabelMargin))->setDuration(0);
+	_messageLabel = _messageWrap->entity();
 	_messageLabel->setTryMakeSimilarLines(true);
-	content->add(std::move(message), st::peerAppearanceCoverLabelMargin);
 
-	auto retry = object_ptr<Ui::SettingsButton>(
-		content, tr::lng_teagram_invite_try_again(),
-		st::settingsButtonLightNoIcon);
-	_retryButton = retry.data();
+	_retryWrap = content->add(
+		object_ptr<Ui::SlideWrap<Ui::SettingsButton>>(
+			content,
+			object_ptr<Ui::SettingsButton>(
+				content,
+				tr::lng_teagram_invite_try_again(),
+				st::settingsButtonLightNoIcon)))->setDuration(0);
+	_retryButton = _retryWrap->entity();
 	_retryButton->setClickedCallback([=] { loadInvites(); });
-	content->add(std::move(retry));
 
 	const auto delegate = content->lifetime().make_state<InviteListDelegate>(
 		_controller->uiShow());
@@ -364,6 +375,8 @@ void InviteFriends::setupContent() {
 	delegate->setContent(list);
 	_messageLabel->hide();
 	_retryButton->hide();
+	_messageWrap->toggle(false, anim::type::instant);
+	_retryWrap->toggle(false, anim::type::instant);
 	setDelegate(delegate);
 	list->setHideEmpty(true);
 
@@ -410,6 +423,8 @@ void InviteFriends::updateAvailability() {
 		_messageLabel->setText(tr::lng_teagram_invite_off(tr::now));
 		_messageLabel->show();
 	}
+	_messageWrap->toggle(!_messageLabel->isHidden(), anim::type::instant);
+	_retryWrap->toggle(!_retryButton->isHidden(), anim::type::instant);
 }
 
 void InviteFriends::updateSummary() {
@@ -466,6 +481,8 @@ void InviteFriends::updateMessage() {
 	} else {
 		_messageLabel->hide();
 	}
+	_messageWrap->toggle(!_messageLabel->isHidden(), anim::type::instant);
+	_retryWrap->toggle(!_retryButton->isHidden(), anim::type::instant);
 }
 
 void InviteFriends::prepare() {
