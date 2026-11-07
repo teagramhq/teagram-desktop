@@ -81,4 +81,8 @@ bool CanRevokeInvite(const QString &state, bool inFlight) {
 	return (state == u"pending"_q) && !inFlight;
 }
 
+bool ShouldShowInviteListTitle(bool loaded, bool failed, bool hasRows) {
+	return !loaded || failed || hasRows;
+}
+
 } // namespace Settings::details

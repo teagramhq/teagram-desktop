@@ -16,7 +16,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "mtproto/mtproto_response.h"
 #include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/labels.h"
 #include "styles/style_intro.h"
 
 namespace Intro::details {
@@ -24,9 +23,7 @@ namespace Intro::details {
 InviteWidget::InviteWidget(QWidget *parent, not_null<Main::Account *> account,
 						   not_null<Data *> data)
 	: Step(parent, account, data),
-	  _invite(this, st::introName, tr::lng_teagram_invite_field()),
-	  _note(this, tr::lng_teagram_invite_field_empty(), st::introDescription) {
-	_note->resizeToWidth(st::introDescription.minWidth);
+	  _invite(this, st::introName, tr::lng_teagram_invite_field()) {
 	setTitleText(tr::lng_teagram_invite_step_title());
 	setDescriptionText(tr::lng_teagram_invite_step_desc(
 		tr::now, lt_server, getData()->serverEndpoint));
@@ -62,7 +59,6 @@ QWidget *InviteWidget::firstTabWidget() const { return _invite.data(); }
 void InviteWidget::activate() {
 	Step::activate();
 	_invite->show();
-	_note->show();
 	_invite->setFocusFast();
 	if (getData()->signupInviteError) {
 		getData()->signupInviteError = false;
@@ -84,8 +80,6 @@ void InviteWidget::cancelled() {
 void InviteWidget::resizeEvent(QResizeEvent *e) {
 	Step::resizeEvent(e);
 	_invite->moveToLeft(contentLeft(), contentTop() + st::introStepFieldTop);
-	_note->moveToLeft(contentLeft() + st::buttonRadius,
-					  contentTop() + st::introSignUpNoteTop);
 }
 
 void InviteWidget::showInviteError(const QString &text, bool select) {

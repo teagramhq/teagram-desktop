@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Ui {
 class InputField;
-class FlatLabel;
 } // namespace Ui
 
 namespace Intro::details {
@@ -42,7 +41,6 @@ class InviteWidget final : public Step {
 	void signInFail(const MTP::Error &error);
 
 	object_ptr<Ui::InputField> _invite;
-	object_ptr<Ui::FlatLabel> _note;
 	mtpRequestId _sentRequest = 0;
 };
 
