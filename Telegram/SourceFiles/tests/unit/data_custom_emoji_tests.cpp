@@ -21,3 +21,54 @@ TEST_CASE(CustomServerStatusKeepsCollectiblesPremiumOnly) {
 	CHECK(Data::details::EmojiStatusRequiresPremium(false, false, false));
 	CHECK(!Data::details::EmojiStatusRequiresPremium(true, false, true));
 }
+
+TEST_CASE(CustomEmojiCustomServerActionsHappyPathSmoke) {
+	CHECK(!Data::details::MessageCustomEmojiRequiresPremium(false, true, true));
+	CHECK(Data::details::ResolveReactActionGate({
+			  .reactionsAreTags = false,
+			  .canReact = true,
+			  .premium = false,
+			  .customReaction = true,
+			  .reactionAlreadyAdded = false,
+			  .broadcast = false,
+			  .customServer = true,
+		  })
+		  == Data::details::ReactActionGate::Allowed);
+	CHECK(!Data::details::EmojiStatusRequiresPremium(false, true, false));
+}
+
+TEST_CASE(CustomEmojiActionPremiumGatesStayScoped) {
+	CHECK(Data::details::MessageCustomEmojiRequiresPremium(true, false, false));
+	CHECK(Data::details::ResolveReactActionGate({
+			  .reactionsAreTags = false,
+			  .canReact = true,
+			  .premium = false,
+			  .customReaction = true,
+			  .reactionAlreadyAdded = false,
+			  .broadcast = false,
+			  .customServer = false,
+		  })
+		  == Data::details::ReactActionGate::CustomReactionPremium);
+	CHECK(Data::details::ResolveReactActionGate({
+			  .reactionsAreTags = true,
+			  .canReact = true,
+			  .premium = false,
+			  .customReaction = true,
+			  .reactionAlreadyAdded = false,
+			  .broadcast = false,
+			  .customServer = true,
+		  })
+		  == Data::details::ReactActionGate::TagsPremium);
+	CHECK(Data::details::ResolveReactActionGate({
+			  .reactionsAreTags = false,
+			  .canReact = false,
+			  .premium = false,
+			  .customReaction = true,
+			  .reactionAlreadyAdded = false,
+			  .broadcast = false,
+			  .customServer = true,
+		  })
+		  == Data::details::ReactActionGate::Restricted);
+	CHECK(Data::details::EmojiStatusRequiresPremium(false, true, true));
+	CHECK(!Data::details::EmojiStatusRequiresPremium(true, false, true));
+}

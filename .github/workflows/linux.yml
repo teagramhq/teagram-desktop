@@ -636,6 +636,23 @@ jobs:
               echo "Sticker import delayed-suggestion regression did not report one passing case."
               exit 1
             fi
+
+            if selected_output=$("$test_unit" --case CustomEmojiCustomServerActionsHappyPathSmoke 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  CustomEmojiCustomServerActionsHappyPathSmoke"; then
+              echo "--case did not run exactly CustomEmojiCustomServerActionsHappyPathSmoke."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Custom emoji custom-server actions did not report one passing smoke case."
+              exit 1
+            fi
           '
 
       - name: Sticker set API smoke.

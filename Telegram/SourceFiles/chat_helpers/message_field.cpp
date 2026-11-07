@@ -108,10 +108,10 @@ constexpr auto kLinkProtocols = {
 					const auto document = session->data().document(emoji);
 					if (document->isPremiumEmoji()) {
 						if (!allowPremiumEmoji || premiumSkipped
-							|| Data::details::CustomEmojiRequiresPremium(
+							|| Data::details::MessageCustomEmojiRequiresPremium(
 								session->premiumPossible(),
-								session->mtp().dcOptions().hasCustomServer())
-							|| !allowPremiumEmoji(document)) {
+								session->mtp().dcOptions().hasCustomServer(),
+								allowPremiumEmoji(document))) {
 							premiumSkipped = document;
 							i = all.erase(i);
 							continue;
