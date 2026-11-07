@@ -1547,6 +1547,12 @@ rpl::producer<FileChosen> EmojiListWidget::customChosen() const {
 	return _customChosen.events();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void EmojiListWidget::selectCustomForRegressionTest(FileChosen data) {
+	selectCustom(std::move(data));
+}
+#endif
+
 rpl::producer<> EmojiListWidget::jumpedToPremium() const {
 	return _jumpedToPremium.events();
 }

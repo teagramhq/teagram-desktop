@@ -732,6 +732,12 @@ rpl::producer<FileChosen> TabbedSelector::customEmojiChosen() const {
 	return emoji()->customChosen();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void TabbedSelector::chooseCustomEmojiForRegressionTest(FileChosen data) {
+	emoji()->selectCustomForRegressionTest(std::move(data));
+}
+#endif
+
 rpl::producer<FileChosen> TabbedSelector::fileChosen() const {
 	auto never = rpl::never<FileChosen>(
 	) | rpl::type_erased;

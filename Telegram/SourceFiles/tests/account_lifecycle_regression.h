@@ -202,5 +202,8 @@ SetBoostRequestCaptureForRegressionTest(
 #endif
 
 void RunAccountLifecycleRegression(Fn<void(int)> done);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void RunCustomEmojiUiSmoke(Fn<void(int)> done);
+#endif
 
 } // namespace Tests

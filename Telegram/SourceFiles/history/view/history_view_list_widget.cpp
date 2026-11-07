@@ -3572,13 +3572,14 @@ void ListWidget::reactionChosen(ChosenReaction reaction) {
 			viewForItem(item),
 			HistoryReactionSource::Selector);
 		return;
-	} else if (_delegate->listShowReactPremiumError(item, reaction.id)) {
+	} else if (!Window::TryToggleReactionAction(
+			   controller(), item, reaction.id,
+			   HistoryReactionSource::Selector)) {
 		if (_menu) {
 			_menu->hideMenu();
 		}
 		return;
 	}
-	item->toggleReaction(reaction.id, HistoryReactionSource::Selector);
 	if (!ranges::contains(item->chosenReactions(), reaction.id)) {
 		return;
 	} else if (const auto view = viewForItem(item)) {

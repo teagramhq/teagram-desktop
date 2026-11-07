@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "chat_helpers/tabbed_selector.h"
 #include "boxes/about_box.h"
 #include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
@@ -56,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
+#include "data/data_message_reaction_id.h"
 #include "data/data_message_reactions.h"
 #include "data/data_peer_id.h"
 #include "data/data_photo.h"
@@ -63,6 +65,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_user.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_username_policy.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
@@ -79,6 +82,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
+#include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_emoji_status_panel.h"
 #include "info/profile/info_profile_top_bar.h"
 #include "info/info_controller.h"
 #include "info/info_layer_widget.h"
@@ -150,11 +155,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
+#include "window/section_widget.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
 
 #include "styles/style_basic.h"
 #include "styles/style_chat.h"
+#include "styles/style_info.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QByteArray>
@@ -10132,6 +10139,38 @@ struct NativeLifecycleResults {
 						MTP_vector<MTPDocumentAttribute>());
 }
 
+[[nodiscard]] MTPDocument RegressionCustomEmojiDocument(int64 id) {
+	const auto customEmoji = MTP_documentAttributeCustomEmoji(
+		MTP_flags(0), MTP_string(u"🧪"_q),
+		MTP_inputStickerSetID(MTP_long(420), MTP_long(0)));
+	return MTP_document(
+		MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(), MTP_int(1),
+		MTP_string("application/x-tgsticker"), MTP_long(0),
+		MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
+		MTP_vector<MTPDocumentAttribute>({ customEmoji }));
+}
+
+[[nodiscard]] MTPMessage RegressionCustomEmojiMessage(
+		int messageId,
+		UserId from,
+		PeerId peer,
+		DocumentId documentId) {
+	const auto text = u"🧪"_q;
+	return MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id), MTP_int(messageId),
+		peerToMTP(peerFromUser(from)), MTPint(), MTPstring(), peerToMTP(peer),
+		MTPPeer(), MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(1), MTP_string(text),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>({ MTP_messageEntityCustomEmoji(
+			MTP_int(0), MTP_int(int(text.size())),
+			MTP_long(static_cast<int64>(documentId))) }),
+		MTP_int(0), MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(),
+		MTPlong(), MTPMessageReactions(), MTPVector<MTPRestrictionReason>(),
+		MTP_int(0), MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
 [[nodiscard]] MTPAvailableReaction RegressionAvailableReaction(int index) {
 	using Flag = MTPDavailableReaction::Flag;
 	const auto flags
@@ -14645,6 +14684,166 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 }
 
 } // namespace
+
+void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
+	const auto fail = [&](const char *reason) {
+		std::fprintf(stderr, "Custom emoji UI smoke: FAIL (%s).\n", reason);
+		done(1);
+	};
+	auto &app = Core::App();
+	auto &domain = app.domain();
+	const auto primary = app.activePrimaryWindow();
+	if (!primary) {
+		return fail("primary window is missing");
+	}
+
+	constexpr auto kSenderId = UserId(724101);
+	constexpr auto kRecipientId = UserId(724102);
+	constexpr auto kDocumentId = DocumentId(724103);
+	const auto sender = domain.add(MTP::Environment::Production);
+	sender->mtp().stopForServerEnrollment();
+	if (!ConfigurePinnedServer(sender, RegressionServerKey())) {
+		return fail("could not pin the sender custom server");
+	}
+	sender->setSessionUserId(kSenderId);
+	if (!sender->createSession(
+			RegressionUser(kSenderId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		return fail("could not create the non-Premium sender session");
+	}
+	if (sender->session().premium()
+		|| sender->session().paidFeaturesSupported()
+		|| !sender->mtp().dcOptions().hasCustomServer()) {
+		return fail("sender fixture is not a non-Premium custom-server account");
+	}
+	const auto recipient = domain.add(MTP::Environment::Production);
+	recipient->mtp().stopForServerEnrollment();
+	if (!ConfigurePinnedServer(recipient, RegressionServerKey())) {
+		return fail("could not pin the recipient custom server");
+	}
+	recipient->setSessionUserId(kRecipientId);
+	if (!recipient->createSession(
+			RegressionUser(kRecipientId, true, QString()),
+			std::make_unique<Main::SessionSettings>())) {
+		return fail("could not create the non-Premium recipient session");
+	}
+	if (recipient->session().premium()
+		|| recipient->session().paidFeaturesSupported()
+		|| !recipient->mtp().dcOptions().hasCustomServer()) {
+		return fail(
+			"recipient fixture is not a non-Premium custom-server account");
+	}
+
+	domain.activate(sender);
+	primary->showAccount(sender);
+	primary->firstShow();
+	primary->finishFirstShow();
+	const auto controller = primary->sessionController();
+	if (!controller || (&controller->session() != &sender->session())) {
+		return fail("sender session controller was not created");
+	}
+	const auto senderController = not_null<Window::SessionController *>(
+		controller);
+
+	const auto emoji = sender->session().data().processDocument(
+		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
+	if (!emoji->isPremiumEmoji() || !emoji->sticker()
+		|| emoji->sticker()->setType != Data::StickersType::Emoji) {
+		return fail("custom emoji fixture is not a Premium emoji document");
+	}
+	const auto recipientUser = sender->session().data().processUsers(
+		MTP_vector<MTPUser>({
+			RegressionUser(kRecipientId, false, u"2"_q),
+		}));
+	if (!recipientUser) {
+		return fail("sender did not load the recipient user");
+	}
+
+	controller->showPeerHistory(not_null<PeerData *>(recipientUser));
+	QCoreApplication::processEvents();
+	const auto historyWidget
+		= controller->content()->historyWidgetForRegressionTest();
+	if (!historyWidget || !historyWidget->history()) {
+		return fail("sender message composer was not created");
+	}
+	controller->tabbedSelector()->chooseCustomEmojiForRegressionTest(
+		ChatHelpers::FileChosen{ .document = emoji });
+	QCoreApplication::processEvents();
+	const auto draft = historyWidget->draftWithTagsForRegressionTest();
+	if (draft.text != u"🧪"_q || draft.tags.empty()) {
+		return fail("custom emoji selector action did not insert a tagged emoji");
+	}
+	const auto sendHistory = historyWidget->history();
+	historyWidget->sendForRegressionTest({});
+	const auto sent = sendHistory->lastMessage();
+	if (!sent || sent->originalText().text != u"🧪"_q) {
+		return fail("message composer did not send the inserted custom emoji");
+	}
+
+	const auto reactionMessage = sender->session().data().addNewMessage(
+		RegressionCustomEmojiMessage(
+			724104, kRecipientId, peerFromUser(kRecipientId), kDocumentId),
+		MessageFlags(), NewMessageType::Existing);
+	const auto reaction = Data::ReactionId{ { kDocumentId } };
+	if (!reactionMessage || !reactionMessage->canReact()) {
+		return fail("custom reaction fixture cannot be toggled");
+	}
+	historyWidget->chooseReactionForRegressionTest(
+		reactionMessage->fullId(), reaction);
+	QCoreApplication::processEvents();
+	if (!ranges::contains(reactionMessage->chosenReactions(), reaction)) {
+		return fail("custom reaction action did not toggle the reaction");
+	}
+
+	const auto statusId = EmojiStatusId{ .documentId = kDocumentId };
+	primary->widget()->showMainMenu();
+	QCoreApplication::processEvents();
+	const auto menu = Test::FindFirst<Window::MainMenu>(
+		not_null<QWidget *>(primary->widget()));
+	if (!menu || !menu->emojiStatusEntryVisibleForRegressionTest()
+		|| !menu->openEmojiStatusPickerForRegressionTest()) {
+		return fail("custom-server status entry did not open its picker");
+	}
+	menu->chooseCustomEmojiStatusForRegressionTest(
+		not_null<DocumentData *>(emoji));
+	QCoreApplication::processEvents();
+	if (sender->session().user()->emojiStatusId() != statusId) {
+		return fail("status picker action did not persist the selected status");
+	}
+
+	const auto remoteSender = recipient->session().data().processUsers(
+		MTP_vector<MTPUser>({ RegressionUser(kSenderId, false, u"1"_q) }));
+	const auto remoteEmoji = recipient->session().data().processDocument(
+		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
+	const auto received = recipient->session().data().addNewMessage(
+		RegressionCustomEmojiMessage(
+			724105, kSenderId, peerFromUser(kSenderId), kDocumentId),
+		MessageFlags(), NewMessageType::Existing);
+	if (!remoteSender || !remoteEmoji || !received
+		|| received->originalText().entities.empty()) {
+		return fail("recipient message did not retain the custom emoji entity");
+	}
+	recipient->session().api().updates().applyUpdateNoPtsCheck(
+		MTP_updateUserEmojiStatus(
+			MTP_long(kSenderId.bare),
+			MTP_emojiStatus(
+				MTP_flags(0), MTP_long(static_cast<int64>(kDocumentId)),
+				MTP_int(0))));
+	auto badgeParent = QWidget(primary->widget()->bodyWidget());
+	auto badge = Info::Profile::Badge(
+		&badgeParent, st::settingsInfoPeerBadge, &recipient->session(),
+		Info::Profile::BadgeContentForPeer(
+			not_null<PeerData *>(remoteSender)),
+		nullptr, [] { return false; });
+	QCoreApplication::processEvents();
+	if (remoteSender->emojiStatusId() != statusId || !badge.widget()) {
+		return fail("recipient did not render the received emoji status");
+	}
+
+	std::fprintf(stderr,
+		"Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering).\n");
+	done(0);
+}
 
 void RunAccountLifecycleRegression(Fn<void(int)> done) {
 	if (const auto result = StartAccountLifecycleRegression(done)) {

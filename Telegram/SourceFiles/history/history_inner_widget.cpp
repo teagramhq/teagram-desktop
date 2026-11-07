@@ -556,10 +556,9 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 			viewByItem(item),
 			HistoryReactionSource::Selector);
 		return;
-	} else if (!Window::TryReactAction(_controller, item, reaction.id, [=] {
-				   item->toggleReaction(reaction.id,
-										HistoryReactionSource::Selector);
-			   })) {
+	} else if (!Window::TryToggleReactionAction(
+			   _controller, item, reaction.id,
+			   HistoryReactionSource::Selector)) {
 		if (_menu) {
 			_menu->hideMenu();
 		}
@@ -580,6 +579,12 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 		}
 	}
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void HistoryInner::chooseReactionForRegressionTest(ChosenReaction reaction) {
+	_reactionsManager->chooseForRegressionTest(std::move(reaction));
+}
+#endif
 
 Main::Session &HistoryInner::session() const {
 	return _controller->session();

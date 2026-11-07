@@ -191,6 +191,15 @@ bool EmojiStatusPanel::shown() const {
 	return _panel && !_panel->isHidden();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void EmojiStatusPanel::chooseCustomEmojiForRegressionTest(
+		not_null<DocumentData*> document) {
+	_panel->selector()->chooseCustomEmojiForRegressionTest({
+		.document = document,
+	});
+}
+#endif
+
 bool EmojiStatusPanel::hasFocus() const {
 	return _panel && Ui::InFocusChain(_panel.get());
 }
@@ -291,24 +300,13 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 			Expects(chosen.until != Selector::kPickCustomTimeId);
 
 			// PickUntilBox calls this after EmojiStatusPanel is destroyed!
-			const auto owner = &controller->session().data();
-			if (!Data::details::ApplyEmojiStatus(
-					bool(chosen.id), controller->session().premium(),
-					controller->session().mtp().dcOptions().hasCustomServer(),
-					chosen.id.collectible != nullptr,
-					[=] {
-						if (weak) {
-							startAnimation(owner, body, chosen.id,
-										   chosen.animation);
-						}
-						owner->emojiStatuses().set(chosen.id, chosen.until);
-					},
-					[=] {
-						ShowPremiumPreviewBox(controller,
-											  PremiumFeature::EmojiStatus);
-					})) {
-				return;
-			}
+			const auto animate = [=] {
+				if (weak) {
+					startAnimation(&controller->session().data(), body,
+									   chosen.id, chosen.animation);
+				}
+			};
+			applyChosen(controller, chosen.id, chosen.until, animate);
 		};
 
 		rpl::merge(
@@ -328,6 +326,27 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 			}
 		}, _panel->lifetime());
 	}
+}
+
+bool EmojiStatusPanel::applyChosen(
+		not_null<Window::SessionController*> controller,
+		EmojiStatusId id,
+		TimeId until,
+		Fn<void()> animate) {
+	const auto owner = &controller->session().data();
+	return Data::details::ApplyEmojiStatus(
+		bool(id), controller->session().premium(),
+		controller->session().mtp().dcOptions().hasCustomServer(),
+		id.collectible != nullptr,
+		[=] {
+			if (animate) {
+				animate();
+			}
+			owner->emojiStatuses().set(id, until);
+		},
+		[=] {
+			ShowPremiumPreviewBox(controller, PremiumFeature::EmojiStatus);
+		});
 }
 
 bool EmojiStatusPanel::filter(

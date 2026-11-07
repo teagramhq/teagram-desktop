@@ -145,6 +145,9 @@ public:
 
 	[[nodiscard]] rpl::producer<EmojiChosen> emojiChosen() const;
 	[[nodiscard]] rpl::producer<FileChosen> customEmojiChosen() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void chooseCustomEmojiForRegressionTest(FileChosen data);
+#endif
 	[[nodiscard]] rpl::producer<FileChosen> fileChosen() const;
 	[[nodiscard]] rpl::producer<PhotoChosen> photoChosen() const;
 	[[nodiscard]] rpl::producer<InlineChosen> inlineResultChosen() const;

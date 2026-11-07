@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "chat_helpers/field_characters_count_manager.h"
 #include "data/data_report.h"
+#include "data/data_message_reaction_id.h"
 #include "window/section_widget.h"
 #include "window/window_session_controller.h"
 #include "ui/widgets/fields/input_field.h"
@@ -292,7 +293,11 @@ public:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
+	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
 	void sendForRegressionTest(Api::SendOptions options);
+	void chooseReactionForRegressionTest(
+		FullMsgId context,
+		Data::ReactionId id);
 	[[nodiscard]] bool chatThemeControlsAccessibleForRegressionTest() const;
 	[[nodiscard]] ClickHandlerContext
 	prepareClickHandlerContextForRegressionTest(FullMsgId itemId) const;

@@ -637,20 +637,16 @@ jobs:
               exit 1
             fi
 
-            if selected_output=$("$test_unit" --case CustomEmojiCustomServerActionsHappyPathSmoke 2>&1); then
-              printf "%s\n" "$selected_output"
+            emoji_smoke_workdir=$(mktemp -d)
+            if emoji_smoke_output=$(QT_QPA_PLATFORM=offscreen TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$PWD/out/Debug/Teagram" -noupdate -debug -workdir "$emoji_smoke_workdir" 2>&1); then
+              printf "%s\n" "$emoji_smoke_output"
             else
               TEST_STATUS=$?
-              printf "%s\n" "$selected_output"
+              printf "%s\n" "$emoji_smoke_output"
               exit "$TEST_STATUS"
             fi
-            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
-            if test "$case_runs" != "run  CustomEmojiCustomServerActionsHappyPathSmoke"; then
-              echo "--case did not run exactly CustomEmojiCustomServerActionsHappyPathSmoke."
-              exit 1
-            fi
-            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
-              echo "Custom emoji custom-server actions did not report one passing smoke case."
+            if ! printf "%s\n" "$emoji_smoke_output" | grep -Fqx "Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering)."; then
+              echo "Custom emoji user-path smoke did not report a passing result."
               exit 1
             fi
           '

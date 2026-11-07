@@ -552,6 +552,9 @@ private:
 	-> HistoryView::ReplyButton::ButtonParameters;
 	void toggleFavoriteReaction(not_null<Element*> view) const;
 	void reactionChosen(const ChosenReaction &reaction);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void chooseReactionForRegressionTest(ChosenReaction reaction);
+#endif
 
 	void setupSharingDisallowed();
 	void setupSwipeReplyAndBack();

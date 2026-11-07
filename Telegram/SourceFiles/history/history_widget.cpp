@@ -6550,8 +6550,23 @@ QString HistoryWidget::draftTextForRegressionTest() const {
 	return _field->getTextWithTags().text;
 }
 
+TextWithTags HistoryWidget::draftWithTagsForRegressionTest() const {
+	return _field->getTextWithTags();
+}
+
 void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
 	send(options);
+}
+
+void HistoryWidget::chooseReactionForRegressionTest(
+		FullMsgId context,
+		Data::ReactionId id) {
+	if (_list) {
+		_list->chooseReactionForRegressionTest({
+			.context = context,
+			.id = std::move(id),
+		});
+	}
 }
 
 bool HistoryWidget::chatThemeControlsAccessibleForRegressionTest() const {

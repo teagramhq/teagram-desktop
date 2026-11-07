@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_section_common.h"
 
 class PeerData;
+enum class HistoryReactionSource : char;
 
 namespace ChatHelpers {
 struct FileChosen;
@@ -283,6 +284,11 @@ private:
 								  not_null<HistoryItem *> item,
 								  const Data::ReactionId &id,
 								  Fn<void()> action);
+[[nodiscard]] bool TryToggleReactionAction(
+	not_null<SessionController *> controller,
+	not_null<HistoryItem *> item,
+	const Data::ReactionId &id,
+	HistoryReactionSource source);
 
 [[nodiscard]] rpl::producer<const Data::WallPaper*> WallPaperResolved(
 	not_null<Data::Session*> owner,

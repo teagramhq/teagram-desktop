@@ -73,6 +73,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_settings.h"
 #include "styles/style_window.h"
 #include "styles/style_window_main_menu.h"
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "test/test_widgets.h"
+#endif
 
 #include <QtGui/QWindow>
 #include <QtGui/QScreen>
@@ -504,6 +507,22 @@ MainMenu::MainMenu(QWidget *parent, not_null<SessionController *> controller)
 }
 
 MainMenu::~MainMenu() = default;
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool MainMenu::emojiStatusEntryVisibleForRegressionTest() const {
+	return !_setEmojiStatus->isHidden();
+}
+
+bool MainMenu::openEmojiStatusPickerForRegressionTest() {
+	Test::Click(not_null<QWidget *>(_setEmojiStatus.get()));
+	return _emojiStatusPanel->shown();
+}
+
+void MainMenu::chooseCustomEmojiStatusForRegressionTest(
+		not_null<DocumentData*> document) {
+	_emojiStatusPanel->chooseCustomEmojiForRegressionTest(document);
+}
+#endif
 
 void MainMenu::moveBadge() {
 	if (!_badge->widget()) {
