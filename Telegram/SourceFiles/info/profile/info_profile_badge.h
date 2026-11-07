@@ -102,21 +102,18 @@ private:
 
 namespace details {
 
-[[nodiscard]] inline Badge::Content ResolveBadgeContentForPeer(
-	BadgeType badge,
-	EmojiStatusId emojiStatusId,
-	bool isUser,
-	bool customServer) {
+[[nodiscard]] inline Badge::Content
+ResolveBadgeContentForPeer(BadgeType badge, EmojiStatusId emojiStatusId,
+						   bool isUser, bool customServer) {
 	if (customServer && emojiStatusId) {
-		if (badge == BadgeType::Scam
-			|| badge == BadgeType::Fake
+		if (badge == BadgeType::Scam || badge == BadgeType::Fake
 			|| badge == BadgeType::Direct) {
-			return { badge };
+			return {badge};
 		}
-		return { BadgeType::EmojiStatus, emojiStatusId };
+		return {BadgeType::EmojiStatus, emojiStatusId};
 	}
 	if (emojiStatusId.collectible && (badge == BadgeType::Verified)) {
-		return { BadgeType::Premium, emojiStatusId };
+		return {BadgeType::Premium, emojiStatusId};
 	}
 	if (badge == BadgeType::Verified) {
 		badge = BadgeType::None;
@@ -126,13 +123,12 @@ namespace details {
 	} else if (emojiStatusId && badge == BadgeType::None) {
 		badge = BadgeType::Premium;
 	}
-	return { badge, emojiStatusId };
+	return {badge, emojiStatusId};
 }
 
-[[nodiscard]] inline Badge::Content FilterBadgeContent(
-	Badge::Content content,
-	bool allowed,
-	bool premiumBadgesShown) {
+[[nodiscard]] inline Badge::Content
+FilterBadgeContent(Badge::Content content, bool allowed,
+				   bool premiumBadgesShown) {
 	if (!allowed
 		|| (!premiumBadgesShown && content.badge == BadgeType::Premium)) {
 		content.badge = BadgeType::None;

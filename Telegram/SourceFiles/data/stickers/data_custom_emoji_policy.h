@@ -29,12 +29,10 @@ enum class MessageCustomEmojiAction {
 [[nodiscard]] constexpr MessageCustomEmojiAction
 ResolveMessageCustomEmojiAction(bool premiumPossible, bool customServer,
 								bool peerAllowsWithoutPremium) {
-	return MessageCustomEmojiRequiresPremium(
-		premiumPossible,
-		customServer,
-		peerAllowsWithoutPremium)
-		? MessageCustomEmojiAction::PremiumGate
-		: MessageCustomEmojiAction::Keep;
+	return MessageCustomEmojiRequiresPremium(premiumPossible, customServer,
+											 peerAllowsWithoutPremium)
+			   ? MessageCustomEmojiAction::PremiumGate
+			   : MessageCustomEmojiAction::Keep;
 }
 
 enum class EmojiStatusPickerAction {
@@ -43,8 +41,8 @@ enum class EmojiStatusPickerAction {
 	PremiumPreview,
 };
 
-[[nodiscard]] constexpr bool
-EmojiStatusEntryVisible(bool paidFeaturesSupported, bool customServer) {
+[[nodiscard]] constexpr bool EmojiStatusEntryVisible(bool paidFeaturesSupported,
+													 bool customServer) {
 	return paidFeaturesSupported || customServer;
 }
 

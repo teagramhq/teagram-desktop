@@ -305,46 +305,37 @@ void MainMenu::ResetScaleButton::paintEvent(QPaintEvent *e) {
 		kText);
 }
 
-MainMenu::MainMenu(
-	QWidget *parent,
-	not_null<SessionController*> controller)
-: LayerWidget(parent)
-, _controller(controller)
-, _userpicButton(
-	this,
-	_controller->session().user(),
-	st::mainMenuUserpic)
-, _toggleAccounts(this, &controller->session().account())
-, _setEmojiStatus(this, SetStatusLabel(&controller->session()))
-, _emojiStatusPanel(std::make_unique<Info::Profile::EmojiStatusPanel>())
-, _badge(std::make_unique<Info::Profile::Badge>(
-	this,
-	st::settingsInfoPeerBadge,
-	&controller->session(),
-	Info::Profile::BadgeContentForPeer(controller->session().user()),
-	_emojiStatusPanel.get(),
-	[=] { return controller->isGifPausedAtLeastFor(GifPauseReason::Layer); },
-	kPlayStatusLimit,
-	Info::Profile::BadgeType::Premium
-		| Info::Profile::BadgeType::EmojiStatus))
-, _scroll(this, st::defaultSolidScroll)
-, _inner(_scroll->setOwnedWidget(
-	object_ptr<Ui::VerticalLayout>(_scroll.data())))
-, _topShadowSkip(_inner->add(
-	object_ptr<Ui::FixedHeightWidget>(_inner.get(), st::lineWidth)))
-, _accounts(_inner->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-	_inner.get(),
-	object_ptr<Ui::VerticalLayout>(_inner.get()))))
-, _shadow(_inner->add(object_ptr<Ui::SlideWrap<Ui::PlainShadow>>(
-	_inner.get(),
-	object_ptr<Ui::PlainShadow>(_inner.get()))))
-, _menu(_inner->add(
-	object_ptr<Ui::VerticalLayout>(_inner.get()),
-	{ 0, st::mainMenuSkip, 0, 0 }))
-, _footer(_inner->add(object_ptr<Ui::RpWidget>(_inner.get())))
-, _telegram(
-	Ui::CreateChild<Ui::FlatLabel>(_footer.get(), st::mainMenuTelegramLabel))
-, _version(AddVersionLabel(_footer)) {
+MainMenu::MainMenu(QWidget *parent, not_null<SessionController *> controller)
+	: LayerWidget(parent), _controller(controller),
+	  _userpicButton(this, _controller->session().user(), st::mainMenuUserpic),
+	  _toggleAccounts(this, &controller->session().account()),
+	  _setEmojiStatus(this, SetStatusLabel(&controller->session())),
+	  _emojiStatusPanel(std::make_unique<Info::Profile::EmojiStatusPanel>()),
+	  _badge(std::make_unique<Info::Profile::Badge>(
+		  this, st::settingsInfoPeerBadge, &controller->session(),
+		  Info::Profile::BadgeContentForPeer(controller->session().user()),
+		  _emojiStatusPanel.get(),
+		  [=] {
+			  return controller->isGifPausedAtLeastFor(GifPauseReason::Layer);
+		  },
+		  kPlayStatusLimit,
+		  Info::Profile::BadgeType::Premium
+			  | Info::Profile::BadgeType::EmojiStatus)),
+	  _scroll(this, st::defaultSolidScroll),
+	  _inner(_scroll->setOwnedWidget(
+		  object_ptr<Ui::VerticalLayout>(_scroll.data()))),
+	  _topShadowSkip(_inner->add(
+		  object_ptr<Ui::FixedHeightWidget>(_inner.get(), st::lineWidth))),
+	  _accounts(_inner->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+		  _inner.get(), object_ptr<Ui::VerticalLayout>(_inner.get())))),
+	  _shadow(_inner->add(object_ptr<Ui::SlideWrap<Ui::PlainShadow>>(
+		  _inner.get(), object_ptr<Ui::PlainShadow>(_inner.get())))),
+	  _menu(_inner->add(object_ptr<Ui::VerticalLayout>(_inner.get()),
+						{0, st::mainMenuSkip, 0, 0})),
+	  _footer(_inner->add(object_ptr<Ui::RpWidget>(_inner.get()))),
+	  _telegram(Ui::CreateChild<Ui::FlatLabel>(_footer.get(),
+											   st::mainMenuTelegramLabel)),
+	  _version(AddVersionLabel(_footer)) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
 
 	setupUserpicButton();
@@ -464,9 +455,7 @@ MainMenu::MainMenu(
 	_badge->setPremiumClickCallback([=] {
 		chooseEmojiStatus();
 	});
-	_badge->setEmojiStatusClickCallback([=] {
-		chooseEmojiStatus();
-	});
+	_badge->setEmojiStatusClickCallback([=] { chooseEmojiStatus(); });
 
 	_controller->session().downloaderTaskFinished(
 	) | rpl::on_next([=] {
@@ -909,15 +898,12 @@ void MainMenu::chooseEmojiStatus() {
 	const auto &session = _controller->session();
 	const auto paidFeaturesSupported = session.paidFeaturesSupported();
 	const auto customServer = session.mtp().dcOptions().hasCustomServer();
-	if (!Data::details::EmojiStatusEntryVisible(
-			paidFeaturesSupported,
-			customServer)) {
+	if (!Data::details::EmojiStatusEntryVisible(paidFeaturesSupported,
+												customServer)) {
 		return;
 	}
 	const auto action = Data::details::ResolveEmojiStatusPickerAction(
-		paidFeaturesSupported,
-		customServer,
-		_controller->showFrozenError(),
+		paidFeaturesSupported, customServer, _controller->showFrozenError(),
 		_badge->widget() != nullptr);
 	switch (action) {
 	case Data::details::EmojiStatusPickerAction::NoAction:

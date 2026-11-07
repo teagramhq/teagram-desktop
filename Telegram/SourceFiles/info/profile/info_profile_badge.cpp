@@ -63,10 +63,9 @@ Ui::RpWidget *Badge::widget() const {
 }
 
 void Badge::setContent(Content content) {
-	content = details::FilterBadgeContent(
-		content,
-		bool(_allowed & content.badge),
-		_session->premiumBadgesShown());
+	content
+		= details::FilterBadgeContent(content, bool(_allowed & content.badge),
+									  _session->premiumBadgesShown());
 	if (_content == content) {
 		return;
 	}
@@ -113,10 +112,10 @@ void Badge::setContent(Content content) {
 			: 0;
 		const auto &style = st();
 		const auto icon = (_content.badge == BadgeType::Verified)
-			? &style.verified
-			: (id || _content.badge == BadgeType::EmojiStatus)
-			? nullptr
-			: &style.premium;
+							  ? &style.verified
+						  : (id || _content.badge == BadgeType::EmojiStatus)
+							  ? nullptr
+							  : &style.premium;
 		const auto iconForeground = (_content.badge == BadgeType::Verified)
 			? &style.verifiedCheck
 			: nullptr;
@@ -209,8 +208,7 @@ void Badge::setContent(Content content) {
 	} break;
 	}
 
-	if (_content.badge == BadgeType::EmojiStatus
-		&& _emojiStatusClickCallback) {
+	if (_content.badge == BadgeType::EmojiStatus && _emojiStatusClickCallback) {
 		_view->setAttribute(Qt::WA_TransparentForMouseEvents, false);
 		_view->setClickedCallback(_emojiStatusClickCallback);
 	} else if (!HasPremiumClick(_content) || !_premiumClickCallback) {
@@ -290,16 +288,12 @@ Data::CustomEmojiSizeTag Badge::sizeTag() const {
 }
 
 rpl::producer<Badge::Content> BadgeContentForPeer(not_null<PeerData*> peer) {
-	return rpl::combine(
-		BadgeValue(peer),
-		EmojiStatusIdValue(peer)
-	) | rpl::map([=](BadgeType badge, EmojiStatusId emojiStatusId) {
-		return details::ResolveBadgeContentForPeer(
-			badge,
-			emojiStatusId,
-			peer->isUser(),
-			peer->usesCustomServer());
-	});
+	return rpl::combine(BadgeValue(peer), EmojiStatusIdValue(peer))
+		   | rpl::map([=](BadgeType badge, EmojiStatusId emojiStatusId) {
+				 return details::ResolveBadgeContentForPeer(
+					 badge, emojiStatusId, peer->isUser(),
+					 peer->usesCustomServer());
+			 });
 }
 
 rpl::producer<Badge::Content> VerifiedContentForPeer(
