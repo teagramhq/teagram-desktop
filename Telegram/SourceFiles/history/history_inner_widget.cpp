@@ -581,7 +581,8 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 }
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-void HistoryInner::chooseReactionForRegressionTest(ChosenReaction reaction) {
+void HistoryInner::chooseReactionForRegressionTest(
+	HistoryView::Reactions::ChosenReaction reaction) {
 	_reactionsManager->chooseForRegressionTest(std::move(reaction));
 }
 #endif
