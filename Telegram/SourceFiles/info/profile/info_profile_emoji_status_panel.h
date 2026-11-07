@@ -43,8 +43,7 @@ public:
 	void setChooseFilter(Fn<bool(EmojiStatusId)> filter);
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	void chooseCustomEmojiForRegressionTest(
-		not_null<DocumentData*> document);
+	void chooseCustomEmojiForRegressionTest(not_null<DocumentData *> document);
 #endif
 
 	void show(
@@ -81,11 +80,9 @@ public:
 
 private:
 	void create(const Descriptor &descriptor);
-	[[nodiscard]] bool applyChosen(
-		not_null<Window::SessionController*> controller,
-		EmojiStatusId id,
-		TimeId until,
-		Fn<void()> animate);
+	[[nodiscard]] bool
+	applyChosen(not_null<Window::SessionController *> controller,
+				EmojiStatusId id, TimeId until, Fn<void()> animate);
 	[[nodiscard]] bool filter(
 		not_null<Window::SessionController*> controller,
 		EmojiStatusId chosenId) const;

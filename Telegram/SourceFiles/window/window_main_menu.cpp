@@ -519,7 +519,7 @@ bool MainMenu::openEmojiStatusPickerForRegressionTest() {
 }
 
 void MainMenu::chooseCustomEmojiStatusForRegressionTest(
-		not_null<DocumentData*> document) {
+	not_null<DocumentData *> document) {
 	_emojiStatusPanel->chooseCustomEmojiForRegressionTest(document);
 }
 #endif

@@ -66,8 +66,8 @@ public:
 	}
 	[[nodiscard]] bool emojiStatusEntryVisibleForRegressionTest() const;
 	[[nodiscard]] bool openEmojiStatusPickerForRegressionTest();
-	void chooseCustomEmojiStatusForRegressionTest(
-		not_null<DocumentData*> document);
+	void
+	chooseCustomEmojiStatusForRegressionTest(not_null<DocumentData *> document);
 #endif
 
 	void parentResized() override;

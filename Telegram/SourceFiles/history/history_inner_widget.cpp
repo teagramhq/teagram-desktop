@@ -557,8 +557,8 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 			HistoryReactionSource::Selector);
 		return;
 	} else if (!Window::TryToggleReactionAction(
-			   _controller, item, reaction.id,
-			   HistoryReactionSource::Selector)) {
+				   _controller, item, reaction.id,
+				   HistoryReactionSource::Selector)) {
 		if (_menu) {
 			_menu->hideMenu();
 		}

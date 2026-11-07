@@ -285,10 +285,8 @@ private:
 								  const Data::ReactionId &id,
 								  Fn<void()> action);
 [[nodiscard]] bool TryToggleReactionAction(
-	not_null<SessionController *> controller,
-	not_null<HistoryItem *> item,
-	const Data::ReactionId &id,
-	HistoryReactionSource source);
+	not_null<SessionController *> controller, not_null<HistoryItem *> item,
+	const Data::ReactionId &id, HistoryReactionSource source);
 
 [[nodiscard]] rpl::producer<const Data::WallPaper*> WallPaperResolved(
 	not_null<Data::Session*> owner,

@@ -653,14 +653,12 @@ bool TryReactAction(not_null<SessionController *> controller,
 		});
 }
 
-bool TryToggleReactionAction(
-		not_null<SessionController *> controller,
-		not_null<HistoryItem *> item,
-		const Data::ReactionId &id,
-		HistoryReactionSource source) {
-	return TryReactAction(controller, item, id, [=] {
-		item->toggleReaction(id, source);
-	});
+bool TryToggleReactionAction(not_null<SessionController *> controller,
+							 not_null<HistoryItem *> item,
+							 const Data::ReactionId &id,
+							 HistoryReactionSource source) {
+	return TryReactAction(controller, item, id,
+						  [=] { item->toggleReaction(id, source); });
 }
 
 bool ShowReactPremiumError(not_null<SessionController *> controller,

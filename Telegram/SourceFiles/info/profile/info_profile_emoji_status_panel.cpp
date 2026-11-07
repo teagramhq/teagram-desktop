@@ -193,7 +193,7 @@ bool EmojiStatusPanel::shown() const {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void EmojiStatusPanel::chooseCustomEmojiForRegressionTest(
-		not_null<DocumentData*> document) {
+	not_null<DocumentData *> document) {
 	_panel->selector()->chooseCustomEmojiForRegressionTest({
 		.document = document,
 	});
@@ -303,7 +303,7 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 			const auto animate = [=] {
 				if (weak) {
 					startAnimation(&controller->session().data(), body,
-									   chosen.id, chosen.animation);
+								   chosen.id, chosen.animation);
 				}
 			};
 			applyChosen(controller, chosen.id, chosen.until, animate);
@@ -329,10 +329,8 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 }
 
 bool EmojiStatusPanel::applyChosen(
-		not_null<Window::SessionController*> controller,
-		EmojiStatusId id,
-		TimeId until,
-		Fn<void()> animate) {
+	not_null<Window::SessionController *> controller, EmojiStatusId id,
+	TimeId until, Fn<void()> animate) {
 	const auto owner = &controller->session().data();
 	return Data::details::ApplyEmojiStatus(
 		bool(id), controller->session().premium(),

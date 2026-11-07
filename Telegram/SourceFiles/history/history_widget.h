@@ -295,9 +295,8 @@ public:
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
 	void sendForRegressionTest(Api::SendOptions options);
-	void chooseReactionForRegressionTest(
-		FullMsgId context,
-		Data::ReactionId id);
+	void chooseReactionForRegressionTest(FullMsgId context,
+										 Data::ReactionId id);
 	[[nodiscard]] bool chatThemeControlsAccessibleForRegressionTest() const;
 	[[nodiscard]] ClickHandlerContext
 	prepareClickHandlerContextForRegressionTest(FullMsgId itemId) const;

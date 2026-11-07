@@ -10143,18 +10143,16 @@ struct NativeLifecycleResults {
 	const auto customEmoji = MTP_documentAttributeCustomEmoji(
 		MTP_flags(0), MTP_string(u"🧪"_q),
 		MTP_inputStickerSetID(MTP_long(420), MTP_long(0)));
-	return MTP_document(
-		MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(), MTP_int(1),
-		MTP_string("application/x-tgsticker"), MTP_long(0),
-		MTP_vector<MTPPhotoSize>(), MTPVector<MTPVideoSize>(), MTP_int(2),
-		MTP_vector<MTPDocumentAttribute>({ customEmoji }));
+	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
+						MTP_int(1), MTP_string("application/x-tgsticker"),
+						MTP_long(0), MTP_vector<MTPPhotoSize>(),
+						MTPVector<MTPVideoSize>(), MTP_int(2),
+						MTP_vector<MTPDocumentAttribute>({customEmoji}));
 }
 
-[[nodiscard]] MTPMessage RegressionCustomEmojiMessage(
-		int messageId,
-		UserId from,
-		PeerId peer,
-		DocumentId documentId) {
+[[nodiscard]] MTPMessage RegressionCustomEmojiMessage(int messageId,
+													  UserId from, PeerId peer,
+													  DocumentId documentId) {
 	const auto text = u"🧪"_q;
 	return MTP_message(
 		MTP_flags(MTPDmessage::Flag::f_from_id), MTP_int(messageId),
@@ -10162,9 +10160,9 @@ struct NativeLifecycleResults {
 		MTPPeer(), MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
 		MTPMessageReplyHeader(), MTP_int(1), MTP_string(text),
 		MTP_messageMediaEmpty(), MTPReplyMarkup(),
-		MTP_vector<MTPMessageEntity>({ MTP_messageEntityCustomEmoji(
+		MTP_vector<MTPMessageEntity>({MTP_messageEntityCustomEmoji(
 			MTP_int(0), MTP_int(int(text.size())),
-			MTP_long(static_cast<int64>(documentId))) }),
+			MTP_long(static_cast<int64>(documentId)))}),
 		MTP_int(0), MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(),
 		MTPlong(), MTPMessageReactions(), MTPVector<MTPRestrictionReason>(),
 		MTP_int(0), MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
@@ -14706,15 +14704,14 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("could not pin the sender custom server");
 	}
 	sender->setSessionUserId(kSenderId);
-	if (!sender->createSession(
-			RegressionUser(kSenderId, true, QString()),
-			std::make_unique<Main::SessionSettings>())) {
+	if (!sender->createSession(RegressionUser(kSenderId, true, QString()),
+							   std::make_unique<Main::SessionSettings>())) {
 		return fail("could not create the non-Premium sender session");
 	}
-	if (sender->session().premium()
-		|| sender->session().paidFeaturesSupported()
+	if (sender->session().premium() || sender->session().paidFeaturesSupported()
 		|| !sender->mtp().dcOptions().hasCustomServer()) {
-		return fail("sender fixture is not a non-Premium custom-server account");
+		return fail(
+			"sender fixture is not a non-Premium custom-server account");
 	}
 	const auto recipient = domain.add(MTP::Environment::Production);
 	recipient->mtp().stopForServerEnrollment();
@@ -14722,9 +14719,8 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("could not pin the recipient custom server");
 	}
 	recipient->setSessionUserId(kRecipientId);
-	if (!recipient->createSession(
-			RegressionUser(kRecipientId, true, QString()),
-			std::make_unique<Main::SessionSettings>())) {
+	if (!recipient->createSession(RegressionUser(kRecipientId, true, QString()),
+								  std::make_unique<Main::SessionSettings>())) {
 		return fail("could not create the non-Premium recipient session");
 	}
 	if (recipient->session().premium()
@@ -14742,8 +14738,8 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (!controller || (&controller->session() != &sender->session())) {
 		return fail("sender session controller was not created");
 	}
-	const auto senderController = not_null<Window::SessionController *>(
-		controller);
+	const auto senderController
+		= not_null<Window::SessionController *>(controller);
 
 	const auto emoji = sender->session().data().processDocument(
 		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
@@ -14751,8 +14747,8 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		|| emoji->sticker()->setType != Data::StickersType::Emoji) {
 		return fail("custom emoji fixture is not a Premium emoji document");
 	}
-	const auto recipientUser = sender->session().data().processUsers(
-		MTP_vector<MTPUser>({
+	const auto recipientUser
+		= sender->session().data().processUsers(MTP_vector<MTPUser>({
 			RegressionUser(kRecipientId, false, u"2"_q),
 		}));
 	if (!recipientUser) {
@@ -14767,11 +14763,12 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("sender message composer was not created");
 	}
 	controller->tabbedSelector()->chooseCustomEmojiForRegressionTest(
-		ChatHelpers::FileChosen{ .document = emoji });
+		ChatHelpers::FileChosen{.document = emoji});
 	QCoreApplication::processEvents();
 	const auto draft = historyWidget->draftWithTagsForRegressionTest();
 	if (draft.text != u"🧪"_q || draft.tags.empty()) {
-		return fail("custom emoji selector action did not insert a tagged emoji");
+		return fail(
+			"custom emoji selector action did not insert a tagged emoji");
 	}
 	const auto sendHistory = historyWidget->history();
 	historyWidget->sendForRegressionTest({});
@@ -14781,21 +14778,21 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	}
 
 	const auto reactionMessage = sender->session().data().addNewMessage(
-		RegressionCustomEmojiMessage(
-			724104, kRecipientId, peerFromUser(kRecipientId), kDocumentId),
+		RegressionCustomEmojiMessage(724104, kRecipientId,
+									 peerFromUser(kRecipientId), kDocumentId),
 		MessageFlags(), NewMessageType::Existing);
-	const auto reaction = Data::ReactionId{ { kDocumentId } };
+	const auto reaction = Data::ReactionId{{kDocumentId}};
 	if (!reactionMessage || !reactionMessage->canReact()) {
 		return fail("custom reaction fixture cannot be toggled");
 	}
-	historyWidget->chooseReactionForRegressionTest(
-		reactionMessage->fullId(), reaction);
+	historyWidget->chooseReactionForRegressionTest(reactionMessage->fullId(),
+												   reaction);
 	QCoreApplication::processEvents();
 	if (!ranges::contains(reactionMessage->chosenReactions(), reaction)) {
 		return fail("custom reaction action did not toggle the reaction");
 	}
 
-	const auto statusId = EmojiStatusId{ .documentId = kDocumentId };
+	const auto statusId = EmojiStatusId{.documentId = kDocumentId};
 	primary->widget()->showMainMenu();
 	QCoreApplication::processEvents();
 	const auto menu = Test::FindFirst<Window::MainMenu>(
@@ -14812,12 +14809,12 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	}
 
 	const auto remoteSender = recipient->session().data().processUsers(
-		MTP_vector<MTPUser>({ RegressionUser(kSenderId, false, u"1"_q) }));
+		MTP_vector<MTPUser>({RegressionUser(kSenderId, false, u"1"_q)}));
 	const auto remoteEmoji = recipient->session().data().processDocument(
 		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
 	const auto received = recipient->session().data().addNewMessage(
-		RegressionCustomEmojiMessage(
-			724105, kSenderId, peerFromUser(kSenderId), kDocumentId),
+		RegressionCustomEmojiMessage(724105, kSenderId, peerFromUser(kSenderId),
+									 kDocumentId),
 		MessageFlags(), NewMessageType::Existing);
 	if (!remoteSender || !remoteEmoji || !received
 		|| received->originalText().entities.empty()) {
@@ -14826,22 +14823,21 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	recipient->session().api().updates().applyUpdateNoPtsCheck(
 		MTP_updateUserEmojiStatus(
 			MTP_long(kSenderId.bare),
-			MTP_emojiStatus(
-				MTP_flags(0), MTP_long(static_cast<int64>(kDocumentId)),
-				MTP_int(0))));
+			MTP_emojiStatus(MTP_flags(0),
+							MTP_long(static_cast<int64>(kDocumentId)),
+							MTP_int(0))));
 	auto badgeParent = QWidget(primary->widget()->bodyWidget());
 	auto badge = Info::Profile::Badge(
 		&badgeParent, st::settingsInfoPeerBadge, &recipient->session(),
-		Info::Profile::BadgeContentForPeer(
-			not_null<PeerData *>(remoteSender)),
+		Info::Profile::BadgeContentForPeer(not_null<PeerData *>(remoteSender)),
 		nullptr, [] { return false; });
 	QCoreApplication::processEvents();
 	if (remoteSender->emojiStatusId() != statusId || !badge.widget()) {
 		return fail("recipient did not render the received emoji status");
 	}
 
-	std::fprintf(stderr,
-		"Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering).\n");
+	std::fprintf(stderr, "Custom emoji UI smoke: PASS (message send, reaction "
+						 "toggle, status picker, recipient rendering).\n");
 	done(0);
 }
 

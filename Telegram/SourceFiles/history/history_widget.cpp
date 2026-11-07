@@ -6558,9 +6558,8 @@ void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
 	send(options);
 }
 
-void HistoryWidget::chooseReactionForRegressionTest(
-		FullMsgId context,
-		Data::ReactionId id) {
+void HistoryWidget::chooseReactionForRegressionTest(FullMsgId context,
+													Data::ReactionId id) {
 	if (_list) {
 		_list->chooseReactionForRegressionTest({
 			.context = context,
