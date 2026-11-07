@@ -51,8 +51,9 @@ private:
 	void checkRequest();
 	void countryChanged();
 
+	void sendCode(QString token = QString(), bool retried = false);
 	void phoneSubmitDone(const MTPauth_SentCode &result);
-	void phoneSubmitFail(const MTP::Error &error);
+	void phoneSubmitFail(const MTP::Error &error, bool retried);
 
 	QString fullNumber() const;
 	void stopCheck();
@@ -68,6 +69,7 @@ private:
 
 	QString _sentPhone;
 	mtpRequestId _sentRequest = 0;
+	bool _turnstilePending = false;
 
 	base::Timer _checkRequestTimer;
 

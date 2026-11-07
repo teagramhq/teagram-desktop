@@ -9,7 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "config.h"
 #include "intro/intro_password_check.h"
+#include "intro/intro_signup_error.h"
 #include "intro/intro_signup_name.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
 #include "lang/lang_keys.h"
@@ -292,23 +295,22 @@ void UsernameWidget::submit() {
 	}
 }
 
-void UsernameWidget::requestCode() {
-	_sentRequest = api().request(MTPauth_SendCode(
-		MTP_string(_sentUsername),
-		MTP_int(ApiId),
-		MTP_string(ApiHash),
-		MTP_codeSettings(
-			MTP_flags(0),
-			MTPVector<MTPbytes>(),
-			MTPstring(),
-			MTPBool())
-	)).done([=](const MTPauth_SentCode &result) {
-		_sentRequest = 0;
-		sendCodeDone(result);
-	}).fail([=](const MTP::Error &error) {
-		_sentRequest = 0;
-		requestFail(error);
-	}).handleAllErrors().send();
+void UsernameWidget::requestCode(QString token, bool retried) {
+	_sentRequest = SendAuthRequest(
+		api(),
+		MTPauth_SendCode(MTP_string(_sentUsername), MTP_int(ApiId),
+						 MTP_string(ApiHash),
+						 MTP_codeSettings(MTP_flags(0), MTPVector<MTPbytes>(),
+										  MTPstring(), MTPBool())),
+		std::move(token), false,
+		[=](const MTPauth_SentCode &result) {
+			_sentRequest = 0;
+			sendCodeDone(result);
+		},
+		[=](const MTP::Error &error) {
+			_sentRequest = 0;
+			requestFail(error, retried);
+		});
 }
 
 void UsernameWidget::signIn() {
@@ -357,7 +359,27 @@ void UsernameWidget::sendCodeDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void UsernameWidget::requestFail(const MTP::Error &error) {
+void UsernameWidget::requestFail(const MTP::Error &error, bool retried) {
+	if (IsTurnstileChallengeError(error.type())) {
+		_checkRequestTimer.cancel();
+		_sentRequest = 0;
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
+		if (!challenge) {
+			LOG(("Intro Username Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			fail(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_checkRequestTimer.callEach(1000);
+				requestCode(std::move(token), true);
+			},
+			[=] { fail(tr::lng_intro_retry(tr::now)); },
+			[=](QString error) { fail(error); });
+		return;
+	}
 	LOG(("Intro Username Error: sendCode failed with %1 (%2)"
 		).arg(error.type()).arg(error.code()));
 	if (MTP::IsFloodError(error)) {
@@ -482,6 +504,7 @@ void UsernameWidget::finished() {
 }
 
 void UsernameWidget::cancelled() {
+	Step::cancelled();
 	api().request(base::take(_sentRequest)).cancel();
 }
 

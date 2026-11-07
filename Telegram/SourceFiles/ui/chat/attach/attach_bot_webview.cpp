@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
+#include "ui/webview_limits.h"
 #include "lang/lang_keys.h"
 #include "core/file_utilities.h"
 #include "webview/webview_embed.h"
@@ -68,7 +69,6 @@ constexpr auto kProgressOpacity = 0.3;
 constexpr auto kLightnessThreshold = 128;
 constexpr auto kLightnessDelta = 32;
 constexpr auto kExternalShellButtonIconSize = 20;
-constexpr auto kMaxNativeMessageBytes = 1024 * 1024;
 constexpr auto kExternalMessageType = "tdesktop_external_bot_webapp";
 
 enum class NativeMessageSource {
@@ -262,7 +262,7 @@ void LogNativeMessageRejected(
 		bool externalShell,
 		const QString &shellToken) {
 	const auto byteCount = quint64(bytes.size());
-	if (bytes.size() > kMaxNativeMessageBytes) {
+	if (bytes.size() > Ui::kMaxNativeMessageBytes) {
 		LogNativeMessageRejected(u"payload too large"_q, byteCount);
 		return std::nullopt;
 	}
@@ -2244,7 +2244,7 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 	raw->setMessageHandler([=](Webview::Message message) {
 		if (_closeRequested) {
 			return;
-		} else if (message.text.size() > size_t(kMaxNativeMessageBytes)) {
+		} else if (message.text.size() > Ui::kMaxNativeMessageBytes) {
 			LogNativeMessageRejected(
 				u"payload too large"_q,
 				quint64(message.text.size()));

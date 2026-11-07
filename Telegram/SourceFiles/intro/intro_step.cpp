@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "intro/intro_widget.h"
 #include "intro/intro_signup.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_panel.h"
 #include "storage/localstorage.h"
 #include "storage/storage_account.h"
 #include "lang/lang_keys.h"
@@ -114,7 +116,43 @@ Step::Step(
 	}, lifetime());
 }
 
-Step::~Step() = default;
+Step::~Step() { closeTurnstileChallenge(); }
+
+bool Step::showTurnstileChallenge(TurnstileChallenge challenge,
+								  Fn<void(QString)> token, Fn<void()> failed,
+								  Fn<void(QString)> unavailable) {
+	closeTurnstileChallenge();
+	auto result = OpenTurnstilePanel(std::move(challenge),
+									 crl::guard(this,
+												[this, token](QString value) {
+													_closeTurnstileChallenge
+														= nullptr;
+													if (token) {
+														token(std::move(value));
+													}
+												}),
+									 crl::guard(this, [this, failed] {
+										 _closeTurnstileChallenge = nullptr;
+										 if (failed) {
+											 failed();
+										 }
+									 }));
+	if (!result.error.isEmpty()) {
+		if (unavailable) {
+			unavailable(std::move(result.error));
+		}
+		return false;
+	}
+	_closeTurnstileChallenge = std::move(result.closeSilently);
+	return true;
+}
+
+void Step::closeTurnstileChallenge() {
+	const auto close = base::take(_closeTurnstileChallenge);
+	if (close) {
+		close();
+	}
+}
 
 MTP::Sender &Step::api() const {
 	if (!_api) {
@@ -684,10 +722,10 @@ void Step::activate() {
 	}
 }
 
-void Step::cancelled() {
-}
+void Step::cancelled() { closeTurnstileChallenge(); }
 
 void Step::finished() {
+	closeTurnstileChallenge();
 	hide();
 }
 

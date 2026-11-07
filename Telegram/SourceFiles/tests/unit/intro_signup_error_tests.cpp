@@ -103,6 +103,63 @@ TEST_CASE(SignupCodeTicketIsReissuedAtMostOnce) {
 	}
 }
 
+TEST_CASE(WrappedSignupFailureShowsErrorBeforeManualCodeRetry) {
+	const auto wrapped = ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400,
+											   false, false, true);
+	CHECK(wrapped.message == SignupFailureMessage::CodeTicketExpired);
+	CHECK(wrapped.action == SignupFailureAction::ShowError);
+
+	const auto submittedAgain
+		= ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400, false, false);
+	CHECK(submittedAgain.action == SignupFailureAction::ReissueCode);
+	CHECK(ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__public_key-1"_q,
+								   false)
+			  .has_value());
+}
+
+TEST_CASE(ClassifiesOnlyFirstValidTurnstileChallengeForRetry) {
+	const auto first = ClassifyTurnstileFailure(
+		u"RECAPTCHA_CHECK_signup__public_key-1"_q, false);
+	CHECK(first.has_value());
+	CHECK(first->action() == TurnstileAction::SignUp);
+	CHECK_EQ(first->siteKey(), u"public_key-1"_q);
+
+	CHECK(!ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__bad.key"_q, false)
+			   .has_value());
+	CHECK(!ClassifyTurnstileFailure(u"RECAPTCHA_CHECK_signup__public_key-1"_q,
+									true)
+			   .has_value());
+}
+
+TEST_CASE(SignupCodeReissueCanBeRetriedAfterChallengeCancellation) {
+	auto state = SignupCodeReissueState();
+	CHECK(state.begin(false));
+	CHECK(state.wasReissuedOnce());
+	CHECK(!state.begin(false));
+
+	state.challengeAborted();
+	CHECK(!state.wasReissuedOnce());
+	const auto expired = ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400,
+											   false, state.wasReissuedOnce());
+	CHECK(expired.action == SignupFailureAction::ReissueCode);
+	CHECK(state.begin(false));
+	CHECK(state.wasReissuedOnce());
+}
+
+TEST_CASE(SignupCodeReissueCanBeRetriedWhenWrappedRequestIsChallengedAgain) {
+	auto state = SignupCodeReissueState();
+	CHECK(state.begin(false));
+	CHECK(state.handleChallengeError(false));
+	CHECK(state.begin(true));
+	CHECK(!state.handleChallengeError(true));
+	CHECK(!state.wasReissuedOnce());
+
+	const auto expired = ClassifySignupFailure(u"PHONE_CODE_EXPIRED"_q, 400,
+											   false, state.wasReissuedOnce());
+	CHECK(expired.action == SignupFailureAction::ReissueCode);
+	CHECK(state.begin(false));
+}
+
 TEST_CASE(SignupFloodAndUnexpectedErrorsKeepTheirRecoveryBehavior) {
 	const auto flood = ClassifySignupFailure(
 		u"FLOOD_WAIT_3600"_q,

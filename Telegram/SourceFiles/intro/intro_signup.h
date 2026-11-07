@@ -39,8 +39,11 @@ private:
 	void refreshLang();
 	void updateControlsGeometry();
 
+	void sendSignup(SignupRequestData request, QString token = QString(),
+					bool retried = false);
 	void nameSubmitDone(const MTPauth_Authorization &result);
-	void nameSubmitFail(const MTP::Error &error);
+	void nameSubmitFail(const MTP::Error &error, SignupRequestData request,
+						bool retried);
 
 	object_ptr<Ui::UserpicButton> _photo;
 	object_ptr<Ui::InputField> _first;
@@ -52,6 +55,7 @@ private:
 
 	SignupTermsGate _termsGate;
 	bool _termsPromptPending = false;
+	bool _turnstilePending = false;
 };
 
 } // namespace details

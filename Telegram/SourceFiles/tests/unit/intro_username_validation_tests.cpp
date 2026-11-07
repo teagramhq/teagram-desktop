@@ -383,6 +383,13 @@ TEST_CASE(SigninPasswordFailuresHaveExplicitFallbacks) {
 		== SigninPasswordFailure::Other);
 }
 
+TEST_CASE(WrappedSrpIdFailureShowsErrorBeforeManualRefresh) {
+	CHECK(ClassifySigninPasswordFailure(u"SRP_ID_INVALID"_q, true)
+		  == SigninPasswordFailure::Other);
+	CHECK(ClassifySigninPasswordFailure(u"SRP_ID_INVALID"_q, false)
+		  == SigninPasswordFailure::SrpIdInvalid);
+}
+
 TEST_CASE(SigninPasswordDataFailuresKeepFloodVisible) {
 	CHECK(
 		ClassifySigninPasswordDataFailure(u"FLOOD_WAIT_60"_q)

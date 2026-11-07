@@ -1444,6 +1444,8 @@ PRIVATE
     intro/intro_signup_name.h
     intro/intro_signup_password.cpp
     intro/intro_signup_password.h
+    intro/intro_turnstile.cpp
+    intro/intro_turnstile.h
     intro/intro_server.cpp
     intro/intro_server.h
     intro/intro_server_discovery.cpp
@@ -1456,6 +1458,9 @@ PRIVATE
     intro/intro_username_validation.h
     intro/intro_step.cpp
     intro/intro_step.h
+    intro/intro_turnstile_panel.cpp
+    intro/intro_turnstile_panel.h
+    intro/intro_turnstile_request.h
     intro/intro_widget.cpp
     intro/intro_widget.h
     iv/iv_cached_media.cpp
