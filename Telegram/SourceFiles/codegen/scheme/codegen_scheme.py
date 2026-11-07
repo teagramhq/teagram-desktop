@@ -55,6 +55,7 @@ generate({
     'accessPointRule#4679b65f',
     'help.configSimple#5a592a6c',
     'messageReplies#81834865',
+    'teagram.userInvites#b5cfec46',
   ],
 
   'renamedTypes': {

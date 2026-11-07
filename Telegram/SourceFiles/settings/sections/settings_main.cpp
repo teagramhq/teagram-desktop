@@ -53,6 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_credits.h"
 #include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
+#include "settings/sections/settings_invite_friends.h"
 #include "settings/sections/settings_notifications.h"
 #include "settings/settings_power_saving.h"
 #include "settings/sections/settings_premium.h"
@@ -578,6 +579,59 @@ void BuildPremiumSection(SectionBuilder &builder) {
 	builder.addSkip();
 }
 
+void BuildInviteFriendsEntry(SectionBuilder &builder) {
+	const auto session = builder.session();
+	builder.add([=](const BuildContext &ctx) {
+		v::match(
+			ctx,
+			[&](const WidgetContext &wctx) {
+				auto shown = session->appConfig().value() | rpl::map([=] {
+								 return session->appConfig().get<bool>(
+									 u"user_invites_enabled"_q, false);
+							 });
+				auto nested = SectionBuilder(wctx);
+				nested.scope(
+					[&] {
+						nested.addDivider();
+						nested.addSkip();
+						nested.addButton({
+							.id = u"main/invite-friends"_q,
+							.title = tr::lng_teagram_invite_title(),
+							.icon = {&st::menuIconInvite},
+							.onClick =
+								[=] {
+									if (session->appConfig().get<bool>(
+											u"user_invites_enabled"_q, false)) {
+										wctx.showOther(InviteFriendsId());
+									} else {
+										wctx.controller->showToast(
+											tr::lng_teagram_invite_off(
+												tr::now));
+									}
+								},
+							.keywords = {u"invite"_q, u"link"_q, u"friends"_q,
+										 u"sign up"_q},
+						});
+						nested.addSkip();
+					},
+					std::move(shown));
+			},
+			[&](const SearchContext &sctx) {
+				if (session->appConfig().get<bool>(u"user_invites_enabled"_q,
+												   false)) {
+					sctx.entries->push_back({
+						.id = u"main/invite-friends"_q,
+						.title = tr::lng_teagram_invite_title(tr::now),
+						.keywords
+						= {u"invite"_q, u"link"_q, u"friends"_q, u"sign up"_q},
+						.section = InviteFriendsId(),
+						.icon = {&st::menuIconInvite},
+					});
+				}
+			});
+	});
+}
+
 void BuildValidationSuggestions(SectionBuilder &builder) {
 	builder.add([](const WidgetContext &ctx) {
 		const auto controller = ctx.controller.get();
@@ -691,6 +745,7 @@ void Main::setupContent() {
 		BuildSectionButtons(builder);
 		builder.addSkip();
 		BuildInterfaceScale(builder);
+		BuildInviteFriendsEntry(builder);
 		BuildPremiumSection(builder);
 
 		std::move(showFinished) | rpl::on_next([=] {
@@ -764,6 +819,7 @@ const auto kMeta = BuildHelper({
 	builder.addSkip();
 
 	BuildInterfaceScale(builder);
+	BuildInviteFriendsEntry(builder);
 	BuildPremiumSection(builder);
 });
 

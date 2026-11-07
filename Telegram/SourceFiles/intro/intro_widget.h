@@ -102,6 +102,7 @@ struct Data {
 	QString signupName;
 	QString usernameError;
 	QString signupNameError;
+	bool signupInviteError = false;
 
 	rpl::event_stream<> updated;
 

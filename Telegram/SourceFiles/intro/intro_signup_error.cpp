@@ -42,6 +42,8 @@ SignupFailureDecision ClassifySignupFailure(
 		result.action = SignupFailureAction::ReturnToInput;
 	} else if (errorType == u"INVITE_HASH_INVALID"_q) {
 		result.message = SignupFailureMessage::InvitationUnavailable;
+		result.destination = SignupFailureDestination::Invite;
+		result.action = SignupFailureAction::ReturnToInput;
 	} else if (errorType == u"SESSION_STATE_INVALID"_q) {
 		result.message = SignupFailureMessage::SessionCannotContinue;
 	} else if (errorType == u"PHONE_CODE_INVALID"_q
