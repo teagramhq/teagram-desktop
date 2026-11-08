@@ -20,22 +20,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <openssl/sha.h>
 
 #include <array>
-#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <vector>
-
-#ifdef Q_OS_LINUX
-#include <execinfo.h>
-#include <signal.h>
-#include <unistd.h>
-#endif // Q_OS_LINUX
 
 namespace {
 
 MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
 
 } // namespace
+
+// Instance::dcOptions() is defined once for the whole test binary, in
+// mtproto_dc_options_tests.cpp, and reads this pointer.
+namespace MTP::details {
+
+extern DcOptions *UnitProxyCheckOptions;
+
+} // namespace MTP::details
 
 // session_private.cpp is linked as shipped. The application-only code it
 // calls into (Instance, Session behind SessionData, the real transports
@@ -45,8 +46,6 @@ MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
 namespace MTP {
 
 bool Instance::isTestMode() const { return false; }
-
-DcOptions &Instance::dcOptions() const { return UnitDcOptions; }
 
 QString Instance::deviceModel() const { return QString(); }
 
@@ -664,39 +663,15 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 	CHECK_EQ(int(withFallback), 30000);
 }
 
-#ifdef Q_OS_LINUX
-void PrintCrashBacktrace(int signum) {
-	void *frames[64];
-	const auto count = backtrace(frames, 64);
-	backtrace_symbols_fd(frames, count, STDERR_FILENO);
-	_exit(128 + signum);
-}
-
-[[nodiscard]] auto InstallCrashBacktrace() {
-	static char stack[1 << 16];
-	auto altstack = stack_t();
-	altstack.ss_sp = stack;
-	altstack.ss_size = sizeof(stack);
-	sigaltstack(&altstack, nullptr);
-	struct sigaction action = {};
-	action.sa_handler = PrintCrashBacktrace;
-	action.sa_flags = SA_ONSTACK;
-	sigemptyset(&action.sa_mask);
-	sigaction(SIGSEGV, &action, nullptr);
-	return gsl::finally([] { signal(SIGSEGV, SIG_DFL); });
-}
-#endif // Q_OS_LINUX
-
 TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
-#ifdef Q_OS_LINUX
-	const auto crashBacktrace = InstallCrashBacktrace();
-#endif // Q_OS_LINUX
-	std::fprintf(stderr, "browser-only test: start\n");
+	const auto previousOptions = MTP::details::UnitProxyCheckOptions;
+	MTP::details::UnitProxyCheckOptions = &UnitDcOptions;
+	const auto resetOptions = gsl::finally(
+		[=] { MTP::details::UnitProxyCheckOptions = previousOptions; });
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
 	auto connectionLog = std::make_shared<TransportLog>();
 	SetServerConnectionTestFactory(
 		[=](QThread *thread, const ProxyData &proxy) {
-			std::fprintf(stderr, "browser-only test: factory invoked\n");
 			return ConnectionPointer::New<FakeTransport>(thread, proxy,
 														 connectionLog);
 		});
@@ -709,13 +684,11 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	options.useHttp = false;
 	data->setOptions(std::move(options));
 	auto session = SessionPrivateTestAccess::Create(data);
-	std::fprintf(stderr, "browser-only test: session created\n");
 	auto connection = ConnectionPointer::New<FakeTransport>(
 		QThread::currentThread(), ProxyData(),
 		std::make_shared<TransportLog>());
 	SessionPrivateTestAccess::BrowserOnlyError(
 		*session, not_null<AbstractConnection *>(connection.get()));
-	std::fprintf(stderr, "browser-only test: refusal applied\n");
 
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
@@ -723,18 +696,14 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	CHECK(SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
 
 	SessionPrivateTestAccess::ResumeAfterServerEnrollment(*session);
-	std::fprintf(stderr, "browser-only test: resume applied\n");
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 2);
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
 	CHECK_EQ(SessionPrivateTestAccess::TestConnectionCount(*session), 0);
 
 	SessionPrivateTestAccess::DcOptionsChanged(*session);
-	std::fprintf(stderr, "browser-only test: dc options changed\n");
 	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
 	CHECK(SessionPrivateTestAccess::TestConnectionCount(*session) > 0);
-	std::fprintf(stderr, "browser-only test: assertions passed\n");
 	SessionPrivateTestAccess::Disconnect(*session);
-	std::fprintf(stderr, "browser-only test: disconnected\n");
 }
