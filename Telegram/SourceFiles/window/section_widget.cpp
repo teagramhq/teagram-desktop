@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_cloud_themes.h"
 #include "data/data_message_reactions.h"
 #include "data/data_peer_values.h"
+#include "data/stickers/data_custom_emoji_actions.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "lang/lang_keys.h"
@@ -614,31 +615,56 @@ void ShowReactRestrictionToast(not_null<SessionController*> controller) {
 	});
 }
 
-bool ShowReactPremiumError(
-		not_null<SessionController*> controller,
-		not_null<HistoryItem*> item,
-		const Data::ReactionId &id) {
-	if (item->reactionsAreTags()) {
-		if (controller->session().premium()) {
-			return false;
-		}
-		ShowPremiumPreviewBox(controller, PremiumFeature::TagsForMessages);
-		return true;
-	} else if (!item->canReact()) {
-		ShowReactRestrictionToast(controller);
-		return true;
-	} else if (controller->session().premium()
-		|| ranges::contains(
-			item->reactions(),
-			id,
-			&Data::MessageReaction::id)
-		|| item->history()->peer->isBroadcast()) {
-		return false;
-	} else if (!id.custom()) {
-		return false;
-	}
-	ShowPremiumPreviewBox(controller, PremiumFeature::InfiniteReactions);
-	return true;
+bool TryReactAction(not_null<SessionController *> controller,
+					not_null<HistoryItem *> item, const Data::ReactionId &id,
+					Fn<void()> action) {
+	return Data::details::RunReactAction(
+		{
+			.reactionsAreTags = item->reactionsAreTags(),
+			.canReact = item->canReact(),
+			.premium = controller->session().premium(),
+			.customReaction = bool(id.custom()),
+			.reactionAlreadyAdded = ranges::contains(
+				item->reactions(), id, &Data::MessageReaction::id),
+			.broadcast = item->history()->peer->isBroadcast(),
+			.customServer = item->history()->peer->usesCustomServer(),
+		},
+		[=] {
+			if (action) {
+				action();
+			}
+		},
+		[=](Data::details::ReactActionGate gate) {
+			switch (gate) {
+			case Data::details::ReactActionGate::Allowed:
+				Unexpected("allowed reaction gate");
+			case Data::details::ReactActionGate::Restricted:
+				ShowReactRestrictionToast(controller);
+				break;
+			case Data::details::ReactActionGate::TagsPremium:
+				ShowPremiumPreviewBox(controller,
+									  PremiumFeature::TagsForMessages);
+				break;
+			case Data::details::ReactActionGate::CustomReactionPremium:
+				ShowPremiumPreviewBox(controller,
+									  PremiumFeature::InfiniteReactions);
+				break;
+			}
+		});
+}
+
+bool TryToggleReactionAction(not_null<SessionController *> controller,
+							 not_null<HistoryItem *> item,
+							 const Data::ReactionId &id,
+							 HistoryReactionSource source) {
+	return TryReactAction(controller, item, id,
+						  [=] { item->toggleReaction(id, source); });
+}
+
+bool ShowReactPremiumError(not_null<SessionController *> controller,
+						   not_null<HistoryItem *> item,
+						   const Data::ReactionId &id) {
+	return !TryReactAction(controller, item, id, [] {});
 }
 
 } // namespace Window

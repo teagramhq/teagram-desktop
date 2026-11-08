@@ -465,7 +465,7 @@ jobs:
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
       # Linux ships Teagram without an updater, so CI gates the standalone
-      # unit cases without running the desktop GUI regression under Xvfb.
+      # unit cases, including the custom emoji smoke.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -634,6 +634,23 @@ jobs:
             fi
             if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
               echo "Sticker import delayed-suggestion regression did not report one passing case."
+              exit 1
+            fi
+
+            if selected_output=$("$test_unit" --case CustomEmojiActionsHappyPathSmoke 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  CustomEmojiActionsHappyPathSmoke"; then
+              echo "--case did not run exactly CustomEmojiActionsHappyPathSmoke."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Custom emoji action smoke case did not report one passing case."
               exit 1
             fi
           '

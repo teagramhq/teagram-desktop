@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_document.h"
 #include "data/data_emoji_statuses.h"
+#include "data/stickers/data_custom_emoji_actions.h"
 #include "lang/lang_keys.h"
 #include "menu/menu_send.h" // SendMenu::Type.
 #include "ui/boxes/confirm_box.h"
@@ -190,6 +191,15 @@ bool EmojiStatusPanel::shown() const {
 	return _panel && !_panel->isHidden();
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void EmojiStatusPanel::chooseCustomEmojiForRegressionTest(
+	not_null<DocumentData *> document) {
+	_panel->selector()->chooseCustomEmojiForRegressionTest({
+		.document = document,
+	});
+}
+#endif
+
 bool EmojiStatusPanel::hasFocus() const {
 	return _panel && Ui::InFocusChain(_panel.get());
 }
@@ -290,11 +300,13 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 			Expects(chosen.until != Selector::kPickCustomTimeId);
 
 			// PickUntilBox calls this after EmojiStatusPanel is destroyed!
-			const auto owner = &controller->session().data();
-			if (weak) {
-				startAnimation(owner, body, chosen.id, chosen.animation);
-			}
-			owner->emojiStatuses().set(chosen.id, chosen.until);
+			const auto animate = [=] {
+				if (weak) {
+					startAnimation(&controller->session().data(), body,
+								   chosen.id, chosen.animation);
+				}
+			};
+			applyChosen(controller, chosen.id, chosen.until, animate);
 		};
 
 		rpl::merge(
@@ -316,12 +328,36 @@ void EmojiStatusPanel::create(const Descriptor &descriptor) {
 	}
 }
 
+bool EmojiStatusPanel::applyChosen(
+	not_null<Window::SessionController *> controller, EmojiStatusId id,
+	TimeId until, Fn<void()> animate) {
+	const auto owner = &controller->session().data();
+	return Data::details::ApplyEmojiStatus(
+		bool(id), controller->session().premium(),
+		controller->session().mtp().dcOptions().hasCustomServer(),
+		id.collectible != nullptr,
+		[=] {
+			if (animate) {
+				animate();
+			}
+			owner->emojiStatuses().set(id, until);
+		},
+		[=] {
+			ShowPremiumPreviewBox(controller, PremiumFeature::EmojiStatus);
+		});
+}
+
 bool EmojiStatusPanel::filter(
 		not_null<Window::SessionController*> controller,
 		EmojiStatusId chosenId) const {
+	const auto session = &controller->session();
 	if (_chooseFilter) {
 		return _chooseFilter(chosenId);
-	} else if (chosenId && !controller->session().premium()) {
+	} else if (chosenId
+			   && Data::details::EmojiStatusRequiresPremium(
+				   session->premium(),
+				   session->mtp().dcOptions().hasCustomServer(),
+				   chosenId.collectible != nullptr)) {
 		ShowPremiumPreviewBox(controller, PremiumFeature::EmojiStatus);
 		return false;
 	}

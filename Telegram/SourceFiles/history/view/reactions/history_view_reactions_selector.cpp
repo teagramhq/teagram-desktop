@@ -1126,6 +1126,8 @@ void Selector::createList() {
 			.mediaPreviewMargins = marginsForShadow(),
 			.mediaPreviewPanelStyle = (_mediaPreviewParent == nullptr),
 		}));
+	_list->setAllowWithoutPremium(
+		_show->session().mtp().dcOptions().hasCustomServer());
 	if (!_reactions.stickers.empty()) {
 		auto descriptors = ranges::views::all(
 			_reactions.stickers

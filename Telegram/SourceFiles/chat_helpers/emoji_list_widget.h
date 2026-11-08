@@ -148,6 +148,9 @@ public:
 
 	[[nodiscard]] rpl::producer<EmojiChosen> chosen() const;
 	[[nodiscard]] rpl::producer<FileChosen> customChosen() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void selectCustomForRegressionTest(FileChosen data);
+#endif
 	[[nodiscard]] rpl::producer<> jumpedToPremium() const;
 	[[nodiscard]] rpl::producer<> escapes() const;
 

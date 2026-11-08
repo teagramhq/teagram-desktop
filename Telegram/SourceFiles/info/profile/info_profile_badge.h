@@ -43,6 +43,7 @@ enum class BadgeType : uchar {
 	Scam = 0x08,
 	Fake = 0x10,
 	Direct = 0x20,
+	EmojiStatus = 0x40,
 };
 inline constexpr bool is_flag_type(BadgeType) { return true; }
 
@@ -70,6 +71,7 @@ public:
 	[[nodiscard]] Ui::RpWidget *widget() const;
 
 	void setPremiumClickCallback(Fn<void()> callback);
+	void setEmojiStatusClickCallback(Fn<void()> callback);
 	void setOverrideStyle(const style::InfoPeerBadge *st);
 	[[nodiscard]] rpl::producer<> updated() const;
 	void move(int left, int top, int bottom);
@@ -90,12 +92,62 @@ private:
 	base::flags<BadgeType> _allowed;
 	Content _content;
 	Fn<void()> _premiumClickCallback;
+	Fn<void()> _emojiStatusClickCallback;
 	Fn<bool()> _animationPaused;
 	object_ptr<Ui::AbstractButton> _view = { nullptr };
 	rpl::event_stream<> _updated;
 	rpl::lifetime _lifetime;
 
 };
+
+namespace details {
+
+[[nodiscard]] inline Badge::Content
+ResolveBadgeContentForPeer(BadgeType badge, EmojiStatusId emojiStatusId,
+						   bool isUser, bool customServer) {
+	if (customServer && emojiStatusId) {
+		if (badge == BadgeType::Scam || badge == BadgeType::Fake
+			|| badge == BadgeType::Direct) {
+			return {badge};
+		}
+		return {BadgeType::EmojiStatus, emojiStatusId};
+	}
+	if (emojiStatusId.collectible && (badge == BadgeType::Verified)) {
+		return {BadgeType::Premium, emojiStatusId};
+	}
+	if (badge == BadgeType::Verified) {
+		badge = BadgeType::None;
+	}
+	if (isUser && badge != BadgeType::Premium) {
+		emojiStatusId = EmojiStatusId();
+	} else if (emojiStatusId && badge == BadgeType::None) {
+		badge = BadgeType::Premium;
+	}
+	return {badge, emojiStatusId};
+}
+
+[[nodiscard]] inline Badge::Content
+FilterBadgeContent(Badge::Content content, bool allowed,
+				   bool premiumBadgesShown) {
+	if (!allowed
+		|| (!premiumBadgesShown && content.badge == BadgeType::Premium)) {
+		content.badge = BadgeType::None;
+	}
+	return content;
+}
+
+template <typename Present>
+[[nodiscard]] inline Badge::Content
+PresentBadgeContent(Badge::Content content, bool allowed,
+					bool premiumBadgesShown, Present present) {
+	content = FilterBadgeContent(content, allowed, premiumBadgesShown);
+	if (content.badge != BadgeType::None) {
+		present(content);
+	}
+	return content;
+}
+
+} // namespace details
 
 [[nodiscard]] rpl::producer<Badge::Content> BadgeContentForPeer(
 	not_null<PeerData*> peer);

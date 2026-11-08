@@ -176,7 +176,8 @@ Application::Application()
 	  _clearEmojiImageLoaderTimer([=] { clearEmojiSourceImages(); }),
 	  _audio(std::make_unique<Media::Audio::Instance>(
 		  !qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  && !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION"))),
+		  && !qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")
+		  && !qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE"))),
 	  _fallbackProductionConfig(
 		  std::make_unique<MTP::Config>(MTP::Environment::Production)),
 	  _downloadManager(std::make_unique<Data::DownloadManager>()),
@@ -289,11 +290,13 @@ void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	const auto authLifecycleRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	const auto customEmojiUiSmoke
+		= qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  || authLifecycleRegression;
+		  || authLifecycleRegression || customEmojiUiSmoke;
 	const auto windowedApplication
-		= !headlessRegression || authLifecycleRegression;
+		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -464,6 +467,14 @@ void Application::run() {
 			QCoreApplication::exit(regressionResult | result);
 		});
 		return;
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		Tests::RunCustomEmojiUiSmoke([=](int result) {
+			QCoreApplication::exit(regressionResult | result);
+		});
+		return;
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	}
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 		QCoreApplication::exit(regressionResult);

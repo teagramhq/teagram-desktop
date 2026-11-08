@@ -421,6 +421,10 @@ TabbedSelector::TabbedSelector(
 , _hasMasksTab(ranges::contains(_tabs, SelectorTab::Masks, &Tab::type))
 , _tabbed(_tabs.size() > 1) {
 	resize(st::emojiPanWidth, st::emojiPanMaxHeight);
+	if (_mode == Mode::EmojiStatus
+		&& session().mtp().dcOptions().hasCustomServer()) {
+		setAllowEmojiWithoutPremium(true);
+	}
 
 	for (auto &tab : _tabs) {
 		if (tab.hasFooter()) {
@@ -727,6 +731,12 @@ rpl::producer<EmojiChosen> TabbedSelector::emojiChosen() const {
 rpl::producer<FileChosen> TabbedSelector::customEmojiChosen() const {
 	return emoji()->customChosen();
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void TabbedSelector::chooseCustomEmojiForRegressionTest(FileChosen data) {
+	emoji()->selectCustomForRegressionTest(std::move(data));
+}
+#endif
 
 rpl::producer<FileChosen> TabbedSelector::fileChosen() const {
 	auto never = rpl::never<FileChosen>(
@@ -1090,7 +1100,8 @@ void TabbedSelector::afterShown() {
 	}
 }
 
-void TabbedSelector::setCurrentPeer(PeerData *peer) {
+void TabbedSelector::setCurrentPeer(PeerData *peer,
+									bool allowCustomEmojiOnCustomServer) {
 	if (hasGifsTab()) {
 		gifs()->setInlineQueryPeer(peer);
 	}
@@ -1103,7 +1114,9 @@ void TabbedSelector::setCurrentPeer(PeerData *peer) {
 		stickers()->showMegagroupSet(peer ? peer->asMegagroup() : nullptr);
 	}
 	setAllowEmojiWithoutPremium(
-		peer && Data::AllowEmojiWithoutPremium(peer));
+		peer
+		&& (Data::AllowEmojiWithoutPremium(peer)
+			|| (allowCustomEmojiOnCustomServer && peer->usesCustomServer())));
 }
 
 void TabbedSelector::provideRecentEmoji(

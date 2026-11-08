@@ -143,6 +143,10 @@ public:
 	void accessibilityChildActivate(quintptr identity) override;
 
 	[[nodiscard]] Main::Session &session() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void chooseReactionForRegressionTest(
+		HistoryView::Reactions::ChosenReaction reaction);
+#endif
 	[[nodiscard]] not_null<Ui::ChatTheme*> theme() const {
 		return _theme.get();
 	}

@@ -131,39 +131,28 @@ private:
 
 };
 
-Cover::Cover(
-	QWidget *parent,
-	not_null<Window::SessionController*> controller,
-	not_null<UserData*> user)
-: FixedHeightWidget(
-	parent,
-	st::settingsPhotoTop
-		+ st::infoProfileCover.photo.size.height()
-		+ st::settingsPhotoBottom)
-, _controller(controller)
-, _user(user)
-, _badge(
-	this,
-	st::settingsCoverBadge,
-	&user->session(),
-	Info::Profile::BadgeContentForPeer(user),
-	&_emojiStatusPanel,
-	[=] {
-		return controller->isGifPausedAtLeastFor(
-			Window::GifPauseReason::Layer);
-	},
-	0, // customStatusLoopsLimit
-	Info::Profile::BadgeType::Premium)
-, _userpic(
-	this,
-	controller,
-	_user,
-	Ui::UserpicButton::Role::OpenPhoto,
-	Ui::UserpicButton::Source::PeerPhoto,
-	st::infoProfileCover.photo)
-, _name(this, st::infoProfileCover.name)
-, _phone(this, st::defaultFlatLabel, st::popupMenuWithIcons)
-, _username(this, st::infoProfileMegagroupCover.status) {
+Cover::Cover(QWidget *parent, not_null<Window::SessionController *> controller,
+			 not_null<UserData *> user)
+	: FixedHeightWidget(parent, st::settingsPhotoTop
+									+ st::infoProfileCover.photo.size.height()
+									+ st::settingsPhotoBottom),
+	  _controller(controller), _user(user),
+	  _badge(
+		  this, st::settingsCoverBadge, &user->session(),
+		  Info::Profile::BadgeContentForPeer(user), &_emojiStatusPanel,
+		  [=] {
+			  return controller->isGifPausedAtLeastFor(
+				  Window::GifPauseReason::Layer);
+		  },
+		  0, // customStatusLoopsLimit
+		  Info::Profile::BadgeType::Premium
+			  | Info::Profile::BadgeType::EmojiStatus),
+	  _userpic(this, controller, _user, Ui::UserpicButton::Role::OpenPhoto,
+			   Ui::UserpicButton::Source::PeerPhoto,
+			   st::infoProfileCover.photo),
+	  _name(this, st::infoProfileCover.name),
+	  _phone(this, st::defaultFlatLabel, st::popupMenuWithIcons),
+	  _username(this, st::infoProfileMegagroupCover.status) {
 	_user->updateFull();
 
 	_name->setSelectable(true);
@@ -213,6 +202,9 @@ Cover::Cover(
 			_controller,
 			_badge.widget(),
 			_badge.sizeTag());
+	});
+	_badge.setEmojiStatusClickCallback([=] {
+		_emojiStatusPanel.show(_controller, _badge.widget(), _badge.sizeTag());
 	});
 	_badge.updated() | rpl::on_next([=] {
 		refreshNameGeometry(width());

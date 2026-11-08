@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/reactions/history_view_reactions_strip.h"
 #include "ui/chat/chat_style.h" // Ui::ReactionPaintInfo
 
+#include <utility>
+
 namespace Ui {
 struct ChatPaintContext;
 struct ReactionPaintInfo;
@@ -157,6 +159,11 @@ public:
 	[[nodiscard]] rpl::producer<ChosenReaction> chosen() const {
 		return _chosen.events();
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void chooseForRegressionTest(ChosenReaction reaction) {
+		_chosen.fire(std::move(reaction));
+	}
+#endif
 	[[nodiscard]] rpl::producer<FullMsgId> expandChosen() const {
 		return _expandChosen.events();
 	}

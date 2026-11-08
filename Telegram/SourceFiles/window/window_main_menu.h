@@ -33,6 +33,8 @@ template <typename Widget>
 class SlideWrap;
 } // namespace Ui
 
+class DocumentData;
+
 namespace Info::Profile {
 class Badge;
 class EmojiStatusPanel;
@@ -62,6 +64,10 @@ public:
 	[[nodiscard]] bool callsRowPresentForRegressionTest() const {
 		return _callsRowPresentForRegressionTest;
 	}
+	[[nodiscard]] bool emojiStatusEntryVisibleForRegressionTest() const;
+	[[nodiscard]] bool openEmojiStatusPickerForRegressionTest();
+	void
+	chooseCustomEmojiStatusForRegressionTest(not_null<DocumentData *> document);
 #endif
 
 	void parentResized() override;
