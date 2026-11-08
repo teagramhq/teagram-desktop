@@ -36,14 +36,13 @@ class ServerWidgetDiscovery;
 
 inline void SubmitSavedServer(bool blocked, bool hasSession,
 							  bool browserOnlyServerRefused,
-							  const QString &browserOnlyError,
-							  Fn<void(QString)> showError,
+							  Fn<void()> showBrowserOnlyError,
 							  Fn<void()> continueToUsername) {
 	if (blocked || hasSession) {
 		return;
 	}
 	if (browserOnlyServerRefused) {
-		showError(browserOnlyError);
+		showBrowserOnlyError();
 		return;
 	}
 	continueToUsername();

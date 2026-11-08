@@ -345,9 +345,7 @@ void ServerWidget::submit() {
 	const auto blocked = account().mtp().dcOptions().blocked();
 	const auto hasSession = account().sessionExists();
 	const auto refused = account().mtp().hasBrowserOnlyServerRefusal();
-	const auto error = tr::lng_intro_server_browser_only(tr::now);
-	const auto show
-		= [=](QString message) { showError(rpl::single(std::move(message))); };
+	const auto show = [=] { showError(tr::lng_intro_server_browser_only()); };
 	const auto next = [=] {
 		// A freshly restarted account is intentionally paused until its
 		// stored binding is selected again. The binding was durably
@@ -358,7 +356,7 @@ void ServerWidget::submit() {
 			= CustomServerEndpoint(account().mtp().dcOptions().customServer());
 		goNext<UsernameWidget>();
 	};
-	SubmitSavedServer(blocked, hasSession, refused, error, show, next);
+	SubmitSavedServer(blocked, hasSession, refused, show, next);
 }
 
 void ServerWidget::cancelled() {

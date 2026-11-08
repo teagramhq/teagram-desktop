@@ -14,14 +14,13 @@ namespace {
 using Intro::details::SubmitSavedServer;
 
 TEST_CASE(BrowserOnlyRefusalKeepsSavedServerStepInPlace) {
-	auto message = QString();
+	auto showedError = false;
 	auto wentToUsername = false;
-	const auto error = u"This server works only in the browser."_q;
-	const auto showError = [&](QString value) { message = value; };
+	const auto showError = [&] { showedError = true; };
 	const auto advance = [&] { wentToUsername = true; };
-	SubmitSavedServer(false, false, true, error, showError, advance);
+	SubmitSavedServer(false, false, true, showError, advance);
 
-	CHECK_EQ(message, u"This server works only in the browser."_q);
+	CHECK(showedError);
 	CHECK(!wentToUsername);
 }
 
