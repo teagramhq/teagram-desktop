@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_telegram_sticker_pack.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
+#include "boxes/sticker_import_feedback.h"
 #include "boxes/sticker_set_box.h"
 #include "core/file_utilities.h"
 #include "core/sticker_import.h"
@@ -73,49 +74,6 @@ struct ImportFormState final : base::has_weak_ptr {
 	QPointer<Ui::RoundButton> createButton;
 	QPointer<Ui::RoundButton> suggestButton;
 };
-
-[[nodiscard]] QString
-TelegramDownloadErrorText(Api::TelegramStickerPackDownloadError error,
-						  const QString &detail) {
-	switch (error) {
-	case Api::TelegramStickerPackDownloadError::InvalidToken:
-		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
-	case Api::TelegramStickerPackDownloadError::InvalidLink:
-		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsupportedPackType:
-		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
-	case Api::TelegramStickerPackDownloadError::PackNotFound:
-		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
-	case Api::TelegramStickerPackDownloadError::BotApi:
-		return detail.isEmpty()
-				   ? tr::lng_teagram_sticker_import_telegram_response_invalid(
-						 tr::now)
-				   : tr::lng_teagram_sticker_import_telegram_api_error(
-						 tr::now, lt_error, detail);
-	case Api::TelegramStickerPackDownloadError::Network:
-		return detail.isEmpty()
-				   ? tr::lng_teagram_sticker_import_telegram_network_error(
-						 tr::now)
-				   : tr::lng_teagram_sticker_import_telegram_api_error(
-						 tr::now, lt_error, detail);
-	case Api::TelegramStickerPackDownloadError::InvalidResponse:
-		return tr::lng_teagram_sticker_import_telegram_response_invalid(
-			tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsafeFilePath:
-		return tr::lng_teagram_sticker_import_telegram_file_path_invalid(
-			tr::now);
-	case Api::TelegramStickerPackDownloadError::TooManyFiles:
-		return tr::lng_teagram_sticker_import_telegram_too_many_files(tr::now);
-	case Api::TelegramStickerPackDownloadError::FileTooLarge:
-		return tr::lng_teagram_sticker_import_telegram_file_too_large(tr::now);
-	case Api::TelegramStickerPackDownloadError::TotalTooLarge:
-		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsupportedFormat:
-		return tr::lng_teagram_sticker_import_telegram_format_unsupported(
-			tr::now);
-	}
-	Unexpected("Telegram sticker download error.");
-}
 
 [[nodiscard]] bool StickerImportEnabled(const MTPhelp_AppConfig &config) {
 	return config.match(
@@ -553,6 +511,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		telegramDownloadButton->addClickHandler([=] {
 			error->setText(QString());
 			error->setTextColorOverride(std::nullopt);
+			files->setTextColorOverride(std::nullopt);
 			const auto parsed = Core::ParseTelegramStickerPackLink(
 				telegramLink->getLastText().trimmed());
 			if (!parsed) {
@@ -596,6 +555,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					current->scan = std::move(scan);
 					current->scanPending = false;
 					title->setText(packTitle);
+					files->setTextColorOverride(std::nullopt);
 					files->setText(ScanDescription(current->scan));
 					setPending(false);
 				},
@@ -605,12 +565,18 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					if (!weakBox || !current) {
 						return;
 					}
+					const auto feedback
+						= Ui::StickerImport::TelegramDownloadFailureFeedback(
+							downloadError, detail);
 					current->scan = {};
-					current->scanPending = false;
-					setPending(false);
-					error->setTextColorOverride(st::boxTextFgError->c);
-					error->setText(
-						TelegramDownloadErrorText(downloadError, detail));
+					current->scanPending = feedback.pending;
+					setPending(feedback.pending);
+					if (feedback.isError) {
+						files->setTextColorOverride(st::boxTextFgError->c);
+					} else {
+						files->setTextColorOverride(std::nullopt);
+					}
+					files->setText(feedback.message);
 				},
 				[=](int count, int total) {
 					if (!weakBox || !weakState.get()) {

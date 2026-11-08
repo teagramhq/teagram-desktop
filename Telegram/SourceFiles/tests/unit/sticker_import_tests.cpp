@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_telegram_sticker_pack.h"
 #include "api/api_sticker_set_import_requests.h"
+#include "boxes/sticker_import_feedback.h"
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
 #include "core/telegram_sticker_import.h"
@@ -771,6 +772,68 @@ TEST_CASE(TelegramStickerPackMapsBotApiErrorsAndRedactsToken) {
 			CHECK(result.detail.contains(u"500"_q));
 		}
 	}
+}
+
+TEST_CASE(TelegramStickerPackInvalidTokenPresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto object = QJsonObject();
+		object.insert(u"ok"_q, false);
+		object.insert(u"error_code"_q, 401);
+		object.insert(u"description"_q, u"Unauthorized"_q);
+		auto response
+			= StickerImportNetwork::Response{401, JsonBytes(object)};
+		response.networkError = QNetworkReply::AuthenticationRequiredError;
+		return response;
+	});
+	CHECK(result.error
+		  == Api::TelegramStickerPackDownloadError::InvalidToken);
+	if (!result.error) {
+		return;
+	}
+	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
+		*result.error, result.detail);
+	CHECK(!feedback.pending);
+	CHECK(feedback.isError);
+	CHECK(feedback.text.contains(u"rejected"_q));
+	CHECK(feedback.text.contains(u"try again"_q));
+}
+
+TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto object = QJsonObject();
+		object.insert(u"ok"_q, false);
+		object.insert(u"error_code"_q, 400);
+		object.insert(u"description"_q,
+					  u"Bad Request: STICKERSET_INVALID"_q);
+		return StickerImportNetwork::Response{400, JsonBytes(object)};
+	});
+	CHECK(result.error
+		  == Api::TelegramStickerPackDownloadError::PackNotFound);
+	if (!result.error) {
+		return;
+	}
+	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
+		*result.error, result.detail);
+	CHECK(!feedback.pending);
+	CHECK(feedback.isError);
+	CHECK(feedback.text.contains(u"couldn't find"_q));
+}
+
+TEST_CASE(TelegramStickerPackNetworkFailurePresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto response = StickerImportNetwork::Response{0, {}};
+		response.networkError = QNetworkReply::ConnectionRefusedError;
+		return response;
+	});
+	CHECK(result.error == Api::TelegramStickerPackDownloadError::Network);
+	if (!result.error) {
+		return;
+	}
+	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
+		*result.error, result.detail);
+	CHECK(!feedback.pending);
+	CHECK(feedback.isError);
+	CHECK(feedback.text.contains(u"connect"_q));
 }
 
 TEST_CASE(TelegramStickerPackRefusesRedirectsAndForeignResponses) {
