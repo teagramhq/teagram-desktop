@@ -660,12 +660,13 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
 	auto connectionLog = std::make_shared<TransportLog>();
-	SetServerConnectionTestFactory([=](QThread *thread, const ProxyData &proxy) {
-		return ConnectionPointer::New<FakeTransport>(thread, proxy, connectionLog);
-	});
-	const auto resetFactory = gsl::finally([] {
-		SetServerConnectionTestFactory({});
-	});
+	SetServerConnectionTestFactory(
+		[=](QThread *thread, const ProxyData &proxy) {
+			return ConnectionPointer::New<FakeTransport>(thread, proxy,
+														 connectionLog);
+		});
+	const auto resetFactory
+		= gsl::finally([] { SetServerConnectionTestFactory({}); });
 	auto data = std::make_shared<SessionData>(
 		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
 	auto options = SessionOptions();
