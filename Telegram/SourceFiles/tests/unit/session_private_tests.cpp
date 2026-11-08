@@ -25,6 +25,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <memory>
 #include <vector>
 
+#ifdef Q_OS_LINUX
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
+#endif // Q_OS_LINUX
+
 namespace {
 
 MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
@@ -658,7 +664,33 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 	CHECK_EQ(int(withFallback), 30000);
 }
 
+#ifdef Q_OS_LINUX
+void PrintCrashBacktrace(int signum) {
+	void *frames[64];
+	const auto count = backtrace(frames, 64);
+	backtrace_symbols_fd(frames, count, STDERR_FILENO);
+	_exit(128 + signum);
+}
+
+[[nodiscard]] auto InstallCrashBacktrace() {
+	static char stack[1 << 16];
+	auto altstack = stack_t();
+	altstack.ss_sp = stack;
+	altstack.ss_size = sizeof(stack);
+	sigaltstack(&altstack, nullptr);
+	auto action = struct sigaction();
+	action.sa_handler = PrintCrashBacktrace;
+	action.sa_flags = SA_ONSTACK;
+	sigemptyset(&action.sa_mask);
+	sigaction(SIGSEGV, &action, nullptr);
+	return gsl::finally([] { signal(SIGSEGV, SIG_DFL); });
+}
+#endif // Q_OS_LINUX
+
 TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
+#ifdef Q_OS_LINUX
+	const auto crashBacktrace = InstallCrashBacktrace();
+#endif // Q_OS_LINUX
 	std::fprintf(stderr, "browser-only test: start\n");
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
 	auto connectionLog = std::make_shared<TransportLog>();
