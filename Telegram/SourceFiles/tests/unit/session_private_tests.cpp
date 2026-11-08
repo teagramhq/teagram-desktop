@@ -221,10 +221,12 @@ class SessionPrivateTestAccess final {
 
 	static void BrowserOnlyError(SessionPrivate &session,
 								 not_null<AbstractConnection *> connection) {
+		// clang-format off
 		session.onError(
 			connection,
-			AbstractConnection::kErrorCodeBrowserOnly,
+			kErrorCodeBrowserOnly,
 			{});
+		// clang-format on
 	}
 
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
@@ -683,6 +685,7 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	options.useHttp = false;
 	data->setOptions(std::move(options));
 	auto session = SessionPrivateTestAccess::Create(data);
+	// clang-format off
 	auto connection = ConnectionPointer::New<FakeTransport>(
 		QThread::currentThread(),
 		ProxyData(),
@@ -690,6 +693,7 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	SessionPrivateTestAccess::BrowserOnlyError(
 		*session,
 		not_null<AbstractConnection *>(connection.get()));
+	// clang-format on
 
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));

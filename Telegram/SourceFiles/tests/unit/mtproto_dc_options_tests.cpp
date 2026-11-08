@@ -673,6 +673,7 @@ TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
 
 TEST_CASE(ServerConnectionStopsAfterBrowserOnlyWebSocketRefusal) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	// clang-format off
 	const auto result = RunScriptedServerConnection(
 		false,
 		false,
@@ -683,6 +684,7 @@ TEST_CASE(ServerConnectionStopsAfterBrowserOnlyWebSocketRefusal) {
 		false,
 		{ QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q) },
 		true);
+	// clang-format on
 	CHECK(!result.connected);
 	CHECK(result.failed);
 	CHECK_EQ(int(result.log.endpoints.size()), 2);

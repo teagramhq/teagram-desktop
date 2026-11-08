@@ -27,6 +27,7 @@ struct ConnectionOptions;
 class AbstractConnection;
 
 inline constexpr auto kTestModeDcIdShift = 10000;
+inline constexpr auto kErrorCodeBrowserOnly = -498;
 
 class ConnectionPointer {
 public:
@@ -140,7 +141,6 @@ public:
 
 	// Used to emit error(...) with no real code from the server.
 	static constexpr auto kErrorCodeOther = -499;
-	static constexpr auto kErrorCodeBrowserOnly = -498;
 
 Q_SIGNALS:
 	void receivedData();

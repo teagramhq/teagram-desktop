@@ -2920,7 +2920,7 @@ void SessionPrivate::onError(
 		doDisconnect();
 		return;
 	}
-	if (errorCode == AbstractConnection::kErrorCodeBrowserOnly) {
+	if (errorCode == kErrorCodeBrowserOnly) {
 		stopUntilBrowserOnlyServerRefusal();
 		_sessionData->queueBrowserOnlyServerRefused();
 		return;
