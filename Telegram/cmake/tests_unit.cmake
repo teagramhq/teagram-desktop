@@ -127,6 +127,7 @@ PRIVATE
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_signup_invite_validation_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
+    tests/unit/intro_server_submit_tests.cpp
     tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp

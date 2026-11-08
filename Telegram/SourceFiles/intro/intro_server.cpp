@@ -90,6 +90,20 @@ void ConfigureAddressField(not_null<Ui::InputField*> field) {
 
 } // namespace
 
+void SubmitSavedServer(bool blocked, bool hasSession,
+					   bool browserOnlyServerRefused,
+					   Fn<void(QString)> showError,
+					   Fn<void()> continueToUsername) {
+	if (blocked || hasSession) {
+		return;
+	}
+	if (browserOnlyServerRefused) {
+		showError(tr::lng_intro_server_browser_only(tr::now));
+		return;
+	}
+	continueToUsername();
+}
+
 ServerWidget::ServerWidget(
 		QWidget *parent,
 		not_null<Main::Account*> account,
@@ -342,23 +356,20 @@ void ServerWidget::submit() {
 		submitSelection();
 		return;
 	}
-	if (account().mtp().dcOptions().blocked()) {
-		return;
-	}
-	if (account().sessionExists()) {
-		return;
-	}
-	if (account().mtp().hasBrowserOnlyServerRefusal()) {
-		showError(tr::lng_intro_server_browser_only());
-		return;
-	}
-	// A freshly restarted account is intentionally paused until its stored
-	// binding is selected again. The binding was durably committed before
-	// this point, so resuming here cannot send an unbound request.
-	account().mtp().resume();
-	getData()->serverEndpoint = CustomServerEndpoint(
-		account().mtp().dcOptions().customServer());
-	goNext<UsernameWidget>();
+	SubmitSavedServer(
+		account().mtp().dcOptions().blocked(), account().sessionExists(),
+		account().mtp().hasBrowserOnlyServerRefusal(),
+		[=](QString error) { showError(rpl::single(std::move(error))); },
+		[=] {
+			// A freshly restarted account is intentionally paused until its
+			// stored binding is selected again. The binding was durably
+			// committed before this point, so resuming cannot send an unbound
+			// request.
+			account().mtp().resume();
+			getData()->serverEndpoint = CustomServerEndpoint(
+				account().mtp().dcOptions().customServer());
+			goNext<UsernameWidget>();
+		});
 }
 
 void ServerWidget::cancelled() {

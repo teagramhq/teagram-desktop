@@ -33,6 +33,11 @@ namespace details {
 
 class ServerWidgetDiscovery;
 
+void SubmitSavedServer(bool blocked, bool hasSession,
+					   bool browserOnlyServerRefused,
+					   Fn<void(QString)> showError,
+					   Fn<void()> continueToUsername);
+
 class ServerWidget final : public Step {
 public:
 	ServerWidget(
