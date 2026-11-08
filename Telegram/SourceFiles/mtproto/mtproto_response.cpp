@@ -30,7 +30,7 @@ Error::Error(const MTPrpcError &error)
 : _code(error.c_rpc_error().verror_code().v) {
 	QString text = qs(error.c_rpc_error().verror_message());
 	static const auto Expression = QRegularExpression(
-		"^([A-Z0-9_]+)(: .*)?$",
+		"^([A-Z0-9_]+|RECAPTCHA_CHECK_[A-Za-z0-9_-]+)(: .*)?$",
 		(QRegularExpression::DotMatchesEverythingOption
 			| QRegularExpression::MultilineOption));
 	const auto match = Expression.match(text);
