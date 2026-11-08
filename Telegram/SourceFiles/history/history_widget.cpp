@@ -511,7 +511,7 @@ HistoryWidget::HistoryWidget(
 	_attachToggle->setClickedCallback([=] {
 		const auto toggle = !_attachBotsMenu || _attachBotsMenu->isHidden();
 		base::call_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
-			if (!_attachBotsMenu) {
+			if (!attachBotsMenuBuiltForCurrentPeer()) {
 				refreshAttachBotsMenu();
 			}
 			if (_attachBotsMenu && toggle) {
@@ -654,21 +654,20 @@ HistoryWidget::HistoryWidget(
 	_botCommandStart->hide();
 
 	session().attachWebView().requestBots();
-	rpl::merge(session().attachWebView().attachBotsUpdates(),
-			   session().changes().peerUpdates(
-				   Data::PeerUpdate::Flag::Rights
-				   | Data::PeerUpdate::Flag::StarsPerMessage)
-				   | rpl::filter([=](const Data::PeerUpdate &update) {
-						 return update.peer == _peer;
-					 })
-				   | rpl::to_empty)
-		| rpl::on_next(
-			[=] {
-				if (_attachBotsMenu) {
-					refreshAttachBotsMenu();
-				}
-			},
-			lifetime());
+	session().attachWebView().attachBotsUpdates()
+	| rpl::on_next([=] {
+		invalidateAttachBotsMenuCache();
+	}, lifetime());
+	session().changes().peerUpdates(
+		Data::PeerUpdate::Flag::Rights
+		| Data::PeerUpdate::Flag::StarsPerMessage)
+	| rpl::filter([=](const Data::PeerUpdate &update) {
+		return _attachBotsMenuCache.find(update.peer)
+			!= end(_attachBotsMenuCache);
+	})
+	| rpl::on_next([=](const Data::PeerUpdate &update) {
+		invalidateAttachBotsMenuCache(update.peer);
+	}, lifetime());
 
 	_botKeyboardShow->addClickHandler([=] { toggleKeyboard(); });
 	_botKeyboardHide->addClickHandler([=] { toggleKeyboard(); });
@@ -3361,7 +3360,7 @@ void HistoryWidget::setHistory(History *history) {
 	_pullToNext->setHistory(history);
 
 	if (_attachBotsMenu) {
-		_attachToggle->removeEventFilter(_attachBotsMenu.get());
+		_attachToggle->removeEventFilter(_attachBotsMenu);
 		_attachBotsMenu->hideFast();
 	}
 	_attachBotsMenu = nullptr;
@@ -3402,8 +3401,8 @@ void HistoryWidget::setHistory(History *history) {
 			_preview = nullptr;
 		}
 	}
-	if (_history && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(this);
+	if (_history) {
+		activateCachedAttachBotsMenuForCurrentPeer();
 	}
 }
 
@@ -3446,7 +3445,7 @@ void HistoryWidget::injectSponsoredMessages() const {
 
 void HistoryWidget::refreshAttachBotsMenu() {
 	if (_attachBotsMenu) {
-		_attachToggle->removeEventFilter(_attachBotsMenu.get());
+		_attachToggle->removeEventFilter(_attachBotsMenu);
 		_attachBotsMenu->hideFast();
 	}
 	_attachToggle->removeEventFilter(this);
@@ -3454,10 +3453,22 @@ void HistoryWidget::refreshAttachBotsMenu() {
 	if (!_history) {
 		return;
 	}
-	_attachBotsMenu = InlineBots::MakeAttachBotsMenu(
+	const auto peer = _history->peer;
+	if (const auto i = _attachBotsMenuCache.find(peer);
+		i != end(_attachBotsMenuCache)) {
+		_attachBotsMenu = i->second.get();
+		if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(_attachBotsMenu);
+		}
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_attachMenuBuildCountForRegressionTest;
+#endif
+	auto menu = InlineBots::MakeAttachBotsMenu(
 		this,
 		controller(),
-		_history->peer,
+		peer,
 		[=] { return prepareSendAction({}); },
 		[=] { return sendMenuDetails(); },
 		[=](bool compress) { chooseAttach(compress); },
@@ -3467,21 +3478,75 @@ void HistoryWidget::refreshAttachBotsMenu() {
 		crl::guard(this, [=] {
 			migrateFieldToRichEditor();
 		}));
+	const auto inserted = _attachBotsMenuCache.emplace(peer, std::move(menu));
+	_attachBotsMenu = inserted.first->second.get();
 	if (!_attachBotsMenu) {
-		if (!ChatHelpers::ShowPanelOnClick() && _history) {
-			_attachToggle->installEventFilter(this);
-		}
 		return;
 	}
 	_attachBotsMenu->setOrigin(
 		Ui::PanelAnimation::Origin::BottomLeft);
 	if (!ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu.get());
+		_attachToggle->installEventFilter(_attachBotsMenu);
 	}
 	_attachBotsMenu->heightValue(
 	) | rpl::on_next([=] {
 		moveFieldControls();
 	}, _attachBotsMenu->lifetime());
+}
+
+void HistoryWidget::invalidateAttachBotsMenuCache() {
+	if (_attachBotsMenu) {
+		_attachToggle->removeEventFilter(_attachBotsMenu);
+		_attachBotsMenu->hideFast();
+	}
+	_attachBotsMenu = nullptr;
+	_attachBotsMenuCache.clear();
+	_attachToggle->removeEventFilter(this);
+	if (_history && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+}
+
+void HistoryWidget::invalidateAttachBotsMenuCache(
+		not_null<PeerData*> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	}
+	const auto current = _history && (_history->peer == peer);
+	if (current) {
+		if (_attachBotsMenu) {
+			_attachToggle->removeEventFilter(_attachBotsMenu);
+			_attachBotsMenu->hideFast();
+			_attachBotsMenu = nullptr;
+		}
+		_attachToggle->removeEventFilter(this);
+	}
+	_attachBotsMenuCache.erase(i);
+	if (current && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+}
+
+void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
+	Expects(_history != nullptr);
+	const auto i = _attachBotsMenuCache.find(_history->peer);
+	if (i == end(_attachBotsMenuCache)) {
+		if (!ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(this);
+		}
+		return;
+	}
+	_attachBotsMenu = i->second.get();
+	if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(_attachBotsMenu);
+	}
+}
+
+bool HistoryWidget::attachBotsMenuBuiltForCurrentPeer() const {
+	return _history
+		&& (_attachBotsMenuCache.find(_history->peer)
+			!= end(_attachBotsMenuCache));
 }
 
 void HistoryWidget::unregisterDraftSources() {
@@ -6465,7 +6530,7 @@ void HistoryWidget::insertTextAtCursor(const QString &text) {
 
 bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {
 	if (obj == _attachToggle.get() && e->type() == QEvent::Enter
-		&& !_attachBotsMenu) {
+		&& !attachBotsMenuBuiltForCurrentPeer()) {
 		refreshAttachBotsMenu();
 		if (_attachBotsMenu) {
 			_attachBotsMenu->showAnimated();
@@ -6567,6 +6632,18 @@ bool HistoryWidget::isChoosingTheme() const {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void HistoryWidget::setDraftTextForRegressionTest(const QString &text) {
 	_field->setTextWithTags({text, TextWithTags::Tags()});
+}
+
+Ui::IconButton *HistoryWidget::attachToggleForRegressionTest() const {
+	return _attachToggle.get();
+}
+
+int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
+	return _attachMenuBuildCountForRegressionTest;
+}
+
+bool HistoryWidget::attachMenuExistsForRegressionTest() const {
+	return _attachBotsMenu != nullptr;
 }
 
 QString HistoryWidget::draftTextForRegressionTest() const {

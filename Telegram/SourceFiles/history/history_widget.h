@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/flat_map.h"
 #include "history/view/controls/history_view_compose_media_edit_manager.h"
 #include "history/view/history_view_corner_buttons.h"
 #include "history/history_drag_area.h"
@@ -300,6 +301,9 @@ public:
 	[[nodiscard]] bool chatThemeControlsAccessibleForRegressionTest() const;
 	[[nodiscard]] ClickHandlerContext
 	prepareClickHandlerContextForRegressionTest(FullMsgId itemId) const;
+	[[nodiscard]] Ui::IconButton *attachToggleForRegressionTest() const;
+	[[nodiscard]] int attachMenuBuildCountForRegressionTest() const;
+	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
 #endif
 
 	void applyCloudDraft(History *history);
@@ -787,6 +791,10 @@ private:
 	void setupSendAsToggle();
 	void refreshSendAsToggle();
 	void refreshAttachBotsMenu();
+	void invalidateAttachBotsMenuCache();
+	void invalidateAttachBotsMenuCache(not_null<PeerData*> peer);
+	void activateCachedAttachBotsMenuForCurrentPeer();
+	[[nodiscard]] bool attachBotsMenuBuiltForCurrentPeer() const;
 
 	void injectSponsoredMessages() const;
 
@@ -984,7 +992,12 @@ private:
 
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
-	std::unique_ptr<Ui::DropdownMenu> _attachBotsMenu;
+	base::flat_map<not_null<PeerData*>, std::unique_ptr<Ui::DropdownMenu>>
+		_attachBotsMenuCache;
+	Ui::DropdownMenu *_attachBotsMenu = nullptr;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _attachMenuBuildCountForRegressionTest = 0;
+#endif
 
 	DragArea::Areas _attachDragAreas;
 

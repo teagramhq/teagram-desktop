@@ -2480,6 +2480,14 @@ int AttachWebView::unavailableToastCountForRegressionTest() const {
 	return _unavailableToastsCountForRegressionTest;
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void AttachWebView::setAttachBotsForRegressionTest(
+		std::vector<AttachWebViewBot> bots) {
+	_attachBots = std::move(bots);
+	_attachBotsUpdates.fire({});
+}
+#endif
+
 void AttachWebView::completePendingResolveForRegressionTest(
 	not_null<PeerData *> peer) {
 	if (const auto done = base::take(_pendingResolveForRegressionTest)) {

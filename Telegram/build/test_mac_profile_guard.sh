@@ -74,6 +74,35 @@ report_result() {
 	fi
 }
 
+cache_gap_is_runner_scheduling() {
+	local gap_ns="$1"
+	local process_work_ns="$2"
+	local evidence_matched="$3"
+	local preemption_proven="$4"
+	local samples="$5"
+	local running="$6"
+	local waiting="$7"
+	local uninterruptible="$8"
+	local other="$9"
+	local trace="${10}"
+	local required_samples=$(((gap_ns - 50000000) / 10000000))
+	if (( required_samples < 4 )); then
+		required_samples=4
+	fi
+	(( gap_ns >= 100000000 \
+		&& process_work_ns >= 0 \
+		&& process_work_ns <= 100000000 \
+		&& evidence_matched == 1 \
+		&& preemption_proven == 1 \
+		&& samples >= required_samples \
+		&& running == samples \
+		&& waiting == 0 \
+		&& uninterruptible == 0 \
+		&& other == 0 )) \
+		&& [[ "$trace" =~ ^R+$ ]] \
+		&& (( ${#trace} == samples ))
+}
+
 fixture_unchanged() {
 	local fixture="$1"
 	local is_file="$2"
@@ -1408,7 +1437,7 @@ fi
 for cache in cache media_cache; do
 	local cache_latency_evidence
 	cache_latency_evidence="$(grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ heartbeat_gap_scheduler_samples=[0-9]+ heartbeat_gap_scheduler_running=[0-9]+ heartbeat_gap_scheduler_waiting=[0-9]+ heartbeat_gap_scheduler_uninterruptible=[0-9]+ heartbeat_gap_scheduler_other=[0-9]+ heartbeat_gap_scheduler_trace=([[:alpha:]?]+|none) heartbeat_gap_stack_captured=[01] scheduler_preemption_proven=[01] under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ heartbeat_gap_scheduler_samples=[0-9]+ heartbeat_gap_scheduler_running=[0-9]+ heartbeat_gap_scheduler_waiting=[0-9]+ heartbeat_gap_scheduler_uninterruptible=[0-9]+ heartbeat_gap_scheduler_other=[0-9]+ heartbeat_gap_scheduler_trace=([[:alpha:]?]+|none) heartbeat_gap_stack_captured=[01] scheduler_evidence_matched=[01] scheduler_preemption_proven=[01] under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG" || true)"
 	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
@@ -1431,7 +1460,8 @@ for cache in cache media_cache; do
 	if (( max_heartbeat_gap_ns >= 100000000 )); then
 		local scheduler_samples scheduler_running scheduler_waiting
 		local scheduler_uninterruptible scheduler_other scheduler_trace
-		local scheduler_preemption_proven required_scheduler_samples
+		local scheduler_evidence_matched scheduler_preemption_proven
+		local process_work_ns
 		scheduler_samples="$(sed -E \
 			's/.*heartbeat_gap_scheduler_samples=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
@@ -1453,18 +1483,19 @@ for cache in cache media_cache; do
 		scheduler_preemption_proven="$(sed -E \
 			's/.*scheduler_preemption_proven=([01]).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		required_scheduler_samples=$(((max_heartbeat_gap_ns - 50000000) / 10000000))
-		if (( required_scheduler_samples < 4 )); then
-			required_scheduler_samples=4
-		fi
-		if (( scheduler_preemption_proven != 1 \
-			|| scheduler_samples < required_scheduler_samples \
-			|| scheduler_running != scheduler_samples \
-			|| scheduler_waiting != 0 \
-			|| scheduler_uninterruptible != 0 \
-			|| scheduler_other != 0 )) \
-			|| [[ ! "$scheduler_trace" =~ ^R+$ ]] \
-			|| (( ${#scheduler_trace} != scheduler_samples )); then
+		scheduler_evidence_matched="$(sed -E \
+			's/.*scheduler_evidence_matched=([01]).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		process_work_ns="$(sed -E \
+			's/.*heartbeat_gap_process_work_ns=([0-9]+).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		if ! cache_gap_is_runner_scheduling \
+			"$max_heartbeat_gap_ns" "$process_work_ns" \
+			"$scheduler_evidence_matched" \
+			"$scheduler_preemption_proven" "$scheduler_samples" \
+			"$scheduler_running" "$scheduler_waiting" \
+			"$scheduler_uninterruptible" "$scheduler_other" \
+			"$scheduler_trace"; then
 			cat "$AUTH_LOG" >&2
 			printf 'long seeded cache heartbeat gap lacks runnable scheduler proof for %s.\n' "$cache" >&2
 			exit 1
@@ -1480,7 +1511,7 @@ if ! grep -E -q \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_cached=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1495,6 +1526,15 @@ max_chat_switch_ns="$(sed -E \
 if (( max_chat_switch_ns >= 50000000 )); then
 	cat "$AUTH_LOG" >&2
 	echo "seeded chat switch exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_hover_ns
+attach_menu_hover_ns="$(sed -E \
+	's/.*attach_menu_hover_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if (( attach_menu_hover_ns >= 50000000 )); then
+	cat "$AUTH_LOG" >&2
+	echo "cached attach-menu hover exceeded 50 ms." >&2
 	exit 1
 fi
 if ! grep -F -q \

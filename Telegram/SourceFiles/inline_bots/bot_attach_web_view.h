@@ -396,6 +396,9 @@ public:
 	[[nodiscard]] int appActivateCountForRegressionTest() const;
 	[[nodiscard]] int usernameResolveCountForRegressionTest() const;
 	[[nodiscard]] int unavailableToastCountForRegressionTest() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setAttachBotsForRegressionTest(std::vector<AttachWebViewBot> bots);
+#endif
 
 	// Drives the completion an in-flight username resolve would run, with its
 	// real guards, so the regression can complete it after a window or a

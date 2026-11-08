@@ -785,11 +785,28 @@ awk '
 ' "$profile_harness" > "$temp_dir/cache-latency-check.sh"
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
+awk '
+  /^cache_gap_is_runner_scheduling\(\) \{$/ { copy = 1 }
+  copy { print }
+  copy && /^}$/ { exit }
+' "$profile_harness" > "$temp_dir/cache-scheduler-proof.sh"
+[[ -s "$temp_dir/cache-scheduler-proof.sh" ]] \
+  || contract_fail 'The cache scheduler proof predicate was not found.'
+source "$temp_dir/cache-scheduler-proof.sh"
+local_scheduled_trace=RRRRRRRRRRRRRRRRRRRRRRRR
+if ! cache_gap_is_runner_scheduling \
+	230059167 50000000 1 1 24 24 0 0 0 "$local_scheduled_trace"; then
+  contract_fail 'A low-process-CPU all-runnable trace must remain explainable.'
+fi
+if cache_gap_is_runner_scheduling \
+	230059167 150000000 1 1 24 24 0 0 0 "$local_scheduled_trace"; then
+  contract_fail 'An all-runnable trace with high process CPU must not excuse a long gap.'
+fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=4 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=4 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=WWWW heartbeat_gap_stack_captured=1 scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=0 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=0 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=none heartbeat_gap_stack_captured=0 scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_process_work_ns=50000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=4 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=4 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=WWWW heartbeat_gap_stack_captured=1 scheduler_evidence_matched=1 scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=0 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=0 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=none heartbeat_gap_stack_captured=0 scheduler_evidence_matched=0 scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_stall_ns=45000000 under_50ms=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 attach_menu_hover_ns=15000000 attach_menu_cached=1 max_stall_ns=45000000 under_50ms=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
@@ -891,6 +908,20 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+awk '
+  /RunCacheChatSwitchLatencyRegression\(/ { copy = 1 }
+  copy && /^struct FirstDialogsHandlerRegressionResult/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/cache-chat-switch-regression.cpp"
+grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'QEvent::Enter' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'setAttachBotsForRegressionTest' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'controller->showPeerHistory(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
+  || contract_fail 'The cache regression must time attach-menu hover after a chat switch.'
+grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
+  && grep -Fq 'schedulerEvidenceMatched' "$native_harness" \
+  && grep -Fq 'No startup heartbeat-gap stall evidence matched within 1000 ms.' "$native_harness" \
+  || contract_fail 'The cache regression must require low process CPU and report unmatched stall evidence.'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
   "$native_harness" \

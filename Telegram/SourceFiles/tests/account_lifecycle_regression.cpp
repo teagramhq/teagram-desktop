@@ -173,6 +173,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QEvent>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -196,6 +197,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 #include <mach/mach.h>
+#include <mach/task_info.h>
 #endif
 
 #include <algorithm>
@@ -206,6 +208,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -10218,6 +10221,59 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 								   * 1'000;
 	return userNanoseconds + systemNanoseconds;
 }
+
+[[nodiscard]] std::optional<qint64> ProcessCpuTimeNanoseconds() {
+	struct TimebaseInfo final {
+		kern_return_t result = KERN_FAILURE;
+		mach_timebase_info_data_t value = {};
+	};
+	static const auto timebaseInfo = [] {
+		auto result = TimebaseInfo();
+		result.result = mach_timebase_info(&result.value);
+		return result;
+	}();
+	auto info = task_absolutetime_info_data_t();
+	auto count = mach_msg_type_number_t(TASK_ABSOLUTETIME_INFO_COUNT);
+	const auto infoResult = task_info(
+		mach_task_self(), TASK_ABSOLUTETIME_INFO,
+		reinterpret_cast<task_info_t>(&info), &count);
+	if (infoResult != KERN_SUCCESS) {
+		std::fprintf(stderr, "Process CPU clock failed: task_info=%d.\n",
+					 infoResult);
+		return std::nullopt;
+	}
+	const auto &timebase = timebaseInfo.value;
+	if (timebaseInfo.result != KERN_SUCCESS || !timebase.numer
+		|| !timebase.denom) {
+		std::fprintf(stderr,
+					 "Process CPU clock failed: timebase=%d numer=%u denom=%u.\n",
+					 timebaseInfo.result, timebase.numer, timebase.denom);
+		return std::nullopt;
+	}
+	if (info.total_user
+		> std::numeric_limits<uint64>::max() - info.total_system) {
+		return std::nullopt;
+	}
+	// total_* aggregates CPU from all threads, including terminated threads.
+	const auto ticks = info.total_user + info.total_system;
+	const auto numerator = uint64(timebase.numer);
+	const auto denominator = uint64(timebase.denom);
+	const auto wholeTicks = ticks / denominator;
+	const auto remainingTicks = ticks % denominator;
+	const auto maximum = uint64(std::numeric_limits<qint64>::max());
+	if (wholeTicks > maximum / numerator) {
+		return std::nullopt;
+	}
+	const auto wholeNanoseconds = wholeTicks * numerator;
+	if (remainingTicks > maximum / numerator) {
+		return std::nullopt;
+	}
+	const auto remainingNanoseconds = remainingTicks * numerator / denominator;
+	if (remainingNanoseconds > maximum - wholeNanoseconds) {
+		return std::nullopt;
+	}
+	return qint64(wholeNanoseconds + remainingNanoseconds);
+}
 #endif
 
 struct CacheChatSwitchRegressionResult final {
@@ -10228,8 +10284,10 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 maxHydrationNanoseconds = -1;
 	qint64 minimizedSwitchNanoseconds = -1;
 	qint64 maxChatSwitchNanoseconds = -1;
+	qint64 attachMenuHoverNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	bool minimizedRestore = false;
+	bool attachMenuCacheReused = false;
 	bool passed = false;
 };
 
@@ -10263,6 +10321,57 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		controller->showPeerHistory(target);
 		QCoreApplication::processEvents();
 	}
+	const auto historyWidget
+		= controller->content()->historyWidgetForRegressionTest();
+	if (!historyWidget) {
+		return result;
+	}
+	const auto attachPeerId = UserId(1053);
+	const auto attachBotId = UserId(1054);
+	data.processUsers(MTP_vector<MTPUser>({
+		RegressionUser(attachPeerId, false, u"1053"_q),
+		RegressionBotUser(attachBotId),
+	}));
+	const auto attachPeer = data.user(attachPeerId);
+	const auto attachBot = data.user(attachBotId);
+	session.attachWebView().setAttachBotsForRegressionTest({
+		InlineBots::AttachWebViewBot{
+			.user = attachBot,
+			.name = u"Regression attach bot"_q,
+			.types = InlineBots::PeerTypes(InlineBots::PeerType::User),
+			.inAttachMenu = true,
+		},
+	});
+	const auto attachHistory = data.history(attachPeer);
+	controller->showPeerHistory(attachHistory);
+	QCoreApplication::processEvents();
+	const auto buildsBeforePrime
+		= historyWidget->attachMenuBuildCountForRegressionTest();
+	auto primeEnter = QEvent(QEvent::Enter);
+	QCoreApplication::sendEvent(
+		historyWidget->attachToggleForRegressionTest(), &primeEnter);
+	QCoreApplication::processEvents();
+	const auto attachMenuPrimed
+		= historyWidget->attachMenuExistsForRegressionTest()
+		  && (historyWidget->attachMenuBuildCountForRegressionTest()
+			  == buildsBeforePrime + 1);
+	controller->showPeerHistory(firstHistory);
+	QCoreApplication::processEvents();
+	controller->showPeerHistory(attachHistory);
+	QCoreApplication::processEvents();
+	const auto buildsBeforeCachedHover
+		= historyWidget->attachMenuBuildCountForRegressionTest();
+	auto attachMenuHoverTimer = QElapsedTimer();
+	attachMenuHoverTimer.start();
+	auto cachedEnter = QEvent(QEvent::Enter);
+	QCoreApplication::sendEvent(
+		historyWidget->attachToggleForRegressionTest(), &cachedEnter);
+	result.attachMenuHoverNanoseconds = attachMenuHoverTimer.nsecsElapsed();
+	result.attachMenuCacheReused
+		= attachMenuPrimed
+		  && historyWidget->attachMenuExistsForRegressionTest()
+		  && (historyWidget->attachMenuBuildCountForRegressionTest()
+			  == buildsBeforeCachedHover);
 	auto &mainWindow = *window->widget();
 	mainWindow.activate();
 	QCoreApplication::processEvents();
@@ -10362,8 +10471,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		loop.quit();
 	});
 	loop.exec();
-	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
-										  result.maxChatSwitchNanoseconds);
+	result.maxStallNanoseconds = std::max(
+		std::max(result.maxHydrationNanoseconds,
+				 result.maxChatSwitchNanoseconds),
+		result.attachMenuHoverNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
@@ -10372,6 +10483,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.chatSwitches == kExpectedChatSwitches)
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && result.attachMenuCacheReused
+		  && (result.attachMenuHoverNanoseconds >= 0)
+		  && (result.attachMenuHoverNanoseconds < 50'000'000)
 		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
 		  && (result.maxChatSwitchNanoseconds < kMaxChatSwitchNanoseconds);
 	return result;
@@ -10749,11 +10863,15 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto maxMainThreadWorkNanoseconds = qint64(0);
 			auto maxHeartbeatGapNanoseconds = qint64(0);
 			auto maxHeartbeatGapWorkNanoseconds = qint64(-1);
+			auto maxHeartbeatGapProcessWorkNanoseconds = qint64(-1);
 			auto lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
 			auto maxHeartbeatGapStartedAt = QDateTime();
 			auto lastMainThreadCpuNanoseconds = MainThreadCpuTimeNanoseconds();
 			auto mainThreadCpuClockAvailable
 				= lastMainThreadCpuNanoseconds.has_value();
+			auto lastProcessCpuNanoseconds = ProcessCpuTimeNanoseconds();
+			auto processCpuClockAvailable
+				= lastProcessCpuNanoseconds.has_value();
 			const auto recordMainThreadHeartbeat = [&] {
 				const auto now = mainThreadHeartbeatClock.nsecsElapsed();
 				const auto wallGapNanoseconds
@@ -10771,14 +10889,28 @@ void RunAuthenticatedCacheSymlinkCases(
 				} else {
 					mainThreadCpuClockAvailable = false;
 				}
+				const auto currentProcessCpuNanoseconds
+					= ProcessCpuTimeNanoseconds();
+				auto processWorkNanoseconds = qint64(-1);
+				if (currentProcessCpuNanoseconds
+					&& lastProcessCpuNanoseconds) {
+					processWorkNanoseconds = std::max(
+						qint64(0), *currentProcessCpuNanoseconds
+									   - *lastProcessCpuNanoseconds);
+				} else {
+					processCpuClockAvailable = false;
+				}
 				if (wallGapNanoseconds > maxHeartbeatGapNanoseconds) {
 					maxHeartbeatGapNanoseconds = wallGapNanoseconds;
 					maxHeartbeatGapWorkNanoseconds = workNanoseconds;
+					maxHeartbeatGapProcessWorkNanoseconds
+						= processWorkNanoseconds;
 					maxHeartbeatGapStartedAt = lastMainThreadHeartbeatAt;
 				}
 				lastMainThreadHeartbeatNanoseconds = now;
 				lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
 				lastMainThreadCpuNanoseconds = currentMainThreadCpuNanoseconds;
+				lastProcessCpuNanoseconds = currentProcessCpuNanoseconds;
 			};
 			auto mainThreadHeartbeat = QTimer();
 			mainThreadHeartbeat.setInterval(10);
@@ -10932,8 +11064,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				}
 				return matches;
 			};
-			if (longHeartbeatGap) {
-				WaitForRegressionCondition(findMatchingSchedulerEvidence, 1000);
+			const auto schedulerEvidenceMatched
+				= longHeartbeatGap
+				  && WaitForRegressionCondition(
+					  findMatchingSchedulerEvidence, 1000);
+			if (longHeartbeatGap && !schedulerEvidenceMatched) {
+				std::fprintf(
+					stderr,
+					"No startup heartbeat-gap stall evidence matched within 1000 ms.\n");
 			}
 			const auto schedulerTrace
 				= matchingSchedulerEvidence
@@ -10951,7 +11089,11 @@ void RunAuthenticatedCacheSymlinkCases(
 				= std::max(qint64(4), (maxHeartbeatGapNanoseconds - 50'000'000)
 										  / 10'000'000);
 			const auto schedulerPreemptionProven
-				= longHeartbeatGap && matchingSchedulerEvidence.has_value()
+				= schedulerEvidenceMatched
+				  && matchingSchedulerEvidence.has_value()
+				  && processCpuClockAvailable
+				  && (maxHeartbeatGapProcessWorkNanoseconds >= 0)
+				  && (maxHeartbeatGapProcessWorkNanoseconds <= 100'000'000)
 				  && (qint64(schedulerSamples) >= requiredSchedulerSamples)
 				  && (schedulerRunning == schedulerSamples)
 				  && (schedulerWaiting == 0) && (schedulerUninterruptible == 0)
@@ -11008,6 +11150,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"minimized_restore=%d minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
+					"attach_menu_hover_ns=%lld attach_menu_cached=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
@@ -11016,6 +11159,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuHoverNanoseconds),
+					chatSwitch.attachMenuCacheReused,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
 					 && chatSwitch.maxStallNanoseconds < 50'000'000));
@@ -11085,6 +11231,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				"max_main_thread_work_ns=%lld "
 				"max_heartbeat_gap_ns=%lld "
 				"max_heartbeat_gap_work_ns=%lld "
+				"heartbeat_gap_process_work_ns=%lld "
 				"heartbeat_gap_started_at=%s "
 				"heartbeat_gap_scheduler_samples=%d "
 				"heartbeat_gap_scheduler_running=%d "
@@ -11093,6 +11240,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				"heartbeat_gap_scheduler_other=%d "
 				"heartbeat_gap_scheduler_trace=%s "
 				"heartbeat_gap_stack_captured=%d "
+				"scheduler_evidence_matched=%d "
 				"scheduler_preemption_proven=%d under_100ms=%d "
 				"first_access_ns=%lld under_50ms=%d "
 				"root_swap_refused=%d direct_fallback_closed=%d "
@@ -11108,10 +11256,13 @@ void RunAuthenticatedCacheSymlinkCases(
 				static_cast<long long>(maxMainThreadWorkNanoseconds),
 				static_cast<long long>(maxHeartbeatGapNanoseconds),
 				static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
+				static_cast<long long>(
+					maxHeartbeatGapProcessWorkNanoseconds),
 				heartbeatGapStartedAtUtf8.constData(), schedulerSamples,
 				schedulerRunning, schedulerWaiting, schedulerUninterruptible,
 				schedulerOther, schedulerTraceLatin1.constData(),
-				heartbeatGapStackCaptured, schedulerPreemptionProven,
+				heartbeatGapStackCaptured, schedulerEvidenceMatched,
+				schedulerPreemptionProven,
 				startupWithinBound,
 				static_cast<long long>(firstAccessNanoseconds),
 				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
