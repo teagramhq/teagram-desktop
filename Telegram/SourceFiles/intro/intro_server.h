@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
+#include <QtCore/QString>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -33,10 +34,20 @@ namespace details {
 
 class ServerWidgetDiscovery;
 
-void SubmitSavedServer(bool blocked, bool hasSession,
-					   bool browserOnlyServerRefused,
-					   Fn<void(QString)> showError,
-					   Fn<void()> continueToUsername);
+inline void SubmitSavedServer(bool blocked, bool hasSession,
+							  bool browserOnlyServerRefused,
+							  const QString &browserOnlyError,
+							  Fn<void(QString)> showError,
+							  Fn<void()> continueToUsername) {
+	if (blocked || hasSession) {
+		return;
+	}
+	if (browserOnlyServerRefused) {
+		showError(browserOnlyError);
+		return;
+	}
+	continueToUsername();
+}
 
 class ServerWidget final : public Step {
 public:

@@ -15,7 +15,8 @@ TEST_CASE(BrowserOnlyRefusalKeepsSavedServerStepInPlace) {
 	auto message = QString();
 	auto wentToUsername = false;
 	Intro::details::SubmitSavedServer(
-		false, false, true, [&](QString error) { message = error; },
+		false, false, true, u"This server works only in the browser."_q,
+		[&](QString error) { message = error; },
 		[&] { wentToUsername = true; });
 
 	CHECK_EQ(message, u"This server works only in the browser."_q);
