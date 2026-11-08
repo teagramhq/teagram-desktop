@@ -444,6 +444,8 @@ PRIVATE
     boxes/sticker_creator_box.h
     boxes/sticker_import_box.cpp
     boxes/sticker_import_box.h
+    boxes/sticker_import_feedback.cpp
+    boxes/sticker_import_feedback.h
     boxes/sticker_set_box.cpp
     boxes/sticker_set_box.h
     boxes/stickers_box.cpp

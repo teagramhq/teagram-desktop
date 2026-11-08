@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_telegram_sticker_pack.h"
 #include "api/api_sticker_set_import_requests.h"
+#include "boxes/sticker_import_feedback.h"
 #include "core/local_url_conversion.h"
 #include "core/sticker_import.h"
 #include "core/telegram_sticker_import.h"
@@ -771,6 +772,108 @@ TEST_CASE(TelegramStickerPackMapsBotApiErrorsAndRedactsToken) {
 			CHECK(result.detail.contains(u"500"_q));
 		}
 	}
+}
+
+void CheckTelegramStickerDownloadFailurePresentation(
+	const StickerDownloadFailure &result,
+	Api::TelegramStickerPackDownloadError expectedError, QString expectedText) {
+	CHECK(result.error == expectedError);
+	if (!result.error) {
+		return;
+	}
+	auto scan = Core::StickerImportScan();
+	scan.files.push_back(Core::StickerImportFile());
+	auto scanPending = true;
+	auto retryButtonEnabled = false;
+	auto tokenInputEnabled = false;
+	auto statusText = u"Downloading from Telegram: 0 of 0"_q;
+	auto errorText = QString();
+	auto statusColor = Ui::StickerImport::TelegramDownloadFailureColor::Normal;
+	auto errorColor = Ui::StickerImport::TelegramDownloadFailureColor::Normal;
+	const auto failure = Ui::StickerImport::MakeTelegramDownloadFailureCallback(
+		scan, scanPending, [] { return true; },
+		[&](bool pending) {
+			retryButtonEnabled = !pending;
+			tokenInputEnabled = !pending;
+		},
+		[](Ui::StickerImport::TelegramDownloadFailureMessage message,
+		   const QString &) {
+			using Message = Ui::StickerImport::TelegramDownloadFailureMessage;
+			switch (message) {
+			case Message::InvalidToken:
+				return u"Telegram rejected this bot token."_q;
+			case Message::PackNotFound:
+				return u"Telegram sticker pack was not found."_q;
+			case Message::NetworkError:
+				return u"Telegram could not be reached."_q;
+			default:
+				return QString();
+			}
+		},
+		[&](Ui::StickerImport::TelegramDownloadFailureColor color,
+			QString text) {
+			statusText = std::move(text);
+			statusColor = color;
+		},
+		[&](Ui::StickerImport::TelegramDownloadFailureColor color,
+			QString text) {
+			errorText = std::move(text);
+			errorColor = color;
+		});
+	failure(*result.error, result.detail);
+	CHECK(scan.files.empty());
+	CHECK(!scanPending);
+	CHECK(retryButtonEnabled);
+	CHECK(tokenInputEnabled);
+	CHECK_EQ(statusText, expectedText);
+	CHECK(statusColor
+		  == Ui::StickerImport::TelegramDownloadFailureColor::Error);
+	CHECK(errorText.isEmpty());
+	CHECK(errorColor
+		  == Ui::StickerImport::TelegramDownloadFailureColor::Normal);
+}
+
+TEST_CASE(TelegramStickerPackInvalidTokenPresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto object = QJsonObject();
+		object.insert(u"ok"_q, false);
+		object.insert(u"error_code"_q, 401);
+		object.insert(u"description"_q, u"Unauthorized"_q);
+		auto response = StickerImportNetwork::Response{401, JsonBytes(object)};
+		response.networkError = QNetworkReply::AuthenticationRequiredError;
+		return response;
+	});
+	CheckTelegramStickerDownloadFailurePresentation(
+		result, Api::TelegramStickerPackDownloadError::InvalidToken,
+		u"Telegram rejected this bot token."_q);
+}
+
+TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto object = QJsonObject();
+		object.insert(u"ok"_q, false);
+		object.insert(u"error_code"_q, 400);
+		object.insert(u"description"_q, u"Bad Request: STICKERSET_INVALID"_q);
+		return StickerImportNetwork::Response{400, JsonBytes(object)};
+	});
+	CheckTelegramStickerDownloadFailurePresentation(
+		result, Api::TelegramStickerPackDownloadError::PackNotFound,
+		u"Telegram sticker pack was not found."_q);
+}
+
+TEST_CASE(TelegramStickerPackNetworkFailurePresentsRecoverableError) {
+	const auto result = RunStickerDownloadFailure([](const QUrl &) {
+		auto response = StickerImportNetwork::Response{0, {}};
+		response.networkError = QNetworkReply::ConnectionRefusedError;
+		return response;
+	});
+	CHECK(result.error == Api::TelegramStickerPackDownloadError::Network);
+	if (!result.error) {
+		return;
+	}
+	CheckTelegramStickerDownloadFailurePresentation(
+		result, Api::TelegramStickerPackDownloadError::Network,
+		u"Telegram could not be reached."_q);
 }
 
 TEST_CASE(TelegramStickerPackRefusesRedirectsAndForeignResponses) {

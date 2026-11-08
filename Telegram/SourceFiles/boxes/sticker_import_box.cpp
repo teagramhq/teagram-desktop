@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_telegram_sticker_pack.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
+#include "boxes/sticker_import_feedback.h"
 #include "boxes/sticker_set_box.h"
 #include "core/file_utilities.h"
 #include "core/sticker_import.h"
@@ -74,49 +75,6 @@ struct ImportFormState final : base::has_weak_ptr {
 	QPointer<Ui::RoundButton> suggestButton;
 };
 
-[[nodiscard]] QString
-TelegramDownloadErrorText(Api::TelegramStickerPackDownloadError error,
-						  const QString &detail) {
-	switch (error) {
-	case Api::TelegramStickerPackDownloadError::InvalidToken:
-		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
-	case Api::TelegramStickerPackDownloadError::InvalidLink:
-		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsupportedPackType:
-		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
-	case Api::TelegramStickerPackDownloadError::PackNotFound:
-		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
-	case Api::TelegramStickerPackDownloadError::BotApi:
-		return detail.isEmpty()
-				   ? tr::lng_teagram_sticker_import_telegram_response_invalid(
-						 tr::now)
-				   : tr::lng_teagram_sticker_import_telegram_api_error(
-						 tr::now, lt_error, detail);
-	case Api::TelegramStickerPackDownloadError::Network:
-		return detail.isEmpty()
-				   ? tr::lng_teagram_sticker_import_telegram_network_error(
-						 tr::now)
-				   : tr::lng_teagram_sticker_import_telegram_api_error(
-						 tr::now, lt_error, detail);
-	case Api::TelegramStickerPackDownloadError::InvalidResponse:
-		return tr::lng_teagram_sticker_import_telegram_response_invalid(
-			tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsafeFilePath:
-		return tr::lng_teagram_sticker_import_telegram_file_path_invalid(
-			tr::now);
-	case Api::TelegramStickerPackDownloadError::TooManyFiles:
-		return tr::lng_teagram_sticker_import_telegram_too_many_files(tr::now);
-	case Api::TelegramStickerPackDownloadError::FileTooLarge:
-		return tr::lng_teagram_sticker_import_telegram_file_too_large(tr::now);
-	case Api::TelegramStickerPackDownloadError::TotalTooLarge:
-		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
-	case Api::TelegramStickerPackDownloadError::UnsupportedFormat:
-		return tr::lng_teagram_sticker_import_telegram_format_unsupported(
-			tr::now);
-	}
-	Unexpected("Telegram sticker download error.");
-}
-
 [[nodiscard]] bool StickerImportEnabled(const MTPhelp_AppConfig &config) {
 	return config.match(
 		[&](const MTPDhelp_appConfig &data) {
@@ -177,6 +135,43 @@ TelegramDownloadErrorText(Api::TelegramStickerPackDownloadError error,
 		return tr::lng_teagram_sticker_import_scan_symbolic_link(tr::now);
 	}
 	Unexpected("Sticker import scan problem.");
+}
+
+[[nodiscard]] QString TelegramDownloadFailureText(
+	Ui::StickerImport::TelegramDownloadFailureMessage message,
+	const QString &detail) {
+	using Message = Ui::StickerImport::TelegramDownloadFailureMessage;
+	switch (message) {
+	case Message::InvalidToken:
+		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
+	case Message::InvalidLink:
+		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
+	case Message::UnsupportedPackType:
+		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
+	case Message::PackNotFound:
+		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
+	case Message::ApiError:
+		return tr::lng_teagram_sticker_import_telegram_api_error(
+			tr::now, lt_error, detail);
+	case Message::NetworkError:
+		return tr::lng_teagram_sticker_import_telegram_network_error(tr::now);
+	case Message::InvalidResponse:
+		return tr::lng_teagram_sticker_import_telegram_response_invalid(
+			tr::now);
+	case Message::UnsafeFilePath:
+		return tr::lng_teagram_sticker_import_telegram_file_path_invalid(
+			tr::now);
+	case Message::TooManyFiles:
+		return tr::lng_teagram_sticker_import_telegram_too_many_files(tr::now);
+	case Message::FileTooLarge:
+		return tr::lng_teagram_sticker_import_telegram_file_too_large(tr::now);
+	case Message::TotalTooLarge:
+		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
+	case Message::UnsupportedFormat:
+		return tr::lng_teagram_sticker_import_telegram_format_unsupported(
+			tr::now);
+	}
+	Unexpected("Telegram sticker download failure message.");
 }
 
 [[nodiscard]] QString ScanDescription(const Core::StickerImportScan &scan) {
@@ -421,6 +416,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			const auto type = customEmoji->checked()
 								  ? Core::StickerImportType::Emoji
 								  : Core::StickerImportType::Stickers;
+			files->setTextColorOverride(std::nullopt);
 			state->scanPending = true;
 			setPending(true);
 			files->setText(tr::lng_teagram_sticker_import_scanning(tr::now));
@@ -553,6 +549,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 		telegramDownloadButton->addClickHandler([=] {
 			error->setText(QString());
 			error->setTextColorOverride(std::nullopt);
+			files->setTextColorOverride(std::nullopt);
+			files->setText(ScanDescription(state->scan));
 			const auto parsed = Core::ParseTelegramStickerPackLink(
 				telegramLink->getLastText().trimmed());
 			if (!parsed) {
@@ -584,6 +582,34 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
+			const auto setFailureText =
+				[=](const auto &label,
+					Ui::StickerImport::TelegramDownloadFailureColor color,
+					QString text) {
+					switch (color) {
+					case Ui::StickerImport::TelegramDownloadFailureColor::
+						Normal:
+						label->setTextColorOverride(std::nullopt);
+						break;
+					case Ui::StickerImport::TelegramDownloadFailureColor::Error:
+						label->setTextColorOverride(st::boxTextFgError->c);
+						break;
+					}
+					label->setText(std::move(text));
+				};
+			const auto failure
+				= Ui::StickerImport::MakeTelegramDownloadFailureCallback(
+					state->scan, state->scanPending,
+					[=] { return weakBox && weakState.get(); }, setPending,
+					TelegramDownloadFailureText,
+					[=](Ui::StickerImport::TelegramDownloadFailureColor color,
+						QString text) {
+						setFailureText(files, color, std::move(text));
+					},
+					[=](Ui::StickerImport::TelegramDownloadFailureColor color,
+						QString text) {
+						setFailureText(error, color, std::move(text));
+					});
 			state->telegramDownloader
 				= std::make_unique<Api::TelegramStickerPackDownloader>(
 					*parsed, state->telegramBotToken->clone());
@@ -596,22 +622,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					current->scan = std::move(scan);
 					current->scanPending = false;
 					title->setText(packTitle);
+					files->setTextColorOverride(std::nullopt);
 					files->setText(ScanDescription(current->scan));
 					setPending(false);
 				},
-				[=](Api::TelegramStickerPackDownloadError downloadError,
-					QString detail) {
-					const auto current = weakState.get();
-					if (!weakBox || !current) {
-						return;
-					}
-					current->scan = {};
-					current->scanPending = false;
-					setPending(false);
-					error->setTextColorOverride(st::boxTextFgError->c);
-					error->setText(
-						TelegramDownloadErrorText(downloadError, detail));
-				},
+				failure,
 				[=](int count, int total) {
 					if (!weakBox || !weakState.get()) {
 						return;
