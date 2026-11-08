@@ -423,6 +423,7 @@ void SessionPrivate::dcOptionsChanged() {
 		return;
 	}
 	_gaveUpOnPinnedFailure = false;
+	_gaveUpOnBrowserOnlyServer = false;
 	_gaveUpOnProxyError = false;
 	_retryTimeout = 1;
 	connectToServer(true);
@@ -441,6 +442,12 @@ void SessionPrivate::resumeAfterServerEnrollment() {
 
 void SessionPrivate::stopUntilPinChange() {
 	_gaveUpOnPinnedFailure = true;
+	doDisconnect();
+}
+
+void SessionPrivate::stopUntilBrowserOnlyServerRefusal() {
+	_gaveUpOnBrowserOnlyServer = true;
+	_retryTimer.cancel();
 	doDisconnect();
 }
 
@@ -1117,6 +1124,9 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	// it reports. A corrected pin arrives through dcOptionsChanged() or the
 	// explicit enrollment resume, both of which clear the give-up state first.
 	if (_gaveUpOnPinnedFailure && !afterConfig) {
+		return;
+	}
+	if (_gaveUpOnBrowserOnlyServer) {
 		return;
 	}
 	// A proxy -404 is unauthenticated. Wait for an explicit restart or
@@ -2907,6 +2917,11 @@ void SessionPrivate::onError(
 		ConnectionErrorInfo context) {
 	if (!_instance->isServerEnrollmentNetworkAllowed()) {
 		doDisconnect();
+		return;
+	}
+	if (errorCode == AbstractConnection::kErrorCodeBrowserOnly) {
+		stopUntilBrowserOnlyServerRefusal();
+		_sessionData->queueBrowserOnlyServerRefused();
 		return;
 	}
 	if (errorCode == -429) {

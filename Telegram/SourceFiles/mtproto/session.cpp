@@ -96,6 +96,12 @@ void SessionData::queuePinnedServerFailure(
 	});
 }
 
+void SessionData::queueBrowserOnlyServerRefused() {
+	withSession([](not_null<Session*> session) {
+		session->browserOnlyServerRefused();
+	});
+}
+
 void SessionData::queueResetDone() {
 	withSession([](not_null<Session*> session) {
 		session->resetDone();
@@ -424,6 +430,10 @@ void Session::pinnedServerFailure(
 		presentedFingerprint,
 		pinnedHostname,
 		dialledAddress);
+}
+
+void Session::browserOnlyServerRefused() {
+	_instance->onBrowserOnlyServerRefused();
 }
 
 void Session::stopUntilPinChange() {

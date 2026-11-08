@@ -18,6 +18,7 @@ enum class WebSocketUpgradeResult {
 	Incomplete,
 	Accepted,
 	Rejected,
+	BrowserOnly,
 };
 
 [[nodiscard]] WebSocketUpgradeResult
@@ -60,6 +61,9 @@ class WebSocketSocket final : public AbstractSocket {
 
 	int32 debugState() override;
 	QString debugPostfix() const override;
+	[[nodiscard]] bool isBrowserOnlyRefusal() const override {
+		return _browserOnlyRefusal;
+	}
 
   private:
 #ifdef TDESKTOP_UNIT_TESTS
@@ -91,6 +95,7 @@ class WebSocketSocket final : public AbstractSocket {
 	QByteArray _message;
 	QByteArray _readBuffer;
 	int _readOffset = 0;
+	bool _browserOnlyRefusal = false;
 	bool _fragmentedMessage = false;
 	bool _readyReadQueued = false;
 };

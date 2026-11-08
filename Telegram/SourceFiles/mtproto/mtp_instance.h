@@ -343,6 +343,8 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailure() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
+	void onBrowserOnlyServerRefused();
+	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
 
 	// Thread-safe.
 	[[nodiscard]] Config &config() const;

@@ -59,12 +59,15 @@ void Instance::restartedByTimeout(ShiftedDcId) {}
 
 void Instance::keyDestroyedOnServer(ShiftedDcId, uint64) {}
 
+void Instance::onBrowserOnlyServerRefused() {}
+
 } // namespace MTP
 
 namespace MTP::details {
 namespace {
 
 bool UnitConnectionInited = false;
+int UnitBrowserOnlyServerRefusals = 0;
 Fn<void()> UnitNeedToResumeAndSend;
 
 } // namespace
@@ -119,6 +122,10 @@ void SessionData::queuePinnedServerFailure(PinnedServerFailure failure,
 										   uint64 presentedFingerprint,
 										   const QString &pinnedHostname,
 										   const QString &dialledAddress) {}
+
+void SessionData::queueBrowserOnlyServerRefused() {
+	++UnitBrowserOnlyServerRefusals;
+}
 
 void SessionData::queueResetDone() {}
 
@@ -196,6 +203,31 @@ class SessionPrivateTestAccess final {
 		session._retryTimer.cancel();
 		session._connection = std::move(connection);
 		session.setState(ConnectingState);
+	}
+
+	static void BrowserOnlyError(
+			SessionPrivate &session,
+			not_null<AbstractConnection *> connection) {
+		session.onError(
+			connection,
+			AbstractConnection::kErrorCodeBrowserOnly,
+			{});
+	}
+
+	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
+		return session._gaveUpOnBrowserOnlyServer;
+	}
+
+	static bool RetryTimerActive(const SessionPrivate &session) {
+		return session._retryTimer.isActive();
+	}
+
+	static void ResetBrowserOnlyServerRefusals() {
+		UnitBrowserOnlyServerRefusals = 0;
+	}
+
+	static int BrowserOnlyServerRefusals() {
+		return UnitBrowserOnlyServerRefusals;
 	}
 
 	static crl::time ArmConnectedTimer(SessionPrivate &session,
@@ -595,4 +627,20 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 		ConnectionPointer::New<FakeTransport>(
 			QThread::currentThread(), ProxyData(), log, crl::time(30000)));
 	CHECK_EQ(int(withFallback), 30000);
+}
+
+TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
+	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto session = SessionPrivateTestAccess::Create(data);
+	auto connection = ConnectionPointer::New<FakeTransport>(
+		QThread::currentThread(), ProxyData(), std::make_shared<TransportLog>());
+	SessionPrivateTestAccess::BrowserOnlyError(
+		*session,
+		not_null<AbstractConnection *>(connection.get()));
+
+	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 1);
 }

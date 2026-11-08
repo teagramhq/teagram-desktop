@@ -69,8 +69,7 @@ WebSocketUpgradeResult ParseWebSocketUpgrade(QByteArray &incoming,
 	}
 	status.chop(1);
 	const auto statusParts = status.split(' ');
-	if (statusParts.size() < 2 || statusParts[0] != "HTTP/1.1"
-		|| statusParts[1] != "101") {
+	if (statusParts.size() < 2 || statusParts[0] != "HTTP/1.1") {
 		error = u"WSS upgrade was refused."_q;
 		return WebSocketUpgradeResult::Rejected;
 	}
@@ -93,6 +92,15 @@ WebSocketUpgradeResult ParseWebSocketUpgrade(QByteArray &incoming,
 			return WebSocketUpgradeResult::Rejected;
 		}
 		headers.insert(name, value);
+	}
+	if (statusParts[1] == "403"
+		&& headers.value("teagram-client-policy") == "browser-only") {
+		error = u"WSS server is available only in the browser."_q;
+		return WebSocketUpgradeResult::BrowserOnly;
+	}
+	if (statusParts[1] != "101") {
+		error = u"WSS upgrade was refused."_q;
+		return WebSocketUpgradeResult::Rejected;
 	}
 	const auto expectedAccept
 		= QCryptographicHash::hash(key + kWebSocketGuid,
@@ -352,6 +360,10 @@ void WebSocketSocket::handleHandshake() {
 	case WebSocketUpgradeResult::Incomplete:
 		return;
 	case WebSocketUpgradeResult::Rejected:
+		fail(error);
+		return;
+	case WebSocketUpgradeResult::BrowserOnly:
+		_browserOnlyRefusal = true;
 		fail(error);
 		return;
 	case WebSocketUpgradeResult::Accepted:

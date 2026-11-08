@@ -55,6 +55,7 @@ public:
 	// Stop retrying until the pin changes: the endpoint failed the
 	// pin check and asking again reaches the same answer.
 	void stopUntilPinChange();
+	void stopUntilBrowserOnlyServerRefusal();
 
   private:
 	friend class SessionPrivateTestAccess;
@@ -224,6 +225,8 @@ public:
 	// not a retry: only a corrected pin (dcOptionsChanged or the explicit
 	// enrollment resume) clears it.
 	bool _gaveUpOnPinnedFailure = false;
+	// A browser-only refusal cannot change without selecting another server.
+	bool _gaveUpOnBrowserOnlyServer = false;
 	// A proxy can inject unauthenticated -404 errors. Keep the persistent
 	// key and stop reconnecting until the connection settings are restarted.
 	bool _gaveUpOnProxyError = false;

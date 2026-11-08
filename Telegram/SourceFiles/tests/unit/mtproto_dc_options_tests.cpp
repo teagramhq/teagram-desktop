@@ -362,6 +362,7 @@ struct ScriptedTransportLog {
 	std::vector<QString> addresses;
 	bool tcpSucceeds = false;
 	bool webSocketSucceeds = false;
+	bool webSocketBrowserOnly = false;
 };
 
 class ScriptedConnection final : public details::AbstractConnection {
@@ -396,7 +397,10 @@ class ScriptedConnection final : public details::AbstractConnection {
 				_connected = true;
 				connected();
 			} else {
-				error(kErrorCodeOther);
+				error(!_webSocketEndpoint.isEmpty()
+						&& _log->webSocketBrowserOnly
+					? kErrorCodeBrowserOnly
+					: kErrorCodeOther);
 			}
 		});
 	}
@@ -427,10 +431,12 @@ struct ScriptedOutcome {
 	ProxyData::Type proxyType = ProxyData::Type::None,
 	const QString &hostname = u"demo.example.com"_q, bool ipv6 = false,
 	bool bothAddressFamilies = false,
-	QList<QHostAddress> webSocketAnswers = {QHostAddress(u"8.8.4.4"_q)}) {
+	QList<QHostAddress> webSocketAnswers = {QHostAddress(u"8.8.4.4"_q)},
+	bool webSocketBrowserOnly = false) {
 	auto result = ScriptedOutcome();
 	result.log.tcpSucceeds = tcpSucceeds;
 	result.log.webSocketSucceeds = webSocketSucceeds;
+	result.log.webSocketBrowserOnly = webSocketBrowserOnly;
 	UnitHostResolver resolver;
 	if (!QHostAddress(hostname).isNull()) {
 		resolver.add({.addresses = webSocketAnswers});
@@ -665,6 +671,30 @@ TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
 	CHECK_EQ(result.log.endpoints[1], endpoint);
 }
 
+TEST_CASE(ServerConnectionStopsAfterBrowserOnlyWebSocketRefusal) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(
+		false,
+		false,
+		endpoint,
+		ProxyData::Type::None,
+		u"demo.example.com"_q,
+		false,
+		false,
+		{ QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q) },
+		true);
+	CHECK(!result.connected);
+	CHECK(result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 2);
+	if (result.log.endpoints.size() != 2) {
+		return;
+	}
+	CHECK(result.log.endpoints[0].isEmpty());
+	CHECK_EQ(result.log.addresses[0], u"8.8.8.88"_q);
+	CHECK_EQ(result.log.endpoints[1], endpoint);
+	CHECK_EQ(result.log.addresses[1], u"8.8.4.4"_q);
+}
+
 TEST_CASE(ServerConnectionNeverAttemptsWebSocketWhenTcpConnects) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(true, true, endpoint);
@@ -810,6 +840,40 @@ TEST_CASE(WebSocketUpgradeWaitsForTheWholeResponse) {
 	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
 		  == details::WebSocketUpgradeResult::Incomplete);
 	CHECK(incoming == before);
+}
+
+TEST_CASE(WebSocketUpgradeRecognizesBrowserOnlyPolicyRefusal) {
+	auto incoming = QByteArray("HTTP/1.1 403 Forbidden\r\n"
+							  "tEaGrAm-cLiEnT-pOlIcY: browser-only\r\n"
+							  "\r\n");
+	auto error = QString();
+	const auto result
+		= details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error);
+	CHECK(result == details::WebSocketUpgradeResult::BrowserOnly);
+}
+
+TEST_CASE(WebSocketUpgradeRejects403WithoutBrowserOnlyPolicy) {
+	auto incoming = QByteArray("HTTP/1.1 403 Forbidden\r\n\r\n");
+	CHECK(UpgradeIsRejected(incoming));
+}
+
+TEST_CASE(WebSocketUpgradeIgnoresBrowserOnlyPolicyOutside403) {
+	auto incoming = ValidUpgradeResponse();
+	incoming.replace(
+		"\r\n\r\n",
+		"\r\nTeagram-Client-Policy: browser-only\r\n\r\n");
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
+		  == details::WebSocketUpgradeResult::Accepted);
+}
+
+TEST_CASE(WebSocketUpgradeRequiresExactBrowserOnlyPolicyValue) {
+	auto incoming = QByteArray("HTTP/1.1 403 Forbidden\r\n"
+							  "Teagram-Client-Policy: Browser-only\r\n"
+							  "\r\n");
+	auto error = QString();
+	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
+		  == details::WebSocketUpgradeResult::Rejected);
 }
 
 TEST_CASE(WebSocketUpgradeRejectsRefusalAndBadHeaders) {

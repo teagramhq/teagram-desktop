@@ -130,6 +130,7 @@ public:
 		uint64 presentedFingerprint = 0,
 		const QString &pinnedHostname = {},
 		const QString &dialledAddress = {});
+	void queueBrowserOnlyServerRefused();
 	void queueResetDone();
 	void queueSendAnything(crl::time msCanWait = 0);
 
@@ -234,6 +235,7 @@ public:
 		uint64 presentedFingerprint = 0,
 		const QString &pinnedHostname = {},
 		const QString &dialledAddress = {});
+	void browserOnlyServerRefused();
 	void stopUntilPinChange();
 	void resetDone();
 	void sendAnything(crl::time msCanWait = 0);
