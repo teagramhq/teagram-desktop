@@ -238,7 +238,7 @@ run_helper() {
 		xdotool-fail) failure_vars=(QA_TEST_XDOTOOL_FAIL=1) ;;
 		initial-screenshot-fail) failure_vars=(QA_TEST_INITIAL_SCREENSHOT_FAIL=1) ;;
 		import-fail) failure_vars=(QA_TEST_IMPORT_FAIL=1) ;;
-		orphan-openbox) failure_vars=(QA_TEST_ORPHAN_OPENBOX=1) ;;
+		orphan-openbox) failure_vars=(QA_TEST_ORPHAN_OPENBOX=1 QA_SESSION_LEADER_ATTEMPTS=0) ;;
 	esac
 	if [[ "$mode" == stop ]]; then
 		if printf 'stop\n' | env -i \
@@ -575,6 +575,7 @@ orphan_session_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}
 	fail 'The failed untracked group should identify its retained session directory.'
 }
 session_dirs+=("$orphan_session_dir")
+grep -Fq 'Could not discover the openbox process group leader' "$orphan_output" || fail 'The orphan test should skip leader discovery deterministically.'
 grep -Fq 'Found an untracked openbox process' "$orphan_output" || fail 'Cleanup should report an undiscovered marked process.'
 [[ -d "$orphan_session_dir" ]] || fail 'Cleanup should retain session data when a marked process is untracked.'
 ! grep -Fq 'CLEANUP_COMPLETE=' "$orphan_output" || fail 'Cleanup must not report success with an untracked process.'

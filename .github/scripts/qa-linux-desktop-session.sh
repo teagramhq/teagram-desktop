@@ -138,8 +138,13 @@ group_is_alive() {
 }
 
 start_group() {
-	local name="$1" log="$2" marker leader_pid
+	local name="$1" log="$2" marker leader_pid untracked_pid
+	local leader_attempts="${QA_SESSION_LEADER_ATTEMPTS:-100}" attempt
 	shift 2
+	[[ "$leader_attempts" =~ ^[0-9]+$ ]] || {
+		echo 'QA_SESSION_LEADER_ATTEMPTS must be a non-negative integer.' >&2
+		return 64
+	}
 	marker="$SESSION_ID-$name-$$"
 	GROUP_MARKERS["$name"]="$marker"
 	setsid env \
@@ -152,10 +157,17 @@ start_group() {
 		"XDG_DATA_HOME=$SESSION_DIR/xdg-data" \
 		"XDG_CACHE_HOME=$SESSION_DIR/xdg-cache" \
 		"$@" > "$SESSION_DIR/$log" 2>&1 &
-	for _ in {1..100}; do
+	for ((attempt = 0; attempt < leader_attempts; attempt++)); do
 		if leader_pid="$(find_group_leader "$marker")"; then
 			GROUP_PIDS["$name"]="$leader_pid"
 			return 0
+		fi
+		sleep 0.05
+	done
+	for ((attempt = 0; attempt < 100; attempt++)); do
+		if untracked_pid="$(find_marked_process "$marker")"; then
+			echo "Could not discover the $name process group leader; marked process $untracked_pid remains." >&2
+			return 1
 		fi
 		sleep 0.05
 	done
