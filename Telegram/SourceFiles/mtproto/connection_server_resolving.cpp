@@ -46,6 +46,7 @@ PublicDiscoveryAddresses(const ServerSelectionCheck &origin,
 
 #ifdef TDESKTOP_UNIT_TESTS
 ServerHostnameResolverTestLookup TestLookup;
+ServerConnectionTestFactory TestConnectionFactory;
 #endif
 
 using HostnameLookupFunction = Fn<void(
@@ -134,6 +135,10 @@ void SetServerHostnameResolverTestLookup(
 	TestLookup = std::move(lookup);
 }
 
+void SetServerConnectionTestFactory(ServerConnectionTestFactory factory) {
+	TestConnectionFactory = std::move(factory);
+}
+
 #endif
 
 ConnectionPointer CreateServerConnection(
@@ -142,6 +147,11 @@ ConnectionPointer CreateServerConnection(
 	const QString &hostname, bool ipv6, ServerHostnameResolver resolver,
 	const QString &webSocketEndpoint, const QString &webSocketSelection,
 	bool bothAddressFamilies) {
+#ifdef TDESKTOP_UNIT_TESTS
+	if (TestConnectionFactory) {
+		return TestConnectionFactory(thread, proxy);
+	}
+#endif
 	const auto useWebSocketFallback = protocol == DcOptions::Variants::Tcp
 									  && proxy.type == ProxyData::Type::None
 									  && !webSocketEndpoint.isEmpty();

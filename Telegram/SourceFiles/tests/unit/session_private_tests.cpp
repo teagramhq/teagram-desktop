@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "mtproto/connection_abstract.h"
+#include "mtproto/connection_server_resolving.h"
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/mtp_instance.h"
 #include "mtproto/session.h"
@@ -252,7 +253,10 @@ class SessionPrivateTestAccess final {
 		return session._sessionData->browserOnlyServerRefused();
 	}
 
-	static void Disconnect(SessionPrivate &session) { session.doDisconnect(); }
+	static void Disconnect(SessionPrivate &session) {
+		session._waitForConnectedTimer.cancel();
+		session.doDisconnect();
+	}
 
 	static crl::time ArmConnectedTimer(SessionPrivate &session,
 									   ConnectionPointer connection) {
@@ -655,8 +659,19 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 
 TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
+	auto connectionLog = std::make_shared<TransportLog>();
+	SetServerConnectionTestFactory([=](QThread *thread, const ProxyData &proxy) {
+		return ConnectionPointer::New<FakeTransport>(thread, proxy, connectionLog);
+	});
+	const auto resetFactory = gsl::finally([] {
+		SetServerConnectionTestFactory({});
+	});
 	auto data = std::make_shared<SessionData>(
 		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto options = SessionOptions();
+	options.useIPv6 = false;
+	options.useHttp = false;
+	data->setOptions(std::move(options));
 	auto session = SessionPrivateTestAccess::Create(data);
 	auto connection = ConnectionPointer::New<FakeTransport>(
 		QThread::currentThread(), ProxyData(),
