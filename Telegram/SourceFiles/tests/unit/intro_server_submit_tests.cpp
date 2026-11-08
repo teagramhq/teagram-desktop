@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "intro/intro_server.h"
-#include "lang/lang_keys.h"
 
 namespace {
 
@@ -19,7 +18,7 @@ TEST_CASE(BrowserOnlyRefusalKeepsSavedServerStepInPlace) {
 		false, false, true, [&](QString error) { message = error; },
 		[&] { wentToUsername = true; });
 
-	CHECK_EQ(message, tr::lng_intro_server_browser_only(tr::now));
+	CHECK_EQ(message, u"This server works only in the browser."_q);
 	CHECK(!wentToUsername);
 }
 
