@@ -110,6 +110,19 @@ find_group_leader() {
 	return 1
 }
 
+find_marked_process() {
+	local marker="$1" proc pid
+	for proc in /proc/[0-9]*; do
+		pid="${proc##*/}"
+		[[ -r "$proc/environ" ]] || continue
+		if has_group_marker "$pid" "$marker"; then
+			printf '%s\n' "$pid"
+			return 0
+		fi
+	done
+	return 1
+}
+
 group_is_alive() {
 	local pgid="$1" marker="$2" proc pid pgrp session _start_ticks
 	for proc in /proc/[0-9]*; do
@@ -151,8 +164,15 @@ start_group() {
 }
 
 stop_group() {
-	local name="$1" pgid="${GROUP_PIDS[$1]:-}" marker="${GROUP_MARKERS[$1]:-}"
-	[[ -n "$pgid" && -n "$marker" ]] || return 0
+	local name="$1" pgid="${GROUP_PIDS[$1]:-}" marker="${GROUP_MARKERS[$1]:-}" untracked_pid
+	[[ -n "$marker" ]] || return 0
+	if [[ -z "$pgid" ]]; then
+		if untracked_pid="$(find_marked_process "$marker")"; then
+			echo "Found an untracked $name process $untracked_pid with its QA session marker." >&2
+			return 1
+		fi
+		return 0
+	fi
 	group_is_alive "$pgid" "$marker" || return 0
 	if ! kill -TERM -- "-$pgid" 2>/dev/null && group_is_alive "$pgid" "$marker"; then
 		echo "Could not send TERM to the $name process group $pgid." >&2
@@ -246,7 +266,7 @@ cleanup() {
 emit_session_diagnostics() {
 	local log
 	printf 'QA session diagnostics from %s follow (last 200 lines per log):\n' "$SESSION_DIR" >&2
-	for log in "$SESSION_DIR"/*.log; do
+	for log in "$SESSION_DIR"/*.log "$PROFILE"/log*.txt "$PROFILE"/DebugLogs/*.txt; do
 		[[ -f "$log" ]] || continue
 		printf '\n--- %s ---\n' "${log##*/}" >&2
 		tail -n 200 -- "$log" >&2 || true
@@ -255,8 +275,10 @@ emit_session_diagnostics() {
 
 on_exit() {
 	local status=$?
-	trap - EXIT HUP INT TERM
+	trap - EXIT
+	trap '' HUP INT TERM
 	if (( status != 0 )); then
+		printf 'QA session exited with status %s.\n' "$status" >&2
 		emit_session_diagnostics
 	fi
 	if cleanup; then
@@ -345,10 +367,10 @@ find_main_window() {
 	local candidate geometry width height
 	local -a candidates=()
 	mapfile -t candidates < <(
-		DISPLAY="$DISPLAY_VALUE" xdotool search --onlyvisible --pid "${GROUP_PIDS[telegram]}" 2>/dev/null || true
+		DISPLAY="$DISPLAY_VALUE" xdotool search --onlyvisible --pid "${GROUP_PIDS[telegram]}" 2>>"$SESSION_DIR/xdotool.log" || true
 	)
 	for candidate in "${candidates[@]}"; do
-		geometry="$(DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry --shell "$candidate" 2>/dev/null)" || continue
+		geometry="$(DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry --shell "$candidate" 2>>"$SESSION_DIR/xdotool.log")" || continue
 		width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$geometry")"
 		height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$geometry")"
 		if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] && (( width >= 398 && height >= 522 )); then
@@ -378,10 +400,10 @@ sleep 2
 
 capture_screenshot() {
 	local destination="$1" geometry
-	if ! DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry "$WINDOW_ID" >/dev/null 2>&1; then
+	if ! DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry "$WINDOW_ID" >/dev/null 2>>"$SESSION_DIR/xdotool.log"; then
 		WINDOW_ID="$(find_main_window)" || return 1
 	fi
-	geometry="$(DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry --shell "$WINDOW_ID")" || return 1
+	geometry="$(DISPLAY="$DISPLAY_VALUE" xdotool getwindowgeometry --shell "$WINDOW_ID" 2>>"$SESSION_DIR/xdotool.log")" || return 1
 	WINDOW_X="$(awk -F= '$1 == "X" { print $2 }' <<<"$geometry")"
 	WINDOW_Y="$(awk -F= '$1 == "Y" { print $2 }' <<<"$geometry")"
 	[[ "$WINDOW_X" =~ ^-?[0-9]+$ && "$WINDOW_Y" =~ ^-?[0-9]+$ ]] || return 1
@@ -390,7 +412,10 @@ capture_screenshot() {
 }
 
 INITIAL_SCREENSHOT="$SESSION_DIR/screenshot-000.png"
-capture_screenshot "$INITIAL_SCREENSHOT"
+capture_screenshot "$INITIAL_SCREENSHOT" || {
+	echo 'Could not capture the initial Teagram window.' >&2
+	exit 1
+}
 printf 'SESSION=%s DISPLAY=%s PROFILE=%s TELEGRAM_PID=%s WINDOW_ID=%s WINDOW_X=%s WINDOW_Y=%s BUILD_SHA=%s SCREENSHOT=%s\n' \
 	"$SESSION_ID" "$DISPLAY_VALUE" "$PROFILE" "${GROUP_PIDS[telegram]}" "$WINDOW_ID" "$WINDOW_X" "$WINDOW_Y" "$BUILD_SHA" "$INITIAL_SCREENSHOT"
 printf 'Ready for steps: send `step <settle-seconds> <base64-command>`; send `stop` when finished.\n'
