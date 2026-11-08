@@ -13,8 +13,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Ui::StickerImport {
 
+enum class TelegramDownloadFailureMessage {
+	InvalidToken,
+	InvalidLink,
+	UnsupportedPackType,
+	PackNotFound,
+	ApiError,
+	NetworkError,
+	InvalidResponse,
+	UnsafeFilePath,
+	TooManyFiles,
+	FileTooLarge,
+	TotalTooLarge,
+	UnsupportedFormat,
+};
+
 struct TelegramDownloadFailure final {
-	QString message;
+	TelegramDownloadFailureMessage message;
 	bool pending = false;
 	bool isError = true;
 };

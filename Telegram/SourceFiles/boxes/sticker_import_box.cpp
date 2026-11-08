@@ -137,6 +137,43 @@ struct ImportFormState final : base::has_weak_ptr {
 	Unexpected("Sticker import scan problem.");
 }
 
+[[nodiscard]] QString TelegramDownloadFailureText(
+	Ui::StickerImport::TelegramDownloadFailureMessage message,
+	const QString &detail) {
+	using Message = Ui::StickerImport::TelegramDownloadFailureMessage;
+	switch (message) {
+	case Message::InvalidToken:
+		return tr::lng_teagram_sticker_import_telegram_token_rejected(tr::now);
+	case Message::InvalidLink:
+		return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
+	case Message::UnsupportedPackType:
+		return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
+	case Message::PackNotFound:
+		return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
+	case Message::ApiError:
+		return tr::lng_teagram_sticker_import_telegram_api_error(
+			tr::now, lt_error, detail);
+	case Message::NetworkError:
+		return tr::lng_teagram_sticker_import_telegram_network_error(tr::now);
+	case Message::InvalidResponse:
+		return tr::lng_teagram_sticker_import_telegram_response_invalid(
+			tr::now);
+	case Message::UnsafeFilePath:
+		return tr::lng_teagram_sticker_import_telegram_file_path_invalid(
+			tr::now);
+	case Message::TooManyFiles:
+		return tr::lng_teagram_sticker_import_telegram_too_many_files(tr::now);
+	case Message::FileTooLarge:
+		return tr::lng_teagram_sticker_import_telegram_file_too_large(tr::now);
+	case Message::TotalTooLarge:
+		return tr::lng_teagram_sticker_import_scan_total_size(tr::now);
+	case Message::UnsupportedFormat:
+		return tr::lng_teagram_sticker_import_telegram_format_unsupported(
+			tr::now);
+	}
+	Unexpected("Telegram sticker download failure message.");
+}
+
 [[nodiscard]] QString ScanDescription(const Core::StickerImportScan &scan) {
 	auto lines = QStringList();
 	if (!scan.files.empty()) {
@@ -576,7 +613,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					} else {
 						files->setTextColorOverride(std::nullopt);
 					}
-					files->setText(feedback.message);
+					files->setText(
+						TelegramDownloadFailureText(feedback.message, detail));
 				},
 				[=](int count, int total) {
 					if (!weakBox || !weakState.get()) {
