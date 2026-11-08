@@ -321,9 +321,15 @@ grep -Fq 'Ready for steps:' "$hup_output" || {
 }
 hup_dir="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$hup_output" | head -n 1)"
 hup_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$hup_output" | head -n 1)"
-[[ -n "$hup_dir" && -n "$hup_telegram_pid" ]] || {
+[[ -n "$hup_dir" ]] || {
 	cat "$hup_output" >&2
-	fail 'The HUP test session should report its directory and Telegram PID.'
+	fail 'The HUP test session should report its directory.'
+}
+hup_session_dir="/tmp/$hup_dir"
+session_dirs+=("$hup_session_dir")
+[[ -n "$hup_telegram_pid" ]] || {
+	cat "$hup_output" >&2
+	fail 'The HUP test session should report its Telegram PID.'
 }
 kill -HUP "$hup_pid"
 if wait "$hup_pid"; then
@@ -343,7 +349,7 @@ exec 9>&-
 	cat "$hup_output" >&2
 	fail "The HUP handler should preserve exit status 129, got $hup_status."
 }
-[[ ! -e "$hup_dir" ]] || fail 'Successful HUP teardown should remove the session tree.'
+[[ ! -e "$hup_session_dir" ]] || fail 'Successful HUP teardown should remove the session tree.'
 [[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after HUP cleanup.'
 for _ in {1..20}; do
 	is_running "$hup_telegram_pid" || break
