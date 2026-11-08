@@ -11,13 +11,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+using Intro::details::SubmitSavedServer;
+
 TEST_CASE(BrowserOnlyRefusalKeepsSavedServerStepInPlace) {
 	auto message = QString();
 	auto wentToUsername = false;
-	Intro::details::SubmitSavedServer(
-		false, false, true, u"This server works only in the browser."_q,
-		[&](QString error) { message = error; },
-		[&] { wentToUsername = true; });
+	const auto error = u"This server works only in the browser."_q;
+	const auto showError = [&](QString value) { message = value; };
+	const auto advance = [&] { wentToUsername = true; };
+	SubmitSavedServer(false, false, true, error, showError, advance);
 
 	CHECK_EQ(message, u"This server works only in the browser."_q);
 	CHECK(!wentToUsername);

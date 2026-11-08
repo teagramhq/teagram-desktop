@@ -342,21 +342,23 @@ void ServerWidget::submit() {
 		submitSelection();
 		return;
 	}
-	SubmitSavedServer(
-		account().mtp().dcOptions().blocked(), account().sessionExists(),
-		account().mtp().hasBrowserOnlyServerRefusal(),
-		tr::lng_intro_server_browser_only(tr::now),
-		[=](QString error) { showError(rpl::single(std::move(error))); },
-		[=] {
-			// A freshly restarted account is intentionally paused until its
-			// stored binding is selected again. The binding was durably
-			// committed before this point, so resuming cannot send an unbound
-			// request.
-			account().mtp().resume();
-			getData()->serverEndpoint = CustomServerEndpoint(
-				account().mtp().dcOptions().customServer());
-			goNext<UsernameWidget>();
-		});
+	const auto blocked = account().mtp().dcOptions().blocked();
+	const auto hasSession = account().sessionExists();
+	const auto refused = account().mtp().hasBrowserOnlyServerRefusal();
+	const auto error = tr::lng_intro_server_browser_only(tr::now);
+	const auto show
+		= [=](QString message) { showError(rpl::single(std::move(message))); };
+	const auto next = [=] {
+		// A freshly restarted account is intentionally paused until its
+		// stored binding is selected again. The binding was durably
+		// committed before this point, so resuming cannot send an unbound
+		// request.
+		account().mtp().resume();
+		getData()->serverEndpoint
+			= CustomServerEndpoint(account().mtp().dcOptions().customServer());
+		goNext<UsernameWidget>();
+	};
+	SubmitSavedServer(blocked, hasSession, refused, error, show, next);
 }
 
 void ServerWidget::cancelled() {

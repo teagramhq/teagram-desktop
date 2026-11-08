@@ -669,11 +669,10 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	const auto resetOptions = gsl::finally(
 		[=] { MTP::details::UnitProxyCheckOptions = previousOptions; });
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
-	auto connectionLog = std::make_shared<TransportLog>();
+	auto log = std::make_shared<TransportLog>();
 	SetServerConnectionTestFactory(
 		[=](QThread *thread, const ProxyData &proxy) {
-			return ConnectionPointer::New<FakeTransport>(thread, proxy,
-														 connectionLog);
+			return ConnectionPointer::New<FakeTransport>(thread, proxy, log);
 		});
 	const auto resetFactory
 		= gsl::finally([] { SetServerConnectionTestFactory({}); });
