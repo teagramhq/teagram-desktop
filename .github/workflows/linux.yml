@@ -465,7 +465,7 @@ jobs:
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
       # Linux ships Teagram without an updater, so CI gates the standalone
-      # unit cases without running the desktop GUI regression under Xvfb.
+      # unit cases and the custom emoji GUI smoke under Xvfb.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -638,7 +638,7 @@ jobs:
             fi
 
             emoji_smoke_workdir=$(mktemp -d)
-            if emoji_smoke_output=$(QT_QPA_PLATFORM=offscreen TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$PWD/out/Debug/Teagram" -noupdate -debug -workdir "$emoji_smoke_workdir" 2>&1); then
+            if emoji_smoke_output=$(xvfb-run -a env QT_QPA_PLATFORM=xcb TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$PWD/out/Debug/Teagram" -noupdate -debug -workdir "$emoji_smoke_workdir" 2>&1); then
               printf "%s\n" "$emoji_smoke_output"
             else
               TEST_STATUS=$?
