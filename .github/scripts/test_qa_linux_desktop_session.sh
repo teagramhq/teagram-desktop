@@ -10,6 +10,7 @@ remote_helper="/tmp/qa-linux-desktop-session-test-${run_id}.sh"
 padding="$(head -c 8192 /dev/zero | /usr/bin/tr '\0' x)"
 system_path="${PATH}"
 declare -a session_dirs=()
+hup_pid=
 
 fail() {
 	printf '%s\n' "$*" >&2
@@ -18,6 +19,9 @@ fail() {
 
 cleanup() {
 	local proc pgrp marker
+	if [[ -n "$hup_pid" ]] && kill -0 "$hup_pid" 2>/dev/null; then
+		kill -TERM "$hup_pid" 2>/dev/null || true
+	fi
 	for proc in /proc/[0-9]*; do
 		[[ -r "$proc/environ" && -r "$proc/stat" ]] || continue
 		/usr/bin/grep -qzFx -- "QA_SESSION_TEST_RUN_ID=$run_id" "$proc/environ" 2>/dev/null || continue
@@ -46,8 +50,35 @@ else
 fi
 STUB_ID
 
+cat > "$stub_bin/xauth" <<'STUB_XAUTH'
+#!/usr/bin/env bash
+[[ "${1:-}" == -f && "${3:-}" == nmerge && "${4:-}" == - ]] || exit 64
+cat > "$2"
+STUB_XAUTH
+
 cat > "$stub_bin/Xvfb" <<'STUB_XVFB'
 #!/usr/bin/env bash
+auth_file=
+while (($#)); do
+	if [[ "$1" == -auth ]]; then
+		auth_file="${2:-}"
+		shift 2
+	else
+		shift
+	fi
+done
+[[ -n "$auth_file" && -s "$auth_file" ]] || {
+	echo 'Xvfb did not receive an Xauthority file.' >&2
+	exit 1
+}
+[[ "$(stat -c '%a' "$auth_file")" == 600 ]] || {
+	echo 'Xauthority file permissions are not private.' >&2
+	exit 1
+}
+/usr/bin/grep -Eq '^ffff 0000 0000 0012 4d49542d4d414749432d434f4f4b49452d31 0010 [[:xdigit:]]{32}$' "$auth_file" || {
+	echo 'Xauthority file does not contain a wildcard MIT cookie.' >&2
+	exit 1
+}
 printf '99\n' >&3
 exec sleep 120
 STUB_XVFB
@@ -62,6 +93,10 @@ done
 
 cat > "$stub_bin/Telegram" <<'STUB_TELEGRAM'
 #!/usr/bin/env bash
+[[ -r "${XAUTHORITY:-}" ]] || {
+	echo 'Telegram did not receive its Xauthority file.' >&2
+	exit 43
+}
 if [[ "${QA_TEST_TELEGRAM_FAIL:-0}" == 1 ]]; then
 	printf 'simulated Telegram launch failure\n' >&2
 	exit 42
@@ -83,6 +118,7 @@ STUB_DBUS_LAUNCH
 
 cat > "$stub_bin/xdotool" <<'STUB_XDOTOOL'
 #!/usr/bin/env bash
+[[ -r "${XAUTHORITY:-}" ]] || exit 1
 case "${1:-}" in
 	search)
 		printf '12345\n'
@@ -138,7 +174,7 @@ else
 fi
 STUB_TR
 
-for tool in id Xvfb openbox tint2 dunst Telegram dbus-launch xdotool import tr; do
+for tool in id Xvfb openbox tint2 dunst Telegram dbus-launch xdotool import tr xauth; do
 	chmod +x "$stub_bin/$tool"
 done
 
@@ -186,9 +222,11 @@ run_helper() {
 }
 
 tagged_processes() {
-	local proc
+	local proc state
 	for proc in /proc/[0-9]*; do
 		[[ -r "$proc/environ" ]] || continue
+		state="$(awk '{ print $3 }' "$proc/stat" 2>/dev/null || true)"
+		[[ "$state" != Z && "$state" != X ]] || continue
 		if /usr/bin/grep -qzFx -- "QA_SESSION_TEST_RUN_ID=$run_id" "$proc/environ" 2>/dev/null; then
 			printf '%s\n' "${proc##*/}"
 		fi
@@ -226,14 +264,14 @@ if run_helper dbus-fail "$failure_output"; then
 	fail 'A failing dbus-launch stub should make startup fail.'
 fi
 failure_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$failure_output" | head -n 1 || true)"
-[[ -n "$failure_dir" ]] && session_dirs+=("$failure_dir")
-dbus_log="$(sed -n 's/^dbus-launch failed; log retained at //p' "$failure_output" | head -n 1)"
-[[ -n "$failure_dir" && -n "$dbus_log" && -f "$dbus_log" ]] || {
+
+[[ -n "$failure_dir" ]] || {
 	cat "$failure_output" >&2
-	fail 'A failed dbus-launch should name a retained diagnostic log.'
+	fail 'A failed dbus-launch should identify its session diagnostics.'
 }
-grep -Fq 'simulated dbus-launch failure' "$dbus_log" || fail 'The retained D-Bus log should include the launch error.'
-[[ -d "$failure_dir" ]] || fail 'The session directory should remain after failed startup.'
+grep -Fq -- '--- dbus-launch.log ---' "$failure_output" || fail 'The failed D-Bus log should be emitted before cleanup.'
+grep -Fq 'simulated dbus-launch failure' "$failure_output" || fail 'The D-Bus startup error should be emitted before cleanup.'
+[[ ! -e "$failure_dir" ]] || fail 'Per-run data should be removed after failed-start cleanup.'
 [[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after failed startup.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after failed startup cleanup.'
 
@@ -242,16 +280,80 @@ if run_helper telegram-fail "$telegram_failure_output"; then
 	cat "$telegram_failure_output" >&2
 	fail 'A failing Telegram stub should make startup fail.'
 fi
-telegram_log="$(sed -n 's/^Could not start telegram; see //p' "$telegram_failure_output" | head -n 1)"
-[[ -n "$telegram_log" && -f "$telegram_log" ]] || {
+telegram_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$telegram_failure_output" | head -n 1 || true)"
+[[ -n "$telegram_dir" ]] || {
 	cat "$telegram_failure_output" >&2
-	fail 'A failed Telegram launch should name a retained diagnostic log.'
+	fail 'A failed Telegram launch should identify its session diagnostics.'
 }
-telegram_dir="${telegram_log%/*}"
-session_dirs+=("$telegram_dir")
-grep -Fq 'simulated Telegram launch failure' "$telegram_log" || fail 'The retained Telegram log should include the launch error.'
-[[ -d "$telegram_dir" ]] || fail 'The session directory should remain after Telegram startup failure.'
+grep -Fq -- '--- teagram.log ---' "$telegram_failure_output" || fail 'The failed Telegram log should be emitted before cleanup.'
+grep -Fq 'simulated Telegram launch failure' "$telegram_failure_output" || fail 'The Telegram startup error should be emitted before cleanup.'
+[[ ! -e "$telegram_dir" ]] || fail 'Per-run data should be removed after failed Telegram cleanup.'
 [[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after failed Telegram startup.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after Telegram startup failure cleanup.'
+
+hup_output="${temp_dir}/hup.log"
+hup_fifo="${temp_dir}/hup.in"
+mkfifo "$hup_fifo"
+cp "$session_script" "$remote_helper"
+chmod 700 "$remote_helper"
+env -i \
+	QA_SESSION_GROUP=seed \
+	QA_SESSION_PADDING="$padding" \
+	QA_SESSION_TEST_RUN_ID="$run_id" \
+	QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
+	QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
+	PATH="$stub_bin:$system_path" \
+	HOME="$temp_dir" \
+	bash "$remote_helper" serve < "$hup_fifo" > "$hup_output" 2>&1 &
+hup_pid=$!
+exec 9>"$hup_fifo"
+for _ in {1..200}; do
+	grep -Fq 'Ready for steps:' "$hup_output" && break
+	if ! kill -0 "$hup_pid" 2>/dev/null; then
+		cat "$hup_output" >&2
+		fail 'The session should remain ready before the HUP test.'
+	fi
+	sleep 0.05
+done
+grep -Fq 'Ready for steps:' "$hup_output" || {
+	cat "$hup_output" >&2
+	fail 'The HUP test session did not become ready.'
+}
+hup_dir="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$hup_output" | head -n 1)"
+hup_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$hup_output" | head -n 1)"
+[[ -n "$hup_dir" && -n "$hup_telegram_pid" ]] || {
+	cat "$hup_output" >&2
+	fail 'The HUP test session should report its directory and Telegram PID.'
+}
+kill -HUP "$hup_pid"
+if wait "$hup_pid"; then
+	fail 'The HUP test helper should exit with a non-zero status.'
+else
+	hup_status=$?
+fi
+is_running() {
+	local state
+	[[ -r "/proc/$1/stat" ]] || return 1
+	state="$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null || true)"
+	[[ -n "$state" && "$state" != Z && "$state" != X ]]
+}
+hup_pid=
+exec 9>&-
+[[ "$hup_status" == 129 ]] || {
+	cat "$hup_output" >&2
+	fail "The HUP handler should preserve exit status 129, got $hup_status."
+}
+[[ ! -e "$hup_dir" ]] || fail 'Successful HUP teardown should remove the session tree.'
+[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after HUP cleanup.'
+for _ in {1..20}; do
+	is_running "$hup_telegram_pid" || break
+	sleep 0.05
+done
+if is_running "$hup_telegram_pid"; then
+	ps -o pid,ppid,pgid,state,comm -p "$hup_telegram_pid" >&2 || true
+	cat "$hup_output" >&2
+	fail "Telegram process $hup_telegram_pid remains after HUP cleanup."
+fi
+[[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after HUP cleanup.'
 
 printf 'QA desktop session lifecycle tests passed.\n'
