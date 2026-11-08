@@ -10750,7 +10750,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto maxHeartbeatGapNanoseconds = qint64(0);
 			auto maxHeartbeatGapWorkNanoseconds = qint64(-1);
 			auto lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
-			auto maxHeartbeatGapStartedAt = QString();
+			auto maxHeartbeatGapStartedAt = QDateTime();
 			auto lastMainThreadCpuNanoseconds = MainThreadCpuTimeNanoseconds();
 			auto mainThreadCpuClockAvailable
 				= lastMainThreadCpuNanoseconds.has_value();
@@ -10774,8 +10774,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				if (wallGapNanoseconds > maxHeartbeatGapNanoseconds) {
 					maxHeartbeatGapNanoseconds = wallGapNanoseconds;
 					maxHeartbeatGapWorkNanoseconds = workNanoseconds;
-					maxHeartbeatGapStartedAt
-						= lastMainThreadHeartbeatAt.toString(Qt::ISODateWithMs);
+					maxHeartbeatGapStartedAt = lastMainThreadHeartbeatAt;
 				}
 				lastMainThreadHeartbeatNanoseconds = now;
 				lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
@@ -10886,9 +10885,88 @@ void RunAuthenticatedCacheSymlinkCases(
 			});
 			mainThreadHeartbeat.stop();
 			recordMainThreadHeartbeat();
+			const auto longHeartbeatGap
+				= (maxHeartbeatGapNanoseconds >= 100'000'000);
+			auto matchingSchedulerEvidence
+				= std::optional<Core::UiStallWatchdog::StallEvidence>();
+			const auto findMatchingSchedulerEvidence = [&] {
+				if (!maxHeartbeatGapStartedAt.isValid()) {
+					return false;
+				}
+				const auto gapStartMilliseconds
+					= maxHeartbeatGapStartedAt.toMSecsSinceEpoch();
+				const auto gapDurationMilliseconds
+					= (maxHeartbeatGapNanoseconds + 999'999) / 1'000'000;
+				const auto gapEndMilliseconds
+					= gapStartMilliseconds + gapDurationMilliseconds;
+				auto bestOverlapMilliseconds = qint64(0);
+				for (const auto &evidence :
+					 Core::UiStallWatchdog::RecentStallEvidenceForTesting()) {
+					const auto start = QDateTime::fromString(evidence.startedAt,
+															 Qt::ISODateWithMs);
+					if (!start.isValid()
+						|| evidence.durationMilliseconds <= 0) {
+						continue;
+					}
+					const auto evidenceStartMilliseconds
+						= start.toMSecsSinceEpoch();
+					const auto evidenceEndMilliseconds
+						= evidenceStartMilliseconds
+						  + evidence.durationMilliseconds;
+					const auto overlapMilliseconds = std::max(
+						qint64(0),
+						std::min(gapEndMilliseconds, evidenceEndMilliseconds)
+							- std::max(gapStartMilliseconds,
+									   evidenceStartMilliseconds));
+					if (overlapMilliseconds > bestOverlapMilliseconds) {
+						bestOverlapMilliseconds = overlapMilliseconds;
+						matchingSchedulerEvidence = evidence;
+					}
+				}
+				const auto matches
+					= matchingSchedulerEvidence.has_value()
+					  && (bestOverlapMilliseconds
+						  >= std::max(qint64(1), gapDurationMilliseconds - 50));
+				if (!matches) {
+					matchingSchedulerEvidence.reset();
+				}
+				return matches;
+			};
+			if (longHeartbeatGap) {
+				WaitForRegressionCondition(findMatchingSchedulerEvidence, 1000);
+			}
+			const auto schedulerTrace
+				= matchingSchedulerEvidence
+					  ? matchingSchedulerEvidence->schedulerTrace
+					  : QString();
+			const auto schedulerSamples = int(schedulerTrace.size());
+			const auto schedulerRunning = int(schedulerTrace.count(u'R'));
+			const auto schedulerWaiting = int(schedulerTrace.count(u'W'));
+			const auto schedulerUninterruptible
+				= int(schedulerTrace.count(u'U'));
+			const auto schedulerOther = schedulerSamples - schedulerRunning
+										- schedulerWaiting
+										- schedulerUninterruptible;
+			const auto requiredSchedulerSamples
+				= std::max(qint64(4), (maxHeartbeatGapNanoseconds - 50'000'000)
+										  / 10'000'000);
+			const auto schedulerPreemptionProven
+				= longHeartbeatGap && matchingSchedulerEvidence.has_value()
+				  && (qint64(schedulerSamples) >= requiredSchedulerSamples)
+				  && (schedulerRunning == schedulerSamples)
+				  && (schedulerWaiting == 0) && (schedulerUninterruptible == 0)
+				  && (schedulerOther == 0);
 			const auto mainThreadWorkWithinBound
 				= mainThreadCpuClockAvailable
 				  && (maxMainThreadWorkNanoseconds < 100'000'000);
+			const auto startupWithinBound
+				= mainThreadWorkWithinBound
+				  && (!longHeartbeatGap || schedulerPreemptionProven);
+			const auto heartbeatGapStackCaptured
+				= matchingSchedulerEvidence
+				  && !matchingSchedulerEvidence->stack.isEmpty()
+				  && (matchingSchedulerEvidence->stack
+					  != u"stack unavailable"_q);
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
@@ -10991,52 +11069,65 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto mainThreadWalks = Core::MacProtectedPath::
 				CachePathWalkMainThreadCountForTesting();
 			const auto heartbeatGapStartedAtUtf8
-				= maxHeartbeatGapStartedAt.toUtf8();
-			std::fprintf(stderr,
-						 "Cache access latency regression: cache=%s "
-						 "seeded_directories=125 seeded_files=169 "
-						 "closed_clear_missing_active=%d "
-						 "cache_initialization_ns=%lld "
-						 "initialization_allowed=%d "
-						 "queued_ops_before_ready=%d queued_ops_passed=%d "
-						 "cache_usable_ns=%lld under_10s=%d "
-						 "max_main_thread_work_ns=%lld "
-						 "max_heartbeat_gap_ns=%lld "
-						 "max_heartbeat_gap_work_ns=%lld "
-						 "heartbeat_gap_started_at=%s under_100ms=%d "
-						 "first_access_ns=%lld under_50ms=%d "
-						 "root_swap_refused=%d direct_fallback_closed=%d "
-						 "root_restored=%d startup_walks=%d "
-						 "main_thread_walks=%d.\n",
-						 mediaCache ? "media_cache" : "cache",
-						 missingActiveVersionBeforeOpen,
-						 static_cast<long long>(cacheInitializationNanoseconds),
-						 cacheInitializationAllowed,
-						 initializationPendingAtFirstAccess,
-						 queuedOperationsPassed,
-						 static_cast<long long>(cacheUsableNanoseconds),
-						 cacheUsableWithinBound,
-						 static_cast<long long>(maxMainThreadWorkNanoseconds),
-						 static_cast<long long>(maxHeartbeatGapNanoseconds),
-						 static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
-						 heartbeatGapStartedAtUtf8.constData(),
-						 mainThreadWorkWithinBound,
-						 static_cast<long long>(firstAccessNanoseconds),
-						 (firstAccessNanoseconds < 50'000'000),
-						 swappedRootRefused, directFallbackClosed,
-						 rootRestoreSucceeded, startupWalks, mainThreadWalks);
-			const auto passed = startupScansCompleted && first && second
-								&& missingActiveVersionBeforeOpen
-								&& initializationPendingAtFirstAccess
-								&& queuedOperationsPassed
-								&& cacheInitializationAllowed
-								&& cacheUsableWithinBound && (startupWalks == 2)
-								&& (mainThreadWalks == 0) && swappedRootRefused
-								&& directFallbackClosed && rootRestoreSucceeded
-								&& mainThreadWorkWithinBound
-								&& (mediaCache || chatSwitch.passed)
-								&& (mediaCache || dialogsHandler.passed)
-								&& (firstAccessNanoseconds < 50'000'000);
+				= maxHeartbeatGapStartedAt.toString(Qt::ISODateWithMs).toUtf8();
+			const auto schedulerTraceLatin1 = schedulerTrace.isEmpty()
+												  ? QByteArray("none")
+												  : schedulerTrace.toLatin1();
+			std::fprintf(
+				stderr,
+				"Cache access latency regression: cache=%s "
+				"seeded_directories=125 seeded_files=169 "
+				"closed_clear_missing_active=%d "
+				"cache_initialization_ns=%lld "
+				"initialization_allowed=%d "
+				"queued_ops_before_ready=%d queued_ops_passed=%d "
+				"cache_usable_ns=%lld under_10s=%d "
+				"max_main_thread_work_ns=%lld "
+				"max_heartbeat_gap_ns=%lld "
+				"max_heartbeat_gap_work_ns=%lld "
+				"heartbeat_gap_started_at=%s "
+				"heartbeat_gap_scheduler_samples=%d "
+				"heartbeat_gap_scheduler_running=%d "
+				"heartbeat_gap_scheduler_waiting=%d "
+				"heartbeat_gap_scheduler_uninterruptible=%d "
+				"heartbeat_gap_scheduler_other=%d "
+				"heartbeat_gap_scheduler_trace=%s "
+				"heartbeat_gap_stack_captured=%d "
+				"scheduler_preemption_proven=%d under_100ms=%d "
+				"first_access_ns=%lld under_50ms=%d "
+				"root_swap_refused=%d direct_fallback_closed=%d "
+				"root_restored=%d startup_walks=%d "
+				"main_thread_walks=%d.\n",
+				mediaCache ? "media_cache" : "cache",
+				missingActiveVersionBeforeOpen,
+				static_cast<long long>(cacheInitializationNanoseconds),
+				cacheInitializationAllowed, initializationPendingAtFirstAccess,
+				queuedOperationsPassed,
+				static_cast<long long>(cacheUsableNanoseconds),
+				cacheUsableWithinBound,
+				static_cast<long long>(maxMainThreadWorkNanoseconds),
+				static_cast<long long>(maxHeartbeatGapNanoseconds),
+				static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
+				heartbeatGapStartedAtUtf8.constData(), schedulerSamples,
+				schedulerRunning, schedulerWaiting, schedulerUninterruptible,
+				schedulerOther, schedulerTraceLatin1.constData(),
+				heartbeatGapStackCaptured, schedulerPreemptionProven,
+				startupWithinBound,
+				static_cast<long long>(firstAccessNanoseconds),
+				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
+				directFallbackClosed, rootRestoreSucceeded, startupWalks,
+				mainThreadWalks);
+			const auto passed
+				= startupScansCompleted && first && second
+				  && missingActiveVersionBeforeOpen
+				  && initializationPendingAtFirstAccess
+				  && queuedOperationsPassed && cacheInitializationAllowed
+				  && cacheUsableWithinBound && (startupWalks == 2)
+				  && (mainThreadWalks == 0) && swappedRootRefused
+				  && directFallbackClosed && rootRestoreSucceeded
+				  && startupWithinBound && (mediaCache || chatSwitch.passed)
+				  && (mediaCache || dialogsHandler.passed)
+				  && (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName,
 										   passed && accountCleanup.cleanup());
 		}

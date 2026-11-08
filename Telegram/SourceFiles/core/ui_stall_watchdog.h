@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace Core {
 
@@ -23,6 +24,14 @@ class UiStallWatchdog final : public QObject {
   public:
 	struct Settings {
 		bool captureShortStalls = false;
+		bool captureSchedulerTrace = false;
+	};
+
+	struct StallEvidence {
+		QString startedAt;
+		qint64 durationMilliseconds = 0;
+		QString schedulerTrace;
+		QString stack;
 	};
 
 	explicit UiStallWatchdog(
@@ -35,6 +44,8 @@ class UiStallWatchdog final : public QObject {
 	UiStallWatchdog &operator=(const UiStallWatchdog &) = delete;
 
 	[[nodiscard]] static quint64 StallCount();
+	[[nodiscard]] static std::vector<StallEvidence>
+	RecentStallEvidenceForTesting();
 
   protected:
 	bool event(QEvent *event) override;
@@ -47,6 +58,7 @@ class UiStallWatchdog final : public QObject {
 	std::chrono::milliseconds _countThreshold;
 	std::chrono::milliseconds _logThreshold;
 	std::chrono::milliseconds _logRateLimit;
+	bool _captureSchedulerTrace = false;
 	std::thread _thread;
 	std::mutex _mutex;
 	std::condition_variable _condition;

@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cstdlib>
 #include <functional>
 #include <system_error>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ucontext.h>
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#endif // Q_OS_MAC
 #if defined(Q_OS_MAC) && defined(__arm64__)
 #include <ptrauth.h>
 #endif // Q_OS_MAC && __arm64__
@@ -46,10 +50,14 @@ constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
 constexpr auto kShortLogThreshold = 40ms;
+constexpr auto kSchedulerSampleInterval = 5ms;
+constexpr auto kMaxSchedulerSamples = 1024U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
 
 std::atomic<quint64> TotalStallCount = 0;
+std::mutex StallEvidenceMutex;
+std::vector<UiStallWatchdog::StallEvidence> StallEvidenceHistory;
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 
@@ -69,12 +77,46 @@ std::atomic_uint RequestedCapture = 0;
 std::atomic_uint CompletedCapture = 0;
 std::atomic_uint CaptureSequence = 0;
 pthread_t MainThread = {};
+#if defined(Q_OS_MAC)
+thread_t MainMachThread = MACH_PORT_NULL;
+#endif // Q_OS_MAC
 StackBounds MainStack;
 struct sigaction PreviousSignalAction = {};
 std::mutex SignalInstallMutex;
 bool SignalInstalled = false;
 
 static_assert(std::atomic_uint::is_always_lock_free);
+
+[[nodiscard]] char MainThreadSchedulerState() noexcept {
+#if defined(Q_OS_MAC)
+	if (MainMachThread == MACH_PORT_NULL) {
+		return '?';
+	}
+	auto info = thread_basic_info_data_t();
+	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
+	if (thread_info(MainMachThread, THREAD_BASIC_INFO,
+					reinterpret_cast<thread_info_t>(&info), &count)
+		!= KERN_SUCCESS) {
+		return '?';
+	}
+	switch (info.run_state) {
+	case TH_STATE_RUNNING:
+		return 'R';
+	case TH_STATE_WAITING:
+		return 'W';
+	case TH_STATE_UNINTERRUPTIBLE:
+		return 'U';
+	case TH_STATE_STOPPED:
+		return 'S';
+	case TH_STATE_HALTED:
+		return 'H';
+	default:
+		return '?';
+	}
+#else  // Q_OS_MAC
+	return '?';
+#endif // else for Q_OS_MAC
+}
 
 [[nodiscard]] StackBounds CurrentStackBounds(pthread_t thread) {
 #ifdef Q_OS_MAC
@@ -173,12 +215,21 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 		return false;
 	}
 	MainThread = pthread_self();
+#if defined(Q_OS_MAC)
+	MainMachThread = mach_thread_self();
+#endif // Q_OS_MAC
 	MainStack = CurrentStackBounds(MainThread);
 	struct sigaction action = {};
 	action.sa_sigaction = CaptureSignal;
 	sigemptyset(&action.sa_mask);
 	action.sa_flags = SA_SIGINFO | SA_RESTART;
 	if (sigaction(SIGUSR2, &action, &PreviousSignalAction) != 0) {
+#if defined(Q_OS_MAC)
+		if (MainMachThread != MACH_PORT_NULL) {
+			mach_port_deallocate(mach_task_self(), MainMachThread);
+			MainMachThread = MACH_PORT_NULL;
+		}
+#endif // Q_OS_MAC
 		return false;
 	}
 	SignalInstalled = true;
@@ -195,6 +246,16 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 		return false;
 	}
 	SignalInstalled = false;
+#if defined(Q_OS_MAC)
+	if (MainMachThread != MACH_PORT_NULL) {
+		const auto result
+			= mach_port_deallocate(mach_task_self(), MainMachThread);
+		MainMachThread = MACH_PORT_NULL;
+		if (result != KERN_SUCCESS) {
+			return false;
+		}
+	}
+#endif // Q_OS_MAC
 	return true;
 }
 
@@ -299,7 +360,8 @@ UiStallWatchdog::UiStallWatchdog(
 	  _countThreshold(kCountThreshold),
 	  _logThreshold(settings.captureShortStalls ? kShortLogThreshold
 												: kLogThreshold),
-	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit) {
+	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit),
+	  _captureSchedulerTrace(settings.captureSchedulerTrace) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
 	try {
@@ -341,6 +403,12 @@ quint64 UiStallWatchdog::StallCount() {
 	return TotalStallCount.load(std::memory_order_relaxed);
 }
 
+std::vector<UiStallWatchdog::StallEvidence>
+UiStallWatchdog::RecentStallEvidenceForTesting() {
+	const auto lock = std::lock_guard(StallEvidenceMutex);
+	return StallEvidenceHistory;
+}
+
 bool UiStallWatchdog::event(QEvent *event) {
 	if (event->type() != PingEvent::Type()) {
 		return QObject::event(event);
@@ -379,10 +447,24 @@ void UiStallWatchdog::run() {
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
 		auto stack = QString();
+		auto schedulerTrace = std::string();
 		const auto lineForDuration = [&](Clock::duration duration) {
 			const auto milliseconds
 				= std::chrono::duration_cast<std::chrono::milliseconds>(
 					duration);
+			if (_captureSchedulerTrace) {
+				const auto schedulerTraceText
+					= schedulerTrace.empty()
+						  ? u"none"_q
+						  : QString::fromLatin1(
+								schedulerTrace.data(),
+								qsizetype(schedulerTrace.size()));
+				return u"UI stall %1 ms (started %2): "
+					   "scheduler_trace=%3 stack=%4"_q.arg(milliseconds.count())
+						   .arg(startTime.toString(Qt::ISODateWithMs))
+						   .arg(schedulerTraceText)
+						   .arg(stack);
+			}
 			return u"UI stall %1 ms (started %2): %3"_q
 				.arg(milliseconds.count())
 				.arg(startTime.toString(Qt::ISODateWithMs))
@@ -391,6 +473,31 @@ void UiStallWatchdog::run() {
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
+		const auto sampleSchedulerState = [&] {
+			if (!_captureSchedulerTrace
+				|| schedulerTrace.size() == kMaxSchedulerSamples) {
+				return;
+			}
+			lock.unlock();
+			const auto state = MainThreadSchedulerState();
+			lock.lock();
+			schedulerTrace.push_back(state);
+		};
+		const auto waitUntil = [&](Clock::time_point deadline) {
+			while (true) {
+				const auto sampleAt = Clock::now() + kSchedulerSampleInterval;
+				const auto wakeAt = _captureSchedulerTrace
+										? std::min(deadline, sampleAt)
+										: deadline;
+				if (_condition.wait_until(lock, wakeAt, acknowledged)) {
+					return true;
+				}
+				sampleSchedulerState();
+				if (Clock::now() >= deadline) {
+					return false;
+				}
+			}
+		};
 		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
 			if (_stopping) {
@@ -405,8 +512,10 @@ void UiStallWatchdog::run() {
 			}
 		} else {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (!_condition.wait_until(lock, postedAt + _logThreshold,
-									   acknowledged)) {
+			if (_captureSchedulerTrace) {
+				sampleSchedulerState();
+			}
+			if (!waitUntil(postedAt + _logThreshold)) {
 				detectedAt = Clock::now();
 			} else if (_stopping) {
 				return;
@@ -464,7 +573,20 @@ void UiStallWatchdog::run() {
 				lock.lock();
 			}
 		}
-		_condition.wait(lock, acknowledged);
+		while (!_stopping && (_acknowledgedSequence < current)) {
+			if (_captureSchedulerTrace) {
+				if (_condition.wait_for(lock, kSchedulerSampleInterval,
+										acknowledged)) {
+					break;
+				}
+				sampleSchedulerState();
+			} else {
+				_condition.wait(lock, acknowledged);
+			}
+		}
+		if (_stopping) {
+			return;
+		}
 		if (_acknowledgedSequence < current) {
 			return;
 		}
@@ -473,6 +595,28 @@ void UiStallWatchdog::run() {
 			lock.unlock();
 			const auto duration = completedAt - postedAt;
 			_log(lineForDuration(duration), true);
+			if (_captureSchedulerTrace) {
+				const auto evidence = StallEvidence{
+					.startedAt = startTime.toString(Qt::ISODateWithMs),
+					.durationMilliseconds
+					= std::chrono::duration_cast<std::chrono::milliseconds>(
+						  duration)
+						  .count(),
+					.schedulerTrace
+					= QString::fromLatin1(schedulerTrace.data(),
+										  qsizetype(schedulerTrace.size())),
+					.stack = stack,
+				};
+				{
+					const auto evidenceLock
+						= std::lock_guard(StallEvidenceMutex);
+					StallEvidenceHistory.push_back(evidence);
+					if (StallEvidenceHistory.size() > 64) {
+						StallEvidenceHistory.erase(
+							StallEvidenceHistory.begin());
+					}
+				}
+			}
 			lastLogged = Clock::now();
 			lastLoggedDuration = duration;
 			lock.lock();

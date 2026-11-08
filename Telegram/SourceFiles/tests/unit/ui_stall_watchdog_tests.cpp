@@ -154,6 +154,10 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto blockActive = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
 	const auto before = Core::UiStallWatchdog::StallCount();
+	const auto beforeEvidence
+		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	const auto lastEvidenceStartedAt
+		= beforeEvidence.empty() ? QString() : beforeEvidence.back().startedAt;
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -173,7 +177,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				if (blockActive.load(std::memory_order_acquire)) {
 					logged.store(true, std::memory_order_release);
 				}
-			});
+			},
+			{.captureSchedulerTrace = true});
 		auto blockFilter = UiStallWatchdogTestBlockFilter(
 			std::chrono::milliseconds(300), &loop, &logged, &blockActive);
 		watchdog.installEventFilter(&blockFilter);
@@ -195,11 +200,23 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	if (!lines.empty()) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
 		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
+		CHECK(lines.front().contains(u"scheduler_trace="_q));
 		const auto duration = lines.front()
 								  .mid(u"UI stall "_q.size())
 								  .section(u' ', 0, 0)
 								  .toInt();
 		CHECK(duration >= 300);
+	}
+	const auto evidence
+		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	CHECK(!evidence.empty());
+	if (!evidence.empty()) {
+		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
+		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
+		CHECK(!evidence.back().schedulerTrace.isEmpty());
+#if defined(Q_OS_MAC)
+		CHECK(evidence.back().schedulerTrace.contains(u'R'));
+#endif
 	}
 }
 

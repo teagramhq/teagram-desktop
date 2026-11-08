@@ -786,8 +786,8 @@ awk '
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=230059167 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=230059167 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=4 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=4 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=WWWW heartbeat_gap_stack_captured=1 scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=0 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=0 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=none heartbeat_gap_stack_captured=0 scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
 Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_stall_ns=45000000 under_50ms=1.
 EOF
@@ -798,20 +798,42 @@ check_cache_latency_evidence() (
 if check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
   contract_fail 'Over-budget startup and chat-switch timings must fail the cache case.'
 fi
-sed -e 's/max_main_thread_work_ns=230059167/max_main_thread_work_ns=25000000/' \
-  -e 's/max_heartbeat_gap_work_ns=230059167/max_heartbeat_gap_work_ns=25000000/' \
+sed -e 's/heartbeat_gap_scheduler_samples=4/heartbeat_gap_scheduler_samples=24/' \
+  -e 's/heartbeat_gap_scheduler_running=0/heartbeat_gap_scheduler_running=24/' \
+  -e 's/heartbeat_gap_scheduler_waiting=4/heartbeat_gap_scheduler_waiting=0/' \
+  -e 's/heartbeat_gap_scheduler_trace=WWWW/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/' \
+  -e 's/heartbeat_gap_stack_captured=1/heartbeat_gap_stack_captured=0/' \
+  -e 's/scheduler_preemption_proven=0/scheduler_preemption_proven=1/' \
   -e 's/under_100ms=0/under_100ms=1/' \
   "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-scheduled.log"
-sed -e 's/max_main_thread_work_ns=230059167/max_main_thread_work_ns=25000000/' \
-  -e 's/max_switch_ns=45000000/max_switch_ns=45000000/' \
-  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-responsive.log"
-if ! check_cache_latency_evidence "$temp_dir/cache-latency-responsive.log" >/dev/null 2>&1; then
-  contract_fail 'Runner scheduling gaps must not fail the main-thread work budget.'
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-scheduled.log" >/dev/null 2>&1; then
+  contract_fail 'Only a matching runnable scheduler trace may excuse a long heartbeat gap.'
 fi
-sed 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=100000000/' \
-  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-startup.log"
+
+sed -e 's/heartbeat_gap_scheduler_samples=24/heartbeat_gap_scheduler_samples=0/' \
+  -e 's/heartbeat_gap_scheduler_running=24/heartbeat_gap_scheduler_running=0/' \
+  -e 's/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/heartbeat_gap_scheduler_trace=none/' \
+  -e 's/scheduler_preemption_proven=1/scheduler_preemption_proven=0/' \
+  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-no-scheduler-proof.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-no-scheduler-proof.log" >/dev/null 2>&1; then
+  contract_fail 'A long heartbeat gap without scheduler proof must not pass.'
+fi
+sed -e 's/heartbeat_gap_scheduler_running=24/heartbeat_gap_scheduler_running=23/' \
+  -e 's/heartbeat_gap_scheduler_waiting=0/heartbeat_gap_scheduler_waiting=1/' \
+  -e 's/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRW/' \
+  -e 's/scheduler_preemption_proven=1/scheduler_preemption_proven=0/' \
+  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-waiting.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-waiting.log" >/dev/null 2>&1; then
+  contract_fail 'A waiting main thread must not be classified as runner scheduling.'
+fi
+sed -e 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=100000000/' \
+  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-slow-startup.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-startup.log" >/dev/null 2>&1; then
   contract_fail 'The main-thread startup work budget must reject 100 ms or more.'
+fi
+cp "$temp_dir/cache-latency-scheduled.log" "$temp_dir/cache-latency-responsive.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-responsive.log" >/dev/null 2>&1; then
+  contract_fail 'Runner scheduling gaps must not fail the main-thread work budget.'
 fi
 sed -e 's/max_switch_ns=45000000/max_switch_ns=50000000/' \
   -e 's/max_stall_ns=45000000/max_stall_ns=50000000/' \
