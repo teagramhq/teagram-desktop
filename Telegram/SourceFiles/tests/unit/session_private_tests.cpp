@@ -678,7 +678,7 @@ void PrintCrashBacktrace(int signum) {
 	altstack.ss_sp = stack;
 	altstack.ss_size = sizeof(stack);
 	sigaltstack(&altstack, nullptr);
-	auto action = struct sigaction();
+	struct sigaction action = {};
 	action.sa_handler = PrintCrashBacktrace;
 	action.sa_flags = SA_ONSTACK;
 	sigemptyset(&action.sa_mask);
