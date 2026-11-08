@@ -44,8 +44,25 @@ struct TelegramDownloadFailure final {
 	TelegramDownloadFailureColor color;
 };
 
+using TelegramDownloadFailureSetPending = Fn<void(bool)>;
+using TelegramDownloadFailureFormatText = Fn<QString(
+	TelegramDownloadFailureMessage, const QString &)>;
+using TelegramDownloadFailureSetText = Fn<void(
+	TelegramDownloadFailureColor, QString)>;
+using TelegramDownloadFailureIsAlive = Fn<bool()>;
+
 [[nodiscard]] TelegramDownloadFailure
 TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
 								const QString &detail, bool &scanPending);
+
+[[nodiscard]] Api::TelegramStickerPackDownloader::Fail
+MakeTelegramDownloadFailureCallback(
+	Core::StickerImportScan &scan,
+	bool &scanPending,
+	TelegramDownloadFailureIsAlive isAlive,
+	TelegramDownloadFailureSetPending setPending,
+	TelegramDownloadFailureFormatText formatText,
+	TelegramDownloadFailureSetText setStatusText,
+	TelegramDownloadFailureSetText setErrorText);
 
 } // namespace Ui::StickerImport
