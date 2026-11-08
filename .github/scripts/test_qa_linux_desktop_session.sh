@@ -179,7 +179,13 @@ STUB_XDOTOOL
 
 cat > "$stub_bin/import" <<'STUB_IMPORT'
 #!/usr/bin/env bash
-printf 'stub screenshot\n' > "${@: -1}"
+destination="${@: -1}"
+printf 'stub screenshot\n' > "$destination"
+if [[ "${QA_TEST_IMPORT_FAIL:-0}" == 1 ]]; then
+	printf '%s\n' "$destination" > "${QA_TEST_IMPORT_PARTIAL_PATH:?}"
+	printf 'simulated import failure after partial output\n' >&2
+	exit 1
+fi
 STUB_IMPORT
 
 # Delay output after a matching marker to reproduce grep -q closing the pipe early.
@@ -231,6 +237,7 @@ run_helper() {
 		telegram-fail) failure_vars=(QA_TEST_TELEGRAM_FAIL=1) ;;
 		xdotool-fail) failure_vars=(QA_TEST_XDOTOOL_FAIL=1) ;;
 		initial-screenshot-fail) failure_vars=(QA_TEST_INITIAL_SCREENSHOT_FAIL=1) ;;
+		import-fail) failure_vars=(QA_TEST_IMPORT_FAIL=1) ;;
 		orphan-openbox) failure_vars=(QA_TEST_ORPHAN_OPENBOX=1) ;;
 	esac
 	if [[ "$mode" == stop ]]; then
@@ -241,6 +248,7 @@ run_helper() {
 			QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
 			QA_TEST_DISPLAY_NUMBER=99 \
 			QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
+			QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
 			QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
 			"${failure_vars[@]}" \
 			PATH="$stub_bin:$system_path" \
@@ -259,6 +267,7 @@ run_helper() {
 		QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
 		QA_TEST_DISPLAY_NUMBER=99 \
 		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
+		QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
 		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
 		"${failure_vars[@]}" \
 		PATH="$stub_bin:$system_path" \
@@ -391,6 +400,22 @@ grep -Fq 'Could not capture the initial Teagram window.' "$initial_screenshot_ou
 grep -Fq 'simulated initial geometry failure' "$initial_screenshot_output" || fail 'The xdotool geometry error should be emitted before cleanup.'
 [[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after initial screenshot failure.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after initial screenshot failure cleanup.'
+
+import_failure_output="${temp_dir}/import-failure.log"
+if run_helper import-fail "$import_failure_output"; then
+	cat "$import_failure_output" >&2
+	fail 'A failing import stub should make initial screenshot capture fail.'
+fi
+grep -Fq 'simulated import failure after partial output' "$import_failure_output" || {
+	cat "$import_failure_output" >&2
+	fail 'The import failure should remain visible in startup diagnostics.'
+}
+grep -Fq 'Could not capture the initial Teagram window.' "$import_failure_output" || fail 'A failed initial import should report screenshot capture failure.'
+partial_screenshot="$(<"${temp_dir}/import-partial-path")"
+[[ -n "$partial_screenshot" && ! -e "$partial_screenshot" ]] || fail 'The partial screenshot should not survive failed session cleanup.'
+grep -Fq 'Ready for steps:' "$import_failure_output" && fail 'A failed initial screenshot must not report the session as ready.'
+[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after import failure.'
+[[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after initial import failure cleanup.'
 
 first_helper="/tmp/qa-linux-desktop-session-test-${run_id}-first.sh"
 second_helper="/tmp/qa-linux-desktop-session-test-${run_id}-second.sh"

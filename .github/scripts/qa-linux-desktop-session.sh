@@ -407,7 +407,7 @@ capture_screenshot() {
 	WINDOW_X="$(awk -F= '$1 == "X" { print $2 }' <<<"$geometry")"
 	WINDOW_Y="$(awk -F= '$1 == "Y" { print $2 }' <<<"$geometry")"
 	[[ "$WINDOW_X" =~ ^-?[0-9]+$ && "$WINDOW_Y" =~ ^-?[0-9]+$ ]] || return 1
-	DISPLAY="$DISPLAY_VALUE" import -window "$WINDOW_ID" "$destination"
+	DISPLAY="$DISPLAY_VALUE" import -window "$WINDOW_ID" "$destination" || return 1
 	chmod 600 "$destination"
 }
 
