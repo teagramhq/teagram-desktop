@@ -40,8 +40,9 @@ TEST_CASE(InviteSignInSecretIsRedactedFromMtpDump) {
 TEST_CASE(InviteLinkSecretIsRedactedFromMtpDump) {
 	const auto secret
 		= u"https://teagram.example/#invite-secret-0123456789abcdef"_q;
-	const auto dump = DumpMessage(MTP_teagram_userInviteLink(
-		MTP_long(42), MTP_string(secret), MTP_int(1'800'000'000)));
+	const auto dump
+		= DumpMessage(MTPteagram_UserInviteLink(MTP_teagram_userInviteLink(
+			MTP_long(42), MTP_string(secret), MTP_int(1'800'000'000))));
 
 	CHECK(!dump.contains(secret));
 	CHECK(dump.contains(u"link: [REDACTED] [STRING]"_q));
