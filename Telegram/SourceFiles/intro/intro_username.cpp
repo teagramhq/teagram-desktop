@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_password_check.h"
 #include "intro/intro_signup_error.h"
 #include "intro/intro_signup_invite.h"
+#include "intro/intro_signup_invite_validation.h"
 #include "intro/intro_signup_name.h"
 #include "intro/intro_turnstile.h"
 #include "intro/intro_turnstile_request.h"
@@ -414,9 +415,10 @@ void UsernameWidget::signInDone(const MTPauth_Authorization &result) {
 		getData()->signupName.clear();
 		getData()->usernameError.clear();
 		getData()->signupNameError.clear();
-		if (account().appConfig().get<QString>(u"registration_mode"_q,
-											   QString())
-			== u"invite"_q) {
+		const auto inviteMode = account().appConfig().get<QString>(
+									u"registration_mode"_q, QString())
+								== u"invite"_q;
+		if (ShouldStartInviteStep(inviteMode, getData()->signupInviteError)) {
 			goNext<InviteWidget>();
 		} else {
 			goNext<SignUpNameWidget>();

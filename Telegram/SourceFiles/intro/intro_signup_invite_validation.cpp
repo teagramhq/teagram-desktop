@@ -28,6 +28,10 @@ QString NormalizeInviteSecret(const QString &input) {
 	return result;
 }
 
+bool ShouldStartInviteStep(bool inviteMode, bool inviteRejected) {
+	return inviteMode || inviteRejected;
+}
+
 InviteSignInFailure ClassifyInviteSignInFailure(const QString &type,
 												bool floodError) {
 	if (floodError) {

@@ -14,6 +14,7 @@ namespace {
 using Intro::details::ClassifyInviteSignInFailure;
 using Intro::details::InviteSignInFailure;
 using Intro::details::NormalizeInviteSecret;
+using Intro::details::ShouldStartInviteStep;
 
 const auto kInviteSecret
 	= u"3f9a6c0e5b2d41a7c8e9f0b1d2c3a4b5e6f708192a3b4c5d6e7f8091a2b3c4d5"_q;
@@ -55,6 +56,12 @@ TEST_CASE(ExpiredUsernameCodeOnInviteStepReturnsToUsernameEntry) {
 		  == InviteSignInFailure::UsernameCodeExpired);
 	CHECK(ClassifyInviteSignInFailure(u"PHONE_CODE_EXPIRED"_q, false)
 		  == InviteSignInFailure::UsernameCodeExpired);
+}
+
+TEST_CASE(RejectedInviteReturnsToInviteStepRegardlessOfCachedMode) {
+	CHECK(ShouldStartInviteStep(false, true));
+	CHECK(!ShouldStartInviteStep(false, false));
+	CHECK(ShouldStartInviteStep(true, false));
 }
 
 } // namespace
