@@ -75,9 +75,8 @@ TEST_CASE(RealTurnstileRpcErrorPreservesActionAndSiteKey) {
 		MTP_int(403),
 		MTP_string("RECAPTCHA_CHECK_signin__0x4AAAAAAFap1OVWss0Na2Xz")));
 	CHECK_EQ(error.code(), 403);
-	CHECK_EQ(
-		error.type(),
-		u"RECAPTCHA_CHECK_signin__0x4AAAAAAFap1OVWss0Na2Xz"_q);
+	CHECK_EQ(error.type(),
+			 u"RECAPTCHA_CHECK_signin__0x4AAAAAAFap1OVWss0Na2Xz"_q);
 	CHECK(IsTurnstileChallengeError(error.type()));
 
 	const auto challenge = ParseTurnstileChallenge(error.type());
@@ -89,19 +88,16 @@ TEST_CASE(RealTurnstileRpcErrorPreservesActionAndSiteKey) {
 }
 
 TEST_CASE(OtherRpcErrorTypesKeepTheirClassification) {
-	const auto standard = MTP::Error(MTP_rpc_error(
-		MTP_int(400),
-		MTP_string("PHONE_NUMBER_INVALID")));
+	const auto standard = MTP::Error(
+		MTP_rpc_error(MTP_int(400), MTP_string("PHONE_NUMBER_INVALID")));
 	CHECK_EQ(standard.type(), u"PHONE_NUMBER_INVALID"_q);
 	CHECK(standard.description().isEmpty());
 
-	const auto lowercase = MTP::Error(MTP_rpc_error(
-		MTP_int(403),
-		MTP_string("PHONE_number_INVALID")));
+	const auto lowercase = MTP::Error(
+		MTP_rpc_error(MTP_int(403), MTP_string("PHONE_number_INVALID")));
 	CHECK_EQ(lowercase.type(), u"CLIENT_BAD_RPC_ERROR"_q);
-	CHECK_EQ(
-		lowercase.description(),
-		u"Bad rpc error received, text = 'PHONE_number_INVALID'"_q);
+	CHECK_EQ(lowercase.description(),
+			 u"Bad rpc error received, text = 'PHONE_number_INVALID'"_q);
 }
 
 TEST_CASE(RejectsMalformedTurnstileChallengeErrors) {

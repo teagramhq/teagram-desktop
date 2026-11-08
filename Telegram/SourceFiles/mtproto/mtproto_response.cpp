@@ -32,7 +32,7 @@ Error::Error(const MTPrpcError &error)
 	static const auto Expression = QRegularExpression(
 		"^([A-Z0-9_]+|RECAPTCHA_CHECK_[A-Za-z0-9_-]+)(: .*)?$",
 		(QRegularExpression::DotMatchesEverythingOption
-			| QRegularExpression::MultilineOption));
+		 | QRegularExpression::MultilineOption));
 	const auto match = Expression.match(text);
 	if (match.hasMatch()) {
 		_type = match.captured(1);
