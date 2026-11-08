@@ -66,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_stories.h"
 #include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "data/stickers/data_stickers.h"
 #include "data/data_username_policy.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/ui/dialogs_suggestions.h"
@@ -162,6 +163,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_basic.h"
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
+#include "styles/style_settings.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QByteArray>
