@@ -13,7 +13,8 @@ namespace Ui::StickerImport {
 
 TelegramDownloadFailure
 TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
-								const QString &detail) {
+								const QString &detail, bool &scanPending) {
+	scanPending = false;
 	const auto message = [&] {
 		switch (error) {
 		case Api::TelegramStickerPackDownloadError::InvalidToken:
@@ -49,8 +50,8 @@ TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
 	}();
 	return {
 		.message = message,
-		.pending = false,
-		.isError = true,
+		.line = TelegramDownloadFailureLine::Status,
+		.color = TelegramDownloadFailureColor::Error,
 	};
 }
 

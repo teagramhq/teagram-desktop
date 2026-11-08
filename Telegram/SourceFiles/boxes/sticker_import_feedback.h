@@ -28,14 +28,24 @@ enum class TelegramDownloadFailureMessage {
 	UnsupportedFormat,
 };
 
+enum class TelegramDownloadFailureLine {
+	Status,
+	Error,
+};
+
+enum class TelegramDownloadFailureColor {
+	Normal,
+	Error,
+};
+
 struct TelegramDownloadFailure final {
 	TelegramDownloadFailureMessage message;
-	bool pending = false;
-	bool isError = true;
+	TelegramDownloadFailureLine line;
+	TelegramDownloadFailureColor color;
 };
 
 [[nodiscard]] TelegramDownloadFailure
 TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
-								const QString &detail);
+								const QString &detail, bool &scanPending);
 
 } // namespace Ui::StickerImport

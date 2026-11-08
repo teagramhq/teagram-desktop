@@ -788,10 +788,14 @@ TEST_CASE(TelegramStickerPackInvalidTokenPresentsRecoverableError) {
 	if (!result.error) {
 		return;
 	}
+	auto scanPending = true;
 	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
-		*result.error, result.detail);
-	CHECK(!feedback.pending);
-	CHECK(feedback.isError);
+		*result.error, result.detail, scanPending);
+	CHECK(!scanPending);
+	CHECK(feedback.line
+		  == Ui::StickerImport::TelegramDownloadFailureLine::Status);
+	CHECK(feedback.color
+		  == Ui::StickerImport::TelegramDownloadFailureColor::Error);
 	CHECK(feedback.message
 		  == Ui::StickerImport::TelegramDownloadFailureMessage::InvalidToken);
 }
@@ -808,10 +812,14 @@ TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
 	if (!result.error) {
 		return;
 	}
+	auto scanPending = true;
 	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
-		*result.error, result.detail);
-	CHECK(!feedback.pending);
-	CHECK(feedback.isError);
+		*result.error, result.detail, scanPending);
+	CHECK(!scanPending);
+	CHECK(feedback.line
+		  == Ui::StickerImport::TelegramDownloadFailureLine::Status);
+	CHECK(feedback.color
+		  == Ui::StickerImport::TelegramDownloadFailureColor::Error);
 	CHECK(feedback.message
 		  == Ui::StickerImport::TelegramDownloadFailureMessage::PackNotFound);
 }
@@ -826,10 +834,14 @@ TEST_CASE(TelegramStickerPackNetworkFailurePresentsRecoverableError) {
 	if (!result.error) {
 		return;
 	}
+	auto scanPending = true;
 	const auto feedback = Ui::StickerImport::TelegramDownloadFailureFeedback(
-		*result.error, result.detail);
-	CHECK(!feedback.pending);
-	CHECK(feedback.isError);
+		*result.error, result.detail, scanPending);
+	CHECK(!scanPending);
+	CHECK(feedback.line
+		  == Ui::StickerImport::TelegramDownloadFailureLine::Status);
+	CHECK(feedback.color
+		  == Ui::StickerImport::TelegramDownloadFailureColor::Error);
 	CHECK(feedback.message
 		  == Ui::StickerImport::TelegramDownloadFailureMessage::NetworkError);
 }

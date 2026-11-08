@@ -416,6 +416,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			const auto type = customEmoji->checked()
 								  ? Core::StickerImportType::Emoji
 								  : Core::StickerImportType::Stickers;
+			files->setTextColorOverride(std::nullopt);
 			state->scanPending = true;
 			setPending(true);
 			files->setText(tr::lng_teagram_sticker_import_scanning(tr::now));
@@ -549,6 +550,7 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			error->setText(QString());
 			error->setTextColorOverride(std::nullopt);
 			files->setTextColorOverride(std::nullopt);
+			files->setText(ScanDescription(state->scan));
 			const auto parsed = Core::ParseTelegramStickerPackLink(
 				telegramLink->getLastText().trimmed());
 			if (!parsed) {
@@ -604,16 +606,25 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					const auto feedback
 						= Ui::StickerImport::TelegramDownloadFailureFeedback(
-							downloadError, detail);
+							downloadError, detail, current->scanPending);
 					current->scan = {};
-					current->scanPending = feedback.pending;
-					setPending(feedback.pending);
-					if (feedback.isError) {
-						files->setTextColorOverride(st::boxTextFgError->c);
-					} else {
-						files->setTextColorOverride(std::nullopt);
+					setPending(current->scanPending);
+					const auto target
+						= (feedback.line
+						   == Ui::StickerImport::TelegramDownloadFailureLine::
+							   Status)
+							  ? files
+							  : error;
+					switch (feedback.color) {
+					case Ui::StickerImport::TelegramDownloadFailureColor::
+						Normal:
+						target->setTextColorOverride(std::nullopt);
+						break;
+					case Ui::StickerImport::TelegramDownloadFailureColor::Error:
+						target->setTextColorOverride(st::boxTextFgError->c);
+						break;
 					}
-					files->setText(
+					target->setText(
 						TelegramDownloadFailureText(feedback.message, detail));
 				},
 				[=](int count, int total) {
