@@ -7,6 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_password_check.h"
 
+#include "intro/intro_signup_error.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "intro/intro_username_validation.h"
 #include "intro/intro_widget.h"
 #include "core/core_cloud_password.h"
@@ -123,19 +126,50 @@ void PasswordCheckWidget::activate() {
 }
 
 void PasswordCheckWidget::cancelled() {
+	_turnstilePending = false;
+	Step::cancelled();
 	api().request(base::take(_sentRequest)).cancel();
 }
 
 void PasswordCheckWidget::pwdSubmitDone(
 		const MTPauth_Authorization &result) {
 	_sentRequest = 0;
+	_turnstilePending = false;
 	finish(result);
 }
 
-void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error) {
+void PasswordCheckWidget::pwdSubmitFail(const MTP::Error &error,
+										MTPInputCheckPasswordSRP check,
+										bool retried) {
 	_sentRequest = 0;
+	if (IsTurnstileChallengeError(error.type())) {
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
+		if (!challenge) {
+			LOG(("Intro Password Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			_turnstilePending = false;
+			showPasswordError(tr::lng_intro_server_error(tr::now));
+			return;
+		}
+		_turnstilePending = true;
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_turnstilePending = false;
+				sendPasswordCheck(check, std::move(token), true);
+			},
+			[=] {
+				_turnstilePending = false;
+				showPasswordError(tr::lng_intro_retry(tr::now));
+			},
+			[=](QString error) {
+				_turnstilePending = false;
+				showPasswordError(error);
+			});
+		return;
+	}
 	const auto &type = error.type();
-	switch (ClassifySigninPasswordFailure(type)) {
+	switch (ClassifySigninPasswordFailure(type, retried)) {
 	case SigninPasswordFailure::Flood:
 		showPasswordError(tr::lng_intro_signin_flood(
 			tr::now,
@@ -226,13 +260,19 @@ void PasswordCheckWidget::passwordChecked() {
 		return serverError();
 	}
 	_passwordState.mtp.request.id = 0;
-	_sentRequest = api().request(
-		MTPauth_CheckPassword(check.result)
-	).done([=](const MTPauth_Authorization &result) {
-		pwdSubmitDone(result);
-	}).fail([=](const MTP::Error &error) {
-		pwdSubmitFail(error);
-	}).handleAllErrors().send();
+	sendPasswordCheck(check.result);
+}
+
+void PasswordCheckWidget::sendPasswordCheck(MTPInputCheckPasswordSRP check,
+											QString token, bool retried) {
+	const auto retryCheck = check;
+	auto request = MTPauth_CheckPassword(std::move(check));
+	_sentRequest = SendAuthRequest(
+		api(), std::move(request), std::move(token), false,
+		[=](const MTPauth_Authorization &result) { pwdSubmitDone(result); },
+		[=](const MTP::Error &error) {
+			pwdSubmitFail(error, retryCheck, retried);
+		});
 }
 
 void PasswordCheckWidget::serverError() {
@@ -266,7 +306,7 @@ void PasswordCheckWidget::showPasswordError(const QString &text) {
 }
 
 void PasswordCheckWidget::submit() {
-	if (_sentRequest) {
+	if (_sentRequest || _turnstilePending) {
 		return;
 	}
 	const auto password = _pwdField->getLastText();

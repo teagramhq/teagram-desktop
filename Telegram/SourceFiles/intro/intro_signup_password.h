@@ -8,9 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/bytes.h"
-#include "intro/intro_step.h"
-#include "intro/intro_signup_terms.h"
 #include "core/core_cloud_password.h"
+#include "intro/intro_signup_error.h"
+#include "intro/intro_signup_terms.h"
+#include "intro/intro_step.h"
 
 #include <QtCore/QByteArray>
 
@@ -61,11 +62,14 @@ private:
 	void requestSignup();
 
 	void signUp(SignupTermsPermission, SignupRequestData request);
+	void sendSignup(SignupRequestData request, QString token = QString(),
+					bool retried = false);
 	void signUpDone(const MTPauth_Authorization &result);
-	void signUpFail(const MTP::Error &error);
-	void reissueCode();
+	void signUpFail(const MTP::Error &error, SignupRequestData request,
+					bool retried);
+	void reissueCode(QString token = QString(), bool retried = false);
 	void reissueDone(const MTPauth_SentCode &result);
-	void reissueFail(const MTP::Error &error);
+	void reissueFail(const MTP::Error &error, bool retried);
 
 	void requestPasswordData();
 	void passwordDataDone(const MTPaccount_Password &result);
@@ -89,7 +93,8 @@ private:
 	rpl::variable<bool> _backAvailable = true;
 	mtpRequestId _sentRequest = 0;
 	bool _signupDone = false;
-	bool _reissuedOnce = false;
+	SignupCodeReissueState _codeReissue;
+	bool _turnstilePending = false;
 	SignupTermsGate _termsGate;
 	bool _termsPromptPending = false;
 };

@@ -103,6 +103,7 @@ PRIVATE
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
     intro/intro_signup_terms.cpp
+    intro/intro_turnstile.cpp
     intro/intro_username_validation.cpp
     main/main_account_persistence.cpp
     storage/details/storage_file_utilities.cpp
@@ -121,6 +122,7 @@ PRIVATE
     tests/unit/export_output_string_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
+    tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
     tests/unit/sticker_import_tests.cpp

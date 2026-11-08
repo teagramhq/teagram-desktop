@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "intro/intro_turnstile.h"
+
 #include <QtCore/QString>
 
 namespace Intro::details {
@@ -44,10 +46,38 @@ struct SignupFailureDecision {
 	int floodWaitSeconds = 0;
 };
 
-[[nodiscard]] SignupFailureDecision ClassifySignupFailure(
-	const QString &errorType,
-	int errorCode,
-	bool floodError,
-	bool reissuedOnce);
+class SignupCodeReissueState final {
+  public:
+	[[nodiscard]] bool begin(bool retried) {
+		if (_reissuedOnce && !retried) {
+			return false;
+		} else if (!retried) {
+			_reissuedOnce = true;
+		}
+		return true;
+	}
+
+	[[nodiscard]] bool wasReissuedOnce() const { return _reissuedOnce; }
+
+	[[nodiscard]] bool handleChallengeError(bool retried) {
+		if (retried) {
+			_reissuedOnce = false;
+			return false;
+		}
+		return true;
+	}
+
+	void challengeAborted() { _reissuedOnce = false; }
+
+  private:
+	bool _reissuedOnce = false;
+};
+
+[[nodiscard]] SignupFailureDecision
+ClassifySignupFailure(const QString &errorType, int errorCode, bool floodError,
+					  bool reissuedOnce, bool retried = false);
+
+[[nodiscard]] std::optional<TurnstileChallenge>
+ClassifyTurnstileFailure(QStringView errorType, bool retried);
 
 } // namespace Intro::details

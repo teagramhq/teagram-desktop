@@ -11,6 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_code.h"
 #include "intro/intro_email.h"
 #include "intro/intro_qr.h"
+#include "intro/intro_signup_error.h"
+#include "intro/intro_turnstile.h"
+#include "intro/intro_turnstile_request.h"
 #include "styles/style_intro.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
@@ -159,7 +162,7 @@ void PhoneWidget::phoneChanged() {
 }
 
 void PhoneWidget::submit() {
-	if (_sentRequest || isHidden()) {
+	if (_sentRequest || _turnstilePending || isHidden()) {
 		return;
 	}
 
@@ -199,24 +202,22 @@ void PhoneWidget::submit() {
 
 	hidePhoneError();
 
-	_checkRequestTimer.callEach(1000);
-
 	_sentPhone = phone;
 	api().instance().setUserPhone(_sentPhone);
-	_sentRequest = api().request(MTPauth_SendCode(
-		MTP_string(_sentPhone),
-		MTP_int(ApiId),
-		MTP_string(ApiHash),
-		MTP_codeSettings(
-			MTP_flags(0),
-			MTPVector<MTPbytes>(),
-			MTPstring(),
-			MTPBool())
-	)).done([=](const MTPauth_SentCode &result) {
-		phoneSubmitDone(result);
-	}).fail([=](const MTP::Error &error) {
-		phoneSubmitFail(error);
-	}).handleFloodErrors().send();
+	sendCode();
+}
+
+void PhoneWidget::sendCode(QString token, bool retried) {
+	_checkRequestTimer.callEach(1000);
+	_sentRequest = SendAuthRequest(
+		api(),
+		MTPauth_SendCode(MTP_string(_sentPhone), MTP_int(ApiId),
+						 MTP_string(ApiHash),
+						 MTP_codeSettings(MTP_flags(0), MTPVector<MTPbytes>(),
+										  MTPstring(), MTPBool())),
+		std::move(token), true,
+		[=](const MTPauth_SentCode &result) { phoneSubmitDone(result); },
+		[=](const MTP::Error &error) { phoneSubmitFail(error, retried); });
 }
 
 void PhoneWidget::stopCheck() {
@@ -264,7 +265,35 @@ void PhoneWidget::phoneSubmitDone(const MTPauth_SentCode &result) {
 	});
 }
 
-void PhoneWidget::phoneSubmitFail(const MTP::Error &error) {
+void PhoneWidget::phoneSubmitFail(const MTP::Error &error, bool retried) {
+	if (IsTurnstileChallengeError(error.type())) {
+		stopCheck();
+		_sentRequest = 0;
+		const auto challenge = ClassifyTurnstileFailure(error.type(), retried);
+		if (!challenge) {
+			LOG(("Intro Phone Error: Turnstile challenge rejected with %1")
+					.arg(error.type()));
+			showPhoneError(tr::lng_intro_server_error());
+			return;
+		}
+		_turnstilePending = true;
+		showTurnstileChallenge(
+			*challenge,
+			[=](QString token) {
+				_turnstilePending = false;
+				hidePhoneError();
+				sendCode(std::move(token), true);
+			},
+			[=] {
+				_turnstilePending = false;
+				showPhoneError(tr::lng_intro_retry());
+			},
+			[=](QString error) {
+				_turnstilePending = false;
+				showPhoneError(rpl::single(std::move(error)));
+			});
+		return;
+	}
 	if (MTP::IsFloodError(error)) {
 		stopCheck();
 		_sentRequest = 0;
@@ -313,6 +342,8 @@ void PhoneWidget::finished() {
 }
 
 void PhoneWidget::cancelled() {
+	_turnstilePending = false;
+	Step::cancelled();
 	api().request(base::take(_sentRequest)).cancel();
 }
 
