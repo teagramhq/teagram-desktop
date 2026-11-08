@@ -509,8 +509,11 @@ HistoryWidget::HistoryWidget(
 	initTabbedSelector();
 
 	_attachToggle->setClickedCallback([=] {
-		const auto toggle = _attachBotsMenu && _attachBotsMenu->isHidden();
+		const auto toggle = !_attachBotsMenu || _attachBotsMenu->isHidden();
 		base::call_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
+			if (!_attachBotsMenu) {
+				refreshAttachBotsMenu();
+			}
 			if (_attachBotsMenu && toggle) {
 				_attachBotsMenu->showAnimated();
 			} else {
@@ -651,17 +654,21 @@ HistoryWidget::HistoryWidget(
 	_botCommandStart->hide();
 
 	session().attachWebView().requestBots();
-	rpl::merge(
-		session().attachWebView().attachBotsUpdates(),
-		session().changes().peerUpdates(
-			Data::PeerUpdate::Flag::Rights
-			| Data::PeerUpdate::Flag::StarsPerMessage
-		) | rpl::filter([=](const Data::PeerUpdate &update) {
-			return update.peer == _peer;
-		}) | rpl::to_empty
-	) | rpl::on_next([=] {
-		refreshAttachBotsMenu();
-	}, lifetime());
+	rpl::merge(session().attachWebView().attachBotsUpdates(),
+			   session().changes().peerUpdates(
+				   Data::PeerUpdate::Flag::Rights
+				   | Data::PeerUpdate::Flag::StarsPerMessage)
+				   | rpl::filter([=](const Data::PeerUpdate &update) {
+						 return update.peer == _peer;
+					 })
+				   | rpl::to_empty)
+		| rpl::on_next(
+			[=] {
+				if (_attachBotsMenu) {
+					refreshAttachBotsMenu();
+				}
+			},
+			lifetime());
 
 	_botKeyboardShow->addClickHandler([=] { toggleKeyboard(); });
 	_botKeyboardHide->addClickHandler([=] { toggleKeyboard(); });
@@ -3353,14 +3360,12 @@ void HistoryWidget::setHistory(History *history) {
 	}
 	_pullToNext->setHistory(history);
 
-	const auto was = _attachBotsMenu && _history && _history->peer->isUser();
-	const auto now = _attachBotsMenu && history && history->peer->isUser();
-	if (was && !now) {
+	if (_attachBotsMenu) {
 		_attachToggle->removeEventFilter(_attachBotsMenu.get());
 		_attachBotsMenu->hideFast();
-	} else if (now && !was && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu.get());
 	}
+	_attachBotsMenu = nullptr;
+	_attachToggle->removeEventFilter(this);
 
 	const auto unloadHeavyViewParts = [](History *history) {
 		if (history) {
@@ -3397,7 +3402,9 @@ void HistoryWidget::setHistory(History *history) {
 			_preview = nullptr;
 		}
 	}
-	refreshAttachBotsMenu();
+	if (_history && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
 }
 
 void HistoryWidget::setupPreview() {
@@ -3438,6 +3445,11 @@ void HistoryWidget::injectSponsoredMessages() const {
 }
 
 void HistoryWidget::refreshAttachBotsMenu() {
+	if (_attachBotsMenu) {
+		_attachToggle->removeEventFilter(_attachBotsMenu.get());
+		_attachBotsMenu->hideFast();
+	}
+	_attachToggle->removeEventFilter(this);
 	_attachBotsMenu = nullptr;
 	if (!_history) {
 		return;
@@ -3456,6 +3468,9 @@ void HistoryWidget::refreshAttachBotsMenu() {
 			migrateFieldToRichEditor();
 		}));
 	if (!_attachBotsMenu) {
+		if (!ChatHelpers::ShowPanelOnClick() && _history) {
+			_attachToggle->installEventFilter(this);
+		}
 		return;
 	}
 	_attachBotsMenu->setOrigin(
@@ -6449,6 +6464,14 @@ void HistoryWidget::insertTextAtCursor(const QString &text) {
 }
 
 bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {
+	if (obj == _attachToggle.get() && e->type() == QEvent::Enter
+		&& !_attachBotsMenu) {
+		refreshAttachBotsMenu();
+		if (_attachBotsMenu) {
+			_attachBotsMenu->showAnimated();
+		}
+		return false;
+	}
 	if (e->type() == QEvent::KeyPress) {
 		const auto k = static_cast<QKeyEvent*>(e);
 		if ((k->modifiers() & kCommonModifiers) == Qt::ControlModifier) {

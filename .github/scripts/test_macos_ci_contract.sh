@@ -786,39 +786,58 @@ awk '
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_stall_ns=230059167 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_stall_ns=48247625 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=230059167 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=230059167 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=51000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_stall_ns=45000000 under_50ms=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
   source "$temp_dir/cache-latency-check.sh"
 )
-cache_latency_report="$(check_cache_latency_evidence "$temp_dir/cache-latency.log" 2>/dev/null)" \
-  || contract_fail 'Chat switch and startup-gap timing must be report-only.'
-[[ "$cache_latency_report" == *'max_main_thread_stall_ns=230059167 under_100ms=0'* \
-  && "$cache_latency_report" == *'max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0'* ]] \
-  || contract_fail 'The report-only timings must appear in the workflow log.'
+if check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
+  contract_fail 'Over-budget startup and chat-switch timings must fail the cache case.'
+fi
+sed -e 's/max_main_thread_work_ns=230059167/max_main_thread_work_ns=25000000/' \
+  -e 's/max_heartbeat_gap_work_ns=230059167/max_heartbeat_gap_work_ns=25000000/' \
+  -e 's/under_100ms=0/under_100ms=1/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-scheduled.log"
+sed -e 's/max_main_thread_work_ns=230059167/max_main_thread_work_ns=25000000/' \
+  -e 's/max_switch_ns=45000000/max_switch_ns=45000000/' \
+  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-responsive.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-responsive.log" >/dev/null 2>&1; then
+  contract_fail 'Runner scheduling gaps must not fail the main-thread work budget.'
+fi
+sed 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=100000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-startup.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-startup.log" >/dev/null 2>&1; then
+  contract_fail 'The main-thread startup work budget must reject 100 ms or more.'
+fi
+sed -e 's/max_switch_ns=45000000/max_switch_ns=50000000/' \
+  -e 's/max_stall_ns=45000000/max_stall_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-switch.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-switch.log" >/dev/null 2>&1; then
+  contract_fail 'The chat-switch work budget must reject 50 ms or more.'
+fi
 for field in reactions=73 hydrated_documents=292 chat_switches=73; do
   sed "s/$field/${field%%=*}=0/" \
-    "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-incomplete-switch.log"
+    "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-incomplete-switch.log"
   if check_cache_latency_evidence "$temp_dir/cache-latency-incomplete-switch.log" >/dev/null 2>&1; then
     contract_fail "Incomplete $field must remain a gate."
   fi
 done
 sed 's/minimized_restore=1/minimized_restore=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-unrestored.log"
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-unrestored.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-unrestored.log" >/dev/null 2>&1; then
   contract_fail 'The minimized window must be restored.'
 fi
 sed 's/max_handler_ns=9893666 under_50ms=1/max_handler_ns=9893666 under_50ms=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-dialogs.log"
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-bad-dialogs.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-dialogs.log" >/dev/null 2>&1; then
   contract_fail 'The first getDialogs timing must remain a gate.'
 fi
 sed 's/root_swap_refused=1/root_swap_refused=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-protection.log"
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-bad-protection.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-protection.log" >/dev/null 2>&1; then
   contract_fail 'The cache root-swap protection must remain a gate.'
 fi
@@ -857,11 +876,6 @@ grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
 grep -Fq 'result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds' \
   "$native_harness" \
   || contract_fail 'The minimized restore sample must contribute to the max switch report.'
-if grep -Fq '&& (maxMainThreadStallNanoseconds <' "$native_harness" \
-  || grep -Fq '< kMaxMinimizedRestoreNanoseconds' "$native_harness" \
-  || grep -Fq '&& (result.maxStallNanoseconds <' "$native_harness"; then
-  contract_fail 'Chat switch and startup-gap timing must not fail the cache case.'
-fi
 grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
   || contract_fail 'The chat switch completion and restore checks must remain a gate.'
 grep -Fq 'completed && !timedOut' "$native_harness" \

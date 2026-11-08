@@ -169,6 +169,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDataStream>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
 #include <QtCore/QElapsedTimer>
@@ -192,6 +193,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeySequence>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
+
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#include <mach/mach.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -10185,6 +10190,35 @@ struct NativeLifecycleResults {
 }
 
 constexpr auto kMaxMinimizedRestoreNanoseconds = qint64(50'000'000);
+constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
+
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+[[nodiscard]] std::optional<qint64> MainThreadCpuTimeNanoseconds() {
+	const auto thread = mach_thread_self();
+	if (thread == MACH_PORT_NULL) {
+		return std::nullopt;
+	}
+	auto info = thread_basic_info_data_t();
+	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
+	const auto infoResult
+		= thread_info(thread, THREAD_BASIC_INFO,
+					  reinterpret_cast<thread_info_t>(&info), &count);
+	const auto releaseResult = mach_port_deallocate(mach_task_self(), thread);
+	if (infoResult != KERN_SUCCESS || releaseResult != KERN_SUCCESS) {
+		std::fprintf(stderr,
+					 "Main thread CPU clock failed: info=%d release=%d.\n",
+					 infoResult, releaseResult);
+		return std::nullopt;
+	}
+	const auto userNanoseconds = (qint64(info.user_time.seconds) * 1'000'000
+								  + info.user_time.microseconds)
+								 * 1'000;
+	const auto systemNanoseconds = (qint64(info.system_time.seconds) * 1'000'000
+									+ info.system_time.microseconds)
+								   * 1'000;
+	return userNanoseconds + systemNanoseconds;
+}
+#endif
 
 struct CacheChatSwitchRegressionResult final {
 	int reactions = 0;
@@ -10331,15 +10365,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.maxStallNanoseconds = std::max(result.maxHydrationNanoseconds,
 										  result.maxChatSwitchNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
-	result.passed = completed && !timedOut
-					&& (result.reactions == kReactionCount)
-					&& (result.hydratedDocuments
-						== kReactionCount * kDocumentsPerReaction)
-					&& (result.chatSwitches == kExpectedChatSwitches)
-					&& (result.cachedDocuments
-						== (kReactionCount / 2 + 1) * kDocumentsPerReaction)
-					&& result.minimizedRestore
-					&& (result.minimizedSwitchNanoseconds >= 0);
+	result.passed
+		= completed && !timedOut && (result.reactions == kReactionCount)
+		  && (result.hydratedDocuments
+			  == kReactionCount * kDocumentsPerReaction)
+		  && (result.chatSwitches == kExpectedChatSwitches)
+		  && (result.cachedDocuments
+			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
+		  && (result.maxChatSwitchNanoseconds < kMaxChatSwitchNanoseconds);
 	return result;
 }
 
@@ -10710,21 +10744,49 @@ void RunAuthenticatedCacheSymlinkCases(
 			cacheInitializationTimer.start();
 			auto mainThreadHeartbeatClock = QElapsedTimer();
 			mainThreadHeartbeatClock.start();
-			auto lastMainThreadHeartbeatNanoseconds = qint64(0);
-			auto maxMainThreadStallNanoseconds = qint64(0);
+			auto lastMainThreadHeartbeatNanoseconds
+				= mainThreadHeartbeatClock.nsecsElapsed();
+			auto maxMainThreadWorkNanoseconds = qint64(0);
+			auto maxHeartbeatGapNanoseconds = qint64(0);
+			auto maxHeartbeatGapWorkNanoseconds = qint64(-1);
+			auto lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
+			auto maxHeartbeatGapStartedAt = QString();
+			auto lastMainThreadCpuNanoseconds = MainThreadCpuTimeNanoseconds();
+			auto mainThreadCpuClockAvailable
+				= lastMainThreadCpuNanoseconds.has_value();
+			const auto recordMainThreadHeartbeat = [&] {
+				const auto now = mainThreadHeartbeatClock.nsecsElapsed();
+				const auto wallGapNanoseconds
+					= now - lastMainThreadHeartbeatNanoseconds;
+				const auto currentMainThreadCpuNanoseconds
+					= MainThreadCpuTimeNanoseconds();
+				auto workNanoseconds = qint64(-1);
+				if (currentMainThreadCpuNanoseconds
+					&& lastMainThreadCpuNanoseconds) {
+					workNanoseconds = std::max(
+						qint64(0), *currentMainThreadCpuNanoseconds
+									   - *lastMainThreadCpuNanoseconds);
+					maxMainThreadWorkNanoseconds = std::max(
+						maxMainThreadWorkNanoseconds, workNanoseconds);
+				} else {
+					mainThreadCpuClockAvailable = false;
+				}
+				if (wallGapNanoseconds > maxHeartbeatGapNanoseconds) {
+					maxHeartbeatGapNanoseconds = wallGapNanoseconds;
+					maxHeartbeatGapWorkNanoseconds = workNanoseconds;
+					maxHeartbeatGapStartedAt
+						= lastMainThreadHeartbeatAt.toString(Qt::ISODateWithMs);
+				}
+				lastMainThreadHeartbeatNanoseconds = now;
+				lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
+				lastMainThreadCpuNanoseconds = currentMainThreadCpuNanoseconds;
+			};
 			auto mainThreadHeartbeat = QTimer();
 			mainThreadHeartbeat.setInterval(10);
 			mainThreadHeartbeat.setTimerType(Qt::PreciseTimer);
 			QObject::connect(&mainThreadHeartbeat, &QTimer::timeout,
-							 &mainThreadHeartbeat, [&] {
-								 const auto now
-									 = mainThreadHeartbeatClock.nsecsElapsed();
-								 maxMainThreadStallNanoseconds = std::max(
-									 maxMainThreadStallNanoseconds,
-									 now - lastMainThreadHeartbeatNanoseconds);
-								 lastMainThreadHeartbeatNanoseconds = now;
-							 });
-			mainThreadHeartbeatClock.start();
+							 &mainThreadHeartbeat,
+							 [&] { recordMainThreadHeartbeat(); });
 			mainThreadHeartbeat.start();
 			if (!guarded->createSession(
 					RegressionUser(selfId, true, QString()),
@@ -10823,11 +10885,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				return true;
 			});
 			mainThreadHeartbeat.stop();
-			const auto heartbeatAtCompletion
-				= mainThreadHeartbeatClock.nsecsElapsed();
-			maxMainThreadStallNanoseconds = std::max(
-				maxMainThreadStallNanoseconds,
-				heartbeatAtCompletion - lastMainThreadHeartbeatNanoseconds);
+			recordMainThreadHeartbeat();
+			const auto mainThreadWorkWithinBound
+				= mainThreadCpuClockAvailable
+				  && (maxMainThreadWorkNanoseconds < 100'000'000);
 			const auto first = (firstCache != nullptr);
 			const auto second
 				= (getAllowedCache() != nullptr) && (getCache() != nullptr);
@@ -10929,6 +10990,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				= Core::MacProtectedPath::CachePathWalkCountForTesting();
 			const auto mainThreadWalks = Core::MacProtectedPath::
 				CachePathWalkMainThreadCountForTesting();
+			const auto heartbeatGapStartedAtUtf8
+				= maxHeartbeatGapStartedAt.toUtf8();
 			std::fprintf(stderr,
 						 "Cache access latency regression: cache=%s "
 						 "seeded_directories=125 seeded_files=169 "
@@ -10937,7 +11000,10 @@ void RunAuthenticatedCacheSymlinkCases(
 						 "initialization_allowed=%d "
 						 "queued_ops_before_ready=%d queued_ops_passed=%d "
 						 "cache_usable_ns=%lld under_10s=%d "
-						 "max_main_thread_stall_ns=%lld under_100ms=%d "
+						 "max_main_thread_work_ns=%lld "
+						 "max_heartbeat_gap_ns=%lld "
+						 "max_heartbeat_gap_work_ns=%lld "
+						 "heartbeat_gap_started_at=%s under_100ms=%d "
 						 "first_access_ns=%lld under_50ms=%d "
 						 "root_swap_refused=%d direct_fallback_closed=%d "
 						 "root_restored=%d startup_walks=%d "
@@ -10950,8 +11016,11 @@ void RunAuthenticatedCacheSymlinkCases(
 						 queuedOperationsPassed,
 						 static_cast<long long>(cacheUsableNanoseconds),
 						 cacheUsableWithinBound,
-						 static_cast<long long>(maxMainThreadStallNanoseconds),
-						 (maxMainThreadStallNanoseconds < 100'000'000),
+						 static_cast<long long>(maxMainThreadWorkNanoseconds),
+						 static_cast<long long>(maxHeartbeatGapNanoseconds),
+						 static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
+						 heartbeatGapStartedAtUtf8.constData(),
+						 mainThreadWorkWithinBound,
 						 static_cast<long long>(firstAccessNanoseconds),
 						 (firstAccessNanoseconds < 50'000'000),
 						 swappedRootRefused, directFallbackClosed,
@@ -10964,6 +11033,7 @@ void RunAuthenticatedCacheSymlinkCases(
 								&& cacheUsableWithinBound && (startupWalks == 2)
 								&& (mainThreadWalks == 0) && swappedRootRefused
 								&& directFallbackClosed && rootRestoreSucceeded
+								&& mainThreadWorkWithinBound
 								&& (mediaCache || chatSwitch.passed)
 								&& (mediaCache || dialogsHandler.passed)
 								&& (firstAccessNanoseconds < 50'000'000);
