@@ -14740,8 +14740,6 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (!controller || (&controller->session() != &sender->session())) {
 		return fail("sender session controller was not created");
 	}
-	const auto senderController
-		= not_null<Window::SessionController *>(controller);
 
 	const auto emoji = sender->session().data().processDocument(
 		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
