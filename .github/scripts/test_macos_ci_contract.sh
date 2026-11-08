@@ -920,7 +920,9 @@ grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cp
   || contract_fail 'The cache regression must time attach-menu hover after a chat switch.'
 grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
   && grep -Fq 'schedulerEvidenceMatched' "$native_harness" \
-  && grep -Fq 'No startup heartbeat-gap stall evidence matched within 1000 ms.' "$native_harness" \
+  && stall_diagnostic="$(grep -A 1 -F 'No startup heartbeat-gap stall evidence' "$native_harness")" \
+  && grep -Fq 'No startup heartbeat-gap stall evidence ' <<< "$stall_diagnostic" \
+  && grep -Fq 'matched within 1000 ms.' <<< "$stall_diagnostic" \
   || contract_fail 'The cache regression must require low process CPU and report unmatched stall evidence.'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
