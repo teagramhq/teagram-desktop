@@ -792,8 +792,8 @@ TEST_CASE(TelegramStickerPackInvalidTokenPresentsRecoverableError) {
 		*result.error, result.detail);
 	CHECK(!feedback.pending);
 	CHECK(feedback.isError);
-	CHECK(feedback.text.contains(u"rejected"_q));
-	CHECK(feedback.text.contains(u"try again"_q));
+	CHECK(feedback.message.contains(u"rejected"_q));
+	CHECK(feedback.message.contains(u"try again"_q));
 }
 
 TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
@@ -812,7 +812,7 @@ TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
 		*result.error, result.detail);
 	CHECK(!feedback.pending);
 	CHECK(feedback.isError);
-	CHECK(feedback.text.contains(u"couldn't find"_q));
+	CHECK(feedback.message.contains(u"couldn't find"_q));
 }
 
 TEST_CASE(TelegramStickerPackNetworkFailurePresentsRecoverableError) {
@@ -829,7 +829,7 @@ TEST_CASE(TelegramStickerPackNetworkFailurePresentsRecoverableError) {
 		*result.error, result.detail);
 	CHECK(!feedback.pending);
 	CHECK(feedback.isError);
-	CHECK(feedback.text.contains(u"connect"_q));
+	CHECK(feedback.message.contains(u"connect"_q));
 }
 
 TEST_CASE(TelegramStickerPackRefusesRedirectsAndForeignResponses) {
