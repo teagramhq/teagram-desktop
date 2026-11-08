@@ -398,9 +398,9 @@ class ScriptedConnection final : public details::AbstractConnection {
 				connected();
 			} else {
 				error(!_webSocketEndpoint.isEmpty()
-						&& _log->webSocketBrowserOnly
-					? kErrorCodeBrowserOnly
-					: kErrorCodeOther);
+							  && _log->webSocketBrowserOnly
+						  ? kErrorCodeBrowserOnly
+						  : kErrorCodeOther);
 			}
 		});
 	}
@@ -674,14 +674,8 @@ TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
 TEST_CASE(ServerConnectionStopsAfterBrowserOnlyWebSocketRefusal) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(
-		false,
-		false,
-		endpoint,
-		ProxyData::Type::None,
-		u"demo.example.com"_q,
-		false,
-		false,
-		{ QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q) },
+		false, false, endpoint, ProxyData::Type::None, u"demo.example.com"_q,
+		false, false, {QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q)},
 		true);
 	CHECK(!result.connected);
 	CHECK(result.failed);
@@ -844,8 +838,8 @@ TEST_CASE(WebSocketUpgradeWaitsForTheWholeResponse) {
 
 TEST_CASE(WebSocketUpgradeRecognizesBrowserOnlyPolicyRefusal) {
 	auto incoming = QByteArray("HTTP/1.1 403 Forbidden\r\n"
-							  "tEaGrAm-cLiEnT-pOlIcY: browser-only\r\n"
-							  "\r\n");
+							   "tEaGrAm-cLiEnT-pOlIcY: browser-only\r\n"
+							   "\r\n");
 	auto error = QString();
 	const auto result
 		= details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error);
@@ -859,9 +853,8 @@ TEST_CASE(WebSocketUpgradeRejects403WithoutBrowserOnlyPolicy) {
 
 TEST_CASE(WebSocketUpgradeIgnoresBrowserOnlyPolicyOutside403) {
 	auto incoming = ValidUpgradeResponse();
-	incoming.replace(
-		"\r\n\r\n",
-		"\r\nTeagram-Client-Policy: browser-only\r\n\r\n");
+	incoming.replace("\r\n\r\n",
+					 "\r\nTeagram-Client-Policy: browser-only\r\n\r\n");
 	auto error = QString();
 	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
 		  == details::WebSocketUpgradeResult::Accepted);
@@ -869,8 +862,8 @@ TEST_CASE(WebSocketUpgradeIgnoresBrowserOnlyPolicyOutside403) {
 
 TEST_CASE(WebSocketUpgradeRequiresExactBrowserOnlyPolicyValue) {
 	auto incoming = QByteArray("HTTP/1.1 403 Forbidden\r\n"
-							  "Teagram-Client-Policy: Browser-only\r\n"
-							  "\r\n");
+							   "Teagram-Client-Policy: Browser-only\r\n"
+							   "\r\n");
 	auto error = QString();
 	CHECK(details::ParseWebSocketUpgrade(incoming, kUpgradeKey, error)
 		  == details::WebSocketUpgradeResult::Rejected);

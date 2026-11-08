@@ -142,7 +142,7 @@ public:
 	static constexpr auto kErrorCodeOther = -499;
 	static constexpr auto kErrorCodeBrowserOnly = -498;
 
-Q_SIGNALS:
+  Q_SIGNALS:
 	void receivedData();
 	void receivedSome(); // to stop restart timer
 

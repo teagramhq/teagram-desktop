@@ -97,7 +97,7 @@ void SessionData::queuePinnedServerFailure(
 }
 
 void SessionData::queueBrowserOnlyServerRefused() {
-	withSession([](not_null<Session*> session) {
+	withSession([](not_null<Session *> session) {
 		session->browserOnlyServerRefused();
 	});
 }

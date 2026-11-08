@@ -664,9 +664,8 @@ void TcpConnection::socketError() {
 		return;
 	}
 
-	error(_socket->isBrowserOnlyRefusal()
-		? kErrorCodeBrowserOnly
-		: kErrorCodeOther);
+	error(_socket->isBrowserOnlyRefusal() ? kErrorCodeBrowserOnly
+										  : kErrorCodeOther);
 }
 
 TcpConnection::~TcpConnection() = default;

@@ -186,10 +186,10 @@ Widget::Widget(
 		getStep()->showError(rpl::single(text));
 	}, lifetime());
 
-	_account->mtp().browserOnlyServerRefused(
-	) | rpl::on_next([=] {
-		getStep()->showError(tr::lng_intro_server_browser_only());
-	}, lifetime());
+	_account->mtp().browserOnlyServerRefused()
+		| rpl::on_next(
+			[=] { getStep()->showError(tr::lng_intro_server_browser_only()); },
+			lifetime());
 
 	_back->entity()->setClickedCallback([=] { backRequested(); });
 	_back->entity()->setAccessibleName(tr::lng_go_back(tr::now));

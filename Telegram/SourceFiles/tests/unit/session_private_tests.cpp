@@ -205,13 +205,10 @@ class SessionPrivateTestAccess final {
 		session.setState(ConnectingState);
 	}
 
-	static void BrowserOnlyError(
-			SessionPrivate &session,
-			not_null<AbstractConnection *> connection) {
-		session.onError(
-			connection,
-			AbstractConnection::kErrorCodeBrowserOnly,
-			{});
+	static void BrowserOnlyError(SessionPrivate &session,
+								 not_null<AbstractConnection *> connection) {
+		session.onError(connection, AbstractConnection::kErrorCodeBrowserOnly,
+						{});
 	}
 
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
@@ -635,10 +632,10 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
 	auto session = SessionPrivateTestAccess::Create(data);
 	auto connection = ConnectionPointer::New<FakeTransport>(
-		QThread::currentThread(), ProxyData(), std::make_shared<TransportLog>());
+		QThread::currentThread(), ProxyData(),
+		std::make_shared<TransportLog>());
 	SessionPrivateTestAccess::BrowserOnlyError(
-		*session,
-		not_null<AbstractConnection *>(connection.get()));
+		*session, not_null<AbstractConnection *>(connection.get()));
 
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
