@@ -655,19 +655,18 @@ HistoryWidget::HistoryWidget(
 
 	session().attachWebView().requestBots();
 	session().attachWebView().attachBotsUpdates()
-	| rpl::on_next([=] {
-		invalidateAttachBotsMenuCache();
-	}, lifetime());
-	session().changes().peerUpdates(
-		Data::PeerUpdate::Flag::Rights
-		| Data::PeerUpdate::Flag::StarsPerMessage)
-	| rpl::filter([=](const Data::PeerUpdate &update) {
-		return _attachBotsMenuCache.find(update.peer)
-			!= end(_attachBotsMenuCache);
-	})
-	| rpl::on_next([=](const Data::PeerUpdate &update) {
-		invalidateAttachBotsMenuCache(update.peer);
-	}, lifetime());
+		| rpl::on_next([=] { invalidateAttachBotsMenuCache(); }, lifetime());
+	session().changes().peerUpdates(Data::PeerUpdate::Flag::Rights
+									| Data::PeerUpdate::Flag::StarsPerMessage)
+		| rpl::filter([=](const Data::PeerUpdate &update) {
+			  return _attachBotsMenuCache.find(update.peer)
+					 != end(_attachBotsMenuCache);
+		  })
+		| rpl::on_next(
+			[=](const Data::PeerUpdate &update) {
+				invalidateAttachBotsMenuCache(update.peer);
+			},
+			lifetime());
 
 	_botKeyboardShow->addClickHandler([=] { toggleKeyboard(); });
 	_botKeyboardHide->addClickHandler([=] { toggleKeyboard(); });
@@ -3466,18 +3465,11 @@ void HistoryWidget::refreshAttachBotsMenu() {
 	++_attachMenuBuildCountForRegressionTest;
 #endif
 	auto menu = InlineBots::MakeAttachBotsMenu(
-		this,
-		controller(),
-		peer,
-		[=] { return prepareSendAction({}); },
+		this, controller(), peer, [=] { return prepareSendAction({}); },
 		[=] { return sendMenuDetails(); },
 		[=](bool compress) { chooseAttach(compress); },
-		crl::guard(this, [=] {
-			return _field->getTextWithAppliedMarkdown();
-		}),
-		crl::guard(this, [=] {
-			migrateFieldToRichEditor();
-		}));
+		crl::guard(this, [=] { return _field->getTextWithAppliedMarkdown(); }),
+		crl::guard(this, [=] { migrateFieldToRichEditor(); }));
 	const auto inserted = _attachBotsMenuCache.emplace(peer, std::move(menu));
 	_attachBotsMenu = inserted.first->second.get();
 	if (!_attachBotsMenu) {
@@ -3507,8 +3499,7 @@ void HistoryWidget::invalidateAttachBotsMenuCache() {
 	}
 }
 
-void HistoryWidget::invalidateAttachBotsMenuCache(
-		not_null<PeerData*> peer) {
+void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
 	const auto i = _attachBotsMenuCache.find(peer);
 	if (i == end(_attachBotsMenuCache)) {
 		return;
@@ -3545,8 +3536,8 @@ void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
 
 bool HistoryWidget::attachBotsMenuBuiltForCurrentPeer() const {
 	return _history
-		&& (_attachBotsMenuCache.find(_history->peer)
-			!= end(_attachBotsMenuCache));
+		   && (_attachBotsMenuCache.find(_history->peer)
+			   != end(_attachBotsMenuCache));
 }
 
 void HistoryWidget::unregisterDraftSources() {

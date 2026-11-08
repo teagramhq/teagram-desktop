@@ -2482,7 +2482,7 @@ int AttachWebView::unavailableToastCountForRegressionTest() const {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 void AttachWebView::setAttachBotsForRegressionTest(
-		std::vector<AttachWebViewBot> bots) {
+	std::vector<AttachWebViewBot> bots) {
 	_attachBots = std::move(bots);
 	_attachBotsUpdates.fire({});
 }

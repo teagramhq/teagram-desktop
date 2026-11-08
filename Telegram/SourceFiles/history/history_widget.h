@@ -792,7 +792,7 @@ private:
 	void refreshSendAsToggle();
 	void refreshAttachBotsMenu();
 	void invalidateAttachBotsMenuCache();
-	void invalidateAttachBotsMenuCache(not_null<PeerData*> peer);
+	void invalidateAttachBotsMenuCache(not_null<PeerData *> peer);
 	void activateCachedAttachBotsMenuForCurrentPeer();
 	[[nodiscard]] bool attachBotsMenuBuiltForCurrentPeer() const;
 
@@ -992,7 +992,7 @@ private:
 
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
-	base::flat_map<not_null<PeerData*>, std::unique_ptr<Ui::DropdownMenu>>
+	base::flat_map<not_null<PeerData *>, std::unique_ptr<Ui::DropdownMenu>>
 		_attachBotsMenuCache;
 	Ui::DropdownMenu *_attachBotsMenu = nullptr;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION

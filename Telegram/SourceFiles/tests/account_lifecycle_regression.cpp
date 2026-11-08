@@ -10234,9 +10234,9 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 	}();
 	auto info = task_absolutetime_info_data_t();
 	auto count = mach_msg_type_number_t(TASK_ABSOLUTETIME_INFO_COUNT);
-	const auto infoResult = task_info(
-		mach_task_self(), TASK_ABSOLUTETIME_INFO,
-		reinterpret_cast<task_info_t>(&info), &count);
+	const auto infoResult
+		= task_info(mach_task_self(), TASK_ABSOLUTETIME_INFO,
+					reinterpret_cast<task_info_t>(&info), &count);
 	if (infoResult != KERN_SUCCESS) {
 		std::fprintf(stderr, "Process CPU clock failed: task_info=%d.\n",
 					 infoResult);
@@ -10245,9 +10245,10 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 	const auto &timebase = timebaseInfo.value;
 	if (timebaseInfo.result != KERN_SUCCESS || !timebase.numer
 		|| !timebase.denom) {
-		std::fprintf(stderr,
-					 "Process CPU clock failed: timebase=%d numer=%u denom=%u.\n",
-					 timebaseInfo.result, timebase.numer, timebase.denom);
+		std::fprintf(
+			stderr,
+			"Process CPU clock failed: timebase=%d numer=%u denom=%u.\n",
+			timebaseInfo.result, timebase.numer, timebase.denom);
 		return std::nullopt;
 	}
 	if (info.total_user
@@ -10348,8 +10349,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto buildsBeforePrime
 		= historyWidget->attachMenuBuildCountForRegressionTest();
 	auto primeEnter = QEvent(QEvent::Enter);
-	QCoreApplication::sendEvent(
-		historyWidget->attachToggleForRegressionTest(), &primeEnter);
+	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
+								&primeEnter);
 	QCoreApplication::processEvents();
 	const auto attachMenuPrimed
 		= historyWidget->attachMenuExistsForRegressionTest()
@@ -10364,12 +10365,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto attachMenuHoverTimer = QElapsedTimer();
 	attachMenuHoverTimer.start();
 	auto cachedEnter = QEvent(QEvent::Enter);
-	QCoreApplication::sendEvent(
-		historyWidget->attachToggleForRegressionTest(), &cachedEnter);
+	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
+								&cachedEnter);
 	result.attachMenuHoverNanoseconds = attachMenuHoverTimer.nsecsElapsed();
 	result.attachMenuCacheReused
-		= attachMenuPrimed
-		  && historyWidget->attachMenuExistsForRegressionTest()
+		= attachMenuPrimed && historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeCachedHover);
 	auto &mainWindow = *window->widget();
@@ -10471,10 +10471,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		loop.quit();
 	});
 	loop.exec();
-	result.maxStallNanoseconds = std::max(
-		std::max(result.maxHydrationNanoseconds,
-				 result.maxChatSwitchNanoseconds),
-		result.attachMenuHoverNanoseconds);
+	result.maxStallNanoseconds
+		= std::max(std::max(result.maxHydrationNanoseconds,
+							result.maxChatSwitchNanoseconds),
+				   result.attachMenuHoverNanoseconds);
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
@@ -10892,11 +10892,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto currentProcessCpuNanoseconds
 					= ProcessCpuTimeNanoseconds();
 				auto processWorkNanoseconds = qint64(-1);
-				if (currentProcessCpuNanoseconds
-					&& lastProcessCpuNanoseconds) {
-					processWorkNanoseconds = std::max(
-						qint64(0), *currentProcessCpuNanoseconds
-									   - *lastProcessCpuNanoseconds);
+				if (currentProcessCpuNanoseconds && lastProcessCpuNanoseconds) {
+					processWorkNanoseconds
+						= std::max(qint64(0), *currentProcessCpuNanoseconds
+												  - *lastProcessCpuNanoseconds);
 				} else {
 					processCpuClockAvailable = false;
 				}
@@ -11066,12 +11065,11 @@ void RunAuthenticatedCacheSymlinkCases(
 			};
 			const auto schedulerEvidenceMatched
 				= longHeartbeatGap
-				  && WaitForRegressionCondition(
-					  findMatchingSchedulerEvidence, 1000);
+				  && WaitForRegressionCondition(findMatchingSchedulerEvidence,
+												1000);
 			if (longHeartbeatGap && !schedulerEvidenceMatched) {
-				std::fprintf(
-					stderr,
-					"No startup heartbeat-gap stall evidence matched within 1000 ms.\n");
+				std::fprintf(stderr, "No startup heartbeat-gap stall evidence "
+									 "matched within 1000 ms.\n");
 			}
 			const auto schedulerTrace
 				= matchingSchedulerEvidence
@@ -11256,14 +11254,12 @@ void RunAuthenticatedCacheSymlinkCases(
 				static_cast<long long>(maxMainThreadWorkNanoseconds),
 				static_cast<long long>(maxHeartbeatGapNanoseconds),
 				static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
-				static_cast<long long>(
-					maxHeartbeatGapProcessWorkNanoseconds),
+				static_cast<long long>(maxHeartbeatGapProcessWorkNanoseconds),
 				heartbeatGapStartedAtUtf8.constData(), schedulerSamples,
 				schedulerRunning, schedulerWaiting, schedulerUninterruptible,
 				schedulerOther, schedulerTraceLatin1.constData(),
 				heartbeatGapStackCaptured, schedulerEvidenceMatched,
-				schedulerPreemptionProven,
-				startupWithinBound,
+				schedulerPreemptionProven, startupWithinBound,
 				static_cast<long long>(firstAccessNanoseconds),
 				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
 				directFallbackClosed, rootRestoreSucceeded, startupWalks,
