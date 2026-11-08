@@ -780,13 +780,11 @@ TEST_CASE(TelegramStickerPackInvalidTokenPresentsRecoverableError) {
 		object.insert(u"ok"_q, false);
 		object.insert(u"error_code"_q, 401);
 		object.insert(u"description"_q, u"Unauthorized"_q);
-		auto response
-			= StickerImportNetwork::Response{401, JsonBytes(object)};
+		auto response = StickerImportNetwork::Response{401, JsonBytes(object)};
 		response.networkError = QNetworkReply::AuthenticationRequiredError;
 		return response;
 	});
-	CHECK(result.error
-		  == Api::TelegramStickerPackDownloadError::InvalidToken);
+	CHECK(result.error == Api::TelegramStickerPackDownloadError::InvalidToken);
 	if (!result.error) {
 		return;
 	}
@@ -803,12 +801,10 @@ TEST_CASE(TelegramStickerPackMissingPackPresentsRecoverableError) {
 		auto object = QJsonObject();
 		object.insert(u"ok"_q, false);
 		object.insert(u"error_code"_q, 400);
-		object.insert(u"description"_q,
-					  u"Bad Request: STICKERSET_INVALID"_q);
+		object.insert(u"description"_q, u"Bad Request: STICKERSET_INVALID"_q);
 		return StickerImportNetwork::Response{400, JsonBytes(object)};
 	});
-	CHECK(result.error
-		  == Api::TelegramStickerPackDownloadError::PackNotFound);
+	CHECK(result.error == Api::TelegramStickerPackDownloadError::PackNotFound);
 	if (!result.error) {
 		return;
 	}

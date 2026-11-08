@@ -19,7 +19,8 @@ struct TelegramDownloadFailure final {
 	bool isError = true;
 };
 
-[[nodiscard]] TelegramDownloadFailure TelegramDownloadFailureFeedback(
-	Api::TelegramStickerPackDownloadError error, const QString &detail);
+[[nodiscard]] TelegramDownloadFailure
+TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
+								const QString &detail);
 
 } // namespace Ui::StickerImport

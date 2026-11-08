@@ -12,19 +12,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Ui::StickerImport {
 
-TelegramDownloadFailure TelegramDownloadFailureFeedback(
-		Api::TelegramStickerPackDownloadError error, const QString &detail) {
+TelegramDownloadFailure
+TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
+								const QString &detail) {
 	const auto message = [&] {
 		switch (error) {
 		case Api::TelegramStickerPackDownloadError::InvalidToken:
 			return tr::lng_teagram_sticker_import_telegram_token_rejected(
 				tr::now);
 		case Api::TelegramStickerPackDownloadError::InvalidLink:
-			return tr::lng_teagram_sticker_import_telegram_link_invalid(tr::now);
+			return tr::lng_teagram_sticker_import_telegram_link_invalid(
+				tr::now);
 		case Api::TelegramStickerPackDownloadError::UnsupportedPackType:
-			return tr::lng_teagram_sticker_import_telegram_type_mismatch(tr::now);
+			return tr::lng_teagram_sticker_import_telegram_type_mismatch(
+				tr::now);
 		case Api::TelegramStickerPackDownloadError::PackNotFound:
-			return tr::lng_teagram_sticker_import_telegram_pack_missing(tr::now);
+			return tr::lng_teagram_sticker_import_telegram_pack_missing(
+				tr::now);
 		case Api::TelegramStickerPackDownloadError::BotApi:
 			return detail.isEmpty()
 					   ? tr::lng_teagram_sticker_import_telegram_response_invalid(
