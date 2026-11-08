@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/session.h"
 #include "mtproto/session_private.h"
 #include "mtproto/mtproto_auth_key.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "base/unixtime.h"
 
 #include <openssl/sha.h>
@@ -22,6 +23,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <memory>
 #include <vector>
 
+namespace {
+
+MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
+
+} // namespace
+
 // session_private.cpp is linked as shipped. The application-only code it
 // calls into (Instance, Session behind SessionData, the real transports
 // behind AbstractConnection) is replaced below by the smallest stand-ins
@@ -30,6 +37,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace MTP {
 
 bool Instance::isTestMode() const { return false; }
+
+DcOptions &Instance::dcOptions() const { return UnitDcOptions; }
 
 QString Instance::deviceModel() const { return QString(); }
 
@@ -226,6 +235,24 @@ class SessionPrivateTestAccess final {
 	static int BrowserOnlyServerRefusals() {
 		return UnitBrowserOnlyServerRefusals;
 	}
+
+	static void ResumeAfterServerEnrollment(SessionPrivate &session) {
+		session.resumeAfterServerEnrollment();
+	}
+
+	static void DcOptionsChanged(SessionPrivate &session) {
+		session.dcOptionsChanged();
+	}
+
+	static int TestConnectionCount(const SessionPrivate &session) {
+		return int(session._testConnections.size());
+	}
+
+	static bool SessionDataBrowserOnlyRefusal(const SessionPrivate &session) {
+		return session._sessionData->browserOnlyServerRefused();
+	}
+
+	static void Disconnect(SessionPrivate &session) { session.doDisconnect(); }
 
 	static crl::time ArmConnectedTimer(SessionPrivate &session,
 									   ConnectionPointer connection) {
@@ -640,4 +667,17 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
 	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 1);
+	CHECK(SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+
+	SessionPrivateTestAccess::ResumeAfterServerEnrollment(*session);
+	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 2);
+	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
+	CHECK_EQ(SessionPrivateTestAccess::TestConnectionCount(*session), 0);
+
+	SessionPrivateTestAccess::DcOptionsChanged(*session);
+	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK(!SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+	CHECK(SessionPrivateTestAccess::TestConnectionCount(*session) > 0);
+	SessionPrivateTestAccess::Disconnect(*session);
 }

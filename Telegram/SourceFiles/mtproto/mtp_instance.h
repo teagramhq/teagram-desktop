@@ -345,6 +345,8 @@ public:
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
+	// Main-thread query for the saved-server continuation in intro.
+	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
 
 	// Thread-safe.
 	[[nodiscard]] Config &config() const;

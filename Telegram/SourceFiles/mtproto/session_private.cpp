@@ -419,11 +419,12 @@ int32 SessionPrivate::getShiftedDcId() const {
 }
 
 void SessionPrivate::dcOptionsChanged() {
+	_gaveUpOnBrowserOnlyServer = false;
+	_sessionData->setBrowserOnlyServerRefused(false);
 	if (!_instance->isServerEnrollmentNetworkAllowed()) {
 		return;
 	}
 	_gaveUpOnPinnedFailure = false;
-	_gaveUpOnBrowserOnlyServer = false;
 	_gaveUpOnProxyError = false;
 	_retryTimeout = 1;
 	connectToServer(true);
@@ -432,6 +433,10 @@ void SessionPrivate::dcOptionsChanged() {
 void SessionPrivate::resumeAfterServerEnrollment() {
 	if (!_instance->isServerEnrollmentNetworkAllowed()) {
 		doDisconnect();
+		return;
+	}
+	if (_gaveUpOnBrowserOnlyServer) {
+		_sessionData->queueBrowserOnlyServerRefused();
 		return;
 	}
 	_gaveUpOnPinnedFailure = false;
@@ -447,6 +452,7 @@ void SessionPrivate::stopUntilPinChange() {
 
 void SessionPrivate::stopUntilBrowserOnlyServerRefusal() {
 	_gaveUpOnBrowserOnlyServer = true;
+	_sessionData->setBrowserOnlyServerRefused(true);
 	_retryTimer.cancel();
 	doDisconnect();
 }

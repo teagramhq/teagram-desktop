@@ -348,6 +348,10 @@ void ServerWidget::submit() {
 	if (account().sessionExists()) {
 		return;
 	}
+	if (account().mtp().hasBrowserOnlyServerRefusal()) {
+		showError(tr::lng_intro_server_browser_only());
+		return;
+	}
 	// A freshly restarted account is intentionally paused until its stored
 	// binding is selected again. The binding was durably committed before
 	// this point, so resuming here cannot send an unbound request.

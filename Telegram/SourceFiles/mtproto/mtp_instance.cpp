@@ -179,6 +179,7 @@ public:
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefusedValue() const;
+	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
 
 	// return true if need to clean request data
 	bool rpcErrorOccured(
@@ -1533,6 +1534,15 @@ rpl::producer<> Instance::Private::browserOnlyServerRefusedValue() const {
 	return _browserOnlyServerRefused.events();
 }
 
+bool Instance::Private::hasBrowserOnlyServerRefusal() const {
+	for (const auto &[shiftedDcId, session] : _sessions) {
+		if (session->isBrowserOnlyServerRefused()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void Instance::Private::onSessionReset(ShiftedDcId dcWithShift) {
 	if (_sessionResetHandler) {
 		_sessionResetHandler(dcWithShift);
@@ -2316,6 +2326,10 @@ void Instance::onBrowserOnlyServerRefused() {
 
 rpl::producer<> Instance::browserOnlyServerRefused() const {
 	return _private->browserOnlyServerRefusedValue();
+}
+
+bool Instance::hasBrowserOnlyServerRefusal() const {
+	return _private->hasBrowserOnlyServerRefusal();
 }
 
 void Instance::restart(ShiftedDcId shiftedDcId) {
