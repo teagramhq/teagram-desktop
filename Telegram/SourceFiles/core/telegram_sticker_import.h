@@ -44,6 +44,18 @@ struct TelegramStickerPackLink {
 	[[nodiscard]] QString canonicalUrl() const;
 };
 
+class TelegramStickerPackDownloadStatus final {
+  public:
+	void setProgress(QString text);
+	void setError(QString text);
+	[[nodiscard]] const QString &text() const;
+	[[nodiscard]] bool isError() const;
+
+  private:
+	QString _text;
+	bool _error = false;
+};
+
 [[nodiscard]] std::optional<TelegramStickerPackLink>
 ParseTelegramStickerPackLink(const QString &link);
 [[nodiscard]] QString TelegramStickerPackCanonicalUrl(StickerImportType type,

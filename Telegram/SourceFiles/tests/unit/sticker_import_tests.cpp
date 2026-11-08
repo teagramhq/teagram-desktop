@@ -625,6 +625,19 @@ TEST_CASE(TelegramStickerBotErrorsRedactSecrets) {
 		!value->redact(u"Bad token %1"_q.arg(otherToken)).contains(otherToken));
 }
 
+TEST_CASE(TelegramStickerPackErrorReplacesDownloadProgress) {
+	auto status = Core::TelegramStickerPackDownloadStatus();
+	status.setProgress(u"Downloading from Telegram: 0 of 0"_q);
+	status.setError(
+		u"Telegram rejected this bot token. Check it and try again."_q);
+	CHECK(status.isError());
+	CHECK_EQ(status.text(),
+			 u"Telegram rejected this bot token. Check it and try again."_q);
+	status.setProgress(u"Downloading from Telegram: 1 of 1"_q);
+	CHECK(!status.isError());
+	CHECK_EQ(status.text(), u"Downloading from Telegram: 1 of 1"_q);
+}
+
 struct StickerDownloadFailure {
 	std::optional<Api::TelegramStickerPackDownloadError> error;
 	QString detail;

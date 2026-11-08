@@ -66,6 +66,7 @@ struct ImportFormState final : base::has_weak_ptr {
 	std::unique_ptr<Api::TelegramStickerPackDownloader> telegramDownloader;
 	std::optional<Core::TelegramStickerPackLink> telegramPack;
 	std::optional<Core::TelegramBotToken> telegramBotToken;
+	Core::TelegramStickerPackDownloadStatus telegramStatus;
 	rpl::lifetime rightsErrorLifetime;
 	Fn<void()> showRightsError;
 	bool scanPending = false;
@@ -401,6 +402,15 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 				state->suggestButton->setDisabled(pending);
 			}
 		};
+		const auto updateTelegramStatus = [=](
+				const Core::TelegramStickerPackDownloadStatus &status) {
+			files->setText(status.text());
+			if (status.isError()) {
+				files->setTextColorOverride(st::boxTextFgError->c);
+			} else {
+				files->setTextColorOverride(std::nullopt);
+			}
+		};
 		const auto updateTelegramTokenControls = [=] {
 			const auto saved = state->telegramBotToken.has_value();
 			telegramTokenRow->setVisible(!saved);
@@ -505,6 +515,8 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			= [=](Core::StickerImportSource type, QString path) {
 				  state->telegramDownloader.reset();
 				  state->telegramPack.reset();
+				  state->telegramStatus.setProgress(QString());
+				  updateTelegramStatus(state->telegramStatus);
 				  state->scan = {};
 				  state->scanPending = false;
 				  state->selection.selectSource(type, std::move(path));
@@ -578,9 +590,11 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			title->setText(QString());
 			source->setText(tr::lng_teagram_sticker_import_telegram_source(
 				tr::now, lt_link, parsed->canonicalUrl()));
-			files->setText(tr::lng_teagram_sticker_import_telegram_downloading(
-				tr::now, lt_current, QString::number(0), lt_total,
-				QString::number(0)));
+			state->telegramStatus.setProgress(
+				tr::lng_teagram_sticker_import_telegram_downloading(
+					tr::now, lt_current, QString::number(0), lt_total,
+					QString::number(0)));
+			updateTelegramStatus(state->telegramStatus);
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
@@ -595,8 +609,10 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					current->scan = std::move(scan);
 					current->scanPending = false;
+					current->telegramStatus.setProgress(
+						ScanDescription(current->scan));
 					title->setText(packTitle);
-					files->setText(ScanDescription(current->scan));
+					updateTelegramStatus(current->telegramStatus);
 					setPending(false);
 				},
 				[=](Api::TelegramStickerPackDownloadError downloadError,
@@ -607,19 +623,21 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 					}
 					current->scan = {};
 					current->scanPending = false;
-					setPending(false);
-					error->setTextColorOverride(st::boxTextFgError->c);
-					error->setText(
+					current->telegramStatus.setError(
 						TelegramDownloadErrorText(downloadError, detail));
+					updateTelegramStatus(current->telegramStatus);
+					setPending(false);
 				},
 				[=](int count, int total) {
-					if (!weakBox || !weakState.get()) {
+					const auto current = weakState.get();
+					if (!weakBox || !current) {
 						return;
 					}
-					files->setText(
+					current->telegramStatus.setProgress(
 						tr::lng_teagram_sticker_import_telegram_downloading(
 							tr::now, lt_current, QString::number(count),
 							lt_total, QString::number(total)));
+					updateTelegramStatus(current->telegramStatus);
 				});
 		});
 		const auto chooseFolder = [=] {

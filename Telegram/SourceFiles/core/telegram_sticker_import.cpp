@@ -116,6 +116,24 @@ QString TelegramStickerPackLink::canonicalUrl() const {
 	return TelegramStickerPackCanonicalUrl(type, name);
 }
 
+void TelegramStickerPackDownloadStatus::setProgress(QString text) {
+	_text = std::move(text);
+	_error = false;
+}
+
+void TelegramStickerPackDownloadStatus::setError(QString text) {
+	_text = std::move(text);
+	_error = true;
+}
+
+const QString &TelegramStickerPackDownloadStatus::text() const {
+	return _text;
+}
+
+bool TelegramStickerPackDownloadStatus::isError() const {
+	return _error;
+}
+
 QString TelegramStickerPackCanonicalUrl(StickerImportType type,
 										const QString &name) {
 	if (!IsValidPackName(name)) {
