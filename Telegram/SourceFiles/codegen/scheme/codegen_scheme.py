@@ -12,6 +12,55 @@ scriptPath = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(scriptPath + '/../../../lib_tl/tl')
 from generate_tl import generate
 
+REDACTED_DUMP_FIELDS = (
+  ('auth_signIn', 'phone_code'),
+  ('teagram_userInviteLink', 'link'),
+)
+
+def redactDumpFields():
+  outputPath = ''
+  arguments = sys.argv[1:]
+  for index, argument in enumerate(arguments):
+    if argument == '-o' and index + 1 < len(arguments):
+      outputPath = arguments[index + 1]
+      break
+    elif argument.startswith('-o') and len(argument) > 2:
+      outputPath = argument[2:]
+      break
+  if not outputPath:
+    raise ValueError('Output path required.')
+
+  dumpPath = outputPath + '-dump_to_text.cpp'
+  with open(dumpPath, encoding='utf-8') as sourceFile:
+    source = sourceFile.read()
+  for constructor, field in REDACTED_DUMP_FIELDS:
+    start = source.find('bool Serialize_' + constructor + '(')
+    if start < 0:
+      raise ValueError('Missing dump serializer for ' + constructor)
+    end = source.find('\nbool Serialize_', start + 1)
+    if end < 0:
+      end = len(source)
+    serializer = source[start:end]
+    lines = serializer.splitlines(True)
+    matches = [
+      index for index, line in enumerate(lines)
+      if 'to.add("  ' + field + ': ")' in line
+    ]
+    if len(matches) != 1:
+      raise ValueError('Expected one dump field ' + constructor + '.' + field)
+    lineIndex = matches[0]
+    originalType = 'types.push_back(mtpc_string+0)'
+    if originalType not in lines[lineIndex]:
+      raise ValueError('Expected string dump field ' + constructor + '.' + field)
+    lines[lineIndex] = lines[lineIndex].replace(
+      originalType,
+      'types.push_back(mtpc_redacted_string)',
+      1)
+    updated = ''.join(lines)
+    source = source[:start] + updated + source[end:]
+  with open(dumpPath, 'w', encoding='utf-8', newline='') as sourceFile:
+    sourceFile.write(source)
+
 generate({
   'namespaces': {
     'creator': 'MTP::details',
@@ -99,3 +148,5 @@ generate({
   },
 
 })
+
+redactDumpFields()

@@ -72,6 +72,14 @@ bool DumpToTextCore(DumpToTextBuffer &to, const mtpPrime *&from, const mtpPrime 
 		}
 	} break;
 
+	case mtpc_redacted_string: {
+		MTPstring value;
+		if (value.read(from, end, mtpc_string)) {
+			to.add("[REDACTED] [STRING]");
+			return true;
+		}
+	} break;
+
 	case mtpc_vector: {
 		if (from < end) {
 			int32 cnt = *(from++);

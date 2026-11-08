@@ -133,6 +133,7 @@ PRIVATE
     tests/unit/mac_protected_path_policy_tests.cpp
     tests/unit/mtproto_custom_server_input_tests.cpp
     tests/unit/mtproto_dc_options_tests.cpp
+    tests/unit/mtproto_dump_to_text_tests.cpp
     tests/unit/mtp_instance_tests.cpp
     tests/unit/passport_credentials_secret_tests.cpp
     tests/unit/persistent_key_rejection_tests.cpp
