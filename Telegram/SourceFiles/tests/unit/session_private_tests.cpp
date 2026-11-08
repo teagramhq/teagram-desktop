@@ -30,8 +30,6 @@ MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
 
 } // namespace
 
-// Instance::dcOptions() is defined once for the whole test binary, in
-// mtproto_dc_options_tests.cpp, and reads this pointer.
 namespace MTP::details {
 
 extern DcOptions *UnitProxyCheckOptions;
@@ -223,8 +221,10 @@ class SessionPrivateTestAccess final {
 
 	static void BrowserOnlyError(SessionPrivate &session,
 								 not_null<AbstractConnection *> connection) {
-		session.onError(connection, AbstractConnection::kErrorCodeBrowserOnly,
-						{});
+		session.onError(
+			connection,
+			AbstractConnection::kErrorCodeBrowserOnly,
+			{});
 	}
 
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
@@ -684,10 +684,12 @@ TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
 	data->setOptions(std::move(options));
 	auto session = SessionPrivateTestAccess::Create(data);
 	auto connection = ConnectionPointer::New<FakeTransport>(
-		QThread::currentThread(), ProxyData(),
+		QThread::currentThread(),
+		ProxyData(),
 		std::make_shared<TransportLog>());
 	SessionPrivateTestAccess::BrowserOnlyError(
-		*session, not_null<AbstractConnection *>(connection.get()));
+		*session,
+		not_null<AbstractConnection *>(connection.get()));
 
 	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));

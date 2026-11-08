@@ -674,8 +674,14 @@ TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {
 TEST_CASE(ServerConnectionStopsAfterBrowserOnlyWebSocketRefusal) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(
-		false, false, endpoint, ProxyData::Type::None, u"demo.example.com"_q,
-		false, false, {QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q)},
+		false,
+		false,
+		endpoint,
+		ProxyData::Type::None,
+		u"demo.example.com"_q,
+		false,
+		false,
+		{ QHostAddress(u"8.8.4.4"_q), QHostAddress(u"8.8.8.8"_q) },
 		true);
 	CHECK(!result.connected);
 	CHECK(result.failed);

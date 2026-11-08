@@ -391,11 +391,7 @@ void ServerResolvingConnection::emitError(int errorCode) {
 }
 
 void ServerResolvingConnection::handleError(int errorCode) {
-	if (errorCode == kErrorCodeBrowserOnly) {
-		emitError(errorCode);
-		return;
-	}
-	if (_connected) {
+	if (errorCode == kErrorCodeBrowserOnly || _connected) {
 		emitError(errorCode);
 		return;
 	}

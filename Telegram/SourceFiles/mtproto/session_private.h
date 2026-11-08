@@ -225,7 +225,6 @@ public:
 	// not a retry: only a corrected pin (dcOptionsChanged or the explicit
 	// enrollment resume) clears it.
 	bool _gaveUpOnPinnedFailure = false;
-	// A browser-only refusal cannot change without selecting another server.
 	bool _gaveUpOnBrowserOnlyServer = false;
 	// A proxy can inject unauthenticated -404 errors. Keep the persistent
 	// key and stop reconnecting until the connection settings are restarted.

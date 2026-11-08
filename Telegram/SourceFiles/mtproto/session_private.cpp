@@ -1129,15 +1129,10 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	// cannot change the key the endpoint answers with, nor the DC id
 	// it reports. A corrected pin arrives through dcOptionsChanged() or the
 	// explicit enrollment resume, both of which clear the give-up state first.
-	if (_gaveUpOnPinnedFailure && !afterConfig) {
-		return;
-	}
-	if (_gaveUpOnBrowserOnlyServer) {
-		return;
-	}
 	// A proxy -404 is unauthenticated. Wait for an explicit restart or
 	// connection settings change instead of reconnecting through that proxy.
-	if (_gaveUpOnProxyError && !afterConfig) {
+	if (_gaveUpOnBrowserOnlyServer
+		|| ((_gaveUpOnPinnedFailure || _gaveUpOnProxyError) && !afterConfig)) {
 		return;
 	}
 	if (afterConfig && (!_testConnections.empty() || _connection)) {
