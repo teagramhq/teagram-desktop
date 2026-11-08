@@ -80,9 +80,8 @@ public:
 
 private:
 	void create(const Descriptor &descriptor);
-	[[nodiscard]] bool
-	applyChosen(not_null<Window::SessionController *> controller,
-				EmojiStatusId id, TimeId until, Fn<void()> animate);
+	bool applyChosen(not_null<Window::SessionController *> controller,
+					 EmojiStatusId id, TimeId until, Fn<void()> animate);
 	[[nodiscard]] bool filter(
 		not_null<Window::SessionController*> controller,
 		EmojiStatusId chosenId) const;
