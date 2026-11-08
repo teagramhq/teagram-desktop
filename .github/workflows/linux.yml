@@ -465,7 +465,7 @@ jobs:
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
       # Linux ships Teagram without an updater, so CI gates the standalone
-      # unit cases and the custom emoji GUI smoke under Xvfb.
+      # unit cases, including the custom emoji smoke.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -637,16 +637,20 @@ jobs:
               exit 1
             fi
 
-            emoji_smoke_workdir=$(mktemp -d)
-            if emoji_smoke_output=$(xvfb-run -a env QT_QPA_PLATFORM=xcb TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$PWD/out/Debug/Teagram" -noupdate -debug -workdir "$emoji_smoke_workdir" 2>&1); then
-              printf "%s\n" "$emoji_smoke_output"
+            if selected_output=$("$test_unit" --case CustomEmojiActionsHappyPathSmoke 2>&1); then
+              printf "%s\n" "$selected_output"
             else
               TEST_STATUS=$?
-              printf "%s\n" "$emoji_smoke_output"
+              printf "%s\n" "$selected_output"
               exit "$TEST_STATUS"
             fi
-            if ! printf "%s\n" "$emoji_smoke_output" | grep -Fqx "Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering)."; then
-              echo "Custom emoji user-path smoke did not report a passing result."
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  CustomEmojiActionsHappyPathSmoke"; then
+              echo "--case did not run exactly CustomEmojiActionsHappyPathSmoke."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Custom emoji action smoke case did not report one passing case."
               exit 1
             fi
           '

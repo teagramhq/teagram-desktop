@@ -109,3 +109,49 @@ TEST_CASE(CustomEmojiActionPremiumGatesStayScoped) {
 	CHECK(hiddenPremiumBadge.badge == Info::Profile::BadgeType::None);
 	CHECK(!premiumBadgeDisplayed);
 }
+
+TEST_CASE(CustomEmojiActionsHappyPathSmoke) {
+	auto insertedText = QString();
+	CHECK(Data::details::RunMessageCustomEmojiAction(
+		false, true, true, [&] { insertedText = u"🧪"_q; }));
+	CHECK(insertedText == u"🧪"_q);
+
+	auto reactionAdded = false;
+	CHECK(Data::details::RunReactAction(
+		{
+			.reactionsAreTags = false,
+			.canReact = true,
+			.premium = false,
+			.customReaction = true,
+			.reactionAlreadyAdded = false,
+			.broadcast = false,
+			.customServer = true,
+		},
+		[&] { reactionAdded = true; }, [&](auto) { reactionAdded = false; }));
+	CHECK(reactionAdded);
+
+	auto pickerOpened = false;
+	auto premiumPreviewOpened = false;
+	Data::details::RunEmojiStatusPickerAction(
+		false, true, false, false, [&] { pickerOpened = true; },
+		[&] { premiumPreviewOpened = true; });
+	CHECK(pickerOpened);
+	CHECK(!premiumPreviewOpened);
+
+	const auto status = EmojiStatusId{.documentId = DocumentId(724103)};
+	auto savedStatus = EmojiStatusId();
+	CHECK(Data::details::ApplyEmojiStatus(
+		true, false, true, false, [&] { savedStatus = status; }, [] {}));
+	CHECK(savedStatus == status);
+
+	const auto badge = Info::Profile::details::ResolveBadgeContentForPeer(
+		Info::Profile::BadgeType::None, savedStatus, true, true);
+	CHECK(badge.badge == Info::Profile::BadgeType::EmojiStatus);
+	CHECK(badge.emojiStatusId == status);
+	auto recipientRenderedStatus = false;
+	const auto displayed = Info::Profile::details::PresentBadgeContent(
+		badge, true, false,
+		[&](auto content) { recipientRenderedStatus = content == badge; });
+	CHECK(recipientRenderedStatus);
+	CHECK(displayed == badge);
+}
