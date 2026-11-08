@@ -369,6 +369,9 @@ void SignUpPasswordWidget::signUpFail(const MTP::Error &error,
 		} else if (decision.destination == SignupFailureDestination::Name) {
 			routeBackWithNameError(text);
 			return;
+		} else if (decision.destination == SignupFailureDestination::Invite) {
+			routeBackWithInviteError();
+			return;
 		}
 		break;
 	case SignupFailureAction::ShowError:
@@ -572,6 +575,11 @@ void SignUpPasswordWidget::passwordSaveFailed() {
 void SignUpPasswordWidget::routeBackWithUsernameError(
 		const QString &text) {
 	getData()->usernameError = text;
+	goBack();
+}
+
+void SignUpPasswordWidget::routeBackWithInviteError() {
+	getData()->signupInviteError = true;
 	goBack();
 }
 

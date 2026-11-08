@@ -72,6 +72,11 @@ void SignUpNameWidget::activate() {
 	// editable control and its note before handing focus to the field.
 	ShowSignupControls(this);
 	_name->setFocusFast();
+	if (getData()->signupInviteError) {
+		QMetaObject::invokeMethod(
+			this, [=] { goBack(); }, Qt::QueuedConnection);
+		return;
+	}
 
 	if (!getData()->usernameError.isEmpty()) {
 		// PHONE_NUMBER_INVALID belongs to the username step. This name step
