@@ -45,10 +45,10 @@ struct TelegramDownloadFailure final {
 };
 
 using TelegramDownloadFailureSetPending = Fn<void(bool)>;
-using TelegramDownloadFailureFormatText = Fn<QString(
-	TelegramDownloadFailureMessage, const QString &)>;
-using TelegramDownloadFailureSetText = Fn<void(
-	TelegramDownloadFailureColor, QString)>;
+using TelegramDownloadFailureFormatText
+	= Fn<QString(TelegramDownloadFailureMessage, const QString &)>;
+using TelegramDownloadFailureSetText
+	= Fn<void(TelegramDownloadFailureColor, QString)>;
 using TelegramDownloadFailureIsAlive = Fn<bool()>;
 
 [[nodiscard]] TelegramDownloadFailure
@@ -57,8 +57,7 @@ TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
 
 [[nodiscard]] Api::TelegramStickerPackDownloader::Fail
 MakeTelegramDownloadFailureCallback(
-	Core::StickerImportScan &scan,
-	bool &scanPending,
+	Core::StickerImportScan &scan, bool &scanPending,
 	TelegramDownloadFailureIsAlive isAlive,
 	TelegramDownloadFailureSetPending setPending,
 	TelegramDownloadFailureFormatText formatText,

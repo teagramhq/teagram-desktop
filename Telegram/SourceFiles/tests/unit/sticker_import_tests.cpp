@@ -776,8 +776,7 @@ TEST_CASE(TelegramStickerPackMapsBotApiErrorsAndRedactsToken) {
 
 void CheckTelegramStickerDownloadFailurePresentation(
 	const StickerDownloadFailure &result,
-	Api::TelegramStickerPackDownloadError expectedError,
-	QString expectedText) {
+	Api::TelegramStickerPackDownloadError expectedError, QString expectedText) {
 	CHECK(result.error == expectedError);
 	if (!result.error) {
 		return;
@@ -791,38 +790,36 @@ void CheckTelegramStickerDownloadFailurePresentation(
 	auto errorText = QString();
 	auto statusColor = Ui::StickerImport::TelegramDownloadFailureColor::Normal;
 	auto errorColor = Ui::StickerImport::TelegramDownloadFailureColor::Normal;
-	const auto failure
-		= Ui::StickerImport::MakeTelegramDownloadFailureCallback(
-			scan, scanPending, [] { return true; },
-			[&](bool pending) {
-				retryButtonEnabled = !pending;
-				tokenInputEnabled = !pending;
-			},
-			[](Ui::StickerImport::TelegramDownloadFailureMessage message,
-			   const QString &) {
-				using Message
-					= Ui::StickerImport::TelegramDownloadFailureMessage;
-				switch (message) {
-				case Message::InvalidToken:
-					return u"Telegram rejected this bot token."_q;
-				case Message::PackNotFound:
-					return u"Telegram sticker pack was not found."_q;
-				case Message::NetworkError:
-					return u"Telegram could not be reached."_q;
-				default:
-					return QString();
-				}
-			},
-			[&](Ui::StickerImport::TelegramDownloadFailureColor color,
-				QString text) {
-				statusText = std::move(text);
-				statusColor = color;
-			},
-			[&](Ui::StickerImport::TelegramDownloadFailureColor color,
-				QString text) {
-				errorText = std::move(text);
-				errorColor = color;
-			});
+	const auto failure = Ui::StickerImport::MakeTelegramDownloadFailureCallback(
+		scan, scanPending, [] { return true; },
+		[&](bool pending) {
+			retryButtonEnabled = !pending;
+			tokenInputEnabled = !pending;
+		},
+		[](Ui::StickerImport::TelegramDownloadFailureMessage message,
+		   const QString &) {
+			using Message = Ui::StickerImport::TelegramDownloadFailureMessage;
+			switch (message) {
+			case Message::InvalidToken:
+				return u"Telegram rejected this bot token."_q;
+			case Message::PackNotFound:
+				return u"Telegram sticker pack was not found."_q;
+			case Message::NetworkError:
+				return u"Telegram could not be reached."_q;
+			default:
+				return QString();
+			}
+		},
+		[&](Ui::StickerImport::TelegramDownloadFailureColor color,
+			QString text) {
+			statusText = std::move(text);
+			statusColor = color;
+		},
+		[&](Ui::StickerImport::TelegramDownloadFailureColor color,
+			QString text) {
+			errorText = std::move(text);
+			errorColor = color;
+		});
 	failure(*result.error, result.detail);
 	CHECK(scan.files.empty());
 	CHECK(!scanPending);

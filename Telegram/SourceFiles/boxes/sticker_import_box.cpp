@@ -582,34 +582,31 @@ void ShowStickerImportBox(not_null<Window::SessionController *> controller) {
 			setPending(true);
 			const auto weakBox = QPointer<Ui::GenericBox>(box.get());
 			const auto weakState = base::make_weak(state);
-			const auto setFailureText = [=](
-					const auto &label,
+			const auto setFailureText =
+				[=](const auto &label,
 					Ui::StickerImport::TelegramDownloadFailureColor color,
 					QString text) {
-				switch (color) {
-				case Ui::StickerImport::
-					TelegramDownloadFailureColor::Normal:
-					label->setTextColorOverride(std::nullopt);
-					break;
-				case Ui::StickerImport::
-					TelegramDownloadFailureColor::Error:
-					label->setTextColorOverride(st::boxTextFgError->c);
-					break;
-				}
-				label->setText(std::move(text));
-			};
+					switch (color) {
+					case Ui::StickerImport::TelegramDownloadFailureColor::
+						Normal:
+						label->setTextColorOverride(std::nullopt);
+						break;
+					case Ui::StickerImport::TelegramDownloadFailureColor::Error:
+						label->setTextColorOverride(st::boxTextFgError->c);
+						break;
+					}
+					label->setText(std::move(text));
+				};
 			const auto failure
 				= Ui::StickerImport::MakeTelegramDownloadFailureCallback(
 					state->scan, state->scanPending,
 					[=] { return weakBox && weakState.get(); }, setPending,
 					TelegramDownloadFailureText,
-					[=](
-						Ui::StickerImport::TelegramDownloadFailureColor color,
+					[=](Ui::StickerImport::TelegramDownloadFailureColor color,
 						QString text) {
 						setFailureText(files, color, std::move(text));
 					},
-					[=](
-						Ui::StickerImport::TelegramDownloadFailureColor color,
+					[=](Ui::StickerImport::TelegramDownloadFailureColor color,
 						QString text) {
 						setFailureText(error, color, std::move(text));
 					});

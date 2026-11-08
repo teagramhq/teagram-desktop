@@ -57,37 +57,32 @@ TelegramDownloadFailureFeedback(Api::TelegramStickerPackDownloadError error,
 	};
 }
 
-Api::TelegramStickerPackDownloader::Fail
-MakeTelegramDownloadFailureCallback(
-		Core::StickerImportScan &scan,
-		bool &scanPending,
-		TelegramDownloadFailureIsAlive isAlive,
-		TelegramDownloadFailureSetPending setPending,
-		TelegramDownloadFailureFormatText formatText,
-		TelegramDownloadFailureSetText setStatusText,
-		TelegramDownloadFailureSetText setErrorText) {
-	const auto callback = [&scan,
-			&scanPending,
-			isAlive = std::move(isAlive),
-			setPending = std::move(setPending),
-			formatText = std::move(formatText),
-			setStatusText = std::move(setStatusText),
-			setErrorText = std::move(setErrorText)](
-			Api::TelegramStickerPackDownloadError error,
-			QString detail) {
-		if (!isAlive()) {
-			return;
-		}
-		const auto feedback = TelegramDownloadFailureFeedback(
-			error, detail, scanPending);
-		scan = {};
-		setPending(scanPending);
-		const auto &setText
-			= (feedback.line == TelegramDownloadFailureLine::Status)
-				  ? setStatusText
-				  : setErrorText;
-		setText(feedback.color, formatText(feedback.message, detail));
-	};
+Api::TelegramStickerPackDownloader::Fail MakeTelegramDownloadFailureCallback(
+	Core::StickerImportScan &scan, bool &scanPending,
+	TelegramDownloadFailureIsAlive isAlive,
+	TelegramDownloadFailureSetPending setPending,
+	TelegramDownloadFailureFormatText formatText,
+	TelegramDownloadFailureSetText setStatusText,
+	TelegramDownloadFailureSetText setErrorText) {
+	const auto callback =
+		[&scan, &scanPending, isAlive = std::move(isAlive),
+		 setPending = std::move(setPending), formatText = std::move(formatText),
+		 setStatusText = std::move(setStatusText),
+		 setErrorText = std::move(setErrorText)](
+			Api::TelegramStickerPackDownloadError error, QString detail) {
+			if (!isAlive()) {
+				return;
+			}
+			const auto feedback
+				= TelegramDownloadFailureFeedback(error, detail, scanPending);
+			scan = {};
+			setPending(scanPending);
+			const auto &setText
+				= (feedback.line == TelegramDownloadFailureLine::Status)
+					  ? setStatusText
+					  : setErrorText;
+			setText(feedback.color, formatText(feedback.message, detail));
+		};
 	return callback;
 }
 
