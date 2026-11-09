@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "media/audio/media_audio.h"
 #include "mtproto/mtproto_config.h"
+#include "mtproto/mtproto_server_enrollment.h"
 #include "mainwidget.h"
 #include "api/api_updates.h"
 #include "ui/ui_utility.h"
@@ -828,6 +829,11 @@ bool Account::startMtp(
 	const auto restoringSession = bool(_sessionUserId);
 	const auto pausedUntilSessionCommit = startPaused || restoringSession;
 	auto fields = base::take(_mtpFields);
+	fields.mainDcId = MTP::ServerEnrollmentMainDcId({
+		.hasAuthenticatedSession = restoringSession,
+		.storedMainDcId = fields.mainDcId,
+		.pinnedServerDcId = config->customServer().dcId,
+	});
 	fields.config = std::move(config);
 	fields.deviceModel = Platform::DeviceModelPretty();
 	fields.systemVersion = Platform::SystemVersionPretty();

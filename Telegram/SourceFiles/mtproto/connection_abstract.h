@@ -27,6 +27,7 @@ struct ConnectionOptions;
 class AbstractConnection;
 
 inline constexpr auto kTestModeDcIdShift = 10000;
+inline constexpr auto kErrorCodeBrowserOnly = -498;
 
 class ConnectionPointer {
 public:
@@ -171,6 +172,17 @@ private:
 	uint64 _sentEncryptedWithKeyId = 0;
 
 };
+
+[[nodiscard]] inline qint32 ServerErrorCode(qint32 errorCode) {
+	return (errorCode == kErrorCodeBrowserOnly)
+			   ? AbstractConnection::kErrorCodeOther
+			   : errorCode;
+}
+
+[[nodiscard]] inline qint32 ServerErrorFromPacket(const mtpBuffer &packet) {
+	Expects(packet.size() == 1);
+	return ServerErrorCode(packet[0]);
+}
 
 template <typename Request>
 mtpBuffer AbstractConnection::prepareNotSecurePacket(

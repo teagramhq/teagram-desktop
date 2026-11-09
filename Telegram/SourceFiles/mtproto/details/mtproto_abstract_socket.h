@@ -62,6 +62,7 @@ class AbstractSocket : protected QObject {
 	[[nodiscard]] rpl::producer<> error() const {
 		return _error.events();
 	}
+	[[nodiscard]] virtual bool isBrowserOnlyRefusal() const { return false; }
 	[[nodiscard]] rpl::producer<> syncTimeRequests() const {
 		return _syncTimeRequests.events();
 	}

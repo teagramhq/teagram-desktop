@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
+#include <QtCore/QString>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -32,6 +33,39 @@ namespace Intro {
 namespace details {
 
 class ServerWidgetDiscovery;
+
+inline void SubmitSavedServer(bool blocked, bool hasSession,
+							  bool browserOnlyServerRefused,
+							  Fn<void()> showBrowserOnlyError,
+							  Fn<void()> continueToUsername) {
+	if (blocked || hasSession) {
+		return;
+	}
+	if (browserOnlyServerRefused) {
+		showBrowserOnlyError();
+		return;
+	}
+	continueToUsername();
+}
+
+struct ServerStepState {
+	bool blocked = false;
+	bool hasSession = false;
+	bool hasCustomServer = false;
+	bool browserOnlyServerRefused = false;
+};
+
+[[nodiscard]] inline bool ServerStepIsReadOnly(const ServerStepState &state) {
+	return state.blocked
+		   || (state.hasCustomServer
+			   && (state.hasSession || !state.browserOnlyServerRefused));
+}
+
+[[nodiscard]] inline bool
+CanCommitServerSelection(const ServerStepState &state) {
+	return !state.blocked && !state.hasSession
+		   && (!state.hasCustomServer || state.browserOnlyServerRefused);
+}
 
 class ServerWidget final : public Step {
 public:
@@ -61,9 +95,12 @@ protected:
 
 private:
 	void layoutContent();
+	void refreshMode();
+	[[nodiscard]] ServerStepState serverStepState() const;
 	void setupSelection();
 	void setupBound();
 	void switchToBound();
+	void switchToSelection();
 	void selectionChanged();
 	void submitSelection();
 	void beginPublicDiscovery();

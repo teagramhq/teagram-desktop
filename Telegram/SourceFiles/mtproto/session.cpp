@@ -96,6 +96,12 @@ void SessionData::queuePinnedServerFailure(
 	});
 }
 
+void SessionData::queueBrowserOnlyServerRefused() {
+	withSession([](not_null<Session *> session) {
+		session->browserOnlyServerRefused();
+	});
+}
+
 void SessionData::queueResetDone() {
 	withSession([](not_null<Session*> session) {
 		session->resetDone();
@@ -245,14 +251,17 @@ void Session::watchDcKeyChanges() {
 }
 
 void Session::watchDcOptionsChanges() {
-	_instance->dcOptions().changed(
-	) | rpl::filter([=](DcId dcId) {
+	_instance->dcOptions().changed() | rpl::filter([=](DcId dcId) {
 		return (BareDcId(_shiftedDcId) == dcId) && (_private != nullptr);
-	}) | rpl::on_next([=] {
-		InvokeQueued(_private, [captured = _private] {
-			captured->dcOptionsChanged();
-		});
-	}, _lifetime);
+	})
+		| rpl::on_next(
+			[=] {
+				_data->setBrowserOnlyServerRefused(false);
+				InvokeQueued(_private, [captured = _private] {
+					captured->dcOptionsChanged();
+				});
+			},
+			_lifetime);
 
 	_instance->dcOptions().cdnConfigChanged(
 	) | rpl::filter([=] {
@@ -424,6 +433,14 @@ void Session::pinnedServerFailure(
 		presentedFingerprint,
 		pinnedHostname,
 		dialledAddress);
+}
+
+void Session::browserOnlyServerRefused() {
+	_instance->onBrowserOnlyServerRefused();
+}
+
+bool Session::isBrowserOnlyServerRefused() const {
+	return _data->browserOnlyServerRefused();
 }
 
 void Session::stopUntilPinChange() {

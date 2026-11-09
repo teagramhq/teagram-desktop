@@ -118,7 +118,7 @@ qint32 HttpConnection::handleError(QNetworkReply *reply) {
 		QNetworkRequest::HttpStatusCodeAttribute);
 	if (statusCode.isValid()) {
 		int status = statusCode.toInt();
-		result = -status;
+		result = ServerErrorCode(-status);
 	}
 
 	switch (reply->error()) {
@@ -202,7 +202,7 @@ void HttpConnection::requestFinished(QNetworkReply *reply) {
 
 		mtpBuffer data = handleResponse(reply);
 		if (data.size() == 1) {
-			error(data[0]);
+			error(ServerErrorFromPacket(data));
 		} else if (!data.isEmpty()) {
 			if (_status == Status::Ready) {
 				_receivedQueue.push_back(data);

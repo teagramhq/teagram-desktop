@@ -8,11 +8,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "mtproto/connection_abstract.h"
+#include "mtproto/connection_http.h"
+#include "mtproto/connection_server_resolving.h"
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/mtp_instance.h"
 #include "mtproto/session.h"
 #include "mtproto/session_private.h"
 #include "mtproto/mtproto_auth_key.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "base/unixtime.h"
 
 #include <openssl/sha.h>
@@ -20,7 +23,32 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <vector>
+
+namespace {
+
+MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
+
+class HttpStatusReply final : public QNetworkReply {
+  public:
+	explicit HttpStatusReply(int status) {
+		setAttribute(QNetworkRequest::HttpStatusCodeAttribute, status);
+	}
+
+	void abort() override {}
+
+  protected:
+	qint64 readData(char *, qint64) override { return -1; }
+};
+
+} // namespace
+
+namespace MTP::details {
+
+extern DcOptions *UnitProxyCheckOptions;
+
+} // namespace MTP::details
 
 // session_private.cpp is linked as shipped. The application-only code it
 // calls into (Instance, Session behind SessionData, the real transports
@@ -59,12 +87,15 @@ void Instance::restartedByTimeout(ShiftedDcId) {}
 
 void Instance::keyDestroyedOnServer(ShiftedDcId, uint64) {}
 
+void Instance::onBrowserOnlyServerRefused() {}
+
 } // namespace MTP
 
 namespace MTP::details {
 namespace {
 
 bool UnitConnectionInited = false;
+int UnitBrowserOnlyServerRefusals = 0;
 Fn<void()> UnitNeedToResumeAndSend;
 
 } // namespace
@@ -93,6 +124,15 @@ AbstractConnection::parseNotSecureResponse(const mtpBuffer &buffer) const {
 	Unexpected("Key creation is not exercised by these tests.");
 }
 
+mtpBuffer AbstractConnection::preparePQFake(const MTPint128 &nonce) const {
+	Unexpected("HTTP connection setup is not exercised by these tests.");
+}
+
+std::optional<MTPResPQ>
+AbstractConnection::readPQFakeReply(const mtpBuffer &buffer) const {
+	Unexpected("HTTP connection setup is not exercised by these tests.");
+}
+
 uint32 AbstractConnection::extendedNotSecurePadding() const {
 	Unexpected("Key creation is not exercised by these tests.");
 }
@@ -102,6 +142,8 @@ QString AbstractConnection::ProtocolDcDebugId(int16 protocolDcId) {
 }
 
 void AbstractConnection::logInfo(const QString &message) {}
+
+void AbstractConnection::logError(const QString &message) {}
 
 void SessionData::notifyConnectionInited(const SessionOptions &options) {}
 
@@ -119,6 +161,10 @@ void SessionData::queuePinnedServerFailure(PinnedServerFailure failure,
 										   uint64 presentedFingerprint,
 										   const QString &pinnedHostname,
 										   const QString &dialledAddress) {}
+
+void SessionData::queueBrowserOnlyServerRefused() {
+	++UnitBrowserOnlyServerRefusals;
+}
 
 void SessionData::queueResetDone() {}
 
@@ -196,6 +242,61 @@ class SessionPrivateTestAccess final {
 		session._retryTimer.cancel();
 		session._connection = std::move(connection);
 		session.setState(ConnectingState);
+	}
+
+	static void BrowserOnlyError(SessionPrivate &session,
+								 not_null<AbstractConnection *> connection) {
+		// clang-format off
+		session.onError(
+			connection,
+			kErrorCodeBrowserOnly,
+			{});
+		// clang-format on
+	}
+
+	static void PacketError(SessionPrivate &session,
+							AbstractConnection *connection,
+							const mtpBuffer &packet) {
+		const auto target = not_null<AbstractConnection *>(connection);
+		const auto mapped = ServerErrorFromPacket(packet);
+		session.onError(target, mapped, {});
+	}
+
+	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
+		return session._gaveUpOnBrowserOnlyServer;
+	}
+
+	static bool RetryTimerActive(const SessionPrivate &session) {
+		return session._retryTimer.isActive();
+	}
+
+	static void ResetBrowserOnlyServerRefusals() {
+		UnitBrowserOnlyServerRefusals = 0;
+	}
+
+	static int BrowserOnlyServerRefusals() {
+		return UnitBrowserOnlyServerRefusals;
+	}
+
+	static void ResumeAfterServerEnrollment(SessionPrivate &session) {
+		session.resumeAfterServerEnrollment();
+	}
+
+	static void DcOptionsChanged(SessionPrivate &session) {
+		session.dcOptionsChanged();
+	}
+
+	static int TestConnectionCount(const SessionPrivate &session) {
+		return int(session._testConnections.size());
+	}
+
+	static bool SessionDataBrowserOnlyRefusal(const SessionPrivate &session) {
+		return session._sessionData->browserOnlyServerRefused();
+	}
+
+	static void Disconnect(SessionPrivate &session) {
+		session._waitForConnectedTimer.cancel();
+		session.doDisconnect();
 	}
 
 	static crl::time ArmConnectedTimer(SessionPrivate &session,
@@ -595,4 +696,89 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 		ConnectionPointer::New<FakeTransport>(
 			QThread::currentThread(), ProxyData(), log, crl::time(30000)));
 	CHECK_EQ(int(withFallback), 30000);
+}
+
+TEST_CASE(ServerErrorFromPacketMapsOnlyBrowserOnlyCode) {
+	const auto browserOnlyPacket = mtpBuffer(1, -498);
+	const auto browserOnlyError = ServerErrorFromPacket(browserOnlyPacket);
+	CHECK_EQ(browserOnlyError, AbstractConnection::kErrorCodeOther);
+	const auto serverErrorPacket = mtpBuffer(1, -404);
+	const auto serverError = ServerErrorFromPacket(serverErrorPacket);
+	CHECK_EQ(serverError, -404);
+}
+
+TEST_CASE(HttpConnectionMapsBrowserOnlyStatusToOther) {
+	auto reply = HttpStatusReply(498);
+	auto connection
+		= MTP::details::HttpConnection(QThread::currentThread(), ProxyData());
+	CHECK_EQ(connection.handleError(&reply),
+			 MTP::details::AbstractConnection::kErrorCodeOther);
+	auto serverReply = HttpStatusReply(404);
+	CHECK_EQ(connection.handleError(&serverReply), -404);
+}
+
+TEST_CASE(ServerErrorFromPacketDoesNotRecordBrowserOnlyRefusal) {
+	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto session = SessionPrivateTestAccess::Create(data);
+	const auto thread = QThread::currentThread();
+	const auto proxy = ProxyData();
+	const auto log = std::make_shared<TransportLog>();
+	auto connection = ConnectionPointer::New<FakeTransport>(thread, proxy, log);
+	const auto packet = mtpBuffer(1, -498);
+	SessionPrivateTestAccess::PacketError(*session, connection.get(), packet);
+
+	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 0);
+	CHECK(!SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+	SessionPrivateTestAccess::Disconnect(*session);
+}
+
+TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
+	const auto previousOptions = MTP::details::UnitProxyCheckOptions;
+	MTP::details::UnitProxyCheckOptions = &UnitDcOptions;
+	const auto resetOptions = gsl::finally(
+		[=] { MTP::details::UnitProxyCheckOptions = previousOptions; });
+	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
+	auto log = std::make_shared<TransportLog>();
+	SetServerConnectionTestFactory(
+		[=](QThread *thread, const ProxyData &proxy) {
+			return ConnectionPointer::New<FakeTransport>(thread, proxy, log);
+		});
+	const auto resetFactory
+		= gsl::finally([] { SetServerConnectionTestFactory({}); });
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto options = SessionOptions();
+	options.useIPv6 = false;
+	options.useHttp = false;
+	data->setOptions(std::move(options));
+	auto session = SessionPrivateTestAccess::Create(data);
+	// clang-format off
+	auto connection = ConnectionPointer::New<FakeTransport>(
+		QThread::currentThread(),
+		ProxyData(),
+		std::make_shared<TransportLog>());
+	SessionPrivateTestAccess::BrowserOnlyError(
+		*session,
+		not_null<AbstractConnection *>(connection.get()));
+	// clang-format on
+
+	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 1);
+	CHECK(SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+
+	SessionPrivateTestAccess::ResumeAfterServerEnrollment(*session);
+	CHECK(SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 2);
+	CHECK(!SessionPrivateTestAccess::RetryTimerActive(*session));
+	CHECK_EQ(SessionPrivateTestAccess::TestConnectionCount(*session), 0);
+
+	SessionPrivateTestAccess::DcOptionsChanged(*session);
+	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK(!SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+	CHECK(SessionPrivateTestAccess::TestConnectionCount(*session) > 0);
+	SessionPrivateTestAccess::Disconnect(*session);
 }
