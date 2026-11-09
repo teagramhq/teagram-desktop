@@ -14857,15 +14857,15 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 }
 
 template <typename Action>
-[[nodiscard]] bool WithDesktopScaleAccount(Main::Domain &domain,
-										   not_null<Main::Account *> fallback,
-										   UserId selfId, Action action,
-										   bool retainSession = false) {
+[[nodiscard]] bool WithDesktopScaleAccount(Main::Domain &domain, UserId selfId,
+										   Action action) {
 	const auto account = domain.add(MTP::Environment::Production);
-	// The standalone scale run exits after reporting; avoid forced logout's
-	// global media-mixer teardown in its headless Linux scenarios.
-	auto cleanup
-		= RegressionAccountCleanup(domain, account, fallback, retainSession);
+	// Activating the synthetic account schedules removal of the startup
+	// account, which has no session. Keep the synthetic account as its own
+	// fallback and never hold a pointer to the startup one. The standalone
+	// run exits after reporting, so the session is retained to avoid forced
+	// logout's global media-mixer teardown in its headless Linux scenarios.
+	auto cleanup = RegressionAccountCleanup(domain, account, account, true);
 	account->mtp().stopForServerEnrollment();
 	account->setSessionUserId(selfId);
 	if (!account->createSession(RegressionUser(selfId, true, QString()),
@@ -14884,11 +14884,15 @@ template <typename Action>
 			"Desktop scale check failed: the synthetic cache did not open.\n");
 		return false;
 	}
+	// Let the deferred account bookkeeping queued by the activation run
+	// before the measured step, so it is not counted against that step.
+	auto settle = QEventLoop();
+	QTimer::singleShot(150, &settle, &QEventLoop::quit);
+	settle.exec();
 	const auto passed = action(account);
 	const auto cleaned = cleanup.cleanup();
 	const auto retained
-		= !retainSession
-		  || (account->sessionExists() && (&domain.active() == fallback));
+		= account->sessionExists() && (&domain.active() == account);
 	if (!passed || !cleaned || !retained) {
 		std::fprintf(stderr,
 					 "Desktop scale check failed: scenario %s, cleanup %s, "
@@ -14900,13 +14904,11 @@ template <typename Action>
 }
 
 [[nodiscard]] DesktopScaleActionSample
-RunDesktopScaleDialogs(Main::Domain &domain, not_null<Main::Account *> fallback,
-					   Core::UiStallWatchdog &watchdog, int alreadyLoaded,
-					   UserId firstId) {
+RunDesktopScaleDialogs(Main::Domain &domain, Core::UiStallWatchdog &watchdog,
+					   int alreadyLoaded, UserId firstId) {
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, UserId(firstId.bare - 1),
-		[&](auto account) {
+		domain, UserId(firstId.bare - 1), [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			auto users = DesktopScaleUsers(firstId, alreadyLoaded, false);
@@ -14956,8 +14958,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, not_null<Main::Account *> fallback,
 					"did not produce the expected list.\n");
 			}
 			return sample.passed;
-		},
-		true);
+		});
 	if (!created) {
 		sample.passed = false;
 	}
@@ -14992,13 +14993,12 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 								 MTP_vector<MTPUser>(std::move(users)));
 }
 
-[[nodiscard]] DesktopScaleContactsSample RunDesktopScaleContacts(
-	Main::Domain &domain, not_null<Main::Account *> fallback,
-	Core::UiStallWatchdog &watchdog, int count, UserId firstId) {
+[[nodiscard]] DesktopScaleContactsSample
+RunDesktopScaleContacts(Main::Domain &domain, Core::UiStallWatchdog &watchdog,
+						int count, UserId firstId) {
 	auto result = DesktopScaleContactsSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, UserId(firstId.bare - 1),
-		[&](auto account) {
+		domain, UserId(firstId.bare - 1), [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			result.loaded.nanoseconds = 0;
@@ -15096,8 +15096,7 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 					count);
 			}
 			return result.loaded.passed && result.changedAndFound.passed;
-		},
-		true);
+		});
 	if (!created) {
 		result.loaded.passed = false;
 		result.changedAndFound.passed = false;
@@ -15213,13 +15212,12 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account,
 }
 
 [[nodiscard]] DesktopScaleCacheSamples
-RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
-					 Core::UiStallWatchdog &watchdog, UserId selfId) {
+RunDesktopScaleCache(Main::Domain &domain, Core::UiStallWatchdog &watchdog,
+					 UserId selfId) {
 	auto samples = DesktopScaleCacheSamples();
 #if defined(Q_OS_LINUX)
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, selfId,
-		[&](auto account) {
+		domain, selfId, [&](auto account) {
 			samples.one = MeasureDesktopScaleCache(account, watchdog, 500, 0,
 												   50'000'000);
 			if (!samples.one.passed) {
@@ -15228,15 +15226,13 @@ RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
 			samples.hundred = MeasureDesktopScaleCache(account, watchdog,
 													   50'000, 500, 60'000'000);
 			return samples.hundred.passed;
-		},
-		true);
+		});
 	if (!created) {
 		samples.one.passed = false;
 		samples.hundred.passed = false;
 	}
 #else
 	(void)domain;
-	(void)fallback;
 	(void)watchdog;
 	(void)selfId;
 #endif // Q_OS_LINUX
@@ -15249,21 +15245,20 @@ int RunDesktopScaleCheck() {
 #if defined(Q_OS_LINUX)
 	auto &app = Core::App();
 	auto &domain = app.domain();
-	const auto fallback = not_null<Main::Account *>(&domain.active());
 	auto watchdog = Core::UiStallWatchdog(
 		[](const QString &, bool) {},
 		Core::UiStallWatchdog::Settings{.captureShortStalls = true});
 
-	const auto dialogsOne = RunDesktopScaleDialogs(domain, fallback, watchdog,
-												   50, UserId(1'000'000));
-	const auto dialogsHundred = RunDesktopScaleDialogs(
-		domain, fallback, watchdog, 4'900, UserId(2'000'000));
-	const auto contactsOne = RunDesktopScaleContacts(domain, fallback, watchdog,
-													 100, UserId(3'000'000));
-	const auto contactsHundred = RunDesktopScaleContacts(
-		domain, fallback, watchdog, 10'000, UserId(4'000'000));
+	const auto dialogsOne
+		= RunDesktopScaleDialogs(domain, watchdog, 50, UserId(1'000'000));
+	const auto dialogsHundred
+		= RunDesktopScaleDialogs(domain, watchdog, 4'900, UserId(2'000'000));
+	const auto contactsOne
+		= RunDesktopScaleContacts(domain, watchdog, 100, UserId(3'000'000));
+	const auto contactsHundred
+		= RunDesktopScaleContacts(domain, watchdog, 10'000, UserId(4'000'000));
 	const auto cacheSamples
-		= RunDesktopScaleCache(domain, fallback, watchdog, UserId(5'000'000));
+		= RunDesktopScaleCache(domain, watchdog, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
 
