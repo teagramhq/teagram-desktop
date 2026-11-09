@@ -958,6 +958,14 @@ grep -Fq 'processWorkNanoseconds' "$native_harness" \
   && grep -Fq 'No startup heartbeat-gap stall evidence ' <<< "$stall_diagnostic" \
   && grep -Fq 'matched within 1000 ms.' <<< "$stall_diagnostic" \
   || contract_fail 'The cache regression must validate every long heartbeat gap and cover the two-gap case.'
+awk '
+  /for \(auto i = 0; i != 10; \+\+i\)/ { copy = 1 }
+  copy && /result.attachMenuCacheBounded/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/uncached-peer-switches.cpp"
+grep -Fq 'showPeerHistoryMeasured(history);' \
+  "$temp_dir/uncached-peer-switches.cpp" \
+  || contract_fail 'Every uncached peer switch must contribute main-thread and scheduler evidence.'
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuFirstHoverCallbackNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuInvalidationCallbackNanoseconds' "$native_harness" \
