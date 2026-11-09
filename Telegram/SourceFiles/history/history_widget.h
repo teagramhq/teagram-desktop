@@ -386,6 +386,10 @@ private:
 	using TabbedPanel = ChatHelpers::TabbedPanel;
 	using TabbedSelector = ChatHelpers::TabbedSelector;
 	using VoiceToSend = HistoryView::Controls::VoiceToSend;
+	struct AttachBotsMenuCacheEntry final {
+		std::unique_ptr<Ui::DropdownMenu> menu;
+		bool ready = false;
+	};
 	enum ScrollChangeType {
 		ScrollChangeNone,
 
@@ -796,6 +800,8 @@ private:
 	void setupSendAsToggle();
 	void refreshSendAsToggle();
 	void refreshAttachBotsMenu();
+	void buildAttachBotsMenu(not_null<PeerData *> peer);
+	void attachBotsMenuBuildFinished(not_null<PeerData *> peer);
 	void invalidateAttachBotsMenuCache();
 	void invalidateAttachBotsMenuCache(not_null<PeerData *> peer);
 	void activateCachedAttachBotsMenuForCurrentPeer();
@@ -999,10 +1005,12 @@ private:
 
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
-	base::flat_map<not_null<PeerData *>, std::unique_ptr<Ui::DropdownMenu>>
+	base::flat_map<not_null<PeerData *>, AttachBotsMenuCacheEntry>
 		_attachBotsMenuCache;
 	std::vector<not_null<PeerData *>> _attachBotsMenuCacheLru;
 	Ui::DropdownMenu *_attachBotsMenu = nullptr;
+	bool _attachMenuShowWhenReady = false;
+	bool _attachMenuClickWhenReady = false;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _attachMenuBuildCountForRegressionTest = 0;
 #endif

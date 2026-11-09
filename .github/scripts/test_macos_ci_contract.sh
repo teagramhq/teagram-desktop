@@ -926,10 +926,17 @@ grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
   || contract_fail 'The cache regression must require low process CPU and report unmatched stall evidence.'
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq "attachMenuFirstHoverNanoseconds < 50'000'000" "$native_harness" \
+  && grep -Fq 'kAttachMenuRegressionBotCount = 20' "$native_harness" \
+  && grep -Fq 'lastAttachBotId' "$native_harness" \
   && grep -Fq 'attachMenuInvalidationRebuilt' "$native_harness" \
   && grep -Fq 'attachMenuContainsBotForRegressionTest' "$native_harness" \
   && grep -Fq 'attachMenuCacheSizeForRegressionTest() <= 8' "$native_harness" \
   || contract_fail 'The attach-menu regression must gate first hover, bot invalidation, and bounded caching.'
+grep -Fq 'std::vector<AttachWebViewBot> bots' \
+  Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp \
+  && grep -Fq 'menuBots.push_back(bot)' \
+    Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp \
+  || contract_fail 'Deferred attach-menu rows must own bot records across updates.'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
   "$native_harness" \

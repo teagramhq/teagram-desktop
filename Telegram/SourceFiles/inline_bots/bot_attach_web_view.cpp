@@ -860,9 +860,11 @@ class AttachBotsMenuPopulation final : public QObject {
 	AttachBotsMenuPopulation(not_null<Ui::DropdownMenu *> menu,
 							 not_null<Window::SessionController *> controller,
 							 Fn<Api::SendAction()> actionFactory,
-							 std::vector<const AttachWebViewBot *> bots)
+							 std::vector<AttachWebViewBot> bots,
+							 Fn<void()> buildComplete)
 		: QObject(menu), _menu(menu), _controller(controller),
-		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)) {}
+		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)),
+		  _buildComplete(std::move(buildComplete)) {}
 
 	void start() {
 		QTimer::singleShot(0, this, [=] { addNext(); });
@@ -871,12 +873,18 @@ class AttachBotsMenuPopulation final : public QObject {
   private:
 	void addNext() {
 		if (_position == int(_bots.size())) {
+			if (_buildComplete) {
+				_buildComplete();
+			}
 			deleteLater();
 			return;
 		}
 		AddAttachBotMenuAction(_menu, _controller, _actionFactory,
-							   *_bots[_position++]);
+							   _bots[_position++]);
 		if (_position == int(_bots.size())) {
+			if (_buildComplete) {
+				_buildComplete();
+			}
 			deleteLater();
 		} else {
 			QTimer::singleShot(0, this, [=] { addNext(); });
@@ -886,7 +894,8 @@ class AttachBotsMenuPopulation final : public QObject {
 	const not_null<Ui::DropdownMenu *> _menu;
 	const not_null<Window::SessionController *> _controller;
 	const Fn<Api::SendAction()> _actionFactory;
-	const std::vector<const AttachWebViewBot *> _bots;
+	const std::vector<AttachWebViewBot> _bots;
+	const Fn<void()> _buildComplete;
 	int _position = 0;
 };
 
@@ -3139,7 +3148,7 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	Fn<Api::SendAction()> actionFactory,
 	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
-	AttachBotsMenuBuildMode buildMode) {
+	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete) {
 	auto result = std::make_unique<Ui::DropdownMenu>(
 		parent,
 		st::dropdownMenuWithIcons);
@@ -3230,14 +3239,14 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	}
 	const auto addBots = Data::CanSend(peer, ChatRestriction::SendInline, false)
 		&& !peer->starsPerMessageChecked();
-	auto menuBots = std::vector<const AttachWebViewBot *>();
+	auto menuBots = std::vector<AttachWebViewBot>();
 	for (const auto &bot : bots->attachBots()) {
 		if (!addBots
 			|| !bot.inAttachMenu
 			|| !PeerMatchesTypes(peer, bot.user, bot.types)) {
 			continue;
 		}
-		menuBots.push_back(&bot);
+		menuBots.push_back(bot);
 	}
 	const auto actions = raw->actions().size() + menuBots.size();
 	const auto onclick = ChatHelpers::ShowPanelOnClick();
@@ -3249,12 +3258,26 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	if (buildMode == AttachBotsMenuBuildMode::Incremental) {
 		if (!menuBots.empty()) {
 			auto population = new AttachBotsMenuPopulation(
-				raw, controller, std::move(actionFactory), std::move(menuBots));
+				raw,
+				controller,
+				std::move(actionFactory),
+				std::move(menuBots),
+				std::move(buildComplete));
 			population->start();
+		} else if (buildComplete) {
+			QTimer::singleShot(
+				0,
+				raw,
+				[buildComplete = std::move(buildComplete)] {
+					buildComplete();
+				});
 		}
 	} else {
 		for (const auto bot : menuBots) {
-			AddAttachBotMenuAction(raw, controller, actionFactory, *bot);
+			AddAttachBotMenuAction(raw, controller, actionFactory, bot);
+		}
+		if (buildComplete) {
+			buildComplete();
 		}
 	}
 	return result;

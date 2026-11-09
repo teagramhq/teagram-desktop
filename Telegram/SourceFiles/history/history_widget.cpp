@@ -221,8 +221,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #include <QtGui/QAction>
 #include <QtCore/QMimeData>
+#include <QtCore/QTimer>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -516,7 +518,10 @@ HistoryWidget::HistoryWidget(
 		const auto toggle = !_attachBotsMenu || _attachBotsMenu->isHidden();
 		base::call_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
 			if (!attachBotsMenuBuiltForCurrentPeer()) {
+				_attachMenuClickWhenReady = toggle;
+				_attachMenuShowWhenReady = toggle;
 				refreshAttachBotsMenu();
+				return;
 			}
 			if (_attachBotsMenu && toggle) {
 				_attachBotsMenu->showAnimated();
@@ -3367,6 +3372,8 @@ void HistoryWidget::setHistory(History *history) {
 		_attachBotsMenu->hideFast();
 	}
 	_attachBotsMenu = nullptr;
+	_attachMenuShowWhenReady = false;
+	_attachMenuClickWhenReady = false;
 	_attachToggle->removeEventFilter(this);
 
 	const auto unloadHeavyViewParts = [](History *history) {
@@ -3447,12 +3454,6 @@ void HistoryWidget::injectSponsoredMessages() const {
 }
 
 void HistoryWidget::refreshAttachBotsMenu() {
-	if (_attachBotsMenu) {
-		_attachToggle->removeEventFilter(_attachBotsMenu);
-		_attachBotsMenu->hideFast();
-	}
-	_attachToggle->removeEventFilter(this);
-	_attachBotsMenu = nullptr;
 	if (!_history) {
 		return;
 	}
@@ -3460,10 +3461,33 @@ void HistoryWidget::refreshAttachBotsMenu() {
 	if (const auto i = _attachBotsMenuCache.find(peer);
 		i != end(_attachBotsMenuCache)) {
 		touchAttachBotsMenuCache(peer);
-		_attachBotsMenu = i->second.get();
-		if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
-			_attachToggle->installEventFilter(_attachBotsMenu);
+		if (i->second.ready) {
+			_attachBotsMenu = i->second.menu.get();
+			if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+				_attachToggle->removeEventFilter(this);
+				_attachToggle->installEventFilter(_attachBotsMenu);
+			}
 		}
+		return;
+	}
+	auto [i, inserted] = _attachBotsMenuCache.emplace(
+		peer, AttachBotsMenuCacheEntry());
+	if (!inserted) {
+		return;
+	}
+	touchAttachBotsMenuCache(peer);
+	trimAttachBotsMenuCache();
+	if (!ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+	QTimer::singleShot(0, this, [=] { buildAttachBotsMenu(peer); });
+}
+
+void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)
+		|| i->second.ready
+		|| i->second.menu) {
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -3475,36 +3499,68 @@ void HistoryWidget::refreshAttachBotsMenu() {
 		[=](bool compress) { chooseAttach(compress); },
 		crl::guard(this, [=] { return _field->getTextWithAppliedMarkdown(); }),
 		crl::guard(this, [=] { migrateFieldToRichEditor(); }),
-		InlineBots::AttachBotsMenuBuildMode::Incremental);
-	const auto inserted = _attachBotsMenuCache.emplace(peer, std::move(menu));
-	touchAttachBotsMenuCache(peer);
-	trimAttachBotsMenuCache();
-	_attachBotsMenu = inserted.first->second.get();
-	if (!_attachBotsMenu) {
+		InlineBots::AttachBotsMenuBuildMode::Incremental,
+		crl::guard(this, [=] { attachBotsMenuBuildFinished(peer); }));
+	i->second.menu = std::move(menu);
+	if (!i->second.menu) {
+		i->second.ready = true;
+		attachBotsMenuBuildFinished(peer);
 		return;
 	}
-	_attachBotsMenu->setOrigin(
-		Ui::PanelAnimation::Origin::BottomLeft);
-	if (!ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu);
+	i->second.menu->setOrigin(Ui::PanelAnimation::Origin::BottomLeft);
+	if (_history && (_history->peer == peer)) {
+		_attachBotsMenu = i->second.menu.get();
 	}
-	_attachBotsMenu->heightValue(
-	) | rpl::on_next([=] {
+}
+
+void HistoryWidget::attachBotsMenuBuildFinished(
+		not_null<PeerData *> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	}
+	i->second.ready = true;
+	const auto menu = i->second.menu.get();
+	if (menu) {
+		menu->heightValue() | rpl::on_next([=] {
+			if (_history && (_history->peer == peer)
+				&& (_attachBotsMenu == menu)) {
+				moveFieldControls();
+			}
+		}, menu->lifetime());
+	}
+	if (!_history || (_history->peer != peer)) {
+		return;
+	}
+	_attachBotsMenu = menu;
+	_attachToggle->removeEventFilter(this);
+	if (menu && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(menu);
 		moveFieldControls();
-	}, _attachBotsMenu->lifetime());
+	}
+	const auto show = std::exchange(_attachMenuShowWhenReady, false);
+	const auto click = std::exchange(_attachMenuClickWhenReady, false);
+	if (menu && (show || click)) {
+		menu->showAnimated();
+	} else if (!menu && click) {
+		chooseAttach();
+	}
 }
 
 void HistoryWidget::invalidateAttachBotsMenuCache() {
+	const auto showWhenReady = _attachToggle->underMouse();
 	if (_attachBotsMenu) {
 		_attachToggle->removeEventFilter(_attachBotsMenu);
 		_attachBotsMenu->hideFast();
 	}
 	_attachBotsMenu = nullptr;
+	_attachMenuShowWhenReady = showWhenReady;
+	_attachMenuClickWhenReady = false;
 	_attachBotsMenuCache.clear();
 	_attachBotsMenuCacheLru.clear();
 	_attachToggle->removeEventFilter(this);
-	if (_history && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(this);
+	if (_history) {
+		refreshAttachBotsMenu();
 	}
 }
 
@@ -3520,12 +3576,14 @@ void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
 			_attachBotsMenu->hideFast();
 			_attachBotsMenu = nullptr;
 		}
+		_attachMenuShowWhenReady = _attachToggle->underMouse();
+		_attachMenuClickWhenReady = false;
 		_attachToggle->removeEventFilter(this);
 	}
 	_attachBotsMenuCache.erase(i);
 	std::erase(_attachBotsMenuCacheLru, peer);
-	if (current && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(this);
+	if (current) {
+		refreshAttachBotsMenu();
 	}
 }
 
@@ -3536,12 +3594,21 @@ void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
 		if (!ChatHelpers::ShowPanelOnClick()) {
 			_attachToggle->installEventFilter(this);
 		}
+		refreshAttachBotsMenu();
 		return;
 	}
 	touchAttachBotsMenuCache(_history->peer);
-	_attachBotsMenu = i->second.get();
-	if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu);
+	_attachBotsMenu = i->second.menu.get();
+	if (i->second.ready) {
+		_attachToggle->removeEventFilter(this);
+		if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(_attachBotsMenu);
+		}
+	} else {
+		if (!ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(this);
+		}
+		refreshAttachBotsMenu();
 	}
 }
 
@@ -3570,9 +3637,11 @@ void HistoryWidget::trimAttachBotsMenuCache() {
 }
 
 bool HistoryWidget::attachBotsMenuBuiltForCurrentPeer() const {
-	return _history
-		   && (_attachBotsMenuCache.find(_history->peer)
-			   != end(_attachBotsMenuCache));
+	if (!_history) {
+		return false;
+	}
+	const auto i = _attachBotsMenuCache.find(_history->peer);
+	return (i != end(_attachBotsMenuCache)) && i->second.ready;
 }
 
 void HistoryWidget::unregisterDraftSources() {
@@ -6555,12 +6624,14 @@ void HistoryWidget::insertTextAtCursor(const QString &text) {
 }
 
 bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {
-	if (obj == _attachToggle.get() && e->type() == QEvent::Enter
-		&& !attachBotsMenuBuiltForCurrentPeer()) {
-		refreshAttachBotsMenu();
-		if (_attachBotsMenu) {
-			_attachBotsMenu->showAnimated();
+	if (obj == _attachToggle.get() && e->type() == QEvent::Enter) {
+		if (!attachBotsMenuBuiltForCurrentPeer()) {
+			_attachMenuShowWhenReady = true;
+			refreshAttachBotsMenu();
 		}
+		return false;
+	} else if (obj == _attachToggle.get() && e->type() == QEvent::Leave) {
+		_attachMenuShowWhenReady = false;
 		return false;
 	}
 	if (e->type() == QEvent::KeyPress) {

@@ -535,7 +535,8 @@ private:
 	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText = nullptr,
 	Fn<void()> composeFieldMigrated = nullptr,
-	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate);
+	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate,
+	Fn<void()> buildComplete = nullptr);
 
 class MenuBotIcon final : public Ui::RpWidget {
 public:

@@ -10278,6 +10278,7 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 #endif
 
 struct CacheChatSwitchRegressionResult final {
+	int attachMenuBotCount = 0;
 	int reactions = 0;
 	int hydratedDocuments = 0;
 	int chatSwitches = 0;
@@ -10332,38 +10333,51 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return result;
 	}
 	const auto attachPeerId = UserId(1053);
-	const auto attachBotId = UserId(1054);
 	data.processUsers(MTP_vector<MTPUser>({
 		RegressionUser(attachPeerId, false, u"1053"_q),
-		RegressionBotUser(attachBotId),
 	}));
 	const auto attachPeer = data.user(attachPeerId);
-	const auto attachBot = data.user(attachBotId);
-	session.attachWebView().setAttachBotsForRegressionTest({
-		InlineBots::AttachWebViewBot{
-			.user = attachBot,
-			.name = u"Regression attach bot"_q,
-			.types = InlineBots::PeerTypes(InlineBots::PeerType::User),
-			.inAttachMenu = true,
-		},
-	});
+	session.attachWebView().setAttachBotsForRegressionTest({});
 	const auto attachHistory = data.history(attachPeer);
 	controller->showPeerHistory(attachHistory);
 	QCoreApplication::processEvents();
 	const auto buildsBeforePrime
 		= historyWidget->attachMenuBuildCountForRegressionTest();
+	constexpr auto kAttachMenuRegressionBotCount = 20;
+	result.attachMenuBotCount = kAttachMenuRegressionBotCount;
+	auto attachBotUsers = QVector<MTPUser>();
+	attachBotUsers.reserve(kAttachMenuRegressionBotCount);
+	auto attachBots = std::vector<InlineBots::AttachWebViewBot>();
+	attachBots.reserve(kAttachMenuRegressionBotCount);
+	for (auto i = 0; i != kAttachMenuRegressionBotCount; ++i) {
+		const auto botId = UserId(1054 + i);
+		attachBotUsers.push_back(RegressionBotUser(botId));
+	}
+	data.processUsers(MTP_vector<MTPUser>(std::move(attachBotUsers)));
+	for (auto i = 0; i != kAttachMenuRegressionBotCount; ++i) {
+		const auto botId = UserId(1054 + i);
+		attachBots.push_back(InlineBots::AttachWebViewBot{
+			.user = data.user(botId),
+			.name = u"Regression attach bot %1"_q.arg(i),
+			.types = InlineBots::PeerTypes(InlineBots::PeerType::User),
+			.inAttachMenu = true,
+		});
+	}
+	const auto lastAttachBotId
+		= UserId(1054 + kAttachMenuRegressionBotCount - 1);
+	session.attachWebView().setAttachBotsForRegressionTest(std::move(attachBots));
 	auto primeTimer = QElapsedTimer();
 	primeTimer.start();
 	auto primeEnter = QEvent(QEvent::Enter);
 	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
 								&primeEnter);
-	result.attachMenuFirstHoverNanoseconds = primeTimer.nsecsElapsed();
 	const auto attachBotAppeared = WaitForRegressionCondition(
 		[&] {
 			return historyWidget->attachMenuContainsBotForRegressionTest(
-				attachBotId);
+				lastAttachBotId);
 		},
 		1000);
+	result.attachMenuFirstHoverNanoseconds = primeTimer.nsecsElapsed();
 	const auto attachMenuPrimed
 		= historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
@@ -10385,7 +10399,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= attachMenuPrimed && historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeCachedHover);
-	const auto replacementBotId = UserId(1055);
+	const auto replacementBotId = UserId(1080);
 	data.processUsers(MTP_vector<MTPUser>({
 		RegressionBotUser(replacementBotId),
 	}));
@@ -10400,26 +10414,25 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			.inAttachMenu = true,
 		},
 	});
-	QCoreApplication::processEvents();
 	auto invalidationTimer = QElapsedTimer();
 	invalidationTimer.start();
 	auto invalidatedEnter = QEvent(QEvent::Enter);
 	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
 								&invalidatedEnter);
-	result.attachMenuInvalidationHoverNanoseconds
-		= invalidationTimer.nsecsElapsed();
 	const auto replacementBotAppeared = WaitForRegressionCondition(
 		[&] {
 			return historyWidget->attachMenuContainsBotForRegressionTest(
 				replacementBotId);
 		},
 		1000);
+	result.attachMenuInvalidationHoverNanoseconds
+		= invalidationTimer.nsecsElapsed();
 	result.attachMenuInvalidationRebuilt
 		= replacementBotAppeared
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeInvalidation + 1);
 	for (auto i = 0; i != 10; ++i) {
-		const auto peerId = UserId(1060 + i);
+		const auto peerId = UserId(1100 + i);
 		data.processUsers(MTP_vector<MTPUser>({
 			RegressionUser(peerId, false, QString::number(peerId.bare)),
 		}));
@@ -10540,6 +10553,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
+		  && (result.attachMenuBotCount >= 20)
 		  && (result.hydratedDocuments
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
@@ -11213,6 +11227,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"Cache chat switch latency regression: "
 					"seeded_directories=125 seeded_files=169 reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
+					"attach_menu_bot_count=%d "
 					"minimized_restore=%d minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
@@ -11223,7 +11238,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_cache_bound=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
-					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
+					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
+					chatSwitch.minimizedRestore,
 					static_cast<long long>(
 						chatSwitch.minimizedSwitchNanoseconds),
 					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
