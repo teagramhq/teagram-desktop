@@ -14774,14 +14774,17 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
-									   bool contact) {
+									   bool contact, bool withPhone = false) {
 	const auto flags
 		= MTPDuser::Flag::f_first_name
+		  | (withPhone ? MTPDuser::Flag::f_phone : MTPDuser::Flag())
 		  | (contact ? MTPDuser::Flag::f_contact : MTPDuser::Flag());
+	const auto phone
+		= withPhone ? MTP_string(QString::number(id.bare)) : MTPstring();
 	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
 					MTP_string(std::move(firstName)), MTPstring(), MTPstring(),
-					MTPstring(), MTPUserProfilePhoto(), MTPUserStatus(),
-					MTPint(), MTP_vector<MTPRestrictionReason>(0), MTPstring(),
+					phone, MTPUserProfilePhoto(), MTPUserStatus(), MTPint(),
+					MTP_vector<MTPRestrictionReason>(0), MTPstring(),
 					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
 					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
 					MTPlong(), MTPlong(), MTPlong());
@@ -14819,15 +14822,16 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 }
 
 [[nodiscard]] QVector<MTPUser> DesktopScaleUsers(UserId firstId, int count,
-												 bool contacts) {
+												 bool contacts,
+												 bool withPhone = false) {
 	auto users = QVector<MTPUser>();
 	users.reserve(count);
 	for (auto i = 0; i != count; ++i) {
 		const auto firstName
 			= contacts ? u"Scale Contact %1"_q.arg(i, 5, 10, QChar('0'))
 					   : u"Scale Peer %1"_q.arg(i, 5, 10, QChar('0'));
-		users.push_back(
-			DesktopScaleUser(UserId(firstId.bare + i), firstName, contacts));
+		users.push_back(DesktopScaleUser(UserId(firstId.bare + i), firstName,
+										 contacts, withPhone));
 	}
 	return users;
 }
@@ -14971,7 +14975,7 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 			= changeOne ? u"ScaleUpdatedContact"_q
 						: u"Scale Contact %1"_q.arg(i, 5, 10, QChar('0'));
 		contacts.push_back(MTP_contact(MTP_long(userId.bare), MTP_boolFalse()));
-		users.push_back(DesktopScaleUser(userId, firstName, true));
+		users.push_back(DesktopScaleUser(userId, firstName, true, true));
 	}
 	return MTP_contacts_contacts(MTP_vector<MTPContact>(std::move(contacts)),
 								 MTP_int(count),
@@ -14987,6 +14991,12 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
+			// contacts.getContacts can contain peers already loaded from other
+			// responses. Seed their full user records first so the
+			// contact-state update is measured against loaded peers, as in that
+			// account state.
+			auto existingUsers = DesktopScaleUsers(firstId, count, false, true);
+			data.processUsers(MTP_vector<MTPUser>(std::move(existingUsers)));
 			auto capture = ChannelSaveRequestCapture{
 				.instance = &account->mtp(),
 			};
