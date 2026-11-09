@@ -1033,7 +1033,8 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		}
 		webSocketEndpoint = *normalized;
 		if (websocketObject.contains(u"browser_only"_q)) {
-			const auto browserOnlyValue = websocketObject.value(u"browser_only"_q);
+			const auto browserOnlyValue
+				= websocketObject.value(u"browser_only"_q);
 			if (!browserOnlyValue.isBool()) {
 				return Invalid(ServerDiscoveryResponseStatus::InvalidSchema);
 			}

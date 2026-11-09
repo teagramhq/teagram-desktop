@@ -171,13 +171,13 @@ PublicResponseWithWebSocket(const QString &endpoint,
 	return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
-[[nodiscard]] QByteArray PublicResponseWithBrowserOnlyWebSocket(
-		const QString &endpoint,
-		const QString &webSocketEndpoint,
-		const QJsonValue &browserOnly) {
-	auto root = QJsonDocument::fromJson(PublicResponseWithWebSocket(
-		endpoint,
-		webSocketEndpoint)).object();
+[[nodiscard]] QByteArray
+PublicResponseWithBrowserOnlyWebSocket(const QString &endpoint,
+									   const QString &webSocketEndpoint,
+									   const QJsonValue &browserOnly) {
+	auto root = QJsonDocument::fromJson(
+					PublicResponseWithWebSocket(endpoint, webSocketEndpoint))
+					.object();
 	auto websocket = root.value(u"websocket"_q).toObject();
 	websocket.insert(u"browser_only"_q, browserOnly);
 	root.insert(u"websocket"_q, websocket);
@@ -1592,8 +1592,7 @@ TEST_CASE(DiscoveryJsonRefusesBrowserOnlyWebSocketAsNativeBinding) {
 		CheckServerSelection(u"server.example.com"_q),
 		PublicResponseWithBrowserOnlyWebSocket(
 			u"mtproto.example.com:443"_q,
-			u"wss://transport.example.com/apiws"_q,
-			true));
+			u"wss://transport.example.com/apiws"_q, true));
 	CHECK(!result.valid());
 	CHECK(result.status == ServerDiscoveryResponseStatus::BrowserOnly);
 
@@ -1601,8 +1600,7 @@ TEST_CASE(DiscoveryJsonRefusesBrowserOnlyWebSocketAsNativeBinding) {
 		CheckServerSelection(u"server.example.com"_q),
 		PublicResponseWithBrowserOnlyWebSocket(
 			u"mtproto.example.com:443"_q,
-			u"wss://transport.example.com/apiws"_q,
-			false));
+			u"wss://transport.example.com/apiws"_q, false));
 	CHECK(nonBrowserOnly.valid());
 }
 
@@ -1611,8 +1609,7 @@ TEST_CASE(DiscoveryJsonRejectsNonBooleanBrowserOnlyFlag) {
 		CheckServerSelection(u"server.example.com"_q),
 		PublicResponseWithBrowserOnlyWebSocket(
 			u"mtproto.example.com:443"_q,
-			u"wss://transport.example.com/apiws"_q,
-			u"true"_q));
+			u"wss://transport.example.com/apiws"_q, u"true"_q));
 	CHECK(result.status == ServerDiscoveryResponseStatus::InvalidSchema);
 }
 
