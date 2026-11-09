@@ -226,8 +226,7 @@ void DictManifestLoader::finish() {
 
 void StartManifestRefresh(not_null<Main::Session*> session) {
 	Main::details::runCloudResourceActionIfSupported(
-		session->mtp().dcOptions(),
-		[=] {
+		session->mtp().dcOptions(), [=] {
 			if (ActiveManifestLoader) {
 				return;
 			}
@@ -246,8 +245,7 @@ rpl::lifetime ManifestPendingSubscription;
 void EnsureManifestThen(
 		not_null<Main::Session*> session,
 		Fn<void()> callback) {
-	if (!Main::details::cloudResourcesSupported(
-			session->mtp().dcOptions())) {
+	if (!Main::details::cloudResourcesSupported(session->mtp().dcOptions())) {
 		return;
 	}
 	if (!DictionariesList.empty()) {
@@ -301,8 +299,7 @@ void DownloadDictionaryInBackground(
 		not_null<Main::Session*> session,
 		int counter,
 		std::vector<int> langs) {
-	if (!Main::details::cloudResourcesSupported(
-			session->mtp().dcOptions())
+	if (!Main::details::cloudResourcesSupported(session->mtp().dcOptions())
 		|| counter >= langs.size()) {
 		return;
 	}

@@ -218,8 +218,8 @@ Inner::Inner(QWidget *parent, not_null<Main::Session*> session)
 
 void Inner::setupContent() {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
-	const auto cloudResourcesSupported = Main::details::cloudResourcesSupported(
-		_session->mtp().dcOptions());
+	const auto cloudResourcesSupported
+		= Main::details::cloudResourcesSupported(_session->mtp().dcOptions());
 
 	for (const auto &set : kSets) {
 		if (!cloudResourcesSupported && set.id != 0) {
@@ -567,8 +567,7 @@ void LoadAndSwitchTo(not_null<Main::Session*> session, int id) {
 		ClearNeedSwitchToId();
 		return;
 	}
-	if (!Main::details::cloudResourcesSupported(
-			session->mtp().dcOptions())) {
+	if (!Main::details::cloudResourcesSupported(session->mtp().dcOptions())) {
 		ClearNeedSwitchToId();
 		return;
 	}

@@ -2313,9 +2313,8 @@ TEST_CASE(TelegramdCloudResourceActionsAreRefused) {
 
 	const auto checkAction = [](const DcOptions &options, bool expected) {
 		auto actions = 0;
-		Main::details::runCloudResourceActionIfSupported(
-			options,
-			[&] { ++actions; });
+		Main::details::runCloudResourceActionIfSupported(options,
+														 [&] { ++actions; });
 		CHECK_EQ(actions, expected ? 1 : 0);
 	};
 	checkAction(custom, false);

@@ -341,8 +341,8 @@ void Inner::setupContent(
 		not_null<Main::Session*> session,
 		Dictionaries enabledDictionaries) {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
-	const auto cloudResourcesSupported = Main::details::cloudResourcesSupported(
-		session->mtp().dcOptions());
+	const auto cloudResourcesSupported
+		= Main::details::cloudResourcesSupported(session->mtp().dcOptions());
 
 	const auto queryStream = content->lifetime()
 		.make_state<rpl::event_stream<QStringView>>();
@@ -383,8 +383,8 @@ void Inner::setupContent(
 
 	buildRows();
 	if (cloudResourcesSupported) {
-		Spellchecker::DictionariesChanged(
-		) | rpl::on_next(buildRows, content->lifetime());
+		Spellchecker::DictionariesChanged()
+			| rpl::on_next(buildRows, content->lifetime());
 		Spellchecker::RefreshDictionariesManifest(session);
 	}
 
