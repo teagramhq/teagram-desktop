@@ -875,10 +875,10 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure,
 	_address->rawTextEdit()->setReadOnly(false);
 	_continue->setDisabled(false);
 	_continue->setText(tr::lng_intro_server_try_again());
-	const auto error = browserOnlyRefusal ? tr::lng_intro_server_browser_only()
-					   : connectionFailure
-						   ? tr::lng_intro_server_connect_failed(tr::now)
-						   : tr::lng_intro_server_unsupported(tr::now);
+	const auto error
+		= browserOnlyRefusal  ? tr::lng_intro_server_browser_only(tr::now)
+		  : connectionFailure ? tr::lng_intro_server_connect_failed(tr::now)
+							  : tr::lng_intro_server_unsupported(tr::now);
 	_address->setAccessibleDescription(error);
 	showStatus(error, true);
 	_address->setFocusFast();
