@@ -1511,7 +1511,7 @@ if ! grep -E -q \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_cached=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_cache_bound=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1535,6 +1535,13 @@ attach_menu_hover_ns="$(sed -E \
 if (( attach_menu_hover_ns >= 50000000 )); then
 	cat "$AUTH_LOG" >&2
 	echo "cached attach-menu hover exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_ns
+attach_menu_uncached_peer_ns="$(sed -E 's/.*attach_menu_uncached_peer_ns=([0-9]+).*/\1/' <<<"$chat_switch_evidence")"
+if (( attach_menu_uncached_peer_ns >= 50000000 )); then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu hover exceeded 50 ms." >&2
 	exit 1
 fi
 if ! grep -F -q \

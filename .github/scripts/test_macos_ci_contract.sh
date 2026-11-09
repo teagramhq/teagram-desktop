@@ -806,7 +806,7 @@ cat > "$temp_dir/cache-latency.log" <<'EOF'
 Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_process_work_ns=50000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=4 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=4 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=WWWW heartbeat_gap_stack_captured=1 scheduler_evidence_matched=1 scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=0 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=0 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=none heartbeat_gap_stack_captured=0 scheduler_evidence_matched=0 scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 attach_menu_hover_ns=15000000 attach_menu_cached=1 max_stall_ns=45000000 under_50ms=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_cache_bound=1 max_stall_ns=45000000 under_50ms=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
@@ -857,6 +857,11 @@ sed -e 's/max_switch_ns=45000000/max_switch_ns=50000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-switch.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-switch.log" >/dev/null 2>&1; then
   contract_fail 'The chat-switch work budget must reject 50 ms or more.'
+fi
+sed 's/attach_menu_uncached_peer_ns=20000000/attach_menu_uncached_peer_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-uncached-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-uncached-hover.log" >/dev/null 2>&1; then
+  contract_fail 'The uncached attach-menu hover budget must reject 50 ms or more.'
 fi
 for field in reactions=73 hydrated_documents=292 chat_switches=73; do
   sed "s/$field/${field%%=*}=0/" \
@@ -918,12 +923,18 @@ grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cp
   && grep -Fq 'setAttachBotsForRegressionTest' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'controller->showPeerHistory(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
   || contract_fail 'The cache regression must time attach-menu hover after a chat switch.'
-grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
+grep -Fq 'processWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'kMaxStartupHeartbeatProcessWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'mainThreadWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'matchedEvidenceStarts' "$native_harness" \
+  && grep -Fq 'startupHeartbeatGaps.push_back' "$native_harness" \
   && grep -Fq 'schedulerEvidenceMatched' "$native_harness" \
+  && grep -Fq 'AllStartupHeartbeatGapsHaveSchedulerProof' "$native_harness" \
+  && grep -Fq 'StartupHeartbeatGapEvidenceRegressionPasses' "$native_harness" \
   && stall_diagnostic="$(grep -A 1 -F 'No startup heartbeat-gap stall evidence' "$native_harness")" \
   && grep -Fq 'No startup heartbeat-gap stall evidence ' <<< "$stall_diagnostic" \
   && grep -Fq 'matched within 1000 ms.' <<< "$stall_diagnostic" \
-  || contract_fail 'The cache regression must require low process CPU and report unmatched stall evidence.'
+  || contract_fail 'The cache regression must validate every long heartbeat gap and cover the two-gap case.'
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq "attachMenuFirstHoverNanoseconds < 50'000'000" "$native_harness" \
   && grep -Fq 'kAttachMenuRegressionBotCount = 20' "$native_harness" \

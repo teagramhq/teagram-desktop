@@ -10277,6 +10277,142 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 }
 #endif
 
+constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
+constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
+constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
+
+struct StartupHeartbeatGap final {
+	QDateTime startedAt;
+	qint64 durationNanoseconds = 0;
+	qint64 mainThreadWorkNanoseconds = -1;
+	qint64 processWorkNanoseconds = -1;
+};
+
+[[nodiscard]] std::optional<Core::UiStallWatchdog::StallEvidence>
+FindMatchingStartupHeartbeatGapEvidence(
+	const StartupHeartbeatGap &gap,
+	const std::vector<Core::UiStallWatchdog::StallEvidence> &evidence) {
+	if (!gap.startedAt.isValid()
+		|| (gap.durationNanoseconds
+			< kStartupHeartbeatGapThresholdNanoseconds)) {
+		return std::nullopt;
+	}
+	const auto gapStartMilliseconds = gap.startedAt.toMSecsSinceEpoch();
+	const auto gapDurationMilliseconds
+		= (gap.durationNanoseconds + 999'999) / 1'000'000;
+	const auto gapEndMilliseconds
+		= gapStartMilliseconds + gapDurationMilliseconds;
+	auto bestOverlapMilliseconds = qint64(0);
+	auto result = std::optional<Core::UiStallWatchdog::StallEvidence>();
+	for (const auto &candidate : evidence) {
+		const auto start
+			= QDateTime::fromString(candidate.startedAt, Qt::ISODateWithMs);
+		if (!start.isValid() || candidate.durationMilliseconds <= 0) {
+			continue;
+		}
+		const auto evidenceStartMilliseconds = start.toMSecsSinceEpoch();
+		const auto evidenceEndMilliseconds
+			= evidenceStartMilliseconds + candidate.durationMilliseconds;
+		const auto overlapMilliseconds = std::max(
+			qint64(0),
+			std::min(gapEndMilliseconds, evidenceEndMilliseconds)
+				- std::max(gapStartMilliseconds, evidenceStartMilliseconds));
+		if (overlapMilliseconds > bestOverlapMilliseconds) {
+			bestOverlapMilliseconds = overlapMilliseconds;
+			result = candidate;
+		}
+	}
+	if (!result
+		|| (bestOverlapMilliseconds
+			< std::max(qint64(1), gapDurationMilliseconds - 50))) {
+		return std::nullopt;
+	}
+	return result;
+}
+
+[[nodiscard]] bool StartupHeartbeatGapHasSchedulerProof(
+	const StartupHeartbeatGap &gap,
+	const std::optional<Core::UiStallWatchdog::StallEvidence> &evidence) {
+	if ((gap.durationNanoseconds < kStartupHeartbeatGapThresholdNanoseconds)
+		|| (gap.mainThreadWorkNanoseconds < 0)
+		|| (gap.mainThreadWorkNanoseconds
+			>= kMaxStartupHeartbeatThreadWorkNanoseconds)
+		|| (gap.processWorkNanoseconds < 0)
+		|| (gap.processWorkNanoseconds
+			> kMaxStartupHeartbeatProcessWorkNanoseconds)
+		|| !evidence) {
+		return false;
+	}
+	const auto trace = evidence->schedulerTrace;
+	const auto requiredSamples = std::max(
+		qint64(4), (gap.durationNanoseconds - 50'000'000) / 10'000'000);
+	return (qint64(trace.size()) >= requiredSamples)
+		   && (trace.count(u'R') == trace.size());
+}
+
+[[nodiscard]] bool AllStartupHeartbeatGapsHaveSchedulerProof(
+	const std::vector<StartupHeartbeatGap> &gaps,
+	const std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>
+		&evidence,
+	bool processCpuClockAvailable) {
+	if (gaps.empty()) {
+		return true;
+	} else if (!processCpuClockAvailable || (gaps.size() != evidence.size())) {
+		return false;
+	}
+	auto matchedEvidenceStarts = std::set<QString>();
+	for (auto i = 0U; i != gaps.size(); ++i) {
+		if (!StartupHeartbeatGapHasSchedulerProof(gaps[i], evidence[i])
+			|| !matchedEvidenceStarts.insert(evidence[i]->startedAt).second) {
+			return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] bool StartupHeartbeatGapEvidenceRegressionPasses() {
+	const auto firstStart = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
+												  Qt::ISODateWithMs);
+	const auto secondStart = QDateTime::fromString(
+		u"2026-11-09T00:00:01.000Z"_q, Qt::ISODateWithMs);
+	const auto gaps = std::vector<StartupHeartbeatGap>{
+		{firstStart, 230'000'000, 25'000'000, 50'000'000},
+		{secondStart, 150'000'000, 25'000'000, 50'000'000},
+	};
+	const auto evidence = std::vector<Core::UiStallWatchdog::StallEvidence>{
+		{
+			.startedAt = firstStart.toString(Qt::ISODateWithMs),
+			.durationMilliseconds = 230,
+			.schedulerTrace = QString(24, QChar(u'R')),
+			.stack = u"scheduler regression"_q,
+		},
+		{
+			.startedAt = secondStart.toString(Qt::ISODateWithMs),
+			.durationMilliseconds = 150,
+			.schedulerTrace = QString(12, QChar(u'W')),
+			.stack = u"app wait regression"_q,
+		},
+	};
+	auto matchedEvidence
+		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>();
+	for (const auto &gap : gaps) {
+		matchedEvidence.push_back(
+			FindMatchingStartupHeartbeatGapEvidence(gap, evidence));
+	}
+	const auto largestGapOnly = std::vector<StartupHeartbeatGap>{gaps.front()};
+	const auto largestGapEvidence
+		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>{
+			matchedEvidence.front()};
+	const auto largestGapProven = StartupHeartbeatGapHasSchedulerProof(
+		largestGapOnly.front(), largestGapEvidence.front());
+	const auto secondGapEvidenceMatched = matchedEvidence.back().has_value();
+	const auto secondGapProven = StartupHeartbeatGapHasSchedulerProof(
+		gaps.back(), matchedEvidence.back());
+	return largestGapProven && secondGapEvidenceMatched && !secondGapProven
+		   && !AllStartupHeartbeatGapsHaveSchedulerProof(gaps, matchedEvidence,
+														 true);
+}
+
 struct CacheChatSwitchRegressionResult final {
 	int attachMenuBotCount = 0;
 	int reactions = 0;
@@ -10995,6 +11131,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto maxHeartbeatGapProcessWorkNanoseconds = qint64(-1);
 			auto lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
 			auto maxHeartbeatGapStartedAt = QDateTime();
+			auto startupHeartbeatGaps = std::vector<StartupHeartbeatGap>();
+			auto maxHeartbeatGapIndex = std::optional<std::size_t>();
 			auto lastMainThreadCpuNanoseconds = MainThreadCpuTimeNanoseconds();
 			auto mainThreadCpuClockAvailable
 				= lastMainThreadCpuNanoseconds.has_value();
@@ -11028,12 +11166,25 @@ void RunAuthenticatedCacheSymlinkCases(
 				} else {
 					processCpuClockAvailable = false;
 				}
+				if (wallGapNanoseconds
+					>= kStartupHeartbeatGapThresholdNanoseconds) {
+					startupHeartbeatGaps.push_back({
+						lastMainThreadHeartbeatAt,
+						wallGapNanoseconds,
+						workNanoseconds,
+						processWorkNanoseconds,
+					});
+				}
 				if (wallGapNanoseconds > maxHeartbeatGapNanoseconds) {
 					maxHeartbeatGapNanoseconds = wallGapNanoseconds;
 					maxHeartbeatGapWorkNanoseconds = workNanoseconds;
 					maxHeartbeatGapProcessWorkNanoseconds
 						= processWorkNanoseconds;
 					maxHeartbeatGapStartedAt = lastMainThreadHeartbeatAt;
+					if (wallGapNanoseconds
+						>= kStartupHeartbeatGapThresholdNanoseconds) {
+						maxHeartbeatGapIndex = startupHeartbeatGaps.size() - 1;
+					}
 				}
 				lastMainThreadHeartbeatNanoseconds = now;
 				lastMainThreadHeartbeatAt = QDateTime::currentDateTime();
@@ -11145,52 +11296,23 @@ void RunAuthenticatedCacheSymlinkCases(
 			});
 			mainThreadHeartbeat.stop();
 			recordMainThreadHeartbeat();
-			const auto longHeartbeatGap
-				= (maxHeartbeatGapNanoseconds >= 100'000'000);
-			auto matchingSchedulerEvidence
-				= std::optional<Core::UiStallWatchdog::StallEvidence>();
+			const auto longHeartbeatGap = !startupHeartbeatGaps.empty();
+			auto matchingEvidenceByGap = std::vector<
+				std::optional<Core::UiStallWatchdog::StallEvidence>>(
+				startupHeartbeatGaps.size());
 			const auto findMatchingSchedulerEvidence = [&] {
-				if (!maxHeartbeatGapStartedAt.isValid()) {
-					return false;
-				}
-				const auto gapStartMilliseconds
-					= maxHeartbeatGapStartedAt.toMSecsSinceEpoch();
-				const auto gapDurationMilliseconds
-					= (maxHeartbeatGapNanoseconds + 999'999) / 1'000'000;
-				const auto gapEndMilliseconds
-					= gapStartMilliseconds + gapDurationMilliseconds;
-				auto bestOverlapMilliseconds = qint64(0);
-				for (const auto &evidence :
-					 Core::UiStallWatchdog::RecentStallEvidenceForTesting()) {
-					const auto start = QDateTime::fromString(evidence.startedAt,
-															 Qt::ISODateWithMs);
-					if (!start.isValid()
-						|| evidence.durationMilliseconds <= 0) {
-						continue;
-					}
-					const auto evidenceStartMilliseconds
-						= start.toMSecsSinceEpoch();
-					const auto evidenceEndMilliseconds
-						= evidenceStartMilliseconds
-						  + evidence.durationMilliseconds;
-					const auto overlapMilliseconds = std::max(
-						qint64(0),
-						std::min(gapEndMilliseconds, evidenceEndMilliseconds)
-							- std::max(gapStartMilliseconds,
-									   evidenceStartMilliseconds));
-					if (overlapMilliseconds > bestOverlapMilliseconds) {
-						bestOverlapMilliseconds = overlapMilliseconds;
-						matchingSchedulerEvidence = evidence;
+				const auto evidence
+					= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+				for (auto i = 0; i != startupHeartbeatGaps.size(); ++i) {
+					if (!matchingEvidenceByGap[i]) {
+						matchingEvidenceByGap[i]
+							= FindMatchingStartupHeartbeatGapEvidence(
+								startupHeartbeatGaps[i], evidence);
 					}
 				}
-				const auto matches
-					= matchingSchedulerEvidence.has_value()
-					  && (bestOverlapMilliseconds
-						  >= std::max(qint64(1), gapDurationMilliseconds - 50));
-				if (!matches) {
-					matchingSchedulerEvidence.reset();
-				}
-				return matches;
+				return std::all_of(
+					begin(matchingEvidenceByGap), end(matchingEvidenceByGap),
+					[](const auto &matching) { return matching.has_value(); });
 			};
 			const auto schedulerEvidenceMatched
 				= longHeartbeatGap
@@ -11200,6 +11322,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				std::fprintf(stderr, "No startup heartbeat-gap stall evidence "
 									 "matched within 1000 ms.\n");
 			}
+			const auto matchingSchedulerEvidence
+				= maxHeartbeatGapIndex
+					  ? matchingEvidenceByGap[*maxHeartbeatGapIndex]
+					  : std::optional<Core::UiStallWatchdog::StallEvidence>();
 			const auto schedulerTrace
 				= matchingSchedulerEvidence
 					  ? matchingSchedulerEvidence->schedulerTrace
@@ -11212,24 +11338,19 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto schedulerOther = schedulerSamples - schedulerRunning
 										- schedulerWaiting
 										- schedulerUninterruptible;
-			const auto requiredSchedulerSamples
-				= std::max(qint64(4), (maxHeartbeatGapNanoseconds - 50'000'000)
-										  / 10'000'000);
 			const auto schedulerPreemptionProven
-				= schedulerEvidenceMatched
-				  && matchingSchedulerEvidence.has_value()
-				  && processCpuClockAvailable
-				  && (maxHeartbeatGapProcessWorkNanoseconds >= 0)
-				  && (maxHeartbeatGapProcessWorkNanoseconds <= 100'000'000)
-				  && (qint64(schedulerSamples) >= requiredSchedulerSamples)
-				  && (schedulerRunning == schedulerSamples)
-				  && (schedulerWaiting == 0) && (schedulerUninterruptible == 0)
-				  && (schedulerOther == 0);
+				= schedulerEvidenceMatched && processCpuClockAvailable
+				  && AllStartupHeartbeatGapsHaveSchedulerProof(
+					  startupHeartbeatGaps, matchingEvidenceByGap,
+					  processCpuClockAvailable);
+			const auto heartbeatGapEvidenceRegressionPassed
+				= StartupHeartbeatGapEvidenceRegressionPasses();
 			const auto mainThreadWorkWithinBound
 				= mainThreadCpuClockAvailable
 				  && (maxMainThreadWorkNanoseconds < 100'000'000);
 			const auto startupWithinBound
 				= mainThreadWorkWithinBound
+				  && heartbeatGapEvidenceRegressionPassed
 				  && (!longHeartbeatGap || schedulerPreemptionProven);
 			const auto heartbeatGapStackCaptured
 				= matchingSchedulerEvidence
