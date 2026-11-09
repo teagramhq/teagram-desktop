@@ -14886,9 +14886,17 @@ template <typename Action>
 	}
 	const auto passed = action(account);
 	const auto cleaned = cleanup.cleanup();
-	return cleaned && passed
-		   && (!retainSession
-			   || (account->sessionExists() && (&domain.active() == fallback)));
+	const auto retained
+		= !retainSession
+		  || (account->sessionExists() && (&domain.active() == fallback));
+	if (!passed || !cleaned || !retained) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: scenario %s, cleanup %s, "
+					 "retained session %s.\n",
+					 passed ? "passed" : "failed", cleaned ? "ok" : "failed",
+					 retained ? "ok" : "lost");
+	}
+	return cleaned && passed && retained;
 }
 
 [[nodiscard]] DesktopScaleActionSample
@@ -15341,6 +15349,14 @@ int RunDesktopScaleCheck() {
 		static_cast<unsigned long long>(cacheOne.mainThreadStepsOverBudget),
 		static_cast<unsigned long long>(cacheHundred.mainThreadStepsOverBudget),
 		static_cast<unsigned long long>(stalls));
+	std::printf(
+		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
+		"cache=%d/%d.\n",
+		int(dialogsOne.passed), int(dialogsHundred.passed),
+		int(contactsOne.loaded.passed), int(contactsHundred.loaded.passed),
+		int(contactsOne.changedAndFound.passed),
+		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
+		int(cacheHundred.passed));
 	std::printf("Outcome: %s\n", passed ? "PASS" : "FAIL");
 	std::printf("DESKTOP_SCALE_REPORT_END\n");
 	std::fflush(stdout);
