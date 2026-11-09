@@ -114,8 +114,8 @@ private:
 		const QHostInfo &info);
 	void discoveryFailed(bool connectionFailure);
 	void resetAfterDiscoveryFailure(bool connectionFailure);
-	void resetAfterDiscoveryFailure(
-		ServerDiscoveryFailurePresentation presentation);
+	void
+	resetAfterDiscoveryFailure(ServerDiscoveryFailurePresentation presentation);
 	void cancelDiscovery();
 	void showStatus(const QString &text, bool error);
 	void clearStatus();

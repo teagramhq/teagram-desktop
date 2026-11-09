@@ -755,32 +755,35 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 	}
 	const auto status = result.status;
 	HandleServerDiscoveryResult(
-		_discoveryFlow,
-		std::move(result),
+		_discoveryFlow, std::move(result),
 		tr::lng_intro_server_browser_only(tr::now),
 		tr::lng_intro_server_try_again(tr::now),
 		{
-			.browserOnly = [=](ServerDiscoveryFailurePresentation presentation) {
-				resetAfterDiscoveryFailure(std::move(presentation));
-			},
-			.invalid = [=] {
-				LOG(("Server discovery response invalid: status %1.")
-						.arg(int(status)));
-				discoveryFailed(false);
-			},
-			.ready = [=](MTP::ServerDiscoveryResult result) {
-				if (_reply) {
-					const auto reply = _reply;
-					_reply = nullptr;
-					reply->deleteLater();
-				}
-				if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
-					resolvePublicEndpoint(std::move(result));
-				} else {
-					_deadline->stop();
-					commitBinding(std::move(result));
-				}
-			},
+			.browserOnly =
+				[=](ServerDiscoveryFailurePresentation presentation) {
+					resetAfterDiscoveryFailure(std::move(presentation));
+				},
+			.invalid =
+				[=] {
+					LOG(("Server discovery response invalid: status %1.")
+							.arg(int(status)));
+					discoveryFailed(false);
+				},
+			.ready =
+				[=](MTP::ServerDiscoveryResult result) {
+					if (_reply) {
+						const auto reply = _reply;
+						_reply = nullptr;
+						reply->deleteLater();
+					}
+					if (result.policy
+						== MTP::ServerDiscoveryPolicy::PublicHttps) {
+						resolvePublicEndpoint(std::move(result));
+					} else {
+						_deadline->stop();
+						commitBinding(std::move(result));
+					}
+				},
 		});
 }
 
@@ -863,8 +866,8 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 		return;
 	}
 	const auto message = connectionFailure
-		? tr::lng_intro_server_connect_failed(tr::now)
-		: tr::lng_intro_server_unsupported(tr::now);
+							 ? tr::lng_intro_server_connect_failed(tr::now)
+							 : tr::lng_intro_server_unsupported(tr::now);
 	resetAfterDiscoveryFailure({
 		.message = message,
 		.continueText = tr::lng_intro_server_try_again(tr::now),
@@ -874,7 +877,7 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 }
 
 void ServerWidget::resetAfterDiscoveryFailure(
-		ServerDiscoveryFailurePresentation presentation) {
+	ServerDiscoveryFailurePresentation presentation) {
 	if (!_connecting) {
 		return;
 	}

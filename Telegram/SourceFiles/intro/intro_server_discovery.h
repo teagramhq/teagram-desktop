@@ -73,12 +73,11 @@ struct ServerDiscoveryResultHandlers {
 	std::function<void(MTP::ServerDiscoveryResult)> ready;
 };
 
-void HandleServerDiscoveryResult(
-	ServerDiscoveryFlow &flow,
-	MTP::ServerDiscoveryResult result,
-	QString browserOnlyMessage,
-	QString continueText,
-	ServerDiscoveryResultHandlers handlers);
+void HandleServerDiscoveryResult(ServerDiscoveryFlow &flow,
+								 MTP::ServerDiscoveryResult result,
+								 QString browserOnlyMessage,
+								 QString continueText,
+								 ServerDiscoveryResultHandlers handlers);
 
 class ServerWidgetDiscovery final : public QObject {
 public:

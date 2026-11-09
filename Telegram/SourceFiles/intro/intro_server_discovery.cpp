@@ -374,12 +374,11 @@ void ServerDiscoveryFlow::cancel() {
 	finish();
 }
 
-void HandleServerDiscoveryResult(
-		ServerDiscoveryFlow &flow,
-		MTP::ServerDiscoveryResult result,
-		QString browserOnlyMessage,
-		QString continueText,
-		ServerDiscoveryResultHandlers handlers) {
+void HandleServerDiscoveryResult(ServerDiscoveryFlow &flow,
+								 MTP::ServerDiscoveryResult result,
+								 QString browserOnlyMessage,
+								 QString continueText,
+								 ServerDiscoveryResultHandlers handlers) {
 	if (result.status == MTP::ServerDiscoveryResponseStatus::BrowserOnly) {
 		flow.finish();
 		handlers.browserOnly({

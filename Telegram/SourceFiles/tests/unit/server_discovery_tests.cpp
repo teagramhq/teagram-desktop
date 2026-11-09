@@ -1618,11 +1618,9 @@ TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
 	CHECK(flow.start(selected, callbacks));
 
 	const auto result = ParsePublicDiscoveryResponse(
-		selected,
-		PublicResponseWithBrowserOnlyWebSocket(
-			u"mtproto.example.com:443"_q,
-			u"wss://transport.example.com/apiws"_q,
-			true));
+		selected, PublicResponseWithBrowserOnlyWebSocket(
+					  u"mtproto.example.com:443"_q,
+					  u"wss://transport.example.com/apiws"_q, true));
 	auto presentation = Intro::details::ServerDiscoveryFailurePresentation();
 	auto refused = 0;
 	auto invalid = 0;
@@ -1631,22 +1629,22 @@ TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
 	auto navigations = 0;
 	auto reconnects = 0;
 	Intro::details::HandleServerDiscoveryResult(
-		flow,
-		result,
-		u"This server works only in the browser."_q,
+		flow, result, u"This server works only in the browser."_q,
 		u"Try again"_q,
 		{
-			.browserOnly = [&](auto value) {
-				++refused;
-				presentation = std::move(value);
-			},
+			.browserOnly =
+				[&](auto value) {
+					++refused;
+					presentation = std::move(value);
+				},
 			.invalid = [&] { ++invalid; },
-			.ready = [&](MTP::ServerDiscoveryResult) {
-				++ready;
-				++bindings;
-				++navigations;
-				++reconnects;
-			},
+			.ready =
+				[&](MTP::ServerDiscoveryResult) {
+					++ready;
+					++bindings;
+					++navigations;
+					++reconnects;
+				},
 		});
 
 	CHECK_EQ(refused, 1);
