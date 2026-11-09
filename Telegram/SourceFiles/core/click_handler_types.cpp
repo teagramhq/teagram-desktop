@@ -90,7 +90,6 @@ constexpr auto kReminderSetToastDuration = 4 * crl::time(1000);
 	return (scheme != u"https"_q && scheme != u"http"_q)
 		   || UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
 }
-}
 
 [[nodiscard]] bool RequiresConfirmationAfterIvFallback(const QUrl &url) {
 	const auto host = url.host().toLower();
