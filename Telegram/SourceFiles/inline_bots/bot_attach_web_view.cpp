@@ -719,7 +719,7 @@ BotAction::BotAction(
 		+ _st.itemStyle.font->height
 		+ _st.itemPadding.bottom()) {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	_dummyAction->setData(QString::number(_bot.user->id.bare));
+	_dummyAction->setData(QString::number(_bot.user->id.value));
 #endif
 	setAcceptBoth(false);
 	fitToMenuWidth();
