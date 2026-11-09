@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 
 #include <QtCore/QBuffer>
+#include <QtCore/QDir>
 #include <QtGui/QImageReader>
 
 namespace Data {
@@ -513,6 +514,8 @@ void DocumentMedia::ReadOrGenerateThumbnail(
 		return;
 	}
 	document->setGoodThumbnailGenerating();
+
+	QDir().entryList();
 
 	const auto guard = base::make_weak(&document->session());
 	const auto active = document->activeMediaView();
