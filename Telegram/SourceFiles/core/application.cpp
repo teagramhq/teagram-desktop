@@ -296,8 +296,7 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  || authLifecycleRegression || customEmojiUiSmoke
-		  || desktopScaleCheck;
+		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck;
 	const auto windowedApplication
 		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke;
 	if (headlessRegression) {

@@ -35,8 +35,8 @@ DIR *opendir(const char *name) {
 	}
 	DIR *result = next_opendir(name);
 	if (result && atomic_load_explicit(&counting, memory_order_relaxed)) {
-		atomic_fetch_add_explicit(
-			&directory_enumerations, 1, memory_order_relaxed);
+		atomic_fetch_add_explicit(&directory_enumerations, 1,
+								  memory_order_relaxed);
 	}
 	return result;
 }
@@ -48,8 +48,8 @@ DIR *fdopendir(int fd) {
 	}
 	DIR *result = next_fdopendir(fd);
 	if (result && atomic_load_explicit(&counting, memory_order_relaxed)) {
-		atomic_fetch_add_explicit(
-			&directory_enumerations, 1, memory_order_relaxed);
+		atomic_fetch_add_explicit(&directory_enumerations, 1,
+								  memory_order_relaxed);
 	}
 	return result;
 }
