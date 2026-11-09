@@ -536,7 +536,8 @@ private:
 	Fn<TextWithTags()> composeFieldText = nullptr,
 	Fn<void()> composeFieldMigrated = nullptr,
 	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate,
-	Fn<void()> buildComplete = nullptr);
+	Fn<void()> buildComplete = nullptr,
+	Fn<void(qint64)> buildStepMeasured = nullptr);
 
 class MenuBotIcon final : public Ui::RpWidget {
 public:

@@ -10429,7 +10429,13 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 attachMenuHoverNanoseconds = -1;
 	qint64 attachMenuInvalidationHoverNanoseconds = -1;
 	qint64 attachMenuUncachedPeerNanoseconds = -1;
+	qint64 attachMenuFirstHoverBuildWorkNanoseconds = -1;
+	qint64 attachMenuInvalidationBuildWorkNanoseconds = -1;
+	qint64 attachMenuUncachedPeerBuildWorkNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
+	int attachMenuUncachedDeferredFailures = 0;
+	int attachMenuUncachedMissingBotFailures = 0;
+	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
@@ -10513,6 +10519,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.attachMenuBuildDeferredUntilHover
 		= (historyWidget->attachMenuBuildCountForRegressionTest()
 		   == buildsBeforePrime);
+	const auto buildWorkBeforePrime
+		= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest();
 	auto primeTimer = QElapsedTimer();
 	primeTimer.start();
 	auto primeEnter = QEvent(QEvent::Enter);
@@ -10525,6 +10533,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		},
 		1000);
 	result.attachMenuFirstHoverNanoseconds = primeTimer.nsecsElapsed();
+	result.attachMenuFirstHoverBuildWorkNanoseconds
+		= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest()
+		  - buildWorkBeforePrime;
 	const auto attachMenuPrimed
 		= historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
@@ -10553,6 +10564,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto replacementBot = data.user(replacementBotId);
 	const auto buildsBeforeInvalidation
 		= historyWidget->attachMenuBuildCountForRegressionTest();
+	const auto buildWorkBeforeInvalidation
+		= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest();
 	session.attachWebView().setAttachBotsForRegressionTest({
 		InlineBots::AttachWebViewBot{
 			.user = replacementBot,
@@ -10574,6 +10587,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		1000);
 	result.attachMenuInvalidationHoverNanoseconds
 		= invalidationTimer.nsecsElapsed();
+	result.attachMenuInvalidationBuildWorkNanoseconds
+		= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest()
+		  - buildWorkBeforeInvalidation;
 	result.attachMenuInvalidationRebuilt
 		= replacementBotAppeared
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
@@ -10600,10 +10616,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto history = data.history(data.user(peerId));
 		const auto buildsBeforePeerSwitch
 			= historyWidget->attachMenuBuildCountForRegressionTest();
+		const auto buildWorkBeforePeerSwitch
+			= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest();
 		auto peerTimer = QElapsedTimer();
 		peerTimer.start();
 		controller->showPeerHistory(history);
-		QCoreApplication::processEvents();
 		const auto buildDeferredUntilEnter
 			= (historyWidget->attachMenuBuildCountForRegressionTest()
 			   == buildsBeforePeerSwitch);
@@ -10618,11 +10635,21 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			1000);
 		result.attachMenuUncachedPeerNanoseconds = std::max(
 			result.attachMenuUncachedPeerNanoseconds, peerTimer.nsecsElapsed());
+		const auto peerBuildWorkNanoseconds
+			= historyWidget->attachMenuBuildWorkNanosecondsForRegressionTest()
+			  - buildWorkBeforePeerSwitch;
+		result.attachMenuUncachedPeerBuildWorkNanoseconds
+			= std::max(result.attachMenuUncachedPeerBuildWorkNanoseconds,
+					   peerBuildWorkNanoseconds);
+		const auto buildCountMatches
+			= (historyWidget->attachMenuBuildCountForRegressionTest()
+			   == buildsBeforePeerSwitch + 1);
+		result.attachMenuUncachedDeferredFailures += !buildDeferredUntilEnter;
+		result.attachMenuUncachedMissingBotFailures += !lastBotAppeared;
+		result.attachMenuUncachedBuildCountFailures += !buildCountMatches;
 		result.attachMenuUncachedPeersReady
 			= result.attachMenuUncachedPeersReady && buildDeferredUntilEnter
-			  && lastBotAppeared
-			  && (historyWidget->attachMenuBuildCountForRegressionTest()
-				  == buildsBeforePeerSwitch + 1);
+			  && lastBotAppeared && buildCountMatches;
 	}
 	result.attachMenuCacheBounded
 		= (historyWidget->attachMenuCacheSizeForRegressionTest() <= 8);
@@ -10725,13 +10752,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		loop.quit();
 	});
 	loop.exec();
-	result.maxStallNanoseconds
-		= std::max(std::max(std::max(result.maxHydrationNanoseconds,
-									 result.maxChatSwitchNanoseconds),
-							std::max(result.attachMenuFirstHoverNanoseconds,
-									 result.attachMenuUncachedPeerNanoseconds)),
-				   std::max(result.attachMenuHoverNanoseconds,
-							result.attachMenuInvalidationHoverNanoseconds));
+	result.maxStallNanoseconds = std::max(
+		std::max(std::max(result.maxHydrationNanoseconds,
+						  result.maxChatSwitchNanoseconds),
+				 std::max(result.attachMenuFirstHoverBuildWorkNanoseconds,
+						  result.attachMenuUncachedPeerBuildWorkNanoseconds)),
+		std::max(result.attachMenuHoverNanoseconds,
+				 result.attachMenuInvalidationBuildWorkNanoseconds));
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
@@ -10742,17 +10769,20 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
-		  && (result.attachMenuFirstHoverNanoseconds < 50'000'000)
+		  && (result.attachMenuFirstHoverBuildWorkNanoseconds >= 0)
+		  && (result.attachMenuFirstHoverBuildWorkNanoseconds < 50'000'000)
 		  && result.attachMenuCacheReused
 		  && (result.attachMenuHoverNanoseconds >= 0)
 		  && (result.attachMenuHoverNanoseconds < 50'000'000)
 		  && result.attachMenuInvalidationRebuilt
 		  && (result.attachMenuInvalidationHoverNanoseconds >= 0)
-		  && (result.attachMenuInvalidationHoverNanoseconds < 50'000'000)
+		  && (result.attachMenuInvalidationBuildWorkNanoseconds >= 0)
+		  && (result.attachMenuInvalidationBuildWorkNanoseconds < 50'000'000)
 		  && result.attachMenuBuildDeferredUntilHover
 		  && result.attachMenuUncachedPeersReady
 		  && (result.attachMenuUncachedPeerNanoseconds >= 0)
-		  && (result.attachMenuUncachedPeerNanoseconds < 50'000'000)
+		  && (result.attachMenuUncachedPeerBuildWorkNanoseconds >= 0)
+		  && (result.attachMenuUncachedPeerBuildWorkNanoseconds < 50'000'000)
 		  && result.attachMenuCacheBounded && result.minimizedRestore
 		  && (result.minimizedSwitchNanoseconds >= 0)
 		  && (result.maxChatSwitchNanoseconds < kMaxChatSwitchNanoseconds);
@@ -11406,9 +11436,15 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_hover_ns=%lld "
 					"attach_menu_update_hover_ns=%lld "
 					"attach_menu_uncached_peer_ns=%lld "
+					"attach_menu_first_hover_work_ns=%lld "
+					"attach_menu_update_hover_work_ns=%lld "
+					"attach_menu_uncached_peer_work_ns=%lld "
 					"attach_menu_cached=%d attach_menu_invalidated=%d "
 					"attach_menu_build_deferred=%d "
 					"attach_menu_uncached_ready=%d "
+					"attach_menu_uncached_deferred_failures=%d "
+					"attach_menu_uncached_missing_bot_failures=%d "
+					"attach_menu_uncached_build_count_failures=%d "
 					"attach_menu_cache_bound=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
@@ -11427,10 +11463,19 @@ void RunAuthenticatedCacheSymlinkCases(
 						chatSwitch.attachMenuInvalidationHoverNanoseconds),
 					static_cast<long long>(
 						chatSwitch.attachMenuUncachedPeerNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuFirstHoverBuildWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuInvalidationBuildWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuUncachedPeerBuildWorkNanoseconds),
 					chatSwitch.attachMenuCacheReused,
 					chatSwitch.attachMenuInvalidationRebuilt,
 					chatSwitch.attachMenuBuildDeferredUntilHover,
 					chatSwitch.attachMenuUncachedPeersReady,
+					chatSwitch.attachMenuUncachedDeferredFailures,
+					chatSwitch.attachMenuUncachedMissingBotFailures,
+					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0

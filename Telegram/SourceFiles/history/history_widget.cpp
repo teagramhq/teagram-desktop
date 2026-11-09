@@ -220,6 +220,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QWindow>
 #include <QtGui/QAction>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QTimer>
 
@@ -3485,11 +3486,26 @@ void HistoryWidget::refreshAttachBotsMenu() {
 
 void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	const auto i = _attachBotsMenuCache.find(peer);
-	if (i == end(_attachBotsMenuCache) || i->second.ready || i->second.menu) {
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	} else if (!_history || (_history->peer != peer)) {
+		_attachBotsMenuCache.erase(i);
+		std::erase(_attachBotsMenuCacheLru, peer);
+		return;
+	} else if (i->second.ready || i->second.menu) {
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_attachMenuBuildCountForRegressionTest;
+	auto buildTimer = QElapsedTimer();
+	buildTimer.start();
+	const auto recordBuildWork = gsl::finally([&] {
+		_attachMenuBuildWorkNanosecondsForRegressionTest
+			+= buildTimer.nsecsElapsed();
+	});
+	auto buildStepMeasured = crl::guard(this, [=](qint64 nanoseconds) {
+		_attachMenuBuildWorkNanosecondsForRegressionTest += nanoseconds;
+	});
 #endif
 	auto menu = InlineBots::MakeAttachBotsMenu(
 		this, controller(), peer, [=] { return prepareSendAction({}); },
@@ -3498,7 +3514,12 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 		crl::guard(this, [=] { return _field->getTextWithAppliedMarkdown(); }),
 		crl::guard(this, [=] { migrateFieldToRichEditor(); }),
 		InlineBots::AttachBotsMenuBuildMode::Incremental,
-		crl::guard(this, [=] { attachBotsMenuBuildFinished(peer); }));
+		crl::guard(this, [=] { attachBotsMenuBuildFinished(peer); }),
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		std::move(buildStepMeasured));
+#else
+		nullptr);
+#endif
 	i->second.menu = std::move(menu);
 	if (!i->second.menu) {
 		i->second.ready = true;
@@ -6742,6 +6763,10 @@ Ui::IconButton *HistoryWidget::attachToggleForRegressionTest() const {
 
 int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
 	return _attachMenuBuildCountForRegressionTest;
+}
+
+qint64 HistoryWidget::attachMenuBuildWorkNanosecondsForRegressionTest() const {
+	return _attachMenuBuildWorkNanosecondsForRegressionTest;
 }
 
 bool HistoryWidget::attachMenuExistsForRegressionTest() const {

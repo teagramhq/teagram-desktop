@@ -93,6 +93,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
+#include <QElapsedTimer>
 #include <QSvgRenderer>
 #include <QTimer>
 
@@ -757,7 +758,7 @@ void BotAction::paint(Painter &p) {
 }
 
 void BotAction::prepare() {
-	_text.setMarkedText(_st.itemStyle, { _bot.name });
+	_text.setText(_st.itemStyle, _bot.name, kPlainTextOptions);
 	const auto textWidth = _text.maxWidth();
 	const auto &padding = _st.itemPadding;
 
@@ -827,7 +828,12 @@ void BotAction::handleKeyPress(not_null<QKeyEvent*> e) {
 void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
 							not_null<Window::SessionController *> controller,
 							Fn<Api::SendAction()> actionFactory,
-							const AttachWebViewBot &bot) {
+							const AttachWebViewBot &bot,
+							Fn<void(qint64)> buildStepMeasured) {
+	auto timer = QElapsedTimer();
+	if (buildStepMeasured) {
+		timer.start();
+	}
 	const auto bots = &controller->session().attachWebView();
 	const auto callback = [=] {
 		bots->open({
@@ -853,6 +859,9 @@ void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
 			},
 			action->lifetime());
 	menu->addAction(std::move(action));
+	if (buildStepMeasured) {
+		buildStepMeasured(timer.nsecsElapsed());
+	}
 }
 
 class AttachBotsMenuPopulation final : public QObject {
@@ -861,24 +870,36 @@ class AttachBotsMenuPopulation final : public QObject {
 							 not_null<Window::SessionController *> controller,
 							 Fn<Api::SendAction()> actionFactory,
 							 std::vector<AttachWebViewBot> bots,
-							 Fn<void()> buildComplete)
+							 Fn<void()> buildComplete,
+							 Fn<void(qint64)> buildStepMeasured)
 		: QObject(menu), _menu(menu), _controller(controller),
 		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)),
-		  _buildComplete(std::move(buildComplete)) {}
+		  _buildComplete(std::move(buildComplete)),
+		  _buildStepMeasured(std::move(buildStepMeasured)) {}
 
 	void start() {
-		QTimer::singleShot(0, this, [=] { populate(); });
+		QTimer::singleShot(0, this, [=] { addNext(); });
 	}
 
   private:
-	void populate() {
-		for (const auto &bot : _bots) {
-			AddAttachBotMenuAction(_menu, _controller, _actionFactory, bot);
+	void addNext() {
+		AddAttachBotMenuAction(_menu, _controller, _actionFactory,
+							   _bots[_position++], _buildStepMeasured);
+		if (_position == int(_bots.size())) {
+			if (_buildComplete) {
+				auto timer = QElapsedTimer();
+				if (_buildStepMeasured) {
+					timer.start();
+				}
+				_buildComplete();
+				if (_buildStepMeasured) {
+					_buildStepMeasured(timer.nsecsElapsed());
+				}
+			}
+			deleteLater();
+		} else {
+			QTimer::singleShot(0, this, [=] { addNext(); });
 		}
-		if (_buildComplete) {
-			_buildComplete();
-		}
-		deleteLater();
 	}
 
 	const not_null<Ui::DropdownMenu *> _menu;
@@ -886,6 +907,8 @@ class AttachBotsMenuPopulation final : public QObject {
 	const Fn<Api::SendAction()> _actionFactory;
 	const std::vector<AttachWebViewBot> _bots;
 	const Fn<void()> _buildComplete;
+	const Fn<void(qint64)> _buildStepMeasured;
+	int _position = 0;
 };
 
 } // namespace
@@ -3137,7 +3160,8 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	Fn<Api::SendAction()> actionFactory,
 	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
-	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete) {
+	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete,
+	Fn<void(qint64)> buildStepMeasured) {
 	auto result = std::make_unique<Ui::DropdownMenu>(
 		parent,
 		st::dropdownMenuWithIcons);
@@ -3248,20 +3272,37 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 		if (!menuBots.empty()) {
 			auto population = new AttachBotsMenuPopulation(
 				raw, controller, std::move(actionFactory), std::move(menuBots),
-				std::move(buildComplete));
+				std::move(buildComplete), std::move(buildStepMeasured));
 			population->start();
 		} else if (buildComplete) {
-			QTimer::singleShot(0, raw,
-							   [buildComplete = std::move(buildComplete)] {
-								   buildComplete();
-							   });
+			QTimer::singleShot(
+				0, raw,
+				[buildComplete = std::move(buildComplete),
+				 buildStepMeasured = std::move(buildStepMeasured)] {
+					auto timer = QElapsedTimer();
+					if (buildStepMeasured) {
+						timer.start();
+					}
+					buildComplete();
+					if (buildStepMeasured) {
+						buildStepMeasured(timer.nsecsElapsed());
+					}
+				});
 		}
 	} else {
 		for (const auto &bot : menuBots) {
-			AddAttachBotMenuAction(raw, controller, actionFactory, bot);
+			AddAttachBotMenuAction(raw, controller, actionFactory, bot,
+								   buildStepMeasured);
 		}
 		if (buildComplete) {
+			auto timer = QElapsedTimer();
+			if (buildStepMeasured) {
+				timer.start();
+			}
 			buildComplete();
+			if (buildStepMeasured) {
+				buildStepMeasured(timer.nsecsElapsed());
+			}
 		}
 	}
 	return result;
