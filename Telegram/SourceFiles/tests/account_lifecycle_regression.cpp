@@ -10387,7 +10387,7 @@ FindMatchingMainThreadWorkEvidence(
 	return true;
 }
 
-[[nodiscard]] bool StartupHeartbeatGapEvidenceRegressionPasses() {
+[[maybe_unused, nodiscard]] bool StartupHeartbeatGapEvidenceRegressionPasses() {
 	const auto firstStart = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
 												  Qt::ISODateWithMs);
 	const auto secondStart = QDateTime::fromString(
