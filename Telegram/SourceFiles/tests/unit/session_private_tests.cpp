@@ -682,7 +682,7 @@ TEST_CASE(ServerErrorFromPacketMapsOnlyBrowserOnlyCode) {
 	CHECK_EQ(serverError, -404);
 }
 
-TEST_CASE(ServerPacketBrowserOnlyCodeDoesNotSetBrowserOnlyRefusal) {
+TEST_CASE(ServerErrorFromPacketDoesNotRecordBrowserOnlyRefusal) {
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
 	auto data = std::make_shared<SessionData>(
 		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
