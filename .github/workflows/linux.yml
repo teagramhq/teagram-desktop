@@ -673,6 +673,7 @@ jobs:
             export XDG_DATA_HOME="$scale_home/data"
             export XDG_CACHE_HOME="$scale_home/cache"
             export QT_QPA_PLATFORM=offscreen
+            export ALSOFT_DRIVERS=null
             export TDESKTOP_DESKTOP_SCALE_CHECK=1
             export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
             app_output="$scale_home/app-output.txt"
@@ -692,10 +693,12 @@ jobs:
                 echo "::group::Backtrace of the crashed scale check"
                 unset LD_PRELOAD
                 gdb -batch -ex "set environment LD_PRELOAD /usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so" \
+                  -ex "set debuginfod enabled off" \
                   -ex "handle SIGPIPE nostop noprint pass" \
-                  -ex run -ex "bt 40" -ex "info threads" \
+                  -ex "handle SIGUSR2 nostop noprint pass" \
+                  -ex run -ex "bt 40" -ex "thread apply all bt 12" \
                   --args /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
-                  -workdir "$scale_home/work2/" 2>&1 | tail -n 120
+                  -workdir "$scale_home/work2/" 2>&1 | grep -v "^Downloading separate\|^\[New Thread\|^\[Detaching" | tail -n 150
                 echo "::endgroup::"
               fi
             fi
