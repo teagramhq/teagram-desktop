@@ -46,7 +46,26 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$stub_bin"
-cp "$(command -v sleep)" "$stub_bin/dbus-daemon"
+cat > "$stub_bin/dbus-daemon" <<'STUB_DBUS_DAEMON'
+#!/usr/bin/env python3
+import ctypes
+import sys
+import time
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.prctl.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_ulong,
+    ctypes.c_ulong,
+    ctypes.c_ulong,
+]
+libc.prctl.restype = ctypes.c_int
+# Linux PR_SET_NAME keeps the stub compatible with the session identity check.
+if libc.prctl(15, b"dbus-daemon", 0, 0, 0) != 0:
+    raise OSError(ctypes.get_errno(), "prctl(PR_SET_NAME) failed")
+time.sleep(int(sys.argv[1]))
+STUB_DBUS_DAEMON
 
 cat > "$stub_bin/id" <<'STUB_ID'
 #!/usr/bin/env bash
@@ -223,7 +242,8 @@ else
 fi
 STUB_TR
 
-for tool in id Xvfb openbox tint2 dunst Telegram dbus-launch xdotool import tr xauth; do
+for tool in id Xvfb openbox tint2 dunst Telegram dbus-daemon \
+	dbus-launch xdotool import tr xauth; do
 	chmod +x "$stub_bin/$tool"
 done
 
