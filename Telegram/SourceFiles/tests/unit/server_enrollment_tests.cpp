@@ -441,22 +441,17 @@ TEST_CASE(PinPersistencePrecedesTheFirstConnection) {
 	CHECK_EQ(events[2], 3);
 }
 
-TEST_CASE(RefusedServerReplacementResetsToTheAdvertisedDcBeforeResume) {
+TEST_CASE(RefusedServerReplacementPersistsAdvertisedDcBeforeResume) {
 	const auto originalDc = DcId(2);
 	const auto replacementDc = DcId(3);
 	auto mainDc = originalDc;
 	auto sessionDcs = std::vector<DcId>{originalDc};
 	auto browserOnlyRefused = true;
-	auto persisted = false;
+	auto pinPersisted = false;
+	auto mainDcPersisted = false;
 	auto resumed = false;
 	const auto committed = CommitServerEnrollment(
-		[] { return true; },
 		[&] {
-			persisted = true;
-			return true;
-		},
-		[&] {
-			CHECK(persisted);
 			ReinitializeMainDcAfterServerReplacement(
 				{
 					.browserOnlyServerRefused = browserOnlyRefused,
@@ -468,6 +463,17 @@ TEST_CASE(RefusedServerReplacementResetsToTheAdvertisedDcBeforeResume) {
 					sessionDcs = {dcId};
 					browserOnlyRefused = false;
 				});
+			return true;
+		},
+		[&] {
+			CHECK_EQ(mainDc, replacementDc);
+			pinPersisted = true;
+			mainDcPersisted = true;
+			return true;
+		},
+		[&] {
+			CHECK(pinPersisted);
+			CHECK(mainDcPersisted);
 			CHECK_EQ(mainDc, replacementDc);
 			CHECK_EQ(int(sessionDcs.size()), 1);
 			CHECK_EQ(sessionDcs.front(), replacementDc);
@@ -477,6 +483,54 @@ TEST_CASE(RefusedServerReplacementResetsToTheAdvertisedDcBeforeResume) {
 
 	CHECK(committed);
 	CHECK(resumed);
+}
+
+TEST_CASE(ServerEnrollmentRestoresMainDcFromPinnedServerAfterCrash) {
+	const auto originalDc = DcId(2);
+	const auto replacementDc = DcId(3);
+	const auto newPinWithOldMain = ServerEnrollmentMainDcId({
+		.hasAuthenticatedSession = false,
+		.storedMainDcId = originalDc,
+		.pinnedServerDcId = replacementDc,
+	});
+	const auto oldPinWithNewMain = ServerEnrollmentMainDcId({
+		.hasAuthenticatedSession = false,
+		.storedMainDcId = replacementDc,
+		.pinnedServerDcId = originalDc,
+	});
+	const auto authenticated = ServerEnrollmentMainDcId({
+		.hasAuthenticatedSession = true,
+		.storedMainDcId = originalDc,
+		.pinnedServerDcId = replacementDc,
+	});
+
+	CHECK_EQ(newPinWithOldMain, replacementDc);
+	CHECK_EQ(oldPinWithNewMain, originalDc);
+	CHECK_EQ(authenticated, originalDc);
+}
+
+TEST_CASE(FailedRefusedServerReplacementRestoresPreviousDc) {
+	const auto originalDc = DcId(2);
+	const auto replacementDc = DcId(3);
+	auto mainDc = originalDc;
+	const auto setPin = [&] {
+		ReinitializeMainDcAfterServerReplacement(
+			{
+				.browserOnlyServerRefused = true,
+				.currentMainDcId = mainDc,
+				.replacementDcId = replacementDc,
+			},
+			[&](DcId dcId) { mainDc = dcId; });
+		return true;
+	};
+	const auto persistPin = [] { return false; };
+	const auto resume = [] {};
+	const auto rollbackPin = [&] { mainDc = originalDc; };
+	const auto committed
+		= CommitServerEnrollment(setPin, persistPin, resume, rollbackPin);
+
+	CHECK(!committed);
+	CHECK_EQ(mainDc, originalDc);
 }
 
 TEST_CASE(EnrollmentPersistenceFailureRollsBackBeforeReturning) {

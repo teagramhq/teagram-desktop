@@ -397,6 +397,12 @@ void ReinitializeMainDcAfterServerReplacement(
 	}
 }
 
+DcId ServerEnrollmentMainDcId(const ServerEnrollmentMainDcState &state) {
+	return !state.hasAuthenticatedSession && state.pinnedServerDcId
+			   ? state.pinnedServerDcId
+			   : state.storedMainDcId;
+}
+
 bool IsServerEnrollmentActivationKey(int key) {
 	return key == Qt::Key_Enter
 		|| key == Qt::Key_Return

@@ -959,10 +959,9 @@ void ServerWidget::commitBinding(
 	const auto previousWasUnenrolled = account().mtp().dcOptions().unenrolled();
 	if (!MTP::CommitServerEnrollment(
 			[&] {
-				return account().mtp().dcOptions().setCustomServer(*server);
-			},
-			[&] { return account().local().writeMtpConfig(true); },
-			[&] {
+				if (!account().mtp().dcOptions().setCustomServer(*server)) {
+					return false;
+				}
 				MTP::ReinitializeMainDcAfterServerReplacement(
 					{
 						.browserOnlyServerRefused
@@ -971,8 +970,13 @@ void ServerWidget::commitBinding(
 						.replacementDcId = server->dcId,
 					},
 					[&](MTP::DcId dcId) { account().mtp().setMainDcId(dcId); });
-				account().mtp().resume();
+				return true;
 			},
+			[&] {
+				return account().local().writeMtpData(true)
+					   && account().local().writeMtpConfig(true);
+			},
+			[&] { account().mtp().resume(); },
 			[&] {
 				if (previousWasBlocked) {
 					account().mtp().dcOptions().constructBlocked();
@@ -981,6 +985,9 @@ void ServerWidget::commitBinding(
 				} else if (!account().mtp().dcOptions().constructFromSerialized(
 							   previousOptions)) {
 					account().mtp().dcOptions().constructBlocked();
+				}
+				if (state.browserOnlyServerRefused) {
+					account().mtp().setMainDcId(previousMainDcId);
 				}
 			})) {
 		_discoveryFlow.finish();

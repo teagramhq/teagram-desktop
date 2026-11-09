@@ -99,9 +99,18 @@ struct ServerReplacementState {
 	DcId replacementDcId = 0;
 };
 
+struct ServerEnrollmentMainDcState {
+	bool hasAuthenticatedSession = false;
+	DcId storedMainDcId = 0;
+	DcId pinnedServerDcId = 0;
+};
+
 void ReinitializeMainDcAfterServerReplacement(
 	const ServerReplacementState &state,
 	const std::function<void(DcId)> &reinitializeMainDc);
+
+[[nodiscard]] DcId
+ServerEnrollmentMainDcId(const ServerEnrollmentMainDcState &state);
 
 // The shell handles activation keys globally. The enrollment step consumes
 // these keys when they bubble from non-action controls so they cannot submit
