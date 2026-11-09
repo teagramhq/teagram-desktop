@@ -3548,7 +3548,8 @@ void HistoryWidget::attachBotsMenuBuildFinished(not_null<PeerData *> peer) {
 }
 
 void HistoryWidget::invalidateAttachBotsMenuCache() {
-	const auto showWhenReady = _attachToggle->underMouse();
+	const auto showWhenReady
+		= !ChatHelpers::ShowPanelOnClick() && _attachToggle->underMouse();
 	if (_attachBotsMenu) {
 		_attachToggle->removeEventFilter(_attachBotsMenu);
 		_attachBotsMenu->hideFast();
@@ -3576,7 +3577,8 @@ void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
 			_attachBotsMenu->hideFast();
 			_attachBotsMenu = nullptr;
 		}
-		_attachMenuShowWhenReady = _attachToggle->underMouse();
+		_attachMenuShowWhenReady
+			= !ChatHelpers::ShowPanelOnClick() && _attachToggle->underMouse();
 		_attachMenuClickWhenReady = false;
 		_attachToggle->removeEventFilter(this);
 	}
