@@ -107,6 +107,7 @@ PRIVATE
     intro/intro_signup_terms.cpp
     intro/intro_turnstile.cpp
     intro/intro_username_validation.cpp
+    mtproto/connection_http.cpp
     settings/sections/settings_invite_state.cpp
     main/main_account_persistence.cpp
     storage/details/storage_file_utilities.cpp

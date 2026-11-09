@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -123,6 +124,15 @@ AbstractConnection::parseNotSecureResponse(const mtpBuffer &buffer) const {
 	Unexpected("Key creation is not exercised by these tests.");
 }
 
+mtpBuffer AbstractConnection::preparePQFake(const MTPint128 &nonce) const {
+	Unexpected("HTTP connection setup is not exercised by these tests.");
+}
+
+std::optional<MTPResPQ>
+AbstractConnection::readPQFakeReply(const mtpBuffer &buffer) const {
+	Unexpected("HTTP connection setup is not exercised by these tests.");
+}
+
 uint32 AbstractConnection::extendedNotSecurePadding() const {
 	Unexpected("Key creation is not exercised by these tests.");
 }
@@ -132,6 +142,8 @@ QString AbstractConnection::ProtocolDcDebugId(int16 protocolDcId) {
 }
 
 void AbstractConnection::logInfo(const QString &message) {}
+
+void AbstractConnection::logError(const QString &message) {}
 
 void SessionData::notifyConnectionInited(const SessionOptions &options) {}
 
