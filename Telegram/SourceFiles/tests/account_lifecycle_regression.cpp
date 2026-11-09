@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
+#include "data/data_document_media.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
@@ -15104,7 +15105,7 @@ RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
 					  Data::DocumentThumbCacheKey(1, uint64(60'000'000 + i)),
 					  QByteArray("cache-entry"));
 			  }
-			  for (const auto document : documents) {
+			  for (const auto &document : documents) {
 				  cache->put(document->goodThumbnailCacheKey(),
 							 QByteArray("cached-thumbnail"));
 			  }
@@ -15119,7 +15120,7 @@ RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
 			  startCounting();
 			  auto timer = QElapsedTimer();
 			  timer.start();
-			  for (const auto document : documents) {
+			  for (const auto &document : documents) {
 				  Data::DocumentMedia::CheckGoodThumbnail(document);
 			  }
 			  const auto completed = WaitForRegressionCondition(
