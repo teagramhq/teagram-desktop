@@ -667,7 +667,7 @@ jobs:
           bash -lc '
             cd /usr/src/tdesktop
             scale_home=$(mktemp -d /tmp/tdesktop-scale-check.XXXXXX)
-            mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache"
+            mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache" "$scale_home/work"
             export HOME="$scale_home"
             export XDG_CONFIG_HOME="$scale_home/config"
             export XDG_DATA_HOME="$scale_home/data"
@@ -675,7 +675,22 @@ jobs:
             export QT_QPA_PLATFORM=offscreen
             export TDESKTOP_DESKTOP_SCALE_CHECK=1
             export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
-            /usr/src/tdesktop/out/Debug/Teagram
+            app_output="$scale_home/app-output.txt"
+            /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
+              -workdir "$scale_home/work/" > "$app_output" 2>&1
+            app_status=$?
+            cat "$app_output"
+            if ! grep -Fqx DESKTOP_SCALE_REPORT_END "$app_output"; then
+              # The client logs to its working directory, not to stdout, and
+              # the container is removed on exit: print what a silent exit
+              # left behind before it is lost.
+              echo "::group::Scale check exited with status $app_status without a report"
+              find "$scale_home/work" -maxdepth 3 -type f \
+                \( -name "*.txt" -o -name "*.dmp" -o -name "*.log" \) \
+                -print -exec tail -n 80 {} \;
+              echo "::endgroup::"
+            fi
+            exit "$app_status"
           ' | tee "$RUNNER_TEMP/desktop-scale-check.log"
           scale_status=${PIPESTATUS[0]}
           scale_report=$(sed -n '/^DESKTOP_SCALE_REPORT_BEGIN$/,/^DESKTOP_SCALE_REPORT_END$/p' \
