@@ -13,8 +13,20 @@ sys.path.append(scriptPath + '/../../../lib_tl/tl')
 from generate_tl import generate
 
 REDACTED_DUMP_FIELDS = (
-  ('auth_signIn', 'phone_code'),
-  ('teagram_userInviteLink', 'link'),
+  ('auth_signIn', 'phone_code', 'mtpc_string+0', 'mtpc_redacted_string'),
+  ('teagram_userInviteLink', 'link', 'mtpc_string+0', 'mtpc_redacted_string'),
+  (
+    'account_passwordInputSettings',
+    'new_password_hash',
+    'mtpc_bytes+0',
+    'mtpc_redacted_string',
+  ),
+  (
+    'account_passwordInputSettings',
+    'new_secure_settings',
+    'types.push_back(0)',
+    'types.push_back(mtpc_redacted_object)',
+  ),
 )
 
 def redactDumpFields():
@@ -33,7 +45,7 @@ def redactDumpFields():
   dumpPath = outputPath + '-dump_to_text.cpp'
   with open(dumpPath, encoding='utf-8') as sourceFile:
     source = sourceFile.read()
-  for constructor, field in REDACTED_DUMP_FIELDS:
+  for constructor, field, serializedType, redactedType in REDACTED_DUMP_FIELDS:
     start = source.find('bool Serialize_' + constructor + '(')
     if start < 0:
       raise ValueError('Missing dump serializer for ' + constructor)
@@ -49,12 +61,11 @@ def redactDumpFields():
     if len(matches) != 1:
       raise ValueError('Expected one dump field ' + constructor + '.' + field)
     lineIndex = matches[0]
-    originalType = 'types.push_back(mtpc_string+0)'
-    if originalType not in lines[lineIndex]:
-      raise ValueError('Expected string dump field ' + constructor + '.' + field)
+    if serializedType not in lines[lineIndex]:
+      raise ValueError('Unexpected serialized type for dump field ' + constructor + '.' + field)
     lines[lineIndex] = lines[lineIndex].replace(
-      originalType,
-      'types.push_back(mtpc_redacted_string)',
+      serializedType,
+      redactedType,
       1)
     updated = ''.join(lines)
     source = source[:start] + updated + source[end:]

@@ -48,4 +48,26 @@ TEST_CASE(InviteLinkSecretIsRedactedFromMtpDump) {
 	CHECK(dump.contains(u"link: [REDACTED] [STRING]"_q));
 }
 
+TEST_CASE(PasswordInputSecretsAreRedactedFromMtpDump) {
+	const auto secret = QByteArray(256, char(0xAB));
+	using Flag = MTPDaccount_passwordInputSettings::Flag;
+	const auto settings = MTP_account_passwordInputSettings(
+		MTP_flags(Flag::f_new_password_hash | Flag::f_hint
+				  | Flag::f_new_secure_settings),
+		MTP_passwordKdfAlgoUnknown(), MTP_bytes(secret),
+		MTP_string(u"visible-hint"_q), MTP_string(),
+		MTP_secureSecretSettings(
+			MTP_securePasswordKdfAlgoSHA512(MTP_bytes(secret)),
+			MTP_bytes(secret), MTP_long(123)));
+	const auto dump = DumpMessage(MTPaccount_UpdatePasswordSettings(
+		MTP_inputCheckPasswordEmpty(), settings));
+
+	CHECK(dump.contains(u"new_password_hash: [REDACTED] [STRING]"_q));
+	CHECK(dump.contains(u"new_secure_settings: [REDACTED] [OBJECT]"_q));
+	CHECK(!dump.toUtf8().contains(secret.left(16)));
+	CHECK(!dump.toUpper().contains(u"AB"_q));
+	CHECK(!dump.contains(u"secure_secret:"_q));
+	CHECK(dump.contains(u"hint: \"visible-hint\" [STRING]"_q));
+}
+
 } // namespace
