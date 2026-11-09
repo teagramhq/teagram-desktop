@@ -12,10 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-template <typename Value>
-QString DumpMessage(const Value &value, int32 truncatePrimes = 0) {
-	auto body = mtpBuffer();
-	value.template write<mtpBuffer>(body);
+QString DumpMessageBody(mtpBuffer &body, int32 truncatePrimes) {
 	body.resize(body.size() - truncatePrimes);
 
 	auto message = mtpBuffer();
@@ -26,6 +23,21 @@ QString DumpMessage(const Value &value, int32 truncatePrimes = 0) {
 
 	auto from = message.constData();
 	return MTP::details::DumpToText(from, from + message.size());
+}
+
+template <typename Value>
+QString DumpMessage(const Value &value, int32 truncatePrimes = 0) {
+	auto body = mtpBuffer();
+	value.template write<mtpBuffer>(body);
+	return DumpMessageBody(body, truncatePrimes);
+}
+
+template <typename Value>
+QString DumpReceivedMessage(const Value &value, int32 truncatePrimes = 0) {
+	auto body = mtpBuffer();
+	MTP_int(static_cast<int32>(value.type())).write(body);
+	value.template write<mtpBuffer>(body);
+	return DumpMessageBody(body, truncatePrimes);
 }
 
 TEST_CASE(InviteSignInSecretIsRedactedFromMtpDump) {
@@ -78,7 +90,7 @@ TEST_CASE(ReceivedPasswordSettingsSecureSecretIsRedactedFromMtpDump) {
 	const auto salt = QByteArray("received-secure-salt");
 	constexpr auto secureSecretId = 42LL;
 	using Flag = MTPDaccount_passwordSettings::Flag;
-	const auto dump = DumpMessage(MTP_account_passwordSettings(
+	const auto dump = DumpReceivedMessage(MTP_account_passwordSettings(
 		MTP_flags(Flag::f_email | Flag::f_secure_settings),
 		MTP_string(u"safe@example.test"_q),
 		MTP_secureSecretSettings(
@@ -102,7 +114,7 @@ TEST_CASE(RedactedPasswordSettingsDecodeErrorDoesNotExposeBytes) {
 	const auto salt = QByteArray("decode-error-salt");
 	constexpr auto secureSecretId = 43LL;
 	using Flag = MTPDaccount_passwordSettings::Flag;
-	const auto dump = DumpMessage(
+	const auto dump = DumpReceivedMessage(
 		MTP_account_passwordSettings(
 			MTP_flags(Flag::f_email | Flag::f_secure_settings),
 			MTP_string(u"safe@example.test"_q),
