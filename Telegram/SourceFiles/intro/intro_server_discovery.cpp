@@ -374,6 +374,27 @@ void ServerDiscoveryFlow::cancel() {
 	finish();
 }
 
+void HandleServerDiscoveryResult(
+		ServerDiscoveryFlow &flow,
+		MTP::ServerDiscoveryResult result,
+		QString browserOnlyMessage,
+		QString continueText,
+		ServerDiscoveryResultHandlers handlers) {
+	if (result.status == MTP::ServerDiscoveryResponseStatus::BrowserOnly) {
+		flow.finish();
+		handlers.browserOnly({
+			.message = std::move(browserOnlyMessage),
+			.continueText = std::move(continueText),
+			.selectionEditable = true,
+			.continueEnabled = true,
+		});
+	} else if (!result) {
+		handlers.invalid();
+	} else {
+		handlers.ready(std::move(result));
+	}
+}
+
 ServerWidgetDiscovery::~ServerWidgetDiscovery() {
 	cancel();
 }

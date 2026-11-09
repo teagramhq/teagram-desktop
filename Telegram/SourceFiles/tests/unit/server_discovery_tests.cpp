@@ -1604,6 +1604,77 @@ TEST_CASE(DiscoveryJsonRefusesBrowserOnlyWebSocketAsNativeBinding) {
 	CHECK(nonBrowserOnly.valid());
 }
 
+TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
+	const auto selected = CheckServerSelection(u"first.example.com"_q);
+	auto flow = Intro::details::ServerDiscoveryFlow();
+	auto publicAttempts = 0;
+	auto localAttempts = 0;
+	auto flowFailures = 0;
+	const auto callbacks = Intro::details::ServerDiscoveryFlow::Callbacks{
+		.publicHttps = [&] { ++publicAttempts; },
+		.localDirect = [&] { ++localAttempts; },
+		.failed = [&](bool) { ++flowFailures; },
+	};
+	CHECK(flow.start(selected, callbacks));
+
+	const auto result = ParsePublicDiscoveryResponse(
+		selected,
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q,
+			true));
+	auto presentation = Intro::details::ServerDiscoveryFailurePresentation();
+	auto refused = 0;
+	auto invalid = 0;
+	auto ready = 0;
+	auto bindings = 0;
+	auto navigations = 0;
+	auto reconnects = 0;
+	Intro::details::HandleServerDiscoveryResult(
+		flow,
+		result,
+		u"This server works only in the browser."_q,
+		u"Try again"_q,
+		{
+			.browserOnly = [&](auto value) {
+				++refused;
+				presentation = std::move(value);
+			},
+			.invalid = [&] { ++invalid; },
+			.ready = [&](MTP::ServerDiscoveryResult) {
+				++ready;
+				++bindings;
+				++navigations;
+				++reconnects;
+			},
+		});
+
+	CHECK_EQ(refused, 1);
+	CHECK_EQ(invalid, 0);
+	CHECK_EQ(ready, 0);
+	CHECK_EQ(bindings, 0);
+	CHECK_EQ(navigations, 0);
+	CHECK_EQ(reconnects, 0);
+	CHECK_EQ(presentation.message, u"This server works only in the browser."_q);
+	CHECK_EQ(presentation.continueText, u"Try again"_q);
+	CHECK(presentation.selectionEditable);
+	CHECK(presentation.continueEnabled);
+	CHECK(!flow.active());
+	CHECK_EQ(publicAttempts, 1);
+	CHECK_EQ(localAttempts, 0);
+	CHECK_EQ(flowFailures, 0);
+
+	CHECK(Intro::details::SubmitServerSelection(
+		u"another.example.com"_q,
+		[](MTP::ServerSelectionStatus) { CHECK(false); },
+		[&](const MTP::ServerSelectionCheck &replacement) {
+			CHECK_EQ(replacement.normalizedSelection, u"another.example.com"_q);
+			CHECK(flow.start(replacement, callbacks));
+		}));
+	CHECK(flow.active());
+	CHECK_EQ(publicAttempts, 2);
+}
+
 TEST_CASE(DiscoveryJsonRejectsNonBooleanBrowserOnlyFlag) {
 	const auto result = ParsePublicDiscoveryResponse(
 		CheckServerSelection(u"server.example.com"_q),

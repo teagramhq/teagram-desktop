@@ -753,28 +753,35 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 	if (!_connecting) {
 		return;
 	}
-	if (result.status == MTP::ServerDiscoveryResponseStatus::BrowserOnly) {
-		_discoveryFlow.finish();
-		resetAfterDiscoveryFailure(false, true);
-		return;
-	}
-	if (!result) {
-		LOG(("Server discovery response invalid: status %1.")
-				.arg(int(result.status)));
-		discoveryFailed(false);
-		return;
-	}
-	if (_reply) {
-		const auto reply = _reply;
-		_reply = nullptr;
-		reply->deleteLater();
-	}
-	if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
-		resolvePublicEndpoint(std::move(result));
-	} else {
-		_deadline->stop();
-		commitBinding(std::move(result));
-	}
+	const auto status = result.status;
+	HandleServerDiscoveryResult(
+		_discoveryFlow,
+		std::move(result),
+		tr::lng_intro_server_browser_only(tr::now),
+		tr::lng_intro_server_try_again(tr::now),
+		{
+			.browserOnly = [=](ServerDiscoveryFailurePresentation presentation) {
+				resetAfterDiscoveryFailure(std::move(presentation));
+			},
+			.invalid = [=] {
+				LOG(("Server discovery response invalid: status %1.")
+						.arg(int(status)));
+				discoveryFailed(false);
+			},
+			.ready = [=](MTP::ServerDiscoveryResult result) {
+				if (_reply) {
+					const auto reply = _reply;
+					_reply = nullptr;
+					reply->deleteLater();
+				}
+				if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
+					resolvePublicEndpoint(std::move(result));
+				} else {
+					_deadline->stop();
+					commitBinding(std::move(result));
+				}
+			},
+		});
 }
 
 void ServerWidget::resolvePublicEndpoint(
@@ -851,8 +858,23 @@ void ServerWidget::discoveryFailed(bool connectionFailure) {
 	}
 }
 
-void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure,
-											  bool browserOnlyRefusal) {
+void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
+	if (!_connecting) {
+		return;
+	}
+	const auto message = connectionFailure
+		? tr::lng_intro_server_connect_failed(tr::now)
+		: tr::lng_intro_server_unsupported(tr::now);
+	resetAfterDiscoveryFailure({
+		.message = message,
+		.continueText = tr::lng_intro_server_try_again(tr::now),
+		.selectionEditable = true,
+		.continueEnabled = true,
+	});
+}
+
+void ServerWidget::resetAfterDiscoveryFailure(
+		ServerDiscoveryFailurePresentation presentation) {
 	if (!_connecting) {
 		return;
 	}
@@ -872,15 +894,11 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure,
 		reply->abort();
 		reply->deleteLater();
 	}
-	_address->rawTextEdit()->setReadOnly(false);
-	_continue->setDisabled(false);
-	_continue->setText(tr::lng_intro_server_try_again());
-	const auto error
-		= browserOnlyRefusal  ? tr::lng_intro_server_browser_only(tr::now)
-		  : connectionFailure ? tr::lng_intro_server_connect_failed(tr::now)
-							  : tr::lng_intro_server_unsupported(tr::now);
-	_address->setAccessibleDescription(error);
-	showStatus(error, true);
+	_address->rawTextEdit()->setReadOnly(!presentation.selectionEditable);
+	_continue->setDisabled(!presentation.continueEnabled);
+	_continue->setText(rpl::single(std::move(presentation.continueText)));
+	_address->setAccessibleDescription(presentation.message);
+	showStatus(presentation.message, true);
 	_address->setFocusFast();
 	_scroll->scrollToWidget(_continue);
 }

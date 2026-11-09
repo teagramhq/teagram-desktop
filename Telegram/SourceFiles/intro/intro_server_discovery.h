@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
 #include <QtCore/QObject>
+#include <QtCore/QString>
 #include <QtNetwork/QHostAddress>
 
 #include <functional>
@@ -58,6 +59,26 @@ private:
 	Callbacks _callbacks;
 	bool _active = false;
 };
+
+struct ServerDiscoveryFailurePresentation {
+	QString message;
+	QString continueText;
+	bool selectionEditable = false;
+	bool continueEnabled = false;
+};
+
+struct ServerDiscoveryResultHandlers {
+	std::function<void(ServerDiscoveryFailurePresentation)> browserOnly;
+	std::function<void()> invalid;
+	std::function<void(MTP::ServerDiscoveryResult)> ready;
+};
+
+void HandleServerDiscoveryResult(
+	ServerDiscoveryFlow &flow,
+	MTP::ServerDiscoveryResult result,
+	QString browserOnlyMessage,
+	QString continueText,
+	ServerDiscoveryResultHandlers handlers);
 
 class ServerWidgetDiscovery final : public QObject {
 public:
