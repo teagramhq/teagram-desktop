@@ -3499,12 +3499,15 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	++_attachMenuBuildCountForRegressionTest;
 	auto buildTimer = QElapsedTimer();
 	buildTimer.start();
-	const auto recordBuildWork = gsl::finally([&] {
-		_attachMenuBuildWorkNanosecondsForRegressionTest
-			+= buildTimer.nsecsElapsed();
+	const auto recordBuildCallback = gsl::finally([&] {
+		_attachMenuBuildMaxCallbackNanosecondsForRegressionTest
+			= std::max(_attachMenuBuildMaxCallbackNanosecondsForRegressionTest,
+					   buildTimer.nsecsElapsed());
 	});
 	auto buildStepMeasured = crl::guard(this, [=](qint64 nanoseconds) {
-		_attachMenuBuildWorkNanosecondsForRegressionTest += nanoseconds;
+		_attachMenuBuildMaxCallbackNanosecondsForRegressionTest
+			= std::max(_attachMenuBuildMaxCallbackNanosecondsForRegressionTest,
+					   nanoseconds);
 	});
 #endif
 	auto menu = InlineBots::MakeAttachBotsMenu(
@@ -6765,8 +6768,13 @@ int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
 	return _attachMenuBuildCountForRegressionTest;
 }
 
-qint64 HistoryWidget::attachMenuBuildWorkNanosecondsForRegressionTest() const {
-	return _attachMenuBuildWorkNanosecondsForRegressionTest;
+qint64
+HistoryWidget::attachMenuBuildMaxCallbackNanosecondsForRegressionTest() const {
+	return _attachMenuBuildMaxCallbackNanosecondsForRegressionTest;
+}
+
+void HistoryWidget::resetAttachMenuBuildCallbackTimeForRegressionTest() {
+	_attachMenuBuildMaxCallbackNanosecondsForRegressionTest = 0;
 }
 
 bool HistoryWidget::attachMenuExistsForRegressionTest() const {

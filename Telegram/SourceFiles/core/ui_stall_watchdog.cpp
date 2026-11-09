@@ -403,6 +403,10 @@ quint64 UiStallWatchdog::StallCount() {
 	return TotalStallCount.load(std::memory_order_relaxed);
 }
 
+quint64 UiStallWatchdog::StallCountForTesting() const {
+	return _stallCount.load(std::memory_order_relaxed);
+}
+
 std::vector<UiStallWatchdog::StallEvidence>
 UiStallWatchdog::RecentStallEvidenceForTesting() {
 	const auto lock = std::lock_guard(StallEvidenceMutex);
@@ -505,12 +509,14 @@ void UiStallWatchdog::run() {
 			}
 			const auto duration = _acknowledgedAt - postedAt;
 			if (duration >= _countThreshold) {
+				_stallCount.fetch_add(1, std::memory_order_relaxed);
 				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			}
 			if (duration >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
 			}
 		} else {
+			_stallCount.fetch_add(1, std::memory_order_relaxed);
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			if (_captureSchedulerTrace) {
 				sampleSchedulerState();

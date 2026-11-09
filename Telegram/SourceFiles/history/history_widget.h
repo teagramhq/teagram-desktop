@@ -306,7 +306,8 @@ public:
 	[[nodiscard]] Ui::IconButton *attachToggleForRegressionTest() const;
 	[[nodiscard]] int attachMenuBuildCountForRegressionTest() const;
 	[[nodiscard]] qint64
-	attachMenuBuildWorkNanosecondsForRegressionTest() const;
+	attachMenuBuildMaxCallbackNanosecondsForRegressionTest() const;
+	void resetAttachMenuBuildCallbackTimeForRegressionTest();
 	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
 	[[nodiscard]] bool
 	attachMenuContainsBotForRegressionTest(UserId botId) const;
@@ -1015,7 +1016,7 @@ private:
 	bool _attachMenuClickWhenReady = false;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _attachMenuBuildCountForRegressionTest = 0;
-	qint64 _attachMenuBuildWorkNanosecondsForRegressionTest = 0;
+	qint64 _attachMenuBuildMaxCallbackNanosecondsForRegressionTest = 0;
 #endif
 
 	DragArea::Areas _attachDragAreas;

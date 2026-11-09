@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QObject>
 #include <QtCore/QString>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -44,6 +45,7 @@ class UiStallWatchdog final : public QObject {
 	UiStallWatchdog &operator=(const UiStallWatchdog &) = delete;
 
 	[[nodiscard]] static quint64 StallCount();
+	[[nodiscard]] quint64 StallCountForTesting() const;
 	[[nodiscard]] static std::vector<StallEvidence>
 	RecentStallEvidenceForTesting();
 
@@ -67,6 +69,7 @@ class UiStallWatchdog final : public QObject {
 	bool _started = false;
 	bool _stopping = false;
 	bool _canCaptureStack = false;
+	std::atomic<quint64> _stallCount = 0;
 };
 
 } // namespace Core

@@ -153,7 +153,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto logged = std::atomic_bool(false);
 	auto blockActive = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
-	const auto before = Core::UiStallWatchdog::StallCount();
 	const auto beforeEvidence
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
 	const auto lastEvidenceStartedAt
@@ -194,8 +193,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		QCoreApplication::processEvents();
+		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
@@ -227,7 +226,6 @@ TEST_CASE(UiStallWatchdogCapturesShortStalls) {
 	auto logged = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
 	auto loop = QEventLoop();
-	const auto before = Core::UiStallWatchdog::StallCount();
 	auto watchdog = Core::UiStallWatchdog(
 		[&](const QString &line, bool update) {
 			const auto lock = std::lock_guard(mutex);
@@ -254,7 +252,7 @@ TEST_CASE(UiStallWatchdogCapturesShortStalls) {
 	loop.exec();
 	CHECK(blockFilter.Blocked());
 	CHECK(blockFilter.LoggedWhileBlocked());
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
+	CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	const auto deadline
 		= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 	while (!completed.load(std::memory_order_acquire)
@@ -370,7 +368,6 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 	auto loggedWhileBlocked = std::atomic_bool(false);
 	auto blockActive = std::atomic_bool(false);
 	auto completedLongStall = std::atomic_bool(false);
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([&](const QString &line,
@@ -411,8 +408,8 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 			QCoreApplication::processEvents();
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
+		CHECK_EQ(watchdog.StallCountForTesting(), 2);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 2);
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
 		const auto duration = lines.front()
@@ -424,7 +421,6 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 }
 
 TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([](const QString &, bool) {});
@@ -434,13 +430,12 @@ TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
+		CHECK_EQ(watchdog.StallCountForTesting(), 0);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before);
 }
 
 TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 	auto lines = std::vector<QString>();
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -451,7 +446,7 @@ TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
+		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
 	CHECK(lines.empty());
 }
