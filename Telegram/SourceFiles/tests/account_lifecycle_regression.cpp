@@ -10621,6 +10621,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		auto peerTimer = QElapsedTimer();
 		peerTimer.start();
 		controller->showPeerHistory(history);
+		QCoreApplication::processEvents();
 		const auto buildDeferredUntilEnter
 			= (historyWidget->attachMenuBuildCountForRegressionTest()
 			   == buildsBeforePeerSwitch);
