@@ -202,7 +202,7 @@ void HttpConnection::requestFinished(QNetworkReply *reply) {
 
 		mtpBuffer data = handleResponse(reply);
 		if (data.size() == 1) {
-			error(data[0]);
+			error(ErrorCodeFromServer(data[0]));
 		} else if (!data.isEmpty()) {
 			if (_status == Status::Ready) {
 				_receivedQueue.push_back(data);

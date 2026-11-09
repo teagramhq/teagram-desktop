@@ -173,6 +173,12 @@ private:
 
 };
 
+[[nodiscard]] inline qint32 ErrorCodeFromServer(qint32 errorCode) {
+	return (errorCode == kErrorCodeBrowserOnly)
+			   ? AbstractConnection::kErrorCodeOther
+			   : errorCode;
+}
+
 template <typename Request>
 mtpBuffer AbstractConnection::prepareNotSecurePacket(
 		const Request &request,

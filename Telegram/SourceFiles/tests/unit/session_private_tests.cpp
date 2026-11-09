@@ -229,6 +229,14 @@ class SessionPrivateTestAccess final {
 		// clang-format on
 	}
 
+	static void RawServerError(SessionPrivate &session,
+							   AbstractConnection *connection,
+							   qint32 errorCode) {
+		const auto target = not_null<AbstractConnection *>(connection);
+		const auto mapped = ErrorCodeFromServer(errorCode);
+		session.onError(target, mapped, {});
+	}
+
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
 		return session._gaveUpOnBrowserOnlyServer;
 	}
@@ -663,6 +671,24 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 		ConnectionPointer::New<FakeTransport>(
 			QThread::currentThread(), ProxyData(), log, crl::time(30000)));
 	CHECK_EQ(int(withFallback), 30000);
+}
+
+TEST_CASE(ServerPacketBrowserOnlyCodeDoesNotSetBrowserOnlyRefusal) {
+	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
+	auto data = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	auto session = SessionPrivateTestAccess::Create(data);
+	const auto thread = QThread::currentThread();
+	const auto proxy = ProxyData();
+	const auto log = std::make_shared<TransportLog>();
+	auto connection = ConnectionPointer::New<FakeTransport>(thread, proxy, log);
+	auto *serverConnection = connection.get();
+	SessionPrivateTestAccess::RawServerError(*session, serverConnection, -498);
+
+	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
+	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 0);
+	CHECK(!SessionPrivateTestAccess::SessionDataBrowserOnlyRefusal(*session));
+	SessionPrivateTestAccess::Disconnect(*session);
 }
 
 TEST_CASE(BrowserOnlyServerRefusalStopsSessionRetries) {
