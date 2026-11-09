@@ -113,7 +113,9 @@ private:
 		MTP::ServerDiscoveryResult result,
 		const QHostInfo &info);
 	void discoveryFailed(bool connectionFailure);
-	void resetAfterDiscoveryFailure(bool connectionFailure);
+	void resetAfterDiscoveryFailure(
+		bool connectionFailure,
+		bool browserOnlyRefusal = false);
 	void cancelDiscovery();
 	void showStatus(const QString &text, bool error);
 	void clearStatus();

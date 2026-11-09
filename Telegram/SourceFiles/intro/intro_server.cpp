@@ -753,6 +753,11 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 	if (!_connecting) {
 		return;
 	}
+	if (result.status == MTP::ServerDiscoveryResponseStatus::BrowserOnly) {
+		_discoveryFlow.finish();
+		resetAfterDiscoveryFailure(false, true);
+		return;
+	}
 	if (!result) {
 		LOG(("Server discovery response invalid: status %1.")
 				.arg(int(result.status)));
@@ -846,7 +851,9 @@ void ServerWidget::discoveryFailed(bool connectionFailure) {
 	}
 }
 
-void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
+void ServerWidget::resetAfterDiscoveryFailure(
+		bool connectionFailure,
+		bool browserOnlyRefusal) {
 	if (!_connecting) {
 		return;
 	}
@@ -869,14 +876,13 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 	_address->rawTextEdit()->setReadOnly(false);
 	_continue->setDisabled(false);
 	_continue->setText(tr::lng_intro_server_try_again());
-	_address->setAccessibleDescription(connectionFailure
+	const auto error = browserOnlyRefusal
+		? tr::lng_intro_server_browser_only()
+		: connectionFailure
 		? tr::lng_intro_server_connect_failed(tr::now)
-		: tr::lng_intro_server_unsupported(tr::now));
-	showStatus(
-		connectionFailure
-			? tr::lng_intro_server_connect_failed(tr::now)
-			: tr::lng_intro_server_unsupported(tr::now),
-		true);
+		: tr::lng_intro_server_unsupported(tr::now);
+	_address->setAccessibleDescription(error);
+	showStatus(error, true);
 	_address->setFocusFast();
 	_scroll->scrollToWidget(_continue);
 }

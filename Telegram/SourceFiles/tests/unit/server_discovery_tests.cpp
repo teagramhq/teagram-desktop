@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QEventLoop>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QJsonValue>
 #include <QtCore/QList>
 #include <QtCore/QSocketNotifier>
 #include <QtCore/QTimer>
@@ -167,6 +168,19 @@ PublicResponseWithWebSocket(const QString &endpoint,
 	auto root = QJsonDocument::fromJson(PublicResponse(endpoint)).object();
 	root.insert(u"websocket"_q,
 				QJsonObject{{u"endpoint"_q, webSocketEndpoint}});
+	return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+[[nodiscard]] QByteArray PublicResponseWithBrowserOnlyWebSocket(
+		const QString &endpoint,
+		const QString &webSocketEndpoint,
+		const QJsonValue &browserOnly) {
+	auto root = QJsonDocument::fromJson(PublicResponseWithWebSocket(
+		endpoint,
+		webSocketEndpoint)).object();
+	auto websocket = root.value(u"websocket"_q).toObject();
+	websocket.insert(u"browser_only"_q, browserOnly);
+	root.insert(u"websocket"_q, websocket);
 	return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
@@ -1571,6 +1585,35 @@ TEST_CASE(DiscoveryJsonAcceptsWssWebSocketEndpoint) {
 									u"wss://transport.example.com/apiws"_q));
 	CHECK(result.valid());
 	CHECK_EQ(result.webSocketEndpoint, u"wss://transport.example.com/apiws"_q);
+}
+
+TEST_CASE(DiscoveryJsonRefusesBrowserOnlyWebSocketAsNativeBinding) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q,
+			true));
+	CHECK(!result.valid());
+	CHECK(result.status == ServerDiscoveryResponseStatus::BrowserOnly);
+
+	const auto nonBrowserOnly = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q,
+			false));
+	CHECK(nonBrowserOnly.valid());
+}
+
+TEST_CASE(DiscoveryJsonRejectsNonBooleanBrowserOnlyFlag) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q,
+			u"true"_q));
+	CHECK(result.status == ServerDiscoveryResponseStatus::InvalidSchema);
 }
 
 TEST_CASE(DiscoveryJsonRejectsUnsafeWssWebSocketEndpoint) {
