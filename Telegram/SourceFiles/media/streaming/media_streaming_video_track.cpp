@@ -751,8 +751,7 @@ bool VideoTrackObject::processFirstFrame() {
 
 crl::time VideoTrackObject::currentFramePosition() const {
 	const auto position = FramePosition(_stream);
-	if (position == kTimeUnknown
-		|| position == kFinishedPosition
+	if (position == kTimeUnknown || position == kFinishedPosition
 		|| position > kDurationMax) {
 		return kTimeUnknown;
 	}

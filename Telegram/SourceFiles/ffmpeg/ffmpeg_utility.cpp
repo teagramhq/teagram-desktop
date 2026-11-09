@@ -95,22 +95,19 @@ void AlignedImageBufferCleanupHandler(void *data) {
 	delete[] buffer;
 }
 
-[[nodiscard]] bool ComputeAlignedFrameStorageLayout(
-		QSize size,
-		int minBytesPerLine,
-		AlignedFrameStorageLayout *out) {
+[[nodiscard]] bool
+ComputeAlignedFrameStorageLayout(QSize size, int minBytesPerLine,
+								 AlignedFrameStorageLayout *out) {
 	const auto width = size.width();
 	const auto height = size.height();
 	if (width <= 0 || height <= 0 || minBytesPerLine < 0) {
 		return false;
 	}
-	const auto requested = std::max(
-		int64_t(width) * kPixelBytesSize,
-		int64_t(minBytesPerLine));
+	const auto requested
+		= std::max(int64_t(width) * kPixelBytesSize, int64_t(minBytesPerLine));
 	const auto remainder = requested % kAlignImageBy;
-	const auto bytesPerLine = remainder
-		? (requested + kAlignImageBy - remainder)
-		: requested;
+	const auto bytesPerLine
+		= remainder ? (requested + kAlignImageBy - remainder) : requested;
 	if (bytesPerLine > kMaxFrameStorageBytes) {
 		return false;
 	}
@@ -762,9 +759,8 @@ AVRational ValidateAspectRatio(AVRational aspect) {
 QSize CorrectByAspect(QSize size, AVRational aspect) {
 	Expects(IsValidAspectRatio(aspect));
 
-	return QSize(
-		std::max(int(size.width() * av_q2d(aspect)), 1),
-		size.height());
+	return QSize(std::max(int(size.width() * av_q2d(aspect)), 1),
+				 size.height());
 }
 
 bool RotationSwapWidthHeight(int rotation) {
@@ -775,14 +771,10 @@ QSize TransposeSizeByRotation(QSize size, int rotation) {
 	return RotationSwapWidthHeight(rotation) ? size.transposed() : size;
 }
 
-bool GoodStorageForFrame(
-		const QImage &storage,
-		QSize size,
-		int minBytesPerLine) {
-	if (storage.isNull()
-		|| (storage.format() != kImageFormat)
-		|| (storage.size() != size)
-		|| !storage.isDetached()
+bool GoodStorageForFrame(const QImage &storage, QSize size,
+						 int minBytesPerLine) {
+	if (storage.isNull() || (storage.format() != kImageFormat)
+		|| (storage.size() != size) || !storage.isDetached()
 		|| !IsAlignedImage(storage)) {
 		return false;
 	} else if (minBytesPerLine <= 0) {

@@ -120,9 +120,8 @@ const auto kBadPrefix = u"http://"_q;
 	const auto opened = UrlClickHandler::EncodeForOpening(url);
 	const auto scheme = opened.left(opened.indexOf(':')).toLower();
 	return !opened.startsWith(u"tc://"_q, Qt::CaseInsensitive)
-		&& (!File::IsUrlSchemeAllowed(scheme)
-			|| scheme == u"mailto"_q
-			|| scheme == u"tel"_q);
+		   && (!File::IsUrlSchemeAllowed(scheme) || scheme == u"mailto"_q
+			   || scheme == u"tel"_q);
 }
 
 [[nodiscard]] QString OpenGLCheckFilePath() {
@@ -141,17 +140,14 @@ const auto kBadPrefix = u"http://"_q;
 	const auto at = command.indexOf('@');
 	const auto name = (at < 0) ? command : command.left(at);
 	const auto bot = (at < 0) ? QStringView() : command.mid(at + 1);
-	if (name.isEmpty()
-		|| name.size() > 64
+	if (name.isEmpty() || name.size() > 64
 		|| (at >= 0 && (bot.size() < 3 || bot.size() > 32))) {
 		return false;
 	}
 	const auto valid = [](QChar ch) {
 		const auto value = ch.unicode();
-		return (value >= 'A' && value <= 'Z')
-			|| (value >= 'a' && value <= 'z')
-			|| (value >= '0' && value <= '9')
-			|| (value == '_');
+		return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+			   || (value >= '0' && value <= '9') || (value == '_');
 	};
 	return ranges::all_of(name, valid) && ranges::all_of(bot, valid);
 }
@@ -378,10 +374,10 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 	switch (data.type) {
 	case EntityType::Url:
 		return (!data.data.isEmpty()
-			&& (UrlClickHandler::IsSuspicious(data.data)
-				|| SchemeRequiresConfirmation(data.data)))
-			? std::make_shared<HiddenUrlClickHandler>(data.data)
-			: Integration::createLinkHandler(data, context);
+				&& (UrlClickHandler::IsSuspicious(data.data)
+					|| SchemeRequiresConfirmation(data.data)))
+				   ? std::make_shared<HiddenUrlClickHandler>(data.data)
+				   : Integration::createLinkHandler(data, context);
 
 	case EntityType::CustomUrl:
 		return !data.data.isEmpty()
@@ -390,13 +386,13 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 
 	case EntityType::Email:
 		return UrlClickHandler::IsEmail(data.data)
-			? Integration::createLinkHandler(data, context)
-			: nullptr;
+				   ? Integration::createLinkHandler(data, context)
+				   : nullptr;
 
 	case EntityType::BotCommand:
 		return IsBotCommand(data.data)
-			? std::make_shared<BotCommandClickHandler>(data.data)
-			: nullptr;
+				   ? std::make_shared<BotCommandClickHandler>(data.data)
+				   : nullptr;
 
 	case EntityType::Hashtag:
 		using HashtagMentionType = TextContextDetails::HashtagMentionType;

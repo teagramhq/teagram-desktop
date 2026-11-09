@@ -86,9 +86,7 @@ bool CheckStreamingSupport(
 			auto atomSize64Bytes = bytes::make_span(atomSize64);
 			return ReadBigEndian<uint64>(atomSize64Bytes);
 		}();
-		if (length < uint64(headerSize)
-			|| position < 0
-			|| position > size
+		if (length < uint64(headerSize) || position < 0 || position > size
 			|| length > uint64(size - position)
 			|| !device->seek(position + qint64(length))) {
 			break;

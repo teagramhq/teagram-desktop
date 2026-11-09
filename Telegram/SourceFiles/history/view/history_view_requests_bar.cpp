@@ -57,11 +57,8 @@ rpl::producer<Ui::RequestsBarContent> RequestsBarContentByPeer(
 		for (auto b = begin(users), e = end(users), i = b; i != e; ++i) {
 			const auto user = *i;
 			const auto place = begin(state->userpics) + (i - b);
-			const auto j = ranges::find(
-				place,
-				end(state->userpics),
-				user,
-				&UserpicInRow::peer);
+			const auto j = ranges::find(place, end(state->userpics), user,
+										&UserpicInRow::peer);
 			if (j == end(state->userpics)) {
 				state->userpics.insert(
 					place,

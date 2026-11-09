@@ -343,17 +343,12 @@ rpl::lifetime &AbstractDedicatedLoader::lifetime() {
 	return _lifetime;
 }
 
-DedicatedLoader::DedicatedLoader(
-	base::weak_ptr<Main::Session> session,
-	const QString &folder,
-	const File &file)
-: AbstractDedicatedLoader(
-	folder + '/' + base::FileNameFromUserString(file.name),
-	kChunkSize)
-, _size(file.size)
-, _dcId(file.dcId)
-, _location(file.location)
-, _mtp(session) {
+DedicatedLoader::DedicatedLoader(base::weak_ptr<Main::Session> session,
+								 const QString &folder, const File &file)
+	: AbstractDedicatedLoader(
+		  folder + '/' + base::FileNameFromUserString(file.name), kChunkSize),
+	  _size(file.size), _dcId(file.dcId), _location(file.location),
+	  _mtp(session) {
 	Expects(_size > 0);
 }
 

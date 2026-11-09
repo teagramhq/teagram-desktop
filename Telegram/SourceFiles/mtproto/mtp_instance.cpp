@@ -1727,9 +1727,7 @@ bool Instance::Private::onErrorDefault(
 		} else {
 			LOG(("MTP Error: could not find request %1 for migrating to %2").arg(requestId).arg(newdcWithShift));
 		}
-		if (!dcWithShift
-			|| newdcWithShift <= 0
-			|| newdcWithShift >= kDcShift) {
+		if (!dcWithShift || newdcWithShift <= 0 || newdcWithShift >= kDcShift) {
 			return false;
 		}
 

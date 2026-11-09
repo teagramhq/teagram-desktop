@@ -239,10 +239,8 @@ void LogError(
 [[nodiscard]] QSize TransposeSizeByRotation(QSize size, int rotation);
 [[nodiscard]] QSize CorrectByAspect(QSize size, AVRational aspect);
 
-[[nodiscard]] bool GoodStorageForFrame(
-	const QImage &storage,
-	QSize size,
-	int minBytesPerLine = 0);
+[[nodiscard]] bool GoodStorageForFrame(const QImage &storage, QSize size,
+									   int minBytesPerLine = 0);
 [[nodiscard]] QImage CreateFrameStorage(QSize size, int minBytesPerLine = 0);
 
 void UnPremultiply(QImage &to, const QImage &from);

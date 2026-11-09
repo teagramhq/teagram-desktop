@@ -329,17 +329,15 @@ void DocumentMedia::automaticLoad(
 	const auto filename = toCache
 		? QString()
 		: DocumentFileNameForSave(_owner);
-	const auto shouldLoadFromCloud = (indata.isEmpty()
-		|| Core::DetectNameType(indata) != Core::NameType::Executable)
-		&& Core::DetectNameType(filename) != Core::NameType::Executable
-		&& (item
-			? Data::AutoDownload::Should(
-				_owner->session().settings().autoDownload(),
-				item->history()->peer,
-				_owner)
-			: Data::AutoDownload::Should(
-				_owner->session().settings().autoDownload(),
-				_owner));
+	const auto shouldLoadFromCloud
+		= (indata.isEmpty()
+		   || Core::DetectNameType(indata) != Core::NameType::Executable)
+		  && Core::DetectNameType(filename) != Core::NameType::Executable
+		  && (item ? Data::AutoDownload::Should(
+						 _owner->session().settings().autoDownload(),
+						 item->history()->peer, _owner)
+				   : Data::AutoDownload::Should(
+						 _owner->session().settings().autoDownload(), _owner));
 	const auto loadFromCloud = shouldLoadFromCloud
 		? LoadFromCloudOrLocal
 		: LoadFromLocalOnly;

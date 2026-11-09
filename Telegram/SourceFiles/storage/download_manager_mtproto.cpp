@@ -916,9 +916,7 @@ void DownloadMtprotoTask::removeFromQueue() {
 	_owner->remove(this);
 }
 
-bool DownloadMtprotoTask::partLoaded(
-		int64 offset,
-		const QByteArray &bytes) {
+bool DownloadMtprotoTask::partLoaded(int64 offset, const QByteArray &bytes) {
 	if (bytes.size() > Storage::kDownloadPartSize) {
 		cancelOnFail();
 		return false;

@@ -246,8 +246,8 @@ void LoadCloudFile(
 		Fn<void()> progress,
 		int downloadFrontPartSize = 0) {
 	const auto loadSize = (downloadFrontPartSize > 0)
-		? std::min(downloadFrontPartSize, file.byteSize)
-		: file.byteSize;
+							  ? std::min(downloadFrontPartSize, file.byteSize)
+							  : file.byteSize;
 	if (file.loader) {
 		if (fromCloud == LoadFromCloudOrLocal) {
 			file.loader->permitLoadFromCloud();

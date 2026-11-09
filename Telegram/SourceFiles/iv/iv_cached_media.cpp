@@ -631,22 +631,21 @@ void CachedPageInlineDocumentImage::subscribeToUpdates(Fn<void()> callback) {
 	if (fullImageLoaded()) {
 		return;
 	}
-	_document->session().downloaderTaskFinished(
-	) | rpl::filter([=] {
+	_document->session().downloaderTaskFinished() | rpl::filter([=] {
 		return fullImageLoaded()
-			|| (!_photoMedia
-				&& (!_document->isImage()
-					|| _document->size > Storage::kMaxFileInMemory)
-				&& resolvedThumbnailImage());
-	}) | rpl::take(1) | rpl::on_next(std::move(callback), _subscription);
+			   || (!_photoMedia
+				   && (!_document->isImage()
+					   || _document->size > Storage::kMaxFileInMemory)
+				   && resolvedThumbnailImage());
+	}) | rpl::take(1)
+		| rpl::on_next(std::move(callback), _subscription);
 }
 
 void CachedPageInlineDocumentImage::ensureWanted() {
 	if (_photoMedia) {
 		_photoMedia->wanted(::Data::PhotoSize::Large, _origin);
 	}
-	if (_document->isImage()
-		&& _document->size <= Storage::kMaxFileInMemory) {
+	if (_document->isImage() && _document->size <= Storage::kMaxFileInMemory) {
 		_document->forceToCache(true);
 		_document->save(_origin, QString(), LoadFromCloudOrLocal, true);
 	} else {

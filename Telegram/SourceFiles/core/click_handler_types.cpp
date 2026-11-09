@@ -88,8 +88,7 @@ constexpr auto kReminderSetToastDuration = 4 * crl::time(1000);
 [[nodiscard]] bool HiddenUrlRequiresConfirmation(const QUrl &url) {
 	const auto scheme = url.scheme().toLower();
 	return (scheme != u"https"_q && scheme != u"http"_q)
-		|| UrlRequiresConfirmation(url)
-		|| IsTelegramShortLinkHost(url);
+		   || UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
 }
 }
 
@@ -302,12 +301,10 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 	} else {
 		const auto isEmail = UrlClickHandler::IsEmail(url);
 		const auto external = QUrl(url);
-		const auto parsedUrl = external.scheme().isEmpty()
-			? QUrl::fromUserInput(url)
-			: external;
+		const auto parsedUrl
+			= external.scheme().isEmpty() ? QUrl::fromUserInput(url) : external;
 		if (!isEmail
-			&& (!external.isValid()
-				|| !parsedUrl.isValid()
+			&& (!external.isValid() || !parsedUrl.isValid()
 				|| parsedUrl.isLocalFile()
 				|| !File::IsUrlSchemeAllowed(parsedUrl.scheme()))) {
 			if (my.show) {

@@ -1493,10 +1493,8 @@ void SessionPrivate::handleReceived() {
 			return restart();
 		}
 
-		if ((messageLength < kIntSize)
-			|| (messageLength > kMaxMessageLength)
-			|| (messageLength & 0x03)
-			|| (paddingSize < kMinPaddingSize)
+		if ((messageLength < kIntSize) || (messageLength > kMaxMessageLength)
+			|| (messageLength & 0x03) || (paddingSize < kMinPaddingSize)
 			|| (paddingSize > kMaxPaddingSize)) {
 			LOG(("TCP Error: bad msg_len received %1, data size: %2").arg(messageLength).arg(encryptedBytesCount));
 			return restart();

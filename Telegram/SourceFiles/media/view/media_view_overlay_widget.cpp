@@ -3355,8 +3355,7 @@ void OverlayWidget::downloadMedia() {
 			}
 			toName = filedialogNextFilename(
 				base::FileNameFromUserString(_document->filename()),
-				location.name(),
-				path);
+				location.name(), path);
 			if (!toName.isEmpty() && toName != location.name()) {
 				const auto copyAllowed = Core::MacProtectedPath::CheckPair(
 					Core::MacProtectedPath::Operation::Copy, location.name(),

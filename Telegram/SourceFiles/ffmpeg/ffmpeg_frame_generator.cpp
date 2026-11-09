@@ -23,20 +23,18 @@ constexpr auto kMaxArea = 1920 * 1080 * 4;
 
 using ::Media::ValidFrameSize;
 
-[[nodiscard]] bool ValidSourcePlanes(not_null<AVFrame*> frame, int format) {
+[[nodiscard]] bool ValidSourcePlanes(not_null<AVFrame *> frame, int format) {
 	const auto pixelFormat = AVPixelFormat(format);
 	const auto desc = av_pix_fmt_desc_get(pixelFormat);
 	auto visible = std::array<int, 4>{};
 	if (!desc
-		|| av_image_fill_linesizes(
-			visible.data(),
-			pixelFormat,
-			frame->width) < 0) {
+		|| av_image_fill_linesizes(visible.data(), pixelFormat, frame->width)
+			   < 0) {
 		return false;
 	}
 	const auto palette = (desc->flags & AV_PIX_FMT_FLAG_PAL) != 0;
-	const auto maxPlaneBytes = int64_t(std::numeric_limits<int>::max())
-		/ kPixelBytesSize;
+	const auto maxPlaneBytes
+		= int64_t(std::numeric_limits<int>::max()) / kPixelBytesSize;
 	for (auto plane = 0; plane != int(visible.size()); ++plane) {
 		const auto data = frame->data[plane];
 		const auto stride = frame->linesize[plane];
@@ -47,15 +45,11 @@ using ::Media::ValidFrameSize;
 			continue;
 		} else if (!visible[plane]) {
 			continue;
-		} else if (!data
-			|| !stride
-			|| stride == std::numeric_limits<int>::min()
-			|| std::abs(stride) < visible[plane]) {
+		} else if (!data || !stride || stride == std::numeric_limits<int>::min()
+				   || std::abs(stride) < visible[plane]) {
 			return false;
 		}
-		const auto shift = (plane == 1 || plane == 2)
-			? desc->log2_chroma_h
-			: 0;
+		const auto shift = (plane == 1 || plane == 2) ? desc->log2_chroma_h : 0;
 		const auto rows = AV_CEIL_RSHIFT(frame->height, shift);
 		if (int64_t(rows) * std::abs(stride) > maxPlaneBytes) {
 			return false;
@@ -211,31 +205,31 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 	const auto width = frame->width;
 	const auto height = frame->height;
 	if (width <= 0 || height <= 0 || size.isEmpty()) {
-		LOG(("Webm Error: Bad frame size %1x%2 -> %3x%4"
-			).arg(width
-			).arg(height
-			).arg(size.width()
-			).arg(size.height()));
+		LOG(("Webm Error: Bad frame size %1x%2 -> %3x%4")
+				.arg(width)
+				.arg(height)
+				.arg(size.width())
+				.arg(size.height()));
 		return {};
 	}
 
 	const auto srcSize = QSize(width, height);
 	// Qt narrows the expanding side to int, so check it wide before scaling.
-	const auto expanding = (mode == Qt::KeepAspectRatioByExpanding)
-		&& ((int64_t(size.height()) * width / height > size.width())
-			|| (int64_t(size.width()) * height / width > size.height()));
+	const auto expanding
+		= (mode == Qt::KeepAspectRatioByExpanding)
+		  && ((int64_t(size.height()) * width / height > size.width())
+			  || (int64_t(size.width()) * height / width > size.height()));
 	auto scaled = expanding ? QSize() : srcSize.scaled(size, mode);
 	if (!scaled.isEmpty() && rotationSwapWidthHeight()) {
 		scaled.transpose();
 	}
-	if (scaled.isEmpty()
-		|| scaled.width() > size.width()
+	if (scaled.isEmpty() || scaled.width() > size.width()
 		|| scaled.height() > size.height()) {
-		LOG(("Webm Error: Bad scaled frame size %1x%2 -> %3x%4"
-			).arg(width
-			).arg(height
-			).arg(scaled.width()
-			).arg(scaled.height()));
+		LOG(("Webm Error: Bad scaled frame size %1x%2 -> %3x%4")
+				.arg(width)
+				.arg(height)
+				.arg(scaled.width())
+				.arg(scaled.height()));
 		return {};
 	}
 	const auto srcFormat = (frame->format == AV_PIX_FMT_NONE)
@@ -260,11 +254,10 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 	// WHY: swscale's BGRA kernels round each row's write up to kAlignImageBy
 	// bytes from the shifted start, so a centered row needs that rounded span
 	// after the shift, or the last row runs past the storage.
-	const auto neededPitch = native
-		? aligned(canvasBytes)
-		: std::max(
-			aligned(canvasBytes),
-			aligned(shiftBytes + aligned(visibleBytes)));
+	const auto neededPitch
+		= native ? aligned(canvasBytes)
+				 : std::max(aligned(canvasBytes),
+							aligned(shiftBytes + aligned(visibleBytes)));
 	if (neededPitch > std::numeric_limits<int>::max()) {
 		LOG(("Webm Error: Bad frame pitch %1.").arg(neededPitch));
 		return {};
@@ -272,9 +265,7 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 	const auto minPitch = int(neededPitch);
 
 	const auto rotated = (_rotation != 0);
-	auto working = rotated
-		? base::take(_rotationStorage)
-		: std::move(storage);
+	auto working = rotated ? base::take(_rotationStorage) : std::move(storage);
 	if (!GoodStorageForFrame(working, size, minPitch)) {
 		working = CreateFrameStorage(size, minPitch);
 	}
@@ -284,9 +275,9 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 		bits = working.bits();
 	}
 	if (!bits || !GoodStorageForFrame(working, size, minPitch)) {
-		LOG(("Webm Error: Bad frame storage %1x%2."
-			).arg(size.width()
-			).arg(size.height()));
+		LOG(("Webm Error: Bad frame storage %1x%2.")
+				.arg(size.width())
+				.arg(size.height()));
 		return {};
 	}
 	const auto pitch = int(working.bytesPerLine());
@@ -296,44 +287,33 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 	const auto srcStride = frame->linesize[0];
 	if (native && bgra) {
 		for (auto y = 0; y != height; ++y) {
-			memcpy(
-				first + int64_t(y) * pitch,
-				src + int64_t(y) * srcStride,
-				line);
+			memcpy(first + int64_t(y) * pitch, src + int64_t(y) * srcStride,
+				   line);
 		}
 	} else if (native) {
 		static_assert(sizeof(uint32) == kPixelBytesSize);
 		for (auto y = 0; y != height; ++y) {
-			auto to = reinterpret_cast<uint32*>(first + int64_t(y) * pitch);
-			auto from = reinterpret_cast<const uint32*>(
+			auto to = reinterpret_cast<uint32 *>(first + int64_t(y) * pitch);
+			auto from = reinterpret_cast<const uint32 *>(
 				src + int64_t(y) * srcStride);
 			for (auto x = 0; x != width; ++x) {
 				*to++ = 0xFF000000U | *from++;
 			}
 		}
 	} else {
-		_scale = MakeSwscalePointer(
-			srcSize,
-			srcFormat,
-			scaled,
-			AV_PIX_FMT_BGRA,
-			&_scale);
+		_scale = MakeSwscalePointer(srcSize, srcFormat, scaled, AV_PIX_FMT_BGRA,
+									&_scale);
 		if (!_scale) {
 			LOG(("Webm Error: Unable to create sws context."));
 			return {};
 		}
 
 		// AV_NUM_DATA_POINTERS defined in AVFrame struct
-		uint8_t *dstData[AV_NUM_DATA_POINTERS] = { first, nullptr };
-		int dstLinesize[AV_NUM_DATA_POINTERS] = { pitch, 0 };
-		const auto converted = sws_scale(
-			_scale.get(),
-			frame->data,
-			frame->linesize,
-			0,
-			height,
-			dstData,
-			dstLinesize);
+		uint8_t *dstData[AV_NUM_DATA_POINTERS] = {first, nullptr};
+		int dstLinesize[AV_NUM_DATA_POINTERS] = {pitch, 0};
+		const auto converted
+			= sws_scale(_scale.get(), frame->data, frame->linesize, 0, height,
+						dstData, dstLinesize);
 		if (converted != scaled.height()) {
 			LOG(("Webm Error: Bad sws_scale result %1.").arg(converted));
 			return {};
@@ -369,9 +349,9 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 	_rotationStorage = std::move(working);
 	auto image = _rotationStorage.transformed(transform);
 	if (image.isNull()) {
-		LOG(("Webm Error: Unable to rotate frame %1x%2."
-			).arg(size.width()
-			).arg(size.height()));
+		LOG(("Webm Error: Unable to rotate frame %1x%2.")
+				.arg(size.width())
+				.arg(size.height()));
 		return {};
 	}
 	return {

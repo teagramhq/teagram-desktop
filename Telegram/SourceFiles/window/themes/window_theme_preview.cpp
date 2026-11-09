@@ -519,7 +519,7 @@ void Generator::paintHistoryBackground() {
 					}
 					imageBytes += background.bytesPerLine();
 					imageForTiledBytes += imageForTiled.bytesPerLine()
-						- (repeatTimesX * bytesInLine);
+										  - (repeatTimesX * bytesInLine);
 				}
 			}
 			_p->drawImage(_history.x(), _history.y() + fromy, imageForTiled);

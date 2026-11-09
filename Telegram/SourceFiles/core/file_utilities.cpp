@@ -174,16 +174,8 @@ namespace File {
 
 bool IsUrlSchemeAllowed(const QString &scheme) {
 	static const auto kSchemes = std::array{
-		u"http"_q,
-		u"https"_q,
-		u"ftp"_q,
-		u"itmss"_q,
-		u"mailto"_q,
-		u"tel"_q,
-		u"tg"_q,
-		u"tc"_q,
-		u"ton"_q,
-		u"tonsite"_q,
+		u"http"_q, u"https"_q, u"ftp"_q, u"itmss"_q, u"mailto"_q,
+		u"tel"_q,  u"tg"_q,	   u"tc"_q,	 u"ton"_q,	 u"tonsite"_q,
 	};
 	if (ranges::contains(kSchemes, scheme)) {
 		return true;
@@ -196,11 +188,10 @@ bool IsUrlSchemeAllowed(const QString &scheme) {
 	}
 	for (const auto &[index, account] : Core::App().domain().accounts()) {
 		const auto protocols = account->appConfig().get<std::vector<QString>>(
-			"web_app_allowed_protocols",
-			{});
+			"web_app_allowed_protocols", {});
 		if (ranges::any_of(protocols, [&](const QString &protocol) {
-			return scheme.compare(protocol, Qt::CaseInsensitive) == 0;
-		})) {
+				return scheme.compare(protocol, Qt::CaseInsensitive) == 0;
+			})) {
 			return true;
 		}
 	}
@@ -281,8 +272,7 @@ namespace internal {
 
 void UnsafeOpenUrlDefault(const QString &url) {
 	const auto parsed = QUrl(url);
-	if (!parsed.isValid()
-		|| parsed.isLocalFile()
+	if (!parsed.isValid() || parsed.isLocalFile()
 		|| !IsUrlSchemeAllowed(parsed.scheme())) {
 		ShowUnsupportedUrl();
 		return;

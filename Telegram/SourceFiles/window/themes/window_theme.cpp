@@ -339,7 +339,8 @@ bool LoadTheme(
 			auto reader = QImageReader(&check);
 			const auto size = reader.size();
 			if (size.isEmpty()
-				|| (int64(size.width()) * size.height() > kBackgroundSizeLimit)) {
+				|| (int64(size.width()) * size.height()
+					> kBackgroundSizeLimit)) {
 				LOG(("Theme Error: bad background image size in the theme file."));
 				return false;
 			}

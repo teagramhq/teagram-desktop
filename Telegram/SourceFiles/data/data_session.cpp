@@ -4185,15 +4185,13 @@ void Session::photoApplyFields(
 			return std::nullopt;
 		}
 		const auto area = [](const MTPVideoSize &size) {
-			return size.match([](const MTPDvideoSize &data) {
-				return (data.vsize().v > 0)
-					? (data.vw().v * data.vh().v)
-					: 0;
-			}, [](const MTPDvideoSizeEmojiMarkup &) {
-				return 0;
-			}, [](const MTPDvideoSizeStickerMarkup &) {
-				return 0;
-			});
+			return size.match(
+				[](const MTPDvideoSize &data) {
+					return (data.vsize().v > 0) ? (data.vw().v * data.vh().v)
+												: 0;
+				},
+				[](const MTPDvideoSizeEmojiMarkup &) { return 0; },
+				[](const MTPDvideoSizeStickerMarkup &) { return 0; });
 		};
 		const auto type = [](const MTPVideoSize &size) {
 			return size.match([](const MTPDvideoSize &data) {
