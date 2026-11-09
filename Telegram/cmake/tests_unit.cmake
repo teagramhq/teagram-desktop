@@ -253,6 +253,22 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
         )
     endif()
+
+    if (TDESKTOP_API_TEST)
+        set_property(SOURCE ${src_loc}/main.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS TDESKTOP_TEST_QPA_OFFSCREEN
+        )
+        target_link_libraries(Telegram
+        PRIVATE
+            Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
+        )
+        if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+            target_link_libraries(Telegram
+            PRIVATE
+                Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
+            )
+        endif()
+    endif()
 endif()
 
 # Put it beside Telegram in out/<config>/ instead of the target's own
