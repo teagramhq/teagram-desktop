@@ -21,6 +21,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_runtime.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
+#include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "storage/storage_cloud_blob.h"
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
@@ -216,8 +218,13 @@ Inner::Inner(QWidget *parent, not_null<Main::Session*> session)
 
 void Inner::setupContent() {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	const auto cloudResourcesSupported = Main::details::cloudResourcesSupported(
+		_session->mtp().dcOptions());
 
 	for (const auto &set : kSets) {
+		if (!cloudResourcesSupported && set.id != 0) {
+			continue;
+		}
 		content->add(object_ptr<Row>(content, _session, set));
 	}
 
@@ -557,6 +564,11 @@ void ManageSetsBox::prepare() {
 
 void LoadAndSwitchTo(not_null<Main::Session*> session, int id) {
 	if (!ranges::contains(kSets, id, &Set::id)) {
+		ClearNeedSwitchToId();
+		return;
+	}
+	if (!Main::details::cloudResourcesSupported(
+			session->mtp().dcOptions())) {
 		ClearNeedSwitchToId();
 		return;
 	}

@@ -2270,7 +2270,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 14>{
+	const auto capabilities = std::array<Capability, 15>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -2285,6 +2285,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::noForwardsSupported,
 		Main::details::chatThemeEditingSupported,
 		Main::details::scheduledMessagesSupported,
+		Main::details::cloudResourcesSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -2300,6 +2301,26 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+TEST_CASE(TelegramdCloudResourceActionsAreRefused) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	const auto checkAction = [](const DcOptions &options, bool expected) {
+		auto actions = 0;
+		Main::details::runCloudResourceActionIfSupported(
+			options,
+			[&] { ++actions; });
+		CHECK_EQ(actions, expected ? 1 : 0);
+	};
+	checkAction(custom, false);
+	checkAction(blocked, false);
+	checkAction(stock, true);
 }
 
 TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {

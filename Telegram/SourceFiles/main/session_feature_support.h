@@ -48,6 +48,20 @@ namespace Main::details {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
+[[nodiscard]] inline bool cloudResourcesSupported(
+		const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
+template <typename Callback>
+inline void runCloudResourceActionIfSupported(
+		const MTP::DcOptions &options,
+		Callback &&action) {
+	if (cloudResourcesSupported(options)) {
+		action();
+	}
+}
+
 [[nodiscard]] inline bool
 automaticChatTranslationEnabled(bool serverSupported, bool settingEnabled,
 								bool premium, bool channelAutoTranslation) {

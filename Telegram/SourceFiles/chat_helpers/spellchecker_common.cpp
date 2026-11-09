@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "mainwidget.h"
 #include "mtproto/dedicated_file_loader.h"
 #include "spellcheck/platform/platform_spellcheck.h"
@@ -224,12 +225,16 @@ void DictManifestLoader::finish() {
 }
 
 void StartManifestRefresh(not_null<Main::Session*> session) {
-	if (ActiveManifestLoader) {
-		return;
-	}
-	ActiveManifestLoader = std::make_shared<DictManifestLoader>(
-		base::make_weak(session));
-	ActiveManifestLoader->start();
+	Main::details::runCloudResourceActionIfSupported(
+		session->mtp().dcOptions(),
+		[=] {
+			if (ActiveManifestLoader) {
+				return;
+			}
+			ActiveManifestLoader = std::make_shared<DictManifestLoader>(
+				base::make_weak(session));
+			ActiveManifestLoader->start();
+		});
 }
 
 // Callers waiting for the first manifest arrival in this session.
@@ -241,6 +246,10 @@ rpl::lifetime ManifestPendingSubscription;
 void EnsureManifestThen(
 		not_null<Main::Session*> session,
 		Fn<void()> callback) {
+	if (!Main::details::cloudResourcesSupported(
+			session->mtp().dcOptions())) {
+		return;
+	}
 	if (!DictionariesList.empty()) {
 		callback();
 		return;
@@ -292,7 +301,9 @@ void DownloadDictionaryInBackground(
 		not_null<Main::Session*> session,
 		int counter,
 		std::vector<int> langs) {
-	if (counter >= langs.size()) {
+	if (!Main::details::cloudResourcesSupported(
+			session->mtp().dcOptions())
+		|| counter >= langs.size()) {
 		return;
 	}
 	const auto id = langs[counter];

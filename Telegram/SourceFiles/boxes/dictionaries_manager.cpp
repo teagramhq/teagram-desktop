@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "mainwidget.h"
 #include "mtproto/dedicated_file_loader.h"
 #include "spellcheck/spellcheck_utils.h"
@@ -340,6 +341,8 @@ void Inner::setupContent(
 		not_null<Main::Session*> session,
 		Dictionaries enabledDictionaries) {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	const auto cloudResourcesSupported = Main::details::cloudResourcesSupported(
+		session->mtp().dcOptions());
 
 	const auto queryStream = content->lifetime()
 		.make_state<rpl::event_stream<QStringView>>();
@@ -350,7 +353,7 @@ void Inner::setupContent(
 	// then if we haven't already.
 	const auto built = content->lifetime().make_state<bool>(false);
 	const auto buildRows = [=] {
-		if (*built) {
+		if (*built || !cloudResourcesSupported) {
 			return;
 		}
 		const auto dicts = Spellchecker::Dictionaries();
@@ -379,9 +382,11 @@ void Inner::setupContent(
 	};
 
 	buildRows();
-	Spellchecker::DictionariesChanged(
-	) | rpl::on_next(buildRows, content->lifetime());
-	Spellchecker::RefreshDictionariesManifest(session);
+	if (cloudResourcesSupported) {
+		Spellchecker::DictionariesChanged(
+		) | rpl::on_next(buildRows, content->lifetime());
+		Spellchecker::RefreshDictionariesManifest(session);
+	}
 
 	_queryCallback = [=](const QString &query) {
 		if (query.size() >= kMaxQueryLength) {
