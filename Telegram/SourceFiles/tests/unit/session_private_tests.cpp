@@ -229,11 +229,11 @@ class SessionPrivateTestAccess final {
 		// clang-format on
 	}
 
-	static void RawServerError(SessionPrivate &session,
-							   AbstractConnection *connection,
-							   qint32 errorCode) {
+	static void PacketError(SessionPrivate &session,
+							AbstractConnection *connection,
+							const mtpBuffer &packet) {
 		const auto target = not_null<AbstractConnection *>(connection);
-		const auto mapped = ErrorCodeFromServer(errorCode);
+		const auto mapped = ServerErrorFromPacket(packet);
 		session.onError(target, mapped, {});
 	}
 
@@ -673,6 +673,15 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 	CHECK_EQ(int(withFallback), 30000);
 }
 
+TEST_CASE(ServerErrorFromPacketMapsOnlyBrowserOnlyCode) {
+	const auto browserOnlyPacket = mtpBuffer(1, -498);
+	const auto browserOnlyError = ServerErrorFromPacket(browserOnlyPacket);
+	CHECK_EQ(browserOnlyError, AbstractConnection::kErrorCodeOther);
+	const auto serverErrorPacket = mtpBuffer(1, -404);
+	const auto serverError = ServerErrorFromPacket(serverErrorPacket);
+	CHECK_EQ(serverError, -404);
+}
+
 TEST_CASE(ServerPacketBrowserOnlyCodeDoesNotSetBrowserOnlyRefusal) {
 	SessionPrivateTestAccess::ResetBrowserOnlyServerRefusals();
 	auto data = std::make_shared<SessionData>(
@@ -682,8 +691,8 @@ TEST_CASE(ServerPacketBrowserOnlyCodeDoesNotSetBrowserOnlyRefusal) {
 	const auto proxy = ProxyData();
 	const auto log = std::make_shared<TransportLog>();
 	auto connection = ConnectionPointer::New<FakeTransport>(thread, proxy, log);
-	auto *serverConnection = connection.get();
-	SessionPrivateTestAccess::RawServerError(*session, serverConnection, -498);
+	const auto packet = mtpBuffer(1, -498);
+	SessionPrivateTestAccess::PacketError(*session, connection.get(), packet);
 
 	CHECK(!SessionPrivateTestAccess::GaveUpOnBrowserOnlyServer(*session));
 	CHECK_EQ(SessionPrivateTestAccess::BrowserOnlyServerRefusals(), 0);

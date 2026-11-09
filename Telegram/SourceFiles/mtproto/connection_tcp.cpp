@@ -588,7 +588,7 @@ void TcpConnection::socketPacket(bytes::const_span bytes) {
 	const auto data = parsePacket(bytes);
 	if (data.size() == 1) {
 		if (data[0] != 0) {
-			error(ErrorCodeFromServer(data[0]));
+			error(ServerErrorFromPacket(data));
 		} else {
 			// nop
 		}
