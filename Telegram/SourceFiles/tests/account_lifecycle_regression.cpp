@@ -14991,12 +14991,6 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
-			// contacts.getContacts can contain peers already loaded from other
-			// responses. Seed their full user records first so the
-			// contact-state update is measured against loaded peers, as in that
-			// account state.
-			auto existingUsers = DesktopScaleUsers(firstId, count, false, true);
-			data.processUsers(MTP_vector<MTPUser>(std::move(existingUsers)));
 			auto capture = ChannelSaveRequestCapture{
 				.instance = &account->mtp(),
 			};
@@ -15013,8 +15007,12 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 						capture, mtpc_contacts_getContacts, fullReply, watchdog,
 						[&] {
-							return data.contactsList()->size() == count
-								   && data.contactsLoaded().current();
+							return WaitForRegressionCondition(
+								[&] {
+									return data.contactsList()->size() == count
+										   && data.contactsLoaded().current();
+								},
+								5000);
 						});
 			}
 			if (!result.loaded.passed) {
@@ -15043,15 +15041,21 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 						updateCapture, mtpc_contacts_getContacts, changedReply,
 						watchdog, [&] {
-							const auto userId
-								= UserId(firstId.bare + count - 1);
-							const auto user = data.userLoaded(userId);
-							const auto found = data.contactsList()->filtered(
-								QStringList{u"scaleupdatedcontact"_q});
-							return user && user->isContact()
-								   && (user->firstName
-									   == u"ScaleUpdatedContact"_q)
-								   && (found.size() == 1);
+							return WaitForRegressionCondition(
+								[&] {
+									const auto userId
+										= UserId(firstId.bare + count - 1);
+									const auto user = data.userLoaded(userId);
+									const auto found
+										= data.contactsList()->filtered(
+											QStringList{
+												u"scaleupdatedcontact"_q});
+									return user && user->isContact()
+										   && (user->firstName
+											   == u"ScaleUpdatedContact"_q)
+										   && (found.size() == 1);
+								},
+								5000);
 						});
 			}
 			if (!result.changedAndFound.passed) {
