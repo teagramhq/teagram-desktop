@@ -3560,8 +3560,10 @@ void HistoryWidget::invalidateAttachBotsMenuCache() {
 	_attachBotsMenuCache.clear();
 	_attachBotsMenuCacheLru.clear();
 	_attachToggle->removeEventFilter(this);
-	if (_history) {
+	if (_history && showWhenReady) {
 		refreshAttachBotsMenu();
+	} else if (_history && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
 	}
 }
 
@@ -3571,21 +3573,24 @@ void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
 		return;
 	}
 	const auto current = _history && (_history->peer == peer);
+	const auto showWhenReady = current && !ChatHelpers::ShowPanelOnClick()
+							   && _attachToggle->underMouse();
 	if (current) {
 		if (_attachBotsMenu) {
 			_attachToggle->removeEventFilter(_attachBotsMenu);
 			_attachBotsMenu->hideFast();
 			_attachBotsMenu = nullptr;
 		}
-		_attachMenuShowWhenReady
-			= !ChatHelpers::ShowPanelOnClick() && _attachToggle->underMouse();
+		_attachMenuShowWhenReady = showWhenReady;
 		_attachMenuClickWhenReady = false;
 		_attachToggle->removeEventFilter(this);
 	}
 	_attachBotsMenuCache.erase(i);
 	std::erase(_attachBotsMenuCacheLru, peer);
-	if (current) {
+	if (showWhenReady) {
 		refreshAttachBotsMenu();
+	} else if (current && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
 	}
 }
 
@@ -3596,7 +3601,6 @@ void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
 		if (!ChatHelpers::ShowPanelOnClick()) {
 			_attachToggle->installEventFilter(this);
 		}
-		refreshAttachBotsMenu();
 		return;
 	}
 	touchAttachBotsMenuCache(_history->peer);
@@ -3610,7 +3614,6 @@ void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
 		if (!ChatHelpers::ShowPanelOnClick()) {
 			_attachToggle->installEventFilter(this);
 		}
-		refreshAttachBotsMenu();
 	}
 }
 

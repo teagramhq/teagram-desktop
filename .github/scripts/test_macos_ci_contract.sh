@@ -927,11 +927,22 @@ grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq "attachMenuFirstHoverNanoseconds < 50'000'000" "$native_harness" \
   && grep -Fq 'kAttachMenuRegressionBotCount = 20' "$native_harness" \
+  && grep -Fq 'attachMenuBuildDeferredUntilHover' "$native_harness" \
+  && grep -Fq "attachMenuUncachedPeerNanoseconds < 50'000'000" "$native_harness" \
+  && grep -Fq 'buildDeferredUntilEnter' "$native_harness" \
   && grep -Fq 'lastAttachBotId' "$native_harness" \
   && grep -Fq 'attachMenuInvalidationRebuilt' "$native_harness" \
   && grep -Fq 'attachMenuContainsBotForRegressionTest' "$native_harness" \
   && grep -Fq 'attachMenuCacheSizeForRegressionTest() <= 8' "$native_harness" \
-  || contract_fail 'The attach-menu regression must gate first hover, bot invalidation, and bounded caching.'
+  || contract_fail 'The attach-menu regression must defer and gate first hover, uncached peers, bot invalidation, and bounded caching.'
+awk '
+  /void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer\(/ { copy = 1 }
+  copy && /^void HistoryWidget::touchAttachBotsMenuCache\(/ { exit }
+  copy { print }
+' Telegram/SourceFiles/history/history_widget.cpp > "$temp_dir/activate-attach-menu.cpp"
+if grep -Fq 'refreshAttachBotsMenu();' "$temp_dir/activate-attach-menu.cpp"; then
+  contract_fail 'Switching to an uncached peer must not build its attach menu before hover or click.'
+fi
 grep -Fq 'std::vector<AttachWebViewBot> bots' \
   Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp \
   && grep -Fq 'menuBots.push_back(bot)' \

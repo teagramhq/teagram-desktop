@@ -10289,11 +10289,14 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 attachMenuFirstHoverNanoseconds = -1;
 	qint64 attachMenuHoverNanoseconds = -1;
 	qint64 attachMenuInvalidationHoverNanoseconds = -1;
+	qint64 attachMenuUncachedPeerNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	bool minimizedRestore = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
+	bool attachMenuBuildDeferredUntilHover = false;
 	bool attachMenuCacheBounded = false;
+	bool attachMenuUncachedPeersReady = false;
 	bool passed = false;
 };
 
@@ -10367,6 +10370,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= UserId(1054 + kAttachMenuRegressionBotCount - 1);
 	session.attachWebView().setAttachBotsForRegressionTest(
 		std::move(attachBots));
+	QCoreApplication::processEvents();
+	result.attachMenuBuildDeferredUntilHover
+		= (historyWidget->attachMenuBuildCountForRegressionTest()
+		   == buildsBeforePrime);
 	auto primeTimer = QElapsedTimer();
 	primeTimer.start();
 	auto primeEnter = QEvent(QEvent::Enter);
@@ -10383,7 +10390,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforePrime + 1)
-		  && attachBotAppeared;
+		  && attachBotAppeared && result.attachMenuBuildDeferredUntilHover;
 	controller->showPeerHistory(firstHistory);
 	QCoreApplication::processEvents();
 	controller->showPeerHistory(attachHistory);
@@ -10432,17 +10439,51 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= replacementBotAppeared
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeInvalidation + 1);
+	auto uncachedPeerBots = std::vector<InlineBots::AttachWebViewBot>();
+	uncachedPeerBots.reserve(kAttachMenuRegressionBotCount);
+	for (auto i = 0; i != kAttachMenuRegressionBotCount; ++i) {
+		const auto botId = UserId(1054 + i);
+		uncachedPeerBots.push_back(InlineBots::AttachWebViewBot{
+			.user = data.user(botId),
+			.name = u"Regression attach bot %1"_q.arg(i),
+			.types = InlineBots::PeerTypes(InlineBots::PeerType::User),
+			.inAttachMenu = true,
+		});
+	}
+	session.attachWebView().setAttachBotsForRegressionTest(
+		std::move(uncachedPeerBots));
+	result.attachMenuUncachedPeersReady = true;
 	for (auto i = 0; i != 10; ++i) {
 		const auto peerId = UserId(1100 + i);
 		data.processUsers(MTP_vector<MTPUser>({
 			RegressionUser(peerId, false, QString::number(peerId.bare)),
 		}));
 		const auto history = data.history(data.user(peerId));
+		const auto buildsBeforePeerSwitch
+			= historyWidget->attachMenuBuildCountForRegressionTest();
+		auto peerTimer = QElapsedTimer();
+		peerTimer.start();
 		controller->showPeerHistory(history);
 		QCoreApplication::processEvents();
+		const auto buildDeferredUntilEnter
+			= (historyWidget->attachMenuBuildCountForRegressionTest()
+			   == buildsBeforePeerSwitch);
 		auto enter = QEvent(QEvent::Enter);
 		QCoreApplication::sendEvent(
 			historyWidget->attachToggleForRegressionTest(), &enter);
+		const auto lastBotAppeared = WaitForRegressionCondition(
+			[&] {
+				return historyWidget->attachMenuContainsBotForRegressionTest(
+					lastAttachBotId);
+			},
+			1000);
+		result.attachMenuUncachedPeerNanoseconds = std::max(
+			result.attachMenuUncachedPeerNanoseconds, peerTimer.nsecsElapsed());
+		result.attachMenuUncachedPeersReady
+			= result.attachMenuUncachedPeersReady && buildDeferredUntilEnter
+			  && lastBotAppeared
+			  && (historyWidget->attachMenuBuildCountForRegressionTest()
+				  == buildsBeforePeerSwitch + 1);
 	}
 	result.attachMenuCacheBounded
 		= (historyWidget->attachMenuCacheSizeForRegressionTest() <= 8);
@@ -10548,7 +10589,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.maxStallNanoseconds
 		= std::max(std::max(std::max(result.maxHydrationNanoseconds,
 									 result.maxChatSwitchNanoseconds),
-							result.attachMenuFirstHoverNanoseconds),
+							std::max(result.attachMenuFirstHoverNanoseconds,
+									 result.attachMenuUncachedPeerNanoseconds)),
 				   std::max(result.attachMenuHoverNanoseconds,
 							result.attachMenuInvalidationHoverNanoseconds));
 	result.cachedDocuments = int(mediaViews.size());
@@ -10568,6 +10610,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.attachMenuInvalidationRebuilt
 		  && (result.attachMenuInvalidationHoverNanoseconds >= 0)
 		  && (result.attachMenuInvalidationHoverNanoseconds < 50'000'000)
+		  && result.attachMenuBuildDeferredUntilHover
+		  && result.attachMenuUncachedPeersReady
+		  && (result.attachMenuUncachedPeerNanoseconds >= 0)
+		  && (result.attachMenuUncachedPeerNanoseconds < 50'000'000)
 		  && result.attachMenuCacheBounded && result.minimizedRestore
 		  && (result.minimizedSwitchNanoseconds >= 0)
 		  && (result.maxChatSwitchNanoseconds < kMaxChatSwitchNanoseconds);
@@ -11235,7 +11281,10 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_first_hover_ns=%lld "
 					"attach_menu_hover_ns=%lld "
 					"attach_menu_update_hover_ns=%lld "
+					"attach_menu_uncached_peer_ns=%lld "
 					"attach_menu_cached=%d attach_menu_invalidated=%d "
+					"attach_menu_build_deferred=%d "
+					"attach_menu_uncached_ready=%d "
 					"attach_menu_cache_bound=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
@@ -11252,8 +11301,12 @@ void RunAuthenticatedCacheSymlinkCases(
 						chatSwitch.attachMenuHoverNanoseconds),
 					static_cast<long long>(
 						chatSwitch.attachMenuInvalidationHoverNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuUncachedPeerNanoseconds),
 					chatSwitch.attachMenuCacheReused,
 					chatSwitch.attachMenuInvalidationRebuilt,
+					chatSwitch.attachMenuBuildDeferredUntilHover,
+					chatSwitch.attachMenuUncachedPeersReady,
 					chatSwitch.attachMenuCacheBounded,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
