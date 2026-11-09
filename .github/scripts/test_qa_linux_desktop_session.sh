@@ -46,7 +46,16 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$stub_bin"
-cp "$(command -v sleep)" "$stub_bin/dbus-daemon"
+cat > "$stub_bin/dbus-daemon" <<'STUB_DBUS_DAEMON'
+#!/usr/bin/env python3
+import ctypes
+import time
+
+if ctypes.CDLL(None).prctl(15, b"dbus-daemon", 0, 0, 0):
+    raise OSError("Could not set the D-Bus stub process name.")
+time.sleep(120)
+STUB_DBUS_DAEMON
+chmod +x "$stub_bin/dbus-daemon"
 
 cat > "$stub_bin/id" <<'STUB_ID'
 #!/usr/bin/env bash
