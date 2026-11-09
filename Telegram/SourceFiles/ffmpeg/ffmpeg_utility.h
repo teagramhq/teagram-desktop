@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "ffmpeg/ffmpeg_frame_storage.h"
+
 #include "base/bytes.h"
 #include "base/algorithm.h"
 
@@ -32,9 +34,6 @@ class QImage;
 
 namespace FFmpeg {
 
-inline constexpr auto kPixelBytesSize = 4;
-// See https://github.com/telegramdesktop/tdesktop/issues/7225
-inline constexpr auto kAlignImageBy = 64;
 inline constexpr auto kAVBlockSize = 4096; // 4Kb for ffmpeg blocksize
 
 constexpr auto kUniversalTimeBase = AVRational{ 1, AV_TIME_BASE };
@@ -238,10 +237,6 @@ void LogError(
 [[nodiscard]] bool RotationSwapWidthHeight(int rotation);
 [[nodiscard]] QSize TransposeSizeByRotation(QSize size, int rotation);
 [[nodiscard]] QSize CorrectByAspect(QSize size, AVRational aspect);
-
-[[nodiscard]] bool GoodStorageForFrame(const QImage &storage, QSize size,
-									   int minBytesPerLine = 0);
-[[nodiscard]] QImage CreateFrameStorage(QSize size, int minBytesPerLine = 0);
 
 void UnPremultiply(QImage &to, const QImage &from);
 void PremultiplyInplace(QImage &image);

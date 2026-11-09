@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
-#include "ffmpeg/ffmpeg_utility.h"
+#include "ffmpeg/ffmpeg_frame_storage.h"
 
 #include <QtGui/QImage>
 

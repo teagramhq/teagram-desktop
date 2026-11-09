@@ -98,6 +98,7 @@ PRIVATE
     core/hash_sha.cpp
     core/hash_md5.cpp
     core/mac_protected_path_policy.cpp
+    ffmpeg/ffmpeg_frame_storage.cpp
     core/file_location.cpp
     data/data_peer_id.cpp
     data/data_pts_waiter.cpp
@@ -204,7 +205,6 @@ PRIVATE
     tdesktop::td_scheme
     desktop-app::lib_base
     desktop-app::lib_crl
-    desktop-app::lib_ffmpeg
     desktop-app::lib_storage
     desktop-app::lib_ui
     desktop-app::lib_webview
