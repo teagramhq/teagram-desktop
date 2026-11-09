@@ -14962,23 +14962,25 @@ struct DesktopScaleContactsSample final {
 };
 
 [[nodiscard]] MTPcontacts_Contacts
-DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
+DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
+						  int pageSize, bool changeOne) {
 	auto contacts = QVector<MTPContact>();
 	auto users = QVector<MTPUser>();
-	const auto responseCount = changeOne ? 1 : count;
+	const auto responseCount = changeOne ? 1 : pageSize;
 	contacts.reserve(responseCount);
 	users.reserve(responseCount);
 	for (auto i = 0; i != responseCount; ++i) {
-		const auto userId = changeOne ? UserId(firstId.bare + count - 1)
-									  : UserId(firstId.bare + i);
+		const auto index = offset + i;
+		const auto userId = changeOne ? UserId(firstId.bare + totalCount - 1)
+									  : UserId(firstId.bare + index);
 		const auto firstName
 			= changeOne ? u"ScaleUpdatedContact"_q
-						: u"Scale Contact %1"_q.arg(i, 5, 10, QChar('0'));
+						: u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0'));
 		contacts.push_back(MTP_contact(MTP_long(userId.bare), MTP_boolFalse()));
 		users.push_back(DesktopScaleUser(userId, firstName, true, true));
 	}
 	return MTP_contacts_contacts(MTP_vector<MTPContact>(std::move(contacts)),
-								 MTP_int(count),
+								 MTP_int(totalCount),
 								 MTP_vector<MTPUser>(std::move(users)));
 }
 
@@ -14991,29 +14993,49 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
-			auto capture = ChannelSaveRequestCapture{
-				.instance = &account->mtp(),
-			};
-			{
-				const auto restoreCapture
-					= gsl::finally([previous = std::exchange(
-										gChannelSaveRequestCapture, &capture)] {
-						  gChannelSaveRequestCapture = previous;
-					  });
-				session.api().requestContacts();
-				const auto fullReply
-					= DesktopScaleContactsReply(firstId, count, false);
-				result.loaded
-					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						capture, mtpc_contacts_getContacts, fullReply, watchdog,
+			result.loaded.nanoseconds = 0;
+			result.loaded.passed = true;
+			// Apply the complete contact result in the same 100-user pages as
+			// the other synthetic server responses.
+			for (auto offset = 0; offset != count;
+				 offset += kDesktopScalePageSize) {
+				const auto pageSize
+					= std::min(kDesktopScalePageSize, count - offset);
+				data.contactsLoaded() = false;
+				auto capture = ChannelSaveRequestCapture{
+					.instance = &account->mtp(),
+				};
+				DesktopScaleActionSample page;
+				{
+					const auto restoreCapture = gsl::finally(
+						[previous = std::exchange(gChannelSaveRequestCapture,
+												  &capture)] {
+							gChannelSaveRequestCapture = previous;
+						});
+					session.api().requestContacts();
+					const auto reply = DesktopScaleContactsReply(
+						firstId, count, offset, pageSize, false);
+					page = ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
+						capture, mtpc_contacts_getContacts, reply, watchdog,
 						[&] {
 							return WaitForRegressionCondition(
 								[&] {
-									return data.contactsList()->size() == count
+									return data.contactsList()->size()
+											   == offset + pageSize
 										   && data.contactsLoaded().current();
 								},
 								5000);
 						});
+				}
+				if (page.nanoseconds >= 0) {
+					result.loaded.nanoseconds += page.nanoseconds;
+				}
+				result.loaded.mainThreadStepsOverBudget
+					+= page.mainThreadStepsOverBudget;
+				result.loaded.passed = result.loaded.passed && page.passed;
+				if (!page.passed) {
+					break;
+				}
 			}
 			if (!result.loaded.passed) {
 				std::fprintf(
@@ -15035,8 +15057,8 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 						gChannelSaveRequestCapture = previous;
 					});
 				session.api().requestContacts();
-				const auto changedReply
-					= DesktopScaleContactsReply(firstId, count, true);
+				const auto changedReply = DesktopScaleContactsReply(
+					firstId, count, count - 1, 1, true);
 				result.changedAndFound
 					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 						updateCapture, mtpc_contacts_getContacts, changedReply,
