@@ -999,7 +999,7 @@ void BuildSpellcheckerSection(SectionBuilder &builder) {
 				}, autoDownload->lifetime());
 			}
 
-			if (Main::details::cloudResourcesSupported(
+			if (Main::details::advancedManageDictionariesMenuItemSupported(
 					session->mtp().dcOptions())) {
 				builder.addButton({
 					.id = u"advanced/manage_dictionaries"_q,

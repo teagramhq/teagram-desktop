@@ -50,6 +50,7 @@ public:
 		Dictionaries enabledDictionaries);
 
 	Dictionaries enabledRows() const;
+	bool rowsBuilt() const;
 	QueryCallback queryCallback() const;
 
 private:
@@ -59,7 +60,7 @@ private:
 
 	Dictionaries _enabledRows;
 	QueryCallback _queryCallback;
-
+	bool _rowsBuilt = false;
 };
 
 inline auto DictExists(int langId) {
@@ -112,6 +113,8 @@ QueryCallback Inner::queryCallback() const {
 Dictionaries Inner::enabledRows() const {
 	return _enabledRows;
 }
+
+bool Inner::rowsBuilt() const { return _rowsBuilt; }
 
 auto AddButtonWithLoader(
 		not_null<Ui::VerticalLayout*> content,
@@ -341,8 +344,9 @@ void Inner::setupContent(
 		not_null<Main::Session*> session,
 		Dictionaries enabledDictionaries) {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
-	const auto cloudResourcesSupported
-		= Main::details::cloudResourcesSupported(session->mtp().dcOptions());
+	const auto dictionaryRowsSupported
+		= Main::details::dictionaryManagerRowsSupported(
+			session->mtp().dcOptions());
 
 	const auto queryStream = content->lifetime()
 		.make_state<rpl::event_stream<QStringView>>();
@@ -351,16 +355,15 @@ void Inner::setupContent(
 	// non-empty. Manifest is fetched lazily and may arrive after the box
 	// opens, so we subscribe to DictionariesChanged and populate rows
 	// then if we haven't already.
-	const auto built = content->lifetime().make_state<bool>(false);
 	const auto buildRows = [=] {
-		if (*built || !cloudResourcesSupported) {
+		if (_rowsBuilt || !dictionaryRowsSupported) {
 			return;
 		}
 		const auto dicts = Spellchecker::Dictionaries();
 		if (dicts.empty()) {
 			return;
 		}
-		*built = true;
+		_rowsBuilt = true;
 		for (const auto &dict : dicts) {
 			const auto id = dict.id;
 			const auto row = AddButtonWithLoader(
@@ -382,7 +385,7 @@ void Inner::setupContent(
 	};
 
 	buildRows();
-	if (cloudResourcesSupported) {
+	if (dictionaryRowsSupported) {
 		Spellchecker::DictionariesChanged()
 			| rpl::on_next(buildRows, content->lifetime());
 		Spellchecker::RefreshDictionariesManifest(session);
@@ -431,24 +434,35 @@ void ManageDictionariesBox::prepare() {
 	setTitle(tr::lng_settings_manage_dictionaries());
 
 	addButton(tr::lng_settings_save(), [=] {
-		Core::App().settings().setDictionariesEnabled(
-			FilterEnabledDict(inner->enabledRows()));
-		Core::App().saveSettingsDelayed();
+		if (Main::details::dictionaryManagerSaveAllowed(
+				_session->mtp().dcOptions(), inner->rowsBuilt())) {
+			Core::App().settings().setDictionariesEnabled(
+				FilterEnabledDict(inner->enabledRows()));
+			Core::App().saveSettingsDelayed();
+		}
 		// Ignore boxClosing() when the Save button was pressed.
 		lifetime().destroy();
 		closeBox();
 	});
 	addButton(tr::lng_close(), [=] { closeBox(); });
 
-	boxClosing() | rpl::on_next([=] {
-		const auto &current = Core::App().settings().dictionariesEnabled();
-		const auto filtered = FilterEnabledDict(current);
-		if (filtered.size() == current.size()) {
-			return;
-		}
-		Core::App().settings().setDictionariesEnabled(filtered);
-		Core::App().saveSettingsDelayed();
-	}, lifetime());
+	boxClosing()
+		| rpl::on_next(
+			[=] {
+				if (!Main::details::dictionaryManagerSaveAllowed(
+						_session->mtp().dcOptions(), inner->rowsBuilt())) {
+					return;
+				}
+				const auto &current
+					= Core::App().settings().dictionariesEnabled();
+				const auto filtered = FilterEnabledDict(current);
+				if (filtered.size() == current.size()) {
+					return;
+				}
+				Core::App().settings().setDictionariesEnabled(filtered);
+				Core::App().saveSettingsDelayed();
+			},
+			lifetime());
 
 	setDimensionsToContent(st::boxWidth, inner);
 

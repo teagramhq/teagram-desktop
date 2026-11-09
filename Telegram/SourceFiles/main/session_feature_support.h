@@ -53,12 +53,49 @@ cloudResourcesSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-template <typename Callback>
-inline void runCloudResourceActionIfSupported(const MTP::DcOptions &options,
-											  Callback &&action) {
-	if (cloudResourcesSupported(options)) {
-		action();
-	}
+[[nodiscard]] inline bool
+dictionaryManifestRefreshSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+dictionaryManifestAccessSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+dictionaryAutoDownloadSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+cloudEmojiSetsListedSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+cloudEmojiSetSwitchSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+dictionaryManagerRowsSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+dictionaryManagerSaveAllowed(const MTP::DcOptions &options, bool rowsBuilt) {
+	return rowsBuilt && dictionaryManagerRowsSupported(options);
+}
+
+[[nodiscard]] inline bool
+advancedManageDictionariesMenuItemSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+composerManageDictionariesMenuItemSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
 }
 
 [[nodiscard]] inline bool

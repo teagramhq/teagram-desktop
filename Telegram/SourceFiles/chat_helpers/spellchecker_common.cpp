@@ -225,15 +225,16 @@ void DictManifestLoader::finish() {
 }
 
 void StartManifestRefresh(not_null<Main::Session*> session) {
-	Main::details::runCloudResourceActionIfSupported(
-		session->mtp().dcOptions(), [=] {
-			if (ActiveManifestLoader) {
-				return;
-			}
-			ActiveManifestLoader = std::make_shared<DictManifestLoader>(
-				base::make_weak(session));
-			ActiveManifestLoader->start();
-		});
+	if (!Main::details::dictionaryManifestRefreshSupported(
+			session->mtp().dcOptions())) {
+		return;
+	}
+	if (ActiveManifestLoader) {
+		return;
+	}
+	ActiveManifestLoader = std::make_shared<DictManifestLoader>(
+		base::make_weak(session));
+	ActiveManifestLoader->start();
 }
 
 // Callers waiting for the first manifest arrival in this session.
@@ -245,7 +246,8 @@ rpl::lifetime ManifestPendingSubscription;
 void EnsureManifestThen(
 		not_null<Main::Session*> session,
 		Fn<void()> callback) {
-	if (!Main::details::cloudResourcesSupported(session->mtp().dcOptions())) {
+	if (!Main::details::dictionaryManifestAccessSupported(
+			session->mtp().dcOptions())) {
 		return;
 	}
 	if (!DictionariesList.empty()) {
@@ -299,7 +301,8 @@ void DownloadDictionaryInBackground(
 		not_null<Main::Session*> session,
 		int counter,
 		std::vector<int> langs) {
-	if (!Main::details::cloudResourcesSupported(session->mtp().dcOptions())
+	if (!Main::details::dictionaryAutoDownloadSupported(
+			session->mtp().dcOptions())
 		|| counter >= langs.size()) {
 		return;
 	}

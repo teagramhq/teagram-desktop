@@ -2303,7 +2303,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	}
 }
 
-TEST_CASE(TelegramdCloudResourceActionsAreRefused) {
+TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
 	auto custom = DcOptions(Environment::Production);
 	CHECK(custom.setCustomServer(MakeCustomServer()));
 	auto blocked = DcOptions(Environment::Production);
@@ -2311,15 +2311,26 @@ TEST_CASE(TelegramdCloudResourceActionsAreRefused) {
 	auto stock = DcOptions(Environment::Production);
 	stock.constructFromBuiltIn();
 
-	const auto checkAction = [](const DcOptions &options, bool expected) {
-		auto actions = 0;
-		Main::details::runCloudResourceActionIfSupported(options,
-														 [&] { ++actions; });
-		CHECK_EQ(actions, expected ? 1 : 0);
+	using Capability = bool (*)(const DcOptions &);
+	const auto capabilities = std::array<Capability, 9>{
+		Main::details::dictionaryManifestRefreshSupported,
+		Main::details::dictionaryManifestAccessSupported,
+		Main::details::dictionaryAutoDownloadSupported,
+		Main::details::cloudEmojiSetsListedSupported,
+		Main::details::cloudEmojiSetSwitchSupported,
+		Main::details::dictionaryManagerRowsSupported,
+		Main::details::advancedManageDictionariesMenuItemSupported,
+		Main::details::composerManageDictionariesMenuItemSupported,
+		[](const DcOptions &options) {
+			return Main::details::dictionaryManagerSaveAllowed(options, true);
+		},
 	};
-	checkAction(custom, false);
-	checkAction(blocked, false);
-	checkAction(stock, true);
+	for (const auto capability : capabilities) {
+		CHECK(!capability(custom));
+		CHECK(!capability(blocked));
+		CHECK(capability(stock));
+	}
+	CHECK(!Main::details::dictionaryManagerSaveAllowed(stock, false));
 }
 
 TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {
