@@ -655,6 +655,39 @@ jobs:
             fi
           '
 
+      - name: Desktop data scale check.
+        if: env.ONLY_CACHE == 'false'
+        shell: bash
+        run: |
+          set +e
+          docker run --rm \
+          -u $(id -u) \
+          -v $PWD:/usr/src/tdesktop \
+          $IMAGE_TAG \
+          bash -lc '
+            cd /usr/src/tdesktop
+            scale_home=$(mktemp -d /tmp/tdesktop-scale-check.XXXXXX)
+            mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache"
+            export HOME="$scale_home"
+            export XDG_CONFIG_HOME="$scale_home/config"
+            export XDG_DATA_HOME="$scale_home/data"
+            export XDG_CACHE_HOME="$scale_home/cache"
+            export QT_QPA_PLATFORM=offscreen
+            export TDESKTOP_DESKTOP_SCALE_CHECK=1
+            export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
+            /usr/src/tdesktop/out/Debug/Teagram
+          ' | tee "$RUNNER_TEMP/desktop-scale-check.log"
+          scale_status=${PIPESTATUS[0]}
+          scale_report=$(sed -n '/^DESKTOP_SCALE_REPORT_BEGIN$/,/^DESKTOP_SCALE_REPORT_END$/p' \
+            "$RUNNER_TEMP/desktop-scale-check.log")
+          if test -n "$scale_report"; then
+            printf '%s\n' "$scale_report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Desktop scale check did not emit its report table."
+            scale_status=1
+          fi
+          exit "$scale_status"
+
       - name: Sticker set API smoke.
         if: env.ONLY_CACHE == 'false'
         working-directory: server-source
