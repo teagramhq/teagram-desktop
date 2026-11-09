@@ -14883,8 +14883,8 @@ template <typename Action>
 	const auto passed = action(account);
 	const auto cleaned = cleanup.cleanup();
 	return cleaned && passed
-		&& (!retainSession
-			|| (account->sessionExists() && (&domain.active() == fallback)));
+		   && (!retainSession
+			   || (account->sessionExists() && (&domain.active() == fallback)));
 }
 
 [[nodiscard]] DesktopScaleActionSample
@@ -14893,7 +14893,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, not_null<Main::Account *> fallback,
 					   UserId firstId) {
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, UserId(firstId.bare - 1), [&](auto account) {
+		domain, fallback, UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			auto users = DesktopScaleUsers(firstId, alreadyLoaded, false);
@@ -14943,7 +14944,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, not_null<Main::Account *> fallback,
 					"did not produce the expected list.\n");
 			}
 			return sample.passed;
-		}, true);
+		},
+		true);
 	if (!created) {
 		sample.passed = false;
 	}
@@ -14981,7 +14983,8 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 	Core::UiStallWatchdog &watchdog, int count, UserId firstId) {
 	auto result = DesktopScaleContactsSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, UserId(firstId.bare - 1), [&](auto account) {
+		domain, fallback, UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			auto capture = ChannelSaveRequestCapture{
@@ -15049,7 +15052,8 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 					count);
 			}
 			return result.loaded.passed && result.changedAndFound.passed;
-		}, true);
+		},
+		true);
 	if (!created) {
 		result.loaded.passed = false;
 		result.changedAndFound.passed = false;
@@ -15083,9 +15087,10 @@ template <typename Function>
 }
 #endif // Q_OS_LINUX
 
-[[nodiscard]] DesktopScaleCacheSample MeasureDesktopScaleCache(
-	not_null<Main::Account *> account, Core::UiStallWatchdog &watchdog,
-	int entryCount, int alreadySeeded, int64 firstDocumentId) {
+[[nodiscard]] DesktopScaleCacheSample
+MeasureDesktopScaleCache(not_null<Main::Account *> account,
+						 Core::UiStallWatchdog &watchdog, int entryCount,
+						 int alreadySeeded, int64 firstDocumentId) {
 	Q_UNUSED(watchdog);
 	auto sample = DesktopScaleCacheSample();
 #if defined(Q_OS_LINUX)
@@ -15108,8 +15113,8 @@ template <typename Function>
 	auto documents = std::vector<not_null<DocumentData *>>();
 	documents.reserve(kDesktopScaleThumbnailReads);
 	for (auto i = 0; i != kDesktopScaleThumbnailReads; ++i) {
-		const auto document
-			= data.processDocument(DesktopScaleVideoDocument(firstDocumentId + i));
+		const auto document = data.processDocument(
+			DesktopScaleVideoDocument(firstDocumentId + i));
 		if (!document->isVideoFile()) {
 			return sample;
 		}
@@ -15118,17 +15123,16 @@ template <typename Function>
 	for (auto i = 0;
 		 i != entryCount - alreadySeeded - kDesktopScaleThumbnailReads; ++i) {
 		cache->put(Data::DocumentThumbCacheKey(
-					 1, uint64(60'000'000 + alreadySeeded + i)),
-				  QByteArray("cache-entry"));
+					   1, uint64(60'000'000 + alreadySeeded + i)),
+				   QByteArray("cache-entry"));
 	}
 	for (const auto &document : documents) {
 		cache->put(document->goodThumbnailCacheKey(),
 				   QByteArray("cached-thumbnail"));
 	}
 	cache->sync();
-	if (!CachePayloadMatches(*cache,
-			documents.front()->goodThumbnailCacheKey(),
-			QByteArray("cached-thumbnail"))) {
+	if (!CachePayloadMatches(*cache, documents.front()->goodThumbnailCacheKey(),
+							 QByteArray("cached-thumbnail"))) {
 		return sample;
 	}
 
@@ -15164,22 +15168,24 @@ template <typename Function>
 	return sample;
 }
 
-[[nodiscard]] DesktopScaleCacheSamples RunDesktopScaleCache(
-	Main::Domain &domain, not_null<Main::Account *> fallback,
-	Core::UiStallWatchdog &watchdog, UserId selfId) {
+[[nodiscard]] DesktopScaleCacheSamples
+RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
+					 Core::UiStallWatchdog &watchdog, UserId selfId) {
 	auto samples = DesktopScaleCacheSamples();
 #if defined(Q_OS_LINUX)
 	const auto created = WithDesktopScaleAccount(
-		domain, fallback, selfId, [&](auto account) {
-			samples.one = MeasureDesktopScaleCache(
-				account, watchdog, 500, 0, 50'000'000);
+		domain, fallback, selfId,
+		[&](auto account) {
+			samples.one = MeasureDesktopScaleCache(account, watchdog, 500, 0,
+												   50'000'000);
 			if (!samples.one.passed) {
 				return false;
 			}
-			samples.hundred = MeasureDesktopScaleCache(
-				account, watchdog, 50'000, 500, 60'000'000);
+			samples.hundred = MeasureDesktopScaleCache(account, watchdog,
+													   50'000, 500, 60'000'000);
 			return samples.hundred.passed;
-		}, true);
+		},
+		true);
 	if (!created) {
 		samples.one.passed = false;
 		samples.hundred.passed = false;
@@ -15212,8 +15218,8 @@ int RunDesktopScaleCheck() {
 													 100, UserId(3'000'000));
 	const auto contactsHundred = RunDesktopScaleContacts(
 		domain, fallback, watchdog, 10'000, UserId(4'000'000));
-	const auto cacheSamples = RunDesktopScaleCache(
-		domain, fallback, watchdog, UserId(5'000'000));
+	const auto cacheSamples
+		= RunDesktopScaleCache(domain, fallback, watchdog, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
 
