@@ -197,6 +197,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <mach/task_info.h>
 #endif
 
