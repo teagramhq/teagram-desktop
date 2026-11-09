@@ -419,6 +419,8 @@ int32 SessionPrivate::getShiftedDcId() const {
 }
 
 void SessionPrivate::dcOptionsChanged() {
+	_gaveUpOnBrowserOnlyServer = false;
+	_sessionData->setBrowserOnlyServerRefused(false);
 	if (!_instance->isServerEnrollmentNetworkAllowed()) {
 		return;
 	}
@@ -433,6 +435,10 @@ void SessionPrivate::resumeAfterServerEnrollment() {
 		doDisconnect();
 		return;
 	}
+	if (_gaveUpOnBrowserOnlyServer) {
+		_sessionData->queueBrowserOnlyServerRefused();
+		return;
+	}
 	_gaveUpOnPinnedFailure = false;
 	_gaveUpOnProxyError = false;
 	_retryTimeout = 1;
@@ -441,6 +447,13 @@ void SessionPrivate::resumeAfterServerEnrollment() {
 
 void SessionPrivate::stopUntilPinChange() {
 	_gaveUpOnPinnedFailure = true;
+	doDisconnect();
+}
+
+void SessionPrivate::stopUntilBrowserOnlyServerRefusal() {
+	_gaveUpOnBrowserOnlyServer = true;
+	_sessionData->setBrowserOnlyServerRefused(true);
+	_retryTimer.cancel();
 	doDisconnect();
 }
 
@@ -1116,12 +1129,10 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	// cannot change the key the endpoint answers with, nor the DC id
 	// it reports. A corrected pin arrives through dcOptionsChanged() or the
 	// explicit enrollment resume, both of which clear the give-up state first.
-	if (_gaveUpOnPinnedFailure && !afterConfig) {
-		return;
-	}
 	// A proxy -404 is unauthenticated. Wait for an explicit restart or
 	// connection settings change instead of reconnecting through that proxy.
-	if (_gaveUpOnProxyError && !afterConfig) {
+	if (_gaveUpOnBrowserOnlyServer
+		|| ((_gaveUpOnPinnedFailure || _gaveUpOnProxyError) && !afterConfig)) {
 		return;
 	}
 	if (afterConfig && (!_testConnections.empty() || _connection)) {
@@ -2907,6 +2918,11 @@ void SessionPrivate::onError(
 		ConnectionErrorInfo context) {
 	if (!_instance->isServerEnrollmentNetworkAllowed()) {
 		doDisconnect();
+		return;
+	}
+	if (errorCode == kErrorCodeBrowserOnly) {
+		stopUntilBrowserOnlyServerRefusal();
+		_sessionData->queueBrowserOnlyServerRefused();
 		return;
 	}
 	if (errorCode == -429) {

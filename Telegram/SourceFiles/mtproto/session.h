@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMutex>
 #include <QtCore/QTimer>
 
+#include <atomic>
 #include <functional>
 #include <utility>
 
@@ -130,6 +131,7 @@ public:
 		uint64 presentedFingerprint = 0,
 		const QString &pinnedHostname = {},
 		const QString &dialledAddress = {});
+	void queueBrowserOnlyServerRefused();
 	void queueResetDone();
 	void queueSendAnything(crl::time msCanWait = 0);
 
@@ -149,6 +151,12 @@ public:
 	void releasePersistentKeyCreationOnFail();
 	void destroyPersistentKey(uint64 keyId);
 	void destroyTemporaryKey(uint64 keyId);
+	void setBrowserOnlyServerRefused(bool refused) {
+		_browserOnlyServerRefused.store(refused, std::memory_order_relaxed);
+	}
+	[[nodiscard]] bool browserOnlyServerRefused() const {
+		return _browserOnlyServerRefused.load(std::memory_order_relaxed);
+	}
 
 	void detach();
 
@@ -158,6 +166,7 @@ private:
 
 	Session *_owner = nullptr;
 	mutable QMutex _ownerMutex;
+	std::atomic_bool _browserOnlyServerRefused = false;
 
 	SessionOptions _options;
 	mutable QReadWriteLock _optionsLock;
@@ -234,6 +243,8 @@ public:
 		uint64 presentedFingerprint = 0,
 		const QString &pinnedHostname = {},
 		const QString &dialledAddress = {});
+	void browserOnlyServerRefused();
+	[[nodiscard]] bool isBrowserOnlyServerRefused() const;
 	void stopUntilPinChange();
 	void resetDone();
 	void sendAnything(crl::time msCanWait = 0);

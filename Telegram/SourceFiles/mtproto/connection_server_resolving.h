@@ -62,6 +62,9 @@ using ServerHostnameResolverTestLookup = Fn<void(
 		QHostInfo &info)>;
 void SetServerHostnameResolverTestLookup(
 		ServerHostnameResolverTestLookup lookup);
+using ServerConnectionTestFactory
+	= Fn<ConnectionPointer(QThread *thread, const ProxyData &proxy)>;
+void SetServerConnectionTestFactory(ServerConnectionTestFactory factory);
 #endif
 
 class ServerResolvingConnection final : public AbstractConnection {

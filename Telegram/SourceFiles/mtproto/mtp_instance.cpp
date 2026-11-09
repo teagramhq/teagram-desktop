@@ -177,6 +177,9 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailureValue() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
+	void onBrowserOnlyServerRefused();
+	[[nodiscard]] rpl::producer<> browserOnlyServerRefusedValue() const;
+	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
 
 	// return true if need to clean request data
 	bool rpcErrorOccured(
@@ -331,6 +334,7 @@ private:
 	Fn<void(ShiftedDcId shiftedDcId)> _sessionResetHandler;
 
 	PinnedServerFailureChannel _pinnedServerFailure;
+	rpl::event_stream<> _browserOnlyServerRefused;
 
 	rpl::event_stream<mtpRequestId> _nonPremiumDelayedRequests;
 	rpl::event_stream<> _frozenErrorReceived;
@@ -1522,6 +1526,23 @@ Instance::Private::pinnedServerFailureValue() const {
 	return _pinnedServerFailure.updates();
 }
 
+void Instance::Private::onBrowserOnlyServerRefused() {
+	_browserOnlyServerRefused.fire({});
+}
+
+rpl::producer<> Instance::Private::browserOnlyServerRefusedValue() const {
+	return _browserOnlyServerRefused.events();
+}
+
+bool Instance::Private::hasBrowserOnlyServerRefusal() const {
+	for (const auto &[shiftedDcId, session] : _sessions) {
+		if (session->isBrowserOnlyServerRefused()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void Instance::Private::onSessionReset(ShiftedDcId dcWithShift) {
 	if (_sessionResetHandler) {
 		_sessionResetHandler(dcWithShift);
@@ -2297,6 +2318,18 @@ void Instance::onPinnedServerFailure(
 rpl::producer<std::optional<PinnedServerFailureReport>>
 Instance::pinnedServerFailure() const {
 	return _private->pinnedServerFailureValue();
+}
+
+void Instance::onBrowserOnlyServerRefused() {
+	_private->onBrowserOnlyServerRefused();
+}
+
+rpl::producer<> Instance::browserOnlyServerRefused() const {
+	return _private->browserOnlyServerRefusedValue();
+}
+
+bool Instance::hasBrowserOnlyServerRefusal() const {
+	return _private->hasBrowserOnlyServerRefusal();
 }
 
 void Instance::restart(ShiftedDcId shiftedDcId) {

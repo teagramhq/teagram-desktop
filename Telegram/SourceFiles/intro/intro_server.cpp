@@ -71,11 +71,6 @@ void ConfigureAddressField(not_null<Ui::InputField*> field) {
 	return formattedHost + u":"_q + QString::number(server.port);
 }
 
-[[nodiscard]] bool HasBoundServer(Main::Account &account) {
-	const auto &options = account.mtp().dcOptions();
-	return options.hasCustomServer() || options.blocked();
-}
-
 [[nodiscard]] bool DiscoveryHeadersWithinBound(
 		QNetworkReply *reply) {
 	auto size = 0;
@@ -136,7 +131,33 @@ ServerWidget::ServerWidget(
 }
 
 bool ServerWidget::readOnly() const {
-	return HasBoundServer(account());
+	return ServerStepIsReadOnly(serverStepState());
+}
+
+ServerStepState ServerWidget::serverStepState() const {
+	const auto &options = account().mtp().dcOptions();
+	auto result = ServerStepState();
+	result.blocked = options.blocked();
+	result.hasSession = account().sessionExists();
+	result.hasCustomServer = options.hasCustomServer();
+	result.browserOnlyServerRefused
+		= account().mtp().hasBrowserOnlyServerRefusal();
+	return result;
+}
+
+void ServerWidget::refreshMode() {
+	const auto state = serverStepState();
+	const auto shouldBeReadOnly = ServerStepIsReadOnly(state);
+	if (_readOnly != shouldBeReadOnly) {
+		if (shouldBeReadOnly) {
+			switchToBound();
+		} else {
+			switchToSelection();
+		}
+	}
+	if (!_readOnly && !state.hasSession && state.browserOnlyServerRefused) {
+		account().mtp().stopForServerEnrollment();
+	}
 }
 
 void ServerWidget::setupSelection() {
@@ -193,9 +214,19 @@ void ServerWidget::setupSelection() {
 	_status->hide();
 	QWidget::setTabOrder(_address, _continue);
 
-	if (!getData()->serverSelection.isEmpty()) {
+	auto selection = getData()->serverSelection;
+	if (selection.isEmpty()) {
+		const auto custom = account().mtp().dcOptions().customServer();
+		if (!custom.empty()) {
+			selection = custom.serverSelection.empty()
+							? CustomServerEndpoint(custom)
+							: QString::fromStdString(custom.serverSelection);
+			getData()->serverSelection = selection;
+		}
+	}
+	if (!selection.isEmpty()) {
 		_suppressChanges = true;
-		_address->setText(getData()->serverSelection);
+		_address->setText(selection);
 		_suppressChanges = false;
 	}
 }
@@ -311,11 +342,35 @@ void ServerWidget::switchToBound() {
 	layoutContent();
 }
 
+void ServerWidget::switchToSelection() {
+	_readOnly = false;
+	setTitleText(tr::lng_intro_server_title());
+	setDescriptionText(tr::lng_intro_server_desc());
+	_addressLabel->show();
+	_address->show();
+	_address->rawTextEdit()->setReadOnly(false);
+	_address->hideError();
+	_address->setAccessibleDescription(
+		tr::lng_intro_server_address_ph(tr::now));
+	_status->hide();
+	_continue->show();
+	_continue->setDisabled(false);
+	_continue->setText(tr::lng_intro_server_continue());
+	_savedAddressLabel->hide();
+	_savedAddress->hide();
+	_savedStatus->hide();
+	_savedContinue->hide();
+	_addAccount->hide();
+	clearStatus();
+	layoutContent();
+}
+
 int ServerWidget::nextButtonTop() const {
 	return contentTop() + st::introServerNextTop;
 }
 
 void ServerWidget::setInnerFocus() {
+	refreshMode();
 	if (_readOnly) {
 		if (account().mtp().dcOptions().blocked()
 			|| account().sessionExists()) {
@@ -331,30 +386,34 @@ void ServerWidget::setInnerFocus() {
 void ServerWidget::activate() {
 	Step::activate();
 	_scroll->show();
-	if (!_readOnly && readOnly()) {
-		switchToBound();
-	}
 	setInnerFocus();
 }
 
 void ServerWidget::submit() {
+	const auto wasReadOnly = _readOnly;
+	refreshMode();
+	if (_readOnly != wasReadOnly) {
+		return;
+	}
 	if (!_readOnly) {
 		submitSelection();
 		return;
 	}
-	if (account().mtp().dcOptions().blocked()) {
-		return;
-	}
-	if (account().sessionExists()) {
-		return;
-	}
-	// A freshly restarted account is intentionally paused until its stored
-	// binding is selected again. The binding was durably committed before
-	// this point, so resuming here cannot send an unbound request.
-	account().mtp().resume();
-	getData()->serverEndpoint = CustomServerEndpoint(
-		account().mtp().dcOptions().customServer());
-	goNext<UsernameWidget>();
+	const auto blocked = account().mtp().dcOptions().blocked();
+	const auto hasSession = account().sessionExists();
+	const auto refused = account().mtp().hasBrowserOnlyServerRefusal();
+	const auto show = [=] { showError(tr::lng_intro_server_browser_only()); };
+	const auto next = [=] {
+		// A freshly restarted account is intentionally paused until its
+		// stored binding is selected again. The binding was durably
+		// committed before this point, so resuming cannot send an unbound
+		// request.
+		account().mtp().resume();
+		getData()->serverEndpoint
+			= CustomServerEndpoint(account().mtp().dcOptions().customServer());
+		goNext<UsernameWidget>();
+	};
+	SubmitSavedServer(blocked, hasSession, refused, show, next);
 }
 
 void ServerWidget::cancelled() {
@@ -884,36 +943,53 @@ void ServerWidget::commitBinding(
 		return;
 	}
 	_deadline->stop();
-	if (account().sessionExists()
-		|| account().mtp().dcOptions().hasCustomServer()) {
+	const auto state = serverStepState();
+	if (!CanCommitServerSelection(state)) {
 		// A concurrent authorization or binding won the race. The existing
 		// account remains immutable and this candidate is discarded.
 		discoveryFailed(false);
 		return;
 	}
+	auto previousMainDcId = server->dcId;
+	if (state.browserOnlyServerRefused) {
+		previousMainDcId = account().mtp().mainDcId();
+	}
 	const auto previousOptions = account().mtp().dcOptions().serialize();
 	const auto previousWasBlocked = account().mtp().dcOptions().blocked();
 	const auto previousWasUnenrolled = account().mtp().dcOptions().unenrolled();
 	if (!MTP::CommitServerEnrollment(
-		[&] {
-			return account().mtp().dcOptions().setCustomServer(*server);
-		},
-		[&] {
-			return account().local().writeMtpConfig(true);
-		},
-		[&] {
-			account().mtp().resume();
-		},
-		[&] {
-			if (previousWasBlocked) {
-				account().mtp().dcOptions().constructBlocked();
-			} else if (previousWasUnenrolled) {
-				account().mtp().dcOptions().constructUnenrolled();
-			} else if (!account().mtp().dcOptions().constructFromSerialized(
-				previousOptions)) {
-				account().mtp().dcOptions().constructBlocked();
-			}
-		})) {
+			[&] {
+				if (!account().mtp().dcOptions().setCustomServer(*server)) {
+					return false;
+				}
+				MTP::ReinitializeMainDcAfterServerReplacement(
+					{
+						.browserOnlyServerRefused
+						= state.browserOnlyServerRefused,
+						.currentMainDcId = previousMainDcId,
+						.replacementDcId = server->dcId,
+					},
+					[&](MTP::DcId dcId) { account().mtp().setMainDcId(dcId); });
+				return true;
+			},
+			[&] {
+				return account().local().writeMtpData(true)
+					   && account().local().writeMtpConfig(true);
+			},
+			[&] { account().mtp().resume(); },
+			[&] {
+				if (previousWasBlocked) {
+					account().mtp().dcOptions().constructBlocked();
+				} else if (previousWasUnenrolled) {
+					account().mtp().dcOptions().constructUnenrolled();
+				} else if (!account().mtp().dcOptions().constructFromSerialized(
+							   previousOptions)) {
+					account().mtp().dcOptions().constructBlocked();
+				}
+				if (state.browserOnlyServerRefused) {
+					account().mtp().setMainDcId(previousMainDcId);
+				}
+			})) {
 		_discoveryFlow.finish();
 		_connecting = false;
 		_discoveryAttempt.reset();
