@@ -635,8 +635,8 @@ QNetworkRequest details::MakeTeagramUpdateRequest(const QUrl &url) {
 	request.setRawHeader("User-Agent", "Teagram-Desktop");
 	request.setRawHeader("Accept-Encoding", "identity");
 	request.setRawHeader("Accept", url.host() == kReleaseApiHost
-								   ? "application/vnd.github+json"
-								   : "application/octet-stream");
+									   ? "application/vnd.github+json"
+									   : "application/octet-stream");
 	return request;
 }
 
