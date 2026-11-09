@@ -948,6 +948,7 @@ QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 	request.setRawHeader("User-Agent", QByteArrayLiteral("-"));
 	request.setRawHeader("Accept-Encoding", QByteArrayLiteral("identity"));
+	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::ManualRedirectPolicy);

@@ -1478,7 +1478,7 @@ TEST_CASE(ServerWidgetDiscoveryLimitIsRetryable) {
 }
 
 TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
-	const auto selection = CheckServerSelection(u"example.com"_q);
+	const auto selection = CheckServerSelection(u"chat.example.com"_q);
 	QNetworkRequest request(QUrl(PublicDiscoveryUrl(selection)));
 	ConfigurePublicDiscoveryRequest(request);
 	CHECK(request.attribute(QNetworkRequest::CookieLoadControlAttribute).toInt()
@@ -1490,6 +1490,7 @@ TEST_CASE(PublicDiscoveryRequestsUseRestrictedPolicy) {
 	CHECK(!request.attribute(QNetworkRequest::CacheSaveControlAttribute).toBool());
 	CHECK(request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt()
 		== int(QNetworkRequest::ManualRedirectPolicy));
+	CHECK(!request.attribute(QNetworkRequest::Http2AllowedAttribute).toBool());
 	auto hasUserAgent = false;
 	for (const auto &header : request.rawHeaderList()) {
 		if (header.compare("User-Agent", Qt::CaseInsensitive) == 0) {

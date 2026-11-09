@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 
 class QTemporaryFile;
+class QNetworkRequest;
 
 namespace Core {
 
@@ -67,6 +68,10 @@ class TeagramUpdateTransport {
 	get(const QUrl &url, quint64 maximumBytes, const ChunkHandler &onChunk,
 		const CancellationCheck &isCancelled) = 0;
 };
+
+namespace details {
+[[nodiscard]] QNetworkRequest MakeTeagramUpdateRequest(const QUrl &url);
+} // namespace details
 
 class TeagramUpdateCandidate final {
   public:
