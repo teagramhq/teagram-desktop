@@ -10277,6 +10277,7 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 }
 #endif
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
@@ -10412,6 +10413,7 @@ FindMatchingStartupHeartbeatGapEvidence(
 		   && !AllStartupHeartbeatGapsHaveSchedulerProof(gaps, matchedEvidence,
 														 true);
 }
+#endif
 
 struct CacheChatSwitchRegressionResult final {
 	int attachMenuBotCount = 0;
