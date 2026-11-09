@@ -685,10 +685,19 @@ jobs:
               # the container is removed on exit: print what a silent exit
               # left behind before it is lost.
               echo "::group::Scale check exited with status $app_status without a report"
-              find "$scale_home/work" -maxdepth 3 -type f \
-                \( -name "*.txt" -o -name "*.dmp" -o -name "*.log" \) \
-                -print -exec tail -n 80 {} \;
+              find "$scale_home/work/DebugLogs" -type f -name "log_*.txt" \
+                -print -exec tail -n 30 {} \;
               echo "::endgroup::"
+              if test "$app_status" -ge 128; then
+                echo "::group::Backtrace of the crashed scale check"
+                unset LD_PRELOAD
+                gdb -batch -ex "set environment LD_PRELOAD /usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so" \
+                  -ex "handle SIGPIPE nostop noprint pass" \
+                  -ex run -ex "bt 40" -ex "info threads" \
+                  --args /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
+                  -workdir "$scale_home/work2/" 2>&1 | tail -n 120
+                echo "::endgroup::"
+              fi
             fi
             exit "$app_status"
           ' | tee "$RUNNER_TEMP/desktop-scale-check.log"
