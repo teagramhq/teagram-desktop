@@ -3470,8 +3470,8 @@ void HistoryWidget::refreshAttachBotsMenu() {
 		}
 		return;
 	}
-	auto [i, inserted] = _attachBotsMenuCache.emplace(
-		peer, AttachBotsMenuCacheEntry());
+	auto [i, inserted]
+		= _attachBotsMenuCache.emplace(peer, AttachBotsMenuCacheEntry());
 	if (!inserted) {
 		return;
 	}
@@ -3485,9 +3485,7 @@ void HistoryWidget::refreshAttachBotsMenu() {
 
 void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	const auto i = _attachBotsMenuCache.find(peer);
-	if (i == end(_attachBotsMenuCache)
-		|| i->second.ready
-		|| i->second.menu) {
+	if (i == end(_attachBotsMenuCache) || i->second.ready || i->second.menu) {
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -3513,8 +3511,7 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	}
 }
 
-void HistoryWidget::attachBotsMenuBuildFinished(
-		not_null<PeerData *> peer) {
+void HistoryWidget::attachBotsMenuBuildFinished(not_null<PeerData *> peer) {
 	const auto i = _attachBotsMenuCache.find(peer);
 	if (i == end(_attachBotsMenuCache)) {
 		return;
@@ -3522,12 +3519,15 @@ void HistoryWidget::attachBotsMenuBuildFinished(
 	i->second.ready = true;
 	const auto menu = i->second.menu.get();
 	if (menu) {
-		menu->heightValue() | rpl::on_next([=] {
-			if (_history && (_history->peer == peer)
-				&& (_attachBotsMenu == menu)) {
-				moveFieldControls();
-			}
-		}, menu->lifetime());
+		menu->heightValue()
+			| rpl::on_next(
+				[=] {
+					if (_history && (_history->peer == peer)
+						&& (_attachBotsMenu == menu)) {
+						moveFieldControls();
+					}
+				},
+				menu->lifetime());
 	}
 	if (!_history || (_history->peer != peer)) {
 		return;

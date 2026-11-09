@@ -3258,19 +3258,14 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	if (buildMode == AttachBotsMenuBuildMode::Incremental) {
 		if (!menuBots.empty()) {
 			auto population = new AttachBotsMenuPopulation(
-				raw,
-				controller,
-				std::move(actionFactory),
-				std::move(menuBots),
+				raw, controller, std::move(actionFactory), std::move(menuBots),
 				std::move(buildComplete));
 			population->start();
 		} else if (buildComplete) {
-			QTimer::singleShot(
-				0,
-				raw,
-				[buildComplete = std::move(buildComplete)] {
-					buildComplete();
-				});
+			QTimer::singleShot(0, raw,
+							   [buildComplete = std::move(buildComplete)] {
+								   buildComplete();
+							   });
 		}
 	} else {
 		for (const auto bot : menuBots) {

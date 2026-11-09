@@ -10365,7 +10365,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	const auto lastAttachBotId
 		= UserId(1054 + kAttachMenuRegressionBotCount - 1);
-	session.attachWebView().setAttachBotsForRegressionTest(std::move(attachBots));
+	session.attachWebView().setAttachBotsForRegressionTest(
+		std::move(attachBots));
 	auto primeTimer = QElapsedTimer();
 	primeTimer.start();
 	auto primeEnter = QEvent(QEvent::Enter);
