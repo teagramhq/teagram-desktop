@@ -2637,8 +2637,10 @@ TEST_CASE(TeagramUpdateRequestsDisableHttp2ForEveryHop) {
 	};
 	for (const auto &url : urls) {
 		const auto request = details::MakeTeagramUpdateRequest(url);
-		CHECK(!request.attribute(QNetworkRequest::Http2AllowedAttribute)
-				   .toBool());
+		const auto http2Allowed
+			= request.attribute(QNetworkRequest::Http2AllowedAttribute);
+		CHECK(http2Allowed.isValid());
+		CHECK(!http2Allowed.toBool());
 		CHECK(
 			request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt()
 			== int(QNetworkRequest::ManualRedirectPolicy));
