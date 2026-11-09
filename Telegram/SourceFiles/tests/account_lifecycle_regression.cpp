@@ -2357,9 +2357,11 @@ class RegressionAccountCleanup final {
   public:
 	RegressionAccountCleanup(Main::Domain &domain,
 							 not_null<Main::Account *> account,
-							 not_null<Main::Account *> fallback)
+							 not_null<Main::Account *> fallback,
+							 bool retainSession = false)
 		: _domain(domain), _account(base::make_weak(account.get())),
-		  _fallback(base::make_weak(fallback.get())) {
+		  _fallback(base::make_weak(fallback.get())),
+		  _retainSession(retainSession) {
 		_domain.activate(account);
 	}
 
@@ -2371,7 +2373,7 @@ class RegressionAccountCleanup final {
 
 	[[nodiscard]] bool cleanup() {
 		if (_cleaned) {
-			return _released && _cacheCleanupPassed;
+			return (_released || _retainSession) && _cacheCleanupPassed;
 		}
 		_cleaned = true;
 		const auto account = _account.get();
@@ -2404,15 +2406,19 @@ class RegressionAccountCleanup final {
 		if (mediaCache) {
 			mediaCache->sync();
 		}
-		if (const auto current = _account.get();
-			current && current->sessionExists()) {
-			current->forcedLogOut();
+		if (!_retainSession) {
+			if (const auto current = _account.get();
+				current && current->sessionExists()) {
+				current->forcedLogOut();
+			}
 		}
 #endif
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		if (const auto current = _account.get();
-			current && current->sessionExists()) {
-			current->forcedLogOut();
+		if (!_retainSession) {
+			if (const auto current = _account.get();
+				current && current->sessionExists()) {
+				current->forcedLogOut();
+			}
 		}
 #endif
 		if (const auto fallback = _fallback.get();
@@ -2424,14 +2430,15 @@ class RegressionAccountCleanup final {
 		QCoreApplication::processEvents();
 		_domain.removeRedundantAccounts();
 		_released = _account.empty();
-		_cleaned = _released;
-		return _released && _cacheCleanupPassed;
+		_cleaned = _released || _retainSession;
+		return _cleaned && _cacheCleanupPassed;
 	}
 
   private:
 	Main::Domain &_domain;
 	base::weak_ptr<Main::Account> _account;
 	base::weak_ptr<Main::Account> _fallback;
+	const bool _retainSession = false;
 	bool _cleaned = false;
 	bool _released = false;
 	bool _cacheCleanupPassed = true;
@@ -14705,6 +14712,11 @@ struct DesktopScaleCacheSample final : DesktopScaleActionSample {
 	quint64 directoryEnumerations = 0;
 };
 
+struct DesktopScaleCacheSamples final {
+	DesktopScaleCacheSample one;
+	DesktopScaleCacheSample hundred;
+};
+
 template <typename Action>
 [[nodiscard]] DesktopScaleActionSample
 MeasureDesktopScaleAction(Core::UiStallWatchdog &watchdog, Action action) {
@@ -14843,9 +14855,13 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 template <typename Action>
 [[nodiscard]] bool WithDesktopScaleAccount(Main::Domain &domain,
 										   not_null<Main::Account *> fallback,
-										   UserId selfId, Action action) {
+										   UserId selfId, Action action,
+										   bool retainSession = false) {
 	const auto account = domain.add(MTP::Environment::Production);
-	auto cleanup = RegressionAccountCleanup(domain, account, fallback);
+	// The standalone scale run exits after reporting; avoid forced logout's
+	// global media-mixer teardown in its headless Linux scenarios.
+	auto cleanup
+		= RegressionAccountCleanup(domain, account, fallback, retainSession);
 	account->mtp().stopForServerEnrollment();
 	account->setSessionUserId(selfId);
 	if (!account->createSession(RegressionUser(selfId, true, QString()),
@@ -14865,7 +14881,10 @@ template <typename Action>
 		return false;
 	}
 	const auto passed = action(account);
-	return cleanup.cleanup() && passed;
+	const auto cleaned = cleanup.cleanup();
+	return cleaned && passed
+		&& (!retainSession
+			|| (account->sessionExists() && (&domain.active() == fallback)));
 }
 
 [[nodiscard]] DesktopScaleActionSample
@@ -14924,7 +14943,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, not_null<Main::Account *> fallback,
 					"did not produce the expected list.\n");
 			}
 			return sample.passed;
-		});
+		}, true);
 	if (!created) {
 		sample.passed = false;
 	}
@@ -15030,7 +15049,7 @@ DesktopScaleContactsReply(UserId firstId, int count, bool changeOne) {
 					count);
 			}
 			return result.loaded.passed && result.changedAndFound.passed;
-		});
+		}, true);
 	if (!created) {
 		result.loaded.passed = false;
 		result.changedAndFound.passed = false;
@@ -15064,10 +15083,9 @@ template <typename Function>
 }
 #endif // Q_OS_LINUX
 
-[[nodiscard]] DesktopScaleCacheSample
-RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
-					 Core::UiStallWatchdog &watchdog, int entryCount,
-					 UserId selfId) {
+[[nodiscard]] DesktopScaleCacheSample MeasureDesktopScaleCache(
+	not_null<Main::Account *> account, Core::UiStallWatchdog &watchdog,
+	int entryCount, int alreadySeeded, int64 firstDocumentId) {
 	Q_UNUSED(watchdog);
 	auto sample = DesktopScaleCacheSample();
 #if defined(Q_OS_LINUX)
@@ -15082,76 +15100,97 @@ RunDesktopScaleCache(Main::Domain &domain, not_null<Main::Account *> fallback,
 							 "preload is missing.\n");
 		return sample;
 	}
-	const auto created
-		= WithDesktopScaleAccount(domain, fallback, selfId, [&](auto account) {
-			  auto &data = account->session().data();
-			  auto *cache = data.cacheIfAllowed();
-			  if (!cache || (entryCount < kDesktopScaleThumbnailReads)) {
-				  return false;
-			  }
-			  auto documents = std::vector<not_null<DocumentData *>>();
-			  documents.reserve(kDesktopScaleThumbnailReads);
-			  for (auto i = 0; i != kDesktopScaleThumbnailReads; ++i) {
-				  const auto document = data.processDocument(
-					  DesktopScaleVideoDocument(50'000'000 + i));
-				  if (!document->isVideoFile()) {
-					  return false;
-				  }
-				  documents.push_back(document);
-			  }
-			  for (auto i = 0; i != entryCount - kDesktopScaleThumbnailReads;
-				   ++i) {
-				  cache->put(
-					  Data::DocumentThumbCacheKey(1, uint64(60'000'000 + i)),
-					  QByteArray("cache-entry"));
-			  }
-			  for (const auto &document : documents) {
-				  cache->put(document->goodThumbnailCacheKey(),
-							 QByteArray("cached-thumbnail"));
-			  }
-			  cache->sync();
-			  if (!CachePayloadMatches(
-					  *cache, documents.front()->goodThumbnailCacheKey(),
-					  QByteArray("cached-thumbnail"))) {
-				  return false;
-			  }
+	auto &data = account->session().data();
+	auto *cache = data.cacheIfAllowed();
+	if (!cache || (entryCount < alreadySeeded + kDesktopScaleThumbnailReads)) {
+		return sample;
+	}
+	auto documents = std::vector<not_null<DocumentData *>>();
+	documents.reserve(kDesktopScaleThumbnailReads);
+	for (auto i = 0; i != kDesktopScaleThumbnailReads; ++i) {
+		const auto document
+			= data.processDocument(DesktopScaleVideoDocument(firstDocumentId + i));
+		if (!document->isVideoFile()) {
+			return sample;
+		}
+		documents.push_back(document);
+	}
+	for (auto i = 0;
+		 i != entryCount - alreadySeeded - kDesktopScaleThumbnailReads; ++i) {
+		cache->put(Data::DocumentThumbCacheKey(
+					 1, uint64(60'000'000 + alreadySeeded + i)),
+				  QByteArray("cache-entry"));
+	}
+	for (const auto &document : documents) {
+		cache->put(document->goodThumbnailCacheKey(),
+				   QByteArray("cached-thumbnail"));
+	}
+	cache->sync();
+	if (!CachePayloadMatches(*cache,
+			documents.front()->goodThumbnailCacheKey(),
+			QByteArray("cached-thumbnail"))) {
+		return sample;
+	}
 
-			  const auto stallsBefore = Core::UiStallWatchdog::StallCount();
-			  startCounting();
-			  auto timer = QElapsedTimer();
-			  timer.start();
-			  for (const auto &document : documents) {
-				  Data::DocumentMedia::CheckGoodThumbnail(document);
-			  }
-			  const auto completed = WaitForRegressionCondition(
-				  [&] {
-					  return ranges::all_of(documents, [](const auto document) {
-						  return document->goodThumbnailChecked();
-					  });
-				  },
-				  15'000);
-			  sample.nanoseconds = timer.nsecsElapsed();
-			  sample.directoryEnumerations = stopCounting();
-			  auto loop = QEventLoop();
-			  QTimer::singleShot(80, &loop, &QEventLoop::quit);
-			  loop.exec();
-			  sample.mainThreadStepsOverBudget
-				  = Core::UiStallWatchdog::StallCount() - stallsBefore;
-			  sample.passed = completed && (sample.directoryEnumerations == 0)
-							  && (sample.mainThreadStepsOverBudget == 0);
-			  return sample.passed;
-		  });
+	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
+	startCounting();
+	auto timer = QElapsedTimer();
+	timer.start();
+	for (const auto &document : documents) {
+		Data::DocumentMedia::CheckGoodThumbnail(document);
+	}
+	const auto completed = WaitForRegressionCondition(
+		[&] {
+			return ranges::all_of(documents, [](const auto document) {
+				return document->goodThumbnailChecked();
+			});
+		},
+		15'000);
+	sample.nanoseconds = timer.nsecsElapsed();
+	sample.directoryEnumerations = stopCounting();
+	auto loop = QEventLoop();
+	QTimer::singleShot(80, &loop, &QEventLoop::quit);
+	loop.exec();
+	sample.mainThreadStepsOverBudget
+		= Core::UiStallWatchdog::StallCount() - stallsBefore;
+	sample.passed = completed && (sample.directoryEnumerations == 0)
+					&& (sample.mainThreadStepsOverBudget == 0);
+#else
+	(void)account;
+	(void)entryCount;
+	(void)alreadySeeded;
+	(void)firstDocumentId;
+#endif // Q_OS_LINUX
+	return sample;
+}
+
+[[nodiscard]] DesktopScaleCacheSamples RunDesktopScaleCache(
+	Main::Domain &domain, not_null<Main::Account *> fallback,
+	Core::UiStallWatchdog &watchdog, UserId selfId) {
+	auto samples = DesktopScaleCacheSamples();
+#if defined(Q_OS_LINUX)
+	const auto created = WithDesktopScaleAccount(
+		domain, fallback, selfId, [&](auto account) {
+			samples.one = MeasureDesktopScaleCache(
+				account, watchdog, 500, 0, 50'000'000);
+			if (!samples.one.passed) {
+				return false;
+			}
+			samples.hundred = MeasureDesktopScaleCache(
+				account, watchdog, 50'000, 500, 60'000'000);
+			return samples.hundred.passed;
+		}, true);
 	if (!created) {
-		sample.passed = false;
+		samples.one.passed = false;
+		samples.hundred.passed = false;
 	}
 #else
 	(void)domain;
 	(void)fallback;
 	(void)watchdog;
-	(void)entryCount;
 	(void)selfId;
 #endif // Q_OS_LINUX
-	return sample;
+	return samples;
 }
 
 } // namespace
@@ -15173,10 +15212,10 @@ int RunDesktopScaleCheck() {
 													 100, UserId(3'000'000));
 	const auto contactsHundred = RunDesktopScaleContacts(
 		domain, fallback, watchdog, 10'000, UserId(4'000'000));
-	const auto cacheOne = RunDesktopScaleCache(domain, fallback, watchdog, 500,
-											   UserId(5'000'000));
-	const auto cacheHundred = RunDesktopScaleCache(domain, fallback, watchdog,
-												   50'000, UserId(6'000'000));
+	const auto cacheSamples = RunDesktopScaleCache(
+		domain, fallback, watchdog, UserId(5'000'000));
+	const auto &cacheOne = cacheSamples.one;
+	const auto &cacheHundred = cacheSamples.hundred;
 
 	const auto printRow = [](const char *name,
 							 const DesktopScaleActionSample &one,
