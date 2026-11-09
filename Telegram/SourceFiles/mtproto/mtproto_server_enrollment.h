@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "mtproto/core_types.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 
 #include <QtCore/QString>
@@ -91,6 +92,16 @@ struct ServerEnrollmentCheck {
 	const std::function<bool()> &persistPin,
 	const std::function<void()> &resume,
 	const std::function<void()> &rollbackPin = {});
+
+struct ServerReplacementState {
+	bool browserOnlyServerRefused = false;
+	DcId currentMainDcId = 0;
+	DcId replacementDcId = 0;
+};
+
+void ReinitializeMainDcAfterServerReplacement(
+	const ServerReplacementState &state,
+	const std::function<void(DcId)> &reinitializeMainDc);
 
 // The shell handles activation keys globally. The enrollment step consumes
 // these keys when they bubble from non-action controls so they cannot submit

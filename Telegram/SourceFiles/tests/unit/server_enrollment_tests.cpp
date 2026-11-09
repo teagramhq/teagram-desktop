@@ -441,6 +441,44 @@ TEST_CASE(PinPersistencePrecedesTheFirstConnection) {
 	CHECK_EQ(events[2], 3);
 }
 
+TEST_CASE(RefusedServerReplacementResetsToTheAdvertisedDcBeforeResume) {
+	const auto originalDc = DcId(2);
+	const auto replacementDc = DcId(3);
+	auto mainDc = originalDc;
+	auto sessionDcs = std::vector<DcId>{originalDc};
+	auto browserOnlyRefused = true;
+	auto persisted = false;
+	auto resumed = false;
+	const auto committed = CommitServerEnrollment(
+		[] { return true; },
+		[&] {
+			persisted = true;
+			return true;
+		},
+		[&] {
+			CHECK(persisted);
+			ReinitializeMainDcAfterServerReplacement(
+				{
+					.browserOnlyServerRefused = browserOnlyRefused,
+					.currentMainDcId = mainDc,
+					.replacementDcId = replacementDc,
+				},
+				[&](DcId dcId) {
+					mainDc = dcId;
+					sessionDcs = {dcId};
+					browserOnlyRefused = false;
+				});
+			CHECK_EQ(mainDc, replacementDc);
+			CHECK_EQ(int(sessionDcs.size()), 1);
+			CHECK_EQ(sessionDcs.front(), replacementDc);
+			CHECK(!browserOnlyRefused);
+			resumed = true;
+		});
+
+	CHECK(committed);
+	CHECK(resumed);
+}
+
 TEST_CASE(EnrollmentPersistenceFailureRollsBackBeforeReturning) {
 	auto rolledBack = false;
 	auto resumed = false;

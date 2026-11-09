@@ -943,35 +943,46 @@ void ServerWidget::commitBinding(
 		return;
 	}
 	_deadline->stop();
-	if (!CanCommitServerSelection(serverStepState())) {
+	const auto state = serverStepState();
+	if (!CanCommitServerSelection(state)) {
 		// A concurrent authorization or binding won the race. The existing
 		// account remains immutable and this candidate is discarded.
 		discoveryFailed(false);
 		return;
 	}
+	auto previousMainDcId = server->dcId;
+	if (state.browserOnlyServerRefused) {
+		previousMainDcId = account().mtp().mainDcId();
+	}
 	const auto previousOptions = account().mtp().dcOptions().serialize();
 	const auto previousWasBlocked = account().mtp().dcOptions().blocked();
 	const auto previousWasUnenrolled = account().mtp().dcOptions().unenrolled();
 	if (!MTP::CommitServerEnrollment(
-		[&] {
-			return account().mtp().dcOptions().setCustomServer(*server);
-		},
-		[&] {
-			return account().local().writeMtpConfig(true);
-		},
-		[&] {
-			account().mtp().resume();
-		},
-		[&] {
-			if (previousWasBlocked) {
-				account().mtp().dcOptions().constructBlocked();
-			} else if (previousWasUnenrolled) {
-				account().mtp().dcOptions().constructUnenrolled();
-			} else if (!account().mtp().dcOptions().constructFromSerialized(
-				previousOptions)) {
-				account().mtp().dcOptions().constructBlocked();
-			}
-		})) {
+			[&] {
+				return account().mtp().dcOptions().setCustomServer(*server);
+			},
+			[&] { return account().local().writeMtpConfig(true); },
+			[&] {
+				MTP::ReinitializeMainDcAfterServerReplacement(
+					{
+						.browserOnlyServerRefused
+						= state.browserOnlyServerRefused,
+						.currentMainDcId = previousMainDcId,
+						.replacementDcId = server->dcId,
+					},
+					[&](MTP::DcId dcId) { account().mtp().setMainDcId(dcId); });
+				account().mtp().resume();
+			},
+			[&] {
+				if (previousWasBlocked) {
+					account().mtp().dcOptions().constructBlocked();
+				} else if (previousWasUnenrolled) {
+					account().mtp().dcOptions().constructUnenrolled();
+				} else if (!account().mtp().dcOptions().constructFromSerialized(
+							   previousOptions)) {
+					account().mtp().dcOptions().constructBlocked();
+				}
+			})) {
 		_discoveryFlow.finish();
 		_connecting = false;
 		_discoveryAttempt.reset();

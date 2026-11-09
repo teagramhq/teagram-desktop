@@ -388,6 +388,15 @@ bool CommitServerEnrollment(
 	return true;
 }
 
+void ReinitializeMainDcAfterServerReplacement(
+	const ServerReplacementState &state,
+	const std::function<void(DcId)> &reinitializeMainDc) {
+	if (state.browserOnlyServerRefused
+		&& state.currentMainDcId != state.replacementDcId) {
+		reinitializeMainDc(state.replacementDcId);
+	}
+}
+
 bool IsServerEnrollmentActivationKey(int key) {
 	return key == Qt::Key_Enter
 		|| key == Qt::Key_Return
