@@ -3268,7 +3268,7 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 							   });
 		}
 	} else {
-		for (const auto bot : menuBots) {
+		for (const auto &bot : menuBots) {
 			AddAttachBotMenuAction(raw, controller, actionFactory, bot);
 		}
 		if (buildComplete) {
