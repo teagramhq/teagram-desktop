@@ -399,7 +399,7 @@ class ScriptedConnection final : public details::AbstractConnection {
 			} else {
 				error(!_webSocketEndpoint.isEmpty()
 							  && _log->webSocketBrowserOnly
-						  ? kErrorCodeBrowserOnly
+						  ? MTP::details::kErrorCodeBrowserOnly
 						  : kErrorCodeOther);
 			}
 		});
