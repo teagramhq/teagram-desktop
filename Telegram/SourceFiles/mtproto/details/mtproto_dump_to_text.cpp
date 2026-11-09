@@ -86,6 +86,7 @@ bool DumpToTextCore(DumpToTextBuffer &to, const mtpPrime *&from, const mtpPrime 
 			to.add("[REDACTED] [OBJECT]");
 			return true;
 		}
+		to.error("could not decode redacted object");
 	} break;
 
 	case mtpc_vector: {

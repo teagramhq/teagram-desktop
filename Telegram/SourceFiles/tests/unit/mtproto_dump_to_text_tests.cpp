@@ -12,9 +12,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-template <typename Value> QString DumpMessage(const Value &value) {
+template <typename Value>
+QString DumpMessage(const Value &value, int32 truncatePrimes = 0) {
 	auto body = mtpBuffer();
 	value.template write<mtpBuffer>(body);
+	body.resize(body.size() - truncatePrimes);
 
 	auto message = mtpBuffer();
 	MTP_long(1).write(message);
@@ -64,10 +66,58 @@ TEST_CASE(PasswordInputSecretsAreRedactedFromMtpDump) {
 
 	CHECK(dump.contains(u"new_password_hash: [REDACTED] [STRING]"_q));
 	CHECK(dump.contains(u"new_secure_settings: [REDACTED] [OBJECT]"_q));
-	CHECK(!dump.toUtf8().contains(secret.left(16)));
 	CHECK(!dump.toUpper().contains(u"AB"_q));
+	CHECK(!dump.contains(u"secure_algo:"_q));
 	CHECK(!dump.contains(u"secure_secret:"_q));
+	CHECK(!dump.contains(u"secure_secret_id:"_q));
 	CHECK(dump.contains(u"hint: \"visible-hint\" [STRING]"_q));
+}
+
+TEST_CASE(ReceivedPasswordSettingsSecureSecretIsRedactedFromMtpDump) {
+	const auto secret = QByteArray("received-secure-secret");
+	const auto salt = QByteArray("received-secure-salt");
+	constexpr auto secureSecretId = 42LL;
+	using Flag = MTPDaccount_passwordSettings::Flag;
+	const auto dump = DumpMessage(MTP_account_passwordSettings(
+		MTP_flags(Flag::f_email | Flag::f_secure_settings),
+		MTP_string(u"safe@example.test"_q),
+		MTP_secureSecretSettings(
+			MTP_securePasswordKdfAlgoPBKDF2HMACSHA512iter100000(
+				MTP_bytes(salt)),
+			MTP_bytes(secret), MTP_long(secureSecretId))));
+
+	CHECK(dump.contains(u"secure_settings: [REDACTED] [OBJECT]"_q));
+	CHECK(
+		!dump.contains(QString::fromLatin1(secret.constData(), secret.size())));
+	CHECK(!dump.contains(QString::fromLatin1(salt.constData(), salt.size())));
+	CHECK(!dump.contains(QString::number(secureSecretId)));
+	CHECK(!dump.contains(u"secure_algo:"_q));
+	CHECK(!dump.contains(u"secure_secret:"_q));
+	CHECK(!dump.contains(u"secure_secret_id:"_q));
+	CHECK(dump.contains(u"email: \"safe@example.test\" [STRING]"_q));
+}
+
+TEST_CASE(RedactedPasswordSettingsDecodeErrorDoesNotExposeBytes) {
+	const auto secret = QByteArray("decode-error-secret");
+	const auto salt = QByteArray("decode-error-salt");
+	constexpr auto secureSecretId = 43LL;
+	using Flag = MTPDaccount_passwordSettings::Flag;
+	const auto dump = DumpMessage(
+		MTP_account_passwordSettings(
+			MTP_flags(Flag::f_email | Flag::f_secure_settings),
+			MTP_string(u"safe@example.test"_q),
+			MTP_secureSecretSettings(
+				MTP_securePasswordKdfAlgoPBKDF2HMACSHA512iter100000(
+					MTP_bytes(salt)),
+				MTP_bytes(secret), MTP_long(secureSecretId))),
+		1);
+
+	CHECK(dump.contains(
+		u"secure_settings: [ERROR] (could not decode redacted object)"_q));
+	CHECK(
+		!dump.contains(QString::fromLatin1(secret.constData(), secret.size())));
+	CHECK(!dump.contains(QString::fromLatin1(salt.constData(), salt.size())));
+	CHECK(!dump.contains(QString::number(secureSecretId)));
 }
 
 } // namespace

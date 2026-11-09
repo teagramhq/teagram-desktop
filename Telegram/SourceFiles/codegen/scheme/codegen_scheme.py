@@ -27,6 +27,12 @@ REDACTED_DUMP_FIELDS = (
     'types.push_back(0)',
     'types.push_back(mtpc_redacted_object)',
   ),
+  (
+    'account_passwordSettings',
+    'secure_settings',
+    'types.push_back(0)',
+    'types.push_back(mtpc_redacted_object)',
+  ),
 )
 
 def redactDumpFields():
