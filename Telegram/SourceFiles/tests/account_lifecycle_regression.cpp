@@ -10285,10 +10285,14 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 maxHydrationNanoseconds = -1;
 	qint64 minimizedSwitchNanoseconds = -1;
 	qint64 maxChatSwitchNanoseconds = -1;
+	qint64 attachMenuFirstHoverNanoseconds = -1;
 	qint64 attachMenuHoverNanoseconds = -1;
+	qint64 attachMenuInvalidationHoverNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	bool minimizedRestore = false;
 	bool attachMenuCacheReused = false;
+	bool attachMenuInvalidationRebuilt = false;
+	bool attachMenuCacheBounded = false;
 	bool passed = false;
 };
 
@@ -10348,14 +10352,23 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	const auto buildsBeforePrime
 		= historyWidget->attachMenuBuildCountForRegressionTest();
+	auto primeTimer = QElapsedTimer();
+	primeTimer.start();
 	auto primeEnter = QEvent(QEvent::Enter);
 	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
 								&primeEnter);
-	QCoreApplication::processEvents();
+	result.attachMenuFirstHoverNanoseconds = primeTimer.nsecsElapsed();
+	const auto attachBotAppeared = WaitForRegressionCondition(
+		[&] {
+			return historyWidget->attachMenuContainsBotForRegressionTest(
+				attachBotId);
+		},
+		1000);
 	const auto attachMenuPrimed
 		= historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
-			  == buildsBeforePrime + 1);
+			  == buildsBeforePrime + 1)
+		  && attachBotAppeared;
 	controller->showPeerHistory(firstHistory);
 	QCoreApplication::processEvents();
 	controller->showPeerHistory(attachHistory);
@@ -10372,6 +10385,53 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= attachMenuPrimed && historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeCachedHover);
+	const auto replacementBotId = UserId(1055);
+	data.processUsers(MTP_vector<MTPUser>({
+		RegressionBotUser(replacementBotId),
+	}));
+	const auto replacementBot = data.user(replacementBotId);
+	const auto buildsBeforeInvalidation
+		= historyWidget->attachMenuBuildCountForRegressionTest();
+	session.attachWebView().setAttachBotsForRegressionTest({
+		InlineBots::AttachWebViewBot{
+			.user = replacementBot,
+			.name = u"Replacement attach bot"_q,
+			.types = InlineBots::PeerTypes(InlineBots::PeerType::User),
+			.inAttachMenu = true,
+		},
+	});
+	QCoreApplication::processEvents();
+	auto invalidationTimer = QElapsedTimer();
+	invalidationTimer.start();
+	auto invalidatedEnter = QEvent(QEvent::Enter);
+	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
+								&invalidatedEnter);
+	result.attachMenuInvalidationHoverNanoseconds
+		= invalidationTimer.nsecsElapsed();
+	const auto replacementBotAppeared = WaitForRegressionCondition(
+		[&] {
+			return historyWidget->attachMenuContainsBotForRegressionTest(
+				replacementBotId);
+		},
+		1000);
+	result.attachMenuInvalidationRebuilt
+		= replacementBotAppeared
+		  && (historyWidget->attachMenuBuildCountForRegressionTest()
+			  == buildsBeforeInvalidation + 1);
+	for (auto i = 0; i != 10; ++i) {
+		const auto peerId = UserId(1060 + i);
+		data.processUsers(MTP_vector<MTPUser>({
+			RegressionUser(peerId, false, QString::number(peerId.bare)),
+		}));
+		const auto history = data.history(data.user(peerId));
+		controller->showPeerHistory(history);
+		QCoreApplication::processEvents();
+		auto enter = QEvent(QEvent::Enter);
+		QCoreApplication::sendEvent(
+			historyWidget->attachToggleForRegressionTest(), &enter);
+	}
+	result.attachMenuCacheBounded
+		= (historyWidget->attachMenuCacheSizeForRegressionTest() <= 8);
 	auto &mainWindow = *window->widget();
 	mainWindow.activate();
 	QCoreApplication::processEvents();
@@ -10472,9 +10532,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	});
 	loop.exec();
 	result.maxStallNanoseconds
-		= std::max(std::max(result.maxHydrationNanoseconds,
-							result.maxChatSwitchNanoseconds),
-				   result.attachMenuHoverNanoseconds);
+		= std::max(std::max(std::max(result.maxHydrationNanoseconds,
+									 result.maxChatSwitchNanoseconds),
+							result.attachMenuFirstHoverNanoseconds),
+				   std::max(result.attachMenuHoverNanoseconds,
+							result.attachMenuInvalidationHoverNanoseconds));
 	result.cachedDocuments = int(mediaViews.size());
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
@@ -10483,10 +10545,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.chatSwitches == kExpectedChatSwitches)
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && (result.attachMenuFirstHoverNanoseconds >= 0)
+		  && (result.attachMenuFirstHoverNanoseconds < 50'000'000)
 		  && result.attachMenuCacheReused
 		  && (result.attachMenuHoverNanoseconds >= 0)
 		  && (result.attachMenuHoverNanoseconds < 50'000'000)
-		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
+		  && result.attachMenuInvalidationRebuilt
+		  && (result.attachMenuInvalidationHoverNanoseconds >= 0)
+		  && (result.attachMenuInvalidationHoverNanoseconds < 50'000'000)
+		  && result.attachMenuCacheBounded && result.minimizedRestore
+		  && (result.minimizedSwitchNanoseconds >= 0)
 		  && (result.maxChatSwitchNanoseconds < kMaxChatSwitchNanoseconds);
 	return result;
 }
@@ -11148,7 +11216,11 @@ void RunAuthenticatedCacheSymlinkCases(
 					"minimized_restore=%d minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld max_switch_ns=%lld "
-					"attach_menu_hover_ns=%lld attach_menu_cached=%d "
+					"attach_menu_first_hover_ns=%lld "
+					"attach_menu_hover_ns=%lld "
+					"attach_menu_update_hover_ns=%lld "
+					"attach_menu_cached=%d attach_menu_invalidated=%d "
+					"attach_menu_cache_bound=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.minimizedRestore,
@@ -11158,8 +11230,14 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(
+						chatSwitch.attachMenuFirstHoverNanoseconds),
+					static_cast<long long>(
 						chatSwitch.attachMenuHoverNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuInvalidationHoverNanoseconds),
 					chatSwitch.attachMenuCacheReused,
+					chatSwitch.attachMenuInvalidationRebuilt,
+					chatSwitch.attachMenuCacheBounded,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
 					 && chatSwitch.maxStallNanoseconds < 50'000'000));

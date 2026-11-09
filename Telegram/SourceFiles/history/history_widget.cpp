@@ -219,7 +219,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 
 #include <QtGui/QWindow>
+#include <QtGui/QAction>
 #include <QtCore/QMimeData>
+
+#include <algorithm>
 
 namespace {
 
@@ -228,6 +231,7 @@ constexpr auto kMessagesPerPage = 50;
 constexpr auto kPreloadHeightsCount = 3; // when 3 screens to scroll left make a preload request
 constexpr auto kScrollToVoiceAfterScrolledMs = 1000;
 constexpr auto kSkipRepaintWhileScrollMs = 100;
+constexpr auto kAttachBotsMenuCacheLimit = 8;
 constexpr auto kShowMembersDropdownTimeoutMs = 300;
 constexpr auto kDisplayEditTimeWarningMs = 300 * 1000;
 constexpr auto kFullDayInMs = 86400 * 1000;
@@ -3455,6 +3459,7 @@ void HistoryWidget::refreshAttachBotsMenu() {
 	const auto peer = _history->peer;
 	if (const auto i = _attachBotsMenuCache.find(peer);
 		i != end(_attachBotsMenuCache)) {
+		touchAttachBotsMenuCache(peer);
 		_attachBotsMenu = i->second.get();
 		if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
 			_attachToggle->installEventFilter(_attachBotsMenu);
@@ -3469,8 +3474,11 @@ void HistoryWidget::refreshAttachBotsMenu() {
 		[=] { return sendMenuDetails(); },
 		[=](bool compress) { chooseAttach(compress); },
 		crl::guard(this, [=] { return _field->getTextWithAppliedMarkdown(); }),
-		crl::guard(this, [=] { migrateFieldToRichEditor(); }));
+		crl::guard(this, [=] { migrateFieldToRichEditor(); }),
+		InlineBots::AttachBotsMenuBuildMode::Incremental);
 	const auto inserted = _attachBotsMenuCache.emplace(peer, std::move(menu));
+	touchAttachBotsMenuCache(peer);
+	trimAttachBotsMenuCache();
 	_attachBotsMenu = inserted.first->second.get();
 	if (!_attachBotsMenu) {
 		return;
@@ -3493,6 +3501,7 @@ void HistoryWidget::invalidateAttachBotsMenuCache() {
 	}
 	_attachBotsMenu = nullptr;
 	_attachBotsMenuCache.clear();
+	_attachBotsMenuCacheLru.clear();
 	_attachToggle->removeEventFilter(this);
 	if (_history && !ChatHelpers::ShowPanelOnClick()) {
 		_attachToggle->installEventFilter(this);
@@ -3514,6 +3523,7 @@ void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
 		_attachToggle->removeEventFilter(this);
 	}
 	_attachBotsMenuCache.erase(i);
+	std::erase(_attachBotsMenuCacheLru, peer);
 	if (current && !ChatHelpers::ShowPanelOnClick()) {
 		_attachToggle->installEventFilter(this);
 	}
@@ -3528,9 +3538,34 @@ void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
 		}
 		return;
 	}
+	touchAttachBotsMenuCache(_history->peer);
 	_attachBotsMenu = i->second.get();
 	if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
 		_attachToggle->installEventFilter(_attachBotsMenu);
+	}
+}
+
+void HistoryWidget::touchAttachBotsMenuCache(not_null<PeerData *> peer) {
+	const auto i = std::find(begin(_attachBotsMenuCacheLru),
+							 end(_attachBotsMenuCacheLru), peer);
+	if (i != end(_attachBotsMenuCacheLru)) {
+		_attachBotsMenuCacheLru.erase(i);
+	}
+	_attachBotsMenuCacheLru.push_back(peer);
+}
+
+void HistoryWidget::trimAttachBotsMenuCache() {
+	while (_attachBotsMenuCache.size() > kAttachBotsMenuCacheLimit) {
+		const auto oldest = _attachBotsMenuCacheLru.front();
+		_attachBotsMenuCacheLru.erase(begin(_attachBotsMenuCacheLru));
+		if (_history && (_history->peer == oldest)) {
+			touchAttachBotsMenuCache(oldest);
+			continue;
+		}
+		const auto i = _attachBotsMenuCache.find(oldest);
+		if (i != end(_attachBotsMenuCache)) {
+			_attachBotsMenuCache.erase(i);
+		}
 	}
 }
 
@@ -6635,6 +6670,21 @@ int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
 
 bool HistoryWidget::attachMenuExistsForRegressionTest() const {
 	return _attachBotsMenu != nullptr;
+}
+
+bool HistoryWidget::attachMenuContainsBotForRegressionTest(UserId botId) const {
+	if (!_attachBotsMenu) {
+		return false;
+	}
+	const auto expected = QString::number(botId.bare);
+	const auto actions = _attachBotsMenu->menu()->findChildren<QAction *>();
+	return ranges::any_of(actions, [&](QAction *action) {
+		return action->data().toString() == expected;
+	});
+}
+
+int HistoryWidget::attachMenuCacheSizeForRegressionTest() const {
+	return int(_attachBotsMenuCache.size());
 }
 
 QString HistoryWidget::draftTextForRegressionTest() const {

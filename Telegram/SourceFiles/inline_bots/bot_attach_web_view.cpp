@@ -94,6 +94,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_menu_icons.h"
 
 #include <QSvgRenderer>
+#include <QTimer>
 
 namespace InlineBots {
 namespace {
@@ -717,6 +718,9 @@ BotAction::BotAction(
 , _height(_st.itemPadding.top()
 		+ _st.itemStyle.font->height
 		+ _st.itemPadding.bottom()) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	_dummyAction->setData(QString::number(_bot.user->id.bare));
+#endif
 	setAcceptBoth(false);
 	fitToMenuWidth();
 	setActionTriggered(std::move(callback));
@@ -819,6 +823,72 @@ void BotAction::handleKeyPress(not_null<QKeyEvent*> e) {
 		setClicked(Ui::Menu::TriggeredSource::Keyboard);
 	}
 }
+
+void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
+							not_null<Window::SessionController *> controller,
+							Fn<Api::SendAction()> actionFactory,
+							const AttachWebViewBot &bot) {
+	const auto bots = &controller->session().attachWebView();
+	const auto callback = [=] {
+		bots->open({
+			.bot = bot.user,
+			.context = {
+				.controller = controller,
+				.action = actionFactory(),
+			},
+			.source = InlineBots::WebViewSourceAttachMenu(),
+		});
+	};
+	auto action = base::make_unique_q<BotAction>(
+		menu->menu(), controller->uiShow(), menu->menu()->st(), bot, callback);
+	action->forceShown()
+		| rpl::on_next(
+			[=](bool shown) {
+				if (shown) {
+					menu->setAutoHiding(false);
+				} else {
+					menu->hideAnimated();
+					menu->setAutoHiding(true);
+				}
+			},
+			action->lifetime());
+	menu->addAction(std::move(action));
+}
+
+class AttachBotsMenuPopulation final : public QObject {
+  public:
+	AttachBotsMenuPopulation(not_null<Ui::DropdownMenu *> menu,
+							 not_null<Window::SessionController *> controller,
+							 Fn<Api::SendAction()> actionFactory,
+							 std::vector<const AttachWebViewBot *> bots)
+		: QObject(menu), _menu(menu), _controller(controller),
+		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)) {}
+
+	void start() {
+		QTimer::singleShot(0, this, [=] { addNext(); });
+	}
+
+  private:
+	void addNext() {
+		if (_position == int(_bots.size())) {
+			deleteLater();
+			return;
+		}
+		AddAttachBotMenuAction(_menu, _controller, _actionFactory,
+							   *_bots[_position++]);
+		if (_position == int(_bots.size())) {
+			deleteLater();
+		} else {
+			QTimer::singleShot(0, this, [=] { addNext(); });
+		}
+	}
+
+	const not_null<Ui::DropdownMenu *> _menu;
+	const not_null<Window::SessionController *> _controller;
+	const Fn<Api::SendAction()> _actionFactory;
+	const std::vector<const AttachWebViewBot *> _bots;
+	int _position = 0;
+};
 
 } // namespace
 
@@ -3064,14 +3134,12 @@ void ChooseAndSendLocation(
 }
 
 std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
-		not_null<QWidget*> parent,
-		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer,
-		Fn<Api::SendAction()> actionFactory,
-		Fn<SendMenu::Details()> sendMenuDetails,
-		Fn<void(bool)> attach,
-		Fn<TextWithTags()> composeFieldText,
-		Fn<void()> composeFieldMigrated) {
+	not_null<QWidget *> parent,
+	not_null<Window::SessionController *> controller, not_null<PeerData *> peer,
+	Fn<Api::SendAction()> actionFactory,
+	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
+	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
+	AttachBotsMenuBuildMode buildMode) {
 	auto result = std::make_unique<Ui::DropdownMenu>(
 		parent,
 		st::dropdownMenuWithIcons);
@@ -3162,45 +3230,32 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	}
 	const auto addBots = Data::CanSend(peer, ChatRestriction::SendInline, false)
 		&& !peer->starsPerMessageChecked();
+	auto menuBots = std::vector<const AttachWebViewBot *>();
 	for (const auto &bot : bots->attachBots()) {
 		if (!addBots
 			|| !bot.inAttachMenu
 			|| !PeerMatchesTypes(peer, bot.user, bot.types)) {
 			continue;
 		}
-		const auto callback = [=] {
-			bots->open({
-				.bot = bot.user,
-				.context = {
-					.controller = controller,
-					.action = actionFactory(),
-				},
-				.source = InlineBots::WebViewSourceAttachMenu(),
-			});
-		};
-		auto action = base::make_unique_q<BotAction>(
-			raw->menu(),
-			controller->uiShow(),
-			raw->menu()->st(),
-			bot,
-			callback);
-		action->forceShown(
-		) | rpl::on_next([=](bool shown) {
-			if (shown) {
-				raw->setAutoHiding(false);
-			} else {
-				raw->hideAnimated();
-				raw->setAutoHiding(true);
-			}
-		}, action->lifetime());
-		raw->addAction(std::move(action));
+		menuBots.push_back(&bot);
 	}
-	const auto actions = raw->actions().size();
+	const auto actions = raw->actions().size() + menuBots.size();
 	const auto onclick = ChatHelpers::ShowPanelOnClick();
 	if (!actions) {
 		return nullptr;
 	} else if (actions <= minimal && !onclick) {
 		return nullptr;
+	}
+	if (buildMode == AttachBotsMenuBuildMode::Incremental) {
+		if (!menuBots.empty()) {
+			auto population = new AttachBotsMenuPopulation(
+				raw, controller, std::move(actionFactory), std::move(menuBots));
+			population->start();
+		}
+	} else {
+		for (const auto bot : menuBots) {
+			AddAttachBotMenuAction(raw, controller, actionFactory, *bot);
+		}
 	}
 	return result;
 }

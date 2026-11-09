@@ -924,6 +924,12 @@ grep -Fq 'maxHeartbeatGapProcessWorkNanoseconds <= 100' "$native_harness" \
   && grep -Fq 'No startup heartbeat-gap stall evidence ' <<< "$stall_diagnostic" \
   && grep -Fq 'matched within 1000 ms.' <<< "$stall_diagnostic" \
   || contract_fail 'The cache regression must require low process CPU and report unmatched stall evidence.'
+grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
+  && grep -Fq "attachMenuFirstHoverNanoseconds < 50'000'000" "$native_harness" \
+  && grep -Fq 'attachMenuInvalidationRebuilt' "$native_harness" \
+  && grep -Fq 'attachMenuContainsBotForRegressionTest' "$native_harness" \
+  && grep -Fq 'attachMenuCacheSizeForRegressionTest() <= 8' "$native_harness" \
+  || contract_fail 'The attach-menu regression must gate first hover, bot invalidation, and bounded caching.'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
   "$native_harness" \

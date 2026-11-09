@@ -23,6 +23,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/fields/input_field.h"
 #include "mtproto/sender.h"
 
+#include <vector>
+
 enum class SendMediaType;
 class MessageLinksParser;
 struct ClickHandlerContext;
@@ -304,6 +306,9 @@ public:
 	[[nodiscard]] Ui::IconButton *attachToggleForRegressionTest() const;
 	[[nodiscard]] int attachMenuBuildCountForRegressionTest() const;
 	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
+	[[nodiscard]] bool
+	attachMenuContainsBotForRegressionTest(UserId botId) const;
+	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
 #endif
 
 	void applyCloudDraft(History *history);
@@ -794,6 +799,8 @@ private:
 	void invalidateAttachBotsMenuCache();
 	void invalidateAttachBotsMenuCache(not_null<PeerData *> peer);
 	void activateCachedAttachBotsMenuForCurrentPeer();
+	void touchAttachBotsMenuCache(not_null<PeerData *> peer);
+	void trimAttachBotsMenuCache();
 	[[nodiscard]] bool attachBotsMenuBuiltForCurrentPeer() const;
 
 	void injectSponsoredMessages() const;
@@ -994,6 +1001,7 @@ private:
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
 	base::flat_map<not_null<PeerData *>, std::unique_ptr<Ui::DropdownMenu>>
 		_attachBotsMenuCache;
+	std::vector<not_null<PeerData *>> _attachBotsMenuCacheLru;
 	Ui::DropdownMenu *_attachBotsMenu = nullptr;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _attachMenuBuildCountForRegressionTest = 0;

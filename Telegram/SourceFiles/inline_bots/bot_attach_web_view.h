@@ -56,6 +56,11 @@ class WebViewInstance;
 class Downloads;
 class Storage;
 
+enum class AttachBotsMenuBuildMode {
+	Immediate,
+	Incremental,
+};
+
 enum class PeerType : uint8 {
 	SameBot   = 0x01,
 	Bot       = 0x02,
@@ -524,14 +529,13 @@ private:
 };
 
 [[nodiscard]] std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
-	not_null<QWidget*> parent,
-	not_null<Window::SessionController*> controller,
-	not_null<PeerData*> peer,
+	not_null<QWidget *> parent,
+	not_null<Window::SessionController *> controller, not_null<PeerData *> peer,
 	Fn<Api::SendAction()> actionFactory,
-	Fn<SendMenu::Details()> sendMenuDetails,
-	Fn<void(bool)> attach,
+	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText = nullptr,
-	Fn<void()> composeFieldMigrated = nullptr);
+	Fn<void()> composeFieldMigrated = nullptr,
+	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate);
 
 class MenuBotIcon final : public Ui::RpWidget {
 public:
