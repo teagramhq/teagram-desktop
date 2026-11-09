@@ -786,7 +786,7 @@ awk '
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
 awk '
-  /^cache_gap_is_runner_scheduling\(\) \{$/ { copy = 1 }
+  /^cache_stall_is_runner_scheduling\(\) \{$/ { copy = 1 }
   copy { print }
   copy && /^}$/ { exit }
 ' "$profile_harness" > "$temp_dir/cache-scheduler-proof.sh"
@@ -794,17 +794,18 @@ awk '
   || contract_fail 'The cache scheduler proof predicate was not found.'
 source "$temp_dir/cache-scheduler-proof.sh"
 local_scheduled_trace=RRRRRRRRRRRRRRRRRRRRRRRR
-if ! cache_gap_is_runner_scheduling \
-	230059167 50000000 1 1 24 24 0 0 0 "$local_scheduled_trace"; then
+if ! cache_stall_is_runner_scheduling \
+	230059167 25000000 50000000 1 1 24 24 0 0 0 "$local_scheduled_trace" 1; then
   contract_fail 'A low-process-CPU all-runnable trace must remain explainable.'
 fi
-if cache_gap_is_runner_scheduling \
-	230059167 150000000 1 1 24 24 0 0 0 "$local_scheduled_trace"; then
-  contract_fail 'An all-runnable trace with high process CPU must not excuse a long gap.'
+if cache_stall_is_runner_scheduling \
+	230059167 25000000 150000000 1 1 24 24 0 0 0 "$local_scheduled_trace" 1; then
+  contract_fail 'An all-runnable trace with high process CPU must not excuse a watchdog stall.'
 fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_process_work_ns=50000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=4 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=4 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=WWWW heartbeat_gap_stack_captured=1 scheduler_evidence_matched=1 scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z heartbeat_gap_scheduler_samples=0 heartbeat_gap_scheduler_running=0 heartbeat_gap_scheduler_waiting=0 heartbeat_gap_scheduler_uninterruptible=0 heartbeat_gap_scheduler_other=0 heartbeat_gap_scheduler_trace=none heartbeat_gap_stack_captured=0 scheduler_evidence_matched=0 scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=25000000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=25000000 heartbeat_gap_process_work_ns=50000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_count=1 max_startup_stall_ns=230000000 startup_stall_main_thread_work_ns=25000000 startup_stall_process_work_ns=50000000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=4 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=4 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=WWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
 Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_switch_work_ns=40000000 switch_scheduler_preemption_proven=1 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_ns=12000000 attach_menu_update_hover_callback_ns=1000000 attach_menu_uncached_peer_callback_ns=20000000 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 max_stall_ns=45000000 under_50ms=1.
 EOF
@@ -815,33 +816,38 @@ check_cache_latency_evidence() (
 if check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
   contract_fail 'Over-budget startup and chat-switch timings must fail the cache case.'
 fi
-sed -e 's/heartbeat_gap_scheduler_samples=4/heartbeat_gap_scheduler_samples=24/' \
-  -e 's/heartbeat_gap_scheduler_running=0/heartbeat_gap_scheduler_running=24/' \
-  -e 's/heartbeat_gap_scheduler_waiting=4/heartbeat_gap_scheduler_waiting=0/' \
-  -e 's/heartbeat_gap_scheduler_trace=WWWW/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/' \
-  -e 's/heartbeat_gap_stack_captured=1/heartbeat_gap_stack_captured=0/' \
-  -e 's/scheduler_preemption_proven=0/scheduler_preemption_proven=1/' \
+sed -e 's/startup_stall_scheduler_samples=4/startup_stall_scheduler_samples=24/' \
+  -e 's/startup_stall_scheduler_running=0/startup_stall_scheduler_running=24/' \
+  -e 's/startup_stall_scheduler_waiting=4/startup_stall_scheduler_waiting=0/' \
+  -e 's/scheduler_trace=WWWW/scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/g' \
+  -e 's/startup_stall_scheduler_preemption_proven=0/startup_stall_scheduler_preemption_proven=1/' \
   -e 's/under_100ms=0/under_100ms=1/' \
   "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-scheduled.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-scheduled.log" >/dev/null 2>&1; then
-  contract_fail 'Only a matching runnable scheduler trace may excuse a long heartbeat gap.'
+  contract_fail 'Only a matching runnable scheduler trace may excuse a watchdog stall.'
 fi
 
-sed -e 's/heartbeat_gap_scheduler_samples=24/heartbeat_gap_scheduler_samples=0/' \
-  -e 's/heartbeat_gap_scheduler_running=24/heartbeat_gap_scheduler_running=0/' \
-  -e 's/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/heartbeat_gap_scheduler_trace=none/' \
-  -e 's/scheduler_preemption_proven=1/scheduler_preemption_proven=0/' \
+sed -e 's/startup_stall_scheduler_samples=24/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=0/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \
   "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-no-scheduler-proof.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-no-scheduler-proof.log" >/dev/null 2>&1; then
-  contract_fail 'A long heartbeat gap without scheduler proof must not pass.'
+  contract_fail 'A watchdog stall without scheduler proof must not pass.'
 fi
-sed -e 's/heartbeat_gap_scheduler_running=24/heartbeat_gap_scheduler_running=23/' \
-  -e 's/heartbeat_gap_scheduler_waiting=0/heartbeat_gap_scheduler_waiting=1/' \
-  -e 's/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/heartbeat_gap_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRW/' \
-  -e 's/scheduler_preemption_proven=1/scheduler_preemption_proven=0/' \
+sed -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=23/' \
+  -e 's/startup_stall_scheduler_waiting=0/startup_stall_scheduler_waiting=1/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRW/' \
+  -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \
   "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-waiting.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-waiting.log" >/dev/null 2>&1; then
   contract_fail 'A waiting main thread must not be classified as runner scheduling.'
+fi
+sed -e 's/startup_stall_process_work_ns=50000000/startup_stall_process_work_ns=150000000/' \
+  -e 's/under_100ms=1/under_100ms=0/' \
+  "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-high-process-work.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-high-process-work.log" >/dev/null 2>&1; then
+  contract_fail 'High process CPU must not be excused by an all-runnable watchdog trace.'
 fi
 sed -e 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=100000000/' \
   "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-slow-startup.log"
@@ -851,6 +857,34 @@ fi
 cp "$temp_dir/cache-latency-scheduled.log" "$temp_dir/cache-latency-responsive.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-responsive.log" >/dev/null 2>&1; then
   contract_fail 'Runner scheduling gaps must not fail the main-thread work budget.'
+fi
+sed -e 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=30000000/' \
+  -e 's/max_heartbeat_gap_ns=230059167/max_heartbeat_gap_ns=207000000/' \
+  -e 's/max_heartbeat_gap_work_ns=25000000/max_heartbeat_gap_work_ns=30000000/' \
+  -e 's/heartbeat_gap_process_work_ns=50000000/heartbeat_gap_process_work_ns=123315125/' \
+  -e 's/startup_stall_count=1/startup_stall_count=0/' \
+  -e 's/max_startup_stall_ns=230000000/max_startup_stall_ns=0/' \
+  -e 's/startup_stall_main_thread_work_ns=25000000/startup_stall_main_thread_work_ns=0/' \
+  -e 's/startup_stall_process_work_ns=50000000/startup_stall_process_work_ns=0/' \
+  -e 's/startup_stall_started_at=2026-11-06T00:47:53.000Z/startup_stall_started_at=none/' \
+  -e 's/startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z/startup_stall_heartbeat_gap_started_at=none/' \
+  -e 's/startup_stall_scheduler_samples=24/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=0/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
+  -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
+  -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \
+  -e '/^Cache startup watchdog stall:/d' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-timer-only-gap.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-timer-only-gap.log" >/dev/null 2>&1; then
+  contract_fail 'A long QTimer gap without a corroborating watchdog stall must remain diagnostic only.'
+fi
+cp "$temp_dir/cache-latency-timer-only-gap.log" "$temp_dir/cache-latency-unmatched-watchdog.log"
+printf '%s\n' \
+  'Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:50.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR stack_captured=1 stack=unmatched regression record' \
+  >> "$temp_dir/cache-latency-unmatched-watchdog.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-unmatched-watchdog.log" >/dev/null 2>&1; then
+  contract_fail 'An uncorroborated watchdog record must not be counted as a startup stall.'
 fi
 sed -e 's/max_switch_ns=45000000/max_switch_ns=92000000/' \
 	-e 's/max_switch_work_ns=40000000/max_switch_work_ns=50000000/' \
@@ -950,14 +984,13 @@ grep -Fq 'processWorkNanoseconds' "$native_harness" \
   && grep -Fq 'mainThreadWorkNanoseconds' "$native_harness" \
   && grep -Fq 'matchedEvidenceStarts' "$native_harness" \
   && grep -Fq 'startupHeartbeatGaps.push_back' "$native_harness" \
-  && grep -Fq 'schedulerEvidenceMatched' "$native_harness" \
+  && grep -Fq 'corroboratedStartupStalls' "$native_harness" \
   && grep -Fq 'AllMainThreadWorkIntervalsHaveSchedulerProof' "$native_harness" \
-  && grep -Fq 'StartupHeartbeatGapEvidenceRegressionPasses' "$native_harness" \
+  && grep -Fq 'StartupWatchdogStallEvidenceRegressionPasses' "$native_harness" \
   && grep -Fq 'ChatSwitchSchedulerProofRegressionPasses' "$native_harness" \
-  && stall_diagnostic="$(grep -A 1 -F 'No startup heartbeat-gap stall evidence' "$native_harness")" \
-  && grep -Fq 'No startup heartbeat-gap stall evidence ' <<< "$stall_diagnostic" \
-  && grep -Fq 'matched within 1000 ms.' <<< "$stall_diagnostic" \
-  || contract_fail 'The cache regression must validate every long heartbeat gap and cover the two-gap case.'
+  && grep -Fq 'Cache startup watchdog stall:' "$native_harness" \
+  && grep -Fq 'startup_stall_scheduler_preemption_proven' "$native_harness" \
+  || contract_fail 'The cache regression must attribute startup stalls to corroborated watchdog evidence.'
 awk '
   /for \(auto i = 0; i != 10; \+\+i\)/ { copy = 1 }
   copy && /result.attachMenuCacheBounded/ { exit }

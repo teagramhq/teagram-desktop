@@ -74,26 +74,31 @@ report_result() {
 	fi
 }
 
-cache_gap_is_runner_scheduling() {
-	local gap_ns="$1"
-	local process_work_ns="$2"
-	local evidence_matched="$3"
-	local preemption_proven="$4"
-	local samples="$5"
-	local running="$6"
-	local waiting="$7"
-	local uninterruptible="$8"
-	local other="$9"
-	local trace="${10}"
-	local required_samples=$(((gap_ns - 50000000) / 10000000))
+cache_stall_is_runner_scheduling() {
+	local stall_ns="$1"
+	local main_thread_work_ns="$2"
+	local process_work_ns="$3"
+	local evidence_matched="$4"
+	local preemption_proven="$5"
+	local samples="$6"
+	local running="$7"
+	local waiting="$8"
+	local uninterruptible="$9"
+	local other="${10}"
+	local trace="${11}"
+	local stack_captured="${12}"
+	local required_samples=$(((stall_ns - 50000000) / 10000000))
 	if (( required_samples < 4 )); then
 		required_samples=4
 	fi
-	(( gap_ns >= 100000000 \
+	(( stall_ns >= 100000000 \
+		&& main_thread_work_ns >= 0 \
+		&& main_thread_work_ns < 100000000 \
 		&& process_work_ns >= 0 \
 		&& process_work_ns <= 100000000 \
 		&& evidence_matched == 1 \
 		&& preemption_proven == 1 \
+		&& stack_captured == 1 \
 		&& samples >= required_samples \
 		&& running == samples \
 		&& waiting == 0 \
@@ -1437,7 +1442,7 @@ fi
 for cache in cache media_cache; do
 	local cache_latency_evidence
 	cache_latency_evidence="$(grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ heartbeat_gap_scheduler_samples=[0-9]+ heartbeat_gap_scheduler_running=[0-9]+ heartbeat_gap_scheduler_waiting=[0-9]+ heartbeat_gap_scheduler_uninterruptible=[0-9]+ heartbeat_gap_scheduler_other=[0-9]+ heartbeat_gap_scheduler_trace=([[:alpha:]?]+|none) heartbeat_gap_stack_captured=[01] scheduler_evidence_matched=[01] scheduler_preemption_proven=[01] under_100ms=1 first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG" || true)"
 	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
@@ -1453,53 +1458,93 @@ for cache in cache media_cache; do
 		printf 'seeded cache main-thread work exceeded 100 ms for %s.\n' "$cache" >&2
 		exit 1
 	fi
-	local max_heartbeat_gap_ns
-	max_heartbeat_gap_ns="$(sed -E \
-		's/.*max_heartbeat_gap_ns=([0-9]+).*/\1/' \
+	local under_100ms startup_stall_count
+	under_100ms="$(sed -E 's/.*under_100ms=([01]).*/\1/' \
 		<<<"$cache_latency_evidence")"
-	if (( max_heartbeat_gap_ns >= 100000000 )); then
-		local scheduler_samples scheduler_running scheduler_waiting
-		local scheduler_uninterruptible scheduler_other scheduler_trace
-		local scheduler_evidence_matched scheduler_preemption_proven
-		local process_work_ns
-		scheduler_samples="$(sed -E \
-			's/.*heartbeat_gap_scheduler_samples=([0-9]+).*/\1/' \
+	if (( under_100ms != 1 )); then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache startup work exceeded 100 ms for %s.\n' "$cache" >&2
+		exit 1
+	fi
+	startup_stall_count="$(sed -E \
+		's/.*startup_stall_count=([0-9]+).*/\1/' \
+		<<<"$cache_latency_evidence")"
+	if (( startup_stall_count > 0 )); then
+		local max_startup_stall_ns stall_main_thread_work_ns
+		local stall_process_work_ns stall_started_at stall_heartbeat_gap_started_at
+		local stall_samples stall_running stall_waiting stall_uninterruptible
+		local stall_other stall_trace stall_stack_captured
+		local stall_evidence_matched stall_preemption_proven stall_log_count
+		max_startup_stall_ns="$(sed -E \
+			's/.*max_startup_stall_ns=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_running="$(sed -E \
-			's/.*heartbeat_gap_scheduler_running=([0-9]+).*/\1/' \
+		stall_main_thread_work_ns="$(sed -E \
+			's/.*startup_stall_main_thread_work_ns=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_waiting="$(sed -E \
-			's/.*heartbeat_gap_scheduler_waiting=([0-9]+).*/\1/' \
+		stall_process_work_ns="$(sed -E \
+			's/.*startup_stall_process_work_ns=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_uninterruptible="$(sed -E \
-			's/.*heartbeat_gap_scheduler_uninterruptible=([0-9]+).*/\1/' \
+		stall_started_at="$(sed -E \
+			's/.*startup_stall_started_at=([^ ]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_other="$(sed -E \
-			's/.*heartbeat_gap_scheduler_other=([0-9]+).*/\1/' \
+		stall_heartbeat_gap_started_at="$(sed -E \
+			's/.*startup_stall_heartbeat_gap_started_at=([^ ]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_trace="$(sed -E \
-			's/.*heartbeat_gap_scheduler_trace=([^ ]+).*/\1/' \
+		stall_samples="$(sed -E \
+			's/.*startup_stall_scheduler_samples=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_preemption_proven="$(sed -E \
-			's/.*scheduler_preemption_proven=([01]).*/\1/' \
+		stall_running="$(sed -E \
+			's/.*startup_stall_scheduler_running=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		scheduler_evidence_matched="$(sed -E \
-			's/.*scheduler_evidence_matched=([01]).*/\1/' \
+		stall_waiting="$(sed -E \
+			's/.*startup_stall_scheduler_waiting=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		process_work_ns="$(sed -E \
-			's/.*heartbeat_gap_process_work_ns=([0-9]+).*/\1/' \
+		stall_uninterruptible="$(sed -E \
+			's/.*startup_stall_scheduler_uninterruptible=([0-9]+).*/\1/' \
 			<<<"$cache_latency_evidence")"
-		if ! cache_gap_is_runner_scheduling \
-			"$max_heartbeat_gap_ns" "$process_work_ns" \
-			"$scheduler_evidence_matched" \
-			"$scheduler_preemption_proven" "$scheduler_samples" \
-			"$scheduler_running" "$scheduler_waiting" \
-			"$scheduler_uninterruptible" "$scheduler_other" \
-			"$scheduler_trace"; then
+		stall_other="$(sed -E \
+			's/.*startup_stall_scheduler_other=([0-9]+).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		stall_trace="$(sed -E \
+			's/.*startup_stall_scheduler_trace=([^ ]+).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		stall_stack_captured="$(sed -E \
+			's/.*startup_stall_stack_captured=([01]).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		stall_evidence_matched="$(sed -E \
+			's/.*startup_stall_evidence_matched=([01]).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		stall_preemption_proven="$(sed -E \
+			's/.*startup_stall_scheduler_preemption_proven=([01]).*/\1/' \
+			<<<"$cache_latency_evidence")"
+		if ! cache_stall_is_runner_scheduling \
+			"$max_startup_stall_ns" "$stall_main_thread_work_ns" \
+			"$stall_process_work_ns" "$stall_evidence_matched" \
+			"$stall_preemption_proven" "$stall_samples" \
+			"$stall_running" "$stall_waiting" "$stall_uninterruptible" \
+			"$stall_other" "$stall_trace" "$stall_stack_captured"; then
 			cat "$AUTH_LOG" >&2
-			printf 'long seeded cache heartbeat gap lacks runnable scheduler proof for %s.\n' "$cache" >&2
+			printf 'startup watchdog stall lacks runnable scheduler proof for %s.\n' "$cache" >&2
 			exit 1
 		fi
+		stall_log_count="$(grep -c \
+			"^Cache startup watchdog stall: cache=$cache " "$AUTH_LOG" || true)"
+		if (( stall_log_count != startup_stall_count )); then
+			cat "$AUTH_LOG" >&2
+			printf 'startup watchdog stall stack and trace records are incomplete for %s.\n' "$cache" >&2
+			exit 1
+		fi
+		if ! grep -E -q \
+			"^Cache startup watchdog stall: cache=$cache started_at=$stall_started_at duration_ms=$((max_startup_stall_ns / 1000000)) heartbeat_gap_started_at=$stall_heartbeat_gap_started_at scheduler_trace=$stall_trace stack_captured=1 stack=.+$" \
+			"$AUTH_LOG"; then
+			cat "$AUTH_LOG" >&2
+			printf 'startup watchdog stall stack or trace missing for %s.\n' "$cache" >&2
+			exit 1
+		fi
+	elif grep -q "^Cache startup watchdog stall: cache=$cache " "$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'uncorroborated startup watchdog evidence was counted for %s.\n' "$cache" >&2
+		exit 1
 	fi
 done
 if ! grep -E -q \
