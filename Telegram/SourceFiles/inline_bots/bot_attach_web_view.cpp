@@ -867,28 +867,18 @@ class AttachBotsMenuPopulation final : public QObject {
 		  _buildComplete(std::move(buildComplete)) {}
 
 	void start() {
-		QTimer::singleShot(0, this, [=] { addNext(); });
+		QTimer::singleShot(0, this, [=] { populate(); });
 	}
 
   private:
-	void addNext() {
-		if (_position == int(_bots.size())) {
-			if (_buildComplete) {
-				_buildComplete();
-			}
-			deleteLater();
-			return;
+	void populate() {
+		for (const auto &bot : _bots) {
+			AddAttachBotMenuAction(_menu, _controller, _actionFactory, bot);
 		}
-		AddAttachBotMenuAction(_menu, _controller, _actionFactory,
-							   _bots[_position++]);
-		if (_position == int(_bots.size())) {
-			if (_buildComplete) {
-				_buildComplete();
-			}
-			deleteLater();
-		} else {
-			QTimer::singleShot(0, this, [=] { addNext(); });
+		if (_buildComplete) {
+			_buildComplete();
 		}
+		deleteLater();
 	}
 
 	const not_null<Ui::DropdownMenu *> _menu;
@@ -896,7 +886,6 @@ class AttachBotsMenuPopulation final : public QObject {
 	const Fn<Api::SendAction()> _actionFactory;
 	const std::vector<AttachWebViewBot> _bots;
 	const Fn<void()> _buildComplete;
-	int _position = 0;
 };
 
 } // namespace
