@@ -155,8 +155,14 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto completed = std::atomic_bool(false);
 	const auto beforeEvidence
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	const auto beforeAcknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	const auto lastEvidenceStartedAt
 		= beforeEvidence.empty() ? QString() : beforeEvidence.back().startedAt;
+	const auto lastAcknowledgedAt
+		= beforeAcknowledgements.empty()
+			  ? QString()
+			  : beforeAcknowledgements.back().acknowledgedAt;
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -208,7 +214,14 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	}
 	const auto evidence
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	const auto acknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
+	CHECK(!acknowledgements.empty());
+	if (!acknowledgements.empty()) {
+		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
+		CHECK(acknowledgements.back().responseNanoseconds >= 0);
+	}
 	if (!evidence.empty()) {
 		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
 		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));

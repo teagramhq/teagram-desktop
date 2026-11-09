@@ -54,10 +54,13 @@ constexpr auto kSchedulerSampleInterval = 5ms;
 constexpr auto kMaxSchedulerSamples = 1024U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
+constexpr auto kMaxPingAcknowledgements = 16'384U;
 
 std::atomic<quint64> TotalStallCount = 0;
 std::mutex StallEvidenceMutex;
 std::vector<UiStallWatchdog::StallEvidence> StallEvidenceHistory;
+std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
+	PingAcknowledgementHistory;
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 
@@ -340,10 +343,11 @@ class PingEvent final : public QEvent {
 		return Result;
 	}
 
-	explicit PingEvent(std::uint64_t sequence)
-		: QEvent(Type()), sequence(sequence) {}
+	explicit PingEvent(std::uint64_t sequence, Clock::time_point postedAt)
+		: QEvent(Type()), sequence(sequence), postedAt(postedAt) {}
 
 	const std::uint64_t sequence;
+	const Clock::time_point postedAt;
 };
 
 } // namespace
@@ -413,16 +417,41 @@ UiStallWatchdog::RecentStallEvidenceForTesting() {
 	return StallEvidenceHistory;
 }
 
+std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
+UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
+	const auto lock = std::lock_guard(StallEvidenceMutex);
+	return PingAcknowledgementHistory;
+}
+
 bool UiStallWatchdog::event(QEvent *event) {
 	if (event->type() != PingEvent::Type()) {
 		return QObject::event(event);
 	}
 	const auto ping = static_cast<PingEvent *>(event);
+	const auto acknowledgedAt = Clock::now();
+	auto acknowledged = false;
 	{
 		const auto lock = std::lock_guard(_mutex);
 		if (ping->sequence > _acknowledgedSequence) {
 			_acknowledgedSequence = ping->sequence;
-			_acknowledgedAt = Clock::now();
+			_acknowledgedAt = acknowledgedAt;
+			acknowledged = true;
+		}
+	}
+	if (acknowledged && _captureSchedulerTrace) {
+		const auto duration = acknowledgedAt - ping->postedAt;
+		const auto evidence = PingAcknowledgementEvidence{
+			.acknowledgedAt
+			= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
+			.responseNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
+				  .count(),
+		};
+		const auto lock = std::lock_guard(StallEvidenceMutex);
+		PingAcknowledgementHistory.push_back(evidence);
+		if (PingAcknowledgementHistory.size() > kMaxPingAcknowledgements) {
+			PingAcknowledgementHistory.erase(
+				PingAcknowledgementHistory.begin());
 		}
 	}
 	_condition.notify_one();
@@ -439,7 +468,7 @@ void UiStallWatchdog::run() {
 		const auto current = ++sequence;
 		const auto startTime = QDateTime::currentDateTime();
 		const auto postedAt = Clock::now();
-		QCoreApplication::postEvent(this, new PingEvent(current));
+		QCoreApplication::postEvent(this, new PingEvent(current, postedAt));
 		{
 			const auto lock = std::lock_guard(_mutex);
 			_started = true;

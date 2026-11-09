@@ -35,6 +35,11 @@ class UiStallWatchdog final : public QObject {
 		QString stack;
 	};
 
+	struct PingAcknowledgementEvidence {
+		QString acknowledgedAt;
+		qint64 responseNanoseconds = 0;
+	};
+
 	explicit UiStallWatchdog(
 		std::function<void(const QString &, bool update)> log);
 	UiStallWatchdog(std::function<void(const QString &, bool update)> log,
@@ -48,6 +53,8 @@ class UiStallWatchdog final : public QObject {
 	[[nodiscard]] quint64 StallCountForTesting() const;
 	[[nodiscard]] static std::vector<StallEvidence>
 	RecentStallEvidenceForTesting();
+	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
+	RecentPingAcknowledgementsForTesting();
 
   protected:
 	bool event(QEvent *event) override;

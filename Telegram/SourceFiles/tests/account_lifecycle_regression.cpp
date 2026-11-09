@@ -10289,6 +10289,7 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
+constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(50);
 
 struct MainThreadWorkInterval final {
 	QDateTime startedAt;
@@ -10431,9 +10432,7 @@ FindMatchingMainThreadWorkEvidence(
 			std::min(gapEndMilliseconds, evidenceEndMilliseconds)
 				- std::max(gapStartMilliseconds, evidenceStartMilliseconds));
 		const auto requiredOverlapMilliseconds
-			= std::max(qint64(1), std::min(gapDurationMilliseconds,
-										   evidenceDurationMilliseconds)
-									  - 50);
+			= std::max(qint64(1), gapDurationMilliseconds - 50);
 		if ((overlapMilliseconds >= requiredOverlapMilliseconds)
 			&& (overlapMilliseconds > bestOverlapMilliseconds)) {
 			bestOverlapMilliseconds = overlapMilliseconds;
@@ -10471,6 +10470,83 @@ BuildCorroboratedStartupStalls(
         .heartbeatGapStartedAt = heartbeatGap.startedAt,
         .evidence = candidate,
     });
+	}
+	return result;
+}
+
+[[nodiscard]] bool HeartbeatGapHasSuccessfulWatchdogCoverage(
+	const MainThreadWorkInterval &gap,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements) {
+	if (!gap.startedAt.isValid()
+		|| (gap.durationNanoseconds
+			< kStartupHeartbeatGapThresholdNanoseconds)) {
+		return false;
+	}
+	const auto gapStartMilliseconds = gap.startedAt.toMSecsSinceEpoch();
+	const auto gapDurationMilliseconds
+		= (gap.durationNanoseconds + 999'999) / 1'000'000;
+	const auto gapEndMilliseconds
+		= gapStartMilliseconds + gapDurationMilliseconds;
+	auto eligible = std::vector<std::pair<qint64, qint64>>();
+	for (const auto &acknowledgement : acknowledgements) {
+		if ((acknowledgement.responseNanoseconds < 0)
+			|| (acknowledgement.responseNanoseconds
+				> kMaxStartupWatchdogPingSilenceMilliseconds * 1'000'000)) {
+			continue;
+		}
+		const auto acknowledgedAt = QDateTime::fromString(
+			acknowledgement.acknowledgedAt, Qt::ISODateWithMs);
+		if (acknowledgedAt.isValid()) {
+			eligible.emplace_back(acknowledgedAt.toMSecsSinceEpoch(),
+								  acknowledgement.responseNanoseconds);
+		}
+	}
+	std::sort(eligible.begin(), eligible.end());
+	auto previous = std::optional<qint64>();
+	for (const auto &[acknowledgedAt, responseNanoseconds] : eligible) {
+		if (acknowledgedAt < gapStartMilliseconds) {
+			previous = acknowledgedAt;
+			continue;
+		}
+		if (!previous
+			|| (acknowledgedAt - *previous
+				> kMaxStartupWatchdogPingSilenceMilliseconds)) {
+			return false;
+		}
+		previous = acknowledgedAt;
+		if (acknowledgedAt >= gapEndMilliseconds) {
+			return (acknowledgedAt - gapEndMilliseconds
+					<= kMaxStartupWatchdogPingSilenceMilliseconds)
+				   && (responseNanoseconds
+					   <= kMaxStartupWatchdogPingSilenceMilliseconds
+							  * 1'000'000);
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] int CountUncoveredStartupHeartbeatGaps(
+	const std::vector<MainThreadWorkInterval> &heartbeatGaps,
+	const std::vector<CorroboratedStartupStall> &corroboratedStalls,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements) {
+	auto result = 0;
+	for (const auto &gap : heartbeatGaps) {
+		if (gap.durationNanoseconds
+			< kStartupHeartbeatGapThresholdNanoseconds) {
+			continue;
+		}
+		const auto matchedByWatchdog = std::any_of(
+			corroboratedStalls.begin(), corroboratedStalls.end(),
+			[&](const auto &stall) {
+				return stall.heartbeatGapStartedAt == gap.startedAt;
+			});
+		if (!matchedByWatchdog
+			&& !HeartbeatGapHasSuccessfulWatchdogCoverage(gap,
+														  acknowledgements)) {
+			++result;
+		}
 	}
 	return result;
 }
@@ -10544,6 +10620,37 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 	};
 	const auto timerOnlyCorroborated = BuildCorroboratedStartupStalls(
 		timerOnlyGap, unrelatedWatchdogEvidence);
+	auto timerOnlyAcknowledgements
+		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>();
+	for (auto offset = qint64(-10); offset <= 217; offset += 10) {
+		timerOnlyAcknowledgements.push_back({
+			.acknowledgedAt
+			= timerOnlyGap.front().startedAt.addMSecs(offset).toString(
+				Qt::ISODateWithMs),
+			.responseNanoseconds = 1'000'000,
+		});
+	}
+	const auto unobservedAppWait = std::vector<MainThreadWorkInterval>{
+		{secondStart, 200'000'000, 25'000'000, 50'000'000},
+	};
+	const auto unobservedAppWaitAcknowledgements
+		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			{
+				.acknowledgedAt
+				= secondStart.addMSecs(-10).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 1'000'000,
+			},
+			{
+				.acknowledgedAt
+				= secondStart.addMSecs(210).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 210'000'000,
+			},
+			{
+				.acknowledgedAt
+				= secondStart.addMSecs(220).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 1'000'000,
+			},
+	};
 	const auto highProcessCpuGap = std::vector<MainThreadWorkInterval>{
 		{firstStart, 230'000'000, 25'000'000, 120'000'000},
 	};
@@ -10558,6 +10665,13 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		   && timerOnlyCorroborated.empty()
 		   && AllCorroboratedStartupStallsHaveSchedulerProof(
 			   timerOnlyCorroborated, true)
+		   && (CountUncoveredStartupHeartbeatGaps(timerOnlyGap,
+												  timerOnlyCorroborated,
+												  timerOnlyAcknowledgements)
+			   == 0)
+		   && (CountUncoveredStartupHeartbeatGaps(
+				   unobservedAppWait, {}, unobservedAppWaitAcknowledgements)
+			   == 1)
 		   && (highProcessCpuStall.size() == 1)
 		   && !AllCorroboratedStartupStallsHaveSchedulerProof(
 			   highProcessCpuStall, true);
@@ -11559,17 +11673,29 @@ void RunAuthenticatedCacheSymlinkCases(
 			recordMainThreadHeartbeat();
 			auto corroboratedStartupStalls
 				= std::vector<CorroboratedStartupStall>();
+			auto uncoveredStartupHeartbeatGaps = 0;
 			auto lastMatchingEvidenceChange = QElapsedTimer();
 			lastMatchingEvidenceChange.start();
+			auto lastStartupEvidenceState = QString();
 			const auto collectStartupWatchdogEvidence = [&] {
 				const auto current = BuildCorroboratedStartupStalls(
 					startupHeartbeatGaps,
 					Core::UiStallWatchdog::RecentStallEvidenceForTesting());
-				if (current.size() != corroboratedStartupStalls.size()) {
+				const auto acknowledgements = Core::UiStallWatchdog::
+					RecentPingAcknowledgementsForTesting();
+				const auto uncovered = CountUncoveredStartupHeartbeatGaps(
+					startupHeartbeatGaps, current, acknowledgements);
+				auto state = QString::number(uncovered);
+				for (const auto &stall : current) {
+					state += u":"_q + stall.evidence.startedAt;
+				}
+				if (state != lastStartupEvidenceState) {
 					corroboratedStartupStalls = current;
+					uncoveredStartupHeartbeatGaps = uncovered;
+					lastStartupEvidenceState = std::move(state);
 					lastMatchingEvidenceChange.restart();
 				}
-				return !corroboratedStartupStalls.empty()
+				return (uncoveredStartupHeartbeatGaps == 0)
 					   && (lastMatchingEvidenceChange.elapsed() >= 50);
 			};
 			const auto startupWatchdogEvidenceSettled
@@ -11578,14 +11704,21 @@ void RunAuthenticatedCacheSymlinkCases(
 												1000);
 			if (!startupHeartbeatGaps.empty()
 				&& !startupWatchdogEvidenceSettled) {
-				std::fprintf(stderr, "No startup watchdog stall "
-									 "evidence matched within "
-									 "1000 ms; QTimer heartbeat gaps "
-									 "remain diagnostic.\n");
+				std::fprintf(stderr, "Startup watchdog ping/ack coverage "
+									 "or matching stall evidence did not "
+									 "cover every QTimer heartbeat gap within "
+									 "1000 ms.\n");
 			}
 			corroboratedStartupStalls = BuildCorroboratedStartupStalls(
 				startupHeartbeatGaps,
 				Core::UiStallWatchdog::RecentStallEvidenceForTesting());
+			const auto startupPingAcknowledgements
+				= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+			uncoveredStartupHeartbeatGaps = CountUncoveredStartupHeartbeatGaps(
+				startupHeartbeatGaps, corroboratedStartupStalls,
+				startupPingAcknowledgements);
+			const auto startupHeartbeatGapCoverageProven
+				= (uncoveredStartupHeartbeatGaps == 0);
 			const auto startupStallSchedulerPreemptionProven
 				= !corroboratedStartupStalls.empty() && processCpuClockAvailable
 				  && AllCorroboratedStartupStallsHaveSchedulerProof(
@@ -11644,6 +11777,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto startupWithinBound
 				= mainThreadWorkWithinBound
 				  && startupWatchdogStallEvidenceRegressionPassed
+				  && startupHeartbeatGapCoverageProven
 				  && (corroboratedStartupStalls.empty()
 					  || startupStallSchedulerPreemptionProven);
 			for (const auto &stall : corroboratedStartupStalls) {
@@ -11847,6 +11981,9 @@ void RunAuthenticatedCacheSymlinkCases(
 				"max_heartbeat_gap_work_ns=%lld "
 				"heartbeat_gap_process_work_ns=%lld "
 				"heartbeat_gap_started_at=%s "
+				"startup_heartbeat_gap_count=%d "
+				"startup_uncovered_heartbeat_gaps=%d "
+				"startup_heartbeat_gap_coverage_proven=%d "
 				"startup_stall_count=%d "
 				"max_startup_stall_ns=%lld "
 				"startup_stall_main_thread_work_ns=%lld "
@@ -11879,6 +12016,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
 				static_cast<long long>(maxHeartbeatGapProcessWorkNanoseconds),
 				heartbeatGapStartedAtUtf8.constData(),
+				int(startupHeartbeatGaps.size()), uncoveredStartupHeartbeatGaps,
+				startupHeartbeatGapCoverageProven,
 				int(corroboratedStartupStalls.size()),
 				static_cast<long long>(maxStartupStallNanoseconds),
 				static_cast<long long>(startupStallMainThreadWorkNanoseconds),
