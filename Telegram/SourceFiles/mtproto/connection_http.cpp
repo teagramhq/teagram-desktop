@@ -118,7 +118,7 @@ qint32 HttpConnection::handleError(QNetworkReply *reply) {
 		QNetworkRequest::HttpStatusCodeAttribute);
 	if (statusCode.isValid()) {
 		int status = statusCode.toInt();
-		result = -status;
+		result = ServerErrorCode(-status);
 	}
 
 	switch (reply->error()) {

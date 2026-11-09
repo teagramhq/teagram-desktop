@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "mtproto/connection_abstract.h"
+#include "mtproto/connection_http.h"
 #include "mtproto/connection_server_resolving.h"
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/mtp_instance.h"
@@ -27,6 +28,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 MTP::DcOptions UnitDcOptions(MTP::Environment::Production);
+
+class HttpStatusReply final : public QNetworkReply {
+  public:
+	explicit HttpStatusReply(int status) {
+		setAttribute(QNetworkRequest::HttpStatusCodeAttribute, status);
+	}
+
+	void abort() override {}
+
+  protected:
+	qint64 readData(char *, qint64) override { return -1; }
+};
 
 } // namespace
 
@@ -680,6 +693,16 @@ TEST_CASE(ServerErrorFromPacketMapsOnlyBrowserOnlyCode) {
 	const auto serverErrorPacket = mtpBuffer(1, -404);
 	const auto serverError = ServerErrorFromPacket(serverErrorPacket);
 	CHECK_EQ(serverError, -404);
+}
+
+TEST_CASE(HttpConnectionMapsBrowserOnlyStatusToOther) {
+	auto reply = HttpStatusReply(498);
+	auto connection
+		= MTP::details::HttpConnection(QThread::currentThread(), ProxyData());
+	CHECK_EQ(connection.handleError(&reply),
+			 MTP::details::AbstractConnection::kErrorCodeOther);
+	auto serverReply = HttpStatusReply(404);
+	CHECK_EQ(connection.handleError(&serverReply), -404);
 }
 
 TEST_CASE(ServerErrorFromPacketDoesNotRecordBrowserOnlyRefusal) {

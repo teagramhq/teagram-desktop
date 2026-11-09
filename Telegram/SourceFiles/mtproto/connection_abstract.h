@@ -173,11 +173,15 @@ private:
 
 };
 
+[[nodiscard]] inline qint32 ServerErrorCode(qint32 errorCode) {
+	return (errorCode == kErrorCodeBrowserOnly)
+			   ? AbstractConnection::kErrorCodeOther
+			   : errorCode;
+}
+
 [[nodiscard]] inline qint32 ServerErrorFromPacket(const mtpBuffer &packet) {
 	Expects(packet.size() == 1);
-	return (packet[0] == kErrorCodeBrowserOnly)
-			   ? AbstractConnection::kErrorCodeOther
-			   : packet[0];
+	return ServerErrorCode(packet[0]);
 }
 
 template <typename Request>
