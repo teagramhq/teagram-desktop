@@ -5984,6 +5984,17 @@ void Session::refreshChatListUnreadOnTop() {
 	}
 }
 
+void Session::notifyChatListEntryMoved(Dialogs::Key key, FilterId filterId,
+									   Dialogs::PositionChange moved) {
+	if (moved.from != moved.to) {
+		_chatListEntryRefreshes.fire(ChatListEntryRefresh{
+			.key = key,
+			.moved = moved,
+			.filterId = filterId,
+		});
+	}
+}
+
 void Session::removeChatListEntry(Dialogs::Key key) {
 	using namespace Dialogs;
 

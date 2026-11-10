@@ -14907,15 +14907,20 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 	return users;
 }
 
-[[nodiscard]] QVector<MTPDialog>
-DesktopScaleDialogs(UserId firstId, int count, bool withListState = false) {
+[[nodiscard]] QVector<MTPDialog> DesktopScaleDialogs(UserId firstId, int count,
+													 bool withListState = false,
+													 int archivedCount = 0) {
 	auto dialogs = QVector<MTPDialog>();
 	dialogs.reserve(count);
 	for (auto i = 0; i != count; ++i) {
 		dialogs.push_back(DesktopScaleDialog(
 			UserId(firstId.bare + i), withListState && (i == 0),
 			withListState && (i == 2) ? 3 : 0,
-			withListState && (i == 1) ? Data::Folder::kId : 0));
+			withListState
+					&& ((i == 1)
+						|| ((archivedCount > 0) && (i <= archivedCount)))
+				? Data::Folder::kId
+				: 0));
 	}
 	return dialogs;
 }
@@ -15281,7 +15286,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 		domain, UserId(firstId.bare - 1), [&](auto account) {
 			auto &data = account->session().data();
 			auto users = DesktopScaleUsers(firstId, kLoaded, false);
-			const auto dialogs = DesktopScaleDialogs(firstId, kLoaded, true);
+			const auto dialogs = DesktopScaleDialogs(firstId, kLoaded, true, 9);
 			auto messages = DesktopScaleMessages(firstId, kLoaded, 10);
 			messages[3] = DesktopScaleMessage(UserId(firstId.bare + 3), 1, 30);
 			messages[kLoaded - 1]
@@ -15294,6 +15299,25 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				std::fprintf(stderr,
 							 "Desktop scale check failed: the archive folder "
 							 "was not created from the dialogs.\n");
+				return false;
+			}
+			const auto newestArchiveUser = UserId(firstId.bare + 9);
+			const auto newestArchiveHistory
+				= data.historyLoaded(peerFromUser(newestArchiveUser));
+			const auto archivePreviewContains = [&](const auto &lastHistories) {
+				return newestArchiveHistory
+					   && ranges::contains(lastHistories, newestArchiveHistory,
+										   [](not_null<History *> history) {
+											   return history.get();
+										   });
+			};
+			if (!newestArchiveHistory
+				|| archivePreviewContains(archive->lastHistories())) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: archive preview fixture did "
+					"not "
+					"place its candidate below the first eight chats.\n");
 				return false;
 			}
 			const auto mainBefore
@@ -15401,17 +15425,48 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 
 			const auto mainBeforeRedate
 				= DesktopScaleChatListSnapshot(*data.chatsList());
-			const auto movingDownUser = UserId(firstId.bare + 3);
+			const auto movingDownUser = UserId(firstId.bare + 10);
 			const auto movingUpUser = UserId(firstId.bare + kLoaded - 1);
+			const auto movingDownHistory
+				= data.historyLoaded(peerFromUser(movingDownUser));
+			const auto movingUpHistory
+				= data.historyLoaded(peerFromUser(movingUpUser));
+			if (!movingDownHistory || !movingUpHistory) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: move history is missing.\n");
+				return false;
+			}
+			const auto movingDownBeforeTop
+				= movingDownHistory->mainChatListLink(FilterId())->top();
+			const auto movingUpBeforeTop
+				= movingUpHistory->mainChatListLink(FilterId())->top();
+			auto movementChanges
+				= std::vector<std::pair<History *, Dialogs::PositionChange>>();
+			auto movementLifetime = rpl::lifetime();
+			data.chatListEntryRefreshes()
+				| rpl::on_next(
+					[&](const Data::Session::ChatListEntryRefresh &event) {
+						const auto history = event.key.history();
+						if ((event.filterId == FilterId())
+							&& ((history == movingDownHistory)
+								|| (history == movingUpHistory))) {
+							movementChanges.emplace_back(history, event.moved);
+						}
+					},
+					movementLifetime);
 			const auto redatedMessages = QVector<MTPMessage>{
 				DesktopScaleMessage(movingUpUser, 2, 40),
 				DesktopScaleMessage(movingDownUser, 2, 5),
+				DesktopScaleMessage(newestArchiveUser, 2, 50),
 			};
 			const auto redatedDialogs = QVector<MTPDialog>{
 				DesktopScaleDialog(movingUpUser, false, 0, 0, 2),
 				DesktopScaleDialog(movingDownUser, false, 0, 0, 2),
+				DesktopScaleDialog(newestArchiveUser, false, 0,
+								   Data::Folder::kId, 2),
 			};
-			data.applyDialogs(nullptr, redatedMessages, redatedDialogs, 2);
+			data.applyDialogs(nullptr, redatedMessages, redatedDialogs, 3);
 
 			auto expectedRedatedOrder = mainBeforeRedate.order;
 			ranges::stable_sort(
@@ -15422,6 +15477,10 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				});
 			const auto mainAfterRedate
 				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto movingDownAfterTop
+				= movingDownHistory->mainChatListLink(FilterId())->top();
+			const auto movingUpAfterTop
+				= movingUpHistory->mainChatListLink(FilterId())->top();
 			const auto redatedOrderMatches
 				= (mainAfterRedate.order == expectedRedatedOrder);
 			if (!redatedOrderMatches) {
@@ -15429,6 +15488,18 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 					"main-after-redate", "order", expectedRedatedOrder,
 					mainAfterRedate.order);
 			}
+			const auto movementChangeExists = [&](History *history, int from,
+												  int to) {
+				return ranges::any_of(movementChanges, [&](const auto &change) {
+					return (change.first == history)
+						   && (change.second.from == from)
+						   && (change.second.to == to);
+				});
+			};
+			const auto movingDownEventExists = movementChangeExists(
+				movingDownHistory, movingDownBeforeTop, movingDownAfterTop);
+			const auto movingUpEventExists = movementChangeExists(
+				movingUpHistory, movingUpBeforeTop, movingUpAfterTop);
 			const auto positionOf = [](const std::vector<Dialogs::Key> &order,
 									   uint64 dialogId) {
 				const auto i
@@ -15471,6 +15542,57 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 					static_cast<unsigned long long>(movingUpBefore),
 					static_cast<unsigned long long>(movingUpAfter));
 			}
+			if (!movingDownEventExists
+				|| !(movingDownBeforeTop < movingDownAfterTop)) {
+				const auto actual
+					= ranges::find_if(movementChanges, [&](const auto &change) {
+						  return (change.first == movingDownHistory)
+								 && (change.second.from != change.second.to);
+					  });
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main "
+					"property=movement dialog=%llu expected=%d-to-%d "
+					"actual=%s%d-to-%d.\n",
+					static_cast<unsigned long long>(movingDownUser.bare),
+					movingDownBeforeTop, movingDownAfterTop,
+					(actual == end(movementChanges)) ? "missing/" : "",
+					(actual == end(movementChanges)) ? -1 : actual->second.from,
+					(actual == end(movementChanges)) ? -1 : actual->second.to);
+			}
+			if (!movingUpEventExists
+				|| !(movingUpBeforeTop > movingUpAfterTop)) {
+				const auto actual
+					= ranges::find_if(movementChanges, [&](const auto &change) {
+						  return (change.first == movingUpHistory)
+								 && (change.second.from != change.second.to);
+					  });
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main "
+					"property=movement dialog=%llu expected=%d-to-%d "
+					"actual=%s%d-to-%d.\n",
+					static_cast<unsigned long long>(movingUpUser.bare),
+					movingUpBeforeTop, movingUpAfterTop,
+					(actual == end(movementChanges)) ? "missing/" : "",
+					(actual == end(movementChanges)) ? -1 : actual->second.from,
+					(actual == end(movementChanges)) ? -1 : actual->second.to);
+			}
+			const auto archivePreviewAfter = archive->lastHistories();
+			const auto newestArchivePreviewMatches
+				= !archivePreviewAfter.empty()
+				  && (archivePreviewAfter.front().get() == newestArchiveHistory)
+				  && archivePreviewContains(archivePreviewAfter);
+			if (!newestArchivePreviewMatches) {
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=archive "
+					"property=lastHistories dialog=%llu expected=first "
+					"actual=%s.\n",
+					static_cast<unsigned long long>(newestArchiveUser.bare),
+					archivePreviewAfter.empty() ? "empty"
+												: "different-dialog-first");
+			}
 			const auto loadedAfterRedate
 				= DesktopScaleHistoryCount(*data.chatsList())
 				  + DesktopScaleHistoryCount(*archive->chatsList());
@@ -15483,7 +15605,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 					  "archive-after-redate");
 			if ((loadedAfterRedate != loadedAfter) || !redatedOrderMatches
 				|| !movedDownPastSeveral || !movedUpPastSeveral
-				|| !statePreservedAfterRedate) {
+				|| !movingDownEventExists || !movingUpEventExists
+				|| !newestArchivePreviewMatches || !statePreservedAfterRedate) {
 				std::fprintf(
 					stderr,
 					"Desktop scale check failed: re-dating dialogs changed "

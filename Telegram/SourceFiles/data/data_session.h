@@ -952,6 +952,8 @@ class Session final : public base::has_weak_ptr {
 		}
 	};
 	void refreshChatListEntry(Dialogs::Key key);
+	void notifyChatListEntryMoved(Dialogs::Key key, FilterId filterId,
+								  Dialogs::PositionChange moved);
 	void removeChatListEntry(Dialogs::Key key);
 	void refreshChatListUnreadOnTop();
 	[[nodiscard]] auto chatListEntryRefreshes() const

@@ -217,9 +217,17 @@ void IndexedList::unfreeze() {
 		return;
 	}
 	--_freezeDepth;
-	_list.unfreeze();
+	const auto moved = _list.unfreeze();
 	for (auto &[ch, list] : _index) {
 		list.unfreeze();
+	}
+	if (_freezeDepth) {
+		return;
+	}
+	_unfrozen.fire({});
+	for (const auto &[row, position] : moved) {
+		row->entry()->owner().notifyChatListEntryMoved(row->key(), _filterId,
+													   position);
 	}
 }
 

@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <rpl/event_stream.h>
+
 #include "dialogs/dialogs_list.h"
 
 class History;
@@ -26,6 +28,9 @@ public:
 	void moveToTop(Key key);
 	void freeze();
 	void unfreeze();
+	[[nodiscard]] auto unfrozen() const -> rpl::producer<> {
+		return _unfrozen.events();
+	}
 	bool updateHeight(Key key, float64 narrowRatio);
 	bool updateHeights(float64 narrowRatio);
 
@@ -101,6 +106,7 @@ private:
 	int _freezeDepth = 0;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
+	rpl::event_stream<> _unfrozen;
 }; // clang-format on
 
 } // namespace Dialogs

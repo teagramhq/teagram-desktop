@@ -27,6 +27,8 @@ public:
 		_freezeDepth = 0;
 		_frozen = false;
 		_pendingAdjust.clear();
+		_addedWhileFrozen.clear();
+		_pendingMoveFrom.clear();
 		_rows.clear();
 		_rowByKey.clear();
 	}
@@ -56,7 +58,8 @@ public:
 	bool moveToTop(Key key);
 	void adjustByDate(not_null<Row*> row);
 	void freeze();
-	void unfreeze();
+	using MovedRow = std::pair<not_null<Row *>, PositionChange>;
+	std::vector<MovedRow> unfreeze();
 	bool updateHeight(Key key, float64 narrowRatio);
 	bool updateHeights(float64 narrowRatio);
 	bool remove(Key key, Row *replacedBy = nullptr);
@@ -93,7 +96,8 @@ private:
 	std::vector<not_null<Row*>> _rows;
 	std::map<Key, std::unique_ptr<Row>> _rowByKey;
 	base::flat_set<not_null<Row*>> _pendingAdjust;
-
+	base::flat_set<not_null<Row *>> _addedWhileFrozen;
+	std::map<Row *, int> _pendingMoveFrom;
 };
 
 } // namespace Dialogs
