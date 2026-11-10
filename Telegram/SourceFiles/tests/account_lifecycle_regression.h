@@ -38,7 +38,8 @@ namespace Tests {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 [[nodiscard]] std::optional<qint64> ThreadCpuTimeNanosecondsForRegressionTest();
-[[nodiscard]] std::optional<qint64> ProcessCpuTimeNanosecondsForRegressionTest();
+[[nodiscard]] std::optional<qint64>
+ProcessCpuTimeNanosecondsForRegressionTest();
 
 enum class MainQueueBarrierResult {
 	Completed,

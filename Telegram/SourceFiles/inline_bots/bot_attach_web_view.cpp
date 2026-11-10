@@ -853,12 +853,12 @@ void MeasureAttachMenuBuildStep(
 		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
 	const auto processFinishedAt
 		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
-	const auto elapsedCpu = [](std::optional<qint64> started,
-							   std::optional<qint64> finished) {
-		return started && finished && (*finished >= *started)
-				   ? (*finished - *started)
-				   : qint64(-1);
-	};
+	const auto elapsedCpu
+		= [](std::optional<qint64> started, std::optional<qint64> finished) {
+			  return started && finished && (*finished >= *started)
+						 ? (*finished - *started)
+						 : qint64(-1);
+		  };
 	buildStepMeasured({
 		.startedAt = startedAt,
 		.wallNanoseconds = wallNanoseconds,
@@ -881,11 +881,11 @@ void MeasureAttachMenuBuildStep(
 #endif
 }
 
-void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
-							not_null<Window::SessionController *> controller,
-							Fn<Api::SendAction()> actionFactory,
-							const AttachWebViewBot &bot,
-							Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
+void AddAttachBotMenuAction(
+	not_null<Ui::DropdownMenu *> menu,
+	not_null<Window::SessionController *> controller,
+	Fn<Api::SendAction()> actionFactory, const AttachWebViewBot &bot,
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
 	MeasureAttachMenuBuildStep(buildStepMeasured, [&] {
 		const auto bots = &controller->session().attachWebView();
 		const auto callback = [=] {
@@ -918,12 +918,12 @@ void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
 
 class AttachBotsMenuPopulation final : public QObject {
   public:
-	AttachBotsMenuPopulation(not_null<Ui::DropdownMenu *> menu,
-							 not_null<Window::SessionController *> controller,
-							 Fn<Api::SendAction()> actionFactory,
-							 std::vector<AttachWebViewBot> bots,
-							 Fn<void()> buildComplete,
-				 Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured)
+	AttachBotsMenuPopulation(
+		not_null<Ui::DropdownMenu *> menu,
+		not_null<Window::SessionController *> controller,
+		Fn<Api::SendAction()> actionFactory, std::vector<AttachWebViewBot> bots,
+		Fn<void()> buildComplete,
+		Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured)
 		: QObject(menu), _menu(menu), _controller(controller),
 		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)),
 		  _buildComplete(std::move(buildComplete)),
@@ -3208,9 +3208,8 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
 	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete,
 	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
-	auto result = std::make_unique<Ui::DropdownMenu>(
-		parent,
-		st::dropdownMenuWithIcons);
+	auto result
+		= std::make_unique<Ui::DropdownMenu>(parent, st::dropdownMenuWithIcons);
 	const auto bots = &peer->session().attachWebView();
 	const auto raw = result.get();
 	auto minimal = 0;

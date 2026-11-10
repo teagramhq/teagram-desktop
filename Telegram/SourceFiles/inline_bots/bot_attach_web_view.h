@@ -71,10 +71,10 @@ struct AttachBotsMenuBuildStepTiming final {
 };
 
 enum class PeerType : uint8 {
-	SameBot   = 0x01,
-	Bot       = 0x02,
-	User      = 0x04,
-	Group     = 0x08,
+	SameBot = 0x01,
+	Bot = 0x02,
+	User = 0x04,
+	Group = 0x08,
 	Broadcast = 0x10,
 };
 using PeerTypes = base::flags<PeerType>;

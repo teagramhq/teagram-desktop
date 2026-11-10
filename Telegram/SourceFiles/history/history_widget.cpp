@@ -3496,8 +3496,9 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_attachMenuBuildCountForRegressionTest;
-	const auto recordBuildMeasurement = [=](
-							InlineBots::AttachBotsMenuBuildStepTiming timing) {
+	const auto recordBuildMeasurement = [=](InlineBots::
+												AttachBotsMenuBuildStepTiming
+													timing) {
 		if (timing.mainThreadCpuNanoseconds < 0) {
 			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
 		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
@@ -3536,7 +3537,7 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 		const auto buildProcessFinishedAt
 			= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
 		const auto elapsedCpu = [](std::optional<qint64> started,
-							   std::optional<qint64> finished) {
+								   std::optional<qint64> finished) {
 			return started && finished && (*finished >= *started)
 					   ? (*finished - *started)
 					   : qint64(-1);
@@ -6829,7 +6830,8 @@ HistoryWidget::attachMenuBuildCallbackMeasurementsForRegressionTest() const {
 	return _attachMenuBuildCallbackMeasurementsForRegressionTest;
 }
 
-void HistoryWidget::resetAttachMenuBuildCallbackMeasurementsForRegressionTest() {
+void HistoryWidget::
+	resetAttachMenuBuildCallbackMeasurementsForRegressionTest() {
 	_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
 	_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;
 	_attachMenuBuildCallbackMeasurementsForRegressionTest.clear();

@@ -10770,35 +10770,37 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 
 [[nodiscard]] bool AttachMenuCallbackSchedulerProofRegressionPasses() {
 	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
-														 Qt::ISODateWithMs);
+												 Qt::ISODateWithMs);
 	const auto interval
 		= MainThreadWorkInterval{startedAt, 92'000'000, 12'000'000, 50'000'000};
-	const auto runnableEvidence = std::vector<Core::UiStallWatchdog::StallEvidence>{
-		{
-			.startedAt = startedAt.toString(Qt::ISODateWithMs),
-			.durationMilliseconds = 92,
-			.schedulerTrace = QString(18, QChar(u'R')),
-			.stack = u"runner scheduling regression"_q,
-		},
+	const auto runnableEvidence
+		= std::vector<Core::UiStallWatchdog::StallEvidence>{
+			{
+				.startedAt = startedAt.toString(Qt::ISODateWithMs),
+				.durationMilliseconds = 92,
+				.schedulerTrace = QString(18, QChar(u'R')),
+				.stack = u"runner scheduling regression"_q,
+			},
 	};
-	const auto blockedEvidence = std::vector<Core::UiStallWatchdog::StallEvidence>{
-		{
-			.startedAt = startedAt.toString(Qt::ISODateWithMs),
-			.durationMilliseconds = 92,
-			.schedulerTrace = QString(18, QChar(u'W')),
-			.stack = u"blocked callback regression"_q,
-		},
+	const auto blockedEvidence
+		= std::vector<Core::UiStallWatchdog::StallEvidence>{
+			{
+				.startedAt = startedAt.toString(Qt::ISODateWithMs),
+				.durationMilliseconds = 92,
+				.schedulerTrace = QString(18, QChar(u'W')),
+				.stack = u"blocked callback regression"_q,
+			},
 	};
-	const auto highProcessWork
-		= MainThreadWorkInterval{startedAt, 92'000'000, 12'000'000, 120'000'000};
+	const auto highProcessWork = MainThreadWorkInterval{
+		startedAt, 92'000'000, 12'000'000, 120'000'000};
 	const auto evidence = FindMatchingMainThreadWorkEvidence(
 		interval, runnableEvidence, kMaxChatSwitchNanoseconds, 10);
 	const auto blocked = FindMatchingMainThreadWorkEvidence(
 		interval, blockedEvidence, kMaxChatSwitchNanoseconds, 10);
 	return evidence
-		   && MainThreadWorkIntervalHasSchedulerProof(
-			   interval, evidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds)
+		   && MainThreadWorkIntervalHasSchedulerProof(interval, evidence,
+													  kMaxChatSwitchNanoseconds,
+													  kMaxChatSwitchNanoseconds)
 		   && !MainThreadWorkIntervalHasSchedulerProof(
 			   interval, blocked, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds)
@@ -10810,12 +10812,11 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   kMaxChatSwitchNanoseconds);
 }
 
-[[nodiscard]] bool AttachMenuCallbackWithinBound(
-	qint64 wallNanoseconds,
-	qint64 mainThreadCpuNanoseconds,
-	bool schedulerPreemptionProven) {
-	return (wallNanoseconds >= 0)
-		   && (mainThreadCpuNanoseconds >= 0)
+[[nodiscard]] bool
+AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
+							  qint64 mainThreadCpuNanoseconds,
+							  bool schedulerPreemptionProven) {
+	return (wallNanoseconds >= 0) && (mainThreadCpuNanoseconds >= 0)
 		   && (mainThreadCpuNanoseconds < kMaxChatSwitchNanoseconds)
 		   && ((wallNanoseconds < kMaxChatSwitchNanoseconds)
 			   || schedulerPreemptionProven);
@@ -10964,7 +10965,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto collectSlowAttachMenuCallbacks = [&] {
 		for (const auto &measurement :
-			 historyWidget->attachMenuBuildCallbackMeasurementsForRegressionTest()) {
+			 historyWidget
+				 ->attachMenuBuildCallbackMeasurementsForRegressionTest()) {
 			if (measurement.wallNanoseconds >= kMaxChatSwitchNanoseconds) {
 				slowAttachMenuCallbacks.push_back({
 					measurement.startedAt,
@@ -11125,7 +11127,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto history = data.history(data.user(peerId));
 		const auto buildsBeforePeerSwitch
 			= historyWidget->attachMenuBuildCountForRegressionTest();
-		historyWidget->resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
+		historyWidget
+			->resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
 		auto peerTimer = QElapsedTimer();
 		peerTimer.start();
 		showPeerHistoryMeasured(history);
@@ -11160,9 +11163,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		if (peerBuildCallbackWallNanoseconds < 0) {
 			result.attachMenuUncachedPeerCallbackWallNanoseconds = -1;
 		} else if (result.attachMenuUncachedPeerCallbackWallNanoseconds >= 0) {
-			result.attachMenuUncachedPeerCallbackWallNanoseconds = std::max(
-				result.attachMenuUncachedPeerCallbackWallNanoseconds,
-				peerBuildCallbackWallNanoseconds);
+			result.attachMenuUncachedPeerCallbackWallNanoseconds
+				= std::max(result.attachMenuUncachedPeerCallbackWallNanoseconds,
+						   peerBuildCallbackWallNanoseconds);
 		}
 		collectSlowAttachMenuCallbacks();
 		const auto buildCountMatches
@@ -11314,8 +11317,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	};
 	const auto slowAttachMenuCallbackEvidenceMatched
 		= slowAttachMenuCallbacks.empty()
-		  || WaitForRegressionCondition(
-			  findSlowAttachMenuCallbackEvidence, 1000);
+		  || WaitForRegressionCondition(findSlowAttachMenuCallbackEvidence,
+										1000);
 	result.attachMenuSchedulerPreemptionProven
 		= slowAttachMenuCallbackEvidenceMatched
 		  && AllMainThreadWorkIntervalsHaveSchedulerProof(
@@ -12152,9 +12155,11 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(
 						chatSwitch.attachMenuFirstHoverCallbackWallNanoseconds),
 					static_cast<long long>(
-						chatSwitch.attachMenuInvalidationCallbackWallNanoseconds),
+						chatSwitch
+							.attachMenuInvalidationCallbackWallNanoseconds),
 					static_cast<long long>(
-						chatSwitch.attachMenuUncachedPeerCallbackWallNanoseconds),
+						chatSwitch
+							.attachMenuUncachedPeerCallbackWallNanoseconds),
 					chatSwitch.attachMenuSchedulerPreemptionProven,
 					chatSwitch.attachMenuCacheReused,
 					chatSwitch.attachMenuInvalidationRebuilt,

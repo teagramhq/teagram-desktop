@@ -318,7 +318,8 @@ public:
 	attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest() const;
 	[[nodiscard]] qint64
 	attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest() const;
-	[[nodiscard]] const std::vector<AttachMenuBuildCallbackMeasurementForRegressionTest> &
+	[[nodiscard]] const std::vector<
+		AttachMenuBuildCallbackMeasurementForRegressionTest> &
 	attachMenuBuildCallbackMeasurementsForRegressionTest() const;
 	void resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
 	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
