@@ -15239,6 +15239,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 										   == peerFromUser(userId));
 							};
 							if (!foundBy(u"updatedcontact"_q)
+								|| !foundBy(u"upd"_q)
 								|| !foundBy(u"nameprobe"_q)
 								|| !foundBy(u"probeusername"_q)
 								|| !data.contactsList()
