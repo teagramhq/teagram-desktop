@@ -15064,19 +15064,32 @@ WithDesktopScaleAccount(Main::Domain &domain, UserId selfId, Action action,
 template <typename Function>
 [[nodiscard]] bool WithDesktopScaleWindow(not_null<Main::Account *> account,
 										  Function function) {
-	const auto window
-		= Core::App().ensureSeparateWindowFor(Window::SeparateId(account));
-	if (!window || !window->sessionController()) {
-		std::fprintf(stderr, "Desktop scale check failed: synthetic window "
-							 "did not open.\n");
+	auto &app = Core::App();
+	const auto window = app.activePrimaryWindow();
+	if (!window) {
+		std::fprintf(stderr, "Desktop scale check failed: no primary "
+							 "window.\n");
 		return false;
 	}
-	const auto controller = not_null<Window::Controller *>(window);
-	const auto closeWindow
-		= gsl::finally([=] { Core::App().closeWindow(controller); });
-	controller->widget()->hide();
+	if (window->maybeSession() != &account->session()) {
+		app.windowActivated(window);
+		window->showAccount(account);
+		QCoreApplication::processEvents();
+	}
+	if (window->maybeSession() != &account->session()
+		|| !window->sessionController()) {
+		std::fprintf(stderr, "Desktop scale check failed: the primary window "
+							 "does not show the synthetic account.\n");
+		return false;
+	}
+	static auto shown = false;
+	if (!std::exchange(shown, true)) {
+		window->firstShow();
+		window->finishFirstShow();
+	}
+	window->widget()->hide();
 	return function(
-		not_null<Window::SessionController *>(controller->sessionController()));
+		not_null<Window::SessionController *>(window->sessionController()));
 }
 
 [[nodiscard]] int
