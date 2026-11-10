@@ -333,7 +333,34 @@ def self_test(formatter: str) -> int:
     except Exception as error:
         print(f"::error::Synthetic-upstream formatter regression failed: {error}")
         return 1
+    try:
+        upstream_option_test()
+    except Exception as error:
+        print(f"::error::Upstream-ref CLI regression failed: {error}")
+        return 1
     return 0
+
+
+def upstream_option_test() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--formatter",
+            "__missing_clang_format_for_cli_test__",
+            "--upstream-ref",
+            "refs/upstream/telegramdesktop/heads/dev",
+            "--self-test",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    if "unrecognized arguments: --upstream-ref" in output:
+        raise RuntimeError("checker rejected --upstream-ref")
+    if "Formatter executable not found: __missing_clang_format_for_cli_test__" not in output:
+        raise RuntimeError(f"checker did not reach formatter lookup with --upstream-ref: {output.strip()}")
 
 
 def history_test(formatter: str) -> None:

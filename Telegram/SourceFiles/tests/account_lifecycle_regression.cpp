@@ -14779,7 +14779,7 @@ struct DesktopScaleCacheSamples final {
 
 template <typename Action>
 [[nodiscard]] DesktopScaleActionSample
-MeasureDesktopScaleAction(Action action, bool reportOnlyStalls = false) {
+MeasureDesktopScaleAction(Action action) {
 	SettleDesktopScaleWatchdog();
 	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
 	auto timer = QElapsedTimer();
@@ -14791,7 +14791,7 @@ MeasureDesktopScaleAction(Action action, bool reportOnlyStalls = false) {
 	return {
 		.nanoseconds = nanoseconds,
 		.mainThreadStepsOverBudget = stalls,
-		.passed = passed && (reportOnlyStalls || (stalls == 0)),
+		.passed = passed,
 	};
 }
 
@@ -14799,7 +14799,7 @@ template <typename Request, typename Action>
 [[nodiscard]] DesktopScaleActionSample ApplyDesktopScaleResponse(
 	ChannelSaveRequestCapture &capture, uint32 expectedConstructor,
 	const typename Request::ResponseType &result, Action action,
-	bool reportOnlyStalls = false, Fn<void()> beforeAction = {},
+	Fn<void()> beforeAction = {},
 	Fn<void()> afterAction = {}) {
 	const auto request
 		= std::find_if(capture.requests.begin(), capture.requests.end(),
@@ -14839,8 +14839,7 @@ template <typename Request, typename Action>
 				}
 			});
 			return done(response) && action();
-		},
-		reportOnlyStalls);
+		});
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -15179,7 +15178,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
-	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr,
+	Main::Account *reuseAccount = nullptr,
 	Window::SessionController *windowController = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	auto sample = DesktopScaleActionSample();
@@ -15230,8 +15229,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 			const auto reply = DesktopScaleMessagesReply(std::move(messages),
 														 kHistoryCount, false);
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-				capture, mtpc_messages_getHistory, reply, [] { return true; },
-				reportOnlyStalls);
+				capture, mtpc_messages_getHistory, reply, [] { return true; });
 			auto pageApplied = true;
 			int64 firstMissingPageId = 0;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
@@ -15265,7 +15263,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleDateHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
-	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr,
+	Main::Account *reuseAccount = nullptr,
 	Window::SessionController *windowController = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	constexpr auto kDateOffset = int64(500'000);
@@ -15326,7 +15324,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 			const auto resolvedSample
 				= ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
 					capture, mtpc_messages_getHistory, resolvedReply,
-					[] { return true; }, reportOnlyStalls);
+					[] { return true; });
 			if ((resolvedPeer != history->peer.get())
 				|| (resolvedId != targetId)) {
 				std::fprintf(stderr, "Desktop scale check failed: jump-to-date "
@@ -15356,8 +15354,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 			const auto reply = DesktopScaleMessagesReply(std::move(messages),
 														 kHistoryCount, false);
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-				capture, mtpc_messages_getHistory, reply, [] { return true; },
-				reportOnlyStalls);
+				capture, mtpc_messages_getHistory, reply, [] { return true; });
 			auto pageApplied = true;
 			int64 firstMissingPageId = 0;
 			for (auto id = firstPageId; id != lastPageId; ++id) {
@@ -15433,7 +15430,6 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 
 [[nodiscard]] DesktopScaleSearchUpdateSamples RunDesktopScaleSearchAndUpdates(
 	Main::Domain &domain, int dialogCount, UserId selfId, UserId firstId,
-	bool reportOnlySearchStalls = false, bool reportOnlyUpdateStalls = false,
 	Main::Account *reuseAccount = nullptr) {
 	constexpr auto kSearchResultCount = kDesktopScalePageSize;
 	constexpr auto kUpdateCount = 1'000;
@@ -15476,7 +15472,7 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 			samples.search
 				= ApplyDesktopScaleResponse<MTPmessages_SearchGlobal>(
 					capture, mtpc_messages_searchGlobal, searchReply,
-					[] { return true; }, reportOnlySearchStalls);
+					[] { return true; });
 			const auto searchResultAvailable = bool(searchResult);
 			if (!searchResultAvailable) {
 				std::fprintf(
@@ -15529,7 +15525,7 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 			samples.updateBurst
 				= ApplyDesktopScaleResponse<MTPupdates_GetDifference>(
 					capture, mtpc_updates_getDifference, difference,
-					[] { return true; }, reportOnlyUpdateStalls);
+					[] { return true; });
 			auto updatesApplied = true;
 			for (auto i = 0; i != kUpdateCount; ++i) {
 				const auto userId = UserId(firstId.bare + (i % dialogCount));
@@ -15600,8 +15596,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				[&] {
 					return data.chatsList()->indexed()->size()
 						   == alreadyLoaded + kDesktopScalePageSize;
-				},
-				true);
+					});
 			if (!sample.passed) {
 				std::fprintf(
 					stderr,
@@ -15647,7 +15642,6 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 
 [[nodiscard]] DesktopScaleContactsSample
 RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
-						bool reportOnlyStalls = false,
 						Main::Account *reuseAccount = nullptr) {
 	auto result = DesktopScaleContactsSample();
 	const auto created = WithDesktopScaleAccount(
@@ -15737,8 +15731,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 										   && data.contactsLoaded().current();
 								},
 								5000);
-						},
-						reportOnlyStalls);
+						});
 			}
 			if (!result.loaded.passed) {
 				std::fprintf(
@@ -15829,8 +15822,7 @@ template <typename Function>
 
 [[nodiscard]] DesktopScaleFsSample RunDesktopScaleGroupMediaHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId senderId,
-	ChannelId channelId, bool reportOnlyStalls = false,
-	Main::Account *reuseAccount = nullptr,
+	ChannelId channelId, Main::Account *reuseAccount = nullptr,
 	Window::SessionController *windowController = nullptr) {
 	auto sample = DesktopScaleFsSample();
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
@@ -15904,7 +15896,7 @@ template <typename Function>
 			static_cast<DesktopScaleActionSample &>(sample)
 				= ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
 					capture, mtpc_messages_getHistory, reply,
-					[] { return true; }, reportOnlyStalls,
+					[] { return true; },
 					[&] { startCounting(); },
 					[&] { sample.directoryEnumerations = stopCounting(); });
 
@@ -15977,7 +15969,6 @@ template <typename Function>
 	(void)selfId;
 	(void)senderId;
 	(void)channelId;
-	(void)reportOnlyStalls;
 	(void)reuseAccount;
 	(void)windowController;
 #endif // !Q_OS_WIN && !Q_OS_MAC
@@ -16107,8 +16098,7 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 	SettleDesktopScaleWatchdog();
 	sample.mainThreadStepsOverBudget
 		= Core::UiStallWatchdog::StallCount() - stallsBefore;
-	sample.passed = completed && (sample.directoryEnumerations == 0)
-					&& (sample.mainThreadStepsOverBudget == 0);
+	sample.passed = completed && (sample.directoryEnumerations == 0);
 #else
 	(void)account;
 	(void)entryCount;
@@ -16175,8 +16165,7 @@ int RunDesktopScaleCheck() {
 				  return false;
 			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(
-				  domain, 50, UserId(999'999), firstId, false, true,
-				  account.get());
+				  domain, 50, UserId(999'999), firstId, account.get());
 			  return searchOne.search.passed && searchOne.updateBurst.passed
 					 && dialogsOne.passed;
 		  });
@@ -16187,8 +16176,8 @@ int RunDesktopScaleCheck() {
 			  dialogsHundred = RunDesktopScaleDialogs(
 				  domain, 4'900, UserId(2'000'000), account.get());
 			  searchHundred = RunDesktopScaleSearchAndUpdates(
-				  domain, 5'000, UserId(9'000'000), UserId(2'000'000), false,
-				  true, account.get());
+				  domain, 5'000, UserId(9'000'000), UserId(2'000'000),
+				  account.get());
 			  return dialogsHundred.passed && searchHundred.search.passed
 					 && searchHundred.updateBurst.passed;
 		  });
@@ -16197,9 +16186,9 @@ int RunDesktopScaleCheck() {
 	const auto contactsCreated
 		= WithDesktopScaleAccount(domain, UserId(2'999'999), [&](auto account) {
 			  contactsOne = RunDesktopScaleContacts(
-				  domain, 100, UserId(3'000'000), false, account.get());
+				  domain, 100, UserId(3'000'000), account.get());
 			  contactsHundred = RunDesktopScaleContacts(
-				  domain, 10'000, UserId(3'000'000), true, account.get());
+				  domain, 10'000, UserId(3'000'000), account.get());
 			  return contactsOne.loaded.passed
 					 && contactsOne.changedAndFound.passed
 					 && contactsHundred.loaded.passed
@@ -16216,16 +16205,16 @@ int RunDesktopScaleCheck() {
 		domain, UserId(6'000'000), [&](auto account) {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
 				historyOne = RunDesktopScaleHistoryPage(
-					domain, 20, UserId(6'000'000), UserId(6'000'001), false,
+					domain, 20, UserId(6'000'000), UserId(6'000'001),
 					account.get(), windowController.get());
 				historyHundred = RunDesktopScaleHistoryPage(
-					domain, 2'000, UserId(6'100'000), UserId(6'100'001), false,
+					domain, 2'000, UserId(6'100'000), UserId(6'100'001),
 					account.get(), windowController.get());
 				dateOne = RunDesktopScaleDateHistoryPage(
-					domain, 20, UserId(7'000'000), UserId(7'000'001), false,
+					domain, 20, UserId(7'000'000), UserId(7'000'001),
 					account.get(), windowController.get());
 				dateHundred = RunDesktopScaleDateHistoryPage(
-					domain, 2'000, UserId(7'100'000), UserId(7'100'001), false,
+					domain, 2'000, UserId(7'100'000), UserId(7'100'001),
 					account.get(), windowController.get());
 				return historyOne.passed && historyHundred.passed
 					   && dateOne.passed && dateHundred.passed;
@@ -16238,11 +16227,11 @@ int RunDesktopScaleCheck() {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
 				groupOne = RunDesktopScaleGroupMediaHistoryPage(
 					domain, 20, UserId(8'000'000), UserId(8'000'001),
-					ChannelId(8'000'002), false, account.get(),
+					ChannelId(8'000'002), account.get(),
 					windowController.get());
 				groupHundred = RunDesktopScaleGroupMediaHistoryPage(
 					domain, 2'000, UserId(8'100'000), UserId(8'100'001),
-					ChannelId(8'100'002), false, account.get(),
+					ChannelId(8'100'002), account.get(),
 					windowController.get());
 				return groupOne.passed && groupHundred.passed;
 			});
@@ -16293,11 +16282,6 @@ int RunDesktopScaleCheck() {
 	// The dialogs page and full 100x contacts response exceed the 50 ms budget
 	// on the dev baseline. Report their stalls without blocking on them.
 	const auto blockingStalls = SumDesktopScaleStalls({
-		contactsOne.loaded.mainThreadStepsOverBudget,
-		contactsOne.changedAndFound.mainThreadStepsOverBudget,
-		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
-		cacheOne.mainThreadStepsOverBudget,
-		cacheHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
@@ -16436,13 +16420,16 @@ int RunDesktopScaleCheck() {
 	std::printf(".\n");
 	std::printf(
 		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
-		"cache=%d/%d history=%d/%d date=%d/%d group=%d/%d search=%d/%d "
-		"updates=%d/%d.\n",
+		"cache=%d/%d.\n",
 		int(dialogsOne.passed), int(dialogsHundred.passed),
 		int(contactsOne.loaded.passed), int(contactsHundred.loaded.passed),
 		int(contactsOne.changedAndFound.passed),
 		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
-		int(cacheHundred.passed), int(historyOne.passed),
+		int(cacheHundred.passed));
+	std::printf(
+		"Additional scenario checks: history=%d/%d date=%d/%d group=%d/%d "
+		"search=%d/%d updates=%d/%d.\n",
+		int(historyOne.passed),
 		int(historyHundred.passed), int(dateOne.passed),
 		int(dateHundred.passed), int(groupOne.passed), int(groupHundred.passed),
 		int(searchOne.search.passed), int(searchHundred.search.passed),

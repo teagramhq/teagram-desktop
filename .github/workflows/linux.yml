@@ -23,6 +23,9 @@ on:
       - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/verify_built_sha.sh'
       - '.github/scripts/test_verify_built_sha.sh'
+      - '.github/scripts/desktop_scale_check.py'
+      - '.github/scripts/test_desktop_scale_check.py'
+      - '.github/scripts/run_desktop_scale_check.sh'
       - '!snap/**'
       - '!Telegram/build/**'
       - 'Telegram/build/docker/centos_env/**'
@@ -655,66 +658,29 @@ jobs:
             fi
           '
 
+      - name: Desktop scale check tests.
+        if: env.ONLY_CACHE == 'false'
+        run: python3 .github/scripts/test_desktop_scale_check.py
+
       - name: Desktop data scale check.
+        id: desktop-scale
         if: env.ONLY_CACHE == 'false'
         shell: bash
-        run: |
-          set +e
-          docker run --rm \
-          -u $(id -u) \
-          -v $PWD:/usr/src/tdesktop \
-          $IMAGE_TAG \
-          bash -lc '
-            cd /usr/src/tdesktop
-            scale_home=$(mktemp -d /tmp/tdesktop-scale-check.XXXXXX)
-            mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache" "$scale_home/work"
-            export HOME="$scale_home"
-            export XDG_CONFIG_HOME="$scale_home/config"
-            export XDG_DATA_HOME="$scale_home/data"
-            export XDG_CACHE_HOME="$scale_home/cache"
-            export QT_QPA_PLATFORM=offscreen
-            export ALSOFT_DRIVERS=null
-            export TDESKTOP_DESKTOP_SCALE_CHECK=1
-            export TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1
-            export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
-            app_output="$scale_home/app-output.txt"
-            /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
-              -workdir "$scale_home/work/" > "$app_output" 2>&1
-            app_status=$?
-            cat "$app_output"
-            if ! grep -Fqx DESKTOP_SCALE_REPORT_END "$app_output"; then
-              # The client logs to its working directory, not to stdout, and
-              # the container is removed on exit: print what a silent exit
-              # left behind before it is lost.
-              echo "::group::Scale check exited with status $app_status without a report"
-              find "$scale_home/work/DebugLogs" -type f -name "log_*.txt" \
-                -print -exec tail -n 30 {} \;
-              echo "::endgroup::"
-              if test "$app_status" -ge 128; then
-                echo "::group::Backtrace of the crashed scale check"
-                unset LD_PRELOAD
-                gdb -batch -ex "set environment LD_PRELOAD /usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so" \
-                  -ex "set debuginfod enabled off" \
-                  -ex "handle SIGPIPE nostop noprint pass" \
-                  -ex "handle SIGUSR2 nostop noprint pass" \
-                  -ex run -ex "bt 40" -ex "thread apply all bt 12" \
-                  --args /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
-                  -workdir "$scale_home/work2/" 2>&1 | grep -v "^Downloading separate\|^\[New Thread\|^\[Detaching" | tail -n 150
-                echo "::endgroup::"
-              fi
-            fi
-            exit "$app_status"
-          ' | tee "$RUNNER_TEMP/desktop-scale-check.log"
-          scale_status=${PIPESTATUS[0]}
-          scale_report=$(sed -n '/^DESKTOP_SCALE_REPORT_BEGIN$/,/^DESKTOP_SCALE_REPORT_END$/p' \
-            "$RUNNER_TEMP/desktop-scale-check.log")
-          if test -n "$scale_report"; then
-            printf '%s\n' "$scale_report" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error::Desktop scale check did not emit its report table."
-            scale_status=1
-          fi
-          exit "$scale_status"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DESKTOP_SCALE_RUN_BUDGET_SECONDS: "180"
+        run: bash .github/scripts/run_desktop_scale_check.sh
+
+      - name: Record dev desktop scale timings.
+        if: always() && github.ref == 'refs/heads/dev' && steps.desktop-scale.outputs.recorded == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-scale-dev
+          path: ${{ runner.temp }}/desktop-scale-sample.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
 
       - name: Sticker set API smoke.
         if: env.ONLY_CACHE == 'false'
