@@ -3123,6 +3123,57 @@ void Session::applyDialogs(
 		const QVector<MTPMessage> &messages,
 		const QVector<MTPDialog> &dialogs,
 		std::optional<int> count) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList*>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList*> list) {
+		const auto indexed = list->indexed();
+		if (!ranges::contains(frozen, indexed)) {
+			indexed->freeze();
+			frozen.push_back(indexed);
+		}
+	};
+	if (dialogs.size() > 1) {
+		for (const auto &dialog : dialogs) {
+			dialog.match([&](const MTPDdialog &data) {
+				if (const auto folderId = data.vfolder_id();
+					folderId && folderId->v) {
+					folder(folderId->v);
+				}
+			}, [&](const MTPDdialogFolder &data) {
+				processFolder(data.vfolder());
+			}, [](const MTPDdialogCommunity &) {
+			});
+		}
+		freezeList(&_chatsList);
+		for (const auto &entry : _folders) {
+			freezeList(entry.second->chatsList());
+		}
+		if (requestFolder) {
+			freezeList(requestFolder->chatsList());
+		}
+		for (const auto &filter : chatsFilters().list()) {
+			freezeList(chatsFilters().chatsList(filter.id()));
+		}
+		for (const auto &dialog : dialogs) {
+			dialog.match([&](const MTPDdialog &data) {
+				if (const auto peerId = peerFromMTP(data.vpeer())) {
+					if (const auto history = historyLoaded(peerId)) {
+						freezeList(chatsListFor(history));
+					}
+				}
+			}, [&](const MTPDdialogCommunity &data) {
+				const auto channelId = ChannelId(data.vcommunity_id().v);
+				if (const auto channel = channelLoaded(channelId)) {
+					freezeList(chatsListFor(history(channel)));
+				}
+			}, [](const MTPDdialogFolder &) {
+			});
+		}
+	}
+	const auto unfreeze = gsl::finally([&] {
+		for (const auto &list : frozen) {
+			list->unfreeze();
+		}
+	});
 	processMessages(messages, NewMessageType::Last);
 	for (const auto &dialog : dialogs) {
 		dialog.match([&](const auto &data) {

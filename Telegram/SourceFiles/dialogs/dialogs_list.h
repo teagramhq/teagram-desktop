@@ -24,6 +24,7 @@ public:
 	~List() = default;
 
 	void clear() {
+		_freezeDepth = 0;
 		_frozen = false;
 		_pendingAdjust.clear();
 		_rows.clear();
@@ -79,7 +80,6 @@ public:
 private:
 	void adjustByName(not_null<Row*> row);
 	[[nodiscard]] bool sortedByDate() const;
-	void sortByDate();
 	void rotate(
 		std::vector<not_null<Row*>>::iterator first,
 		std::vector<not_null<Row*>>::iterator middle,
@@ -88,6 +88,7 @@ private:
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
 	float64 _narrowRatio = 0.;
+	int _freezeDepth = 0;
 	bool _frozen = false;
 	std::vector<not_null<Row*>> _rows;
 	std::map<Key, std::unique_ptr<Row>> _rowByKey;

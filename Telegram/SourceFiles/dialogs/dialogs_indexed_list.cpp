@@ -30,6 +30,7 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		result.letters.emplace(ch, j->second.addToEnd(key));
 	}
@@ -46,6 +47,7 @@ Row *IndexedList::addByName(Key key) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		j->second.addByName(key);
 	}
@@ -150,6 +152,7 @@ void IndexedList::adjustByName(
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
 				j = _index.emplace(ch, _sortMode, _filterId).first;
+				freezeNewIndexList(j->second);
 			}
 			j->second.addByName(key);
 		}
@@ -186,6 +189,7 @@ void IndexedList::adjustNames(
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		auto row = j->second.addToEnd(key);
 		if (_sortMode == SortMode::Date) {
@@ -194,7 +198,14 @@ void IndexedList::adjustNames(
 	}
 }
 
+void IndexedList::freezeNewIndexList(List &list) {
+	for (auto i = 0; i != _freezeDepth; ++i) {
+		list.freeze();
+	}
+}
+
 void IndexedList::freeze() {
+	++_freezeDepth;
 	_list.freeze();
 	for (auto &[ch, list] : _index) {
 		list.freeze();
@@ -202,6 +213,10 @@ void IndexedList::freeze() {
 }
 
 void IndexedList::unfreeze() {
+	if (!_freezeDepth) {
+		return;
+	}
+	--_freezeDepth;
 	_list.unfreeze();
 	for (auto &[ch, list] : _index) {
 		list.unfreeze();
@@ -219,6 +234,7 @@ void IndexedList::remove(Key key, Row *replacedBy) {
 }
 
 void IndexedList::clear() {
+	_freezeDepth = 0;
 	_list.clear();
 	_index.clear();
 }

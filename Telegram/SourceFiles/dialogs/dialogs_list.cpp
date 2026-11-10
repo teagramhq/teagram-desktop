@@ -115,10 +115,17 @@ void List::adjustByDate(not_null<Row*> row) {
 }
 
 void List::freeze() {
+	++_freezeDepth;
 	_frozen = true;
 }
 
 void List::unfreeze() {
+	if (!_freezeDepth) {
+		return;
+	}
+	if (--_freezeDepth) {
+		return;
+	}
 	_frozen = false;
 	auto pending = base::take(_pendingAdjust);
 	if (pending.empty()) {
@@ -127,11 +134,43 @@ void List::unfreeze() {
 		adjustByDate(*pending.begin());
 		return;
 	}
-	for (const auto &row : pending) {
-		adjustByDate(row);
+	if (sortedByDate()) {
+		return;
 	}
-	if (!sortedByDate()) {
-		sortByDate();
+	auto pendingByIndex = std::vector<not_null<Row*>>(
+		pending.begin(), pending.end());
+	ranges::sort(pendingByIndex, [](Row *a, Row *b) {
+		return a->index() < b->index();
+	});
+	auto adjusted = pendingByIndex;
+	ranges::stable_sort(adjusted, [&](Row *a, Row *b) {
+		return a->sortKey(_filterId) > b->sortKey(_filterId);
+	});
+	auto rows = std::vector<not_null<Row*>>();
+	rows.reserve(_rows.size());
+	auto nextAdjusted = begin(adjusted);
+	auto nextPending = begin(pendingByIndex);
+	for (const auto row : _rows) {
+		if ((nextPending != end(pendingByIndex))
+			&& (row == *nextPending)) {
+			++nextPending;
+			continue;
+		}
+		while ((nextAdjusted != end(adjusted))
+			&& ((*nextAdjusted)->sortKey(_filterId)
+				> row->sortKey(_filterId))) {
+			rows.push_back(*nextAdjusted++);
+		}
+		rows.push_back(row);
+	}
+	rows.insert(rows.end(), nextAdjusted, end(adjusted));
+	_rows = std::move(rows);
+	auto top = 0;
+	for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
+		const auto row = _rows[i];
+		row->_index = i;
+		row->_top = top;
+		top += row->height();
 	}
 }
 
@@ -144,21 +183,6 @@ bool List::sortedByDate() const {
 		}
 	}
 	return true;
-}
-
-void List::sortByDate() {
-	Expects(_sortMode == SortMode::Date);
-
-	ranges::stable_sort(_rows, [&](Row *a, Row *b) {
-		return a->sortKey(_filterId) > b->sortKey(_filterId);
-	});
-	auto top = 0;
-	for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
-		const auto row = _rows[i];
-		row->_index = i;
-		row->_top = top;
-		top += row->height();
-	}
 }
 
 bool List::updateHeight(Key key, float64 narrowRatio) {

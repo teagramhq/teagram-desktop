@@ -87,6 +87,7 @@ public:
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
 private:
+	void freezeNewIndexList(List &list);
 	void adjustByName(
 		Key key,
 		const base::flat_set<QChar> &oldChars);
@@ -97,6 +98,7 @@ private:
 
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
+	int _freezeDepth = 0;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
 
