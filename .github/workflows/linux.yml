@@ -675,6 +675,7 @@ jobs:
             export QT_QPA_PLATFORM=offscreen
             export ALSOFT_DRIVERS=null
             export TDESKTOP_DESKTOP_SCALE_CHECK=1
+            export TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1
             export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
             app_output="$scale_home/app-output.txt"
             /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
