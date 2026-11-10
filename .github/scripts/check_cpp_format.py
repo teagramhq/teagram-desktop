@@ -129,6 +129,8 @@ def history_test(formatter: str) -> None:
         git("add", "profile.cpp")
         git("commit", "--quiet", "-m", "base")
         base = git("rev-parse", "HEAD")
+        git("update-ref", "refs/upstream/telegramdesktop/heads/dev", base)
+        git("update-ref", "refs/upstream/telegramdesktop/tags/v7.4.1", base)
 
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             empty_result = check_source_range(
@@ -189,6 +191,10 @@ def history_test(formatter: str) -> None:
                 str(root),
                 "--formatter",
                 formatter,
+                "--upstream-ref",
+                "refs/upstream/telegramdesktop/heads/dev",
+                "--upstream-ref",
+                "refs/upstream/telegramdesktop/tags/v7.4.1",
                 "--allow-empty",
                 "--tested-head",
                 tested_head,
@@ -388,6 +394,13 @@ def main() -> int:
     parser.add_argument("--formatter", default="clang-format")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument(
+        "--upstream-ref",
+        action="append",
+        default=[],
+        metavar="REF",
+        help="upstream history ref fetched by CI (validated; may be repeated)",
+    )
+    parser.add_argument(
         "--allow-empty",
         action="store_true",
         help="pass when a source range has no added C/C++ lines",
@@ -432,6 +445,8 @@ def main() -> int:
         root = args.repo_root.resolve()
         tested_head = resolve_commit(root, args.tested_head)
         checked_out_head = resolve_commit(root, "HEAD")
+        for upstream_ref in args.upstream_ref:
+            resolve_commit(root, upstream_ref)
         manifest["resolved_tested_head"] = tested_head
         manifest["checked_out_head"] = checked_out_head
         if tested_head != checked_out_head:
