@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "intro/intro_server_discovery.h"
+#include "lang/lang_keys.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_server_discovery.h"
 
@@ -37,6 +38,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif
 
 #include <utility>
+
+namespace Lang::details {
+
+QString Current(ushort key) {
+	if (key == tr::lng_intro_server_browser_only.base) {
+		return u"This server works only in the browser."_q;
+	} else if (key == tr::lng_intro_server_connect_failed.base) {
+		return u"Could not connect to this server. Check the address and your connection, then try again."_q;
+	}
+	return QString();
+}
+
+} // namespace Lang::details
 
 namespace {
 
@@ -1629,22 +1643,17 @@ TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
 	auto navigations = 0;
 	auto reconnects = 0;
 	Intro::details::HandleServerDiscoveryResult(
-		flow, result, u"This server works only in the browser."_q,
-		u"Try again"_q,
-		{
-			.browserOnly =
-				[&](auto value) {
-					++refused;
-					presentation = std::move(value);
-				},
-			.invalid = [&] { ++invalid; },
-			.ready =
-				[&](MTP::ServerDiscoveryResult) {
-					++ready;
-					++bindings;
-					++navigations;
-					++reconnects;
-				},
+		flow, result,
+		[&](auto value) {
+			++refused;
+			presentation = std::move(value);
+		},
+		[&] { ++invalid; },
+		[&](MTP::ServerDiscoveryResult) {
+			++ready;
+			++bindings;
+			++navigations;
+			++reconnects;
 		});
 
 	CHECK_EQ(refused, 1);
@@ -1654,7 +1663,8 @@ TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
 	CHECK_EQ(navigations, 0);
 	CHECK_EQ(reconnects, 0);
 	CHECK_EQ(presentation.message, u"This server works only in the browser."_q);
-	CHECK_EQ(presentation.continueText, u"Try again"_q);
+	CHECK_EQ(presentation.message, tr::lng_intro_server_browser_only(tr::now));
+	CHECK(presentation.message != tr::lng_intro_server_connect_failed(tr::now));
 	CHECK(presentation.selectionEditable);
 	CHECK(presentation.continueEnabled);
 	CHECK(!flow.active());
@@ -1671,6 +1681,46 @@ TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
 		}));
 	CHECK(flow.active());
 	CHECK_EQ(publicAttempts, 2);
+}
+
+TEST_CASE(ServerDiscoveryResultRoutesReadyAndInvalidResponses) {
+	const auto selected = CheckServerSelection(u"first.example.com"_q);
+	const auto valid = ParsePublicDiscoveryResponse(
+		selected,
+		PublicResponseWithWebSocket(u"mtproto.example.com:443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(valid.valid());
+
+	auto ready = 0;
+	auto invalid = 0;
+	auto browserOnly = 0;
+	auto flow = Intro::details::ServerDiscoveryFlow();
+	const auto onBrowserOnly
+		= [&](Intro::details::ServerDiscoveryFailurePresentation) {
+			  ++browserOnly;
+		  };
+	const auto onInvalid = [&] { ++invalid; };
+	const auto onReady = [&](MTP::ServerDiscoveryResult result) {
+		CHECK(result.valid());
+		++ready;
+	};
+	Intro::details::HandleServerDiscoveryResult(flow, valid, onBrowserOnly,
+												onInvalid, onReady);
+	CHECK_EQ(ready, 1);
+	CHECK_EQ(invalid, 0);
+	CHECK_EQ(browserOnly, 0);
+
+	ready = 0;
+	invalid = 0;
+	browserOnly = 0;
+	const auto malformed
+		= ParsePublicDiscoveryResponse(selected, QByteArray("not-json"));
+	CHECK(!malformed.valid());
+	Intro::details::HandleServerDiscoveryResult(flow, malformed, onBrowserOnly,
+												onInvalid, onReady);
+	CHECK_EQ(invalid, 1);
+	CHECK_EQ(ready, 0);
+	CHECK_EQ(browserOnly, 0);
 }
 
 TEST_CASE(DiscoveryJsonRejectsNonBooleanBrowserOnlyFlag) {

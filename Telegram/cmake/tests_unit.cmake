@@ -39,6 +39,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 target_include_directories(test_unit PRIVATE ${src_loc})
+target_include_directories(test_unit PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
+add_dependencies(test_unit td_lang)
 find_package(Python3 REQUIRED)
 file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" teagram_test_python_executable)
 file(TO_CMAKE_PATH

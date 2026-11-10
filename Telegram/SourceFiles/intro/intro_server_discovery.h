@@ -62,22 +62,21 @@ private:
 
 struct ServerDiscoveryFailurePresentation {
 	QString message;
-	QString continueText;
 	bool selectionEditable = false;
 	bool continueEnabled = false;
 };
 
-struct ServerDiscoveryResultHandlers {
-	std::function<void(ServerDiscoveryFailurePresentation)> browserOnly;
-	std::function<void()> invalid;
-	std::function<void(MTP::ServerDiscoveryResult)> ready;
-};
+using ServerDiscoveryBrowserOnlyHandler
+	= std::function<void(ServerDiscoveryFailurePresentation)>;
+using ServerDiscoveryInvalidHandler = std::function<void()>;
+using ServerDiscoveryReadyHandler
+	= std::function<void(MTP::ServerDiscoveryResult)>;
 
 void HandleServerDiscoveryResult(ServerDiscoveryFlow &flow,
 								 MTP::ServerDiscoveryResult result,
-								 QString browserOnlyMessage,
-								 QString continueText,
-								 ServerDiscoveryResultHandlers handlers);
+								 ServerDiscoveryBrowserOnlyHandler browserOnly,
+								 ServerDiscoveryInvalidHandler invalid,
+								 ServerDiscoveryReadyHandler ready);
 
 class ServerWidgetDiscovery final : public QObject {
 public:

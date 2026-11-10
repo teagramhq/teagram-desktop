@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_server_discovery.h"
 
+#include "lang/lang_keys.h"
+
 #include <QtCore/QSocketNotifier>
 #include <QtNetwork/QNetworkInterface>
 
@@ -376,21 +378,20 @@ void ServerDiscoveryFlow::cancel() {
 
 void HandleServerDiscoveryResult(ServerDiscoveryFlow &flow,
 								 MTP::ServerDiscoveryResult result,
-								 QString browserOnlyMessage,
-								 QString continueText,
-								 ServerDiscoveryResultHandlers handlers) {
+								 ServerDiscoveryBrowserOnlyHandler browserOnly,
+								 ServerDiscoveryInvalidHandler invalid,
+								 ServerDiscoveryReadyHandler ready) {
 	if (result.status == MTP::ServerDiscoveryResponseStatus::BrowserOnly) {
 		flow.finish();
-		handlers.browserOnly({
-			.message = std::move(browserOnlyMessage),
-			.continueText = std::move(continueText),
+		browserOnly({
+			.message = tr::lng_intro_server_browser_only(tr::now),
 			.selectionEditable = true,
 			.continueEnabled = true,
 		});
 	} else if (!result) {
-		handlers.invalid();
+		invalid();
 	} else {
-		handlers.ready(std::move(result));
+		ready(std::move(result));
 	}
 }
 

@@ -756,34 +756,26 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 	const auto status = result.status;
 	HandleServerDiscoveryResult(
 		_discoveryFlow, std::move(result),
-		tr::lng_intro_server_browser_only(tr::now),
-		tr::lng_intro_server_try_again(tr::now),
-		{
-			.browserOnly =
-				[=](ServerDiscoveryFailurePresentation presentation) {
-					resetAfterDiscoveryFailure(std::move(presentation));
-				},
-			.invalid =
-				[=] {
-					LOG(("Server discovery response invalid: status %1.")
-							.arg(int(status)));
-					discoveryFailed(false);
-				},
-			.ready =
-				[=](MTP::ServerDiscoveryResult result) {
-					if (_reply) {
-						const auto reply = _reply;
-						_reply = nullptr;
-						reply->deleteLater();
-					}
-					if (result.policy
-						== MTP::ServerDiscoveryPolicy::PublicHttps) {
-						resolvePublicEndpoint(std::move(result));
-					} else {
-						_deadline->stop();
-						commitBinding(std::move(result));
-					}
-				},
+		[=](ServerDiscoveryFailurePresentation presentation) {
+			resetAfterDiscoveryFailure(std::move(presentation));
+		},
+		[=] {
+			LOG(("Server discovery response invalid: status %1.")
+					.arg(int(status)));
+			discoveryFailed(false);
+		},
+		[=](MTP::ServerDiscoveryResult result) {
+			if (_reply) {
+				const auto reply = _reply;
+				_reply = nullptr;
+				reply->deleteLater();
+			}
+			if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
+				resolvePublicEndpoint(std::move(result));
+			} else {
+				_deadline->stop();
+				commitBinding(std::move(result));
+			}
 		});
 }
 
@@ -870,7 +862,6 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 							 : tr::lng_intro_server_unsupported(tr::now);
 	resetAfterDiscoveryFailure({
 		.message = message,
-		.continueText = tr::lng_intro_server_try_again(tr::now),
 		.selectionEditable = true,
 		.continueEnabled = true,
 	});
@@ -899,7 +890,7 @@ void ServerWidget::resetAfterDiscoveryFailure(
 	}
 	_address->rawTextEdit()->setReadOnly(!presentation.selectionEditable);
 	_continue->setDisabled(!presentation.continueEnabled);
-	_continue->setText(rpl::single(std::move(presentation.continueText)));
+	_continue->setText(tr::lng_intro_server_try_again());
 	_address->setAccessibleDescription(presentation.message);
 	showStatus(presentation.message, true);
 	_address->setFocusFast();
