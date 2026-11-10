@@ -97,7 +97,6 @@ private:
   int _freezeDepth = 0;
   List _list, _empty;
   base::flat_map<QChar, List> _index;
-
 };
 
 } // namespace Dialogs
