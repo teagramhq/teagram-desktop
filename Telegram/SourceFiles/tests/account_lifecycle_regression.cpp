@@ -15332,7 +15332,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 												   mainPendingPageOrder);
 			}
 			const auto letterList
-				= data.chatsList()->indexed()->filtered(QChar('Q'));
+				= data.chatsList()->indexed()->filtered(QChar('q'));
 			const auto letterPendingPageOrder
 				= letterList
 					  ? DesktopScalePageOrder(*letterList, requestPageOrder)
@@ -15355,7 +15355,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 					"main-after-unfreeze", expectedPageOrder, actualPageOrder);
 			}
 			const auto letterListAfter
-				= data.chatsList()->indexed()->filtered(QChar('Q'));
+				= data.chatsList()->indexed()->filtered(QChar('q'));
 			const auto letterPageOrder
 				= letterListAfter ? DesktopScalePageOrder(*letterListAfter,
 														  expectedPageOrder)
