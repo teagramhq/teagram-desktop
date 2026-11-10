@@ -96,6 +96,7 @@ target_precompile_headers(test_unit PRIVATE
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/teagram_icon_choice.cpp
+    core/url_scheme_policy.cpp
     core/teagram_update_verification.cpp
     core/teagram_update_state.cpp
     core/teagram_update_download.cpp
@@ -113,6 +114,7 @@ PRIVATE
     core/mac_protected_path_policy.cpp
     ffmpeg/ffmpeg_frame_storage.cpp
     core/file_location.cpp
+    media/clip/media_clip_check_streaming.cpp
     data/data_peer_id.cpp
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
@@ -146,7 +148,9 @@ PRIVATE
     tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/media_clip_check_streaming_tests.cpp
     tests/unit/sticker_import_tests.cpp
+    tests/unit/url_scheme_policy_tests.cpp
     tests/unit/mac_menu_text_tests.cpp
     tests/unit/mac_protected_path_policy_tests.cpp
     tests/unit/mtproto_custom_server_input_tests.cpp

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/file_utilities.h"
 
+#include "core/url_scheme_policy.h"
 #include "core/mac_protected_path_access.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/version.h"
@@ -25,14 +26,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "ui/toast/toast.h"
 #include "mainwindow.h"
+#include "logs.h"
 
 #include <QtWidgets/QFileDialog>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QStandardPaths>
 #include <QtGui/QDesktopServices>
 #include <QtWidgets/QApplication>
-
-#include <array>
 
 bool filedialogGetSaveFile(
 		QPointer<QWidget> parent,
@@ -173,24 +173,10 @@ QString filedialogNextFilename(
 namespace File {
 
 bool IsUrlSchemeAllowed(const QString &scheme) {
-	static const auto kSchemes = std::array{
-		u"http"_q,
-		u"https"_q,
-		u"ftp"_q,
-		u"itmss"_q,
-		u"mailto"_q,
-		u"tel"_q,
-		u"tg"_q,
-		u"tc"_q,
-		u"ton"_q,
-		u"tonsite"_q,
-	};
-	if (ranges::contains(kSchemes, scheme)) {
+	if (internal::IsDefaultUrlSchemeAllowed(scheme)) {
 		return true;
 	}
-	if (scheme.size() <= 1
-		|| scheme.compare(u"file"_q, Qt::CaseInsensitive) == 0
-		|| scheme.compare(u"webdavs"_q, Qt::CaseInsensitive) == 0
+	if (internal::IsUrlSchemeForbiddenForCustomAllowlist(scheme)
 		|| !Core::IsAppLaunched()) {
 		return false;
 	}
@@ -284,6 +270,7 @@ void UnsafeOpenUrlDefault(const QString &url) {
 	if (!parsed.isValid()
 		|| parsed.isLocalFile()
 		|| !IsUrlSchemeAllowed(parsed.scheme())) {
+		LOG(("URL Error: refused scheme %1.").arg(parsed.scheme()));
 		ShowUnsupportedUrl();
 		return;
 	}

@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "core/crash_reports.h"
 #include "base/bytes.h"
+#include "logs.h"
 
 namespace {
 
@@ -442,6 +443,8 @@ bool FileLoader::finalizeResult() {
 	Expects(!_finished);
 
 	if (_skippedBytes != 0) {
+		LOG(("Download Error: %1 bytes skipped before finalize.")
+				.arg(_skippedBytes));
 		cancel(FailureReason::OtherFailure);
 		return false;
 	}
