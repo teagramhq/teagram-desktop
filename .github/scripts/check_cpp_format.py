@@ -191,11 +191,19 @@ def upstream_pick_lines(
         source_renames = renamed_paths_between(root, source_parent, source)
         source_parent_paths = {new: old for old, new in source_renames.items()}
         picked_renames = renamed_paths_between(root, source_parent, parents[0])
+        pick_renames = renamed_paths_between(root, parents[0], commit)
         for source_path, source_lines in source_added.items():
             source_parent_path = source_parent_paths.get(source_path, source_path)
             picked_path = picked_renames.get(source_parent_path, source_parent_path)
+            picked_path = pick_renames.get(picked_path, picked_path)
             picked_lines = picked_added.get(picked_path)
             if picked_lines is None:
+                if source_lines:
+                    print(
+                        f"Notice: upstream pick {commit[:12]} has additions in {source_path}, "
+                        f"but no picked additions in {picked_path}.",
+                        file=sys.stderr,
+                    )
                 continue
             picked_text = [line for _, line in picked_lines]
             matcher = difflib.SequenceMatcher(
@@ -634,6 +642,37 @@ def upstream_provenance_test(formatter: str) -> None:
             "upstream-pick-after-rename",
             rename_before_pick,
             pick_after_rename,
+            should_pass=True,
+            expected_lines=0,
+            expected_exempted_lines=1,
+            expected_ranges=[],
+        )
+
+        git("checkout", "-b", "upstream-file-rename-source", base)
+        renamed_content = "".join(
+            f"int value_{index} = {index};\n" for index in range(12)
+        )
+        (root / "a.cpp").write_text(renamed_content, encoding="utf-8")
+        git("add", "a.cpp")
+        git("commit", "--quiet", "-m", "prepare upstream rename source")
+        file_rename_base = git("rev-parse", "HEAD")
+        git("mv", "a.cpp", "b.cpp")
+        (root / "b.cpp").write_text(
+            renamed_content + "int imported=12;\n",
+            encoding="utf-8",
+        )
+        git("add", "b.cpp")
+        git("commit", "--quiet", "-m", "upstream rename and addition")
+        file_rename_source = git("rev-parse", "HEAD")
+        git("update-ref", "refs/upstream/telegramdesktop/heads/file-rename-dev", file_rename_source)
+
+        git("checkout", "-b", "pick-upstream-file-rename", file_rename_base)
+        git("cherry-pick", "-x", file_rename_source)
+        file_rename_pick = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-that-renames-file",
+            file_rename_base,
+            file_rename_pick,
             should_pass=True,
             expected_lines=0,
             expected_exempted_lines=1,
