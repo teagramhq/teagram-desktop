@@ -14,6 +14,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Main {
 class Session;
+namespace details {
+class CloudResourceGrant;
+} // namespace details
 } // namespace Main
 
 namespace Spellchecker {
@@ -45,20 +48,14 @@ std::vector<int> DefaultLanguages();
 
 class DictLoader : public Storage::CloudBlob::BlobLoader {
 public:
-	DictLoader(
-		QObject *parent,
-		not_null<Main::Session*> session,
-		int id,
-		MTP::DedicatedLoader::Location location,
-		const QString &folder,
-		int64 size,
-		Fn<void()> destroyCallback);
+  DictLoader(QObject *parent, not_null<Main::Session *> session,
+			 const Main::details::CloudResourceGrant &grant, int id,
+			 MTP::DedicatedLoader::Location location, const QString &folder,
+			 int64 size, Fn<void()> destroyCallback);
 
-	void destroy() override;
+  void destroy() override;
 
-	rpl::lifetime &lifetime() {
-		return _lifetime;
-	}
+  rpl::lifetime &lifetime() { return _lifetime; }
 
 private:
 	void unpack(const QString &path) override;

@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace MTP::details {
 
 inline constexpr auto mtpc_redacted_string = mtpTypeId(0xFFFFFFFEU);
+inline constexpr auto mtpc_redacted_object = mtpTypeId(0xFFFFFFFDU);
 
 // Human-readable text serialization
 QString DumpToText(const mtpPrime *&from, const mtpPrime *end);

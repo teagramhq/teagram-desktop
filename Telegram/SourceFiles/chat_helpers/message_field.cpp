@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "mainwindow.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "settings/settings_common.h"
 #include "settings/sections/settings_premium.h"
 #include "styles/style_layers.h"
@@ -720,12 +721,15 @@ void InitSpellchecker(
 #ifndef TDESKTOP_DISABLE_SPELLCHECK
 	using namespace Spellchecker;
 	const auto session = &show->session();
-	const auto menuItem = skipDictionariesManager
-		? std::nullopt
-		: std::make_optional(SpellingHighlighter::CustomContextMenuItem{
-			tr::lng_settings_manage_dictionaries(tr::now),
-			[=] { show->showBox(Box<Ui::ManageDictionariesBox>(session)); }
-		});
+	const auto menuItem
+		= (skipDictionariesManager
+		   || !Main::details::composerManageDictionariesMenuItemSupported(
+			   session->mtp().dcOptions()))
+			  ? std::nullopt
+			  : std::make_optional(SpellingHighlighter::CustomContextMenuItem{
+					tr::lng_settings_manage_dictionaries(tr::now), [=] {
+						show->showBox(Box<Ui::ManageDictionariesBox>(session));
+					}});
 	// The highlighter parents itself to the field's document and registers a
 	// context-menu hook on the field, so it keeps working without holding it.
 	Ui::CreateChild<SpellingHighlighter>(

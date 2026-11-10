@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QThread>
 #include <QtCore/QUrlQuery>
 #include <QtCore/QUuid>
+#include <QtNetwork/QNetworkRequest>
 #if defined(Q_OS_MAC)
 #include <QtCore/QMetaObject>
 #include <QtNetwork/QLocalServer>
@@ -2620,6 +2621,31 @@ TEST_CASE(TeagramUpdateReplacementRestoresMissingTarget) {
 }
 
 } // namespace
+
+TEST_CASE(TeagramUpdateRequestsDisableHttp2ForEveryHop) {
+	const auto urls = std::vector<QUrl>{
+		QUrl(
+			u"https://api.github.com/repos/teagramhq/teagram-desktop/releases?per_page=100&page=1"_q),
+		QUrl(
+			u"https://github.com/teagramhq/teagram-desktop/releases/download/"_q
+			+ u"teagram-build-101/teagram-update.json"_q),
+		QUrl(
+			u"https://github.com/teagramhq/teagram-desktop/releases/download/"_q
+			+ u"teagram-build-101/Teagram-macOS-arm64-101.zip"_q),
+		QUrl(
+			u"https://release-assets.githubusercontent.com/download/verified"_q),
+	};
+	for (const auto &url : urls) {
+		const auto request = details::MakeTeagramUpdateRequest(url);
+		const auto http2Allowed
+			= request.attribute(QNetworkRequest::Http2AllowedAttribute);
+		CHECK(http2Allowed.isValid());
+		CHECK(!http2Allowed.toBool());
+		CHECK(
+			request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt()
+			== int(QNetworkRequest::ManualRedirectPolicy));
+	}
+}
 
 TEST_CASE(TeagramUpdateDownloadAcceptsProducerArtifactsAndDiscardsArchive) {
 	const auto signingKey = GenerateTestSigningKey();

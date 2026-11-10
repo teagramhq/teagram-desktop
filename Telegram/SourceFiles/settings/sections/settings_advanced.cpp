@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "main/session_feature_support.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtp_instance.h"
 #include "platform/platform_specific.h"
@@ -998,16 +999,24 @@ void BuildSpellcheckerSection(SectionBuilder &builder) {
 				}, autoDownload->lifetime());
 			}
 
-			builder.addButton({
-				.id = u"advanced/manage_dictionaries"_q,
-				.title = tr::lng_settings_manage_dictionaries(),
-				.st = &st::settingsButtonNoIcon,
-				.label = Spellchecker::ButtonManageDictsState(session),
-				.onClick = [=] {
-					controller->show(Box<Ui::ManageDictionariesBox>(session));
-				},
-				.keywords = { u"dictionary"_q, u"manage"_q, u"spellcheck"_q },
-			});
+			if (Main::details::advancedManageDictionariesMenuItemSupported(
+					session->mtp().dcOptions())) {
+				builder.addButton({
+					.id = u"advanced/manage_dictionaries"_q,
+					.title = tr::lng_settings_manage_dictionaries(),
+					.st = &st::settingsButtonNoIcon,
+					.label = Spellchecker::ButtonManageDictsState(session),
+					.onClick = [=] {
+						controller->show(
+							Box<Ui::ManageDictionariesBox>(session));
+					},
+					.keywords = {
+						u"dictionary"_q,
+						u"manage"_q,
+						u"spellcheck"_q,
+					},
+				});
+			}
 		}, spellchecker ? spellchecker->toggledValue() : nullptr);
 	}
 

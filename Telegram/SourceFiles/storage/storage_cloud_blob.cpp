@@ -115,18 +115,12 @@ QString StateDescription(const BlobState &state, tr::phrase<> activeText) {
 	});
 }
 
-BlobLoader::BlobLoader(
-	QObject *parent,
-	not_null<Main::Session*> session,
-	int id,
-	MTP::DedicatedLoader::Location location,
-	const QString &folder,
-	int64 size)
-: QObject(parent)
-, _folder(folder)
-, _id(id)
-, _state(Loading{ 0, size })
-, _mtproto(session.get()) {
+BlobLoader::BlobLoader(QObject *parent, not_null<Main::Session *> session,
+					   const Main::details::CloudResourceGrant &, int id,
+					   MTP::DedicatedLoader::Location location,
+					   const QString &folder, int64 size)
+	: QObject(parent), _folder(folder), _id(id), _state(Loading{0, size}),
+	  _mtproto(session.get()) {
 	const auto ready = [=](std::unique_ptr<MTP::DedicatedLoader> loader) {
 		if (loader) {
 			setImplementation(std::move(loader));

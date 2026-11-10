@@ -16,6 +16,9 @@ struct phrase;
 
 namespace Main {
 class Session;
+namespace details {
+class CloudResourceGrant;
+} // namespace details
 } // namespace Main
 
 namespace Storage::CloudBlob {
@@ -81,19 +84,16 @@ QString StateDescription(const BlobState &state, tr::phrase<> activeText);
 
 class BlobLoader : public QObject {
 public:
-	BlobLoader(
-		QObject *parent,
-		not_null<Main::Session*> session,
-		int id,
-		MTP::DedicatedLoader::Location location,
-		const QString &folder,
-		int64 size);
+  BlobLoader(QObject *parent, not_null<Main::Session *> session,
+			 const Main::details::CloudResourceGrant &grant, int id,
+			 MTP::DedicatedLoader::Location location, const QString &folder,
+			 int64 size);
 
-	int id() const;
+  int id() const;
 
-	rpl::producer<BlobState> state() const;
-	virtual void destroy() = 0;
-	virtual void unpack(const QString &path) = 0;
+  rpl::producer<BlobState> state() const;
+  virtual void destroy() = 0;
+  virtual void unpack(const QString &path) = 0;
 
 protected:
 	virtual void fail();

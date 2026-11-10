@@ -197,22 +197,7 @@ TeagramUpdateTransportResponse HttpTeagramUpdateTransport::get(
 	const QUrl &url, quint64 maximumBytes,
 	const TeagramUpdateTransport::ChunkHandler &onChunk,
 	const TeagramUpdateTransport::CancellationCheck &isCancelled) {
-	auto request = QNetworkRequest(url);
-	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-						 QNetworkRequest::ManualRedirectPolicy);
-	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-						 QNetworkRequest::AlwaysNetwork);
-	request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
-	request.setAttribute(QNetworkRequest::CookieLoadControlAttribute,
-						 QNetworkRequest::Manual);
-	request.setAttribute(QNetworkRequest::CookieSaveControlAttribute,
-						 QNetworkRequest::Manual);
-	request.setTransferTimeout(kTransferTimeoutMilliseconds);
-	request.setRawHeader("User-Agent", "Teagram-Desktop");
-	request.setRawHeader("Accept-Encoding", "identity");
-	request.setRawHeader("Accept", url.host() == kReleaseApiHost
-									   ? "application/vnd.github+json"
-									   : "application/octet-stream");
+	const auto request = details::MakeTeagramUpdateRequest(url);
 
 	auto manager = QNetworkAccessManager();
 	auto reply = manager.get(request);
@@ -633,6 +618,27 @@ DownloadRunner::downloadArchive(const AuthenticatedTeagramUpdate &metadata) {
 	};
 }
 } // namespace
+
+QNetworkRequest details::MakeTeagramUpdateRequest(const QUrl &url) {
+	auto request = QNetworkRequest(url);
+	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+						 QNetworkRequest::ManualRedirectPolicy);
+	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+						 QNetworkRequest::AlwaysNetwork);
+	request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+	request.setAttribute(QNetworkRequest::CookieLoadControlAttribute,
+						 QNetworkRequest::Manual);
+	request.setAttribute(QNetworkRequest::CookieSaveControlAttribute,
+						 QNetworkRequest::Manual);
+	request.setTransferTimeout(kTransferTimeoutMilliseconds);
+	request.setRawHeader("User-Agent", "Teagram-Desktop");
+	request.setRawHeader("Accept-Encoding", "identity");
+	request.setRawHeader("Accept", url.host() == kReleaseApiHost
+									   ? "application/vnd.github+json"
+									   : "application/octet-stream");
+	return request;
+}
 
 TeagramUpdateCandidate::TeagramUpdateCandidate(
 	AuthenticatedTeagramUpdate metadata, quint64 installedBuild,

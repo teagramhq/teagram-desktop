@@ -2,6 +2,8 @@
 
 #include "mtproto/mtproto_dc_options.h"
 
+#include <optional>
+
 namespace Main::details {
 
 [[nodiscard]] inline bool callsSupported(
@@ -46,6 +48,57 @@ namespace Main::details {
 [[nodiscard]] inline bool serverTranslationSupported(
 		const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
+}
+
+[[nodiscard]] inline bool
+cloudResourcesSupported(const MTP::DcOptions &options) {
+	return !(options.hasCustomServer() || options.blocked());
+}
+
+class CloudResourceGrant final {
+  public:
+	CloudResourceGrant(const CloudResourceGrant &) = default;
+	CloudResourceGrant(CloudResourceGrant &&) = default;
+	CloudResourceGrant &operator=(const CloudResourceGrant &) = default;
+	CloudResourceGrant &operator=(CloudResourceGrant &&) = default;
+
+  private:
+	CloudResourceGrant() = default;
+
+	friend std::optional<CloudResourceGrant>
+	cloudResourceGrant(const MTP::DcOptions &options);
+};
+
+[[nodiscard]] inline std::optional<CloudResourceGrant>
+cloudResourceGrant(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options)
+			   ? std::optional<CloudResourceGrant>(CloudResourceGrant())
+			   : std::nullopt;
+}
+
+[[nodiscard]] inline bool
+dictionaryManifestAccessSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+cloudEmojiSetsListedSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+dictionaryManagerSaveAllowed(const MTP::DcOptions &options, bool rowsBuilt) {
+	return rowsBuilt && cloudResourceGrant(options).has_value();
+}
+
+[[nodiscard]] inline bool
+advancedManageDictionariesMenuItemSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
+}
+
+[[nodiscard]] inline bool
+composerManageDictionariesMenuItemSupported(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options);
 }
 
 [[nodiscard]] inline bool
