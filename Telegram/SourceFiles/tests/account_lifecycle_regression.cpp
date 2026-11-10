@@ -14799,8 +14799,7 @@ template <typename Request, typename Action>
 [[nodiscard]] DesktopScaleActionSample ApplyDesktopScaleResponse(
 	ChannelSaveRequestCapture &capture, uint32 expectedConstructor,
 	const typename Request::ResponseType &result, Action action,
-	Fn<void()> beforeAction = {},
-	Fn<void()> afterAction = {}) {
+	Fn<void()> beforeAction = {}, Fn<void()> afterAction = {}) {
 	const auto request
 		= std::find_if(capture.requests.begin(), capture.requests.end(),
 					   [=](const auto &entry) {
@@ -14828,18 +14827,17 @@ template <typename Request, typename Action>
 	result.write(response.reply);
 	auto done = std::move(request->callbacks.done);
 	capture.requests.erase(request);
-	return MeasureDesktopScaleAction(
-		[&] {
-			if (beforeAction) {
-				beforeAction();
+	return MeasureDesktopScaleAction([&] {
+		if (beforeAction) {
+			beforeAction();
+		}
+		const auto finish = gsl::finally([&] {
+			if (afterAction) {
+				afterAction();
 			}
-			const auto finish = gsl::finally([&] {
-				if (afterAction) {
-					afterAction();
-				}
-			});
-			return done(response) && action();
 		});
+		return done(response) && action();
+	});
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -15428,9 +15426,10 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 	return messages;
 }
 
-[[nodiscard]] DesktopScaleSearchUpdateSamples RunDesktopScaleSearchAndUpdates(
-	Main::Domain &domain, int dialogCount, UserId selfId, UserId firstId,
-	Main::Account *reuseAccount = nullptr) {
+[[nodiscard]] DesktopScaleSearchUpdateSamples
+RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
+								UserId selfId, UserId firstId,
+								Main::Account *reuseAccount = nullptr) {
 	constexpr auto kSearchResultCount = kDesktopScalePageSize;
 	constexpr auto kUpdateCount = 1'000;
 	auto samples = DesktopScaleSearchUpdateSamples();
@@ -15592,11 +15591,10 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				MTP_vector<MTPChat>(0),
 				MTP_vector<MTPUser>(std::move(pageUsers)));
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetDialogs>(
-				capture, mtpc_messages_getDialogs, reply,
-				[&] {
+				capture, mtpc_messages_getDialogs, reply, [&] {
 					return data.chatsList()->indexed()->size()
 						   == alreadyLoaded + kDesktopScalePageSize;
-					});
+				});
 			if (!sample.passed) {
 				std::fprintf(
 					stderr,
@@ -15723,8 +15721,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 															 count, false);
 				result.loaded
 					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						capture, mtpc_contacts_getContacts, reply,
-						[&] {
+						capture, mtpc_contacts_getContacts, reply, [&] {
 							return WaitForRegressionCondition(
 								[&] {
 									return data.contactsList()->size() == count
@@ -15896,8 +15893,7 @@ template <typename Function>
 			static_cast<DesktopScaleActionSample &>(sample)
 				= ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
 					capture, mtpc_messages_getHistory, reply,
-					[] { return true; },
-					[&] { startCounting(); },
+					[] { return true; }, [&] { startCounting(); },
 					[&] { sample.directoryEnumerations = stopCounting(); });
 
 			auto pageApplied = true;
@@ -16429,8 +16425,7 @@ int RunDesktopScaleCheck() {
 	std::printf(
 		"Additional scenario checks: history=%d/%d date=%d/%d group=%d/%d "
 		"search=%d/%d updates=%d/%d.\n",
-		int(historyOne.passed),
-		int(historyHundred.passed), int(dateOne.passed),
+		int(historyOne.passed), int(historyHundred.passed), int(dateOne.passed),
 		int(dateHundred.passed), int(groupOne.passed), int(groupHundred.passed),
 		int(searchOne.search.passed), int(searchHundred.search.passed),
 		int(searchOne.updateBurst.passed),
