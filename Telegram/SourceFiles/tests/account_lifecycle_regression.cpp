@@ -10721,6 +10721,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedMissingBotFailures = 0;
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
+	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
@@ -10753,14 +10754,20 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			peer, RegressionChatFullReply(id, 1, QString(), UserId(1)));
 		return data.history(peer);
 	};
-	// Keep these IDs separate from RunFirstDialogsHandlerLatencyRegression,
-	// whose histories intentionally contain unread messages.
-	const auto firstHistory = makeHistory(ChatId(1'050'051));
-	const auto secondHistory = makeHistory(ChatId(1'050'052));
-	result.syntheticHistoriesReady
-		= firstHistory->isEmpty() && secondHistory->isEmpty()
+	const auto firstHistory = makeHistory(ChatId(1051));
+	const auto secondHistory = makeHistory(ChatId(1052));
+	const auto emptyFirstHistory = makeHistory(ChatId(1'050'051));
+	const auto emptySecondHistory = makeHistory(ChatId(1'050'052));
+	result.dialogHistoriesReady
+		= !firstHistory->isEmpty() && !secondHistory->isEmpty()
+		  && (firstHistory->unreadCount() == 7)
+		  && (secondHistory->unreadCount() == 6)
 		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && secondHistory->isReadyFor(ShowAtUnreadMsgId);
+	result.syntheticHistoriesReady
+		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
+		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
+		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
 	auto slowChatSwitches = std::vector<MainThreadWorkInterval>();
 	auto chatSwitchCpuClockAvailable = true;
 	auto chatSwitchProcessCpuClockAvailable = true;
@@ -10806,7 +10813,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
 		const auto target = (i % 2) ? secondHistory : firstHistory;
-		controller->showPeerHistory(target);
+		showPeerHistoryMeasured(target);
+		QCoreApplication::processEvents();
+	}
+	for (const auto target : { emptyFirstHistory, emptySecondHistory }) {
+		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
 	const auto historyWidget
@@ -11115,6 +11126,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.hydratedDocuments
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
+		  && result.dialogHistoriesReady
 		  && result.syntheticHistoriesReady
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
@@ -11183,6 +11195,8 @@ struct FirstDialogsHandlerRegressionResult final {
 RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto result = FirstDialogsHandlerRegressionResult();
 	constexpr auto kMessageCount = 73;
+	constexpr auto kFirstChatMessageCount = (kMessageCount + 1) / 2;
+	constexpr auto kSecondChatMessageCount = kMessageCount / 2;
 	constexpr auto kDialogUnreadCount = 7;
 	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
 	const auto firstChatId = ChatId(1051);
@@ -11219,7 +11233,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	for (auto i = 0; i != kMessageCount; ++i) {
 		const auto chatId = (i % 2) ? secondChatId : firstChatId;
 		messages.push_back(RegressionDialogsDocumentMessage(
-			chatId, i + 1, int64(300'000 + i)));
+			chatId, (i / 2) + 1, int64(300'000 + i)));
 	}
 	const auto notifySettings = MTP_peerNotifySettings(
 		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
@@ -11231,11 +11245,13 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	const auto dialogs = MTPmessages_Dialogs(MTP_messages_dialogsSlice(
 		MTP_int(2),
 		MTP_vector<MTPDialog>(
-			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId), MTP_int(73),
+			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId),
+						MTP_int(kFirstChatMessageCount),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
 						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
 						MTPint(), MTPDraftMessage(), MTPint(), MTPint()),
-			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId), MTP_int(72),
+			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId),
+						MTP_int(kSecondChatMessageCount),
 						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
 						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
 						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
@@ -11274,20 +11290,23 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		= firstHistory->folderKnown()
 		  && (firstHistory->unreadCount() == kDialogUnreadCount)
 		  && (firstHistory->lastMessage()
-			  == data.message(firstPeerId, MsgId(73)))
+			  == data.message(firstPeerId, MsgId(kFirstChatMessageCount)))
 		  && secondHistory->folderKnown()
 		  && (secondHistory->unreadCount() == kDialogUnreadCount - 1)
 		  && (secondHistory->lastMessage()
-			  == data.message(secondPeerId, MsgId(72)));
-	for (auto i = 1; i <= kMessageCount; ++i) {
-		const auto peerId = (i % 2) ? firstPeerId : secondPeerId;
-		if (const auto item = data.message(peerId, MsgId(i))) {
-			++result.processedMessages;
-			if (item->media() && item->media()->document()) {
-				++result.processedDocuments;
+			  == data.message(secondPeerId, MsgId(kSecondChatMessageCount)));
+	const auto countMessages = [&](PeerId peerId, int count) {
+		for (auto i = 1; i <= count; ++i) {
+			if (const auto item = data.message(peerId, MsgId(i))) {
+				++result.processedMessages;
+				if (item->media() && item->media()->document()) {
+					++result.processedDocuments;
+				}
 			}
 		}
-	}
+	};
+	countMessages(firstPeerId, kFirstChatMessageCount);
+	countMessages(secondPeerId, kSecondChatMessageCount);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
 #endif
@@ -11875,6 +11894,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_uncached_missing_bot_failures=%d "
 					"attach_menu_uncached_build_count_failures=%d "
 					"attach_menu_cache_bound=%d "
+					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
@@ -11910,6 +11930,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuUncachedMissingBotFailures,
 					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
+					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
