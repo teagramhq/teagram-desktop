@@ -16206,12 +16206,23 @@ int RunDesktopScaleCheck() {
 	auto searchOne = DesktopScaleSearchUpdateSamples();
 	const auto dialogsOneCreated
 		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
+			  const auto firstId = UserId(1'000'000);
+			  constexpr auto kLoadedDialogs = 50;
 			  dialogsOne = RunDesktopScaleDialogs(
-				  domain, 50, UserId(1'000'000), account.get());
+				  domain, kLoadedDialogs, firstId, account.get());
+			  auto &data = account->session().data();
+			  for (auto i = 0; i != kDesktopScalePageSize; ++i) {
+				  const auto pagePeer
+					  = peerFromUser(UserId(firstId.bare + kLoadedDialogs + i));
+				  data.removeChatListEntry(data.history(pagePeer));
+			  }
+			  if (data.chatsList()->indexed()->size() != kLoadedDialogs) {
+				  return false;
+			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(domain,
 														  50,
 														  UserId(999'999),
-														  UserId(1'000'000),
+														  firstId,
 														  false,
 														  true,
 														  account.get());
