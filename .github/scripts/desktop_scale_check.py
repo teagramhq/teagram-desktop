@@ -22,16 +22,29 @@ DEV_ARTIFACT_NAME = "desktop-scale-dev"
 APP_ARTIFACT_NAME = "Teagram"
 SAMPLE_FILE_NAME = "desktop-scale-sample.json"
 MAX_DEV_ARTIFACT_READS = 40
-SCENARIOS = {
+LEGACY_SCENARIOS = {
     "messages.getDialogs page (100 dialogs)": "dialogs",
     "contacts.getContacts full response": "contacts.getContacts",
     "contact change + name lookup": "contact change and lookup",
     "cache read x100": "thumbnail reads",
 }
+ADDITIONAL_SCENARIOS = {
+    "private history page (1M messages; 20 / 2,000 loaded)": "private history",
+    "jump to date in 1M-message history": "jump to date",
+    "group media page (200K messages; 20 / 2,000 loaded)": "group media",
+    "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)": "search",
+    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": "update burst",
+}
+SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
 STATIC_EXCEPTIONS = {
     "messages.getDialogs page (100 dialogs)": "MAIN-3656 (chat list page)",
     "contacts.getContacts full response": "MAIN-3657 (contacts)",
     "contact change + name lookup": "MAIN-3657 (contacts)",
+}
+REPORT_ONLY_SCENARIOS = {
+    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": (
+        "updates.getDifference timing is report-only"
+    ),
 }
 
 
@@ -73,8 +86,14 @@ def parse_report(report):
             "one_ms": _duration(match.group(2)),
             "hundred_ms": _duration(match.group(3)),
         }
-    if set(scenario_rows) != set(SCENARIOS):
-        missing = sorted(set(SCENARIOS) - set(scenario_rows))
+    if not set(LEGACY_SCENARIOS).issubset(scenario_rows):
+        missing = sorted(set(LEGACY_SCENARIOS) - set(scenario_rows))
+        raise ScaleCheckError(
+            "scale-check report is missing scenario rows: " + ", ".join(missing)
+        )
+    additional_rows = set(scenario_rows) & set(ADDITIONAL_SCENARIOS)
+    if additional_rows and additional_rows != set(ADDITIONAL_SCENARIOS):
+        missing = sorted(set(ADDITIONAL_SCENARIOS) - additional_rows)
         raise ScaleCheckError(
             "scale-check report is missing scenario rows: " + ", ".join(missing)
         )
@@ -84,14 +103,19 @@ def parse_report(report):
     )
     if not stalls_line:
         raise ScaleCheckError("scale-check report is missing main-thread stall counts")
-    for label, key in SCENARIOS.items():
+    for label in scenario_rows:
+        key = SCENARIOS[label]
         prefix = re.escape(key)
         match = re.search(
             rf"(?:^|; ){prefix} 1x=(\d+|n/a), 100x=(\d+|n/a)",
             stalls_line.group(1),
         )
         if not match:
-            raise ScaleCheckError(f"scale-check report is missing stalls for {label}")
+            if label in LEGACY_SCENARIOS or additional_rows:
+                raise ScaleCheckError(
+                    f"scale-check report is missing stalls for {label}"
+                )
+            continue
         scenario_rows[label]["one_stalls"] = (
             int(match.group(1)) if match.group(1) != "n/a" else None
         )
@@ -118,10 +142,21 @@ def parse_report(report):
         report,
         re.MULTILINE,
     )
+    additional_checks = re.search(
+        r"^Additional scenario checks: history=(\d)/(\d) date=(\d)/(\d) "
+        r"group=(\d)/(\d) search=(\d)/(\d) updates=(\d)/(\d)\.$",
+        report,
+        re.MULTILINE,
+    )
     outcome = re.search(r"^Outcome: (PASS|FAIL)$", report, re.MULTILINE)
     if not checks or not outcome:
         raise ScaleCheckError("scale-check report is missing its outcome")
-    checks_passed = all(value == "1" for value in checks.groups())
+    if bool(additional_rows) != bool(additional_checks):
+        raise ScaleCheckError("scale-check report is missing additional scenario checks")
+    checks_passed = all(value == "1" for value in checks.groups()) and (
+        not additional_rows
+        or all(value == "1" for value in additional_checks.groups())
+    )
     metrics_present = all(
         row[field] is not None
         for row in scenario_rows.values()
@@ -133,14 +168,14 @@ def parse_report(report):
         and metrics_present
         and all(
             scenario_rows[name][field] > 0
-            for name in SCENARIOS
+            for name in scenario_rows
             for field in ("one_ms", "hundred_ms")
             if scenario_rows[name][field] is not None
         )
         and enumerations == {"one": 0, "hundred": 0}
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2 if additional_rows else 1,
         "valid": valid,
         "scenario_checks_passed": checks_passed,
         "outcome": outcome.group(1),
@@ -154,9 +189,11 @@ def latest_records(records, limit=MIN_DEV_RUNS):
 
 
 def _is_valid_record(record):
+    schema_version = record.get("schema_version") if isinstance(record, dict) else None
     if (
         not isinstance(record, dict)
-        or record.get("schema_version") != 1
+        or isinstance(schema_version, bool)
+        or schema_version not in (1, 2)
         or record.get("valid") is not True
         or not isinstance(record.get("created_at"), str)
         or not record.get("created_at")
@@ -165,7 +202,11 @@ def _is_valid_record(record):
         or record.get("directory_enumerations")
         != {"one": 0, "hundred": 0}
         or not isinstance(record.get("scenarios"), dict)
-        or set(record["scenarios"]) != set(SCENARIOS)
+        or (
+            schema_version == 1
+            and set(record["scenarios"]) != set(LEGACY_SCENARIOS)
+        )
+        or (schema_version == 2 and set(record["scenarios"]) != set(SCENARIOS))
     ):
         return False
     for row in record["scenarios"].values():
@@ -201,13 +242,22 @@ def _valid_records(records):
 
 
 def _median(records, scenario, field):
-    return statistics.median(
-        record["scenarios"][scenario][field] for record in records
-    )
+    values = [
+        record["scenarios"][scenario][field]
+        for record in records
+        if scenario in record["scenarios"]
+    ]
+    return statistics.median(values) if values else None
 
 
 def _noise(records, scenario, field):
-    values = [record["scenarios"][scenario][field] for record in records]
+    values = [
+        record["scenarios"][scenario][field]
+        for record in records
+        if scenario in record["scenarios"]
+    ]
+    if not values:
+        return None
     median = statistics.median(values)
     median_absolute_deviation = statistics.median(
         abs(value - median) for value in values
@@ -219,7 +269,15 @@ def _baseline_exceptions(records):
     exceptions = {}
     additions = {}
     for scenario in SCENARIOS:
-        rows = [record["scenarios"][scenario] for record in records]
+        if scenario in REPORT_ONLY_SCENARIOS:
+            continue
+        rows = [
+            record["scenarios"][scenario]
+            for record in records
+            if scenario in record["scenarios"]
+        ]
+        if len(rows) < MIN_DEV_RUNS:
+            continue
         stalled_runs = [
             int(bool(row["one_stalls"] or row["hundred_stalls"]))
             for row in rows
@@ -279,10 +337,16 @@ def evaluate(
     ):
         raise ScaleCheckError("scale check received an invalid app report")
     count = len(history)
+    baseline = latest_records(history)
+    scenario_counts = {
+        scenario: sum(scenario in record["scenarios"] for record in baseline)
+        for scenario in SCENARIOS
+    }
     if count < MIN_DEV_RUNS:
         return {
             "record_count": count,
             "calibrating": count,
+            "scenario_counts": scenario_counts,
             "exceptions": dict(STATIC_EXCEPTIONS),
             "additional_exceptions": {},
             "rows": {},
@@ -295,7 +359,6 @@ def evaluate(
             "invalid_head_outcomes": invalid_head_outcomes,
         }
 
-    baseline = latest_records(history)
     exceptions, additions = _baseline_exceptions(baseline)
     if not report_only and (len(base_runs) < 2 or len(head_runs) < 2):
         raise ScaleCheckError(
@@ -304,10 +367,20 @@ def evaluate(
     rows = {}
     failures = []
     for scenario in SCENARIOS:
+        baseline_rows = [
+            sample for sample in baseline if scenario in sample["scenarios"]
+        ]
+        base_scenario_runs = [
+            sample for sample in base_runs if scenario in sample["scenarios"]
+        ]
+        head_scenario_runs = [
+            sample for sample in head_runs if scenario in sample["scenarios"]
+        ]
         noise_one = _noise(baseline, scenario, "one_ms")
         noise_hundred = _noise(baseline, scenario, "hundred_ms")
         row_result = {
             "exception": exceptions.get(scenario),
+            "baseline_count": len(baseline_rows),
             "noise_one_ms": noise_one,
             "noise_hundred_ms": noise_hundred,
             "base_one_ms": None,
@@ -317,31 +390,41 @@ def evaluate(
             "ratio": None,
             "failures": [],
         }
-        if head_runs:
+        if head_scenario_runs:
             row_result["head_one_ms"] = statistics.median(
-                sample["scenarios"][scenario]["one_ms"] for sample in head_runs
+                sample["scenarios"][scenario]["one_ms"]
+                for sample in head_scenario_runs
             )
             row_result["head_hundred_ms"] = statistics.median(
-                sample["scenarios"][scenario]["hundred_ms"] for sample in head_runs
+                sample["scenarios"][scenario]["hundred_ms"]
+                for sample in head_scenario_runs
             )
             if row_result["head_one_ms"] > 0:
                 row_result["ratio"] = (
                     row_result["head_hundred_ms"] / row_result["head_one_ms"]
                 )
-        if base_runs:
+        if base_scenario_runs:
             row_result["base_one_ms"] = statistics.median(
-                sample["scenarios"][scenario]["one_ms"] for sample in base_runs
+                sample["scenarios"][scenario]["one_ms"]
+                for sample in base_scenario_runs
             )
             row_result["base_hundred_ms"] = statistics.median(
                 sample["scenarios"][scenario]["hundred_ms"]
-                for sample in base_runs
+                for sample in base_scenario_runs
             )
         rows[scenario] = row_result
 
-        if report_only or scenario in exceptions or not head_runs:
+        if (
+            report_only
+            or scenario in exceptions
+            or scenario in REPORT_ONLY_SCENARIOS
+            or not head_scenario_runs
+        ):
             continue
         absolute_budget_rows = [
-            sample["scenarios"][scenario] for sample in absolute_budget_head_runs
+            sample["scenarios"][scenario]
+            for sample in absolute_budget_head_runs
+            if scenario in sample["scenarios"]
         ]
         if any(
             row["one_stalls"] or row["hundred_stalls"]
@@ -356,7 +439,7 @@ def evaluate(
                 f"{scenario}: 100x takes {row_result['ratio']:.2f}x as long as 1x "
                 "(limit 1.5x)"
             )
-        if base_runs:
+        if len(baseline_rows) >= MIN_DEV_RUNS and base_scenario_runs:
             for scale, base_field, head_field, noise in (
                 ("1x", "base_one_ms", "head_one_ms", noise_one),
                 ("100x", "base_hundred_ms", "head_hundred_ms", noise_hundred),
@@ -373,6 +456,7 @@ def evaluate(
     return {
         "record_count": count,
         "calibrating": None,
+        "scenario_counts": scenario_counts,
         "exceptions": exceptions,
         "additional_exceptions": additions,
         "rows": rows,
@@ -445,13 +529,24 @@ def format_summary(result, current_sample=None, retry_note=None):
     for scenario in SCENARIOS:
         row = result["rows"].get(scenario, {})
         if result["calibrating"] is not None:
-            current = current_sample["scenarios"][scenario] if current_sample else {}
+            current = (
+                current_sample.get("scenarios", {}).get(scenario, {})
+                if current_sample
+                else {}
+            )
             one = _format_ms(current.get("one_ms"))
             hundred = _format_ms(current.get("hundred_ms"))
             one_pair = f"n/a → {one}"
             hundred_pair = f"n/a → {hundred}"
-            ratio = "n/a"
-            noise = f"calibrating: {result['calibrating']}/{MIN_DEV_RUNS}"
+            one_ms = current.get("one_ms")
+            hundred_ms = current.get("hundred_ms")
+            ratio = (
+                f"{hundred_ms / one_ms:.2f}x"
+                if one_ms and hundred_ms is not None
+                else "n/a"
+            )
+            baseline_count = result.get("scenario_counts", {}).get(scenario, 0)
+            noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
         else:
             one_pair = (
                 f"{_format_ms(row.get('base_one_ms'))} → "
@@ -462,11 +557,19 @@ def format_summary(result, current_sample=None, retry_note=None):
                 f"{_format_ms(row.get('head_hundred_ms'))}"
             )
             ratio = "n/a" if row.get("ratio") is None else f"{row['ratio']:.2f}x"
-            noise = (
-                f"1x ±3σ {_format_ms(3 * row['noise_one_ms'])}; "
-                f"100x ±3σ {_format_ms(3 * row['noise_hundred_ms'])}"
-            )
-        exception = row.get("exception") or result["exceptions"].get(scenario)
+            baseline_count = row.get("baseline_count", 0)
+            if baseline_count < MIN_DEV_RUNS:
+                noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
+            else:
+                noise = (
+                    f"1x ±3σ {_format_ms(3 * row['noise_one_ms'])}; "
+                    f"100x ±3σ {_format_ms(3 * row['noise_hundred_ms'])}"
+                )
+        exception = (
+            row.get("exception")
+            or result["exceptions"].get(scenario)
+            or REPORT_ONLY_SCENARIOS.get(scenario)
+        )
         budget = (
             f"report-only ({exception})"
             if exception
