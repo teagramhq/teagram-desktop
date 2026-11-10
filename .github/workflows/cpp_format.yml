@@ -66,8 +66,8 @@ jobs:
           set -euo pipefail
           git fetch --quiet --no-tags --filter=blob:none \
             https://github.com/telegramdesktop/tdesktop.git \
-            '+refs/heads/*:refs/remotes/telegramdesktop/*' \
-            '+refs/tags/*:refs/tags/telegramdesktop/*'
+            '+refs/heads/*:refs/upstream/telegramdesktop/heads/*' \
+            '+refs/tags/*:refs/upstream/telegramdesktop/tags/*'
 
       - name: Install clang-format 23.1.0.
         shell: bash
@@ -135,7 +135,7 @@ jobs:
             while IFS= read -r upstream_ref; do
               upstream_args+=(--upstream-ref "$upstream_ref")
             done < <(git for-each-ref --format='%(refname)' \
-              refs/remotes/telegramdesktop refs/tags/telegramdesktop)
+              refs/upstream/telegramdesktop)
             if [[ "${#upstream_args[@]}" -eq 0 ]]; then
               echo '::error::No telegramdesktop upstream history refs were fetched.'
               exit 1

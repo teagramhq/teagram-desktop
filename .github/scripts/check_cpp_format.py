@@ -150,11 +150,10 @@ def upstream_pick_lines(
         if len(parents) != 1:
             continue
         source = trailers[0]
-        try:
-            source_parent = git_output(root, "rev-parse", "--verify", f"{source}^1").strip()
-        except RuntimeError:
+        source_parents = git_output(root, "rev-list", "--parents", "-n", "1", source).split()[1:]
+        if not source_parents:
             continue
-        source_added = added_lines_between(root, source_parent, source)
+        source_added = added_lines_between(root, source_parents[0], source)
         picked_added = added_lines_between(root, parents[0], commit)
         for path in source_added.keys() & picked_added.keys():
             source_lines = source_added[path]
@@ -422,6 +421,10 @@ def upstream_provenance_test(formatter: str) -> None:
             git("commit", "--quiet", "-m", message)
             return git("rev-parse", "HEAD")
 
+        def upstream_refs() -> list[str]:
+            refs = git("for-each-ref", "--format=%(refname)", "refs/upstream/telegramdesktop")
+            return refs.splitlines() if refs else []
+
         def check(
             name: str,
             base: str,
@@ -429,9 +432,9 @@ def upstream_provenance_test(formatter: str) -> None:
             should_pass: bool,
             expected_lines: int,
             expected_exempted_lines: int,
-            upstream_refs: list[str],
+            expected_ranges: list[tuple[str, int, int]],
         ) -> None:
-            upstream_commits = upstream_history(root, upstream_refs)
+            upstream_commits = upstream_history(root, upstream_refs())
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 result = check_source_range(
                     root,
@@ -455,6 +458,13 @@ def upstream_provenance_test(formatter: str) -> None:
                     f"{name} exempted {result.get('exempted_upstream_line_count')} upstream lines, "
                     f"expected {expected_exempted_lines}: {result}"
                 )
+            actual_ranges = [
+                (entry["path"], changed_range["first"], changed_range["last"])
+                for entry in result.get("files", [])
+                for changed_range in entry.get("ranges", [])
+            ]
+            if actual_ranges != expected_ranges:
+                raise RuntimeError(f"{name} checked ranges {actual_ranges}, expected {expected_ranges}: {result}")
 
         git("init", "--quiet")
         git("config", "user.name", "Formatter Regression")
@@ -466,7 +476,7 @@ def upstream_provenance_test(formatter: str) -> None:
         git("checkout", "-b", "upstream-pick")
         write_file("int base = 0;\nint imported=1;\n")
         source = commit("upstream change")
-        git("update-ref", "refs/remotes/telegramdesktop/dev", source)
+        git("update-ref", "refs/upstream/telegramdesktop/heads/dev", source)
 
         git("checkout", "main")
         git("cherry-pick", "-x", source)
@@ -478,7 +488,7 @@ def upstream_provenance_test(formatter: str) -> None:
             should_pass=True,
             expected_lines=0,
             expected_exempted_lines=1,
-            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+            expected_ranges=[],
         )
 
         git("checkout", "-b", "pick-with-own-line", base)
@@ -494,12 +504,29 @@ def upstream_provenance_test(formatter: str) -> None:
             should_pass=False,
             expected_lines=1,
             expected_exempted_lines=1,
-            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+            expected_ranges=[("fixture.cpp", 3, 3)],
+        )
+
+        git("checkout", "-b", "pick-with-formatted-own-line", base)
+        git("cherry-pick", "-x", source)
+        write_file("int base = 0;\nint imported=1;\nint own = 2;\n")
+        git("add", "fixture.cpp")
+        git("commit", "--quiet", "--amend", "--no-edit")
+        formatted_pick = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-with-formatted-own-line",
+            base,
+            formatted_pick,
+            should_pass=True,
+            expected_lines=1,
+            expected_exempted_lines=1,
+            expected_ranges=[("fixture.cpp", 3, 3)],
         )
 
         git("checkout", "-b", "non-upstream-source", base)
         write_file("int base = 0;\nint forged=3;\n")
         forged_source = commit("untrusted source")
+        git("update-ref", "refs/tags/telegramdesktop/forged-source", forged_source)
         git("checkout", "-b", "forged-trailer", base)
         write_file("int base = 0;\nint forged=3;\n")
         git("add", "fixture.cpp")
@@ -519,13 +546,13 @@ def upstream_provenance_test(formatter: str) -> None:
             should_pass=False,
             expected_lines=1,
             expected_exempted_lines=0,
-            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+            expected_ranges=[("fixture.cpp", 2, 2)],
         )
 
         git("checkout", "-b", "upstream-merge", base)
         write_file("int conflict=2;\nint imported=4;\n")
         merge_source = commit("upstream merge source")
-        git("update-ref", "refs/remotes/telegramdesktop/merge-dev", merge_source)
+        git("update-ref", "refs/upstream/telegramdesktop/heads/merge-dev", merge_source)
 
         git("checkout", "-b", "merge-with-own-changes", base)
         write_file("int conflict = 0;\nint own=5;\n")
@@ -551,10 +578,7 @@ def upstream_provenance_test(formatter: str) -> None:
             should_pass=False,
             expected_lines=2,
             expected_exempted_lines=1,
-            upstream_refs=[
-                "refs/remotes/telegramdesktop/dev",
-                "refs/remotes/telegramdesktop/merge-dev",
-            ],
+            expected_ranges=[("fixture.cpp", 1, 2)],
         )
     print(
         "Formatter self-test: upstream pick exemption, own pick line, forged trailer, "
