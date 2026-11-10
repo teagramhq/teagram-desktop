@@ -15061,6 +15061,8 @@ WithDesktopScaleAccount(Main::Domain &domain, UserId selfId, Action action,
 	return cleaned && passed && retained;
 }
 
+auto gDesktopScaleWindowShown = false;
+
 template <typename Function>
 [[nodiscard]] bool WithDesktopScaleWindow(not_null<Main::Account *> account,
 										  Function function) {
@@ -15098,8 +15100,7 @@ template <typename Function>
 							 "does not show the synthetic account.\n");
 		return false;
 	}
-	static auto shown = false;
-	if (!std::exchange(shown, true)) {
+	if (!std::exchange(gDesktopScaleWindowShown, true)) {
 		window->firstShow();
 		window->finishFirstShow();
 	}
