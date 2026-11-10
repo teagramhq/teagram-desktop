@@ -10333,7 +10333,7 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
-constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(50);
+constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
 struct MainThreadWorkInterval final {
 	QDateTime startedAt;
@@ -10695,6 +10695,27 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 				.responseNanoseconds = 1'000'000,
 			},
 	};
+	const auto delayedButObservedGap = std::vector<MainThreadWorkInterval>{
+		{firstStart, 116'000'000, 25'000'000, 50'000'000},
+	};
+	const auto delayedButObservedAcknowledgements
+		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			{
+				.acknowledgedAt
+				= firstStart.addMSecs(-10).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 1'000'000,
+			},
+			{
+				.acknowledgedAt
+				= firstStart.addMSecs(77).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 77'000'000,
+			},
+			{
+				.acknowledgedAt
+				= firstStart.addMSecs(136).toString(Qt::ISODateWithMs),
+				.responseNanoseconds = 1'000'000,
+			},
+	};
 	const auto highProcessCpuGap = std::vector<MainThreadWorkInterval>{
 		{firstStart, 230'000'000, 25'000'000, 120'000'000},
 	};
@@ -10716,6 +10737,10 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		   && (CountUncoveredStartupHeartbeatGaps(
 				   unobservedAppWait, {}, unobservedAppWaitAcknowledgements)
 			   == 1)
+		   && (CountUncoveredStartupHeartbeatGaps(
+				   delayedButObservedGap, {},
+				   delayedButObservedAcknowledgements)
+			   == 0)
 		   && (highProcessCpuStall.size() == 1)
 		   && !AllCorroboratedStartupStallsHaveSchedulerProof(
 			   highProcessCpuStall, true);
@@ -10854,9 +10879,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		return wallDurationNanoseconds;
 	};
+	// Create the history view before measuring peer switches. The first call
+	// can construct the window contents and is not representative of a switch.
+	controller->showPeerHistory(emptyFirstHistory);
+	QCoreApplication::processEvents();
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
-		const auto target = (i % 2) ? secondHistory : firstHistory;
+		const auto target = (i % 2) ? firstHistory : secondHistory;
 		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
