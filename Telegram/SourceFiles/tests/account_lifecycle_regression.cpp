@@ -14994,12 +14994,10 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 				MTP_vector<MTPChat>(0),
 				MTP_vector<MTPUser>(std::move(pageUsers)));
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetDialogs>(
-				capture, mtpc_messages_getDialogs, reply,
-				[&] {
+				capture, mtpc_messages_getDialogs, reply, [&] {
 					return data.chatsList()->indexed()->size()
 						   == alreadyLoaded + kDesktopScalePageSize;
-				},
-				true);
+				});
 			if (!sample.passed) {
 				std::fprintf(
 					stderr,
