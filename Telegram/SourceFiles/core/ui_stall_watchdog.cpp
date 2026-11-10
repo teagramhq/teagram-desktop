@@ -458,6 +458,17 @@ UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 	return PingAcknowledgementHistory;
 }
 
+bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+	const QString &trace, qint64 durationNanoseconds) {
+	const auto sampleIntervalNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  kSchedulerSampleInterval)
+			  .count();
+	return (durationNanoseconds >= 0)
+		   && (trace.size() >= durationNanoseconds / sampleIntervalNanoseconds)
+		   && (trace.count(u'R') == trace.size());
+}
+
 void UiStallWatchdog::enqueueReport(std::function<void()> report) {
 	{
 		const auto lock = std::lock_guard(_reportMutex);
@@ -498,6 +509,10 @@ bool UiStallWatchdog::event(QEvent *event) {
 		if (ping->sequence > _acknowledgedSequence) {
 			_acknowledgedSequence = ping->sequence;
 			_acknowledgedAt = acknowledgedAt;
+			if (_captureSchedulerTrace) {
+				_schedulerSamplingStopSequence.store(ping->sequence,
+													 std::memory_order_release);
+			}
 			acknowledged = true;
 		}
 	}
@@ -531,7 +546,69 @@ void UiStallWatchdog::run() {
 		const auto current = ++sequence;
 		const auto startTime = QDateTime::currentDateTime();
 		const auto postedAt = Clock::now();
+		auto schedulerTrace = std::string();
+		auto schedulerTraceMutex = std::mutex();
+		auto schedulerSampler = std::jthread();
+		const auto schedulerTraceTextSnapshot = [&] {
+			const auto traceLock = std::lock_guard(schedulerTraceMutex);
+			return schedulerTrace.empty()
+					   ? u"none"_q
+					   : QString::fromLatin1(schedulerTrace.data(),
+											 qsizetype(schedulerTrace.size()));
+		};
 		QCoreApplication::postEvent(this, new PingEvent(current, postedAt));
+		if (_captureSchedulerTrace) {
+			schedulerTrace.push_back(MainThreadSchedulerState());
+			try {
+				schedulerSampler = std::jthread(
+					[this, current, postedAt, &schedulerTrace,
+					 &schedulerTraceMutex](std::stop_token stop) {
+						auto nextSampleAt = postedAt + kSchedulerSampleInterval;
+						auto sampleCount = std::size_t(1);
+						while (!stop.stop_requested()
+							   && (_schedulerSamplingStopSequence.load(
+									   std::memory_order_acquire)
+								   < current)
+							   && (sampleCount < kMaxSchedulerSamples)) {
+							auto sampleAt = nextSampleAt;
+							if (sampleAt < Clock::now()) {
+								sampleAt
+									= Clock::now() + kSchedulerSampleInterval;
+							}
+							std::this_thread::sleep_until(sampleAt);
+							if (stop.stop_requested()
+								|| (_schedulerSamplingStopSequence.load(
+										std::memory_order_acquire)
+									>= current)) {
+								break;
+							}
+							const auto state = MainThreadSchedulerState();
+							if (_schedulerSamplingStopSequence.load(
+									std::memory_order_acquire)
+								>= current) {
+								break;
+							}
+							{
+								const auto traceLock
+									= std::lock_guard(schedulerTraceMutex);
+								schedulerTrace.push_back(state);
+							}
+							++sampleCount;
+							nextSampleAt = sampleAt + kSchedulerSampleInterval;
+						}
+					});
+			} catch (const std::system_error &error) {
+				const auto message = QString::fromLocal8Bit(error.what());
+				enqueueReport([this, message] {
+					if (_log) {
+						_log(
+							u"UI stall watchdog scheduler sampler could not start: %1"_q
+								.arg(message),
+							false);
+					}
+				});
+			}
+		}
 		{
 			const auto lock = std::lock_guard(_mutex);
 			_started = true;
@@ -542,7 +619,6 @@ void UiStallWatchdog::run() {
 		auto replaceLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
-		auto schedulerTrace = std::string();
 		auto rawStack = QString();
 		auto formattedStack = std::shared_ptr<QString>();
 		auto startedAt = QString();
@@ -551,30 +627,8 @@ void UiStallWatchdog::run() {
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
-		const auto sampleSchedulerState = [&] {
-			if (!_captureSchedulerTrace
-				|| schedulerTrace.size() == kMaxSchedulerSamples) {
-				return;
-			}
-			lock.unlock();
-			const auto state = MainThreadSchedulerState();
-			lock.lock();
-			schedulerTrace.push_back(state);
-		};
 		const auto waitUntil = [&](Clock::time_point deadline) {
-			while (true) {
-				const auto sampleAt = Clock::now() + kSchedulerSampleInterval;
-				const auto wakeAt = _captureSchedulerTrace
-										? std::min(deadline, sampleAt)
-										: deadline;
-				if (_condition.wait_until(lock, wakeAt, acknowledged)) {
-					return true;
-				}
-				sampleSchedulerState();
-				if (Clock::now() >= deadline) {
-					return false;
-				}
-			}
+			return _condition.wait_until(lock, deadline, acknowledged);
 		};
 		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
@@ -592,9 +646,6 @@ void UiStallWatchdog::run() {
 		} else {
 			_stallCount.fetch_add(1, std::memory_order_relaxed);
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (_captureSchedulerTrace) {
-				sampleSchedulerState();
-			}
 			if (!waitUntil(postedAt + _logThreshold)) {
 				detectedAt = Clock::now();
 			} else if (_stopping) {
@@ -641,12 +692,7 @@ void UiStallWatchdog::run() {
 				rawStack = FormatRawStack(frames);
 				formattedStack = std::make_shared<QString>();
 				startedAt = startTime.toString(Qt::ISODateWithMs);
-				schedulerTraceText
-					= schedulerTrace.empty()
-						  ? u"none"_q
-						  : QString::fromLatin1(
-								schedulerTrace.data(),
-								qsizetype(schedulerTrace.size()));
+				schedulerTraceText = schedulerTraceTextSnapshot();
 				detectedDurationMilliseconds
 					= std::chrono::duration_cast<std::chrono::milliseconds>(
 						  detectedAt - postedAt)
@@ -677,15 +723,7 @@ void UiStallWatchdog::run() {
 			}
 		}
 		while (!_stopping && (_acknowledgedSequence < current)) {
-			if (_captureSchedulerTrace) {
-				if (_condition.wait_for(lock, kSchedulerSampleInterval,
-										acknowledged)) {
-					break;
-				}
-				sampleSchedulerState();
-			} else {
-				_condition.wait(lock, acknowledged);
-			}
+			_condition.wait(lock, acknowledged);
 		}
 		if (_stopping) {
 			return;
@@ -693,13 +731,13 @@ void UiStallWatchdog::run() {
 		if (_acknowledgedSequence < current) {
 			return;
 		}
+		if (schedulerSampler.joinable()) {
+			schedulerSampler.request_stop();
+			schedulerSampler.join();
+		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
-			schedulerTraceText
-				= schedulerTrace.empty()
-					  ? u"none"_q
-					  : QString::fromLatin1(schedulerTrace.data(),
-											qsizetype(schedulerTrace.size()));
+			schedulerTraceText = schedulerTraceTextSnapshot();
 			lock.unlock();
 			const auto completedDurationMilliseconds
 				= std::chrono::duration_cast<std::chrono::milliseconds>(

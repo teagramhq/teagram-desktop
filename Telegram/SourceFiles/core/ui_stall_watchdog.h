@@ -56,6 +56,9 @@ class UiStallWatchdog final : public QObject {
 	RecentStallEvidenceForTesting();
 	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
 	RecentPingAcknowledgementsForTesting();
+	[[nodiscard]] static bool
+	SchedulerTraceProvesRunnableForDuration(const QString &trace,
+											qint64 durationNanoseconds);
 
   protected:
 	bool event(QEvent *event) override;
@@ -79,6 +82,7 @@ class UiStallWatchdog final : public QObject {
 	std::mutex _reportMutex;
 	std::condition_variable _reportCondition;
 	std::uint64_t _acknowledgedSequence = 0;
+	std::atomic<std::uint64_t> _schedulerSamplingStopSequence = 0;
 	std::chrono::steady_clock::time_point _acknowledgedAt;
 	bool _started = false;
 	bool _stopping = false;

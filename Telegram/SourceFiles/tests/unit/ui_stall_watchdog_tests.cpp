@@ -262,9 +262,23 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
 		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
 		CHECK(!evidence.back().schedulerTrace.isEmpty());
+		CHECK(evidence.back().schedulerTrace.size()
+			  >= evidence.back().durationMilliseconds / 5);
+		const auto schedulerTraceProvesRunnable
+			= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+				evidence.back().schedulerTrace,
+				evidence.back().durationMilliseconds * 1'000'000);
+		CHECK_EQ(schedulerTraceProvesRunnable,
+				 (evidence.back().schedulerTrace.size()
+				  >= evidence.back().durationMilliseconds / 5)
+					 && (evidence.back().schedulerTrace.count(u'R')
+						 == evidence.back().schedulerTrace.size()));
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
 #if defined(Q_OS_MAC)
 		CHECK(evidence.back().schedulerTrace.contains(u'R'));
+		CHECK(schedulerTraceProvesRunnable);
+#else
+		CHECK(!schedulerTraceProvesRunnable);
 #endif
 	}
 }

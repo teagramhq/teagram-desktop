@@ -10334,7 +10334,6 @@ constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
 	= qint64(20'000'000);
-constexpr auto kUiStallSchedulerSampleIntervalNanoseconds = qint64(5'000'000);
 constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
 struct MainThreadWorkInterval final {
@@ -10430,11 +10429,8 @@ FindMatchingMainThreadWorkEvidence(
 		|| !evidence) {
 		return false;
 	}
-	const auto trace = evidence->schedulerTrace;
-	const auto requiredSamples = interval.durationNanoseconds
-								 / kUiStallSchedulerSampleIntervalNanoseconds;
-	return (qint64(trace.size()) >= requiredSamples)
-		   && (trace.count(u'R') == trace.size());
+	return Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		evidence->schedulerTrace, interval.durationNanoseconds);
 }
 
 [[nodiscard]] bool AllMainThreadWorkIntervalsHaveSchedulerProof(
