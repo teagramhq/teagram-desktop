@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_document_media.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
+#include "data/data_history_messages.h"
 #include "data/data_media_types.h"
 #include "data/data_message_reaction_id.h"
 #include "data/data_message_reactions.h"
@@ -15306,7 +15307,7 @@ void RequestDesktopScaleHistoryPage(
 				[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
 					gChannelSaveRequestCapture = previous;
 				});
-			auto resolvedPeer = PeerData*();
+			PeerData *resolvedPeer = nullptr;
 			auto resolvedId = MsgId();
 			session.api().resolveJumpToDate(
 				Dialogs::Key(history),
