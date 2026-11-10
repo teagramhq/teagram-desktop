@@ -15061,24 +15061,72 @@ WithDesktopScaleAccount(Main::Domain &domain, UserId selfId, Action action,
 	return cleaned && passed && retained;
 }
 
-[[nodiscard]] bool
-ApplyDesktopScaleHistoryReply(not_null<History *> history, MsgId aroundId,
-							  Data::LoadDirection direction,
-							  const MTPmessages_Messages &reply) {
-	auto parsed
-		= Api::ParseHistoryResult(history->peer, aroundId, direction, reply);
-	const auto hasMessages = !parsed.messageIds.empty();
-	history->messages().addSlice(std::move(parsed.messageIds),
-								 parsed.noSkipRange, parsed.fullCount);
-	return hasMessages;
+template <typename Function>
+[[nodiscard]] bool WithDesktopScaleWindow(not_null<Main::Account *> account,
+										  Function function) {
+	const auto window
+		= Core::App().ensureSeparateWindowFor(Window::SeparateId(account));
+	if (!window || !window->sessionController()) {
+		std::fprintf(stderr, "Desktop scale check failed: synthetic window "
+							 "did not open.\n");
+		return false;
+	}
+	const auto controller = not_null<Window::Controller *>(window);
+	const auto closeWindow
+		= gsl::finally([=] { Core::App().closeWindow(controller); });
+	controller->widget()->hide();
+	return function(
+		not_null<Window::SessionController *>(controller->sessionController()));
+}
+
+[[nodiscard]] int
+DesktopScaleHistoryBlockItemCount(not_null<History *> history) {
+	auto result = 0;
+	for (const auto &block : history->blocks) {
+		result += int(block->messages.size());
+	}
+	return result;
+}
+
+[[nodiscard]] bool DesktopScaleHistoryBlockItemCountMatches(
+	not_null<History *> history, int expectedCount, const char *scenario) {
+	const auto actualCount = DesktopScaleHistoryBlockItemCount(history);
+	if (actualCount != expectedCount) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: %s expected %d history "
+					 "items, found %d.\n",
+					 scenario, expectedCount, actualCount);
+	}
+	return actualCount == expectedCount;
+}
+
+[[nodiscard]] HistoryWidget *
+DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
+						not_null<History *> history, MsgId showAtMsgId) {
+	controller->showPeerHistory(
+		history,
+		Window::SectionShow(Window::SectionShow::Way::ClearStack,
+							anim::type::instant, anim::activation::background),
+		showAtMsgId);
+	QCoreApplication::processEvents();
+	const auto widget = controller->content()->historyWidgetForRegressionTest();
+	if (!widget || (widget->history() != history.get())) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: history widget was not "
+					 "created for %s.\n",
+					 history->peer->name().toUtf8().constData());
+		return nullptr;
+	}
+	widget->hide();
+	return widget;
 }
 
 [[nodiscard]] bool SeedDesktopScaleHistory(not_null<History *> history,
 										   MsgId firstMessageId,
-										   int loadedCount, int totalCount,
-										   UserId senderId, bool channel,
+										   int loadedCount, UserId senderId,
 										   bool withMedia, int dateBase = 0,
 										   MsgId dateOrigin = 0) {
+	history->getReadyFor(ShowAtTheEndMsgId);
 	for (auto loaded = 0; loaded != loadedCount;) {
 		const auto pageCount
 			= std::min(kDesktopScalePageSize, loadedCount - loaded);
@@ -15092,76 +15140,17 @@ ApplyDesktopScaleHistoryReply(not_null<History *> history, MsgId aroundId,
 			messages.push_back(DesktopScaleTimelineMessage(
 				history->peer->id, senderId, MsgId(id), date, withMedia));
 		}
-		const auto reply = DesktopScaleMessagesReply(std::move(messages),
-													 totalCount, channel);
-		if (!ApplyDesktopScaleHistoryReply(
-				history, MsgId(lowId), Data::LoadDirection::Before, reply)) {
-			return false;
-		}
+		history->addOlderSlice(messages);
 		loaded += pageCount;
 	}
-	return true;
-}
-
-void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
-									not_null<History *> history, MsgId offsetId,
-									Data::LoadDirection direction) {
-	const auto offset = [&] {
-		switch (direction) {
-		case Data::LoadDirection::Before:
-		case Data::LoadDirection::Around:
-			return offsetId;
-		case Data::LoadDirection::After:
-			return offsetId + 1;
-		}
-		Unexpected("Direction in RequestDesktopScaleHistoryPage");
-	}();
-	const auto addOffset = [&] {
-		switch (direction) {
-		case Data::LoadDirection::Before:
-			return 0;
-		case Data::LoadDirection::Around:
-			return -kDesktopScalePageSize / 2;
-		case Data::LoadDirection::After:
-			return -kDesktopScalePageSize;
-		}
-		Unexpected("Direction in RequestDesktopScaleHistoryPage");
-	}();
-	session->api()
-		.request(MTPmessages_GetHistory(
-			history->peer->input(), MTP_int(int(offset.bare)), MTP_int(0),
-			MTP_int(addOffset), MTP_int(kDesktopScalePageSize), MTP_int(0),
-			MTP_int(0), MTP_long(0)))
-		.done([=](const Api::HistoryRequestResult &reply) {
-			if (!ApplyDesktopScaleHistoryReply(history, offsetId, direction,
-											   reply)) {
-				std::fprintf(stderr, "Desktop scale check failed: history page "
-									 "had no messages.\n");
-			}
-		})
-		.send();
-}
-
-[[nodiscard]] bool DesktopScaleHistoryCountMatches(not_null<History *> history,
-												   MsgId aroundId,
-												   int expectedCount,
-												   const char *scenario) {
-	const auto snapshot = history->messages().snapshot({aroundId, 0, 0});
-	const auto matches = snapshot.count && (*snapshot.count == expectedCount);
-	if (!matches) {
-		std::fprintf(
-			stderr,
-			"Desktop scale check failed: %s history count expected %d, "
-			"found %d.\n",
-			scenario, expectedCount,
-			snapshot.count ? int(*snapshot.count) : -1);
-	}
-	return matches;
+	return DesktopScaleHistoryBlockItemCountMatches(history, loadedCount,
+													"history seed");
 }
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
-	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr) {
+	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr,
+	Window::SessionController *windowController = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
@@ -15173,9 +15162,21 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				DesktopScaleUser(peerId, u"Scale history peer"_q, false),
 			}));
 			const auto history = data.history(peerFromUser(peerId));
+			if (!windowController
+				|| (&windowController->session() != &session)) {
+				std::fprintf(stderr, "Desktop scale check failed: history "
+									 "window is unavailable.\n");
+				return false;
+			}
 			const auto firstLoadedId = MsgId(kHistoryCount - alreadyLoaded + 1);
 			if (!SeedDesktopScaleHistory(history, firstLoadedId, alreadyLoaded,
-										 kHistoryCount, peerId, false, false)) {
+										 peerId, false)) {
+				return false;
+			}
+			const auto historyWidget = DesktopScaleShowHistory(
+				not_null<Window::SessionController *>(windowController),
+				history, ShowAtTheEndMsgId);
+			if (!historyWidget) {
 				return false;
 			}
 
@@ -15188,12 +15189,11 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 									gChannelSaveRequestCapture, &capture)] {
 					  gChannelSaveRequestCapture = previous;
 				  });
-			RequestDesktopScaleHistoryPage(&session, history, firstLoadedId,
-										   Data::LoadDirection::Before);
+			historyWidget->loadMessages();
 			const auto firstPageId = firstLoadedId.bare - kDesktopScalePageSize;
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
-			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
+			for (auto id = firstLoadedId.bare - 1; id >= firstPageId; --id) {
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerFromUser(peerId), peerId, MsgId(id), int(id)));
 			}
@@ -15205,7 +15205,8 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 			auto pageApplied = true;
 			int64 firstMissingPageId = 0;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
-				if (!data.message(peerFromUser(peerId), MsgId(id))) {
+				const auto item = data.message(peerFromUser(peerId), MsgId(id));
+				if (!item || !item->mainView()) {
 					pageApplied = false;
 					firstMissingPageId = id;
 					break;
@@ -15218,8 +15219,10 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 					"message %lld.\n",
 					static_cast<long long>(firstMissingPageId));
 			}
-			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
-				history, firstLoadedId, kHistoryCount, "history page");
+			const auto historyCountMatches
+				= DesktopScaleHistoryBlockItemCountMatches(
+					history, alreadyLoaded + kDesktopScalePageSize,
+					"history page");
 			sample.passed = sample.passed && pageApplied && historyCountMatches;
 			return sample.passed;
 		},
@@ -15232,7 +15235,8 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleDateHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
-	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr) {
+	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr,
+	Window::SessionController *windowController = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	constexpr auto kDateOffset = int64(500'000);
 	const auto targetId = MsgId(kDateOffset);
@@ -15248,9 +15252,21 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				DesktopScaleUser(peerId, u"Scale date peer"_q, false),
 			}));
 			const auto history = data.history(peerFromUser(peerId));
-			if (!SeedDesktopScaleHistory(
-					history, MsgId(kDateOffset + 100), alreadyLoaded - 1,
-					kHistoryCount, peerId, false, false, dateBase, targetId)) {
+			if (!windowController
+				|| (&windowController->session() != &session)) {
+				std::fprintf(stderr, "Desktop scale check failed: date "
+									 "window is unavailable.\n");
+				return false;
+			}
+			if (!SeedDesktopScaleHistory(history, MsgId(kDateOffset + 100),
+										 alreadyLoaded, peerId, false, dateBase,
+										 targetId)) {
+				return false;
+			}
+			const auto historyWidget = DesktopScaleShowHistory(
+				not_null<Window::SessionController *>(windowController),
+				history, ShowAtTheEndMsgId);
+			if (!historyWidget) {
 				return false;
 			}
 
@@ -15287,21 +15303,22 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 									 "did not resolve its target message.\n");
 				return false;
 			}
-			if (!DesktopScaleHistoryCountMatches(
-					history, targetId, kHistoryCount, "jump-to-date target")) {
+			if (!DesktopScaleHistoryBlockItemCountMatches(
+					history, alreadyLoaded, "jump-to-date seed")) {
 				return false;
 			}
 
-			RequestDesktopScaleHistoryPage(&session, history, targetId,
-										   Data::LoadDirection::Around);
+			const auto aroundWidget = DesktopScaleShowHistory(
+				not_null<Window::SessionController *>(windowController),
+				history, targetId);
+			if (aroundWidget != historyWidget) {
+				return false;
+			}
+			const auto firstPageId = kDateOffset - kDesktopScalePageSize / 2;
+			const auto lastPageId = firstPageId + kDesktopScalePageSize;
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
-			for (auto id = kDateOffset - 50; id < kDateOffset; ++id) {
-				messages.push_back(DesktopScaleTimelineMessage(
-					peerFromUser(peerId), peerId, MsgId(id),
-					dateBase + int(id - kDateOffset)));
-			}
-			for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
+			for (auto id = lastPageId - 1; id >= firstPageId; --id) {
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerFromUser(peerId), peerId, MsgId(id),
 					dateBase + int(id - kDateOffset)));
@@ -15313,20 +15330,12 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				reportOnlyStalls);
 			auto pageApplied = true;
 			int64 firstMissingPageId = 0;
-			for (auto id = kDateOffset - 50; id < kDateOffset; ++id) {
-				if (!data.message(peerFromUser(peerId), MsgId(id))) {
+			for (auto id = firstPageId; id != lastPageId; ++id) {
+				const auto item = data.message(peerFromUser(peerId), MsgId(id));
+				if (!item || !item->mainView()) {
 					pageApplied = false;
 					firstMissingPageId = id;
 					break;
-				}
-			}
-			if (pageApplied) {
-				for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
-					if (!data.message(peerFromUser(peerId), MsgId(id))) {
-						pageApplied = false;
-						firstMissingPageId = id;
-						break;
-					}
 				}
 			}
 			if (!pageApplied) {
@@ -15336,8 +15345,9 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 					"apply message %lld.\n",
 					static_cast<long long>(firstMissingPageId));
 			}
-			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
-				history, targetId, kHistoryCount, "jump-to-date page");
+			const auto historyCountMatches
+				= DesktopScaleHistoryBlockItemCountMatches(
+					history, kDesktopScalePageSize, "jump-to-date page");
 			sample.nanoseconds
 				= resolvedSample.nanoseconds && sample.nanoseconds
 					  ? std::optional<qint64>(*resolvedSample.nanoseconds
@@ -15790,7 +15800,8 @@ template <typename Function>
 [[nodiscard]] DesktopScaleFsSample RunDesktopScaleGroupMediaHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId senderId,
 	ChannelId channelId, bool reportOnlyStalls = false,
-	Main::Account *reuseAccount = nullptr) {
+	Main::Account *reuseAccount = nullptr,
+	Window::SessionController *windowController = nullptr) {
 	auto sample = DesktopScaleFsSample();
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 	const auto startCounting
@@ -15823,9 +15834,21 @@ template <typename Function>
 			}
 			const auto peerId = peerFromChannel(channelId);
 			const auto history = data.history(peerId);
+			if (!windowController
+				|| (&windowController->session() != &session)) {
+				std::fprintf(stderr, "Desktop scale check failed: group "
+									 "window is unavailable.\n");
+				return false;
+			}
 			const auto firstLoadedId = MsgId(kHistoryCount - alreadyLoaded + 1);
 			if (!SeedDesktopScaleHistory(history, firstLoadedId, alreadyLoaded,
-										 kHistoryCount, senderId, true, true)) {
+										 senderId, true)) {
+				return false;
+			}
+			const auto historyWidget = DesktopScaleShowHistory(
+				not_null<Window::SessionController *>(windowController),
+				history, ShowAtTheEndMsgId);
+			if (!historyWidget) {
 				return false;
 			}
 
@@ -15838,12 +15861,11 @@ template <typename Function>
 									gChannelSaveRequestCapture, &capture)] {
 					  gChannelSaveRequestCapture = previous;
 				  });
-			RequestDesktopScaleHistoryPage(&session, history, firstLoadedId,
-										   Data::LoadDirection::Before);
+			historyWidget->loadMessages();
 			const auto firstPageId = firstLoadedId.bare - kDesktopScalePageSize;
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
-			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
+			for (auto id = firstLoadedId.bare - 1; id >= firstPageId; --id) {
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerId, senderId, MsgId(id), int(id), true));
 			}
@@ -15862,7 +15884,7 @@ template <typename Function>
 			auto documents = 0;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
 				const auto item = data.message(peerId, MsgId(id));
-				if (!item || !item->media()) {
+				if (!item || !item->mainView() || !item->media()) {
 					pageApplied = false;
 					if (!firstMissingPageId) {
 						firstMissingPageId = id;
@@ -15890,8 +15912,10 @@ template <typename Function>
 					kDesktopScalePageSize / 2, kDesktopScalePageSize / 2,
 					photos, documents);
 			}
-			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
-				history, firstLoadedId, kHistoryCount, "group media page");
+			const auto historyCountMatches
+				= DesktopScaleHistoryBlockItemCountMatches(
+					history, alreadyLoaded + kDesktopScalePageSize,
+					"group media page");
 			const auto directoryCountMatches
 				= sample.directoryEnumerations == 0;
 			if (!directoryCountMatches) {
@@ -15925,6 +15949,7 @@ template <typename Function>
 	(void)channelId;
 	(void)reportOnlyStalls;
 	(void)reuseAccount;
+	(void)windowController;
 #endif // !Q_OS_WIN && !Q_OS_MAC
 	return sample;
 }
@@ -16157,35 +16182,41 @@ int RunDesktopScaleCheck() {
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
 	auto dateHundred = DesktopScaleActionSample();
-	const auto historyCreated
-		= WithDesktopScaleAccount(domain, UserId(6'000'000), [&](auto account) {
-			  historyOne = RunDesktopScaleHistoryPage(
-				  domain, 20, UserId(6'000'000), UserId(6'000'001), false,
-				  account.get());
-			  historyHundred = RunDesktopScaleHistoryPage(
-				  domain, 2'000, UserId(6'100'000), UserId(6'100'001), false,
-				  account.get());
-			  dateOne = RunDesktopScaleDateHistoryPage(
-				  domain, 20, UserId(7'000'000), UserId(7'000'001), false,
-				  account.get());
-			  dateHundred = RunDesktopScaleDateHistoryPage(
-				  domain, 2'000, UserId(7'100'000), UserId(7'100'001), false,
-				  account.get());
-			  return historyOne.passed && historyHundred.passed
-					 && dateOne.passed && dateHundred.passed;
-		  });
+	const auto historyCreated = WithDesktopScaleAccount(
+		domain, UserId(6'000'000), [&](auto account) {
+			return WithDesktopScaleWindow(account, [&](auto windowController) {
+				historyOne = RunDesktopScaleHistoryPage(
+					domain, 20, UserId(6'000'000), UserId(6'000'001), false,
+					account.get(), windowController.get());
+				historyHundred = RunDesktopScaleHistoryPage(
+					domain, 2'000, UserId(6'100'000), UserId(6'100'001), false,
+					account.get(), windowController.get());
+				dateOne = RunDesktopScaleDateHistoryPage(
+					domain, 20, UserId(7'000'000), UserId(7'000'001), false,
+					account.get(), windowController.get());
+				dateHundred = RunDesktopScaleDateHistoryPage(
+					domain, 2'000, UserId(7'100'000), UserId(7'100'001), false,
+					account.get(), windowController.get());
+				return historyOne.passed && historyHundred.passed
+					   && dateOne.passed && dateHundred.passed;
+			});
+		});
 	auto groupOne = DesktopScaleFsSample();
 	auto groupHundred = DesktopScaleFsSample();
-	const auto groupCreated
-		= WithDesktopScaleAccount(domain, UserId(8'000'000), [&](auto account) {
-			  groupOne = RunDesktopScaleGroupMediaHistoryPage(
-				  domain, 20, UserId(8'000'000), UserId(8'000'001),
-				  ChannelId(8'000'002), false, account.get());
-			  groupHundred = RunDesktopScaleGroupMediaHistoryPage(
-				  domain, 2'000, UserId(8'100'000), UserId(8'100'001),
-				  ChannelId(8'100'002), false, account.get());
-			  return groupOne.passed && groupHundred.passed;
-		  });
+	const auto groupCreated = WithDesktopScaleAccount(
+		domain, UserId(8'000'000), [&](auto account) {
+			return WithDesktopScaleWindow(account, [&](auto windowController) {
+				groupOne = RunDesktopScaleGroupMediaHistoryPage(
+					domain, 20, UserId(8'000'000), UserId(8'000'001),
+					ChannelId(8'000'002), false, account.get(),
+					windowController.get());
+				groupHundred = RunDesktopScaleGroupMediaHistoryPage(
+					domain, 2'000, UserId(8'100'000), UserId(8'100'001),
+					ChannelId(8'100'002), false, account.get(),
+					windowController.get());
+				return groupOne.passed && groupHundred.passed;
+			});
+		});
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
 			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
