@@ -881,8 +881,9 @@ class DesktopScaleCheckTests(unittest.TestCase):
     def test_example_below_two_milliseconds_passes_and_above_fails(self):
         self.require_implementation()
         records = []
+        deviation = 0.4 / 1.4826
         for index in range(20):
-            value = 9.6 if index < 10 else 10.4
+            value = 10.0 - deviation if index < 10 else 10.0 + deviation
             sample = make_sample(one_ms=value, hundred_ms=11.0)
             sample["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
             records.append(sample)
@@ -910,14 +911,17 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         result = scale_check.evaluate(records, base, head)
 
-        self.assertAlmostEqual(result["rows"]["cache read x100"]["noise_one_ms"], 1.0)
+        self.assertAlmostEqual(
+            result["rows"]["cache read x100"]["noise_one_ms"], 1.4826
+        )
         self.assertFalse(result["failures"])
 
     def test_fifteen_percent_noise_term_can_allow_a_five_point_five_ms_increase(self):
         self.require_implementation()
         records = []
+        deviation = 0.1 / 1.4826
         for index in range(20):
-            value = 39.9 if index < 10 else 40.1
+            value = 40.0 - deviation if index < 10 else 40.0 + deviation
             sample = make_sample(one_ms=value, hundred_ms=48.0)
             sample["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
             records.append(sample)
@@ -928,6 +932,23 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertAlmostEqual(result["rows"]["cache read x100"]["noise_one_ms"], 0.1)
         self.assertFalse(result["failures"])
+
+    def test_robust_sigma_ignores_one_high_dev_outlier(self):
+        self.require_implementation()
+        scenario = "cache read x100"
+        records = [make_sample() for _ in range(20)]
+        records[-1]["scenarios"][scenario]["one_ms"] = 30.0
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"][scenario]["one_ms"] = 13.0
+
+        result = scale_check.evaluate(records, base, head)
+
+        self.assertEqual(result["rows"][scenario]["noise_one_ms"], 0.0)
+        self.assertTrue(
+            any(scenario in failure and "3.00 ms" in failure for failure in result["failures"])
+        )
 
     def test_nineteen_dev_runs_remain_report_only_even_for_timing_failures(self):
         self.require_implementation()
@@ -1017,6 +1038,22 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 for failure in result["failures"]
             )
         )
+
+    def test_dev_stall_exception_requires_more_than_half_the_runs(self):
+        self.require_implementation()
+        scenario = "cache read x100"
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+
+        results = {}
+        for stalled_count in (10, 11):
+            records = [make_sample() for _ in range(20)]
+            for record in records[:stalled_count]:
+                record["scenarios"][scenario]["one_stalls"] = 1
+            results[stalled_count] = scale_check.evaluate(records, base, head)
+
+        self.assertNotIn(scenario, results[10]["exceptions"])
+        self.assertIn(scenario, results[11]["exceptions"])
 
     def test_static_baseline_exceptions_are_report_only(self):
         self.require_implementation()

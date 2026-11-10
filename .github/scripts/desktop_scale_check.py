@@ -207,9 +207,12 @@ def _median(records, scenario, field):
 
 
 def _noise(records, scenario, field):
-    return statistics.pstdev(
-        record["scenarios"][scenario][field] for record in records
+    values = [record["scenarios"][scenario][field] for record in records]
+    median = statistics.median(values)
+    median_absolute_deviation = statistics.median(
+        abs(value - median) for value in values
     )
+    return 1.4826 * median_absolute_deviation
 
 
 def _baseline_exceptions(records):
