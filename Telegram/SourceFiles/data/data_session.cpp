@@ -3137,7 +3137,7 @@ void Session::applyDialogs(
 				[&](const MTPDdialog &data) {
 					if (const auto folderId = data.vfolder_id();
 						folderId && folderId->v) {
-						folder(folderId->v);
+						freezeList(folder(folderId->v)->chatsList());
 					}
 				},
 				[&](const MTPDdialogFolder &data) {
