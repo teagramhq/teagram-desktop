@@ -10845,7 +10845,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto chatSwitchIndex = 0;
 	const auto showPeerHistoryMeasured = [&](auto history) {
 		const auto index = chatSwitchIndex++;
-		const auto peerId = qint64(history->peer->id.bare);
+		const auto peerId = qint64(history->peer->id.value);
 		const auto startedAt = QDateTime::currentDateTime();
 		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
 		const auto processBefore = ProcessCpuTimeNanoseconds();
