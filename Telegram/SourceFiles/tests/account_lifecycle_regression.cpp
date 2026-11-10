@@ -206,6 +206,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <set>
@@ -14729,9 +14730,24 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
 
+[[nodiscard]] constexpr std::optional<quint64>
+SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
+	auto total = quint64(0);
+	for (const auto count : counts) {
+		if (!count) {
+			return std::nullopt;
+		}
+		total += *count;
+	}
+	return total;
+}
+
+static_assert(!SumDesktopScaleStalls({std::nullopt,
+									  std::optional<quint64>(0)}));
+
 struct DesktopScaleActionSample {
 	std::optional<qint64> nanoseconds;
-	quint64 mainThreadStepsOverBudget = 0;
+	std::optional<quint64> mainThreadStepsOverBudget;
 	bool passed = false;
 };
 
@@ -15103,8 +15119,13 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 						= result.loaded.nanoseconds.value_or(0)
 						  + *page.nanoseconds;
 				}
-				result.loaded.mainThreadStepsOverBudget
-					+= page.mainThreadStepsOverBudget;
+				if (page.mainThreadStepsOverBudget) {
+					result.loaded.mainThreadStepsOverBudget
+						= result.loaded.mainThreadStepsOverBudget.value_or(0)
+						  + *page.mainThreadStepsOverBudget;
+				} else {
+					result.loaded.mainThreadStepsOverBudget.reset();
+				}
 				result.loaded.passed = result.loaded.passed && page.passed;
 				if (!page.passed) {
 					break;
@@ -15371,27 +15392,32 @@ int RunDesktopScaleCheck() {
 		}
 		std::printf(" | 50 ms | calibrating |\n");
 	};
-	const auto stalls
-		= dialogsOne.mainThreadStepsOverBudget
-		  + dialogsHundred.mainThreadStepsOverBudget
-		  + contactsOne.loaded.mainThreadStepsOverBudget
-		  + contactsHundred.loaded.mainThreadStepsOverBudget
-		  + contactsOne.changedAndFound.mainThreadStepsOverBudget
-		  + contactsHundred.changedAndFound.mainThreadStepsOverBudget
-		  + cacheOne.mainThreadStepsOverBudget
-		  + cacheHundred.mainThreadStepsOverBudget;
+	const auto stalls = SumDesktopScaleStalls({
+		dialogsOne.mainThreadStepsOverBudget,
+		dialogsHundred.mainThreadStepsOverBudget,
+		contactsOne.loaded.mainThreadStepsOverBudget,
+		contactsHundred.loaded.mainThreadStepsOverBudget,
+		contactsOne.changedAndFound.mainThreadStepsOverBudget,
+		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
+		cacheOne.mainThreadStepsOverBudget,
+		cacheHundred.mainThreadStepsOverBudget,
+	});
 	// The dialogs page already exceeds the 50 ms budget on the dev baseline.
 	// Report its stalls, but keep that known scenario non-blocking here.
-	const auto reportOnlyDialogStalls
-		= dialogsOne.mainThreadStepsOverBudget
-		  + dialogsHundred.mainThreadStepsOverBudget;
-	const auto blockingStalls = stalls - reportOnlyDialogStalls;
+	const auto blockingStalls = SumDesktopScaleStalls({
+		contactsOne.loaded.mainThreadStepsOverBudget,
+		contactsHundred.loaded.mainThreadStepsOverBudget,
+		contactsOne.changedAndFound.mainThreadStepsOverBudget,
+		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
+		cacheOne.mainThreadStepsOverBudget,
+		cacheHundred.mainThreadStepsOverBudget,
+	});
 	const auto passed
 		= dialogsOne.passed && dialogsHundred.passed
 		  && contactsOne.loaded.passed && contactsHundred.loaded.passed
 		  && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed && cacheOne.passed
-		  && cacheHundred.passed && (blockingStalls == 0)
+		  && cacheHundred.passed && blockingStalls && (*blockingStalls == 0)
 		  && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0);
 
@@ -15413,41 +15439,49 @@ int RunDesktopScaleCheck() {
 			std::printf("n/a");
 		}
 	};
+	const auto printStallCount = [](const std::optional<quint64> &sample) {
+		if (sample) {
+			std::printf("%llu", static_cast<unsigned long long>(*sample));
+		} else {
+			std::printf("n/a");
+		}
+	};
 	std::printf("Directory enumerations per thumbnail cache access: 1x=");
 	printEnumerations(cacheOne.directoryEnumerations);
 	std::printf(", 100x=");
 	printEnumerations(cacheHundred.directoryEnumerations);
 	std::printf(".\n");
-	std::printf(
-		"Main-thread steps over 50 ms: dialogs 1x=%llu, 100x=%llu; "
-		"contacts.getContacts 1x=%llu, 100x=%llu; "
-		"contact change and lookup 1x=%llu, 100x=%llu; "
-		"thumbnail reads 1x=%llu, 100x=%llu; total=%llu.\n",
-		static_cast<unsigned long long>(dialogsOne.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(
-			dialogsHundred.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(
-			contactsOne.loaded.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(
-			contactsHundred.loaded.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(
-			contactsOne.changedAndFound.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(
-			contactsHundred.changedAndFound.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(cacheOne.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(cacheHundred.mainThreadStepsOverBudget),
-		static_cast<unsigned long long>(stalls));
+	std::printf("Main-thread steps over 50 ms: dialogs 1x=");
+	printStallCount(dialogsOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
+	std::printf("; contacts.getContacts 1x=");
+	printStallCount(contactsOne.loaded.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
+	std::printf("; contact change and lookup 1x=");
+	printStallCount(contactsOne.changedAndFound.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(contactsHundred.changedAndFound.mainThreadStepsOverBudget);
+	std::printf("; thumbnail reads 1x=");
+	printStallCount(cacheOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(cacheHundred.mainThreadStepsOverBudget);
+	std::printf("; total=");
+	printStallCount(stalls);
+	std::printf(".\n");
 	std::printf("Report-only baseline: dialogs page 1x=");
 	printSampleTime(dialogsOne);
-	std::printf(
-		"/%llu over-50-ms steps, 100x=",
-		static_cast<unsigned long long>(dialogsOne.mainThreadStepsOverBudget));
+	std::printf("/");
+	printStallCount(dialogsOne.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps, 100x=");
 	printSampleTime(dialogsHundred);
-	std::printf("/%llu over-50-ms steps.\n",
-				static_cast<unsigned long long>(
-					dialogsHundred.mainThreadStepsOverBudget));
-	std::printf("Blocking main-thread steps over 50 ms: %llu.\n",
-				static_cast<unsigned long long>(blockingStalls));
+	std::printf("/");
+	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps.\n");
+	std::printf("Blocking main-thread steps over 50 ms: ");
+	printStallCount(blockingStalls);
+	std::printf(".\n");
 	std::printf(
 		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
 		"cache=%d/%d.\n",
