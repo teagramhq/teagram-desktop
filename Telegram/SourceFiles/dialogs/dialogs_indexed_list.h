@@ -55,7 +55,7 @@ public:
 		  return (i != _nameIndex.end()) ? &i->second : nullptr;
 	  }
 	  const auto i = _index.find(ch);
-	  return (i != _index.end()) ? &i->second.all().rows() : nullptr;
+	  return (i != _index.end()) ? &i->second.rows() : nullptr;
   }
 	[[nodiscard]] std::vector<not_null<Row*>> filtered(
 		const QStringList &words) const;
