@@ -658,6 +658,10 @@ jobs:
             fi
           '
 
+      - name: Desktop scale check tests.
+        if: env.ONLY_CACHE == 'false'
+        run: python3 .github/scripts/test_desktop_scale_check.py
+
       - name: Desktop data scale check.
         id: desktop-scale
         if: env.ONLY_CACHE == 'false'
