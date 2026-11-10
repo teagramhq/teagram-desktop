@@ -10816,7 +10816,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
-	for (const auto target : {emptyFirstHistory, emptySecondHistory}) {
+	for (const auto &target : {emptyFirstHistory, emptySecondHistory}) {
 		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
