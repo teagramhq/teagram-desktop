@@ -912,6 +912,10 @@ void ApiWrap::prepareContacts(const MTPcontacts_Contacts &result, int offset) {
 		_contactsApplyKeys.clear();
 		_contactsApplyKeys.reserve(count);
 		_contactsApplyOrder.clear();
+		const auto contacts = _session->data().contactsList();
+		contacts->reserve(contacts->size() + count);
+		const auto noChats = _session->data().contactsNoChatsList();
+		noChats->reserve(noChats->size() + count);
 	}
 	const auto till = std::min(offset + kContactsApplyChunk, count);
 	for (auto i = offset; i != till; ++i) {

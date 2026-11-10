@@ -27,6 +27,11 @@ IndexedList::IndexedList(SortMode sortMode, FilterId filterId,
 			|| sortMode == SortMode::Name);
 }
 
+void IndexedList::reserve(int size) {
+	Expects(size >= this->size());
+	_indexedLettersByRow.reserve(size);
+}
+
 void IndexedList::addNameRow(QChar ch, Row *row) {
 	Expects(_sortMode == SortMode::Name);
 	Expects(row != nullptr);
@@ -71,7 +76,7 @@ void IndexedList::addNameRows(Row *row) {
 	Expects(_sortMode == SortMode::Name);
 	Expects(row != nullptr);
 	const auto [i, inserted]
-		= _indexedLettersByRow.emplace(row, std::vector<QChar>());
+		= _indexedLettersByRow.emplace(row, QVarLengthArray<QChar, 4>());
 	Expects(inserted);
 	auto &letters = i->second;
 	for (const auto &ch : row->entry()->chatListFirstLetters()) {

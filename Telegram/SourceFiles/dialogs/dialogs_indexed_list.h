@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <unordered_map>
 #include <unordered_set>
 
+#include <QVarLengthArray>
+
 class History;
 
 namespace Dialogs {
@@ -32,6 +34,7 @@ class IndexedList {
 
 	RowsByLetter addToEnd(Key key);
 	Row *addByName(Key key);
+	void reserve(int size);
 	void adjustByDate(const RowsByLetter &links);
 	void moveToTop(Key key);
 	void freeze();
@@ -114,7 +117,7 @@ class IndexedList {
 	base::flat_map<QChar, std::vector<not_null<Row *>>> _nameIndex;
 	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
 	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
-	std::unordered_map<Row *, std::vector<QChar>> _indexedLettersByRow;
+	std::unordered_map<Row *, QVarLengthArray<QChar, 4>> _indexedLettersByRow;
 };
 
 } // namespace Dialogs
