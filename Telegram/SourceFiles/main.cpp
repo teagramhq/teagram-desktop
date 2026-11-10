@@ -8,7 +8,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/launcher.h"
 #include "core/mac_protected_path_runtime.h"
 
+#if defined(TDESKTOP_TEST_QPA_OFFSCREEN)
+#include <QtCore/QtPlugin>
+#endif // TDESKTOP_TEST_QPA_OFFSCREEN
+
 #include <cstring>
+
+#if defined(TDESKTOP_TEST_QPA_OFFSCREEN)
+Q_IMPORT_PLUGIN(QOffscreenIntegrationPlugin)
+#endif // TDESKTOP_TEST_QPA_OFFSCREEN
 
 int main(int argc, char *argv[]) {
 	if (!Core::MacProtectedPath::InitializeProfile()) {

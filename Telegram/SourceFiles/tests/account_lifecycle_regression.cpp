@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
+#include "data/data_document_media.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_media_types.h"
@@ -64,11 +65,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_saved_messages.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
+#include "data/data_types.h"
 #include "data/data_user.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_username_policy.h"
+#include "dialogs/dialogs_indexed_list.h"
 #include "dialogs/dialogs_key.h"
+#include "dialogs/dialogs_main_list.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "export/export_controller.h"
 #include "export/export_manager.h"
@@ -197,10 +201,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <future>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <set>
@@ -210,6 +216,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #if !defined(Q_OS_WIN)
 #include <execinfo.h>
+#endif
+#if defined(Q_OS_LINUX)
+#include <dlfcn.h>
 #endif
 
 namespace Tests {
@@ -254,6 +263,7 @@ struct ChannelSaveRequestCapture {
 	not_null<MTP::Instance *> instance;
 	std::vector<CapturedChannelSaveRequest> requests;
 	bool peerPhotoUploadOnly = false;
+	bool desktopScaleContactsOnly = false;
 };
 
 ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
@@ -780,6 +790,10 @@ bool CaptureChannelSaveRequestForRegressionTest(
 		&& (constructor != mtpc_messages_editChatPhoto)) {
 		return true;
 	}
+	if ((constructor == mtpc_contacts_getContacts)
+		&& !capture->desktopScaleContactsOnly) {
+		return false;
+	}
 	switch (constructor) {
 	case mtpc_channels_deactivateAllUsernames:
 	case mtpc_channels_editTitle:
@@ -791,6 +805,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 	case mtpc_channels_getParticipant:
 	case mtpc_messages_createChat:
 	case mtpc_messages_getDialogs:
+	case mtpc_contacts_getContacts:
 	case mtpc_upload_saveFilePart:
 	case mtpc_messages_editChatPhoto:
 	case mtpc_updates_getDifference:
@@ -2348,9 +2363,11 @@ class RegressionAccountCleanup final {
   public:
 	RegressionAccountCleanup(Main::Domain &domain,
 							 not_null<Main::Account *> account,
-							 not_null<Main::Account *> fallback)
+							 not_null<Main::Account *> fallback,
+							 bool retainSession = false)
 		: _domain(domain), _account(base::make_weak(account.get())),
-		  _fallback(base::make_weak(fallback.get())) {
+		  _fallback(base::make_weak(fallback.get())),
+		  _retainSession(retainSession) {
 		_domain.activate(account);
 	}
 
@@ -2360,9 +2377,21 @@ class RegressionAccountCleanup final {
 
 	~RegressionAccountCleanup() { (void)cleanup(); }
 
+	[[nodiscard]] bool retainedSession() const {
+		const auto account = _account.get();
+		return account && account->sessionExists();
+	}
+
+	[[nodiscard]] bool fallbackActive() const {
+		const auto fallback = _fallback.get();
+		return fallback && (&_domain.active() == fallback);
+	}
+
 	[[nodiscard]] bool cleanup() {
 		if (_cleaned) {
-			return _released && _cacheCleanupPassed;
+			return (_released || _retainSession) && _cacheCleanupPassed
+				   && (!_retainSession
+					   || (retainedSession() && fallbackActive()));
 		}
 		_cleaned = true;
 		const auto account = _account.get();
@@ -2395,15 +2424,19 @@ class RegressionAccountCleanup final {
 		if (mediaCache) {
 			mediaCache->sync();
 		}
-		if (const auto current = _account.get();
-			current && current->sessionExists()) {
-			current->forcedLogOut();
+		if (!_retainSession) {
+			if (const auto current = _account.get();
+				current && current->sessionExists()) {
+				current->forcedLogOut();
+			}
 		}
 #endif
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-		if (const auto current = _account.get();
-			current && current->sessionExists()) {
-			current->forcedLogOut();
+		if (!_retainSession) {
+			if (const auto current = _account.get();
+				current && current->sessionExists()) {
+				current->forcedLogOut();
+			}
 		}
 #endif
 		if (const auto fallback = _fallback.get();
@@ -2414,15 +2447,26 @@ class RegressionAccountCleanup final {
 		_domain.removeRedundantAccounts();
 		QCoreApplication::processEvents();
 		_domain.removeRedundantAccounts();
+		// Events queued while restoring the fallback can activate another
+		// account. Make the fallback the final active account after draining
+		// those events, while keeping the synthetic session alive for shutdown.
+		if (_retainSession) {
+			const auto fallback = _fallback.get();
+			if (fallback && (&_domain.active() != fallback)) {
+				_domain.activate(not_null<Main::Account *>(fallback));
+			}
+		}
 		_released = _account.empty();
-		_cleaned = _released;
-		return _released && _cacheCleanupPassed;
+		_cleaned = _released || _retainSession;
+		return _cleaned && _cacheCleanupPassed
+			   && (!_retainSession || (retainedSession() && fallbackActive()));
 	}
 
   private:
 	Main::Domain &_domain;
 	base::weak_ptr<Main::Account> _account;
 	base::weak_ptr<Main::Account> _fallback;
+	const bool _retainSession = false;
 	bool _cleaned = false;
 	bool _released = false;
 	bool _cacheCleanupPassed = true;
@@ -14683,7 +14727,818 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		domain, fixtures, std::move(nativeLifecycleResults), std::move(done));
 }
 
+constexpr auto kDesktopScalePageSize = 100;
+constexpr auto kDesktopScaleThumbnailReads = 100;
+
+[[nodiscard]] constexpr std::optional<quint64>
+SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
+	auto total = quint64(0);
+	for (const auto count : counts) {
+		if (!count) {
+			return std::nullopt;
+		}
+		total += *count;
+	}
+	return total;
+}
+
+static_assert(!SumDesktopScaleStalls({std::nullopt,
+									  std::optional<quint64>(0)}));
+
+struct DesktopScaleActionSample {
+	std::optional<qint64> nanoseconds;
+	std::optional<quint64> mainThreadStepsOverBudget;
+	bool passed = false;
+};
+
+void SettleDesktopScaleWatchdog() {
+	auto loop = QEventLoop();
+	QTimer::singleShot(80, &loop, &QEventLoop::quit);
+	loop.exec();
+}
+
+struct DesktopScaleCacheSample final : DesktopScaleActionSample {
+	std::optional<quint64> directoryEnumerations;
+};
+
+struct DesktopScaleCacheSamples final {
+	DesktopScaleCacheSample one;
+	DesktopScaleCacheSample hundred;
+};
+
+template <typename Action>
+[[nodiscard]] DesktopScaleActionSample
+MeasureDesktopScaleAction(Action action, bool reportOnlyStalls = false) {
+	SettleDesktopScaleWatchdog();
+	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
+	auto timer = QElapsedTimer();
+	timer.start();
+	const auto passed = action();
+	const auto nanoseconds = timer.nsecsElapsed();
+	SettleDesktopScaleWatchdog();
+	const auto stalls = Core::UiStallWatchdog::StallCount() - stallsBefore;
+	return {
+		.nanoseconds = nanoseconds,
+		.mainThreadStepsOverBudget = stalls,
+		.passed = passed && (reportOnlyStalls || (stalls == 0)),
+	};
+}
+
+template <typename Request, typename Action>
+[[nodiscard]] DesktopScaleActionSample
+ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
+						  uint32 expectedConstructor,
+						  const typename Request::ResponseType &result,
+						  Action action, bool reportOnlyStalls = false) {
+	const auto request
+		= std::find_if(capture.requests.begin(), capture.requests.end(),
+					   [=](const auto &entry) {
+						   return !entry.body.isEmpty()
+								  && (static_cast<uint32>(entry.body.front())
+									  == expectedConstructor);
+					   });
+	const auto requestCount
+		= std::count_if(capture.requests.begin(), capture.requests.end(),
+						[=](const auto &entry) {
+							return !entry.body.isEmpty()
+								   && (static_cast<uint32>(entry.body.front())
+									   == expectedConstructor);
+						});
+	if (requestCount != 1 || request == capture.requests.end()
+		|| !request->callbacks.done) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: expected one request with "
+					 "constructor 0x%08x, found %d.\n",
+					 expectedConstructor, int(requestCount));
+		return {};
+	}
+	auto response = MTP::Response();
+	response.requestId = request->id;
+	result.write(response.reply);
+	auto done = std::move(request->callbacks.done);
+	return MeasureDesktopScaleAction([&] { return done(response) && action(); },
+									 reportOnlyStalls);
+}
+
+[[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
+									   bool contact, bool withPhone = false) {
+	const auto flags
+		= MTPDuser::Flag::f_first_name
+		  | (withPhone ? MTPDuser::Flag::f_phone : MTPDuser::Flag())
+		  | (contact ? MTPDuser::Flag::f_contact : MTPDuser::Flag());
+	const auto phone
+		= withPhone ? MTP_string(QString::number(id.bare)) : MTPstring();
+	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
+					MTP_string(std::move(firstName)), MTPstring(), MTPstring(),
+					phone, MTPUserProfilePhoto(), MTPUserStatus(), MTPint(),
+					MTP_vector<MTPRestrictionReason>(0), MTPstring(),
+					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
+					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
+					MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] auto DesktopScaleNotifySettings() {
+	return MTP_peerNotifySettings(
+		MTP_flags(MTPDpeerNotifySettings::Flags()), MTP_boolFalse(),
+		MTP_boolFalse(), MTP_int(0), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault(),
+		MTP_boolFalse(), MTP_boolFalse(), MTP_notificationSoundDefault(),
+		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
+}
+
+[[nodiscard]] MTPDialog DesktopScaleDialog(UserId userId) {
+	const auto notifySettings = DesktopScaleNotifySettings();
+	return MTP_dialog(MTP_flags(0), peerToMTP(peerFromUser(userId)), MTP_int(1),
+					  MTP_int(0), MTP_int(0), MTP_int(0), MTP_int(0),
+					  MTP_int(0), MTP_int(0), notifySettings, MTPint(),
+					  MTPDraftMessage(), MTPint(), MTPint());
+}
+
+[[nodiscard]] MTPMessage DesktopScaleMessage(UserId userId) {
+	return MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id), MTP_int(1),
+		peerToMTP(peerFromUser(userId)), MTPint(), MTPstring(),
+		peerToMTP(peerFromUser(userId)), MTPPeer(), MTPMessageFwdHeader(),
+		MTP_long(0), MTPlong(), MTPPeer(), MTPMessageReplyHeader(), MTP_int(1),
+		MTP_string(u"desktop scale check"_q), MTP_messageMediaEmpty(),
+		MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(), MTP_int(0),
+		MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
+[[nodiscard]] QVector<MTPUser> DesktopScaleUsers(UserId firstId, int count,
+												 bool contacts,
+												 bool withPhone = false) {
+	auto users = QVector<MTPUser>();
+	users.reserve(count);
+	for (auto i = 0; i != count; ++i) {
+		const auto firstName
+			= contacts ? u"Scale Contact %1"_q.arg(i, 5, 10, QChar('0'))
+					   : u"Scale Peer %1"_q.arg(i, 5, 10, QChar('0'));
+		users.push_back(DesktopScaleUser(UserId(firstId.bare + i), firstName,
+										 contacts, withPhone));
+	}
+	return users;
+}
+
+[[nodiscard]] QVector<MTPDialog> DesktopScaleDialogs(UserId firstId,
+													 int count) {
+	auto dialogs = QVector<MTPDialog>();
+	dialogs.reserve(count);
+	for (auto i = 0; i != count; ++i) {
+		dialogs.push_back(DesktopScaleDialog(UserId(firstId.bare + i)));
+	}
+	return dialogs;
+}
+
+[[nodiscard]] QVector<MTPMessage> DesktopScaleMessages(UserId firstId,
+													   int count) {
+	auto messages = QVector<MTPMessage>();
+	messages.reserve(count);
+	for (auto i = 0; i != count; ++i) {
+		messages.push_back(DesktopScaleMessage(UserId(firstId.bare + i)));
+	}
+	return messages;
+}
+
+template <typename Action>
+[[nodiscard]] bool WithDesktopScaleAccount(Main::Domain &domain, UserId selfId,
+										   Action action) {
+	const auto account = domain.add(MTP::Environment::Production);
+	// Activating the synthetic account schedules removal of the startup
+	// account, which has no session. Keep the synthetic account as its own
+	// fallback and never hold a pointer to the startup one. The standalone
+	// run exits after reporting, so the session is retained to avoid forced
+	// logout's global media-mixer teardown in its headless Linux scenarios.
+	auto cleanup = RegressionAccountCleanup(domain, account, account, true);
+	account->mtp().stopForServerEnrollment();
+	account->setSessionUserId(selfId);
+	if (!account->createSession(RegressionUser(selfId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		std::fprintf(stderr, "Desktop scale check failed: could not create a "
+							 "synthetic session.\n");
+		return false;
+	}
+	if (!WaitForRegressionCondition(
+			[&] {
+				return account->session().data().cacheIfAllowed() != nullptr;
+			},
+			15'000)) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: the synthetic cache did not open.\n");
+		return false;
+	}
+	// Let the deferred account bookkeeping queued by the activation run
+	// before the measured step, so it is not counted against that step.
+	auto settle = QEventLoop();
+	QTimer::singleShot(150, &settle, &QEventLoop::quit);
+	settle.exec();
+	const auto passed = action(account);
+	const auto cleaned = cleanup.cleanup();
+	const auto sessionRetained = cleanup.retainedSession();
+	const auto fallbackActive = cleanup.fallbackActive();
+	const auto retained = sessionRetained && fallbackActive;
+	if (!passed || !cleaned || !retained) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: scenario %s, cleanup %s, "
+					 "session %s, fallback %s.\n",
+					 passed ? "passed" : "failed", cleaned ? "ok" : "failed",
+					 sessionRetained ? "retained" : "lost",
+					 fallbackActive ? "active" : "inactive");
+	}
+	return cleaned && passed && retained;
+}
+
+[[nodiscard]] DesktopScaleActionSample
+RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
+					   UserId firstId) {
+	auto sample = DesktopScaleActionSample();
+	const auto created = WithDesktopScaleAccount(
+		domain, UserId(firstId.bare - 1), [&](auto account) {
+			auto &session = account->session();
+			auto &data = session.data();
+			auto users = DesktopScaleUsers(firstId, alreadyLoaded, false);
+			auto dialogs = DesktopScaleDialogs(firstId, alreadyLoaded);
+			auto messages = DesktopScaleMessages(firstId, alreadyLoaded);
+			data.processUsers(MTP_vector<MTPUser>(std::move(users)));
+			data.applyDialogs(nullptr, messages, dialogs, alreadyLoaded);
+			if (data.chatsList()->indexed()->size() != alreadyLoaded) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: preloaded dialog count did "
+					"not match %d.\n",
+					alreadyLoaded);
+				return false;
+			}
+
+			auto capture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+			};
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			session.api().requestDialogs(nullptr);
+			const auto pageStart = UserId(firstId.bare + alreadyLoaded);
+			auto pageUsers
+				= DesktopScaleUsers(pageStart, kDesktopScalePageSize, false);
+			auto pageDialogs
+				= DesktopScaleDialogs(pageStart, kDesktopScalePageSize);
+			auto pageMessages
+				= DesktopScaleMessages(pageStart, kDesktopScalePageSize);
+			const auto reply = MTP_messages_dialogs(
+				MTP_vector<MTPDialog>(std::move(pageDialogs)),
+				MTP_vector<MTPMessage>(std::move(pageMessages)),
+				MTP_vector<MTPChat>(0),
+				MTP_vector<MTPUser>(std::move(pageUsers)));
+			sample = ApplyDesktopScaleResponse<MTPmessages_GetDialogs>(
+				capture, mtpc_messages_getDialogs, reply,
+				[&] {
+					return data.chatsList()->indexed()->size()
+						   == alreadyLoaded + kDesktopScalePageSize;
+				},
+				true);
+			if (!sample.passed) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: applying the dialogs page "
+					"did not produce the expected list.\n");
+			}
+			return sample.passed;
+		});
+	if (!created) {
+		sample.passed = false;
+	}
+	return sample;
+}
+
+struct DesktopScaleContactsSample final {
+	DesktopScaleActionSample loaded;
+	DesktopScaleActionSample changedAndFound;
+};
+
+[[nodiscard]] MTPcontacts_Contacts
+DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
+						  int pageSize, bool changeOne) {
+	auto contacts = QVector<MTPContact>();
+	auto users = QVector<MTPUser>();
+	const auto responseCount = changeOne ? 1 : pageSize;
+	contacts.reserve(responseCount);
+	users.reserve(responseCount);
+	for (auto i = 0; i != responseCount; ++i) {
+		const auto index = offset + i;
+		const auto userId = changeOne ? UserId(firstId.bare + totalCount - 1)
+									  : UserId(firstId.bare + index);
+		const auto firstName
+			= changeOne ? u"ScaleUpdatedContact"_q
+						: u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0'));
+		contacts.push_back(MTP_contact(MTP_long(userId.bare), MTP_boolFalse()));
+		users.push_back(DesktopScaleUser(userId, firstName, true, true));
+	}
+	return MTP_contacts_contacts(MTP_vector<MTPContact>(std::move(contacts)),
+								 MTP_int(totalCount),
+								 MTP_vector<MTPUser>(std::move(users)));
+}
+
+[[nodiscard]] DesktopScaleContactsSample
+RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
+						bool reportOnlyStalls = false) {
+	auto result = DesktopScaleContactsSample();
+	const auto created = WithDesktopScaleAccount(
+		domain, UserId(firstId.bare - 1), [&](auto account) {
+			auto &session = account->session();
+			auto &data = session.data();
+			auto unrelatedCapture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+			};
+			auto unrelatedCallbacks = MTP::ResponseHandler();
+			const auto contactsRequest
+				= MTP::details::SerializedRequest::Serialize(
+					MTPcontacts_GetContacts(MTP_long(0)));
+			{
+				const auto restoreCapture = gsl::finally(
+					[previous = std::exchange(gChannelSaveRequestCapture,
+											  &unrelatedCapture)] {
+						gChannelSaveRequestCapture = previous;
+					});
+				if (CaptureChannelSaveRequestForRegressionTest(
+						&account->mtp(), 1, contactsRequest,
+						unrelatedCallbacks)) {
+					std::fprintf(stderr,
+								 "Desktop scale check failed: "
+								 "unapproved contacts request "
+								 "was intercepted by a non-scale capture.\n");
+					return false;
+				}
+			}
+			if (!unrelatedCapture.requests.empty()) {
+				std::fprintf(stderr, "Desktop scale check failed: "
+									 "unrelated request capture "
+									 "captured contacts.getContacts "
+									 "without scale opt-in.\n");
+				return false;
+			}
+			auto peerPhotoCapture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.peerPhotoUploadOnly = true,
+			};
+			auto peerPhotoCallbacks = MTP::ResponseHandler();
+			{
+				const auto restoreCapture = gsl::finally(
+					[previous = std::exchange(gChannelSaveRequestCapture,
+											  &peerPhotoCapture)] {
+						gChannelSaveRequestCapture = previous;
+					});
+				if (!CaptureChannelSaveRequestForRegressionTest(
+						&account->mtp(), 2, contactsRequest,
+						peerPhotoCallbacks)) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: peer-photo capture "
+						"did not swallow contacts.getContacts.\n");
+					return false;
+				}
+			}
+			if (!peerPhotoCapture.requests.empty()) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: peer-photo capture "
+							 "retained contacts.getContacts.\n");
+				return false;
+			}
+
+			data.contactsLoaded() = false;
+			auto capture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.desktopScaleContactsOnly = true,
+			};
+			{
+				const auto restoreCapture
+					= gsl::finally([previous = std::exchange(
+										gChannelSaveRequestCapture, &capture)] {
+						  gChannelSaveRequestCapture = previous;
+					  });
+				session.api().requestContacts();
+				const auto reply = DesktopScaleContactsReply(firstId, count, 0,
+															 count, false);
+				result.loaded
+					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
+						capture, mtpc_contacts_getContacts, reply,
+						[&] {
+							return WaitForRegressionCondition(
+								[&] {
+									return data.contactsList()->size() == count
+										   && data.contactsLoaded().current();
+								},
+								5000);
+						},
+						reportOnlyStalls);
+			}
+			if (!result.loaded.passed) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: contacts.getContacts did "
+					"not load %d contacts.\n",
+					count);
+				return false;
+			}
+
+			data.contactsLoaded() = false;
+			auto updateCapture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.desktopScaleContactsOnly = true,
+			};
+			{
+				const auto restoreCapture = gsl::finally(
+					[previous = std::exchange(gChannelSaveRequestCapture,
+											  &updateCapture)] {
+						gChannelSaveRequestCapture = previous;
+					});
+				session.api().requestContacts();
+				const auto changedReply = DesktopScaleContactsReply(
+					firstId, count, count - 1, 1, true);
+				result.changedAndFound
+					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
+						updateCapture, mtpc_contacts_getContacts, changedReply,
+						[&] {
+							return WaitForRegressionCondition(
+								[&] {
+									const auto userId
+										= UserId(firstId.bare + count - 1);
+									const auto user = data.userLoaded(userId);
+									const auto found
+										= data.contactsList()->filtered(
+											QStringList{
+												u"scaleupdatedcontact"_q});
+									return user && user->isContact()
+										   && (user->firstName
+											   == u"ScaleUpdatedContact"_q)
+										   && (found.size() == 1);
+								},
+								5000);
+						});
+			}
+			if (!result.changedAndFound.passed) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: updated contact could not be "
+					"found by its new name among %d contacts.\n",
+					count);
+			}
+			return result.loaded.passed && result.changedAndFound.passed;
+		});
+	if (!created) {
+		result.loaded.passed = false;
+		result.changedAndFound.passed = false;
+	}
+	return result;
+}
+
+[[nodiscard]] MTPDocument DesktopScaleVideoDocument(int64 id) {
+	const auto video = MTP_documentAttributeVideo(
+		MTP_flags(0), MTP_double(1.), MTP_int(160), MTP_int(120), MTPint(),
+		MTPdouble(), MTPstring());
+	return MTP_document(MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(),
+						MTP_int(1), MTP_string("video/mp4"), MTP_long(1024),
+						MTP_vector<MTPPhotoSize>(0), MTPVector<MTPVideoSize>(),
+						MTP_int(1), MTP_vector<MTPDocumentAttribute>({video}));
+}
+
+#if defined(Q_OS_LINUX)
+using DesktopScaleStartDirectoryCount = void (*)();
+using DesktopScaleStopDirectoryCount = uint64_t (*)();
+
+template <typename Function>
+[[nodiscard]] Function ResolveDesktopScaleCounter(const char *name) {
+	const auto address = dlsym(RTLD_DEFAULT, name);
+	auto result = Function();
+	static_assert(sizeof(result) == sizeof(address));
+	if (address) {
+		std::memcpy(&result, &address, sizeof(result));
+	}
+	return result;
+}
+#endif // Q_OS_LINUX
+
+[[nodiscard]] DesktopScaleCacheSample
+MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
+						 int alreadySeeded, int64 firstDocumentId) {
+	auto sample = DesktopScaleCacheSample();
+#if defined(Q_OS_LINUX)
+	const auto startCounting
+		= ResolveDesktopScaleCounter<DesktopScaleStartDirectoryCount>(
+			"DesktopScaleCheckStartDirectoryCount");
+	const auto stopCounting
+		= ResolveDesktopScaleCounter<DesktopScaleStopDirectoryCount>(
+			"DesktopScaleCheckStopDirectoryCount");
+	if (!startCounting || !stopCounting) {
+		std::fprintf(stderr, "Desktop scale check failed: directory counter "
+							 "preload is missing.\n");
+		return sample;
+	}
+	auto &data = account->session().data();
+	auto *cache = data.cacheIfAllowed();
+	if (!cache) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: thumbnail cache is unavailable.\n");
+		return sample;
+	}
+	const auto requiredEntries = alreadySeeded + kDesktopScaleThumbnailReads;
+	if (entryCount < requiredEntries) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: cache seed has %d entries, but %d "
+			"are required (already seeded %d plus %d thumbnail reads).\n",
+			entryCount, requiredEntries, alreadySeeded,
+			kDesktopScaleThumbnailReads);
+		return sample;
+	}
+	auto documents = std::vector<not_null<DocumentData *>>();
+	documents.reserve(kDesktopScaleThumbnailReads);
+	for (auto i = 0; i != kDesktopScaleThumbnailReads; ++i) {
+		const auto document = data.processDocument(
+			DesktopScaleVideoDocument(firstDocumentId + i));
+		if (!document->isVideoFile()) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: document %lld is "
+						 "not a video.\n",
+						 static_cast<long long>(firstDocumentId + i));
+			return sample;
+		}
+		documents.push_back(document);
+	}
+	for (auto i = 0;
+		 i != entryCount - alreadySeeded - kDesktopScaleThumbnailReads; ++i) {
+		cache->put(Data::DocumentThumbCacheKey(
+					   1, uint64(100'000'000 + alreadySeeded + i)),
+				   QByteArray("cache-entry"));
+	}
+	for (const auto &document : documents) {
+		cache->put(document->goodThumbnailCacheKey(),
+				   QByteArray("cached-thumbnail"));
+	}
+	cache->sync();
+	if (!CachePayloadMatches(*cache, documents.front()->goodThumbnailCacheKey(),
+							 QByteArray("cached-thumbnail"))) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: cached thumbnail payload did not "
+			"match for the %d-entry scenario.\n",
+			entryCount);
+		return sample;
+	}
+	auto stats = std::optional<Storage::Cache::Database::Stats>();
+	auto statsLifetime = rpl::lifetime();
+	data.cacheStatsOnMain(false)
+		| rpl::on_next(
+			[&](Storage::Cache::Database::Stats &&value) {
+				stats = std::move(value);
+			},
+			statsLifetime);
+	const auto entryCountMatches = WaitForRegressionCondition([&] {
+		return stats && (quint64(stats->full.count) == quint64(entryCount));
+	});
+	if (!entryCountMatches) {
+		if (stats) {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: cache entry count was %llu, "
+				"expected %d.\n",
+				static_cast<unsigned long long>(stats->full.count), entryCount);
+		} else {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: could not read actual cache "
+				"entry count for the %d-entry scenario.\n",
+				entryCount);
+		}
+		return sample;
+	}
+
+	SettleDesktopScaleWatchdog();
+	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
+	startCounting();
+	auto timer = QElapsedTimer();
+	timer.start();
+	for (const auto &document : documents) {
+		Data::DocumentMedia::CheckGoodThumbnail(document);
+	}
+	const auto completed = WaitForRegressionCondition(
+		[&] {
+			return ranges::all_of(documents, [](const auto document) {
+				return document->goodThumbnailChecked();
+			});
+		},
+		15'000);
+	if (!completed) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: waiting 15000 ms for %d cached "
+			"thumbnails at %d cache entries timed out.\n",
+			kDesktopScaleThumbnailReads, entryCount);
+	}
+	sample.nanoseconds = timer.nsecsElapsed();
+	sample.directoryEnumerations = stopCounting();
+	SettleDesktopScaleWatchdog();
+	sample.mainThreadStepsOverBudget
+		= Core::UiStallWatchdog::StallCount() - stallsBefore;
+	sample.passed = completed && (sample.directoryEnumerations == 0)
+					&& (sample.mainThreadStepsOverBudget == 0);
+#else
+	(void)account;
+	(void)entryCount;
+	(void)alreadySeeded;
+	(void)firstDocumentId;
+#endif // Q_OS_LINUX
+	return sample;
+}
+
+[[nodiscard]] DesktopScaleCacheSamples
+RunDesktopScaleCache(Main::Domain &domain, UserId selfId) {
+	auto samples = DesktopScaleCacheSamples();
+#if defined(Q_OS_LINUX)
+	const auto created
+		= WithDesktopScaleAccount(domain, selfId, [&](auto account) {
+			  samples.one
+				  = MeasureDesktopScaleCache(account, 500, 0, 50'000'000);
+			  if (!samples.one.passed) {
+				  return false;
+			  }
+			  samples.hundred
+				  = MeasureDesktopScaleCache(account, 50'000, 500, 60'000'000);
+			  return samples.hundred.passed;
+		  });
+	if (!created) {
+		samples.one.passed = false;
+		samples.hundred.passed = false;
+	}
+#else
+	(void)domain;
+	(void)selfId;
+#endif // Q_OS_LINUX
+	return samples;
+}
+
 } // namespace
+
+int RunDesktopScaleCheck() {
+#if defined(Q_OS_LINUX)
+	auto &app = Core::App();
+	auto &domain = app.domain();
+
+	const auto dialogsOne
+		= RunDesktopScaleDialogs(domain, 50, UserId(1'000'000));
+	const auto dialogsHundred
+		= RunDesktopScaleDialogs(domain, 4'900, UserId(2'000'000));
+	const auto contactsOne
+		= RunDesktopScaleContacts(domain, 100, UserId(3'000'000));
+	const auto contactsHundred
+		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000), true);
+	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
+	const auto &cacheOne = cacheSamples.one;
+	const auto &cacheHundred = cacheSamples.hundred;
+
+	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
+		if (sample.nanoseconds) {
+			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
+		} else {
+			std::printf("n/a");
+		}
+	};
+	const auto printRow = [&](const char *name,
+							  const DesktopScaleActionSample &one,
+							  const DesktopScaleActionSample &hundred) {
+		std::printf("| %s | ", name);
+		printSampleTime(one);
+		std::printf(" | ");
+		printSampleTime(hundred);
+		std::printf(" | ");
+		if (one.nanoseconds && hundred.nanoseconds && (*one.nanoseconds > 0)) {
+			std::printf("%.2fx", double(*hundred.nanoseconds)
+									 / double(*one.nanoseconds));
+		} else {
+			std::printf("n/a");
+		}
+		std::printf(" | 50 ms | calibrating |\n");
+	};
+	const auto stalls = SumDesktopScaleStalls({
+		dialogsOne.mainThreadStepsOverBudget,
+		dialogsHundred.mainThreadStepsOverBudget,
+		contactsOne.loaded.mainThreadStepsOverBudget,
+		contactsHundred.loaded.mainThreadStepsOverBudget,
+		contactsOne.changedAndFound.mainThreadStepsOverBudget,
+		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
+		cacheOne.mainThreadStepsOverBudget,
+		cacheHundred.mainThreadStepsOverBudget,
+	});
+	// The dialogs page and full 100x contacts response exceed the 50 ms budget
+	// on the dev baseline. Report their stalls without blocking on them.
+	const auto blockingStalls = SumDesktopScaleStalls({
+		contactsOne.loaded.mainThreadStepsOverBudget,
+		contactsOne.changedAndFound.mainThreadStepsOverBudget,
+		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
+		cacheOne.mainThreadStepsOverBudget,
+		cacheHundred.mainThreadStepsOverBudget,
+	});
+	const auto passed
+		= dialogsOne.passed && dialogsHundred.passed
+		  && contactsOne.loaded.passed && contactsHundred.loaded.passed
+		  && contactsOne.changedAndFound.passed
+		  && contactsHundred.changedAndFound.passed && cacheOne.passed
+		  && cacheHundred.passed && blockingStalls && (*blockingStalls == 0)
+		  && (cacheOne.directoryEnumerations == 0)
+		  && (cacheHundred.directoryEnumerations == 0);
+
+	std::printf("DESKTOP_SCALE_REPORT_BEGIN\n");
+	std::printf(
+		"| Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |\n");
+	std::printf("| --- | ---: | ---: | ---: | --- | --- |\n");
+	printRow("messages.getDialogs page (100 dialogs)", dialogsOne,
+			 dialogsHundred);
+	printRow("contacts.getContacts full response", contactsOne.loaded,
+			 contactsHundred.loaded);
+	printRow("contact change + name lookup", contactsOne.changedAndFound,
+			 contactsHundred.changedAndFound);
+	printRow("cache read x100", cacheOne, cacheHundred);
+	const auto printEnumerations = [](const std::optional<quint64> &sample) {
+		if (sample) {
+			std::printf("%llu/100", static_cast<unsigned long long>(*sample));
+		} else {
+			std::printf("n/a");
+		}
+	};
+	const auto printStallCount = [](const std::optional<quint64> &sample) {
+		if (sample) {
+			std::printf("%llu", static_cast<unsigned long long>(*sample));
+		} else {
+			std::printf("n/a");
+		}
+	};
+	std::printf("Directory enumerations per thumbnail cache access: 1x=");
+	printEnumerations(cacheOne.directoryEnumerations);
+	std::printf(", 100x=");
+	printEnumerations(cacheHundred.directoryEnumerations);
+	std::printf(".\n");
+	std::printf("Main-thread steps over 50 ms: dialogs 1x=");
+	printStallCount(dialogsOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
+	std::printf("; contacts.getContacts 1x=");
+	printStallCount(contactsOne.loaded.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
+	std::printf("; contact change and lookup 1x=");
+	printStallCount(contactsOne.changedAndFound.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(contactsHundred.changedAndFound.mainThreadStepsOverBudget);
+	std::printf("; thumbnail reads 1x=");
+	printStallCount(cacheOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(cacheHundred.mainThreadStepsOverBudget);
+	std::printf("; total=");
+	printStallCount(stalls);
+	std::printf(".\n");
+	std::printf("Report-only baseline: dialogs page 1x=");
+	printSampleTime(dialogsOne);
+	std::printf("/");
+	printStallCount(dialogsOne.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps, 100x=");
+	printSampleTime(dialogsHundred);
+	std::printf("/");
+	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps.\n");
+	std::printf(
+		"Report-only baseline: contacts.getContacts full response 100x=");
+	printSampleTime(contactsHundred.loaded);
+	std::printf("/");
+	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps.\n");
+	std::printf("Blocking main-thread steps over 50 ms: ");
+	printStallCount(blockingStalls);
+	std::printf(".\n");
+	std::printf(
+		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
+		"cache=%d/%d.\n",
+		int(dialogsOne.passed), int(dialogsHundred.passed),
+		int(contactsOne.loaded.passed), int(contactsHundred.loaded.passed),
+		int(contactsOne.changedAndFound.passed),
+		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
+		int(cacheHundred.passed));
+	std::printf("Outcome: %s\n", passed ? "PASS" : "FAIL");
+	std::printf("DESKTOP_SCALE_REPORT_END\n");
+	std::fflush(stdout);
+	return passed ? 0 : 1;
+#else
+	std::fprintf(
+		stderr,
+		"Desktop scale check is supported only in the Linux unit-test job.\n");
+	return 1;
+#endif // Q_OS_LINUX
+}
 
 void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	const auto fail = [&](const char *reason) {

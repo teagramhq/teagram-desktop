@@ -26,6 +26,17 @@ if(UNIX)
     target_link_libraries(test_unit PRIVATE test_unit_system_resolver)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(desktop_scale_check_fs_counter SHARED
+        ${src_loc}/tests/desktop_scale_check_fs_counter.c
+    )
+    target_compile_features(desktop_scale_check_fs_counter PRIVATE c_std_11)
+    target_link_libraries(desktop_scale_check_fs_counter PRIVATE ${CMAKE_DL_LIBS})
+    set_target_properties(desktop_scale_check_fs_counter PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endif()
+
 if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_property(TARGET test_unit PROPERTY ENABLE_EXPORTS ON)
     target_compile_options(test_unit PRIVATE -fno-omit-frame-pointer)
@@ -241,6 +252,22 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         PRIVATE
             Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
         )
+    endif()
+
+    if (TDESKTOP_API_TEST)
+        set_property(SOURCE ${src_loc}/main.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS TDESKTOP_TEST_QPA_OFFSCREEN
+        )
+        target_link_libraries(Telegram
+        PRIVATE
+            Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
+        )
+        if (QT_VERSION_MAJOR GREATER_EQUAL 6)
+            target_link_libraries(Telegram
+            PRIVATE
+                Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin_init
+            )
+        endif()
     endif()
 endif()
 

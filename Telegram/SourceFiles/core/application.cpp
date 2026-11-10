@@ -292,9 +292,11 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
 	const auto customEmojiUiSmoke
 		= qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE");
+	const auto desktopScaleCheck
+		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  || authLifecycleRegression || customEmojiUiSmoke;
+		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck;
 	const auto windowedApplication
 		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke;
 	if (headlessRegression) {
@@ -479,6 +481,12 @@ void Application::run() {
 	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 		QCoreApplication::exit(regressionResult);
 		return;
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		QCoreApplication::exit(Tests::RunDesktopScaleCheck());
+		return;
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	}
 	startTray();
 
