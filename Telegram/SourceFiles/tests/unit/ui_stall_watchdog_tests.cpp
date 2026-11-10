@@ -262,8 +262,9 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
 		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
 		CHECK(!evidence.back().schedulerTrace.isEmpty());
-		CHECK_EQ(evidence.back().schedulerTrace.size(),
-				 evidence.back().schedulerSampleOffsetsNanoseconds.size());
+		CHECK(evidence.back().schedulerTrace.size()
+			  == qsizetype(
+				  evidence.back().schedulerSampleOffsetsNanoseconds.size()));
 		CHECK(evidence.back().schedulerTrace.size()
 			  >= evidence.back().durationMilliseconds / 5);
 		const auto schedulerTraceProvesRunnable
