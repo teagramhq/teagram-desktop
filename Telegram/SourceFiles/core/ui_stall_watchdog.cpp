@@ -571,9 +571,9 @@ void UiStallWatchdog::run() {
 								   < current)
 							   && (sampleCount < kMaxSchedulerSamples)) {
 							auto sampleAt = nextSampleAt;
-							if (sampleAt < Clock::now()) {
-								sampleAt
-									= Clock::now() + kSchedulerSampleInterval;
+							const auto now = Clock::now();
+							if (sampleAt + kSchedulerSampleInterval < now) {
+								sampleAt = now + kSchedulerSampleInterval;
 							}
 							std::this_thread::sleep_until(sampleAt);
 							if (stop.stop_requested()
