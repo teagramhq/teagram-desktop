@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "lottie/lottie_animation.h"
 #include "boxes/abstract_box.h" // Ui::hideLayer().
+#include "logs.h"
 
 #include <QtCore/QBuffer>
 #include <QtCore/QMimeType>
@@ -1309,13 +1310,19 @@ void DocumentData::save(
 		if (fromCloud == LoadFromCloudOrLocal) {
 			_loader->permitLoadFromCloud();
 		}
-	} else if (!Data::details::IsValidDocumentDownloadSize(size)) {
-		status = FileDownloadFailed;
-		_owner->documentLoadFail(this, false);
-		return;
-	} else if (toFile.isEmpty() && size > Storage::kMaxFileInMemory) {
-		return;
 	} else {
+		switch (Data::details::DecideDocumentDownload(
+			size, !toFile.isEmpty(), Storage::kMaxFileInMemory)) {
+		case Data::details::DocumentDownloadDecision::Fail:
+			LOG(("API Error: Bad document size %1.").arg(size));
+			status = FileDownloadFailed;
+			_owner->documentLoadFail(this, false);
+			return;
+		case Data::details::DocumentDownloadDecision::Cache:
+			return;
+		case Data::details::DocumentDownloadDecision::Stream:
+			break;
+		}
 		status = FileReady;
 		auto reader = owner().streaming().sharedReader(this, origin, true);
 		if (reader) {

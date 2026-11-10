@@ -11,8 +11,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Data::details {
 
-[[nodiscard]] inline bool IsValidDocumentDownloadSize(std::int64_t size) {
-	return size >= 0;
+enum class DocumentDownloadDecision {
+	Fail,
+	Cache,
+	Stream,
+};
+
+[[nodiscard]] inline DocumentDownloadDecision
+DecideDocumentDownload(std::int64_t size, bool hasDestination,
+					   std::int64_t maxFileInMemory) {
+	if (size < 0) {
+		return DocumentDownloadDecision::Fail;
+	} else if (!hasDestination && size > maxFileInMemory) {
+		return DocumentDownloadDecision::Cache;
+	}
+	return DocumentDownloadDecision::Stream;
 }
 
 } // namespace Data::details

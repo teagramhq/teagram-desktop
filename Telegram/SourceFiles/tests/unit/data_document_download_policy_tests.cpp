@@ -9,8 +9,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_document_download_policy.h"
 
-TEST_CASE(NegativeDocumentDownloadSizeIsRejected) {
-	CHECK(!Data::details::IsValidDocumentDownloadSize(-1));
-	CHECK(Data::details::IsValidDocumentDownloadSize(0));
-	CHECK(Data::details::IsValidDocumentDownloadSize(1024));
+TEST_CASE(DocumentDownloadPolicyRejectsNegativeSizes) {
+	using Decision = Data::details::DocumentDownloadDecision;
+	CHECK(Data::details::DecideDocumentDownload(-1, false, 1024)
+		  == Decision::Fail);
+}
+
+TEST_CASE(DocumentDownloadPolicyKeepsCacheAndStreamPaths) {
+	using Decision = Data::details::DocumentDownloadDecision;
+	CHECK(Data::details::DecideDocumentDownload(1025, false, 1024)
+		  == Decision::Cache);
+	CHECK(Data::details::DecideDocumentDownload(1025, true, 1024)
+		  == Decision::Stream);
+	CHECK(Data::details::DecideDocumentDownload(1024, false, 1024)
+		  == Decision::Stream);
 }
