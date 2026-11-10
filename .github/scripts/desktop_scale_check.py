@@ -28,10 +28,12 @@ SCENARIOS = {
     "contact change + name lookup": "contact change and lookup",
     "cache read x100": "thumbnail reads",
 }
+ALWAYS_ENFORCED_SCENARIOS = {
+    "contacts.getContacts full response",
+    "contact change + name lookup",
+}
 STATIC_EXCEPTIONS = {
     "messages.getDialogs page (100 dialogs)": "MAIN-3656 (chat list page)",
-    "contacts.getContacts full response": "MAIN-3657 (contacts)",
-    "contact change + name lookup": "MAIN-3657 (contacts)",
 }
 
 
@@ -219,6 +221,8 @@ def _baseline_exceptions(records):
     exceptions = {}
     additions = {}
     for scenario in SCENARIOS:
+        if scenario in ALWAYS_ENFORCED_SCENARIOS:
+            continue
         rows = [record["scenarios"][scenario] for record in records]
         stalled_runs = [
             int(bool(row["one_stalls"] or row["hundred_stalls"]))
