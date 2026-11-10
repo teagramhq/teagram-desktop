@@ -54,15 +54,13 @@ using SetState = BlobState;
 
 class Loader final : public BlobLoader {
 public:
-	Loader(
-		not_null<Main::Session*> session,
-		int id,
-		MTP::DedicatedLoader::Location location,
-		const QString &folder,
-		int size);
+  Loader(not_null<Main::Session *> session,
+		 const Main::details::CloudResourceGrant &grant, int id,
+		 MTP::DedicatedLoader::Location location, const QString &folder,
+		 int size);
 
-	void destroy() override;
-	void unpack(const QString &path) override;
+  void destroy() override;
+  void unpack(const QString &path) override;
 
 private:
 	void fail() override;
@@ -164,15 +162,11 @@ bool UnpackSet(const QString &path, const QString &folder) {
 	return UnpackBlob(path, folder, GoodSetPartName);
 }
 
-
-Loader::Loader(
-	not_null<Main::Session*> session,
-	int id,
-	MTP::DedicatedLoader::Location location,
-	const QString &folder,
-	int size)
-: BlobLoader(nullptr, session, id, location, folder, size) {
-}
+Loader::Loader(not_null<Main::Session *> session,
+			   const Main::details::CloudResourceGrant &grant, int id,
+			   MTP::DedicatedLoader::Location location, const QString &folder,
+			   int size)
+	: BlobLoader(nullptr, session, grant, id, location, folder, size) {}
 
 void Loader::unpack(const QString &path) {
 	const auto folder = internal::SetDataPath(id());
@@ -568,17 +562,14 @@ void LoadAndSwitchTo(not_null<Main::Session*> session, int id) {
 		ClearNeedSwitchToId();
 		return;
 	}
-	if (!Main::details::cloudEmojiSetSwitchSupported(
-			session->mtp().dcOptions())) {
+	if (const auto grant
+		= Main::details::cloudResourceGrant(session->mtp().dcOptions())) {
+		SetGlobalLoader(base::make_unique_q<Loader>(
+			session, *grant, id, GetDownloadLocation(id),
+			internal::SetDataPath(id), GetDownloadSize(id)));
+	} else {
 		ClearNeedSwitchToId();
-		return;
 	}
-	SetGlobalLoader(base::make_unique_q<Loader>(
-		session,
-		id,
-		GetDownloadLocation(id),
-		internal::SetDataPath(id),
-		GetDownloadSize(id)));
 }
 
 } // namespace Emoji

@@ -139,9 +139,10 @@ std::vector<Dict> ParseManifest(const QByteArray &bytes) {
 
 class DictManifestLoader final : public base::has_weak_ptr {
 public:
-	explicit DictManifestLoader(base::weak_ptr<Main::Session> session);
+  DictManifestLoader(base::weak_ptr<Main::Session> session,
+					 const Main::details::CloudResourceGrant &grant);
 
-	void start();
+  void start();
 
 private:
 	void resolved(const MTPInputChannel &channel);
@@ -155,9 +156,10 @@ private:
 
 std::shared_ptr<DictManifestLoader> ActiveManifestLoader;
 
-DictManifestLoader::DictManifestLoader(base::weak_ptr<Main::Session> session)
-: _mtp(session) {
-}
+DictManifestLoader::DictManifestLoader(
+	base::weak_ptr<Main::Session> session,
+	const Main::details::CloudResourceGrant &)
+	: _mtp(session) {}
 
 void DictManifestLoader::start() {
 	if (!_mtp.valid()) {
@@ -225,15 +227,15 @@ void DictManifestLoader::finish() {
 }
 
 void StartManifestRefresh(not_null<Main::Session*> session) {
-	Main::details::requestDictionaryManifestIfSupported(
-		session->mtp().dcOptions(), [=] {
-			if (ActiveManifestLoader) {
-				return;
-			}
-			ActiveManifestLoader = std::make_shared<DictManifestLoader>(
-				base::make_weak(session));
-			ActiveManifestLoader->start();
-		});
+	if (const auto grant
+		= Main::details::cloudResourceGrant(session->mtp().dcOptions())) {
+		if (ActiveManifestLoader) {
+			return;
+		}
+		ActiveManifestLoader = std::make_shared<DictManifestLoader>(
+			base::make_weak(session), *grant);
+		ActiveManifestLoader->start();
+	}
 }
 
 // Callers waiting for the first manifest arrival in this session.
@@ -303,42 +305,41 @@ void DownloadDictionaryInBackground(
 	if (counter >= langs.size()) {
 		return;
 	}
-	Main::details::runDictionaryAutoDownloadIfSupported(
-		session->mtp().dcOptions(), [=] {
-			const auto id = langs[counter];
-			const auto next = counter + 1;
-			const auto destroyer = [=] {
-				BackgroundLoader = nullptr;
-				BackgroundLoaderChanged.fire(0);
+	if (const auto grant
+		= Main::details::cloudResourceGrant(session->mtp().dcOptions())) {
+		const auto id = langs[counter];
+		const auto next = counter + 1;
+		const auto destroyer = [=] {
+			BackgroundLoader = nullptr;
+			BackgroundLoaderChanged.fire(0);
 
-				if (DictionaryExists(id)) {
-					auto dicts = Core::App().settings().dictionariesEnabled();
-					if (ranges::contains(dicts, id)) {
-						Platform::Spellchecker::UpdateLanguages(dicts);
-					} else {
-						dicts.push_back(id);
-						Core::App().settings().setDictionariesEnabled(
-							std::move(dicts));
-						Core::App().saveSettingsDelayed();
-					}
-				}
-
-				DownloadDictionaryInBackground(session, next, langs);
-			};
 			if (DictionaryExists(id)) {
-				destroyer();
-				return;
+				auto dicts = Core::App().settings().dictionariesEnabled();
+				if (ranges::contains(dicts, id)) {
+					Platform::Spellchecker::UpdateLanguages(dicts);
+				} else {
+					dicts.push_back(id);
+					Core::App().settings().setDictionariesEnabled(
+						std::move(dicts));
+					Core::App().saveSettingsDelayed();
+				}
 			}
 
-			auto sharedLoader
-				= std::make_shared<base::unique_qptr<DictLoader>>();
-			*sharedLoader = base::make_unique_q<DictLoader>(
-				QCoreApplication::instance(), session, id,
-				GetDownloadLocation(id), DictPathByLangId(id),
-				GetDownloadSize(id), crl::guard(session, destroyer));
-			SetBackgroundLoader(std::move(sharedLoader));
-			BackgroundLoaderChanged.fire_copy(id);
-		});
+			DownloadDictionaryInBackground(session, next, langs);
+		};
+		if (DictionaryExists(id)) {
+			destroyer();
+			return;
+		}
+
+		auto sharedLoader = std::make_shared<base::unique_qptr<DictLoader>>();
+		*sharedLoader = base::make_unique_q<DictLoader>(
+			QCoreApplication::instance(), session, *grant, id,
+			GetDownloadLocation(id), DictPathByLangId(id), GetDownloadSize(id),
+			crl::guard(session, destroyer));
+		SetBackgroundLoader(std::move(sharedLoader));
+		BackgroundLoaderChanged.fire_copy(id);
+	}
 }
 
 void AddExceptions() {
@@ -364,17 +365,13 @@ rpl::producer<int> GlobalLoaderChanged() {
 	return BackgroundLoaderChanged.events();
 }
 
-DictLoader::DictLoader(
-	QObject *parent,
-	not_null<Main::Session*> session,
-	int id,
-	MTP::DedicatedLoader::Location location,
-	const QString &folder,
-	int64 size,
-	Fn<void()> destroyCallback)
-: BlobLoader(parent, session, id, location, folder, size)
-, _destroyCallback(std::move(destroyCallback)) {
-}
+DictLoader::DictLoader(QObject *parent, not_null<Main::Session *> session,
+					   const Main::details::CloudResourceGrant &grant, int id,
+					   MTP::DedicatedLoader::Location location,
+					   const QString &folder, int64 size,
+					   Fn<void()> destroyCallback)
+	: BlobLoader(parent, session, grant, id, location, folder, size),
+	  _destroyCallback(std::move(destroyCallback)) {}
 
 void DictLoader::unpack(const QString &path) {
 	crl::async([=] {

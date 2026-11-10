@@ -2,6 +2,8 @@
 
 #include "mtproto/mtproto_dc_options.h"
 
+#include <optional>
+
 namespace Main::details {
 
 [[nodiscard]] inline bool callsSupported(
@@ -53,25 +55,30 @@ cloudResourcesSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-template <typename Resolver>
-inline void requestDictionaryManifestIfSupported(const MTP::DcOptions &options,
-												 Resolver &&resolve) {
-	if (cloudResourcesSupported(options)) {
-		resolve();
-	}
+class CloudResourceGrant final {
+  public:
+	CloudResourceGrant(const CloudResourceGrant &) = default;
+	CloudResourceGrant(CloudResourceGrant &&) = default;
+	CloudResourceGrant &operator=(const CloudResourceGrant &) = default;
+	CloudResourceGrant &operator=(CloudResourceGrant &&) = default;
+
+  private:
+	CloudResourceGrant() = default;
+
+	friend std::optional<CloudResourceGrant>
+	cloudResourceGrant(const MTP::DcOptions &options);
+};
+
+[[nodiscard]] inline std::optional<CloudResourceGrant>
+cloudResourceGrant(const MTP::DcOptions &options) {
+	return cloudResourcesSupported(options)
+			   ? std::optional<CloudResourceGrant>(CloudResourceGrant())
+			   : std::nullopt;
 }
 
 [[nodiscard]] inline bool
 dictionaryManifestAccessSupported(const MTP::DcOptions &options) {
 	return cloudResourcesSupported(options);
-}
-
-template <typename Loader>
-inline void runDictionaryAutoDownloadIfSupported(const MTP::DcOptions &options,
-												 Loader &&start) {
-	if (cloudResourcesSupported(options)) {
-		start();
-	}
 }
 
 [[nodiscard]] inline bool
@@ -80,18 +87,8 @@ cloudEmojiSetsListedSupported(const MTP::DcOptions &options) {
 }
 
 [[nodiscard]] inline bool
-cloudEmojiSetSwitchSupported(const MTP::DcOptions &options) {
-	return cloudResourcesSupported(options);
-}
-
-[[nodiscard]] inline bool
-dictionaryManagerRowsSupported(const MTP::DcOptions &options) {
-	return cloudResourcesSupported(options);
-}
-
-[[nodiscard]] inline bool
 dictionaryManagerSaveAllowed(const MTP::DcOptions &options, bool rowsBuilt) {
-	return rowsBuilt && dictionaryManagerRowsSupported(options);
+	return rowsBuilt && cloudResourceGrant(options).has_value();
 }
 
 [[nodiscard]] inline bool

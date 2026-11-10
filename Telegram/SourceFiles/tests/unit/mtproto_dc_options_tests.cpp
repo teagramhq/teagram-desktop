@@ -2312,11 +2312,9 @@ TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
 	stock.constructFromBuiltIn();
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 7>{
+	const auto capabilities = std::array<Capability, 5>{
 		Main::details::dictionaryManifestAccessSupported,
 		Main::details::cloudEmojiSetsListedSupported,
-		Main::details::cloudEmojiSetSwitchSupported,
-		Main::details::dictionaryManagerRowsSupported,
 		Main::details::advancedManageDictionariesMenuItemSupported,
 		Main::details::composerManageDictionariesMenuItemSupported,
 		[](const DcOptions &options) {
@@ -2331,7 +2329,7 @@ TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
 	CHECK(!Main::details::dictionaryManagerSaveAllowed(stock, false));
 }
 
-TEST_CASE(TelegramdCloudResourceManifestAndDownloadsAreRefused) {
+TEST_CASE(TelegramdCloudResourceGrantsRequireStockSession) {
 	auto custom = DcOptions(Environment::Production);
 	CHECK(custom.setCustomServer(MakeCustomServer()));
 	auto blocked = DcOptions(Environment::Production);
@@ -2339,28 +2337,9 @@ TEST_CASE(TelegramdCloudResourceManifestAndDownloadsAreRefused) {
 	auto stock = DcOptions(Environment::Production);
 	stock.constructFromBuiltIn();
 
-	struct FakeResolver {
-		int requests = 0;
-		void resolve() { ++requests; }
-	};
-	struct FakeLoader {
-		int starts = 0;
-		void start() { ++starts; }
-	};
-	const auto check = [](const DcOptions &options, int expected) {
-		auto resolver = FakeResolver();
-		Main::details::requestDictionaryManifestIfSupported(
-			options, [&] { resolver.resolve(); });
-		CHECK_EQ(resolver.requests, expected);
-
-		auto loader = FakeLoader();
-		Main::details::runDictionaryAutoDownloadIfSupported(
-			options, [&] { loader.start(); });
-		CHECK_EQ(loader.starts, expected);
-	};
-	check(custom, 0);
-	check(blocked, 0);
-	check(stock, 1);
+	CHECK(!Main::details::cloudResourceGrant(custom));
+	CHECK(!Main::details::cloudResourceGrant(blocked));
+	CHECK(Main::details::cloudResourceGrant(stock).has_value());
 }
 
 TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {

@@ -116,12 +116,11 @@ Dictionaries Inner::enabledRows() const {
 
 bool Inner::rowsBuilt() const { return _rowsBuilt; }
 
-auto AddButtonWithLoader(
-		not_null<Ui::VerticalLayout*> content,
-		not_null<Main::Session*> session,
-		const Spellchecker::Dict &dict,
-		bool buttonEnabled,
-		rpl::producer<QStringView> query) {
+auto AddButtonWithLoader(not_null<Ui::VerticalLayout *> content,
+						 not_null<Main::Session *> session,
+						 Main::details::CloudResourceGrant grant,
+						 const Spellchecker::Dict &dict, bool buttonEnabled,
+						 rpl::producer<QStringView> query) {
 	const auto id = dict.id;
 	buttonEnabled &= DictExists(id);
 
@@ -288,9 +287,7 @@ auto AddButtonWithLoader(
 		if (toggled && (v::is<Available>(state) || v::is<Failed>(state))) {
 			const auto weak = base::make_weak(button);
 			setLocalLoader(base::make_unique_q<Loader>(
-				QCoreApplication::instance(),
-				session,
-				id,
+				QCoreApplication::instance(), session, grant, id,
 				Spellchecker::GetDownloadLocation(id),
 				Spellchecker::DictPathByLangId(id),
 				Spellchecker::GetDownloadSize(id),
@@ -344,9 +341,6 @@ void Inner::setupContent(
 		not_null<Main::Session*> session,
 		Dictionaries enabledDictionaries) {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
-	const auto dictionaryRowsSupported
-		= Main::details::dictionaryManagerRowsSupported(
-			session->mtp().dcOptions());
 
 	const auto queryStream = content->lifetime()
 		.make_state<rpl::event_stream<QStringView>>();
@@ -355,37 +349,38 @@ void Inner::setupContent(
 	// non-empty. Manifest is fetched lazily and may arrive after the box
 	// opens, so we subscribe to DictionariesChanged and populate rows
 	// then if we haven't already.
-	const auto buildRows = [=] {
-		if (_rowsBuilt || !dictionaryRowsSupported) {
-			return;
-		}
-		const auto dicts = Spellchecker::Dictionaries();
-		if (dicts.empty()) {
-			return;
-		}
-		_rowsBuilt = true;
-		for (const auto &dict : dicts) {
-			const auto id = dict.id;
-			const auto row = AddButtonWithLoader(
-				content,
-				session,
-				dict,
-				ranges::contains(enabledDictionaries, id),
-				queryStream->events());
-			row->toggledValue(
-			) | rpl::on_next([=](auto enabled) {
-				if (enabled) {
-					_enabledRows.push_back(id);
-				} else {
-					auto &rows = _enabledRows;
-					rows.erase(ranges::remove(rows, id), end(rows));
-				}
-			}, row->lifetime());
-		}
-	};
+	if (const auto grant
+		= Main::details::cloudResourceGrant(session->mtp().dcOptions())) {
+		const auto buildRows = [=] {
+			if (_rowsBuilt) {
+				return;
+			}
+			const auto dicts = Spellchecker::Dictionaries();
+			if (dicts.empty()) {
+				return;
+			}
+			_rowsBuilt = true;
+			for (const auto &dict : dicts) {
+				const auto id = dict.id;
+				const auto row = AddButtonWithLoader(
+					content, session, *grant, dict,
+					ranges::contains(enabledDictionaries, id),
+					queryStream->events());
+				row->toggledValue()
+					| rpl::on_next(
+						[=](auto enabled) {
+							if (enabled) {
+								_enabledRows.push_back(id);
+							} else {
+								auto &rows = _enabledRows;
+								rows.erase(ranges::remove(rows, id), end(rows));
+							}
+						},
+						row->lifetime());
+			}
+		};
 
-	buildRows();
-	if (dictionaryRowsSupported) {
+		buildRows();
 		Spellchecker::DictionariesChanged()
 			| rpl::on_next(buildRows, content->lifetime());
 		Spellchecker::RefreshDictionariesManifest(session);
