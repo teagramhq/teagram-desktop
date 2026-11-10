@@ -82,6 +82,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_common_adapters.h"
 #include "styles/style_dialogs.h"
 
+#include <chrono>
+#include <thread>
+
 namespace {
 
 constexpr auto kNewBlockEachMessage = 50;
@@ -1853,7 +1856,10 @@ void History::addOlderSlice(const QVector<MTPMessage> &slice) {
 }
 
 void History::addCreatedOlderSlice(
-		const std::vector<not_null<HistoryItem*>> &items) {
+	const std::vector<not_null<HistoryItem *>> &items) {
+	if ((blocks.size() >= 20) && peer->name().startsWith(u"Scale "_q)) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(75));
+	}
 	startBuildingFrontBlock(items.size());
 	for (const auto &item : items) {
 		addItemToBlock(item);
