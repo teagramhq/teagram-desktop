@@ -129,14 +129,13 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 }
 
 Row *IndexedList::addByName(Key key) {
-	if (const auto row = _list.getRow(key)) {
-		return row;
+	const auto [row, inserted] = _list.addByName(key);
+	if (!inserted) {
+		return row.get();
 	}
-
-	const auto result = _list.addByName(key);
 	for (const auto &ch : key.entry()->chatListFirstLetters()) {
 		if (_sortMode == SortMode::Name) {
-			addNameRow(ch, result.get());
+			addNameRow(ch, row.get());
 		} else {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
@@ -145,8 +144,8 @@ Row *IndexedList::addByName(Key key) {
 			j->second.addByName(key);
 		}
 	}
-	updatePrefixSearchIndex(result.get());
-	return result;
+	updatePrefixSearchIndex(row.get());
+	return row.get();
 }
 
 void IndexedList::adjustByDate(const RowsByLetter &links) {

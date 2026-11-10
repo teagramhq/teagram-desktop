@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_row.h"
 
+#include <utility>
+
 class PeerData;
 namespace Dialogs {
 
@@ -51,7 +53,7 @@ public:
 
 	not_null<Row*> addToEnd(Key key);
 	Row *adjustByName(Key key);
-	not_null<Row*> addByName(Key key);
+	std::pair<not_null<Row *>, bool> addByName(Key key);
 	bool moveToTop(Key key);
 	void adjustByDate(not_null<Row*> row);
 	void freeze();
