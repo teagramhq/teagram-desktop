@@ -15310,12 +15310,21 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 										   QStringList{u"updatedcontact"_q})
 									   .empty()
 								   && data.contactsList()
+										  ->filtered(QStringList{u"upd"_q})
+										  .empty()
+								   && data.contactsList()
 										  ->filtered(
 											  QStringList{u"nameprobe"_q})
 										  .empty()
 								   && data.contactsList()
+										  ->filtered(QStringList{u"nam"_q})
+										  .empty()
+								   && data.contactsList()
 										  ->filtered(
 											  QStringList{u"probeusername"_q})
+										  .empty()
+								   && data.contactsList()
+										  ->filtered(QStringList{u"pro"_q})
 										  .empty();
 						});
 			}

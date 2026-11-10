@@ -21,9 +21,10 @@ from typing import Iterable
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".mm")
 SOURCE_PATHS = tuple(f"*{suffix}" for suffix in SOURCE_SUFFIXES)
 FORMAT_STYLE = (
-    "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
-    "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
-    "BreakBeforeBinaryOperators: All, NamespaceIndentation: None}"
+    "{BasedOnStyle: LLVM, AccessModifierOffset: -4, UseTab: Always, "
+    "IndentWidth: 4, TabWidth: 4, ContinuationIndentWidth: 4, "
+    "ColumnLimit: 80, SortIncludes: false, BreakBeforeBinaryOperators: All, "
+    "NamespaceIndentation: None}"
 )
 CHERRY_PICK_TRAILER = re.compile(
     r"\(cherry picked from commit ([0-9a-f]{40})\)"
@@ -311,6 +312,24 @@ def self_test(formatter: str) -> int:
             print(f"::error::Compliant formatter fixture failed: {detail or 'clang-format returned nonzero.'}")
             return 1
         print("Formatter self-test: compliant synthetic C++ fixture passed.")
+
+        access_specifiers = root / "formatter-access-specifiers.cpp"
+        access_specifiers.write_text(
+            "class Fixture {\n"
+            "public:\n"
+            "\tvoid run();\n"
+            "\n"
+            "private:\n"
+            "\tint value = 0;\n"
+            "};\n",
+            encoding="utf-8",
+        )
+        access_passed = format_file(formatter, access_specifiers, [(1, 6)])
+        if access_passed.returncode:
+            detail = (access_passed.stderr or access_passed.stdout).strip()
+            print(f"::error::Access specifier formatter fixture failed: {detail or 'clang-format returned nonzero.'}")
+            return 1
+        print("Formatter self-test: column-zero access specifiers passed.")
 
         violation = root / "formatter-fixture.cpp"
         violation.write_text("int answer=42;\n", encoding="utf-8")

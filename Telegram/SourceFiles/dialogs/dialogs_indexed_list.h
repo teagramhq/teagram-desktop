@@ -20,7 +20,6 @@ namespace Dialogs {
 struct RowsByLetter;
 class Row;
 
-// clang-format off
 class IndexedList {
 public:
 	enum class PrefixSearch {
@@ -28,10 +27,8 @@ public:
 		Enabled,
 	};
 
-	IndexedList(
-		SortMode sortMode,
-		FilterId filterId = 0,
-		PrefixSearch prefixSearch = PrefixSearch::Disabled);
+	IndexedList(SortMode sortMode, FilterId filterId = 0,
+				PrefixSearch prefixSearch = PrefixSearch::Disabled);
 
 	RowsByLetter addToEnd(Key key);
 	Row *addByName(Key key);
@@ -46,24 +43,18 @@ public:
 	void movePinned(Row *row, int deltaSign);
 
 	// For sortMode != SortMode::Date && != Complex
-	void peerNameChanged(
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+	void peerNameChanged(not_null<PeerData *> peer,
+						 const base::flat_set<QChar> &oldChars);
 
-	//For sortMode == SortMode::Date || == Complex
-	void peerNameChanged(
-		FilterId filterId,
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+	// For sortMode == SortMode::Date || == Complex
+	void peerNameChanged(FilterId filterId, not_null<PeerData *> peer,
+						 const base::flat_set<QChar> &oldChars);
 
 	void remove(Key key, Row *replacedBy = nullptr);
 	void clear();
 
-	[[nodiscard]] const List &all() const {
-		return _list;
-	}
-	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(
-			QChar ch) const {
+	[[nodiscard]] const List &all() const { return _list; }
+	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
 		if (_sortMode == SortMode::Name) {
 			const auto i = _nameIndex.find(ch);
 			return (i != _nameIndex.end()) ? &i->second : nullptr;
@@ -71,16 +62,14 @@ public:
 		const auto i = _index.find(ch);
 		return (i != _index.end()) ? &i->second.rows() : nullptr;
 	}
-	[[nodiscard]] std::vector<not_null<Row*>> filtered(
-		const QStringList &words) const;
+	[[nodiscard]] std::vector<not_null<Row *>>
+	filtered(const QStringList &words) const;
 
 	// Part of List interface is duplicated here for all() list.
 	[[nodiscard]] int size() const { return all().size(); }
 	[[nodiscard]] bool empty() const { return all().empty(); }
 	[[nodiscard]] int height() const { return all().height(); }
-	[[nodiscard]] bool contains(Key key) const {
-		return all().contains(key);
-	}
+	[[nodiscard]] bool contains(Key key) const { return all().contains(key); }
 	[[nodiscard]] Row *getRow(Key key) const { return all().getRow(key); }
 	[[nodiscard]] Row *rowAtY(int y) const { return all().rowAtY(y); }
 
@@ -104,8 +93,7 @@ public:
 	}
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
-	// clang-format on
-  private:
+private:
 	void adjustByName(Key key);
 	void adjustNames(FilterId filterId, not_null<History *> history,
 					 const base::flat_set<QChar> &oldChars);

@@ -114,8 +114,8 @@ constexpr auto kSaveCloudDraftTimeout = 1000;
 
 constexpr auto kSmallDelayMs = 5;
 
-// A large contact list is applied in steps, so that the main thread
-// returns to the event loop often enough to stay responsive.
+// A large contact list is prepared and applied in steps, so that the main
+// thread returns to the event loop often enough to stay responsive.
 constexpr auto kContactsApplyChunk = 200;
 constexpr auto kReadFeaturedSetsTimeout = crl::time(1000);
 constexpr auto kFileLoaderQueueStopTimeout = crl::time(5000);
@@ -897,67 +897,79 @@ void ApiWrap::requestContacts() {
 			return;
 		}
 		Assert(result.type() == mtpc_contacts_contacts);
-		applyContacts(result, 0);
+		prepareContacts(result, 0);
 	}).fail([=] {
 		_contactsRequestId = 0;
 	}).send();
+}
+
+void ApiWrap::prepareContacts(const MTPcontacts_Contacts &result, int offset) {
+	const auto &d = result.c_contacts_contacts();
+	const auto &users = d.vusers().v;
+	const auto count = int(users.size());
+	if (offset == 0) {
+		_contactsApplying = true;
+		_contactsApplyKeys.clear();
+		_contactsApplyKeys.reserve(count);
+		_contactsApplyOrder.clear();
+	}
+	const auto till = std::min(offset + kContactsApplyChunk, count);
+	for (auto i = offset; i != till; ++i) {
+		const auto sortKey = users[i].match(
+			[&](const MTPDuser &user) {
+				if (user.is_deleted()) {
+					return TextUtilities::NameSortKey(tr::lng_deleted(tr::now));
+				}
+				auto first = TextUtilities::SingleLine(
+					qs(user.vfirst_name().value_or_empty()));
+				auto last = TextUtilities::SingleLine(
+					qs(user.vlast_name().value_or_empty()));
+				if (const auto loaded
+					= _session->data().userLoaded(UserId(user.vid().v));
+					loaded) {
+					const auto hasLocalName = !loaded->firstName.isEmpty()
+											  || !loaded->lastName.isEmpty();
+					if (user.is_min() && hasLocalName) {
+						first = loaded->firstName;
+						last = loaded->lastName;
+					} else if (!user.is_min() && first.isEmpty()
+							   && last.isEmpty() && hasLocalName) {
+						first = loaded->firstName;
+						last = loaded->lastName;
+					}
+				}
+				if (first.trimmed().isEmpty()) {
+					first = last;
+					last.clear();
+				}
+				return TextUtilities::NameSortKey(langFullName(first, last));
+			},
+			[&](const MTPDuserEmpty &) {
+				return TextUtilities::NameSortKey(tr::lng_deleted(tr::now));
+			});
+		_contactsApplyKeys.push_back(sortKey);
+	}
+	if (till < count) {
+		crl::on_main(_session, [=] { prepareContacts(result, till); });
+		return;
+	}
+	_contactsApplyOrder.reserve(count);
+	for (auto i = 0; i != count; ++i) {
+		_contactsApplyOrder.push_back(i);
+	}
+	ranges::sort(_contactsApplyOrder, [this](int a, int b) {
+		const auto &left = _contactsApplyKeys[a];
+		const auto &right = _contactsApplyKeys[b];
+		return (left == right) ? (a < b) : (left < right);
+	});
+	_contactsApplyKeys.clear();
+	crl::on_main(_session, [=] { applyContacts(result, 0); });
 }
 
 void ApiWrap::applyContacts(const MTPcontacts_Contacts &result, int offset) {
 	const auto &d = result.c_contacts_contacts();
 	const auto &users = d.vusers().v;
 	const auto count = int(users.size());
-	if (offset == 0) {
-		auto keyed = std::vector<std::pair<QString, int>>();
-		keyed.reserve(count);
-		for (auto i = 0; i != count; ++i) {
-			const auto sortKey = users[i].match(
-				[&](const MTPDuser &user) {
-					if (user.is_deleted()) {
-						return TextUtilities::NameSortKey(
-							tr::lng_deleted(tr::now));
-					}
-					auto first = TextUtilities::SingleLine(
-						qs(user.vfirst_name().value_or_empty()));
-					auto last = TextUtilities::SingleLine(
-						qs(user.vlast_name().value_or_empty()));
-					if (const auto loaded
-						= _session->data().userLoaded(UserId(user.vid().v));
-						loaded) {
-						const auto hasLocalName
-							= !loaded->firstName.isEmpty()
-							  || !loaded->lastName.isEmpty();
-						if (user.is_min() && hasLocalName) {
-							first = loaded->firstName;
-							last = loaded->lastName;
-						} else if (!user.is_min() && first.isEmpty()
-								   && last.isEmpty() && hasLocalName) {
-							first = loaded->firstName;
-							last = loaded->lastName;
-						}
-					}
-					if (first.trimmed().isEmpty()) {
-						first = last;
-						last.clear();
-					}
-					return TextUtilities::NameSortKey(
-						langFullName(first, last));
-				},
-				[&](const MTPDuserEmpty &) {
-					return TextUtilities::NameSortKey(tr::lng_deleted(tr::now));
-				});
-			keyed.emplace_back(sortKey, i);
-		}
-		ranges::sort(keyed, [](const auto &a, const auto &b) {
-			return (a.first == b.first) ? (a.second < b.second)
-										: (a.first < b.first);
-		});
-		_contactsApplyOrder.clear();
-		_contactsApplyOrder.reserve(count);
-		for (const auto &[key, index] : keyed) {
-			_contactsApplyOrder.push_back(index);
-		}
-	}
 	const auto till = std::min(offset + kContactsApplyChunk, count);
 	for (auto i = offset; i != till; ++i) {
 		_session->data().processUser(users[_contactsApplyOrder[i]]);
