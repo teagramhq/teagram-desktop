@@ -23,6 +23,8 @@ on:
       - '.github/scripts/test_linux_libraries_image.sh'
       - '.github/scripts/verify_built_sha.sh'
       - '.github/scripts/test_verify_built_sha.sh'
+      - '.github/scripts/desktop_scale_check.py'
+      - '.github/scripts/test_desktop_scale_check.py'
       - '!snap/**'
       - '!Telegram/build/**'
       - 'Telegram/build/docker/centos_env/**'
@@ -655,16 +657,78 @@ jobs:
             fi
           '
 
+      - name: Restore desktop scale baseline.
+        id: desktop-scale-baseline
+        if: >
+          env.ONLY_CACHE == 'false'
+            && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=(
+            fetch
+            --api-url "$GITHUB_API_URL"
+            --token "$GH_TOKEN"
+            --repository "$GITHUB_REPOSITORY"
+            --records-output "$RUNNER_TEMP/desktop-scale-history.json"
+          )
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+            args+=(
+              --base-sha "${{ github.event.pull_request.base.sha }}"
+              --binary-directory "$RUNNER_TEMP/desktop-scale-dev"
+              --require-binary
+            )
+            timeout 90s python3 .github/scripts/desktop_scale_check.py \
+              "${args[@]}" >> "$GITHUB_OUTPUT"
+          elif timeout 90s python3 .github/scripts/desktop_scale_check.py \
+              "${args[@]}" >> "$GITHUB_OUTPUT"; then
+            :
+          else
+            echo '::warning::Could not read prior desktop scale artifacts; this dev run will still record its own sample.'
+            printf '[]\n' > "$RUNNER_TEMP/desktop-scale-history.json"
+            echo 'record_count=0' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Desktop data scale check.
+        id: desktop-scale
         if: env.ONLY_CACHE == 'false'
         shell: bash
+        env:
+          SCALE_BASELINE_COUNT: ${{ steps.desktop-scale-baseline.outputs.record_count || '0' }}
         run: |
-          set +e
-          docker run --rm \
-          -u $(id -u) \
-          -v $PWD:/usr/src/tdesktop \
-          $IMAGE_TAG \
-          bash -lc '
+          set -euo pipefail
+          scale_script=.github/scripts/desktop_scale_check.py
+          history_file="$RUNNER_TEMP/desktop-scale-history.json"
+          summary_file="$RUNNER_TEMP/desktop-scale-summary.md"
+          app_mount="$RUNNER_TEMP/desktop-scale-dev"
+          scale_started=$SECONDS
+          scale_budget_seconds=200
+
+          run_scale_check() {
+            local label="$1"
+            local source="$2"
+            local log_file="$RUNNER_TEMP/desktop-scale-$label.log"
+            local sample_file="$RUNNER_TEMP/desktop-scale-$label.json"
+            local binary_path=/usr/src/tdesktop/out/Debug/Teagram
+            local binary_mount=()
+            if [[ "$source" == 'base' ]]; then
+              binary_path=/desktop-scale/Teagram
+              binary_mount=(-v "$app_mount:/desktop-scale:ro")
+            fi
+            local remaining=$((scale_budget_seconds - (SECONDS - scale_started)))
+            if (( remaining <= 0 )); then
+              echo "::error::Desktop scale check exceeded its runtime budget."
+              return 124
+            fi
+            set +e
+            timeout "${remaining}s" docker run --rm \
+              -u "$(id -u)" \
+              -v "$PWD:/usr/src/tdesktop" \
+              "${binary_mount[@]}" \
+              -e DESKTOP_SCALE_BINARY="$binary_path" \
+              "$IMAGE_TAG" \
+              bash -lc '
             cd /usr/src/tdesktop
             scale_home=$(mktemp -d /tmp/tdesktop-scale-check.XXXXXX)
             mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache" "$scale_home/work"
@@ -678,14 +742,11 @@ jobs:
             export TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1
             export LD_PRELOAD=/usr/src/tdesktop/out/Debug/libdesktop_scale_check_fs_counter.so
             app_output="$scale_home/app-output.txt"
-            /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
+            "$DESKTOP_SCALE_BINARY" -noupdate -debug \
               -workdir "$scale_home/work/" > "$app_output" 2>&1
             app_status=$?
             cat "$app_output"
             if ! grep -Fqx DESKTOP_SCALE_REPORT_END "$app_output"; then
-              # The client logs to its working directory, not to stdout, and
-              # the container is removed on exit: print what a silent exit
-              # left behind before it is lost.
               echo "::group::Scale check exited with status $app_status without a report"
               find "$scale_home/work/DebugLogs" -type f -name "log_*.txt" \
                 -print -exec tail -n 30 {} \;
@@ -698,23 +759,149 @@ jobs:
                   -ex "handle SIGPIPE nostop noprint pass" \
                   -ex "handle SIGUSR2 nostop noprint pass" \
                   -ex run -ex "bt 40" -ex "thread apply all bt 12" \
-                  --args /usr/src/tdesktop/out/Debug/Teagram -noupdate -debug \
+                  --args "$DESKTOP_SCALE_BINARY" -noupdate -debug \
                   -workdir "$scale_home/work2/" 2>&1 | grep -v "^Downloading separate\|^\[New Thread\|^\[Detaching" | tail -n 150
                 echo "::endgroup::"
               fi
             fi
             exit "$app_status"
-          ' | tee "$RUNNER_TEMP/desktop-scale-check.log"
-          scale_status=${PIPESTATUS[0]}
-          scale_report=$(sed -n '/^DESKTOP_SCALE_REPORT_BEGIN$/,/^DESKTOP_SCALE_REPORT_END$/p' \
-            "$RUNNER_TEMP/desktop-scale-check.log")
-          if test -n "$scale_report"; then
-            printf '%s\n' "$scale_report" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error::Desktop scale check did not emit its report table."
-            scale_status=1
+          ' | tee "$log_file"
+            local statuses=("${PIPESTATUS[@]}")
+            local run_status=${statuses[0]}
+            local tee_status=${statuses[1]}
+            set -e
+            if (( tee_status != 0 )); then
+              return "$tee_status"
+            fi
+            if python3 "$scale_script" parse \
+                --report "$log_file" \
+                --output "$sample_file" \
+                --run-id "$GITHUB_RUN_ID" \
+                --run-attempt "$GITHUB_RUN_ATTEMPT" \
+                --commit "$GITHUB_SHA"; then
+              :
+            else
+              local parse_status=$?
+              return "$parse_status"
+            fi
+            return "$run_status"
+          }
+
+          append_summary() {
+            cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+            python3 "$scale_script" annotate --evaluation "$RUNNER_TEMP/desktop-scale-evaluation.json"
+          }
+
+          run_and_require_success() {
+            if run_scale_check "$1" "$2"; then
+              return 0
+            else
+              local status=$?
+              echo "::error::Desktop scale check run $1 failed with status $status."
+              return "$status"
+            fi
+          }
+
+          if [[ "$GITHUB_REF" == 'refs/heads/dev' ]]; then
+            run_status=0
+            if run_scale_check head-1 head; then
+              :
+            else
+              run_status=$?
+            fi
+            sample_file="$RUNNER_TEMP/desktop-scale-head-1.json"
+            python3 "$scale_script" evaluate \
+              --history "$history_file" \
+              --base "$sample_file" \
+              --head "$sample_file" \
+              --output "$RUNNER_TEMP/desktop-scale-evaluation.json" \
+              --summary-output "$summary_file" \
+              --report-only \
+              --include-head-in-history
+            append_summary
+            if [[ -s "$sample_file" ]]; then
+              cp "$sample_file" "$RUNNER_TEMP/desktop-scale-sample.json"
+              echo 'recorded=true' >> "$GITHUB_OUTPUT"
+            fi
+            exit "$run_status"
           fi
-          exit "$scale_status"
+
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+              && "$SCALE_BASELINE_COUNT" -ge 20 ]]; then
+            for pair in 1 2; do
+              run_and_require_success "base-$pair" base
+              run_and_require_success "head-$pair" head
+            done
+            base_args=(
+              --base "$RUNNER_TEMP/desktop-scale-base-1.json"
+              --base "$RUNNER_TEMP/desktop-scale-base-2.json"
+            )
+            head_args=(
+              --head "$RUNNER_TEMP/desktop-scale-head-1.json"
+              --head "$RUNNER_TEMP/desktop-scale-head-2.json"
+            )
+            set +e
+            python3 "$scale_script" evaluate \
+              --history "$history_file" \
+              "${base_args[@]}" \
+              "${head_args[@]}" \
+              --output "$RUNNER_TEMP/desktop-scale-evaluation.json" \
+              --summary-output "$summary_file"
+            evaluation_status=$?
+            set -e
+            if (( evaluation_status == 1 )); then
+              echo 'Desktop scale timing threshold crossed; repeating the interleaved samples once.'
+              for pair in 3 4; do
+                run_and_require_success "base-$pair" base
+                run_and_require_success "head-$pair" head
+              done
+              retry_base_args=(
+                --base "$RUNNER_TEMP/desktop-scale-base-3.json"
+                --base "$RUNNER_TEMP/desktop-scale-base-4.json"
+              )
+              retry_head_args=(
+                --head "$RUNNER_TEMP/desktop-scale-head-3.json"
+                --head "$RUNNER_TEMP/desktop-scale-head-4.json"
+              )
+              set +e
+              python3 "$scale_script" evaluate \
+                --history "$history_file" \
+                "${retry_base_args[@]}" \
+                "${retry_head_args[@]}" \
+                --output "$RUNNER_TEMP/desktop-scale-evaluation.json" \
+                --summary-output "$summary_file" \
+                --retry-note 'The initial interleaved comparison crossed a timing limit. The paired samples were repeated once.'
+              evaluation_status=$?
+              set -e
+            fi
+            append_summary
+            exit "$evaluation_status"
+          fi
+
+          if run_scale_check head-1 head; then
+            :
+          else
+            status=$?
+            echo "::error::Desktop scale check run failed with status $status."
+            exit "$status"
+          fi
+          python3 "$scale_script" evaluate \
+            --history "$history_file" \
+            --head "$RUNNER_TEMP/desktop-scale-head-1.json" \
+            --output "$RUNNER_TEMP/desktop-scale-evaluation.json" \
+            --summary-output "$summary_file" \
+            --report-only
+          append_summary
+
+      - name: Record dev desktop scale timings.
+        if: always() && github.ref == 'refs/heads/dev' && steps.desktop-scale.outputs.recorded == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-scale-dev
+          path: ${{ runner.temp }}/desktop-scale-sample.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
 
       - name: Sticker set API smoke.
         if: env.ONLY_CACHE == 'false'
