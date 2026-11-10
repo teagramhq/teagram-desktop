@@ -11036,6 +11036,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	session.attachWebView().setAttachBotsForRegressionTest(
 		std::move(uncachedPeerBots));
 	result.attachMenuUncachedPeersReady = true;
+	result.attachMenuUncachedPeerCallbackCpuNanoseconds = 0;
 	for (auto i = 0; i != 10; ++i) {
 		const auto peerId = UserId(1100 + i);
 		data.processUsers(MTP_vector<MTPUser>({
@@ -11066,9 +11067,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto peerBuildCallbackCpuNanoseconds
 			= historyWidget
 				  ->attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest();
-		result.attachMenuUncachedPeerCallbackCpuNanoseconds
-			= std::max(result.attachMenuUncachedPeerCallbackCpuNanoseconds,
-					   peerBuildCallbackCpuNanoseconds);
+		if (peerBuildCallbackCpuNanoseconds < 0) {
+			result.attachMenuUncachedPeerCallbackCpuNanoseconds = -1;
+		} else if (result.attachMenuUncachedPeerCallbackCpuNanoseconds >= 0) {
+			result.attachMenuUncachedPeerCallbackCpuNanoseconds
+				= std::max(result.attachMenuUncachedPeerCallbackCpuNanoseconds,
+						   peerBuildCallbackCpuNanoseconds);
+		}
 		const auto buildCountMatches
 			= (historyWidget->attachMenuBuildCountForRegressionTest()
 			   == buildsBeforePeerSwitch + 1);

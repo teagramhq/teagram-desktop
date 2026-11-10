@@ -1017,7 +1017,11 @@ awk '
 ' "$native_harness" > "$temp_dir/uncached-peer-switches.cpp"
 grep -Fq 'showPeerHistoryMeasured(history);' \
   "$temp_dir/uncached-peer-switches.cpp" \
-  || contract_fail 'Every uncached peer switch must contribute main-thread and scheduler evidence.'
+  && grep -Fq 'peerBuildCallbackCpuNanoseconds < 0' \
+    "$temp_dir/uncached-peer-switches.cpp" \
+  && grep -Fq 'result.attachMenuUncachedPeerCallbackCpuNanoseconds = -1;' \
+    "$temp_dir/uncached-peer-switches.cpp" \
+  || contract_fail 'Uncached peer switches must measure work and fail the CPU aggregate on any unavailable sample.'
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuFirstHoverCallbackCpuNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuInvalidationCallbackCpuNanoseconds' "$native_harness" \
