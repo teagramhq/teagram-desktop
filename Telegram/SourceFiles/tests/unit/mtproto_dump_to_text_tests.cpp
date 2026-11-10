@@ -12,9 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-template <typename Value> QString DumpMessage(const Value &value) {
-	auto body = mtpBuffer();
-	value.template write<mtpBuffer>(body);
+QString DumpMessageBody(mtpBuffer &body, int32 truncatePrimes) {
+	body.resize(body.size() - truncatePrimes);
 
 	auto message = mtpBuffer();
 	MTP_long(1).write(message);
@@ -24,6 +23,21 @@ template <typename Value> QString DumpMessage(const Value &value) {
 
 	auto from = message.constData();
 	return MTP::details::DumpToText(from, from + message.size());
+}
+
+template <typename Value>
+QString DumpMessage(const Value &value, int32 truncatePrimes = 0) {
+	auto body = mtpBuffer();
+	value.template write<mtpBuffer>(body);
+	return DumpMessageBody(body, truncatePrimes);
+}
+
+template <typename Value>
+QString DumpReceivedMessage(const Value &value, int32 truncatePrimes = 0) {
+	auto body = mtpBuffer();
+	MTP_int(static_cast<int32>(value.type())).write(body);
+	value.template write<mtpBuffer>(body);
+	return DumpMessageBody(body, truncatePrimes);
 }
 
 TEST_CASE(InviteSignInSecretIsRedactedFromMtpDump) {
@@ -46,6 +60,76 @@ TEST_CASE(InviteLinkSecretIsRedactedFromMtpDump) {
 
 	CHECK(!dump.contains(secret));
 	CHECK(dump.contains(u"link: [REDACTED] [STRING]"_q));
+}
+
+TEST_CASE(PasswordInputSecretsAreRedactedFromMtpDump) {
+	const auto secret = QByteArray(256, char(0xAB));
+	using Flag = MTPDaccount_passwordInputSettings::Flag;
+	const auto settings = MTP_account_passwordInputSettings(
+		MTP_flags(Flag::f_new_password_hash | Flag::f_hint
+				  | Flag::f_new_secure_settings),
+		MTP_passwordKdfAlgoUnknown(), MTP_bytes(secret),
+		MTP_string(u"visible-hint"_q), MTP_string(),
+		MTP_secureSecretSettings(
+			MTP_securePasswordKdfAlgoSHA512(MTP_bytes(secret)),
+			MTP_bytes(secret), MTP_long(123)));
+	const auto dump = DumpMessage(MTPaccount_UpdatePasswordSettings(
+		MTP_inputCheckPasswordEmpty(), settings));
+
+	CHECK(dump.contains(u"new_password_hash: [REDACTED] [STRING]"_q));
+	CHECK(dump.contains(u"new_secure_settings: [REDACTED] [OBJECT]"_q));
+	CHECK(!dump.toUpper().contains(u"AB"_q));
+	CHECK(!dump.contains(u"secure_algo:"_q));
+	CHECK(!dump.contains(u"secure_secret:"_q));
+	CHECK(!dump.contains(u"secure_secret_id:"_q));
+	CHECK(dump.contains(u"hint: \"visible-hint\" [STRING]"_q));
+}
+
+TEST_CASE(ReceivedPasswordSettingsSecureSecretIsRedactedFromMtpDump) {
+	const auto secret = QByteArray("received-secure-secret");
+	const auto salt = QByteArray("received-secure-salt");
+	constexpr auto secureSecretId = 42LL;
+	using Flag = MTPDaccount_passwordSettings::Flag;
+	const auto dump = DumpReceivedMessage(MTP_account_passwordSettings(
+		MTP_flags(Flag::f_email | Flag::f_secure_settings),
+		MTP_string(u"safe@example.test"_q),
+		MTP_secureSecretSettings(
+			MTP_securePasswordKdfAlgoPBKDF2HMACSHA512iter100000(
+				MTP_bytes(salt)),
+			MTP_bytes(secret), MTP_long(secureSecretId))));
+
+	CHECK(dump.contains(u"secure_settings: [REDACTED] [OBJECT]"_q));
+	CHECK(
+		!dump.contains(QString::fromLatin1(secret.constData(), secret.size())));
+	CHECK(!dump.contains(QString::fromLatin1(salt.constData(), salt.size())));
+	CHECK(!dump.contains(QString::number(secureSecretId)));
+	CHECK(!dump.contains(u"secure_algo:"_q));
+	CHECK(!dump.contains(u"secure_secret:"_q));
+	CHECK(!dump.contains(u"secure_secret_id:"_q));
+	CHECK(dump.contains(u"email: \"safe@example.test\" [STRING]"_q));
+}
+
+TEST_CASE(RedactedPasswordSettingsDecodeErrorDoesNotExposeBytes) {
+	const auto secret = QByteArray("decode-error-secret");
+	const auto salt = QByteArray("decode-error-salt");
+	constexpr auto secureSecretId = 43LL;
+	using Flag = MTPDaccount_passwordSettings::Flag;
+	const auto dump = DumpReceivedMessage(
+		MTP_account_passwordSettings(
+			MTP_flags(Flag::f_email | Flag::f_secure_settings),
+			MTP_string(u"safe@example.test"_q),
+			MTP_secureSecretSettings(
+				MTP_securePasswordKdfAlgoPBKDF2HMACSHA512iter100000(
+					MTP_bytes(salt)),
+				MTP_bytes(secret), MTP_long(secureSecretId))),
+		1);
+
+	CHECK(dump.contains(
+		u"secure_settings: [ERROR] (could not decode redacted object)"_q));
+	CHECK(
+		!dump.contains(QString::fromLatin1(secret.constData(), secret.size())));
+	CHECK(!dump.contains(QString::fromLatin1(salt.constData(), salt.size())));
+	CHECK(!dump.contains(QString::number(secureSecretId)));
 }
 
 } // namespace

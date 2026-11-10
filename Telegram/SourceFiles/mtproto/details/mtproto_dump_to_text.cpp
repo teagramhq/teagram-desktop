@@ -80,6 +80,15 @@ bool DumpToTextCore(DumpToTextBuffer &to, const mtpPrime *&from, const mtpPrime 
 		}
 	} break;
 
+	case mtpc_redacted_object: {
+		DumpToTextBuffer redacted;
+		if (DumpToTextType(redacted, from, end, 0, level)) {
+			to.add("[REDACTED] [OBJECT]");
+			return true;
+		}
+		to.error("could not decode redacted object");
+	} break;
+
 	case mtpc_vector: {
 		if (from < end) {
 			int32 cnt = *(from++);
