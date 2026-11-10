@@ -262,17 +262,15 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
 		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
 		CHECK(!evidence.back().schedulerTrace.isEmpty());
+		CHECK_EQ(evidence.back().schedulerTrace.size(),
+				 evidence.back().schedulerSampleOffsetsNanoseconds.size());
 		CHECK(evidence.back().schedulerTrace.size()
 			  >= evidence.back().durationMilliseconds / 5);
 		const auto schedulerTraceProvesRunnable
 			= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 				evidence.back().schedulerTrace,
-				evidence.back().durationMilliseconds * 1'000'000);
-		CHECK_EQ(schedulerTraceProvesRunnable,
-				 (evidence.back().schedulerTrace.size()
-				  >= evidence.back().durationMilliseconds / 5)
-					 && (evidence.back().schedulerTrace.count(u'R')
-						 == evidence.back().schedulerTrace.size()));
+				evidence.back().schedulerSampleOffsetsNanoseconds,
+				evidence.back().durationNanoseconds);
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
 #if defined(Q_OS_MAC)
 		CHECK(evidence.back().schedulerTrace.contains(u'R'));
@@ -281,6 +279,28 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(!schedulerTraceProvesRunnable);
 #endif
 	}
+}
+
+TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
+	constexpr auto sampleIntervalNanoseconds = qint64(5'000'000);
+	constexpr auto durationNanoseconds = qint64(95'000'000);
+	auto offsets = std::vector<qint64>();
+	for (auto offset = qint64(0); offset <= 90'000'000; offset += 5'000'000) {
+		offsets.push_back(offset);
+	}
+	const auto trace = QString(int(offsets.size()), QChar(u'R'));
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, offsets, durationNanoseconds));
+
+	auto gapOffsets = offsets;
+	gapOffsets[10] += 1'000'000;
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, gapOffsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		QString(4, QChar(u'R')),
+		{0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds,
+		 3 * sampleIntervalNanoseconds},
+		92'000'000));
 }
 
 TEST_CASE(UiStallWatchdogCapturesShortStalls) {

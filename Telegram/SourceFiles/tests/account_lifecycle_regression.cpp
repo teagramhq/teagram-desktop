@@ -10336,6 +10336,17 @@ constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
 	= qint64(20'000'000);
 constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
+[[nodiscard]] std::vector<qint64>
+SchedulerSampleOffsetsForDuration(qint64 durationNanoseconds) {
+	constexpr auto sampleIntervalNanoseconds = qint64(5'000'000);
+	auto result = std::vector<qint64>();
+	for (auto offset = qint64(0); offset < durationNanoseconds;
+		 offset += sampleIntervalNanoseconds) {
+		result.push_back(offset);
+	}
+	return result;
+}
+
 struct MainThreadWorkInterval final {
 	QDateTime startedAt;
 	qint64 durationNanoseconds = 0;
@@ -10430,7 +10441,8 @@ FindMatchingMainThreadWorkEvidence(
 		return false;
 	}
 	return Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-		evidence->schedulerTrace, interval.durationNanoseconds);
+		evidence->schedulerTrace, evidence->schedulerSampleOffsetsNanoseconds,
+		interval.durationNanoseconds);
 }
 
 [[nodiscard]] bool AllMainThreadWorkIntervalsHaveSchedulerProof(
@@ -10702,12 +10714,16 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			.startedAt = firstStart.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 230,
 			.schedulerTrace = QString(46, QChar(u'R')),
+			.schedulerSampleOffsetsNanoseconds
+			= SchedulerSampleOffsetsForDuration(230'000'000),
 			.stack = u"scheduler regression"_q,
 		},
 		{
 			.startedAt = secondStart.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 150,
-			.schedulerTrace = QString(12, QChar(u'W')),
+			.schedulerTrace = QString(30, QChar(u'W')),
+			.schedulerSampleOffsetsNanoseconds
+			= SchedulerSampleOffsetsForDuration(150'000'000),
 			.stack = u"app wait regression"_q,
 		},
 	};
@@ -10824,7 +10840,9 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		= std::optional<Core::UiStallWatchdog::StallEvidence>{{
 			.startedAt = startedAt.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 92,
-			.schedulerTrace = QString(18, QChar(u'R')),
+			.schedulerTrace = QString(19, QChar(u'R')),
+			.schedulerSampleOffsetsNanoseconds
+			= SchedulerSampleOffsetsForDuration(92'000'000),
 			.stack = u"runner scheduling regression"_q,
 		}};
 	const auto highProcessWork = MainThreadWorkInterval{
@@ -10860,7 +10878,9 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 			{
 				.startedAt = startedAt.toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
-				.schedulerTrace = QString(18, QChar(u'R')),
+				.schedulerTrace = QString(19, QChar(u'R')),
+				.schedulerSampleOffsetsNanoseconds
+				= SchedulerSampleOffsetsForDuration(92'000'000),
 				.stack = u"runner scheduling regression"_q,
 			},
 	};
@@ -10869,7 +10889,9 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 			{
 				.startedAt = startedAt.toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
-				.schedulerTrace = QString(18, QChar(u'W')),
+				.schedulerTrace = QString(19, QChar(u'W')),
+				.schedulerSampleOffsetsNanoseconds
+				= SchedulerSampleOffsetsForDuration(92'000'000),
 				.stack = u"blocked callback regression"_q,
 			},
 	};
@@ -10883,6 +10905,8 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 				.startedAt = startedAt.toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
 				.schedulerTrace = QString(4, QChar(u'R')),
+				.schedulerSampleOffsetsNanoseconds
+				= {0, 5'000'000, 10'000'000, 15'000'000},
 				.stack = u"undersampled scheduler trace regression"_q,
 			},
 	};

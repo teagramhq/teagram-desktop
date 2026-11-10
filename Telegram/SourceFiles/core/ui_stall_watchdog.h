@@ -32,7 +32,9 @@ class UiStallWatchdog final : public QObject {
 	struct StallEvidence {
 		QString startedAt;
 		qint64 durationMilliseconds = 0;
+		qint64 durationNanoseconds = 0;
 		QString schedulerTrace;
+		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
 		QString stack;
 	};
 
@@ -56,9 +58,10 @@ class UiStallWatchdog final : public QObject {
 	RecentStallEvidenceForTesting();
 	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
 	RecentPingAcknowledgementsForTesting();
-	[[nodiscard]] static bool
-	SchedulerTraceProvesRunnableForDuration(const QString &trace,
-											qint64 durationNanoseconds);
+	[[nodiscard]] static bool SchedulerTraceProvesRunnableForDuration(
+		const QString &trace,
+		const std::vector<qint64> &sampleOffsetsNanoseconds,
+		qint64 durationNanoseconds);
 
   protected:
 	bool event(QEvent *event) override;

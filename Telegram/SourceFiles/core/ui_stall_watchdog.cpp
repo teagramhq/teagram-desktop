@@ -459,14 +459,32 @@ UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 }
 
 bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-	const QString &trace, qint64 durationNanoseconds) {
+	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
+	qint64 durationNanoseconds) {
 	const auto sampleIntervalNanoseconds
 		= std::chrono::duration_cast<std::chrono::nanoseconds>(
 			  kSchedulerSampleInterval)
 			  .count();
-	return (durationNanoseconds >= 0)
-		   && (trace.size() >= durationNanoseconds / sampleIntervalNanoseconds)
-		   && (trace.count(u'R') == trace.size());
+	if ((durationNanoseconds < 0)
+		|| (trace.size() != qsizetype(sampleOffsetsNanoseconds.size()))
+		|| trace.isEmpty() || (trace.count(u'R') != trace.size())) {
+		return false;
+	}
+	auto previousOffset = qint64(-1);
+	for (const auto offset : sampleOffsetsNanoseconds) {
+		if ((offset < 0) || (offset > durationNanoseconds)
+			|| ((previousOffset < 0) && (offset > sampleIntervalNanoseconds))
+			|| ((previousOffset >= 0)
+				&& ((offset < previousOffset)
+					|| (offset - previousOffset
+						> sampleIntervalNanoseconds)))) {
+			return false;
+		}
+		previousOffset = offset;
+	}
+	return (previousOffset >= 0)
+		   && (durationNanoseconds - previousOffset
+			   <= sampleIntervalNanoseconds);
 }
 
 void UiStallWatchdog::enqueueReport(std::function<void()> report) {
@@ -547,6 +565,7 @@ void UiStallWatchdog::run() {
 		const auto startTime = QDateTime::currentDateTime();
 		const auto postedAt = Clock::now();
 		auto schedulerTrace = std::string();
+		auto schedulerSampleOffsetsNanoseconds = std::vector<qint64>();
 		auto schedulerTraceMutex = std::mutex();
 		auto schedulerSampler = std::jthread();
 		const auto schedulerTraceTextSnapshot = [&] {
@@ -558,10 +577,17 @@ void UiStallWatchdog::run() {
 		};
 		QCoreApplication::postEvent(this, new PingEvent(current, postedAt));
 		if (_captureSchedulerTrace) {
-			schedulerTrace.push_back(MainThreadSchedulerState());
+			const auto initialState = MainThreadSchedulerState();
+			const auto sampledAt = Clock::now();
+			schedulerTrace.push_back(initialState);
+			schedulerSampleOffsetsNanoseconds.push_back(
+				std::chrono::duration_cast<std::chrono::nanoseconds>(sampledAt
+																	 - postedAt)
+					.count());
 			try {
 				schedulerSampler = std::jthread(
 					[this, current, postedAt, &schedulerTrace,
+					 &schedulerSampleOffsetsNanoseconds,
 					 &schedulerTraceMutex](std::stop_token stop) {
 						auto nextSampleAt = postedAt + kSchedulerSampleInterval;
 						auto sampleCount = std::size_t(1);
@@ -583,6 +609,7 @@ void UiStallWatchdog::run() {
 								break;
 							}
 							const auto state = MainThreadSchedulerState();
+							const auto sampledAt = Clock::now();
 							if (_schedulerSamplingStopSequence.load(
 									std::memory_order_acquire)
 								>= current) {
@@ -592,6 +619,11 @@ void UiStallWatchdog::run() {
 								const auto traceLock
 									= std::lock_guard(schedulerTraceMutex);
 								schedulerTrace.push_back(state);
+								schedulerSampleOffsetsNanoseconds.push_back(
+									std::chrono::duration_cast<
+										std::chrono::nanoseconds>(sampledAt
+																  - postedAt)
+										.count());
 							}
 							++sampleCount;
 							nextSampleAt = sampleAt + kSchedulerSampleInterval;
@@ -748,7 +780,13 @@ void UiStallWatchdog::run() {
 				const auto evidence = StallEvidence{
 					.startedAt = startedAt,
 					.durationMilliseconds = completedDurationMilliseconds,
+					.durationNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  completedDuration)
+						  .count(),
 					.schedulerTrace = schedulerTraceText,
+					.schedulerSampleOffsetsNanoseconds
+					= schedulerSampleOffsetsNanoseconds,
 					.stack = rawStack,
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
