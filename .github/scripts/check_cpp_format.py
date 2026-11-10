@@ -172,14 +172,23 @@ def upstream_pick_lines(
     return {commit: dict(paths) for commit, paths in exempt.items()}
 
 
-def blame_line_origins(root: Path, revision: str, path: str) -> dict[int, tuple[str, int]]:
+def blame_line_origins(root: Path, revision: str, path: str) -> dict[int, tuple[str, int, str]]:
     output = git_output(root, "blame", "--line-porcelain", "--no-progress", revision, "--", path)
-    origins: dict[int, tuple[str, int]] = {}
+    origins: dict[int, tuple[str, int, str]] = {}
     header = re.compile(r"^(\^?[0-9a-f]{40}) (\d+) (\d+)(?: \d+)?$")
+    current_line: tuple[int, str, int] | None = None
     for line in output.splitlines():
         match = header.match(line)
         if match:
-            origins[int(match.group(3))] = (match.group(1).lstrip("^"), int(match.group(2)))
+            current_line = (
+                int(match.group(3)),
+                match.group(1).lstrip("^"),
+                int(match.group(2)),
+            )
+        elif current_line is not None and line.startswith("filename "):
+            final_line, commit, original_line = current_line
+            origins[final_line] = (commit, original_line, line[len("filename "):])
+            current_line = None
     return origins
 
 
@@ -195,10 +204,10 @@ def ranges_without_upstream_lines(
     checked: list[int] = []
     for first, last in ranges:
         for line_number in range(first, last + 1):
-            commit, original_line = origins.get(line_number, ("", 0))
+            commit, original_line, original_path = origins.get(line_number, ("", 0, ""))
             if commit in upstream_commits:
                 continue
-            if original_line in picked_lines.get(commit, {}).get(path, set()):
+            if original_line in picked_lines.get(commit, {}).get(original_path, set()):
                 continue
             checked.append(line_number)
     return merge_ranges((line, line) for line in checked), len(checked)
@@ -521,6 +530,39 @@ def upstream_provenance_test(formatter: str) -> None:
             expected_lines=1,
             expected_exempted_lines=1,
             expected_ranges=[("fixture.cpp", 3, 3)],
+        )
+
+        git("checkout", "-b", "upstream-rename-source", base)
+        git("mv", "fixture.cpp", "a.cpp")
+        (root / "a.cpp").write_text(
+            "int base = 0;\nint one = 1;\nint two = 2;\nint three = 3;\n",
+            encoding="utf-8",
+        )
+        git("add", "a.cpp")
+        git("commit", "--quiet", "-m", "prepare upstream source path")
+        rename_base = git("rev-parse", "HEAD")
+        (root / "a.cpp").write_text(
+            "int base = 0;\nint one = 1;\nint two = 2;\nint three = 3;\nint imported=4;\n",
+            encoding="utf-8",
+        )
+        git("add", "a.cpp")
+        git("commit", "--quiet", "-m", "upstream change in a.cpp")
+        rename_source = git("rev-parse", "HEAD")
+        git("update-ref", "refs/upstream/telegramdesktop/heads/rename-dev", rename_source)
+
+        git("checkout", "-b", "pick-then-rename", rename_base)
+        git("cherry-pick", "-x", rename_source)
+        git("mv", "a.cpp", "b.cpp")
+        git("commit", "--quiet", "-m", "rename picked source")
+        renamed_pick = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-then-rename",
+            rename_base,
+            renamed_pick,
+            should_pass=True,
+            expected_lines=0,
+            expected_exempted_lines=1,
+            expected_ranges=[],
         )
 
         git("checkout", "-b", "non-upstream-source", base)
