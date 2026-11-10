@@ -356,7 +356,11 @@ void Application::run() {
 	startShortcuts();
 	startEmojiImageLoader();
 	startSystemDarkModeViewer();
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (windowedApplication || desktopScaleCheck) {
+#else
 	if (windowedApplication) {
+#endif
 		Media::Player::start(_audio.get());
 	}
 
