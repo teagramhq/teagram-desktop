@@ -15468,7 +15468,7 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 					stderr,
 					"Desktop scale check failed: global search hit for peer "
 					"%lld message %lld was not applied.\n",
-					static_cast<long long>(missingSearchHit->peer.bare),
+					static_cast<long long>(missingSearchHit->peer.value),
 					static_cast<long long>(missingSearchHit->msg.bare));
 			}
 			const auto searchApplied
