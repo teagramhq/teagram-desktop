@@ -134,6 +134,7 @@ enum class ServerDiscoveryResponseStatus {
 	UnsafeEndpoint,
 	BadFrame,
 	NonceMismatch,
+	BrowserOnly,
 };
 
 struct ServerDiscoveryResult {

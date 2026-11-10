@@ -753,23 +753,30 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 	if (!_connecting) {
 		return;
 	}
-	if (!result) {
-		LOG(("Server discovery response invalid: status %1.")
-				.arg(int(result.status)));
-		discoveryFailed(false);
-		return;
-	}
-	if (_reply) {
-		const auto reply = _reply;
-		_reply = nullptr;
-		reply->deleteLater();
-	}
-	if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
-		resolvePublicEndpoint(std::move(result));
-	} else {
-		_deadline->stop();
-		commitBinding(std::move(result));
-	}
+	const auto status = result.status;
+	HandleServerDiscoveryResult(
+		_discoveryFlow, std::move(result),
+		[=](ServerDiscoveryFailurePresentation presentation) {
+			resetAfterDiscoveryFailure(std::move(presentation));
+		},
+		[=] {
+			LOG(("Server discovery response invalid: status %1.")
+					.arg(int(status)));
+			discoveryFailed(false);
+		},
+		[=](MTP::ServerDiscoveryResult result) {
+			if (_reply) {
+				const auto reply = _reply;
+				_reply = nullptr;
+				reply->deleteLater();
+			}
+			if (result.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
+				resolvePublicEndpoint(std::move(result));
+			} else {
+				_deadline->stop();
+				commitBinding(std::move(result));
+			}
+		});
 }
 
 void ServerWidget::resolvePublicEndpoint(
@@ -850,6 +857,21 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 	if (!_connecting) {
 		return;
 	}
+	const auto message = connectionFailure
+							 ? tr::lng_intro_server_connect_failed(tr::now)
+							 : tr::lng_intro_server_unsupported(tr::now);
+	resetAfterDiscoveryFailure({
+		.message = message,
+		.selectionEditable = true,
+		.continueEnabled = true,
+	});
+}
+
+void ServerWidget::resetAfterDiscoveryFailure(
+	ServerDiscoveryFailurePresentation presentation) {
+	if (!_connecting) {
+		return;
+	}
 	_connecting = false;
 	_localDiscovery->cancel();
 	_discoveryAttempt.reset();
@@ -866,17 +888,11 @@ void ServerWidget::resetAfterDiscoveryFailure(bool connectionFailure) {
 		reply->abort();
 		reply->deleteLater();
 	}
-	_address->rawTextEdit()->setReadOnly(false);
-	_continue->setDisabled(false);
+	_address->rawTextEdit()->setReadOnly(!presentation.selectionEditable);
+	_continue->setDisabled(!presentation.continueEnabled);
 	_continue->setText(tr::lng_intro_server_try_again());
-	_address->setAccessibleDescription(connectionFailure
-		? tr::lng_intro_server_connect_failed(tr::now)
-		: tr::lng_intro_server_unsupported(tr::now));
-	showStatus(
-		connectionFailure
-			? tr::lng_intro_server_connect_failed(tr::now)
-			: tr::lng_intro_server_unsupported(tr::now),
-		true);
+	_address->setAccessibleDescription(presentation.message);
+	showStatus(presentation.message, true);
 	_address->setFocusFast();
 	_scroll->scrollToWidget(_continue);
 }

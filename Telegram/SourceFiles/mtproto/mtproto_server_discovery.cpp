@@ -1016,6 +1016,7 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		return Invalid(ServerDiscoveryResponseStatus::EndpointMismatch);
 	}
 	auto webSocketEndpoint = QString();
+	auto browserOnly = false;
 	if (root.contains(u"websocket"_q)) {
 		const auto websocket = root.value(u"websocket"_q);
 		if (!websocket.isObject()) {
@@ -1032,6 +1033,14 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 			return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
 		}
 		webSocketEndpoint = *normalized;
+		if (websocketObject.contains(u"browser_only"_q)) {
+			const auto browserOnlyValue
+				= websocketObject.value(u"browser_only"_q);
+			if (!browserOnlyValue.isBool()) {
+				return Invalid(ServerDiscoveryResponseStatus::InvalidSchema);
+			}
+			browserOnly = browserOnlyValue.toBool();
+		}
 	}
 
 	const auto encoded = mtproto.value(u"rsa_spki"_q).toString().toLatin1();
@@ -1045,6 +1054,9 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 	const auto key = ParseSpki(der);
 	if (!key) {
 		return Invalid(ServerDiscoveryResponseStatus::InvalidKey);
+	}
+	if (browserOnly) {
+		return Invalid(ServerDiscoveryResponseStatus::BrowserOnly);
 	}
 
 	return {
