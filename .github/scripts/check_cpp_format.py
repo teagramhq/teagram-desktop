@@ -155,20 +155,20 @@ def upstream_pick_lines(
             continue
         source_added = added_lines_between(root, source_parents[0], source)
         picked_added = added_lines_between(root, parents[0], commit)
-        for path in source_added.keys() & picked_added.keys():
-            source_lines = source_added[path]
-            picked_lines = picked_added[path]
-            matcher = difflib.SequenceMatcher(
-                None,
-                [line for _, line in source_lines],
-                [line for _, line in picked_lines],
-                autojunk=False,
-            )
-            for _, picked_index, count in matcher.get_matching_blocks():
-                if not count:
-                    continue
-                for line_number, _ in picked_lines[picked_index:picked_index + count]:
-                    exempt[commit][path].add(line_number)
+        for path, picked_lines in picked_added.items():
+            picked_text = [line for _, line in picked_lines]
+            for source_lines in source_added.values():
+                matcher = difflib.SequenceMatcher(
+                    None,
+                    [line for _, line in source_lines],
+                    picked_text,
+                    autojunk=False,
+                )
+                for _, picked_index, count in matcher.get_matching_blocks():
+                    if not count:
+                        continue
+                    for line_number, _ in picked_lines[picked_index:picked_index + count]:
+                        exempt[commit][path].add(line_number)
     return {commit: dict(paths) for commit, paths in exempt.items()}
 
 
@@ -559,6 +559,40 @@ def upstream_provenance_test(formatter: str) -> None:
             "upstream-pick-then-rename",
             rename_base,
             renamed_pick,
+            should_pass=True,
+            expected_lines=0,
+            expected_exempted_lines=1,
+            expected_ranges=[],
+        )
+
+        git("checkout", "-b", "upstream-renamed-pick-source", base)
+        git("mv", "fixture.cpp", "a.cpp")
+        (root / "a.cpp").write_text(
+            "int base = 0;\nint one = 1;\nint two = 2;\nint three = 3;\n",
+            encoding="utf-8",
+        )
+        git("add", "a.cpp")
+        git("commit", "--quiet", "-m", "prepare upstream a.cpp")
+        rename_pick_base = git("rev-parse", "HEAD")
+        (root / "a.cpp").write_text(
+            "int base = 0;\nint one = 1;\nint two = 2;\nint three = 3;\nint imported=4;\n",
+            encoding="utf-8",
+        )
+        git("add", "a.cpp")
+        git("commit", "--quiet", "-m", "upstream addition to a.cpp")
+        rename_pick_source = git("rev-parse", "HEAD")
+        git("update-ref", "refs/upstream/telegramdesktop/heads/renamed-pick-dev", rename_pick_source)
+
+        git("checkout", "-b", "rename-before-pick", rename_pick_base)
+        git("mv", "a.cpp", "b.cpp")
+        git("commit", "--quiet", "-m", "rename a.cpp before pick")
+        rename_before_pick = git("rev-parse", "HEAD")
+        git("cherry-pick", "-x", rename_pick_source)
+        pick_after_rename = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-after-rename",
+            rename_before_pick,
+            pick_after_rename,
             should_pass=True,
             expected_lines=0,
             expected_exempted_lines=1,
