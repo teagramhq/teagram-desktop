@@ -15334,10 +15334,13 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 				return false;
 			}
 
-			const auto aroundWidget = DesktopScaleShowHistory(
-				not_null<Window::SessionController *>(windowController),
-				history, targetId);
-			if (aroundWidget != historyWidget) {
+			const auto aroundSample = MeasureDesktopScaleAction([&] {
+				const auto aroundWidget = DesktopScaleShowHistory(
+					not_null<Window::SessionController *>(windowController),
+					history, targetId);
+				return aroundWidget == historyWidget;
+			});
+			if (!aroundSample.passed) {
 				return false;
 			}
 			const auto firstPageId = kDateOffset - kDesktopScalePageSize / 2;
@@ -15374,16 +15377,20 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 				= DesktopScaleHistoryBlockItemCountMatches(
 					history, kDesktopScalePageSize, "jump-to-date page");
 			sample.nanoseconds
-				= resolvedSample.nanoseconds && sample.nanoseconds
+				= resolvedSample.nanoseconds && aroundSample.nanoseconds
+						  && sample.nanoseconds
 					  ? std::optional<qint64>(*resolvedSample.nanoseconds
+											  + *aroundSample.nanoseconds
 											  + *sample.nanoseconds)
 					  : std::nullopt;
 			sample.mainThreadStepsOverBudget = SumDesktopScaleStalls({
 				resolvedSample.mainThreadStepsOverBudget,
+				aroundSample.mainThreadStepsOverBudget,
 				sample.mainThreadStepsOverBudget,
 			});
-			sample.passed = resolvedSample.passed && sample.passed
-							&& pageApplied && historyCountMatches;
+			sample.passed = resolvedSample.passed && aroundSample.passed
+							&& sample.passed && pageApplied
+							&& historyCountMatches;
 			return sample.passed;
 		},
 		reuseAccount);
