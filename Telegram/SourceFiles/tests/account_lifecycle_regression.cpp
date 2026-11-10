@@ -15190,7 +15190,23 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 			const auto reply = DesktopScaleMessagesReply(std::move(messages),
 														 kHistoryCount, false);
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-				capture, mtpc_messages_getHistory, reply, [] { return true; },
+				capture, mtpc_messages_getHistory, reply, [&] {
+					auto loadedVisits = 0;
+					for (auto pass = 0; pass != 100; ++pass) {
+						for (auto pageId = firstPageId;
+							 pageId != firstLoadedId.bare; ++pageId) {
+							for (auto loadedId = firstLoadedId.bare;
+								 loadedId
+								 != firstLoadedId.bare + alreadyLoaded;
+								++loadedId) {
+								loadedVisits += (data.message(
+									peerFromUser(peerId), MsgId(loadedId))
+									!= nullptr);
+							}
+						}
+					}
+					return loadedVisits > 0;
+				},
 				reportOnlyStalls);
 			auto pageApplied = true;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
