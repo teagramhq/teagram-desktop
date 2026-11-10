@@ -16,7 +16,7 @@ namespace Dialogs {
 struct RowsByLetter;
 class Row;
 
-class IndexedList {
+class IndexedList { // clang-format off
 public:
 	IndexedList(SortMode sortMode, FilterId filterId = 0);
 
@@ -101,6 +101,6 @@ private:
 	int _freezeDepth = 0;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
-};
+}; // clang-format on
 
 } // namespace Dialogs
