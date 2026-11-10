@@ -221,6 +221,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <dlfcn.h>
 #endif
 
+namespace Data {
+extern qint64 gDiag[8];
+} // namespace Data
+
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 namespace {
@@ -15427,8 +15431,14 @@ int RunDesktopScaleCheck() {
 		= RunDesktopScaleDialogs(domain, 4'900, UserId(2'000'000));
 	const auto contactsOne
 		= RunDesktopScaleContacts(domain, 100, UserId(3'000'000));
+	std::fill(std::begin(::Data::gDiag), std::end(::Data::gDiag), qint64(0));
 	const auto contactsHundred
 		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000));
+	std::fprintf(stderr,
+		"SCALE_DIAG processUsers=%.1f history=%.1f contactsAdd=%.1f "
+		"noChatsAdd=%.1f viewerCalls=%lld ms\n",
+		::Data::gDiag[0] / 1e6, ::Data::gDiag[1] / 1e6, ::Data::gDiag[2] / 1e6,
+		::Data::gDiag[3] / 1e6, (long long)::Data::gDiag[4]);
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;

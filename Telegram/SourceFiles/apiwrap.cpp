@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include <QtCore/QElapsedTimer>
 #include "apiwrap.h"
 
 #include "api/api_authorizations.h"
@@ -880,6 +881,10 @@ QString ApiWrap::exportDirectStoryLink(not_null<Data::Story*> story) {
 	return current;
 }
 
+namespace Data {
+extern qint64 gDiag[8];
+} // namespace Data
+
 void ApiWrap::requestContacts() {
 	if (_session->data().contactsLoaded().current() || _contactsRequestId) {
 		return;
@@ -893,7 +898,10 @@ void ApiWrap::requestContacts() {
 		}
 		Assert(result.type() == mtpc_contacts_contacts);
 		const auto &d = result.c_contacts_contacts();
+		auto diagTimer = QElapsedTimer();
+		diagTimer.start();
 		_session->data().processUsers(d.vusers());
+		Data::gDiag[0] += diagTimer.nsecsElapsed();
 		for (const auto &contact : d.vcontacts().v) {
 			if (contact.type() != mtpc_contact) continue;
 

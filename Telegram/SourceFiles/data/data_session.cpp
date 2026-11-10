@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include <QtCore/QElapsedTimer>
 #include "data/data_session.h"
 
 #include "main/main_session.h"
@@ -102,6 +103,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <rpl/flatten_latest.h>
 
 namespace Data {
+
+qint64 gDiag[8] = {};
 namespace {
 
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
@@ -2289,11 +2292,19 @@ void Session::setupUserIsContactViewer() {
 			return;
 		}
 		if (user->isContact()) {
+			auto t = QElapsedTimer();
+			t.start();
 			const auto history = this->history(user->id);
+			gDiag[1] += t.nsecsElapsed();
+			t.restart();
 			_contactsList.addByName(history);
+			gDiag[2] += t.nsecsElapsed();
+			t.restart();
 			if (!history->inChatList()) {
 				_contactsNoChatsList.addByName(history);
 			}
+			gDiag[3] += t.nsecsElapsed();
+			++gDiag[4];
 		} else if (const auto history = historyLoaded(user)) {
 			_contactsNoChatsList.remove(history);
 			_contactsList.remove(history);
