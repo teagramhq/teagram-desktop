@@ -14952,51 +14952,155 @@ DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
 	return result;
 }
 
-[[nodiscard]] bool
-DesktopScaleUnreadStateMatches(const Dialogs::UnreadState &a,
-							   const Dialogs::UnreadState &b) {
-	return (a.messages == b.messages) && (a.messagesMuted == b.messagesMuted)
-		   && (a.chats == b.chats) && (a.chatsMuted == b.chatsMuted)
-		   && (a.marks == b.marks) && (a.marksMuted == b.marksMuted)
-		   && (a.reactions == b.reactions)
-		   && (a.reactionsMuted == b.reactionsMuted)
-		   && (a.mentions == b.mentions) && (a.polls == b.polls)
-		   && (a.pollsMuted == b.pollsMuted) && (a.known == b.known);
+[[nodiscard]] uint64 DesktopScaleDialogId(Dialogs::Key key) {
+	const auto history = key.history();
+	return history ? history->peer->id.value : 0;
 }
 
-[[nodiscard]] bool
-DesktopScaleOldOrderPreserved(const std::vector<Dialogs::Key> &before,
-							  const std::vector<Dialogs::Key> &after) {
-	auto next = begin(before);
-	for (const auto &key : after) {
-		if ((next != end(before)) && (key == *next)) {
-			++next;
-		}
+void DesktopScalePrintDialogOrderMismatch(
+	const char *listName, const char *property,
+	const std::vector<Dialogs::Key> &expected,
+	const std::vector<Dialogs::Key> &actual) {
+	auto index = 0;
+	while ((index < expected.size()) && (index < actual.size())
+		   && (expected[index] == actual[index])) {
+		++index;
 	}
-	return (next == end(before));
+	const auto expectedId
+		= (index < expected.size()) ? DesktopScaleDialogId(expected[index]) : 0;
+	const auto actualId
+		= (index < actual.size()) ? DesktopScaleDialogId(actual[index]) : 0;
+	std::fprintf(stderr,
+				 "Desktop scale state mismatch: list=%s property=%s index=%llu "
+				 "expected_dialog=%llu actual_dialog=%llu.\n",
+				 listName, property, static_cast<unsigned long long>(index),
+				 static_cast<unsigned long long>(expectedId),
+				 static_cast<unsigned long long>(actualId));
+}
+
+[[nodiscard]] bool DesktopScaleDialogOrderMatches(
+	const char *listName, const std::vector<Dialogs::Key> &expected,
+	const std::vector<Dialogs::Key> &actual, bool allowNewRows) {
+	auto actualExisting = std::vector<Dialogs::Key>();
+	if (allowNewRows) {
+		for (const auto &key : actual) {
+			if (ranges::contains(expected, key)) {
+				actualExisting.push_back(key);
+			}
+		}
+	} else {
+		actualExisting = actual;
+	}
+	if (expected == actualExisting) {
+		return true;
+	}
+	DesktopScalePrintDialogOrderMismatch(listName, "order", expected,
+										 actualExisting);
+	return false;
+}
+
+[[nodiscard]] const char *
+DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
+								  const Dialogs::UnreadState &actual,
+								  int *expectedValue, int *actualValue) {
+	const auto check = [&](const char *name, int left, int right) {
+		if (left != right) {
+			*expectedValue = left;
+			*actualValue = right;
+			return name;
+		}
+		return static_cast<const char *>(nullptr);
+	};
+	auto field = check("messages", expected.messages, actual.messages);
+	field = field ? field
+				  : check("messagesMuted", expected.messagesMuted,
+						  actual.messagesMuted);
+	field = field ? field : check("chats", expected.chats, actual.chats);
+	field = field ? field
+				  : check("chatsMuted", expected.chatsMuted, actual.chatsMuted);
+	field = field ? field : check("marks", expected.marks, actual.marks);
+	field = field ? field
+				  : check("marksMuted", expected.marksMuted, actual.marksMuted);
+	field = field ? field
+				  : check("reactions", expected.reactions, actual.reactions);
+	field = field ? field
+				  : check("reactionsMuted", expected.reactionsMuted,
+						  actual.reactionsMuted);
+	field
+		= field ? field : check("mentions", expected.mentions, actual.mentions);
+	field = field ? field : check("polls", expected.polls, actual.polls);
+	field = field ? field
+				  : check("pollsMuted", expected.pollsMuted, actual.pollsMuted);
+	field = field ? field : check("known", expected.known, actual.known);
+	return field;
 }
 
 [[nodiscard]] bool
 DesktopScaleChatListStatePreserved(const DesktopScaleChatListState &before,
 								   const Dialogs::MainList &now,
-								   bool allowNewRows) {
+								   bool allowNewRows, const char *listName) {
 	const auto after = DesktopScaleChatListSnapshot(now);
-	const auto orderMatches
-		= allowNewRows
-			  ? DesktopScaleOldOrderPreserved(before.order, after.order)
-			  : (before.order == after.order);
-	if (!orderMatches || (before.pinned != after.pinned)
-		|| !DesktopScaleUnreadStateMatches(before.unread, after.unread)
-		|| (!allowNewRows
-			&& (before.histories.size() != after.histories.size()))) {
+	if (!DesktopScaleDialogOrderMatches(listName, before.order, after.order,
+										allowNewRows)) {
 		return false;
 	}
 	for (const auto &state : before.histories) {
-		if ((state.history->folder() != state.folder)
-			|| (state.history->unreadCount() != state.unreadCount)
-			|| (state.history->isPinnedDialog(FilterId()) != state.pinned)) {
+		const auto dialogId = state.history->peer->id.value;
+		const auto actualFolder = state.history->folder();
+		if (actualFolder != state.folder) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=folder "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				state.folder ? state.folder->id() : 0,
+				actualFolder ? actualFolder->id() : 0);
 			return false;
 		}
+		const auto actualUnreadCount = state.history->unreadCount();
+		if (actualUnreadCount != state.unreadCount) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=unread "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				state.unreadCount, actualUnreadCount);
+			return false;
+		}
+		const auto actualPinned = state.history->isPinnedDialog(FilterId());
+		if (actualPinned != state.pinned) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=pinned "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				int(state.pinned), int(actualPinned));
+			return false;
+		}
+	}
+	if (before.pinned != after.pinned) {
+		DesktopScalePrintDialogOrderMismatch(listName, "pinned", before.pinned,
+											 after.pinned);
+		return false;
+	}
+	if (!allowNewRows && (before.histories.size() != after.histories.size())) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=%s property=order "
+					 "expected_histories=%llu actual_histories=%llu.\n",
+					 listName,
+					 static_cast<unsigned long long>(before.histories.size()),
+					 static_cast<unsigned long long>(after.histories.size()));
+		return false;
+	}
+	auto expectedUnread = 0;
+	auto actualUnread = 0;
+	if (const auto field = DesktopScaleUnreadStateDifference(
+			before.unread, after.unread, &expectedUnread, &actualUnread)) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=%s property=unread "
+					 "field=%s expected=%d actual=%d first_dialog=none.\n",
+					 listName, field, expectedUnread, actualUnread);
+		return false;
 	}
 	return true;
 }
@@ -15021,6 +15125,26 @@ DesktopScalePageOrder(const Dialogs::List &list,
 		}
 	}
 	return result;
+}
+
+void DesktopScalePrintPeerOrderMismatch(const char *listName,
+										const std::vector<PeerId> &expected,
+										const std::vector<PeerId> &actual) {
+	auto index = size_t(0);
+	while ((index < expected.size()) && (index < actual.size())
+		   && (expected[index] == actual[index])) {
+		++index;
+	}
+	const auto expectedId
+		= (index < expected.size()) ? expected[index].value : 0;
+	const auto actualId = (index < actual.size()) ? actual[index].value : 0;
+	std::fprintf(
+		stderr,
+		"Desktop scale state mismatch: list=%s property=order index=%llu "
+		"expected_dialog=%llu actual_dialog=%llu.\n",
+		listName, static_cast<unsigned long long>(index),
+		static_cast<unsigned long long>(expectedId),
+		static_cast<unsigned long long>(actualId));
 }
 
 [[nodiscard]] QVector<MTPMessage> DesktopScaleMessages(UserId firstId,
@@ -15198,38 +15322,69 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 			data.applyDialogs(nullptr, pageMessages, pageDialogs,
 							  kDesktopScalePageSize);
 
+			const auto mainPendingPageOrder = DesktopScalePageOrder(
+				data.chatsList()->indexed()->all(), requestPageOrder);
 			const auto mainPendingOrderPreserved
-				= (DesktopScalePageOrder(data.chatsList()->indexed()->all(),
-										 requestPageOrder)
-				   == requestPageOrder);
+				= (mainPendingPageOrder == requestPageOrder);
+			if (!mainPendingOrderPreserved) {
+				DesktopScalePrintPeerOrderMismatch("main-while-frozen",
+												   requestPageOrder,
+												   mainPendingPageOrder);
+			}
 			const auto letterList
 				= data.chatsList()->indexed()->filtered(QChar('Q'));
-			const auto letterPendingOrderPreserved
+			const auto letterPendingPageOrder
 				= letterList
-				  && (DesktopScalePageOrder(*letterList, requestPageOrder)
-					  == requestPageOrder);
+					  ? DesktopScalePageOrder(*letterList, requestPageOrder)
+					  : std::vector<PeerId>();
+			const auto letterPendingOrderPreserved
+				= (letterPendingPageOrder == requestPageOrder);
+			if (!letterPendingOrderPreserved) {
+				DesktopScalePrintPeerOrderMismatch("letter-Q-while-frozen",
+												   requestPageOrder,
+												   letterPendingPageOrder);
+			}
 			mainIndexed->unfreeze();
 			archiveIndexed->unfreeze();
 			const auto actualPageOrder = DesktopScalePageOrder(
 				data.chatsList()->indexed()->all(), expectedPageOrder);
+			const auto pageOrderMatches
+				= (actualPageOrder == expectedPageOrder);
+			if (!pageOrderMatches) {
+				DesktopScalePrintPeerOrderMismatch(
+					"main-after-unfreeze", expectedPageOrder, actualPageOrder);
+			}
 			const auto letterListAfter
 				= data.chatsList()->indexed()->filtered(QChar('Q'));
+			const auto letterPageOrder
+				= letterListAfter ? DesktopScalePageOrder(*letterListAfter,
+														  expectedPageOrder)
+								  : std::vector<PeerId>();
 			const auto letterOrderMatches
-				= letterListAfter
-				  && (DesktopScalePageOrder(*letterListAfter, expectedPageOrder)
-					  == expectedPageOrder);
+				= (letterPageOrder == expectedPageOrder);
+			if (!letterOrderMatches) {
+				DesktopScalePrintPeerOrderMismatch("letter-Q-after-unfreeze",
+												   expectedPageOrder,
+												   letterPageOrder);
+			}
 			const auto loadedAfter
 				= DesktopScaleHistoryCount(*data.chatsList())
 				  + DesktopScaleHistoryCount(*archive->chatsList());
+			if (loadedAfter != kLoaded + kDesktopScalePageSize) {
+				std::fprintf(stderr,
+							 "Desktop scale state mismatch: property=order "
+							 "expected_dialogs=%d actual_dialogs=%d.\n",
+							 kLoaded + kDesktopScalePageSize, loadedAfter);
+			}
 			const auto statePreserved
-				= DesktopScaleChatListStatePreserved(mainBefore,
-													 *data.chatsList(), true)
+				= DesktopScaleChatListStatePreserved(
+					  mainBefore, *data.chatsList(), true, "main")
 				  && DesktopScaleChatListStatePreserved(
-					  archiveBefore, *archive->chatsList(), false);
+					  archiveBefore, *archive->chatsList(), false, "archive");
 			if ((loadedAfter != kLoaded + kDesktopScalePageSize)
-				|| (actualPageOrder != expectedPageOrder)
-				|| !mainPendingOrderPreserved || !letterPendingOrderPreserved
-				|| !letterOrderMatches || !statePreserved) {
+				|| !pageOrderMatches || !mainPendingOrderPreserved
+				|| !letterPendingOrderPreserved || !letterOrderMatches
+				|| !statePreserved) {
 				std::fprintf(
 					stderr,
 					"Desktop scale check failed: dialogs page changed "
