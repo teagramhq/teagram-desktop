@@ -15437,10 +15437,18 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 					"Desktop scale check failed: move history is missing.\n");
 				return false;
 			}
-			const auto movingDownBeforeTop
-				= movingDownHistory->mainChatListLink(FilterId())->top();
-			const auto movingUpBeforeTop
-				= movingUpHistory->mainChatListLink(FilterId())->top();
+			const auto movingDownRow
+				= mainIndexed->getRow(Dialogs::Key(movingDownHistory));
+			const auto movingUpRow
+				= mainIndexed->getRow(Dialogs::Key(movingUpHistory));
+			if (!movingDownRow || !movingUpRow) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: move rows are missing.\n");
+				return false;
+			}
+			const auto movingDownBeforeTop = movingDownRow->top();
+			const auto movingUpBeforeTop = movingUpRow->top();
 			auto movementChanges
 				= std::vector<std::pair<History *, Dialogs::PositionChange>>();
 			auto movementLifetime = rpl::lifetime();
@@ -15477,10 +15485,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				});
 			const auto mainAfterRedate
 				= DesktopScaleChatListSnapshot(*data.chatsList());
-			const auto movingDownAfterTop
-				= movingDownHistory->mainChatListLink(FilterId())->top();
-			const auto movingUpAfterTop
-				= movingUpHistory->mainChatListLink(FilterId())->top();
+			const auto movingDownAfterTop = movingDownRow->top();
+			const auto movingUpAfterTop = movingUpRow->top();
 			const auto redatedOrderMatches
 				= (mainAfterRedate.order == expectedRedatedOrder);
 			if (!redatedOrderMatches) {
