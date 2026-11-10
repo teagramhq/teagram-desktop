@@ -80,10 +80,9 @@ public:
 private:
 	void adjustByName(not_null<Row*> row);
 	[[nodiscard]] bool sortedByDate() const;
-	void rotate(
-		std::vector<not_null<Row*>>::iterator first,
-		std::vector<not_null<Row*>>::iterator middle,
-		std::vector<not_null<Row*>>::iterator last);
+	void rotate(std::vector<not_null<Row *>>::iterator first,
+				std::vector<not_null<Row *>>::iterator middle,
+				std::vector<not_null<Row *>>::iterator last);
 
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;

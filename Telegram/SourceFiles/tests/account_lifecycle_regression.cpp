@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
-#include "api/api_compose_with_ai.h"
 #include "api/api_chat_filters.h"
 #include "api/api_common.h"
+#include "api/api_compose_with_ai.h"
 #include "api/api_peer_photo.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
@@ -18,24 +18,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
-#include "chat_helpers/tabbed_selector.h"
 #include "boxes/about_box.h"
 #include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
+#include "boxes/language_box.h"
+#include "boxes/peer_list_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
-#include "boxes/peer_list_box.h"
-#include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
-#include "calls/group/calls_group_common.h"
 #include "calls/calls_call.h"
 #include "calls/calls_instance.h"
 #include "calls/calls_panel.h"
+#include "calls/group/calls_group_common.h"
+#include "chat_helpers/tabbed_selector.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -52,9 +52,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
-#include "data/data_download_manager.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/data_download_manager.h"
 #include "data/data_folder.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -68,9 +68,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_stories.h"
 #include "data/data_types.h"
 #include "data/data_user.h"
+#include "data/data_username_policy.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
-#include "data/data_username_policy.h"
 #include "dialogs/dialogs_indexed_list.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/dialogs_main_list.h"
@@ -87,46 +87,46 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
-#include "info/peer_gifts/info_peer_gifts_common.h"
-#include "info/profile/info_profile_badge.h"
-#include "info/profile/info_profile_emoji_status_panel.h"
-#include "info/profile/info_profile_top_bar.h"
 #include "info/info_controller.h"
 #include "info/info_layer_widget.h"
 #include "info/info_section_widget.h"
 #include "info/info_wrap_widget.h"
+#include "info/peer_gifts/info_peer_gifts_common.h"
+#include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_emoji_status_panel.h"
+#include "info/profile/info_profile_top_bar.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
 #include "logs.h"
 #include "main/main_account.h"
-#include "main/main_app_config.h"
 #include "main/main_account_persistence.h"
+#include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
-#include "mainwidget.h"
 #include "main/session_feature_support.h"
-#include "menu/menu_send.h"
+#include "mainwidget.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
+#include "menu/menu_send.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
+#include "passport/passport_form_controller.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
 #include "platform/platform_specific.h"
 #include "platform/platform_translate_provider.h"
-#include "settings/sections/settings_business.h"
-#include "settings/sections/settings_credits.h"
-#include "passport/passport_form_controller.h"
-#include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_business.h"
 #include "settings/sections/settings_calls.h"
+#include "settings/sections/settings_credits.h"
+#include "settings/sections/settings_folders.h"
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
@@ -138,30 +138,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
+#include "ui/click_handler.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/effects/animations.h"
 #include "ui/image/image_location.h"
+#include "ui/item_text_options.h"
 #include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text.h"
 #include "ui/text/text_entity.h"
+#include "ui/ui_utility.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/fields/special_fields.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
-#include "ui/click_handler.h"
-#include "ui/item_text_options.h"
-#include "ui/ui_utility.h"
+#include "window/section_widget.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
-#include "window/section_widget.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
 
@@ -14821,17 +14821,14 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 									 reportOnlyStalls);
 }
 
-[[nodiscard]] bool DesktopScaleDialogsMeetBudget(
-		const DesktopScaleActionSample &one,
-		const DesktopScaleActionSample &hundred) {
-	return one.nanoseconds
-		&& (*one.nanoseconds > 0)
-		&& hundred.nanoseconds
-		&& (*hundred.nanoseconds <= 50'000'000)
-		&& (double(*hundred.nanoseconds)
-			<= double(*one.nanoseconds) * 1.5)
-		&& hundred.mainThreadStepsOverBudget
-		&& (*hundred.mainThreadStepsOverBudget == 0);
+[[nodiscard]] bool
+DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
+							  const DesktopScaleActionSample &hundred) {
+	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
+		   && (*hundred.nanoseconds <= 50'000'000)
+		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
+		   && hundred.mainThreadStepsOverBudget
+		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -14860,11 +14857,9 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 }
 
-[[nodiscard]] MTPDialog DesktopScaleDialog(
-		UserId userId,
-		bool pinned = false,
-		int unreadCount = 0,
-		int folderId = 0) {
+[[nodiscard]] MTPDialog DesktopScaleDialog(UserId userId, bool pinned = false,
+										   int unreadCount = 0,
+										   int folderId = 0) {
 	auto flags = MTPDdialog::Flags();
 	if (pinned) {
 		flags |= MTPDdialog::Flag::f_pinned;
@@ -14874,10 +14869,9 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 	}
 	const auto notifySettings = DesktopScaleNotifySettings();
 	return MTP_dialog(MTP_flags(flags), peerToMTP(peerFromUser(userId)),
-					  MTP_int(1), MTP_int(0), MTP_int(0),
-					  MTP_int(unreadCount), MTP_int(0),
-					  MTP_int(0), MTP_int(0), notifySettings, MTPint(),
-					  MTPDraftMessage(), MTPint(),
+					  MTP_int(1), MTP_int(0), MTP_int(0), MTP_int(unreadCount),
+					  MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
+					  MTPint(), MTPDraftMessage(), MTPint(),
 					  folderId ? MTP_int(folderId) : MTPint());
 }
 
@@ -14910,15 +14904,13 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 	return users;
 }
 
-[[nodiscard]] QVector<MTPDialog> DesktopScaleDialogs(UserId firstId,
-													 int count,
-													 bool withListState = false) {
+[[nodiscard]] QVector<MTPDialog>
+DesktopScaleDialogs(UserId firstId, int count, bool withListState = false) {
 	auto dialogs = QVector<MTPDialog>();
 	dialogs.reserve(count);
 	for (auto i = 0; i != count; ++i) {
 		dialogs.push_back(DesktopScaleDialog(
-			UserId(firstId.bare + i),
-			withListState && (i == 0),
+			UserId(firstId.bare + i), withListState && (i == 0),
 			withListState && (i == 2) ? 3 : 0,
 			withListState && (i == 1) ? Data::Folder::kId : 0));
 	}
@@ -14939,8 +14931,8 @@ struct DesktopScaleChatListState final {
 	Dialogs::UnreadState unread;
 };
 
-[[nodiscard]] DesktopScaleChatListState DesktopScaleChatListSnapshot(
-		const Dialogs::MainList &list) {
+[[nodiscard]] DesktopScaleChatListState
+DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
 	auto result = DesktopScaleChatListState();
 	result.unread = list.unreadState();
 	for (const auto row : list.indexed()->all()) {
@@ -14960,26 +14952,21 @@ struct DesktopScaleChatListState final {
 	return result;
 }
 
-[[nodiscard]] bool DesktopScaleUnreadStateMatches(
-		const Dialogs::UnreadState &a,
-		const Dialogs::UnreadState &b) {
-	return (a.messages == b.messages)
-		&& (a.messagesMuted == b.messagesMuted)
-		&& (a.chats == b.chats)
-		&& (a.chatsMuted == b.chatsMuted)
-		&& (a.marks == b.marks)
-		&& (a.marksMuted == b.marksMuted)
-		&& (a.reactions == b.reactions)
-		&& (a.reactionsMuted == b.reactionsMuted)
-		&& (a.mentions == b.mentions)
-		&& (a.polls == b.polls)
-		&& (a.pollsMuted == b.pollsMuted)
-		&& (a.known == b.known);
+[[nodiscard]] bool
+DesktopScaleUnreadStateMatches(const Dialogs::UnreadState &a,
+							   const Dialogs::UnreadState &b) {
+	return (a.messages == b.messages) && (a.messagesMuted == b.messagesMuted)
+		   && (a.chats == b.chats) && (a.chatsMuted == b.chatsMuted)
+		   && (a.marks == b.marks) && (a.marksMuted == b.marksMuted)
+		   && (a.reactions == b.reactions)
+		   && (a.reactionsMuted == b.reactionsMuted)
+		   && (a.mentions == b.mentions) && (a.polls == b.polls)
+		   && (a.pollsMuted == b.pollsMuted) && (a.known == b.known);
 }
 
-[[nodiscard]] bool DesktopScaleOldOrderPreserved(
-		const std::vector<Dialogs::Key> &before,
-		const std::vector<Dialogs::Key> &after) {
+[[nodiscard]] bool
+DesktopScaleOldOrderPreserved(const std::vector<Dialogs::Key> &before,
+							  const std::vector<Dialogs::Key> &after) {
 	auto next = begin(before);
 	for (const auto &key : after) {
 		if ((next != end(before)) && (key == *next)) {
@@ -14989,16 +14976,16 @@ struct DesktopScaleChatListState final {
 	return (next == end(before));
 }
 
-[[nodiscard]] bool DesktopScaleChatListStatePreserved(
-		const DesktopScaleChatListState &before,
-		const Dialogs::MainList &now,
-		bool allowNewRows) {
+[[nodiscard]] bool
+DesktopScaleChatListStatePreserved(const DesktopScaleChatListState &before,
+								   const Dialogs::MainList &now,
+								   bool allowNewRows) {
 	const auto after = DesktopScaleChatListSnapshot(now);
-	const auto orderMatches = allowNewRows
-		? DesktopScaleOldOrderPreserved(before.order, after.order)
-		: (before.order == after.order);
-	if (!orderMatches
-		|| (before.pinned != after.pinned)
+	const auto orderMatches
+		= allowNewRows
+			  ? DesktopScaleOldOrderPreserved(before.order, after.order)
+			  : (before.order == after.order);
+	if (!orderMatches || (before.pinned != after.pinned)
 		|| !DesktopScaleUnreadStateMatches(before.unread, after.unread)
 		|| (!allowNewRows
 			&& (before.histories.size() != after.histories.size()))) {
@@ -15022,9 +15009,9 @@ struct DesktopScaleChatListState final {
 	return result;
 }
 
-[[nodiscard]] std::vector<PeerId> DesktopScalePageOrder(
-		const Dialogs::List &list,
-		const std::vector<PeerId> &pagePeers) {
+[[nodiscard]] std::vector<PeerId>
+DesktopScalePageOrder(const Dialogs::List &list,
+					  const std::vector<PeerId> &pagePeers) {
 	auto result = std::vector<PeerId>();
 	for (const auto row : list) {
 		if (const auto history = row->history()) {
@@ -15096,8 +15083,8 @@ template <typename Action>
 }
 
 [[nodiscard]] DesktopScaleActionSample
-RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
-					   UserId firstId, bool reportOnlyStalls) {
+RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
+					   bool reportOnlyStalls) {
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
 		domain, UserId(firstId.bare - 1), [&](auto account) {
@@ -15143,8 +15130,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 				[&] {
 					return data.chatsList()->indexed()->size()
 						   == alreadyLoaded + kDesktopScalePageSize;
-					},
-					reportOnlyStalls);
+				},
+				reportOnlyStalls);
 			if (!sample.passed) {
 				std::fprintf(
 					stderr,
@@ -15159,8 +15146,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 	return sample;
 }
 
-[[nodiscard]] bool RunDesktopScaleDialogStateRegression(
-		Main::Domain &domain) {
+[[nodiscard]] bool RunDesktopScaleDialogStateRegression(Main::Domain &domain) {
 	constexpr auto kLoaded = 20;
 	const auto firstId = UserId(6'000'000);
 	const auto passed = WithDesktopScaleAccount(
@@ -15176,10 +15162,10 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 			if (!archive) {
 				return false;
 			}
-			const auto mainBefore = DesktopScaleChatListSnapshot(
-				*data.chatsList());
-			const auto archiveBefore = DesktopScaleChatListSnapshot(
-				*archive->chatsList());
+			const auto mainBefore
+				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto archiveBefore
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
 
 			const auto pageStart = UserId(firstId.bare + kLoaded);
 			auto pageUsers = QVector<MTPUser>();
@@ -15187,14 +15173,13 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 			for (auto i = 0; i != kDesktopScalePageSize; ++i) {
 				pageUsers.push_back(DesktopScaleUser(
 					UserId(pageStart.bare + i),
-					u"Q Scale Peer %1"_q.arg(i, 5, 10, QChar('0')),
-					false));
+					u"Q Scale Peer %1"_q.arg(i, 5, 10, QChar('0')), false));
 			}
 			auto requestPageOrder = std::vector<PeerId>();
 			requestPageOrder.reserve(kDesktopScalePageSize);
 			for (auto i = 0; i != kDesktopScalePageSize; ++i) {
-				requestPageOrder.push_back(peerFromUser(
-					UserId(pageStart.bare + i)));
+				requestPageOrder.push_back(
+					peerFromUser(UserId(pageStart.bare + i)));
 			}
 			auto expectedPageOrder = requestPageOrder;
 			std::reverse(begin(expectedPageOrder), end(expectedPageOrder));
@@ -15208,43 +15193,44 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 			archiveIndexed->freeze();
 			data.processUsers(MTP_vector<MTPUser>(std::move(pageUsers)));
 			data.applyDialogs(nullptr, pageMessages, pageDialogs,
-				kDesktopScalePageSize);
+							  kDesktopScalePageSize);
 
 			const auto mainPendingOrderPreserved
-				= (DesktopScalePageOrder(
-					data.chatsList()->indexed()->all(), requestPageOrder)
-					== requestPageOrder);
+				= (DesktopScalePageOrder(data.chatsList()->indexed()->all(),
+										 requestPageOrder)
+				   == requestPageOrder);
 			const auto letterList
 				= data.chatsList()->indexed()->filtered(QChar('Q'));
-			const auto letterPendingOrderPreserved = letterList
-				&& (DesktopScalePageOrder(*letterList, requestPageOrder)
-					== requestPageOrder);
+			const auto letterPendingOrderPreserved
+				= letterList
+				  && (DesktopScalePageOrder(*letterList, requestPageOrder)
+					  == requestPageOrder);
 			mainIndexed->unfreeze();
 			archiveIndexed->unfreeze();
 			const auto actualPageOrder = DesktopScalePageOrder(
 				data.chatsList()->indexed()->all(), expectedPageOrder);
 			const auto letterListAfter
 				= data.chatsList()->indexed()->filtered(QChar('Q'));
-			const auto letterOrderMatches = letterListAfter
-				&& (DesktopScalePageOrder(*letterListAfter, expectedPageOrder)
-					== expectedPageOrder);
+			const auto letterOrderMatches
+				= letterListAfter
+				  && (DesktopScalePageOrder(*letterListAfter, expectedPageOrder)
+					  == expectedPageOrder);
 			const auto loadedAfter
 				= DesktopScaleHistoryCount(*data.chatsList())
-				+ DesktopScaleHistoryCount(*archive->chatsList());
+				  + DesktopScaleHistoryCount(*archive->chatsList());
 			const auto statePreserved
-				= DesktopScaleChatListStatePreserved(
-					mainBefore, *data.chatsList(), true)
-				&& DesktopScaleChatListStatePreserved(
-					archiveBefore, *archive->chatsList(), false);
+				= DesktopScaleChatListStatePreserved(mainBefore,
+													 *data.chatsList(), true)
+				  && DesktopScaleChatListStatePreserved(
+					  archiveBefore, *archive->chatsList(), false);
 			if ((loadedAfter != kLoaded + kDesktopScalePageSize)
 				|| (actualPageOrder != expectedPageOrder)
-				|| !mainPendingOrderPreserved
-				|| !letterPendingOrderPreserved
-				|| !letterOrderMatches
-				|| !statePreserved) {
-				std::fprintf(stderr,
-							 "Desktop scale check failed: dialogs page changed "
-							 "order, pinned chats, folders, or unread counts.\n");
+				|| !mainPendingOrderPreserved || !letterPendingOrderPreserved
+				|| !letterOrderMatches || !statePreserved) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: dialogs page changed "
+					"order, pinned chats, folders, or unread counts.\n");
 				return false;
 			}
 			return true;
@@ -15690,9 +15676,8 @@ int RunDesktopScaleCheck() {
 	const auto passed
 		= dialogsOne.passed && dialogsHundred.passed
 		  && DesktopScaleDialogsMeetBudget(dialogsOne, dialogsHundred)
-		  && dialogsState
-		  && contactsOne.loaded.passed && contactsHundred.loaded.passed
-		  && contactsOne.changedAndFound.passed
+		  && dialogsState && contactsOne.loaded.passed
+		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed && cacheOne.passed
 		  && cacheHundred.passed && blockingStalls && (*blockingStalls == 0)
 		  && (cacheOne.directoryEnumerations == 0)
@@ -15756,16 +15741,15 @@ int RunDesktopScaleCheck() {
 	std::printf("Blocking main-thread steps over 50 ms: ");
 	printStallCount(blockingStalls);
 	std::printf(".\n");
-	std::printf(
-		"Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
-		"contact change=%d/%d "
-		"cache=%d/%d.\n",
-		int(dialogsOne.passed), int(dialogsHundred.passed),
-		int(dialogsState),
-		int(contactsOne.loaded.passed), int(contactsHundred.loaded.passed),
-		int(contactsOne.changedAndFound.passed),
-		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
-		int(cacheHundred.passed));
+	std::printf("Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
+				"contact change=%d/%d "
+				"cache=%d/%d.\n",
+				int(dialogsOne.passed), int(dialogsHundred.passed),
+				int(dialogsState), int(contactsOne.loaded.passed),
+				int(contactsHundred.loaded.passed),
+				int(contactsOne.changedAndFound.passed),
+				int(contactsHundred.changedAndFound.passed),
+				int(cacheOne.passed), int(cacheHundred.passed));
 	std::printf("Outcome: %s\n", passed ? "PASS" : "FAIL");
 	std::printf("DESKTOP_SCALE_REPORT_END\n");
 	std::fflush(stdout);

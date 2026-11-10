@@ -3123,8 +3123,8 @@ void Session::applyDialogs(
 		const QVector<MTPMessage> &messages,
 		const QVector<MTPDialog> &dialogs,
 		std::optional<int> count) {
-	auto frozen = std::vector<not_null<Dialogs::IndexedList*>>();
-	const auto freezeList = [&](not_null<Dialogs::MainList*> list) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
 		const auto indexed = list->indexed();
 		if (!ranges::contains(frozen, indexed)) {
 			indexed->freeze();
@@ -3133,15 +3133,17 @@ void Session::applyDialogs(
 	};
 	if (dialogs.size() > 1) {
 		for (const auto &dialog : dialogs) {
-			dialog.match([&](const MTPDdialog &data) {
-				if (const auto folderId = data.vfolder_id();
-					folderId && folderId->v) {
-					folder(folderId->v);
-				}
-			}, [&](const MTPDdialogFolder &data) {
-				processFolder(data.vfolder());
-			}, [](const MTPDdialogCommunity &) {
-			});
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto folderId = data.vfolder_id();
+						folderId && folderId->v) {
+						folder(folderId->v);
+					}
+				},
+				[&](const MTPDdialogFolder &data) {
+					processFolder(data.vfolder());
+				},
+				[](const MTPDdialogCommunity &) {});
 		}
 		freezeList(&_chatsList);
 		for (const auto &entry : _folders) {
@@ -3154,19 +3156,21 @@ void Session::applyDialogs(
 			freezeList(chatsFilters().chatsList(filter.id()));
 		}
 		for (const auto &dialog : dialogs) {
-			dialog.match([&](const MTPDdialog &data) {
-				if (const auto peerId = peerFromMTP(data.vpeer())) {
-					if (const auto history = historyLoaded(peerId)) {
-						freezeList(chatsListFor(history));
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto peerId = peerFromMTP(data.vpeer())) {
+						if (const auto history = historyLoaded(peerId)) {
+							freezeList(chatsListFor(history));
+						}
 					}
-				}
-			}, [&](const MTPDdialogCommunity &data) {
-				const auto channelId = ChannelId(data.vcommunity_id().v);
-				if (const auto channel = channelLoaded(channelId)) {
-					freezeList(chatsListFor(history(channel)));
-				}
-			}, [](const MTPDdialogFolder &) {
-			});
+				},
+				[&](const MTPDdialogCommunity &data) {
+					const auto channelId = ChannelId(data.vcommunity_id().v);
+					if (const auto channel = channelLoaded(channelId)) {
+						freezeList(chatsListFor(history(channel)));
+					}
+				},
+				[](const MTPDdialogFolder &) {});
 		}
 	}
 	const auto unfreeze = gsl::finally([&] {
@@ -3176,9 +3180,8 @@ void Session::applyDialogs(
 	});
 	processMessages(messages, NewMessageType::Last);
 	for (const auto &dialog : dialogs) {
-		dialog.match([&](const auto &data) {
-			applyDialog(requestFolder, data);
-		});
+		dialog.match(
+			[&](const auto &data) { applyDialog(requestFolder, data); });
 	}
 	if (requestFolder && count) {
 		requestFolder->chatsList()->setCloudListSize(*count);
