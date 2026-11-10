@@ -189,9 +189,10 @@ run_scale_check() {
 				local report_outcome
 				report_outcome="$(sed -n 's/^Outcome: //p' "$log_file" | tail -n 1)"
 				echo "::error::app report Outcome: $report_outcome; sample recorded as invalid."
-				if (( run_status == 0 )); then
-					return 3
+				if (( run_status != 0 )); then
+					echo "::error::Desktop scale run $label exited with status $run_status."
 				fi
+				return 3
 			elif (( run_status == 0 )); then
 				return "$parse_status"
 			else

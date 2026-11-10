@@ -1283,6 +1283,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             env["GITHUB_EVENT_NAME"] = "push"
             env["GITHUB_REF"] = "refs/heads/dev"
             env["MOCK_DOCKER_OUTCOME"] = "FAIL"
+            env["MOCK_DOCKER_STATUS"] = "1"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -1326,6 +1327,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertFalse(sample["valid"])
         self.assertEqual(sample["outcome"], "FAIL")
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
+        self.assertIn("Desktop scale run head-1 exited with status 1", result.stdout)
         self.assertNotIn("Could not parse the report", result.stdout)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
         self.assertIn("| Scenario |", summary)
@@ -1341,6 +1343,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             root = Path(directory)
             repo_root, _runner_temp, env = make_runner_harness(root)
             env["MOCK_DOCKER_OUTCOME"] = "FAIL"
+            env["MOCK_DOCKER_STATUS"] = "1"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -1353,6 +1356,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
+        self.assertIn("Desktop scale run head-1 exited with status 1", result.stdout)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
         self.assertNotIn("Could not parse the report", result.stdout)
 
