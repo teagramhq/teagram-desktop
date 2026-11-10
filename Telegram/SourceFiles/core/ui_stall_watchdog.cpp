@@ -470,20 +470,31 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		|| trace.isEmpty() || (trace.count(u'R') != trace.size())) {
 		return false;
 	}
-	auto previousOffset = qint64(-1);
+	auto previousOffset = qint64(0);
+	auto hasPreviousOffset = false;
+	auto firstCoveredOffset = qint64(0);
+	auto lastCoveredOffset = qint64(0);
+	auto hasCoveredOffset = false;
 	for (const auto offset : sampleOffsetsNanoseconds) {
-		if ((offset < 0) || (offset > durationNanoseconds)
-			|| ((previousOffset < 0) && (offset > sampleIntervalNanoseconds))
-			|| ((previousOffset >= 0)
-				&& ((offset < previousOffset)
-					|| (offset - previousOffset
+		if (hasPreviousOffset
+			&& ((offset < previousOffset)
+				|| ((offset >= 0) && (previousOffset <= durationNanoseconds)
+					&& (offset - previousOffset
 						> sampleIntervalNanoseconds)))) {
 			return false;
 		}
+		if ((offset >= 0) && (offset <= durationNanoseconds)) {
+			if (!hasCoveredOffset) {
+				firstCoveredOffset = offset;
+				hasCoveredOffset = true;
+			}
+			lastCoveredOffset = offset;
+		}
 		previousOffset = offset;
+		hasPreviousOffset = true;
 	}
-	return (previousOffset >= 0)
-		   && (durationNanoseconds - previousOffset
+	return hasCoveredOffset && (firstCoveredOffset <= sampleIntervalNanoseconds)
+		   && (durationNanoseconds - lastCoveredOffset
 			   <= sampleIntervalNanoseconds);
 }
 

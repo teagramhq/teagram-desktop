@@ -10426,7 +10426,8 @@ FindMatchingMainThreadWorkEvidence(
 	const std::optional<Core::UiStallWatchdog::StallEvidence> &evidence,
 	qint64 minimumDurationNanoseconds, qint64 maximumMainThreadWorkNanoseconds,
 	qint64 maximumOtherThreadWorkNanoseconds) {
-	if ((interval.durationNanoseconds < minimumDurationNanoseconds)
+	if (!interval.startedAt.isValid()
+		|| (interval.durationNanoseconds < minimumDurationNanoseconds)
 		|| (interval.mainThreadWorkNanoseconds < 0)
 		|| (interval.mainThreadWorkNanoseconds
 			>= maximumMainThreadWorkNanoseconds)
@@ -10440,8 +10441,38 @@ FindMatchingMainThreadWorkEvidence(
 		|| !evidence) {
 		return false;
 	}
+	const auto evidenceStartedAt
+		= QDateTime::fromString(evidence->startedAt, Qt::ISODateWithMs);
+	if (!evidenceStartedAt.isValid()) {
+		return false;
+	}
+	constexpr auto kNanosecondsPerMillisecond = qint64(1'000'000);
+	const auto sampleOffsetMilliseconds
+		= interval.startedAt.msecsTo(evidenceStartedAt);
+	if ((sampleOffsetMilliseconds
+		 > std::numeric_limits<qint64>::max() / kNanosecondsPerMillisecond)
+		|| (sampleOffsetMilliseconds < std::numeric_limits<qint64>::min()
+										   / kNanosecondsPerMillisecond)) {
+		return false;
+	}
+	const auto sampleOffsetNanoseconds
+		= sampleOffsetMilliseconds * kNanosecondsPerMillisecond;
+	auto rebasedSampleOffsetsNanoseconds = std::vector<qint64>();
+	rebasedSampleOffsetsNanoseconds.reserve(
+		evidence->schedulerSampleOffsetsNanoseconds.size());
+	for (const auto offset : evidence->schedulerSampleOffsetsNanoseconds) {
+		if (offset < 0) {
+			return false;
+		} else if ((sampleOffsetNanoseconds > 0)
+				   && (offset > std::numeric_limits<qint64>::max()
+									- sampleOffsetNanoseconds)) {
+			return false;
+		}
+		rebasedSampleOffsetsNanoseconds.push_back(offset
+												  + sampleOffsetNanoseconds);
+	}
 	return Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-		evidence->schedulerTrace, evidence->schedulerSampleOffsetsNanoseconds,
+		evidence->schedulerTrace, rebasedSampleOffsetsNanoseconds,
 		interval.durationNanoseconds);
 }
 
@@ -10845,6 +10876,19 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			= SchedulerSampleOffsetsForDuration(92'000'000),
 			.stack = u"runner scheduling regression"_q,
 		}};
+	const auto lateStartEvidence
+		= std::vector<Core::UiStallWatchdog::StallEvidence>{
+			{
+				.startedAt = startedAt.addMSecs(6).toString(Qt::ISODateWithMs),
+				.durationMilliseconds = 92,
+				.schedulerTrace = QString(19, QChar(u'R')),
+				.schedulerSampleOffsetsNanoseconds
+				= SchedulerSampleOffsetsForDuration(92'000'000),
+				.stack = u"late scheduler evidence regression"_q,
+			},
+	};
+	const auto lateStartMatch = FindMatchingMainThreadWorkEvidence(
+		interval, lateStartEvidence, kMaxChatSwitchNanoseconds, 10);
 	const auto highProcessWork = MainThreadWorkInterval{
 		startedAt, 92'000'000, 25'000'000, 120'000'000};
 	const auto highOtherThreadWork
@@ -10859,6 +10903,11 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
 		   && !MainThreadWorkIntervalHasSchedulerProof(
 			   highOtherThreadWork, runnableEvidence, kMaxChatSwitchNanoseconds,
+			   kMaxChatSwitchNanoseconds,
+			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
+		   && lateStartMatch
+		   && !MainThreadWorkIntervalHasSchedulerProof(
+			   interval, lateStartMatch, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
