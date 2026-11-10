@@ -10332,7 +10332,8 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
-constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds = qint64(20'000'000);
+constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
+	= qint64(20'000'000);
 constexpr auto kUiStallSchedulerSampleIntervalNanoseconds = qint64(5'000'000);
 constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
@@ -10352,7 +10353,8 @@ struct CorroboratedStartupStall final {
 
 [[nodiscard]] bool HasValidStallEvidenceTimestamp(
 	const Core::UiStallWatchdog::StallEvidence &evidence) {
-	return QDateTime::fromString(evidence.startedAt, Qt::ISODateWithMs).isValid()
+	return QDateTime::fromString(evidence.startedAt, Qt::ISODateWithMs)
+			   .isValid()
 		   && (evidence.durationMilliseconds > 0);
 }
 
@@ -10412,8 +10414,7 @@ FindMatchingMainThreadWorkEvidence(
 [[nodiscard]] bool MainThreadWorkIntervalHasSchedulerProof(
 	const MainThreadWorkInterval &interval,
 	const std::optional<Core::UiStallWatchdog::StallEvidence> &evidence,
-	qint64 minimumDurationNanoseconds,
-	qint64 maximumMainThreadWorkNanoseconds,
+	qint64 minimumDurationNanoseconds, qint64 maximumMainThreadWorkNanoseconds,
 	qint64 maximumOtherThreadWorkNanoseconds) {
 	if ((interval.durationNanoseconds < minimumDurationNanoseconds)
 		|| (interval.mainThreadWorkNanoseconds < 0)
@@ -10424,16 +10425,14 @@ FindMatchingMainThreadWorkEvidence(
 			> kMaxStartupHeartbeatProcessWorkNanoseconds)
 		|| (interval.processWorkNanoseconds
 			< interval.mainThreadWorkNanoseconds)
-		|| (interval.processWorkNanoseconds
-			- interval.mainThreadWorkNanoseconds
+		|| (interval.processWorkNanoseconds - interval.mainThreadWorkNanoseconds
 			> maximumOtherThreadWorkNanoseconds)
 		|| !evidence) {
 		return false;
 	}
 	const auto trace = evidence->schedulerTrace;
-	const auto requiredSamples
-		= interval.durationNanoseconds
-		  / kUiStallSchedulerSampleIntervalNanoseconds;
+	const auto requiredSamples = interval.durationNanoseconds
+								 / kUiStallSchedulerSampleIntervalNanoseconds;
 	return (qint64(trace.size()) >= requiredSamples)
 		   && (trace.count(u'R') == trace.size());
 }
@@ -10476,12 +10475,12 @@ struct SchedulerEvidenceDiagnostics final {
 	const std::vector<MainThreadWorkInterval> &intervals,
 	const std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>
 		&matches,
-	qint64 minimumDurationNanoseconds,
-	qint64 maximumMainThreadWorkNanoseconds,
+	qint64 minimumDurationNanoseconds, qint64 maximumMainThreadWorkNanoseconds,
 	qint64 maximumOtherThreadWorkNanoseconds) {
 	auto result = SchedulerEvidenceDiagnostics();
 	for (const auto &record : records) {
-		result.skippedEvidenceRecords += !HasValidStallEvidenceTimestamp(record);
+		result.skippedEvidenceRecords
+			+= !HasValidStallEvidenceTimestamp(record);
 	}
 	auto matchedEvidenceStarts = std::set<QString>();
 	for (auto i = 0U; i != intervals.size(); ++i) {
@@ -10489,10 +10488,11 @@ struct SchedulerEvidenceDiagnostics final {
 		if (!matching) {
 			++result.unmatchedCallbacks;
 		}
-		auto hasProof = matching && MainThreadWorkIntervalHasSchedulerProof(
-			intervals[i], matching, minimumDurationNanoseconds,
-			maximumMainThreadWorkNanoseconds,
-			maximumOtherThreadWorkNanoseconds);
+		auto hasProof = matching
+						&& MainThreadWorkIntervalHasSchedulerProof(
+							intervals[i], matching, minimumDurationNanoseconds,
+							maximumMainThreadWorkNanoseconds,
+							maximumOtherThreadWorkNanoseconds);
 		if (hasProof && !matchedEvidenceStarts.insert(matching->startedAt).second) {
 			hasProof = false;
 		}
@@ -10832,12 +10832,12 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		}};
 	const auto highProcessWork = MainThreadWorkInterval{
 		startedAt, 92'000'000, 25'000'000, 120'000'000};
-	const auto highOtherThreadWork = MainThreadWorkInterval{
-		startedAt, 92'000'000, 25'000'000, 85'000'000};
-	return MainThreadWorkIntervalHasSchedulerProof(interval, runnableEvidence,
-												   kMaxChatSwitchNanoseconds,
-												   kMaxChatSwitchNanoseconds,
-												   kMaxSchedulerProofOtherThreadWorkNanoseconds)
+	const auto highOtherThreadWork
+		= MainThreadWorkInterval{startedAt, 92'000'000, 25'000'000, 85'000'000};
+	return MainThreadWorkIntervalHasSchedulerProof(
+			   interval, runnableEvidence, kMaxChatSwitchNanoseconds,
+			   kMaxChatSwitchNanoseconds,
+			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
 		   && !MainThreadWorkIntervalHasSchedulerProof(
 			   highProcessWork, runnableEvidence, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
@@ -10848,10 +10848,10 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
 
-[[nodiscard]] bool AttachMenuCallbackWithinBound(
-	qint64 wallNanoseconds,
-	qint64 mainThreadCpuNanoseconds,
-	bool schedulerPreemptionProven);
+[[nodiscard]] bool
+AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
+							  qint64 mainThreadCpuNanoseconds,
+							  bool schedulerPreemptionProven);
 
 [[nodiscard]] bool AttachMenuCallbackSchedulerProofRegressionPasses() {
 	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
@@ -10878,8 +10878,8 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 	};
 	const auto highProcessWork = MainThreadWorkInterval{
 		startedAt, 92'000'000, 12'000'000, 120'000'000};
-	const auto highOtherThreadWork = MainThreadWorkInterval{
-		startedAt, 92'000'000, 12'000'000, 72'000'000};
+	const auto highOtherThreadWork
+		= MainThreadWorkInterval{startedAt, 92'000'000, 12'000'000, 72'000'000};
 	const auto lowSampleEvidence
 		= std::vector<Core::UiStallWatchdog::StallEvidence>{
 			{
@@ -10888,7 +10888,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 				.schedulerTrace = QString(4, QChar(u'R')),
 				.stack = u"undersampled scheduler trace regression"_q,
 			},
-		};
+	};
 	const auto evidence = FindMatchingMainThreadWorkEvidence(
 		interval, runnableEvidence, kMaxChatSwitchNanoseconds, 10);
 	const auto blocked = FindMatchingMainThreadWorkEvidence(
@@ -10900,10 +10900,10 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		   && AttachMenuCallbackWithinBound(49'000'000, 12'000'000, false)
 		   && !AttachMenuCallbackWithinBound(92'000'000, 50'000'000, true)
 		   && evidence
-		   && MainThreadWorkIntervalHasSchedulerProof(interval, evidence,
-													  kMaxChatSwitchNanoseconds,
-													  kMaxChatSwitchNanoseconds,
-													  kMaxSchedulerProofOtherThreadWorkNanoseconds)
+		   && MainThreadWorkIntervalHasSchedulerProof(
+			   interval, evidence, kMaxChatSwitchNanoseconds,
+			   kMaxChatSwitchNanoseconds,
+			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
 		   && !MainThreadWorkIntervalHasSchedulerProof(
 			   interval, blocked, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
@@ -10930,7 +10930,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 [[maybe_unused, nodiscard]] bool
 SchedulerEvidenceDiagnosticsRegressionPasses() {
 	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
-												  Qt::ISODateWithMs);
+												 Qt::ISODateWithMs);
 	const auto intervals = std::vector<MainThreadWorkInterval>{
 		{
 			startedAt,
@@ -10961,11 +10961,11 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	};
 	const auto matches
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>{
-			FindMatchingMainThreadWorkEvidence(
-				intervals[0], records, kMaxChatSwitchNanoseconds, 10),
-			FindMatchingMainThreadWorkEvidence(
-				intervals[1], records, kMaxChatSwitchNanoseconds, 10),
-		};
+			FindMatchingMainThreadWorkEvidence(intervals[0], records,
+											   kMaxChatSwitchNanoseconds, 10),
+			FindMatchingMainThreadWorkEvidence(intervals[1], records,
+											   kMaxChatSwitchNanoseconds, 10),
+	};
 	const auto diagnostics = BuildSchedulerEvidenceDiagnostics(
 		records, intervals, matches, kMaxChatSwitchNanoseconds,
 		kMaxChatSwitchNanoseconds,
@@ -10975,9 +10975,9 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 		   && (diagnostics.unmatchedCallbacks == 1)
 		   && (diagnostics.callbacksWithoutProof == 2)
 		   && diagnostics.callbackNamesWithoutProof.contains(
-			  u"first hover callback"_q)
+			   u"first hover callback"_q)
 		   && diagnostics.callbackNamesWithoutProof.contains(
-			  u"uncached peer callback"_q);
+			   u"uncached peer callback"_q);
 }
 
 [[nodiscard]] bool
@@ -11506,9 +11506,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= CountMalformedStallEvidenceRecords(schedulerEvidenceRecords);
 	const auto chatSwitchEvidenceDiagnostics
 		= BuildSchedulerEvidenceDiagnostics(
-			schedulerEvidenceRecords, slowChatSwitches,
-			slowChatSwitchEvidence, kMaxChatSwitchNanoseconds,
-			kMaxChatSwitchNanoseconds,
+			schedulerEvidenceRecords, slowChatSwitches, slowChatSwitchEvidence,
+			kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
 			kMaxSchedulerProofOtherThreadWorkNanoseconds);
 	const auto attachMenuEvidenceDiagnostics
 		= BuildSchedulerEvidenceDiagnostics(
@@ -12388,9 +12387,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					const auto callbackNames
 						= chatSwitch.schedulerEvidenceCallbackNamesWithoutProof;
 					const auto callbackNamesUtf8
-						= (callbackNames.isEmpty()
-							   ? QString(u"none"_q)
-							   : callbackNames)
+						= (callbackNames.isEmpty() ? QString(u"none"_q)
+												   : callbackNames)
 							  .toUtf8();
 					std::fprintf(
 						stderr,
