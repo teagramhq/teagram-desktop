@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/url_scheme_policy.h"
 
 #include <array>
+#include <vector>
 
 TEST_CASE(DefaultUrlSchemePolicyAllowsTeagramSchemes) {
 	for (const auto &scheme : std::array{
@@ -49,8 +50,34 @@ TEST_CASE(CustomUrlSchemeAllowlistCannotEnableForbiddenSchemes) {
 			 u"webdavs"_q,
 			 u"WEBDAVS"_q,
 			 u"c"_q,
+			 u"tc"_q,
+			 u"TC"_q,
 		 }) {
 		CHECK(File::internal::IsUrlSchemeForbiddenForCustomAllowlist(scheme));
 	}
 	CHECK(!File::internal::IsUrlSchemeForbiddenForCustomAllowlist(u"smb"_q));
+}
+
+TEST_CASE(CustomUrlSchemePolicyUsesOnlyTheSuppliedAccountProtocols) {
+	const auto firstAccount = std::vector<QString>{u"first-app"_q};
+	const auto secondAccount = std::vector<QString>{u"second-app"_q};
+	CHECK(
+		File::internal::IsCustomUrlSchemeAllowed(u"first-app"_q, firstAccount));
+	CHECK(!File::internal::IsCustomUrlSchemeAllowed(u"second-app"_q,
+													firstAccount));
+	CHECK(File::internal::IsCustomUrlSchemeAllowed(u"second-app"_q,
+												   secondAccount));
+	CHECK(File::internal::SchemeRequiresConfirmation(u"first-app"_q, false));
+	CHECK(!File::internal::SchemeRequiresConfirmation(u"first-app"_q, true));
+	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(u"first-app"_q, false));
+	CHECK(File::internal::IsUrlSchemeAllowedForOpen(u"first-app"_q, true));
+}
+
+TEST_CASE(TonConnectSchemeIsNotDefaultOrCustomAllowedAndNeedsConfirmation) {
+	const auto tc = u"tc"_q;
+	const auto allowed = File::internal::IsDefaultUrlSchemeAllowed(tc)
+						 || File::internal::IsCustomUrlSchemeAllowed(tc, {tc});
+	CHECK(!allowed);
+	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(tc, true));
+	CHECK(File::internal::SchemeRequiresConfirmation(tc, allowed));
 }

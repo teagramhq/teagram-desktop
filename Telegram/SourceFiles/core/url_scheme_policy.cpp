@@ -34,7 +34,29 @@ bool IsDefaultUrlSchemeAllowed(const QString &scheme) {
 bool IsUrlSchemeForbiddenForCustomAllowlist(const QString &scheme) {
 	return (scheme.size() <= 1)
 		   || (scheme.compare(u"file"_q, Qt::CaseInsensitive) == 0)
-		   || (scheme.compare(u"webdavs"_q, Qt::CaseInsensitive) == 0);
+		   || (scheme.compare(u"webdavs"_q, Qt::CaseInsensitive) == 0)
+		   || (scheme.compare(u"tc"_q, Qt::CaseInsensitive) == 0);
+}
+
+bool IsCustomUrlSchemeAllowed(const QString &scheme,
+							  const std::vector<QString> &allowedProtocols) {
+	return !IsUrlSchemeForbiddenForCustomAllowlist(scheme)
+		   && ranges::any_of(allowedProtocols, [&](const QString &protocol) {
+				  return scheme.compare(protocol, Qt::CaseInsensitive) == 0;
+			  });
+}
+
+bool IsUrlSchemeAllowedForOpen(const QString &scheme,
+							   bool customSchemeApproved) {
+	return IsDefaultUrlSchemeAllowed(scheme)
+		   || (customSchemeApproved
+			   && !IsUrlSchemeForbiddenForCustomAllowlist(scheme));
+}
+
+bool SchemeRequiresConfirmation(const QString &scheme, bool allowedForOrigin) {
+	return !allowedForOrigin
+		   || (scheme.compare(u"mailto"_q, Qt::CaseInsensitive) == 0)
+		   || (scheme.compare(u"tel"_q, Qt::CaseInsensitive) == 0);
 }
 
 } // namespace internal

@@ -12,10 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Platform::File {
 
-void UnsafeOpenUrl(const QString &url) {
+void UnsafeOpenUrl(const QString &url, bool customSchemeApproved) {
 	const auto dispatch = [&] {
 		if (!Test::BlockLaunch(u"UnsafeOpenUrl"_q, url)) {
-			Unfused::UnsafeOpenUrl(url);
+			Unfused::UnsafeOpenUrl(url, customSchemeApproved);
 		}
 	};
 #ifdef Q_OS_MAC

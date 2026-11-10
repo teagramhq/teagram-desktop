@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_runtime.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
+#include "core/url_scheme_policy.h"
 #include "logs.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
@@ -304,11 +305,18 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 		const auto parsedUrl = external.scheme().isEmpty()
 			? QUrl::fromUserInput(url)
 			: external;
+		const auto originSession
+			= originController ? &originController->session() : nullptr;
+		const auto allowedForOrigin
+			= File::IsUrlSchemeAllowed(parsedUrl.scheme(), originSession);
+		const auto requiresOriginConfirmation
+			= !File::internal::IsDefaultUrlSchemeAllowed(parsedUrl.scheme())
+			  && !allowedForOrigin;
 		if (!isEmail
-			&& (!external.isValid()
-				|| !parsedUrl.isValid()
+			&& (!external.isValid() || !parsedUrl.isValid()
 				|| parsedUrl.isLocalFile()
-				|| !File::IsUrlSchemeAllowed(parsedUrl.scheme()))) {
+				|| File::internal::IsUrlSchemeForbiddenForCustomAllowlist(
+					parsedUrl.scheme()))) {
 			LOG(("URL Error: refused scheme %1.").arg(parsedUrl.scheme()));
 			if (my.show) {
 				my.show->showToast(tr::lng_open_link_unsupported(tr::now));
@@ -337,11 +345,18 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			my.forceExternalUrlConfirmation = true;
 			openContext = QVariant::fromValue(my);
 		}
-		const auto open = [=] {
-			UrlClickHandler::Open(url, openContext);
+		const auto open = [=](bool confirmed) {
+			auto finalContext = openContext;
+			if (confirmed) {
+				auto confirmedContext
+					= finalContext.value<ClickHandlerContext>();
+				confirmedContext.confirmedExternalUrl = true;
+				finalContext = QVariant::fromValue(confirmedContext);
+			}
+			UrlClickHandler::Open(url, finalContext);
 		};
-		if (forceConfirmation
-			|| (confirmAfterIvFallback && !canTryIv)
+		if (forceConfirmation || (confirmAfterIvFallback && !canTryIv)
+			|| requiresOriginConfirmation
 			|| (HiddenUrlRequiresConfirmation(parsedUrl)
 				&& !skipConfirmation)) {
 			if (!my.show) {
@@ -359,13 +374,19 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			const auto use = controller
 				? &controller->window()
 				: Core::App().activeWindow();
-			auto box = Box([=](not_null<Ui::GenericBox*> box) {
-				Ui::ConfirmBox(box, {
-					.text = (tr::lng_open_this_link(tr::now)),
-					.confirmed = [=](Fn<void()> hide) { hide(); open(); },
-					.confirmText = tr::lng_open_link(),
-					.labelStyle = my.dark ? &st::groupCallBoxLabel : nullptr,
-				});
+			auto box = Box([=](not_null<Ui::GenericBox *> box) {
+				Ui::ConfirmBox(box,
+							   {
+								   .text = (tr::lng_open_this_link(tr::now)),
+								   .confirmed =
+									   [=](Fn<void()> hide) {
+										   hide();
+										   open(true);
+									   },
+								   .confirmText = tr::lng_open_link(),
+								   .labelStyle
+								   = my.dark ? &st::groupCallBoxLabel : nullptr,
+							   });
 				const auto &st = my.dark
 					? st::groupCallBoxLabel
 					: st::boxLabel;
@@ -414,7 +435,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 				use->activate();
 			}
 		} else {
-			open();
+			open(false);
 		}
 	}
 }

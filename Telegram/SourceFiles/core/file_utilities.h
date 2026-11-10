@@ -33,11 +33,12 @@ QString filedialogNextFilename(
 
 namespace File {
 
-[[nodiscard]] bool IsUrlSchemeAllowed(const QString &scheme);
+[[nodiscard]] bool IsUrlSchemeAllowed(const QString &scheme,
+									  const Main::Session *origin = nullptr);
 void ShowUnsupportedUrl();
 
 // Those functions are async wrappers to Platform::File::Unsafe* calls.
-void OpenUrl(const QString &url);
+void OpenUrl(const QString &url, bool customSchemeApproved = false);
 void OpenEmailLink(const QString &email);
 void OpenWith(const QString &filepath);
 void Launch(const QString &filepath);
@@ -53,7 +54,7 @@ inline QString UrlToLocalDefault(const QUrl &url) {
 	return url.toLocalFile();
 }
 
-void UnsafeOpenUrlDefault(const QString &url);
+void UnsafeOpenUrlDefault(const QString &url, bool customSchemeApproved);
 void UnsafeOpenEmailLinkDefault(const QString &email);
 void UnsafeLaunchDefault(const QString &filepath);
 

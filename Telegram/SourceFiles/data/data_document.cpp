@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_document.h"
 
+#include "data/data_document_download_policy.h"
 #include "data/data_document_resolver.h"
 #include "data/data_session.h"
 #include "data/data_streaming.h"
@@ -1308,6 +1309,10 @@ void DocumentData::save(
 		if (fromCloud == LoadFromCloudOrLocal) {
 			_loader->permitLoadFromCloud();
 		}
+	} else if (!Data::details::IsValidDocumentDownloadSize(size)) {
+		status = FileDownloadFailed;
+		_owner->documentLoadFail(this, false);
+		return;
 	} else if (toFile.isEmpty() && size > Storage::kMaxFileInMemory) {
 		return;
 	} else {

@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_text_entities.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
+#include "core/url_scheme_policy.h"
 #include "core/application.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/bank_card_click_handler.h"
@@ -113,16 +114,15 @@ const auto kBadPrefix = u"http://"_q;
 	return true;
 }
 
-[[nodiscard]] bool SchemeRequiresConfirmation(const QString &url) {
+[[nodiscard]] bool SchemeRequiresConfirmation(const QString &url,
+											  const Main::Session *origin) {
 	if (UrlClickHandler::IsEmail(url)) {
 		return false;
 	}
 	const auto opened = UrlClickHandler::EncodeForOpening(url);
 	const auto scheme = opened.left(opened.indexOf(':')).toLower();
-	return !opened.startsWith(u"tc://"_q, Qt::CaseInsensitive)
-		&& (!File::IsUrlSchemeAllowed(scheme)
-			|| scheme == u"mailto"_q
-			|| scheme == u"tel"_q);
+	return File::internal::SchemeRequiresConfirmation(
+		scheme, File::IsUrlSchemeAllowed(scheme, origin));
 }
 
 [[nodiscard]] QString OpenGLCheckFilePath() {
@@ -378,10 +378,11 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 	switch (data.type) {
 	case EntityType::Url:
 		return (!data.data.isEmpty()
-			&& (UrlClickHandler::IsSuspicious(data.data)
-				|| SchemeRequiresConfirmation(data.data)))
-			? std::make_shared<HiddenUrlClickHandler>(data.data)
-			: Integration::createLinkHandler(data, context);
+				&& (UrlClickHandler::IsSuspicious(data.data)
+					|| SchemeRequiresConfirmation(data.data,
+												  my ? my->session : nullptr)))
+				   ? std::make_shared<HiddenUrlClickHandler>(data.data)
+				   : Integration::createLinkHandler(data, context);
 
 	case EntityType::CustomUrl:
 		return !data.data.isEmpty()
@@ -503,10 +504,18 @@ bool UiIntegration::handleUrlClick(
 
 	auto parsed = UrlForAutoLogin(url);
 	const auto domain = DomainForAutoLogin(parsed);
-	const auto skip = context.value<ClickHandlerContext>().skipBotAutoLogin;
+	const auto my = context.value<ClickHandlerContext>();
+	const auto skip = my.skipBotAutoLogin;
 	if (skip || !BotAutoLogin(url, domain, context)) {
+		const auto controller = my.sessionWindow.get();
+		const auto origin = controller ? &controller->session() : nullptr;
+		const auto scheme = QUrl(url).scheme();
+		const auto customSchemeApproved
+			= my.confirmedExternalUrl
+			  || File::IsUrlSchemeAllowed(scheme, origin);
 		File::OpenUrl(
-			UrlWithAutoLoginToken(url, std::move(parsed), domain, context));
+			UrlWithAutoLoginToken(url, std::move(parsed), domain, context),
+			customSchemeApproved);
 	}
 	return true;
 }

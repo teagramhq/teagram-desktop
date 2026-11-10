@@ -749,6 +749,7 @@ PRIVATE
     data/data_community.h
     data/data_document.cpp
     data/data_document.h
+    data/data_document_download_policy.h
     data/data_document_media.cpp
     data/data_document_media.h
     data/data_document_resolver.cpp

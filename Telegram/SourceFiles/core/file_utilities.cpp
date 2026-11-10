@@ -172,25 +172,17 @@ QString filedialogNextFilename(
 
 namespace File {
 
-bool IsUrlSchemeAllowed(const QString &scheme) {
+bool IsUrlSchemeAllowed(const QString &scheme, const Main::Session *origin) {
 	if (internal::IsDefaultUrlSchemeAllowed(scheme)) {
 		return true;
 	}
-	if (internal::IsUrlSchemeForbiddenForCustomAllowlist(scheme)
-		|| !Core::IsAppLaunched()) {
+	if (!origin || internal::IsUrlSchemeForbiddenForCustomAllowlist(scheme)) {
 		return false;
 	}
-	for (const auto &[index, account] : Core::App().domain().accounts()) {
-		const auto protocols = account->appConfig().get<std::vector<QString>>(
-			"web_app_allowed_protocols",
-			{});
-		if (ranges::any_of(protocols, [&](const QString &protocol) {
-			return scheme.compare(protocol, Qt::CaseInsensitive) == 0;
-		})) {
-			return true;
-		}
-	}
-	return false;
+	const auto protocols
+		= origin->account().appConfig().get<std::vector<QString>>(
+			"web_app_allowed_protocols", {});
+	return internal::IsCustomUrlSchemeAllowed(scheme, protocols);
 }
 
 void ShowUnsupportedUrl() {
@@ -202,10 +194,10 @@ void ShowUnsupportedUrl() {
 	}
 }
 
-void OpenUrl(const QString &url) {
+void OpenUrl(const QString &url, bool customSchemeApproved) {
 	crl::on_main([=] {
 		Ui::PreventDelayedActivation();
-		Platform::File::UnsafeOpenUrl(url);
+		Platform::File::UnsafeOpenUrl(url, customSchemeApproved);
 	});
 }
 
@@ -265,11 +257,10 @@ QString DefaultDownloadPath(not_null<Main::Session*> session) {
 
 namespace internal {
 
-void UnsafeOpenUrlDefault(const QString &url) {
+void UnsafeOpenUrlDefault(const QString &url, bool customSchemeApproved) {
 	const auto parsed = QUrl(url);
-	if (!parsed.isValid()
-		|| parsed.isLocalFile()
-		|| !IsUrlSchemeAllowed(parsed.scheme())) {
+	if (!parsed.isValid() || parsed.isLocalFile()
+		|| !IsUrlSchemeAllowedForOpen(parsed.scheme(), customSchemeApproved)) {
 		LOG(("URL Error: refused scheme %1.").arg(parsed.scheme()));
 		ShowUnsupportedUrl();
 		return;

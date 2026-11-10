@@ -9,12 +9,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QString>
 
+#include <vector>
+
 namespace File {
 namespace internal {
 
 [[nodiscard]] bool IsDefaultUrlSchemeAllowed(const QString &scheme);
 [[nodiscard]] bool
 IsUrlSchemeForbiddenForCustomAllowlist(const QString &scheme);
+[[nodiscard]] bool
+IsCustomUrlSchemeAllowed(const QString &scheme,
+						 const std::vector<QString> &allowedProtocols);
+[[nodiscard]] bool IsUrlSchemeAllowedForOpen(const QString &scheme,
+											 bool customSchemeApproved);
+[[nodiscard]] bool SchemeRequiresConfirmation(const QString &scheme,
+											  bool allowedForOrigin);
 
 } // namespace internal
 } // namespace File
