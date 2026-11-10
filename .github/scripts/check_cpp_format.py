@@ -21,8 +21,7 @@ SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m
 FORMAT_STYLE = (
     "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
     "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
-    "BreakBeforeBinaryOperators: All, NamespaceIndentation: None, "
-    "BinPackArguments: false}"
+    "BreakBeforeBinaryOperators: All, NamespaceIndentation: None}"
 )
 
 
