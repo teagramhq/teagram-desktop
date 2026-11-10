@@ -15144,9 +15144,19 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 
 [[nodiscard]] bool DesktopScaleHistoryCountMatches(not_null<History *> history,
 												   MsgId aroundId,
-												   int expectedCount) {
+												   int expectedCount,
+												   const char *scenario) {
 	const auto snapshot = history->messages().snapshot({aroundId, 0, 0});
-	return snapshot.count && (*snapshot.count == expectedCount);
+	const auto matches = snapshot.count && (*snapshot.count == expectedCount);
+	if (!matches) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: %s history count expected %d, "
+			"found %d.\n",
+			scenario, expectedCount,
+			snapshot.count ? int(*snapshot.count) : -1);
+	}
+	return matches;
 }
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
@@ -15193,14 +15203,24 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				capture, mtpc_messages_getHistory, reply, [] { return true; },
 				reportOnlyStalls);
 			auto pageApplied = true;
+			int64 firstMissingPageId = 0;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
-				pageApplied = pageApplied
-							  && (data.message(peerFromUser(peerId), MsgId(id))
-								  != nullptr);
+				if (!data.message(peerFromUser(peerId), MsgId(id))) {
+					pageApplied = false;
+					firstMissingPageId = id;
+					break;
+				}
 			}
-			sample.passed = sample.passed && pageApplied
-							&& DesktopScaleHistoryCountMatches(
-								history, firstLoadedId, kHistoryCount);
+			if (!pageApplied) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: history page did not apply "
+					"message %lld.\n",
+					static_cast<long long>(firstMissingPageId));
+			}
+			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
+				history, firstLoadedId, kHistoryCount, "history page");
+			sample.passed = sample.passed && pageApplied && historyCountMatches;
 			return sample.passed;
 		},
 		reuseAccount);
@@ -15262,12 +15282,13 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 					capture, mtpc_messages_getHistory, resolvedReply,
 					[] { return true; }, reportOnlyStalls);
 			if ((resolvedPeer != history->peer.get())
-				|| (resolvedId != targetId)
-				|| !DesktopScaleHistoryCountMatches(history, targetId,
-													kHistoryCount)) {
+				|| (resolvedId != targetId)) {
 				std::fprintf(stderr, "Desktop scale check failed: jump-to-date "
-									 "did not resolve its "
-									 "target message.\n");
+									 "did not resolve its target message.\n");
+				return false;
+			}
+			if (!DesktopScaleHistoryCountMatches(
+					history, targetId, kHistoryCount, "jump-to-date target")) {
 				return false;
 			}
 
@@ -15291,16 +15312,32 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				capture, mtpc_messages_getHistory, reply, [] { return true; },
 				reportOnlyStalls);
 			auto pageApplied = true;
+			int64 firstMissingPageId = 0;
 			for (auto id = kDateOffset - 50; id < kDateOffset; ++id) {
-				pageApplied = pageApplied
-							  && (data.message(peerFromUser(peerId), MsgId(id))
-								  != nullptr);
+				if (!data.message(peerFromUser(peerId), MsgId(id))) {
+					pageApplied = false;
+					firstMissingPageId = id;
+					break;
+				}
 			}
-			for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
-				pageApplied = pageApplied
-							  && (data.message(peerFromUser(peerId), MsgId(id))
-								  != nullptr);
+			if (pageApplied) {
+				for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
+					if (!data.message(peerFromUser(peerId), MsgId(id))) {
+						pageApplied = false;
+						firstMissingPageId = id;
+						break;
+					}
+				}
 			}
+			if (!pageApplied) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: jump-to-date page did not "
+					"apply message %lld.\n",
+					static_cast<long long>(firstMissingPageId));
+			}
+			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
+				history, targetId, kHistoryCount, "jump-to-date page");
 			sample.nanoseconds
 				= resolvedSample.nanoseconds && sample.nanoseconds
 					  ? std::optional<qint64>(*resolvedSample.nanoseconds
@@ -15310,10 +15347,8 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 				resolvedSample.mainThreadStepsOverBudget,
 				sample.mainThreadStepsOverBudget,
 			});
-			sample.passed
-				= resolvedSample.passed && sample.passed && pageApplied
-				  && DesktopScaleHistoryCountMatches(history, targetId,
-													 kHistoryCount);
+			sample.passed = resolvedSample.passed && sample.passed
+							&& pageApplied && historyCountMatches;
 			return sample.passed;
 		},
 		reuseAccount);
@@ -15402,15 +15437,42 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 				= ApplyDesktopScaleResponse<MTPmessages_SearchGlobal>(
 					capture, mtpc_messages_searchGlobal, searchReply,
 					[] { return true; }, reportOnlySearchStalls);
+			const auto searchResultAvailable = bool(searchResult);
+			if (!searchResultAvailable) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: search result callback "
+					"returned no result.\n");
+			}
+			const auto hitCountMatches
+				= searchResultAvailable
+				  && (searchResult->messageIds.size() == kSearchResultCount);
+			if (searchResultAvailable && !hitCountMatches) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: global search expected %d "
+					"hits, found %zu.\n",
+					kSearchResultCount, searchResult->messageIds.size());
+			}
+			auto missingSearchHit = std::optional<FullMsgId>();
+			if (searchResultAvailable) {
+				for (const auto &position : searchResult->messageIds) {
+					if (!data.message(position.fullId)) {
+						missingSearchHit = position.fullId;
+						break;
+					}
+				}
+			}
+			if (missingSearchHit) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: global search hit for peer "
+					"%lld message %lld was not applied.\n",
+					static_cast<long long>(missingSearchHit->peer.bare),
+					static_cast<long long>(missingSearchHit->msg.bare));
+			}
 			const auto searchApplied
-				= searchResult
-				  && (searchResult->messageIds.size() == kSearchResultCount)
-				  && std::all_of(searchResult->messageIds.begin(),
-								 searchResult->messageIds.end(),
-								 [&](const auto &position) {
-									 return data.message(position.fullId)
-											!= nullptr;
-								 });
+				= searchResultAvailable && hitCountMatches && !missingSearchHit;
 			samples.search.passed = samples.search.passed && searchApplied;
 
 			session.updates().completeInitialStateForRegressionTest(1);
@@ -15431,10 +15493,16 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 			auto updatesApplied = true;
 			for (auto i = 0; i != kUpdateCount; ++i) {
 				const auto userId = UserId(firstId.bare + (i % dialogCount));
-				updatesApplied = updatesApplied
-								 && (data.message(peerFromUser(userId),
-												  MsgId(2'000'000 + i))
-									 != nullptr);
+				const auto messageId = MsgId(2'000'000 + i);
+				if (!data.message(peerFromUser(userId), messageId)) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: updates.getDifference "
+						"did not apply message %lld.\n",
+						static_cast<long long>(messageId.bare));
+					updatesApplied = false;
+					break;
+				}
 			}
 			samples.updateBurst.passed
 				= samples.updateBurst.passed && updatesApplied;
@@ -15789,22 +15857,60 @@ template <typename Function>
 					[&] { sample.directoryEnumerations = stopCounting(); });
 
 			auto pageApplied = true;
+			int64 firstMissingPageId = 0;
 			auto photos = 0;
 			auto documents = 0;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
 				const auto item = data.message(peerId, MsgId(id));
-				pageApplied = pageApplied && item && item->media();
-				if (item && item->media()) {
-					photos += (item->media()->photo() != nullptr);
-					documents += (item->media()->document() != nullptr);
+				if (!item || !item->media()) {
+					pageApplied = false;
+					if (!firstMissingPageId) {
+						firstMissingPageId = id;
+					}
+					continue;
+				}
+				photos += (item->media()->photo() != nullptr);
+				documents += (item->media()->document() != nullptr);
+			}
+			if (!pageApplied) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: group media page did not "
+					"apply media for message %lld.\n",
+					static_cast<long long>(firstMissingPageId));
+			}
+			const auto mediaCountsMatch
+				= (photos == kDesktopScalePageSize / 2)
+				  && (documents == kDesktopScalePageSize / 2);
+			if (!mediaCountsMatch) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: group media page expected "
+					"%d photos and %d documents, found %d and %d.\n",
+					kDesktopScalePageSize / 2, kDesktopScalePageSize / 2,
+					photos, documents);
+			}
+			const auto historyCountMatches = DesktopScaleHistoryCountMatches(
+				history, firstLoadedId, kHistoryCount, "group media page");
+			const auto directoryCountMatches
+				= sample.directoryEnumerations == 0;
+			if (!directoryCountMatches) {
+				if (sample.directoryEnumerations) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: group media page made "
+						"%llu directory enumerations; expected 0.\n",
+						static_cast<unsigned long long>(
+							*sample.directoryEnumerations));
+				} else {
+					std::fprintf(stderr,
+								 "Desktop scale check failed: group media page "
+								 "directory "
+								 "enumeration count was unavailable.\n");
 				}
 			}
-			pageApplied = pageApplied && (photos == kDesktopScalePageSize / 2)
-						  && (documents == kDesktopScalePageSize / 2);
-			sample.passed = sample.passed && pageApplied
-							&& DesktopScaleHistoryCountMatches(
-								history, firstLoadedId, kHistoryCount)
-							&& (sample.directoryEnumerations == 0);
+			sample.passed = sample.passed && pageApplied && mediaCountsMatch
+							&& historyCountMatches && directoryCountMatches;
 			return sample.passed;
 		},
 		reuseAccount);
@@ -16004,7 +16110,13 @@ int RunDesktopScaleCheck() {
 					  = peerFromUser(UserId(firstId.bare + kLoadedDialogs + i));
 				  data.removeChatListEntry(data.history(pagePeer));
 			  }
-			  if (data.chatsList()->indexed()->size() != kLoadedDialogs) {
+			  const auto actualDialogCount
+				  = data.chatsList()->indexed()->size();
+			  if (actualDialogCount != kLoadedDialogs) {
+				  std::fprintf(stderr,
+							   "Desktop scale check failed: dialogsOne cleanup "
+							   "expected %d loaded dialogs, found %d.\n",
+							   kLoadedDialogs, int(actualDialogCount));
 				  return false;
 			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(
