@@ -785,14 +785,14 @@ bool CaptureChannelSaveRequestForRegressionTest(
 		return false;
 	}
 	const auto constructor = static_cast<uint32>(body.front());
-	if ((constructor == mtpc_contacts_getContacts)
-		&& !capture->desktopScaleContactsOnly) {
-		return false;
-	}
 	if (capture->peerPhotoUploadOnly
 		&& (constructor != mtpc_upload_saveFilePart)
 		&& (constructor != mtpc_messages_editChatPhoto)) {
 		return true;
+	}
+	if ((constructor == mtpc_contacts_getContacts)
+		&& !capture->desktopScaleContactsOnly) {
+		return false;
 	}
 	switch (constructor) {
 	case mtpc_channels_deactivateAllUsernames:
@@ -15055,6 +15055,9 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 				.instance = &account->mtp(),
 			};
 			auto unrelatedCallbacks = MTP::ResponseHandler();
+			const auto contactsRequest
+				= MTP::details::SerializedRequest::Serialize(
+					MTPcontacts_GetContacts(MTP_long(0)));
 			{
 				const auto restoreCapture = gsl::finally(
 					[previous = std::exchange(gChannelSaveRequestCapture,
@@ -15062,9 +15065,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 						gChannelSaveRequestCapture = previous;
 					});
 				if (CaptureChannelSaveRequestForRegressionTest(
-						&account->mtp(), 1,
-						MTP::details::SerializedRequest::Serialize(
-							MTPcontacts_GetContacts(MTP_long(0))),
+						&account->mtp(), 1, contactsRequest,
 						unrelatedCallbacks)) {
 					std::fprintf(stderr,
 								 "Desktop scale check failed: "
@@ -15078,6 +15079,33 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 									 "unrelated request capture "
 									 "captured contacts.getContacts "
 									 "without scale opt-in.\n");
+				return false;
+			}
+			auto peerPhotoCapture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.peerPhotoUploadOnly = true,
+			};
+			auto peerPhotoCallbacks = MTP::ResponseHandler();
+			{
+				const auto restoreCapture = gsl::finally(
+					[previous = std::exchange(gChannelSaveRequestCapture,
+											  &peerPhotoCapture)] {
+						gChannelSaveRequestCapture = previous;
+					});
+				if (!CaptureChannelSaveRequestForRegressionTest(
+						&account->mtp(), 2, contactsRequest,
+						peerPhotoCallbacks)) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: peer-photo capture "
+						"did not swallow contacts.getContacts.\n");
+					return false;
+				}
+			}
+			if (!peerPhotoCapture.requests.empty()) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: peer-photo capture "
+							 "retained contacts.getContacts.\n");
 				return false;
 			}
 
@@ -15128,6 +15156,8 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 				}
 				result.loaded.passed = result.loaded.passed && page.passed;
 				if (!page.passed) {
+					result.loaded.nanoseconds.reset();
+					result.loaded.mainThreadStepsOverBudget.reset();
 					break;
 				}
 			}
