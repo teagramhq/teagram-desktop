@@ -22,48 +22,41 @@ class Row;
 
 class IndexedList {
 public:
-	IndexedList(
-		SortMode sortMode,
-		FilterId filterId = 0,
-		bool usePrefixSearch = false);
+  IndexedList(SortMode sortMode, FilterId filterId = 0,
+			  bool usePrefixSearch = false);
 
-	RowsByLetter addToEnd(Key key);
-	Row *addByName(Key key);
-	void adjustByDate(const RowsByLetter &links);
-	void moveToTop(Key key);
-	void freeze();
-	void unfreeze();
-	bool updateHeight(Key key, float64 narrowRatio);
-	bool updateHeights(float64 narrowRatio);
+  RowsByLetter addToEnd(Key key);
+  Row *addByName(Key key);
+  void adjustByDate(const RowsByLetter &links);
+  void moveToTop(Key key);
+  void freeze();
+  void unfreeze();
+  bool updateHeight(Key key, float64 narrowRatio);
+  bool updateHeights(float64 narrowRatio);
 
-	// row must belong to this indexed list all().
-	void movePinned(Row *row, int deltaSign);
+  // row must belong to this indexed list all().
+  void movePinned(Row *row, int deltaSign);
 
-	// For sortMode != SortMode::Date && != Complex
-	void peerNameChanged(
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+  // For sortMode != SortMode::Date && != Complex
+  void peerNameChanged(not_null<PeerData *> peer,
+					   const base::flat_set<QChar> &oldChars);
 
-	//For sortMode == SortMode::Date || == Complex
-	void peerNameChanged(
-		FilterId filterId,
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+  // For sortMode == SortMode::Date || == Complex
+  void peerNameChanged(FilterId filterId, not_null<PeerData *> peer,
+					   const base::flat_set<QChar> &oldChars);
 
-	void remove(Key key, Row *replacedBy = nullptr);
-	void clear();
+  void remove(Key key, Row *replacedBy = nullptr);
+  void clear();
 
-	[[nodiscard]] const List &all() const {
-		return _list;
-	}
-	[[nodiscard]] const std::vector<not_null<Row*>> *filtered(QChar ch) const {
-		if (_sortMode == SortMode::Name) {
-			const auto i = _nameIndex.find(ch);
-			return (i != _nameIndex.end()) ? &i->second : nullptr;
-		}
-		const auto i = _index.find(ch);
-		return (i != _index.end()) ? &i->second.all().rows() : nullptr;
-	}
+  [[nodiscard]] const List &all() const { return _list; }
+  [[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
+	  if (_sortMode == SortMode::Name) {
+		  const auto i = _nameIndex.find(ch);
+		  return (i != _nameIndex.end()) ? &i->second : nullptr;
+	  }
+	  const auto i = _index.find(ch);
+	  return (i != _index.end()) ? &i->second.all().rows() : nullptr;
+  }
 	[[nodiscard]] std::vector<not_null<Row*>> filtered(
 		const QStringList &words) const;
 
@@ -115,10 +108,9 @@ private:
 	bool _usePrefixSearch = false;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
-	base::flat_map<QChar, std::vector<not_null<Row*>>> _nameIndex;
-	std::map<QString, std::unordered_set<Row*>> _prefixSearchIndex;
-	std::unordered_map<Row*, std::vector<QString>> _searchKeysByRow;
-
+	base::flat_map<QChar, std::vector<not_null<Row *>>> _nameIndex;
+	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
+	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
 };
 
 } // namespace Dialogs

@@ -18,16 +18,11 @@ constexpr auto kSearchPrefixLength = 8;
 
 } // namespace
 
-IndexedList::IndexedList(
-		SortMode sortMode,
-		FilterId filterId,
-		bool usePrefixSearch)
-: _sortMode(sortMode)
-, _filterId(filterId)
-, _usePrefixSearch(usePrefixSearch)
-, _list(sortMode, filterId)
-, _empty(sortMode, filterId) {
-}
+IndexedList::IndexedList(SortMode sortMode, FilterId filterId,
+						 bool usePrefixSearch)
+	: _sortMode(sortMode), _filterId(filterId),
+	  _usePrefixSearch(usePrefixSearch), _list(sortMode, filterId),
+	  _empty(sortMode, filterId) {}
 
 void IndexedList::addNameRow(QChar ch, Row *row) {
 	Expects(_sortMode == SortMode::Name);
@@ -35,19 +30,17 @@ void IndexedList::addNameRow(QChar ch, Row *row) {
 
 	auto i = _nameIndex.find(ch);
 	if (i == _nameIndex.end()) {
-		i = _nameIndex.emplace(ch, std::vector<not_null<Row*>>()).first;
+		i = _nameIndex.emplace(ch, std::vector<not_null<Row *>>()).first;
 	}
 	auto &rows = i->second;
 	if (rows.empty() || rows.back()->index() < row->index()) {
 		rows.emplace_back(row);
 	} else {
-		const auto position = std::lower_bound(
-			rows.begin(),
-			rows.end(),
-			row->index(),
-			[](const not_null<Row*> &entry, int index) {
-				return entry->index() < index;
-			});
+		const auto position
+			= std::lower_bound(rows.begin(), rows.end(), row->index(),
+							   [](const not_null<Row *> &entry, int index) {
+								   return entry->index() < index;
+							   });
 		rows.emplace(position, row);
 	}
 }
@@ -62,9 +55,8 @@ void IndexedList::removeNameRow(QChar ch, Row *row) {
 	}
 	auto &rows = i->second;
 	const auto found = std::find_if(
-		rows.begin(),
-		rows.end(),
-		[row](const not_null<Row*> &entry) { return entry.get() == row; });
+		rows.begin(), rows.end(),
+		[row](const not_null<Row *> &entry) { return entry.get() == row; });
 	if (found != rows.end()) {
 		rows.erase(found);
 	}
@@ -337,9 +329,8 @@ void IndexedList::clear() {
 
 std::vector<not_null<Row*>> IndexedList::filtered(
 		const QStringList &words) const {
-	const auto byLetter
-		= (const std::vector<not_null<Row*>>*)nullptr;
-	const auto byPrefix = (const std::unordered_set<Row*>*)nullptr;
+	const auto byLetter = (const std::vector<not_null<Row *>> *)nullptr;
+	const auto byPrefix = (const std::unordered_set<Row *> *)nullptr;
 	auto minimalByLetter = byLetter;
 	auto minimalByPrefix = byPrefix;
 	auto minimalSize = size_t(0);
@@ -349,8 +340,8 @@ std::vector<not_null<Row*>> IndexedList::filtered(
 			continue;
 		}
 		if (_usePrefixSearch && word.size() >= kSearchPrefixLength) {
-			const auto i = _prefixSearchIndex.find(
-				word.left(kSearchPrefixLength));
+			const auto i
+				= _prefixSearchIndex.find(word.left(kSearchPrefixLength));
 			if (i == _prefixSearchIndex.end() || i->second.empty()) {
 				return {};
 			}
@@ -404,9 +395,10 @@ std::vector<not_null<Row*>> IndexedList::filtered(
 		for (const auto row : *minimalByPrefix) {
 			appendIfFound(row);
 		}
-		ranges::sort(result, [](const not_null<Row*> &a, const not_null<Row*> &b) {
-			return a->index() < b->index();
-		});
+		ranges::sort(result,
+					 [](const not_null<Row *> &a, const not_null<Row *> &b) {
+						 return a->index() < b->index();
+					 });
 	} else {
 		for (const auto &row : *minimalByLetter) {
 			appendIfFound(row.get());

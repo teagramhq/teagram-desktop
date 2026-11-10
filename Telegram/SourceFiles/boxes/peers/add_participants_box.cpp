@@ -2052,14 +2052,13 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 		}
 		return true;
 	};
-	const auto getSmallestIndex = [&](not_null<Dialogs::IndexedList*> list)
-	-> const std::vector<not_null<Dialogs::Row*>>* {
+	const auto getSmallestIndex = [&](not_null<Dialogs::IndexedList *> list)
+		-> const std::vector<not_null<Dialogs::Row *>> * {
 		if (list->empty()) {
 			return nullptr;
 		}
 
-		auto result
-			= (const std::vector<not_null<Dialogs::Row*>>*)nullptr;
+		auto result = (const std::vector<not_null<Dialogs::Row *>> *)nullptr;
 		for (const auto &word : wordList) {
 			const auto found = list->filtered(word[0]);
 			if (!found || found->empty()) {
