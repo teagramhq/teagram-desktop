@@ -220,8 +220,17 @@ def upstream_pick_lines(
     return {commit: dict(paths) for commit, paths in exempt.items()}
 
 
-def blame_line_origins(root: Path, revision: str, path: str) -> dict[int, tuple[str, int, str]]:
-    output = git_output(root, "blame", "--line-porcelain", "--no-progress", revision, "--", path)
+def blame_line_origins(
+    root: Path,
+    revision: str,
+    path: str,
+    ranges: list[tuple[int, int]],
+) -> dict[int, tuple[str, int, str]]:
+    arguments = ["blame", "--line-porcelain", "--no-progress"]
+    for first, last in ranges:
+        arguments.extend(["-L", f"{first},{last}"])
+    arguments.extend([revision, "--", path])
+    output = git_output(root, *arguments)
     origins: dict[int, tuple[str, int, str]] = {}
     header = re.compile(r"^(\^?[0-9a-f]{40}) (\d+) (\d+)(?: \d+)?$")
     current_line: tuple[int, str, int] | None = None
@@ -242,13 +251,14 @@ def blame_line_origins(root: Path, revision: str, path: str) -> dict[int, tuple[
 
 def ranges_without_upstream_lines(
     root: Path,
+    base: str,
     tested_head: str,
     path: str,
     ranges: list[tuple[int, int]],
     upstream_commits: set[str],
     picked_lines: dict[str, dict[str, set[int]]],
 ) -> tuple[list[tuple[int, int]], int]:
-    origins = blame_line_origins(root, tested_head, path)
+    origins = blame_line_origins(root, f"{base}..{tested_head}", path, ranges)
     checked: list[int] = []
     for first, last in ranges:
         for line_number in range(first, last + 1):
@@ -836,6 +846,7 @@ def check_source_range(
         for path, path_ranges in ranges.items():
             checked_ranges, checked_lines = ranges_without_upstream_lines(
                 root,
+                resolved_base,
                 tested_head,
                 path,
                 path_ranges,
