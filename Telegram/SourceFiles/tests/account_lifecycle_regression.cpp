@@ -15009,8 +15009,12 @@ DesktopScaleMessagesReply(QVector<MTPMessage> messages, int totalCount,
 }
 
 template <typename Action>
-[[nodiscard]] bool WithDesktopScaleAccount(Main::Domain &domain, UserId selfId,
-										   Action action) {
+[[nodiscard]] bool
+WithDesktopScaleAccount(Main::Domain &domain, UserId selfId, Action action,
+						Main::Account *reuseAccount = nullptr) {
+	if (reuseAccount) {
+		return action(not_null<Main::Account *>(reuseAccount));
+	}
 	const auto account = domain.add(MTP::Environment::Production);
 	// Activating the synthetic account schedules removal of the startup
 	// account, which has no session. Keep the synthetic account as its own
@@ -15145,14 +15149,14 @@ void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
 	return snapshot.count && (*snapshot.count == expectedCount);
 }
 
-[[nodiscard]] DesktopScaleActionSample
-RunDesktopScaleHistoryPage(Main::Domain &domain, int alreadyLoaded,
-						   UserId selfId, UserId peerId,
-						   bool reportOnlyStalls = false) {
+[[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
+	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
+	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, selfId, [&](auto account) {
+		domain, selfId,
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15198,17 +15202,17 @@ RunDesktopScaleHistoryPage(Main::Domain &domain, int alreadyLoaded,
 							&& DesktopScaleHistoryCountMatches(
 								history, firstLoadedId, kHistoryCount);
 			return sample.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		sample.passed = false;
 	}
 	return sample;
 }
 
-[[nodiscard]] DesktopScaleActionSample
-RunDesktopScaleDateHistoryPage(Main::Domain &domain, int alreadyLoaded,
-							   UserId selfId, UserId peerId,
-							   bool reportOnlyStalls = false) {
+[[nodiscard]] DesktopScaleActionSample RunDesktopScaleDateHistoryPage(
+	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
+	bool reportOnlyStalls = false, Main::Account *reuseAccount = nullptr) {
 	constexpr auto kHistoryCount = 1'000'000;
 	constexpr auto kDateOffset = int64(500'000);
 	const auto targetId = MsgId(kDateOffset);
@@ -15216,7 +15220,8 @@ RunDesktopScaleDateHistoryPage(Main::Domain &domain, int alreadyLoaded,
 	const auto dateBase = int(targetDate.startOfDay().toSecsSinceEpoch());
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, selfId, [&](auto account) {
+		domain, selfId,
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15310,7 +15315,8 @@ RunDesktopScaleDateHistoryPage(Main::Domain &domain, int alreadyLoaded,
 				  && DesktopScaleHistoryCountMatches(history, targetId,
 													 kHistoryCount);
 			return sample.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		sample.passed = false;
 	}
@@ -15352,12 +15358,14 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 
 [[nodiscard]] DesktopScaleSearchUpdateSamples RunDesktopScaleSearchAndUpdates(
 	Main::Domain &domain, int dialogCount, UserId selfId, UserId firstId,
-	bool reportOnlySearchStalls = false, bool reportOnlyUpdateStalls = false) {
+	bool reportOnlySearchStalls = false, bool reportOnlyUpdateStalls = false,
+	Main::Account *reuseAccount = nullptr) {
 	constexpr auto kSearchResultCount = kDesktopScalePageSize;
 	constexpr auto kUpdateCount = 1'000;
 	auto samples = DesktopScaleSearchUpdateSamples();
 	const auto created = WithDesktopScaleAccount(
-		domain, selfId, [&](auto account) {
+		domain, selfId,
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			if (!SeedDesktopScaleDialogs(data, firstId, dialogCount)) {
@@ -15431,7 +15439,8 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 			samples.updateBurst.passed
 				= samples.updateBurst.passed && updatesApplied;
 			return samples.search.passed && samples.updateBurst.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		samples.search.passed = false;
 		samples.updateBurst.passed = false;
@@ -15440,11 +15449,12 @@ DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 }
 
 [[nodiscard]] DesktopScaleActionSample
-RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
-					   UserId firstId) {
+RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
+					   Main::Account *reuseAccount = nullptr) {
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, UserId(firstId.bare - 1), [&](auto account) {
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			if (!SeedDesktopScaleDialogs(data, firstId, alreadyLoaded)) {
@@ -15491,7 +15501,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 					"did not produce the expected list.\n");
 			}
 			return sample.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		sample.passed = false;
 	}
@@ -15528,10 +15539,12 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 
 [[nodiscard]] DesktopScaleContactsSample
 RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
-						bool reportOnlyStalls = false) {
+						bool reportOnlyStalls = false,
+						Main::Account *reuseAccount = nullptr) {
 	auto result = DesktopScaleContactsSample();
 	const auto created = WithDesktopScaleAccount(
-		domain, UserId(firstId.bare - 1), [&](auto account) {
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			auto unrelatedCapture = ChannelSaveRequestCapture{
@@ -15671,7 +15684,8 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 					count);
 			}
 			return result.loaded.passed && result.changedAndFound.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		result.loaded.passed = false;
 		result.changedAndFound.passed = false;
@@ -15707,7 +15721,8 @@ template <typename Function>
 
 [[nodiscard]] DesktopScaleFsSample RunDesktopScaleGroupMediaHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId senderId,
-	ChannelId channelId, bool reportOnlyStalls = false) {
+	ChannelId channelId, bool reportOnlyStalls = false,
+	Main::Account *reuseAccount = nullptr) {
 	auto sample = DesktopScaleFsSample();
 #if defined(Q_OS_LINUX)
 	const auto startCounting
@@ -15723,7 +15738,8 @@ template <typename Function>
 	}
 	constexpr auto kHistoryCount = 200'000;
 	const auto created = WithDesktopScaleAccount(
-		domain, selfId, [&](auto account) {
+		domain, selfId,
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15790,7 +15806,8 @@ template <typename Function>
 								history, firstLoadedId, kHistoryCount)
 							&& (sample.directoryEnumerations == 0);
 			return sample.passed;
-		});
+		},
+		reuseAccount);
 	if (!created) {
 		sample.passed = false;
 	}
@@ -15972,34 +15989,107 @@ int RunDesktopScaleCheck() {
 	auto &app = Core::App();
 	auto &domain = app.domain();
 
-	const auto dialogsOne
-		= RunDesktopScaleDialogs(domain, 50, UserId(1'000'000));
-	const auto dialogsHundred
-		= RunDesktopScaleDialogs(domain, 4'900, UserId(2'000'000));
-	const auto contactsOne
-		= RunDesktopScaleContacts(domain, 100, UserId(3'000'000));
-	const auto contactsHundred
-		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000), true);
+	// Retained synthetic sessions avoid headless logout teardown. Share each
+	// 1x/100x pair so the scale scenarios stay within the six-account limit.
+	auto dialogsOne = DesktopScaleActionSample();
+	auto dialogsHundred = DesktopScaleActionSample();
+	const auto dialogsCreated
+		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
+			  dialogsOne = RunDesktopScaleDialogs(domain, 50, UserId(1'000'000),
+												  account.get());
+			  dialogsHundred = RunDesktopScaleDialogs(
+				  domain, 4'900, UserId(1'000'000), account.get());
+			  return dialogsOne.passed && dialogsHundred.passed;
+		  });
+	if (!dialogsCreated) {
+		dialogsOne.passed = false;
+		dialogsHundred.passed = false;
+	}
+	auto contactsOne = DesktopScaleContactsSample();
+	auto contactsHundred = DesktopScaleContactsSample();
+	const auto contactsCreated
+		= WithDesktopScaleAccount(domain, UserId(2'999'999), [&](auto account) {
+			  contactsOne = RunDesktopScaleContacts(
+				  domain, 100, UserId(3'000'000), false, account.get());
+			  contactsHundred = RunDesktopScaleContacts(
+				  domain, 10'000, UserId(3'000'000), true, account.get());
+			  return contactsOne.loaded.passed
+					 && contactsOne.changedAndFound.passed
+					 && contactsHundred.loaded.passed
+					 && contactsHundred.changedAndFound.passed;
+		  });
+	if (!contactsCreated) {
+		contactsOne.loaded.passed = false;
+		contactsOne.changedAndFound.passed = false;
+		contactsHundred.loaded.passed = false;
+		contactsHundred.changedAndFound.passed = false;
+	}
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
-	const auto historyOne = RunDesktopScaleHistoryPage(
-		domain, 20, UserId(6'000'000), UserId(6'000'001));
-	const auto historyHundred = RunDesktopScaleHistoryPage(
-		domain, 2'000, UserId(6'100'000), UserId(6'100'001));
-	const auto dateOne = RunDesktopScaleDateHistoryPage(
-		domain, 20, UserId(7'000'000), UserId(7'000'001));
-	const auto dateHundred = RunDesktopScaleDateHistoryPage(
-		domain, 2'000, UserId(7'100'000), UserId(7'100'001));
-	const auto groupOne = RunDesktopScaleGroupMediaHistoryPage(
-		domain, 20, UserId(8'000'000), UserId(8'000'001), ChannelId(8'000'002));
-	const auto groupHundred = RunDesktopScaleGroupMediaHistoryPage(
-		domain, 2'000, UserId(8'100'000), UserId(8'100'001),
-		ChannelId(8'100'002));
-	const auto searchOne = RunDesktopScaleSearchAndUpdates(
-		domain, 50, UserId(9'000'000), UserId(9'000'001));
-	const auto searchHundred = RunDesktopScaleSearchAndUpdates(
-		domain, 5'000, UserId(9'100'000), UserId(9'100'001));
+	auto historyOne = DesktopScaleActionSample();
+	auto historyHundred = DesktopScaleActionSample();
+	auto dateOne = DesktopScaleActionSample();
+	auto dateHundred = DesktopScaleActionSample();
+	const auto historyCreated
+		= WithDesktopScaleAccount(domain, UserId(6'000'000), [&](auto account) {
+			  historyOne = RunDesktopScaleHistoryPage(
+				  domain, 20, UserId(6'000'000), UserId(6'000'001), false,
+				  account.get());
+			  historyHundred = RunDesktopScaleHistoryPage(
+				  domain, 2'000, UserId(6'100'000), UserId(6'100'001), false,
+				  account.get());
+			  dateOne = RunDesktopScaleDateHistoryPage(
+				  domain, 20, UserId(7'000'000), UserId(7'000'001), false,
+				  account.get());
+			  dateHundred = RunDesktopScaleDateHistoryPage(
+				  domain, 2'000, UserId(7'100'000), UserId(7'100'001), false,
+				  account.get());
+			  return historyOne.passed && historyHundred.passed
+					 && dateOne.passed && dateHundred.passed;
+		  });
+	if (!historyCreated) {
+		historyOne.passed = false;
+		historyHundred.passed = false;
+		dateOne.passed = false;
+		dateHundred.passed = false;
+	}
+	auto groupOne = DesktopScaleFsSample();
+	auto groupHundred = DesktopScaleFsSample();
+	const auto groupCreated
+		= WithDesktopScaleAccount(domain, UserId(8'000'000), [&](auto account) {
+			  groupOne = RunDesktopScaleGroupMediaHistoryPage(
+				  domain, 20, UserId(8'000'000), UserId(8'000'001),
+				  ChannelId(8'000'002), false, account.get());
+			  groupHundred = RunDesktopScaleGroupMediaHistoryPage(
+				  domain, 2'000, UserId(8'100'000), UserId(8'100'001),
+				  ChannelId(8'100'002), false, account.get());
+			  return groupOne.passed && groupHundred.passed;
+		  });
+	if (!groupCreated) {
+		groupOne.passed = false;
+		groupHundred.passed = false;
+	}
+	auto searchOne = DesktopScaleSearchUpdateSamples();
+	auto searchHundred = DesktopScaleSearchUpdateSamples();
+	const auto searchCreated
+		= WithDesktopScaleAccount(domain, UserId(9'000'000), [&](auto account) {
+			  searchOne = RunDesktopScaleSearchAndUpdates(
+				  domain, 50, UserId(9'000'000), UserId(9'000'001), false,
+				  false, account.get());
+			  searchHundred = RunDesktopScaleSearchAndUpdates(
+				  domain, 5'000, UserId(9'000'000), UserId(9'000'001), false,
+				  false, account.get());
+			  return searchOne.search.passed && searchOne.updateBurst.passed
+					 && searchHundred.search.passed
+					 && searchHundred.updateBurst.passed;
+		  });
+	if (!searchCreated) {
+		searchOne.search.passed = false;
+		searchOne.updateBurst.passed = false;
+		searchHundred.search.passed = false;
+		searchHundred.updateBurst.passed = false;
+	}
 
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
