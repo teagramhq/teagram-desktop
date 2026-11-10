@@ -218,10 +218,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_iv.h"
 #include "styles/style_layers.h"
 
-#include <QtGui/QWindow>
-#include <QtGui/QAction>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QTimer>
+#include <QtGui/QAction>
+#include <QtGui/QWindow>
 
 #include <algorithm>
 #include <utility>

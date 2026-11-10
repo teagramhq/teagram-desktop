@@ -953,7 +953,7 @@ class AttachBotsMenuPopulation final : public QObject {
 	const Fn<Api::SendAction()> _actionFactory;
 	const std::vector<AttachWebViewBot> _bots;
 	const Fn<void()> _buildComplete;
-	const Fn<void(qint64)> _buildStepMeasured;
+	const Fn<void(AttachBotsMenuBuildStepTiming)> _buildStepMeasured;
 	int _position = 0;
 };
 
