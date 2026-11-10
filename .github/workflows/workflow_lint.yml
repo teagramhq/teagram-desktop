@@ -47,6 +47,9 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - '.github/scripts/desktop_scale_check.py'
+      - '.github/scripts/test_desktop_scale_check.py'
+      - '.github/scripts/run_desktop_scale_check.sh'
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   pull_request:
@@ -90,6 +93,9 @@ on:
       - '.github/scripts/test_ensure_release_tag.sh'
       - '.github/scripts/test_unit_feedback.py'
       - '.github/scripts/unit_feedback_metadata.py'
+      - '.github/scripts/desktop_scale_check.py'
+      - '.github/scripts/test_desktop_scale_check.py'
+      - '.github/scripts/run_desktop_scale_check.sh'
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:
@@ -178,3 +184,6 @@ jobs:
 
       - name: Test unit feedback selection.
         run: python3 .github/scripts/test_unit_feedback.py
+
+      - name: Test desktop scale thresholds.
+        run: python3 .github/scripts/test_desktop_scale_check.py

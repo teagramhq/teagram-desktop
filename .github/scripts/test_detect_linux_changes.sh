@@ -154,6 +154,9 @@ for path in \
   .github/scripts/test_linux_libraries_image.sh \
   .github/scripts/verify_built_sha.sh \
   .github/scripts/test_verify_built_sha.sh \
+  .github/scripts/desktop_scale_check.py \
+  .github/scripts/test_desktop_scale_check.py \
+  .github/scripts/run_desktop_scale_check.sh \
   .github/workflows/linux.yml; do
   run_detector pull_request 0 "${path}"
   if [[ "$(<"${output}")" != 'required=true' ]]; then
@@ -221,6 +224,9 @@ for path in \
   .github/scripts/test_linux_libraries_image.sh \
   .github/scripts/verify_built_sha.sh \
   .github/scripts/test_verify_built_sha.sh \
+  .github/scripts/desktop_scale_check.py \
+  .github/scripts/test_desktop_scale_check.py \
+  .github/scripts/run_desktop_scale_check.sh \
   .github/scripts/mac_ccache_profile.sh \
   docs/README.md \
   README.md \
