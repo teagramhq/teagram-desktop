@@ -15068,7 +15068,15 @@ template <typename Function>
 	auto window = app.activePrimaryWindow();
 	if (!window) {
 		auto anyWindow = false;
-		app.enumerateWindows([&](auto) { anyWindow = true; });
+		for (const auto widget : QApplication::topLevelWidgets()) {
+			if (const auto candidate = app.findWindow(widget)) {
+				anyWindow = true;
+				if (candidate->isPrimary()) {
+					window = candidate;
+					break;
+				}
+			}
+		}
 		if (!anyWindow) {
 			app.createPrimaryWindowForLifecycleRegression();
 			window = app.activePrimaryWindow();
