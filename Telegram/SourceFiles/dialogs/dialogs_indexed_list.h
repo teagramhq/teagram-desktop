@@ -21,7 +21,7 @@ struct RowsByLetter;
 class Row;
 
 class IndexedList {
-public:
+  public:
 	enum class PrefixSearch {
 		Disabled,
 		Enabled,
@@ -43,22 +43,17 @@ public:
 	void movePinned(Row *row, int deltaSign);
 
 	// For sortMode != SortMode::Date && != Complex
-	void peerNameChanged(
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+	void peerNameChanged(not_null<PeerData *> peer,
+						 const base::flat_set<QChar> &oldChars);
 
-	//For sortMode == SortMode::Date || == Complex
-	void peerNameChanged(
-		FilterId filterId,
-		not_null<PeerData*> peer,
-		const base::flat_set<QChar> &oldChars);
+	// For sortMode == SortMode::Date || == Complex
+	void peerNameChanged(FilterId filterId, not_null<PeerData *> peer,
+						 const base::flat_set<QChar> &oldChars);
 
 	void remove(Key key, Row *replacedBy = nullptr);
 	void clear();
 
-	[[nodiscard]] const List &all() const {
-		return _list;
-	}
+	[[nodiscard]] const List &all() const { return _list; }
 	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
 		if (_sortMode == SortMode::Name) {
 			const auto i = _nameIndex.find(ch);
@@ -100,7 +95,7 @@ public:
 	}
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
-private:
+  private:
 	void adjustByName(Key key);
 	void adjustNames(FilterId filterId, not_null<History *> history,
 					 const base::flat_set<QChar> &oldChars);
