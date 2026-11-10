@@ -695,6 +695,11 @@ void UiStallWatchdog::run() {
 		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
+			schedulerTraceText
+				= schedulerTrace.empty()
+					  ? u"none"_q
+					  : QString::fromLatin1(schedulerTrace.data(),
+											qsizetype(schedulerTrace.size()));
 			lock.unlock();
 			const auto completedDurationMilliseconds
 				= std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -154,6 +154,20 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto blockActive = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
 	auto acknowledgementsDuringLogging = std::atomic_int(0);
+	auto initialSchedulerSampleCount = std::atomic_int(-1);
+	auto finalReportedSchedulerTrace = QString();
+	const auto schedulerTraceFromLine = [](const QString &line) {
+		const auto prefix = u"scheduler_trace="_q;
+		const auto start = line.indexOf(prefix);
+		if (start < 0) {
+			return QString();
+		}
+		const auto traceStart = start + prefix.size();
+		const auto traceEnd = line.indexOf(u" stack="_q, traceStart);
+		return (traceEnd >= traceStart)
+				   ? line.mid(traceStart, traceEnd - traceStart)
+				   : QString();
+	};
 	const auto beforeEvidence
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
 	const auto beforeAcknowledgements
@@ -193,6 +207,9 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 					completed.store(duration >= 300, std::memory_order_release);
 				} else {
 					lines.push_back(line);
+					initialSchedulerSampleCount.store(
+						schedulerTraceFromLine(line).size(),
+						std::memory_order_release);
 				}
 				if (blockActive.load(std::memory_order_acquire)) {
 					logged.store(true, std::memory_order_release);
@@ -222,6 +239,9 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
 		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
 		CHECK(lines.front().contains(u"scheduler_trace="_q));
+		finalReportedSchedulerTrace = schedulerTraceFromLine(lines.front());
+		CHECK(finalReportedSchedulerTrace.size()
+			  > initialSchedulerSampleCount.load(std::memory_order_acquire));
 		const auto duration = lines.front()
 								  .mid(u"UI stall "_q.size())
 								  .section(u' ', 0, 0)
@@ -242,6 +262,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
 		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
 		CHECK(!evidence.back().schedulerTrace.isEmpty());
+		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
 #if defined(Q_OS_MAC)
 		CHECK(evidence.back().schedulerTrace.contains(u'R'));
 #endif
