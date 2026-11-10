@@ -165,11 +165,11 @@ QImage FileLoader::imageData(int progressiveSizeLimit) const {
 }
 
 void FileLoader::readImage(int progressiveSizeLimit) const {
-	const auto buffer = (progressiveSizeLimit > 0
-		&& progressiveSizeLimit < _data.size())
-		? QByteArray::fromRawData(_data.data(), progressiveSizeLimit)
-		: _data;
-	auto read = Images::Read({ .content = buffer });
+	const auto buffer
+		= (progressiveSizeLimit > 0 && progressiveSizeLimit < _data.size())
+			  ? QByteArray::fromRawData(_data.data(), progressiveSizeLimit)
+			  : _data;
+	auto read = Images::Read({.content = buffer});
 	if (!read.image.isNull()) {
 		_imageData = std::move(read.image);
 		_imageFormat = read.format;

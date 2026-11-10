@@ -89,7 +89,7 @@ constexpr auto kReminderSetToastDuration = 4 * crl::time(1000);
 [[nodiscard]] bool HiddenUrlRequiresConfirmation(const QUrl &url) {
 	const auto scheme = url.scheme().toLower();
 	return (scheme != u"https"_q && scheme != u"http"_q)
-		|| UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
+		   || UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
 }
 
 [[nodiscard]] bool RequiresConfirmationAfterIvFallback(const QUrl &url) {
