@@ -15433,6 +15433,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 
 			const auto mainBeforeRedate
 				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto archiveBeforeRedate
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
 			const auto movingDownUser = UserId(firstId.bare + 10);
 			const auto movingUpUser = UserId(firstId.bare + kLoaded - 1);
 			const auto movingDownHistory
@@ -15474,7 +15476,7 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 			const auto redatedMessages = QVector<MTPMessage>{
 				DesktopScaleMessage(movingUpUser, 2, 40),
 				DesktopScaleMessage(movingDownUser, 2, 5),
-				DesktopScaleMessage(newestArchiveUser, 2, 50),
+				DesktopScaleMessage(newestArchiveUser, 2, 150),
 			};
 			const auto redatedDialogs = QVector<MTPDialog>{
 				DesktopScaleDialog(movingUpUser, false, 0, 0, 2),
@@ -15491,6 +15493,22 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 					return a.entry()->sortKeyInChatList(FilterId())
 						   > b.entry()->sortKeyInChatList(FilterId());
 				});
+			auto expectedArchiveOrder = archiveBeforeRedate.order;
+			ranges::stable_sort(
+				begin(expectedArchiveOrder), end(expectedArchiveOrder),
+				[](const Dialogs::Key &a, const Dialogs::Key &b) {
+					return a.entry()->sortKeyInChatList(FilterId())
+						   > b.entry()->sortKeyInChatList(FilterId());
+				});
+			const auto archiveAfterRedate
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
+			const auto archiveOrderMatches
+				= (archiveAfterRedate.order == expectedArchiveOrder);
+			if (!archiveOrderMatches) {
+				DesktopScalePrintDialogOrderMismatch(
+					"archive-after-redate", "order", expectedArchiveOrder,
+					archiveAfterRedate.order);
+			}
 			const auto mainAfterRedate
 				= DesktopScaleChatListSnapshot(*data.chatsList());
 			const auto movingDownAfterTop = movingDownRow->top();
@@ -15616,11 +15634,12 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 													 "main-after-redate", false)
 				  && DesktopScaleChatListStatePreserved(
 					  archiveBefore, *archive->chatsList(), false,
-					  "archive-after-redate");
+					  "archive-after-redate", false);
 			if ((loadedAfterRedate != loadedAfter) || !redatedOrderMatches
 				|| !movedDownPastSeveral || !movedUpPastSeveral
 				|| !movingDownEventExists || !movingUpEventExists
-				|| !newestArchivePreviewMatches || !statePreservedAfterRedate) {
+				|| !newestArchivePreviewMatches || !archiveOrderMatches
+				|| !statePreservedAfterRedate) {
 				std::fprintf(
 					stderr,
 					"Desktop scale check failed: re-dating dialogs changed "
