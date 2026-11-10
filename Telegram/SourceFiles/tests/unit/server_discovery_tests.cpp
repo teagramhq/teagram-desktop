@@ -8,12 +8,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "intro/intro_server_discovery.h"
+#include "lang/lang_keys.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_server_discovery.h"
 
 #include <QtCore/QEventLoop>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QJsonValue>
 #include <QtCore/QList>
 #include <QtCore/QSocketNotifier>
 #include <QtCore/QTimer>
@@ -36,6 +38,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif
 
 #include <utility>
+
+namespace Lang::details {
+
+QString Current(ushort key) {
+	if (key == tr::lng_intro_server_browser_only.base) {
+		return u"This server works only in the browser."_q;
+	} else if (key == tr::lng_intro_server_connect_failed.base) {
+		return u"Could not connect to this server. Check the address and your connection, then try again."_q;
+	}
+	return QString();
+}
+
+} // namespace Lang::details
 
 namespace {
 
@@ -167,6 +182,19 @@ PublicResponseWithWebSocket(const QString &endpoint,
 	auto root = QJsonDocument::fromJson(PublicResponse(endpoint)).object();
 	root.insert(u"websocket"_q,
 				QJsonObject{{u"endpoint"_q, webSocketEndpoint}});
+	return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+[[nodiscard]] QByteArray
+PublicResponseWithBrowserOnlyWebSocket(const QString &endpoint,
+									   const QString &webSocketEndpoint,
+									   const QJsonValue &browserOnly) {
+	auto root = QJsonDocument::fromJson(
+					PublicResponseWithWebSocket(endpoint, webSocketEndpoint))
+					.object();
+	auto websocket = root.value(u"websocket"_q).toObject();
+	websocket.insert(u"browser_only"_q, browserOnly);
+	root.insert(u"websocket"_q, websocket);
 	return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
@@ -1575,6 +1603,137 @@ TEST_CASE(DiscoveryJsonAcceptsWssWebSocketEndpoint) {
 									u"wss://transport.example.com/apiws"_q));
 	CHECK(result.valid());
 	CHECK_EQ(result.webSocketEndpoint, u"wss://transport.example.com/apiws"_q);
+}
+
+TEST_CASE(DiscoveryJsonRefusesBrowserOnlyWebSocketAsNativeBinding) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q, true));
+	CHECK(!result.valid());
+	CHECK(result.status == ServerDiscoveryResponseStatus::BrowserOnly);
+
+	const auto nonBrowserOnly = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q, false));
+	CHECK(nonBrowserOnly.valid());
+}
+
+TEST_CASE(ServerWidgetBrowserOnlyRefusalKeepsSelectionRetryable) {
+	const auto selected = CheckServerSelection(u"first.example.com"_q);
+	auto flow = Intro::details::ServerDiscoveryFlow();
+	auto publicAttempts = 0;
+	auto localAttempts = 0;
+	auto flowFailures = 0;
+	const auto callbacks = Intro::details::ServerDiscoveryFlow::Callbacks{
+		.publicHttps = [&] { ++publicAttempts; },
+		.localDirect = [&] { ++localAttempts; },
+		.failed = [&](bool) { ++flowFailures; },
+	};
+	CHECK(flow.start(selected, callbacks));
+
+	const auto result = ParsePublicDiscoveryResponse(
+		selected, PublicResponseWithBrowserOnlyWebSocket(
+					  u"mtproto.example.com:443"_q,
+					  u"wss://transport.example.com/apiws"_q, true));
+	auto presentation = Intro::details::ServerDiscoveryFailurePresentation();
+	auto refused = 0;
+	auto invalid = 0;
+	auto ready = 0;
+	auto bindings = 0;
+	auto navigations = 0;
+	auto reconnects = 0;
+	Intro::details::HandleServerDiscoveryResult(
+		flow, result,
+		[&](auto value) {
+			++refused;
+			presentation = std::move(value);
+		},
+		[&] { ++invalid; },
+		[&](MTP::ServerDiscoveryResult) {
+			++ready;
+			++bindings;
+			++navigations;
+			++reconnects;
+		});
+
+	CHECK_EQ(refused, 1);
+	CHECK_EQ(invalid, 0);
+	CHECK_EQ(ready, 0);
+	CHECK_EQ(bindings, 0);
+	CHECK_EQ(navigations, 0);
+	CHECK_EQ(reconnects, 0);
+	CHECK_EQ(presentation.message, u"This server works only in the browser."_q);
+	CHECK_EQ(presentation.message, tr::lng_intro_server_browser_only(tr::now));
+	CHECK(presentation.message != tr::lng_intro_server_connect_failed(tr::now));
+	CHECK(presentation.selectionEditable);
+	CHECK(presentation.continueEnabled);
+	CHECK(!flow.active());
+	CHECK_EQ(publicAttempts, 1);
+	CHECK_EQ(localAttempts, 0);
+	CHECK_EQ(flowFailures, 0);
+
+	CHECK(Intro::details::SubmitServerSelection(
+		u"another.example.com"_q,
+		[](MTP::ServerSelectionStatus) { CHECK(false); },
+		[&](const MTP::ServerSelectionCheck &replacement) {
+			CHECK_EQ(replacement.normalizedSelection, u"another.example.com"_q);
+			CHECK(flow.start(replacement, callbacks));
+		}));
+	CHECK(flow.active());
+	CHECK_EQ(publicAttempts, 2);
+}
+
+TEST_CASE(ServerDiscoveryResultRoutesReadyAndInvalidResponses) {
+	const auto selected = CheckServerSelection(u"first.example.com"_q);
+	const auto valid = ParsePublicDiscoveryResponse(
+		selected,
+		PublicResponseWithWebSocket(u"mtproto.example.com:443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(valid.valid());
+
+	auto ready = 0;
+	auto invalid = 0;
+	auto browserOnly = 0;
+	auto flow = Intro::details::ServerDiscoveryFlow();
+	const auto onBrowserOnly
+		= [&](Intro::details::ServerDiscoveryFailurePresentation) {
+			  ++browserOnly;
+		  };
+	const auto onInvalid = [&] { ++invalid; };
+	const auto onReady = [&](MTP::ServerDiscoveryResult result) {
+		CHECK(result.valid());
+		++ready;
+	};
+	Intro::details::HandleServerDiscoveryResult(flow, valid, onBrowserOnly,
+												onInvalid, onReady);
+	CHECK_EQ(ready, 1);
+	CHECK_EQ(invalid, 0);
+	CHECK_EQ(browserOnly, 0);
+
+	ready = 0;
+	invalid = 0;
+	browserOnly = 0;
+	const auto malformed
+		= ParsePublicDiscoveryResponse(selected, QByteArray("not-json"));
+	CHECK(!malformed.valid());
+	Intro::details::HandleServerDiscoveryResult(flow, malformed, onBrowserOnly,
+												onInvalid, onReady);
+	CHECK_EQ(invalid, 1);
+	CHECK_EQ(ready, 0);
+	CHECK_EQ(browserOnly, 0);
+}
+
+TEST_CASE(DiscoveryJsonRejectsNonBooleanBrowserOnlyFlag) {
+	const auto result = ParsePublicDiscoveryResponse(
+		CheckServerSelection(u"server.example.com"_q),
+		PublicResponseWithBrowserOnlyWebSocket(
+			u"mtproto.example.com:443"_q,
+			u"wss://transport.example.com/apiws"_q, u"true"_q));
+	CHECK(result.status == ServerDiscoveryResponseStatus::InvalidSchema);
 }
 
 TEST_CASE(DiscoveryJsonRejectsUnsafeWssWebSocketEndpoint) {
