@@ -21,7 +21,6 @@ TEST_CASE(DefaultUrlSchemePolicyAllowsTeagramSchemes) {
 			 u"mailto"_q,
 			 u"tel"_q,
 			 u"tg"_q,
-			 u"tc"_q,
 			 u"ton"_q,
 			 u"tonsite"_q,
 		 }) {
@@ -36,6 +35,7 @@ TEST_CASE(DefaultUrlSchemePolicyRejectsUnsafeAndUnknownSchemes) {
 			 u"webdavs"_q,
 			 u"WEBDAVS"_q,
 			 u"c"_q,
+			 u"tc"_q,
 			 u"smb"_q,
 		 }) {
 		CHECK(!File::internal::IsDefaultUrlSchemeAllowed(scheme));
