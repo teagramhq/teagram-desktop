@@ -9,6 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_list.h"
 
+#include <map>
+#include <unordered_map>
+#include <unordered_set>
+
 class History;
 
 namespace Dialogs {
@@ -18,7 +22,10 @@ class Row;
 
 class IndexedList {
 public:
-	IndexedList(SortMode sortMode, FilterId filterId = 0);
+	IndexedList(
+		SortMode sortMode,
+		FilterId filterId = 0,
+		bool usePrefixSearch = false);
 
 	RowsByLetter addToEnd(Key key);
 	Row *addByName(Key key);
@@ -49,9 +56,13 @@ public:
 	[[nodiscard]] const List &all() const {
 		return _list;
 	}
-	[[nodiscard]] const List *filtered(QChar ch) const {
+	[[nodiscard]] const std::vector<not_null<Row*>> *filtered(QChar ch) const {
+		if (_sortMode == SortMode::Name) {
+			const auto i = _nameIndex.find(ch);
+			return (i != _nameIndex.end()) ? &i->second : nullptr;
+		}
 		const auto i = _index.find(ch);
-		return (i != _index.end()) ? &i->second : nullptr;
+		return (i != _index.end()) ? &i->second.all().rows() : nullptr;
 	}
 	[[nodiscard]] std::vector<not_null<Row*>> filtered(
 		const QStringList &words) const;
@@ -94,11 +105,19 @@ private:
 		FilterId filterId,
 		not_null<History*> history,
 		const base::flat_set<QChar> &oldChars);
+	void addNameRow(QChar ch, Row *row);
+	void removeNameRow(QChar ch, Row *row);
+	void updatePrefixSearchIndex(Row *row);
+	void removePrefixSearchIndex(Row *row);
 
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
+	bool _usePrefixSearch = false;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
+	base::flat_map<QChar, std::vector<not_null<Row*>>> _nameIndex;
+	std::map<QString, std::unordered_set<Row*>> _prefixSearchIndex;
+	std::unordered_map<Row*, std::vector<QString>> _searchKeysByRow;
 
 };
 

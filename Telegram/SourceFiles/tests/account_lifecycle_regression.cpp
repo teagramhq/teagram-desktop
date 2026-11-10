@@ -14821,20 +14821,30 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
-									   bool contact, bool withPhone = false) {
+									   bool contact, bool withPhone = false,
+									   QString lastName = QString(),
+									   QString username = QString()) {
 	const auto flags
 		= MTPDuser::Flag::f_first_name
+		  | (!lastName.isEmpty()
+				? MTPDuser::Flag::f_last_name
+				: MTPDuser::Flag())
+		  | (!username.isEmpty()
+				? MTPDuser::Flag::f_username
+				: MTPDuser::Flag())
 		  | (withPhone ? MTPDuser::Flag::f_phone : MTPDuser::Flag())
 		  | (contact ? MTPDuser::Flag::f_contact : MTPDuser::Flag());
 	const auto phone
 		= withPhone ? MTP_string(QString::number(id.bare)) : MTPstring();
 	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
-					MTP_string(std::move(firstName)), MTPstring(), MTPstring(),
-					phone, MTPUserProfilePhoto(), MTPUserStatus(), MTPint(),
-					MTP_vector<MTPRestrictionReason>(0), MTPstring(),
-					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
-					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
-					MTPlong(), MTPlong(), MTPlong());
+				 MTP_string(std::move(firstName)),
+				 MTP_string(std::move(lastName)),
+				 MTP_string(std::move(username)), phone,
+				 MTPUserProfilePhoto(), MTPUserStatus(), MTPint(),
+				 MTP_vector<MTPRestrictionReason>(0), MTPstring(),
+				 MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
+				 MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
+				 MTPlong(), MTPlong(), MTPlong());
 }
 
 [[nodiscard]] auto DesktopScaleNotifySettings() {
@@ -15037,7 +15047,13 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 			= changeOne ? u"ScaleUpdatedContact"_q
 						: u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0'));
 		contacts.push_back(MTP_contact(MTP_long(userId.bare), MTP_boolFalse()));
-		users.push_back(DesktopScaleUser(userId, firstName, true, true));
+		users.push_back(DesktopScaleUser(
+			userId,
+			firstName,
+			true,
+			true,
+			changeOne ? u"NameProbe"_q : QString(),
+			changeOne ? u"ScaleProbeUsername"_q : QString()));
 	}
 	return MTP_contacts_contacts(MTP_vector<MTPContact>(std::move(contacts)),
 								 MTP_int(totalCount),
@@ -15045,8 +15061,7 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 }
 
 [[nodiscard]] DesktopScaleContactsSample
-RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
-						bool reportOnlyStalls = false) {
+RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 	auto result = DesktopScaleContactsSample();
 	const auto created = WithDesktopScaleAccount(
 		domain, UserId(firstId.bare - 1), [&](auto account) {
@@ -15134,8 +15149,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 										   && data.contactsLoaded().current();
 								},
 								5000);
-						},
-						reportOnlyStalls);
+						});
 			}
 			if (!result.loaded.passed) {
 				std::fprintf(
@@ -15144,6 +15158,22 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 					"not load %d contacts.\n",
 					count);
 				return false;
+			}
+		auto position = 0;
+			for (const auto &row : *data.contactsList()) {
+				const auto history = row->history();
+				if (!history
+					|| history->peer->id
+						!= peerFromUser(UserId(firstId.bare + position))) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: contacts were not kept "
+						"in name order at position %llu.\n",
+						static_cast<unsigned long long>(
+							position));
+					return false;
+				}
+				++position;
 			}
 
 			data.contactsLoaded() = false;
@@ -15169,14 +15199,21 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 									const auto userId
 										= UserId(firstId.bare + count - 1);
 									const auto user = data.userLoaded(userId);
-									const auto found
-										= data.contactsList()->filtered(
-											QStringList{
-												u"scaleupdatedcontact"_q});
+									const auto foundBy = [&](QString word) {
+										const auto found
+											= data.contactsList()->filtered(
+												QStringList{ std::move(word) });
+										return (found.size() == 1)
+										&& found.front()->history()
+										&& (found.front()->history()->peer->id
+											== peerFromUser(userId));
+									};
 									return user && user->isContact()
 										   && (user->firstName
 											   == u"ScaleUpdatedContact"_q)
-										   && (found.size() == 1);
+										   && foundBy(u"scaleupdatedcontact"_q)
+										   && foundBy(u"nameprobe"_q)
+										   && foundBy(u"scaleprobeusername"_q);
 								},
 								5000);
 						});
@@ -15185,7 +15222,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
 				std::fprintf(
 					stderr,
 					"Desktop scale check failed: updated contact could not be "
-					"found by its new name among %d contacts.\n",
+					"found by its new names among %d contacts.\n",
 					count);
 			}
 			return result.loaded.passed && result.changedAndFound.passed;
@@ -15397,10 +15434,18 @@ int RunDesktopScaleCheck() {
 	const auto contactsOne
 		= RunDesktopScaleContacts(domain, 100, UserId(3'000'000));
 	const auto contactsHundred
-		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000), true);
+		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000));
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
+	const auto contactResponseWithinBudget
+		= contactsHundred.loaded.nanoseconds
+		&& (*contactsHundred.loaded.nanoseconds < 500'000'000);
+	const auto contactChangeScales
+		= contactsOne.changedAndFound.nanoseconds
+		&& contactsHundred.changedAndFound.nanoseconds
+		&& (double(*contactsHundred.changedAndFound.nanoseconds)
+			<= 1.5 * double(*contactsOne.changedAndFound.nanoseconds));
 
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
@@ -15411,7 +15456,9 @@ int RunDesktopScaleCheck() {
 	};
 	const auto printRow = [&](const char *name,
 							  const DesktopScaleActionSample &one,
-							  const DesktopScaleActionSample &hundred) {
+							  const DesktopScaleActionSample &hundred,
+							  const char *budget,
+							  const char *gate) {
 		std::printf("| %s | ", name);
 		printSampleTime(one);
 		std::printf(" | ");
@@ -15423,7 +15470,7 @@ int RunDesktopScaleCheck() {
 		} else {
 			std::printf("n/a");
 		}
-		std::printf(" | 50 ms | calibrating |\n");
+		std::printf(" | %s | %s |\n", budget, gate);
 	};
 	const auto stalls = SumDesktopScaleStalls({
 		dialogsOne.mainThreadStepsOverBudget,
@@ -15435,10 +15482,10 @@ int RunDesktopScaleCheck() {
 		cacheOne.mainThreadStepsOverBudget,
 		cacheHundred.mainThreadStepsOverBudget,
 	});
-	// The dialogs page and full 100x contacts response exceed the 50 ms budget
-	// on the dev baseline. Report their stalls without blocking on them.
+	// The dialogs page stays report-only; contact response stalls are blocking.
 	const auto blockingStalls = SumDesktopScaleStalls({
 		contactsOne.loaded.mainThreadStepsOverBudget,
+		contactsHundred.loaded.mainThreadStepsOverBudget,
 		contactsOne.changedAndFound.mainThreadStepsOverBudget,
 		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
 		cacheOne.mainThreadStepsOverBudget,
@@ -15450,20 +15497,21 @@ int RunDesktopScaleCheck() {
 		  && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed && cacheOne.passed
 		  && cacheHundred.passed && blockingStalls && (*blockingStalls == 0)
+		  && contactResponseWithinBudget && contactChangeScales
 		  && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0);
 
 	std::printf("DESKTOP_SCALE_REPORT_BEGIN\n");
 	std::printf(
-		"| Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |\n");
+		"| Scenario | 1x | 100x | Ratio | Budget | Gate |\n");
 	std::printf("| --- | ---: | ---: | ---: | --- | --- |\n");
 	printRow("messages.getDialogs page (100 dialogs)", dialogsOne,
-			 dialogsHundred);
+			 dialogsHundred, "report-only", "report-only");
 	printRow("contacts.getContacts full response", contactsOne.loaded,
-			 contactsHundred.loaded);
+			 contactsHundred.loaded, "<500 ms", "0 stalls");
 	printRow("contact change + name lookup", contactsOne.changedAndFound,
-			 contactsHundred.changedAndFound);
-	printRow("cache read x100", cacheOne, cacheHundred);
+			 contactsHundred.changedAndFound, "<=1.50x", "0 stalls");
+	printRow("cache read x100", cacheOne, cacheHundred, "50 ms", "0 stalls");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
 		if (sample) {
 			std::printf("%llu/100", static_cast<unsigned long long>(*sample));
@@ -15511,12 +15559,10 @@ int RunDesktopScaleCheck() {
 	std::printf("/");
 	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
-	std::printf(
-		"Report-only baseline: contacts.getContacts full response 100x=");
-	printSampleTime(contactsHundred.loaded);
-	std::printf("/");
-	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
-	std::printf(" over-50-ms steps.\n");
+	std::printf("Contacts.getContacts 100x budget (<500 ms, 0 stalls): %s\n",
+		contactResponseWithinBudget ? "PASS" : "FAIL");
+	std::printf("Contact change + name lookup budget (<=1.50x): %s\n",
+		contactChangeScales ? "PASS" : "FAIL");
 	std::printf("Blocking main-thread steps over 50 ms: ");
 	printStallCount(blockingStalls);
 	std::printf(".\n");

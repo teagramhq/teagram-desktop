@@ -250,8 +250,8 @@ Session::Session(not_null<Main::Session *> session)
 				return limits.groupTranscribeLevelMin();
 			})),
 	  _chatsList(session, FilterId(), maxPinnedChatsLimitValue(nullptr)),
-	  _contactsList(Dialogs::SortMode::Name),
-	  _contactsNoChatsList(Dialogs::SortMode::Name),
+	  _contactsList(Dialogs::SortMode::Name, 0, true),
+	  _contactsNoChatsList(Dialogs::SortMode::Name, 0, true),
 	  _ttlCheckTimer([=] { checkTTLs(); }),
 	  _formattedDateTimer([=] { checkFormattedDateUpdates(); }),
 	  _selfDestructTimer([=] { checkSelfDestructItems(); }),

@@ -67,6 +67,9 @@ public:
 	[[nodiscard]] const_iterator cend() const { return _rows.cend(); }
 	[[nodiscard]] const_iterator begin() const { return cbegin(); }
 	[[nodiscard]] const_iterator end() const { return cend(); }
+	[[nodiscard]] const std::vector<not_null<Row*>> &rows() const {
+		return _rows;
+	}
 	[[nodiscard]] iterator begin() { return cbegin(); }
 	[[nodiscard]] iterator end() { return cend(); }
 	[[nodiscard]] const_iterator cfind(Row *value) const;
