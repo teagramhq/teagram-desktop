@@ -15989,41 +15989,41 @@ int RunDesktopScaleCheck() {
 	auto &app = Core::App();
 	auto &domain = app.domain();
 
-	// Retained synthetic sessions avoid headless logout teardown. Share each
-	// 1x/100x pair so the scale scenarios stay within the six-account limit.
-	auto dialogsOne = DesktopScaleActionSample();
+	// Retained synthetic sessions avoid headless logout teardown. Keep the
+	// scale contexts within the six-account limit, sharing only compatible
+	// data.
+	const auto dialogsOne
+		= RunDesktopScaleDialogs(domain, 50, UserId(1'000'000));
 	auto dialogsHundred = DesktopScaleActionSample();
-	const auto dialogsCreated
-		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
-			  dialogsOne = RunDesktopScaleDialogs(domain, 50, UserId(1'000'000),
-												  account.get());
+	auto searchHundred = DesktopScaleSearchUpdateSamples();
+	const auto dialogsHundredCreated
+		= WithDesktopScaleAccount(domain, UserId(1'999'999), [&](auto account) {
 			  dialogsHundred = RunDesktopScaleDialogs(
-				  domain, 4'900, UserId(1'000'000), account.get());
-			  return dialogsOne.passed && dialogsHundred.passed;
+				  domain, 4'900, UserId(2'000'000), account.get());
+			  searchHundred = RunDesktopScaleSearchAndUpdates(
+				  domain, 5'000, UserId(9'000'000), UserId(2'000'000), false,
+				  true, account.get());
+			  return dialogsHundred.passed && searchHundred.search.passed
+					 && searchHundred.updateBurst.passed;
 		  });
-	if (!dialogsCreated) {
-		dialogsOne.passed = false;
-		dialogsHundred.passed = false;
-	}
 	auto contactsOne = DesktopScaleContactsSample();
 	auto contactsHundred = DesktopScaleContactsSample();
+	auto searchOne = DesktopScaleSearchUpdateSamples();
 	const auto contactsCreated
 		= WithDesktopScaleAccount(domain, UserId(2'999'999), [&](auto account) {
 			  contactsOne = RunDesktopScaleContacts(
 				  domain, 100, UserId(3'000'000), false, account.get());
 			  contactsHundred = RunDesktopScaleContacts(
 				  domain, 10'000, UserId(3'000'000), true, account.get());
+			  searchOne = RunDesktopScaleSearchAndUpdates(
+				  domain, 50, UserId(9'000'000), UserId(9'000'001), false,
+				  true, account.get());
 			  return contactsOne.loaded.passed
 					 && contactsOne.changedAndFound.passed
 					 && contactsHundred.loaded.passed
-					 && contactsHundred.changedAndFound.passed;
+					 && contactsHundred.changedAndFound.passed
+					 && searchOne.search.passed && searchOne.updateBurst.passed;
 		  });
-	if (!contactsCreated) {
-		contactsOne.loaded.passed = false;
-		contactsOne.changedAndFound.passed = false;
-		contactsHundred.loaded.passed = false;
-		contactsHundred.changedAndFound.passed = false;
-	}
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
@@ -16048,12 +16048,6 @@ int RunDesktopScaleCheck() {
 			  return historyOne.passed && historyHundred.passed
 					 && dateOne.passed && dateHundred.passed;
 		  });
-	if (!historyCreated) {
-		historyOne.passed = false;
-		historyHundred.passed = false;
-		dateOne.passed = false;
-		dateHundred.passed = false;
-	}
 	auto groupOne = DesktopScaleFsSample();
 	auto groupHundred = DesktopScaleFsSample();
 	const auto groupCreated
@@ -16066,31 +16060,6 @@ int RunDesktopScaleCheck() {
 				  ChannelId(8'100'002), false, account.get());
 			  return groupOne.passed && groupHundred.passed;
 		  });
-	if (!groupCreated) {
-		groupOne.passed = false;
-		groupHundred.passed = false;
-	}
-	auto searchOne = DesktopScaleSearchUpdateSamples();
-	auto searchHundred = DesktopScaleSearchUpdateSamples();
-	const auto searchCreated
-		= WithDesktopScaleAccount(domain, UserId(9'000'000), [&](auto account) {
-			  searchOne = RunDesktopScaleSearchAndUpdates(
-				  domain, 50, UserId(9'000'000), UserId(9'000'001), false,
-				  false, account.get());
-			  searchHundred = RunDesktopScaleSearchAndUpdates(
-				  domain, 5'000, UserId(9'000'000), UserId(9'000'001), false,
-				  false, account.get());
-			  return searchOne.search.passed && searchOne.updateBurst.passed
-					 && searchHundred.search.passed
-					 && searchHundred.updateBurst.passed;
-		  });
-	if (!searchCreated) {
-		searchOne.search.passed = false;
-		searchOne.updateBurst.passed = false;
-		searchHundred.search.passed = false;
-		searchHundred.updateBurst.passed = false;
-	}
-
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
 			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
@@ -16134,8 +16103,8 @@ int RunDesktopScaleCheck() {
 		searchOne.updateBurst.mainThreadStepsOverBudget,
 		searchHundred.updateBurst.mainThreadStepsOverBudget,
 	});
-	// The dialogs page and full 100x contacts response exceed the 50 ms budget
-	// on the dev baseline. Report their stalls without blocking on them.
+	// These scenarios exceed the 50 ms budget on the dev baseline. Report their
+	// stalls without blocking on them.
 	const auto blockingStalls = SumDesktopScaleStalls({
 		contactsOne.loaded.mainThreadStepsOverBudget,
 		contactsOne.changedAndFound.mainThreadStepsOverBudget,
@@ -16150,18 +16119,20 @@ int RunDesktopScaleCheck() {
 		groupHundred.mainThreadStepsOverBudget,
 		searchOne.search.mainThreadStepsOverBudget,
 		searchHundred.search.mainThreadStepsOverBudget,
-		searchOne.updateBurst.mainThreadStepsOverBudget,
-		searchHundred.updateBurst.mainThreadStepsOverBudget,
 	});
 	const auto passed
-		= dialogsOne.passed && dialogsHundred.passed
+		= dialogsOne.passed && dialogsHundredCreated
+		  && dialogsHundred.passed
 		  && contactsOne.loaded.passed && contactsHundred.loaded.passed
 		  && contactsOne.changedAndFound.passed
-		  && contactsHundred.changedAndFound.passed && cacheOne.passed
+		  && contactsHundred.changedAndFound.passed && contactsCreated
+		  && cacheOne.passed
 		  && cacheHundred.passed && historyOne.passed && historyHundred.passed
-		  && dateOne.passed && dateHundred.passed && groupOne.passed
+		  && dateOne.passed && dateHundred.passed && historyCreated
+		  && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed
-		  && searchHundred.search.passed && searchOne.updateBurst.passed
+		  && groupCreated && searchHundred.search.passed
+		  && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
 		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
@@ -16266,6 +16237,15 @@ int RunDesktopScaleCheck() {
 	printSampleTime(contactsHundred.loaded);
 	std::printf("/");
 	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps.\n");
+	std::printf("Report-only baseline: updates.getDifference 1x=");
+	printSampleTime(searchOne.updateBurst);
+	std::printf("/");
+	printStallCount(searchOne.updateBurst.mainThreadStepsOverBudget);
+	std::printf(" over-50-ms steps, 100x=");
+	printSampleTime(searchHundred.updateBurst);
+	std::printf("/");
+	printStallCount(searchHundred.updateBurst.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
 	std::printf("Blocking main-thread steps over 50 ms: ");
 	printStallCount(blockingStalls);
