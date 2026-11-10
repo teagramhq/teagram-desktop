@@ -16016,8 +16016,8 @@ int RunDesktopScaleCheck() {
 			  contactsHundred = RunDesktopScaleContacts(
 				  domain, 10'000, UserId(3'000'000), true, account.get());
 			  searchOne = RunDesktopScaleSearchAndUpdates(
-				  domain, 50, UserId(9'000'000), UserId(9'000'001), false,
-				  true, account.get());
+				  domain, 50, UserId(9'000'000), UserId(9'000'001), false, true,
+				  account.get());
 			  return contactsOne.loaded.passed
 					 && contactsOne.changedAndFound.passed
 					 && contactsHundred.loaded.passed
@@ -16121,18 +16121,15 @@ int RunDesktopScaleCheck() {
 		searchHundred.search.mainThreadStepsOverBudget,
 	});
 	const auto passed
-		= dialogsOne.passed && dialogsHundredCreated
-		  && dialogsHundred.passed
+		= dialogsOne.passed && dialogsHundredCreated && dialogsHundred.passed
 		  && contactsOne.loaded.passed && contactsHundred.loaded.passed
 		  && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed && contactsCreated
-		  && cacheOne.passed
-		  && cacheHundred.passed && historyOne.passed && historyHundred.passed
-		  && dateOne.passed && dateHundred.passed && historyCreated
-		  && groupOne.passed
-		  && groupHundred.passed && searchOne.search.passed
-		  && groupCreated && searchHundred.search.passed
-		  && searchOne.updateBurst.passed
+		  && cacheOne.passed && cacheHundred.passed && historyOne.passed
+		  && historyHundred.passed && dateOne.passed && dateHundred.passed
+		  && historyCreated && groupOne.passed && groupHundred.passed
+		  && searchOne.search.passed && groupCreated
+		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
 		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
