@@ -16105,16 +16105,15 @@ int RunDesktopScaleCheck() {
 	std::printf("/");
 	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
-	std::printf(
-		"Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
-		"contact change=%d/%d "
-		"cache=%d/%d.\n",
-		int(dialogsOne.passed), int(dialogsHundred.passed),
-		int(dialogsState), int(contactsOne.loaded.passed),
-		int(contactsHundred.loaded.passed),
-		int(contactsOne.changedAndFound.passed),
-		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
-		int(cacheHundred.passed));
+	std::printf("Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
+				"contact change=%d/%d "
+				"cache=%d/%d.\n",
+				int(dialogsOne.passed), int(dialogsHundred.passed),
+				int(dialogsState), int(contactsOne.loaded.passed),
+				int(contactsHundred.loaded.passed),
+				int(contactsOne.changedAndFound.passed),
+				int(contactsHundred.changedAndFound.passed),
+				int(cacheOne.passed), int(cacheHundred.passed));
 	std::printf("Outcome: %s\n", passed ? "PASS" : "FAIL");
 	std::printf("DESKTOP_SCALE_REPORT_END\n");
 	std::fflush(stdout);
