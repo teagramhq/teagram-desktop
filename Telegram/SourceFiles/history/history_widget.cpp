@@ -220,7 +220,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QWindow>
 #include <QtGui/QAction>
-#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QTimer>
 
@@ -3497,17 +3496,34 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_attachMenuBuildCountForRegressionTest;
-	auto buildTimer = QElapsedTimer();
-	buildTimer.start();
+	const auto recordBuildCpuTime = [=](std::optional<qint64> startedAt,
+										std::optional<qint64> finishedAt) {
+		if (!startedAt || !finishedAt || (*finishedAt < *startedAt)) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
+		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				   >= 0) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				= std::max(
+					_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest,
+					*finishedAt - *startedAt);
+		}
+	};
+	const auto buildStartedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
 	const auto recordBuildCallback = gsl::finally([&] {
-		_attachMenuBuildMaxCallbackNanosecondsForRegressionTest
-			= std::max(_attachMenuBuildMaxCallbackNanosecondsForRegressionTest,
-					   buildTimer.nsecsElapsed());
+		recordBuildCpuTime(buildStartedAt,
+						   Tests::ThreadCpuTimeNanosecondsForRegressionTest());
 	});
 	auto buildStepMeasured = crl::guard(this, [=](qint64 nanoseconds) {
-		_attachMenuBuildMaxCallbackNanosecondsForRegressionTest
-			= std::max(_attachMenuBuildMaxCallbackNanosecondsForRegressionTest,
-					   nanoseconds);
+		if (nanoseconds < 0) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
+		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				   >= 0) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				= std::max(
+					_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest,
+					nanoseconds);
+		}
 	});
 #endif
 	auto menu = InlineBots::MakeAttachBotsMenu(
@@ -6769,12 +6785,13 @@ int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
 }
 
 qint64
-HistoryWidget::attachMenuBuildMaxCallbackNanosecondsForRegressionTest() const {
-	return _attachMenuBuildMaxCallbackNanosecondsForRegressionTest;
+HistoryWidget::attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest()
+	const {
+	return _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest;
 }
 
-void HistoryWidget::resetAttachMenuBuildCallbackTimeForRegressionTest() {
-	_attachMenuBuildMaxCallbackNanosecondsForRegressionTest = 0;
+void HistoryWidget::resetAttachMenuBuildCallbackCpuTimeForRegressionTest() {
+	_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
 }
 
 bool HistoryWidget::attachMenuExistsForRegressionTest() const {

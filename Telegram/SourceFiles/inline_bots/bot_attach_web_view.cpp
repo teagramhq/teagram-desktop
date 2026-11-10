@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "inline_bots/bot_attach_web_view.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "api/api_blocked_peers.h"
 #include "api/api_common.h"
 #include "api/api_sending.h"
@@ -825,43 +829,62 @@ void BotAction::handleKeyPress(not_null<QKeyEvent*> e) {
 	}
 }
 
+template <typename Callback>
+void MeasureAttachMenuBuildStep(Fn<void(qint64)> buildStepMeasured,
+								Callback &&callback) {
+	if (!buildStepMeasured) {
+		callback();
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const auto startedAt = Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	callback();
+	const auto finishedAt = Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto elapsed = startedAt && finishedAt && (*finishedAt >= *startedAt)
+							 ? (*finishedAt - *startedAt)
+							 : qint64(-1);
+	buildStepMeasured(elapsed);
+#else
+	auto timer = QElapsedTimer();
+	timer.start();
+	callback();
+	buildStepMeasured(timer.nsecsElapsed());
+#endif
+}
+
 void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
 							not_null<Window::SessionController *> controller,
 							Fn<Api::SendAction()> actionFactory,
 							const AttachWebViewBot &bot,
 							Fn<void(qint64)> buildStepMeasured) {
-	auto timer = QElapsedTimer();
-	if (buildStepMeasured) {
-		timer.start();
-	}
-	const auto bots = &controller->session().attachWebView();
-	const auto callback = [=] {
-		bots->open({
-			.bot = bot.user,
-			.context = {
-				.controller = controller,
-				.action = actionFactory(),
-			},
-			.source = InlineBots::WebViewSourceAttachMenu(),
-		});
-	};
-	auto action = base::make_unique_q<BotAction>(
-		menu->menu(), controller->uiShow(), menu->menu()->st(), bot, callback);
-	action->forceShown()
-		| rpl::on_next(
-			[=](bool shown) {
-				if (shown) {
-					menu->setAutoHiding(false);
-				} else {
-					menu->hideAnimated();
-					menu->setAutoHiding(true);
-				}
-			},
-			action->lifetime());
-	menu->addAction(std::move(action));
-	if (buildStepMeasured) {
-		buildStepMeasured(timer.nsecsElapsed());
-	}
+	MeasureAttachMenuBuildStep(buildStepMeasured, [&] {
+		const auto bots = &controller->session().attachWebView();
+		const auto callback = [=] {
+			bots->open({
+				.bot = bot.user,
+				.context = {
+					.controller = controller,
+					.action = actionFactory(),
+				},
+				.source = InlineBots::WebViewSourceAttachMenu(),
+			});
+		};
+		auto action
+			= base::make_unique_q<BotAction>(menu->menu(), controller->uiShow(),
+											 menu->menu()->st(), bot, callback);
+		action->forceShown()
+			| rpl::on_next(
+				[=](bool shown) {
+					if (shown) {
+						menu->setAutoHiding(false);
+					} else {
+						menu->hideAnimated();
+						menu->setAutoHiding(true);
+					}
+				},
+				action->lifetime());
+		menu->addAction(std::move(action));
+	});
 }
 
 class AttachBotsMenuPopulation final : public QObject {
@@ -887,14 +910,8 @@ class AttachBotsMenuPopulation final : public QObject {
 							   _bots[_position++], _buildStepMeasured);
 		if (_position == int(_bots.size())) {
 			if (_buildComplete) {
-				auto timer = QElapsedTimer();
-				if (_buildStepMeasured) {
-					timer.start();
-				}
-				_buildComplete();
-				if (_buildStepMeasured) {
-					_buildStepMeasured(timer.nsecsElapsed());
-				}
+				MeasureAttachMenuBuildStep(_buildStepMeasured,
+										   [&] { _buildComplete(); });
 			}
 			deleteLater();
 		} else {
@@ -3279,14 +3296,8 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 				0, raw,
 				[buildComplete = std::move(buildComplete),
 				 buildStepMeasured = std::move(buildStepMeasured)] {
-					auto timer = QElapsedTimer();
-					if (buildStepMeasured) {
-						timer.start();
-					}
-					buildComplete();
-					if (buildStepMeasured) {
-						buildStepMeasured(timer.nsecsElapsed());
-					}
+					MeasureAttachMenuBuildStep(buildStepMeasured,
+											   [&] { buildComplete(); });
 				});
 		}
 	} else {
@@ -3295,14 +3306,8 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 								   buildStepMeasured);
 		}
 		if (buildComplete) {
-			auto timer = QElapsedTimer();
-			if (buildStepMeasured) {
-				timer.start();
-			}
-			buildComplete();
-			if (buildStepMeasured) {
-				buildStepMeasured(timer.nsecsElapsed());
-			}
+			MeasureAttachMenuBuildStep(buildStepMeasured,
+									   [&] { buildComplete(); });
 		}
 	}
 	return result;

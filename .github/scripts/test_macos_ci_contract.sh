@@ -807,7 +807,7 @@ Cache access latency regression: cache=cache seeded_directories=125 seeded_files
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_switch_work_ns=40000000 switch_scheduler_preemption_proven=1 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_ns=12000000 attach_menu_update_hover_callback_ns=1000000 attach_menu_uncached_peer_callback_ns=20000000 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=45000000 under_50ms=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=45000000 max_switch_work_ns=40000000 max_switch_index=11 max_switch_peer_id=1051 switch_scheduler_preemption_proven=1 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=45000000 under_50ms=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
@@ -912,17 +912,17 @@ sed 's/max_switch_ns=45000000/max_switch_ns=92000000/' \
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-runner-switch.log" >/dev/null 2>&1; then
 	contract_fail 'A slow wall-clock switch with bounded main-thread work and scheduler proof must pass.'
 fi
-sed 's/attach_menu_first_hover_callback_ns=12000000/attach_menu_first_hover_callback_ns=50000000/' \
+sed 's/attach_menu_first_hover_callback_cpu_ns=12000000/attach_menu_first_hover_callback_cpu_ns=50000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-first-hover.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-first-hover.log" >/dev/null 2>&1; then
   contract_fail 'First-hover attach-menu callback must reject 50 ms or more.'
 fi
-sed 's/attach_menu_update_hover_callback_ns=1000000/attach_menu_update_hover_callback_ns=50000000/' \
+sed 's/attach_menu_update_hover_callback_cpu_ns=1000000/attach_menu_update_hover_callback_cpu_ns=50000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-update-hover.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-update-hover.log" >/dev/null 2>&1; then
   contract_fail 'Updated attach-menu callback must reject 50 ms or more.'
 fi
-sed 's/attach_menu_uncached_peer_callback_ns=20000000/attach_menu_uncached_peer_callback_ns=50000000/' \
+sed 's/attach_menu_uncached_peer_callback_cpu_ns=20000000/attach_menu_uncached_peer_callback_cpu_ns=50000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-uncached-hover.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-uncached-hover.log" >/dev/null 2>&1; then
   contract_fail 'Uncached attach-menu callback must reject 50 ms or more.'
@@ -980,6 +980,8 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+history_widget='Telegram/SourceFiles/history/history_widget.cpp'
+attach_menu_builder='Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp'
 awk '
   /RunCacheChatSwitchLatencyRegression\(/ { copy = 1 }
   copy && /^struct FirstDialogsHandlerRegressionResult/ { exit }
@@ -988,8 +990,10 @@ awk '
 grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'QEvent::Enter' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'setAttachBotsForRegressionTest' "$temp_dir/cache-chat-switch-regression.cpp" \
-  && grep -Fq 'controller->showPeerHistory(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
-  || contract_fail 'The cache regression must time attach-menu hover after a chat switch.'
+  && grep -Fq 'showPeerHistoryMeasured(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'maxChatSwitchIndex' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'maxChatSwitchPeerId' "$temp_dir/cache-chat-switch-regression.cpp" \
+  || contract_fail 'The cache regression must measure attach-menu hover and identify the slowest peer switch.'
 grep -Fq 'processWorkNanoseconds' "$native_harness" \
   && grep -Fq 'kMaxStartupHeartbeatProcessWorkNanoseconds' "$native_harness" \
   && grep -Fq 'mainThreadWorkNanoseconds' "$native_harness" \
@@ -1015,9 +1019,9 @@ grep -Fq 'showPeerHistoryMeasured(history);' \
   "$temp_dir/uncached-peer-switches.cpp" \
   || contract_fail 'Every uncached peer switch must contribute main-thread and scheduler evidence.'
 grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
-  && grep -Fq 'attachMenuFirstHoverCallbackNanoseconds' "$native_harness" \
-  && grep -Fq 'attachMenuInvalidationCallbackNanoseconds' "$native_harness" \
-  && grep -Fq 'attachMenuUncachedPeerCallbackNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuFirstHoverCallbackCpuNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuInvalidationCallbackCpuNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuUncachedPeerCallbackCpuNanoseconds' "$native_harness" \
   && grep -Fq 'kAttachMenuRegressionBotCount = 20' "$native_harness" \
   && grep -Fq 'attachMenuBuildDeferredUntilHover' "$native_harness" \
   && grep -Fq 'buildDeferredUntilEnter' "$native_harness" \
@@ -1026,6 +1030,9 @@ grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuContainsBotForRegressionTest' "$native_harness" \
   && grep -Fq 'attachMenuCacheSizeForRegressionTest() <= 8' "$native_harness" \
   || contract_fail 'The attach-menu regression must defer and gate first hover, uncached peers, bot invalidation, and bounded caching.'
+grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$history_widget" \
+  && grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$attach_menu_builder" \
+  || contract_fail 'Attach-menu construction callbacks must be measured with the main-thread CPU clock.'
 awk '
   /void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer\(/ { copy = 1 }
   copy && /^void HistoryWidget::touchAttachBotsMenuCache\(/ { exit }
