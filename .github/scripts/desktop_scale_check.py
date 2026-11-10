@@ -217,9 +217,11 @@ def _baseline_exceptions(records):
     additions = {}
     for scenario in SCENARIOS:
         rows = [record["scenarios"][scenario] for record in records]
-        if any(
-            row["one_stalls"] or row["hundred_stalls"] for row in rows
-        ):
+        stalled_runs = [
+            int(bool(row["one_stalls"] or row["hundred_stalls"]))
+            for row in rows
+        ]
+        if statistics.median(stalled_runs) > 0.5:
             reason = "dev runs exceed the 50 ms main-thread budget"
         elif _median(records, scenario, "hundred_ms") > (
             MAX_SCALE_RATIO * _median(records, scenario, "one_ms")

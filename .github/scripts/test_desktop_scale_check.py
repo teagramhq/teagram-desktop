@@ -998,6 +998,26 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertIn("Additional dev-baseline exceptions", summary)
         self.assertIn("::warning::", "\n".join(scale_check.format_annotations(result)))
 
+    def test_one_dev_stall_does_not_exempt_a_head_regression(self):
+        self.require_implementation()
+        scenario = "cache read x100"
+        records = [make_sample() for _ in range(20)]
+        records[0]["scenarios"][scenario]["one_stalls"] = 1
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"][scenario]["hundred_ms"] = 16.0
+
+        result = scale_check.evaluate(records, base, head)
+
+        self.assertNotIn(scenario, result["exceptions"])
+        self.assertTrue(
+            any(
+                scenario in failure and "1.5x" in failure
+                for failure in result["failures"]
+            )
+        )
+
     def test_static_baseline_exceptions_are_report_only(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
