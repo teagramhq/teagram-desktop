@@ -23,6 +23,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/fields/input_field.h"
 #include "mtproto/sender.h"
 
+#include <QtCore/QDateTime>
+
 #include <vector>
 
 enum class SendMediaType;
@@ -294,6 +296,13 @@ public:
 		std::optional<bool> show = std::nullopt);
 	[[nodiscard]] Ui::ChatTheme *customChatTheme() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	struct AttachMenuBuildCallbackMeasurementForRegressionTest final {
+		QDateTime startedAt;
+		qint64 wallNanoseconds = -1;
+		qint64 mainThreadCpuNanoseconds = -1;
+		qint64 processCpuNanoseconds = -1;
+	};
+
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
@@ -307,7 +316,11 @@ public:
 	[[nodiscard]] int attachMenuBuildCountForRegressionTest() const;
 	[[nodiscard]] qint64
 	attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest() const;
-	void resetAttachMenuBuildCallbackCpuTimeForRegressionTest();
+	[[nodiscard]] qint64
+	attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest() const;
+	[[nodiscard]] const std::vector<AttachMenuBuildCallbackMeasurementForRegressionTest> &
+	attachMenuBuildCallbackMeasurementsForRegressionTest() const;
+	void resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
 	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
 	[[nodiscard]] bool
 	attachMenuContainsBotForRegressionTest(UserId botId) const;
@@ -1017,6 +1030,9 @@ private:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _attachMenuBuildCountForRegressionTest = 0;
 	qint64 _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
+	qint64 _attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;
+	std::vector<AttachMenuBuildCallbackMeasurementForRegressionTest>
+		_attachMenuBuildCallbackMeasurementsForRegressionTest;
 #endif
 
 	DragArea::Areas _attachDragAreas;

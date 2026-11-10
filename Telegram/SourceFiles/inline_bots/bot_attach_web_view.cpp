@@ -97,7 +97,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
-#include <QElapsedTimer>
+#include <QtCore/QDateTime>
+#include <QtCore/QElapsedTimer>
+
 #include <QSvgRenderer>
 #include <QTimer>
 
@@ -830,25 +832,52 @@ void BotAction::handleKeyPress(not_null<QKeyEvent*> e) {
 }
 
 template <typename Callback>
-void MeasureAttachMenuBuildStep(Fn<void(qint64)> buildStepMeasured,
-								Callback &&callback) {
+void MeasureAttachMenuBuildStep(
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured,
+	Callback &&callback) {
 	if (!buildStepMeasured) {
 		callback();
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	const auto startedAt = Tests::ThreadCpuTimeNanosecondsForRegressionTest();
-	callback();
-	const auto finishedAt = Tests::ThreadCpuTimeNanosecondsForRegressionTest();
-	const auto elapsed = startedAt && finishedAt && (*finishedAt >= *startedAt)
-							 ? (*finishedAt - *startedAt)
-							 : qint64(-1);
-	buildStepMeasured(elapsed);
-#else
+	const auto threadStartedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto processStartedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto startedAt = QDateTime::currentDateTime();
 	auto timer = QElapsedTimer();
 	timer.start();
 	callback();
-	buildStepMeasured(timer.nsecsElapsed());
+	const auto wallNanoseconds = timer.nsecsElapsed();
+	const auto threadFinishedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto processFinishedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto elapsedCpu = [](std::optional<qint64> started,
+							   std::optional<qint64> finished) {
+		return started && finished && (*finished >= *started)
+				   ? (*finished - *started)
+				   : qint64(-1);
+	};
+	buildStepMeasured({
+		.startedAt = startedAt,
+		.wallNanoseconds = wallNanoseconds,
+		.mainThreadCpuNanoseconds
+		= elapsedCpu(threadStartedAt, threadFinishedAt),
+		.processCpuNanoseconds
+		= elapsedCpu(processStartedAt, processFinishedAt),
+	});
+#else
+	const auto startedAt = QDateTime::currentDateTime();
+	auto timer = QElapsedTimer();
+	timer.start();
+	callback();
+	const auto elapsed = timer.nsecsElapsed();
+	buildStepMeasured({
+		.startedAt = startedAt,
+		.wallNanoseconds = elapsed,
+		.mainThreadCpuNanoseconds = elapsed,
+	});
 #endif
 }
 
@@ -856,7 +885,7 @@ void AddAttachBotMenuAction(not_null<Ui::DropdownMenu *> menu,
 							not_null<Window::SessionController *> controller,
 							Fn<Api::SendAction()> actionFactory,
 							const AttachWebViewBot &bot,
-							Fn<void(qint64)> buildStepMeasured) {
+							Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
 	MeasureAttachMenuBuildStep(buildStepMeasured, [&] {
 		const auto bots = &controller->session().attachWebView();
 		const auto callback = [=] {
@@ -894,7 +923,7 @@ class AttachBotsMenuPopulation final : public QObject {
 							 Fn<Api::SendAction()> actionFactory,
 							 std::vector<AttachWebViewBot> bots,
 							 Fn<void()> buildComplete,
-							 Fn<void(qint64)> buildStepMeasured)
+				 Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured)
 		: QObject(menu), _menu(menu), _controller(controller),
 		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)),
 		  _buildComplete(std::move(buildComplete)),
@@ -3178,7 +3207,7 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
 	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete,
-	Fn<void(qint64)> buildStepMeasured) {
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
 	auto result = std::make_unique<Ui::DropdownMenu>(
 		parent,
 		st::dropdownMenuWithIcons);

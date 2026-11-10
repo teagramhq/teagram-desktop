@@ -3496,35 +3496,62 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_attachMenuBuildCountForRegressionTest;
-	const auto recordBuildCpuTime = [=](std::optional<qint64> startedAt,
-										std::optional<qint64> finishedAt) {
-		if (!startedAt || !finishedAt || (*finishedAt < *startedAt)) {
+	const auto recordBuildMeasurement = [=](
+							InlineBots::AttachBotsMenuBuildStepTiming timing) {
+		if (timing.mainThreadCpuNanoseconds < 0) {
 			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
 		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
 				   >= 0) {
 			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
 				= std::max(
 					_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest,
-					*finishedAt - *startedAt);
+					timing.mainThreadCpuNanoseconds);
 		}
+		if (timing.wallNanoseconds < 0) {
+			_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = -1;
+		} else if (_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest
+				   >= 0) {
+			_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest
+				= std::max(
+					_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest,
+					timing.wallNanoseconds);
+		}
+		_attachMenuBuildCallbackMeasurementsForRegressionTest.push_back({
+			.startedAt = timing.startedAt,
+			.wallNanoseconds = timing.wallNanoseconds,
+			.mainThreadCpuNanoseconds = timing.mainThreadCpuNanoseconds,
+			.processCpuNanoseconds = timing.processCpuNanoseconds,
+		});
 	};
-	const auto buildStartedAt
+	auto buildTimer = QElapsedTimer();
+	const auto buildThreadStartedAt
 		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto buildProcessStartedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto buildStartedAt = QDateTime::currentDateTime();
 	const auto recordBuildCallback = gsl::finally([&] {
-		recordBuildCpuTime(buildStartedAt,
-						   Tests::ThreadCpuTimeNanosecondsForRegressionTest());
+		const auto buildWallNanoseconds = buildTimer.nsecsElapsed();
+		const auto buildThreadFinishedAt
+			= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+		const auto buildProcessFinishedAt
+			= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+		const auto elapsedCpu = [](std::optional<qint64> started,
+							   std::optional<qint64> finished) {
+			return started && finished && (*finished >= *started)
+					   ? (*finished - *started)
+					   : qint64(-1);
+		};
+		recordBuildMeasurement({
+			.startedAt = buildStartedAt,
+			.wallNanoseconds = buildWallNanoseconds,
+			.mainThreadCpuNanoseconds
+			= elapsedCpu(buildThreadStartedAt, buildThreadFinishedAt),
+			.processCpuNanoseconds
+			= elapsedCpu(buildProcessStartedAt, buildProcessFinishedAt),
+		});
 	});
-	auto buildStepMeasured = crl::guard(this, [=](qint64 nanoseconds) {
-		if (nanoseconds < 0) {
-			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
-		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
-				   >= 0) {
-			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
-				= std::max(
-					_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest,
-					nanoseconds);
-		}
-	});
+	auto buildStepMeasured = crl::guard(this, recordBuildMeasurement);
+	buildTimer.start();
 #endif
 	auto menu = InlineBots::MakeAttachBotsMenu(
 		this, controller(), peer, [=] { return prepareSendAction({}); },
@@ -6790,8 +6817,22 @@ HistoryWidget::attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest()
 	return _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest;
 }
 
-void HistoryWidget::resetAttachMenuBuildCallbackCpuTimeForRegressionTest() {
+qint64
+HistoryWidget::attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest()
+	const {
+	return _attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest;
+}
+
+const std::vector<
+	HistoryWidget::AttachMenuBuildCallbackMeasurementForRegressionTest> &
+HistoryWidget::attachMenuBuildCallbackMeasurementsForRegressionTest() const {
+	return _attachMenuBuildCallbackMeasurementsForRegressionTest;
+}
+
+void HistoryWidget::resetAttachMenuBuildCallbackMeasurementsForRegressionTest() {
 	_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
+	_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;
+	_attachMenuBuildCallbackMeasurementsForRegressionTest.clear();
 }
 
 bool HistoryWidget::attachMenuExistsForRegressionTest() const {

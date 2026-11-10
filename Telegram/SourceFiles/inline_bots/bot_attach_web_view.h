@@ -17,6 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/attach/attach_bot_webview.h"
 #include "ui/rp_widget.h"
 
+#include <QtCore/QDateTime>
+
 namespace Data {
 class Thread;
 } // namespace Data
@@ -59,6 +61,13 @@ class Storage;
 enum class AttachBotsMenuBuildMode {
 	Immediate,
 	Incremental,
+};
+
+struct AttachBotsMenuBuildStepTiming final {
+	QDateTime startedAt;
+	qint64 wallNanoseconds = -1;
+	qint64 mainThreadCpuNanoseconds = -1;
+	qint64 processCpuNanoseconds = -1;
 };
 
 enum class PeerType : uint8 {
@@ -537,7 +546,7 @@ private:
 	Fn<void()> composeFieldMigrated = nullptr,
 	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate,
 	Fn<void()> buildComplete = nullptr,
-	Fn<void(qint64)> buildStepMeasured = nullptr);
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured = nullptr);
 
 class MenuBotIcon final : public Ui::RpWidget {
 public:

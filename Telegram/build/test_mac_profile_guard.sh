@@ -108,6 +108,16 @@ cache_stall_is_runner_scheduling() {
 		&& (( ${#trace} == samples ))
 }
 
+attach_menu_callback_latency_is_allowed() {
+	local wall_ns="$1"
+	local main_thread_work_ns="$2"
+	local scheduler_preemption_proven="$3"
+	(( wall_ns >= 0 \
+		&& main_thread_work_ns >= 0 \
+		&& main_thread_work_ns < 50000000 \
+		&& (wall_ns < 50000000 || scheduler_preemption_proven == 1) ))
+}
+
 fixture_unchanged() {
 	local fixture="$1"
 	local is_file="$2"
@@ -1564,7 +1574,7 @@ if ! grep -E -q \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1608,6 +1618,22 @@ if (( attach_menu_first_hover_callback_cpu_ns >= 50000000 )); then
 	echo "first-hover attach-menu callback main-thread CPU exceeded 50 ms." >&2
 	exit 1
 fi
+local attach_menu_scheduler_preemption_proven
+attach_menu_scheduler_preemption_proven="$(sed -E \
+	's/.*attach_menu_scheduler_preemption_proven=([01]).*/\1/' \
+	<<<"$chat_switch_evidence")"
+local attach_menu_first_hover_callback_wall_ns
+attach_menu_first_hover_callback_wall_ns="$(sed -E \
+	's/.*attach_menu_first_hover_callback_wall_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! attach_menu_callback_latency_is_allowed \
+	"$attach_menu_first_hover_callback_wall_ns" \
+	"$attach_menu_first_hover_callback_cpu_ns" \
+	"$attach_menu_scheduler_preemption_proven"; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu callback exceeded 50 ms without scheduler proof or exceeded its main-thread CPU budget." >&2
+	exit 1
+fi
 local attach_menu_update_hover_callback_cpu_ns
 attach_menu_update_hover_callback_cpu_ns="$(sed -E \
 	's/.*attach_menu_update_hover_callback_cpu_ns=([0-9]+).*/\1/' \
@@ -1617,11 +1643,33 @@ if (( attach_menu_update_hover_callback_cpu_ns >= 50000000 )); then
 	echo "updated attach-menu callback main-thread CPU exceeded 50 ms." >&2
 	exit 1
 fi
+local attach_menu_update_hover_callback_wall_ns
+attach_menu_update_hover_callback_wall_ns="$(sed -E \
+	's/.*attach_menu_update_hover_callback_wall_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! attach_menu_callback_latency_is_allowed \
+	"$attach_menu_update_hover_callback_wall_ns" \
+	"$attach_menu_update_hover_callback_cpu_ns" \
+	"$attach_menu_scheduler_preemption_proven"; then
+	cat "$AUTH_LOG" >&2
+	echo "updated attach-menu callback exceeded 50 ms without scheduler proof or exceeded its main-thread CPU budget." >&2
+	exit 1
+fi
 local attach_menu_uncached_peer_callback_cpu_ns
 attach_menu_uncached_peer_callback_cpu_ns="$(sed -E 's/.*attach_menu_uncached_peer_callback_cpu_ns=([0-9]+).*/\1/' <<<"$chat_switch_evidence")"
 if (( attach_menu_uncached_peer_callback_cpu_ns >= 50000000 )); then
 	cat "$AUTH_LOG" >&2
 	echo "uncached attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_callback_wall_ns
+attach_menu_uncached_peer_callback_wall_ns="$(sed -E 's/.*attach_menu_uncached_peer_callback_wall_ns=([0-9]+).*/\1/' <<<"$chat_switch_evidence")"
+if ! attach_menu_callback_latency_is_allowed \
+	"$attach_menu_uncached_peer_callback_wall_ns" \
+	"$attach_menu_uncached_peer_callback_cpu_ns" \
+	"$attach_menu_scheduler_preemption_proven"; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu callback exceeded 50 ms without scheduler proof or exceeded its main-thread CPU budget." >&2
 	exit 1
 fi
 if ! grep -F -q \
