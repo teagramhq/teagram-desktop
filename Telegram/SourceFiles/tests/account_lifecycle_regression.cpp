@@ -798,7 +798,7 @@ bool CaptureChannelSaveRequestForRegressionTest(
 		return false;
 	}
 	if (((constructor == mtpc_messages_getHistory)
-			|| (constructor == mtpc_messages_searchGlobal))
+		 || (constructor == mtpc_messages_searchGlobal))
 		&& !capture->desktopScaleDataQueriesOnly) {
 		return false;
 	}
@@ -14795,13 +14795,11 @@ MeasureDesktopScaleAction(Action action, bool reportOnlyStalls = false) {
 }
 
 template <typename Request, typename Action>
-[[nodiscard]] DesktopScaleActionSample
-ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
-						  uint32 expectedConstructor,
-						  const typename Request::ResponseType &result,
-						  Action action, bool reportOnlyStalls = false,
-						  Fn<void()> beforeAction = {},
-						  Fn<void()> afterAction = {}) {
+[[nodiscard]] DesktopScaleActionSample ApplyDesktopScaleResponse(
+	ChannelSaveRequestCapture &capture, uint32 expectedConstructor,
+	const typename Request::ResponseType &result, Action action,
+	bool reportOnlyStalls = false, Fn<void()> beforeAction = {},
+	Fn<void()> afterAction = {}) {
 	const auto request
 		= std::find_if(capture.requests.begin(), capture.requests.end(),
 					   [=](const auto &entry) {
@@ -14829,17 +14827,19 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 	result.write(response.reply);
 	auto done = std::move(request->callbacks.done);
 	capture.requests.erase(request);
-	return MeasureDesktopScaleAction([&] {
-		if (beforeAction) {
-			beforeAction();
-		}
-		const auto finish = gsl::finally([&] {
-			if (afterAction) {
-				afterAction();
+	return MeasureDesktopScaleAction(
+		[&] {
+			if (beforeAction) {
+				beforeAction();
 			}
-		});
-		return done(response) && action();
-	}, reportOnlyStalls);
+			const auto finish = gsl::finally([&] {
+				if (afterAction) {
+					afterAction();
+				}
+			});
+			return done(response) && action();
+		},
+		reportOnlyStalls);
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -14928,17 +14928,15 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 [[nodiscard]] MTPPhoto DesktopScalePhoto(int64 id) {
 	return MTP_photo(
 		MTP_flags(0), MTP_long(id), MTP_long(0), MTP_bytes(), MTP_int(1),
-		MTP_vector<MTPPhotoSize>({MTP_photoSize(
-			MTP_string("s"), MTP_int(160), MTP_int(120), MTP_int(1))}),
+		MTP_vector<MTPPhotoSize>({MTP_photoSize(MTP_string("s"), MTP_int(160),
+												MTP_int(120), MTP_int(1))}),
 		MTPVector<MTPVideoSize>(), MTP_int(1));
 }
 
-[[nodiscard]] MTPMessage DesktopScaleTimelineMessage(
-		PeerId peerId,
-		UserId senderId,
-		MsgId messageId,
-		int date,
-		bool withMedia = false) {
+[[nodiscard]] MTPMessage DesktopScaleTimelineMessage(PeerId peerId,
+													 UserId senderId,
+													 MsgId messageId, int date,
+													 bool withMedia = false) {
 	const auto media = [&] {
 		if (!withMedia) {
 			return MTP_messageMediaEmpty();
@@ -14953,8 +14951,9 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 			RegressionReactionDocument(200'000'000 + messageId.bare),
 			MTPVector<MTPDocument>(), MTPPhoto(), MTPint(), MTPint());
 	}();
-	const auto flags = MTPDmessage::Flag::f_from_id
-		| (withMedia ? MTPDmessage::Flag::f_media : MTPDmessage::Flag());
+	const auto flags
+		= MTPDmessage::Flag::f_from_id
+		  | (withMedia ? MTPDmessage::Flag::f_media : MTPDmessage::Flag());
 	return MTP_message(
 		MTP_flags(flags), MTP_int(messageId.bare),
 		peerToMTP(peerFromUser(senderId)), MTPint(), MTPstring(),
@@ -14968,11 +14967,9 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
 }
 
-[[nodiscard]] MTPmessages_Messages DesktopScaleMessagesReply(
-		QVector<MTPMessage> messages,
-		int totalCount,
-		bool channel,
-		int pts = 1) {
+[[nodiscard]] MTPmessages_Messages
+DesktopScaleMessagesReply(QVector<MTPMessage> messages, int totalCount,
+						  bool channel, int pts = 1) {
 	const auto messageVector = MTP_vector<MTPMessage>(std::move(messages));
 	const auto topics = MTP_vector<MTPForumTopic>(0);
 	const auto chats = MTP_vector<MTPChat>(0);
@@ -14982,9 +14979,9 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 			MTP_flags(0), MTP_int(pts), MTP_int(totalCount), MTPint(),
 			messageVector, topics, chats, users);
 	}
-	return MTP_messages_messagesSlice(
-		MTP_flags(0), MTP_int(totalCount), MTPint(), MTPint(),
-		MTPSearchPostsFlood(), messageVector, topics, chats, users);
+	return MTP_messages_messagesSlice(MTP_flags(0), MTP_int(totalCount),
+									  MTPint(), MTPint(), MTPSearchPostsFlood(),
+									  messageVector, topics, chats, users);
 }
 
 [[nodiscard]] MTPChat DesktopScaleGroup(ChannelId id) {
@@ -15000,10 +14997,8 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 		MTPlong(), MTPlong(), MTPlong());
 }
 
-[[nodiscard]] bool SeedDesktopScaleDialogs(
-		Data::Session &data,
-		UserId firstId,
-		int count) {
+[[nodiscard]] bool SeedDesktopScaleDialogs(Data::Session &data, UserId firstId,
+										   int count) {
 	auto users = DesktopScaleUsers(firstId, count, false);
 	auto dialogs = DesktopScaleDialogs(firstId, count);
 	auto messages = DesktopScaleMessages(firstId, count);
@@ -15061,62 +15056,41 @@ template <typename Action>
 	return cleaned && passed && retained;
 }
 
-[[nodiscard]] bool ApplyDesktopScaleHistoryReply(
-	not_null<History*> history,
-	MsgId aroundId,
-	Data::LoadDirection direction,
-	const MTPmessages_Messages &reply) {
-	auto parsed = Api::ParseHistoryResult(
-		history->peer,
-		aroundId,
-		direction,
-		reply);
+[[nodiscard]] bool
+ApplyDesktopScaleHistoryReply(not_null<History *> history, MsgId aroundId,
+							  Data::LoadDirection direction,
+							  const MTPmessages_Messages &reply) {
+	auto parsed
+		= Api::ParseHistoryResult(history->peer, aroundId, direction, reply);
 	const auto hasMessages = !parsed.messageIds.empty();
-	history->messages().addSlice(
-		std::move(parsed.messageIds),
-		parsed.noSkipRange,
-		parsed.fullCount);
+	history->messages().addSlice(std::move(parsed.messageIds),
+								 parsed.noSkipRange, parsed.fullCount);
 	return hasMessages;
 }
 
-[[nodiscard]] bool SeedDesktopScaleHistory(
-	not_null<History*> history,
-	MsgId firstMessageId,
-	int loadedCount,
-	int totalCount,
-	UserId senderId,
-	bool channel,
-	bool withMedia,
-	int dateBase = 0,
-	MsgId dateOrigin = 0) {
+[[nodiscard]] bool SeedDesktopScaleHistory(not_null<History *> history,
+										   MsgId firstMessageId,
+										   int loadedCount, int totalCount,
+										   UserId senderId, bool channel,
+										   bool withMedia, int dateBase = 0,
+										   MsgId dateOrigin = 0) {
 	for (auto loaded = 0; loaded != loadedCount;) {
-		const auto pageCount = std::min(
-			kDesktopScalePageSize,
-			loadedCount - loaded);
+		const auto pageCount
+			= std::min(kDesktopScalePageSize, loadedCount - loaded);
 		const auto highId = firstMessageId.bare + loadedCount - loaded - 1;
 		const auto lowId = highId - pageCount + 1;
 		auto messages = QVector<MTPMessage>();
 		messages.reserve(pageCount);
 		for (auto id = highId; id >= lowId; --id) {
-			const auto date = dateBase
-				? dateBase + int(id - dateOrigin.bare)
-				: int(id);
+			const auto date
+				= dateBase ? dateBase + int(id - dateOrigin.bare) : int(id);
 			messages.push_back(DesktopScaleTimelineMessage(
-				history->peer->id,
-				senderId,
-				MsgId(id),
-				date,
-				withMedia));
+				history->peer->id, senderId, MsgId(id), date, withMedia));
 		}
-		const auto reply = DesktopScaleMessagesReply(
-			std::move(messages),
-			totalCount,
-			channel);
+		const auto reply = DesktopScaleMessagesReply(std::move(messages),
+													 totalCount, channel);
 		if (!ApplyDesktopScaleHistoryReply(
-				history,
-				MsgId(lowId),
-				Data::LoadDirection::Before,
-				reply)) {
+				history, MsgId(lowId), Data::LoadDirection::Before, reply)) {
 			return false;
 		}
 		loaded += pageCount;
@@ -15124,22 +15098,23 @@ template <typename Action>
 	return true;
 }
 
-void RequestDesktopScaleHistoryPage(
-	not_null<Main::Session*> session,
-	not_null<History*> history,
-	MsgId offsetId,
-	Data::LoadDirection direction) {
+void RequestDesktopScaleHistoryPage(not_null<Main::Session *> session,
+									not_null<History *> history, MsgId offsetId,
+									Data::LoadDirection direction) {
 	const auto offset = [&] {
 		switch (direction) {
 		case Data::LoadDirection::Before:
-		case Data::LoadDirection::Around: return offsetId;
-		case Data::LoadDirection::After: return offsetId + 1;
+		case Data::LoadDirection::Around:
+			return offsetId;
+		case Data::LoadDirection::After:
+			return offsetId + 1;
 		}
 		Unexpected("Direction in RequestDesktopScaleHistoryPage");
 	}();
 	const auto addOffset = [&] {
 		switch (direction) {
-		case Data::LoadDirection::Before: return 0;
+		case Data::LoadDirection::Before:
+			return 0;
 		case Data::LoadDirection::Around:
 			return -kDesktopScalePageSize / 2;
 		case Data::LoadDirection::After:
@@ -15147,43 +15122,36 @@ void RequestDesktopScaleHistoryPage(
 		}
 		Unexpected("Direction in RequestDesktopScaleHistoryPage");
 	}();
-	session->api().request(MTPmessages_GetHistory(
-		history->peer->input(),
-		MTP_int(int(offset.bare)),
-		MTP_int(0),
-		MTP_int(addOffset),
-		MTP_int(kDesktopScalePageSize),
-		MTP_int(0),
-		MTP_int(0),
-		MTP_long(0)
-	)).done([=](const Api::HistoryRequestResult &reply) {
-		if (!ApplyDesktopScaleHistoryReply(history, offsetId, direction, reply)) {
-			std::fprintf(stderr,
-				"Desktop scale check failed: history page had no messages.\n");
-		}
-	}).send();
+	session->api()
+		.request(MTPmessages_GetHistory(
+			history->peer->input(), MTP_int(int(offset.bare)), MTP_int(0),
+			MTP_int(addOffset), MTP_int(kDesktopScalePageSize), MTP_int(0),
+			MTP_int(0), MTP_long(0)))
+		.done([=](const Api::HistoryRequestResult &reply) {
+			if (!ApplyDesktopScaleHistoryReply(history, offsetId, direction,
+											   reply)) {
+				std::fprintf(stderr, "Desktop scale check failed: history page "
+									 "had no messages.\n");
+			}
+		})
+		.send();
 }
 
-[[nodiscard]] bool DesktopScaleHistoryCountMatches(
-	not_null<History*> history,
-	MsgId aroundId,
-	int expectedCount) {
-	const auto snapshot = history->messages().snapshot({ aroundId, 0, 0 });
+[[nodiscard]] bool DesktopScaleHistoryCountMatches(not_null<History *> history,
+												   MsgId aroundId,
+												   int expectedCount) {
+	const auto snapshot = history->messages().snapshot({aroundId, 0, 0});
 	return snapshot.count && (*snapshot.count == expectedCount);
 }
 
-[[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
-		Main::Domain &domain,
-		int alreadyLoaded,
-		UserId selfId,
-		UserId peerId,
-		bool reportOnlyStalls = false) {
+[[nodiscard]] DesktopScaleActionSample
+RunDesktopScaleHistoryPage(Main::Domain &domain, int alreadyLoaded,
+						   UserId selfId, UserId peerId,
+						   bool reportOnlyStalls = false) {
 	constexpr auto kHistoryCount = 1'000'000;
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain,
-		selfId,
-		[&](auto account) {
+		domain, selfId, [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15191,14 +15159,8 @@ void RequestDesktopScaleHistoryPage(
 			}));
 			const auto history = data.history(peerFromUser(peerId));
 			const auto firstLoadedId = MsgId(kHistoryCount - alreadyLoaded + 1);
-			if (!SeedDesktopScaleHistory(
-					history,
-					firstLoadedId,
-					alreadyLoaded,
-					kHistoryCount,
-					peerId,
-					false,
-					false)) {
+			if (!SeedDesktopScaleHistory(history, firstLoadedId, alreadyLoaded,
+										 kHistoryCount, peerId, false, false)) {
 				return false;
 			}
 
@@ -15206,15 +15168,13 @@ void RequestDesktopScaleHistoryPage(
 				.instance = &account->mtp(),
 				.desktopScaleDataQueriesOnly = true,
 			};
-			const auto restoreCapture = gsl::finally(
-				[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
-					gChannelSaveRequestCapture = previous;
-				});
-			RequestDesktopScaleHistoryPage(
-				&session,
-				history,
-				firstLoadedId,
-				Data::LoadDirection::Before);
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			RequestDesktopScaleHistoryPage(&session, history, firstLoadedId,
+										   Data::LoadDirection::Before);
 			const auto firstPageId = firstLoadedId.bare - kDesktopScalePageSize;
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
@@ -15222,24 +15182,20 @@ void RequestDesktopScaleHistoryPage(
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerFromUser(peerId), peerId, MsgId(id), int(id)));
 			}
-			const auto reply = DesktopScaleMessagesReply(
-				std::move(messages),
-				kHistoryCount,
-				false);
+			const auto reply = DesktopScaleMessagesReply(std::move(messages),
+														 kHistoryCount, false);
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-				capture,
-				mtpc_messages_getHistory,
-				reply,
-				[] { return true; },
+				capture, mtpc_messages_getHistory, reply, [] { return true; },
 				reportOnlyStalls);
 			auto pageApplied = true;
 			for (auto id = firstPageId; id != firstLoadedId.bare; ++id) {
 				pageApplied = pageApplied
-					&& (data.message(peerFromUser(peerId), MsgId(id)) != nullptr);
+							  && (data.message(peerFromUser(peerId), MsgId(id))
+								  != nullptr);
 			}
 			sample.passed = sample.passed && pageApplied
-				&& DesktopScaleHistoryCountMatches(
-					history, firstLoadedId, kHistoryCount);
+							&& DesktopScaleHistoryCountMatches(
+								history, firstLoadedId, kHistoryCount);
 			return sample.passed;
 		});
 	if (!created) {
@@ -15248,12 +15204,10 @@ void RequestDesktopScaleHistoryPage(
 	return sample;
 }
 
-[[nodiscard]] DesktopScaleActionSample RunDesktopScaleDateHistoryPage(
-		Main::Domain &domain,
-		int alreadyLoaded,
-		UserId selfId,
-		UserId peerId,
-		bool reportOnlyStalls = false) {
+[[nodiscard]] DesktopScaleActionSample
+RunDesktopScaleDateHistoryPage(Main::Domain &domain, int alreadyLoaded,
+							   UserId selfId, UserId peerId,
+							   bool reportOnlyStalls = false) {
 	constexpr auto kHistoryCount = 1'000'000;
 	constexpr auto kDateOffset = int64(500'000);
 	const auto targetId = MsgId(kDateOffset);
@@ -15261,9 +15215,7 @@ void RequestDesktopScaleHistoryPage(
 	const auto dateBase = int(targetDate.startOfDay().toSecsSinceEpoch());
 	auto sample = DesktopScaleActionSample();
 	const auto created = WithDesktopScaleAccount(
-		domain,
-		selfId,
-		[&](auto account) {
+		domain, selfId, [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15271,15 +15223,8 @@ void RequestDesktopScaleHistoryPage(
 			}));
 			const auto history = data.history(peerFromUser(peerId));
 			if (!SeedDesktopScaleHistory(
-					history,
-					MsgId(kDateOffset + 100),
-					alreadyLoaded - 1,
-					kHistoryCount,
-					peerId,
-					false,
-					false,
-					dateBase,
-					targetId)) {
+					history, MsgId(kDateOffset + 100), alreadyLoaded - 1,
+					kHistoryCount, peerId, false, false, dateBase, targetId)) {
 				return false;
 			}
 
@@ -15287,51 +15232,41 @@ void RequestDesktopScaleHistoryPage(
 				.instance = &account->mtp(),
 				.desktopScaleDataQueriesOnly = true,
 			};
-			const auto restoreCapture = gsl::finally(
-				[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
-					gChannelSaveRequestCapture = previous;
-				});
-			auto resolvedPeer = PeerData*();
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			auto resolvedPeer = PeerData * ();
 			auto resolvedId = MsgId();
 			session.api().resolveJumpToDate(
-				Dialogs::Key(history),
-				targetDate,
-				[&](not_null<PeerData*> peer, MsgId id) {
+				Dialogs::Key(history), targetDate,
+				[&](not_null<PeerData *> peer, MsgId id) {
 					resolvedPeer = peer;
 					resolvedId = id;
 				});
 			const auto targetMessage = DesktopScaleTimelineMessage(
-				peerFromUser(peerId),
-				peerId,
-				targetId,
-				dateBase + 1);
+				peerFromUser(peerId), peerId, targetId, dateBase + 1);
 			const auto resolvedReply = MTP_messages_messages(
-				MTP_vector<MTPMessage>({ targetMessage }),
-				MTP_vector<MTPForumTopic>(0),
-				MTP_vector<MTPChat>(0),
+				MTP_vector<MTPMessage>({targetMessage}),
+				MTP_vector<MTPForumTopic>(0), MTP_vector<MTPChat>(0),
 				MTP_vector<MTPUser>(0));
 			const auto resolvedSample
 				= ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-					capture,
-					mtpc_messages_getHistory,
-					resolvedReply,
-					[] { return true; },
-					reportOnlyStalls);
+					capture, mtpc_messages_getHistory, resolvedReply,
+					[] { return true; }, reportOnlyStalls);
 			if ((resolvedPeer != history->peer.get())
 				|| (resolvedId != targetId)
-				|| !DesktopScaleHistoryCountMatches(
-					history, targetId, kHistoryCount)) {
-				std::fprintf(stderr,
-					"Desktop scale check failed: jump-to-date did not resolve its "
-					"target message.\n");
+				|| !DesktopScaleHistoryCountMatches(history, targetId,
+													kHistoryCount)) {
+				std::fprintf(stderr, "Desktop scale check failed: jump-to-date "
+									 "did not resolve its "
+									 "target message.\n");
 				return false;
 			}
 
-			RequestDesktopScaleHistoryPage(
-				&session,
-				history,
-				targetId,
-				Data::LoadDirection::Around);
+			RequestDesktopScaleHistoryPage(&session, history, targetId,
+										   Data::LoadDirection::Around);
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
 			for (auto id = kDateOffset - 50; id < kDateOffset; ++id) {
@@ -15339,46 +15274,40 @@ void RequestDesktopScaleHistoryPage(
 					peerFromUser(peerId), peerId, MsgId(id),
 					dateBase + int(id - kDateOffset)));
 			}
-			for (auto id = kDateOffset + 1;
-				 id <= kDateOffset + 50;
-				 ++id) {
+			for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerFromUser(peerId), peerId, MsgId(id),
 					dateBase + int(id - kDateOffset)));
 			}
-			const auto reply = DesktopScaleMessagesReply(
-				std::move(messages),
-				kHistoryCount,
-				false);
+			const auto reply = DesktopScaleMessagesReply(std::move(messages),
+														 kHistoryCount, false);
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-				capture,
-				mtpc_messages_getHistory,
-				reply,
-				[] { return true; },
+				capture, mtpc_messages_getHistory, reply, [] { return true; },
 				reportOnlyStalls);
 			auto pageApplied = true;
 			for (auto id = kDateOffset - 50; id < kDateOffset; ++id) {
 				pageApplied = pageApplied
-					&& (data.message(peerFromUser(peerId), MsgId(id)) != nullptr);
+							  && (data.message(peerFromUser(peerId), MsgId(id))
+								  != nullptr);
 			}
 			for (auto id = kDateOffset + 1; id <= kDateOffset + 50; ++id) {
 				pageApplied = pageApplied
-					&& (data.message(peerFromUser(peerId), MsgId(id)) != nullptr);
+							  && (data.message(peerFromUser(peerId), MsgId(id))
+								  != nullptr);
 			}
-			sample.nanoseconds = resolvedSample.nanoseconds
-				&& sample.nanoseconds
-				? std::optional<qint64>(
-					*resolvedSample.nanoseconds + *sample.nanoseconds)
-				: std::nullopt;
-			sample.mainThreadStepsOverBudget
-				= SumDesktopScaleStalls({
-					resolvedSample.mainThreadStepsOverBudget,
-					sample.mainThreadStepsOverBudget,
-				});
-			sample.passed = resolvedSample.passed && sample.passed
-				&& pageApplied
-				&& DesktopScaleHistoryCountMatches(
-					history, targetId, kHistoryCount);
+			sample.nanoseconds
+				= resolvedSample.nanoseconds && sample.nanoseconds
+					  ? std::optional<qint64>(*resolvedSample.nanoseconds
+											  + *sample.nanoseconds)
+					  : std::nullopt;
+			sample.mainThreadStepsOverBudget = SumDesktopScaleStalls({
+				resolvedSample.mainThreadStepsOverBudget,
+				sample.mainThreadStepsOverBudget,
+			});
+			sample.passed
+				= resolvedSample.passed && sample.passed && pageApplied
+				  && DesktopScaleHistoryCountMatches(history, targetId,
+													 kHistoryCount);
 			return sample.passed;
 		});
 	if (!created) {
@@ -15392,55 +15321,42 @@ struct DesktopScaleSearchUpdateSamples final {
 	DesktopScaleActionSample updateBurst;
 };
 
-[[nodiscard]] QVector<MTPMessage> DesktopScaleSearchMessages(
-		UserId firstId,
-		int dialogCount) {
+[[nodiscard]] QVector<MTPMessage> DesktopScaleSearchMessages(UserId firstId,
+															 int dialogCount) {
 	auto messages = QVector<MTPMessage>();
 	messages.reserve(kDesktopScalePageSize);
 	for (auto i = 0; i != kDesktopScalePageSize; ++i) {
 		const auto userId = UserId(firstId.bare + (i % dialogCount));
 		const auto messageId = MsgId(1'000'000 + i / dialogCount);
-		messages.push_back(DesktopScaleTimelineMessage(
-			peerFromUser(userId),
-			userId,
-			messageId,
-			int(base::unixtime::now())));
+		messages.push_back(
+			DesktopScaleTimelineMessage(peerFromUser(userId), userId, messageId,
+										int(base::unixtime::now())));
 	}
 	return messages;
 }
 
-[[nodiscard]] QVector<MTPMessage> DesktopScaleUpdateBurstMessages(
-		UserId firstId,
-		int dialogCount) {
+[[nodiscard]] QVector<MTPMessage>
+DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
 	constexpr auto kUpdateCount = 1'000;
 	auto messages = QVector<MTPMessage>();
 	messages.reserve(kUpdateCount);
 	for (auto i = 0; i != kUpdateCount; ++i) {
 		const auto userId = UserId(firstId.bare + (i % dialogCount));
 		messages.push_back(DesktopScaleTimelineMessage(
-			peerFromUser(userId),
-			userId,
-			MsgId(2'000'000 + i),
+			peerFromUser(userId), userId, MsgId(2'000'000 + i),
 			int(base::unixtime::now())));
 	}
 	return messages;
 }
 
-[[nodiscard]] DesktopScaleSearchUpdateSamples
-RunDesktopScaleSearchAndUpdates(
-		Main::Domain &domain,
-		int dialogCount,
-		UserId selfId,
-		UserId firstId,
-		bool reportOnlySearchStalls = false,
-		bool reportOnlyUpdateStalls = false) {
+[[nodiscard]] DesktopScaleSearchUpdateSamples RunDesktopScaleSearchAndUpdates(
+	Main::Domain &domain, int dialogCount, UserId selfId, UserId firstId,
+	bool reportOnlySearchStalls = false, bool reportOnlyUpdateStalls = false) {
 	constexpr auto kSearchResultCount = kDesktopScalePageSize;
 	constexpr auto kUpdateCount = 1'000;
 	auto samples = DesktopScaleSearchUpdateSamples();
 	const auto created = WithDesktopScaleAccount(
-		domain,
-		selfId,
-		[&](auto account) {
+		domain, selfId, [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			if (!SeedDesktopScaleDialogs(data, firstId, dialogCount)) {
@@ -15455,16 +15371,15 @@ RunDesktopScaleSearchAndUpdates(
 				.instance = &account->mtp(),
 				.desktopScaleDataQueriesOnly = true,
 			};
-			const auto restoreCapture = gsl::finally(
-				[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
-					gChannelSaveRequestCapture = previous;
-				});
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
 			auto searchResult = std::optional<Api::GlobalMediaResult>();
 			const auto offsetPeer = peerFromUser(firstId);
 			session.api().requestGlobalMedia(
-				Storage::SharedMediaType::kCount,
-				u"desktop scale check"_q,
-				0,
+				Storage::SharedMediaType::kCount, u"desktop scale check"_q, 0,
 				Data::MessagePosition{
 					.fullId = FullMsgId(offsetPeer, MsgId(1)),
 				},
@@ -15473,23 +15388,20 @@ RunDesktopScaleSearchAndUpdates(
 				});
 			const auto searchReply = DesktopScaleMessagesReply(
 				DesktopScaleSearchMessages(firstId, dialogCount),
-				kSearchResultCount,
-				false);
+				kSearchResultCount, false);
 			samples.search
 				= ApplyDesktopScaleResponse<MTPmessages_SearchGlobal>(
-					capture,
-					mtpc_messages_searchGlobal,
-					searchReply,
-					[] { return true; },
-					reportOnlySearchStalls);
-			const auto searchApplied = searchResult
-				&& (searchResult->messageIds.size() == kSearchResultCount)
-				&& std::all_of(
-					searchResult->messageIds.begin(),
-					searchResult->messageIds.end(),
-					[&](const auto &position) {
-						return data.message(position.fullId) != nullptr;
-					});
+					capture, mtpc_messages_searchGlobal, searchReply,
+					[] { return true; }, reportOnlySearchStalls);
+			const auto searchApplied
+				= searchResult
+				  && (searchResult->messageIds.size() == kSearchResultCount)
+				  && std::all_of(searchResult->messageIds.begin(),
+								 searchResult->messageIds.end(),
+								 [&](const auto &position) {
+									 return data.message(position.fullId)
+											!= nullptr;
+								 });
 			samples.search.passed = samples.search.passed && searchApplied;
 
 			session.updates().completeInitialStateForRegressionTest(1);
@@ -15498,30 +15410,22 @@ RunDesktopScaleSearchAndUpdates(
 				= DesktopScaleUpdateBurstMessages(firstId, dialogCount);
 			const auto difference = MTP_updates_difference(
 				MTP_vector<MTPMessage>(std::move(updateMessages)),
-				MTP_vector<MTPEncryptedMessage>(0),
-				MTP_vector<MTPUpdate>(0),
-				MTP_vector<MTPChat>(0),
-				MTP_vector<MTPUser>(0),
-				MTP_updates_state(
-					MTP_int(1 + kUpdateCount),
-					MTP_int(0),
-					MTP_int(int(base::unixtime::now())),
-					MTP_int(0),
-					MTP_int(0)));
+				MTP_vector<MTPEncryptedMessage>(0), MTP_vector<MTPUpdate>(0),
+				MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0),
+				MTP_updates_state(MTP_int(1 + kUpdateCount), MTP_int(0),
+								  MTP_int(int(base::unixtime::now())),
+								  MTP_int(0), MTP_int(0)));
 			samples.updateBurst
 				= ApplyDesktopScaleResponse<MTPupdates_GetDifference>(
-					capture,
-					mtpc_updates_getDifference,
-					difference,
-					[] { return true; },
-					reportOnlyUpdateStalls);
+					capture, mtpc_updates_getDifference, difference,
+					[] { return true; }, reportOnlyUpdateStalls);
 			auto updatesApplied = true;
 			for (auto i = 0; i != kUpdateCount; ++i) {
 				const auto userId = UserId(firstId.bare + (i % dialogCount));
 				updatesApplied = updatesApplied
-					&& (data.message(
-						peerFromUser(userId),
-						MsgId(2'000'000 + i)) != nullptr);
+								 && (data.message(peerFromUser(userId),
+												  MsgId(2'000'000 + i))
+									 != nullptr);
 			}
 			samples.updateBurst.passed
 				= samples.updateBurst.passed && updatesApplied;
@@ -15800,14 +15704,9 @@ template <typename Function>
 }
 #endif // Q_OS_LINUX
 
-[[nodiscard]] DesktopScaleFsSample
-RunDesktopScaleGroupMediaHistoryPage(
-		Main::Domain &domain,
-		int alreadyLoaded,
-		UserId selfId,
-		UserId senderId,
-		ChannelId channelId,
-		bool reportOnlyStalls = false) {
+[[nodiscard]] DesktopScaleFsSample RunDesktopScaleGroupMediaHistoryPage(
+	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId senderId,
+	ChannelId channelId, bool reportOnlyStalls = false) {
 	auto sample = DesktopScaleFsSample();
 #if defined(Q_OS_LINUX)
 	const auto startCounting
@@ -15818,14 +15717,12 @@ RunDesktopScaleGroupMediaHistoryPage(
 			"DesktopScaleCheckStopDirectoryCount");
 	if (!startCounting || !stopCounting) {
 		std::fprintf(stderr, "Desktop scale check failed: directory counter "
-					 "preload is missing.\n");
+							 "preload is missing.\n");
 		return sample;
 	}
 	constexpr auto kHistoryCount = 200'000;
 	const auto created = WithDesktopScaleAccount(
-		domain,
-		selfId,
-		[&](auto account) {
+		domain, selfId, [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
 			data.processUsers(MTP_vector<MTPUser>({
@@ -15835,22 +15732,15 @@ RunDesktopScaleGroupMediaHistoryPage(
 				DesktopScaleGroup(channelId),
 			}));
 			if (!channel || !channel->asChannel()) {
-				std::fprintf(
-					stderr,
-					"Desktop scale check failed: group fixture was not loaded.\n");
+				std::fprintf(stderr, "Desktop scale check failed: group "
+									 "fixture was not loaded.\n");
 				return false;
 			}
 			const auto peerId = peerFromChannel(channelId);
 			const auto history = data.history(peerId);
 			const auto firstLoadedId = MsgId(kHistoryCount - alreadyLoaded + 1);
-			if (!SeedDesktopScaleHistory(
-					history,
-					firstLoadedId,
-					alreadyLoaded,
-					kHistoryCount,
-					senderId,
-					true,
-					true)) {
+			if (!SeedDesktopScaleHistory(history, firstLoadedId, alreadyLoaded,
+										 kHistoryCount, senderId, true, true)) {
 				return false;
 			}
 
@@ -15858,15 +15748,13 @@ RunDesktopScaleGroupMediaHistoryPage(
 				.instance = &account->mtp(),
 				.desktopScaleDataQueriesOnly = true,
 			};
-			const auto restoreCapture = gsl::finally(
-				[previous = std::exchange(gChannelSaveRequestCapture, &capture)] {
-					gChannelSaveRequestCapture = previous;
-				});
-			RequestDesktopScaleHistoryPage(
-				&session,
-				history,
-				firstLoadedId,
-				Data::LoadDirection::Before);
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			RequestDesktopScaleHistoryPage(&session, history, firstLoadedId,
+										   Data::LoadDirection::Before);
 			const auto firstPageId = firstLoadedId.bare - kDesktopScalePageSize;
 			auto messages = QVector<MTPMessage>();
 			messages.reserve(kDesktopScalePageSize);
@@ -15874,17 +15762,12 @@ RunDesktopScaleGroupMediaHistoryPage(
 				messages.push_back(DesktopScaleTimelineMessage(
 					peerId, senderId, MsgId(id), int(id), true));
 			}
-			const auto reply = DesktopScaleMessagesReply(
-				std::move(messages),
-				kHistoryCount,
-				true);
+			const auto reply = DesktopScaleMessagesReply(std::move(messages),
+														 kHistoryCount, true);
 			static_cast<DesktopScaleActionSample &>(sample)
 				= ApplyDesktopScaleResponse<MTPmessages_GetHistory>(
-					capture,
-					mtpc_messages_getHistory,
-					reply,
-					[] { return true; },
-					reportOnlyStalls,
+					capture, mtpc_messages_getHistory, reply,
+					[] { return true; }, reportOnlyStalls,
 					[&] { startCounting(); },
 					[&] { sample.directoryEnumerations = stopCounting(); });
 
@@ -15900,13 +15783,13 @@ RunDesktopScaleGroupMediaHistoryPage(
 				}
 			}
 			pageApplied = pageApplied && (photos == kDesktopScalePageSize / 2)
-				&& (documents == kDesktopScalePageSize / 2);
+						  && (documents == kDesktopScalePageSize / 2);
 			sample.passed = sample.passed && pageApplied
-				&& DesktopScaleHistoryCountMatches(
-					history, firstLoadedId, kHistoryCount)
-				&& (sample.directoryEnumerations == 0);
+							&& DesktopScaleHistoryCountMatches(
+								history, firstLoadedId, kHistoryCount)
+							&& (sample.directoryEnumerations == 0);
 			return sample.passed;
-	});
+		});
 	if (!created) {
 		sample.passed = false;
 	}
@@ -16189,8 +16072,7 @@ int RunDesktopScaleCheck() {
 		  && groupHundred.passed && searchOne.search.passed
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
-		  && (*blockingStalls == 0)
-		  && (cacheOne.directoryEnumerations == 0)
+		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
 		  && (groupHundred.directoryEnumerations == 0);
@@ -16306,10 +16188,11 @@ int RunDesktopScaleCheck() {
 		int(contactsOne.changedAndFound.passed),
 		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),
 		int(cacheHundred.passed), int(historyOne.passed),
-		int(historyHundred.passed), int(dateOne.passed), int(dateHundred.passed),
-		int(groupOne.passed), int(groupHundred.passed),
+		int(historyHundred.passed), int(dateOne.passed),
+		int(dateHundred.passed), int(groupOne.passed), int(groupHundred.passed),
 		int(searchOne.search.passed), int(searchHundred.search.passed),
-		int(searchOne.updateBurst.passed), int(searchHundred.updateBurst.passed));
+		int(searchOne.updateBurst.passed),
+		int(searchHundred.updateBurst.passed));
 	std::printf("Outcome: %s\n", passed ? "PASS" : "FAIL");
 	std::printf("DESKTOP_SCALE_REPORT_END\n");
 	std::fflush(stdout);
