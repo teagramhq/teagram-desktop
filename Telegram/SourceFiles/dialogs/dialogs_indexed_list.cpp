@@ -19,10 +19,13 @@ constexpr auto kSearchPrefixLength = 8;
 } // namespace
 
 IndexedList::IndexedList(SortMode sortMode, FilterId filterId,
-						 bool usePrefixSearch)
+						 PrefixSearch prefixSearch)
 	: _sortMode(sortMode), _filterId(filterId),
-	  _usePrefixSearch(usePrefixSearch), _list(sortMode, filterId),
-	  _empty(sortMode, filterId) {}
+	  _usePrefixSearch(prefixSearch == PrefixSearch::Enabled),
+	  _list(sortMode, filterId), _empty(sortMode, filterId) {
+	Expects(prefixSearch == PrefixSearch::Disabled
+			|| sortMode == SortMode::Name);
+}
 
 void IndexedList::addNameRow(QChar ch, Row *row) {
 	Expects(_sortMode == SortMode::Name);
@@ -50,27 +53,42 @@ void IndexedList::removeNameRow(QChar ch, Row *row) {
 	Expects(row != nullptr);
 
 	const auto i = _nameIndex.find(ch);
-	if (i == _nameIndex.end()) {
-		return;
-	}
+	Expects(i != _nameIndex.end());
 	auto &rows = i->second;
-	// Rows of a letter are ordered by index, so look the row up by index
-	// first. The scan is only for a row that was moved in the main list.
 	const auto position
 		= std::lower_bound(rows.begin(), rows.end(), row->index(),
 						   [](const not_null<Row *> &entry, int index) {
 							   return entry->index() < index;
 						   });
-	if (position != rows.end() && position->get() == row) {
-		rows.erase(position);
-		return;
+	Expects(position != rows.end() && position->get() == row);
+	rows.erase(position);
+	if (rows.empty()) {
+		_nameIndex.erase(i);
 	}
-	const auto found = std::find_if(
-		rows.begin(), rows.end(),
-		[row](const not_null<Row *> &entry) { return entry.get() == row; });
-	if (found != rows.end()) {
-		rows.erase(found);
+}
+
+void IndexedList::addNameRows(Row *row) {
+	Expects(_sortMode == SortMode::Name);
+	Expects(row != nullptr);
+	const auto [i, inserted]
+		= _indexedLettersByRow.emplace(row, std::vector<QChar>());
+	Expects(inserted);
+	auto &letters = i->second;
+	for (const auto &ch : row->entry()->chatListFirstLetters()) {
+		addNameRow(ch, row);
+		letters.push_back(ch);
 	}
+}
+
+void IndexedList::removeNameRows(Row *row) {
+	Expects(_sortMode == SortMode::Name);
+	Expects(row != nullptr);
+	const auto i = _indexedLettersByRow.find(row);
+	Expects(i != _indexedLettersByRow.end());
+	for (const auto &ch : i->second) {
+		removeNameRow(ch, row);
+	}
+	_indexedLettersByRow.erase(i);
 }
 
 void IndexedList::updatePrefixSearchIndex(Row *row) {
@@ -123,11 +141,10 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 	}
 
 	auto result = RowsByLetter{ _list.addToEnd(key) };
-	for (const auto &ch : key.entry()->chatListFirstLetters()) {
-		if (_sortMode == SortMode::Name) {
-			addNameRow(ch, result.main.get());
-			result.letters.emplace(ch, result.main);
-		} else {
+	if (_sortMode == SortMode::Name) {
+		addNameRows(result.main.get());
+	} else {
+		for (const auto &ch : key.entry()->chatListFirstLetters()) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
 				j = _index.emplace(ch, _sortMode, _filterId).first;
@@ -144,10 +161,10 @@ Row *IndexedList::addByName(Key key) {
 	if (!inserted) {
 		return row.get();
 	}
-	for (const auto &ch : key.entry()->chatListFirstLetters()) {
-		if (_sortMode == SortMode::Name) {
-			addNameRow(ch, row.get());
-		} else {
+	if (_sortMode == SortMode::Name) {
+		addNameRows(row.get());
+	} else {
+		for (const auto &ch : key.entry()->chatListFirstLetters()) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
 				j = _index.emplace(ch, _sortMode, _filterId).first;
@@ -177,14 +194,21 @@ bool IndexedList::updateHeight(Key key, float64 narrowRatio) {
 }
 
 void IndexedList::moveToTop(Key key) {
+	const auto row = _list.getRow(key);
+	if (!row) {
+		return;
+	}
+	if (_sortMode == SortMode::Name) {
+		removeNameRows(row);
+	}
 	if (_list.moveToTop(key)) {
-		const auto row = _list.getRow(key);
-		for (const auto &ch : key.entry()->chatListFirstLetters()) {
-			if (_sortMode == SortMode::Name) {
-				removeNameRow(ch, row);
-				addNameRow(ch, row);
-			} else if (auto it = _index.find(ch); it != _index.cend()) {
-				it->second.moveToTop(key);
+		if (_sortMode == SortMode::Name) {
+			addNameRows(row);
+		} else {
+			for (const auto &ch : key.entry()->chatListFirstLetters()) {
+				if (auto it = _index.find(ch); it != _index.cend()) {
+					it->second.moveToTop(key);
+				}
 			}
 		}
 	}
@@ -212,7 +236,7 @@ void IndexedList::peerNameChanged(
 
 	if (const auto history = peer->owner().historyLoaded(peer)) {
 		if (_sortMode == SortMode::Name) {
-			adjustByName(history, oldLetters);
+			adjustByName(history);
 		} else {
 			adjustNames(FilterId(), history, oldLetters);
 		}
@@ -230,23 +254,15 @@ void IndexedList::peerNameChanged(
 	}
 }
 
-void IndexedList::adjustByName(
-		Key key,
-		const base::flat_set<QChar> &oldLetters) {
+void IndexedList::adjustByName(Key key) {
 	Expects(_sortMode == SortMode::Name);
 
 	const auto mainRow = _list.getRow(key);
 	if (!mainRow) return;
 
-	// The letter rows are ordered by index, so the row leaves them
-	// before the main list moves it and joins them again afterwards.
-	for (const auto &ch : oldLetters) {
-		removeNameRow(ch, mainRow);
-	}
+	removeNameRows(mainRow);
 	_list.adjustByName(key);
-	for (const auto &ch : key.entry()->chatListFirstLetters()) {
-		addNameRow(ch, mainRow);
-	}
+	addNameRows(mainRow);
 	updatePrefixSearchIndex(mainRow);
 }
 
@@ -309,9 +325,7 @@ void IndexedList::remove(Key key, Row *replacedBy) {
 			return;
 		}
 		removePrefixSearchIndex(row);
-		for (const auto &ch : key.entry()->chatListFirstLetters()) {
-			removeNameRow(ch, row);
-		}
+		removeNameRows(row);
 		_list.remove(key, replacedBy);
 	} else {
 		if (_list.remove(key, replacedBy)) {
@@ -330,6 +344,7 @@ void IndexedList::clear() {
 	_nameIndex.clear();
 	_prefixSearchIndex.clear();
 	_searchKeysByRow.clear();
+	_indexedLettersByRow.clear();
 }
 
 std::vector<not_null<Row*>> IndexedList::filtered(

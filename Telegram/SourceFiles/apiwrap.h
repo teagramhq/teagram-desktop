@@ -737,6 +737,7 @@ private:
 
 	mtpRequestId _contactsRequestId = 0;
 	bool _contactsApplying = false;
+	std::vector<int> _contactsApplyOrder;
 	mtpRequestId _contactsStatusesRequestId = 0;
 
 	struct SharedMediaRequest {

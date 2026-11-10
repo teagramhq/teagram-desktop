@@ -107,8 +107,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
 
-#include <QtCore/QElapsedTimer>
-
 namespace {
 
 // Save draft to the cloud with 1 sec extra delay.
@@ -886,10 +884,6 @@ QString ApiWrap::exportDirectStoryLink(not_null<Data::Story*> story) {
 	return current;
 }
 
-namespace Data {
-extern qint64 gDiag[8];
-} // namespace Data
-
 void ApiWrap::requestContacts() {
 	if (_session->data().contactsLoaded().current() || _contactsRequestId
 		|| _contactsApplying) {
@@ -913,19 +907,68 @@ void ApiWrap::applyContacts(const MTPcontacts_Contacts &result, int offset) {
 	const auto &d = result.c_contacts_contacts();
 	const auto &users = d.vusers().v;
 	const auto count = int(users.size());
-	const auto till = std::min(offset + kContactsApplyChunk, count);
-	auto diagTimer = QElapsedTimer();
-	diagTimer.start();
-	for (auto i = offset; i != till; ++i) {
-		_session->data().processUser(users[i]);
+	if (offset == 0) {
+		auto keyed = std::vector<std::pair<QString, int>>();
+		keyed.reserve(count);
+		for (auto i = 0; i != count; ++i) {
+			const auto sortKey = users[i].match(
+				[&](const MTPDuser &user) {
+					if (user.is_deleted()) {
+						return TextUtilities::NameSortKey(
+							tr::lng_deleted(tr::now));
+					}
+					auto first = TextUtilities::SingleLine(
+						qs(user.vfirst_name().value_or_empty()));
+					auto last = TextUtilities::SingleLine(
+						qs(user.vlast_name().value_or_empty()));
+					if (const auto loaded
+						= _session->data().userLoaded(UserId(user.vid().v));
+						loaded) {
+						const auto hasLocalName
+							= !loaded->firstName.isEmpty()
+							  || !loaded->lastName.isEmpty();
+						if (user.is_min() && hasLocalName) {
+							first = loaded->firstName;
+							last = loaded->lastName;
+						} else if (!user.is_min() && first.isEmpty()
+								   && last.isEmpty() && hasLocalName) {
+							first = loaded->firstName;
+							last = loaded->lastName;
+						}
+					}
+					if (first.trimmed().isEmpty()) {
+						first = last;
+						last.clear();
+					}
+					return TextUtilities::NameSortKey(
+						langFullName(first, last));
+				},
+				[&](const MTPDuserEmpty &) {
+					return TextUtilities::NameSortKey(tr::lng_deleted(tr::now));
+				});
+			keyed.emplace_back(sortKey, i);
+		}
+		ranges::sort(keyed, [](const auto &a, const auto &b) {
+			return (a.first == b.first) ? (a.second < b.second)
+										: (a.first < b.first);
+		});
+		_contactsApplyOrder.clear();
+		_contactsApplyOrder.reserve(count);
+		for (const auto &[key, index] : keyed) {
+			_contactsApplyOrder.push_back(index);
+		}
 	}
-	Data::gDiag[0] += diagTimer.nsecsElapsed();
+	const auto till = std::min(offset + kContactsApplyChunk, count);
+	for (auto i = offset; i != till; ++i) {
+		_session->data().processUser(users[_contactsApplyOrder[i]]);
+	}
 	if (till < count) {
 		_contactsApplying = true;
 		crl::on_main(_session, [=] { applyContacts(result, till); });
 		return;
 	}
 	_contactsApplying = false;
+	_contactsApplyOrder.clear();
 	for (const auto &contact : d.vcontacts().v) {
 		if (contact.type() != mtpc_contact)
 			continue;

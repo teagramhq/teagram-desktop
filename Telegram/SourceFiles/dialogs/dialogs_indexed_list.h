@@ -20,43 +20,57 @@ namespace Dialogs {
 struct RowsByLetter;
 class Row;
 
+// clang-format off
 class IndexedList {
 public:
-  IndexedList(SortMode sortMode, FilterId filterId = 0,
-			  bool usePrefixSearch = false);
+	enum class PrefixSearch {
+		Disabled,
+		Enabled,
+	};
 
-  RowsByLetter addToEnd(Key key);
-  Row *addByName(Key key);
-  void adjustByDate(const RowsByLetter &links);
-  void moveToTop(Key key);
-  void freeze();
-  void unfreeze();
-  bool updateHeight(Key key, float64 narrowRatio);
-  bool updateHeights(float64 narrowRatio);
+	IndexedList(
+		SortMode sortMode,
+		FilterId filterId = 0,
+		PrefixSearch prefixSearch = PrefixSearch::Disabled);
 
-  // row must belong to this indexed list all().
-  void movePinned(Row *row, int deltaSign);
+	RowsByLetter addToEnd(Key key);
+	Row *addByName(Key key);
+	void adjustByDate(const RowsByLetter &links);
+	void moveToTop(Key key);
+	void freeze();
+	void unfreeze();
+	bool updateHeight(Key key, float64 narrowRatio);
+	bool updateHeights(float64 narrowRatio);
 
-  // For sortMode != SortMode::Date && != Complex
-  void peerNameChanged(not_null<PeerData *> peer,
-					   const base::flat_set<QChar> &oldChars);
+	// row must belong to this indexed list all().
+	void movePinned(Row *row, int deltaSign);
 
-  // For sortMode == SortMode::Date || == Complex
-  void peerNameChanged(FilterId filterId, not_null<PeerData *> peer,
-					   const base::flat_set<QChar> &oldChars);
+	// For sortMode != SortMode::Date && != Complex
+	void peerNameChanged(
+		not_null<PeerData*> peer,
+		const base::flat_set<QChar> &oldChars);
 
-  void remove(Key key, Row *replacedBy = nullptr);
-  void clear();
+	//For sortMode == SortMode::Date || == Complex
+	void peerNameChanged(
+		FilterId filterId,
+		not_null<PeerData*> peer,
+		const base::flat_set<QChar> &oldChars);
 
-  [[nodiscard]] const List &all() const { return _list; }
-  [[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
-	  if (_sortMode == SortMode::Name) {
-		  const auto i = _nameIndex.find(ch);
-		  return (i != _nameIndex.end()) ? &i->second : nullptr;
-	  }
-	  const auto i = _index.find(ch);
-	  return (i != _index.end()) ? &i->second.rows() : nullptr;
-  }
+	void remove(Key key, Row *replacedBy = nullptr);
+	void clear();
+
+	[[nodiscard]] const List &all() const {
+		return _list;
+	}
+	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(
+			QChar ch) const {
+		if (_sortMode == SortMode::Name) {
+			const auto i = _nameIndex.find(ch);
+			return (i != _nameIndex.end()) ? &i->second : nullptr;
+		}
+		const auto i = _index.find(ch);
+		return (i != _index.end()) ? &i->second.rows() : nullptr;
+	}
 	[[nodiscard]] std::vector<not_null<Row*>> filtered(
 		const QStringList &words) const;
 
@@ -90,16 +104,15 @@ public:
 	}
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
-private:
-	void adjustByName(
-		Key key,
-		const base::flat_set<QChar> &oldChars);
-	void adjustNames(
-		FilterId filterId,
-		not_null<History*> history,
-		const base::flat_set<QChar> &oldChars);
+	// clang-format on
+  private:
+	void adjustByName(Key key);
+	void adjustNames(FilterId filterId, not_null<History *> history,
+					 const base::flat_set<QChar> &oldChars);
 	void addNameRow(QChar ch, Row *row);
 	void removeNameRow(QChar ch, Row *row);
+	void addNameRows(Row *row);
+	void removeNameRows(Row *row);
 	void updatePrefixSearchIndex(Row *row);
 	void removePrefixSearchIndex(Row *row);
 
@@ -111,6 +124,7 @@ private:
 	base::flat_map<QChar, std::vector<not_null<Row *>>> _nameIndex;
 	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
 	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
+	std::unordered_map<Row *, std::vector<QChar>> _indexedLettersByRow;
 };
 
 } // namespace Dialogs
