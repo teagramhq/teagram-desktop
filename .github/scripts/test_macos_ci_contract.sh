@@ -794,13 +794,19 @@ awk '
 [[ -s "$temp_dir/cache-scheduler-proof.sh" ]] \
   || contract_fail 'The cache scheduler proof predicate was not found.'
 source "$temp_dir/cache-scheduler-proof.sh"
-local_scheduled_trace=RRRRRRRRRRRRRRRRRRRRRRRR
+local_insufficient_trace=RRRRRRRRRRRRRRRRRRRRRRRR
+local_scheduled_trace="$(printf 'R%.0s' {1..46})"
+if cache_stall_is_runner_scheduling \
+	230059167 25000000 50000000 1 1 24 24 0 0 0 \
+	"$local_insufficient_trace" 1; then
+	contract_fail 'A scheduler trace with fewer than one sample per 5 ms must fail closed.'
+fi
 if ! cache_stall_is_runner_scheduling \
-	230059167 25000000 50000000 1 1 24 24 0 0 0 "$local_scheduled_trace" 1; then
+	230059167 25000000 50000000 1 1 46 46 0 0 0 "$local_scheduled_trace" 1; then
   contract_fail 'A low-process-CPU all-runnable trace must remain explainable.'
 fi
 if cache_stall_is_runner_scheduling \
-	230059167 25000000 150000000 1 1 24 24 0 0 0 "$local_scheduled_trace" 1; then
+	230059167 25000000 150000000 1 1 46 46 0 0 0 "$local_scheduled_trace" 1; then
   contract_fail 'An all-runnable trace with high process CPU must not excuse a watchdog stall.'
 fi
 awk '
@@ -837,10 +843,10 @@ check_cache_latency_evidence() (
 if check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
   contract_fail 'Over-budget startup and chat-switch timings must fail the cache case.'
 fi
-sed -e 's/startup_stall_scheduler_samples=4/startup_stall_scheduler_samples=24/' \
-  -e 's/startup_stall_scheduler_running=0/startup_stall_scheduler_running=24/' \
+sed -e 's/startup_stall_scheduler_samples=4/startup_stall_scheduler_samples=46/' \
+  -e 's/startup_stall_scheduler_running=0/startup_stall_scheduler_running=46/' \
   -e 's/startup_stall_scheduler_waiting=4/startup_stall_scheduler_waiting=0/' \
-  -e 's/scheduler_trace=WWWW/scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/g' \
+  -e "s/scheduler_trace=WWWW/scheduler_trace=$local_scheduled_trace/g" \
   -e 's/startup_stall_scheduler_preemption_proven=0/startup_stall_scheduler_preemption_proven=1/' \
   -e 's/startup_uncovered_heartbeat_gaps=1/startup_uncovered_heartbeat_gaps=0/' \
   -e 's/startup_heartbeat_gap_coverage_proven=0/startup_heartbeat_gap_coverage_proven=1/' \
@@ -850,17 +856,17 @@ if ! check_cache_latency_evidence "$temp_dir/cache-latency-scheduled.log" >/dev/
   contract_fail 'Only a matching runnable scheduler trace may excuse a watchdog stall.'
 fi
 
-sed -e 's/startup_stall_scheduler_samples=24/startup_stall_scheduler_samples=0/' \
-  -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=0/' \
-  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=none/' \
+sed -e 's/startup_stall_scheduler_samples=46/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=46/startup_stall_scheduler_running=0/' \
+  -e "s/scheduler_trace=$local_scheduled_trace/scheduler_trace=none/g" \
   -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \
   "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-no-scheduler-proof.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-no-scheduler-proof.log" >/dev/null 2>&1; then
   contract_fail 'A watchdog stall without scheduler proof must not pass.'
 fi
-sed -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=23/' \
+sed -e 's/startup_stall_scheduler_running=46/startup_stall_scheduler_running=45/' \
   -e 's/startup_stall_scheduler_waiting=0/startup_stall_scheduler_waiting=1/' \
-  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRW/' \
+  -e "s/scheduler_trace=$local_scheduled_trace/scheduler_trace=${local_scheduled_trace%?}W/g" \
   -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \
   "$temp_dir/cache-latency-scheduled.log" > "$temp_dir/cache-latency-waiting.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-waiting.log" >/dev/null 2>&1; then
@@ -891,9 +897,9 @@ sed -e 's/max_main_thread_work_ns=25000000/max_main_thread_work_ns=30000000/' \
   -e 's/startup_stall_process_work_ns=50000000/startup_stall_process_work_ns=0/' \
   -e 's/startup_stall_started_at=2026-11-06T00:47:53.000Z/startup_stall_started_at=none/' \
   -e 's/startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z/startup_stall_heartbeat_gap_started_at=none/' \
-  -e 's/startup_stall_scheduler_samples=24/startup_stall_scheduler_samples=0/' \
-  -e 's/startup_stall_scheduler_running=24/startup_stall_scheduler_running=0/' \
-  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRR/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_scheduler_samples=46/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=46/startup_stall_scheduler_running=0/' \
+  -e "s/scheduler_trace=$local_scheduled_trace/scheduler_trace=none/g" \
   -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
   -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
   -e 's/startup_stall_scheduler_preemption_proven=1/startup_stall_scheduler_preemption_proven=0/' \

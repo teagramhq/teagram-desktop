@@ -87,10 +87,7 @@ cache_stall_is_runner_scheduling() {
 	local other="${10}"
 	local trace="${11}"
 	local stack_captured="${12}"
-	local required_samples=$(((stall_ns - 50000000) / 10000000))
-	if (( required_samples < 4 )); then
-		required_samples=4
-	fi
+	local required_samples=$((stall_ns / 5000000))
 	(( stall_ns >= 100000000 \
 		&& main_thread_work_ns >= 0 \
 		&& main_thread_work_ns < 100000000 \
