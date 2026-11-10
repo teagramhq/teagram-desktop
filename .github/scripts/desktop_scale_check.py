@@ -252,6 +252,22 @@ def evaluate(
     history = _valid_records(history)
     if absolute_budget_head_runs is None:
         absolute_budget_head_runs = head_runs
+    invalid_head_outcomes = []
+    if report_only:
+        invalid_head_outcomes = [
+            sample.get("outcome", "unknown")
+            if isinstance(sample, dict)
+            else "unknown"
+            for sample in head_runs
+            if not _is_valid_record(sample)
+        ]
+        base_runs = [sample for sample in base_runs if _is_valid_record(sample)]
+        head_runs = [sample for sample in head_runs if _is_valid_record(sample)]
+        absolute_budget_head_runs = [
+            sample
+            for sample in absolute_budget_head_runs
+            if _is_valid_record(sample)
+        ]
     if any(
         not _is_valid_record(sample)
         for sample in [*base_runs, *head_runs, *absolute_budget_head_runs]
@@ -271,6 +287,7 @@ def evaluate(
             "history_unavailable": history_unavailable,
             "history_malformed_count": history_malformed_count,
             "history_first_error": history_first_error,
+            "invalid_head_outcomes": invalid_head_outcomes,
         }
 
     baseline = latest_records(history)
@@ -360,6 +377,7 @@ def evaluate(
         "history_unavailable": history_unavailable,
         "history_malformed_count": history_malformed_count,
         "history_first_error": history_first_error,
+        "invalid_head_outcomes": invalid_head_outcomes,
     }
 
 
@@ -400,6 +418,13 @@ def format_summary(result, current_sample=None, retry_note=None):
                 "",
                 f"Skipped {result['history_malformed_count']} malformed dev scale "
                 f"artifact record(s). First error: {first_error}.",
+            ]
+        )
+    for outcome in result.get("invalid_head_outcomes", []):
+        lines.extend(
+            [
+                "",
+                f"app report Outcome: {outcome}; sample recorded as invalid.",
             ]
         )
     if retry_note:
@@ -629,8 +654,10 @@ def fetch_history(api_url, token, repository, records_output):
             sample = json.loads(contents)
             if not isinstance(sample, dict):
                 raise ScaleCheckError("sample is not a JSON object")
+            if sample.get("valid") is False:
+                continue
             if sample.get("valid") is not True:
-                raise ScaleCheckError("sample is not marked valid")
+                raise ScaleCheckError("sample has an invalid validity flag")
             if not _is_valid_record(sample):
                 raise ScaleCheckError("sample failed the schema validity checks")
         except (ScaleCheckError, json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -850,7 +877,7 @@ def _cmd_parse(args):
     )
     _write_json(args.output, sample)
     print(f"recorded={'true' if sample['valid'] else 'false'}")
-    return 0 if sample["valid"] else 2
+    return 0 if sample["valid"] else 3
 
 
 def _cmd_evaluate(args):
@@ -863,7 +890,14 @@ def _cmd_evaluate(args):
         else None
     )
     if args.include_head_in_history:
-        history = [*history, *head_runs]
+        history = [
+            *history,
+            *(
+                sample
+                for sample in head_runs
+                if not args.report_only or _is_valid_record(sample)
+            ),
+        ]
     result = evaluate(
         history,
         base_runs,

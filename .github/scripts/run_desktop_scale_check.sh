@@ -185,10 +185,18 @@ run_scale_check() {
 			:
 		else
 			local parse_status=$?
-			if (( run_status == 0 )); then
+			if (( parse_status == 3 )); then
+				local report_outcome
+				report_outcome="$(sed -n 's/^Outcome: //p' "$log_file" | tail -n 1)"
+				echo "::error::app report Outcome: $report_outcome; sample recorded as invalid."
+				if (( run_status == 0 )); then
+					return 3
+				fi
+			elif (( run_status == 0 )); then
 				return "$parse_status"
+			else
+				echo "::warning::Could not parse the report from scale run $label (status $parse_status); preserving app status $run_status."
 			fi
-			echo "::warning::Could not parse the report from scale run $label (status $parse_status); preserving app status $run_status."
 		fi
 	fi
 	if (( run_status != 0 )); then
@@ -204,15 +212,23 @@ append_summary() {
 	if [[ -s "$summary_file" ]]; then
 		cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
 		if [[ -n "$failed_step" ]]; then
-			printf '\nNo final timing verdict was produced because %s failed with status %s.\n' \
-				"$failed_step" "$failed_status" >> "$GITHUB_STEP_SUMMARY"
+			if (( failed_status == 3 )); then
+				printf '\nNo final timing verdict was produced because %s.\n' \
+					"$failed_step" >> "$GITHUB_STEP_SUMMARY"
+			else
+				printf '\nNo final timing verdict was produced because %s failed with status %s.\n' \
+					"$failed_step" "$failed_status" >> "$GITHUB_STEP_SUMMARY"
+			fi
 		fi
 	elif [[ -n "$failed_step" ]]; then
-		cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-### Desktop data scale check
-
-No timing verdict was produced because $failed_step failed with status $failed_status.
-EOF
+		printf '### Desktop data scale check\n\n' >> "$GITHUB_STEP_SUMMARY"
+		if (( failed_status == 3 )); then
+			printf 'No timing verdict was produced because %s.\n' \
+				"$failed_step" >> "$GITHUB_STEP_SUMMARY"
+		else
+			printf 'No timing verdict was produced because %s failed with status %s.\n' \
+				"$failed_step" "$failed_status" >> "$GITHUB_STEP_SUMMARY"
+		fi
 	else
 		cat >> "$GITHUB_STEP_SUMMARY" <<EOF
 ### Desktop data scale check
@@ -228,7 +244,15 @@ EOF
 record_run_failure() {
 	local label="$1"
 	local status="$2"
-	append_summary "scale run $label" "$status"
+	if (( status == 3 )); then
+		local report_outcome
+		report_outcome="$(sed -n 's/^Outcome: //p' "$RUNNER_TEMP/desktop-scale-$label.log" | tail -n 1)"
+		append_summary \
+			"app report Outcome: $report_outcome; sample recorded as invalid" \
+			"$status"
+	else
+		append_summary "scale run $label" "$status"
+	fi
 	echo "::error::Desktop scale check run $label failed with status $status."
 	return "$status"
 }

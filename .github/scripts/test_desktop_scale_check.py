@@ -160,6 +160,7 @@ def make_runner_harness(root, history=None):
                 sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
+            outcome = os.environ.get("MOCK_DOCKER_OUTCOME", "PASS")
             one = "13.00" if str(count) in slow_counts else "10.00"
             dialogs_stalls = "1" if str(count) in stall_counts else "0"
             print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
@@ -172,7 +173,7 @@ def make_runner_harness(root, history=None):
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
             Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
             Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
-            Outcome: PASS
+            Outcome: {outcome}
             DESKTOP_SCALE_REPORT_END\"\"\")
             if status:
                 sys.exit(status)
@@ -206,6 +207,7 @@ def make_runner_harness(root, history=None):
             "MOCK_BINARY_STATUS": "0",
             "MOCK_EVALUATE_STATUS": "0",
             "MOCK_DOCKER_STATUS": "0",
+            "MOCK_DOCKER_OUTCOME": "PASS",
             "MOCK_DOCKER_FAIL_BEFORE_REPORT": "false",
             "MOCK_DOCKER_NO_REPORT": "false",
             "MOCK_DOCKER_SLEEP_SECONDS": "0",
@@ -270,7 +272,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.returncode, 3)
             self.assertFalse(json.loads(sample.read_text())["valid"])
 
     def test_uses_latest_twenty_dev_runs_for_noise(self):
@@ -1271,6 +1273,88 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertTrue(sample["valid"])
         self.assertEqual(len(docker_calls), 1)
         self.assertNotIn("fetch-binary", fetch_calls)
+
+    def test_dev_fail_report_is_recorded_summarized_and_skipped_in_history(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, runner_temp, env = make_runner_harness(root)
+            env["GITHUB_EVENT_NAME"] = "push"
+            env["GITHUB_REF"] = "refs/heads/dev"
+            env["MOCK_DOCKER_OUTCOME"] = "FAIL"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = (root / "github-output.txt").read_text()
+            summary = (root / "step-summary.md").read_text()
+            sample_path = runner_temp / "desktop-scale-sample.json"
+            sample = json.loads(sample_path.read_text())
+            archive = BytesIO()
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(scale_check.SAMPLE_FILE_NAME, json.dumps(sample))
+
+            artifact = {
+                "id": 1,
+                "expired": False,
+                "created_at": sample["created_at"],
+                "workflow_run": {"head_branch": "dev"},
+            }
+            with patch.object(
+                scale_check, "_artifact_pages", return_value=[artifact]
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                return_value=archive.getvalue(),
+            ):
+                records, truncated, malformed_count, first_error = (
+                    scale_check.fetch_history(
+                        "https://api.github.com",
+                        "token",
+                        "owner/repo",
+                        root / "history.json",
+                    )
+                )
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("recorded=true", output)
+        self.assertFalse(sample["valid"])
+        self.assertEqual(sample["outcome"], "FAIL")
+        self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
+        self.assertNotIn("Could not parse the report", result.stdout)
+        self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
+        self.assertIn("| Scenario |", summary)
+        self.assertEqual(records, [])
+        self.assertFalse(truncated)
+        self.assertEqual(malformed_count, 0)
+        self.assertIsNone(first_error)
+
+    def test_pr_invalid_report_maps_status_three_to_summary(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root)
+            env["MOCK_DOCKER_OUTCOME"] = "FAIL"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
+        self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
+        self.assertNotIn("Could not parse the report", result.stdout)
 
     def test_history_fetch_errors_fall_back_to_report_only(self):
         self.require_implementation()
