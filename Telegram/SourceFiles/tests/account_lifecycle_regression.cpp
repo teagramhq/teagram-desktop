@@ -14871,8 +14871,8 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 	return MTP_dialog(MTP_flags(flags), peerToMTP(peerFromUser(userId)),
 					  MTP_int(1), MTP_int(0), MTP_int(0), MTP_int(unreadCount),
 					  MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
-					  MTPint(), MTPDraftMessage(), MTPint(),
-					  folderId ? MTP_int(folderId) : MTPint());
+					  MTPint(), MTPDraftMessage(),
+					  folderId ? MTP_int(folderId) : MTPint(), MTPint());
 }
 
 [[nodiscard]] MTPMessage DesktopScaleMessage(UserId userId) {
@@ -15160,6 +15160,9 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 
 			const auto archive = data.folderLoaded(Data::Folder::kId);
 			if (!archive) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: the archive folder "
+							 "was not created from the dialogs.\n");
 				return false;
 			}
 			const auto mainBefore
