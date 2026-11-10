@@ -49,6 +49,7 @@ on:
       - '.github/scripts/unit_feedback_metadata.py'
       - '.github/scripts/desktop_scale_check.py'
       - '.github/scripts/test_desktop_scale_check.py'
+      - '.github/scripts/run_desktop_scale_check.sh'
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   pull_request:
@@ -94,6 +95,7 @@ on:
       - '.github/scripts/unit_feedback_metadata.py'
       - '.github/scripts/desktop_scale_check.py'
       - '.github/scripts/test_desktop_scale_check.py'
+      - '.github/scripts/run_desktop_scale_check.sh'
       - 'Telegram/build/prepare/prepare.py'
       - 'README.md'
   workflow_dispatch:

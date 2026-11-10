@@ -20,6 +20,7 @@ MAX_SCALE_RATIO = 1.5
 DEV_ARTIFACT_NAME = "desktop-scale-dev"
 APP_ARTIFACT_NAME = "Teagram"
 SAMPLE_FILE_NAME = "desktop-scale-sample.json"
+MAX_DEV_ARTIFACT_READS = 40
 SCENARIOS = {
     "messages.getDialogs page (100 dialogs)": "dialogs",
     "contacts.getContacts full response": "contacts.getContacts",
@@ -232,8 +233,17 @@ def _regression_exceeded(base_ms, head_ms, noise_sd_ms):
     return increase >= 2.0 and increase > max(base_ms * 0.15, 3.0 * noise_sd_ms)
 
 
-def evaluate(history, base_runs, head_runs, report_only=False):
+def evaluate(
+    history,
+    base_runs,
+    head_runs,
+    report_only=False,
+    history_truncated=False,
+    history_unavailable=False,
+):
     history = _valid_records(history)
+    if any(not _is_valid_record(sample) for sample in [*base_runs, *head_runs]):
+        raise ScaleCheckError("scale check received an invalid app report")
     count = len(history)
     if count < MIN_DEV_RUNS:
         return {
@@ -244,6 +254,8 @@ def evaluate(history, base_runs, head_runs, report_only=False):
             "rows": {},
             "failures": [],
             "report_only": True,
+            "history_truncated": history_truncated,
+            "history_unavailable": history_unavailable,
         }
 
     baseline = latest_records(history)
@@ -252,11 +264,6 @@ def evaluate(history, base_runs, head_runs, report_only=False):
         raise ScaleCheckError(
             "blocking scale checks require two interleaved base/head samples"
         )
-    if not report_only and any(
-        not _is_valid_record(sample) for sample in [*base_runs, *head_runs]
-    ):
-        raise ScaleCheckError("blocking scale check received an invalid app report")
-
     rows = {}
     failures = []
     for scenario in SCENARIOS:
@@ -329,6 +336,8 @@ def evaluate(history, base_runs, head_runs, report_only=False):
         "rows": rows,
         "failures": failures,
         "report_only": report_only,
+        "history_truncated": history_truncated,
+        "history_unavailable": history_unavailable,
     }
 
 
@@ -346,7 +355,21 @@ def format_summary(result, current_sample=None, retry_note=None):
     else:
         lines.append(
             f"Noise uses the latest {MIN_DEV_RUNS} valid `dev` runs; "
-            "PR timing comparisons use two interleaved `dev`/head pairs."
+            "PR timing comparisons use two interleaved `dev`/head pairs, "
+            "with one extra pair after an initial timing failure."
+        )
+    if result.get("history_unavailable"):
+        lines.extend(
+            ["", "Dev timing history could not be read; this run is report-only."]
+        )
+    elif result.get("history_truncated"):
+        lines.extend(
+            [
+                "",
+                f"History was cut short at the {MAX_DEV_ARTIFACT_READS}-artifact "
+                f"read cap with {result['record_count']}/{MIN_DEV_RUNS} valid "
+                "samples; this run is report-only.",
+            ]
         )
     if retry_note:
         lines.extend(["", retry_note])
@@ -530,8 +553,9 @@ def fetch_baseline(
     artifacts = _valid_dev_artifacts(
         _artifact_pages(api_url, token, repository, DEV_ARTIFACT_NAME)
     )
+    candidate_artifacts = artifacts[-MAX_DEV_ARTIFACT_READS:]
     records = []
-    for artifact in reversed(artifacts):
+    for artifact in reversed(candidate_artifacts):
         contents = _artifact_file(
             _download_artifact(api_url, token, repository, artifact["id"]),
             SAMPLE_FILE_NAME,
@@ -548,6 +572,10 @@ def fetch_baseline(
             records.append(sample)
         if len(records) >= MIN_DEV_RUNS:
             break
+    history_truncated = (
+        len(records) < MIN_DEV_RUNS
+        and len(artifacts) > len(candidate_artifacts)
+    )
     records.sort(key=lambda sample: sample.get("created_at", ""))
     Path(records_output).write_text(json.dumps(records, indent=2) + "\n")
 
@@ -575,26 +603,37 @@ def fetch_baseline(
             binary_found = True
         elif require_binary:
             raise ScaleCheckError(
-                f"no dev Teagram artifact matches PR base SHA {base_sha}"
+                f"no dev Teagram artifact matches PR base SHA {base_sha}; "
+                "rebase onto an earlier dev commit or rerun after the dev build "
+                "for this SHA completes"
             )
     if require_binary and len(records) >= MIN_DEV_RUNS and not binary_found:
-        raise ScaleCheckError("could not retrieve the PR base Teagram artifact")
-    return records, binary_found
+        raise ScaleCheckError(
+            f"could not retrieve the PR base Teagram artifact for SHA {base_sha}; "
+            "rebase onto an earlier dev commit or rerun after the dev build "
+            "for this SHA completes"
+        )
+    return records, binary_found, history_truncated
 
 
 def _write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def _load_json(path, default):
+_MISSING = object()
+
+
+def _load_json(path, default=_MISSING):
     try:
         return json.loads(Path(path).read_text())
     except FileNotFoundError:
+        if default is _MISSING:
+            raise ScaleCheckError(f"required JSON file is missing: {path}")
         return default
 
 
 def _cmd_fetch(args):
-    records, binary_found = fetch_baseline(
+    records, binary_found, history_truncated = fetch_baseline(
         args.api_url,
         args.token,
         args.repository,
@@ -605,6 +644,7 @@ def _cmd_fetch(args):
     )
     print(f"record_count={len(records)}")
     print(f"binary_available={'true' if binary_found else 'false'}")
+    print(f"history_truncated={'true' if history_truncated else 'false'}")
 
 
 def _cmd_parse(args):
@@ -625,11 +665,18 @@ def _cmd_parse(args):
 
 def _cmd_evaluate(args):
     history = _load_json(args.history, [])
-    base_runs = [_load_json(path, {}) for path in args.base]
-    head_runs = [_load_json(path, {}) for path in args.head]
+    base_runs = [_load_json(path) for path in args.base]
+    head_runs = [_load_json(path) for path in args.head]
     if args.include_head_in_history:
         history = [*history, *head_runs]
-    result = evaluate(history, base_runs, head_runs, args.report_only)
+    result = evaluate(
+        history,
+        base_runs,
+        head_runs,
+        args.report_only,
+        args.history_truncated,
+        args.history_unavailable,
+    )
     _write_json(args.output, result)
     if args.summary_output:
         Path(args.summary_output).write_text(
@@ -680,6 +727,8 @@ def _build_parser():
     compare.add_argument("--retry-note")
     compare.add_argument("--report-only", action="store_true")
     compare.add_argument("--include-head-in-history", action="store_true")
+    compare.add_argument("--history-truncated", action="store_true")
+    compare.add_argument("--history-unavailable", action="store_true")
     compare.set_defaults(function=_cmd_evaluate)
 
     annotate = commands.add_parser("annotate")
@@ -695,6 +744,13 @@ def main(argv=None):
         return args.function(args) or 0
     except (OSError, ScaleCheckError, HTTPError) as error:
         print(f"::error::Desktop scale check: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:
+        print(
+            "::error::Unexpected desktop scale check error "
+            f"({type(error).__name__}): {error}",
+            file=sys.stderr,
+        )
         return 2
 
 
