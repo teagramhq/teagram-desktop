@@ -162,6 +162,7 @@ run_interleaved_pair() {
 evaluate_samples() {
 	local retry_note="${1:-}"
 	local report_only="${2:-false}"
+	local absolute_budget_head_sample="${3:-}"
 	local -a args=(
 		--history "$history_file"
 		--output "$evaluation_file"
@@ -174,6 +175,9 @@ evaluate_samples() {
 	for path in "${head_sample_paths[@]}"; do
 		args+=(--head "$path")
 	done
+	if [[ -n "$absolute_budget_head_sample" ]]; then
+		args+=(--absolute-budget-head "$absolute_budget_head_sample")
+	fi
 	if [[ -n "$retry_note" ]]; then
 		args+=(--retry-note "$retry_note")
 	fi
@@ -261,8 +265,9 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 		fi
 		base_sample_paths+=("$RUNNER_TEMP/desktop-scale-base-3.json")
 		head_sample_paths+=("$RUNNER_TEMP/desktop-scale-head-3.json")
-		retry_note='The initial two-pair comparison crossed a timing limit. One additional interleaved pair was added, and the result uses all three pairs.'
-		if evaluate_samples "$retry_note"; then
+		retry_note='The initial two-pair comparison crossed a timing limit. One additional interleaved pair was added, and the result uses all three pairs for timing medians; the absolute budget is checked on the retry head sample.'
+		if evaluate_samples \
+			"$retry_note" false "$RUNNER_TEMP/desktop-scale-head-3.json"; then
 			evaluation_status=0
 		else
 			evaluation_status=$?

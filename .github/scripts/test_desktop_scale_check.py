@@ -413,6 +413,30 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertTrue(any("50 ms" in failure for failure in absolute["failures"]))
         self.assertTrue(any("1.5x" in failure for failure in ratio["failures"]))
 
+    def test_retry_absolute_budget_uses_only_the_retry_head_sample(self):
+        self.require_implementation()
+        records = [make_sample() for _ in range(20)]
+        base = [make_sample(), make_sample()]
+        first_pair = [make_sample(stalls=1), make_sample()]
+        clean_retry = make_sample()
+        stalled_retry = make_sample(stalls=1)
+
+        clean = scale_check.evaluate(
+            records,
+            base,
+            [*first_pair, clean_retry],
+            absolute_budget_head_runs=[clean_retry],
+        )
+        reproduced = scale_check.evaluate(
+            records,
+            base,
+            [*first_pair, stalled_retry],
+            absolute_budget_head_runs=[stalled_retry],
+        )
+
+        self.assertFalse(any("50 ms" in failure for failure in clean["failures"]))
+        self.assertTrue(any("50 ms" in failure for failure in reproduced["failures"]))
+
     def test_dev_baseline_exceptions_are_named_and_report_only(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -541,7 +565,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("missing-head.json", result.stderr)
 
-    def test_pr_retry_runs_a_fresh_interleaved_pair_and_appends_summary(self):
+    def test_pr_retry_clears_an_initial_only_head_stall(self):
         self.require_implementation()
         repo_root = Path(__file__).parents[2]
         runner = repo_root / ".github/scripts/run_desktop_scale_check.sh"
@@ -581,7 +605,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
                                 binary = sys.argv[index + 1].split("=", 1)[1]
                     with Path(os.environ["DOCKER_CALL_LOG"]).open("a") as log:
                         log.write(f"{count} {binary}\\n")
-                    one = "13.00" if count in (2, 4, 6) else "10.00"
+                    one = "10.00"
+                    dialogs_stalls = "1" if count == 4 else "0"
                     print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
                     | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
                     | --- | ---: | ---: | ---: | --- | --- |
@@ -590,7 +615,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
                     | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
                     Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
-                    Main-thread steps over 50 ms: dialogs 1x=0, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total=0.
+                    Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
                     Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
                     Outcome: PASS
                     DESKTOP_SCALE_REPORT_END\"\"\")
@@ -634,7 +659,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             sample_names = sorted(path.name for path in runner_temp.glob("desktop-scale-*.json"))
             summary = (root / "step-summary.md").read_text()
 
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(calls), 6)
         self.assertEqual(
             [line.split()[1] for line in calls],
@@ -651,7 +676,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertIn("desktop-scale-head-3.json", sample_names)
         self.assertNotIn("desktop-scale-base-4.json", sample_names)
         self.assertIn("One additional interleaved pair was added", summary)
-        self.assertIn("Timing failures:", summary)
+        self.assertNotIn("Timing failures:", summary)
 
 
 if __name__ == "__main__":

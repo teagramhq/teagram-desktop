@@ -240,9 +240,15 @@ def evaluate(
     report_only=False,
     history_truncated=False,
     history_unavailable=False,
+    absolute_budget_head_runs=None,
 ):
     history = _valid_records(history)
-    if any(not _is_valid_record(sample) for sample in [*base_runs, *head_runs]):
+    if absolute_budget_head_runs is None:
+        absolute_budget_head_runs = head_runs
+    if any(
+        not _is_valid_record(sample)
+        for sample in [*base_runs, *head_runs, *absolute_budget_head_runs]
+    ):
         raise ScaleCheckError("scale check received an invalid app report")
     count = len(history)
     if count < MIN_DEV_RUNS:
@@ -303,8 +309,13 @@ def evaluate(
 
         if report_only or scenario in exceptions or not head_runs:
             continue
-        head_rows = [sample["scenarios"][scenario] for sample in head_runs]
-        if any(row["one_stalls"] or row["hundred_stalls"] for row in head_rows):
+        absolute_budget_rows = [
+            sample["scenarios"][scenario] for sample in absolute_budget_head_runs
+        ]
+        if any(
+            row["one_stalls"] or row["hundred_stalls"]
+            for row in absolute_budget_rows
+        ):
             row_result["failures"].append(
                 f"{scenario}: a main-thread step exceeded "
                 f"{ABSOLUTE_BUDGET_MS:g} ms"
@@ -667,6 +678,11 @@ def _cmd_evaluate(args):
     history = _load_json(args.history, [])
     base_runs = [_load_json(path) for path in args.base]
     head_runs = [_load_json(path) for path in args.head]
+    absolute_budget_head_runs = (
+        [_load_json(path) for path in args.absolute_budget_head]
+        if args.absolute_budget_head
+        else None
+    )
     if args.include_head_in_history:
         history = [*history, *head_runs]
     result = evaluate(
@@ -676,6 +692,7 @@ def _cmd_evaluate(args):
         args.report_only,
         args.history_truncated,
         args.history_unavailable,
+        absolute_budget_head_runs,
     )
     _write_json(args.output, result)
     if args.summary_output:
@@ -722,6 +739,7 @@ def _build_parser():
     compare.add_argument("--history", required=True)
     compare.add_argument("--base", action="append", default=[])
     compare.add_argument("--head", action="append", default=[])
+    compare.add_argument("--absolute-budget-head", action="append", default=[])
     compare.add_argument("--output", required=True)
     compare.add_argument("--summary-output")
     compare.add_argument("--retry-note")
