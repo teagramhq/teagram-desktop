@@ -67,17 +67,31 @@ TEST_CASE(CustomUrlSchemePolicyUsesOnlyTheSuppliedAccountProtocols) {
 													firstAccount));
 	CHECK(File::internal::IsCustomUrlSchemeAllowed(u"second-app"_q,
 												   secondAccount));
-	CHECK(File::internal::SchemeRequiresConfirmation(u"first-app"_q, false));
-	CHECK(!File::internal::SchemeRequiresConfirmation(u"first-app"_q, true));
-	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(u"first-app"_q, false));
-	CHECK(File::internal::IsUrlSchemeAllowedForOpen(u"first-app"_q, true));
+	const auto firstAllowed = File::internal::IsCustomUrlSchemeAllowed(
+		u"first-app"_q, firstAccount);
+	const auto secondAllowedFromFirst
+		= File::internal::IsCustomUrlSchemeAllowed(u"second-app"_q,
+												   firstAccount);
+	CHECK(File::internal::IsUrlSchemeAllowedForOpen(u"first-app"_q,
+													firstAllowed));
+	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(u"second-app"_q,
+													 secondAllowedFromFirst));
 }
 
-TEST_CASE(TonConnectSchemeIsNotDefaultOrCustomAllowedAndNeedsConfirmation) {
+TEST_CASE(UnallowlistedCustomSchemeIsNotAllowedForOpen) {
+	const auto smb = u"smb"_q;
+	const auto originProtocols = std::vector<QString>{u"first-app"_q};
+	const auto smbAllowed
+		= File::internal::IsCustomUrlSchemeAllowed(smb, originProtocols);
+	CHECK(!File::internal::IsDefaultUrlSchemeAllowed(smb));
+	CHECK(!smbAllowed);
+	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(smb, smbAllowed));
+}
+
+TEST_CASE(TonConnectSchemeCannotBeAllowedOrOpened) {
 	const auto tc = u"tc"_q;
 	const auto allowed = File::internal::IsDefaultUrlSchemeAllowed(tc)
 						 || File::internal::IsCustomUrlSchemeAllowed(tc, {tc});
 	CHECK(!allowed);
 	CHECK(!File::internal::IsUrlSchemeAllowedForOpen(tc, true));
-	CHECK(File::internal::SchemeRequiresConfirmation(tc, allowed));
 }

@@ -307,16 +307,11 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			: external;
 		const auto originSession
 			= originController ? &originController->session() : nullptr;
-		const auto allowedForOrigin
-			= File::IsUrlSchemeAllowed(parsedUrl.scheme(), originSession);
-		const auto requiresOriginConfirmation
-			= !File::internal::IsDefaultUrlSchemeAllowed(parsedUrl.scheme())
-			  && !allowedForOrigin;
 		if (!isEmail
 			&& (!external.isValid() || !parsedUrl.isValid()
 				|| parsedUrl.isLocalFile()
-				|| File::internal::IsUrlSchemeForbiddenForCustomAllowlist(
-					parsedUrl.scheme()))) {
+				|| !File::IsUrlSchemeAllowed(parsedUrl.scheme(),
+											 originSession))) {
 			LOG(("URL Error: refused scheme %1.").arg(parsedUrl.scheme()));
 			if (my.show) {
 				my.show->showToast(tr::lng_open_link_unsupported(tr::now));
@@ -345,18 +340,8 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			my.forceExternalUrlConfirmation = true;
 			openContext = QVariant::fromValue(my);
 		}
-		const auto open = [=](bool confirmed) {
-			auto finalContext = openContext;
-			if (confirmed) {
-				auto confirmedContext
-					= finalContext.value<ClickHandlerContext>();
-				confirmedContext.confirmedExternalUrl = true;
-				finalContext = QVariant::fromValue(confirmedContext);
-			}
-			UrlClickHandler::Open(url, finalContext);
-		};
+		const auto open = [=] { UrlClickHandler::Open(url, openContext); };
 		if (forceConfirmation || (confirmAfterIvFallback && !canTryIv)
-			|| requiresOriginConfirmation
 			|| (HiddenUrlRequiresConfirmation(parsedUrl)
 				&& !skipConfirmation)) {
 			if (!my.show) {
@@ -381,7 +366,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 								   .confirmed =
 									   [=](Fn<void()> hide) {
 										   hide();
-										   open(true);
+										   open();
 									   },
 								   .confirmText = tr::lng_open_link(),
 								   .labelStyle
@@ -435,7 +420,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 				use->activate();
 			}
 		} else {
-			open(false);
+			open();
 		}
 	}
 }

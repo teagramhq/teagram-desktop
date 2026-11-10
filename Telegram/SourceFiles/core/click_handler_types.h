@@ -57,7 +57,6 @@ struct ClickHandlerContext {
 	bool botStartAutoSubmit = false;
 	bool ignoreIv = false;
 	bool forceExternalUrlConfirmation = false;
-	bool confirmedExternalUrl = false;
 	bool dark = false;
 	// Is filled from peer info.
 	PeerData *peer = nullptr;

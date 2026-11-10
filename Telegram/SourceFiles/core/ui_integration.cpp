@@ -510,12 +510,9 @@ bool UiIntegration::handleUrlClick(
 		const auto controller = my.sessionWindow.get();
 		const auto origin = controller ? &controller->session() : nullptr;
 		const auto scheme = QUrl(url).scheme();
-		const auto customSchemeApproved
-			= my.confirmedExternalUrl
-			  || File::IsUrlSchemeAllowed(scheme, origin);
 		File::OpenUrl(
 			UrlWithAutoLoginToken(url, std::move(parsed), domain, context),
-			customSchemeApproved);
+			File::IsUrlSchemeAllowed(scheme, origin));
 	}
 	return true;
 }
