@@ -14755,8 +14755,7 @@ MeasureDesktopScaleAction(Action action, bool reportOnlyStalls = false) {
 	const auto passed = action();
 	const auto nanoseconds = timer.nsecsElapsed();
 	SettleDesktopScaleWatchdog();
-	const auto stalls
-		= Core::UiStallWatchdog::StallCount() - stallsBefore;
+	const auto stalls = Core::UiStallWatchdog::StallCount() - stallsBefore;
 	return {
 		.nanoseconds = nanoseconds,
 		.mainThreadStepsOverBudget = stalls,
@@ -14796,8 +14795,8 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 	response.requestId = request->id;
 	result.write(response.reply);
 	auto done = std::move(request->callbacks.done);
-	return MeasureDesktopScaleAction(
-		[&] { return done(response) && action(); }, reportOnlyStalls);
+	return MeasureDesktopScaleAction([&] { return done(response) && action(); },
+									 reportOnlyStalls);
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -14976,10 +14975,12 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 				MTP_vector<MTPChat>(0),
 				MTP_vector<MTPUser>(std::move(pageUsers)));
 			sample = ApplyDesktopScaleResponse<MTPmessages_GetDialogs>(
-				capture, mtpc_messages_getDialogs, reply, [&] {
+				capture, mtpc_messages_getDialogs, reply,
+				[&] {
 					return data.chatsList()->indexed()->size()
 						   == alreadyLoaded + kDesktopScalePageSize;
-				}, true);
+				},
+				true);
 			if (!sample.passed) {
 				std::fprintf(
 					stderr,
@@ -15052,8 +15053,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 					const auto reply = DesktopScaleContactsReply(
 						firstId, count, offset, pageSize, false);
 					page = ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						capture, mtpc_contacts_getContacts, reply,
-						[&] {
+						capture, mtpc_contacts_getContacts, reply, [&] {
 							return WaitForRegressionCondition(
 								[&] {
 									return data.contactsList()->size()
@@ -15247,8 +15247,8 @@ RunDesktopScaleCache(Main::Domain &domain, UserId selfId) {
 			  if (!samples.one.passed) {
 				  return false;
 			  }
-			  samples.hundred = MeasureDesktopScaleCache(
-				  account, 50'000, 500, 60'000'000);
+			  samples.hundred
+				  = MeasureDesktopScaleCache(account, 50'000, 500, 60'000'000);
 			  return samples.hundred.passed;
 		  });
 	if (!created) {
@@ -15277,8 +15277,7 @@ int RunDesktopScaleCheck() {
 		= RunDesktopScaleContacts(domain, 100, UserId(3'000'000));
 	const auto contactsHundred
 		= RunDesktopScaleContacts(domain, 10'000, UserId(4'000'000));
-	const auto cacheSamples
-		= RunDesktopScaleCache(domain, UserId(5'000'000));
+	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
 
@@ -15374,13 +15373,12 @@ int RunDesktopScaleCheck() {
 		"Report-only baseline: dialogs page 1x=%.2f ms/%llu over-50-ms "
 		"steps, 100x=%.2f ms/%llu over-50-ms steps.\n",
 		double(dialogsOne.nanoseconds) / 1'000'000.,
-		static_cast<unsigned long long>(
-			dialogsOne.mainThreadStepsOverBudget),
+		static_cast<unsigned long long>(dialogsOne.mainThreadStepsOverBudget),
 		double(dialogsHundred.nanoseconds) / 1'000'000.,
 		static_cast<unsigned long long>(
 			dialogsHundred.mainThreadStepsOverBudget));
 	std::printf("Blocking main-thread steps over 50 ms: %llu.\n",
-		static_cast<unsigned long long>(blockingStalls));
+				static_cast<unsigned long long>(blockingStalls));
 	std::printf(
 		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
 		"cache=%d/%d.\n",
