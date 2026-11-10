@@ -32,6 +32,30 @@ Outcome: PASS
 DESKTOP_SCALE_REPORT_END
 """
 
+EXTENDED_REPORT = REPORT.replace(
+    "| cache read x100 | 10.00 ms | 12.00 ms | 1.20x | 50 ms | calibrating |\n",
+    "| cache read x100 | 10.00 ms | 12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| private history page (1M messages; 20 / 2,000 loaded) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| jump to date in 1M-message history | 10.00 ms | 12.00 ms | 1.20x | "
+    "50 ms | calibrating |\n"
+    "| group media page (200K messages; 20 / 2,000 loaded) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| messages.searchGlobal page (100 hits; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n",
+).replace(
+    "thumbnail reads 1x=0, 100x=0; total=0.",
+    "thumbnail reads 1x=0, 100x=0; private history 1x=0, 100x=0; "
+    "jump to date 1x=0, 100x=0; group media 1x=0, 100x=0; "
+    "search 1x=0, 100x=0; update burst 1x=0, 100x=0; total=0.",
+).replace(
+    "Outcome: PASS",
+    "Additional scenario checks: history=1/1 date=1/1 group=1/1 "
+    "search=1/1 updates=1/1.\nOutcome: PASS",
+)
+
 
 def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
     scenarios = {}
@@ -43,7 +67,7 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
             "hundred_stalls": stalls,
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": "2026-11-10T00:00:00Z",
         "valid": True,
         "scenario_checks_passed": True,
@@ -170,9 +194,15 @@ def make_runner_harness(root, history=None):
             | contacts.getContacts full response | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | private history page (1M messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | jump to date in 1M-message history | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | group media page (200K messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | messages.searchGlobal page (100 hits; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
-            Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
+            Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; private history 1x=0, 100x=0; jump to date 1x=0, 100x=0; group media 1x=0, 100x=0; search 1x=0, 100x=0; update burst 1x=0, 100x=0; total={dialogs_stalls}.
             Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+            Additional scenario checks: history=1/1 date=1/1 group=1/1 search=1/1 updates=1/1.
             Outcome: {outcome}
             DESKTOP_SCALE_REPORT_END\"\"\")
             if status:
@@ -238,6 +268,75 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(row["one_stalls"], 0)
         self.assertEqual(sample["directory_enumerations"], {"one": 0, "hundred": 0})
         self.assertTrue(sample["valid"])
+
+    def test_summary_includes_additional_scenario_timings_and_bands(self):
+        self.require_implementation()
+        sample = scale_check.parse_report(EXTENDED_REPORT)
+        sample["created_at"] = "2026-11-10T00:00:00Z"
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = dict(sample)
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+
+        result = scale_check.evaluate(history, [sample, sample], [sample, sample])
+        summary = scale_check.format_summary(result, sample)
+        expected_scenarios = [
+            "private history page (1M messages; 20 / 2,000 loaded)",
+            "jump to date in 1M-message history",
+            "group media page (200K messages; 20 / 2,000 loaded)",
+            "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        ]
+
+        for scenario in expected_scenarios:
+            with self.subTest(scenario=scenario):
+                budget = (
+                    "report-only (updates.getDifference timing is report-only)"
+                    if scenario.startswith("updates.getDifference")
+                    else "50 ms main-thread step"
+                )
+                self.assertIn(
+                    f"| {scenario} | 10.00 ms → 10.00 ms | "
+                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
+                    summary,
+                )
+
+    def test_accepts_legacy_dev_report_without_additional_scenarios(self):
+        self.require_implementation()
+        sample = scale_check.parse_report(REPORT)
+        sample["created_at"] = "2026-11-10T00:00:00Z"
+
+        self.assertTrue(sample["valid"])
+        self.assertEqual(sample["schema_version"], 1)
+        self.assertTrue(scale_check._is_valid_record(sample))
+        self.assertEqual(
+            set(sample["scenarios"]),
+            {
+                "messages.getDialogs page (100 dialogs)",
+                "contacts.getContacts full response",
+                "contact change + name lookup",
+                "cache read x100",
+            },
+        )
+
+        head = scale_check.parse_report(EXTENDED_REPORT)
+        head["created_at"] = "2026-11-11T00:00:00Z"
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = dict(sample)
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+        result = scale_check.evaluate(history, [sample, sample], [head, head])
+        summary = scale_check.format_summary(result, head)
+
+        self.assertIn(
+            "| private history page (1M messages; 20 / 2,000 loaded) | "
+            "n/a → 10.00 ms | n/a → 12.00 ms | 1.20x | "
+            "50 ms main-thread step | calibrating: 0/20 |",
+            summary,
+        )
 
     def test_main_thread_stalls_remain_valid_timing_samples(self):
         self.require_implementation()
@@ -980,6 +1079,62 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertTrue(any("50 ms" in failure for failure in absolute["failures"]))
         self.assertTrue(any("1.5x" in failure for failure in ratio["failures"]))
 
+        update_scenario = (
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)"
+        )
+        update_head = [make_sample(), make_sample()]
+        for sample in update_head:
+            sample["scenarios"][update_scenario]["one_stalls"] = 1
+        update_result = scale_check.evaluate(records, base, update_head)
+
+        self.assertFalse(
+            any(update_scenario in failure for failure in update_result["failures"])
+        )
+
+    def test_new_scenarios_defer_ratio_gate_until_their_baseline_calibrates(self):
+        self.require_implementation()
+        scenarios = [
+            "private history page (1M messages; 20 / 2,000 loaded)",
+            "jump to date in 1M-message history",
+            "group media page (200K messages; 20 / 2,000 loaded)",
+            "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)",
+        ]
+        legacy = scale_check.parse_report(REPORT)
+        legacy["created_at"] = "2026-11-10T00:00:00Z"
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = dict(legacy)
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+
+        head_runs = []
+        for index in range(2):
+            sample = scale_check.parse_report(EXTENDED_REPORT)
+            sample["created_at"] = f"2026-11-{index + 1:02d}T01:00:00Z"
+            for scenario in scenarios:
+                sample["scenarios"][scenario]["hundred_ms"] = 16.0
+                sample["scenarios"][scenario]["one_stalls"] = 1
+            head_runs.append(sample)
+
+        result = scale_check.evaluate(history, [legacy, legacy], head_runs)
+        summary = scale_check.format_summary(result, head_runs[-1])
+
+        self.assertIn(
+            "| private history page (1M messages; 20 / 2,000 loaded) | "
+            "n/a → 10.00 ms | n/a → 16.00 ms | 1.60x | "
+            "50 ms main-thread step | calibrating: 0/20 |",
+            summary,
+        )
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                row_failures = [
+                    failure for failure in result["failures"] if scenario in failure
+                ]
+                self.assertEqual(result["rows"][scenario]["baseline_count"], 0)
+                self.assertFalse(any("1.5x" in failure for failure in row_failures))
+                self.assertTrue(any("exceeded 50 ms" in failure for failure in row_failures))
+
     def test_retry_absolute_budget_uses_only_the_retry_head_sample(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -1253,9 +1408,29 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 check=False,
             )
             calls = (root / "docker-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(calls), 4)
+        for scenario in (
+            "private history page (1M messages; 20 / 2,000 loaded)",
+            "jump to date in 1M-message history",
+            "group media page (200K messages; 20 / 2,000 loaded)",
+            "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        ):
+            with self.subTest(scenario=scenario):
+                budget = (
+                    "report-only (updates.getDifference timing is report-only)"
+                    if scenario.startswith("updates.getDifference")
+                    else "50 ms main-thread step"
+                )
+                self.assertIn(
+                    f"| {scenario} | 10.00 ms → 10.00 ms | "
+                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
+                    summary,
+                )
 
     def test_successful_app_exit_without_a_report_fails_without_a_sample(self):
         self.require_implementation()
