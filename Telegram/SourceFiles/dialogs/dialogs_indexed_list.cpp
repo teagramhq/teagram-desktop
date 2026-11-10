@@ -54,6 +54,17 @@ void IndexedList::removeNameRow(QChar ch, Row *row) {
 		return;
 	}
 	auto &rows = i->second;
+	// Rows of a letter are ordered by index, so look the row up by index
+	// first. The scan is only for a row that was moved in the main list.
+	const auto position
+		= std::lower_bound(rows.begin(), rows.end(), row->index(),
+						   [](const not_null<Row *> &entry, int index) {
+							   return entry->index() < index;
+						   });
+	if (position != rows.end() && position->get() == row) {
+		rows.erase(position);
+		return;
+	}
 	const auto found = std::find_if(
 		rows.begin(), rows.end(),
 		[row](const not_null<Row *> &entry) { return entry.get() == row; });
@@ -224,22 +235,17 @@ void IndexedList::adjustByName(
 		const base::flat_set<QChar> &oldLetters) {
 	Expects(_sortMode == SortMode::Name);
 
-	const auto mainRow = _list.adjustByName(key);
+	const auto mainRow = _list.getRow(key);
 	if (!mainRow) return;
 
-	auto toRemove = oldLetters;
-	for (const auto &ch : key.entry()->chatListFirstLetters()) {
-		auto j = toRemove.find(ch);
-		if (j == toRemove.cend()) {
-			addNameRow(ch, mainRow);
-		} else {
-			toRemove.erase(j);
-			removeNameRow(ch, mainRow);
-			addNameRow(ch, mainRow);
-		}
-	}
-	for (auto ch : toRemove) {
+	// The letter rows are ordered by index, so the row leaves them
+	// before the main list moves it and joins them again afterwards.
+	for (const auto &ch : oldLetters) {
 		removeNameRow(ch, mainRow);
+	}
+	_list.adjustByName(key);
+	for (const auto &ch : key.entry()->chatListFirstLetters()) {
+		addNameRow(ch, mainRow);
 	}
 	updatePrefixSearchIndex(mainRow);
 }
