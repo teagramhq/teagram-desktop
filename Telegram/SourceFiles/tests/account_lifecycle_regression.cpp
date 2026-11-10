@@ -10493,7 +10493,8 @@ struct SchedulerEvidenceDiagnostics final {
 							intervals[i], matching, minimumDurationNanoseconds,
 							maximumMainThreadWorkNanoseconds,
 							maximumOtherThreadWorkNanoseconds);
-		if (hasProof && !matchedEvidenceStarts.insert(matching->startedAt).second) {
+		if (hasProof
+			&& !matchedEvidenceStarts.insert(matching->startedAt).second) {
 			hasProof = false;
 		}
 		if (!hasProof) {
@@ -10502,8 +10503,8 @@ struct SchedulerEvidenceDiagnostics final {
 				result.callbackNamesWithoutProof += u", "_q;
 			}
 			result.callbackNamesWithoutProof += intervals[i].label.isEmpty()
-				? u"callback %1"_q.arg(i)
-				: intervals[i].label;
+													? u"callback %1"_q.arg(i)
+													: intervals[i].label;
 		}
 	}
 	return result;
