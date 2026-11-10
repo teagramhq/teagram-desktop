@@ -75,6 +75,20 @@ def self_test(formatter: str) -> int:
         print("::error::Formatter self-test could not identify the synthetic changed C++ line.")
         return 1
 
+    upstream_parser = argparse.ArgumentParser()
+    upstream_parser.add_argument("--upstream-ref", action="append", default=[])
+    try:
+        add_upstream_ref_argument(upstream_parser)
+        upstream_args = upstream_parser.parse_args(
+            ["--upstream-ref", "refs/upstream/heads/dev", "--upstream-ref", "refs/upstream/tags/v7.4.1"]
+        )
+    except (argparse.ArgumentError, SystemExit, NameError) as error:
+        print(f"::error::Upstream-ref argument registration failed: {error}")
+        return 1
+    if upstream_args.upstream_ref != ["refs/upstream/heads/dev", "refs/upstream/tags/v7.4.1"]:
+        print("::error::Formatter self-test did not preserve repeated upstream refs.")
+        return 1
+
     with tempfile.TemporaryDirectory(prefix="teagram-format-self-test-") as temporary:
         root = Path(temporary)
         compliant = root / "formatter-fixture.cpp"
@@ -388,11 +402,9 @@ def check_source_range(
     return manifest
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-root", type=Path, default=Path("."))
-    parser.add_argument("--formatter", default="clang-format")
-    parser.add_argument("--self-test", action="store_true")
+def add_upstream_ref_argument(parser: argparse.ArgumentParser) -> None:
+    if "--upstream-ref" in parser._option_string_actions:
+        return
     parser.add_argument(
         "--upstream-ref",
         action="append",
@@ -400,6 +412,14 @@ def main() -> int:
         metavar="REF",
         help="upstream history ref fetched by CI (validated; may be repeated)",
     )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=Path("."))
+    parser.add_argument("--formatter", default="clang-format")
+    parser.add_argument("--self-test", action="store_true")
+    add_upstream_ref_argument(parser)
     parser.add_argument(
         "--allow-empty",
         action="store_true",
