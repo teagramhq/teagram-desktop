@@ -14785,11 +14785,9 @@ MeasureDesktopScaleAction(Action action) {
 }
 
 template <typename Request, typename Action>
-[[nodiscard]] DesktopScaleActionSample
-ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
-						  uint32 expectedConstructor,
-						  const typename Request::ResponseType &result,
-						  Action action) {
+[[nodiscard]] DesktopScaleActionSample ApplyDesktopScaleResponse(
+	ChannelSaveRequestCapture &capture, uint32 expectedConstructor,
+	const typename Request::ResponseType &result, Action action) {
 	const auto request
 		= std::find_if(capture.requests.begin(), capture.requests.end(),
 					   [=](const auto &entry) {
@@ -14816,7 +14814,8 @@ ApplyDesktopScaleResponse(ChannelSaveRequestCapture &capture,
 	response.requestId = request->id;
 	result.write(response.reply);
 	auto done = std::move(request->callbacks.done);
-	return MeasureDesktopScaleAction([&] { return done(response) && action(); });
+	return MeasureDesktopScaleAction(
+		[&] { return done(response) && action(); });
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
@@ -15124,8 +15123,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 															 count, false);
 				result.loaded
 					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						capture, mtpc_contacts_getContacts, reply,
-						[&] {
+						capture, mtpc_contacts_getContacts, reply, [&] {
 							return WaitForRegressionCondition(
 								[&] {
 									return data.contactsList()->size() == count
