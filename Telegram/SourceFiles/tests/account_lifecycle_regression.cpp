@@ -15047,7 +15047,8 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 					});
 				if (CaptureChannelSaveRequestForRegressionTest(
 						&account->mtp(), 1,
-						MTPcontacts_GetContacts(MTP_long(0)),
+						MTP::details::SerializedRequest::Serialize(
+							MTPcontacts_GetContacts(MTP_long(0))),
 						unrelatedCallbacks)) {
 					std::fprintf(stderr,
 								 "Desktop scale check failed: "
