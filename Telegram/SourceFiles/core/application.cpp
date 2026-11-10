@@ -297,8 +297,9 @@ void Application::run() {
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
 		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck;
-	const auto windowedApplication
-		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke;
+	const auto windowedApplication = !headlessRegression
+									 || authLifecycleRegression
+									 || customEmojiUiSmoke || desktopScaleCheck;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -356,11 +357,7 @@ void Application::run() {
 	startShortcuts();
 	startEmojiImageLoader();
 	startSystemDarkModeViewer();
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	if (windowedApplication || desktopScaleCheck) {
-#else
 	if (windowedApplication) {
-#endif
 		Media::Player::start(_audio.get());
 	}
 
