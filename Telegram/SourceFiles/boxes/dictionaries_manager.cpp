@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
+#include "main/session_feature_support.h"
 #include "mainwidget.h"
 #include "mtproto/dedicated_file_loader.h"
 #include "spellcheck/spellcheck_utils.h"
@@ -49,6 +50,7 @@ public:
 		Dictionaries enabledDictionaries);
 
 	Dictionaries enabledRows() const;
+	bool rowsBuilt() const;
 	QueryCallback queryCallback() const;
 
 private:
@@ -58,7 +60,7 @@ private:
 
 	Dictionaries _enabledRows;
 	QueryCallback _queryCallback;
-
+	bool _rowsBuilt = false;
 };
 
 inline auto DictExists(int langId) {
@@ -112,12 +114,13 @@ Dictionaries Inner::enabledRows() const {
 	return _enabledRows;
 }
 
-auto AddButtonWithLoader(
-		not_null<Ui::VerticalLayout*> content,
-		not_null<Main::Session*> session,
-		const Spellchecker::Dict &dict,
-		bool buttonEnabled,
-		rpl::producer<QStringView> query) {
+bool Inner::rowsBuilt() const { return _rowsBuilt; }
+
+auto AddButtonWithLoader(not_null<Ui::VerticalLayout *> content,
+						 not_null<Main::Session *> session,
+						 Main::details::CloudResourceGrant grant,
+						 const Spellchecker::Dict &dict, bool buttonEnabled,
+						 rpl::producer<QStringView> query) {
 	const auto id = dict.id;
 	buttonEnabled &= DictExists(id);
 
@@ -284,9 +287,7 @@ auto AddButtonWithLoader(
 		if (toggled && (v::is<Available>(state) || v::is<Failed>(state))) {
 			const auto weak = base::make_weak(button);
 			setLocalLoader(base::make_unique_q<Loader>(
-				QCoreApplication::instance(),
-				session,
-				id,
+				QCoreApplication::instance(), session, grant, id,
 				Spellchecker::GetDownloadLocation(id),
 				Spellchecker::DictPathByLangId(id),
 				Spellchecker::GetDownloadSize(id),
@@ -348,40 +349,42 @@ void Inner::setupContent(
 	// non-empty. Manifest is fetched lazily and may arrive after the box
 	// opens, so we subscribe to DictionariesChanged and populate rows
 	// then if we haven't already.
-	const auto built = content->lifetime().make_state<bool>(false);
-	const auto buildRows = [=] {
-		if (*built) {
-			return;
-		}
-		const auto dicts = Spellchecker::Dictionaries();
-		if (dicts.empty()) {
-			return;
-		}
-		*built = true;
-		for (const auto &dict : dicts) {
-			const auto id = dict.id;
-			const auto row = AddButtonWithLoader(
-				content,
-				session,
-				dict,
-				ranges::contains(enabledDictionaries, id),
-				queryStream->events());
-			row->toggledValue(
-			) | rpl::on_next([=](auto enabled) {
-				if (enabled) {
-					_enabledRows.push_back(id);
-				} else {
-					auto &rows = _enabledRows;
-					rows.erase(ranges::remove(rows, id), end(rows));
-				}
-			}, row->lifetime());
-		}
-	};
+	if (const auto grant
+		= Main::details::cloudResourceGrant(session->mtp().dcOptions())) {
+		const auto buildRows = [=] {
+			if (_rowsBuilt) {
+				return;
+			}
+			const auto dicts = Spellchecker::Dictionaries();
+			if (dicts.empty()) {
+				return;
+			}
+			_rowsBuilt = true;
+			for (const auto &dict : dicts) {
+				const auto id = dict.id;
+				const auto row = AddButtonWithLoader(
+					content, session, *grant, dict,
+					ranges::contains(enabledDictionaries, id),
+					queryStream->events());
+				row->toggledValue()
+					| rpl::on_next(
+						[=](auto enabled) {
+							if (enabled) {
+								_enabledRows.push_back(id);
+							} else {
+								auto &rows = _enabledRows;
+								rows.erase(ranges::remove(rows, id), end(rows));
+							}
+						},
+						row->lifetime());
+			}
+		};
 
-	buildRows();
-	Spellchecker::DictionariesChanged(
-	) | rpl::on_next(buildRows, content->lifetime());
-	Spellchecker::RefreshDictionariesManifest(session);
+		buildRows();
+		Spellchecker::DictionariesChanged()
+			| rpl::on_next(buildRows, content->lifetime());
+		Spellchecker::RefreshDictionariesManifest(session);
+	}
 
 	_queryCallback = [=](const QString &query) {
 		if (query.size() >= kMaxQueryLength) {
@@ -426,24 +429,35 @@ void ManageDictionariesBox::prepare() {
 	setTitle(tr::lng_settings_manage_dictionaries());
 
 	addButton(tr::lng_settings_save(), [=] {
-		Core::App().settings().setDictionariesEnabled(
-			FilterEnabledDict(inner->enabledRows()));
-		Core::App().saveSettingsDelayed();
+		if (Main::details::dictionaryManagerSaveAllowed(
+				_session->mtp().dcOptions(), inner->rowsBuilt())) {
+			Core::App().settings().setDictionariesEnabled(
+				FilterEnabledDict(inner->enabledRows()));
+			Core::App().saveSettingsDelayed();
+		}
 		// Ignore boxClosing() when the Save button was pressed.
 		lifetime().destroy();
 		closeBox();
 	});
 	addButton(tr::lng_close(), [=] { closeBox(); });
 
-	boxClosing() | rpl::on_next([=] {
-		const auto &current = Core::App().settings().dictionariesEnabled();
-		const auto filtered = FilterEnabledDict(current);
-		if (filtered.size() == current.size()) {
-			return;
-		}
-		Core::App().settings().setDictionariesEnabled(filtered);
-		Core::App().saveSettingsDelayed();
-	}, lifetime());
+	boxClosing()
+		| rpl::on_next(
+			[=] {
+				if (!Main::details::dictionaryManagerSaveAllowed(
+						_session->mtp().dcOptions(), inner->rowsBuilt())) {
+					return;
+				}
+				const auto &current
+					= Core::App().settings().dictionariesEnabled();
+				const auto filtered = FilterEnabledDict(current);
+				if (filtered.size() == current.size()) {
+					return;
+				}
+				Core::App().settings().setDictionariesEnabled(filtered);
+				Core::App().saveSettingsDelayed();
+			},
+			lifetime());
 
 	setDimensionsToContent(st::boxWidth, inner);
 

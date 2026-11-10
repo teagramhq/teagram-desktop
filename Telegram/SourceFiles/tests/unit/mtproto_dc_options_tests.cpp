@@ -2270,7 +2270,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 	CHECK(!stock.hasCustomServer());
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 14>{
+	const auto capabilities = std::array<Capability, 15>{
 		Main::details::callsSupported,
 		Main::details::botAppsSupported,
 		Main::details::paidFeaturesSupported,
@@ -2285,6 +2285,7 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		Main::details::noForwardsSupported,
 		Main::details::chatThemeEditingSupported,
 		Main::details::scheduledMessagesSupported,
+		Main::details::cloudResourcesSupported,
 	};
 	for (const auto capability : capabilities) {
 		CHECK(!capability(custom));
@@ -2300,6 +2301,45 @@ TEST_CASE(SessionFeatureSupportUsesTheOwningConfig) {
 		CHECK(capability(stock));
 		CHECK(!capability(custom));
 	}
+}
+
+TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	using Capability = bool (*)(const DcOptions &);
+	const auto capabilities = std::array<Capability, 5>{
+		Main::details::dictionaryManifestAccessSupported,
+		Main::details::cloudEmojiSetsListedSupported,
+		Main::details::advancedManageDictionariesMenuItemSupported,
+		Main::details::composerManageDictionariesMenuItemSupported,
+		[](const DcOptions &options) {
+			return Main::details::dictionaryManagerSaveAllowed(options, true);
+		},
+	};
+	for (const auto capability : capabilities) {
+		CHECK(!capability(custom));
+		CHECK(!capability(blocked));
+		CHECK(capability(stock));
+	}
+	CHECK(!Main::details::dictionaryManagerSaveAllowed(stock, false));
+}
+
+TEST_CASE(TelegramdCloudResourceGrantsRequireStockSession) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	CHECK(!Main::details::cloudResourceGrant(custom));
+	CHECK(!Main::details::cloudResourceGrant(blocked));
+	CHECK(Main::details::cloudResourceGrant(stock).has_value());
 }
 
 TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {
