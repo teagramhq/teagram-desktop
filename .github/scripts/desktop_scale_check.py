@@ -17,19 +17,21 @@ from zipfile import BadZipFile, ZipFile
 
 MIN_DEV_RUNS = 20
 ABSOLUTE_BUDGET_MS = 50.0
+CONTACT_LOAD_BUDGET_MS = 500.0
 MAX_SCALE_RATIO = 1.5
 DEV_ARTIFACT_NAME = "desktop-scale-dev"
 APP_ARTIFACT_NAME = "Teagram"
 SAMPLE_FILE_NAME = "desktop-scale-sample.json"
 MAX_DEV_ARTIFACT_READS = 40
+CONTACT_LOAD_SCENARIO = "contacts.getContacts full response"
 SCENARIOS = {
     "messages.getDialogs page (100 dialogs)": "dialogs",
-    "contacts.getContacts full response": "contacts.getContacts",
+    CONTACT_LOAD_SCENARIO: "contacts.getContacts",
     "contact change + name lookup": "contact change and lookup",
     "cache read x100": "thumbnail reads",
 }
 ALWAYS_ENFORCED_SCENARIOS = {
-    "contacts.getContacts full response",
+    CONTACT_LOAD_SCENARIO,
     "contact change + name lookup",
 }
 STATIC_EXCEPTIONS = {
@@ -247,6 +249,21 @@ def _regression_exceeded(base_ms, head_ms, noise_sd_ms):
     return increase >= 2.0 and increase > max(base_ms * 0.15, 3.0 * noise_sd_ms)
 
 
+def _contact_load_failures(head_runs):
+    if not head_runs:
+        return []
+    hundred_ms = statistics.median(
+        sample["scenarios"][CONTACT_LOAD_SCENARIO]["hundred_ms"]
+        for sample in head_runs
+    )
+    if hundred_ms < CONTACT_LOAD_BUDGET_MS:
+        return []
+    return [
+        f"{CONTACT_LOAD_SCENARIO}: 100x took {hundred_ms:.2f} ms "
+        f"(limit <{CONTACT_LOAD_BUDGET_MS:g} ms)"
+    ]
+
+
 def evaluate(
     history,
     base_runs,
@@ -282,6 +299,7 @@ def evaluate(
         for sample in [*base_runs, *head_runs, *absolute_budget_head_runs]
     ):
         raise ScaleCheckError("scale check received an invalid app report")
+    contact_load_failures = _contact_load_failures(head_runs)
     count = len(history)
     if count < MIN_DEV_RUNS:
         return {
@@ -290,7 +308,7 @@ def evaluate(
             "exceptions": dict(STATIC_EXCEPTIONS),
             "additional_exceptions": {},
             "rows": {},
-            "failures": [],
+            "failures": contact_load_failures,
             "report_only": True,
             "history_truncated": history_truncated,
             "history_unavailable": history_unavailable,
@@ -306,7 +324,7 @@ def evaluate(
             "blocking scale checks require two interleaved base/head samples"
         )
     rows = {}
-    failures = []
+    failures = list(contact_load_failures)
     for scenario in SCENARIOS:
         noise_one = _noise(baseline, scenario, "one_ms")
         noise_hundred = _noise(baseline, scenario, "hundred_ms")
@@ -471,11 +489,15 @@ def format_summary(result, current_sample=None, retry_note=None):
                 f"100x ±3σ {_format_ms(3 * row['noise_hundred_ms'])}"
             )
         exception = row.get("exception") or result["exceptions"].get(scenario)
-        budget = (
-            f"report-only ({exception})"
-            if exception
-            else f"{ABSOLUTE_BUDGET_MS:g} ms main-thread step"
-        )
+        if exception:
+            budget = f"report-only ({exception})"
+        elif scenario == CONTACT_LOAD_SCENARIO:
+            budget = (
+                f"<{CONTACT_LOAD_BUDGET_MS:g} ms 100x contact load; "
+                f"{ABSOLUTE_BUDGET_MS:g} ms main-thread step"
+            )
+        else:
+            budget = f"{ABSOLUTE_BUDGET_MS:g} ms main-thread step"
         lines.append(
             f"| {scenario} | {one_pair} | {hundred_pair} | {ratio} | "
             f"{budget} | {noise} |"

@@ -963,6 +963,36 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertFalse(result["failures"])
         self.assertIn("calibrating: 19/20", summary)
 
+    def test_contact_load_ceiling_applies_during_and_after_calibration(self):
+        self.require_implementation()
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"]["contacts.getContacts full response"][
+                "hundred_ms"
+            ] = 1003.61
+
+        cases = ((19, False), (20, True), (20, False))
+        for history_count, report_only in cases:
+            with self.subTest(
+                history_count=history_count, report_only=report_only
+            ):
+                result = scale_check.evaluate(
+                    [make_sample() for _ in range(history_count)],
+                    base,
+                    head,
+                    report_only=report_only,
+                )
+
+                self.assertTrue(
+                    any(
+                        "contacts.getContacts full response" in failure
+                        and "1003.61 ms" in failure
+                        and "500 ms" in failure
+                        for failure in result["failures"]
+                    )
+                )
+
     def test_absolute_budget_and_scale_ratio_fail_after_calibration(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
