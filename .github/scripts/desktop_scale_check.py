@@ -113,7 +113,7 @@ def parse_report(report):
     }
 
     checks = re.search(
-        r"^Scenario checks: dialogs=(\d)/(\d) contacts=(\d)/(\d) "
+        r"^Scenario checks: dialogs=(\d)/(\d) state=(\d) contacts=(\d)/(\d) "
         r"contact change=(\d)/(\d) cache=(\d)/(\d)\.$",
         report,
         re.MULTILINE,

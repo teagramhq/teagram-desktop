@@ -27,7 +27,7 @@ REPORT = """DESKTOP_SCALE_REPORT_BEGIN
 | cache read x100 | 10.00 ms | 12.00 ms | 1.20x | 50 ms | calibrating |
 Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
 Main-thread steps over 50 ms: dialogs 1x=0, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total=0.
-Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
 Outcome: PASS
 DESKTOP_SCALE_REPORT_END
 """
@@ -172,7 +172,7 @@ def make_runner_harness(root, history=None):
             | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
             Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
-            Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+            Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
             Outcome: {outcome}
             DESKTOP_SCALE_REPORT_END\"\"\")
             if status:
@@ -238,6 +238,32 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(row["one_stalls"], 0)
         self.assertEqual(sample["directory_enumerations"], {"one": 0, "hundred": 0})
         self.assertTrue(sample["valid"])
+
+    def test_failed_dialog_state_check_fails_the_scale_step(self):
+        self.require_implementation()
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.txt"
+            sample = Path(directory) / "sample.json"
+            report.write_text(REPORT.replace("state=1", "state=0"))
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("desktop_scale_check.py")),
+                    "parse",
+                    "--report",
+                    str(report),
+                    "--output",
+                    str(sample),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            parsed = json.loads(sample.read_text())
+
+        self.assertEqual(result.returncode, 3)
+        self.assertFalse(parsed["scenario_checks_passed"])
+        self.assertFalse(parsed["valid"])
 
     def test_main_thread_stalls_remain_valid_timing_samples(self):
         self.require_implementation()
