@@ -10721,6 +10721,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedMissingBotFailures = 0;
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
+	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
@@ -10752,8 +10753,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			peer, RegressionChatFullReply(id, 1, QString(), UserId(1)));
 		return data.history(peer);
 	};
-	const auto firstHistory = makeHistory(ChatId(1051));
-	const auto secondHistory = makeHistory(ChatId(1052));
+	// Keep these IDs separate from RunFirstDialogsHandlerLatencyRegression,
+	// whose histories intentionally contain unread messages.
+	const auto firstHistory = makeHistory(ChatId(1'050'051));
+	const auto secondHistory = makeHistory(ChatId(1'050'052));
+	result.syntheticHistoriesReady
+		= firstHistory->isEmpty() && secondHistory->isEmpty()
+		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
+		  && secondHistory->isReadyFor(ShowAtUnreadMsgId);
 	auto slowChatSwitches = std::vector<MainThreadWorkInterval>();
 	auto chatSwitchCpuClockAvailable = true;
 	auto chatSwitchProcessCpuClockAvailable = true;
@@ -11108,6 +11115,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.hydratedDocuments
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
+		  && result.syntheticHistoriesReady
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
@@ -11867,6 +11875,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_uncached_missing_bot_failures=%d "
 					"attach_menu_uncached_build_count_failures=%d "
 					"attach_menu_cache_bound=%d "
+					"synthetic_histories_ready=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
@@ -11901,6 +11910,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuUncachedMissingBotFailures,
 					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
+					chatSwitch.syntheticHistoriesReady,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					(chatSwitch.maxStallNanoseconds >= 0
 					 && chatSwitch.maxStallNanoseconds < 50'000'000
