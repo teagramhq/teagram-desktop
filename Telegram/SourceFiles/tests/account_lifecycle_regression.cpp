@@ -16206,6 +16206,8 @@ int RunDesktopScaleCheck() {
 	auto searchOne = DesktopScaleSearchUpdateSamples();
 	const auto dialogsOneCreated
 		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
+			  dialogsOne = RunDesktopScaleDialogs(
+				  domain, 50, UserId(1'000'000), account.get());
 			  searchOne = RunDesktopScaleSearchAndUpdates(domain,
 														  50,
 														  UserId(999'999),
@@ -16213,8 +16215,6 @@ int RunDesktopScaleCheck() {
 														  false,
 														  true,
 														  account.get());
-			  dialogsOne = RunDesktopScaleDialogs(
-				  domain, 50, UserId(1'000'000), account.get());
 			  return searchOne.search.passed && searchOne.updateBurst.passed
 					 && dialogsOne.passed;
 		  });
