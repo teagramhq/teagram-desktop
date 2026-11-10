@@ -15283,10 +15283,22 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded,
 			auto &data = account->session().data();
 			auto users = DesktopScaleUsers(firstId, kLoaded, false);
 			const auto dialogs = DesktopScaleDialogs(firstId, kLoaded, true, 9);
-			auto messages = DesktopScaleMessages(firstId, kLoaded, 10);
-			messages[3] = DesktopScaleMessage(UserId(firstId.bare + 3), 1, 30);
-			messages[kLoaded - 1]
-				= DesktopScaleMessage(UserId(firstId.bare + kLoaded - 1), 1, 1);
+			// Every loaded chat gets its own date, so list order never
+			// depends on how equal dates are tied. Archived chats 1..9 are
+			// the preview candidates and chat 9 is the oldest, so it starts
+			// outside the first eight. Chat 10 is the newest unpinned chat
+			// and chat 19 the oldest, below every page row.
+			auto messages = DesktopScaleMessages(firstId, kLoaded);
+			for (auto i = 0; i != kLoaded; ++i) {
+				const auto date = (i == 0)			  ? 100
+								  : (i == 3)		  ? 30
+								  : (i < 9)			  ? (20 + i)
+								  : (i == 9)		  ? 5
+								  : (i < kLoaded - 1) ? (200 - i)
+													  : 1;
+				messages[i]
+					= DesktopScaleMessage(UserId(firstId.bare + i), 1, date);
+			}
 			data.processUsers(MTP_vector<MTPUser>(std::move(users)));
 			data.applyDialogs(nullptr, messages, dialogs, kLoaded);
 
