@@ -262,6 +262,7 @@ struct ChannelSaveRequestCapture {
 	not_null<MTP::Instance *> instance;
 	std::vector<CapturedChannelSaveRequest> requests;
 	bool peerPhotoUploadOnly = false;
+	bool desktopScaleContactsOnly = false;
 };
 
 ChannelSaveRequestCapture *gChannelSaveRequestCapture = nullptr;
@@ -783,6 +784,10 @@ bool CaptureChannelSaveRequestForRegressionTest(
 		return false;
 	}
 	const auto constructor = static_cast<uint32>(body.front());
+	if ((constructor == mtpc_contacts_getContacts)
+		&& !capture->desktopScaleContactsOnly) {
+		return false;
+	}
 	if (capture->peerPhotoUploadOnly
 		&& (constructor != mtpc_upload_saveFilePart)
 		&& (constructor != mtpc_messages_editChatPhoto)) {
@@ -14725,7 +14730,7 @@ constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
 
 struct DesktopScaleActionSample {
-	qint64 nanoseconds = -1;
+	std::optional<qint64> nanoseconds;
 	quint64 mainThreadStepsOverBudget = 0;
 	bool passed = false;
 };
@@ -14737,7 +14742,7 @@ void SettleDesktopScaleWatchdog() {
 }
 
 struct DesktopScaleCacheSample final : DesktopScaleActionSample {
-	quint64 directoryEnumerations = 0;
+	std::optional<quint64> directoryEnumerations;
 };
 
 struct DesktopScaleCacheSamples final {
@@ -15030,7 +15035,35 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 		domain, UserId(firstId.bare - 1), [&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
-			result.loaded.nanoseconds = 0;
+			auto unrelatedCapture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+			};
+			auto unrelatedCallbacks = MTP::ResponseHandler();
+			{
+				const auto restoreCapture = gsl::finally(
+					[previous = std::exchange(gChannelSaveRequestCapture,
+											  &unrelatedCapture)] {
+						gChannelSaveRequestCapture = previous;
+					});
+				if (CaptureChannelSaveRequestForRegressionTest(
+						&account->mtp(), 1,
+						MTPcontacts_GetContacts(MTP_long(0)),
+						unrelatedCallbacks)) {
+					std::fprintf(stderr,
+								 "Desktop scale check failed: "
+								 "unapproved contacts request "
+								 "was intercepted by a non-scale capture.\n");
+					return false;
+				}
+			}
+			if (!unrelatedCapture.requests.empty()) {
+				std::fprintf(stderr, "Desktop scale check failed: "
+									 "unrelated request capture "
+									 "captured contacts.getContacts "
+									 "without scale opt-in.\n");
+				return false;
+			}
+
 			result.loaded.passed = true;
 			// Apply the complete contact result in the same 100-user pages as
 			// the other synthetic server responses.
@@ -15041,6 +15074,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 				data.contactsLoaded() = false;
 				auto capture = ChannelSaveRequestCapture{
 					.instance = &account->mtp(),
+					.desktopScaleContactsOnly = true,
 				};
 				DesktopScaleActionSample page;
 				{
@@ -15063,8 +15097,10 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 								5000);
 						});
 				}
-				if (page.nanoseconds >= 0) {
-					result.loaded.nanoseconds += page.nanoseconds;
+				if (page.nanoseconds) {
+					result.loaded.nanoseconds
+						= result.loaded.nanoseconds.value_or(0)
+						  + *page.nanoseconds;
 				}
 				result.loaded.mainThreadStepsOverBudget
 					+= page.mainThreadStepsOverBudget;
@@ -15085,6 +15121,7 @@ RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId) {
 			data.contactsLoaded() = false;
 			auto updateCapture = ChannelSaveRequestCapture{
 				.instance = &account->mtp(),
+				.desktopScaleContactsOnly = true,
 			};
 			{
 				const auto restoreCapture = gsl::finally(
@@ -15176,7 +15213,20 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 	}
 	auto &data = account->session().data();
 	auto *cache = data.cacheIfAllowed();
-	if (!cache || (entryCount < alreadySeeded + kDesktopScaleThumbnailReads)) {
+	if (!cache) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: thumbnail cache is unavailable.\n");
+		return sample;
+	}
+	const auto requiredEntries = alreadySeeded + kDesktopScaleThumbnailReads;
+	if (entryCount < requiredEntries) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: cache seed has %d entries, but %d "
+			"are required (already seeded %d plus %d thumbnail reads).\n",
+			entryCount, requiredEntries, alreadySeeded,
+			kDesktopScaleThumbnailReads);
 		return sample;
 	}
 	auto documents = std::vector<not_null<DocumentData *>>();
@@ -15185,6 +15235,10 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 		const auto document = data.processDocument(
 			DesktopScaleVideoDocument(firstDocumentId + i));
 		if (!document->isVideoFile()) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: document %lld is "
+						 "not a video.\n",
+						 static_cast<long long>(firstDocumentId + i));
 			return sample;
 		}
 		documents.push_back(document);
@@ -15202,6 +15256,11 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 	cache->sync();
 	if (!CachePayloadMatches(*cache, documents.front()->goodThumbnailCacheKey(),
 							 QByteArray("cached-thumbnail"))) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: cached thumbnail payload did not "
+			"match for the %d-entry scenario.\n",
+			entryCount);
 		return sample;
 	}
 
@@ -15220,6 +15279,13 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 			});
 		},
 		15'000);
+	if (!completed) {
+		std::fprintf(
+			stderr,
+			"Desktop scale check failed: waiting 15000 ms for %d cached "
+			"thumbnails at %d cache entries timed out.\n",
+			kDesktopScaleThumbnailReads, entryCount);
+	}
 	sample.nanoseconds = timer.nsecsElapsed();
 	sample.directoryEnumerations = stopCounting();
 	SettleDesktopScaleWatchdog();
@@ -15281,30 +15347,24 @@ int RunDesktopScaleCheck() {
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
 
-	const auto printRow = [](const char *name,
-							 const DesktopScaleActionSample &one,
-							 const DesktopScaleActionSample &hundred) {
-		const auto oneMs
-			= one.nanoseconds >= 0 ? double(one.nanoseconds) / 1'000'000. : -1.;
-		const auto hundredMs = hundred.nanoseconds >= 0
-								   ? double(hundred.nanoseconds) / 1'000'000.
-								   : -1.;
-		const auto ratio = oneMs > 0. ? hundredMs / oneMs : -1.;
+	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
+		if (sample.nanoseconds) {
+			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
+		} else {
+			std::printf("n/a");
+		}
+	};
+	const auto printRow = [&](const char *name,
+							  const DesktopScaleActionSample &one,
+							  const DesktopScaleActionSample &hundred) {
 		std::printf("| %s | ", name);
-		if (oneMs >= 0.) {
-			std::printf("%.2f ms", oneMs);
-		} else {
-			std::printf("n/a");
-		}
+		printSampleTime(one);
 		std::printf(" | ");
-		if (hundredMs >= 0.) {
-			std::printf("%.2f ms", hundredMs);
-		} else {
-			std::printf("n/a");
-		}
+		printSampleTime(hundred);
 		std::printf(" | ");
-		if (ratio >= 0.) {
-			std::printf("%.2fx", ratio);
+		if (one.nanoseconds && hundred.nanoseconds && (*one.nanoseconds > 0)) {
+			std::printf("%.2fx", double(*hundred.nanoseconds)
+									 / double(*one.nanoseconds));
 		} else {
 			std::printf("n/a");
 		}
@@ -15345,11 +15405,18 @@ int RunDesktopScaleCheck() {
 	printRow("contact change + name lookup", contactsOne.changedAndFound,
 			 contactsHundred.changedAndFound);
 	printRow("cache read x100", cacheOne, cacheHundred);
-	std::printf(
-		"Directory enumerations per thumbnail cache access: 1x=%llu/100, "
-		"100x=%llu/100.\n",
-		static_cast<unsigned long long>(cacheOne.directoryEnumerations),
-		static_cast<unsigned long long>(cacheHundred.directoryEnumerations));
+	const auto printEnumerations = [](const std::optional<quint64> &sample) {
+		if (sample) {
+			std::printf("%llu/100", static_cast<unsigned long long>(*sample));
+		} else {
+			std::printf("n/a");
+		}
+	};
+	std::printf("Directory enumerations per thumbnail cache access: 1x=");
+	printEnumerations(cacheOne.directoryEnumerations);
+	std::printf(", 100x=");
+	printEnumerations(cacheHundred.directoryEnumerations);
+	std::printf(".\n");
 	std::printf(
 		"Main-thread steps over 50 ms: dialogs 1x=%llu, 100x=%llu; "
 		"contacts.getContacts 1x=%llu, 100x=%llu; "
@@ -15369,14 +15436,15 @@ int RunDesktopScaleCheck() {
 		static_cast<unsigned long long>(cacheOne.mainThreadStepsOverBudget),
 		static_cast<unsigned long long>(cacheHundred.mainThreadStepsOverBudget),
 		static_cast<unsigned long long>(stalls));
+	std::printf("Report-only baseline: dialogs page 1x=");
+	printSampleTime(dialogsOne);
 	std::printf(
-		"Report-only baseline: dialogs page 1x=%.2f ms/%llu over-50-ms "
-		"steps, 100x=%.2f ms/%llu over-50-ms steps.\n",
-		double(dialogsOne.nanoseconds) / 1'000'000.,
-		static_cast<unsigned long long>(dialogsOne.mainThreadStepsOverBudget),
-		double(dialogsHundred.nanoseconds) / 1'000'000.,
-		static_cast<unsigned long long>(
-			dialogsHundred.mainThreadStepsOverBudget));
+		"/%llu over-50-ms steps, 100x=",
+		static_cast<unsigned long long>(dialogsOne.mainThreadStepsOverBudget));
+	printSampleTime(dialogsHundred);
+	std::printf("/%llu over-50-ms steps.\n",
+				static_cast<unsigned long long>(
+					dialogsHundred.mainThreadStepsOverBudget));
 	std::printf("Blocking main-thread steps over 50 ms: %llu.\n",
 				static_cast<unsigned long long>(blockingStalls));
 	std::printf(
