@@ -15065,7 +15065,15 @@ template <typename Function>
 [[nodiscard]] bool WithDesktopScaleWindow(not_null<Main::Account *> account,
 										  Function function) {
 	auto &app = Core::App();
-	const auto window = app.activePrimaryWindow();
+	auto window = app.activePrimaryWindow();
+	if (!window) {
+		auto anyWindow = false;
+		app.enumerateWindows([&](auto) { anyWindow = true; });
+		if (!anyWindow) {
+			app.createPrimaryWindowForLifecycleRegression();
+			window = app.activePrimaryWindow();
+		}
+	}
 	if (!window) {
 		std::fprintf(stderr, "Desktop scale check failed: no primary "
 							 "window.\n");
