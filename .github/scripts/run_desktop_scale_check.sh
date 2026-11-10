@@ -7,11 +7,17 @@ summary_file="$RUNNER_TEMP/desktop-scale-summary.md"
 evaluation_file="$RUNNER_TEMP/desktop-scale-evaluation.json"
 app_mount="$RUNNER_TEMP/desktop-scale-dev"
 scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-180}"
+# A hosted upload of the 236 MB Teagram artifact took 27 seconds.
+# Reserve 50 seconds for the base-run lookup, download, and extraction.
+# The history, binary fetch, and scale caps total 285 seconds.
+binary_fetch_budget_seconds=50
 scale_history_args=()
 scale_baseline_count=0
 scale_history_truncated=false
 scale_history_unavailable=false
 scale_binary_available=false
+scale_history_malformed_count=0
+scale_history_first_error=
 printf '[]\n' > "$history_file"
 
 if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
@@ -33,13 +39,22 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 			exit 2
 		fi
 		scale_history_truncated="$(sed -n 's/^history_truncated=//p' "$fetch_output")"
+		scale_history_malformed_count="$(sed -n 's/^history_malformed_count=//p' "$fetch_output")"
+		scale_history_first_error="$(sed -n 's/^history_first_error=//p' "$fetch_output")"
+		if [[ ! "$scale_history_malformed_count" =~ ^[0-9]+$ ]]; then
+			echo '::error::Desktop scale history fetch returned an invalid malformed-record count.'
+			exit 2
+		fi
+		scale_history_args+=(--history-malformed-count "$scale_history_malformed_count")
+		scale_history_args+=(--history-first-error "$scale_history_first_error")
 		if [[ "$scale_history_truncated" == 'true' ]]; then
 			scale_history_args+=(--history-truncated)
 		fi
 		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 			&& "$scale_baseline_count" -ge 20 ]]; then
+			binary_fetch_started=$SECONDS
 			set +e
-			timeout 35s python3 "$scale_script" fetch-binary \
+			timeout "${binary_fetch_budget_seconds}s" python3 "$scale_script" fetch-binary \
 				--api-url "$GITHUB_API_URL" \
 				--token "$GH_TOKEN" \
 				--repository "$GITHUB_REPOSITORY" \
@@ -49,7 +64,8 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 			set -e
 			if (( binary_fetch_status != 0 )); then
 				if (( binary_fetch_status == 124 )); then
-					echo '::error::PR base Teagram artifact fetch timed out after dev history was available.'
+					printf '::error::PR base Teagram artifact fetch timed out after the '
+					printf '%s-second budget; re-run this job.\n' "$binary_fetch_budget_seconds"
 				else
 					echo "::error::PR base Teagram artifact fetch failed with status $binary_fetch_status after dev history was available."
 				fi
@@ -60,12 +76,16 @@ No timing verdict was produced because the PR base binary fetch failed with stat
 EOF
 				exit "$binary_fetch_status"
 			fi
+			binary_fetch_elapsed=$((SECONDS - binary_fetch_started))
+			echo "::notice::PR base Teagram artifact retrieved in ${binary_fetch_elapsed}s."
 			scale_binary_available=true
 		fi
 	else
 		printf '[]\n' > "$history_file"
 		scale_baseline_count=0
 		scale_history_unavailable=true
+		scale_history_malformed_count=0
+		scale_history_first_error=
 		if (( history_fetch_status == 124 )); then
 			echo '::error::Desktop scale history fetch timed out after 55 seconds; this run will stay report-only.'
 			echo '::warning::Desktop scale baseline history is unavailable for this run.'

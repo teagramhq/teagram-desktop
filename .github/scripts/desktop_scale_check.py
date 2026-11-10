@@ -39,6 +39,10 @@ class ScaleCheckError(Exception):
     pass
 
 
+class PersistentReadError(ScaleCheckError):
+    pass
+
+
 def _duration(value):
     value = value.strip()
     if value == "n/a":
@@ -242,6 +246,8 @@ def evaluate(
     history_truncated=False,
     history_unavailable=False,
     absolute_budget_head_runs=None,
+    history_malformed_count=0,
+    history_first_error=None,
 ):
     history = _valid_records(history)
     if absolute_budget_head_runs is None:
@@ -263,6 +269,8 @@ def evaluate(
             "report_only": True,
             "history_truncated": history_truncated,
             "history_unavailable": history_unavailable,
+            "history_malformed_count": history_malformed_count,
+            "history_first_error": history_first_error,
         }
 
     baseline = latest_records(history)
@@ -350,6 +358,8 @@ def evaluate(
         "report_only": report_only,
         "history_truncated": history_truncated,
         "history_unavailable": history_unavailable,
+        "history_malformed_count": history_malformed_count,
+        "history_first_error": history_first_error,
     }
 
 
@@ -381,6 +391,15 @@ def format_summary(result, current_sample=None, retry_note=None):
                 f"History was cut short at the {MAX_DEV_ARTIFACT_READS}-artifact "
                 f"read cap with {result['record_count']}/{MIN_DEV_RUNS} valid "
                 "samples; this run is report-only.",
+            ]
+        )
+    if result.get("history_malformed_count", 0):
+        first_error = result.get("history_first_error") or "unspecified record error"
+        lines.extend(
+            [
+                "",
+                f"Skipped {result['history_malformed_count']} malformed dev scale "
+                f"artifact record(s). First error: {first_error}.",
             ]
         )
     if retry_note:
@@ -460,7 +479,7 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _api_json(api_url, token, endpoint, query=None):
+def _api_json(api_url, token, endpoint, query=None, timeout=10):
     url = api_url.rstrip("/") + endpoint
     if query:
         url += "?" + urlencode(query)
@@ -472,7 +491,7 @@ def _api_json(api_url, token, endpoint, query=None):
             "X-GitHub-Api-Version": "2026-03-10",
         },
     )
-    with urlopen(request, timeout=60) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
 
 
@@ -492,6 +511,30 @@ def _artifact_pages(api_url, token, repository, name):
             break
         page += 1
     return artifacts
+
+
+def _retry_read(operation, description):
+    for attempt in range(2):
+        try:
+            return operation()
+        except (OSError, ScaleCheckError, json.JSONDecodeError) as error:
+            if attempt == 1:
+                raise PersistentReadError(
+                    f"{description} failed after one retry: {error}"
+                ) from error
+
+
+def _run_artifacts(api_url, token, repository, run_id):
+    result = _retry_read(
+        lambda: _api_json(
+            api_url,
+            token,
+            f"/repos/{repository}/actions/runs/{run_id}/artifacts",
+            {"per_page": 100, "page": 1},
+        ),
+        f"reading artifacts for dev run {run_id}",
+    )
+    return result.get("artifacts", [])
 
 
 def _download_artifact(api_url, token, repository, artifact_id, timeout=60):
@@ -555,25 +598,46 @@ def _valid_dev_artifacts(artifacts):
 
 def fetch_history(api_url, token, repository, records_output):
     artifacts = _valid_dev_artifacts(
-        _artifact_pages(api_url, token, repository, DEV_ARTIFACT_NAME)
+        _retry_read(
+            lambda: _artifact_pages(
+                api_url, token, repository, DEV_ARTIFACT_NAME
+            ),
+            "listing dev scale artifacts",
+        )
     )
     candidate_artifacts = artifacts[-MAX_DEV_ARTIFACT_READS:]
     records = []
+    malformed_count = 0
+    first_error = None
     for artifact in reversed(candidate_artifacts):
-        contents = _artifact_file(
-            _download_artifact(api_url, token, repository, artifact["id"]),
-            SAMPLE_FILE_NAME,
-        )
         try:
+            artifact_id = artifact["id"]
+            archive_bytes = _retry_read(
+                lambda: _download_artifact(
+                    api_url, token, repository, artifact_id, timeout=15
+                ),
+                f"reading dev scale artifact {artifact_id}",
+            )
+        except (KeyError, ScaleCheckError) as error:
+            if isinstance(error, PersistentReadError):
+                raise
+            malformed_count += 1
+            first_error = first_error or f"artifact metadata is invalid: {error}"
+            continue
+        try:
+            contents = _artifact_file(archive_bytes, SAMPLE_FILE_NAME)
             sample = json.loads(contents)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise ScaleCheckError("dev scale artifact contains invalid JSON") from error
-        if not isinstance(sample, dict):
-            raise ScaleCheckError("dev scale artifact contains an invalid record")
-        if sample.get("valid") is True:
+            if not isinstance(sample, dict):
+                raise ScaleCheckError("sample is not a JSON object")
+            if sample.get("valid") is not True:
+                raise ScaleCheckError("sample is not marked valid")
             if not _is_valid_record(sample):
-                raise ScaleCheckError("dev scale artifact contains an invalid sample")
-            records.append(sample)
+                raise ScaleCheckError("sample failed the schema validity checks")
+        except (ScaleCheckError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            malformed_count += 1
+            first_error = first_error or f"artifact {artifact.get('id', 'unknown')}: {error}"
+            continue
+        records.append(sample)
         if len(records) >= MIN_DEV_RUNS:
             break
     history_truncated = (
@@ -582,7 +646,7 @@ def fetch_history(api_url, token, repository, records_output):
     )
     records.sort(key=lambda sample: sample.get("created_at", ""))
     Path(records_output).write_text(json.dumps(records, indent=2) + "\n")
-    return records, history_truncated
+    return records, history_truncated, malformed_count, first_error
 
 
 def fetch_base_binary(
@@ -593,14 +657,56 @@ def fetch_base_binary(
     binary_directory,
     require_binary=True,
 ):
-    binary_artifacts = _valid_dev_artifacts(
-        _artifact_pages(api_url, token, repository, APP_ARTIFACT_NAME)
+    runs_result = _retry_read(
+        lambda: _api_json(
+            api_url,
+            token,
+            f"/repos/{repository}/actions/runs",
+            {
+                "head_sha": base_sha,
+                "branch": "dev",
+                "per_page": 100,
+                "page": 1,
+            },
+        ),
+        f"finding the dev run for PR base SHA {base_sha}",
     )
+    runs = [
+        run
+        for run in runs_result.get("workflow_runs", [])
+        if (
+            run.get("head_sha") == base_sha
+            and run.get("head_branch") == "dev"
+            and Path(run.get("path", "")).name == "linux.yml"
+        )
+    ]
+    runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
+    if not runs:
+        if not require_binary:
+            return False
+        raise ScaleCheckError(
+            f"no dev Linux run or Teagram artifact matches PR base SHA {base_sha}; "
+            "rebase onto an earlier dev commit or rerun after the dev build "
+            "for this SHA completes"
+        )
+
+    completed_runs = [
+        run
+        for run in runs
+        if run.get("status") == "completed" and run.get("conclusion") == "success"
+    ]
+    run = completed_runs[0] if completed_runs else runs[0]
+    run_id = run.get("id")
+    if run_id is None:
+        raise ScaleCheckError(f"dev run for PR base SHA {base_sha} has no run ID")
+    binary_artifacts = _run_artifacts(api_url, token, repository, run_id)
     matching = [
         artifact
         for artifact in binary_artifacts
-        if (artifact.get("workflow_run") or {}).get("head_sha") == base_sha
+        if artifact.get("name") == APP_ARTIFACT_NAME
+        and artifact.get("expired") is False
     ]
+    matching.sort(key=lambda artifact: artifact.get("created_at", ""))
     if not matching:
         if not require_binary:
             return False
@@ -648,7 +754,7 @@ def fetch_baseline(
     binary_directory=None,
     require_binary=False,
 ):
-    records, history_truncated = fetch_history(
+    records, history_truncated, malformed_count, first_error = fetch_history(
         api_url, token, repository, records_output
     )
 
@@ -668,7 +774,7 @@ def fetch_baseline(
             "rebase onto an earlier dev commit or rerun after the dev build "
             "for this SHA completes"
         )
-    return records, binary_found, history_truncated
+    return records, binary_found, history_truncated, malformed_count, first_error
 
 
 def _write_json(path, value):
@@ -689,7 +795,7 @@ def _load_json(path, default=_MISSING):
 
 def _cmd_fetch(args):
     if args.history_only:
-        records, history_truncated = fetch_history(
+        records, history_truncated, malformed_count, first_error = fetch_history(
             args.api_url,
             args.token,
             args.repository,
@@ -697,7 +803,13 @@ def _cmd_fetch(args):
         )
         binary_found = False
     else:
-        records, binary_found, history_truncated = fetch_baseline(
+        (
+            records,
+            binary_found,
+            history_truncated,
+            malformed_count,
+            first_error,
+        ) = fetch_baseline(
             args.api_url,
             args.token,
             args.repository,
@@ -709,6 +821,9 @@ def _cmd_fetch(args):
     print(f"record_count={len(records)}")
     print(f"binary_available={'true' if binary_found else 'false'}")
     print(f"history_truncated={'true' if history_truncated else 'false'}")
+    print(f"history_malformed_count={malformed_count}")
+    safe_first_error = (first_error or "").replace("\r", " ").replace("\n", " ")
+    print(f"history_first_error={safe_first_error}")
 
 
 def _cmd_fetch_binary(args):
@@ -757,6 +872,8 @@ def _cmd_evaluate(args):
         args.history_truncated,
         args.history_unavailable,
         absolute_budget_head_runs,
+        args.history_malformed_count,
+        args.history_first_error,
     )
     _write_json(args.output, result)
     if args.summary_output:
@@ -820,6 +937,8 @@ def _build_parser():
     compare.add_argument("--include-head-in-history", action="store_true")
     compare.add_argument("--history-truncated", action="store_true")
     compare.add_argument("--history-unavailable", action="store_true")
+    compare.add_argument("--history-malformed-count", type=int, default=0)
+    compare.add_argument("--history-first-error")
     compare.set_defaults(function=_cmd_evaluate)
 
     annotate = commands.add_parser("annotate")

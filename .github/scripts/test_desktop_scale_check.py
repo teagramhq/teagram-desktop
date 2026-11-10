@@ -91,6 +91,7 @@ def make_runner_harness(root, history=None):
                     printf '[]\\n' > "$output_path"
                   fi
                   printf 'record_count=%s\\nhistory_truncated=false\\n' "${MOCK_RECORD_COUNT:-0}"
+                  printf 'history_malformed_count=0\\nhistory_first_error=\\n'
                   exit 0
                   ;;
                 fetch-binary)
@@ -155,6 +156,8 @@ def make_runner_harness(root, history=None):
             )
             if status and fail_before_report:
                 sys.exit(status)
+            if os.environ.get("MOCK_DOCKER_NO_REPORT") == "true":
+                sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
             one = "13.00" if str(count) in slow_counts else "10.00"
@@ -204,6 +207,7 @@ def make_runner_harness(root, history=None):
             "MOCK_EVALUATE_STATUS": "0",
             "MOCK_DOCKER_STATUS": "0",
             "MOCK_DOCKER_FAIL_BEFORE_REPORT": "false",
+            "MOCK_DOCKER_NO_REPORT": "false",
             "MOCK_DOCKER_SLEEP_SECONDS": "0",
             "MOCK_DOCKER_STALL_COUNTS": "",
             "MOCK_DOCKER_SLOW_COUNTS": "",
@@ -338,18 +342,41 @@ class DesktopScaleCheckTests(unittest.TestCase):
         with zipfile.ZipFile(binary_archive, "w") as bundle:
             bundle.writestr("Teagram", b"dev app")
         archives[100] = binary_archive.getvalue()
-        base_artifact = {
-            "id": 100,
-            "expired": False,
-            "created_at": "2026-11-22T00:00:00Z",
-            "workflow_run": {"head_branch": "dev", "head_sha": "base-sha"},
-        }
-
         def list_artifacts(_api_url, _token, _repository, name):
             if name == "desktop-scale-dev":
                 return artifacts
-            self.assertEqual(name, "Teagram")
-            return [base_artifact]
+            self.fail(f"base binary must use the run-scoped API, got {name}")
+
+        def api_json(_api_url, _token, endpoint, query=None):
+            if endpoint == "/repos/owner/repo/actions/runs":
+                self.assertEqual(
+                    query,
+                    {
+                        "head_sha": "base-sha",
+                        "branch": "dev",
+                        "per_page": 100,
+                        "page": 1,
+                    },
+                )
+                return {
+                    "workflow_runs": [
+                        {
+                            "id": 456,
+                            "head_sha": "base-sha",
+                            "head_branch": "dev",
+                            "path": ".github/workflows/linux.yml",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "created_at": "2026-11-22T00:00:00Z",
+                        }
+                    ]
+                }
+            self.assertEqual(endpoint, "/repos/owner/repo/actions/runs/456/artifacts")
+            return {
+                "artifacts": [
+                    {"id": 100, "name": "Teagram", "expired": False}
+                ]
+            }
 
         with tempfile.TemporaryDirectory() as directory:
             records_path = Path(directory) / "history.json"
@@ -357,13 +384,21 @@ class DesktopScaleCheckTests(unittest.TestCase):
             with patch.object(
                 scale_check, "_artifact_pages", side_effect=list_artifacts
             ), patch.object(
+                scale_check, "_api_json", side_effect=api_json
+            ), patch.object(
                 scale_check,
                 "_download_artifact",
                 side_effect=lambda _api, _token, _repo, artifact_id, **_kwargs: archives[
                     artifact_id
                 ],
             ):
-                records, binary_found, history_truncated = scale_check.fetch_baseline(
+                (
+                    records,
+                    binary_found,
+                    history_truncated,
+                    _malformed_count,
+                    _first_error,
+                ) = scale_check.fetch_baseline(
                     "https://api.github.com",
                     "token",
                     "owner/repo",
@@ -380,6 +415,85 @@ class DesktopScaleCheckTests(unittest.TestCase):
             self.assertFalse(history_truncated)
             self.assertEqual((binary_dir / "Teagram").read_bytes(), b"dev app")
             self.assertTrue(binary_dir.joinpath("Teagram").stat().st_mode & 0o111)
+
+    def test_base_binary_lookup_uses_only_the_matching_dev_run(self):
+        self.require_implementation()
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("Teagram", b"matching base binary")
+        api_calls = []
+
+        def api_json(_api, _token, endpoint, query=None):
+            api_calls.append((endpoint, query))
+            if endpoint.endswith("/actions/runs"):
+                return {
+                    "workflow_runs": [
+                        {
+                            "id": 455,
+                            "head_sha": "base-sha",
+                            "head_branch": "dev",
+                            "path": ".github/workflows/pr_cache_cleanup.yml",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "created_at": "2026-11-23T00:00:00Z",
+                        },
+                        {
+                            "id": 456,
+                            "head_sha": "base-sha",
+                            "head_branch": "dev",
+                            "path": ".github/workflows/linux.yml",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "created_at": "2026-11-22T00:00:00Z",
+                        },
+                    ]
+                }
+            self.assertTrue(endpoint.endswith("/actions/runs/456/artifacts"))
+            return {
+                "artifacts": [
+                    {"id": 900, "name": "Teagram", "expired": True},
+                    {"id": 901, "name": "Other", "expired": False},
+                    {"id": 902, "name": "Teagram", "expired": False},
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                scale_check, "_api_json", side_effect=api_json
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                return_value=archive.getvalue(),
+            ) as download:
+                found = scale_check.fetch_base_binary(
+                    "https://api.github.com",
+                    "token",
+                    "owner/repo",
+                    "base-sha",
+                    directory,
+                )
+
+            self.assertTrue(found)
+            self.assertEqual(
+                (Path(directory) / "Teagram").read_bytes(), b"matching base binary"
+            )
+
+        self.assertEqual(
+            api_calls[0],
+            (
+                "/repos/owner/repo/actions/runs",
+                {
+                    "head_sha": "base-sha",
+                    "branch": "dev",
+                    "per_page": 100,
+                    "page": 1,
+                },
+            ),
+        )
+        self.assertEqual(
+            api_calls[1][0], "/repos/owner/repo/actions/runs/456/artifacts"
+        )
+        self.assertEqual(download.call_args.args[3], 902)
 
     def test_history_only_fetch_cli_does_not_request_a_base_binary(self):
         self.require_implementation()
@@ -431,6 +545,139 @@ class DesktopScaleCheckTests(unittest.TestCase):
             list_artifacts.call_args.args[-1], scale_check.DEV_ARTIFACT_NAME
         )
 
+    def test_malformed_dev_samples_are_skipped_and_reported(self):
+        self.require_implementation()
+        artifacts = []
+        archives = {}
+        for index in range(22):
+            artifact_id = index + 1
+            sample = make_sample()
+            sample["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            if index == 20:
+                sample["scenarios"] = None
+            artifacts.append(
+                {
+                    "id": artifact_id,
+                    "expired": False,
+                    "created_at": sample["created_at"],
+                    "workflow_run": {"head_branch": "dev"},
+                }
+            )
+            archive = BytesIO()
+            with zipfile.ZipFile(archive, "w") as bundle:
+                payload = b"not-json" if index == 21 else json.dumps(sample).encode()
+                bundle.writestr(scale_check.SAMPLE_FILE_NAME, payload)
+            archives[artifact_id] = archive.getvalue()
+
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                scale_check, "_artifact_pages", return_value=artifacts
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                side_effect=lambda _api, _token, _repo, artifact_id, **_kwargs: (
+                    archives[artifact_id]
+                ),
+            ), redirect_stdout(stdout):
+                status = scale_check.main(
+                    [
+                        "fetch",
+                        "--history-only",
+                        "--api-url",
+                        "https://api.github.com",
+                        "--token",
+                        "token",
+                        "--repository",
+                        "owner/repo",
+                        "--records-output",
+                        str(Path(directory) / "history.json"),
+                    ]
+                )
+
+            saved = json.loads((Path(directory) / "history.json").read_text())
+
+        self.assertEqual(status, 0)
+        self.assertEqual(len(saved), 20)
+        self.assertIn("history_malformed_count=2", stdout.getvalue())
+        self.assertIn("history_first_error=artifact 22:", stdout.getvalue())
+        first_error = next(
+            line.split("=", 1)[1]
+            for line in stdout.getvalue().splitlines()
+            if line.startswith("history_first_error=")
+        )
+        result = scale_check.evaluate(
+            saved,
+            [],
+            [make_sample()],
+            report_only=True,
+            history_malformed_count=2,
+            history_first_error=first_error,
+        )
+        summary = scale_check.format_summary(result, make_sample())
+        self.assertIn("Skipped 2 malformed dev scale artifact record(s)", summary)
+        self.assertIn(first_error, summary)
+
+    def test_history_artifact_read_retries_once_then_accepts_sample(self):
+        self.require_implementation()
+        sample = make_sample()
+        sample["created_at"] = "2026-11-10T00:00:00Z"
+        artifact = {
+            "id": 1,
+            "expired": False,
+            "created_at": sample["created_at"],
+            "workflow_run": {"head_branch": "dev"},
+        }
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr(scale_check.SAMPLE_FILE_NAME, json.dumps(sample).encode())
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                scale_check, "_artifact_pages", return_value=[artifact]
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                side_effect=[OSError("transient read"), archive.getvalue()],
+            ) as download:
+                (
+                    records,
+                    truncated,
+                    malformed_count,
+                    first_error,
+                ) = scale_check.fetch_history(
+                    "https://api.github.com",
+                    "token",
+                    "owner/repo",
+                    Path(directory) / "history.json",
+                )
+
+        self.assertEqual(len(records), 1)
+        self.assertFalse(truncated)
+        self.assertEqual(malformed_count, 0)
+        self.assertIsNone(first_error)
+        self.assertEqual(download.call_count, 2)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                scale_check, "_artifact_pages", return_value=[artifact]
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                side_effect=OSError("persistent read failure"),
+            ) as download:
+                with self.assertRaisesRegex(
+                    scale_check.PersistentReadError, "after one retry"
+                ):
+                    scale_check.fetch_history(
+                        "https://api.github.com",
+                        "token",
+                        "owner/repo",
+                        Path(directory) / "history.json",
+                    )
+
+        self.assertEqual(download.call_count, 2)
+
     def test_missing_base_binary_has_an_actionable_error(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -453,22 +700,15 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     "desktop-scale-sample.json", json.dumps(sample).encode()
                 )
             archives[artifact_id] = archive.getvalue()
-        wrong_base = {
-            "id": 100,
-            "expired": False,
-            "created_at": "2026-11-22T00:00:00Z",
-            "workflow_run": {"head_branch": "dev", "head_sha": "other-sha"},
-        }
-        artifacts_by_name = {
-            "desktop-scale-dev": artifacts,
-            "Teagram": [wrong_base],
-        }
-
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(
                 scale_check,
                 "_artifact_pages",
-                side_effect=lambda _api, _token, _repo, name: artifacts_by_name[name],
+                return_value=artifacts,
+            ), patch.object(
+                scale_check,
+                "_api_json",
+                return_value={"workflow_runs": []},
             ), patch.object(
                 scale_check,
                 "_download_artifact",
@@ -492,21 +732,36 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
     def test_base_binary_download_retries_once_and_fails_after_the_second_error(self):
         self.require_implementation()
-        artifact = {
-            "id": 100,
-            "expired": False,
-            "created_at": "2026-11-22T00:00:00Z",
-            "workflow_run": {"head_branch": "dev", "head_sha": "base-sha"},
-        }
         binary_archive = BytesIO()
         with zipfile.ZipFile(binary_archive, "w") as bundle:
             bundle.writestr("Teagram", b"dev app")
         archive_bytes = binary_archive.getvalue()
         stdout = StringIO()
 
+        def api_json(_api, _token, endpoint, query=None):
+            if endpoint.endswith("/actions/runs"):
+                return {
+                    "workflow_runs": [
+                        {
+                            "id": 456,
+                            "head_sha": "base-sha",
+                            "head_branch": "dev",
+                            "path": ".github/workflows/linux.yml",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "created_at": "2026-11-22T00:00:00Z",
+                        }
+                    ]
+                }
+            return {
+                "artifacts": [
+                    {"id": 100, "name": "Teagram", "expired": False}
+                ]
+            }
+
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(
-                scale_check, "_artifact_pages", return_value=[artifact]
+                scale_check, "_api_json", side_effect=api_json
             ), patch.object(
                 scale_check,
                 "_download_artifact",
@@ -538,7 +793,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         stderr = StringIO()
         with patch.object(
-            scale_check, "_artifact_pages", return_value=[artifact]
+            scale_check, "_api_json", side_effect=api_json
         ), patch.object(
             scale_check,
             "_download_artifact",
@@ -599,7 +854,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     downloaded.append(artifact_id) or archives[artifact_id]
                 ),
             ):
-                records, binary_found, history_truncated = scale_check.fetch_baseline(
+                records, binary_found, history_truncated, _, _ = scale_check.fetch_baseline(
                     "https://api.github.com",
                     "token",
                     "owner/repo",
@@ -898,6 +1153,93 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn("desktop-scale-base-4.json", sample_names)
         self.assertIn("One additional interleaved pair was added", summary)
         self.assertNotIn("Timing failures:", summary)
+
+    def test_pr_retry_keeps_a_reproduced_head_stall_blocking(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        history = [make_sample() for _ in range(20)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_STALL_COUNTS"] = "4,6"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 6)
+        self.assertIn("Timing failures:", summary)
+        self.assertIn("exceeded 50 ms", summary)
+
+    def test_clean_blocking_pr_run_uses_two_pairs_and_passes(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        history = [make_sample() for _ in range(20)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 4)
+
+    def test_successful_app_exit_without_a_report_fails_without_a_sample(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, runner_temp, env = make_runner_harness(root)
+            env["MOCK_DOCKER_NO_REPORT"] = "true"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            sample_path = runner_temp / "desktop-scale-head-1.json"
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(sample_path.exists())
+        self.assertIn("head-1 failed with status 2", summary)
+
+    def test_binary_fetch_timeout_names_budget_and_rerun_action(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(20)]
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_BINARY_STATUS"] = "124"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
+        self.assertIn("50-second budget", result.stdout)
+        self.assertIn("re-run this job", result.stdout)
 
     def test_dev_run_records_sample_before_preserving_app_failure_status(self):
         self.require_implementation()
