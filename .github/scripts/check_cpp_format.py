@@ -112,6 +112,38 @@ def added_lines_between(root: Path, base: str, head: str) -> dict[str, list[tupl
     return parse_added_lines(diff)
 
 
+def renamed_paths_between(root: Path, base: str, head: str) -> dict[str, str]:
+    fields = git_output(
+        root,
+        "diff",
+        "--name-status",
+        "--find-renames",
+        "-z",
+        "--no-ext-diff",
+        "--no-color",
+        base,
+        head,
+        "--",
+        *SOURCE_PATHS,
+    ).split("\0")
+    renames: dict[str, str] = {}
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        if status.startswith(("R", "C")):
+            if index + 1 >= len(fields):
+                raise RuntimeError("git returned an incomplete rename record")
+            source_path, picked_path = fields[index:index + 2]
+            renames[source_path] = picked_path
+            index += 2
+        else:
+            index += 1
+    return renames
+
+
 def cherry_pick_sources(message: str) -> list[str]:
     lines = message.rstrip().splitlines()
     start = len(lines)
@@ -153,22 +185,30 @@ def upstream_pick_lines(
         source_parents = git_output(root, "rev-list", "--parents", "-n", "1", source).split()[1:]
         if not source_parents:
             continue
-        source_added = added_lines_between(root, source_parents[0], source)
+        source_parent = source_parents[0]
+        source_added = added_lines_between(root, source_parent, source)
         picked_added = added_lines_between(root, parents[0], commit)
-        for path, picked_lines in picked_added.items():
+        source_renames = renamed_paths_between(root, source_parent, source)
+        source_parent_paths = {new: old for old, new in source_renames.items()}
+        picked_renames = renamed_paths_between(root, source_parent, parents[0])
+        for source_path, source_lines in source_added.items():
+            source_parent_path = source_parent_paths.get(source_path, source_path)
+            picked_path = picked_renames.get(source_parent_path, source_parent_path)
+            picked_lines = picked_added.get(picked_path)
+            if picked_lines is None:
+                continue
             picked_text = [line for _, line in picked_lines]
-            for source_lines in source_added.values():
-                matcher = difflib.SequenceMatcher(
-                    None,
-                    [line for _, line in source_lines],
-                    picked_text,
-                    autojunk=False,
-                )
-                for _, picked_index, count in matcher.get_matching_blocks():
-                    if not count:
-                        continue
-                    for line_number, _ in picked_lines[picked_index:picked_index + count]:
-                        exempt[commit][path].add(line_number)
+            matcher = difflib.SequenceMatcher(
+                None,
+                [line for _, line in source_lines],
+                picked_text,
+                autojunk=False,
+            )
+            for _, picked_index, count in matcher.get_matching_blocks():
+                if not count:
+                    continue
+                for line_number, _ in picked_lines[picked_index:picked_index + count]:
+                    exempt[commit][picked_path].add(line_number)
     return {commit: dict(paths) for commit, paths in exempt.items()}
 
 
@@ -571,7 +611,8 @@ def upstream_provenance_test(formatter: str) -> None:
             "int base = 0;\nint one = 1;\nint two = 2;\nint three = 3;\n",
             encoding="utf-8",
         )
-        git("add", "a.cpp")
+        (root / "other.cpp").write_text("int other = 0;\n", encoding="utf-8")
+        git("add", "a.cpp", "other.cpp")
         git("commit", "--quiet", "-m", "prepare upstream a.cpp")
         rename_pick_base = git("rev-parse", "HEAD")
         (root / "a.cpp").write_text(
@@ -597,6 +638,25 @@ def upstream_provenance_test(formatter: str) -> None:
             expected_lines=0,
             expected_exempted_lines=1,
             expected_ranges=[],
+        )
+
+        git("checkout", "-b", "upstream-pick-own-duplicate", rename_pick_base)
+        git("cherry-pick", "-x", rename_pick_source)
+        (root / "other.cpp").write_text(
+            "int other = 0;\nint imported=4;\n",
+            encoding="utf-8",
+        )
+        git("add", "other.cpp")
+        git("commit", "--quiet", "--amend", "--no-edit")
+        duplicate_pick = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-with-duplicate-in-unrelated-file",
+            rename_pick_base,
+            duplicate_pick,
+            should_pass=False,
+            expected_lines=1,
+            expected_exempted_lines=1,
+            expected_ranges=[("other.cpp", 2, 2)],
         )
 
         git("checkout", "-b", "non-upstream-source", base)
