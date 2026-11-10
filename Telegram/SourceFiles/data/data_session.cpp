@@ -3180,8 +3180,9 @@ void Session::applyDialogs(
 	});
 	processMessages(messages, NewMessageType::Last);
 	for (const auto &dialog : dialogs) {
-		dialog.match(
-			[&](const auto &data) { applyDialog(requestFolder, data); });
+		dialog.match([&](const auto &data) {
+			applyDialog(requestFolder, data);
+		});
 	}
 	if (requestFolder && count) {
 		requestFolder->chatsList()->setCloudListSize(*count);

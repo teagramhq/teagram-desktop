@@ -87,16 +87,21 @@ public:
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
 private:
-  void freezeNewIndexList(List &list);
-  void adjustByName(Key key, const base::flat_set<QChar> &oldChars);
-  void adjustNames(FilterId filterId, not_null<History *> history,
-				   const base::flat_set<QChar> &oldChars);
+	void freezeNewIndexList(List &list);
+	void adjustByName(
+		Key key,
+		const base::flat_set<QChar> &oldChars);
+	void adjustNames(
+		FilterId filterId,
+		not_null<History*> history,
+		const base::flat_set<QChar> &oldChars);
 
-  SortMode _sortMode = SortMode();
-  FilterId _filterId = 0;
-  int _freezeDepth = 0;
-  List _list, _empty;
-  base::flat_map<QChar, List> _index;
+	SortMode _sortMode = SortMode();
+	FilterId _filterId = 0;
+	int _freezeDepth = 0;
+	List _list, _empty;
+	base::flat_map<QChar, List> _index;
+
 };
 
 } // namespace Dialogs

@@ -137,31 +137,35 @@ void List::unfreeze() {
 	if (sortedByDate()) {
 		return;
 	}
-	auto pendingByIndex
-		= std::vector<not_null<Row *>>(pending.begin(), pending.end());
-	ranges::sort(pendingByIndex,
-				 [](Row *a, Row *b) { return a->index() < b->index(); });
+	auto pendingByIndex = std::vector<not_null<Row*>>(
+		pending.begin(),
+		pending.end());
+	ranges::sort(pendingByIndex, [](Row *a, Row *b) {
+		return a->index() < b->index();
+	});
 	auto adjusted = pendingByIndex;
 	ranges::stable_sort(adjusted, [&](Row *a, Row *b) {
 		return a->sortKey(_filterId) > b->sortKey(_filterId);
 	});
-	auto rows = std::vector<not_null<Row *>>();
+	auto rows = std::vector<not_null<Row*>>();
 	rows.reserve(_rows.size());
-	auto nextAdjusted = begin(adjusted);
-	auto nextPending = begin(pendingByIndex);
-	for (const auto row : _rows) {
-		if ((nextPending != end(pendingByIndex)) && (row == *nextPending)) {
+	auto nextAdjusted = adjusted.begin();
+	auto nextPending = pendingByIndex.begin();
+	for (const auto &row : _rows) {
+		if ((nextPending != pendingByIndex.end()) && (row == *nextPending)) {
 			++nextPending;
 			continue;
 		}
-		while ((nextAdjusted != end(adjusted))
-			   && ((*nextAdjusted)->sortKey(_filterId)
-				   > row->sortKey(_filterId))) {
+		const auto rowKey = row->sortKey(_filterId);
+		while ((nextAdjusted != adjusted.end())
+			   && (((*nextAdjusted)->sortKey(_filterId) > rowKey)
+				   || (((*nextAdjusted)->sortKey(_filterId) == rowKey)
+					   && ((*nextAdjusted)->index() < row->index())))) {
 			rows.push_back(*nextAdjusted++);
 		}
 		rows.push_back(row);
 	}
-	rows.insert(rows.end(), nextAdjusted, end(adjusted));
+	rows.insert(rows.end(), nextAdjusted, adjusted.end());
 	_rows = std::move(rows);
 	auto top = 0;
 	for (auto i = 0, count = int(_rows.size()); i != count; ++i) {

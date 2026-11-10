@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
 
+#include "api/api_compose_with_ai.h"
 #include "api/api_chat_filters.h"
 #include "api/api_common.h"
-#include "api/api_compose_with_ai.h"
 #include "api/api_peer_photo.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
@@ -18,24 +18,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
 #include "base/weak_ptr.h"
+#include "chat_helpers/tabbed_selector.h"
 #include "boxes/about_box.h"
 #include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
-#include "boxes/language_box.h"
-#include "boxes/peer_list_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h"
+#include "boxes/peer_list_box.h"
+#include "boxes/language_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/translate_box.h"
+#include "calls/group/calls_group_common.h"
 #include "calls/calls_call.h"
 #include "calls/calls_instance.h"
 #include "calls/calls_panel.h"
-#include "calls/group/calls_group_common.h"
-#include "chat_helpers/tabbed_selector.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -52,9 +52,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_cloud_themes.h"
+#include "data/data_download_manager.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
-#include "data/data_download_manager.h"
 #include "data/data_folder.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -68,9 +68,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_stories.h"
 #include "data/data_types.h"
 #include "data/data_user.h"
-#include "data/data_username_policy.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
+#include "data/data_username_policy.h"
 #include "dialogs/dialogs_indexed_list.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/dialogs_main_list.h"
@@ -87,46 +87,46 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
-#include "info/info_controller.h"
-#include "info/info_layer_widget.h"
-#include "info/info_section_widget.h"
-#include "info/info_wrap_widget.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "info/profile/info_profile_top_bar.h"
+#include "info/info_controller.h"
+#include "info/info_layer_widget.h"
+#include "info/info_section_widget.h"
+#include "info/info_wrap_widget.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
 #include "logs.h"
 #include "main/main_account.h"
-#include "main/main_account_persistence.h"
 #include "main/main_app_config.h"
+#include "main/main_account_persistence.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
-#include "main/session_feature_support.h"
 #include "mainwidget.h"
+#include "main/session_feature_support.h"
+#include "menu/menu_send.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "media/streaming/media_streaming_reader.h"
-#include "menu/menu_send.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
 #include "mtproto/sender.h"
-#include "passport/passport_form_controller.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
 #include "platform/platform_specific.h"
 #include "platform/platform_translate_provider.h"
-#include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_business.h"
-#include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_credits.h"
+#include "passport/passport_form_controller.h"
 #include "settings/sections/settings_folders.h"
+#include "settings/sections/settings_active_sessions.h"
+#include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_information.h"
 #include "settings/sections/settings_premium.h"
 #include "settings/settings_builder.h"
@@ -138,30 +138,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
 #include "test/test_widgets.h"
-#include "ui/click_handler.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/effects/animations.h"
 #include "ui/image/image_location.h"
-#include "ui/item_text_options.h"
 #include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text.h"
 #include "ui/text/text_entity.h"
-#include "ui/ui_utility.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
-#include "window/section_widget.h"
+#include "ui/click_handler.h"
+#include "ui/item_text_options.h"
+#include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
 #include "window/window_peer_menu.h"
+#include "window/section_widget.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
 
@@ -14935,7 +14935,7 @@ struct DesktopScaleChatListState final {
 DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
 	auto result = DesktopScaleChatListState();
 	result.unread = list.unreadState();
-	for (const auto row : list.indexed()->all()) {
+	for (const auto &row : list.indexed()->all()) {
 		result.order.push_back(row->key());
 		if (const auto history = row->history()) {
 			result.histories.push_back({
@@ -15003,7 +15003,7 @@ DesktopScaleChatListStatePreserved(const DesktopScaleChatListState &before,
 
 [[nodiscard]] int DesktopScaleHistoryCount(const Dialogs::MainList &list) {
 	auto result = 0;
-	for (const auto row : list.indexed()->all()) {
+	for (const auto &row : list.indexed()->all()) {
 		result += (row->history() != nullptr);
 	}
 	return result;
@@ -15013,7 +15013,7 @@ DesktopScaleChatListStatePreserved(const DesktopScaleChatListState &before,
 DesktopScalePageOrder(const Dialogs::List &list,
 					  const std::vector<PeerId> &pagePeers) {
 	auto result = std::vector<PeerId>();
-	for (const auto row : list) {
+	for (const auto &row : list) {
 		if (const auto history = row->history()) {
 			if (ranges::contains(pagePeers, history->peer->id)) {
 				result.push_back(history->peer->id);
