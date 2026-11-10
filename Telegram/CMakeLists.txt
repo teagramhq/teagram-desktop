@@ -629,6 +629,8 @@ PRIVATE
     core/external_control.h
     core/file_utilities.cpp
     core/file_utilities.h
+    core/url_scheme_policy.cpp
+    core/url_scheme_policy.h
     core/hash_sha.cpp
     core/hash_md5.cpp
     core/launcher.cpp

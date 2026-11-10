@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_runtime.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
+#include "logs.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
 #include "main/session_feature_support.h"
@@ -306,6 +307,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			&& (!external.isValid() || !parsedUrl.isValid()
 				|| parsedUrl.isLocalFile()
 				|| !File::IsUrlSchemeAllowed(parsedUrl.scheme()))) {
+			LOG(("URL Error: refused scheme %1.").arg(parsedUrl.scheme()));
 			if (my.show) {
 				my.show->showToast(tr::lng_open_link_unsupported(tr::now));
 			} else {
