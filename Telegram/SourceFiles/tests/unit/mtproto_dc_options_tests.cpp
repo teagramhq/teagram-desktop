@@ -2312,10 +2312,8 @@ TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
 	stock.constructFromBuiltIn();
 
 	using Capability = bool (*)(const DcOptions &);
-	const auto capabilities = std::array<Capability, 9>{
-		Main::details::dictionaryManifestRefreshSupported,
+	const auto capabilities = std::array<Capability, 7>{
 		Main::details::dictionaryManifestAccessSupported,
-		Main::details::dictionaryAutoDownloadSupported,
 		Main::details::cloudEmojiSetsListedSupported,
 		Main::details::cloudEmojiSetSwitchSupported,
 		Main::details::dictionaryManagerRowsSupported,
@@ -2331,6 +2329,38 @@ TEST_CASE(TelegramdCloudResourceUseSitesAreRefused) {
 		CHECK(capability(stock));
 	}
 	CHECK(!Main::details::dictionaryManagerSaveAllowed(stock, false));
+}
+
+TEST_CASE(TelegramdCloudResourceManifestAndDownloadsAreRefused) {
+	auto custom = DcOptions(Environment::Production);
+	CHECK(custom.setCustomServer(MakeCustomServer()));
+	auto blocked = DcOptions(Environment::Production);
+	blocked.constructBlocked();
+	auto stock = DcOptions(Environment::Production);
+	stock.constructFromBuiltIn();
+
+	struct FakeResolver {
+		int requests = 0;
+		void resolve() { ++requests; }
+	};
+	struct FakeLoader {
+		int starts = 0;
+		void start() { ++starts; }
+	};
+	const auto check = [](const DcOptions &options, int expected) {
+		auto resolver = FakeResolver();
+		Main::details::requestDictionaryManifestIfSupported(
+			options, [&] { resolver.resolve(); });
+		CHECK_EQ(resolver.requests, expected);
+
+		auto loader = FakeLoader();
+		Main::details::runDictionaryAutoDownloadIfSupported(
+			options, [&] { loader.start(); });
+		CHECK_EQ(loader.starts, expected);
+	};
+	check(custom, 0);
+	check(blocked, 0);
+	check(stock, 1);
 }
 
 TEST_CASE(AiComposeButtonRequiresSupportedSessionWithPopulatedTones) {

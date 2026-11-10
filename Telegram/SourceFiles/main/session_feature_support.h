@@ -53,9 +53,12 @@ cloudResourcesSupported(const MTP::DcOptions &options) {
 	return !(options.hasCustomServer() || options.blocked());
 }
 
-[[nodiscard]] inline bool
-dictionaryManifestRefreshSupported(const MTP::DcOptions &options) {
-	return cloudResourcesSupported(options);
+template <typename Resolver>
+inline void requestDictionaryManifestIfSupported(const MTP::DcOptions &options,
+												 Resolver &&resolve) {
+	if (cloudResourcesSupported(options)) {
+		resolve();
+	}
 }
 
 [[nodiscard]] inline bool
@@ -63,9 +66,12 @@ dictionaryManifestAccessSupported(const MTP::DcOptions &options) {
 	return cloudResourcesSupported(options);
 }
 
-[[nodiscard]] inline bool
-dictionaryAutoDownloadSupported(const MTP::DcOptions &options) {
-	return cloudResourcesSupported(options);
+template <typename Loader>
+inline void runDictionaryAutoDownloadIfSupported(const MTP::DcOptions &options,
+												 Loader &&start) {
+	if (cloudResourcesSupported(options)) {
+		start();
+	}
 }
 
 [[nodiscard]] inline bool

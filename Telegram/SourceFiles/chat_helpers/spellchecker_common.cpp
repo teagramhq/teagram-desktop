@@ -225,16 +225,15 @@ void DictManifestLoader::finish() {
 }
 
 void StartManifestRefresh(not_null<Main::Session*> session) {
-	if (!Main::details::dictionaryManifestRefreshSupported(
-			session->mtp().dcOptions())) {
-		return;
-	}
-	if (ActiveManifestLoader) {
-		return;
-	}
-	ActiveManifestLoader = std::make_shared<DictManifestLoader>(
-		base::make_weak(session));
-	ActiveManifestLoader->start();
+	Main::details::requestDictionaryManifestIfSupported(
+		session->mtp().dcOptions(), [=] {
+			if (ActiveManifestLoader) {
+				return;
+			}
+			ActiveManifestLoader = std::make_shared<DictManifestLoader>(
+				base::make_weak(session));
+			ActiveManifestLoader->start();
+		});
 }
 
 // Callers waiting for the first manifest arrival in this session.
@@ -301,47 +300,45 @@ void DownloadDictionaryInBackground(
 		not_null<Main::Session*> session,
 		int counter,
 		std::vector<int> langs) {
-	if (!Main::details::dictionaryAutoDownloadSupported(
-			session->mtp().dcOptions())
-		|| counter >= langs.size()) {
+	if (counter >= langs.size()) {
 		return;
 	}
-	const auto id = langs[counter];
-	counter++;
-	const auto destroyer = [=] {
-		BackgroundLoader = nullptr;
-		BackgroundLoaderChanged.fire(0);
+	Main::details::runDictionaryAutoDownloadIfSupported(
+		session->mtp().dcOptions(), [=] {
+			const auto id = langs[counter];
+			const auto next = counter + 1;
+			const auto destroyer = [=] {
+				BackgroundLoader = nullptr;
+				BackgroundLoaderChanged.fire(0);
 
-		if (DictionaryExists(id)) {
-			auto dicts = Core::App().settings().dictionariesEnabled();
-			if (ranges::contains(dicts, id)) {
-				Platform::Spellchecker::UpdateLanguages(dicts);
-			} else {
-				dicts.push_back(id);
-				Core::App().settings().setDictionariesEnabled(
-					std::move(dicts));
-				Core::App().saveSettingsDelayed();
+				if (DictionaryExists(id)) {
+					auto dicts = Core::App().settings().dictionariesEnabled();
+					if (ranges::contains(dicts, id)) {
+						Platform::Spellchecker::UpdateLanguages(dicts);
+					} else {
+						dicts.push_back(id);
+						Core::App().settings().setDictionariesEnabled(
+							std::move(dicts));
+						Core::App().saveSettingsDelayed();
+					}
+				}
+
+				DownloadDictionaryInBackground(session, next, langs);
+			};
+			if (DictionaryExists(id)) {
+				destroyer();
+				return;
 			}
-		}
 
-		DownloadDictionaryInBackground(session, counter, langs);
-	};
-	if (DictionaryExists(id)) {
-		destroyer();
-		return;
-	}
-
-	auto sharedLoader = std::make_shared<base::unique_qptr<DictLoader>>();
-	*sharedLoader = base::make_unique_q<DictLoader>(
-		QCoreApplication::instance(),
-		session,
-		id,
-		GetDownloadLocation(id),
-		DictPathByLangId(id),
-		GetDownloadSize(id),
-		crl::guard(session, destroyer));
-	SetBackgroundLoader(std::move(sharedLoader));
-	BackgroundLoaderChanged.fire_copy(id);
+			auto sharedLoader
+				= std::make_shared<base::unique_qptr<DictLoader>>();
+			*sharedLoader = base::make_unique_q<DictLoader>(
+				QCoreApplication::instance(), session, id,
+				GetDownloadLocation(id), DictPathByLangId(id),
+				GetDownloadSize(id), crl::guard(session, destroyer));
+			SetBackgroundLoader(std::move(sharedLoader));
+			BackgroundLoaderChanged.fire_copy(id);
+		});
 }
 
 void AddExceptions() {
