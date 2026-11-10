@@ -59,6 +59,16 @@ jobs:
           ref: ${{ inputs.tested_head || github.sha }}
           fetch-depth: 0
 
+      - name: Fetch telegramdesktop history for provenance.
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags --filter=blob:none \
+            https://github.com/telegramdesktop/tdesktop.git \
+            '+refs/heads/*:refs/remotes/telegramdesktop/*' \
+            '+refs/tags/*:refs/tags/telegramdesktop/*'
+
       - name: Install clang-format 23.1.0.
         shell: bash
         run: |
@@ -114,6 +124,7 @@ jobs:
 
           source_ranges=()
           allow_empty=()
+          upstream_args=()
           if [[ "$EVENT_NAME" == 'pull_request' ]]; then
             tested_head="$PR_HEAD_SHA"
             git cat-file -e "${PR_BASE_SHA}^{commit}"
@@ -121,6 +132,14 @@ jobs:
             merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
             source_ranges=(--source-range pull-request "$merge_base" "$PR_HEAD_SHA")
             allow_empty=(--allow-empty)
+            while IFS= read -r upstream_ref; do
+              upstream_args+=(--upstream-ref "$upstream_ref")
+            done < <(git for-each-ref --format='%(refname)' \
+              refs/remotes/telegramdesktop refs/tags/telegramdesktop)
+            if [[ "${#upstream_args[@]}" -eq 0 ]]; then
+              echo '::error::No telegramdesktop upstream history refs were fetched.'
+              exit 1
+            fi
           else
             tested_head="$TESTED_HEAD"
             require_full_sha() {
@@ -156,6 +175,7 @@ jobs:
             "${allow_empty[@]}" \
             --tested-head "$tested_head" \
             "${source_ranges[@]}" \
+            "${upstream_args[@]}" \
             --manifest "$manifest" \
             2>&1 | tee -a "$log" || format_status=$?
 
@@ -176,9 +196,10 @@ jobs:
               )
           )
           print(
-              "- Total coverage: {} files, {} changed lines across {} declared source ranges ({} file-range checks)".format(
+              "- Total coverage: {} files, {} changed lines checked, {} upstream lines exempted across {} declared source ranges ({} file-range checks)".format(
                   report.get("checked_source_count", 0),
                   report.get("checked_changed_line_count", 0),
+                  report.get("exempted_upstream_line_count", 0),
                   len(report.get("source_ranges", [])),
                   report.get("checked_source_range_count", 0),
               )
@@ -187,7 +208,7 @@ jobs:
               declared = source_range.get("declared_source_range", {})
               resolved = source_range.get("resolved_source_range", {})
               print(
-                  "- {}: declared `{}..{}`, resolved `{}..{}`; {} files, {} changed lines; {}".format(
+                  "- {}: declared `{}..{}`, resolved `{}..{}`; {} files, {} changed lines checked, {} upstream lines exempted; {}".format(
                       source_range.get("name", "unnamed"),
                       declared.get("base", "unknown"),
                       declared.get("head", "unknown"),
@@ -195,6 +216,7 @@ jobs:
                       resolved.get("head", "unresolved"),
                       source_range.get("checked_source_count", 0),
                       source_range.get("checked_changed_line_count", 0),
+                      source_range.get("exempted_upstream_line_count", 0),
                       source_range.get("result", "unknown"),
                   )
               )

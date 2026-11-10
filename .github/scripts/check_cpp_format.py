@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import difflib
 import io
 import json
 import re
@@ -18,10 +19,14 @@ from typing import Iterable
 
 
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".mm")
+SOURCE_PATHS = tuple(f"*{suffix}" for suffix in SOURCE_SUFFIXES)
 FORMAT_STYLE = (
     "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
     "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
     "BreakBeforeBinaryOperators: All, NamespaceIndentation: None}"
+)
+CHERRY_PICK_TRAILER = re.compile(
+    r"\(cherry picked from commit ([0-9a-f]{40})\)"
 )
 
 
@@ -53,6 +58,161 @@ def merge_ranges(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
         else:
             merged.append([first, last])
     return [(first, last) for first, last in merged]
+
+
+def git_output(root: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(arguments)} failed")
+    return result.stdout
+
+
+def parse_added_lines(diff: str) -> dict[str, list[tuple[int, str]]]:
+    added: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    current_path: str | None = None
+    next_line: int | None = None
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            current_path = None
+            next_line = None
+        elif line.startswith("+++ b/") and next_line is None:
+            current_path = line[6:]
+            if not current_path.endswith(SOURCE_SUFFIXES):
+                current_path = None
+        elif line.startswith("@@"):
+            match = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            next_line = int(match.group(1)) if match else None
+        elif current_path and next_line is not None:
+            if line.startswith("+"):
+                added[current_path].append((next_line, line[1:]))
+                next_line += 1
+            elif line.startswith(" "):
+                next_line += 1
+    return dict(added)
+
+
+def added_lines_between(root: Path, base: str, head: str) -> dict[str, list[tuple[int, str]]]:
+    diff = git_output(
+        root,
+        "diff",
+        "--no-ext-diff",
+        "--no-color",
+        "--unified=0",
+        "--diff-filter=ACMRT",
+        base,
+        head,
+        "--",
+        *SOURCE_PATHS,
+    )
+    return parse_added_lines(diff)
+
+
+def cherry_pick_sources(message: str) -> list[str]:
+    lines = message.rstrip().splitlines()
+    start = len(lines)
+    while start and lines[start - 1].strip():
+        start -= 1
+    return [
+        match.group(1)
+        for line in lines[start:]
+        if (match := CHERRY_PICK_TRAILER.fullmatch(line))
+    ]
+
+
+def upstream_pick_lines(
+    root: Path,
+    base: str,
+    tested_head: str,
+    upstream_commits: set[str],
+) -> dict[str, dict[str, set[int]]]:
+    commits = git_output(
+        root,
+        "log",
+        "--reverse",
+        "--format=%H",
+        "--grep=cherry picked from commit",
+        f"{base}..{tested_head}",
+    ).split()
+    exempt: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    for commit in commits:
+        if commit in upstream_commits:
+            continue
+        message = git_output(root, "show", "-s", "--format=%B", commit)
+        trailers = cherry_pick_sources(message)
+        if len(trailers) != 1 or trailers[0] not in upstream_commits:
+            continue
+        parents = git_output(root, "rev-list", "--parents", "-n", "1", commit).split()[1:]
+        if len(parents) != 1:
+            continue
+        source = trailers[0]
+        try:
+            source_parent = git_output(root, "rev-parse", "--verify", f"{source}^1").strip()
+        except RuntimeError:
+            continue
+        source_added = added_lines_between(root, source_parent, source)
+        picked_added = added_lines_between(root, parents[0], commit)
+        for path in source_added.keys() & picked_added.keys():
+            source_lines = source_added[path]
+            picked_lines = picked_added[path]
+            matcher = difflib.SequenceMatcher(
+                None,
+                [line for _, line in source_lines],
+                [line for _, line in picked_lines],
+                autojunk=False,
+            )
+            for _, picked_index, count in matcher.get_matching_blocks():
+                if not count:
+                    continue
+                for line_number, _ in picked_lines[picked_index:picked_index + count]:
+                    exempt[commit][path].add(line_number)
+    return {commit: dict(paths) for commit, paths in exempt.items()}
+
+
+def blame_line_origins(root: Path, revision: str, path: str) -> dict[int, tuple[str, int]]:
+    output = git_output(root, "blame", "--line-porcelain", "--no-progress", revision, "--", path)
+    origins: dict[int, tuple[str, int]] = {}
+    header = re.compile(r"^(\^?[0-9a-f]{40}) (\d+) (\d+)(?: \d+)?$")
+    for line in output.splitlines():
+        match = header.match(line)
+        if match:
+            origins[int(match.group(3))] = (match.group(1).lstrip("^"), int(match.group(2)))
+    return origins
+
+
+def ranges_without_upstream_lines(
+    root: Path,
+    tested_head: str,
+    path: str,
+    ranges: list[tuple[int, int]],
+    upstream_commits: set[str],
+    picked_lines: dict[str, dict[str, set[int]]],
+) -> tuple[list[tuple[int, int]], int]:
+    origins = blame_line_origins(root, tested_head, path)
+    checked: list[int] = []
+    for first, last in ranges:
+        for line_number in range(first, last + 1):
+            commit, original_line = origins.get(line_number, ("", 0))
+            if commit in upstream_commits:
+                continue
+            if original_line in picked_lines.get(commit, {}).get(path, set()):
+                continue
+            checked.append(line_number)
+    return merge_ranges((line, line) for line in checked), len(checked)
+
+
+def upstream_history(root: Path, refs: list[str]) -> set[str]:
+    if not refs:
+        raise RuntimeError("at least one verified upstream history ref is required")
+    resolved_refs = [resolve_commit(root, ref) for ref in refs]
+    commits = git_output(root, "rev-list", *resolved_refs).split()
+    if not commits:
+        raise RuntimeError("verified upstream refs contain no commits")
+    return set(commits)
 
 
 def format_file(formatter: str, path: Path, ranges: list[tuple[int, int]]) -> subprocess.CompletedProcess[str]:
@@ -101,6 +261,11 @@ def self_test(formatter: str) -> int:
         history_test(formatter)
     except Exception as error:
         print(f"::error::Synthetic-history formatter regression failed: {error}")
+        return 1
+    try:
+        upstream_provenance_test(formatter)
+    except Exception as error:
+        print(f"::error::Synthetic-upstream formatter regression failed: {error}")
         return 1
     return 0
 
@@ -242,6 +407,161 @@ def history_test(formatter: str) -> None:
     print("Formatter self-test: intervening merged-source violation rejected at tested head.")
 
 
+def upstream_provenance_test(formatter: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="teagram-format-upstream-test-") as temporary:
+        root = Path(temporary)
+
+        def git(*arguments: str) -> str:
+            return git_output(root, *arguments).strip()
+
+        def write_file(content: str) -> None:
+            (root / "fixture.cpp").write_text(content, encoding="utf-8")
+
+        def commit(message: str) -> str:
+            git("add", "fixture.cpp")
+            git("commit", "--quiet", "-m", message)
+            return git("rev-parse", "HEAD")
+
+        def check(
+            name: str,
+            base: str,
+            head: str,
+            should_pass: bool,
+            expected_lines: int,
+            expected_exempted_lines: int,
+            upstream_refs: list[str],
+        ) -> None:
+            upstream_commits = upstream_history(root, upstream_refs)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = check_source_range(
+                    root,
+                    formatter,
+                    head,
+                    name,
+                    base,
+                    head,
+                    allow_empty=True,
+                    upstream_commits=upstream_commits,
+                )
+            if result.get("result") != ("success" if should_pass else "failure"):
+                raise RuntimeError(f"{name} had an unexpected formatter result: {result}")
+            if result.get("checked_changed_line_count") != expected_lines:
+                raise RuntimeError(
+                    f"{name} checked {result.get('checked_changed_line_count')} lines, "
+                    f"expected {expected_lines}: {result}"
+                )
+            if result.get("exempted_upstream_line_count") != expected_exempted_lines:
+                raise RuntimeError(
+                    f"{name} exempted {result.get('exempted_upstream_line_count')} upstream lines, "
+                    f"expected {expected_exempted_lines}: {result}"
+                )
+
+        git("init", "--quiet")
+        git("config", "user.name", "Formatter Regression")
+        git("config", "user.email", "formatter-regression@example.invalid")
+        write_file("int base = 0;\n")
+        base = commit("base")
+        git("branch", "-M", "main")
+
+        git("checkout", "-b", "upstream-pick")
+        write_file("int base = 0;\nint imported=1;\n")
+        source = commit("upstream change")
+        git("update-ref", "refs/remotes/telegramdesktop/dev", source)
+
+        git("checkout", "main")
+        git("cherry-pick", "-x", source)
+        picked = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick",
+            base,
+            picked,
+            should_pass=True,
+            expected_lines=0,
+            expected_exempted_lines=1,
+            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+        )
+
+        git("checkout", "-b", "pick-with-own-line", base)
+        git("cherry-pick", "-x", source)
+        write_file("int base = 0;\nint imported=1;\nint own=2;\n")
+        git("add", "fixture.cpp")
+        git("commit", "--quiet", "--amend", "--no-edit")
+        pick_with_own = git("rev-parse", "HEAD")
+        check(
+            "upstream-pick-with-own-line",
+            base,
+            pick_with_own,
+            should_pass=False,
+            expected_lines=1,
+            expected_exempted_lines=1,
+            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+        )
+
+        git("checkout", "-b", "non-upstream-source", base)
+        write_file("int base = 0;\nint forged=3;\n")
+        forged_source = commit("untrusted source")
+        git("checkout", "-b", "forged-trailer", base)
+        write_file("int base = 0;\nint forged=3;\n")
+        git("add", "fixture.cpp")
+        git(
+            "commit",
+            "--quiet",
+            "-m",
+            "forged upstream attribution",
+            "-m",
+            f"(cherry picked from commit {forged_source})",
+        )
+        forged = git("rev-parse", "HEAD")
+        check(
+            "forged-trailer",
+            base,
+            forged,
+            should_pass=False,
+            expected_lines=1,
+            expected_exempted_lines=0,
+            upstream_refs=["refs/remotes/telegramdesktop/dev"],
+        )
+
+        git("checkout", "-b", "upstream-merge", base)
+        write_file("int conflict=2;\nint imported=4;\n")
+        merge_source = commit("upstream merge source")
+        git("update-ref", "refs/remotes/telegramdesktop/merge-dev", merge_source)
+
+        git("checkout", "-b", "merge-with-own-changes", base)
+        write_file("int conflict = 0;\nint own=5;\n")
+        commit("own addition")
+        write_file("int conflict=6;\nint own=5;\n")
+        commit("own conflict side")
+        merge = subprocess.run(
+            ["git", "-C", str(root), "merge", "--no-ff", "upstream-merge"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if merge.returncode == 0 or "CONFLICT" not in merge.stdout + merge.stderr:
+            raise RuntimeError("synthetic upstream merge did not produce the expected conflict")
+        write_file("int conflict=7;\nint own=5;\nint imported=4;\n")
+        git("add", "fixture.cpp")
+        git("commit", "--quiet", "-m", "resolve upstream merge")
+        merged = git("rev-parse", "HEAD")
+        check(
+            "upstream-merge",
+            base,
+            merged,
+            should_pass=False,
+            expected_lines=2,
+            expected_exempted_lines=1,
+            upstream_refs=[
+                "refs/remotes/telegramdesktop/dev",
+                "refs/remotes/telegramdesktop/merge-dev",
+            ],
+        )
+    print(
+        "Formatter self-test: upstream pick exemption, own pick line, forged trailer, "
+        "and upstream merge provenance passed."
+    )
+
+
 def resolve_commit(root: Path, revision: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--verify", f"{revision}^{{commit}}"],
@@ -262,6 +582,7 @@ def check_source_range(
     base: str,
     head: str,
     allow_empty: bool = False,
+    upstream_commits: set[str] | None = None,
 ) -> dict[str, object]:
     resolved_base = resolve_commit(root, base)
     resolved_head = resolve_commit(root, head)
@@ -282,7 +603,7 @@ def check_source_range(
         [
             "git", "-C", str(root), "diff", "--no-ext-diff", "--no-color", "--unified=0",
             "--diff-filter=ACMRT", resolved_base, resolved_head, "--",
-            "*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx", "*.m", "*.mm",
+            *SOURCE_PATHS,
         ],
         text=True,
         capture_output=True,
@@ -296,7 +617,7 @@ def check_source_range(
         [
             "git", "-C", str(root), "diff", "--no-ext-diff", "--no-color", "--unified=0",
             "--diff-filter=ACMRT", resolved_base, tested_head, "--",
-            "*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx", "*.m", "*.mm",
+            *SOURCE_PATHS,
         ],
         text=True,
         capture_output=True,
@@ -308,6 +629,26 @@ def check_source_range(
     tested_ranges, tested_changed_lines = parse_changed_ranges(tested_diff.stdout)
     ranges = {path: tested_ranges[path] for path in scope_ranges if path in tested_ranges}
     changed_lines = {path: tested_changed_lines[path] for path in ranges}
+    exempted_upstream_line_count = 0
+    if upstream_commits is not None:
+        picked_lines = upstream_pick_lines(root, resolved_base, tested_head, upstream_commits)
+        filtered_ranges = {}
+        filtered_changed_lines = {}
+        for path, path_ranges in ranges.items():
+            checked_ranges, checked_lines = ranges_without_upstream_lines(
+                root,
+                tested_head,
+                path,
+                path_ranges,
+                upstream_commits,
+                picked_lines,
+            )
+            exempted_upstream_line_count += sum(last - first + 1 for first, last in path_ranges) - checked_lines
+            if checked_ranges:
+                filtered_ranges[path] = checked_ranges
+                filtered_changed_lines[path] = checked_lines
+        ranges = filtered_ranges
+        changed_lines = filtered_changed_lines
     total_changed_lines = sum(changed_lines.values())
     manifest: dict[str, object] = {
         "name": name,
@@ -318,6 +659,7 @@ def check_source_range(
         "scope_source_count": len(scope_ranges),
         "checked_source_count": len(ranges),
         "checked_changed_line_count": total_changed_lines,
+        "exempted_upstream_line_count": exempted_upstream_line_count,
         "files": [
             {
                 "path": path,
@@ -331,6 +673,11 @@ def check_source_range(
     if not ranges or not total_changed_lines:
         if allow_empty:
             manifest["result"] = "success"
+            if exempted_upstream_line_count:
+                print(
+                    f"Exempted {exempted_upstream_line_count} lines introduced by verified "
+                    f"upstream history in {name}."
+                )
             print(f"No changed C/C++ source lines in {name}; format check not needed.")
             return manifest
         error = (
@@ -400,6 +747,12 @@ def main() -> int:
         metavar=("NAME", "BASE", "HEAD"),
         help="revision range selecting C/C++ source paths; checked against tested-head contents; may be repeated",
     )
+    parser.add_argument(
+        "--upstream-ref",
+        action="append",
+        default=[],
+        help="verified upstream history ref used to exempt unchanged upstream-introduced lines",
+    )
     parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
 
@@ -424,6 +777,7 @@ def main() -> int:
         "checked_source_count": 0,
         "checked_source_range_count": 0,
         "checked_changed_line_count": 0,
+        "exempted_upstream_line_count": 0,
         "source_ranges": [],
         "result": "failure",
     }
@@ -438,6 +792,7 @@ def main() -> int:
             raise RuntimeError(f"checked-out HEAD {checked_out_head} does not match tested SHA {tested_head}")
         if not args.source_range:
             raise RuntimeError("at least one explicit --source-range is required")
+        upstream_commits = upstream_history(root, args.upstream_ref) if args.upstream_ref else None
 
         source_ranges = []
         seen_names = set()
@@ -456,6 +811,7 @@ def main() -> int:
                     base,
                     head,
                     allow_empty=args.allow_empty,
+                    upstream_commits=upstream_commits,
                 )
             except Exception as error:
                 result = {
@@ -480,11 +836,15 @@ def main() -> int:
             int(source_range.get("checked_source_count", 0)) for source_range in source_ranges
         )
         total_changed_lines = sum(int(entry.get("checked_changed_line_count", 0)) for entry in source_ranges)
+        total_exempted_upstream_lines = sum(
+            int(source_range.get("exempted_upstream_line_count", 0)) for source_range in source_ranges
+        )
         manifest.update({
             "source_ranges": source_ranges,
             "checked_source_count": total_source_count,
             "checked_source_range_count": total_source_range_count,
             "checked_changed_line_count": total_changed_lines,
+            "exempted_upstream_line_count": total_exempted_upstream_lines,
             "result": "failure" if errors else "success",
         })
         if errors:
