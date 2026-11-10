@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -60,21 +61,28 @@ class UiStallWatchdog final : public QObject {
 	bool event(QEvent *event) override;
 
   private:
+	void reportLoop();
+	void enqueueReport(std::function<void()> report);
 	void run();
 
 	std::function<void(const QString &, bool update)> _log;
+	std::deque<std::function<void()>> _reports;
 	std::chrono::milliseconds _pingInterval;
 	std::chrono::milliseconds _countThreshold;
 	std::chrono::milliseconds _logThreshold;
 	std::chrono::milliseconds _logRateLimit;
 	bool _captureSchedulerTrace = false;
 	std::thread _thread;
+	std::thread _reportThread;
 	std::mutex _mutex;
 	std::condition_variable _condition;
+	std::mutex _reportMutex;
+	std::condition_variable _reportCondition;
 	std::uint64_t _acknowledgedSequence = 0;
 	std::chrono::steady_clock::time_point _acknowledgedAt;
 	bool _started = false;
 	bool _stopping = false;
+	bool _reportStopping = false;
 	bool _canCaptureStack = false;
 	std::atomic<quint64> _stallCount = 0;
 };

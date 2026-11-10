@@ -153,6 +153,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto logged = std::atomic_bool(false);
 	auto blockActive = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
+	auto acknowledgementsDuringLogging = std::atomic_int(0);
 	const auto beforeEvidence
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
 	const auto beforeAcknowledgements
@@ -171,6 +172,20 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				if (update) {
 					if (!lines.empty()) {
 						lines.back() = line;
+					}
+					if (!blockActive.load(std::memory_order_acquire)) {
+						const auto before
+							= Core::UiStallWatchdog::
+								  RecentPingAcknowledgementsForTesting()
+									  .size();
+						std::this_thread::sleep_for(
+							std::chrono::milliseconds(200));
+						const auto after
+							= Core::UiStallWatchdog::
+								  RecentPingAcknowledgementsForTesting()
+									  .size();
+						acknowledgementsDuringLogging.store(
+							int(after - before), std::memory_order_release);
 					}
 					const auto duration = line.mid(u"UI stall "_q.size())
 											  .section(u' ', 0, 0)
@@ -201,6 +216,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		QCoreApplication::processEvents();
 		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
+	CHECK(acknowledgementsDuringLogging.load(std::memory_order_acquire) >= 1);
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
