@@ -2371,9 +2371,21 @@ class RegressionAccountCleanup final {
 
 	~RegressionAccountCleanup() { (void)cleanup(); }
 
+	[[nodiscard]] bool retainedSession() const {
+		const auto account = _account.get();
+		return account && account->sessionExists();
+	}
+
+	[[nodiscard]] bool fallbackActive() const {
+		const auto fallback = _fallback.get();
+		return fallback && (&_domain.active() == fallback);
+	}
+
 	[[nodiscard]] bool cleanup() {
 		if (_cleaned) {
-			return (_released || _retainSession) && _cacheCleanupPassed;
+			return (_released || _retainSession) && _cacheCleanupPassed
+				   && (!_retainSession
+					   || (retainedSession() && fallbackActive()));
 		}
 		_cleaned = true;
 		const auto account = _account.get();
@@ -2429,9 +2441,19 @@ class RegressionAccountCleanup final {
 		_domain.removeRedundantAccounts();
 		QCoreApplication::processEvents();
 		_domain.removeRedundantAccounts();
+		// Events queued while restoring the fallback can activate another
+		// account. Make the fallback the final active account after draining
+		// those events, while keeping the synthetic session alive for shutdown.
+		if (_retainSession) {
+			const auto fallback = _fallback.get();
+			if (fallback && (&_domain.active() != fallback)) {
+				_domain.activate(not_null<Main::Account *>(fallback));
+			}
+		}
 		_released = _account.empty();
 		_cleaned = _released || _retainSession;
-		return _cleaned && _cacheCleanupPassed;
+		return _cleaned && _cacheCleanupPassed
+			   && (!_retainSession || (retainedSession() && fallbackActive()));
 	}
 
   private:
@@ -14708,6 +14730,12 @@ struct DesktopScaleActionSample {
 	bool passed = false;
 };
 
+void SettleDesktopScaleWatchdog() {
+	auto loop = QEventLoop();
+	QTimer::singleShot(80, &loop, &QEventLoop::quit);
+	loop.exec();
+}
+
 struct DesktopScaleCacheSample final : DesktopScaleActionSample {
 	quint64 directoryEnumerations = 0;
 };
@@ -14721,14 +14749,13 @@ template <typename Action>
 [[nodiscard]] DesktopScaleActionSample
 MeasureDesktopScaleAction(Core::UiStallWatchdog &watchdog, Action action) {
 	Q_UNUSED(watchdog);
+	SettleDesktopScaleWatchdog();
 	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
 	auto timer = QElapsedTimer();
 	timer.start();
 	const auto passed = action();
 	const auto nanoseconds = timer.nsecsElapsed();
-	auto loop = QEventLoop();
-	QTimer::singleShot(80, &loop, &QEventLoop::quit);
-	loop.exec();
+	SettleDesktopScaleWatchdog();
 	return {
 		.nanoseconds = nanoseconds,
 		.mainThreadStepsOverBudget
@@ -14891,14 +14918,16 @@ template <typename Action>
 	settle.exec();
 	const auto passed = action(account);
 	const auto cleaned = cleanup.cleanup();
-	const auto retained
-		= account->sessionExists() && (&domain.active() == account);
+	const auto sessionRetained = cleanup.retainedSession();
+	const auto fallbackActive = cleanup.fallbackActive();
+	const auto retained = sessionRetained && fallbackActive;
 	if (!passed || !cleaned || !retained) {
 		std::fprintf(stderr,
 					 "Desktop scale check failed: scenario %s, cleanup %s, "
-					 "retained session %s.\n",
+					 "session %s, fallback %s.\n",
 					 passed ? "passed" : "failed", cleaned ? "ok" : "failed",
-					 retained ? "ok" : "lost");
+					 sessionRetained ? "retained" : "lost",
+					 fallbackActive ? "active" : "inactive");
 	}
 	return cleaned && passed && retained;
 }
@@ -15179,6 +15208,7 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account,
 		return sample;
 	}
 
+	SettleDesktopScaleWatchdog();
 	const auto stallsBefore = Core::UiStallWatchdog::StallCount();
 	startCounting();
 	auto timer = QElapsedTimer();
@@ -15195,9 +15225,7 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account,
 		15'000);
 	sample.nanoseconds = timer.nsecsElapsed();
 	sample.directoryEnumerations = stopCounting();
-	auto loop = QEventLoop();
-	QTimer::singleShot(80, &loop, &QEventLoop::quit);
-	loop.exec();
+	SettleDesktopScaleWatchdog();
 	sample.mainThreadStepsOverBudget
 		= Core::UiStallWatchdog::StallCount() - stallsBefore;
 	sample.passed = completed && (sample.directoryEnumerations == 0)
@@ -15216,17 +15244,17 @@ RunDesktopScaleCache(Main::Domain &domain, Core::UiStallWatchdog &watchdog,
 					 UserId selfId) {
 	auto samples = DesktopScaleCacheSamples();
 #if defined(Q_OS_LINUX)
-	const auto created = WithDesktopScaleAccount(
-		domain, selfId, [&](auto account) {
-			samples.one = MeasureDesktopScaleCache(account, watchdog, 500, 0,
-												   50'000'000);
-			if (!samples.one.passed) {
-				return false;
-			}
-			samples.hundred = MeasureDesktopScaleCache(account, watchdog,
-													   50'000, 500, 60'000'000);
-			return samples.hundred.passed;
-		});
+	const auto created
+		= WithDesktopScaleAccount(domain, selfId, [&](auto account) {
+			  samples.one = MeasureDesktopScaleCache(account, watchdog, 500, 0,
+													 50'000'000);
+			  if (!samples.one.passed) {
+				  return false;
+			  }
+			  samples.hundred = MeasureDesktopScaleCache(
+				  account, watchdog, 50'000, 500, 60'000'000);
+			  return samples.hundred.passed;
+		  });
 	if (!created) {
 		samples.one.passed = false;
 		samples.hundred.passed = false;
