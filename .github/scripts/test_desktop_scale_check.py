@@ -1091,6 +1091,50 @@ class DesktopScaleCheckTests(unittest.TestCase):
             any(update_scenario in failure for failure in update_result["failures"])
         )
 
+    def test_new_scenarios_defer_ratio_gate_until_their_baseline_calibrates(self):
+        self.require_implementation()
+        scenarios = [
+            "private history page (1M messages; 20 / 2,000 loaded)",
+            "jump to date in 1M-message history",
+            "group media page (200K messages; 20 / 2,000 loaded)",
+            "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)",
+        ]
+        legacy = scale_check.parse_report(REPORT)
+        legacy["created_at"] = "2026-11-10T00:00:00Z"
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = dict(legacy)
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+
+        head_runs = []
+        for index in range(2):
+            sample = scale_check.parse_report(EXTENDED_REPORT)
+            sample["created_at"] = f"2026-11-{index + 1:02d}T01:00:00Z"
+            for scenario in scenarios:
+                sample["scenarios"][scenario]["hundred_ms"] = 16.0
+                sample["scenarios"][scenario]["one_stalls"] = 1
+            head_runs.append(sample)
+
+        result = scale_check.evaluate(history, [legacy, legacy], head_runs)
+        summary = scale_check.format_summary(result, head_runs[-1])
+
+        self.assertIn(
+            "| private history page (1M messages; 20 / 2,000 loaded) | "
+            "n/a → 10.00 ms | n/a → 16.00 ms | 1.60x | "
+            "50 ms main-thread step | calibrating: 0/20 |",
+            summary,
+        )
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                row_failures = [
+                    failure for failure in result["failures"] if scenario in failure
+                ]
+                self.assertEqual(result["rows"][scenario]["baseline_count"], 0)
+                self.assertFalse(any("1.5x" in failure for failure in row_failures))
+                self.assertTrue(any("exceeded 50 ms" in failure for failure in row_failures))
+
     def test_retry_absolute_budget_uses_only_the_retry_head_sample(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]

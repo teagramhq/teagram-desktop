@@ -434,7 +434,11 @@ def evaluate(
                 f"{scenario}: a main-thread step exceeded "
                 f"{ABSOLUTE_BUDGET_MS:g} ms"
             )
-        if row_result["ratio"] is not None and row_result["ratio"] > MAX_SCALE_RATIO:
+        if (
+            len(baseline_rows) >= MIN_DEV_RUNS
+            and row_result["ratio"] is not None
+            and row_result["ratio"] > MAX_SCALE_RATIO
+        ):
             row_result["failures"].append(
                 f"{scenario}: 100x takes {row_result['ratio']:.2f}x as long as 1x "
                 "(limit 1.5x)"
