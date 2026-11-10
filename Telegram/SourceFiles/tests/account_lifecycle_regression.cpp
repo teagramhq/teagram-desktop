@@ -10816,7 +10816,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
-	for (const auto target : { emptyFirstHistory, emptySecondHistory }) {
+	for (const auto target : {emptyFirstHistory, emptySecondHistory}) {
 		showPeerHistoryMeasured(target);
 		QCoreApplication::processEvents();
 	}
@@ -11126,8 +11126,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.hydratedDocuments
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
-		  && result.dialogHistoriesReady
-		  && result.syntheticHistoriesReady
+		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
@@ -11246,15 +11245,15 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		MTP_int(2),
 		MTP_vector<MTPDialog>(
 			{MTP_dialog(MTP_flags(0), peerToMTP(firstPeerId),
-						MTP_int(kFirstChatMessageCount),
-						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount),
-						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
-						MTPint(), MTPDraftMessage(), MTPint(), MTPint()),
+						MTP_int(kFirstChatMessageCount), MTP_int(0), MTP_int(0),
+						MTP_int(kDialogUnreadCount), MTP_int(0), MTP_int(0),
+						MTP_int(0), notifySettings, MTPint(), MTPDraftMessage(),
+						MTPint(), MTPint()),
 			 MTP_dialog(MTP_flags(0), peerToMTP(secondPeerId),
-						MTP_int(kSecondChatMessageCount),
-						MTP_int(0), MTP_int(0), MTP_int(kDialogUnreadCount - 1),
-						MTP_int(0), MTP_int(0), MTP_int(0), notifySettings,
-						MTPint(), MTPDraftMessage(), MTPint(), MTPint())}),
+						MTP_int(kSecondChatMessageCount), MTP_int(0),
+						MTP_int(0), MTP_int(kDialogUnreadCount - 1), MTP_int(0),
+						MTP_int(0), MTP_int(0), notifySettings, MTPint(),
+						MTPDraftMessage(), MTPint(), MTPint())}),
 		MTP_vector<MTPMessage>(std::move(messages)),
 		MTP_vector<MTPChat>(
 			{MTP_chat(MTP_flags(MTPDchat::Flags()), MTP_long(firstChatId.bare),
