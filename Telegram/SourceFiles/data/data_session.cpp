@@ -5,7 +5,6 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
-#include <QtCore/QElapsedTimer>
 #include "data/data_session.h"
 
 #include "main/main_session.h"
@@ -102,8 +101,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMutexLocker>
 #include <rpl/flatten_latest.h>
 
+#include <QtCore/QElapsedTimer>
+
 namespace Data {
 
+// Temporary contact load phase timings, in nanoseconds.
 qint64 gDiag[8] = {};
 namespace {
 
@@ -745,9 +747,12 @@ ChannelData *Session::channelLoaded(ChannelId id) const {
 }
 
 not_null<UserData*> Session::processUser(const MTPUser &data) {
+	auto diagTimer = QElapsedTimer();
+	diagTimer.start();
 	const auto result = user(data.match([](const auto &data) {
 		return data.vid().v;
 	}));
+	gDiag[6] += diagTimer.nsecsElapsed();
 	auto minimal = false;
 	const MTPUserStatus *status = nullptr;
 	const MTPUserStatus emptyStatus = MTP_userStatusEmpty();
@@ -964,7 +969,9 @@ not_null<UserData*> Session::processUser(const MTPUser &data) {
 					: QString())
 				: result->nameOrPhone;
 
+			diagTimer.restart();
 			result->setName(fname, lname, pname, uname);
+			gDiag[5] += diagTimer.nsecsElapsed();
 			if (!minimal || result->applyMinPhoto()) {
 				if (const auto photo = data.vphoto()) {
 					result->setPhoto(*photo);
@@ -2292,18 +2299,18 @@ void Session::setupUserIsContactViewer() {
 			return;
 		}
 		if (user->isContact()) {
-			auto t = QElapsedTimer();
-			t.start();
+			auto timer = QElapsedTimer();
+			timer.start();
 			const auto history = this->history(user->id);
-			gDiag[1] += t.nsecsElapsed();
-			t.restart();
+			gDiag[1] += timer.nsecsElapsed();
+			timer.restart();
 			_contactsList.addByName(history);
-			gDiag[2] += t.nsecsElapsed();
-			t.restart();
+			gDiag[2] += timer.nsecsElapsed();
+			timer.restart();
 			if (!history->inChatList()) {
 				_contactsNoChatsList.addByName(history);
 			}
-			gDiag[3] += t.nsecsElapsed();
+			gDiag[3] += timer.nsecsElapsed();
 			++gDiag[4];
 		} else if (const auto history = historyLoaded(user)) {
 			_contactsNoChatsList.remove(history);

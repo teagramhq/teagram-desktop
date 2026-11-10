@@ -5,7 +5,6 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
-#include <QtCore/QElapsedTimer>
 #include "apiwrap.h"
 
 #include "api/api_authorizations.h"
@@ -108,12 +107,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "storage/storage_account.h"
 
+#include <QtCore/QElapsedTimer>
+
 namespace {
 
 // Save draft to the cloud with 1 sec extra delay.
 constexpr auto kSaveCloudDraftTimeout = 1000;
 
 constexpr auto kSmallDelayMs = 5;
+
+// A large contact list is applied in steps, so that the main thread
+// returns to the event loop often enough to stay responsive.
+constexpr auto kContactsApplyChunk = 200;
 constexpr auto kReadFeaturedSetsTimeout = crl::time(1000);
 constexpr auto kFileLoaderQueueStopTimeout = crl::time(5000);
 constexpr auto kStickersByEmojiInvalidateTimeout = crl::time(6 * 1000);
@@ -886,7 +891,8 @@ extern qint64 gDiag[8];
 } // namespace Data
 
 void ApiWrap::requestContacts() {
-	if (_session->data().contactsLoaded().current() || _contactsRequestId) {
+	if (_session->data().contactsLoaded().current() || _contactsRequestId
+		|| _contactsApplying) {
 		return;
 	}
 	_contactsRequestId = request(MTPcontacts_GetContacts(
@@ -897,23 +903,39 @@ void ApiWrap::requestContacts() {
 			return;
 		}
 		Assert(result.type() == mtpc_contacts_contacts);
-		const auto &d = result.c_contacts_contacts();
-		auto diagTimer = QElapsedTimer();
-		diagTimer.start();
-		_session->data().processUsers(d.vusers());
-		Data::gDiag[0] += diagTimer.nsecsElapsed();
-		for (const auto &contact : d.vcontacts().v) {
-			if (contact.type() != mtpc_contact) continue;
-
-			const auto userId = UserId(contact.c_contact().vuser_id());
-			if (userId == _session->userId()) {
-				_session->user()->setIsContact(true);
-			}
-		}
-		_session->data().contactsLoaded() = true;
+		applyContacts(result, 0);
 	}).fail([=] {
 		_contactsRequestId = 0;
 	}).send();
+}
+
+void ApiWrap::applyContacts(const MTPcontacts_Contacts &result, int offset) {
+	const auto &d = result.c_contacts_contacts();
+	const auto &users = d.vusers().v;
+	const auto count = int(users.size());
+	const auto till = std::min(offset + kContactsApplyChunk, count);
+	auto diagTimer = QElapsedTimer();
+	diagTimer.start();
+	for (auto i = offset; i != till; ++i) {
+		_session->data().processUser(users[i]);
+	}
+	Data::gDiag[0] += diagTimer.nsecsElapsed();
+	if (till < count) {
+		_contactsApplying = true;
+		crl::on_main(_session, [=] { applyContacts(result, till); });
+		return;
+	}
+	_contactsApplying = false;
+	for (const auto &contact : d.vcontacts().v) {
+		if (contact.type() != mtpc_contact)
+			continue;
+
+		const auto userId = UserId(contact.c_contact().vuser_id());
+		if (userId == _session->userId()) {
+			_session->user()->setIsContact(true);
+		}
+	}
+	_session->data().contactsLoaded() = true;
 }
 
 void ApiWrap::requestDialogs(Data::Folder *folder) {
