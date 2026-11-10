@@ -150,7 +150,10 @@ def make_runner_harness(root, history=None):
             if sleep:
                 time.sleep(sleep)
             status = int(os.environ.get("MOCK_DOCKER_STATUS", "0"))
-            if status:
+            fail_before_report = (
+                os.environ.get("MOCK_DOCKER_FAIL_BEFORE_REPORT") == "true"
+            )
+            if status and fail_before_report:
                 sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
@@ -168,6 +171,8 @@ def make_runner_harness(root, history=None):
             Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
             Outcome: PASS
             DESKTOP_SCALE_REPORT_END\"\"\")
+            if status:
+                sys.exit(status)
             """
         )
     )
@@ -198,6 +203,7 @@ def make_runner_harness(root, history=None):
             "MOCK_BINARY_STATUS": "0",
             "MOCK_EVALUATE_STATUS": "0",
             "MOCK_DOCKER_STATUS": "0",
+            "MOCK_DOCKER_FAIL_BEFORE_REPORT": "false",
             "MOCK_DOCKER_SLEEP_SECONDS": "0",
             "MOCK_DOCKER_STALL_COUNTS": "",
             "MOCK_DOCKER_SLOW_COUNTS": "",
@@ -893,7 +899,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertIn("One additional interleaved pair was added", summary)
         self.assertNotIn("Timing failures:", summary)
 
-    def test_dev_run_records_sample_for_the_next_baseline(self):
+    def test_dev_run_records_sample_before_preserving_app_failure_status(self):
         self.require_implementation()
         runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
         with tempfile.TemporaryDirectory() as directory:
@@ -901,6 +907,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             repo_root, runner_temp, env = make_runner_harness(root)
             env["GITHUB_EVENT_NAME"] = "push"
             env["GITHUB_REF"] = "refs/heads/dev"
+            env["MOCK_DOCKER_STATUS"] = "42"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -911,12 +918,14 @@ class DesktopScaleCheckTests(unittest.TestCase):
             )
             output = (root / "github-output.txt").read_text()
             sample_path = runner_temp / "desktop-scale-sample.json"
-            sample = json.loads(sample_path.read_text())
+            sample_exists = sample_path.exists()
+            sample = json.loads(sample_path.read_text()) if sample_exists else None
             docker_calls = (root / "docker-calls.txt").read_text().splitlines()
             fetch_calls = (root / "fetch-calls.txt").read_text()
 
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
         self.assertIn("recorded=true", output)
+        self.assertTrue(sample_exists)
         self.assertTrue(sample["valid"])
         self.assertEqual(len(docker_calls), 1)
         self.assertNotIn("fetch-binary", fetch_calls)
@@ -1000,6 +1009,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             root = Path(directory)
             repo_root, _runner_temp, env = make_runner_harness(root)
             env["MOCK_DOCKER_STATUS"] = "42"
+            env["MOCK_DOCKER_FAIL_BEFORE_REPORT"] = "true"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,

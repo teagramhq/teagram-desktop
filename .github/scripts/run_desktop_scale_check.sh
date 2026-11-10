@@ -155,22 +155,27 @@ run_scale_check() {
 		echo "::error::Desktop scale run $label timed out after exhausting the remaining ${remaining}-second scale-check budget (exit 124)."
 		return 124
 	fi
+	if (( run_status == 0 )) || grep -Fqx DESKTOP_SCALE_REPORT_BEGIN "$log_file"; then
+		if python3 "$scale_script" parse \
+			--report "$log_file" \
+			--output "$sample_file" \
+			--run-id "$GITHUB_RUN_ID" \
+			--run-attempt "$GITHUB_RUN_ATTEMPT" \
+			--commit "$GITHUB_SHA"; then
+			:
+		else
+			local parse_status=$?
+			if (( run_status == 0 )); then
+				return "$parse_status"
+			fi
+			echo "::warning::Could not parse the report from scale run $label (status $parse_status); preserving app status $run_status."
+		fi
+	fi
 	if (( run_status != 0 )); then
 		echo "::error::Desktop scale run $label exited with status $run_status."
 		return "$run_status"
 	fi
-	if python3 "$scale_script" parse \
-		--report "$log_file" \
-		--output "$sample_file" \
-		--run-id "$GITHUB_RUN_ID" \
-		--run-attempt "$GITHUB_RUN_ATTEMPT" \
-		--commit "$GITHUB_SHA"; then
-		:
-	else
-		local parse_status=$?
-		return "$parse_status"
-	fi
-	return "$run_status"
+	return 0
 }
 
 append_summary() {
