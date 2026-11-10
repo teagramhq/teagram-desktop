@@ -364,6 +364,7 @@ jobs:
           key: macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('CCACHE_KEY.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-${{ hashFiles('CCACHE_KEY.txt') }}-
+            macOS-arm64-ccache-dev-pr-compatible-${{ hashFiles('CCACHE_KEY.txt') }}-
             macOS-arm64-ccache-dev-${{ hashFiles('CCACHE_KEY.txt') }}-
             macOS-arm64-ccache-dev-${{ steps.ccache-profile.outputs.name }}-
 

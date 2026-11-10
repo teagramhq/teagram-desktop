@@ -551,6 +551,7 @@ require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.with.
   "macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-\${{ github.run_id }}-\${{ github.run_attempt }}"
 require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.with["restore-keys"]' \
   "macOS-arm64-ccache-dev-${profile_expression}-${hash_expression}-
+macOS-arm64-ccache-dev-pr-compatible-${hash_expression}-
 macOS-arm64-ccache-dev-${hash_expression}-
 macOS-arm64-ccache-dev-${profile_expression}-"
 # Only a dev push or scheduled seed whose commit is still the dev tip saves the
