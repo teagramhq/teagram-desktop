@@ -15298,7 +15298,7 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 	for (auto i = 0;
 		 i != entryCount - alreadySeeded - kDesktopScaleThumbnailReads; ++i) {
 		cache->put(Data::DocumentThumbCacheKey(
-					   1, uint64(60'000'000 + alreadySeeded + i)),
+					   1, uint64(100'000'000 + alreadySeeded + i)),
 				   QByteArray("cache-entry"));
 	}
 	for (const auto &document : documents) {
@@ -15313,6 +15313,33 @@ MeasureDesktopScaleCache(not_null<Main::Account *> account, int entryCount,
 			"Desktop scale check failed: cached thumbnail payload did not "
 			"match for the %d-entry scenario.\n",
 			entryCount);
+		return sample;
+	}
+	auto stats = std::optional<Storage::Cache::Database::Stats>();
+	auto statsLifetime = rpl::lifetime();
+	data.cacheStatsOnMain(false)
+		| rpl::on_next(
+			[&](Storage::Cache::Database::Stats &&value) {
+				stats = std::move(value);
+			},
+			statsLifetime);
+	const auto entryCountMatches = WaitForRegressionCondition([&] {
+		return stats && (quint64(stats->full.count) == quint64(entryCount));
+	});
+	if (!entryCountMatches) {
+		if (stats) {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: cache entry count was %llu, "
+				"expected %d.\n",
+				static_cast<unsigned long long>(stats->full.count), entryCount);
+		} else {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: could not read actual cache "
+				"entry count for the %d-entry scenario.\n",
+				entryCount);
+		}
 		return sample;
 	}
 
