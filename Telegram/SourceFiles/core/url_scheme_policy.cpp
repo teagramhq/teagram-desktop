@@ -16,8 +16,8 @@ namespace internal {
 namespace {
 
 const auto kDefaultUrlSchemes = std::array{
-	u"http"_q, u"https"_q, u"ftp"_q, u"itmss"_q, u"mailto"_q,
-	u"tel"_q,  u"tg"_q,	   u"tc"_q,	 u"ton"_q,	 u"tonsite"_q,
+	u"http"_q, u"https"_q, u"ftp"_q, u"itmss"_q,   u"mailto"_q,
+	u"tel"_q,  u"tg"_q,	   u"ton"_q, u"tonsite"_q,
 };
 
 } // namespace
