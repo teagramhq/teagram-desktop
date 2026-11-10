@@ -658,66 +658,12 @@ jobs:
             fi
           '
 
-      - name: Restore desktop scale baseline.
-        id: desktop-scale-baseline
-        if: >
-          env.ONLY_CACHE == 'false'
-            && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          history_file="$RUNNER_TEMP/desktop-scale-history.json"
-          fetch_output="$RUNNER_TEMP/desktop-scale-fetch-output.txt"
-          args=(
-            fetch
-            --api-url "$GITHUB_API_URL"
-            --token "$GH_TOKEN"
-            --repository "$GITHUB_REPOSITORY"
-            --records-output "$history_file"
-          )
-          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
-            args+=(
-              --base-sha "$PR_BASE_SHA"
-              --binary-directory "$RUNNER_TEMP/desktop-scale-dev"
-            )
-          fi
-          set +e
-          timeout 90s python3 .github/scripts/desktop_scale_check.py \
-            "${args[@]}" > "$fetch_output"
-          fetch_status=$?
-          set -e
-          if (( fetch_status == 0 )); then
-            cat "$fetch_output" >> "$GITHUB_OUTPUT"
-            echo 'history_unavailable=false' >> "$GITHUB_OUTPUT"
-            if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
-                && "$(sed -n 's/^record_count=//p' "$fetch_output")" -ge 20 \
-                && "$(sed -n 's/^binary_available=//p' "$fetch_output")" != 'true' ]]; then
-              echo "::error::No Teagram artifact matches PR base SHA $PR_BASE_SHA. Rebase onto an earlier dev commit or rerun after the dev build for this SHA completes."
-              exit 1
-            fi
-          else
-            printf '[]\n' > "$history_file"
-            printf 'record_count=0\nbinary_available=false\nhistory_truncated=false\nhistory_unavailable=true\n' \
-              >> "$GITHUB_OUTPUT"
-            if (( fetch_status == 124 )); then
-              echo '::error::Desktop scale baseline fetch timed out after 90 seconds; this run will stay report-only.'
-              echo '::warning::Desktop scale baseline history is unavailable for this run.'
-            else
-              echo "::warning::Could not read prior desktop scale artifacts (status $fetch_status); this run will stay report-only."
-            fi
-          fi
-
       - name: Desktop data scale check.
         id: desktop-scale
         if: env.ONLY_CACHE == 'false'
         shell: bash
         env:
-          SCALE_BASELINE_COUNT: ${{ steps.desktop-scale-baseline.outputs.record_count || '0' }}
-          SCALE_BASELINE_TRUNCATED: ${{ steps.desktop-scale-baseline.outputs.history_truncated || 'false' }}
-          SCALE_BASELINE_UNAVAILABLE: ${{ steps.desktop-scale-baseline.outputs.history_unavailable || 'false' }}
-          SCALE_BINARY_AVAILABLE: ${{ steps.desktop-scale-baseline.outputs.binary_available || 'false' }}
+          GH_TOKEN: ${{ github.token }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DESKTOP_SCALE_RUN_BUDGET_SECONDS: "180"
         run: bash .github/scripts/run_desktop_scale_check.sh

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import statistics
 import sys
+import traceback
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -493,7 +494,7 @@ def _artifact_pages(api_url, token, repository, name):
     return artifacts
 
 
-def _download_artifact(api_url, token, repository, artifact_id):
+def _download_artifact(api_url, token, repository, artifact_id, timeout=60):
     endpoint = (
         f"/repos/{repository}/actions/artifacts/{artifact_id}/zip"
     )
@@ -507,7 +508,7 @@ def _download_artifact(api_url, token, repository, artifact_id):
     )
     opener = build_opener(_NoRedirect())
     try:
-        response = opener.open(request, timeout=60)
+        response = opener.open(request, timeout=timeout)
     except HTTPError as error:
         if error.code not in (301, 302, 303, 307, 308):
             raise ScaleCheckError(
@@ -516,7 +517,7 @@ def _download_artifact(api_url, token, repository, artifact_id):
         location = error.headers.get("Location")
         if not location:
             raise ScaleCheckError("GitHub artifact download omitted its redirect")
-        with urlopen(location, timeout=120) as archive_response:
+        with urlopen(location, timeout=timeout) as archive_response:
             return archive_response.read()
     with response:
         return response.read()
@@ -552,15 +553,7 @@ def _valid_dev_artifacts(artifacts):
     return matches
 
 
-def fetch_baseline(
-    api_url,
-    token,
-    repository,
-    base_sha,
-    records_output,
-    binary_directory=None,
-    require_binary=False,
-):
+def fetch_history(api_url, token, repository, records_output):
     artifacts = _valid_dev_artifacts(
         _artifact_pages(api_url, token, repository, DEV_ARTIFACT_NAME)
     )
@@ -589,35 +582,86 @@ def fetch_baseline(
     )
     records.sort(key=lambda sample: sample.get("created_at", ""))
     Path(records_output).write_text(json.dumps(records, indent=2) + "\n")
+    return records, history_truncated
+
+
+def fetch_base_binary(
+    api_url,
+    token,
+    repository,
+    base_sha,
+    binary_directory,
+    require_binary=True,
+):
+    binary_artifacts = _valid_dev_artifacts(
+        _artifact_pages(api_url, token, repository, APP_ARTIFACT_NAME)
+    )
+    matching = [
+        artifact
+        for artifact in binary_artifacts
+        if (artifact.get("workflow_run") or {}).get("head_sha") == base_sha
+    ]
+    if not matching:
+        if not require_binary:
+            return False
+        raise ScaleCheckError(
+            f"no dev Teagram artifact matches PR base SHA {base_sha}; "
+            "rebase onto an earlier dev commit or rerun after the dev build "
+            "for this SHA completes"
+        )
+
+    artifact = matching[-1]
+    for attempt in range(2):
+        try:
+            contents = _artifact_file(
+                _download_artifact(
+                    api_url,
+                    token,
+                    repository,
+                    artifact["id"],
+                    timeout=12,
+                ),
+                "Teagram",
+            )
+            break
+        except (OSError, ScaleCheckError) as error:
+            if attempt == 1:
+                raise ScaleCheckError(
+                    f"could not download the PR base Teagram artifact for SHA "
+                    f"{base_sha} after one retry: {error}"
+                ) from error
+
+    directory = Path(binary_directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    binary_path = directory / "Teagram"
+    binary_path.write_bytes(contents)
+    binary_path.chmod(0o755)
+    return True
+
+
+def fetch_baseline(
+    api_url,
+    token,
+    repository,
+    base_sha,
+    records_output,
+    binary_directory=None,
+    require_binary=False,
+):
+    records, history_truncated = fetch_history(
+        api_url, token, repository, records_output
+    )
 
     binary_found = False
     if len(records) >= MIN_DEV_RUNS and binary_directory:
-        binary_artifacts = _valid_dev_artifacts(
-            _artifact_pages(api_url, token, repository, APP_ARTIFACT_NAME)
+        binary_found = fetch_base_binary(
+            api_url,
+            token,
+            repository,
+            base_sha,
+            binary_directory,
+            require_binary,
         )
-        matching = [
-            artifact
-            for artifact in binary_artifacts
-            if (artifact.get("workflow_run") or {}).get("head_sha") == base_sha
-        ]
-        if matching:
-            artifact = matching[-1]
-            contents = _artifact_file(
-                _download_artifact(api_url, token, repository, artifact["id"]),
-                "Teagram",
-            )
-            directory = Path(binary_directory)
-            directory.mkdir(parents=True, exist_ok=True)
-            binary_path = directory / "Teagram"
-            binary_path.write_bytes(contents)
-            binary_path.chmod(0o755)
-            binary_found = True
-        elif require_binary:
-            raise ScaleCheckError(
-                f"no dev Teagram artifact matches PR base SHA {base_sha}; "
-                "rebase onto an earlier dev commit or rerun after the dev build "
-                "for this SHA completes"
-            )
     if require_binary and len(records) >= MIN_DEV_RUNS and not binary_found:
         raise ScaleCheckError(
             f"could not retrieve the PR base Teagram artifact for SHA {base_sha}; "
@@ -644,18 +688,38 @@ def _load_json(path, default=_MISSING):
 
 
 def _cmd_fetch(args):
-    records, binary_found, history_truncated = fetch_baseline(
+    if args.history_only:
+        records, history_truncated = fetch_history(
+            args.api_url,
+            args.token,
+            args.repository,
+            args.records_output,
+        )
+        binary_found = False
+    else:
+        records, binary_found, history_truncated = fetch_baseline(
+            args.api_url,
+            args.token,
+            args.repository,
+            args.base_sha,
+            args.records_output,
+            args.binary_directory,
+            args.require_binary,
+        )
+    print(f"record_count={len(records)}")
+    print(f"binary_available={'true' if binary_found else 'false'}")
+    print(f"history_truncated={'true' if history_truncated else 'false'}")
+
+
+def _cmd_fetch_binary(args):
+    fetch_base_binary(
         args.api_url,
         args.token,
         args.repository,
         args.base_sha,
-        args.records_output,
         args.binary_directory,
-        args.require_binary,
     )
-    print(f"record_count={len(records)}")
-    print(f"binary_available={'true' if binary_found else 'false'}")
-    print(f"history_truncated={'true' if history_truncated else 'false'}")
+    print("binary_available=true")
 
 
 def _cmd_parse(args):
@@ -724,7 +788,16 @@ def _build_parser():
     fetch.add_argument("--records-output", required=True)
     fetch.add_argument("--binary-directory")
     fetch.add_argument("--require-binary", action="store_true")
+    fetch.add_argument("--history-only", action="store_true")
     fetch.set_defaults(function=_cmd_fetch)
+
+    fetch_binary = commands.add_parser("fetch-binary")
+    fetch_binary.add_argument("--api-url", required=True)
+    fetch_binary.add_argument("--token", required=True)
+    fetch_binary.add_argument("--repository", required=True)
+    fetch_binary.add_argument("--base-sha", required=True)
+    fetch_binary.add_argument("--binary-directory", required=True)
+    fetch_binary.set_defaults(function=_cmd_fetch_binary)
 
     parse = commands.add_parser("parse")
     parse.add_argument("--report", required=True)
@@ -766,7 +839,7 @@ def main(argv=None):
     except Exception as error:
         print(
             "::error::Unexpected desktop scale check error "
-            f"({type(error).__name__}): {error}",
+            f"({type(error).__name__}): {error}\n{traceback.format_exc()}",
             file=sys.stderr,
         )
         return 2

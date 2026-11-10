@@ -6,17 +6,82 @@ history_file="$RUNNER_TEMP/desktop-scale-history.json"
 summary_file="$RUNNER_TEMP/desktop-scale-summary.md"
 evaluation_file="$RUNNER_TEMP/desktop-scale-evaluation.json"
 app_mount="$RUNNER_TEMP/desktop-scale-dev"
-scale_started=$SECONDS
 scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-180}"
-scale_baseline_count="${SCALE_BASELINE_COUNT:-0}"
 scale_history_args=()
+scale_baseline_count=0
+scale_history_truncated=false
+scale_history_unavailable=false
+scale_binary_available=false
+printf '[]\n' > "$history_file"
 
-if [[ "${SCALE_BASELINE_TRUNCATED:-false}" == 'true' ]]; then
-	scale_history_args+=(--history-truncated)
+if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+	|| "$GITHUB_REF" == 'refs/heads/dev' ]]; then
+	fetch_output="$RUNNER_TEMP/desktop-scale-fetch-output.txt"
+	set +e
+	timeout 55s python3 "$scale_script" fetch \
+		--history-only \
+		--api-url "$GITHUB_API_URL" \
+		--token "$GH_TOKEN" \
+		--repository "$GITHUB_REPOSITORY" \
+		--records-output "$history_file" > "$fetch_output"
+	history_fetch_status=$?
+	set -e
+	if (( history_fetch_status == 0 )); then
+		scale_baseline_count="$(sed -n 's/^record_count=//p' "$fetch_output")"
+		if [[ ! "$scale_baseline_count" =~ ^[0-9]+$ ]]; then
+			echo '::error::Desktop scale history fetch returned an invalid record count.'
+			exit 2
+		fi
+		scale_history_truncated="$(sed -n 's/^history_truncated=//p' "$fetch_output")"
+		if [[ "$scale_history_truncated" == 'true' ]]; then
+			scale_history_args+=(--history-truncated)
+		fi
+		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+			&& "$scale_baseline_count" -ge 20 ]]; then
+			set +e
+			timeout 35s python3 "$scale_script" fetch-binary \
+				--api-url "$GITHUB_API_URL" \
+				--token "$GH_TOKEN" \
+				--repository "$GITHUB_REPOSITORY" \
+				--base-sha "$PR_BASE_SHA" \
+				--binary-directory "$app_mount"
+			binary_fetch_status=$?
+			set -e
+			if (( binary_fetch_status != 0 )); then
+				if (( binary_fetch_status == 124 )); then
+					echo '::error::PR base Teagram artifact fetch timed out after dev history was available.'
+				else
+					echo "::error::PR base Teagram artifact fetch failed with status $binary_fetch_status after dev history was available."
+				fi
+				cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+### Desktop data scale check
+
+No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status after $scale_baseline_count dev samples were available.
+EOF
+				exit "$binary_fetch_status"
+			fi
+			scale_binary_available=true
+		fi
+	else
+		printf '[]\n' > "$history_file"
+		scale_baseline_count=0
+		scale_history_unavailable=true
+		if (( history_fetch_status == 124 )); then
+			echo '::error::Desktop scale history fetch timed out after 55 seconds; this run will stay report-only.'
+			echo '::warning::Desktop scale baseline history is unavailable for this run.'
+		else
+			echo "::warning::Could not read prior desktop scale history (status $history_fetch_status); this run will stay report-only."
+		fi
+	fi
 fi
-if [[ "${SCALE_BASELINE_UNAVAILABLE:-false}" == 'true' ]]; then
+
+if [[ "$scale_history_unavailable" == 'true' ]]; then
 	scale_history_args+=(--history-unavailable)
 fi
+printf 'record_count=%s\nbinary_available=%s\nhistory_truncated=%s\nhistory_unavailable=%s\n' \
+	"$scale_baseline_count" "$scale_binary_available" \
+	"$scale_history_truncated" "$scale_history_unavailable" >> "$GITHUB_OUTPUT"
+scale_started=$SECONDS
 
 run_scale_check() {
 	local label="$1"
@@ -90,6 +155,10 @@ run_scale_check() {
 		echo "::error::Desktop scale run $label timed out after exhausting the remaining ${remaining}-second scale-check budget (exit 124)."
 		return 124
 	fi
+	if (( run_status != 0 )); then
+		echo "::error::Desktop scale run $label exited with status $run_status."
+		return "$run_status"
+	fi
 	if python3 "$scale_script" parse \
 		--report "$log_file" \
 		--output "$sample_file" \
@@ -105,13 +174,25 @@ run_scale_check() {
 }
 
 append_summary() {
+	local failed_step="${1:-}"
+	local failed_status="${2:-}"
 	if [[ -s "$summary_file" ]]; then
 		cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+		if [[ -n "$failed_step" ]]; then
+			printf '\nNo final timing verdict was produced because %s failed with status %s.\n' \
+				"$failed_step" "$failed_status" >> "$GITHUB_STEP_SUMMARY"
+		fi
+	elif [[ -n "$failed_step" ]]; then
+		cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+### Desktop data scale check
+
+No timing verdict was produced because $failed_step failed with status $failed_status.
+EOF
 	else
 		cat >> "$GITHUB_STEP_SUMMARY" <<EOF
 ### Desktop data scale check
 
-No timing verdict was produced because scale run ${SCALE_FAILED_RUN:-unknown} failed with status ${SCALE_FAILED_STATUS:-unknown}.
+No timing verdict was produced because no scale-check summary was generated.
 EOF
 	fi
 	if [[ -s "$evaluation_file" ]]; then
@@ -122,13 +203,7 @@ EOF
 record_run_failure() {
 	local label="$1"
 	local status="$2"
-	SCALE_FAILED_RUN="$label"
-	SCALE_FAILED_STATUS="$status"
-	if [[ -s "$summary_file" ]]; then
-		printf '\nTiming comparison did not complete: scale run %s failed with status %s.\n' \
-			"$label" "$status" >> "$summary_file"
-	fi
-	append_summary
+	append_summary "scale run $label" "$status"
 	echo "::error::Desktop scale check run $label failed with status $status."
 	return "$status"
 }
@@ -184,6 +259,8 @@ evaluate_samples() {
 	if [[ "$report_only" == 'true' ]]; then
 		args+=(--report-only)
 	fi
+	: > "$evaluation_file"
+	: > "$summary_file"
 	set +e
 	python3 "$scale_script" evaluate "${args[@]}"
 	local result=$?
@@ -214,13 +291,15 @@ if [[ "$GITHUB_REF" == 'refs/heads/dev' ]]; then
 			"${scale_history_args[@]}"
 		evaluation_status=$?
 		set -e
-		append_summary
+		if (( evaluation_status == 0 )); then
+			append_summary
+		else
+			append_summary 'dev evaluation' "$evaluation_status"
+		fi
 		cp "$sample_file" "$RUNNER_TEMP/desktop-scale-sample.json"
 		echo 'recorded=true' >> "$GITHUB_OUTPUT"
 	else
-		SCALE_FAILED_RUN=head-1
-		SCALE_FAILED_STATUS=${run_status:-2}
-		append_summary
+		append_summary 'scale run head-1' "${run_status:-2}"
 	fi
 	if (( run_status != 0 )); then
 		exit "$run_status"
@@ -230,10 +309,6 @@ fi
 
 if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 	&& "$scale_baseline_count" -ge 20 ]]; then
-	if [[ "${SCALE_BINARY_AVAILABLE:-false}" != 'true' ]]; then
-		echo "::error::No Teagram artifact is available for PR base SHA ${PR_BASE_SHA:-unknown}. Rebase onto an earlier dev commit or rerun after the dev build for this SHA completes."
-		exit 2
-	fi
 	for pair in 1 2; do
 		if run_interleaved_pair "$pair"; then
 			:
@@ -255,6 +330,7 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 	else
 		evaluation_status=$?
 	fi
+	evaluation_step='initial evaluation'
 	if (( evaluation_status == 1 )); then
 		echo 'Desktop scale timing threshold crossed; adding one interleaved sample pair before judging the result.'
 		if run_interleaved_pair 3; then
@@ -272,8 +348,13 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 		else
 			evaluation_status=$?
 		fi
+		evaluation_step='retry evaluation'
 	fi
-	append_summary
+	if (( evaluation_status == 0 || evaluation_status == 1 )); then
+		append_summary
+	else
+		append_summary "$evaluation_step" "$evaluation_status"
+	fi
 	exit "$evaluation_status"
 fi
 
@@ -290,7 +371,7 @@ if evaluate_samples "" true; then
 	:
 else
 	status=$?
-	append_summary
+	append_summary 'report-only evaluation' "$status"
 	exit "$status"
 fi
 append_summary

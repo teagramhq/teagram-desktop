@@ -8,7 +8,8 @@ import tempfile
 import textwrap
 import unittest
 import zipfile
-from io import BytesIO
+from contextlib import redirect_stderr, redirect_stdout
+from io import BytesIO, StringIO
 from unittest.mock import patch
 
 try:
@@ -50,6 +51,163 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
         "directory_enumerations": {"one": 0, "hundred": 0},
         "scenarios": scenarios,
     }
+
+
+def make_runner_harness(root, history=None):
+    repo_root = Path(__file__).parents[2]
+    runner_temp = root / "runner-temp"
+    runner_temp.mkdir()
+    history_file = root / "history.json"
+    history_file.write_text(json.dumps(history or []))
+
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    python_stub = bin_dir / "python3"
+    python_stub.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ "${1:-}" == ".github/scripts/desktop_scale_check.py" ]]; then
+              case "${2:-}" in
+                fetch)
+                  printf 'fetch\\n' >> "$FETCH_CALL_LOG"
+                  status="${MOCK_FETCH_STATUS:-0}"
+                  if [[ "$status" != 0 ]]; then exit "$status"; fi
+                  shift 2
+                  output_path=
+                  while (($#)); do
+                    if [[ "$1" == --records-output ]]; then
+                      output_path="$2"
+                      shift 2
+                    else
+                      shift
+                    fi
+                  done
+                  if [[ -f "$MOCK_HISTORY_FILE" ]]; then
+                    cp "$MOCK_HISTORY_FILE" "$output_path"
+                  else
+                    printf '[]\\n' > "$output_path"
+                  fi
+                  printf 'record_count=%s\\nhistory_truncated=false\\n' "${MOCK_RECORD_COUNT:-0}"
+                  exit 0
+                  ;;
+                fetch-binary)
+                  printf 'fetch-binary\\n' >> "$FETCH_CALL_LOG"
+                  status="${MOCK_BINARY_STATUS:-0}"
+                  if [[ "$status" != 0 ]]; then exit "$status"; fi
+                  shift 2
+                  binary_directory=
+                  while (($#)); do
+                    if [[ "$1" == --binary-directory ]]; then
+                      binary_directory="$2"
+                      shift 2
+                    else
+                      shift
+                    fi
+                  done
+                  mkdir -p "$binary_directory"
+                  printf 'dev binary' > "$binary_directory/Teagram"
+                  exit 0
+                  ;;
+                evaluate)
+                  printf 'evaluate\\n' >> "$EVALUATE_CALL_LOG"
+                  status="${MOCK_EVALUATE_STATUS:-0}"
+                  if [[ "$status" != 0 ]]; then exit "$status"; fi
+                  ;;
+              esac
+            fi
+
+            exec "$REAL_PYTHON3" "$@"
+            """
+        )
+    )
+    python_stub.chmod(0o755)
+
+    docker_stub = bin_dir / "docker"
+    docker_stub.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import os
+            from pathlib import Path
+            import sys
+            import time
+
+            count_path = Path(os.environ["DOCKER_COUNT_FILE"])
+            count = int(count_path.read_text()) if count_path.exists() else 0
+            count += 1
+            count_path.write_text(str(count))
+            binary = ""
+            for index, value in enumerate(sys.argv):
+                if value == "-e" and index + 1 < len(sys.argv):
+                    if sys.argv[index + 1].startswith("DESKTOP_SCALE_BINARY="):
+                        binary = sys.argv[index + 1].split("=", 1)[1]
+            with Path(os.environ["DOCKER_CALL_LOG"]).open("a") as log:
+                log.write(f"{count} {binary}\\n")
+            sleep = float(os.environ.get("MOCK_DOCKER_SLEEP_SECONDS", "0"))
+            if sleep:
+                time.sleep(sleep)
+            status = int(os.environ.get("MOCK_DOCKER_STATUS", "0"))
+            if status:
+                sys.exit(status)
+            slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
+            stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
+            one = "13.00" if str(count) in slow_counts else "10.00"
+            dialogs_stalls = "1" if str(count) in stall_counts else "0"
+            print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
+            | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
+            | --- | ---: | ---: | ---: | --- | --- |
+            | messages.getDialogs page (100 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | contacts.getContacts full response | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
+            Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
+            Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+            Outcome: PASS
+            DESKTOP_SCALE_REPORT_END\"\"\")
+            """
+        )
+    )
+    docker_stub.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "REAL_PYTHON3": sys.executable,
+            "RUNNER_TEMP": str(runner_temp),
+            "GITHUB_STEP_SUMMARY": str(root / "step-summary.md"),
+            "GITHUB_OUTPUT": str(root / "github-output.txt"),
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_SHA": "head-sha",
+            "GITHUB_REF": "refs/pull/285/merge",
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_API_URL": "https://api.github.com",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GH_TOKEN": "token",
+            "PR_BASE_SHA": "base-sha",
+            "IMAGE_TAG": "tdesktop:test",
+            "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "60",
+            "MOCK_RECORD_COUNT": str(len(history or [])),
+            "MOCK_HISTORY_FILE": str(history_file),
+            "MOCK_FETCH_STATUS": "0",
+            "MOCK_BINARY_STATUS": "0",
+            "MOCK_EVALUATE_STATUS": "0",
+            "MOCK_DOCKER_STATUS": "0",
+            "MOCK_DOCKER_SLEEP_SECONDS": "0",
+            "MOCK_DOCKER_STALL_COUNTS": "",
+            "MOCK_DOCKER_SLOW_COUNTS": "",
+            "FETCH_CALL_LOG": str(root / "fetch-calls.txt"),
+            "EVALUATE_CALL_LOG": str(root / "evaluate-calls.txt"),
+            "DOCKER_COUNT_FILE": str(root / "docker-count.txt"),
+            "DOCKER_CALL_LOG": str(root / "docker-calls.txt"),
+        }
+    )
+    return repo_root, runner_temp, env
 
 
 class DesktopScaleCheckTests(unittest.TestCase):
@@ -195,7 +353,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             ), patch.object(
                 scale_check,
                 "_download_artifact",
-                side_effect=lambda _api, _token, _repo, artifact_id: archives[
+                side_effect=lambda _api, _token, _repo, artifact_id, **_kwargs: archives[
                     artifact_id
                 ],
             ):
@@ -216,6 +374,56 @@ class DesktopScaleCheckTests(unittest.TestCase):
             self.assertFalse(history_truncated)
             self.assertEqual((binary_dir / "Teagram").read_bytes(), b"dev app")
             self.assertTrue(binary_dir.joinpath("Teagram").stat().st_mode & 0o111)
+
+    def test_history_only_fetch_cli_does_not_request_a_base_binary(self):
+        self.require_implementation()
+        sample = make_sample()
+        sample["created_at"] = "2026-11-10T00:00:00Z"
+        archive_bytes = BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as bundle:
+            bundle.writestr(scale_check.SAMPLE_FILE_NAME, json.dumps(sample).encode())
+        artifacts = [
+            {
+                "id": 1,
+                "expired": False,
+                "created_at": sample["created_at"],
+                "workflow_run": {"head_branch": "dev"},
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            records_path = Path(directory) / "history.json"
+            stdout = StringIO()
+            with patch.object(
+                scale_check,
+                "_artifact_pages",
+                return_value=artifacts,
+            ) as list_artifacts, patch.object(
+                scale_check, "_download_artifact", return_value=archive_bytes.getvalue()
+            ), redirect_stdout(stdout):
+                status = scale_check.main(
+                    [
+                        "fetch",
+                        "--history-only",
+                        "--api-url",
+                        "https://api.github.com",
+                        "--token",
+                        "token",
+                        "--repository",
+                        "owner/repo",
+                        "--records-output",
+                        str(records_path),
+                    ]
+                )
+
+            self.assertEqual(json.loads(records_path.read_text()), [sample])
+
+        self.assertEqual(status, 0)
+        self.assertIn("record_count=1", stdout.getvalue())
+        self.assertIn("binary_available=false", stdout.getvalue())
+        self.assertEqual(
+            list_artifacts.call_args.args[-1], scale_check.DEV_ARTIFACT_NAME
+        )
 
     def test_missing_base_binary_has_an_actionable_error(self):
         self.require_implementation()
@@ -258,7 +466,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             ), patch.object(
                 scale_check,
                 "_download_artifact",
-                side_effect=lambda _api, _token, _repo, artifact_id: archives[
+                side_effect=lambda _api, _token, _repo, artifact_id, **_kwargs: archives[
                     artifact_id
                 ],
             ):
@@ -275,6 +483,81 @@ class DesktopScaleCheckTests(unittest.TestCase):
                         Path(directory) / "base",
                         require_binary=True,
                     )
+
+    def test_base_binary_download_retries_once_and_fails_after_the_second_error(self):
+        self.require_implementation()
+        artifact = {
+            "id": 100,
+            "expired": False,
+            "created_at": "2026-11-22T00:00:00Z",
+            "workflow_run": {"head_branch": "dev", "head_sha": "base-sha"},
+        }
+        binary_archive = BytesIO()
+        with zipfile.ZipFile(binary_archive, "w") as bundle:
+            bundle.writestr("Teagram", b"dev app")
+        archive_bytes = binary_archive.getvalue()
+        stdout = StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                scale_check, "_artifact_pages", return_value=[artifact]
+            ), patch.object(
+                scale_check,
+                "_download_artifact",
+                side_effect=[scale_check.ScaleCheckError("temporary"), archive_bytes],
+            ) as download:
+                with redirect_stdout(stdout):
+                    status = scale_check.main(
+                        [
+                            "fetch-binary",
+                            "--api-url",
+                            "https://api.github.com",
+                            "--token",
+                            "token",
+                            "--repository",
+                            "owner/repo",
+                            "--base-sha",
+                            "base-sha",
+                            "--binary-directory",
+                            str(Path(directory) / "base"),
+                        ]
+                    )
+
+            self.assertEqual(status, 0)
+            self.assertIn("binary_available=true", stdout.getvalue())
+            self.assertEqual(
+                (Path(directory) / "base" / "Teagram").read_bytes(), b"dev app"
+            )
+            self.assertEqual(download.call_count, 2)
+
+        stderr = StringIO()
+        with patch.object(
+            scale_check, "_artifact_pages", return_value=[artifact]
+        ), patch.object(
+            scale_check,
+            "_download_artifact",
+            side_effect=[scale_check.ScaleCheckError("first"), scale_check.ScaleCheckError("second")],
+        ) as download:
+            with redirect_stderr(stderr):
+                status = scale_check.main(
+                    [
+                        "fetch-binary",
+                        "--api-url",
+                        "https://api.github.com",
+                        "--token",
+                        "token",
+                        "--repository",
+                        "owner/repo",
+                        "--base-sha",
+                        "base-sha",
+                        "--binary-directory",
+                        "unused-binary-directory",
+                    ]
+                )
+
+        self.assertEqual(status, 2)
+        self.assertIn("after one retry", stderr.getvalue())
+        self.assertEqual(download.call_count, 2)
 
     def test_artifact_reads_are_capped_and_history_cut_short_is_reported(self):
         self.require_implementation()
@@ -306,7 +589,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             ), patch.object(
                 scale_check,
                 "_download_artifact",
-                side_effect=lambda _api, _token, _repo, artifact_id: (
+                side_effect=lambda _api, _token, _repo, artifact_id, **_kwargs: (
                     downloaded.append(artifact_id) or archives[artifact_id]
                 ),
             ):
@@ -571,81 +854,11 @@ class DesktopScaleCheckTests(unittest.TestCase):
         runner = repo_root / ".github/scripts/run_desktop_scale_check.sh"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            runner_temp = root / "runner-temp"
-            runner_temp.mkdir()
-            binary_dir = runner_temp / "desktop-scale-dev"
-            binary_dir.mkdir()
-            (binary_dir / "Teagram").write_bytes(b"dev binary")
             history = [make_sample() for _ in range(20)]
             for index, sample in enumerate(history):
                 sample["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
-            (runner_temp / "desktop-scale-history.json").write_text(
-                json.dumps(history)
-            )
-
-            bin_dir = root / "bin"
-            bin_dir.mkdir()
-            docker = bin_dir / "docker"
-            docker.write_text(
-                textwrap.dedent(
-                    """\
-                    #!/usr/bin/env python3
-                    import os
-                    from pathlib import Path
-                    import sys
-
-                    count_path = Path(os.environ["DOCKER_COUNT_FILE"])
-                    count = int(count_path.read_text()) if count_path.exists() else 0
-                    count += 1
-                    count_path.write_text(str(count))
-                    binary = ""
-                    for index, value in enumerate(sys.argv):
-                        if value == "-e" and index + 1 < len(sys.argv):
-                            if sys.argv[index + 1].startswith("DESKTOP_SCALE_BINARY="):
-                                binary = sys.argv[index + 1].split("=", 1)[1]
-                    with Path(os.environ["DOCKER_CALL_LOG"]).open("a") as log:
-                        log.write(f"{count} {binary}\\n")
-                    one = "10.00"
-                    dialogs_stalls = "1" if count == 4 else "0"
-                    print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
-                    | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
-                    | --- | ---: | ---: | ---: | --- | --- |
-                    | messages.getDialogs page (100 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-                    | contacts.getContacts full response | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-                    | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-                    | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-                    Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
-                    Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total={dialogs_stalls}.
-                    Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
-                    Outcome: PASS
-                    DESKTOP_SCALE_REPORT_END\"\"\")
-                    """
-                )
-            )
-            docker.chmod(0o755)
-
-            env = os.environ.copy()
-            env.update(
-                {
-                    "PATH": f"{bin_dir}:{env['PATH']}",
-                    "RUNNER_TEMP": str(runner_temp),
-                    "GITHUB_STEP_SUMMARY": str(root / "step-summary.md"),
-                    "GITHUB_OUTPUT": str(root / "github-output.txt"),
-                    "GITHUB_RUN_ID": "123",
-                    "GITHUB_RUN_ATTEMPT": "1",
-                    "GITHUB_SHA": "head-sha",
-                    "GITHUB_REF": "refs/pull/285/merge",
-                    "GITHUB_EVENT_NAME": "pull_request",
-                    "IMAGE_TAG": "tdesktop:test",
-                    "SCALE_BASELINE_COUNT": "20",
-                    "SCALE_BASELINE_TRUNCATED": "false",
-                    "SCALE_BASELINE_UNAVAILABLE": "false",
-                    "SCALE_BINARY_AVAILABLE": "true",
-                    "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "60",
-                    "DOCKER_COUNT_FILE": str(root / "docker-count.txt"),
-                    "DOCKER_CALL_LOG": str(root / "docker-calls.txt"),
-                }
-            )
+            repo_root, runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_STALL_COUNTS"] = "4"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -656,7 +869,9 @@ class DesktopScaleCheckTests(unittest.TestCase):
             )
 
             calls = (root / "docker-calls.txt").read_text().splitlines()
-            sample_names = sorted(path.name for path in runner_temp.glob("desktop-scale-*.json"))
+            sample_names = sorted(
+                path.name for path in runner_temp.glob("desktop-scale-*.json")
+            )
             summary = (root / "step-summary.md").read_text()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -677,6 +892,182 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn("desktop-scale-base-4.json", sample_names)
         self.assertIn("One additional interleaved pair was added", summary)
         self.assertNotIn("Timing failures:", summary)
+
+    def test_dev_run_records_sample_for_the_next_baseline(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, runner_temp, env = make_runner_harness(root)
+            env["GITHUB_EVENT_NAME"] = "push"
+            env["GITHUB_REF"] = "refs/heads/dev"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = (root / "github-output.txt").read_text()
+            sample_path = runner_temp / "desktop-scale-sample.json"
+            sample = json.loads(sample_path.read_text())
+            docker_calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("recorded=true", output)
+        self.assertTrue(sample["valid"])
+        self.assertEqual(len(docker_calls), 1)
+        self.assertNotIn("fetch-binary", fetch_calls)
+
+    def test_history_fetch_errors_fall_back_to_report_only(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        for fetch_status in ("2", "124"):
+            with self.subTest(fetch_status=fetch_status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                repo_root, _runner_temp, env = make_runner_harness(root)
+                env["MOCK_FETCH_STATUS"] = fetch_status
+                result = subprocess.run(
+                    ["bash", str(runner)],
+                    cwd=repo_root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                summary = (root / "step-summary.md").read_text()
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("history could not be read", summary)
+            if fetch_status == "124":
+                self.assertIn("::error::", result.stdout)
+                self.assertIn("timed out after 55 seconds", result.stdout)
+
+    def test_binary_fetch_error_after_history_is_a_hard_failure(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(20)]
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_BINARY_STATUS"] = "2"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(fetch_calls, ["fetch", "fetch-binary"])
+        self.assertIn("PR base Teagram artifact fetch failed", result.stdout)
+        self.assertIn("No timing verdict", summary)
+        self.assertNotIn("report-only", summary)
+        self.assertFalse((root / "docker-calls.txt").exists())
+
+    def test_evaluation_error_summary_names_the_step_and_status(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(20)]
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_EVALUATE_STATUS"] = "2"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("evaluation failed with status 2", summary)
+        self.assertNotIn("unknown", summary)
+
+    def test_nonzero_run_without_report_returns_the_run_status(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root)
+            env["MOCK_DOCKER_STATUS"] = "42"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertIn("head-1 failed with status 42", summary)
+        self.assertNotIn("unknown", summary)
+        self.assertNotIn("did not emit its report", result.stdout)
+
+    def test_timeout_and_budget_exhaustion_paths_report_status_124(self):
+        self.require_implementation()
+        runner = Path(__file__).parents[2] / ".github/scripts/run_desktop_scale_check.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root)
+            env["DESKTOP_SCALE_RUN_BUDGET_SECONDS"] = "0"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
+        self.assertIn("budget was exhausted", result.stdout)
+        self.assertIn("head-1 failed with status 124", summary)
+        self.assertFalse((root / "docker-calls.txt").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root)
+            env["DESKTOP_SCALE_RUN_BUDGET_SECONDS"] = "1"
+            env["MOCK_DOCKER_SLEEP_SECONDS"] = "3"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
+        self.assertIn("exit 124", result.stdout)
+        self.assertIn("head-1 failed with status 124", summary)
+        self.assertFalse((root / "evaluate-calls.txt").exists())
+
+    def test_unexpected_cli_error_prints_a_traceback(self):
+        self.require_implementation()
+        stderr = StringIO()
+        with patch.object(
+            scale_check, "_cmd_annotate", side_effect=RuntimeError("unexpected bug")
+        ), redirect_stderr(stderr):
+            status = scale_check.main(["annotate", "--evaluation", "unused.json"])
+
+        self.assertEqual(status, 2)
+        self.assertIn("Traceback (most recent call last)", stderr.getvalue())
+        self.assertIn("RuntimeError: unexpected bug", stderr.getvalue())
 
 
 if __name__ == "__main__":
