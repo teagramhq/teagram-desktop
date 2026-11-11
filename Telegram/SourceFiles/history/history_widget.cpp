@@ -500,6 +500,8 @@ HistoryWidget::HistoryWidget(
 		updateExpandButtonVisibility();
 		updateSendButtonType();
 	}, lifetime());
+	Data::AmPremiumValue(&session()) | rpl::skip(1)
+		| rpl::on_next([=] { invalidateAttachBotsMenuCache(); }, lifetime());
 #ifdef Q_OS_MAC
 	// Removed an ability to insert text from the menu bar
 	// when the field is hidden.

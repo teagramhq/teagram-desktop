@@ -11373,6 +11373,34 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= replacementBotAppeared
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforeInvalidation + 1);
+	const auto premiumBeforeToggle = session.premium();
+	const auto buildsBeforePremiumToggle
+		= historyWidget->attachMenuBuildCountForRegressionTest();
+	const auto premiumToggleApplied = SetRegressionSessionPremium(
+		&session, session.userId(), !premiumBeforeToggle);
+	const auto premiumMenuInvalidated
+		= premiumToggleApplied
+		  && !historyWidget->attachMenuExistsForRegressionTest()
+		  && (historyWidget->attachMenuBuildCountForRegressionTest()
+			  == buildsBeforePremiumToggle);
+	auto premiumEnter = QEvent(QEvent::Enter);
+	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
+								&premiumEnter);
+	const auto premiumMenuAppeared = WaitForRegressionCondition(
+		[&] {
+			return historyWidget->attachMenuContainsBotForRegressionTest(
+				replacementBotId);
+		},
+		1000);
+	const auto premiumMenuRebuilt
+		= premiumMenuInvalidated && premiumMenuAppeared
+		  && (historyWidget->attachMenuBuildCountForRegressionTest()
+			  == buildsBeforePremiumToggle + 1);
+	const auto premiumRestored = SetRegressionSessionPremium(
+		&session, session.userId(), premiumBeforeToggle);
+	result.attachMenuInvalidationRebuilt = result.attachMenuInvalidationRebuilt
+										   && premiumMenuRebuilt
+										   && premiumRestored;
 	auto uncachedPeerBots = std::vector<InlineBots::AttachWebViewBot>();
 	uncachedPeerBots.reserve(kAttachMenuRegressionBotCount);
 	for (auto i = 0; i != kAttachMenuRegressionBotCount; ++i) {
