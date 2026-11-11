@@ -2099,7 +2099,8 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 	} else {
 		contacts->searchIndexReadyChanges()
 			| rpl::on_next(
-				[this, query = _query, contacts, filterAndAppend] {
+				[this, query = _query, contacts, filterAndAppend,
+				 searchDelegate] {
 					if (_query == query) {
 						filterAndAppend(contacts);
 						searchDelegate->peerListSearchRefreshRows();
