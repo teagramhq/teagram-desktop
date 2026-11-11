@@ -15154,12 +15154,12 @@ DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
 	return true;
 }
 
-[[nodiscard]] bool
-DesktopScaleUpdateBurstStateMatches(const DesktopScaleChatListState &before,
-									const Dialogs::MainList &now,
-									UserId firstId, int dialogCount) {
+[[nodiscard]] bool DesktopScaleUpdateBurstStateMatches(
+	const DesktopScaleChatListState &before, const Dialogs::MainList &now,
+	UserId firstId, int dialogCount, int updateCount = kDesktopScaleUpdateCount,
+	bool includeInterleaved = true) {
 	const auto after = DesktopScaleChatListSnapshot(now);
-	const auto affectedCount = std::min(dialogCount, kDesktopScaleUpdateCount);
+	const auto affectedCount = std::min(dialogCount, updateCount);
 	const auto historyFor = [&](int index) -> History * {
 		const auto peerId = firstId.bare + index;
 		const auto i
@@ -15169,9 +15169,7 @@ DesktopScaleUpdateBurstStateMatches(const DesktopScaleChatListState &before,
 		return (i == end(before.histories)) ? nullptr : i->history;
 	};
 	const auto latestBurstIndex = [&](int index) {
-		return index
-			   + ((kDesktopScaleUpdateCount - 1 - index) / dialogCount)
-					 * dialogCount;
+		return index + ((updateCount - 1 - index) / dialogCount) * dialogCount;
 	};
 	auto updated = std::vector<std::pair<int, int>>();
 	for (auto index = 0; index != affectedCount; ++index) {
@@ -15184,10 +15182,12 @@ DesktopScaleUpdateBurstStateMatches(const DesktopScaleChatListState &before,
 	if (!firstHistory) {
 		return false;
 	}
-	expectedOrder.push_back(Dialogs::Key(firstHistory));
+	if (includeInterleaved) {
+		expectedOrder.push_back(Dialogs::Key(firstHistory));
+	}
 	for (const auto &entry : updated) {
 		const auto index = entry.second;
-		if (index != 0) {
+		if (!includeInterleaved || index != 0) {
 			const auto history = historyFor(index);
 			if (!history) {
 				return false;
@@ -15207,15 +15207,16 @@ DesktopScaleUpdateBurstStateMatches(const DesktopScaleChatListState &before,
 		return false;
 	}
 	auto expectedUnread = before.unread;
-	expectedUnread.messages += kDesktopScaleUpdateCount + 1;
+	expectedUnread.messages += updateCount + int(includeInterleaved);
 	for (const auto &state : before.histories) {
 		const auto dialogId = state.history->peer->id.value;
 		const auto index = int(dialogId - firstId.bare);
 		const auto burstCount
 			= (index >= 0 && index < affectedCount)
-				  ? ((kDesktopScaleUpdateCount - 1 - index) / dialogCount) + 1
+				  ? ((updateCount - 1 - index) / dialogCount) + 1
 				  : 0;
-		const auto interleavedCount = (index == 0) ? 1 : 0;
+		const auto interleavedCount
+			= (includeInterleaved && (index == 0)) ? 1 : 0;
 		const auto newUnreadCount = burstCount + interleavedCount;
 		expectedUnread.messagesMuted += state.muted ? newUnreadCount : 0;
 		if (!state.unreadCount && newUnreadCount) {
@@ -15822,11 +15823,11 @@ struct DesktopScaleSearchUpdateSamples final {
 }
 
 [[nodiscard]] QVector<MTPMessage>
-DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount,
-								int firstDate) {
+DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount, int firstDate,
+								int updateCount = kDesktopScaleUpdateCount) {
 	auto messages = QVector<MTPMessage>();
-	messages.reserve(kDesktopScaleUpdateCount);
-	for (auto i = 0; i != kDesktopScaleUpdateCount; ++i) {
+	messages.reserve(updateCount);
+	for (auto i = 0; i != updateCount; ++i) {
 		const auto userId = UserId(firstId.bare + (i % dialogCount));
 		messages.push_back(DesktopScaleTimelineMessage(
 			peerFromUser(userId), userId,
@@ -15924,6 +15925,7 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 				= int(base::unixtime::now()) + kDesktopScaleUpdateCount + 10;
 			auto updateMessages = DesktopScaleUpdateBurstMessages(
 				firstId, dialogCount, firstDate);
+			ranges::reverse(updateMessages);
 			const auto beforeUpdateState
 				= DesktopScaleChatListSnapshot(*data.chatsList());
 			const auto interleavedPeer = peerFromUser(firstId);
@@ -15951,9 +15953,21 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 			auto interleavedDeferred = false;
 			auto interleavedAppliedAfterBurst = false;
 			auto interleavedPtsAtSend = 0;
+			auto reconnectRequestedDuringDifference = false;
+			auto reconnectDeferredUntilCommit = false;
+			auto reconnectRefetchAfterDifference = false;
 			auto differenceApplied = false;
 			auto differenceLoop = QEventLoop();
 			auto messageLifetime = rpl::lifetime();
+			const auto capturedDifferenceRequests = [&] {
+				return std::count_if(
+					capture.requests.begin(), capture.requests.end(),
+					[](const auto &request) {
+						return !request.body.isEmpty()
+							   && (static_cast<uint32>(request.body.front())
+								   == mtpc_updates_getDifference);
+					});
+			};
 			data.newItemAdded()
 				| rpl::on_next(
 					[&](not_null<HistoryItem *> item) {
@@ -15976,6 +15990,10 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 													interleavedMessageId)
 									  && (burstMessagesAdded.size() == 1)
 									  && (interleavedPtsAtSend == 1);
+								session.updates().getDifferenceAfterReconnect();
+								reconnectRequestedDuringDifference = true;
+								reconnectDeferredUntilCommit
+									= (capturedDifferenceRequests() == 0);
 							}
 						} else if (id == interleavedMessageId) {
 							interleavedAppliedAfterBurst
@@ -15995,13 +16013,19 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 						QTimer::singleShot(5'000, &differenceLoop,
 										   &QEventLoop::quit);
 						differenceLoop.exec();
+						reconnectRefetchAfterDifference
+							= reconnectDeferredUntilCommit
+							  && (capturedDifferenceRequests() == 1);
 					}
-					if (!interleavedDeferred || !interleavedAppliedAfterBurst) {
+					if (!interleavedDeferred || !interleavedAppliedAfterBurst
+						|| !reconnectRequestedDuringDifference
+						|| !reconnectRefetchAfterDifference) {
 						std::fprintf(
 							stderr,
 							"Desktop scale check failed: updates.getDifference "
-							"did not defer a concurrent update until the burst "
-							"state was applied.\n");
+							"did not defer updates or reconnect recovery to "
+							"the burst "
+							"end.\n");
 						return false;
 					}
 					if (burstMessagesAdded.size() != kDesktopScaleUpdateCount) {
@@ -16069,7 +16093,59 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 				  && DesktopScaleUpdateBurstStateMatches(beforeUpdateState,
 														 *data.chatsList(),
 														 firstId, dialogCount);
-			return samples.search.passed && samples.updateBurst.passed;
+			if (reconnectRefetchAfterDifference) {
+				const auto emptyRefetch = MTP_updates_differenceEmpty(
+					MTP_int(firstDate + kDesktopScaleUpdateCount + 10),
+					MTP_int(0));
+				const auto refetchCompleted
+					= ApplyDesktopScaleResponse<MTPupdates_GetDifference>(
+						capture, mtpc_updates_getDifference, emptyRefetch,
+						[] { return true; });
+				samples.updateBurst.passed
+					= samples.updateBurst.passed && refetchCompleted.passed;
+			}
+			auto baselineStateMatches = true;
+			if (dialogCount == 50) {
+				constexpr auto kBaselineDialogCount = 3;
+				constexpr auto kBaselineUpdateCount = 32;
+				const auto baselineFirstId = UserId(firstId.bare + 100'000);
+				auto existingRows = std::vector<Dialogs::Key>();
+				for (const auto &row : data.chatsList()->indexed()->all()) {
+					existingRows.push_back(row->key());
+				}
+				for (const auto &key : existingRows) {
+					data.removeChatListEntry(key);
+				}
+				if (!SeedDesktopScaleDialogs(data, baselineFirstId,
+											 kBaselineDialogCount)) {
+					baselineStateMatches = false;
+				} else {
+					const auto beforeBaseline
+						= DesktopScaleChatListSnapshot(*data.chatsList());
+					const auto baselineDate = int(base::unixtime::now())
+											  + kBaselineUpdateCount + 10;
+					const auto baselineMessages
+						= DesktopScaleUpdateBurstMessages(
+							baselineFirstId, kBaselineDialogCount, baselineDate,
+							kBaselineUpdateCount);
+					// The pre-batching difference path passed this ascending
+					// wire vector directly to processMessages. Check that the
+					// state model used above reproduces that baseline behavior.
+					data.processMessages(baselineMessages,
+										 NewMessageType::Unread);
+					baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
+						beforeBaseline, *data.chatsList(), baselineFirstId,
+						kBaselineDialogCount, kBaselineUpdateCount, false);
+				}
+				if (!baselineStateMatches) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: the expected-state model "
+						"did not match base processMessages behavior.\n");
+				}
+			}
+			return samples.search.passed && samples.updateBurst.passed
+				   && baselineStateMatches;
 		},
 		reuseAccount);
 	if (!created) {

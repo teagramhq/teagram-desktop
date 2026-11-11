@@ -261,22 +261,27 @@ public:
   }
 
 private:
-	enum class ChannelDifferenceRequest {
-		Unknown,
-		PtsGapOrShortPoll,
-		AfterFail,
-	};
+  enum class DifferenceResponse {
+	  Slice,
+	  Final,
+  };
 
-	enum class SkipUpdatePolicy {
-		SkipNone,
-		SkipMessageIds,
-		SkipExceptGroupCallParticipants,
-	};
+  enum class ChannelDifferenceRequest {
+	  Unknown,
+	  PtsGapOrShortPoll,
+	  AfterFail,
+  };
 
-	struct ActiveChatTracker {
-		PeerData *peer = nullptr;
-		rpl::lifetime lifetime;
-	};
+  enum class SkipUpdatePolicy {
+	  SkipNone,
+	  SkipMessageIds,
+	  SkipExceptGroupCallParticipants,
+  };
+
+  struct ActiveChatTracker {
+	  PeerData *peer = nullptr;
+	  rpl::lifetime lifetime;
+  };
 	struct PendingDifference;
 
 	void channelRangeDifferenceSend(
@@ -316,10 +321,12 @@ private:
 						 const MTPVector<MTPChat> &chats,
 						 const MTPVector<MTPMessage> &messages,
 						 const MTPVector<MTPUpdate> &other, int32 pts,
-						 int32 date, int32 qts, int32 seq, bool slice);
+						 int32 date, int32 qts, int32 seq,
+						 DifferenceResponse response);
 	void applyDifferenceBatch();
 	void finishDifference();
-	void drainDeferredUpdates();
+	void
+	drainDeferredUpdates(std::vector<std::pair<MTPUpdates, uint64>> updates);
 	void stateDone(const MTPupdates_State &state);
 	void setState(int32 pts, int32 date, int32 qts, int32 seq);
 	void channelDifferenceDone(
@@ -383,7 +390,6 @@ private:
 	base::Timer _onlineTimer;
 	base::Timer _differenceApplyTimer;
 	std::unique_ptr<PendingDifference> _pendingDifference;
-	std::vector<std::pair<MTPUpdates, uint64>> _deferredUpdates;
 
 	PtsWaiter _ptsWaiter;
 

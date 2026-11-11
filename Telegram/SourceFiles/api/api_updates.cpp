@@ -242,7 +242,9 @@ struct Updates::PendingDifference final {
 	int32 qts = 0;
 	int32 seq = 0;
 	int nextMessage = 0;
-	bool slice = false;
+	Updates::DifferenceResponse response = Updates::DifferenceResponse::Final;
+	bool refetchAfterDifference = false;
+	std::vector<std::pair<MTPUpdates, uint64>> deferredUpdates;
 };
 
 Updates::Updates(not_null<Main::Session *> session)
@@ -316,6 +318,7 @@ void Updates::clearStaleSyncRequests() {
 
 void Updates::requestState() {
 	if (_pendingDifference) {
+		_pendingDifference->refetchAfterDifference = true;
 		return;
 	}
 	clearStaleSyncRequests();
@@ -615,14 +618,14 @@ void Updates::differenceDone(const MTPupdates_Difference &result) {
 		const auto &s = d.vintermediate_state().c_updates_state();
 		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
 						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
-						s.vseq().v, true);
+						s.vseq().v, DifferenceResponse::Slice);
 	} break;
 	case mtpc_updates_difference: {
 		const auto &d = result.c_updates_difference();
 		const auto &s = d.vstate().c_updates_state();
 		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
 						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
-						s.vseq().v, false);
+						s.vseq().v, DifferenceResponse::Final);
 	} break;
 	case mtpc_updates_differenceTooLong: {
 		LOG(("API Error: updates.differenceTooLong is not supported by "
@@ -635,10 +638,14 @@ void Updates::beginDifference(const MTPVector<MTPUser> &users,
 							  const MTPVector<MTPChat> &chats,
 							  const MTPVector<MTPMessage> &messages,
 							  const MTPVector<MTPUpdate> &other, int32 pts,
-							  int32 date, int32 qts, int32 seq, bool slice) {
+							  int32 date, int32 qts, int32 seq,
+							  DifferenceResponse response) {
 	Expects(!_pendingDifference);
 	const auto sorted = [&] {
 		auto result = messages.v;
+		// telegramd allocates owner-local message IDs with pts, so sorting by
+		// ID preserves event order while making batching independent of wire
+		// order.
 		ranges::stable_sort(
 			result, [](const MTPMessage &a, const MTPMessage &b) {
 				return IdFromMessage(a).bare < IdFromMessage(b).bare;
@@ -653,7 +660,7 @@ void Updates::beginDifference(const MTPVector<MTPUser> &users,
 		.qts = qts,
 		.seq = seq,
 		.nextMessage = 0,
-		.slice = slice,
+		.response = response,
 	});
 
 	Core::App().checkAutoLock();
@@ -693,12 +700,12 @@ void Updates::finishDifference() {
 	Expects(_pendingDifference);
 	auto &pending = *_pendingDifference;
 	feedUpdateVector(pending.other, SkipUpdatePolicy::SkipMessageIds);
-	const auto slice = pending.slice;
+	const auto response = pending.response;
 	const auto pts = pending.pts;
 	const auto date = pending.date;
 	const auto qts = pending.qts;
 	const auto seq = pending.seq;
-	if (slice) {
+	if (response == DifferenceResponse::Slice) {
 		setState(pts, date, qts, seq);
 		_ptsWaiter.setRequesting(false);
 		MTP_LOG(0, ("getDifference "
@@ -707,16 +714,17 @@ void Updates::finishDifference() {
 	} else {
 		stateDone(pts, date, qts, seq);
 	}
+	const auto refetchAfterDifference = pending.refetchAfterDifference;
+	auto deferredUpdates = std::move(pending.deferredUpdates);
 	_pendingDifference.reset();
-	drainDeferredUpdates();
-	if (slice) {
+	drainDeferredUpdates(std::move(deferredUpdates));
+	if ((response == DifferenceResponse::Slice) || refetchAfterDifference) {
 		getDifference();
 	}
 }
 
-void Updates::drainDeferredUpdates() {
-	auto updates = std::move(_deferredUpdates);
-	_deferredUpdates.clear();
+void Updates::drainDeferredUpdates(
+	std::vector<std::pair<MTPUpdates, uint64>> updates) {
 	for (const auto &[update, randomId] : updates) {
 		applyUpdates(update, randomId);
 	}
@@ -887,6 +895,7 @@ void Updates::getDifferenceAfterFail() {
 
 void Updates::getDifference() {
 	if (_pendingDifference) {
+		_pendingDifference->refetchAfterDifference = true;
 		return;
 	}
 	_getDifferenceTimeByPts = 0;
@@ -1113,7 +1122,7 @@ void Updates::mtpUpdateReceived(const MTPUpdates &updates) {
 	_lastUpdateTime = crl::now();
 	_noUpdatesTimer.callOnce(kNoUpdatesTimeout);
 	if (_pendingDifference) {
-		_deferredUpdates.emplace_back(updates, 0);
+		_pendingDifference->deferredUpdates.emplace_back(updates, 0);
 	} else if (!requestingDifference() || HasForceLogoutNotification(updates)) {
 		applyUpdates(updates);
 	} else {
@@ -1765,7 +1774,8 @@ void Updates::applyUpdates(
 		const MTPUpdates &updates,
 		uint64 sentMessageRandomId) {
 	if (_pendingDifference) {
-		_deferredUpdates.emplace_back(updates, sentMessageRandomId);
+		_pendingDifference->deferredUpdates.emplace_back(updates,
+														 sentMessageRandomId);
 		return;
 	}
 	const auto randomId = sentMessageRandomId;
