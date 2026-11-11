@@ -10340,9 +10340,16 @@ constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 SchedulerSampleOffsetsForDuration(qint64 durationNanoseconds) {
 	constexpr auto sampleIntervalNanoseconds = qint64(5'000'000);
 	auto result = std::vector<qint64>();
+	auto i = std::size_t(0);
 	for (auto offset = qint64(0); offset < durationNanoseconds;
-		 offset += sampleIntervalNanoseconds) {
-		result.push_back(offset);
+		 offset += sampleIntervalNanoseconds, ++i) {
+		auto jitter = qint64(0);
+		if (i % 10 == 2) {
+			jitter = 2'000'000;
+		} else if (i % 10 == 7) {
+			jitter = -2'000'000;
+		}
+		result.push_back(offset + jitter);
 	}
 	return result;
 }

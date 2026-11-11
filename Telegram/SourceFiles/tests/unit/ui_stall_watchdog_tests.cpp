@@ -285,6 +285,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	constexpr auto sampleIntervalNanoseconds = qint64(5'000'000);
 	constexpr auto durationNanoseconds = qint64(95'000'000);
+	constexpr auto jitterNanoseconds = qint64(2'000'000);
 	auto offsets = std::vector<qint64>();
 	for (auto offset = qint64(0); offset <= 90'000'000; offset += 5'000'000) {
 		offsets.push_back(offset);
@@ -293,10 +294,35 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, offsets, durationNanoseconds));
 
-	auto gapOffsets = offsets;
-	gapOffsets[10] += 1'000'000;
+	auto smallJitterOffsets = offsets;
+	smallJitterOffsets[10] += 1'000'000;
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, smallJitterOffsets, durationNanoseconds));
+
+	auto jitteredOffsets = offsets;
+	jitteredOffsets[5] += jitterNanoseconds;
+	jitteredOffsets[12] -= jitterNanoseconds;
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, jitteredOffsets, durationNanoseconds));
+
+	auto skippedSlotOffsets = offsets;
+	for (auto i = std::size_t(10); i != skippedSlotOffsets.size(); ++i) {
+		skippedSlotOffsets[i] += sampleIntervalNanoseconds;
+	}
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-		trace, gapOffsets, durationNanoseconds));
+		trace, skippedSlotOffsets, durationNanoseconds));
+
+	auto delayedStartOffsets = offsets;
+	for (auto &offset : delayedStartOffsets) {
+		offset += 7'000'000;
+	}
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, delayedStartOffsets, durationNanoseconds));
+
+	auto earlyEndOffsets = offsets;
+	earlyEndOffsets.back() -= jitterNanoseconds;
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, earlyEndOffsets, durationNanoseconds));
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		QString(4, QChar(u'R')),
 		{0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds,
