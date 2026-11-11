@@ -59,6 +59,7 @@ class IndexedList {
 	[[nodiscard]] const List &all() const { return _list; }
 	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
 		if (_sortMode == SortMode::Name) {
+			ensureNameIndex();
 			const auto i = _nameIndex.find(ch);
 			return (i != _nameIndex.end()) ? &i->second : nullptr;
 		}
@@ -67,6 +68,14 @@ class IndexedList {
 	}
 	[[nodiscard]] std::vector<not_null<Row*>> filtered(
 		const QStringList &words) const;
+
+	// The name index of a SortMode::Name list is built after the rows are
+	// added, so that adding a long list does not wait for the names of every
+	// row. A search finishes the index first. A caller that wants the index
+	// ready earlier indexes a few rows at a time while the list is idle.
+	[[nodiscard]] bool searchIndexReady() const;
+	// Returns true if some rows are still not indexed.
+	bool indexSome(int limit);
 
 	// Part of List interface is duplicated here for all() list.
 	[[nodiscard]] int size() const { return all().size(); }
@@ -105,7 +114,9 @@ class IndexedList {
 	void addNameRow(QChar ch, Row *row);
 	void removeNameRow(QChar ch, Row *row);
 	void addNameRows(Row *row);
-	void removeNameRows(Row *row);
+	// Returns false if the row was not indexed yet.
+	bool removeNameRows(Row *row);
+	void ensureNameIndex() const;
 	void updatePrefixSearchIndex(Row *row);
 	void removePrefixSearchIndex(Row *row);
 
@@ -118,6 +129,7 @@ class IndexedList {
 	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
 	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
 	std::unordered_map<Row *, QVarLengthArray<QChar, 4>> _indexedLettersByRow;
+	int _indexCursor = 0;
 };
 
 } // namespace Dialogs

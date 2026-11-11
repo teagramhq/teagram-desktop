@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "history/history.h"
 
+#include <limits>
+
 namespace Dialogs {
 namespace {
 
@@ -85,15 +87,54 @@ void IndexedList::addNameRows(Row *row) {
 	}
 }
 
-void IndexedList::removeNameRows(Row *row) {
+bool IndexedList::removeNameRows(Row *row) {
 	Expects(_sortMode == SortMode::Name);
 	Expects(row != nullptr);
 	const auto i = _indexedLettersByRow.find(row);
-	Expects(i != _indexedLettersByRow.end());
+	if (i == _indexedLettersByRow.end()) {
+		return false;
+	}
 	for (const auto &ch : i->second) {
 		removeNameRow(ch, row);
 	}
 	_indexedLettersByRow.erase(i);
+	return true;
+}
+
+bool IndexedList::searchIndexReady() const {
+	return (_sortMode != SortMode::Name)
+		   || (_indexedLettersByRow.size() == size_t(_list.size()));
+}
+
+bool IndexedList::indexSome(int limit) {
+	if (searchIndexReady()) {
+		return false;
+	}
+	const auto &rows = _list.rows();
+	auto left = limit;
+	while (left > 0 && _indexCursor < int(rows.size())) {
+		const auto row = rows[_indexCursor++].get();
+		if (_indexedLettersByRow.find(row) == _indexedLettersByRow.end()) {
+			addNameRows(row);
+			updatePrefixSearchIndex(row);
+			--left;
+		}
+	}
+	if (_indexCursor >= int(rows.size())) {
+		// A row that was renamed after the cursor passed its place is found
+		// by the next pass.
+		_indexCursor = 0;
+	}
+	return !searchIndexReady();
+}
+
+void IndexedList::ensureNameIndex() const {
+	if (searchIndexReady()) {
+		return;
+	}
+	const auto that = const_cast<IndexedList *>(this);
+	while (that->indexSome(std::numeric_limits<int>::max())) {
+	}
 }
 
 void IndexedList::updatePrefixSearchIndex(Row *row) {
@@ -146,9 +187,7 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 	}
 
 	auto result = RowsByLetter{ _list.addToEnd(key) };
-	if (_sortMode == SortMode::Name) {
-		addNameRows(result.main.get());
-	} else {
+	if (_sortMode != SortMode::Name) {
 		for (const auto &ch : key.entry()->chatListFirstLetters()) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
@@ -157,7 +196,6 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 			result.letters.emplace(ch, j->second.addToEnd(key));
 		}
 	}
-	updatePrefixSearchIndex(result.main.get());
 	return result;
 }
 
@@ -166,9 +204,7 @@ Row *IndexedList::addByName(Key key) {
 	if (!inserted) {
 		return row.get();
 	}
-	if (_sortMode == SortMode::Name) {
-		addNameRows(row.get());
-	} else {
+	if (_sortMode != SortMode::Name) {
 		for (const auto &ch : key.entry()->chatListFirstLetters()) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
@@ -177,7 +213,6 @@ Row *IndexedList::addByName(Key key) {
 			j->second.addByName(key);
 		}
 	}
-	updatePrefixSearchIndex(row.get());
 	return row.get();
 }
 
@@ -203,12 +238,13 @@ void IndexedList::moveToTop(Key key) {
 	if (!row) {
 		return;
 	}
-	if (_sortMode == SortMode::Name) {
-		removeNameRows(row);
-	}
+	const auto wasIndexed
+		= (_sortMode == SortMode::Name) && removeNameRows(row);
 	if (_list.moveToTop(key)) {
 		if (_sortMode == SortMode::Name) {
-			addNameRows(row);
+			if (wasIndexed) {
+				addNameRows(row);
+			}
 		} else {
 			for (const auto &ch : key.entry()->chatListFirstLetters()) {
 				if (auto it = _index.find(ch); it != _index.cend()) {
@@ -265,10 +301,12 @@ void IndexedList::adjustByName(Key key) {
 	const auto mainRow = _list.getRow(key);
 	if (!mainRow) return;
 
-	removeNameRows(mainRow);
+	const auto wasIndexed = removeNameRows(mainRow);
 	_list.adjustByName(key);
-	addNameRows(mainRow);
-	updatePrefixSearchIndex(mainRow);
+	if (wasIndexed) {
+		addNameRows(mainRow);
+		updatePrefixSearchIndex(mainRow);
+	}
 }
 
 void IndexedList::adjustNames(
@@ -350,10 +388,12 @@ void IndexedList::clear() {
 	_prefixSearchIndex.clear();
 	_searchKeysByRow.clear();
 	_indexedLettersByRow.clear();
+	_indexCursor = 0;
 }
 
 std::vector<not_null<Row*>> IndexedList::filtered(
 		const QStringList &words) const {
+	ensureNameIndex();
 	const auto byLetter = (const std::vector<not_null<Row *>> *)nullptr;
 	const auto byPrefix = (const std::unordered_set<Row *> *)nullptr;
 	auto minimalByLetter = byLetter;

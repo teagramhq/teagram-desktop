@@ -15772,6 +15772,25 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			}
 			++position;
 		}
+		// A search finishes the name index of its own list on demand, and
+		// the other list is indexed in the background after the load.
+		if (int(data.contactsNoChatsList()
+					->filtered(QStringList{u"sca"_q})
+					.size())
+			!= count) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contacts without "
+						 "chats list did not find every contact.\n");
+			return false;
+		}
+		if (!WaitForRegressionCondition(
+				[&] { return data.contactsList()->searchIndexReady(); },
+				5000)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contact name index "
+						 "was not built after the load.\n");
+			return false;
+		}
 		const auto shortPrefixRows
 			= data.contactsList()->filtered(QStringList{u"sca"_q});
 		if (int(shortPrefixRows.size()) != count) {
@@ -15998,7 +16017,8 @@ RunDesktopScaleContactTrials(Main::Domain &domain, int count, UserId firstId,
 							 Main::Account *reuseAccount = nullptr) {
 	auto samples = std::vector<DesktopScaleContactsSample>();
 	const auto created = WithDesktopScaleAccount(
-		domain, UserId(firstId.bare - 1), [&](auto account) {
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
 			samples.reserve(kDesktopScaleContactTrials);
 			for (auto trial = 0; trial != kDesktopScaleContactTrials; ++trial) {
 				const auto trialFirstId
@@ -16534,11 +16554,10 @@ int RunDesktopScaleCheck() {
 		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed
 		  && contactsOne.removed.passed && contactsHundred.removed.passed
-		  && contactsCreated
-		  && cacheOne.passed && cacheHundred.passed && historyOne.passed
-		  && historyHundred.passed && dateOne.passed && dateHundred.passed
-		  && historyCreated && groupOne.passed && groupHundred.passed
-		  && searchOne.search.passed && groupCreated
+		  && contactsCreated && cacheOne.passed && cacheHundred.passed
+		  && historyOne.passed && historyHundred.passed && dateOne.passed
+		  && dateHundred.passed && historyCreated && groupOne.passed
+		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
 		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)

@@ -1059,6 +1059,7 @@ private:
 	void setupChannelLeavingViewer();
 	void setupPeerNameViewer();
 	void setupUserIsContactViewer();
+	void indexContacts();
 
 	void checkSelfDestructItems();
 	void checkLocalUsersWentOffline();
@@ -1292,6 +1293,7 @@ private:
 	Dialogs::MainList _chatsList;
 	Dialogs::IndexedList _contactsList;
 	Dialogs::IndexedList _contactsNoChatsList;
+	base::Timer _contactsIndexTimer;
 
 	MsgId _localMessageIdCounter = StartClientMsgId;
 	std::unordered_map<PeerId, Messages> _messages;

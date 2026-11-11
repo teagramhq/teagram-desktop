@@ -342,9 +342,7 @@ void PeerData::updateNameDelayed(
 			return;
 		}
 	}
-	_name = newName;
-	invalidateEmptyUserpic();
-
+	// Read the letters before anything below changes the name.
 	auto flags = UpdateFlag::None | UpdateFlag::None;
 	auto oldFirstLetters = base::flat_set<QChar>();
 	const auto nameUpdated = (_nameVersion++ > 1);
@@ -352,6 +350,8 @@ void PeerData::updateNameDelayed(
 		oldFirstLetters = nameFirstLetters();
 		flags |= UpdateFlag::Name;
 	}
+	_name = newName;
+	invalidateEmptyUserpic();
 	if (isUser()) {
 		if (asUser()->editableUsername() != newUsername) {
 			asUser()->setUsername(newUsername);
@@ -369,7 +369,7 @@ void PeerData::updateNameDelayed(
 			flags |= UpdateFlag::Username;
 		}
 	}
-	fillNames();
+	_namesStale = true;
 	if (nameUpdated) {
 		session().changes().nameUpdated(this, std::move(oldFirstLetters));
 	}
@@ -1084,6 +1084,7 @@ bool PeerData::changeColorProfile(
 }
 
 void PeerData::fillNames() {
+	_namesStale = false;
 	_nameWords.clear();
 	_nameFirstLetters.clear();
 	auto toIndexList = QStringList();
