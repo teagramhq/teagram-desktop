@@ -2035,25 +2035,25 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 	if (wordList.empty()) {
 		return;
 	}
-	const auto allWordsAreFound = [wordList](
-			const base::flat_set<QString> &nameWords) {
-		const auto hasNamePartStartingWith = [&](const QString &word) {
-			for (const auto &nameWord : nameWords) {
-				if (nameWord.startsWith(word)) {
-					return true;
-				}
-			}
-			return false;
-		};
-		for (const auto &word : wordList) {
-			if (!hasNamePartStartingWith(word)) {
-				return false;
-			}
-		}
-		return true;
-	};
-	const auto getSmallestIndex = [wordList](
-			not_null<Dialogs::IndexedList *> list)
+	const auto allWordsAreFound
+		= [wordList](const base::flat_set<QString> &nameWords) {
+			  const auto hasNamePartStartingWith = [&](const QString &word) {
+				  for (const auto &nameWord : nameWords) {
+					  if (nameWord.startsWith(word)) {
+						  return true;
+					  }
+				  }
+				  return false;
+			  };
+			  for (const auto &word : wordList) {
+				  if (!hasNamePartStartingWith(word)) {
+					  return false;
+				  }
+			  }
+			  return true;
+		  };
+	const auto getSmallestIndex
+		= [wordList](not_null<Dialogs::IndexedList *> list)
 		-> const std::vector<not_null<Dialogs::Row *>> * {
 		if (list->empty()) {
 			return nullptr;
@@ -2071,24 +2071,23 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 		return result;
 	};
 	const auto searchDelegate = delegate();
-	const auto filterAndAppend = [
-			allWordsAreFound,
-			getSmallestIndex,
-			searchDelegate](not_null<Dialogs::IndexedList *> list) {
-		const auto index = getSmallestIndex(list);
-		if (!index) {
-			return;
-		}
-		for (const auto &row : *index) {
-			if (const auto history = row->history()) {
-				if (const auto user = history->peer->asUser()) {
-					if (allWordsAreFound(user->nameWords())) {
-						searchDelegate->peerListSearchAddRow(user);
-					}
-				}
-			}
-		}
-	};
+	const auto filterAndAppend
+		= [allWordsAreFound, getSmallestIndex,
+		   searchDelegate](not_null<Dialogs::IndexedList *> list) {
+			  const auto index = getSmallestIndex(list);
+			  if (!index) {
+				  return;
+			  }
+			  for (const auto &row : *index) {
+				  if (const auto history = row->history()) {
+					  if (const auto user = history->peer->asUser()) {
+						  if (allWordsAreFound(user->nameWords())) {
+							  searchDelegate->peerListSearchAddRow(user);
+						  }
+					  }
+				  }
+			  }
+		  };
 	filterAndAppend(_peer->owner().chatsList()->indexed());
 	const auto id = Data::Folder::kId;
 	if (const auto folder = _peer->owner().folderLoaded(id)) {
@@ -2099,16 +2098,14 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 		filterAndAppend(contacts);
 	} else {
 		contacts->searchIndexReadyChanges()
-		| rpl::on_next([
-				this,
-				query = _query,
-				contacts,
-				filterAndAppend] {
-			if (_query == query) {
-				filterAndAppend(contacts);
-				searchDelegate->peerListSearchRefreshRows();
-			}
-		}, _contactsIndexLifetime);
+			| rpl::on_next(
+				[this, query = _query, contacts, filterAndAppend] {
+					if (_query == query) {
+						filterAndAppend(contacts);
+						searchDelegate->peerListSearchRefreshRows();
+					}
+				},
+				_contactsIndexLifetime);
 	}
 	delegate()->peerListSearchRefreshRows();
 }

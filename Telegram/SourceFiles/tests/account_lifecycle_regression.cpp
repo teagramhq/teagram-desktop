@@ -15772,22 +15772,20 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			}
 			++position;
 		}
-		auto coldSearchList = Dialogs::IndexedList(
-			Dialogs::SortMode::Name,
-			0,
-			Dialogs::IndexedList::PrefixSearch::Enabled);
+		auto coldSearchList
+			= Dialogs::IndexedList(Dialogs::SortMode::Name, 0,
+								   Dialogs::IndexedList::PrefixSearch::Enabled);
 		coldSearchList.reserve(count);
 		for (const auto &row : data.contactsList()->all()) {
 			coldSearchList.addByName(row->key());
 		}
 		auto indexReadyNotified = false;
 		auto indexReadyLifetime = rpl::lifetime();
-		coldSearchList.searchIndexReadyChanges()
-		| rpl::take(1)
-		| rpl::on_next([&] { indexReadyNotified = true; }, indexReadyLifetime);
+		coldSearchList.searchIndexReadyChanges() | rpl::take(1)
+			| rpl::on_next([&] { indexReadyNotified = true; },
+						   indexReadyLifetime);
 		const auto coldLookup = MeasureDesktopScaleAction([&] {
-			const auto found
-				= coldSearchList.filtered(QStringList{u"sca"_q});
+			const auto found = coldSearchList.filtered(QStringList{u"sca"_q});
 			return found.empty() && !coldSearchList.searchIndexReady();
 		});
 		if (!coldLookup.passed || !coldLookup.nanoseconds
@@ -15807,13 +15805,13 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 						 "index did not notify waiters.\n");
 			return false;
 		}
-		const auto coldRows
-			= coldSearchList.filtered(QStringList{u"sca"_q});
+		const auto coldRows = coldSearchList.filtered(QStringList{u"sca"_q});
 		if (int(coldRows.size()) != count) {
 			std::fprintf(stderr,
 						 "Desktop scale check failed: the completed cold "
 						 "contact search returned %llu rows, expected %d.\n",
-						 static_cast<unsigned long long>(coldRows.size()), count);
+						 static_cast<unsigned long long>(coldRows.size()),
+						 count);
 			return false;
 		}
 		for (auto i = 0; i != count; ++i) {

@@ -4268,15 +4268,18 @@ void InnerWidget::refreshFilterResults() {
 		? QStringList(_filter)
 		: TextUtilities::PrepareSearchWords(_filter);
 	_filterResults.clear();
-	const auto append = [&](not_null<IndexedList*> list) {
+	const auto append = [&](not_null<IndexedList *> list) {
 		if (!list->searchIndexReady()) {
 			list->searchIndexReadyChanges()
-			| rpl::on_next([=] {
-				if (_state == WidgetState::Filtered && !_filter.isEmpty()) {
-					refreshFilterResults();
-					refresh(true);
-				}
-			}, _filterIndexLifetime);
+				| rpl::on_next(
+					[=] {
+						if (_state == WidgetState::Filtered
+							&& !_filter.isEmpty()) {
+							refreshFilterResults();
+							refresh(true);
+						}
+					},
+					_filterIndexLifetime);
 		}
 		const auto results = list->filtered(words);
 		auto top = filteredHeight();
