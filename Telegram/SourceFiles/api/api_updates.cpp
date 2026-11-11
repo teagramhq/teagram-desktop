@@ -92,7 +92,7 @@ constexpr auto kNoUpdatesTimeout = 60 * 1000;
 // If nothing is received in 1 min when was a sleepmode we ping.
 constexpr auto kNoUpdatesAfterSleepTimeout = 60 * crl::time(1000);
 
-constexpr auto kDifferenceMessageBatchSize = 32;
+constexpr auto kDifferenceMessageBatchSize = 128;
 
 enum class DataIsLoadedResult {
 	NotLoaded = 0,

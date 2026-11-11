@@ -14966,6 +14966,7 @@ struct DesktopScaleHistoryState final {
 	int unreadCount = 0;
 	MsgId previewId = 0;
 	bool pinned = false;
+	bool muted = false;
 };
 
 struct DesktopScaleChatListState final {
@@ -14990,6 +14991,7 @@ DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
 								 ? history->chatListMessage()->id
 								 : MsgId(),
 				.pinned = history->isPinnedDialog(FilterId()),
+				.muted = history->muted(),
 			});
 		}
 	}
@@ -15214,8 +15216,13 @@ DesktopScaleUpdateBurstStateMatches(const DesktopScaleChatListState &before,
 				  ? ((kDesktopScaleUpdateCount - 1 - index) / dialogCount) + 1
 				  : 0;
 		const auto interleavedCount = (index == 0) ? 1 : 0;
-		if (!state.unreadCount && (burstCount + interleavedCount)) {
+		const auto newUnreadCount = burstCount + interleavedCount;
+		expectedUnread.messagesMuted += state.muted ? newUnreadCount : 0;
+		if (!state.unreadCount && newUnreadCount) {
 			++expectedUnread.chats;
+			if (state.muted) {
+				++expectedUnread.chatsMuted;
+			}
 		}
 		const auto expectedUnreadCount
 			= state.unreadCount + burstCount + interleavedCount;
