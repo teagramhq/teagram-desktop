@@ -631,9 +631,9 @@ void UiStallWatchdog::run() {
 					 &schedulerSampleOffsetsNanoseconds,
 					 &schedulerTraceMutex](std::stop_token stop) {
 						auto nextSampleAt = postedAt + kSchedulerSampleInterval;
+#if defined(Q_OS_MAC)
 						auto sampleIntervalMachTicks = std::uint64_t(0);
 						auto nextSampleAtMach = std::uint64_t(0);
-#if defined(Q_OS_MAC)
 						sampleIntervalMachTicks
 							= SchedulerSampleIntervalMachTicks();
 						if (sampleIntervalMachTicks) {
