@@ -16637,64 +16637,60 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			session.api().requestContacts();
 			const auto changedReply = DesktopScaleContactsReply(
 				firstId, count, changedIndex, 1, true);
-			auto changedAndFound
-				= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-					updateCapture, mtpc_contacts_getContacts, changedReply,
-					[&] {
-						const auto updated = WaitForRegressionCondition(
-							[&] {
-								const auto userId
-									= UserId(firstId.bare + changedIndex);
-								const auto user = data.userLoaded(userId);
-								return user && user->isContact()
-									   && (user->firstName
-										   == u"UpdatedContact"_q);
-							},
-							5000, 1);
-						if (!updated) {
+			auto changedAndFound = ApplyDesktopScaleResponse<
+				MTPcontacts_GetContacts>(
+				updateCapture, mtpc_contacts_getContacts, changedReply, [&] {
+					const auto updated = WaitForRegressionCondition(
+						[&] {
+							const auto userId
+								= UserId(firstId.bare + changedIndex);
+							const auto user = data.userLoaded(userId);
+							return user && user->isContact()
+								   && (user->firstName == u"UpdatedContact"_q);
+						},
+						5000, 1);
+					if (!updated) {
+						return false;
+					}
+					const auto userId = UserId(firstId.bare + changedIndex);
+					const auto foundBy = [&](const QString &word) {
+						const auto found
+							= data.contactsList()->filtered(QStringList{word});
+						return (found.size() == 1) && found.front()->history()
+							   && (found.front()->history()->peer->id
+								   == peerFromUser(userId));
+					};
+					if (!foundBy(u"updatedcontact"_q) || !foundBy(u"upd"_q)
+						|| !foundBy(u"nameprobe"_q)
+						|| !foundBy(u"probeusername"_q)
+						|| !data.contactsList()
+								->filtered(QStringList{u"updatedcx"_q})
+								.empty()) {
+						return false;
+					}
+					const auto movedToEnd
+						= data.contactsList()->all().rows().back()->history();
+					if (!movedToEnd
+						|| movedToEnd->peer->id != peerFromUser(userId)) {
+						std::fprintf(stderr, "Desktop scale check "
+											 "failed: renamed contact "
+											 "did not move to the end "
+											 "of the name list.\n");
+						return false;
+					}
+					const auto query = QStringList{u"upd"_q};
+					const auto expected = peerFromUser(userId);
+					for (auto i = 0; i != kDesktopScaleContactLookupsPerSample;
+						 ++i) {
+						const auto found = data.contactsList()->filtered(query);
+						if ((found.size() != 1) || !found.front()->history()
+							|| (found.front()->history()->peer->id
+								!= expected)) {
 							return false;
 						}
-						const auto userId = UserId(firstId.bare + changedIndex);
-						const auto foundBy = [&](const QString &word) {
-							const auto found = data.contactsList()->filtered(
-								QStringList{word});
-							return (found.size() == 1)
-								   && found.front()->history()
-								   && (found.front()->history()->peer->id
-									   == peerFromUser(userId));
-						};
-						if (!foundBy(u"updatedcontact"_q) || !foundBy(u"upd"_q)
-							|| !foundBy(u"nameprobe"_q)
-							|| !foundBy(u"probeusername"_q)
-							|| !data.contactsList()
-									->filtered(QStringList{u"updatedcx"_q})
-									.empty()) {
-							return false;
-						}
-						const auto movedToEnd
-							= data.contactsList()->all().back()->history();
-						if (!movedToEnd
-							|| movedToEnd->peer->id != peerFromUser(userId)) {
-							std::fprintf(stderr, "Desktop scale check "
-												 "failed: renamed contact "
-												 "did not move to the end "
-												 "of the name list.\n");
-							return false;
-						}
-						const auto query = QStringList{u"upd"_q};
-						const auto expected = peerFromUser(userId);
-						for (auto i = 0;
-							 i != kDesktopScaleContactLookupsPerSample; ++i) {
-							const auto found
-								= data.contactsList()->filtered(query);
-							if ((found.size() != 1) || !found.front()->history()
-								|| (found.front()->history()->peer->id
-									!= expected)) {
-								return false;
-							}
-						}
-						return true;
-					});
+					}
+					return true;
+				});
 			result.changedAndFound = std::move(changedAndFound);
 		}
 		if (!result.changedAndFound.passed) {
