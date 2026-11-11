@@ -17425,7 +17425,7 @@ int RunDesktopScaleCheck() {
 		});
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
-			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
+			std::printf("%.6f ms", double(*sample.nanoseconds) / 1'000'000.);
 		} else {
 			std::printf("n/a");
 		}
