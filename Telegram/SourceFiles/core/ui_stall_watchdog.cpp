@@ -587,6 +587,9 @@ bool UiStallWatchdog::event(QEvent *event) {
 			.responseNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
 				  .count(),
+			.pingIntervalNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(_pingInterval)
+			  .count(),
 		};
 		const auto lock = std::lock_guard(StallEvidenceMutex);
 		PingAcknowledgementHistory.push_back(evidence);

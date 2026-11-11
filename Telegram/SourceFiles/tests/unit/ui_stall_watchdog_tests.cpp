@@ -21,10 +21,79 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#endif // Q_OS_MAC
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+#include <sys/resource.h>
+#endif // Q_OS_LINUX || Q_OS_MAC
+#if defined(Q_OS_LINUX)
+#include <time.h>
+#endif // Q_OS_LINUX
+
+[[nodiscard]] std::optional<qint64>
+UiStallWatchdogProcessCpuTimeNanosecondsForTest() {
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+	auto usage = rusage();
+	if (getrusage(RUSAGE_SELF, &usage) != 0) {
+		return std::nullopt;
+	}
+	const auto userNanoseconds
+		= (qint64(usage.ru_utime.tv_sec) * 1'000'000
+		   + usage.ru_utime.tv_usec)
+		  * 1'000;
+	const auto systemNanoseconds
+		= (qint64(usage.ru_stime.tv_sec) * 1'000'000
+		   + usage.ru_stime.tv_usec)
+		  * 1'000;
+	return userNanoseconds + systemNanoseconds;
+#else
+	return std::nullopt;
+#endif
+}
+
+[[nodiscard]] std::optional<qint64>
+UiStallWatchdogThreadCpuTimeNanosecondsForTest() {
+#if defined(Q_OS_MAC)
+	const auto thread = mach_thread_self();
+	if (thread == MACH_PORT_NULL) {
+		return std::nullopt;
+	}
+	auto info = thread_basic_info_data_t();
+	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
+	const auto infoResult
+		= thread_info(thread, THREAD_BASIC_INFO,
+					  reinterpret_cast<thread_info_t>(&info), &count);
+	const auto releaseResult = mach_port_deallocate(mach_task_self(), thread);
+	if (infoResult != KERN_SUCCESS || releaseResult != KERN_SUCCESS) {
+		return std::nullopt;
+	}
+	const auto userNanoseconds
+		= (qint64(info.user_time.seconds) * 1'000'000
+		   + info.user_time.microseconds)
+		  * 1'000;
+	const auto systemNanoseconds
+		= (qint64(info.system_time.seconds) * 1'000'000
+		   + info.system_time.microseconds)
+		  * 1'000;
+	return userNanoseconds + systemNanoseconds;
+#elif defined(Q_OS_LINUX)
+	auto usage = timespec();
+	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &usage) != 0) {
+		return std::nullopt;
+	}
+	return qint64(usage.tv_sec) * 1'000'000'000 + usage.tv_nsec;
+#else
+	return std::nullopt;
+#endif
+}
 
 // Spins without calling into libstdc++ or the vDSO: those are built without
 // frame pointers, so a sample taken inside them would skip this frame.
@@ -183,6 +252,10 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= beforeAcknowledgements.empty()
 			  ? qint64(0)
 			  : beforeAcknowledgements.back().acknowledgedAtNanoseconds;
+	const auto windowProcessCpuBefore
+		= UiStallWatchdogProcessCpuTimeNanosecondsForTest();
+	const auto windowThreadCpuBefore
+		= UiStallWatchdogThreadCpuTimeNanosecondsForTest();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -238,6 +311,19 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		QCoreApplication::processEvents();
 		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
+	const auto windowProcessCpuAfter
+		= UiStallWatchdogProcessCpuTimeNanosecondsForTest();
+	const auto windowThreadCpuAfter
+		= UiStallWatchdogThreadCpuTimeNanosecondsForTest();
+	auto windowOtherThreadCpuNanoseconds = qint64(-1);
+	if (windowProcessCpuBefore && windowProcessCpuAfter && windowThreadCpuBefore
+		&& windowThreadCpuAfter) {
+		const auto processWork = *windowProcessCpuAfter - *windowProcessCpuBefore;
+		const auto threadWork = *windowThreadCpuAfter - *windowThreadCpuBefore;
+		if (processWork >= threadWork) {
+			windowOtherThreadCpuNanoseconds = processWork - threadWork;
+		}
+	}
 	CHECK(acknowledgementsDuringLogging.load(std::memory_order_acquire) >= 1);
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
@@ -260,22 +346,49 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	CHECK(!evidence.empty());
 	CHECK(!acknowledgements.empty());
 	auto shortSchedulerCapturePingObserved = false;
-	auto previousAcknowledgedAtNanoseconds = qint64(0);
+	auto pingIntervalNanoseconds = qint64(-1);
+	auto previousAcknowledgedAtNanoseconds
+		= lastAcknowledgedAtNanoseconds;
+	auto hasPreviousAcknowledgement
+		= (lastAcknowledgedAtNanoseconds > 0);
+	auto acknowledgementGapsNanoseconds = std::vector<qint64>();
 	for (const auto &acknowledgement : acknowledgements) {
 		const auto acknowledgedAtNanoseconds
 			= acknowledgement.acknowledgedAtNanoseconds;
-		if ((previousAcknowledgedAtNanoseconds > lastAcknowledgedAtNanoseconds)
-			&& (acknowledgedAtNanoseconds > previousAcknowledgedAtNanoseconds)
-			&& (acknowledgedAtNanoseconds - previousAcknowledgedAtNanoseconds
-				<= 5'000'000)) {
-			shortSchedulerCapturePingObserved = true;
-			break;
+		if (acknowledgedAtNanoseconds <= lastAcknowledgedAtNanoseconds) {
+			continue;
+		}
+		pingIntervalNanoseconds = acknowledgement.pingIntervalNanoseconds;
+		if (hasPreviousAcknowledgement
+			&& (acknowledgedAtNanoseconds > previousAcknowledgedAtNanoseconds)) {
+			const auto gapNanoseconds
+				= acknowledgedAtNanoseconds - previousAcknowledgedAtNanoseconds;
+			acknowledgementGapsNanoseconds.push_back(gapNanoseconds);
+			if (gapNanoseconds <= 5'000'000) {
+				shortSchedulerCapturePingObserved = true;
+			}
 		}
 		previousAcknowledgedAtNanoseconds = acknowledgedAtNanoseconds;
+		hasPreviousAcknowledgement = true;
+	}
+	if (!shortSchedulerCapturePingObserved) {
+		std::fprintf(stderr,
+			"Scheduler ping cadence failure: ping_interval_ns=%lld "
+			"window_other_thread_cpu_ns=%lld acknowledgement_gaps_ns=[",
+			static_cast<long long>(pingIntervalNanoseconds),
+			static_cast<long long>(windowOtherThreadCpuNanoseconds));
+		for (auto i = std::size_t(0); i != acknowledgementGapsNanoseconds.size();
+			 ++i) {
+			std::fprintf(stderr, "%s%lld", i ? "," : "",
+						 static_cast<long long>(
+							 acknowledgementGapsNanoseconds[i]));
+		}
+		std::fprintf(stderr, "]\n");
 	}
 	CHECK(shortSchedulerCapturePingObserved);
 	if (!acknowledgements.empty()) {
 		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
+		CHECK(acknowledgements.back().pingIntervalNanoseconds > 0);
 		CHECK(acknowledgements.back().acknowledgedAtNanoseconds
 			  > lastAcknowledgedAtNanoseconds);
 		CHECK(acknowledgements.back().responseNanoseconds >= 0);

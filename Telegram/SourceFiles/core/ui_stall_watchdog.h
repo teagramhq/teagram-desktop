@@ -42,6 +42,7 @@ class UiStallWatchdog final : public QObject {
 		QString acknowledgedAt;
 		qint64 acknowledgedAtNanoseconds = 0;
 		qint64 responseNanoseconds = 0;
+		qint64 pingIntervalNanoseconds = 0;
 	};
 
 	explicit UiStallWatchdog(
