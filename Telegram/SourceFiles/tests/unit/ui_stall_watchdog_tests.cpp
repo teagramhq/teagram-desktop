@@ -179,6 +179,9 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= beforeAcknowledgements.empty()
 			  ? QString()
 			  : beforeAcknowledgements.back().acknowledgedAt;
+	const auto lastAcknowledgedAtMilliseconds
+		= QDateTime::fromString(lastAcknowledgedAt, Qt::ISODateWithMs)
+			  .toMSecsSinceEpoch();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -255,6 +258,27 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
 	CHECK(!acknowledgements.empty());
+	auto shortSchedulerCapturePingObserved = false;
+	auto previousAcknowledgedAtMilliseconds = qint64(0);
+	for (const auto &acknowledgement : acknowledgements) {
+		const auto acknowledgedAt = QDateTime::fromString(
+			acknowledgement.acknowledgedAt, Qt::ISODateWithMs);
+		if (!acknowledgedAt.isValid()) {
+			continue;
+		}
+		const auto acknowledgedAtMilliseconds
+			= acknowledgedAt.toMSecsSinceEpoch();
+		if ((previousAcknowledgedAtMilliseconds
+			 > lastAcknowledgedAtMilliseconds)
+			&& (acknowledgedAtMilliseconds > previousAcknowledgedAtMilliseconds)
+			&& (acknowledgedAtMilliseconds - previousAcknowledgedAtMilliseconds
+				<= 5)) {
+			shortSchedulerCapturePingObserved = true;
+			break;
+		}
+		previousAcknowledgedAtMilliseconds = acknowledgedAtMilliseconds;
+	}
+	CHECK(shortSchedulerCapturePingObserved);
 	if (!acknowledgements.empty()) {
 		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
 		CHECK(acknowledgements.back().responseNanoseconds >= 0);
@@ -266,7 +290,20 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().schedulerTrace.size()
 			  == qsizetype(
 				  evidence.back().schedulerSampleOffsetsNanoseconds.size()));
+		CHECK(evidence.back().schedulerTrace.size()
+			  >= evidence.back().durationMilliseconds / 5);
+		const auto schedulerTraceProvesRunnable
+			= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+				evidence.back().schedulerTrace,
+				evidence.back().schedulerSampleOffsetsNanoseconds,
+				evidence.back().durationNanoseconds);
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
+#if defined(Q_OS_MAC)
+		CHECK(evidence.back().schedulerTrace.contains(u'R'));
+		CHECK(schedulerTraceProvesRunnable);
+#else
+		CHECK(!schedulerTraceProvesRunnable);
+#endif
 	}
 }
 
@@ -282,6 +319,18 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	const auto trace = QString(int(offsets.size()), QChar(u'R'));
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, offsets, durationNanoseconds));
+
+	auto paddedTrace = u"W"_q + trace + u"W"_q;
+	auto paddedOffsets = std::vector<qint64>{-1'000'000};
+	paddedOffsets.insert(paddedOffsets.end(), offsets.begin(), offsets.end());
+	paddedOffsets.push_back(95'000'000);
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		paddedTrace, paddedOffsets, 94'000'000));
+
+	auto blockedTrace = trace;
+	blockedTrace[45] = u'W';
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		blockedTrace, offsets, durationNanoseconds));
 
 	auto smallJitterOffsets = offsets;
 	for (auto i = std::size_t(10); i != smallJitterOffsets.size(); ++i) {

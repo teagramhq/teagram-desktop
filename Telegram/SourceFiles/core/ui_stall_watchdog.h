@@ -40,7 +40,6 @@ class UiStallWatchdog final : public QObject {
 
 	struct PingAcknowledgementEvidence {
 		QString acknowledgedAt;
-		qint64 acknowledgedAtNanoseconds = 0;
 		qint64 responseNanoseconds = 0;
 	};
 

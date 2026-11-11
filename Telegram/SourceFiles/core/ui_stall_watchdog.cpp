@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <sys/ucontext.h>
 #if defined(Q_OS_MAC)
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #endif // Q_OS_MAC
 #if defined(Q_OS_MAC) && defined(__arm64__)
 #include <ptrauth.h>
@@ -64,6 +65,27 @@ std::mutex StallEvidenceMutex;
 std::vector<UiStallWatchdog::StallEvidence> StallEvidenceHistory;
 std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
 	PingAcknowledgementHistory;
+
+#if defined(Q_OS_MAC)
+[[nodiscard]] std::uint64_t SchedulerSampleIntervalMachTicks() {
+	static const auto result = [] {
+		auto timebase = mach_timebase_info_data_t();
+		const auto status = mach_timebase_info(&timebase);
+		if ((status != KERN_SUCCESS) || !timebase.numer || !timebase.denom) {
+			return std::uint64_t(0);
+		}
+		const auto intervalNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  kSchedulerSampleInterval)
+				  .count();
+		const auto numerator = std::uint64_t(timebase.numer);
+		const auto nanoseconds
+			= std::uint64_t(intervalNanoseconds) * timebase.denom;
+		return (nanoseconds + numerator - 1) / numerator;
+	}();
+	return result;
+}
+#endif // Q_OS_MAC
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 
@@ -470,7 +492,7 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 			  .count();
 	if ((durationNanoseconds < 0)
 		|| (trace.size() != qsizetype(sampleOffsetsNanoseconds.size()))
-		|| trace.isEmpty() || (trace.count(u'R') != trace.size())) {
+		|| trace.isEmpty()) {
 		return false;
 	}
 	auto previousOffset = qint64(0);
@@ -478,7 +500,8 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 	auto firstCoveredOffset = qint64(0);
 	auto lastCoveredOffset = qint64(0);
 	auto hasCoveredOffset = false;
-	for (const auto offset : sampleOffsetsNanoseconds) {
+	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = sampleOffsetsNanoseconds[i];
 		if (hasPreviousOffset
 			&& ((offset < previousOffset)
 				|| ((offset >= 0) && (previousOffset <= durationNanoseconds)
@@ -487,6 +510,9 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 			return false;
 		}
 		if ((offset >= 0) && (offset <= durationNanoseconds)) {
+			if (trace[qsizetype(i)] != u'R') {
+				return false;
+			}
 			if (!hasCoveredOffset) {
 				firstCoveredOffset = offset;
 				hasCoveredOffset = true;
@@ -554,10 +580,6 @@ bool UiStallWatchdog::event(QEvent *event) {
 		const auto evidence = PingAcknowledgementEvidence{
 			.acknowledgedAt
 			= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
-			.acknowledgedAtNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  acknowledgedAt.time_since_epoch())
-				  .count(),
 			.responseNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
 				  .count(),
@@ -609,6 +631,34 @@ void UiStallWatchdog::run() {
 					 &schedulerSampleOffsetsNanoseconds,
 					 &schedulerTraceMutex](std::stop_token stop) {
 						auto nextSampleAt = postedAt + kSchedulerSampleInterval;
+						auto sampleIntervalMachTicks = std::uint64_t(0);
+						auto nextSampleAtMach = std::uint64_t(0);
+#if defined(Q_OS_MAC)
+						sampleIntervalMachTicks
+							= SchedulerSampleIntervalMachTicks();
+						if (sampleIntervalMachTicks) {
+							const auto firstSampleDelay
+								= std::max(nextSampleAt - Clock::now(),
+										   Clock::duration::zero());
+							const auto firstSampleDelayNanoseconds
+								= std::chrono::duration_cast<
+									  std::chrono::nanoseconds>(
+									  firstSampleDelay)
+									  .count();
+							const auto sampleIntervalNanoseconds
+								= std::chrono::duration_cast<
+									  std::chrono::nanoseconds>(
+									  kSchedulerSampleInterval)
+									  .count();
+							nextSampleAtMach
+								= mach_absolute_time()
+								  + (sampleIntervalMachTicks
+									 * std::uint64_t(
+										 firstSampleDelayNanoseconds)
+									 / std::uint64_t(
+										 sampleIntervalNanoseconds));
+						}
+#endif // Q_OS_MAC
 						auto sampleCount = std::size_t(1);
 						while (!stop.stop_requested()
 							   && (_schedulerSamplingStopSequence.load(
@@ -620,7 +670,18 @@ void UiStallWatchdog::run() {
 							if (sampleAt < now) {
 								sampleAt = now;
 							}
+#if defined(Q_OS_MAC)
+							if (sampleIntervalMachTicks) {
+								if (mach_wait_until(nextSampleAtMach)
+									!= KERN_SUCCESS) {
+									std::this_thread::sleep_until(sampleAt);
+								}
+							} else {
+								std::this_thread::sleep_until(sampleAt);
+							}
+#else
 							std::this_thread::sleep_until(sampleAt);
+#endif // Q_OS_MAC
 							if (stop.stop_requested()
 								|| (_schedulerSamplingStopSequence.load(
 										std::memory_order_acquire)
@@ -645,7 +706,12 @@ void UiStallWatchdog::run() {
 										.count());
 							}
 							++sampleCount;
-							nextSampleAt = sampledAt + kSchedulerSampleInterval;
+							nextSampleAt += kSchedulerSampleInterval;
+#if defined(Q_OS_MAC)
+							if (sampleIntervalMachTicks) {
+								nextSampleAtMach += sampleIntervalMachTicks;
+							}
+#endif // Q_OS_MAC
 						}
 					});
 			} catch (const std::system_error &error) {
