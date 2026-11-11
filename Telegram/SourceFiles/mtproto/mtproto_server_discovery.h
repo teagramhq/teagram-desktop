@@ -142,9 +142,10 @@ struct ServerDiscoveryResult {
 		= ServerDiscoveryResponseStatus::InvalidJson;
 	QString endpoint;
 	QString webSocketEndpoint;
+	bool webSocketOnly = false;
 	// A public delegated endpoint is resolved and classified before it is
-	// committed. The selected address is kept separately so later MTProto
-	// connections do not perform an unvetted DNS lookup again.
+	// committed. For WebSocket-only bindings this is the resolved WebSocket
+	// address; otherwise it is the resolved MTProto address.
 	QString resolvedAddress;
 	int dcId = 0;
 	details::RSAPublicKey key;

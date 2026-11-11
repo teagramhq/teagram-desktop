@@ -218,7 +218,8 @@ SessionPrivate::~SessionPrivate() {
 
 void SessionPrivate::appendTestConnection(
 	DcOptions::Variants::Protocol protocol, const QString &ip, int port,
-	const bytes::vector &protocolSecret, bool ipv6, bool bothAddressFamilies) {
+	const bytes::vector &protocolSecret, bool ipv6, bool bothAddressFamilies,
+	bool webSocketOnly) {
 	QWriteLocker lock(&_stateMutex);
 
 	const auto pin = _instance->dcOptions().customServer();
@@ -242,7 +243,7 @@ void SessionPrivate::appendTestConnection(
 	auto connection = CreateServerConnection(
 		_instance, protocol, thread(), protocolSecret, _options->proxy,
 		connectionHostname, ipv6, {}, webSocketEndpoint, webSocketSelection,
-		bothAddressFamilies);
+		bothAddressFamilies, webSocketOnly);
 	_testConnections.push_back({
 		std::move(connection),
 		priority
@@ -1152,8 +1153,11 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	_options = std::make_unique<SessionOptions>(_sessionData->options());
 
 	const auto bareDc = BareDcId(_shiftedDcId);
+	const auto pin = _instance->dcOptions().customServer();
 
 	_currentDcType = tryAcquireKeyCreation();
+	const auto webSocketOnly = pin.webSocketOnly
+		&& _instance->dcOptions().isCustomServerPinned(bareDc);
 	if (_currentDcType == DcType::Cdn && !_instance->isKeysDestroyer()) {
 		if (!_instance->dcOptions().hasCDNKeysForDc(bareDc)) {
 			requestCDNConfig();
@@ -1162,19 +1166,21 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	}
 	if (_options->proxy.type == ProxyData::Type::Mtproto) {
 		// host, port, secret for mtproto proxy are taken from proxy.
-		appendTestConnection(DcOptions::Variants::Tcp, {}, 0, {});
+		appendTestConnection(
+			DcOptions::Variants::Tcp, {}, 0, {}, false, false, webSocketOnly);
 	} else {
 		using Variants = DcOptions::Variants;
 		const auto special = (_currentDcType == DcType::Temporary);
-		const auto pin = _instance->dcOptions().customServer();
 		const auto variants = _instance->dcOptions().lookup(
 			bareDc,
 			_currentDcType,
 			_options->proxy.type != ProxyData::Type::None);
 		const auto useIPv4 = special ? true : _options->useIPv4;
 		const auto useIPv6 = special ? false : _options->useIPv6;
-		const auto useTcp = special ? true : _options->useTcp;
-		const auto useHttp = special ? false : _options->useHttp;
+		const auto useTcp = special ? true : (webSocketOnly || _options->useTcp);
+		const auto useHttp = special || webSocketOnly
+			? false
+			: _options->useHttp;
 		const auto bothAddressFamiliesForWebSocket
 			= WebSocketUsesBothAddressFamilies(_options->proxy.type, useTcp,
 											   !pin.webSocketEndpoint.empty(),
@@ -1209,7 +1215,8 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 						static_cast<Variants::Protocol>(protocol),
 						QString::fromStdString(endpoint.ip), endpoint.port,
 						endpoint.secret, address == Variants::IPv6,
-						bothAddressFamiliesForWebSocket);
+						bothAddressFamiliesForWebSocket,
+						webSocketOnly);
 				}
 			}
 		}

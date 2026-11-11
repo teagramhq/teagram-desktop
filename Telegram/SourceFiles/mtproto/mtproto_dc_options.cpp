@@ -14,12 +14,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QUrl>
 #include <QtNetwork/QHostAddress>
 
 namespace MTP {
 namespace {
 
-constexpr auto kVersion = 8;
+constexpr auto kVersion = 9;
 
 using namespace details;
 
@@ -109,7 +110,7 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 		&& !restoredPreviouslyAllowedLiteral) {
 		return false;
 	}
-	if (selection.requestedPort
+	if (!server.webSocketOnly && selection.requestedPort
 		&& selection.requestedPort != server.port) {
 		return false;
 	}
@@ -138,6 +139,35 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 				   != QString::fromStdString(server.webSocketEndpoint)) {
 			return false;
 		}
+	}
+	if (server.webSocketOnly) {
+		if (server.discoveryPolicy != ServerDiscoveryPolicy::PublicHttps
+			|| server.webSocketEndpoint.empty()) {
+			return false;
+		}
+		const auto url = QUrl(
+			QString::fromStdString(server.webSocketEndpoint),
+			QUrl::StrictMode);
+		if (!url.isValid() || server.port != url.port(443)) {
+			return false;
+		}
+		auto address = QHostAddress();
+		if (address.setAddress(url.host())) {
+			return server.hostname.empty()
+				&& server.ip == address.toString().toStdString()
+				&& server.ipv6
+					== (address.protocol() == QAbstractSocket::IPv6Protocol)
+				&& IsPublicDiscoveryAddress(selection, address);
+		}
+		const auto bracketedHost = url.host().contains(QChar::fromLatin1(':'))
+			? (u"["_q + url.host() + u"]"_q)
+			: url.host();
+		const auto webSocketCheck = CheckServerSelection(
+			bracketedHost + u":"_q + QString::number(url.port(443)));
+		return server.ip.empty()
+			&& server.hostname == url.host().toStdString()
+			&& !server.ipv6
+			&& IsPublicDiscoveryEndpoint(webSocketCheck, selection);
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
 		&& hasHostname) {
@@ -231,7 +261,8 @@ bool SameCustomServerPin(
 		|| a.ipv6 != b.ipv6
 		|| a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
-		|| a.discoveryOrigin != b.discoveryOrigin) {
+		|| a.discoveryOrigin != b.discoveryOrigin
+		|| a.webSocketOnly != b.webSocketOnly) {
 		return false;
 	} else if (!a.key || !b.key) {
 		return false;
@@ -270,6 +301,58 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		webSocketEndpoint = *normalized;
 	}
 	const auto endpoint = CheckServerSelection(result.endpoint);
+	if (result.webSocketOnly) {
+		if (result.policy != ServerDiscoveryPolicy::PublicHttps
+			|| webSocketEndpoint.isEmpty()
+			|| !result.key.valid()
+			|| !endpoint.valid()
+			|| !endpoint.explicitPort
+			|| endpoint.operationalPort == 80
+			|| (selection.explicitPort
+				&& endpoint.normalizedSelection
+					!= selection.normalizedSelection)) {
+			return std::nullopt;
+		}
+		const auto url = QUrl(webSocketEndpoint, QUrl::StrictMode);
+		const auto host = url.host();
+		const auto port = url.port(443);
+		const auto bracketedHost = host.contains(QChar::fromLatin1(':'))
+			? (u"["_q + host + u"]"_q)
+			: host;
+		const auto webSocketCheck = CheckServerSelection(
+			bracketedHost + u":"_q + QString::number(port));
+		if (!MTP::IsPublicDiscoveryEndpoint(webSocketCheck, selection)) {
+			return std::nullopt;
+		}
+		auto address = QHostAddress();
+		if (!address.setAddress(result.resolvedAddress)
+			|| !MTP::IsPublicDiscoveryAddress(selection, address)) {
+			return std::nullopt;
+		}
+		auto endpointAddress = QHostAddress();
+		const auto endpointIsLiteral = endpointAddress.setAddress(host);
+		if (endpointIsLiteral && endpointAddress != address) {
+			return std::nullopt;
+		}
+		return CustomServer{
+			.dcId = result.dcId,
+			.hostname = endpointIsLiteral
+				? std::string()
+				: host.toStdString(),
+			.ip = endpointIsLiteral
+				? endpointAddress.toString().toStdString()
+				: std::string(),
+			.port = port,
+			.ipv6 = endpointIsLiteral
+				&& endpointAddress.protocol() == QAbstractSocket::IPv6Protocol,
+			.key = std::make_shared<details::RSAPublicKey>(result.key),
+			.serverSelection = selection.normalizedSelection.toStdString(),
+			.discoveryPolicy = result.policy,
+			.discoveryOrigin = result.origin.toStdString(),
+			.webSocketEndpoint = webSocketEndpoint.toStdString(),
+			.webSocketOnly = true,
+		};
+	}
 	const auto endpointAllowed = (result.policy
 		== ServerDiscoveryPolicy::PublicHttps)
 		? IsPublicDiscoveryEndpoint(endpoint, selection)
@@ -326,6 +409,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		.discoveryPolicy = result.policy,
 		.discoveryOrigin = result.origin.toStdString(),
 		.webSocketEndpoint = webSocketEndpoint.toStdString(),
+		.webSocketOnly = false,
 	};
 }
 
@@ -754,8 +838,8 @@ QByteArray DcOptions::serialize() const {
 	}
 
 	// Pinned custom server. Literal endpoint identity (dcId, ip, port)
-	// and the key bytes are persisted here; v7 adds the hostname and v8 adds
-	// the optional WebSocket endpoint after the unenrolled marker.
+	// and the key bytes are persisted here; v7 adds the hostname, v8 adds the
+	// optional WebSocket endpoint, and v9 adds its transport mode.
 	// The fingerprint is recomputed on load.
 	// Without dcId the CDN-shadowing control cannot match and the pin is
 	// silently ineffective.
@@ -767,6 +851,7 @@ QByteArray DcOptions::serialize() const {
 	auto customSelection = std::string();
 	auto customOrigin = std::string();
 	auto customWebSocketEndpoint = std::string();
+	auto customWebSocketOnly = false;
 	auto customPolicy = ServerDiscoveryPolicy::Legacy;
 	if (_customServer.key) {
 		pinned = true;
@@ -780,6 +865,7 @@ QByteArray DcOptions::serialize() const {
 		customPolicy = _customServer.discoveryPolicy;
 		customOrigin = _customServer.discoveryOrigin;
 		customWebSocketEndpoint = _customServer.webSocketEndpoint;
+		customWebSocketOnly = _customServer.webSocketOnly;
 	}
 	size += sizeof(qint32); // pinned
 	if (pinned) {
@@ -799,6 +885,7 @@ QByteArray DcOptions::serialize() const {
 	size += sizeof(qint32); // unenrolled
 	size += sizeof(qint32) + customHostname.size();
 	size += sizeof(qint32) + customWebSocketEndpoint.size();
+	size += sizeof(qint32);
 
 	auto result = QByteArray();
 	result.reserve(size);
@@ -869,6 +956,7 @@ QByteArray DcOptions::serialize() const {
 		stream << qint32(customWebSocketEndpoint.size());
 		stream.writeRawData(customWebSocketEndpoint.data(),
 							customWebSocketEndpoint.size());
+		stream << qint32(customWebSocketOnly ? 1 : 0);
 	}
 	return result;
 }
@@ -1171,6 +1259,23 @@ bool DcOptions::constructFromSerialized(const QByteArray &serialized) {
 			return false;
 		}
 		_customServer.webSocketEndpoint = std::move(endpoint);
+	}
+	if (version > 8) {
+		qint32 webSocketOnly = 0;
+		if (stream.atEnd()) {
+			LOG(("MTP Error: Missing custom server WebSocket mode in "
+				 "DcOptions::constructFromSerialized()"));
+			return false;
+		}
+		stream >> webSocketOnly;
+		if (webSocketOnly < 0 || webSocketOnly > 1
+			|| stream.status() != QDataStream::Ok
+			|| (!_customServer.key && webSocketOnly)) {
+			LOG(("MTP Error: Bad custom server WebSocket mode in "
+				 "DcOptions::constructFromSerialized()"));
+			return false;
+		}
+		_customServer.webSocketOnly = (webSocketOnly != 0);
 	}
 	if (_customServer.key) {
 		if (const auto problem = CustomServerProblem(

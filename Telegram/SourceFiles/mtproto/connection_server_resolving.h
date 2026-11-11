@@ -76,7 +76,8 @@ class ServerResolvingConnection final : public AbstractConnection {
 							  ServerHostnameResolver resolver,
 							  const QString &webSocketEndpoint,
 							  const QString &webSocketSelection,
-							  bool bothAddressFamilies);
+							  bool bothAddressFamilies,
+							  bool webSocketOnly);
 
 	ConnectionPointer clone(const ProxyData &proxy) override;
 
@@ -121,6 +122,7 @@ private:
 	const QString _webSocketEndpoint;
 	const QString _webSocketSelection;
 	const bool _bothAddressFamilies = false;
+	const bool _webSocketOnly = false;
 	ConnectionPointer _child;
 	QList<QHostAddress> _addresses;
 	QList<QHostAddress> _webSocketAddresses;
@@ -170,6 +172,7 @@ WebSocketUsesBothAddressFamilies(ProxyData::Type proxyType, bool useTcp,
 	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
 	const QString &hostname, bool ipv6, ServerHostnameResolver resolver = {},
 	const QString &webSocketEndpoint = {},
-	const QString &webSocketSelection = {}, bool bothAddressFamilies = false);
+	const QString &webSocketSelection = {}, bool bothAddressFamilies = false,
+	bool webSocketOnly = false);
 
 } // namespace MTP::details
