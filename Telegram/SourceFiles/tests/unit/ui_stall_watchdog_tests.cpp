@@ -179,9 +179,10 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= beforeAcknowledgements.empty()
 			  ? QString()
 			  : beforeAcknowledgements.back().acknowledgedAt;
-	const auto lastAcknowledgedAtMilliseconds
-		= QDateTime::fromString(lastAcknowledgedAt, Qt::ISODateWithMs)
-			  .toMSecsSinceEpoch();
+	const auto lastAcknowledgedAtNanoseconds
+		= beforeAcknowledgements.empty()
+			  ? qint64(0)
+			  : beforeAcknowledgements.back().acknowledgedAtNanoseconds;
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -259,28 +260,24 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	CHECK(!evidence.empty());
 	CHECK(!acknowledgements.empty());
 	auto shortSchedulerCapturePingObserved = false;
-	auto previousAcknowledgedAtMilliseconds = qint64(0);
+	auto previousAcknowledgedAtNanoseconds = qint64(0);
 	for (const auto &acknowledgement : acknowledgements) {
-		const auto acknowledgedAt = QDateTime::fromString(
-			acknowledgement.acknowledgedAt, Qt::ISODateWithMs);
-		if (!acknowledgedAt.isValid()) {
-			continue;
-		}
-		const auto acknowledgedAtMilliseconds
-			= acknowledgedAt.toMSecsSinceEpoch();
-		if ((previousAcknowledgedAtMilliseconds
-			 > lastAcknowledgedAtMilliseconds)
-			&& (acknowledgedAtMilliseconds > previousAcknowledgedAtMilliseconds)
-			&& (acknowledgedAtMilliseconds - previousAcknowledgedAtMilliseconds
-				<= 5)) {
+		const auto acknowledgedAtNanoseconds
+			= acknowledgement.acknowledgedAtNanoseconds;
+		if ((previousAcknowledgedAtNanoseconds > lastAcknowledgedAtNanoseconds)
+			&& (acknowledgedAtNanoseconds > previousAcknowledgedAtNanoseconds)
+			&& (acknowledgedAtNanoseconds - previousAcknowledgedAtNanoseconds
+				<= 5'000'000)) {
 			shortSchedulerCapturePingObserved = true;
 			break;
 		}
-		previousAcknowledgedAtMilliseconds = acknowledgedAtMilliseconds;
+		previousAcknowledgedAtNanoseconds = acknowledgedAtNanoseconds;
 	}
 	CHECK(shortSchedulerCapturePingObserved);
 	if (!acknowledgements.empty()) {
 		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
+		CHECK(acknowledgements.back().acknowledgedAtNanoseconds
+			  > lastAcknowledgedAtNanoseconds);
 		CHECK(acknowledgements.back().responseNanoseconds >= 0);
 	}
 	if (!evidence.empty()) {

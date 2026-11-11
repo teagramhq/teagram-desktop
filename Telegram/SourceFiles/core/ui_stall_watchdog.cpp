@@ -51,7 +51,7 @@ constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
-constexpr auto kSchedulerTracePingInterval = 3ms;
+constexpr auto kSchedulerTracePingInterval = 2ms;
 constexpr auto kShortLogThreshold = 40ms;
 constexpr auto kSchedulerSampleInterval = 1ms;
 constexpr auto kMaxSchedulerSampleGap = 5ms;
@@ -580,6 +580,10 @@ bool UiStallWatchdog::event(QEvent *event) {
 		const auto evidence = PingAcknowledgementEvidence{
 			.acknowledgedAt
 			= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
+			.acknowledgedAtNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  acknowledgedAt.time_since_epoch())
+				  .count(),
 			.responseNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
 				  .count(),
