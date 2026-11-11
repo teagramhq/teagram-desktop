@@ -16510,6 +16510,15 @@ int RunDesktopScaleCheck() {
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
+	const auto contactResponseWithinBudget
+		= contactsHundred.loaded.nanoseconds
+		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
+	const auto contactChangeScales
+		= contactsOne.changedAndFound.nanoseconds
+		  && contactsHundred.changedAndFound.nanoseconds
+		  && (*contactsOne.changedAndFound.nanoseconds > 0)
+		  && (double(*contactsHundred.changedAndFound.nanoseconds)
+			  <= 1.5 * double(*contactsOne.changedAndFound.nanoseconds));
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -16594,9 +16603,9 @@ int RunDesktopScaleCheck() {
 		searchOne.updateBurst.mainThreadStepsOverBudget,
 		searchHundred.updateBurst.mainThreadStepsOverBudget,
 	});
-	// The dialogs page and full 100x contacts response exceed the 50 ms budget
-	// on the dev baseline. Report their stalls without blocking on them.
+	// The dialogs page remains report-only. The 10k contact response is gated.
 	const auto blockingStalls = SumDesktopScaleStalls({
+		contactsHundred.loaded.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
@@ -16618,7 +16627,8 @@ int RunDesktopScaleCheck() {
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
-		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)
+		  && (*blockingStalls == 0) && contactResponseWithinBudget
+		  && contactChangeScales && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
 		  && (groupHundred.directoryEnumerations == 0);
@@ -16645,6 +16655,10 @@ int RunDesktopScaleCheck() {
 			 searchOne.search, searchHundred.search);
 	printRow("updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 			 searchOne.updateBurst, searchHundred.updateBurst);
+	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
+				contactResponseWithinBudget ? "PASS" : "FAIL");
+	std::printf("Contact change + name lookup budget (<=1.50x): %s\n",
+				contactChangeScales ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
 		if (sample) {
 			std::printf("%llu/100", static_cast<unsigned long long>(*sample));
@@ -16721,12 +16735,6 @@ int RunDesktopScaleCheck() {
 	printSampleTime(dialogsHundred);
 	std::printf("/");
 	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
-	std::printf(" over-50-ms steps.\n");
-	std::printf(
-		"Report-only baseline: contacts.getContacts full response 100x=");
-	printSampleTime(contactsHundred.loaded);
-	std::printf("/");
-	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
 	std::printf("Report-only baseline: updates.getDifference 1x=");
 	printSampleTime(searchOne.updateBurst);

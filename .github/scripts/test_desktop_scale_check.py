@@ -1240,7 +1240,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn(scenario, results[10]["exceptions"])
         self.assertIn(scenario, results[11]["exceptions"])
 
-    def test_contact_scenarios_always_enforce_budgets(self):
+    def test_contact_scenarios_do_not_get_baseline_exceptions(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
         base = [make_sample(), make_sample()]

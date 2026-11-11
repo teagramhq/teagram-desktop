@@ -30,7 +30,7 @@ LEGACY_SCENARIOS = {
     "contact change + name lookup": "contact change and lookup",
     "cache read x100": "thumbnail reads",
 }
-ALWAYS_ENFORCED_SCENARIOS = {
+NO_BASELINE_EXEMPTION_SCENARIOS = {
     CONTACT_LOAD_SCENARIO,
     "contact change + name lookup",
 }
@@ -274,7 +274,7 @@ def _baseline_exceptions(records):
     additions = {}
     for scenario in SCENARIOS:
         if (
-            scenario in ALWAYS_ENFORCED_SCENARIOS
+            scenario in NO_BASELINE_EXEMPTION_SCENARIOS
             or scenario in REPORT_ONLY_SCENARIOS
         ):
             continue
