@@ -1364,7 +1364,9 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 		const auto target = my.sessionWindow.get();
 		if (!target
 			&& DeepLinks::Router::Instance().requiresPaidFeatures(command)) {
-			return TryRouterForLocalUrl(nullptr, command);
+			// This route belongs to an account, but there is no origin account
+			// to open it for. Treat it as handled without touching the active one.
+			return true;
 		}
 		const auto controller
 			= target ? target

@@ -4743,30 +4743,56 @@ template <typename Condition>
 		const auto activeBeforeMissingController = app.activeWindow();
 		const auto handled = app.openLocalUrl(url, missingTargetContext);
 		QCoreApplication::processEvents();
+		const auto stockToastAfterMissingController
+			= stockController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto pinnedToastAfterMissingController
+			= pinnedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto blockedToastAfterMissingController
+			= blockedController
+				  ->featureUnavailableOnServerToastCallsForRegressionTest();
+		const auto stockMainSectionShown
+			= stockController->content()->isMainSectionShown();
+		const auto pinnedMainSectionShown
+			= pinnedController->content()->isMainSectionShown();
+		const auto blockedMainSectionShown
+			= blockedController->content()->isMainSectionShown();
+		const auto stockLayerShown = stockController->isLayerShown();
+		const auto pinnedLayerShown = pinnedController->isLayerShown();
+		const auto blockedLayerShown = blockedController->isLayerShown();
+		const auto activeWindowChanged
+			= app.activeWindow() != activeBeforeMissingController;
 		const auto unchanged
 			= handled
-			  && (stockController
-					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  && (stockToastAfterMissingController
 				  == stockToastBeforeMissingController)
-			  && (pinnedController
-					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  && (pinnedToastAfterMissingController
 				  == pinnedToastBeforeMissingController)
-			  && (blockedController
-					  ->featureUnavailableOnServerToastCallsForRegressionTest()
+			  && (blockedToastAfterMissingController
 				  == blockedToastBeforeMissingController)
-			  && !stockController->content()->isMainSectionShown()
-			  && !pinnedController->content()->isMainSectionShown()
-			  && !blockedController->content()->isMainSectionShown()
-			  && !stockController->isLayerShown()
-			  && !pinnedController->isLayerShown()
-			  && !blockedController->isLayerShown()
-			  && (app.activeWindow() == activeBeforeMissingController);
+			  && !stockMainSectionShown && !pinnedMainSectionShown
+			  && !blockedMainSectionShown && !stockLayerShown && !pinnedLayerShown
+			  && !blockedLayerShown && !activeWindowChanged;
 		if (!unchanged) {
 			std::fprintf(
 				stderr,
 				"Settings deep link regression failed: missing target was "
-				"not a no-op for route=%s restored-blocked=%d.\n",
-				url.toUtf8().constData(), restoredBlockedWithoutPin);
+				"not a no-op for route=%s handled=%d "
+				"toast-delta=%d/%d/%d main-section=%d/%d/%d "
+				"layer=%d/%d/%d active-window-changed=%d "
+				"restored-blocked=%d.\n",
+				url.toUtf8().constData(), handled,
+				stockToastAfterMissingController
+					- stockToastBeforeMissingController,
+				pinnedToastAfterMissingController
+					- pinnedToastBeforeMissingController,
+				blockedToastAfterMissingController
+					- blockedToastBeforeMissingController,
+				stockMainSectionShown, pinnedMainSectionShown,
+				blockedMainSectionShown, stockLayerShown, pinnedLayerShown,
+				blockedLayerShown, activeWindowChanged,
+				restoredBlockedWithoutPin);
 			return false;
 		}
 	}
