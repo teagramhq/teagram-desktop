@@ -16817,9 +16817,12 @@ int RunDesktopScaleCheck() {
 			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(
 				  domain, 50, UserId(999'999), firstId, account.get());
-			  const auto existingRows = data.chatsList()->indexed()->all();
-			  for (const auto row : existingRows) {
-				  data.removeChatListEntry(row->key());
+			  auto existingKeys = std::vector<Dialogs::Key>();
+			  for (const auto &row : data.chatsList()->indexed()->all()) {
+				  existingKeys.push_back(row->key());
+			  }
+			  for (const auto &key : existingKeys) {
+				  data.removeChatListEntry(key);
 			  }
 			  dialogsState
 				  = RunDesktopScaleDialogStateRegression(domain, account.get());
