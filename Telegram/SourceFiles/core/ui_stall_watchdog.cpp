@@ -467,6 +467,7 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 			  .count();
 	const auto sampleCoverageToleranceNanoseconds
 		= sampleIntervalNanoseconds * 3 / 2;
+	const auto sampleEdgeToleranceNanoseconds = sampleIntervalNanoseconds;
 	if ((durationNanoseconds < 0)
 		|| (trace.size() != qsizetype(sampleOffsetsNanoseconds.size()))
 		|| trace.isEmpty() || (trace.count(u'R') != trace.size())) {
@@ -496,9 +497,9 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		hasPreviousOffset = true;
 	}
 	return hasCoveredOffset
-		   && (firstCoveredOffset <= sampleCoverageToleranceNanoseconds)
+		   && (firstCoveredOffset <= sampleEdgeToleranceNanoseconds)
 		   && (durationNanoseconds - lastCoveredOffset
-			   <= sampleCoverageToleranceNanoseconds);
+			   <= sampleEdgeToleranceNanoseconds);
 }
 
 void UiStallWatchdog::enqueueReport(std::function<void()> report) {

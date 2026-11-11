@@ -312,17 +312,17 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, skippedSlotOffsets, durationNanoseconds));
 
-	auto delayedStartOffsets = offsets;
-	for (auto &offset : delayedStartOffsets) {
+	auto lateStartOffsets = offsets;
+	for (auto &offset : lateStartOffsets) {
 		offset += 7'000'000;
 	}
-	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-		trace, delayedStartOffsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, lateStartOffsets, durationNanoseconds));
 
-	auto earlyEndOffsets = offsets;
-	earlyEndOffsets.back() -= jitterNanoseconds;
-	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-		trace, earlyEndOffsets, durationNanoseconds));
+	auto lateEndOffsets = offsets;
+	lateEndOffsets.back() -= jitterNanoseconds;
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, lateEndOffsets, durationNanoseconds));
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		QString(4, QChar(u'R')),
 		{0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds,
