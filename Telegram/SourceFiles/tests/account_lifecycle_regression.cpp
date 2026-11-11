@@ -15880,11 +15880,14 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 	return sample;
 }
 
-[[nodiscard]] bool RunDesktopScaleDialogStateRegression(Main::Domain &domain) {
+[[nodiscard]] bool
+RunDesktopScaleDialogStateRegression(Main::Domain &domain,
+									 Main::Account *reuseAccount = nullptr) {
 	constexpr auto kLoaded = 20;
 	const auto firstId = UserId(6'000'000);
 	const auto passed = WithDesktopScaleAccount(
-		domain, UserId(firstId.bare - 1), [&](auto account) {
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &data = account->session().data();
 			auto users = DesktopScaleUsers(firstId, kLoaded, false);
 			const auto dialogs = DesktopScaleDialogs(firstId, kLoaded, true, 9);
@@ -16252,7 +16255,8 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 				return false;
 			}
 			return true;
-		});
+		},
+		reuseAccount);
 	if (!passed) {
 		std::fprintf(stderr,
 					 "Desktop scale check failed: dialogs state regression.\n");
@@ -16789,6 +16793,7 @@ int RunDesktopScaleCheck() {
 
 	auto dialogsOne = DesktopScaleActionSample();
 	auto searchOne = DesktopScaleSearchUpdateSamples();
+	auto dialogsState = false;
 	const auto dialogsOneCreated
 		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
 			  const auto firstId = UserId(1'000'000);
@@ -16812,8 +16817,14 @@ int RunDesktopScaleCheck() {
 			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(
 				  domain, 50, UserId(999'999), firstId, account.get());
+			  const auto existingRows = data.chatsList()->indexed()->all();
+			  for (const auto row : existingRows) {
+				  data.removeChatListEntry(row->key());
+			  }
+			  dialogsState
+				  = RunDesktopScaleDialogStateRegression(domain, account.get());
 			  return searchOne.search.passed && searchOne.updateBurst.passed
-					 && dialogsOne.passed;
+					 && dialogsOne.passed && dialogsState;
 		  });
 	auto dialogsHundred = DesktopScaleActionSample();
 	auto searchHundred = DesktopScaleSearchUpdateSamples();
@@ -16827,7 +16838,6 @@ int RunDesktopScaleCheck() {
 			  return dialogsHundred.passed && searchHundred.search.passed
 					 && searchHundred.updateBurst.passed;
 		  });
-	const auto dialogsState = RunDesktopScaleDialogStateRegression(domain);
 	auto contactsOne = DesktopScaleContactsSample();
 	auto contactsHundred = DesktopScaleContactsSample();
 	const auto contactsCreated
