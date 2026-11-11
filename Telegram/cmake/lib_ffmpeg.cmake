@@ -31,6 +31,13 @@ PUBLIC
     desktop-app::external_ffmpeg
 )
 
+if (APPLE AND NOT DESKTOP_APP_USE_PACKAGED)
+    target_link_libraries(lib_ffmpeg
+    PUBLIC
+        ${libs_loc}/local/lib/libdav1d.a
+    )
+endif()
+
 if (DESKTOP_APP_SPECIAL_TARGET)
     target_compile_definitions(lib_ffmpeg PRIVATE LIB_FFMPEG_USE_QT_PRIVATE_API)
 endif()
