@@ -112,7 +112,6 @@ PRIVATE
     core/hash_sha.cpp
     core/hash_md5.cpp
     core/mac_protected_path_policy.cpp
-    ffmpeg/ffmpeg_frame_storage.cpp
     core/file_location.cpp
     media/clip/media_clip_check_streaming.cpp
     data/data_peer_id.cpp
@@ -142,6 +141,7 @@ PRIVATE
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
+    tests/unit/ffmpeg_frame_generator_tests.cpp
     tests/unit/ffmpeg_frame_storage_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_signup_invite_validation_tests.cpp
@@ -220,6 +220,7 @@ target_link_libraries(test_unit
 PRIVATE
     ${CMAKE_DL_LIBS}
     test_unit_mtproto
+    desktop-app::lib_ffmpeg
     tdesktop::td_scheme
     desktop-app::lib_base
     desktop-app::lib_crl
