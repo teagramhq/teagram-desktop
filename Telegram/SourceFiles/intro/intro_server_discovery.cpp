@@ -280,23 +280,21 @@ ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
 	}
 	if (role == PublicDiscoveryAddressRole::Mtproto) {
 		const auto endpoint = MTP::CheckServerSelection(result.endpoint);
-		if (!MTP::IsPublicDiscoveryEndpoint(endpoint, selection)) {
-			if (result.webSocketEndpoint.isEmpty()) {
+		if (result.webSocketOnly) {
+			if (result.webSocketEndpoint.isEmpty()
+				|| MTP::IsPublicMtprotoDiscoveryEndpoint(endpoint, selection)) {
 				return PublicDiscoveryAddressResolution::Rejected;
 			}
-			result.webSocketOnly = true;
 			result.resolvedAddress.clear();
 			return PublicDiscoveryAddressResolution::NeedsWebSocket;
+		}
+		if (!MTP::IsPublicMtprotoDiscoveryEndpoint(endpoint, selection)) {
+			return PublicDiscoveryAddressResolution::Rejected;
 		}
 		if (const auto address
 			= MTP::FirstSafePublicDiscoveryAddress(selection, addresses)) {
 			result.resolvedAddress = address->toString();
 			return PublicDiscoveryAddressResolution::Resolved;
-		}
-		if (!result.webSocketEndpoint.isEmpty()) {
-			result.webSocketOnly = true;
-			result.resolvedAddress.clear();
-			return PublicDiscoveryAddressResolution::NeedsWebSocket;
 		}
 		return PublicDiscoveryAddressResolution::Rejected;
 	}

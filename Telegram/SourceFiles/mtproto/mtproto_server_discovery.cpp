@@ -902,6 +902,12 @@ bool IsPublicDiscoveryEndpoint(
 		&& endpoint.policy == ServerDiscoveryPolicy::PublicHttps;
 }
 
+bool IsPublicMtprotoDiscoveryEndpoint(const ServerSelectionCheck &endpoint,
+									  const ServerSelectionCheck &origin) {
+	return IsPublicDiscoveryEndpoint(endpoint, origin)
+		   && (IsMagicDnsSelection(origin) || !IsMagicDnsSelection(endpoint));
+}
+
 std::optional<QString>
 NormalizePublicWebSocketEndpoint(const QString &endpoint,
 								 const ServerSelectionCheck &origin) {
@@ -1035,7 +1041,7 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		}
 	}
 	const auto endpointAllowed
-		= IsPublicDiscoveryEndpoint(endpointCheck, selection);
+		= IsPublicMtprotoDiscoveryEndpoint(endpointCheck, selection);
 	const auto webSocketOnly = !endpointAllowed;
 	if (webSocketOnly
 		&& (webSocketEndpoint.isEmpty() || !endpointCheck.valid()

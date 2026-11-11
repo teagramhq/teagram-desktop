@@ -1655,7 +1655,45 @@ TEST_CASE(PrivateMtprotoBindingUsesPublicWebSocketEndpoint) {
 			   .has_value());
 }
 
-TEST_CASE(PublicEnrollmentUsesWssOnlyWhenMtprotoDnsIsPrivate) {
+TEST_CASE(PublicMtprotoNameStaysTcpFirstWithEmptyOrPrivateDnsAnswers) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	const auto result = ParsePublicDiscoveryResponse(
+		selection,
+		PublicResponseWithWebSocket(u"mtproto.example.com:2443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	if (!result.valid()) {
+		return;
+	}
+	CHECK(!result.webSocketOnly);
+
+	auto emptyAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, emptyAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto, {})
+		  == Intro::details::PublicDiscoveryAddressResolution::Rejected);
+	CHECK(!emptyAnswer.webSocketOnly);
+
+	auto privateAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, privateAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto,
+			  {QHostAddress(u"100.64.1.10"_q)})
+		  == Intro::details::PublicDiscoveryAddressResolution::Rejected);
+	CHECK(!privateAnswer.webSocketOnly);
+	CHECK(privateAnswer.resolvedAddress.isEmpty());
+
+	auto publicAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, publicAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto,
+			  {QHostAddress(u"8.8.4.4"_q)})
+		  == Intro::details::PublicDiscoveryAddressResolution::Resolved);
+	CHECK(!publicAnswer.webSocketOnly);
+	CHECK_EQ(publicAnswer.resolvedAddress, u"8.8.4.4"_q);
+}
+
+TEST_CASE(PublicEnrollmentUsesWssOnlyForTailnetMtprotoName) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	auto result = ParsePublicDiscoveryResponse(
 		selection,
@@ -1665,13 +1703,12 @@ TEST_CASE(PublicEnrollmentUsesWssOnlyWhenMtprotoDnsIsPrivate) {
 	if (!result.valid()) {
 		return;
 	}
-	CHECK(!result.webSocketOnly);
+	CHECK(result.webSocketOnly);
 
 	const auto mtprotoResolution
 		= Intro::details::ResolvePublicDiscoveryAddresses(
 			selection, result,
-			Intro::details::PublicDiscoveryAddressRole::Mtproto,
-			{QHostAddress(u"100.64.1.10"_q)});
+			Intro::details::PublicDiscoveryAddressRole::Mtproto, {});
 	CHECK(mtprotoResolution
 		  == Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket);
 	CHECK(result.webSocketOnly);
@@ -2051,6 +2088,11 @@ TEST_CASE(DiscoveryJsonAcceptsTailnetIpForMagicDnsOrigin) {
 		selection,
 		PublicResponse(u"[::ffff:100.124.236.66]:2443"_q));
 	CHECK(mapped.valid());
+
+	const auto tailnetName = ParsePublicDiscoveryResponse(
+		selection, PublicResponse(u"mtproto.tailaa4918.ts.net:2443"_q));
+	CHECK(tailnetName.valid());
+	CHECK(!tailnetName.webSocketOnly);
 }
 
 TEST_CASE(DiscoveryJsonRejectsTailnetIpForOtherOrigins) {

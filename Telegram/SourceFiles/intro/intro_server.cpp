@@ -783,7 +783,7 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 void ServerWidget::resolvePublicEndpoint(
 		MTP::ServerDiscoveryResult result) {
 	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
-	if (!MTP::IsPublicDiscoveryEndpoint(endpoint, _selection)) {
+	if (!MTP::IsPublicMtprotoDiscoveryEndpoint(endpoint, _selection)) {
 		if (result.webSocketOnly) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
@@ -821,8 +821,7 @@ void ServerWidget::resolvePublicEndpoint(
 			publicEndpointResolved(result, info);
 		});
 	if (_hostLookupId < 0) {
-		if (!result.webSocketEndpoint.isEmpty()) {
-			result.webSocketOnly = true;
+		if (result.webSocketOnly) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
 			discoveryFailed(true);

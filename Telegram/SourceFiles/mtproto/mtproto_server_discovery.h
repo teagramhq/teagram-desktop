@@ -111,6 +111,12 @@ FilterPublicDiscoveryAddresses(const ServerSelectionCheck &origin,
 	const ServerSelectionCheck &endpoint,
 	const ServerSelectionCheck &origin);
 
+// Tailnet MTProto names are private to a public origin. A MagicDNS origin
+// keeps its existing permission to use tailnet endpoints.
+[[nodiscard]] bool
+IsPublicMtprotoDiscoveryEndpoint(const ServerSelectionCheck &endpoint,
+								 const ServerSelectionCheck &origin);
+
 [[nodiscard]] std::optional<QString>
 NormalizePublicWebSocketEndpoint(const QString &endpoint,
 								 const ServerSelectionCheck &origin);

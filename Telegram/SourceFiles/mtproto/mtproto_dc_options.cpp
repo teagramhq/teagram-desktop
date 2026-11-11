@@ -301,6 +301,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		if (result.policy != ServerDiscoveryPolicy::PublicHttps
 			|| webSocketEndpoint.isEmpty() || !result.key.valid()
 			|| !endpoint.valid() || !endpoint.explicitPort
+			|| IsPublicMtprotoDiscoveryEndpoint(endpoint, selection)
 			|| endpoint.operationalPort == 80
 			|| (selection.explicitPort
 				&& endpoint.normalizedSelection
@@ -345,10 +346,10 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 			.webSocketOnly = true,
 		};
 	}
-	const auto endpointAllowed = (result.policy
-		== ServerDiscoveryPolicy::PublicHttps)
-		? IsPublicDiscoveryEndpoint(endpoint, selection)
-		: (endpoint && endpoint.policy == result.policy);
+	const auto endpointAllowed
+		= (result.policy == ServerDiscoveryPolicy::PublicHttps)
+			  ? IsPublicMtprotoDiscoveryEndpoint(endpoint, selection)
+			  : (endpoint && endpoint.policy == result.policy);
 	if (!endpointAllowed || !result.key.valid()) {
 		return std::nullopt;
 	}
