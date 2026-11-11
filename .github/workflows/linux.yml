@@ -667,6 +667,12 @@ jobs:
           $IMAGE_TAG \
           bash -lc '
             cd /usr/src/tdesktop
+            smoke_home=$(mktemp -d /tmp/teagram-custom-emoji.XXXXXX)
+            mkdir -p "$smoke_home/config" "$smoke_home/data" "$smoke_home/cache" "$smoke_home/work"
+            export HOME="$smoke_home"
+            export XDG_CONFIG_HOME="$smoke_home/config"
+            export XDG_DATA_HOME="$smoke_home/data"
+            export XDG_CACHE_HOME="$smoke_home/cache"
             Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp -ac \
               >/tmp/teagram-custom-emoji-xvfb.log 2>&1 &
             xvfb_pid=$!
@@ -690,14 +696,21 @@ jobs:
 
             app=/usr/src/tdesktop/out/Debug/Teagram
             smoke_marker="Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering)."
-            if smoke_output=$(DISPLAY=:99 TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$app" -noupdate -debug 2>&1); then
-              printf "%s\n" "$smoke_output"
+            smoke_log="$smoke_home/smoke.log"
+            set -o pipefail
+            if DISPLAY=:99 TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 \
+              timeout --signal=TERM --kill-after=10s 180s \
+                "$app" -noupdate -debug -workdir "$smoke_home/work/" \
+                2>&1 | tee "$smoke_log"; then
+              :
             else
               smoke_status=$?
-              printf "%s\n" "$smoke_output"
+              if test "$smoke_status" -eq 124; then
+                echo "Custom emoji UI smoke timed out after 180 seconds."
+              fi
               exit "$smoke_status"
             fi
-            if ! printf "%s\n" "$smoke_output" | grep -Fqx "$smoke_marker"; then
+            if ! grep -Fqx "$smoke_marker" "$smoke_log"; then
               echo "Custom emoji UI smoke did not report its pass marker."
               exit 1
             fi

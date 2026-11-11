@@ -17196,6 +17196,7 @@ int RunDesktopScaleCheck() {
 }
 
 void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
+	std::fprintf(stderr, "Custom emoji UI smoke: starting.\n");
 	const auto fail = [&](const char *reason) {
 		std::fprintf(stderr, "Custom emoji UI smoke: FAIL (%s).\n", reason);
 		done(1);
@@ -17241,6 +17242,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail(
 			"recipient fixture is not a non-Premium custom-server account");
 	}
+	std::fprintf(stderr, "Custom emoji UI smoke: custom sessions ready.\n");
 
 	domain.activate(sender);
 	primary->showAccount(sender);
@@ -17269,6 +17271,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("custom-server reaction picker did not expand");
 	}
 	reactionPicker->hide();
+	std::fprintf(stderr, "Custom emoji UI smoke: reaction picker expanded.\n");
 
 	const auto emoji = sender->session().data().processDocument(
 		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
@@ -17305,6 +17308,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (!sent || sent->originalText().text != u"🧪"_q) {
 		return fail("message composer did not send the inserted custom emoji");
 	}
+	std::fprintf(stderr, "Custom emoji UI smoke: custom emoji message sent.\n");
 
 	const auto reactionMessage = sender->session().data().addNewMessage(
 		RegressionCustomEmojiMessage(724104, kRecipientId,
@@ -17320,6 +17324,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (!ranges::contains(reactionMessage->chosenReactions(), reaction)) {
 		return fail("custom reaction action did not toggle the reaction");
 	}
+	std::fprintf(stderr, "Custom emoji UI smoke: custom reaction toggled.\n");
 
 	const auto statusId = EmojiStatusId{.documentId = kDocumentId};
 	primary->widget()->showMainMenu();
@@ -17336,6 +17341,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (sender->session().user()->emojiStatusId() != statusId) {
 		return fail("status picker action did not persist the selected status");
 	}
+	std::fprintf(stderr, "Custom emoji UI smoke: status selected.\n");
 
 	const auto remoteSender = recipient->session().data().processUsers(
 		MTP_vector<MTPUser>({RegressionUser(kSenderId, false, u"1"_q)}));
