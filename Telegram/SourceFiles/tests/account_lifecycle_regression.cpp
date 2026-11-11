@@ -74,6 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_username_policy.h"
+#include "dialogs/dialogs_common.h"
 #include "dialogs/dialogs_indexed_list.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/dialogs_main_list.h"
@@ -15883,6 +15884,31 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 [[nodiscard]] bool
 RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 									 Main::Account *reuseAccount = nullptr) {
+	const auto viewportMoves = std::vector<Dialogs::PositionChange>{
+		{.from = 400, .to = 300, .height = 50},
+		{.from = 800, .to = 350, .height = 50},
+	};
+	const auto actualScrollTop
+		= Dialogs::scrollTopAfterMoves(325, viewportMoves);
+	if (actualScrollTop != 425) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=425 actual=%d.\n",
+					 actualScrollTop);
+		return false;
+	}
+	const auto movedAnchor = std::vector<Dialogs::PositionChange>{
+		{.from = 300, .to = 500, .height = 50},
+	};
+	const auto movedAnchorScrollTop
+		= Dialogs::scrollTopAfterMoves(325, movedAnchor);
+	if (movedAnchorScrollTop != 525) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-anchor expected=525 actual=%d.\n",
+					 movedAnchorScrollTop);
+		return false;
+	}
 	constexpr auto kLoaded = 20;
 	const auto firstId = UserId(6'000'000);
 	const auto passed = WithDesktopScaleAccount(

@@ -3288,15 +3288,15 @@ void InnerWidget::handleChatListEntryMoveBatches() {
 				if (_dragging) {
 					return;
 				}
-				auto moves = std::vector<Ui::ScrollToRequest>();
+				auto moves = std::vector<PositionChange>();
 				const auto offset = dialogsOffset();
 				for (const auto &event : events) {
 					if ((event.moved.from != event.moved.to)
 						&& shouldMoveDialog(event)) {
-						moves.push_back({
-							offset + event.moved.from,
-							offset + event.moved.to,
-						});
+						auto moved = event.moved;
+						moved.from += offset;
+						moved.to += offset;
+						moves.push_back(moved);
 					}
 				}
 				if (!moves.empty()) {
@@ -4553,8 +4553,7 @@ rpl::producer<Ui::ScrollToRequest> InnerWidget::mustScrollTo() const {
 	return _mustScrollTo.events();
 }
 
-rpl::producer<std::vector<Ui::ScrollToRequest>>
-InnerWidget::dialogMoved() const {
+rpl::producer<std::vector<PositionChange>> InnerWidget::dialogMoved() const {
 	return _dialogMoved.events();
 }
 

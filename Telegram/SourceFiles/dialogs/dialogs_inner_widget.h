@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/object_ptr.h"
 #include "base/timer.h"
 #include "data/data_messages.h"
+#include "dialogs/dialogs_common.h"
 #include "dialogs/ui/dialogs_quick_action_context.h"
 #include "dialogs/dialogs_community_rows_view.h"
 #include "dialogs/dialogs_inner_widget_accessibility.h"
@@ -220,7 +221,7 @@ public:
 
 	[[nodiscard]] rpl::producer<int> scrollByDeltaRequests() const;
 	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> mustScrollTo() const;
-	[[nodiscard]] rpl::producer<std::vector<Ui::ScrollToRequest>>
+	[[nodiscard]] rpl::producer<std::vector<PositionChange>>
 	dialogMoved() const;
 	[[nodiscard]] rpl::producer<SearchRequestDelay> searchRequests() const;
 	[[nodiscard]] rpl::producer<QString> completeHashtagRequests() const;
@@ -792,7 +793,7 @@ private:
 	rpl::event_stream<> _updated;
 
 	rpl::event_stream<Ui::ScrollToRequest> _mustScrollTo;
-	rpl::event_stream<std::vector<Ui::ScrollToRequest>> _dialogMoved;
+	rpl::event_stream<std::vector<PositionChange>> _dialogMoved;
 	rpl::event_stream<SearchRequestDelay> _searchRequests;
 	rpl::event_stream<QString> _completeHashtagRequests;
 	rpl::event_stream<> _refreshHashtagsRequests;

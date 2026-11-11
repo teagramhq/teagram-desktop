@@ -508,17 +508,11 @@ Widget::Widget(
 	}, lifetime());
 	_inner->dialogMoved()
 		| rpl::on_next(
-			[=](const std::vector<Ui::ScrollToRequest> &moves) {
+			[=](const std::vector<PositionChange> &moves) {
 				const auto st = _scroll->scrollTop();
-				auto movedAboveViewport = 0;
-				for (const auto &move : moves) {
-					if (st > move.ymax && st < move.ymin) {
-						++movedAboveViewport;
-					}
-				}
-				if (movedAboveViewport) {
-					_scroll->scrollToY(
-						st + movedAboveViewport * _inner->st()->height);
+				const auto adjusted = scrollTopAfterMoves(st, moves);
+				if (adjusted != st) {
+					_scroll->scrollToY(adjusted);
 				}
 			},
 			lifetime());
