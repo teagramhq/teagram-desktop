@@ -12,36 +12,31 @@ usage() {
 	echo 'Run this session as the unprivileged qa user.' >&2
 	exit 77
 }
-[[ "$0" == /tmp/qa-linux-desktop-session-*.sh ]] || {
-	echo 'Upload this helper to a unique /tmp/qa-linux-desktop-session-*.sh path before running it.' >&2
+RUNS_ROOT="${QA_SESSION_RUNS_ROOT:-/home/qa/runs}"
+RUNS_ROOT="${RUNS_ROOT%/}"
+REMOTE_HELPER="$0"
+SESSION_DIR="${REMOTE_HELPER%/*}"
+SESSION_ID="${SESSION_DIR##*/}"
+RUNS_ROOT_REAL="$(realpath -e -- "$RUNS_ROOT" 2>/dev/null)" || {
+	echo 'The QA run directory must be below /home/qa/runs.' >&2
+	exit 64
+}
+SESSION_DIR_REAL="$(realpath -e -- "$SESSION_DIR" 2>/dev/null)" || {
+	echo 'The QA session directory must already exist.' >&2
+	exit 64
+}
+[[ "$REMOTE_HELPER" == "$SESSION_DIR/qa-linux-desktop-session.sh" &&
+	"$SESSION_DIR" == "$RUNS_ROOT/$SESSION_ID" &&
+	"$RUNS_ROOT_REAL" == "$RUNS_ROOT" &&
+	"$SESSION_DIR_REAL" == "$SESSION_DIR" &&
+	-f "$REMOTE_HELPER" && ! -L "$REMOTE_HELPER" ]] || {
+	echo 'Upload this helper to /home/qa/runs/<run-id>/qa-linux-desktop-session.sh before running it.' >&2
 	exit 64
 }
 
-for tool in Xvfb dbus-launch openbox tint2 dunst xdotool import setsid xauth; do
-	command -v "$tool" >/dev/null || {
-		echo "Required QA desktop tool is missing: $tool" >&2
-		exit 69
-	}
-done
-
-BIN="${QA_SESSION_TELEGRAM_BIN:-/opt/teagram/Telegram}"
-if [[ -z "${QA_SESSION_TELEGRAM_BIN:-}" && -x /home/qa/build/Telegram ]]; then
-	BIN=/home/qa/build/Telegram
-fi
-[[ -x "$BIN" ]] || {
-	echo "No executable Teagram build found at /home/qa/build/Telegram or /opt/teagram/Telegram." >&2
-	exit 69
-}
-
-BUILD_SHA=unknown
-BUILD_FILE="$(dirname "$BIN")/BUILD"
-[[ -r "$BUILD_FILE" ]] && BUILD_SHA="$(<"$BUILD_FILE")"
-
-SESSION_DIR="$(mktemp -d /tmp/teagram-qa-session.XXXXXXXX)"
-SESSION_ID="${SESSION_DIR##*/}"
-REMOTE_HELPER="$0"
 PROFILE="$SESSION_DIR/profile"
 RUNTIME_DIR="$SESSION_DIR/runtime"
+TEMP_DIR="$SESSION_DIR/tmp"
 DISPLAY_FILE="$SESSION_DIR/display"
 XAUTHORITY="$SESSION_DIR/Xauthority"
 export XAUTHORITY
@@ -60,15 +55,48 @@ declare -A GROUP_PIDS=()
 
 cleanup_preflight() {
 	rm -rf -- "$SESSION_DIR"
-	if [[ -f "$REMOTE_HELPER" ]]; then
-		rm -f -- "$REMOTE_HELPER"
-	fi
 }
 trap cleanup_preflight EXIT
 
-mkdir -p "$PROFILE" "$RUNTIME_DIR" \
+for tool in Xvfb dbus-launch openbox tint2 dunst xdotool import setsid xauth; do
+	command -v "$tool" >/dev/null || {
+		echo "Required QA desktop tool is missing: $tool" >&2
+		exit 69
+	}
+done
+
+BIN="${QA_SESSION_TELEGRAM_BIN:-$SESSION_DIR/Telegram}"
+if [[ -z "${QA_SESSION_TELEGRAM_BIN:-}" && ! -x "$BIN" ]]; then
+	if [[ -x /home/qa/build/Telegram ]]; then
+		BIN=/home/qa/build/Telegram
+	elif [[ -x /opt/teagram/Telegram ]]; then
+		BIN=/opt/teagram/Telegram
+	fi
+fi
+[[ -x "$BIN" ]] || {
+	echo "No executable Teagram build found in $SESSION_DIR, /home/qa/build/Telegram, or /opt/teagram/Telegram." >&2
+	exit 69
+}
+if [[ -n "${QA_SESSION_TELEGRAM_BIN:-}" ]]; then
+	BIN_REAL="$(realpath -e -- "$BIN" 2>/dev/null)" || {
+		echo "The uploaded Teagram build must be inside $SESSION_DIR." >&2
+		exit 64
+	}
+	[[ "$BIN_REAL" == "$SESSION_DIR/"* ]] || {
+		echo "The uploaded Teagram build must be inside $SESSION_DIR." >&2
+		exit 64
+	}
+fi
+
+BUILD_SHA=unknown
+BUILD_FILE="$(dirname "$BIN")/BUILD"
+[[ -r "$BUILD_FILE" ]] && BUILD_SHA="$(<"$BUILD_FILE")"
+
+export TMPDIR="$TEMP_DIR"
+
+mkdir -p "$PROFILE" "$RUNTIME_DIR" "$TEMP_DIR" \
 	"$SESSION_DIR/xdg-config" "$SESSION_DIR/xdg-data" "$SESSION_DIR/xdg-cache"
-chmod 700 "$SESSION_DIR" "$PROFILE" "$RUNTIME_DIR" \
+chmod 700 "$SESSION_DIR" "$PROFILE" "$RUNTIME_DIR" "$TEMP_DIR" \
 	"$SESSION_DIR/xdg-config" "$SESSION_DIR/xdg-data" "$SESSION_DIR/xdg-cache"
 
 proc_fields() {
@@ -152,6 +180,7 @@ start_group() {
 		"DISPLAY=$DISPLAY_VALUE" \
 		"XAUTHORITY=$XAUTHORITY" \
 		"DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+		"TMPDIR=$TEMP_DIR" \
 		"XDG_RUNTIME_DIR=$RUNTIME_DIR" \
 		"XDG_CONFIG_HOME=$SESSION_DIR/xdg-config" \
 		"XDG_DATA_HOME=$SESSION_DIR/xdg-data" \
@@ -263,12 +292,6 @@ cleanup() {
 	else
 		echo "QA session directory retained for cleanup: $SESSION_DIR" >&2
 	fi
-	if [[ -n "$REMOTE_HELPER" && -f "$REMOTE_HELPER" ]]; then
-		if ! rm -f -- "$REMOTE_HELPER"; then
-			echo "Could not remove the uploaded helper $REMOTE_HELPER." >&2
-			failed=1
-		fi
-	fi
 	if (( failed != 0 )); then
 		return 1
 	fi
@@ -308,7 +331,7 @@ trap 'exit 143' TERM
 
 prepare_xauthority
 
-setsid env "QA_SESSION_GROUP=$SESSION_ID-xvfb-$$" \
+setsid env "QA_SESSION_GROUP=$SESSION_ID-xvfb-$$" "TMPDIR=$TEMP_DIR" \
 	Xvfb -displayfd 3 -screen 0 1440x900x24 -nolisten tcp -auth "$XAUTHORITY" \
 	3>"$DISPLAY_FILE" > "$SESSION_DIR/xvfb.log" 2>&1 &
 GROUP_MARKERS[xvfb]="$SESSION_ID-xvfb-$$"
@@ -342,7 +365,7 @@ DISPLAY_NUMBER="$(<"$DISPLAY_FILE")"
 }
 DISPLAY_VALUE=":$DISPLAY_NUMBER"
 
-if ! XDG_RUNTIME_DIR="$RUNTIME_DIR" DISPLAY="$DISPLAY_VALUE" \
+if ! TMPDIR="$TEMP_DIR" XDG_RUNTIME_DIR="$RUNTIME_DIR" DISPLAY="$DISPLAY_VALUE" \
 	dbus-launch --sh-syntax > "$SESSION_DIR/dbus.env" 2> "$SESSION_DIR/dbus-launch.log"; then
 	echo 'dbus-launch failed; captured output will be emitted before cleanup.' >&2
 	exit 1
@@ -463,6 +486,7 @@ while read -r line; do
 			"QA_WINDOW_X=$WINDOW_X" \
 			"QA_WINDOW_Y=$WINDOW_Y" \
 			"DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+			"TMPDIR=$TEMP_DIR" \
 			"XDG_RUNTIME_DIR=$RUNTIME_DIR" \
 			"XDG_CONFIG_HOME=$SESSION_DIR/xdg-config" \
 			"XDG_DATA_HOME=$SESSION_DIR/xdg-data" \
