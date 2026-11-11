@@ -16395,8 +16395,7 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 	for (auto i = 0; i != responseCount; ++i) {
 		const auto arrivalIndex = shuffleArrival ? (i * 7919) % pageSize : i;
 		const auto index = offset + arrivalIndex;
-		const auto userId = changeOne ? UserId(firstId.bare + totalCount - 1)
-									  : UserId(firstId.bare + index);
+		const auto userId = UserId(firstId.bare + index);
 		const auto firstName
 			= changeOne ? u"UpdatedContact"_q
 						: u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0'));
@@ -16623,6 +16622,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			}
 		}
 
+		const auto changedIndex = count / 2;
 		data.contactsLoaded() = false;
 		auto updateCapture = ChannelSaveRequestCapture{
 			.instance = &account->mtp(),
@@ -16635,8 +16635,8 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 					gChannelSaveRequestCapture = previous;
 				});
 			session.api().requestContacts();
-			const auto changedReply
-				= DesktopScaleContactsReply(firstId, count, count - 1, 1, true);
+			const auto changedReply = DesktopScaleContactsReply(
+				firstId, count, changedIndex, 1, true);
 			auto changedAndFound
 				= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 					updateCapture, mtpc_contacts_getContacts, changedReply,
@@ -16644,7 +16644,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 						const auto updated = WaitForRegressionCondition(
 							[&] {
 								const auto userId
-									= UserId(firstId.bare + count - 1);
+									= UserId(firstId.bare + changedIndex);
 								const auto user = data.userLoaded(userId);
 								return user && user->isContact()
 									   && (user->firstName
@@ -16654,7 +16654,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 						if (!updated) {
 							return false;
 						}
-						const auto userId = UserId(firstId.bare + count - 1);
+						const auto userId = UserId(firstId.bare + changedIndex);
 						const auto foundBy = [&](const QString &word) {
 							const auto found = data.contactsList()->filtered(
 								QStringList{word});
@@ -16669,6 +16669,16 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 							|| !data.contactsList()
 									->filtered(QStringList{u"updatedcx"_q})
 									.empty()) {
+							return false;
+						}
+						const auto movedToEnd
+							= data.contactsList()->all().back()->history();
+						if (!movedToEnd
+							|| movedToEnd->peer->id != peerFromUser(userId)) {
+							std::fprintf(stderr, "Desktop scale check "
+												 "failed: renamed contact "
+												 "did not move to the end "
+												 "of the name list.\n");
 							return false;
 						}
 						const auto query = QStringList{u"upd"_q};
@@ -16700,15 +16710,16 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			return false;
 		}
 		for (auto i = 0; i != count - 1; ++i) {
+			const auto originalIndex = i < changedIndex ? i : i + 1;
 			const auto history = oldPrefixRows[i]->history();
 			if (!history
 				|| history->peer->id
-					   != peerFromUser(UserId(firstId.bare + i))) {
-				std::fprintf(
-					stderr,
-					"Desktop scale check failed: old first-letter query "
-					"returned the wrong row at position %d.\n",
-					i);
+					   != peerFromUser(UserId(firstId.bare + originalIndex))) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: old first-letter "
+							 "query "
+							 "returned the wrong row at position %d.\n",
+							 i);
 				return false;
 			}
 		}
@@ -16725,13 +16736,13 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 				});
 			session.api().requestContacts();
 			const auto removedReply = DesktopScaleContactsReply(
-				firstId, count, count - 1, 1, true, false, false);
+				firstId, count, changedIndex, 1, true, false, false);
 			result.removed = ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 				removeCapture, mtpc_contacts_getContacts, removedReply, [&] {
 					const auto removed = WaitForRegressionCondition(
 						[&] {
 							const auto user = data.userLoaded(
-								UserId(firstId.bare + count - 1));
+								UserId(firstId.bare + changedIndex));
 							return user && !user->isContact()
 								   && data.contactsList()->size() == count - 1;
 						},
