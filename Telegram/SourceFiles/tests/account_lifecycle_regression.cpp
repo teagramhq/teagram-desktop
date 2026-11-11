@@ -15162,9 +15162,9 @@ DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
 	return result;
 }
 
+template <typename Rows>
 [[nodiscard]] std::vector<PeerId>
-DesktopScalePageOrder(const Dialogs::List &list,
-					  const std::vector<PeerId> &pagePeers) {
+DesktopScalePageOrder(const Rows &list, const std::vector<PeerId> &pagePeers) {
 	auto result = std::vector<PeerId>();
 	for (const auto &row : list) {
 		if (const auto history = row->history()) {
