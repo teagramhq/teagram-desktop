@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
+#include "boxes/peers/add_participants_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -14743,6 +14744,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
 constexpr auto kDesktopScaleContactTrials = 3;
+constexpr auto kDesktopScaleContactPollToleranceNanoseconds = 1'000'000;
 
 [[nodiscard]] constexpr std::optional<quint64>
 SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
@@ -14758,6 +14760,17 @@ SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
 
 static_assert(!SumDesktopScaleStalls({std::nullopt,
 									  std::optional<quint64>(0)}));
+
+[[nodiscard]] constexpr bool
+DesktopScaleContactChangeWithinBudget(qint64 one, qint64 hundred) {
+	return (one > 0)
+		   && (double(hundred)
+			   <= 1.5 * double(one)
+					  + double(kDesktopScaleContactPollToleranceNanoseconds));
+}
+
+static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 2'500'000));
+static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 2'500'001));
 
 struct DesktopScaleActionSample {
 	std::optional<qint64> nanoseconds;
@@ -16107,6 +16120,82 @@ RunDesktopScaleContactTrials(Main::Domain &domain, int count, UserId firstId,
 	};
 }
 
+class DesktopScaleSearchDelegate final : public PeerListSearchDelegate {
+  public:
+	void peerListSearchAddRow(not_null<PeerData *> peer) override {
+		_rows.push_back(peer->id);
+	}
+	void peerListSearchAddRow(PeerListRowId) override {}
+	void peerListSearchRefreshRows() override {}
+
+	[[nodiscard]] size_t rowsCount() const { return _rows.size(); }
+
+  private:
+	std::vector<PeerId> _rows;
+};
+
+[[nodiscard]] bool
+RunAddParticipantsSearchIndexRegression(Main::Account *account) {
+	const auto fail = [](const char *reason) {
+		std::fprintf(
+			stderr, "Desktop scale check failed: add-participants search %s.\n",
+			reason);
+		return false;
+	};
+	auto &data = account->session().data();
+	const auto firstId = UserId(9'001'000);
+	auto users = QVector<MTPUser>();
+	users.push_back(
+		DesktopScaleUser(firstId, u"SearchOnce Contact A"_q, true, true));
+	users.push_back(DesktopScaleUser(UserId(firstId.bare + 1),
+									 u"SearchOnce Contact B"_q, true, true));
+	users.push_back(DesktopScaleUser(UserId(firstId.bare + 2),
+									 u"Unrelated Member"_q, false));
+	data.processUsers(MTP_vector<MTPUser>(std::move(users)));
+	const auto contacts = data.contactsNoChatsList();
+	if (contacts->searchIndexReady()) {
+		return fail("index was ready before the query subscribed");
+	}
+
+	const auto chat = data.chat(ChatId(9'001'000));
+	chat->participants.emplace(data.user(UserId(firstId.bare + 2)));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	auto additional
+		= ParticipantsAdditionalData(peer, ParticipantsRole::Members);
+	auto controller = AddSpecialBoxSearchController(peer, &additional);
+	auto delegate = DesktopScaleSearchDelegate();
+	controller.setDelegate(&delegate);
+	controller.searchQuery(u"searchonce"_q);
+	if (!controller.loadMoreRows() || !controller.loadMoreRows()
+		|| delegate.rowsCount() != 0) {
+		return fail("did not wait for the contact index");
+	}
+	if (!WaitForRegressionCondition(
+			[&] {
+				return contacts->searchIndexReady()
+					   && delegate.rowsCount() == 2;
+			},
+			5000, 1)) {
+		return fail("did not append the initial matching contacts");
+	}
+
+	auto lateUser = QVector<MTPUser>();
+	lateUser.push_back(DesktopScaleUser(UserId(firstId.bare + 3),
+										u"SearchOnce Contact C"_q, true, true));
+	data.processUsers(MTP_vector<MTPUser>(std::move(lateUser)));
+	if (contacts->searchIndexReady()) {
+		return fail("did not invalidate after a contact was added");
+	}
+	const auto reindexed = WaitForRegressionCondition(
+		[&] { return contacts->searchIndexReady(); }, 5000, 1);
+	if (!reindexed) {
+		return fail("did not rebuild after a contact was added");
+	} else if (delegate.rowsCount() != 2) {
+		return fail("appended duplicate rows after the query completed");
+	}
+	return true;
+}
+
 [[nodiscard]] MTPDocument DesktopScaleVideoDocument(int64 id) {
 	const auto video = MTP_documentAttributeVideo(
 		MTP_flags(0), MTP_double(1.), MTP_int(160), MTP_int(120), MTPint(),
@@ -16494,18 +16583,22 @@ int RunDesktopScaleCheck() {
 		  });
 	auto contactsOne = DesktopScaleContactsSample();
 	auto contactsHundred = DesktopScaleContactsSample();
+	auto addParticipantsIndexLifecycle = false;
 	const auto contactsCreated
 		= WithDesktopScaleAccount(domain, UserId(2'999'999), [&](auto account) {
 			  contactsOne = RunDesktopScaleContactTrials(
 				  domain, 100, UserId(3'000'000), account.get());
 			  contactsHundred = RunDesktopScaleContactTrials(
 				  domain, 10'000, UserId(4'000'000), account.get());
+			  addParticipantsIndexLifecycle
+				  = RunAddParticipantsSearchIndexRegression(account.get());
 			  return contactsOne.loaded.passed
 					 && contactsOne.changedAndFound.passed
 					 && contactsOne.removed.passed
 					 && contactsHundred.loaded.passed
 					 && contactsHundred.changedAndFound.passed
-					 && contactsHundred.removed.passed;
+					 && contactsHundred.removed.passed
+					 && addParticipantsIndexLifecycle;
 		  });
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
@@ -16516,9 +16609,9 @@ int RunDesktopScaleCheck() {
 	const auto contactChangeScales
 		= contactsOne.changedAndFound.nanoseconds
 		  && contactsHundred.changedAndFound.nanoseconds
-		  && (*contactsOne.changedAndFound.nanoseconds > 0)
-		  && (double(*contactsHundred.changedAndFound.nanoseconds)
-			  <= 1.5 * double(*contactsOne.changedAndFound.nanoseconds));
+		  && DesktopScaleContactChangeWithinBudget(
+			  *contactsOne.changedAndFound.nanoseconds,
+			  *contactsHundred.changedAndFound.nanoseconds);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -16657,8 +16750,11 @@ int RunDesktopScaleCheck() {
 			 searchOne.updateBurst, searchHundred.updateBurst);
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
-	std::printf("Contact change + name lookup budget (<=1.50x): %s\n",
+	std::printf("Contact change + name lookup budget (<=1.50x + 1 ms poll "
+				"tolerance): %s\n",
 				contactChangeScales ? "PASS" : "FAIL");
+	std::printf("Add-participants index ready subscription: %s\n",
+				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
 		if (sample) {
 			std::printf("%llu/100", static_cast<unsigned long long>(*sample));

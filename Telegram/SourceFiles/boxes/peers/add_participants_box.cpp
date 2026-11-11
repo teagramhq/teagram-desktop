@@ -2097,7 +2097,7 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 	if (contacts->searchIndexReady()) {
 		filterAndAppend(contacts);
 	} else {
-		contacts->searchIndexReadyChanges()
+		contacts->searchIndexReadyChanges() | rpl::take(1)
 			| rpl::on_next(
 				[this, query = _query, contacts, filterAndAppend,
 				 searchDelegate] {
