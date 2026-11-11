@@ -50,6 +50,7 @@ constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
+constexpr auto kSchedulerTracePingInterval = 3ms;
 constexpr auto kShortLogThreshold = 40ms;
 constexpr auto kSchedulerSampleInterval = 1ms;
 constexpr auto kMaxSchedulerSampleGap = 5ms;
@@ -378,8 +379,9 @@ UiStallWatchdog::UiStallWatchdog(
 UiStallWatchdog::UiStallWatchdog(
 	std::function<void(const QString &, bool update)> log, Settings settings)
 	: QObject(nullptr), _log(std::move(log)),
-	  _pingInterval(settings.captureShortStalls ? kShortPingInterval
-												: kPingInterval),
+	  _pingInterval(settings.captureSchedulerTrace ? kSchedulerTracePingInterval
+					: settings.captureShortStalls  ? kShortPingInterval
+												   : kPingInterval),
 	  _countThreshold(kCountThreshold),
 	  _logThreshold(settings.captureShortStalls ? kShortLogThreshold
 												: kLogThreshold),

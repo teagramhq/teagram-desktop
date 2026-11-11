@@ -10867,13 +10867,14 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 }
 
 [[nodiscard]] bool ChatSwitchSchedulerProofRegressionPasses() {
-	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
-												 Qt::ISODateWithMs);
-	const auto interval
-		= MainThreadWorkInterval{startedAt, 92'000'000, 25'000'000, 45'000'000};
+	const auto lastAcknowledgedAt = QDateTime::fromString(
+		u"2026-11-09T00:00:00.000Z"_q, Qt::ISODateWithMs);
+	const auto callbackStartedAt = lastAcknowledgedAt.addMSecs(8);
+	const auto interval = MainThreadWorkInterval{callbackStartedAt, 92'000'000,
+												 25'000'000, 45'000'000};
 	const auto runnableEvidence
 		= std::optional<Core::UiStallWatchdog::StallEvidence>{{
-			.startedAt = startedAt.toString(Qt::ISODateWithMs),
+			.startedAt = callbackStartedAt.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 92,
 			.schedulerTrace = QString(92, QChar(u'R')),
 			.schedulerSampleOffsetsNanoseconds
@@ -10883,7 +10884,8 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 	const auto lateStartEvidence
 		= std::vector<Core::UiStallWatchdog::StallEvidence>{
 			{
-				.startedAt = startedAt.addMSecs(6).toString(Qt::ISODateWithMs),
+				.startedAt
+				= callbackStartedAt.addMSecs(6).toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
 				.schedulerTrace = QString(92, QChar(u'R')),
 				.schedulerSampleOffsetsNanoseconds
@@ -10893,10 +10895,26 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 	};
 	const auto lateStartMatch = FindMatchingMainThreadWorkEvidence(
 		interval, lateStartEvidence, kMaxChatSwitchNanoseconds, 10);
+	const auto callbackAfterAcknowledgementEvidence
+		= std::vector<Core::UiStallWatchdog::StallEvidence>{
+			{
+				.startedAt
+				= callbackStartedAt.addMSecs(3).toString(Qt::ISODateWithMs),
+				.durationMilliseconds = 95,
+				.schedulerTrace = QString(95, QChar(u'R')),
+				.schedulerSampleOffsetsNanoseconds
+				= SchedulerSampleOffsetsForDuration(95'000'000),
+				.stack = u"callback after acknowledgement regression"_q,
+			},
+	};
+	const auto callbackAfterAcknowledgementMatch
+		= FindMatchingMainThreadWorkEvidence(
+			interval, callbackAfterAcknowledgementEvidence,
+			kMaxChatSwitchNanoseconds, 10);
 	const auto highProcessWork = MainThreadWorkInterval{
-		startedAt, 92'000'000, 25'000'000, 120'000'000};
-	const auto highOtherThreadWork
-		= MainThreadWorkInterval{startedAt, 92'000'000, 25'000'000, 85'000'000};
+		callbackStartedAt, 92'000'000, 25'000'000, 120'000'000};
+	const auto highOtherThreadWork = MainThreadWorkInterval{
+		callbackStartedAt, 92'000'000, 25'000'000, 85'000'000};
 	return MainThreadWorkIntervalHasSchedulerProof(
 			   interval, runnableEvidence, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
@@ -10913,6 +10931,11 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		   && !MainThreadWorkIntervalHasSchedulerProof(
 			   interval, lateStartMatch, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
+			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
+		   && callbackAfterAcknowledgementMatch
+		   && MainThreadWorkIntervalHasSchedulerProof(
+			   interval, callbackAfterAcknowledgementMatch,
+			   kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
 

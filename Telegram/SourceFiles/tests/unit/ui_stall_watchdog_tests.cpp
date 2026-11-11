@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
@@ -254,6 +255,21 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
 	CHECK(!acknowledgements.empty());
+	auto shortSchedulerCapturePingObserved = false;
+	for (auto i = beforeAcknowledgements.size() + 1;
+		 i < acknowledgements.size(); ++i) {
+		const auto previous = QDateTime::fromString(
+			acknowledgements[i - 1].acknowledgedAt, Qt::ISODateWithMs);
+		const auto current = QDateTime::fromString(
+			acknowledgements[i].acknowledgedAt, Qt::ISODateWithMs);
+		const auto intervalMilliseconds = previous.msecsTo(current);
+		if (previous.isValid() && current.isValid()
+			&& (intervalMilliseconds > 0) && (intervalMilliseconds <= 5)) {
+			shortSchedulerCapturePingObserved = true;
+			break;
+		}
+	}
+	CHECK(shortSchedulerCapturePingObserved);
 	if (!acknowledgements.empty()) {
 		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
 		CHECK(acknowledgements.back().responseNanoseconds >= 0);
