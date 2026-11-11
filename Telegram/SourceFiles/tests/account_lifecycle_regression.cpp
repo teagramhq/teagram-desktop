@@ -16628,7 +16628,6 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			.instance = &account->mtp(),
 			.desktopScaleContactsOnly = true,
 		};
-		auto changedLookupNanoseconds = std::optional<qint64>();
 		{
 			const auto restoreCapture = gsl::finally(
 				[previous
@@ -16674,8 +16673,6 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 						}
 						const auto query = QStringList{u"upd"_q};
 						const auto expected = peerFromUser(userId);
-						auto timer = QElapsedTimer();
-						timer.start();
 						for (auto i = 0;
 							 i != kDesktopScaleContactLookupsPerSample; ++i) {
 							const auto found
@@ -16686,14 +16683,8 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 								return false;
 							}
 						}
-						// The total, not the average: one lookup takes
-						// microseconds, which the report prints as 0.00 ms.
-						changedLookupNanoseconds = timer.nsecsElapsed();
 						return true;
 					});
-			if (changedLookupNanoseconds) {
-				changedAndFound.nanoseconds = *changedLookupNanoseconds;
-			}
 			result.changedAndFound = std::move(changedAndFound);
 		}
 		if (!result.changedAndFound.passed) {
@@ -17524,8 +17515,8 @@ int RunDesktopScaleCheck() {
 			 searchOne.updateBurst, searchHundred.updateBurst);
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
-	std::printf("Contact change + name lookup budget (<=1.50x, 1,000 "
-				"short searches timed together): %s\n",
+	std::printf("Contact change + name lookup budget (<=1.50x, update + "
+				"1,000 short searches): %s\n",
 				contactChangeLookupScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
