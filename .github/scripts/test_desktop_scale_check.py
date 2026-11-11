@@ -317,11 +317,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         for scenario in expected_scenarios:
             with self.subTest(scenario=scenario):
-                budget = (
-                    "report-only (updates.getDifference timing is report-only)"
-                    if scenario.startswith("updates.getDifference")
-                    else "50 ms main-thread step"
-                )
+                budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
                     f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
@@ -1140,11 +1136,49 @@ class DesktopScaleCheckTests(unittest.TestCase):
         )
         update_head = [make_sample(), make_sample()]
         for sample in update_head:
-            sample["scenarios"][update_scenario]["one_stalls"] = 1
+            sample["scenarios"][update_scenario].update(
+                {
+                    "one_ms": 203.65,
+                    "hundred_ms": 2297.16,
+                    "one_stalls": 1,
+                    "hundred_stalls": 1,
+                }
+            )
         update_result = scale_check.evaluate(records, base, update_head)
 
-        self.assertFalse(
+        self.assertTrue(
             any(update_scenario in failure for failure in update_result["failures"])
+        )
+
+    def test_updates_difference_cannot_gain_a_dev_baseline_exception(self):
+        self.require_implementation()
+        scenario = "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)"
+        records = [make_sample() for _ in range(20)]
+        for record in records:
+            record["scenarios"][scenario].update(
+                {
+                    "one_ms": 203.65,
+                    "hundred_ms": 2297.16,
+                    "one_stalls": 1,
+                    "hundred_stalls": 1,
+                }
+            )
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"][scenario].update(
+                {
+                    "one_ms": 203.65,
+                    "hundred_ms": 2297.16,
+                    "one_stalls": 1,
+                    "hundred_stalls": 1,
+                }
+            )
+        result = scale_check.evaluate(records, [make_sample(), make_sample()], head)
+
+        self.assertNotIn(scenario, result["exceptions"])
+        self.assertTrue(any(scenario in failure for failure in result["failures"]))
+        self.assertTrue(
+            any("100x takes" in failure for failure in result["failures"])
         )
 
     def test_new_scenarios_defer_ratio_gate_until_their_baseline_calibrates(self):
@@ -1515,11 +1549,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
         ):
             with self.subTest(scenario=scenario):
-                budget = (
-                    "report-only (updates.getDifference timing is report-only)"
-                    if scenario.startswith("updates.getDifference")
-                    else "50 ms main-thread step"
-                )
+                budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
                     f"12.00 ms → 12.00 ms | 1.20x | {budget} | "

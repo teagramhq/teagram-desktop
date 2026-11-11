@@ -92,6 +92,8 @@ constexpr auto kNoUpdatesTimeout = 60 * 1000;
 // If nothing is received in 1 min when was a sleepmode we ping.
 constexpr auto kNoUpdatesAfterSleepTimeout = 60 * crl::time(1000);
 
+constexpr auto kDifferenceMessageBatchSize = 128;
+
 enum class DataIsLoadedResult {
 	NotLoaded = 0,
 	FromNotLoaded = 1,
@@ -232,26 +234,47 @@ bool HasForceLogoutNotification(const MTPUpdates &updates) {
 
 } // namespace
 
-Updates::Updates(not_null<Main::Session*> session)
-: _session(session)
-, _noUpdatesTimer([=] { sendPing(); })
-, _onlineTimer([=] { updateOnline(); })
-, _ptsWaiter({
-	.startTimer = [this](ChannelData *channel, crl::time ms) {
-		ptsWaiterStartTimerFor(channel, ms);
-	},
-	.applyUpdate = [this](const MTPUpdate &update) {
-		applyUpdateNoPtsCheck(update);
-	},
-	.applyUpdates = [this](const MTPUpdates &updates) {
-		applyUpdatesNoPtsCheck(updates);
-	},
-})
-, _byPtsTimer([=] { getDifferenceByPts(); })
-, _bySeqTimer([=] { getDifference(); })
-, _byMinChannelTimer([=] { getDifference(); })
-, _failDifferenceTimer([=] { getDifferenceAfterFail(); })
-, _idleFinishTimer([=] { checkIdleFinish(); }) {
+namespace details {
+
+enum class DifferenceResponse {
+	Slice,
+	Final,
+};
+
+} // namespace details
+
+struct Updates::PendingDifference final {
+	MTPVector<MTPMessage> messages;
+	MTPVector<MTPUpdate> other;
+	int32 pts = 0;
+	int32 date = 0;
+	int32 qts = 0;
+	int32 seq = 0;
+	int nextMessage = 0;
+	details::DifferenceResponse response = details::DifferenceResponse::Final;
+	bool refetchAfterDifference = false;
+	std::vector<std::pair<MTPUpdates, uint64>> deferredUpdates;
+};
+
+Updates::Updates(not_null<Main::Session *> session)
+	: _session(session), _noUpdatesTimer([=] { sendPing(); }),
+	  _onlineTimer([=] { updateOnline(); }),
+	  _differenceApplyTimer([=] { applyDifferenceBatch(); }),
+	  _ptsWaiter({
+		  .startTimer
+		  = [this](ChannelData *channel,
+				   crl::time ms) { ptsWaiterStartTimerFor(channel, ms); },
+		  .applyUpdate
+		  = [this](const MTPUpdate &update) { applyUpdateNoPtsCheck(update); },
+		  .applyUpdates
+		  = [this](
+				const MTPUpdates &updates) { applyUpdatesNoPtsCheck(updates); },
+	  }),
+	  _byPtsTimer([=] { getDifferenceByPts(); }),
+	  _bySeqTimer([=] { getDifference(); }),
+	  _byMinChannelTimer([=] { getDifference(); }),
+	  _failDifferenceTimer([=] { getDifferenceAfterFail(); }),
+	  _idleFinishTimer([=] { checkIdleFinish(); }) {
 	_ptsWaiter.setRequesting(true);
 
 	session->account().mtpUpdates(
@@ -294,6 +317,8 @@ Updates::Updates(not_null<Main::Session*> session)
 	}, _lifetime);
 }
 
+Updates::~Updates() { _differenceApplyTimer.cancel(); }
+
 void Updates::clearStaleSyncRequests() {
 	_syncRequests.clearInactive([this](mtpRequestId requestId) {
 		return session().mtp().hasCallback(requestId);
@@ -301,6 +326,10 @@ void Updates::clearStaleSyncRequests() {
 }
 
 void Updates::requestState() {
+	if (_pendingDifference) {
+		_pendingDifference->refetchAfterDifference = true;
+		return;
+	}
 	clearStaleSyncRequests();
 	if (_syncRequests.pending()) {
 		return;
@@ -555,7 +584,11 @@ void Updates::stateRequestFail(
 
 void Updates::stateDone(const MTPupdates_State &state) {
 	const auto &d = state.c_updates_state();
-	setState(d.vpts().v, d.vdate().v, d.vqts().v, d.vseq().v);
+	stateDone(d.vpts().v, d.vdate().v, d.vqts().v, d.vseq().v);
+}
+
+void Updates::stateDone(int32 pts, int32 date, int32 qts, int32 seq) {
+	setState(pts, date, qts, seq);
 
 	_lastUpdateTime = crl::now();
 	_noUpdatesTimer.callOnce(kNoUpdatesTimeout);
@@ -590,29 +623,121 @@ void Updates::differenceDone(const MTPupdates_Difference &result) {
 		_ptsWaiter.setRequesting(false);
 	} break;
 	case mtpc_updates_differenceSlice: {
-		auto &d = result.c_updates_differenceSlice();
-		feedDifference(d.vusers(), d.vchats(), d.vnew_messages(), d.vother_updates());
+		const auto &d = result.c_updates_differenceSlice();
+		const auto &s = d.vintermediate_state().c_updates_state();
+		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
+						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
+						s.vseq().v, details::DifferenceResponse::Slice);
+	} break;
+	case mtpc_updates_difference: {
+		const auto &d = result.c_updates_difference();
+		const auto &s = d.vstate().c_updates_state();
+		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
+						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
+						s.vseq().v, details::DifferenceResponse::Final);
+	} break;
+	case mtpc_updates_differenceTooLong: {
+		LOG(("API Error: updates.differenceTooLong is not supported by "
+			 "Telegram Desktop!"));
+	} break;
+	};
+}
 
-		auto &s = d.vintermediate_state().c_updates_state();
-		setState(s.vpts().v, s.vdate().v, s.vqts().v, s.vseq().v);
+void Updates::beginDifference(const MTPVector<MTPUser> &users,
+							  const MTPVector<MTPChat> &chats,
+							  const MTPVector<MTPMessage> &messages,
+							  const MTPVector<MTPUpdate> &other, int32 pts,
+							  int32 date, int32 qts, int32 seq,
+							  details::DifferenceResponse response) {
+	Expects(!_pendingDifference);
+	const auto sorted = [&] {
+		auto result = messages.v;
+		// telegramd allocates owner-local message IDs with pts, so sorting by
+		// ID preserves event order while making batching independent of wire
+		// order.
+		ranges::stable_sort(
+			result, [](const MTPMessage &a, const MTPMessage &b) {
+				return IdFromMessage(a).bare < IdFromMessage(b).bare;
+			});
+		return result;
+	}();
+	_pendingDifference = std::make_unique<PendingDifference>(PendingDifference{
+		.messages = MTP_vector<MTPMessage>(sorted),
+		.other = other,
+		.pts = pts,
+		.date = date,
+		.qts = qts,
+		.seq = seq,
+		.nextMessage = 0,
+		.response = response,
+	});
 
+	Core::App().checkAutoLock();
+	session().data().processUsers(users);
+	session().data().processChats(chats);
+	applyConvertToScheduledOnSend(_pendingDifference->other);
+	feedMessageIds(_pendingDifference->other);
+	if (_pendingDifference->messages.v.size() <= kDifferenceMessageBatchSize) {
+		applyDifferenceBatch();
+	} else {
+		_differenceApplyTimer.callOnce(0);
+	}
+}
+
+void Updates::applyDifferenceBatch() {
+	if (!_pendingDifference) {
+		return;
+	}
+	auto &pending = *_pendingDifference;
+	const auto till
+		= std::min(pending.nextMessage + kDifferenceMessageBatchSize,
+				   int(pending.messages.v.size()));
+	if (till > pending.nextMessage) {
+		const auto batch = pending.messages.v.mid(pending.nextMessage,
+												  till - pending.nextMessage);
+		session().data().processMessagesInBatch(batch, NewMessageType::Unread);
+	}
+	pending.nextMessage = till;
+	if (pending.nextMessage != pending.messages.v.size()) {
+		_differenceApplyTimer.callOnce(0);
+		return;
+	}
+	finishDifference();
+}
+
+void Updates::finishDifference() {
+	Expects(_pendingDifference);
+	auto &pending = *_pendingDifference;
+	feedUpdateVector(pending.other, SkipUpdatePolicy::SkipMessageIds);
+	const auto response = pending.response;
+	const auto pts = pending.pts;
+	const auto date = pending.date;
+	const auto qts = pending.qts;
+	const auto seq = pending.seq;
+	if (response == details::DifferenceResponse::Slice) {
+		setState(pts, date, qts, seq);
 		_ptsWaiter.setRequesting(false);
-
 		MTP_LOG(0, ("getDifference "
 			"{ good - after a slice of difference was received }%1"
 			).arg(_session->mtp().isTestMode() ? " TESTMODE" : ""));
+	} else {
+		stateDone(pts, date, qts, seq);
+	}
+	const auto refetchAfterDifference = pending.refetchAfterDifference;
+	auto deferredUpdates = std::move(pending.deferredUpdates);
+	_pendingDifference.reset();
+	drainDeferredUpdates(std::move(deferredUpdates));
+	if ((response == details::DifferenceResponse::Slice)
+		|| refetchAfterDifference) {
 		getDifference();
-	} break;
-	case mtpc_updates_difference: {
-		auto &d = result.c_updates_difference();
-		feedDifference(d.vusers(), d.vchats(), d.vnew_messages(), d.vother_updates());
+	}
+}
 
-		stateDone(d.vstate());
-	} break;
-	case mtpc_updates_differenceTooLong: {
-		LOG(("API Error: updates.differenceTooLong is not supported by Telegram Desktop!"));
-	} break;
-	};
+void Updates::drainDeferredUpdates(
+	std::vector<std::pair<MTPUpdates, uint64>> updates) {
+	for (const auto &[update, randomId] : updates) {
+		applyUpdates(update, randomId);
+	}
 }
 
 bool Updates::whenGetDiffChanged(
@@ -700,20 +825,6 @@ bool Updates::updateAndApply(int32 pts, int32 ptsCount) {
 	return _ptsWaiter.updateAndApply(nullptr, pts, ptsCount);
 }
 
-void Updates::feedDifference(
-		const MTPVector<MTPUser> &users,
-		const MTPVector<MTPChat> &chats,
-		const MTPVector<MTPMessage> &msgs,
-		const MTPVector<MTPUpdate> &other) {
-	Core::App().checkAutoLock();
-	session().data().processUsers(users);
-	session().data().processChats(chats);
-	applyConvertToScheduledOnSend(other);
-	feedMessageIds(other);
-	session().data().processMessages(msgs, NewMessageType::Unread);
-	feedUpdateVector(other, SkipUpdatePolicy::SkipMessageIds);
-}
-
 void Updates::differenceFail(
 		mtpRequestId requestId,
 		const MTP::Error &error) {
@@ -793,6 +904,10 @@ void Updates::getDifferenceAfterFail() {
 }
 
 void Updates::getDifference() {
+	if (_pendingDifference) {
+		_pendingDifference->refetchAfterDifference = true;
+		return;
+	}
 	_getDifferenceTimeByPts = 0;
 	clearStaleSyncRequests();
 
@@ -1016,8 +1131,9 @@ void Updates::mtpUpdateReceived(const MTPUpdates &updates) {
 	Core::App().checkAutoLock();
 	_lastUpdateTime = crl::now();
 	_noUpdatesTimer.callOnce(kNoUpdatesTimeout);
-	if (!requestingDifference()
-		|| HasForceLogoutNotification(updates)) {
+	if (_pendingDifference) {
+		_pendingDifference->deferredUpdates.emplace_back(updates, 0);
+	} else if (!requestingDifference() || HasForceLogoutNotification(updates)) {
 		applyUpdates(updates);
 	} else {
 		applyGroupCallParticipantUpdates(updates);
@@ -1667,6 +1783,11 @@ void Updates::applyUpdateNoPtsCheck(const MTPUpdate &update) {
 void Updates::applyUpdates(
 		const MTPUpdates &updates,
 		uint64 sentMessageRandomId) {
+	if (_pendingDifference) {
+		_pendingDifference->deferredUpdates.emplace_back(updates,
+														 sentMessageRandomId);
+		return;
+	}
 	const auto randomId = sentMessageRandomId;
 
 	switch (updates.type()) {

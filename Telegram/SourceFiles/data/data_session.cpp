@@ -3481,6 +3481,38 @@ void Session::processMessages(
 	}
 }
 
+void Session::processMessagesInBatch(const QVector<MTPMessage> &data,
+									 NewMessageType type) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
+		const auto indexed = list->indexed();
+		if (!ranges::contains(frozen, indexed)) {
+			indexed->freeze();
+			frozen.push_back(indexed);
+		}
+	};
+	freezeList(&_chatsList);
+	for (const auto &entry : _folders) {
+		freezeList(entry.second->chatsList());
+	}
+	for (const auto &filter : chatsFilters().list()) {
+		freezeList(chatsFilters().chatsList(filter.id()));
+	}
+	for (const auto &message : data) {
+		if (const auto peerId = PeerFromMessage(message)) {
+			if (const auto history = historyLoaded(peerId)) {
+				freezeList(chatsListFor(history));
+			}
+		}
+	}
+	const auto unfreeze = gsl::finally([&] {
+		for (const auto &list : frozen) {
+			list->unfreeze();
+		}
+	});
+	processMessages(data, type);
+}
+
 void Session::processMessages(
 		const MTPVector<MTPMessage> &data,
 		NewMessageType type) {
