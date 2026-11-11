@@ -12,7 +12,13 @@ usage() {
 	echo 'Run this session as the unprivileged qa user.' >&2
 	exit 77
 }
-RUNS_ROOT="${QA_SESSION_RUNS_ROOT:-/home/qa/runs}"
+RUNS_ROOT=/home/qa/runs
+if [[ -n "${QA_SESSION_TEST_RUN_ID:-}" ]]; then
+	RUNS_ROOT="${QA_SESSION_TEST_RUNS_ROOT:-$RUNS_ROOT}"
+elif [[ -n "${QA_SESSION_RUNS_ROOT:-}" ]]; then
+	echo 'QA_SESSION_RUNS_ROOT is only supported by test runs.' >&2
+	exit 64
+fi
 RUNS_ROOT="${RUNS_ROOT%/}"
 REMOTE_HELPER="$(realpath -e -- "$0")" || {
 	echo "Could not resolve QA session helper: $0" >&2

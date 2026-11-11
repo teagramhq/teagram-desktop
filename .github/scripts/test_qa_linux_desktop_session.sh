@@ -10,6 +10,7 @@ stub_bin="${temp_dir}/bin"
 remote_helper=
 remote_build=
 remote_run_dir=
+tmp_production_override_dir=
 tmp_unreadable_dir=
 padding="$(head -c 8192 /dev/zero | /usr/bin/tr '\0' x)"
 system_path="${PATH}"
@@ -41,6 +42,9 @@ cleanup() {
 	if [[ -n "$tmp_unreadable_dir" && -d "$tmp_unreadable_dir" ]]; then
 		chmod 700 "$tmp_unreadable_dir" || true
 		rm -rf -- "$tmp_unreadable_dir"
+	fi
+	if [[ -n "$tmp_production_override_dir" && -d "$tmp_production_override_dir" ]]; then
+		rm -rf -- "$tmp_production_override_dir"
 	fi
 	rm -rf -- "$test_runs_root"
 	rm -rf -- "$temp_dir"
@@ -312,7 +316,7 @@ run_helper() {
 		(
 			cd -- "$remote_run_dir"
 			exec env -i \
-				QA_SESSION_RUNS_ROOT="$runs_root" \
+				QA_SESSION_TEST_RUNS_ROOT="$runs_root" \
 				QA_SESSION_GROUP=seed \
 				QA_SESSION_PADDING="$padding" \
 				QA_SESSION_TEST_RUN_ID="$run_id" \
@@ -354,7 +358,7 @@ run_helper() {
 	if (
 		cd -- "$remote_run_dir"
 		exec env -i \
-			QA_SESSION_RUNS_ROOT="$runs_root" \
+			QA_SESSION_TEST_RUNS_ROOT="$runs_root" \
 			QA_SESSION_GROUP=seed \
 			QA_SESSION_PADDING="$padding" \
 			QA_SESSION_TEST_RUN_ID="$run_id" \
@@ -409,6 +413,41 @@ is_running() {
 	state="$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null || true)"
 	[[ -n "$state" && "$state" != Z && "$state" != X ]]
 }
+
+tmp_production_override_dir="/tmp/qa-session-root-override-${run_id}"
+mkdir -m 700 "$tmp_production_override_dir"
+tmp_production_override_helper="$tmp_production_override_dir/qa-linux-desktop-session.sh"
+tmp_production_override_build="$tmp_production_override_dir/Telegram"
+cp "$session_script" "$tmp_production_override_helper"
+chmod 700 "$tmp_production_override_helper"
+cp "$stub_bin/Telegram" "$tmp_production_override_build"
+chmod 700 "$tmp_production_override_build"
+printf 'test-build-%s\n' "$run_id" > "$tmp_production_override_dir/BUILD"
+production_override_output="${temp_dir}/production-root-override.log"
+if (
+	cd -- "$tmp_production_override_dir"
+	exec env -i \
+		QA_SESSION_RUNS_ROOT=/tmp \
+		QA_SESSION_GROUP=seed \
+		QA_SESSION_PADDING="$padding" \
+		QA_SESSION_TELEGRAM_BIN="$tmp_production_override_build" \
+		QA_TEST_DISPLAY_NUMBER=98 \
+		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-production-override.state" \
+		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/production-override-bus" \
+		PATH="$stub_bin:$system_path" \
+		HOME="$temp_dir" \
+		bash qa-linux-desktop-session.sh serve < /dev/null
+) > "$production_override_output" 2>&1; then
+	cat "$production_override_output" >&2
+	fail 'A production serve must not accept QA_SESSION_RUNS_ROOT=/tmp.'
+fi
+grep -Fq 'QA_SESSION_RUNS_ROOT is only supported by test runs.' "$production_override_output" || {
+	cat "$production_override_output" >&2
+	fail 'A production serve should reject an alternate run root explicitly.'
+}
+[[ -x "$tmp_production_override_helper" && -x "$tmp_production_override_build" && -f "$tmp_production_override_dir/BUILD" ]] || fail 'Rejecting a production run-root override should preserve its uploaded files.'
+rm -rf -- "$tmp_production_override_dir"
+tmp_production_override_dir=
 
 normal_output="${temp_dir}/normal.log"
 run_helper stop "$normal_output" || {
@@ -552,7 +591,7 @@ second_fifo="${temp_dir}/second-session.in"
 tmp_before_concurrent="$(tmp_entries)"
 mkfifo "$first_fifo" "$second_fifo"
 env -i \
-	QA_SESSION_RUNS_ROOT="$test_runs_root" \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
@@ -571,7 +610,7 @@ same_dir_xauthority="$(<"$first_run_dir/Xauthority")"
 if (
 	cd -- "$first_run_dir"
 	exec env -i \
-		QA_SESSION_RUNS_ROOT="$test_runs_root" \
+		QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 		QA_SESSION_GROUP=seed \
 		QA_SESSION_PADDING="$padding" \
 		QA_SESSION_TEST_RUN_ID="$run_id" \
@@ -596,7 +635,7 @@ first_live_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$
 [[ -n "$first_live_telegram_pid" ]] || fail 'The first session should report its Telegram PID before a same-directory attempt.'
 is_running "$first_live_telegram_pid" || fail 'The first Telegram process should remain alive after a same-directory rejection.'
 env -i \
-	QA_SESSION_RUNS_ROOT="$test_runs_root" \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
@@ -670,7 +709,7 @@ hup_build="$remote_build"
 hup_tmp_before="$(tmp_entries)"
 mkfifo "$hup_fifo"
 env -i \
-	QA_SESSION_RUNS_ROOT="$test_runs_root" \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
