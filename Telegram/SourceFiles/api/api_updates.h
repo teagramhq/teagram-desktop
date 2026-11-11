@@ -10,7 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_pts_waiter.h"
 #include "base/timer.h"
 
+#include <memory>
 #include <utility>
+#include <vector>
 
 class ApiWrap;
 class History;
@@ -183,6 +185,7 @@ public:
 #endif
 
   explicit Updates(not_null<Main::Session *> session);
+  ~Updates();
 
   [[nodiscard]] Main::Session &session() const;
   [[nodiscard]] ApiWrap &api() const;
@@ -249,6 +252,9 @@ public:
 	  setState(pts, 0, 0, 0);
 	  _ptsWaiter.setRequesting(false);
   }
+  void receiveUpdatesForRegressionTest(const MTPUpdates &updates) {
+	  mtpUpdateReceived(updates);
+  }
 #endif
   [[nodiscard]] bool handlingChannelDifference() const {
 	  return _handlingChannelDifference;
@@ -271,6 +277,7 @@ private:
 		PeerData *peer = nullptr;
 		rpl::lifetime lifetime;
 	};
+	struct PendingDifference;
 
 	void channelRangeDifferenceSend(
 		not_null<ChannelData*> channel,
@@ -305,11 +312,19 @@ private:
 	void differenceFail(
 		mtpRequestId requestId,
 		const MTP::Error &error);
-	void feedDifference(
+	void beginDifference(
 		const MTPVector<MTPUser> &users,
 		const MTPVector<MTPChat> &chats,
-		const MTPVector<MTPMessage> &msgs,
-		const MTPVector<MTPUpdate> &other);
+		const MTPVector<MTPMessage> &messages,
+		const MTPVector<MTPUpdate> &other,
+		int32 pts,
+		int32 date,
+		int32 qts,
+		int32 seq,
+		bool slice);
+	void applyDifferenceBatch();
+	void finishDifference();
+	void drainDeferredUpdates();
 	void stateDone(const MTPupdates_State &state);
 	void setState(int32 pts, int32 date, int32 qts, int32 seq);
 	void channelDifferenceDone(
@@ -326,6 +341,7 @@ private:
 	void feedUpdateVector(
 		const MTPVector<MTPUpdate> &updates,
 		SkipUpdatePolicy policy = SkipUpdatePolicy::SkipNone);
+	void stateDone(int32 pts, int32 date, int32 qts, int32 seq);
 	// Doesn't call sendHistoryChangeNotifications itself.
 	void feedMessageIds(const MTPVector<MTPUpdate> &updates);
 	// Doesn't call sendHistoryChangeNotifications itself.
@@ -370,6 +386,9 @@ private:
 	int32 _updatesSeq = 0;
 	base::Timer _noUpdatesTimer;
 	base::Timer _onlineTimer;
+	base::Timer _differenceApplyTimer;
+	std::unique_ptr<PendingDifference> _pendingDifference;
+	std::vector<std::pair<MTPUpdates, uint64>> _deferredUpdates;
 
 	PtsWaiter _ptsWaiter;
 

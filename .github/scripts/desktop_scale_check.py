@@ -42,11 +42,7 @@ STATIC_EXCEPTIONS = {
 }
 NO_BASELINE_EXCEPTIONS = {
     "messages.getDialogs page (100 dialogs)",
-}
-REPORT_ONLY_SCENARIOS = {
-    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": (
-        "updates.getDifference timing is report-only"
-    ),
+    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 }
 
 
@@ -271,7 +267,7 @@ def _baseline_exceptions(records):
     exceptions = {}
     additions = {}
     for scenario in SCENARIOS:
-        if scenario in REPORT_ONLY_SCENARIOS or scenario in NO_BASELINE_EXCEPTIONS:
+        if scenario in NO_BASELINE_EXCEPTIONS:
             continue
         rows = [
             record["scenarios"][scenario]
@@ -419,7 +415,6 @@ def evaluate(
         if (
             report_only
             or scenario in exceptions
-            or scenario in REPORT_ONLY_SCENARIOS
             or not head_scenario_runs
         ):
             continue
@@ -574,7 +569,6 @@ def format_summary(result, current_sample=None, retry_note=None):
         exception = (
             row.get("exception")
             or result["exceptions"].get(scenario)
-            or REPORT_ONLY_SCENARIOS.get(scenario)
         )
         budget = (
             f"report-only ({exception})"
