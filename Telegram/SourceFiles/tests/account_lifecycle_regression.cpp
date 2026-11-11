@@ -17287,7 +17287,7 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 		return fail("appended duplicate rows after the query completed");
 	}
 
-	const auto restoredHistory = data.history(firstId);
+	const auto restoredHistory = data.history(peerFromUser(firstId));
 	restoredHistory->clearFolder();
 	data.refreshChatListEntry(restoredHistory);
 	if (contacts->filtered(QStringList{u"sea"_q}).size() != 2) {
