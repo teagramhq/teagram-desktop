@@ -1454,7 +1454,8 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
-											  int timeoutMs = 5000);
+											  int timeoutMs = 5000,
+											  int pollIntervalMs = 10);
 
 [[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
 	not_null<Window::SessionController *> controller) {
@@ -3767,7 +3768,8 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
-											  int timeoutMs) {
+											  int timeoutMs,
+											  int pollIntervalMs) {
 	if (condition()) {
 		return true;
 	}
@@ -3775,7 +3777,7 @@ template <typename Predicate>
 	auto timeout = QTimer();
 	auto poll = QTimer();
 	timeout.setSingleShot(true);
-	poll.setInterval(10);
+	poll.setInterval(pollIntervalMs);
 	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
 		if (condition()) {
 			loop.quit();
@@ -15898,7 +15900,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 									   && (user->firstName
 										   == u"UpdatedContact"_q);
 							},
-							5000);
+							5000, 1);
 						if (!updated) {
 							return false;
 						}
