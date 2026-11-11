@@ -19,6 +19,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QMutex>
 
+#include <vector>
+
 class Image;
 class HistoryItem;
 struct WebPageCollage;
@@ -951,11 +953,15 @@ class Session final : public base::has_weak_ptr {
 			return existenceChanged || (moved.from != moved.to);
 		}
 	};
+	using ChatListEntryMoveBatch = std::vector<ChatListEntryRefresh>;
 	void refreshChatListEntry(Dialogs::Key key);
+	void notifyChatListEntryMoves(ChatListEntryMoveBatch moves);
 	void removeChatListEntry(Dialogs::Key key);
 	void refreshChatListUnreadOnTop();
 	[[nodiscard]] auto chatListEntryRefreshes() const
 		-> rpl::producer<ChatListEntryRefresh>;
+	[[nodiscard]] auto chatListEntryMoveBatches() const
+		-> rpl::producer<ChatListEntryMoveBatch>;
 
 	struct DialogsRowReplacement {
 		not_null<Dialogs::Row*> old;
@@ -1283,6 +1289,7 @@ private:
 	rpl::event_stream<MegagroupParticipant> _megagroupParticipantAdded;
 	rpl::event_stream<DialogsRowReplacement> _dialogsRowReplacements;
 	rpl::event_stream<ChatListEntryRefresh> _chatListEntryRefreshes;
+	rpl::event_stream<ChatListEntryMoveBatch> _chatListEntryMoveBatches;
 	rpl::event_stream<> _unreadBadgeChanges;
 	rpl::event_stream<RepliesReadTillUpdate> _repliesReadTillUpdates;
 	rpl::event_stream<SublistReadTillUpdate> _sublistReadTillUpdates;

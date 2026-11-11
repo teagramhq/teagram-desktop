@@ -37,9 +37,11 @@ ADDITIONAL_SCENARIOS = {
 }
 SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
 STATIC_EXCEPTIONS = {
-    "messages.getDialogs page (100 dialogs)": "MAIN-3656 (chat list page)",
     "contacts.getContacts full response": "MAIN-3657 (contacts)",
     "contact change + name lookup": "MAIN-3657 (contacts)",
+}
+NO_BASELINE_EXCEPTIONS = {
+    "messages.getDialogs page (100 dialogs)",
 }
 REPORT_ONLY_SCENARIOS = {
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": (
@@ -137,7 +139,7 @@ def parse_report(report):
     }
 
     checks = re.search(
-        r"^Scenario checks: dialogs=(\d)/(\d) contacts=(\d)/(\d) "
+        r"^Scenario checks: dialogs=(\d)/(\d) state=(\d) contacts=(\d)/(\d) "
         r"contact change=(\d)/(\d) cache=(\d)/(\d)\.$",
         report,
         re.MULTILINE,
@@ -269,7 +271,7 @@ def _baseline_exceptions(records):
     exceptions = {}
     additions = {}
     for scenario in SCENARIOS:
-        if scenario in REPORT_ONLY_SCENARIOS:
+        if scenario in REPORT_ONLY_SCENARIOS or scenario in NO_BASELINE_EXCEPTIONS:
             continue
         rows = [
             record["scenarios"][scenario]

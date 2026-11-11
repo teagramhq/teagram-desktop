@@ -32,6 +32,9 @@ not_null<Row*> List::addToEnd(Key key) {
 		key,
 		std::make_unique<Row>(key, _rows.size(), height())
 	).first->second.get();
+	if (_freezeDepth) {
+		_addedWhileFrozen.emplace(result);
+	}
 	result->recountHeight(_narrowRatio, _filterId);
 	_rows.emplace_back(result);
 	if (_sortMode == SortMode::Date) {
@@ -91,6 +94,9 @@ void List::adjustByDate(not_null<Row*> row) {
 				|| row->entry()->isPinnedDialog(_filterId));
 		if (!canAdjustWhileFrozen) {
 			_pendingAdjust.emplace(row);
+			if (!_addedWhileFrozen.contains(row)) {
+				_pendingMoveFrom.try_emplace(row.get(), row->top());
+			}
 			return;
 		}
 	}
@@ -115,24 +121,77 @@ void List::adjustByDate(not_null<Row*> row) {
 }
 
 void List::freeze() {
+	++_freezeDepth;
 	_frozen = true;
 }
 
-void List::unfreeze() {
+std::vector<List::MovedRow> List::unfreeze() {
+	if (!_freezeDepth) {
+		return {};
+	}
+	if (--_freezeDepth) {
+		return {};
+	}
 	_frozen = false;
 	auto pending = base::take(_pendingAdjust);
-	if (pending.empty()) {
-		return;
-	} else if (pending.size() == 1) {
+	if (pending.size() == 1) {
 		adjustByDate(*pending.begin());
-		return;
+	} else if (pending.size() > 1 && !sortedByDate()) {
+		auto pendingByIndex
+			= std::vector<not_null<Row *>>(pending.begin(), pending.end());
+		ranges::sort(pendingByIndex,
+					 [](Row *a, Row *b) { return a->index() < b->index(); });
+		auto adjusted = pendingByIndex;
+		ranges::stable_sort(adjusted, [&](Row *a, Row *b) {
+			return a->sortKey(_filterId) > b->sortKey(_filterId);
+		});
+		auto rows = std::vector<not_null<Row *>>();
+		rows.reserve(_rows.size());
+		auto nextAdjusted = adjusted.begin();
+		auto nextPending = pendingByIndex.begin();
+		for (const auto &row : _rows) {
+			if ((nextPending != pendingByIndex.end())
+				&& (row == *nextPending)) {
+				++nextPending;
+				continue;
+			}
+			const auto rowKey = row->sortKey(_filterId);
+			while ((nextAdjusted != adjusted.end())
+				   && (((*nextAdjusted)->sortKey(_filterId) > rowKey)
+					   || (((*nextAdjusted)->sortKey(_filterId) == rowKey)
+						   && ((*nextAdjusted)->index() < row->index())))) {
+				rows.push_back(*nextAdjusted++);
+			}
+			rows.push_back(row);
+		}
+		rows.insert(rows.end(), nextAdjusted, adjusted.end());
+		_rows = std::move(rows);
+		auto top = 0;
+		for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
+			const auto row = _rows[i];
+			row->_index = i;
+			row->_top = top;
+			top += row->height();
+		}
 	}
-	for (const auto &row : pending) {
-		adjustByDate(row);
+	auto moved = std::vector<MovedRow>();
+	for (const auto &[row, from] : _pendingMoveFrom) {
+		const auto to = row->top();
+		if (from != to) {
+			moved.push_back({
+				not_null<Row *>(row),
+				{.from = from, .to = to, .height = row->height()},
+			});
+		}
 	}
-	if (!sortedByDate()) {
-		sortByDate();
-	}
+	ranges::sort(moved, [](const MovedRow &a, const MovedRow &b) {
+		return (a.second.from != b.second.from)
+				   ? (a.second.from < b.second.from)
+				   : (a.first->index() < b.first->index());
+	});
+	_pendingMoveFrom.clear();
+	_addedWhileFrozen.clear();
+	return moved;
 }
 
 bool List::sortedByDate() const {
@@ -144,21 +203,6 @@ bool List::sortedByDate() const {
 		}
 	}
 	return true;
-}
-
-void List::sortByDate() {
-	Expects(_sortMode == SortMode::Date);
-
-	ranges::stable_sort(_rows, [&](Row *a, Row *b) {
-		return a->sortKey(_filterId) > b->sortKey(_filterId);
-	});
-	auto top = 0;
-	for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
-		const auto row = _rows[i];
-		row->_index = i;
-		row->_top = top;
-		top += row->height();
-	}
 }
 
 bool List::updateHeight(Key key, float64 narrowRatio) {
@@ -229,6 +273,8 @@ bool List::remove(Key key, Row *replacedBy) {
 
 	const auto row = i->second.get();
 	_pendingAdjust.remove(row);
+	_addedWhileFrozen.remove(row);
+	_pendingMoveFrom.erase(row);
 	row->entry()->owner().dialogsRowReplaced({ row, replacedBy });
 
 	auto top = row->top();

@@ -3123,6 +3123,61 @@ void Session::applyDialogs(
 		const QVector<MTPMessage> &messages,
 		const QVector<MTPDialog> &dialogs,
 		std::optional<int> count) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
+		const auto indexed = list->indexed();
+		if (!ranges::contains(frozen, indexed)) {
+			indexed->freeze();
+			frozen.push_back(indexed);
+		}
+	};
+	if (dialogs.size() > 1) {
+		for (const auto &dialog : dialogs) {
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto folderId = data.vfolder_id();
+						folderId && folderId->v) {
+						freezeList(folder(folderId->v)->chatsList());
+					}
+				},
+				[&](const MTPDdialogFolder &data) {
+					processFolder(data.vfolder());
+				},
+				[](const MTPDdialogCommunity &) {});
+		}
+		freezeList(&_chatsList);
+		for (const auto &entry : _folders) {
+			freezeList(entry.second->chatsList());
+		}
+		if (requestFolder) {
+			freezeList(requestFolder->chatsList());
+		}
+		for (const auto &filter : chatsFilters().list()) {
+			freezeList(chatsFilters().chatsList(filter.id()));
+		}
+		for (const auto &dialog : dialogs) {
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto peerId = peerFromMTP(data.vpeer())) {
+						if (const auto history = historyLoaded(peerId)) {
+							freezeList(chatsListFor(history));
+						}
+					}
+				},
+				[&](const MTPDdialogCommunity &data) {
+					const auto channelId = ChannelId(data.vcommunity_id().v);
+					if (const auto channel = channelLoaded(channelId)) {
+						freezeList(chatsListFor(history(channel)));
+					}
+				},
+				[](const MTPDdialogFolder &) {});
+		}
+	}
+	const auto unfreeze = gsl::finally([&] {
+		for (const auto &list : frozen) {
+			list->unfreeze();
+		}
+	});
 	processMessages(messages, NewMessageType::Last);
 	for (const auto &dialog : dialogs) {
 		dialog.match([&](const auto &data) {
@@ -5866,7 +5921,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		event.moved = entry->adjustByPosInChatList(0, mainList);
 	}
 	if (event) {
-		_chatListEntryRefreshes.fire(std::move(event));
+		if (event.moved.from != event.moved.to) {
+			notifyChatListEntryMoves({std::move(event)});
+		} else {
+			_chatListEntryRefreshes.fire(std::move(event));
+		}
 	}
 	if (!history) {
 		return;
@@ -5890,7 +5949,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 			event.existenceChanged = true;
 		}
 		if (event) {
-			_chatListEntryRefreshes.fire(std::move(event));
+			if (event.moved.from != event.moved.to) {
+				notifyChatListEntryMoves({std::move(event)});
+			} else {
+				_chatListEntryRefreshes.fire(std::move(event));
+			}
 		}
 	}
 
@@ -5926,6 +5989,17 @@ void Session::refreshChatListUnreadOnTop() {
 	}
 	for (const auto &entry : entries) {
 		entry->updateChatListSortPosition();
+	}
+}
+
+void Session::notifyChatListEntryMoves(ChatListEntryMoveBatch moves) {
+	if (moves.empty()) {
+		return;
+	}
+	auto batch = moves;
+	_chatListEntryMoveBatches.fire(std::move(batch));
+	for (auto &event : moves) {
+		_chatListEntryRefreshes.fire(std::move(event));
 	}
 }
 
@@ -5970,6 +6044,11 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 auto Session::chatListEntryRefreshes() const
 -> rpl::producer<ChatListEntryRefresh> {
 	return _chatListEntryRefreshes.events();
+}
+
+auto Session::chatListEntryMoveBatches() const
+	-> rpl::producer<ChatListEntryMoveBatch> {
+	return _chatListEntryMoveBatches.events();
 }
 
 void Session::dialogsRowReplaced(DialogsRowReplacement replacement) {

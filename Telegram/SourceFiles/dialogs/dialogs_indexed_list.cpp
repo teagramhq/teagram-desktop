@@ -30,6 +30,7 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		result.letters.emplace(ch, j->second.addToEnd(key));
 	}
@@ -46,6 +47,7 @@ Row *IndexedList::addByName(Key key) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		j->second.addByName(key);
 	}
@@ -150,6 +152,7 @@ void IndexedList::adjustByName(
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
 				j = _index.emplace(ch, _sortMode, _filterId).first;
+				freezeNewIndexList(j->second);
 			}
 			j->second.addByName(key);
 		}
@@ -186,6 +189,7 @@ void IndexedList::adjustNames(
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
 			j = _index.emplace(ch, _sortMode, _filterId).first;
+			freezeNewIndexList(j->second);
 		}
 		auto row = j->second.addToEnd(key);
 		if (_sortMode == SortMode::Date) {
@@ -194,7 +198,14 @@ void IndexedList::adjustNames(
 	}
 }
 
+void IndexedList::freezeNewIndexList(List &list) {
+	for (auto i = 0; i != _freezeDepth; ++i) {
+		list.freeze();
+	}
+}
+
 void IndexedList::freeze() {
+	++_freezeDepth;
 	_list.freeze();
 	for (auto &[ch, list] : _index) {
 		list.freeze();
@@ -202,9 +213,30 @@ void IndexedList::freeze() {
 }
 
 void IndexedList::unfreeze() {
-	_list.unfreeze();
+	if (!_freezeDepth) {
+		return;
+	}
+	--_freezeDepth;
+	const auto moved = _list.unfreeze();
 	for (auto &[ch, list] : _index) {
 		list.unfreeze();
+	}
+	if (_freezeDepth) {
+		return;
+	}
+	_unfrozen.fire({});
+	auto moveEvents = std::vector<Data::Session::ChatListEntryRefresh>();
+	moveEvents.reserve(moved.size());
+	for (const auto &[row, position] : moved) {
+		moveEvents.push_back({
+			.key = row->key(),
+			.moved = position,
+			.filterId = _filterId,
+		});
+	}
+	if (!moveEvents.empty()) {
+		moveEvents.front().key.entry()->owner().notifyChatListEntryMoves(
+			std::move(moveEvents));
 	}
 }
 
@@ -219,6 +251,7 @@ void IndexedList::remove(Key key, Row *replacedBy) {
 }
 
 void IndexedList::clear() {
+	_freezeDepth = 0;
 	_list.clear();
 	_index.clear();
 }

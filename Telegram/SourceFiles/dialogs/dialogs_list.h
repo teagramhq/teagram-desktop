@@ -24,8 +24,11 @@ public:
 	~List() = default;
 
 	void clear() {
+		_freezeDepth = 0;
 		_frozen = false;
 		_pendingAdjust.clear();
+		_addedWhileFrozen.clear();
+		_pendingMoveFrom.clear();
 		_rows.clear();
 		_rowByKey.clear();
 	}
@@ -55,7 +58,8 @@ public:
 	bool moveToTop(Key key);
 	void adjustByDate(not_null<Row*> row);
 	void freeze();
-	void unfreeze();
+	using MovedRow = std::pair<not_null<Row *>, PositionChange>;
+	std::vector<MovedRow> unfreeze();
 	bool updateHeight(Key key, float64 narrowRatio);
 	bool updateHeights(float64 narrowRatio);
 	bool remove(Key key, Row *replacedBy = nullptr);
@@ -79,7 +83,6 @@ public:
 private:
 	void adjustByName(not_null<Row*> row);
 	[[nodiscard]] bool sortedByDate() const;
-	void sortByDate();
 	void rotate(
 		std::vector<not_null<Row*>>::iterator first,
 		std::vector<not_null<Row*>>::iterator middle,
@@ -88,11 +91,13 @@ private:
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
 	float64 _narrowRatio = 0.;
+	int _freezeDepth = 0;
 	bool _frozen = false;
 	std::vector<not_null<Row*>> _rows;
 	std::map<Key, std::unique_ptr<Row>> _rowByKey;
 	base::flat_set<not_null<Row*>> _pendingAdjust;
-
+	base::flat_set<not_null<Row *>> _addedWhileFrozen;
+	std::map<Row *, int> _pendingMoveFrom;
 };
 
 } // namespace Dialogs
