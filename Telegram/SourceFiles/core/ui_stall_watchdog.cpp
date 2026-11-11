@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #if defined(Q_OS_MAC)
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <pthread/qos.h>
 #endif // Q_OS_MAC
 #if defined(Q_OS_MAC) && defined(__arm64__)
 #include <ptrauth.h>
@@ -638,6 +639,21 @@ void UiStallWatchdog::run() {
 					[this, current, postedAt, &schedulerTrace,
 					 &schedulerSampleOffsetsNanoseconds,
 					 &schedulerTraceMutex](std::stop_token stop) {
+#if defined(Q_OS_MAC)
+						const auto qosResult = pthread_set_qos_class_self_np(
+							QOS_CLASS_USER_INTERACTIVE, 0);
+						if (qosResult != 0) {
+							enqueueReport([this, qosResult] {
+								if (_log) {
+									_log(
+										u"UI stall watchdog scheduler sampler could not set QoS: %1"_q
+											.arg(qosResult),
+										false);
+								}
+							});
+							return;
+						}
+#endif // Q_OS_MAC
 						auto nextSampleAt = postedAt + kSchedulerSampleInterval;
 #if defined(Q_OS_MAC)
 						auto sampleIntervalMachTicks = std::uint64_t(0);
@@ -714,10 +730,11 @@ void UiStallWatchdog::run() {
 										.count());
 							}
 							++sampleCount;
-							nextSampleAt += kSchedulerSampleInterval;
+							nextSampleAt = sampledAt + kSchedulerSampleInterval;
 #if defined(Q_OS_MAC)
 							if (sampleIntervalMachTicks) {
-								nextSampleAtMach += sampleIntervalMachTicks;
+								nextSampleAtMach = mach_absolute_time()
+												   + sampleIntervalMachTicks;
 							}
 #endif // Q_OS_MAC
 						}

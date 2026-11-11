@@ -11123,6 +11123,9 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 maxChatSwitchMainThreadWorkNanoseconds = -1;
 	int maxChatSwitchIndex = -1;
 	qint64 maxChatSwitchPeerId = -1;
+	qint64 initialHistorySelectionNanoseconds = -1;
+	qint64 initialHistorySelectionMainThreadWorkNanoseconds = -1;
+	qint64 initialHistorySelectionPeerId = -1;
 	qint64 attachMenuFirstHoverNanoseconds = -1;
 	qint64 attachMenuHoverNanoseconds = -1;
 	qint64 attachMenuInvalidationHoverNanoseconds = -1;
@@ -11144,6 +11147,10 @@ struct CacheChatSwitchRegressionResult final {
 	bool minimizedRestore = false;
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
+	bool historyChatModeInitiallyWide = false;
+	bool historyChatModeChangedWhileHidden = false;
+	int historyChatModeResizeCountBefore = -1;
+	int historyChatModeResizeCountAfter = -1;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
@@ -11245,7 +11252,23 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		return wallDurationNanoseconds;
 	};
-	showPeerHistoryMeasured(emptyFirstHistory);
+	result.initialHistorySelectionPeerId
+		= qint64(emptyFirstHistory->peer->id.value);
+	const auto initialSelectionMainThreadBefore
+		= MainThreadCpuTimeNanoseconds();
+	auto initialSelectionTimer = QElapsedTimer();
+	initialSelectionTimer.start();
+	controller->showPeerHistory(emptyFirstHistory);
+	result.initialHistorySelectionNanoseconds
+		= initialSelectionTimer.nsecsElapsed();
+	const auto initialSelectionMainThreadAfter = MainThreadCpuTimeNanoseconds();
+	if (initialSelectionMainThreadBefore && initialSelectionMainThreadAfter
+		&& (*initialSelectionMainThreadAfter
+			>= *initialSelectionMainThreadBefore)) {
+		result.initialHistorySelectionMainThreadWorkNanoseconds
+			= *initialSelectionMainThreadAfter
+			  - *initialSelectionMainThreadBefore;
+	}
 	QCoreApplication::processEvents();
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
@@ -11625,7 +11648,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	const auto originalAdaptiveForWide
 		= Core::App().settings().adaptiveForWide();
-	const auto originalWindowSize = mainWindow.size();
 	auto originalChatLayout = Window::Adaptive::ChatLayout::Normal;
 	auto originalChatLayoutCaptured = false;
 	auto chatLayoutLifetime = rpl::lifetime();
@@ -11639,31 +11661,29 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	if (originalChatLayoutCaptured) {
 		Core::App().settings().setAdaptiveForWide(true);
-		mainWindow.resize(originalWindowSize.width() + 2'000,
-						  originalWindowSize.height());
-		QCoreApplication::processEvents();
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
 		QCoreApplication::processEvents();
-		const auto originalHistoryChatWide
+		result.historyChatModeInitiallyWide
 			= controller->adaptive().isChatWide();
-		const auto originalHistoryFullResizeCount
+		result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
 		QCoreApplication::processEvents();
 		Core::App().settings().setAdaptiveForWide(false);
 		QCoreApplication::processEvents();
-		const auto chatWideModeChanged
-			= originalHistoryChatWide && !controller->adaptive().isChatWide();
+		result.historyChatModeChangedWhileHidden
+			= result.historyChatModeInitiallyWide
+			  && !controller->adaptive().isChatWide();
 		controller->showPeerHistory(firstHistory);
 		QCoreApplication::processEvents();
+		result.historyChatModeResizeCountAfter
+			= firstHistory->layoutFullResizeCountForRegressionTest();
 		result.historyChatModeInvalidationRebuilt
-			= chatWideModeChanged
-			  && (firstHistory->layoutFullResizeCountForRegressionTest()
-				  > originalHistoryFullResizeCount);
+			= result.historyChatModeChangedWhileHidden
+			  && (result.historyChatModeResizeCountAfter
+				  > result.historyChatModeResizeCountBefore);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
-		mainWindow.resize(originalWindowSize);
-		QCoreApplication::processEvents();
 		controller->adaptive().setChatLayout(originalChatLayout);
 		QCoreApplication::processEvents();
 	}
@@ -12520,6 +12540,29 @@ void RunAuthenticatedCacheSymlinkCases(
 				});
 				chatSwitch
 					= RunCacheChatSwitchLatencyRegression(guarded, window);
+				std::fprintf(
+					stderr,
+					"Initial history selection: peer_id=%lld "
+					"wall_ns=%lld "
+					"main_thread_work_ns=%lld.\n",
+					static_cast<long long>(
+						chatSwitch.initialHistorySelectionPeerId),
+					static_cast<long long>(
+						chatSwitch.initialHistorySelectionNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.initialHistorySelectionMainThreadWorkNanoseconds));
+				std::fprintf(stderr,
+							 "History chat mode invalidation: "
+							 "wide_before=%d "
+							 "changed_while_hidden=%d "
+							 "full_resize_before=%d "
+							 "full_resize_after=%d rebuilt=%d.\n",
+							 chatSwitch.historyChatModeInitiallyWide,
+							 chatSwitch.historyChatModeChangedWhileHidden,
+							 chatSwitch.historyChatModeResizeCountBefore,
+							 chatSwitch.historyChatModeResizeCountAfter,
+							 chatSwitch.historyChatModeInvalidationRebuilt);
 				std::fprintf(
 					stderr,
 					"Cache chat switch latency regression: "

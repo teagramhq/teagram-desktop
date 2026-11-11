@@ -30,6 +30,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #if defined(Q_OS_MAC)
 #include <mach/mach.h>
+#include <pthread.h>
+#include <pthread/qos.h>
 #endif // Q_OS_MAC
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 #include <sys/resource.h>
@@ -37,6 +39,31 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #if defined(Q_OS_LINUX)
 #include <time.h>
 #endif // Q_OS_LINUX
+
+#if defined(Q_OS_MAC)
+class UiStallWatchdogTestMainThreadPriority final {
+  public:
+	UiStallWatchdogTestMainThreadPriority() {
+		_changed
+			= (pthread_get_qos_class_np(pthread_self(), &_qosClass,
+										&_relativePriority)
+			   == 0)
+			  && (pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)
+				  == 0);
+	}
+
+	~UiStallWatchdogTestMainThreadPriority() {
+		if (_changed) {
+			(void)pthread_set_qos_class_self_np(_qosClass, _relativePriority);
+		}
+	}
+
+  private:
+	qos_class_t _qosClass = QOS_CLASS_DEFAULT;
+	int _relativePriority = 0;
+	bool _changed = false;
+};
+#endif // Q_OS_MAC
 
 [[nodiscard]] std::optional<qint64>
 UiStallWatchdogProcessCpuTimeNanosecondsForTest() {
@@ -96,6 +123,9 @@ UiStallWatchdogThreadCpuTimeNanosecondsForTest() {
 __attribute__((noinline)) void
 UiStallWatchdogTestBlock(std::chrono::milliseconds duration,
 						 std::atomic_bool *waitUntil = nullptr) {
+#if defined(Q_OS_MAC)
+	const auto mainThreadPriority = UiStallWatchdogTestMainThreadPriority();
+#endif // Q_OS_MAC
 	auto released = std::atomic_bool(false);
 	auto releaser = std::thread([&] {
 		std::this_thread::sleep_for(duration);
@@ -440,7 +470,17 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 #if defined(Q_OS_MAC)
 		CHECK(evidence.back().schedulerTrace.contains(u'R'));
 		if (!schedulerTraceProvesRunnable) {
-			const auto trace = evidence.back().schedulerTrace.toLatin1();
+			const auto &offsets
+				= evidence.back().schedulerSampleOffsetsNanoseconds;
+			auto maxGapNanoseconds = qint64(0);
+			auto gapsOverFiveMilliseconds = 0;
+			for (auto i = std::size_t(1); i != offsets.size(); ++i) {
+				const auto gap = offsets[i] - offsets[i - 1];
+				maxGapNanoseconds = std::max(maxGapNanoseconds, gap);
+				if (gap > 5'000'000) {
+					++gapsOverFiveMilliseconds;
+				}
+			}
 			const auto blockStartNanoseconds
 				= std::chrono::duration_cast<std::chrono::nanoseconds>(
 					  blockFilter.BlockStartedAt().time_since_epoch())
@@ -453,21 +493,22 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			std::fprintf(
 				stderr,
 				"Scheduler runnable interval failure: posted_at_ns=%lld "
-				"block_start_ns=%lld block_duration_ns=%lld trace=%s offsets=[",
+				"block_start_ns=%lld block_duration_ns=%lld "
+				"trace_samples=%lld runnable_samples=%lld "
+				"max_gap_ns=%lld gaps_over_5ms=%d first_offset_ns=%lld "
+				"last_offset_ns=%lld other_thread_cpu_ns=%lld.\n",
 				static_cast<long long>(
 					evidence.back().postedAtSteadyNanoseconds),
 				static_cast<long long>(blockStartNanoseconds),
 				static_cast<long long>(blockDurationNanoseconds),
-				trace.constData());
-			for (auto i = std::size_t(0);
-				 i != evidence.back().schedulerSampleOffsetsNanoseconds.size();
-				 ++i) {
-				std::fprintf(
-					stderr, "%s%lld", i ? "," : "",
-					static_cast<long long>(
-						evidence.back().schedulerSampleOffsetsNanoseconds[i]));
-			}
-			std::fprintf(stderr, "]\n");
+				static_cast<long long>(evidence.back().schedulerTrace.size()),
+				static_cast<long long>(
+					evidence.back().schedulerTrace.count(u'R')),
+				static_cast<long long>(maxGapNanoseconds),
+				gapsOverFiveMilliseconds,
+				static_cast<long long>(offsets.empty() ? -1 : offsets.front()),
+				static_cast<long long>(offsets.empty() ? -1 : offsets.back()),
+				static_cast<long long>(windowOtherThreadCpuNanoseconds));
 		}
 		CHECK(schedulerTraceProvesRunnable);
 #else
