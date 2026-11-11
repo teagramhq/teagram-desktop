@@ -1242,13 +1242,15 @@ class DesktopScaleCheckTests(unittest.TestCase):
         base = [make_sample(), make_sample()]
         head = [make_sample(), make_sample()]
         baseline_exceptions = (
-            "messages.getDialogs page (100 dialogs)",
             "contacts.getContacts full response",
             "contact change + name lookup",
         )
         for record in records:
             for name in baseline_exceptions:
                 record["scenarios"][name]["one_stalls"] = 1
+            record["scenarios"]["messages.getDialogs page (100 dialogs)"][
+                "one_stalls"
+            ] = 1
         for sample in head:
             for name in baseline_exceptions:
                 sample["scenarios"][name].update(
@@ -1257,7 +1259,15 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         result = scale_check.evaluate(records, base, head)
 
-        self.assertIn("MAIN-3656", result["exceptions"]["messages.getDialogs page (100 dialogs)"])
+        dialog_scenario = "messages.getDialogs page (100 dialogs)"
+        self.assertEqual(
+            result["exceptions"][dialog_scenario],
+            "dev runs exceed the 50 ms main-thread budget",
+        )
+        self.assertEqual(
+            result["additional_exceptions"][dialog_scenario],
+            "dev runs exceed the 50 ms main-thread budget",
+        )
         self.assertIn("MAIN-3657", result["exceptions"]["contacts.getContacts full response"])
         self.assertIn("MAIN-3657", result["exceptions"]["contact change + name lookup"])
         self.assertFalse(result["failures"])

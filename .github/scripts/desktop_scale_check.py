@@ -37,7 +37,6 @@ ADDITIONAL_SCENARIOS = {
 }
 SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
 STATIC_EXCEPTIONS = {
-    "messages.getDialogs page (100 dialogs)": "MAIN-3656 (chat list page)",
     "contacts.getContacts full response": "MAIN-3657 (contacts)",
     "contact change + name lookup": "MAIN-3657 (contacts)",
 }
