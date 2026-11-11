@@ -234,6 +234,15 @@ bool HasForceLogoutNotification(const MTPUpdates &updates) {
 
 } // namespace
 
+namespace details {
+
+enum class DifferenceResponse {
+	Slice,
+	Final,
+};
+
+} // namespace details
+
 struct Updates::PendingDifference final {
 	MTPVector<MTPMessage> messages;
 	MTPVector<MTPUpdate> other;
@@ -242,7 +251,7 @@ struct Updates::PendingDifference final {
 	int32 qts = 0;
 	int32 seq = 0;
 	int nextMessage = 0;
-	Updates::DifferenceResponse response = Updates::DifferenceResponse::Final;
+	details::DifferenceResponse response = details::DifferenceResponse::Final;
 	bool refetchAfterDifference = false;
 	std::vector<std::pair<MTPUpdates, uint64>> deferredUpdates;
 };
@@ -618,14 +627,14 @@ void Updates::differenceDone(const MTPupdates_Difference &result) {
 		const auto &s = d.vintermediate_state().c_updates_state();
 		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
 						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
-						s.vseq().v, DifferenceResponse::Slice);
+						s.vseq().v, details::DifferenceResponse::Slice);
 	} break;
 	case mtpc_updates_difference: {
 		const auto &d = result.c_updates_difference();
 		const auto &s = d.vstate().c_updates_state();
 		beginDifference(d.vusers(), d.vchats(), d.vnew_messages(),
 						d.vother_updates(), s.vpts().v, s.vdate().v, s.vqts().v,
-						s.vseq().v, DifferenceResponse::Final);
+						s.vseq().v, details::DifferenceResponse::Final);
 	} break;
 	case mtpc_updates_differenceTooLong: {
 		LOG(("API Error: updates.differenceTooLong is not supported by "
@@ -639,7 +648,7 @@ void Updates::beginDifference(const MTPVector<MTPUser> &users,
 							  const MTPVector<MTPMessage> &messages,
 							  const MTPVector<MTPUpdate> &other, int32 pts,
 							  int32 date, int32 qts, int32 seq,
-							  DifferenceResponse response) {
+							  details::DifferenceResponse response) {
 	Expects(!_pendingDifference);
 	const auto sorted = [&] {
 		auto result = messages.v;
@@ -705,7 +714,7 @@ void Updates::finishDifference() {
 	const auto date = pending.date;
 	const auto qts = pending.qts;
 	const auto seq = pending.seq;
-	if (response == DifferenceResponse::Slice) {
+	if (response == details::DifferenceResponse::Slice) {
 		setState(pts, date, qts, seq);
 		_ptsWaiter.setRequesting(false);
 		MTP_LOG(0, ("getDifference "
@@ -718,7 +727,8 @@ void Updates::finishDifference() {
 	auto deferredUpdates = std::move(pending.deferredUpdates);
 	_pendingDifference.reset();
 	drainDeferredUpdates(std::move(deferredUpdates));
-	if ((response == DifferenceResponse::Slice) || refetchAfterDifference) {
+	if ((response == details::DifferenceResponse::Slice)
+		|| refetchAfterDifference) {
 		getDifference();
 	}
 }

@@ -154,6 +154,8 @@ public:
 	bool _recovering = false;
 };
 
+enum class DifferenceResponse;
+
 } // namespace details
 
 class Updates final {
@@ -261,27 +263,22 @@ public:
   }
 
 private:
-  enum class DifferenceResponse {
-	  Slice,
-	  Final,
-  };
+	enum class ChannelDifferenceRequest {
+		Unknown,
+		PtsGapOrShortPoll,
+		AfterFail,
+	};
 
-  enum class ChannelDifferenceRequest {
-	  Unknown,
-	  PtsGapOrShortPoll,
-	  AfterFail,
-  };
+	enum class SkipUpdatePolicy {
+		SkipNone,
+		SkipMessageIds,
+		SkipExceptGroupCallParticipants,
+	};
 
-  enum class SkipUpdatePolicy {
-	  SkipNone,
-	  SkipMessageIds,
-	  SkipExceptGroupCallParticipants,
-  };
-
-  struct ActiveChatTracker {
-	  PeerData *peer = nullptr;
-	  rpl::lifetime lifetime;
-  };
+	struct ActiveChatTracker {
+		PeerData *peer = nullptr;
+		rpl::lifetime lifetime;
+	};
 	struct PendingDifference;
 
 	void channelRangeDifferenceSend(
@@ -322,7 +319,7 @@ private:
 						 const MTPVector<MTPMessage> &messages,
 						 const MTPVector<MTPUpdate> &other, int32 pts,
 						 int32 date, int32 qts, int32 seq,
-						 DifferenceResponse response);
+						 details::DifferenceResponse response);
 	void applyDifferenceBatch();
 	void finishDifference();
 	void
