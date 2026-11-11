@@ -3383,7 +3383,6 @@ void HistoryWidget::setHistory(History *history) {
 		if (history) {
 			history->owner().unloadHeavyViewParts(
 				history->delegateMixin()->delegate());
-			history->forceFullResize();
 		}
 	};
 
