@@ -837,30 +837,27 @@ void ServerWidget::publicEndpointResolved(
 		return;
 	}
 	if (info.error() != QHostInfo::NoError) {
-		if (!result.webSocketEndpoint.isEmpty()) {
-			result.webSocketOnly = true;
+		if (Intro::details::ResolvePublicDiscoveryAddresses(
+				_selection, result,
+				Intro::details::PublicDiscoveryAddressRole::Mtproto, {})
+			== Intro::details::PublicDiscoveryAddressResolution::
+				NeedsWebSocket) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
 			discoveryFailed(true);
 		}
 		return;
 	}
-	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
-	if (!MTP::IsPublicDiscoveryEndpoint(endpoint, _selection)
-		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps) {
-		discoveryFailed(false);
-		return;
-	}
-	if (const auto address = MTP::FirstSafePublicDiscoveryAddress(
-			_selection,
-			info.addresses())) {
-		result.resolvedAddress = address->toString();
+	const auto resolution = Intro::details::ResolvePublicDiscoveryAddresses(
+		_selection, result, Intro::details::PublicDiscoveryAddressRole::Mtproto,
+		info.addresses());
+	if (resolution
+		== Intro::details::PublicDiscoveryAddressResolution::Resolved) {
 		commitBinding(std::move(result));
 		return;
 	}
-	if (!result.webSocketEndpoint.isEmpty()) {
-		result.webSocketOnly = true;
-		result.resolvedAddress.clear();
+	if (resolution
+		== Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket) {
 		resolvePublicWebSocketEndpoint(std::move(result));
 		return;
 	}
@@ -884,11 +881,14 @@ void ServerWidget::resolvePublicWebSocketEndpoint(
 	const auto url = QUrl(result.webSocketEndpoint, QUrl::StrictMode);
 	auto address = QHostAddress();
 	if (address.setAddress(url.host())) {
-		if (!MTP::IsPublicDiscoveryAddress(_selection, address)) {
+		if (Intro::details::ResolvePublicDiscoveryAddresses(
+				_selection, result,
+				Intro::details::PublicDiscoveryAddressRole::WebSocket,
+				{address})
+			!= Intro::details::PublicDiscoveryAddressResolution::Resolved) {
 			discoveryFailed(false);
 			return;
 		}
-		result.resolvedAddress = address.toString();
 		_deadline->stop();
 		commitBinding(std::move(result));
 		return;
@@ -918,9 +918,11 @@ void ServerWidget::publicWebSocketEndpointResolved(
 		discoveryFailed(true);
 		return;
 	}
-	if (const auto address
-		= MTP::FirstSafePublicDiscoveryAddress(_selection, info.addresses())) {
-		result.resolvedAddress = address->toString();
+	if (Intro::details::ResolvePublicDiscoveryAddresses(
+			_selection, result,
+			Intro::details::PublicDiscoveryAddressRole::WebSocket,
+			info.addresses())
+		== Intro::details::PublicDiscoveryAddressResolution::Resolved) {
 		_deadline->stop();
 		commitBinding(std::move(result));
 		return;

@@ -268,6 +268,54 @@ void CloseNativeSocket(qintptr descriptor) {
 
 } // namespace
 
+PublicDiscoveryAddressResolution
+ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
+								MTP::ServerDiscoveryResult &result,
+								PublicDiscoveryAddressRole role,
+								const QList<QHostAddress> &addresses) {
+	if (!selection.valid()
+		|| selection.policy != MTP::ServerDiscoveryPolicy::PublicHttps
+		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps) {
+		return PublicDiscoveryAddressResolution::Rejected;
+	}
+	if (role == PublicDiscoveryAddressRole::Mtproto) {
+		const auto endpoint = MTP::CheckServerSelection(result.endpoint);
+		if (!MTP::IsPublicDiscoveryEndpoint(endpoint, selection)) {
+			if (result.webSocketEndpoint.isEmpty()) {
+				return PublicDiscoveryAddressResolution::Rejected;
+			}
+			result.webSocketOnly = true;
+			result.resolvedAddress.clear();
+			return PublicDiscoveryAddressResolution::NeedsWebSocket;
+		}
+		if (const auto address
+			= MTP::FirstSafePublicDiscoveryAddress(selection, addresses)) {
+			result.resolvedAddress = address->toString();
+			return PublicDiscoveryAddressResolution::Resolved;
+		}
+		if (!result.webSocketEndpoint.isEmpty()) {
+			result.webSocketOnly = true;
+			result.resolvedAddress.clear();
+			return PublicDiscoveryAddressResolution::NeedsWebSocket;
+		}
+		return PublicDiscoveryAddressResolution::Rejected;
+	}
+	if (!result.webSocketOnly || result.webSocketEndpoint.isEmpty()) {
+		return PublicDiscoveryAddressResolution::Rejected;
+	}
+	const auto normalized = MTP::NormalizePublicWebSocketEndpoint(
+		result.webSocketEndpoint, selection);
+	if (!normalized || *normalized != result.webSocketEndpoint) {
+		return PublicDiscoveryAddressResolution::Rejected;
+	}
+	if (const auto address
+		= MTP::FirstSafePublicDiscoveryAddress(selection, addresses)) {
+		result.resolvedAddress = address->toString();
+		return PublicDiscoveryAddressResolution::Resolved;
+	}
+	return PublicDiscoveryAddressResolution::Rejected;
+}
+
 namespace internal {
 
 bool ConfigureNativeSocketForSend(qintptr descriptor, int &error) {

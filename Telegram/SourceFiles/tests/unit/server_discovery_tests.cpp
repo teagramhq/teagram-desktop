@@ -1655,6 +1655,69 @@ TEST_CASE(PrivateMtprotoBindingUsesPublicWebSocketEndpoint) {
 			   .has_value());
 }
 
+TEST_CASE(PublicEnrollmentUsesWssOnlyWhenMtprotoDnsIsPrivate) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	auto result = ParsePublicDiscoveryResponse(
+		selection,
+		PublicResponseWithWebSocket(u"mtproto.tailaa4918.ts.net:2443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	if (!result.valid()) {
+		return;
+	}
+	CHECK(!result.webSocketOnly);
+
+	const auto mtprotoResolution
+		= Intro::details::ResolvePublicDiscoveryAddresses(
+			selection, result,
+			Intro::details::PublicDiscoveryAddressRole::Mtproto,
+			{QHostAddress(u"100.64.1.10"_q)});
+	CHECK(mtprotoResolution
+		  == Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket);
+	CHECK(result.webSocketOnly);
+	CHECK(result.resolvedAddress.isEmpty());
+	if (mtprotoResolution
+		!= Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket) {
+		return;
+	}
+
+	const auto webSocketResolution
+		= Intro::details::ResolvePublicDiscoveryAddresses(
+			selection, result,
+			Intro::details::PublicDiscoveryAddressRole::WebSocket,
+			{QHostAddress(u"8.8.4.4"_q)});
+	CHECK(webSocketResolution
+		  == Intro::details::PublicDiscoveryAddressResolution::Resolved);
+	CHECK_EQ(result.resolvedAddress, u"8.8.4.4"_q);
+	const auto server = BuildCustomServerFromDiscovery(selection, result);
+	CHECK(server.has_value());
+	if (!server) {
+		return;
+	}
+	CHECK(server->webSocketOnly);
+	CHECK_EQ(server->hostname, "transport.example.com");
+	CHECK(server->ip.empty());
+	CHECK_EQ(server->webSocketEndpoint, "wss://transport.example.com/apiws");
+	CHECK(server->key != nullptr);
+	if (server->key) {
+		CHECK_EQ(qint64(server->key->fingerprint()),
+				 qint64(result.key.fingerprint()));
+	}
+
+	auto options = DcOptions(Environment::Production);
+	CHECK(options.setCustomServer(*server));
+	const auto pin = options.customServer();
+	CHECK(pin.webSocketOnly);
+	CHECK_EQ(pin.hostname, "transport.example.com");
+	CHECK(pin.ip.empty());
+	CHECK_EQ(pin.webSocketEndpoint, "wss://transport.example.com/apiws");
+	CHECK(pin.key != nullptr);
+	if (pin.key) {
+		CHECK_EQ(qint64(pin.key->fingerprint()),
+				 qint64(result.key.fingerprint()));
+	}
+}
+
 TEST_CASE(DiscoveryJsonAcceptsWssWebSocketEndpoint) {
 	const auto result = ParsePublicDiscoveryResponse(
 		CheckServerSelection(u"server.example.com"_q),
