@@ -225,6 +225,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 namespace {
@@ -3521,6 +3522,8 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 		}
 		_attachMenuBuildCallbackMeasurementsForRegressionTest.push_back({
 			.startedAt = timing.startedAt,
+			.startedAtSteadyNanoseconds
+			= timing.startedAtSteadyNanoseconds,
 			.wallNanoseconds = timing.wallNanoseconds,
 			.mainThreadCpuNanoseconds = timing.mainThreadCpuNanoseconds,
 			.processCpuNanoseconds = timing.processCpuNanoseconds,
@@ -3532,6 +3535,10 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	const auto buildProcessStartedAt
 		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
 	const auto buildStartedAt = QDateTime::currentDateTime();
+	const auto buildStartedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+		  .count();
 	const auto recordBuildCallback = gsl::finally([&] {
 		const auto buildWallNanoseconds = buildTimer.nsecsElapsed();
 		const auto buildThreadFinishedAt
@@ -3546,6 +3553,7 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 		};
 		recordBuildMeasurement({
 			.startedAt = buildStartedAt,
+			.startedAtSteadyNanoseconds = buildStartedAtSteadyNanoseconds,
 			.wallNanoseconds = buildWallNanoseconds,
 			.mainThreadCpuNanoseconds
 			= elapsedCpu(buildThreadStartedAt, buildThreadFinishedAt),

@@ -172,6 +172,12 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	[[nodiscard]] bool LoggedWhileBlocked() const {
 		return _loggedWhileBlocked;
 	}
+	[[nodiscard]] std::chrono::steady_clock::time_point BlockStartedAt() const {
+		return _blockStartedAt;
+	}
+	[[nodiscard]] std::chrono::steady_clock::time_point BlockFinishedAt() const {
+		return _blockFinishedAt;
+	}
 
   protected:
 	bool eventFilter(QObject *, QEvent *event) override {
@@ -189,7 +195,9 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 			if (_blockActive) {
 				_blockActive->store(true, std::memory_order_release);
 			}
+			_blockStartedAt = std::chrono::steady_clock::now();
 			UiStallWatchdogTestBlock(_durations[_nextBlock], _logged);
+			_blockFinishedAt = std::chrono::steady_clock::now();
 			if (_blockActive) {
 				_blockActive->store(false, std::memory_order_release);
 			}
@@ -211,6 +219,8 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	int _nextBlock = 0;
 	bool _blocked = false;
 	bool _loggedWhileBlocked = false;
+	std::chrono::steady_clock::time_point _blockStartedAt;
+	std::chrono::steady_clock::time_point _blockFinishedAt;
 };
 
 TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
@@ -297,6 +307,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		loop.exec();
 		CHECK(blockFilter.Blocked());
 		CHECK(blockFilter.LoggedWhileBlocked());
+		CHECK(blockFilter.BlockFinishedAt() > blockFilter.BlockStartedAt());
 		const auto deadline
 			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 		while (!completed.load(std::memory_order_acquire)
@@ -399,14 +410,66 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				  evidence.back().schedulerSampleOffsetsNanoseconds.size()));
 		CHECK(evidence.back().schedulerTrace.size()
 			  >= evidence.back().durationMilliseconds / 5);
-		const auto schedulerTraceProvesRunnable
-			= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-				evidence.back().schedulerTrace,
-				evidence.back().schedulerSampleOffsetsNanoseconds,
-				evidence.back().durationNanoseconds);
+		auto schedulerTraceProvesRunnable = false;
+		if (blockFilter.Blocked()
+			&& (evidence.back().postedAtSteadyNanoseconds > 0)) {
+			auto blockSampleOffsetsNanoseconds
+				= evidence.back().schedulerSampleOffsetsNanoseconds;
+			const auto blockStartNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockStartedAt().time_since_epoch())
+				  .count();
+			const auto blockStartOffsetNanoseconds
+				= blockStartNanoseconds
+				  - evidence.back().postedAtSteadyNanoseconds;
+			for (auto &offset : blockSampleOffsetsNanoseconds) {
+				offset -= blockStartOffsetNanoseconds;
+			}
+		const auto blockDurationNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  blockFilter.BlockFinishedAt()
+				  - blockFilter.BlockStartedAt())
+			  .count();
+			schedulerTraceProvesRunnable
+				= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+					evidence.back().schedulerTrace,
+					blockSampleOffsetsNanoseconds,
+					blockDurationNanoseconds);
+		}
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
 #if defined(Q_OS_MAC)
 		CHECK(evidence.back().schedulerTrace.contains(u'R'));
+		if (!schedulerTraceProvesRunnable) {
+			const auto trace = evidence.back().schedulerTrace.toLatin1();
+			const auto blockStartNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockStartedAt().time_since_epoch())
+				  .count();
+			const auto blockDurationNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  blockFilter.BlockFinishedAt()
+				  - blockFilter.BlockStartedAt())
+				  .count();
+			std::fprintf(
+				stderr,
+				"Scheduler runnable interval failure: posted_at_ns=%lld "
+				"block_start_ns=%lld block_duration_ns=%lld trace=%s offsets=[",
+				static_cast<long long>(
+					evidence.back().postedAtSteadyNanoseconds),
+				static_cast<long long>(blockStartNanoseconds),
+				static_cast<long long>(blockDurationNanoseconds),
+				trace.constData());
+			for (auto i = std::size_t(0);
+				 i != evidence.back().schedulerSampleOffsetsNanoseconds.size();
+				 ++i) {
+				std::fprintf(
+					stderr, "%s%lld", i ? "," : "",
+					static_cast<long long>(
+						evidence.back()
+							.schedulerSampleOffsetsNanoseconds[i]));
+			}
+			std::fprintf(stderr, "]\n");
+		}
 		CHECK(schedulerTraceProvesRunnable);
 #else
 		CHECK(!schedulerTraceProvesRunnable);

@@ -103,6 +103,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QSvgRenderer>
 #include <QTimer>
 
+#include <chrono>
+
 namespace InlineBots {
 namespace {
 
@@ -847,6 +849,10 @@ void MeasureAttachMenuBuildStep(
 	const auto startedAt = QDateTime::currentDateTime();
 	auto timer = QElapsedTimer();
 	timer.start();
+	const auto startedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+		  .count();
 	callback();
 	const auto wallNanoseconds = timer.nsecsElapsed();
 	const auto threadFinishedAt
@@ -861,6 +867,7 @@ void MeasureAttachMenuBuildStep(
 		  };
 	buildStepMeasured({
 		.startedAt = startedAt,
+		.startedAtSteadyNanoseconds = startedAtSteadyNanoseconds,
 		.wallNanoseconds = wallNanoseconds,
 		.mainThreadCpuNanoseconds
 		= elapsedCpu(threadStartedAt, threadFinishedAt),
@@ -871,10 +878,15 @@ void MeasureAttachMenuBuildStep(
 	const auto startedAt = QDateTime::currentDateTime();
 	auto timer = QElapsedTimer();
 	timer.start();
+	const auto startedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+		  .count();
 	callback();
 	const auto elapsed = timer.nsecsElapsed();
 	buildStepMeasured({
 		.startedAt = startedAt,
+		.startedAtSteadyNanoseconds = startedAtSteadyNanoseconds,
 		.wallNanoseconds = elapsed,
 		.mainThreadCpuNanoseconds = elapsed,
 	});

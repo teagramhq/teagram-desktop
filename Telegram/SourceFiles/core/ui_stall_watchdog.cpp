@@ -872,6 +872,10 @@ void UiStallWatchdog::run() {
 			if (_captureSchedulerTrace) {
 				const auto evidence = StallEvidence{
 					.startedAt = startedAt,
+					.postedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  postedAt.time_since_epoch())
+						  .count(),
 					.durationMilliseconds = completedDurationMilliseconds,
 					.durationNanoseconds
 					= std::chrono::duration_cast<std::chrono::nanoseconds>(

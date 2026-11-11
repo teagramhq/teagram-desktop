@@ -31,6 +31,7 @@ class UiStallWatchdog final : public QObject {
 
 	struct StallEvidence {
 		QString startedAt;
+		qint64 postedAtSteadyNanoseconds = 0;
 		qint64 durationMilliseconds = 0;
 		qint64 durationNanoseconds = 0;
 		QString schedulerTrace;

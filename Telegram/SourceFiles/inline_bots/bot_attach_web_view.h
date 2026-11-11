@@ -65,6 +65,7 @@ enum class AttachBotsMenuBuildMode {
 
 struct AttachBotsMenuBuildStepTiming final {
 	QDateTime startedAt;
+	qint64 startedAtSteadyNanoseconds = -1;
 	qint64 wallNanoseconds = -1;
 	qint64 mainThreadCpuNanoseconds = -1;
 	qint64 processCpuNanoseconds = -1;

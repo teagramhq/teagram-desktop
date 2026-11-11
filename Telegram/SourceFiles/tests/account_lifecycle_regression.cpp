@@ -10358,6 +10358,7 @@ struct MainThreadWorkInterval final {
 	qint64 mainThreadWorkNanoseconds = -1;
 	qint64 processWorkNanoseconds = -1;
 	QString label;
+	qint64 startedAtSteadyNanoseconds = -1;
 };
 
 struct CorroboratedStartupStall final {
@@ -10452,16 +10453,26 @@ FindMatchingMainThreadWorkEvidence(
 		return false;
 	}
 	constexpr auto kNanosecondsPerMillisecond = qint64(1'000'000);
-	const auto sampleOffsetMilliseconds
-		= interval.startedAt.msecsTo(evidenceStartedAt);
-	if ((sampleOffsetMilliseconds
-		 > std::numeric_limits<qint64>::max() / kNanosecondsPerMillisecond)
-		|| (sampleOffsetMilliseconds < std::numeric_limits<qint64>::min()
-										   / kNanosecondsPerMillisecond)) {
-		return false;
+	auto sampleOffsetNanoseconds = qint64(0);
+	if ((interval.startedAtSteadyNanoseconds >= 0)
+		&& (evidence->postedAtSteadyNanoseconds > 0)) {
+		sampleOffsetNanoseconds
+			= evidence->postedAtSteadyNanoseconds
+			  - interval.startedAtSteadyNanoseconds;
+	} else {
+		const auto sampleOffsetMilliseconds
+			= interval.startedAt.msecsTo(evidenceStartedAt);
+		if ((sampleOffsetMilliseconds
+			 > std::numeric_limits<qint64>::max()
+				 / kNanosecondsPerMillisecond)
+			|| (sampleOffsetMilliseconds
+				< std::numeric_limits<qint64>::min()
+					  / kNanosecondsPerMillisecond)) {
+			return false;
+		}
+		sampleOffsetNanoseconds
+			= sampleOffsetMilliseconds * kNanosecondsPerMillisecond;
 	}
-	const auto sampleOffsetNanoseconds
-		= sampleOffsetMilliseconds * kNanosecondsPerMillisecond;
 	auto rebasedSampleOffsetsNanoseconds = std::vector<qint64>();
 	rebasedSampleOffsetsNanoseconds.reserve(
 		evidence->schedulerSampleOffsetsNanoseconds.size());
@@ -10916,6 +10927,17 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		callbackStartedAt, 92'000'000, 25'000'000, 120'000'000};
 	const auto highOtherThreadWork = MainThreadWorkInterval{
 		callbackStartedAt, 92'000'000, 25'000'000, 85'000'000};
+	auto monotonicInterval = interval;
+	monotonicInterval.startedAtSteadyNanoseconds = 10'008'500'000;
+	auto monotonicEvidence = *runnableEvidence;
+	monotonicEvidence.startedAt
+		= callbackStartedAt.addMSecs(6).toString(Qt::ISODateWithMs);
+	monotonicEvidence.postedAtSteadyNanoseconds = 10'000'000'000;
+	monotonicEvidence.durationMilliseconds = 110;
+	monotonicEvidence.durationNanoseconds = 110'000'000;
+	monotonicEvidence.schedulerTrace = QString(110, QChar(u'R'));
+	monotonicEvidence.schedulerSampleOffsetsNanoseconds
+		= SchedulerSampleOffsetsForDuration(110'000'000);
 	return MainThreadWorkIntervalHasSchedulerProof(
 			   interval, runnableEvidence, kMaxChatSwitchNanoseconds,
 			   kMaxChatSwitchNanoseconds,
@@ -10937,7 +10959,11 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		   && MainThreadWorkIntervalHasSchedulerProof(
 			   interval, callbackAfterAcknowledgementMatch,
 			   kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
+				kMaxSchedulerProofOtherThreadWorkNanoseconds)
+			&& MainThreadWorkIntervalHasSchedulerProof(
+				monotonicInterval, monotonicEvidence,
+				kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
+				kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
 
 [[nodiscard]] bool
@@ -11181,6 +11207,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto processBefore = ProcessCpuTimeNanoseconds();
 		auto timer = QElapsedTimer();
 		timer.start();
+		const auto startedAtSteadyNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  std::chrono::steady_clock::now().time_since_epoch())
+			  .count();
 		controller->showPeerHistory(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
 		const auto mainThreadAfter = MainThreadCpuTimeNanoseconds();
@@ -11213,6 +11243,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				mainThreadWorkNanoseconds,
 				processWorkNanoseconds,
 				u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(peerId),
+				startedAtSteadyNanoseconds,
 			});
 		}
 		return wallDurationNanoseconds;
@@ -11246,6 +11277,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					measurement.mainThreadCpuNanoseconds,
 					measurement.processCpuNanoseconds,
 					label,
+					measurement.startedAtSteadyNanoseconds,
 				});
 			}
 		}
@@ -11596,6 +11628,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	const auto originalAdaptiveForWide
 		= Core::App().settings().adaptiveForWide();
+	const auto originalWindowSize = mainWindow.size();
 	auto originalChatLayout = Window::Adaptive::ChatLayout::Normal;
 	auto originalChatLayoutCaptured = false;
 	auto chatLayoutLifetime = rpl::lifetime();
@@ -11608,24 +11641,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			chatLayoutLifetime);
 	QCoreApplication::processEvents();
 	if (originalChatLayoutCaptured) {
-		controller->showPeerHistory(secondHistory);
+		Core::App().settings().setAdaptiveForWide(true);
+		mainWindow.resize(
+			originalWindowSize.width() + 2'000,
+			originalWindowSize.height());
+		QCoreApplication::processEvents();
+		controller->adaptive().setChatLayout(
+			Window::Adaptive::ChatLayout::Wide);
 		QCoreApplication::processEvents();
 		const auto originalHistoryChatWide
 			= controller->adaptive().isChatWide();
 		const auto originalHistoryFullResizeCount
 			= firstHistory->layoutFullResizeCountForRegressionTest();
-		controller->adaptive().setChatLayout(
-			Window::Adaptive::ChatLayout::Wide);
-		Core::App().settings().setAdaptiveForWide(!originalAdaptiveForWide);
+		controller->showPeerHistory(secondHistory);
 		QCoreApplication::processEvents();
-		if (controller->adaptive().isChatWide() == originalHistoryChatWide) {
-			Core::App().settings().setAdaptiveForWide(!originalHistoryChatWide);
-			controller->adaptive().setChatLayout(
-				Window::Adaptive::ChatLayout::Wide);
-			QCoreApplication::processEvents();
-		}
-		const auto chatWideModeChanged
-			= controller->adaptive().isChatWide() != originalHistoryChatWide;
+		Core::App().settings().setAdaptiveForWide(false);
+		QCoreApplication::processEvents();
+		const auto chatWideModeChanged = originalHistoryChatWide
+			&& !controller->adaptive().isChatWide();
 		controller->showPeerHistory(firstHistory);
 		QCoreApplication::processEvents();
 		result.historyChatModeInvalidationRebuilt
@@ -11633,6 +11666,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  && (firstHistory->layoutFullResizeCountForRegressionTest()
 				  > originalHistoryFullResizeCount);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
+		mainWindow.resize(originalWindowSize);
+		QCoreApplication::processEvents();
 		controller->adaptive().setChatLayout(originalChatLayout);
 		QCoreApplication::processEvents();
 	}
