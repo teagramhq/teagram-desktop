@@ -468,7 +468,7 @@ jobs:
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
       # Linux ships Teagram without an updater, so CI gates the standalone
-      # unit cases, including the custom emoji smoke.
+      # unit cases here and the custom emoji picker UI smoke below.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -654,6 +654,51 @@ jobs:
             fi
             if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
               echo "Custom emoji action smoke case did not report one passing case."
+              exit 1
+            fi
+          '
+
+      - name: Custom emoji picker smoke.
+        if: env.ONLY_CACHE == 'false'
+        run: |
+          docker run --rm \
+          -u $(id -u) \
+          -v $PWD:/usr/src/tdesktop \
+          $IMAGE_TAG \
+          bash -lc '
+            cd /usr/src/tdesktop
+            Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp -ac \
+              >/tmp/teagram-custom-emoji-xvfb.log 2>&1 &
+            xvfb_pid=$!
+            trap "kill $xvfb_pid 2>/dev/null || true; wait $xvfb_pid 2>/dev/null || true" EXIT
+            for attempt in {1..50}; do
+              if test -S /tmp/.X11-unix/X99; then
+                break
+              fi
+              if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+                cat /tmp/teagram-custom-emoji-xvfb.log
+                echo "Xvfb exited before opening display :99."
+                exit 1
+              fi
+              sleep 0.1
+            done
+            if ! test -S /tmp/.X11-unix/X99; then
+              cat /tmp/teagram-custom-emoji-xvfb.log
+              echo "Xvfb did not open display :99."
+              exit 1
+            fi
+
+            app=/usr/src/tdesktop/out/Debug/Teagram
+            smoke_marker="Custom emoji UI smoke: PASS (message send, reaction toggle, status picker, recipient rendering)."
+            if smoke_output=$(DISPLAY=:99 TDESKTOP_CUSTOM_EMOJI_UI_SMOKE=1 "$app" -noupdate -debug 2>&1); then
+              printf "%s\n" "$smoke_output"
+            else
+              smoke_status=$?
+              printf "%s\n" "$smoke_output"
+              exit "$smoke_status"
+            fi
+            if ! printf "%s\n" "$smoke_output" | grep -Fqx "$smoke_marker"; then
+              echo "Custom emoji UI smoke did not report its pass marker."
               exit 1
             fi
           '
