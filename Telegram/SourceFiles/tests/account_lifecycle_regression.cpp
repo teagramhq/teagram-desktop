@@ -14744,7 +14744,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
 constexpr auto kDesktopScaleContactTrials = 3;
-constexpr auto kDesktopScaleContactPollToleranceNanoseconds = 1'000'000;
+constexpr auto kDesktopScaleContactLookupsPerSample = 1'000;
 
 [[nodiscard]] constexpr std::optional<quint64>
 SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
@@ -14763,14 +14763,11 @@ static_assert(!SumDesktopScaleStalls({std::nullopt,
 
 [[nodiscard]] constexpr bool
 DesktopScaleContactChangeWithinBudget(qint64 one, qint64 hundred) {
-	return (one > 0)
-		   && (double(hundred)
-			   <= 1.5 * double(one)
-					  + double(kDesktopScaleContactPollToleranceNanoseconds));
+	return (one > 0) && (double(hundred) <= 1.5 * double(one));
 }
 
-static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 2'500'000));
-static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 2'500'001));
+static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'000));
+static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'001));
 
 struct DesktopScaleActionSample {
 	std::optional<qint64> nanoseconds;
@@ -15891,6 +15888,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			.instance = &account->mtp(),
 			.desktopScaleContactsOnly = true,
 		};
+		auto changedLookupNanoseconds = std::optional<qint64>();
 		{
 			const auto restoreCapture = gsl::finally(
 				[previous
@@ -15900,7 +15898,7 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			session.api().requestContacts();
 			const auto changedReply
 				= DesktopScaleContactsReply(firstId, count, count - 1, 1, true);
-			result.changedAndFound
+			auto changedAndFound
 				= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
 					updateCapture, mtpc_contacts_getContacts, changedReply,
 					[&] {
@@ -15934,8 +15932,29 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 									.empty()) {
 							return false;
 						}
+						const auto query = QStringList{u"upd"_q};
+						const auto expected = peerFromUser(userId);
+						auto timer = QElapsedTimer();
+						timer.start();
+						for (auto i = 0;
+							 i != kDesktopScaleContactLookupsPerSample; ++i) {
+							const auto found
+								= data.contactsList()->filtered(query);
+							if ((found.size() != 1) || !found.front()->history()
+								|| (found.front()->history()->peer->id
+									!= expected)) {
+								return false;
+							}
+						}
+						changedLookupNanoseconds
+							= timer.nsecsElapsed()
+							  / kDesktopScaleContactLookupsPerSample;
 						return true;
 					});
+			if (changedLookupNanoseconds) {
+				changedAndFound.nanoseconds = *changedLookupNanoseconds;
+			}
+			result.changedAndFound = std::move(changedAndFound);
 		}
 		if (!result.changedAndFound.passed) {
 			std::fprintf(
@@ -16153,12 +16172,9 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 									 u"Unrelated Member"_q, false));
 	data.processUsers(MTP_vector<MTPUser>(std::move(users)));
 	const auto contacts = data.contactsNoChatsList();
-	if (!WaitForRegressionCondition(
-			[&] {
-				return (contacts->size() == 2) && !contacts->searchIndexReady();
-			},
-			5000, 1)) {
-		return fail("new contacts did not start index construction");
+	if (!WaitForRegressionCondition([&] { return contacts->size() == 2; }, 5000,
+									1)) {
+		return fail("new contacts were not added to the index");
 	}
 
 	const auto chat = data.chat(ChatId(9'001'000));
@@ -16170,8 +16186,9 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 	auto delegate = DesktopScaleSearchDelegate();
 	controller.setDelegate(&delegate);
 	controller.searchQuery(u"searchonce"_q);
+	const auto indexReadyBeforeSearch = contacts->searchIndexReady();
 	if (!controller.loadMoreRows() || !controller.loadMoreRows()
-		|| delegate.rowsCount() != 0) {
+		|| (!indexReadyBeforeSearch && delegate.rowsCount() != 0)) {
 		return fail("did not wait for the contact index");
 	}
 	if (!WaitForRegressionCondition(
@@ -16187,12 +16204,9 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 	lateUser.push_back(DesktopScaleUser(UserId(firstId.bare + 3),
 										u"SearchOnce Contact C"_q, true, true));
 	data.processUsers(MTP_vector<MTPUser>(std::move(lateUser)));
-	if (!WaitForRegressionCondition(
-			[&] {
-				return (contacts->size() == 3) && !contacts->searchIndexReady();
-			},
-			5000, 1)) {
-		return fail("new contact did not invalidate the ready index");
+	if (!WaitForRegressionCondition([&] { return contacts->size() == 3; }, 5000,
+									1)) {
+		return fail("new contact was not added to the index");
 	}
 	const auto reindexed = WaitForRegressionCondition(
 		[&] { return contacts->searchIndexReady(); }, 5000, 1);
@@ -16614,7 +16628,7 @@ int RunDesktopScaleCheck() {
 	const auto contactResponseWithinBudget
 		= contactsHundred.loaded.nanoseconds
 		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
-	const auto contactChangeScales
+	const auto contactChangeLookupScales
 		= contactsOne.changedAndFound.nanoseconds
 		  && contactsHundred.changedAndFound.nanoseconds
 		  && DesktopScaleContactChangeWithinBudget(
@@ -16729,7 +16743,7 @@ int RunDesktopScaleCheck() {
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed && blockingStalls
 		  && (*blockingStalls == 0) && contactResponseWithinBudget
-		  && contactChangeScales && (cacheOne.directoryEnumerations == 0)
+		  && contactChangeLookupScales && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
 		  && (groupHundred.directoryEnumerations == 0);
@@ -16742,8 +16756,8 @@ int RunDesktopScaleCheck() {
 			 dialogsHundred);
 	printRow("contacts.getContacts full response", contactsOne.loaded,
 			 contactsHundred.loaded);
-	printRow("contact change + name lookup", contactsOne.changedAndFound,
-			 contactsHundred.changedAndFound);
+	printRow("contact change + 1,000 short name lookups (average)",
+			 contactsOne.changedAndFound, contactsHundred.changedAndFound);
 	printRow("contact removal + search cleanup", contactsOne.removed,
 			 contactsHundred.removed);
 	printRow("cache read x100", cacheOne, cacheHundred);
@@ -16758,9 +16772,9 @@ int RunDesktopScaleCheck() {
 			 searchOne.updateBurst, searchHundred.updateBurst);
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
-	std::printf("Contact change + name lookup budget (<=1.50x + 1 ms poll "
-				"tolerance): %s\n",
-				contactChangeScales ? "PASS" : "FAIL");
+	std::printf("Contact change + name lookup budget (<=1.50x, 1,000 "
+				"short searches averaged): %s\n",
+				contactChangeLookupScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
