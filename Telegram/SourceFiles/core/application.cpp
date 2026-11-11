@@ -1365,7 +1365,8 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 		if (!target
 			&& DeepLinks::Router::Instance().requiresPaidFeatures(command)) {
 			// This route belongs to an account, but there is no origin account
-			// to open it for. Treat it as handled without touching the active one.
+			// to open it for. Treat it as handled without touching the active
+			// one.
 			return true;
 		}
 		const auto controller

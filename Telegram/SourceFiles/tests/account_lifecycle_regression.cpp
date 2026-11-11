@@ -4763,17 +4763,18 @@ template <typename Condition>
 		const auto blockedLayerShown = blockedController->isLayerShown();
 		const auto activeWindowChanged
 			= app.activeWindow() != activeBeforeMissingController;
-		const auto unchanged
-			= handled
-			  && (stockToastAfterMissingController
-				  == stockToastBeforeMissingController)
-			  && (pinnedToastAfterMissingController
-				  == pinnedToastBeforeMissingController)
-			  && (blockedToastAfterMissingController
-				  == blockedToastBeforeMissingController)
-			  && !stockMainSectionShown && !pinnedMainSectionShown
-			  && !blockedMainSectionShown && !stockLayerShown && !pinnedLayerShown
-			  && !blockedLayerShown && !activeWindowChanged;
+		const auto unchanged = handled
+							   && (stockToastAfterMissingController
+								   == stockToastBeforeMissingController)
+							   && (pinnedToastAfterMissingController
+								   == pinnedToastBeforeMissingController)
+							   && (blockedToastAfterMissingController
+								   == blockedToastBeforeMissingController)
+							   && !stockMainSectionShown
+							   && !pinnedMainSectionShown
+							   && !blockedMainSectionShown && !stockLayerShown
+							   && !pinnedLayerShown && !blockedLayerShown
+							   && !activeWindowChanged;
 		if (!unchanged) {
 			std::fprintf(
 				stderr,
