@@ -11572,8 +11572,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	loop.exec();
 	const auto originalScale = style::Scale();
 	const auto regressionScale = (originalScale < style::kScaleMax)
-		? (originalScale + 1)
-		: (originalScale - 1);
+									 ? (originalScale + 1)
+									 : (originalScale - 1);
 	const auto originalHistoryLayoutScale
 		= firstHistory->layoutScaleForRegressionTest();
 	const auto originalHistoryFullResizeCount
@@ -11585,9 +11585,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	result.historyScaleInvalidationRebuilt
 		= (originalHistoryLayoutScale != regressionScale)
-		&& (firstHistory->layoutScaleForRegressionTest() == regressionScale)
-		&& (firstHistory->layoutFullResizeCountForRegressionTest()
-			> originalHistoryFullResizeCount);
+		  && (firstHistory->layoutScaleForRegressionTest() == regressionScale)
+		  && (firstHistory->layoutFullResizeCountForRegressionTest()
+			  > originalHistoryFullResizeCount);
 	style::SetScale(originalScale);
 	controller->showPeerHistory(secondHistory);
 	QCoreApplication::processEvents();

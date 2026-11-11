@@ -3800,13 +3800,13 @@ void History::resizeToWidth(int newWidth) {
 	const auto layoutPaletteVersion = style::PaletteVersion();
 	const auto layoutStyleChanged
 		= (_layoutScale != layoutScale)
-		|| (_layoutDevicePixelRatio != layoutDevicePixelRatio)
-		|| (_layoutPaletteVersion != layoutPaletteVersion);
+		  || (_layoutDevicePixelRatio != layoutDevicePixelRatio)
+		  || (_layoutPaletteVersion != layoutPaletteVersion);
 	const auto request = (_flags & Flag::PendingAllItemsResize)
-		? Request::ReinitAll
-		: ((_width != newWidth) || layoutStyleChanged)
-		? Request::ResizeAll
-		: Request::ResizePending;
+							 ? Request::ReinitAll
+						 : ((_width != newWidth) || layoutStyleChanged)
+							 ? Request::ResizeAll
+							 : Request::ResizePending;
 	if (request == Request::ResizePending && !hasPendingResizedItems()) {
 		return;
 	}

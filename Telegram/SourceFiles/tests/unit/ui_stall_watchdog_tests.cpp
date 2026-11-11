@@ -262,14 +262,14 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto shortSchedulerCapturePingObserved = false;
 	for (auto i = std::size_t(1); i < acknowledgements.size(); ++i) {
 		if ((acknowledgements[i - 1].acknowledgedAtNanoseconds
-				<= lastAcknowledgedAtNanoseconds)
+			 <= lastAcknowledgedAtNanoseconds)
 			|| (acknowledgements[i].acknowledgedAtNanoseconds
 				<= lastAcknowledgedAtNanoseconds)) {
 			continue;
 		}
 		const auto intervalNanoseconds
 			= acknowledgements[i].acknowledgedAtNanoseconds
-			- acknowledgements[i - 1].acknowledgedAtNanoseconds;
+			  - acknowledgements[i - 1].acknowledgedAtNanoseconds;
 		if ((intervalNanoseconds > 0) && (intervalNanoseconds <= 5'000'000)) {
 			shortSchedulerCapturePingObserved = true;
 			break;
