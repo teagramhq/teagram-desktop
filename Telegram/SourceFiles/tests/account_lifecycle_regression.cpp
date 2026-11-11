@@ -16686,9 +16686,9 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 								return false;
 							}
 						}
-						changedLookupNanoseconds
-							= timer.nsecsElapsed()
-							  / kDesktopScaleContactLookupsPerSample;
+						// The total, not the average: one lookup takes
+						// microseconds, which the report prints as 0.00 ms.
+						changedLookupNanoseconds = timer.nsecsElapsed();
 						return true;
 					});
 			if (changedLookupNanoseconds) {
@@ -17525,7 +17525,7 @@ int RunDesktopScaleCheck() {
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
 	std::printf("Contact change + name lookup budget (<=1.50x, 1,000 "
-				"short searches averaged): %s\n",
+				"short searches timed together): %s\n",
 				contactChangeLookupScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
