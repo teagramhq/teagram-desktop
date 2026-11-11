@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDebug>
 #endif // _DEBUG
 
+#include <algorithm>
 #include <vector>
 
 namespace style {
@@ -45,20 +46,21 @@ scrollTopAfterMoves(int scrollTop, const std::vector<PositionChange> &moves) {
 		}
 	}
 	auto result = scrollTop;
-	while (true) {
-		auto next = scrollTop;
-		for (const auto &move : moves) {
-			if ((move.from > scrollTop) && (move.to <= result)) {
-				next += move.height;
-			} else if ((move.from < scrollTop) && (move.to > result)) {
-				next -= move.height;
-			}
+	for (const auto &move : moves) {
+		if (move.from + move.height <= scrollTop) {
+			result -= move.height;
 		}
-		if (next == result) {
-			return result;
-		}
-		result = next;
 	}
+	auto ordered = moves;
+	std::sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b) {
+		return (a.to != b.to) ? (a.to < b.to) : (a.from < b.from);
+	});
+	for (const auto &move : ordered) {
+		if (move.to <= result) {
+			result += move.height;
+		}
+	}
+	return result;
 }
 
 struct UnreadState {

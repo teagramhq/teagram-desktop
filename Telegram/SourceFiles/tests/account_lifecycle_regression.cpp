@@ -15897,6 +15897,18 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 					 actualScrollTop);
 		return false;
 	}
+	const auto downwardMove = std::vector<Dialogs::PositionChange>{
+		{.from = 100, .to = 300, .height = 50},
+	};
+	const auto downwardScrollTop
+		= Dialogs::scrollTopAfterMoves(325, downwardMove);
+	if (downwardScrollTop != 275) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=275 actual=%d.\n",
+					 downwardScrollTop);
+		return false;
+	}
 	const auto movedAnchor = std::vector<Dialogs::PositionChange>{
 		{.from = 300, .to = 500, .height = 50},
 	};
