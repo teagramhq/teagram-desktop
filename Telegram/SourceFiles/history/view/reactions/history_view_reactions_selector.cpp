@@ -1126,8 +1126,6 @@ void Selector::createList() {
 			.mediaPreviewMargins = marginsForShadow(),
 			.mediaPreviewPanelStyle = (_mediaPreviewParent == nullptr),
 		}));
-	_list->setAllowWithoutPremium(
-		_show->session().mtp().dcOptions().hasCustomServer());
 	if (!_reactions.stickers.empty()) {
 		auto descriptors = ranges::views::all(
 			_reactions.stickers
@@ -1197,6 +1195,8 @@ void Selector::createList() {
 	const auto geometry = inner.marginsRemoved(_st.margin);
 	lists->move(0, 0);
 	lists->resizeToWidth(geometry.width());
+	_list->setAllowWithoutPremium(
+		_show->session().mtp().dcOptions().hasCustomServer());
 	_list->refreshEmoji();
 	lists->show();
 

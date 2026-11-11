@@ -91,6 +91,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
+#include "history/view/reactions/history_view_reactions_selector.h"
 #include "info/peer_gifts/info_peer_gifts_common.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
@@ -141,6 +142,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 #include "storage/storage_encryption.h"
 #include "storage/streamed_file_downloader.h"
+#include "styles/style_chat_helpers.h"
 #include "test/test_widgets.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
@@ -17248,6 +17250,34 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	if (!controller || (&controller->session() != &sender->session())) {
 		return fail("sender session controller was not created");
 	}
+	auto reactionPicker = Ui::CreateChild<HistoryView::Reactions::Selector>(
+		controller->content(),
+		st::reactPanelEmojiPan,
+		controller->uiShow(),
+		Data::PossibleItemReactionsRef{ .customAllowed = true },
+		TextWithEntities(),
+		[](bool) {},
+		nullptr,
+		nullptr,
+		true);
+	reactionPicker->countWidth(
+		st::reactStripMinWidth,
+		controller->content()->width());
+	reactionPicker->initGeometry(0);
+	reactionPicker->show();
+	const auto collapsedHeight = reactionPicker->height();
+	Test::Click(
+		reactionPicker,
+		QPoint(
+			reactionPicker->width() / 2,
+			reactionPicker->extendTopForCategories()
+				+ reactionPicker->marginsForShadow().top()
+				+ st::reactStripHeight / 2));
+	QCoreApplication::processEvents();
+	if (reactionPicker->height() <= collapsedHeight) {
+		return fail("custom-server reaction picker did not expand");
+	}
+	reactionPicker->hide();
 
 	const auto emoji = sender->session().data().processDocument(
 		RegressionCustomEmojiDocument(static_cast<int64>(kDocumentId)));
