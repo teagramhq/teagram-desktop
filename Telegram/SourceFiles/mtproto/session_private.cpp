@@ -1156,8 +1156,9 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	const auto pin = _instance->dcOptions().customServer();
 
 	_currentDcType = tryAcquireKeyCreation();
-	const auto webSocketOnly = pin.webSocketOnly
-		&& _instance->dcOptions().isCustomServerPinned(bareDc);
+	const auto webSocketOnly
+		= pin.webSocketOnly
+		  && _instance->dcOptions().isCustomServerPinned(bareDc);
 	if (_currentDcType == DcType::Cdn && !_instance->isKeysDestroyer()) {
 		if (!_instance->dcOptions().hasCDNKeysForDc(bareDc)) {
 			requestCDNConfig();
@@ -1166,8 +1167,8 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	}
 	if (_options->proxy.type == ProxyData::Type::Mtproto) {
 		// host, port, secret for mtproto proxy are taken from proxy.
-		appendTestConnection(
-			DcOptions::Variants::Tcp, {}, 0, {}, false, false, webSocketOnly);
+		appendTestConnection(DcOptions::Variants::Tcp, {}, 0, {}, false, false,
+							 webSocketOnly);
 	} else {
 		using Variants = DcOptions::Variants;
 		const auto special = (_currentDcType == DcType::Temporary);
@@ -1177,10 +1178,10 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 			_options->proxy.type != ProxyData::Type::None);
 		const auto useIPv4 = special ? true : _options->useIPv4;
 		const auto useIPv6 = special ? false : _options->useIPv6;
-		const auto useTcp = special ? true : (webSocketOnly || _options->useTcp);
-		const auto useHttp = special || webSocketOnly
-			? false
-			: _options->useHttp;
+		const auto useTcp
+			= special ? true : (webSocketOnly || _options->useTcp);
+		const auto useHttp
+			= special || webSocketOnly ? false : _options->useHttp;
 		const auto bothAddressFamiliesForWebSocket
 			= WebSocketUsesBothAddressFamilies(_options->proxy.type, useTcp,
 											   !pin.webSocketEndpoint.empty(),
@@ -1215,8 +1216,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 						static_cast<Variants::Protocol>(protocol),
 						QString::fromStdString(endpoint.ip), endpoint.port,
 						endpoint.secret, address == Variants::IPv6,
-						bothAddressFamiliesForWebSocket,
-						webSocketOnly);
+						bothAddressFamiliesForWebSocket, webSocketOnly);
 				}
 			}
 		}

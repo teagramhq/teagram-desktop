@@ -722,16 +722,9 @@ TEST_CASE(ServerConnectionFallsBackToWebSocketAfterTcpFails) {
 TEST_CASE(ServerConnectionSkipsPrivateMtprotoAddressesForWebSocket) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(
-		false,
-		true,
-		endpoint,
-		ProxyData::Type::None,
-		u"mtproto.tailaa4918.ts.net"_q,
-		false,
-		false,
-		{ QHostAddress(u"8.8.4.4"_q) },
-		false,
-		{ QHostAddress(u"100.64.1.10"_q) });
+		false, true, endpoint, ProxyData::Type::None,
+		u"mtproto.tailaa4918.ts.net"_q, false, false,
+		{QHostAddress(u"8.8.4.4"_q)}, false, {QHostAddress(u"100.64.1.10"_q)});
 	CHECK(result.connected);
 	CHECK(!result.failed);
 	CHECK_EQ(int(result.log.endpoints.size()), 1);
@@ -745,16 +738,9 @@ TEST_CASE(ServerConnectionSkipsPrivateMtprotoAddressesForWebSocket) {
 TEST_CASE(ServerConnectionStartsWithWebSocketForWebSocketOnlyBinding) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(
-		false,
-		true,
-		endpoint,
-		ProxyData::Type::None,
-		u"mtproto.tailaa4918.ts.net"_q,
-		false,
-		false,
-		{ QHostAddress(u"8.8.4.4"_q) },
-		false,
-		{ QHostAddress(u"100.64.1.10"_q) },
+		false, true, endpoint, ProxyData::Type::None,
+		u"mtproto.tailaa4918.ts.net"_q, false, false,
+		{QHostAddress(u"8.8.4.4"_q)}, false, {QHostAddress(u"100.64.1.10"_q)},
 		true);
 	CHECK(result.connected);
 	CHECK(!result.failed);

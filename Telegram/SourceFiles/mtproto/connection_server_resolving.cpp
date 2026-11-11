@@ -154,11 +154,10 @@ ConnectionPointer CreateServerConnection(
 #endif
 	const auto forceWebSocketOnly
 		= protocol == DcOptions::Variants::Tcp && webSocketOnly;
-	const auto useWebSocket = protocol == DcOptions::Variants::Tcp
-		&& !webSocketEndpoint.isEmpty()
-		&& (proxy.type == ProxyData::Type::None || forceWebSocketOnly);
-	if (ShouldResolveServerHostname(hostname, proxy.type)
-		|| useWebSocket
+	const auto useWebSocket
+		= protocol == DcOptions::Variants::Tcp && !webSocketEndpoint.isEmpty()
+		  && (proxy.type == ProxyData::Type::None || forceWebSocketOnly);
+	if (ShouldResolveServerHostname(hostname, proxy.type) || useWebSocket
 		|| forceWebSocketOnly) {
 		if (!resolver.lookup) {
 			resolver = DefaultServerHostnameResolver();
@@ -167,11 +166,9 @@ ConnectionPointer CreateServerConnection(
 		}
 		return ConnectionPointer::New<ServerResolvingConnection>(
 			instance, thread, proxy, protocol, ipv6, hostname,
-			std::move(resolver),
-			useWebSocket ? webSocketEndpoint : QString(),
+			std::move(resolver), useWebSocket ? webSocketEndpoint : QString(),
 			useWebSocket ? webSocketSelection : QString(),
-			useWebSocket && bothAddressFamilies,
-			forceWebSocketOnly);
+			useWebSocket && bothAddressFamilies, forceWebSocketOnly);
 	}
 	return AbstractConnection::Create(
 		instance,
@@ -186,13 +183,12 @@ ServerResolvingConnection::ServerResolvingConnection(
 	DcOptions::Variants::Protocol protocol, bool ipv6, const QString &hostname,
 	ServerHostnameResolver resolver, const QString &webSocketEndpoint,
 	const QString &webSocketSelection, bool bothAddressFamilies,
-		bool webSocketOnly)
+	bool webSocketOnly)
 	: AbstractConnection(thread, proxy), _instance(instance),
 	  _protocol(protocol), _ipv6(ipv6), _hostname(hostname),
 	  _resolver(std::move(resolver)), _webSocketEndpoint(webSocketEndpoint),
 	  _webSocketSelection(webSocketSelection),
-	  _bothAddressFamilies(bothAddressFamilies),
-	  _webSocketOnly(webSocketOnly),
+	  _bothAddressFamilies(bothAddressFamilies), _webSocketOnly(webSocketOnly),
 	  _lookupTimeoutTimer([=] { lookupTimedOut(); }),
 	  _addressTimeoutTimer([=] { handleError(kErrorCodeOther); }) {}
 
@@ -260,18 +256,16 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 	const auto preferred
 		= FilterPinnedServerAddresses(_hostname, info.addresses(), _ipv6);
 	_addresses = !_webSocketEndpoint.isEmpty()
-		? PublicDiscoveryAddresses(
-			CheckServerSelection(_webSocketSelection),
-			preferred,
-			_ipv6,
-			_bothAddressFamilies)
-		: (_bothAddressFamilies
-			? InterleaveServerAddressFamilies(
-				  preferred,
-				  FilterPinnedServerAddresses(
-					  _hostname, info.addresses(), !_ipv6),
-				  MaxResolvedAddresses(_bothAddressFamilies))
-			: preferred);
+					 ? PublicDiscoveryAddresses(
+						   CheckServerSelection(_webSocketSelection), preferred,
+						   _ipv6, _bothAddressFamilies)
+					 : (_bothAddressFamilies
+							? InterleaveServerAddressFamilies(
+								  preferred,
+								  FilterPinnedServerAddresses(
+									  _hostname, info.addresses(), !_ipv6),
+								  MaxResolvedAddresses(_bothAddressFamilies))
+							: preferred);
 	tryNextAddress();
 }
 

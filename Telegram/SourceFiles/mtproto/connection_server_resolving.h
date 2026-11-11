@@ -76,8 +76,7 @@ class ServerResolvingConnection final : public AbstractConnection {
 							  ServerHostnameResolver resolver,
 							  const QString &webSocketEndpoint,
 							  const QString &webSocketSelection,
-							  bool bothAddressFamilies,
-							  bool webSocketOnly);
+							  bool bothAddressFamilies, bool webSocketOnly);
 
 	ConnectionPointer clone(const ProxyData &proxy) override;
 

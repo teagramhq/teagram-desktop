@@ -145,29 +145,28 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 			|| server.webSocketEndpoint.empty()) {
 			return false;
 		}
-		const auto url = QUrl(
-			QString::fromStdString(server.webSocketEndpoint),
-			QUrl::StrictMode);
+		const auto url = QUrl(QString::fromStdString(server.webSocketEndpoint),
+							  QUrl::StrictMode);
 		if (!url.isValid() || server.port != url.port(443)) {
 			return false;
 		}
 		auto address = QHostAddress();
 		if (address.setAddress(url.host())) {
 			return server.hostname.empty()
-				&& server.ip == address.toString().toStdString()
-				&& server.ipv6
-					== (address.protocol() == QAbstractSocket::IPv6Protocol)
-				&& IsPublicDiscoveryAddress(selection, address);
+				   && server.ip == address.toString().toStdString()
+				   && server.ipv6
+						  == (address.protocol()
+							  == QAbstractSocket::IPv6Protocol)
+				   && IsPublicDiscoveryAddress(selection, address);
 		}
 		const auto bracketedHost = url.host().contains(QChar::fromLatin1(':'))
-			? (u"["_q + url.host() + u"]"_q)
-			: url.host();
+									   ? (u"["_q + url.host() + u"]"_q)
+									   : url.host();
 		const auto webSocketCheck = CheckServerSelection(
 			bracketedHost + u":"_q + QString::number(url.port(443)));
-		return server.ip.empty()
-			&& server.hostname == url.host().toStdString()
-			&& !server.ipv6
-			&& IsPublicDiscoveryEndpoint(webSocketCheck, selection);
+		return server.ip.empty() && server.hostname == url.host().toStdString()
+			   && !server.ipv6
+			   && IsPublicDiscoveryEndpoint(webSocketCheck, selection);
 	}
 	if (server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
 		&& hasHostname) {
@@ -254,11 +253,8 @@ bool SameCustomServerPin(
 	if (a.webSocketEndpoint != b.webSocketEndpoint) {
 		return false;
 	}
-	if (a.dcId != b.dcId
-		|| a.hostname != b.hostname
-		|| a.ip != b.ip
-		|| a.port != b.port
-		|| a.ipv6 != b.ipv6
+	if (a.dcId != b.dcId || a.hostname != b.hostname || a.ip != b.ip
+		|| a.port != b.port || a.ipv6 != b.ipv6
 		|| a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
 		|| a.discoveryOrigin != b.discoveryOrigin
@@ -303,22 +299,20 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 	const auto endpoint = CheckServerSelection(result.endpoint);
 	if (result.webSocketOnly) {
 		if (result.policy != ServerDiscoveryPolicy::PublicHttps
-			|| webSocketEndpoint.isEmpty()
-			|| !result.key.valid()
-			|| !endpoint.valid()
-			|| !endpoint.explicitPort
+			|| webSocketEndpoint.isEmpty() || !result.key.valid()
+			|| !endpoint.valid() || !endpoint.explicitPort
 			|| endpoint.operationalPort == 80
 			|| (selection.explicitPort
 				&& endpoint.normalizedSelection
-					!= selection.normalizedSelection)) {
+					   != selection.normalizedSelection)) {
 			return std::nullopt;
 		}
 		const auto url = QUrl(webSocketEndpoint, QUrl::StrictMode);
 		const auto host = url.host();
 		const auto port = url.port(443);
 		const auto bracketedHost = host.contains(QChar::fromLatin1(':'))
-			? (u"["_q + host + u"]"_q)
-			: host;
+									   ? (u"["_q + host + u"]"_q)
+									   : host;
 		const auto webSocketCheck = CheckServerSelection(
 			bracketedHost + u":"_q + QString::number(port));
 		if (!MTP::IsPublicDiscoveryEndpoint(webSocketCheck, selection)) {
@@ -336,15 +330,13 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		}
 		return CustomServer{
 			.dcId = result.dcId,
-			.hostname = endpointIsLiteral
-				? std::string()
-				: host.toStdString(),
-			.ip = endpointIsLiteral
-				? endpointAddress.toString().toStdString()
-				: std::string(),
+			.hostname = endpointIsLiteral ? std::string() : host.toStdString(),
+			.ip = endpointIsLiteral ? endpointAddress.toString().toStdString()
+									: std::string(),
 			.port = port,
-			.ipv6 = endpointIsLiteral
-				&& endpointAddress.protocol() == QAbstractSocket::IPv6Protocol,
+			.ipv6
+			= endpointIsLiteral
+			  && endpointAddress.protocol() == QAbstractSocket::IPv6Protocol,
 			.key = std::make_shared<details::RSAPublicKey>(result.key),
 			.serverSelection = selection.normalizedSelection.toStdString(),
 			.discoveryPolicy = result.policy,

@@ -869,7 +869,7 @@ void ServerWidget::publicEndpointResolved(
 }
 
 void ServerWidget::resolvePublicWebSocketEndpoint(
-		MTP::ServerDiscoveryResult result) {
+	MTP::ServerDiscoveryResult result) {
 	if (!_connecting) {
 		return;
 	}
@@ -877,8 +877,7 @@ void ServerWidget::resolvePublicWebSocketEndpoint(
 		result.webSocketEndpoint, _selection);
 	if (!result.webSocketOnly
 		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps
-		|| !normalized
-		|| *normalized != result.webSocketEndpoint) {
+		|| !normalized || *normalized != result.webSocketEndpoint) {
 		discoveryFailed(false);
 		return;
 	}
@@ -897,24 +896,21 @@ void ServerWidget::resolvePublicWebSocketEndpoint(
 
 	_deadline->start(kDiscoveryTimeout);
 	const auto attempt = _attempt;
-	_hostLookupId = QHostInfo::lookupHost(
-		url.host(),
-		this,
-		[=](const QHostInfo &info) {
-			if (!_connecting || _attempt != attempt) {
-				return;
-			}
-			_hostLookupId = -1;
-			publicWebSocketEndpointResolved(result, info);
-		});
+	_hostLookupId
+		= QHostInfo::lookupHost(url.host(), this, [=](const QHostInfo &info) {
+			  if (!_connecting || _attempt != attempt) {
+				  return;
+			  }
+			  _hostLookupId = -1;
+			  publicWebSocketEndpointResolved(result, info);
+		  });
 	if (_hostLookupId < 0) {
 		discoveryFailed(true);
 	}
 }
 
 void ServerWidget::publicWebSocketEndpointResolved(
-		MTP::ServerDiscoveryResult result,
-		const QHostInfo &info) {
+	MTP::ServerDiscoveryResult result, const QHostInfo &info) {
 	if (!_connecting) {
 		return;
 	}
@@ -922,15 +918,15 @@ void ServerWidget::publicWebSocketEndpointResolved(
 		discoveryFailed(true);
 		return;
 	}
-	if (const auto address = MTP::FirstSafePublicDiscoveryAddress(
-			_selection,
-			info.addresses())) {
+	if (const auto address
+		= MTP::FirstSafePublicDiscoveryAddress(_selection, info.addresses())) {
 		result.resolvedAddress = address->toString();
 		_deadline->stop();
 		commitBinding(std::move(result));
 		return;
 	}
-	LOG(("Server discovery found no public address for the WebSocket endpoint."));
+	LOG(("Server discovery found no public address for the WebSocket "
+		 "endpoint."));
 	discoveryFailed(false);
 }
 

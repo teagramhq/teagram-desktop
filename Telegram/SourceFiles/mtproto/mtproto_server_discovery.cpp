@@ -1038,15 +1038,13 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		= IsPublicDiscoveryEndpoint(endpointCheck, selection);
 	const auto webSocketOnly = !endpointAllowed;
 	if (webSocketOnly
-		&& (webSocketEndpoint.isEmpty()
-			|| !endpointCheck.valid()
+		&& (webSocketEndpoint.isEmpty() || !endpointCheck.valid()
 			|| !endpointCheck.explicitPort
 			|| endpointCheck.operationalPort == 80)) {
 		return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
 	}
 	if (selection.explicitPort
-		&& endpointCheck.normalizedSelection
-			!= selection.normalizedSelection) {
+		&& endpointCheck.normalizedSelection != selection.normalizedSelection) {
 		return Invalid(ServerDiscoveryResponseStatus::EndpointMismatch);
 	}
 

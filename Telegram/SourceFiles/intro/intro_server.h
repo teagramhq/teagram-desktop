@@ -113,9 +113,8 @@ private:
 		MTP::ServerDiscoveryResult result,
 		const QHostInfo &info);
 	void resolvePublicWebSocketEndpoint(MTP::ServerDiscoveryResult result);
-	void publicWebSocketEndpointResolved(
-		MTP::ServerDiscoveryResult result,
-		const QHostInfo &info);
+	void publicWebSocketEndpointResolved(MTP::ServerDiscoveryResult result,
+										 const QHostInfo &info);
 	void discoveryFailed(bool connectionFailure);
 	void resetAfterDiscoveryFailure(bool connectionFailure);
 	void
