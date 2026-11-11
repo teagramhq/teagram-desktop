@@ -467,8 +467,8 @@ jobs:
       # already produced it, so this only executes it: seconds, not a second
       # compile. Placed before the artifact steps so a red test stops the
       # upload rather than shipping a binary nothing checked.
-      # Linux ships Teagram without an updater, so CI gates the standalone
-      # unit cases, including the custom emoji smoke.
+      # Linux CI gates the standalone unit cases. The custom emoji picker
+      # smoke runs on the QA box; Linux GUI/Xvfb tests are not a gate.
       - name: Unit tests.
         if: env.ONLY_CACHE == 'false'
         run: |
