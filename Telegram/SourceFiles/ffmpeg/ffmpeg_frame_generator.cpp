@@ -134,6 +134,9 @@ FrameGenerator::Impl::Impl(const QByteArray &bytes)
 		&FrameGenerator::Impl::Read,
 		nullptr,
 		&FrameGenerator::Impl::Seek);
+	if (!_format) {
+		return;
+	}
 
 	auto error = 0;
 	if ((error = avformat_find_stream_info(_format.get(), nullptr))) {
@@ -205,6 +208,9 @@ FrameGenerator::Frame FrameGenerator::Impl::renderCurrent(
 		QImage storage,
 		QSize size,
 		Qt::AspectRatioMode mode) {
+	if (!_format) {
+		return {};
+	}
 	Expects(_current.frame != nullptr);
 
 	const auto frame = _current.frame.get();
