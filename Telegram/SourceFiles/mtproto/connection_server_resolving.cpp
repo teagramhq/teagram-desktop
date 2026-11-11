@@ -253,19 +253,19 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 		tryNextAddress();
 		return;
 	}
-	const auto preferred
+	auto pinnedAddresses
 		= FilterPinnedServerAddresses(_hostname, info.addresses(), _ipv6);
+	if (_bothAddressFamilies) {
+		pinnedAddresses = InterleaveServerAddressFamilies(
+			pinnedAddresses,
+			FilterPinnedServerAddresses(_hostname, info.addresses(), !_ipv6),
+			MaxResolvedAddresses(_bothAddressFamilies));
+	}
 	_addresses = !_webSocketEndpoint.isEmpty()
 					 ? PublicDiscoveryAddresses(
-						   CheckServerSelection(_webSocketSelection), preferred,
-						   _ipv6, _bothAddressFamilies)
-					 : (_bothAddressFamilies
-							? InterleaveServerAddressFamilies(
-								  preferred,
-								  FilterPinnedServerAddresses(
-									  _hostname, info.addresses(), !_ipv6),
-								  MaxResolvedAddresses(_bothAddressFamilies))
-							: preferred);
+						   CheckServerSelection(_webSocketSelection),
+						   pinnedAddresses, _ipv6, _bothAddressFamilies)
+					 : pinnedAddresses;
 	tryNextAddress();
 }
 

@@ -735,6 +735,22 @@ TEST_CASE(ServerConnectionSkipsPrivateMtprotoAddressesForWebSocket) {
 	CHECK_EQ(result.log.addresses.front(), u"8.8.4.4"_q);
 }
 
+TEST_CASE(ServerConnectionUsesAlternateFamilyBeforeWebSocketFallback) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(
+		true, false, endpoint, ProxyData::Type::None, u"demo.example.com"_q,
+		false, true, {QHostAddress(u"8.8.4.4"_q)}, false,
+		{QHostAddress(u"2001:4860:4860::8888"_q)});
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints.front().isEmpty());
+	CHECK_EQ(result.log.addresses.front(), u"2001:4860:4860::8888"_q);
+}
+
 TEST_CASE(ServerConnectionStartsWithWebSocketForWebSocketOnlyBinding) {
 	const auto endpoint = u"wss://transport.example.com/apiws"_q;
 	const auto result = RunScriptedServerConnection(
