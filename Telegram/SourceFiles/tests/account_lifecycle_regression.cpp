@@ -16153,8 +16153,12 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 									 u"Unrelated Member"_q, false));
 	data.processUsers(MTP_vector<MTPUser>(std::move(users)));
 	const auto contacts = data.contactsNoChatsList();
-	if (contacts->searchIndexReady()) {
-		return fail("index was ready before the query subscribed");
+	if (!WaitForRegressionCondition(
+			[&] {
+				return (contacts->size() == 2) && !contacts->searchIndexReady();
+			},
+			5000, 1)) {
+		return fail("new contacts did not start index construction");
 	}
 
 	const auto chat = data.chat(ChatId(9'001'000));
@@ -16183,8 +16187,12 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 	lateUser.push_back(DesktopScaleUser(UserId(firstId.bare + 3),
 										u"SearchOnce Contact C"_q, true, true));
 	data.processUsers(MTP_vector<MTPUser>(std::move(lateUser)));
-	if (contacts->searchIndexReady()) {
-		return fail("did not invalidate after a contact was added");
+	if (!WaitForRegressionCondition(
+			[&] {
+				return (contacts->size() == 3) && !contacts->searchIndexReady();
+			},
+			5000, 1)) {
+		return fail("new contact did not invalidate the ready index");
 	}
 	const auto reindexed = WaitForRegressionCondition(
 		[&] { return contacts->searchIndexReady(); }, 5000, 1);
