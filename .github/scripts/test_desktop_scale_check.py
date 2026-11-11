@@ -1236,6 +1236,31 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn(scenario, results[10]["exceptions"])
         self.assertIn(scenario, results[11]["exceptions"])
 
+    def test_dialogs_regression_stays_blocking_with_slow_dev_history(self):
+        self.require_implementation()
+        scenario = "messages.getDialogs page (100 dialogs)"
+        records = [make_sample() for _ in range(20)]
+        for record in records:
+            record["scenarios"][scenario]["one_stalls"] = 1
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"][scenario].update(
+                {
+                    "one_ms": 20.0,
+                    "hundred_ms": 35.0,
+                    "one_stalls": 1,
+                    "hundred_stalls": 1,
+                }
+            )
+
+        result = scale_check.evaluate(records, base, head)
+
+        self.assertNotIn(scenario, result["exceptions"])
+        failures = [item for item in result["failures"] if scenario in item]
+        self.assertTrue(any("50 ms" in item for item in failures))
+        self.assertTrue(any("1.5x" in item for item in failures))
+
     def test_static_baseline_exceptions_are_report_only(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -1248,9 +1273,6 @@ class DesktopScaleCheckTests(unittest.TestCase):
         for record in records:
             for name in baseline_exceptions:
                 record["scenarios"][name]["one_stalls"] = 1
-            record["scenarios"]["messages.getDialogs page (100 dialogs)"][
-                "one_stalls"
-            ] = 1
         for sample in head:
             for name in baseline_exceptions:
                 sample["scenarios"][name].update(
@@ -1259,15 +1281,6 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         result = scale_check.evaluate(records, base, head)
 
-        dialog_scenario = "messages.getDialogs page (100 dialogs)"
-        self.assertEqual(
-            result["exceptions"][dialog_scenario],
-            "dev runs exceed the 50 ms main-thread budget",
-        )
-        self.assertEqual(
-            result["additional_exceptions"][dialog_scenario],
-            "dev runs exceed the 50 ms main-thread budget",
-        )
         self.assertIn("MAIN-3657", result["exceptions"]["contacts.getContacts full response"])
         self.assertIn("MAIN-3657", result["exceptions"]["contact change + name lookup"])
         self.assertFalse(result["failures"])
