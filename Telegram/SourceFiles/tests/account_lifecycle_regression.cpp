@@ -14742,6 +14742,9 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 
 constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
+constexpr auto kDesktopScaleUpdateCount = 1'000;
+constexpr auto kDesktopScaleUpdateMessageBase = 2'000'000;
+constexpr auto kDesktopScaleInterleavedMessageId = 3'000'000;
 
 [[nodiscard]] constexpr std::optional<quint64>
 SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
@@ -14852,6 +14855,17 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
+[[nodiscard]] bool
+DesktopScaleUpdateBurstMeetsBudget(const DesktopScaleActionSample &one,
+								   const DesktopScaleActionSample &hundred) {
+	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
+		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
+		   && one.mainThreadStepsOverBudget
+		   && (*one.mainThreadStepsOverBudget == 0)
+		   && hundred.mainThreadStepsOverBudget
+		   && (*hundred.mainThreadStepsOverBudget == 0);
+}
+
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
 									   bool contact, bool withPhone = false) {
 	const auto flags
@@ -14950,7 +14964,9 @@ struct DesktopScaleHistoryState final {
 	History *history = nullptr;
 	Data::Folder *folder = nullptr;
 	int unreadCount = 0;
+	MsgId previewId = 0;
 	bool pinned = false;
+	bool muted = false;
 };
 
 struct DesktopScaleChatListState final {
@@ -14971,7 +14987,11 @@ DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
 				.history = history,
 				.folder = history->folder(),
 				.unreadCount = history->unreadCount(),
+				.previewId = history->chatListMessage()
+								 ? history->chatListMessage()->id
+								 : MsgId(),
 				.pinned = history->isPinnedDialog(FilterId()),
+				.muted = history->muted(),
 			});
 		}
 	}
@@ -15129,6 +15149,125 @@ DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
 					 "Desktop scale state mismatch: list=%s property=unread "
 					 "field=%s expected=%d actual=%d first_dialog=none.\n",
 					 listName, field, expectedUnread, actualUnread);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool DesktopScaleUpdateBurstStateMatches(
+	const DesktopScaleChatListState &before, const Dialogs::MainList &now,
+	UserId firstId, int dialogCount, int updateCount = kDesktopScaleUpdateCount,
+	bool includeInterleaved = true) {
+	const auto after = DesktopScaleChatListSnapshot(now);
+	const auto affectedCount = std::min(dialogCount, updateCount);
+	const auto historyFor = [&](int index) -> History * {
+		const auto peerId = firstId.bare + index;
+		const auto i
+			= ranges::find_if(before.histories, [&](const auto &state) {
+				  return state.history->peer->id.value == peerId;
+			  });
+		return (i == end(before.histories)) ? nullptr : i->history;
+	};
+	const auto latestBurstIndex = [&](int index) {
+		return index + ((updateCount - 1 - index) / dialogCount) * dialogCount;
+	};
+	auto updated = std::vector<std::pair<int, int>>();
+	for (auto index = 0; index != affectedCount; ++index) {
+		updated.emplace_back(latestBurstIndex(index), index);
+	}
+	ranges::sort(updated, std::greater<>());
+	auto expectedOrder = std::vector<Dialogs::Key>();
+	expectedOrder.reserve(before.order.size());
+	const auto firstHistory = historyFor(0);
+	if (!firstHistory) {
+		return false;
+	}
+	if (includeInterleaved) {
+		expectedOrder.push_back(Dialogs::Key(firstHistory));
+	}
+	for (const auto &entry : updated) {
+		const auto index = entry.second;
+		if (!includeInterleaved || index != 0) {
+			const auto history = historyFor(index);
+			if (!history) {
+				return false;
+			}
+			expectedOrder.push_back(Dialogs::Key(history));
+		}
+	}
+	for (const auto &key : before.order) {
+		const auto id = DesktopScaleDialogId(key);
+		if ((id < uint64(firstId.bare))
+			|| (id >= uint64(firstId.bare + affectedCount))) {
+			expectedOrder.push_back(key);
+		}
+	}
+	if (!DesktopScaleDialogOrderMatches("updates.getDifference", expectedOrder,
+										after.order, false)) {
+		return false;
+	}
+	auto expectedUnread = before.unread;
+	expectedUnread.messages += updateCount + int(includeInterleaved);
+	for (const auto &state : before.histories) {
+		const auto dialogId = state.history->peer->id.value;
+		const auto index = int(dialogId - firstId.bare);
+		const auto burstCount
+			= (index >= 0 && index < affectedCount)
+				  ? ((updateCount - 1 - index) / dialogCount) + 1
+				  : 0;
+		const auto interleavedCount
+			= (includeInterleaved && (index == 0)) ? 1 : 0;
+		const auto newUnreadCount = burstCount + interleavedCount;
+		expectedUnread.messagesMuted += state.muted ? newUnreadCount : 0;
+		if (!state.unreadCount && newUnreadCount) {
+			++expectedUnread.chats;
+			if (state.muted) {
+				++expectedUnread.chatsMuted;
+			}
+		}
+		const auto expectedUnreadCount
+			= state.unreadCount + burstCount + interleavedCount;
+		if (state.history->unreadCount() != expectedUnreadCount) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=updates.getDifference "
+				"property=unread dialog=%llu expected=%d actual=%d.\n",
+				static_cast<unsigned long long>(dialogId), expectedUnreadCount,
+				state.history->unreadCount());
+			return false;
+		}
+		auto expectedPreview = state.previewId;
+		if (burstCount) {
+			expectedPreview = MsgId(kDesktopScaleUpdateMessageBase
+									+ latestBurstIndex(index));
+		}
+		if (interleavedCount) {
+			expectedPreview = MsgId(kDesktopScaleInterleavedMessageId);
+		}
+		const auto actualPreview = state.history->chatListMessage();
+		if ((actualPreview ? actualPreview->id : MsgId()) != expectedPreview) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=updates.getDifference "
+				"property=last-message dialog=%llu expected=%lld "
+				"actual=%lld.\n",
+				static_cast<unsigned long long>(dialogId),
+				static_cast<long long>(expectedPreview.bare),
+				static_cast<long long>(actualPreview ? actualPreview->id.bare
+													 : 0));
+			return false;
+		}
+	}
+	auto expectedUnreadValue = 0;
+	auto actualUnreadValue = 0;
+	const auto actualUnreadDifference = DesktopScaleUnreadStateDifference(
+		expectedUnread, after.unread, &expectedUnreadValue, &actualUnreadValue);
+	if (actualUnreadDifference) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=updates.getDifference "
+					 "property=unread field=%s expected=%d actual=%d.\n",
+					 actualUnreadDifference, expectedUnreadValue,
+					 actualUnreadValue);
 		return false;
 	}
 	return true;
@@ -15684,15 +15823,15 @@ struct DesktopScaleSearchUpdateSamples final {
 }
 
 [[nodiscard]] QVector<MTPMessage>
-DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount) {
-	constexpr auto kUpdateCount = 1'000;
+DesktopScaleUpdateBurstMessages(UserId firstId, int dialogCount, int firstDate,
+								int updateCount = kDesktopScaleUpdateCount) {
 	auto messages = QVector<MTPMessage>();
-	messages.reserve(kUpdateCount);
-	for (auto i = 0; i != kUpdateCount; ++i) {
+	messages.reserve(updateCount);
+	for (auto i = 0; i != updateCount; ++i) {
 		const auto userId = UserId(firstId.bare + (i % dialogCount));
 		messages.push_back(DesktopScaleTimelineMessage(
-			peerFromUser(userId), userId, MsgId(2'000'000 + i),
-			int(base::unixtime::now())));
+			peerFromUser(userId), userId,
+			MsgId(kDesktopScaleUpdateMessageBase + i), firstDate + i));
 	}
 	return messages;
 }
@@ -15702,7 +15841,6 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 								UserId selfId, UserId firstId,
 								Main::Account *reuseAccount = nullptr) {
 	constexpr auto kSearchResultCount = kDesktopScalePageSize;
-	constexpr auto kUpdateCount = 1'000;
 	auto samples = DesktopScaleSearchUpdateSamples();
 	const auto created = WithDesktopScaleAccount(
 		domain, selfId,
@@ -15783,23 +15921,163 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 
 			session.updates().completeInitialStateForRegressionTest(1);
 			session.updates().getDifference();
-			auto updateMessages
-				= DesktopScaleUpdateBurstMessages(firstId, dialogCount);
+			const auto firstDate
+				= int(base::unixtime::now()) + kDesktopScaleUpdateCount + 10;
+			auto updateMessages = DesktopScaleUpdateBurstMessages(
+				firstId, dialogCount, firstDate);
+			ranges::reverse(updateMessages);
+			const auto beforeUpdateState
+				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto interleavedPeer = peerFromUser(firstId);
+			const auto interleavedMessageId
+				= MsgId(kDesktopScaleInterleavedMessageId);
+			const auto interleavedUpdate = MTP_updateNewMessage(
+				DesktopScaleTimelineMessage(
+					interleavedPeer, firstId, interleavedMessageId,
+					firstDate + kDesktopScaleUpdateCount),
+				MTP_int(2 + kDesktopScaleUpdateCount), MTP_int(1));
+			const auto interleavedUpdates = MTP_updates(
+				MTP_vector<MTPUpdate>({interleavedUpdate}),
+				MTP_vector<MTPUser>(0), MTP_vector<MTPChat>(0),
+				MTP_int(firstDate + kDesktopScaleUpdateCount), MTP_int(0));
 			const auto difference = MTP_updates_difference(
 				MTP_vector<MTPMessage>(std::move(updateMessages)),
 				MTP_vector<MTPEncryptedMessage>(0), MTP_vector<MTPUpdate>(0),
 				MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0),
-				MTP_updates_state(MTP_int(1 + kUpdateCount), MTP_int(0),
+				MTP_updates_state(MTP_int(1 + kDesktopScaleUpdateCount),
+								  MTP_int(0),
 								  MTP_int(int(base::unixtime::now())),
 								  MTP_int(0), MTP_int(0)));
-			samples.updateBurst
-				= ApplyDesktopScaleResponse<MTPupdates_GetDifference>(
-					capture, mtpc_updates_getDifference, difference,
-					[] { return true; });
+			auto burstMessagesAdded = std::vector<std::pair<PeerId, MsgId>>();
+			auto interleavedSent = false;
+			auto interleavedDeferred = false;
+			auto interleavedAppliedAfterBurst = false;
+			auto interleavedPtsAtSend = 0;
+			auto reconnectRequestedDuringDifference = false;
+			auto reconnectDeferredUntilCommit = false;
+			auto reconnectRefetchAfterDifference = false;
+			auto differenceApplied = false;
+			auto differenceLoop = QEventLoop();
+			auto messageLifetime = rpl::lifetime();
+			const auto capturedDifferenceRequests = [&] {
+				return std::count_if(
+					capture.requests.begin(), capture.requests.end(),
+					[](const auto &request) {
+						return !request.body.isEmpty()
+							   && (static_cast<uint32>(request.body.front())
+								   == mtpc_updates_getDifference);
+					});
+			};
+			data.newItemAdded()
+				| rpl::on_next(
+					[&](not_null<HistoryItem *> item) {
+						const auto id = item->id;
+						if ((id.bare >= kDesktopScaleUpdateMessageBase)
+							&& (id.bare < kDesktopScaleUpdateMessageBase
+											  + kDesktopScaleUpdateCount)) {
+							burstMessagesAdded.emplace_back(
+								item->history()->peer->id, id);
+							if (!interleavedSent
+								&& (id.bare
+									== kDesktopScaleUpdateMessageBase)) {
+								interleavedSent = true;
+								interleavedPtsAtSend = session.updates().pts();
+								session.updates()
+									.receiveUpdatesForRegressionTest(
+										interleavedUpdates);
+								interleavedDeferred
+									= !data.message(interleavedPeer,
+													interleavedMessageId)
+									  && (burstMessagesAdded.size() == 1)
+									  && (interleavedPtsAtSend == 1);
+								session.updates().getDifferenceAfterReconnect();
+								reconnectRequestedDuringDifference = true;
+								reconnectDeferredUntilCommit
+									= (capturedDifferenceRequests() == 0);
+							}
+						} else if (id == interleavedMessageId) {
+							interleavedAppliedAfterBurst
+								= (burstMessagesAdded.size()
+								   == kDesktopScaleUpdateCount)
+								  && (session.updates().pts()
+									  == 2 + kDesktopScaleUpdateCount);
+							differenceApplied = true;
+							differenceLoop.quit();
+						}
+					},
+					messageLifetime);
+			samples.updateBurst = ApplyDesktopScaleResponse<
+				MTPupdates_GetDifference>(
+				capture, mtpc_updates_getDifference, difference, [&] {
+					if (!differenceApplied) {
+						QTimer::singleShot(5'000, &differenceLoop,
+										   &QEventLoop::quit);
+						differenceLoop.exec();
+						reconnectRefetchAfterDifference
+							= reconnectDeferredUntilCommit
+							  && (capturedDifferenceRequests() == 1);
+					}
+					if (!interleavedDeferred || !interleavedAppliedAfterBurst
+						|| !reconnectRequestedDuringDifference
+						|| !reconnectRefetchAfterDifference) {
+						std::fprintf(
+							stderr,
+							"Desktop scale check failed: updates.getDifference "
+							"did not defer updates or reconnect recovery to "
+							"the burst "
+							"end.\n");
+						return false;
+					}
+					if (burstMessagesAdded.size() != kDesktopScaleUpdateCount) {
+						std::fprintf(
+							stderr,
+							"Desktop scale check failed: updates.getDifference "
+							"added %zu burst messages, expected %d.\n",
+							burstMessagesAdded.size(),
+							kDesktopScaleUpdateCount);
+						return false;
+					}
+					for (auto i = 0; i != kDesktopScaleUpdateCount; ++i) {
+						const auto userId
+							= UserId(firstId.bare + (i % dialogCount));
+						const auto expectedPeer = peerFromUser(userId);
+						const auto expectedId
+							= MsgId(kDesktopScaleUpdateMessageBase + i);
+						if ((burstMessagesAdded[i].first != expectedPeer)
+							|| (burstMessagesAdded[i].second != expectedId)) {
+							std::fprintf(
+								stderr,
+								"Desktop scale check failed: "
+								"updates.getDifference "
+								"message order mismatch at index %d.\n",
+								i);
+							return false;
+						}
+						if (!data.message(expectedPeer, expectedId)) {
+							std::fprintf(
+								stderr,
+								"Desktop scale check failed: "
+								"updates.getDifference "
+								"did not retain message %lld in its chat.\n",
+								static_cast<long long>(expectedId.bare));
+							return false;
+						}
+					}
+					if ((burstMessagesAdded.back().second
+						 != MsgId(kDesktopScaleUpdateMessageBase
+								  + kDesktopScaleUpdateCount - 1))) {
+						return false;
+					}
+					if (!data.message(interleavedPeer, interleavedMessageId)) {
+						return false;
+					}
+					return true;
+				});
 			auto updatesApplied = true;
-			for (auto i = 0; i != kUpdateCount; ++i) {
+			for (auto i = 0; i != kDesktopScaleUpdateCount; ++i) {
 				const auto userId = UserId(firstId.bare + (i % dialogCount));
-				const auto messageId = MsgId(2'000'000 + i);
+				const auto messageId
+					= MsgId(kDesktopScaleUpdateMessageBase + i);
 				if (!data.message(peerFromUser(userId), messageId)) {
 					std::fprintf(
 						stderr,
@@ -15811,8 +16089,63 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 				}
 			}
 			samples.updateBurst.passed
-				= samples.updateBurst.passed && updatesApplied;
-			return samples.search.passed && samples.updateBurst.passed;
+				= samples.updateBurst.passed && updatesApplied
+				  && DesktopScaleUpdateBurstStateMatches(beforeUpdateState,
+														 *data.chatsList(),
+														 firstId, dialogCount);
+			if (reconnectRefetchAfterDifference) {
+				const auto emptyRefetch = MTP_updates_differenceEmpty(
+					MTP_int(firstDate + kDesktopScaleUpdateCount + 10),
+					MTP_int(0));
+				const auto refetchCompleted
+					= ApplyDesktopScaleResponse<MTPupdates_GetDifference>(
+						capture, mtpc_updates_getDifference, emptyRefetch,
+						[] { return true; });
+				samples.updateBurst.passed
+					= samples.updateBurst.passed && refetchCompleted.passed;
+			}
+			auto baselineStateMatches = true;
+			if (dialogCount == 50) {
+				constexpr auto kBaselineDialogCount = 3;
+				constexpr auto kBaselineUpdateCount = 32;
+				const auto baselineFirstId = UserId(firstId.bare + 100'000);
+				auto existingRows = std::vector<Dialogs::Key>();
+				for (const auto &row : data.chatsList()->indexed()->all()) {
+					existingRows.push_back(row->key());
+				}
+				for (const auto &key : existingRows) {
+					data.removeChatListEntry(key);
+				}
+				if (!SeedDesktopScaleDialogs(data, baselineFirstId,
+											 kBaselineDialogCount)) {
+					baselineStateMatches = false;
+				} else {
+					const auto beforeBaseline
+						= DesktopScaleChatListSnapshot(*data.chatsList());
+					const auto baselineDate = int(base::unixtime::now())
+											  + kBaselineUpdateCount + 10;
+					const auto baselineMessages
+						= DesktopScaleUpdateBurstMessages(
+							baselineFirstId, kBaselineDialogCount, baselineDate,
+							kBaselineUpdateCount);
+					// The pre-batching difference path passed this ascending
+					// wire vector directly to processMessages. Check that the
+					// state model used above reproduces that baseline behavior.
+					data.processMessages(baselineMessages,
+										 NewMessageType::Unread);
+					baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
+						beforeBaseline, *data.chatsList(), baselineFirstId,
+						kBaselineDialogCount, kBaselineUpdateCount, false);
+				}
+				if (!baselineStateMatches) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: the expected-state model "
+						"did not match base processMessages behavior.\n");
+				}
+			}
+			return samples.search.passed && samples.updateBurst.passed
+				   && baselineStateMatches;
 		},
 		reuseAccount);
 	if (!created) {
@@ -17043,6 +17376,8 @@ int RunDesktopScaleCheck() {
 		groupHundred.mainThreadStepsOverBudget,
 		searchOne.search.mainThreadStepsOverBudget,
 		searchHundred.search.mainThreadStepsOverBudget,
+		searchOne.updateBurst.mainThreadStepsOverBudget,
+		searchHundred.updateBurst.mainThreadStepsOverBudget,
 	});
 	const auto passed
 		= dialogsOneCreated && dialogsOne.passed && dialogsHundredCreated
@@ -17056,8 +17391,11 @@ int RunDesktopScaleCheck() {
 		  && historyCreated && groupOne.passed && groupHundred.passed
 		  && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
-		  && searchHundred.updateBurst.passed && blockingStalls
-		  && (*blockingStalls == 0) && (cacheOne.directoryEnumerations == 0)
+		  && searchHundred.updateBurst.passed
+		  && DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
+												searchHundred.updateBurst)
+		  && blockingStalls && (*blockingStalls == 0)
+		  && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
 		  && (groupHundred.directoryEnumerations == 0);
@@ -17151,15 +17489,6 @@ int RunDesktopScaleCheck() {
 	printSampleTime(contactsHundred.loaded);
 	std::printf("/");
 	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
-	std::printf(" over-50-ms steps.\n");
-	std::printf("Report-only baseline: updates.getDifference 1x=");
-	printSampleTime(searchOne.updateBurst);
-	std::printf("/");
-	printStallCount(searchOne.updateBurst.mainThreadStepsOverBudget);
-	std::printf(" over-50-ms steps, 100x=");
-	printSampleTime(searchHundred.updateBurst);
-	std::printf("/");
-	printStallCount(searchHundred.updateBurst.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
 	std::printf("Blocking main-thread steps over 50 ms: ");
 	printStallCount(blockingStalls);
