@@ -17508,8 +17508,8 @@ int RunDesktopScaleCheck() {
 			 dialogsHundred);
 	printRow("contacts.getContacts full response", contactsOne.loaded,
 			 contactsHundred.loaded);
-	printRow("contact change + 1,000 short name lookups (average)",
-			 contactsOne.changedAndFound, contactsHundred.changedAndFound);
+	printRow("contact change + name lookup", contactsOne.changedAndFound,
+			 contactsHundred.changedAndFound);
 	printRow("contact removal + search cleanup", contactsOne.removed,
 			 contactsHundred.removed);
 	printRow("cache read x100", cacheOne, cacheHundred);
