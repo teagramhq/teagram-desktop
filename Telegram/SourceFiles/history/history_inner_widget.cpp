@@ -4429,9 +4429,9 @@ void HistoryInner::recountHistoryGeometry(bool initial) {
 
 	updateBotInfo(false);
 
-	_history->resizeToWidth(_contentWidth);
+	_history->resizeToWidth(_contentWidth, _isChatWide);
 	if (_migrated) {
-		_migrated->resizeToWidth(_contentWidth);
+		_migrated->resizeToWidth(_contentWidth, _isChatWide);
 	}
 
 	// With migrated history we perhaps do not need to display

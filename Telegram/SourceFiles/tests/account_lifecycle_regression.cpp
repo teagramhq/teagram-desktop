@@ -11120,6 +11120,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
 	bool historyScaleInvalidationRebuilt = false;
+	bool historyChatModeInvalidationRebuilt = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
@@ -11593,6 +11594,48 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	controller->showPeerHistory(firstHistory);
 	QCoreApplication::processEvents();
+	const auto originalAdaptiveForWide
+		= Core::App().settings().adaptiveForWide();
+	auto originalChatLayout = Window::Adaptive::ChatLayout::Normal;
+	auto originalChatLayoutCaptured = false;
+	auto chatLayoutLifetime = rpl::lifetime();
+	controller->adaptive().chatLayoutValue() | rpl::take(1)
+		| rpl::on_next(
+			[&](Window::Adaptive::ChatLayout layout) {
+				originalChatLayout = layout;
+				originalChatLayoutCaptured = true;
+			},
+			chatLayoutLifetime);
+	QCoreApplication::processEvents();
+	if (originalChatLayoutCaptured) {
+		controller->showPeerHistory(secondHistory);
+		QCoreApplication::processEvents();
+		const auto originalHistoryChatWide
+			= controller->adaptive().isChatWide();
+		const auto originalHistoryFullResizeCount
+			= firstHistory->layoutFullResizeCountForRegressionTest();
+		controller->adaptive().setChatLayout(
+			Window::Adaptive::ChatLayout::Wide);
+		Core::App().settings().setAdaptiveForWide(!originalAdaptiveForWide);
+		QCoreApplication::processEvents();
+		if (controller->adaptive().isChatWide() == originalHistoryChatWide) {
+			Core::App().settings().setAdaptiveForWide(!originalHistoryChatWide);
+			controller->adaptive().setChatLayout(
+				Window::Adaptive::ChatLayout::Wide);
+			QCoreApplication::processEvents();
+		}
+		const auto chatWideModeChanged
+			= controller->adaptive().isChatWide() != originalHistoryChatWide;
+		controller->showPeerHistory(firstHistory);
+		QCoreApplication::processEvents();
+		result.historyChatModeInvalidationRebuilt
+			= chatWideModeChanged
+			  && (firstHistory->layoutFullResizeCountForRegressionTest()
+				  > originalHistoryFullResizeCount);
+		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
+		controller->adaptive().setChatLayout(originalChatLayout);
+		QCoreApplication::processEvents();
+	}
 	auto slowChatSwitchEvidence
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
 			slowChatSwitches.size());
@@ -11697,6 +11740,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
+		  && result.historyChatModeInvalidationRebuilt
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
 		  && AttachMenuCallbackWithinBound(
 			  result.attachMenuFirstHoverCallbackWallNanoseconds,
@@ -12477,6 +12521,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_uncached_missing_bot_failures=%d "
 					"attach_menu_uncached_build_count_failures=%d "
 					"attach_menu_cache_bound=%d "
+					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
 					"max_stall_ns=%lld under_50ms=%d.\n",
@@ -12526,6 +12571,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuUncachedMissingBotFailures,
 					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
+					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),

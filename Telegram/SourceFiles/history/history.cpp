@@ -3793,20 +3793,20 @@ HistoryItem *History::lastEditableMessage() const {
 	return nullptr;
 }
 
-void History::resizeToWidth(int newWidth) {
+void History::resizeToWidth(int newWidth, bool chatWide) {
 	using Request = HistoryBlock::ResizeRequest;
 	const auto layoutScale = style::Scale();
 	const auto layoutDevicePixelRatio = style::DevicePixelRatio();
 	const auto layoutPaletteVersion = style::PaletteVersion();
-	const auto layoutStyleChanged
+	const auto layoutKeyChanged
 		= (_layoutScale != layoutScale)
 		  || (_layoutDevicePixelRatio != layoutDevicePixelRatio)
-		  || (_layoutPaletteVersion != layoutPaletteVersion);
-	const auto request = (_flags & Flag::PendingAllItemsResize)
-							 ? Request::ReinitAll
-						 : ((_width != newWidth) || layoutStyleChanged)
-							 ? Request::ResizeAll
-							 : Request::ResizePending;
+		  || (_layoutPaletteVersion != layoutPaletteVersion)
+		  || (_layoutChatWide != chatWide);
+	const auto request
+		= (_flags & Flag::PendingAllItemsResize)	   ? Request::ReinitAll
+		  : ((_width != newWidth) || layoutKeyChanged) ? Request::ResizeAll
+													   : Request::ResizePending;
 	if (request == Request::ResizePending && !hasPendingResizedItems()) {
 		return;
 	}
@@ -3819,6 +3819,7 @@ void History::resizeToWidth(int newWidth) {
 	_layoutScale = layoutScale;
 	_layoutDevicePixelRatio = layoutDevicePixelRatio;
 	_layoutPaletteVersion = layoutPaletteVersion;
+	_layoutChatWide = chatWide;
 	int y = 0;
 	for (const auto &block : blocks) {
 		block->setY(y);

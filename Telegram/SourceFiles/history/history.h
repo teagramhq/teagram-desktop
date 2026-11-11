@@ -285,7 +285,7 @@ public:
 	MsgId msgIdForRead() const;
 	HistoryItem *lastEditableMessage() const;
 
-	void resizeToWidth(int newWidth);
+	void resizeToWidth(int newWidth, bool chatWide);
 	void forceFullResize();
 	int height() const;
 	[[nodiscard]] int layoutScaleForRegressionTest() const {
@@ -662,6 +662,7 @@ private:
 	int _layoutScale = 0;
 	int _layoutDevicePixelRatio = 0;
 	int _layoutPaletteVersion = -1;
+	bool _layoutChatWide = false;
 	int _layoutFullResizeCount = 0;
 	Element *_unreadBarView = nullptr;
 	Element *_firstUnreadView = nullptr;
