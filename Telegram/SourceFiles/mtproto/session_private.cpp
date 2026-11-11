@@ -1493,7 +1493,8 @@ void SessionPrivate::handleReceived() {
 			return restart();
 		}
 
-		if ((messageLength > kMaxMessageLength)
+		if ((messageLength < kIntSize)
+			|| (messageLength > kMaxMessageLength)
 			|| (messageLength & 0x03)
 			|| (paddingSize < kMinPaddingSize)
 			|| (paddingSize > kMaxPaddingSize)) {
@@ -2015,7 +2016,7 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 	} return HandleResult::Success;
 
 	case mtpc_rpc_result: {
-		if (from + 3 > end) {
+		if (end - from < 4) {
 			return HandleResult::ParseError;
 		}
 		auto response = mtpBuffer();

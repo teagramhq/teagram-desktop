@@ -18,8 +18,8 @@ inline QString UrlToLocal(const QUrl &url) {
 
 namespace Unfused {
 
-inline void UnsafeOpenUrl(const QString &url) {
-	return ::File::internal::UnsafeOpenUrlDefault(url);
+inline void UnsafeOpenUrl(const QString &url, bool customSchemeApproved) {
+	return ::File::internal::UnsafeOpenUrlDefault(url, customSchemeApproved);
 }
 
 } // namespace Unfused

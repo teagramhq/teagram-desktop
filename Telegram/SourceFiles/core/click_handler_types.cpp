@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mac_protected_path_runtime.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
+#include "core/url_scheme_policy.h"
+#include "logs.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
 #include "main/session_feature_support.h"
@@ -86,7 +88,9 @@ constexpr auto kReminderSetToastDuration = 4 * crl::time(1000);
 }
 
 [[nodiscard]] bool HiddenUrlRequiresConfirmation(const QUrl &url) {
-	return UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
+	const auto scheme = url.scheme().toLower();
+	return (scheme != u"https"_q && scheme != u"http"_q)
+		   || UrlRequiresConfirmation(url) || IsTelegramShortLinkHost(url);
 }
 
 [[nodiscard]] bool RequiresConfirmationAfterIvFallback(const QUrl &url) {
@@ -296,9 +300,29 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			return result;
 		}()));
 	} else {
-		const auto parsedUrl = url.startsWith(u"tonsite://"_q)
-			? QUrl(url)
-			: QUrl::fromUserInput(url);
+		const auto isEmail = UrlClickHandler::IsEmail(url);
+		const auto external = QUrl(url);
+		const auto parsedUrl = external.scheme().isEmpty()
+			? QUrl::fromUserInput(url)
+			: external;
+		const auto originSession
+			= originController ? &originController->session() : nullptr;
+		if (!isEmail
+			&& (!external.isValid() || !parsedUrl.isValid()
+				|| parsedUrl.isLocalFile()
+				|| !File::IsUrlSchemeAllowed(parsedUrl.scheme(),
+											 originSession))) {
+			LOG(("URL Error: refused scheme %1.").arg(parsedUrl.scheme()));
+			if (my.show) {
+				my.show->showToast(tr::lng_open_link_unsupported(tr::now));
+			} else {
+				File::ShowUnsupportedUrl();
+			}
+			return;
+		}
+		if (!isEmail) {
+			url = QString::fromUtf8(parsedUrl.toEncoded());
+		}
 		auto openContext = context;
 		const auto forceConfirmation = my.forceExternalUrlConfirmation
 			&& my.ignoreIv;
@@ -316,11 +340,8 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			my.forceExternalUrlConfirmation = true;
 			openContext = QVariant::fromValue(my);
 		}
-		const auto open = [=] {
-			UrlClickHandler::Open(url, openContext);
-		};
-		if (forceConfirmation
-			|| (confirmAfterIvFallback && !canTryIv)
+		const auto open = [=] { UrlClickHandler::Open(url, openContext); };
+		if (forceConfirmation || (confirmAfterIvFallback && !canTryIv)
 			|| (HiddenUrlRequiresConfirmation(parsedUrl)
 				&& !skipConfirmation)) {
 			if (!my.show) {
@@ -338,13 +359,19 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 			const auto use = controller
 				? &controller->window()
 				: Core::App().activeWindow();
-			auto box = Box([=](not_null<Ui::GenericBox*> box) {
-				Ui::ConfirmBox(box, {
-					.text = (tr::lng_open_this_link(tr::now)),
-					.confirmed = [=](Fn<void()> hide) { hide(); open(); },
-					.confirmText = tr::lng_open_link(),
-					.labelStyle = my.dark ? &st::groupCallBoxLabel : nullptr,
-				});
+			auto box = Box([=](not_null<Ui::GenericBox *> box) {
+				Ui::ConfirmBox(box,
+							   {
+								   .text = (tr::lng_open_this_link(tr::now)),
+								   .confirmed =
+									   [=](Fn<void()> hide) {
+										   hide();
+										   open();
+									   },
+								   .confirmText = tr::lng_open_link(),
+								   .labelStyle
+								   = my.dark ? &st::groupCallBoxLabel : nullptr,
+							   });
 				const auto &st = my.dark
 					? st::groupCallBoxLabel
 					: st::boxLabel;

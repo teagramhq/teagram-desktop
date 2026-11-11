@@ -98,6 +98,11 @@ case "$operation" in
           "$image" >&2
         write_cache_result false
         exit 0
+      elif grep -Fq "${image}: not found" "$pull_log"; then
+        printf '::warning::macOS dependency artifact %s disappeared from the registry while downloading; falling back to the legacy cache or rebuilding dependencies.\n' \
+          "$image" >&2
+        write_cache_result false
+        exit 0
       fi
       fail "Unable to pull macOS dependency artifact ${image} (oras exit ${pull_status})."
     fi

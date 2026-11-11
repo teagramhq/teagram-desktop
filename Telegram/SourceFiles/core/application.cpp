@@ -59,6 +59,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_cloud_manager.h"
 #include "lang/lang_hardcoded.h"
 #include "lang/lang_instance.h"
+#include "logs.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "mainwidget.h"
 #include "tray.h"
@@ -1365,7 +1366,12 @@ bool Application::openLocalUrl(const QString &url, QVariant context) {
 		const auto target = my.sessionWindow.get();
 		if (!target
 			&& DeepLinks::Router::Instance().requiresPaidFeatures(command)) {
-			return TryRouterForLocalUrl(nullptr, command);
+			// This route belongs to an account, but there is no origin account
+			// to open it for. Treat it as handled without touching the active
+			// one.
+			LOG(("Local URL Error: paid route without an origin window "
+				 "dropped."));
+			return true;
 		}
 		const auto controller
 			= target ? target

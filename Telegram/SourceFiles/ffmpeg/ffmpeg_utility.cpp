@@ -43,9 +43,6 @@ void _libdrm_so_tramp_resolve_all(void) __attribute__((weak));
 namespace FFmpeg {
 namespace {
 
-// See https://github.com/telegramdesktop/tdesktop/issues/7225
-constexpr auto kAlignImageBy = 64;
-constexpr auto kImageFormat = QImage::Format_ARGB32_Premultiplied;
 constexpr auto kMaxScaleByAspectRatio = 16;
 constexpr auto kAvioBlockSize = 4096;
 constexpr auto kMaxFrameStorageBytes = 64 * 1024 * 1024;
@@ -85,57 +82,11 @@ struct HwAccelDescriptor {
 	AVPixelFormat format = AV_PIX_FMT_NONE;
 };
 
-struct AlignedFrameStorageLayout {
-	int width = 0;
-	int height = 0;
-	int bytesPerLine = 0;
-	int totalBytes = 0;
-};
-
-void AlignedImageBufferCleanupHandler(void *data) {
-	const auto buffer = static_cast<uchar*>(data);
-	delete[] buffer;
-}
-
-[[nodiscard]] bool ComputeAlignedFrameStorageLayout(
-		QSize size,
-		AlignedFrameStorageLayout *out) {
-	const auto width = size.width();
-	const auto height = size.height();
-	if (width <= 0 || height <= 0) {
-		return false;
-	}
-	const auto widthAlign = kAlignImageBy / kPixelBytesSize;
-	const auto widthRemainder = width % widthAlign;
-	const auto widthPadding = widthRemainder
-		? (widthAlign - widthRemainder)
-		: 0;
-	const auto alignedWidth = int64_t(width) + widthPadding;
-	const auto bytesPerLine = int64_t(alignedWidth) * kPixelBytesSize;
-	if (bytesPerLine > kMaxFrameStorageBytes) {
-		return false;
-	}
-	const auto totalBytes = int64_t(bytesPerLine) * height + kAlignImageBy;
-	if (totalBytes > kMaxFrameStorageBytes) {
-		return false;
-	}
-	out->width = width;
-	out->height = height;
-	out->bytesPerLine = int(bytesPerLine);
-	out->totalBytes = int(totalBytes);
-	return true;
-}
-
 [[nodiscard]] bool IsValidAspectRatio(AVRational aspect) {
 	return (aspect.num > 0)
 		&& (aspect.den > 0)
 		&& (aspect.num <= aspect.den * kMaxScaleByAspectRatio)
 		&& (aspect.den <= aspect.num * kMaxScaleByAspectRatio);
-}
-
-[[nodiscard]] bool IsAlignedImage(const QImage &image) {
-	return !(reinterpret_cast<uintptr_t>(image.bits()) % kAlignImageBy)
-		&& !(image.bytesPerLine() % kAlignImageBy);
 }
 
 void UnPremultiplyLine(uchar *dst, const uchar *src, int intsCount) {
@@ -763,7 +714,9 @@ AVRational ValidateAspectRatio(AVRational aspect) {
 QSize CorrectByAspect(QSize size, AVRational aspect) {
 	Expects(IsValidAspectRatio(aspect));
 
-	return QSize(size.width() * av_q2d(aspect), size.height());
+	return QSize(
+		std::max(int(size.width() * av_q2d(aspect)), 1),
+		size.height());
 }
 
 bool RotationSwapWidthHeight(int rotation) {
@@ -772,38 +725,6 @@ bool RotationSwapWidthHeight(int rotation) {
 
 QSize TransposeSizeByRotation(QSize size, int rotation) {
 	return RotationSwapWidthHeight(rotation) ? size.transposed() : size;
-}
-
-bool GoodStorageForFrame(const QImage &storage, QSize size) {
-	return !storage.isNull()
-		&& (storage.format() == kImageFormat)
-		&& (storage.size() == size)
-		&& storage.isDetached()
-		&& IsAlignedImage(storage);
-}
-
-// Create a QImage of desired size where all the data is properly aligned.
-QImage CreateFrameStorage(QSize size) {
-	auto layout = AlignedFrameStorageLayout();
-	if (!ComputeAlignedFrameStorageLayout(size, &layout)) {
-		return {};
-	}
-	const auto buffer = new (std::nothrow) uchar[layout.totalBytes];
-	if (!buffer) {
-		return {};
-	}
-	const auto address = reinterpret_cast<uintptr_t>(buffer);
-	const auto alignedBuffer = buffer + ((address % kAlignImageBy)
-		? (kAlignImageBy - (address % kAlignImageBy))
-		: 0);
-	return QImage(
-		alignedBuffer,
-		layout.width,
-		layout.height,
-		layout.bytesPerLine,
-		kImageFormat,
-		AlignedImageBufferCleanupHandler,
-		buffer);
 }
 
 void UnPremultiply(QImage &dst, const QImage &src) {

@@ -209,6 +209,23 @@ grep -Fq 'falling back to the legacy cache or rebuilding dependencies' \
 [[ ! -e "$fallback_workspace/Libraries" && ! -e "$fallback_workspace/ThirdParty" ]] \
   || fail 'A failed artifact pull must not extract partial dependencies into the workspace.'
 
+missing_image_workspace="${temp_dir}/pull-missing-image"
+mkdir -p "$missing_image_workspace"
+: > "$output"
+if ! env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
+  MOCK_ORAS_PULL_OUTPUT="Error response from registry: ${image}: not found" \
+  bash "$script" pull "$image" "$missing_image_workspace" "$output" \
+  > "${temp_dir}/pull-missing-image.log" 2>&1; then
+  fail 'A registry not-found response for the artifact must use the dependency fallback.'
+fi
+grep -Fqx 'cache-hit=false' "$output" \
+  || fail 'A registry not-found response for the artifact must report a cache miss.'
+grep -Fq 'falling back to the legacy cache or rebuilding dependencies' \
+  "${temp_dir}/pull-missing-image.log" \
+  || fail 'A registry not-found response must explain the dependency fallback.'
+[[ ! -e "$missing_image_workspace/Libraries" && ! -e "$missing_image_workspace/ThirdParty" ]] \
+  || fail 'A missing artifact must not extract partial dependencies into the workspace.'
+
 : > "$output"
 if env MOCK_ORAS_MANIFEST_STATUS=0 MOCK_ORAS_PULL_STATUS=1 \
   MOCK_ORAS_PULL_OUTPUT='missing layer: 404' \

@@ -18,6 +18,7 @@ on:
       - 'Telegram/build/qt_version.py'
       - 'Telegram/build/teagram_update_manifest.py'
       - '.github/scripts/run_teagram_updater_fixtures.sh'
+      - '.github/scripts/macos_libraries_image.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/workflows/macos_updater_fixtures.yml'
 
