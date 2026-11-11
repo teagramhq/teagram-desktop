@@ -283,11 +283,11 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 }
 
 TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
-	constexpr auto sampleIntervalNanoseconds = qint64(3'000'000);
+	constexpr auto sampleIntervalNanoseconds = qint64(1'000'000);
 	constexpr auto durationNanoseconds = qint64(95'000'000);
 	constexpr auto jitterNanoseconds = qint64(2'000'000);
 	auto offsets = std::vector<qint64>();
-	for (auto offset = qint64(0); offset <= 90'000'000;
+	for (auto offset = qint64(0); offset <= 94'000'000;
 		 offset += sampleIntervalNanoseconds) {
 		offsets.push_back(offset);
 	}
@@ -296,15 +296,17 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 		trace, offsets, durationNanoseconds));
 
 	auto smallJitterOffsets = offsets;
-	smallJitterOffsets[10] += jitterNanoseconds;
+	for (auto i = std::size_t(10); i != smallJitterOffsets.size(); ++i) {
+		smallJitterOffsets[i] += jitterNanoseconds;
+	}
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, smallJitterOffsets, durationNanoseconds));
 
 	auto jitteredOffsets = offsets;
 	for (auto i = std::size_t(0); i != jitteredOffsets.size(); ++i) {
-		const auto phase = i % 8;
-		const auto jitter
-			= qint64(phase <= 4 ? phase : 8 - phase) * (jitterNanoseconds / 2);
+		const auto phase = i % 32;
+		const auto jitterSteps = phase <= 16 ? phase : 32 - phase;
+		const auto jitter = qint64(jitterSteps) * (jitterNanoseconds / 8);
 		jitteredOffsets[i] += jitter;
 	}
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
@@ -312,7 +314,7 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 
 	auto skippedSlotOffsets = offsets;
 	for (auto i = std::size_t(10); i != skippedSlotOffsets.size(); ++i) {
-		skippedSlotOffsets[i] += sampleIntervalNanoseconds;
+		skippedSlotOffsets[i] += 5 * sampleIntervalNanoseconds;
 	}
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, skippedSlotOffsets, durationNanoseconds));
@@ -320,7 +322,7 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	auto blockedInJitteredGapOffsets = jitteredOffsets;
 	for (auto i = std::size_t(10); i != blockedInJitteredGapOffsets.size();
 		 ++i) {
-		blockedInJitteredGapOffsets[i] += 3'000'000;
+		blockedInJitteredGapOffsets[i] += 5'000'000;
 	}
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, blockedInJitteredGapOffsets, durationNanoseconds));
@@ -333,7 +335,7 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 		trace, lateStartOffsets, durationNanoseconds));
 
 	auto lateEndOffsets = offsets;
-	lateEndOffsets.back() -= jitterNanoseconds;
+	lateEndOffsets.back() -= 6'000'000;
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, lateEndOffsets, durationNanoseconds));
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(

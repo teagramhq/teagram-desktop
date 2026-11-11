@@ -10338,13 +10338,14 @@ constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
 [[nodiscard]] std::vector<qint64>
 SchedulerSampleOffsetsForDuration(qint64 durationNanoseconds) {
-	constexpr auto sampleIntervalNanoseconds = qint64(3'000'000);
+	constexpr auto sampleIntervalNanoseconds = qint64(1'000'000);
 	auto result = std::vector<qint64>();
 	auto i = std::size_t(0);
 	for (auto offset = qint64(0); offset < durationNanoseconds;
 		 offset += sampleIntervalNanoseconds, ++i) {
-		const auto phase = i % 8;
-		const auto jitter = qint64(phase <= 4 ? phase : 8 - phase) * 1'000'000;
+		const auto phase = i % 32;
+		const auto jitterSteps = phase <= 16 ? phase : 32 - phase;
+		const auto jitter = qint64(jitterSteps) * 250'000;
 		result.push_back(offset + jitter);
 	}
 	return result;
@@ -10747,7 +10748,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		{
 			.startedAt = firstStart.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 230,
-			.schedulerTrace = QString(77, QChar(u'R')),
+			.schedulerTrace = QString(230, QChar(u'R')),
 			.schedulerSampleOffsetsNanoseconds
 			= SchedulerSampleOffsetsForDuration(230'000'000),
 			.stack = u"scheduler regression"_q,
@@ -10755,7 +10756,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		{
 			.startedAt = secondStart.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 150,
-			.schedulerTrace = QString(50, QChar(u'W')),
+			.schedulerTrace = QString(150, QChar(u'W')),
 			.schedulerSampleOffsetsNanoseconds
 			= SchedulerSampleOffsetsForDuration(150'000'000),
 			.stack = u"app wait regression"_q,
@@ -10874,7 +10875,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		= std::optional<Core::UiStallWatchdog::StallEvidence>{{
 			.startedAt = startedAt.toString(Qt::ISODateWithMs),
 			.durationMilliseconds = 92,
-			.schedulerTrace = QString(31, QChar(u'R')),
+			.schedulerTrace = QString(92, QChar(u'R')),
 			.schedulerSampleOffsetsNanoseconds
 			= SchedulerSampleOffsetsForDuration(92'000'000),
 			.stack = u"runner scheduling regression"_q,
@@ -10884,7 +10885,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			{
 				.startedAt = startedAt.addMSecs(6).toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
-				.schedulerTrace = QString(31, QChar(u'R')),
+				.schedulerTrace = QString(92, QChar(u'R')),
 				.schedulerSampleOffsetsNanoseconds
 				= SchedulerSampleOffsetsForDuration(92'000'000),
 				.stack = u"late scheduler evidence regression"_q,
@@ -10930,7 +10931,7 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 			{
 				.startedAt = startedAt.toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
-				.schedulerTrace = QString(31, QChar(u'R')),
+				.schedulerTrace = QString(92, QChar(u'R')),
 				.schedulerSampleOffsetsNanoseconds
 				= SchedulerSampleOffsetsForDuration(92'000'000),
 				.stack = u"runner scheduling regression"_q,
@@ -10941,7 +10942,7 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 			{
 				.startedAt = startedAt.toString(Qt::ISODateWithMs),
 				.durationMilliseconds = 92,
-				.schedulerTrace = QString(31, QChar(u'W')),
+				.schedulerTrace = QString(92, QChar(u'W')),
 				.schedulerSampleOffsetsNanoseconds
 				= SchedulerSampleOffsetsForDuration(92'000'000),
 				.stack = u"blocked callback regression"_q,

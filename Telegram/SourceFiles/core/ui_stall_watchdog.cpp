@@ -51,9 +51,9 @@ constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
 constexpr auto kShortLogThreshold = 40ms;
-constexpr auto kSchedulerSampleInterval = 3ms;
+constexpr auto kSchedulerSampleInterval = 1ms;
 constexpr auto kMaxSchedulerSampleGap = 5ms;
-constexpr auto kMaxSchedulerSamples = 2048U;
+constexpr auto kMaxSchedulerSamples = 8192U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
 constexpr auto kMaxPingAcknowledgements = 16'384U;
@@ -611,8 +611,8 @@ void UiStallWatchdog::run() {
 							   && (sampleCount < kMaxSchedulerSamples)) {
 							auto sampleAt = nextSampleAt;
 							const auto now = Clock::now();
-							if (sampleAt + kSchedulerSampleInterval < now) {
-								sampleAt = now + kSchedulerSampleInterval;
+							if (sampleAt < now) {
+								sampleAt = now;
 							}
 							std::this_thread::sleep_until(sampleAt);
 							if (stop.stop_requested()
@@ -639,7 +639,7 @@ void UiStallWatchdog::run() {
 										.count());
 							}
 							++sampleCount;
-							nextSampleAt = sampleAt + kSchedulerSampleInterval;
+							nextSampleAt = sampledAt + kSchedulerSampleInterval;
 						}
 					});
 			} catch (const std::system_error &error) {
