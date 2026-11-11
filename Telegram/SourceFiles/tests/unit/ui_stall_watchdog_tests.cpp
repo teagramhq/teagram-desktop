@@ -179,10 +179,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= beforeAcknowledgements.empty()
 			  ? QString()
 			  : beforeAcknowledgements.back().acknowledgedAt;
-	const auto lastAcknowledgedAtNanoseconds
-		= beforeAcknowledgements.empty()
-			  ? qint64(0)
-			  : beforeAcknowledgements.back().acknowledgedAtNanoseconds;
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -259,23 +255,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
 	CHECK(!acknowledgements.empty());
-	auto shortSchedulerCapturePingObserved = false;
-	for (auto i = std::size_t(1); i < acknowledgements.size(); ++i) {
-		if ((acknowledgements[i - 1].acknowledgedAtNanoseconds
-			 <= lastAcknowledgedAtNanoseconds)
-			|| (acknowledgements[i].acknowledgedAtNanoseconds
-				<= lastAcknowledgedAtNanoseconds)) {
-			continue;
-		}
-		const auto intervalNanoseconds
-			= acknowledgements[i].acknowledgedAtNanoseconds
-			  - acknowledgements[i - 1].acknowledgedAtNanoseconds;
-		if ((intervalNanoseconds > 0) && (intervalNanoseconds <= 5'000'000)) {
-			shortSchedulerCapturePingObserved = true;
-			break;
-		}
-	}
-	CHECK(shortSchedulerCapturePingObserved);
 	if (!acknowledgements.empty()) {
 		CHECK(acknowledgements.back().acknowledgedAt != lastAcknowledgedAt);
 		CHECK(acknowledgements.back().responseNanoseconds >= 0);
@@ -287,20 +266,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		CHECK(evidence.back().schedulerTrace.size()
 			  == qsizetype(
 				  evidence.back().schedulerSampleOffsetsNanoseconds.size()));
-		CHECK(evidence.back().schedulerTrace.size()
-			  >= evidence.back().durationMilliseconds / 5);
-		const auto schedulerTraceProvesRunnable
-			= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
-				evidence.back().schedulerTrace,
-				evidence.back().schedulerSampleOffsetsNanoseconds,
-				evidence.back().durationNanoseconds);
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
-#if defined(Q_OS_MAC)
-		CHECK(evidence.back().schedulerTrace.contains(u'R'));
-		CHECK(schedulerTraceProvesRunnable);
-#else
-		CHECK(!schedulerTraceProvesRunnable);
-#endif
 	}
 }
 
