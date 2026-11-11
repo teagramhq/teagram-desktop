@@ -17615,14 +17615,14 @@ int RunDesktopScaleCheck() {
 	std::printf("Blocking main-thread steps over 50 ms: ");
 	printStallCount(blockingStalls);
 	std::printf(".\n");
-        std::printf("Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
-                    "contact change=%d/%d cache=%d/%d.\n",
-                    int(dialogsOne.passed), int(dialogsHundred.passed),
-                    int(dialogsState), int(contactsOne.loaded.passed),
-                    int(contactsHundred.loaded.passed),
-                    int(contactsOne.changedAndFound.passed),
-                    int(contactsHundred.changedAndFound.passed),
-                    int(cacheOne.passed), int(cacheHundred.passed));
+	std::printf("Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
+				"contact change=%d/%d cache=%d/%d.\n",
+				int(dialogsOne.passed), int(dialogsHundred.passed),
+				int(dialogsState), int(contactsOne.loaded.passed),
+				int(contactsHundred.loaded.passed),
+				int(contactsOne.changedAndFound.passed),
+				int(contactsHundred.changedAndFound.passed),
+				int(cacheOne.passed), int(cacheHundred.passed));
 	std::printf("Contact removal check: %d/%d.\n",
 				int(contactsOne.removed.passed),
 				int(contactsHundred.removed.passed));
