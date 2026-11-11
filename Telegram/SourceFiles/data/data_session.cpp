@@ -5921,7 +5921,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		event.moved = entry->adjustByPosInChatList(0, mainList);
 	}
 	if (event) {
-		_chatListEntryRefreshes.fire(std::move(event));
+		if (event.moved.from != event.moved.to) {
+			notifyChatListEntryMoves({std::move(event)});
+		} else {
+			_chatListEntryRefreshes.fire(std::move(event));
+		}
 	}
 	if (!history) {
 		return;
@@ -5945,7 +5949,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 			event.existenceChanged = true;
 		}
 		if (event) {
-			_chatListEntryRefreshes.fire(std::move(event));
+			if (event.moved.from != event.moved.to) {
+				notifyChatListEntryMoves({std::move(event)});
+			} else {
+				_chatListEntryRefreshes.fire(std::move(event));
+			}
 		}
 	}
 
@@ -5984,14 +5992,13 @@ void Session::refreshChatListUnreadOnTop() {
 	}
 }
 
-void Session::notifyChatListEntryMoved(Dialogs::Key key, FilterId filterId,
-									   Dialogs::PositionChange moved) {
-	if (moved.from != moved.to) {
-		_chatListEntryRefreshes.fire(ChatListEntryRefresh{
-			.key = key,
-			.moved = moved,
-			.filterId = filterId,
-		});
+void Session::notifyChatListEntryMoves(ChatListEntryMoveBatch moves) {
+	if (moves.empty()) {
+		return;
+	}
+	_chatListEntryMoveBatches.fire(moves);
+	for (auto &event : moves) {
+		_chatListEntryRefreshes.fire(std::move(event));
 	}
 }
 
@@ -6036,6 +6043,11 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 auto Session::chatListEntryRefreshes() const
 -> rpl::producer<ChatListEntryRefresh> {
 	return _chatListEntryRefreshes.events();
+}
+
+auto Session::chatListEntryMoveBatches() const
+	-> rpl::producer<ChatListEntryMoveBatch> {
+	return _chatListEntryMoveBatches.events();
 }
 
 void Session::dialogsRowReplaced(DialogsRowReplacement replacement) {

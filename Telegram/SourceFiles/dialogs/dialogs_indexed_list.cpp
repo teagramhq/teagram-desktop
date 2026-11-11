@@ -225,9 +225,18 @@ void IndexedList::unfreeze() {
 		return;
 	}
 	_unfrozen.fire({});
+	auto moveEvents = std::vector<Data::Session::ChatListEntryRefresh>();
+	moveEvents.reserve(moved.size());
 	for (const auto &[row, position] : moved) {
-		row->entry()->owner().notifyChatListEntryMoved(row->key(), _filterId,
-													   position);
+		moveEvents.push_back({
+			.key = row->key(),
+			.moved = position,
+			.filterId = _filterId,
+		});
+	}
+	if (!moveEvents.empty()) {
+		moveEvents.front().key.entry()->owner().notifyChatListEntryMoves(
+			std::move(moveEvents));
 	}
 }
 

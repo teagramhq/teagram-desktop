@@ -184,6 +184,11 @@ std::vector<List::MovedRow> List::unfreeze() {
 			});
 		}
 	}
+	ranges::sort(moved, [](const MovedRow &a, const MovedRow &b) {
+		return (a.second.from != b.second.from)
+				   ? (a.second.from < b.second.from)
+				   : (a.first->index() < b.first->index());
+	});
 	_pendingMoveFrom.clear();
 	_addedWhileFrozen.clear();
 	return moved;

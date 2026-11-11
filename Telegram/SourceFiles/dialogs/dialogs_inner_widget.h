@@ -22,6 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "ui/userpic_view.h"
 
+#include <vector>
+
 namespace style {
 struct DialogRow;
 struct DialogRightButton;
@@ -218,7 +220,8 @@ public:
 
 	[[nodiscard]] rpl::producer<int> scrollByDeltaRequests() const;
 	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> mustScrollTo() const;
-	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> dialogMoved() const;
+	[[nodiscard]] rpl::producer<std::vector<Ui::ScrollToRequest>>
+	dialogMoved() const;
 	[[nodiscard]] rpl::producer<SearchRequestDelay> searchRequests() const;
 	[[nodiscard]] rpl::producer<QString> completeHashtagRequests() const;
 	[[nodiscard]] rpl::producer<> refreshHashtagsRequests() const;
@@ -603,6 +606,7 @@ private:
 	int countPinnedIndex(Row *ofRow);
 	void savePinnedOrder();
 	bool pinnedShiftAnimationCallback(crl::time now);
+	void handleChatListEntryMoveBatches();
 	void handleChatListEntryRefreshes();
 	void moveSearchIn();
 	void dragPinnedFromTouch();
@@ -788,7 +792,7 @@ private:
 	rpl::event_stream<> _updated;
 
 	rpl::event_stream<Ui::ScrollToRequest> _mustScrollTo;
-	rpl::event_stream<Ui::ScrollToRequest> _dialogMoved;
+	rpl::event_stream<std::vector<Ui::ScrollToRequest>> _dialogMoved;
 	rpl::event_stream<SearchRequestDelay> _searchRequests;
 	rpl::event_stream<QString> _completeHashtagRequests;
 	rpl::event_stream<> _refreshHashtagsRequests;

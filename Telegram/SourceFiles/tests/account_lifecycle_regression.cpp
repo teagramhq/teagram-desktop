@@ -16069,7 +16069,27 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 			const auto movingUpBeforeTop = movingUpRow->top();
 			auto movementChanges
 				= std::vector<std::pair<History *, Dialogs::PositionChange>>();
+			auto movementBatches = std::vector<
+				std::vector<std::pair<History *, Dialogs::PositionChange>>>();
 			auto movementLifetime = rpl::lifetime();
+			data.chatListEntryMoveBatches()
+				| rpl::on_next(
+					[&](const Data::Session::ChatListEntryMoveBatch &events) {
+						auto batch = std::vector<
+							std::pair<History *, Dialogs::PositionChange>>();
+						for (const auto &event : events) {
+							const auto history = event.key.history();
+							if ((event.filterId == FilterId())
+								&& ((history == movingDownHistory)
+									|| (history == movingUpHistory))) {
+								batch.emplace_back(history, event.moved);
+							}
+						}
+						if (!batch.empty()) {
+							movementBatches.push_back(std::move(batch));
+						}
+					},
+					movementLifetime);
 			data.chatListEntryRefreshes()
 				| rpl::on_next(
 					[&](const Data::Session::ChatListEntryRefresh &event) {
@@ -16140,6 +16160,29 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 				movingDownHistory, movingDownBeforeTop, movingDownAfterTop);
 			const auto movingUpEventExists = movementChangeExists(
 				movingUpHistory, movingUpBeforeTop, movingUpAfterTop);
+			const auto movementBatchMatches
+				= (movementBatches.size() == 1)
+				  && (movementBatches.front().size() == 2)
+				  && (movementBatches.front()[0].first
+					  != movementBatches.front()[1].first)
+				  && (movementBatches.front()[0].second.from
+					  < movementBatches.front()[1].second.from)
+				  && ranges::any_of(movementBatches.front(),
+									[&](const auto &move) {
+										return move.first == movingDownHistory;
+									})
+				  && ranges::any_of(movementBatches.front(),
+									[&](const auto &move) {
+										return move.first == movingUpHistory;
+									});
+			if (!movementBatchMatches) {
+				std::fprintf(stderr,
+							 "Desktop scale state mismatch: list=main "
+							 "property=movement-batch expected=one ordered "
+							 "two-row batch "
+							 "actual=%zu batches.\n",
+							 movementBatches.size());
+			}
 			const auto positionOf = [](const std::vector<Dialogs::Key> &order,
 									   uint64 dialogId) {
 				const auto i
@@ -16246,8 +16289,8 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 			if ((loadedAfterRedate != loadedAfter) || !redatedOrderMatches
 				|| !movedDownPastSeveral || !movedUpPastSeveral
 				|| !movingDownEventExists || !movingUpEventExists
-				|| !newestArchivePreviewMatches || !archiveOrderMatches
-				|| !statePreservedAfterRedate) {
+				|| !movementBatchMatches || !newestArchivePreviewMatches
+				|| !archiveOrderMatches || !statePreservedAfterRedate) {
 				std::fprintf(
 					stderr,
 					"Desktop scale check failed: re-dating dialogs changed "
