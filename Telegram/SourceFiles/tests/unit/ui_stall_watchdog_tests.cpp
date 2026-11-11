@@ -263,8 +263,10 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		= UiStallWatchdogProcessCpuTimeNanosecondsForTest();
 	const auto windowThreadCpuBefore
 		= UiStallWatchdogThreadCpuTimeNanosecondsForTest();
+	auto loop = QEventLoop();
+	auto blockFilter = UiStallWatchdogTestBlockFilter(
+		std::chrono::milliseconds(300), &loop, &logged, &blockActive);
 	{
-		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
 			[&](const QString &line, bool update) {
 				const auto lock = std::lock_guard(mutex);
@@ -301,8 +303,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				}
 			},
 			{.captureSchedulerTrace = true});
-		auto blockFilter = UiStallWatchdogTestBlockFilter(
-			std::chrono::milliseconds(300), &loop, &logged, &blockActive);
 		watchdog.installEventFilter(&blockFilter);
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
