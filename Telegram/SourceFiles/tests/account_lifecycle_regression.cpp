@@ -156,6 +156,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "ui/click_handler.h"
 #include "ui/item_text_options.h"
+#include "ui/style/style_core_scale.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
@@ -11118,6 +11119,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedMissingBotFailures = 0;
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
+	bool historyScaleInvalidationRebuilt = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
@@ -11568,6 +11570,29 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		loop.quit();
 	});
 	loop.exec();
+	const auto originalScale = style::Scale();
+	const auto regressionScale = (originalScale < style::kScaleMax)
+		? (originalScale + 1)
+		: (originalScale - 1);
+	const auto originalHistoryLayoutScale
+		= firstHistory->layoutScaleForRegressionTest();
+	const auto originalHistoryFullResizeCount
+		= firstHistory->layoutFullResizeCountForRegressionTest();
+	controller->showPeerHistory(secondHistory);
+	QCoreApplication::processEvents();
+	style::SetScale(regressionScale);
+	controller->showPeerHistory(firstHistory);
+	QCoreApplication::processEvents();
+	result.historyScaleInvalidationRebuilt
+		= (originalHistoryLayoutScale != regressionScale)
+		&& (firstHistory->layoutScaleForRegressionTest() == regressionScale)
+		&& (firstHistory->layoutFullResizeCountForRegressionTest()
+			> originalHistoryFullResizeCount);
+	style::SetScale(originalScale);
+	controller->showPeerHistory(secondHistory);
+	QCoreApplication::processEvents();
+	controller->showPeerHistory(firstHistory);
+	QCoreApplication::processEvents();
 	auto slowChatSwitchEvidence
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
 			slowChatSwitches.size());
@@ -11671,6 +11696,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && result.historyScaleInvalidationRebuilt
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
 		  && AttachMenuCallbackWithinBound(
 			  result.attachMenuFirstHoverCallbackWallNanoseconds,

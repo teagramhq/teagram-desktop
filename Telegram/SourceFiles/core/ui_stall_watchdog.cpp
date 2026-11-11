@@ -554,6 +554,10 @@ bool UiStallWatchdog::event(QEvent *event) {
 		const auto evidence = PingAcknowledgementEvidence{
 			.acknowledgedAt
 			= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
+			.acknowledgedAtNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  acknowledgedAt.time_since_epoch())
+				  .count(),
 			.responseNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
 				  .count(),

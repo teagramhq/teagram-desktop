@@ -288,6 +288,12 @@ public:
 	void resizeToWidth(int newWidth);
 	void forceFullResize();
 	int height() const;
+	[[nodiscard]] int layoutScaleForRegressionTest() const {
+		return _layoutScale;
+	}
+	[[nodiscard]] int layoutFullResizeCountForRegressionTest() const {
+		return _layoutFullResizeCount;
+	}
 
 	void itemRemoved(not_null<HistoryItem*> item);
 	void itemVanished(not_null<HistoryItem*> item);
@@ -653,6 +659,10 @@ private:
 	Flags _flags = 0;
 	int _width = 0;
 	int _height = 0;
+	int _layoutScale = 0;
+	int _layoutDevicePixelRatio = 0;
+	int _layoutPaletteVersion = -1;
+	int _layoutFullResizeCount = 0;
 	Element *_unreadBarView = nullptr;
 	Element *_firstUnreadView = nullptr;
 	HistoryItem *_joinedMessage = nullptr;

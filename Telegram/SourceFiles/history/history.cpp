@@ -71,6 +71,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "support/support_helper.h"
 #include "ui/image/image.h"
+#include "ui/style/style_core.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
@@ -3794,17 +3795,30 @@ HistoryItem *History::lastEditableMessage() const {
 
 void History::resizeToWidth(int newWidth) {
 	using Request = HistoryBlock::ResizeRequest;
+	const auto layoutScale = style::Scale();
+	const auto layoutDevicePixelRatio = style::DevicePixelRatio();
+	const auto layoutPaletteVersion = style::PaletteVersion();
+	const auto layoutStyleChanged
+		= (_layoutScale != layoutScale)
+		|| (_layoutDevicePixelRatio != layoutDevicePixelRatio)
+		|| (_layoutPaletteVersion != layoutPaletteVersion);
 	const auto request = (_flags & Flag::PendingAllItemsResize)
 		? Request::ReinitAll
-		: (_width != newWidth)
+		: ((_width != newWidth) || layoutStyleChanged)
 		? Request::ResizeAll
 		: Request::ResizePending;
 	if (request == Request::ResizePending && !hasPendingResizedItems()) {
 		return;
 	}
+	if (request != Request::ResizePending) {
+		++_layoutFullResizeCount;
+	}
 	_flags &= ~(Flag::HasPendingResizedItems | Flag::PendingAllItemsResize);
 
 	_width = newWidth;
+	_layoutScale = layoutScale;
+	_layoutDevicePixelRatio = layoutDevicePixelRatio;
+	_layoutPaletteVersion = layoutPaletteVersion;
 	int y = 0;
 	for (const auto &block : blocks) {
 		block->setY(y);
