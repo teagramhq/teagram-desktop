@@ -10,6 +10,7 @@ stub_bin="${temp_dir}/bin"
 remote_helper=
 remote_build=
 remote_run_dir=
+tmp_unreadable_dir=
 padding="$(head -c 8192 /dev/zero | /usr/bin/tr '\0' x)"
 system_path="${PATH}"
 hup_pid=
@@ -37,6 +38,10 @@ cleanup() {
 		pgrp="$(/usr/bin/awk '{ print $5 }' "$proc/stat" 2>/dev/null || true)"
 		[[ "$pgrp" =~ ^[0-9]+$ ]] && kill -TERM -- "-$pgrp" 2>/dev/null || true
 	done
+	if [[ -n "$tmp_unreadable_dir" && -d "$tmp_unreadable_dir" ]]; then
+		chmod 700 "$tmp_unreadable_dir" || true
+		rm -rf -- "$tmp_unreadable_dir"
+	fi
 	rm -rf -- "$test_runs_root"
 	rm -rf -- "$temp_dir"
 }
@@ -252,8 +257,20 @@ prepare_run() {
 tmp_entries() {
 	find /tmp -mindepth 1 \
 		\( -path /tmp/.X11-unix -o -path '/tmp/.X[0-9]*-lock' \) -prune -o \
-		-printf '%P\n' | LC_ALL=C sort
+		-printf '%P\n' \( -type d \( ! -readable -o ! -executable \) -prune \) |
+		LC_ALL=C sort
 }
+
+tmp_unreadable_dir="$(mktemp -d /tmp/qa-session-unreadable.XXXXXXXX)"
+tmp_unreadable_name="${tmp_unreadable_dir#/tmp/}"
+touch "$tmp_unreadable_dir/nested"
+chmod 000 "$tmp_unreadable_dir"
+tmp_unreadable_entries="$(tmp_entries)"
+[[ "$tmp_unreadable_entries" == *"$tmp_unreadable_name"* ]] || fail 'The recursive /tmp listing should include unreadable directory entries.'
+[[ "$tmp_unreadable_entries" != *"$tmp_unreadable_name/nested"* ]] || fail 'The recursive /tmp listing should prune unreadable directory contents.'
+chmod 700 "$tmp_unreadable_dir"
+rm -rf -- "$tmp_unreadable_dir"
+tmp_unreadable_dir=
 
 assert_no_new_tmp_entries() {
 	local before="$1" after new_entries
