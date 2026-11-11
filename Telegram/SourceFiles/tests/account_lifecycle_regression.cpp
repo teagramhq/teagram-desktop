@@ -17251,28 +17251,19 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("sender session controller was not created");
 	}
 	auto reactionPicker = Ui::CreateChild<HistoryView::Reactions::Selector>(
-		controller->content(),
-		st::reactPanelEmojiPan,
-		controller->uiShow(),
-		Data::PossibleItemReactionsRef{ .customAllowed = true },
-		TextWithEntities(),
-		[](bool) {},
-		nullptr,
-		nullptr,
-		true);
-	reactionPicker->countWidth(
-		st::reactStripMinWidth,
-		controller->content()->width());
+		controller->content(), st::reactPanelEmojiPan, controller->uiShow(),
+		Data::PossibleItemReactionsRef{.customAllowed = true},
+		TextWithEntities(), [](bool) {}, nullptr, nullptr, true);
+	reactionPicker->countWidth(st::reactStripMinWidth,
+							   controller->content()->width());
 	reactionPicker->initGeometry(0);
 	reactionPicker->show();
 	const auto collapsedHeight = reactionPicker->height();
-	Test::Click(
-		reactionPicker,
-		QPoint(
-			reactionPicker->width() / 2,
-			reactionPicker->extendTopForCategories()
-				+ reactionPicker->marginsForShadow().top()
-				+ st::reactStripHeight / 2));
+	Test::Click(reactionPicker,
+				QPoint(reactionPicker->width() / 2,
+					   reactionPicker->extendTopForCategories()
+						   + reactionPicker->marginsForShadow().top()
+						   + st::reactStripHeight / 2));
 	QCoreApplication::processEvents();
 	if (reactionPicker->height() <= collapsedHeight) {
 		return fail("custom-server reaction picker did not expand");
