@@ -56,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/data_folder.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_history_messages.h"
@@ -74,6 +75,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_username_policy.h"
+#include "dialogs/dialogs_common.h"
 #include "dialogs/dialogs_indexed_list.h"
 #include "dialogs/dialogs_key.h"
 #include "dialogs/dialogs_main_list.h"
@@ -14853,6 +14855,16 @@ template <typename Request, typename Action>
 	});
 }
 
+[[nodiscard]] bool
+DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
+							  const DesktopScaleActionSample &hundred) {
+	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
+		   && (*hundred.nanoseconds <= 50'000'000)
+		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
+		   && hundred.mainThreadStepsOverBudget
+		   && (*hundred.mainThreadStepsOverBudget == 0);
+}
+
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
 									   bool contact, bool withPhone = false,
 									   QString lastName = QString(),
@@ -14886,23 +14898,36 @@ template <typename Request, typename Action>
 		MTP_notificationSoundDefault(), MTP_notificationSoundDefault());
 }
 
-[[nodiscard]] MTPDialog DesktopScaleDialog(UserId userId) {
+[[nodiscard]] MTPDialog DesktopScaleDialog(UserId userId, bool pinned = false,
+										   int unreadCount = 0,
+										   int folderId = 0,
+										   int topMessageId = 1) {
+	auto flags = MTPDdialog::Flags();
+	if (pinned) {
+		flags |= MTPDdialog::Flag::f_pinned;
+	}
+	if (folderId) {
+		flags |= MTPDdialog::Flag::f_folder_id;
+	}
 	const auto notifySettings = DesktopScaleNotifySettings();
-	return MTP_dialog(MTP_flags(0), peerToMTP(peerFromUser(userId)), MTP_int(1),
-					  MTP_int(0), MTP_int(0), MTP_int(0), MTP_int(0),
-					  MTP_int(0), MTP_int(0), notifySettings, MTPint(),
-					  MTPDraftMessage(), MTPint(), MTPint());
+	return MTP_dialog(MTP_flags(flags), peerToMTP(peerFromUser(userId)),
+					  MTP_int(topMessageId), MTP_int(0), MTP_int(0),
+					  MTP_int(unreadCount), MTP_int(0), MTP_int(0), MTP_int(0),
+					  notifySettings, MTPint(), MTPDraftMessage(),
+					  folderId ? MTP_int(folderId) : MTPint(), MTPint());
 }
 
-[[nodiscard]] MTPMessage DesktopScaleMessage(UserId userId) {
+[[nodiscard]] MTPMessage DesktopScaleMessage(UserId userId, int messageId = 1,
+											 int date = 1) {
 	return MTP_message(
-		MTP_flags(MTPDmessage::Flag::f_from_id), MTP_int(1),
+		MTP_flags(MTPDmessage::Flag::f_from_id), MTP_int(messageId),
 		peerToMTP(peerFromUser(userId)), MTPint(), MTPstring(),
 		peerToMTP(peerFromUser(userId)), MTPPeer(), MTPMessageFwdHeader(),
-		MTP_long(0), MTPlong(), MTPPeer(), MTPMessageReplyHeader(), MTP_int(1),
-		MTP_string(u"desktop scale check"_q), MTP_messageMediaEmpty(),
-		MTPReplyMarkup(), MTP_vector<MTPMessageEntity>(), MTP_int(0),
-		MTP_int(0), MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTP_long(0), MTPlong(), MTPPeer(), MTPMessageReplyHeader(),
+		MTP_int(date), MTP_string(u"desktop scale check"_q),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(), MTP_int(0), MTP_int(0),
+		MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
 		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
 		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
 		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
@@ -14923,22 +14948,261 @@ template <typename Request, typename Action>
 	return users;
 }
 
-[[nodiscard]] QVector<MTPDialog> DesktopScaleDialogs(UserId firstId,
-													 int count) {
+[[nodiscard]] QVector<MTPDialog> DesktopScaleDialogs(UserId firstId, int count,
+													 bool withListState = false,
+													 int archivedCount = 0) {
 	auto dialogs = QVector<MTPDialog>();
 	dialogs.reserve(count);
 	for (auto i = 0; i != count; ++i) {
-		dialogs.push_back(DesktopScaleDialog(UserId(firstId.bare + i)));
+		dialogs.push_back(DesktopScaleDialog(
+			UserId(firstId.bare + i), withListState && (i == 0),
+			withListState && (i == 2) ? 3 : 0,
+			withListState
+					&& ((i == 1)
+						|| ((archivedCount > 0) && (i <= archivedCount)))
+				? Data::Folder::kId
+				: 0));
 	}
 	return dialogs;
 }
 
-[[nodiscard]] QVector<MTPMessage> DesktopScaleMessages(UserId firstId,
-													   int count) {
+struct DesktopScaleHistoryState final {
+	History *history = nullptr;
+	Data::Folder *folder = nullptr;
+	int unreadCount = 0;
+	bool pinned = false;
+};
+
+struct DesktopScaleChatListState final {
+	std::vector<Dialogs::Key> order;
+	std::vector<Dialogs::Key> pinned;
+	std::vector<DesktopScaleHistoryState> histories;
+	Dialogs::UnreadState unread;
+};
+
+[[nodiscard]] DesktopScaleChatListState
+DesktopScaleChatListSnapshot(const Dialogs::MainList &list) {
+	auto result = DesktopScaleChatListState();
+	result.unread = list.unreadState();
+	for (const auto &row : list.indexed()->all()) {
+		result.order.push_back(row->key());
+		if (const auto history = row->history()) {
+			result.histories.push_back({
+				.history = history,
+				.folder = history->folder(),
+				.unreadCount = history->unreadCount(),
+				.pinned = history->isPinnedDialog(FilterId()),
+			});
+		}
+	}
+	for (const auto &key : list.pinned()->order()) {
+		result.pinned.push_back(key);
+	}
+	return result;
+}
+
+[[nodiscard]] uint64 DesktopScaleDialogId(Dialogs::Key key) {
+	const auto history = key.history();
+	return history ? history->peer->id.value : 0;
+}
+
+void DesktopScalePrintDialogOrderMismatch(
+	const char *listName, const char *property,
+	const std::vector<Dialogs::Key> &expected,
+	const std::vector<Dialogs::Key> &actual) {
+	auto index = 0;
+	while ((index < expected.size()) && (index < actual.size())
+		   && (expected[index] == actual[index])) {
+		++index;
+	}
+	const auto expectedId
+		= (index < expected.size()) ? DesktopScaleDialogId(expected[index]) : 0;
+	const auto actualId
+		= (index < actual.size()) ? DesktopScaleDialogId(actual[index]) : 0;
+	std::fprintf(stderr,
+				 "Desktop scale state mismatch: list=%s property=%s index=%llu "
+				 "expected_dialog=%llu actual_dialog=%llu.\n",
+				 listName, property, static_cast<unsigned long long>(index),
+				 static_cast<unsigned long long>(expectedId),
+				 static_cast<unsigned long long>(actualId));
+}
+
+[[nodiscard]] bool DesktopScaleDialogOrderMatches(
+	const char *listName, const std::vector<Dialogs::Key> &expected,
+	const std::vector<Dialogs::Key> &actual, bool allowNewRows) {
+	auto actualExisting = std::vector<Dialogs::Key>();
+	if (allowNewRows) {
+		for (const auto &key : actual) {
+			if (ranges::contains(expected, key)) {
+				actualExisting.push_back(key);
+			}
+		}
+	} else {
+		actualExisting = actual;
+	}
+	if (expected == actualExisting) {
+		return true;
+	}
+	DesktopScalePrintDialogOrderMismatch(listName, "order", expected,
+										 actualExisting);
+	return false;
+}
+
+[[nodiscard]] const char *
+DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
+								  const Dialogs::UnreadState &actual,
+								  int *expectedValue, int *actualValue) {
+	const auto check = [&](const char *name, int left, int right) {
+		if (left != right) {
+			*expectedValue = left;
+			*actualValue = right;
+			return name;
+		}
+		return static_cast<const char *>(nullptr);
+	};
+	auto field = check("messages", expected.messages, actual.messages);
+	field = field ? field
+				  : check("messagesMuted", expected.messagesMuted,
+						  actual.messagesMuted);
+	field = field ? field : check("chats", expected.chats, actual.chats);
+	field = field ? field
+				  : check("chatsMuted", expected.chatsMuted, actual.chatsMuted);
+	field = field ? field : check("marks", expected.marks, actual.marks);
+	field = field ? field
+				  : check("marksMuted", expected.marksMuted, actual.marksMuted);
+	field = field ? field
+				  : check("reactions", expected.reactions, actual.reactions);
+	field = field ? field
+				  : check("reactionsMuted", expected.reactionsMuted,
+						  actual.reactionsMuted);
+	field
+		= field ? field : check("mentions", expected.mentions, actual.mentions);
+	field = field ? field : check("polls", expected.polls, actual.polls);
+	field = field ? field
+				  : check("pollsMuted", expected.pollsMuted, actual.pollsMuted);
+	field = field ? field : check("known", expected.known, actual.known);
+	return field;
+}
+
+[[nodiscard]] bool DesktopScaleChatListStatePreserved(
+	const DesktopScaleChatListState &before, const Dialogs::MainList &now,
+	bool allowNewRows, const char *listName, bool checkOrder = true) {
+	const auto after = DesktopScaleChatListSnapshot(now);
+	if (checkOrder
+		&& !DesktopScaleDialogOrderMatches(listName, before.order, after.order,
+										   allowNewRows)) {
+		return false;
+	}
+	for (const auto &state : before.histories) {
+		const auto dialogId = state.history->peer->id.value;
+		const auto actualFolder = state.history->folder();
+		if (actualFolder != state.folder) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=folder "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				state.folder ? state.folder->id() : 0,
+				actualFolder ? actualFolder->id() : 0);
+			return false;
+		}
+		const auto actualUnreadCount = state.history->unreadCount();
+		if (actualUnreadCount != state.unreadCount) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=unread "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				state.unreadCount, actualUnreadCount);
+			return false;
+		}
+		const auto actualPinned = state.history->isPinnedDialog(FilterId());
+		if (actualPinned != state.pinned) {
+			std::fprintf(
+				stderr,
+				"Desktop scale state mismatch: list=%s property=pinned "
+				"dialog=%llu expected=%d actual=%d.\n",
+				listName, static_cast<unsigned long long>(dialogId),
+				int(state.pinned), int(actualPinned));
+			return false;
+		}
+	}
+	if (before.pinned != after.pinned) {
+		DesktopScalePrintDialogOrderMismatch(listName, "pinned", before.pinned,
+											 after.pinned);
+		return false;
+	}
+	if (!allowNewRows && (before.histories.size() != after.histories.size())) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=%s property=order "
+					 "expected_histories=%llu actual_histories=%llu.\n",
+					 listName,
+					 static_cast<unsigned long long>(before.histories.size()),
+					 static_cast<unsigned long long>(after.histories.size()));
+		return false;
+	}
+	auto expectedUnread = 0;
+	auto actualUnread = 0;
+	if (const auto field = DesktopScaleUnreadStateDifference(
+			before.unread, after.unread, &expectedUnread, &actualUnread)) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=%s property=unread "
+					 "field=%s expected=%d actual=%d first_dialog=none.\n",
+					 listName, field, expectedUnread, actualUnread);
+		return false;
+	}
+	return true;
+}
+
+[[nodiscard]] int DesktopScaleHistoryCount(const Dialogs::MainList &list) {
+	auto result = 0;
+	for (const auto &row : list.indexed()->all()) {
+		result += (row->history() != nullptr);
+	}
+	return result;
+}
+
+[[nodiscard]] std::vector<PeerId>
+DesktopScalePageOrder(const Dialogs::List &list,
+					  const std::vector<PeerId> &pagePeers) {
+	auto result = std::vector<PeerId>();
+	for (const auto &row : list) {
+		if (const auto history = row->history()) {
+			if (ranges::contains(pagePeers, history->peer->id)) {
+				result.push_back(history->peer->id);
+			}
+		}
+	}
+	return result;
+}
+
+void DesktopScalePrintPeerOrderMismatch(const char *listName,
+										const std::vector<PeerId> &expected,
+										const std::vector<PeerId> &actual) {
+	auto index = size_t(0);
+	while ((index < expected.size()) && (index < actual.size())
+		   && (expected[index] == actual[index])) {
+		++index;
+	}
+	const auto expectedId
+		= (index < expected.size()) ? expected[index].value : 0;
+	const auto actualId = (index < actual.size()) ? actual[index].value : 0;
+	std::fprintf(
+		stderr,
+		"Desktop scale state mismatch: list=%s property=order index=%llu "
+		"expected_dialog=%llu actual_dialog=%llu.\n",
+		listName, static_cast<unsigned long long>(index),
+		static_cast<unsigned long long>(expectedId),
+		static_cast<unsigned long long>(actualId));
+}
+
+[[nodiscard]] QVector<MTPMessage>
+DesktopScaleMessages(UserId firstId, int count, int date = 1) {
 	auto messages = QVector<MTPMessage>();
 	messages.reserve(count);
 	for (auto i = 0; i != count; ++i) {
-		messages.push_back(DesktopScaleMessage(UserId(firstId.bare + i)));
+		messages.push_back(
+			DesktopScaleMessage(UserId(firstId.bare + i), 1, date));
 	}
 	return messages;
 }
@@ -15635,6 +15899,482 @@ RunDesktopScaleDialogs(Main::Domain &domain, int alreadyLoaded, UserId firstId,
 		sample.passed = false;
 	}
 	return sample;
+}
+
+[[nodiscard]] bool
+RunDesktopScaleDialogStateRegression(Main::Domain &domain,
+									 Main::Account *reuseAccount = nullptr) {
+	const auto viewportMoves = std::vector<Dialogs::PositionChange>{
+		{.from = 400, .to = 300, .height = 50},
+		{.from = 800, .to = 350, .height = 50},
+	};
+	const auto actualScrollTop
+		= Dialogs::scrollTopAfterMoves(325, viewportMoves);
+	if (actualScrollTop != 425) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=425 actual=%d.\n",
+					 actualScrollTop);
+		return false;
+	}
+	const auto downwardMove = std::vector<Dialogs::PositionChange>{
+		{.from = 100, .to = 300, .height = 50},
+	};
+	const auto downwardScrollTop
+		= Dialogs::scrollTopAfterMoves(325, downwardMove);
+	if (downwardScrollTop != 275) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=275 actual=%d.\n",
+					 downwardScrollTop);
+		return false;
+	}
+	const auto movedAnchor = std::vector<Dialogs::PositionChange>{
+		{.from = 300, .to = 500, .height = 50},
+	};
+	const auto movedAnchorScrollTop
+		= Dialogs::scrollTopAfterMoves(325, movedAnchor);
+	if (movedAnchorScrollTop != 325) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-anchor expected=325 actual=%d.\n",
+					 movedAnchorScrollTop);
+		return false;
+	}
+	const auto singleVisibleMove = std::vector<Dialogs::PositionChange>{
+		{.from = 500, .to = 0, .height = 50},
+	};
+	const auto singleVisibleMoveScrollTop
+		= Dialogs::scrollTopAfterMoves(510, singleVisibleMove);
+	if (singleVisibleMoveScrollTop != 560) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=560 actual=%d.\n",
+					 singleVisibleMoveScrollTop);
+		return false;
+	}
+	constexpr auto kLoaded = 20;
+	const auto firstId = UserId(6'000'000);
+	const auto passed = WithDesktopScaleAccount(
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
+			auto &data = account->session().data();
+			auto users = DesktopScaleUsers(firstId, kLoaded, false);
+			const auto dialogs = DesktopScaleDialogs(firstId, kLoaded, true, 9);
+			// Every loaded chat gets its own date, so list order never
+			// depends on how equal dates are tied. Archived chats 1..9 are
+			// the preview candidates and chat 9 is the oldest, so it starts
+			// outside the first eight. Chat 10 is the newest unpinned chat
+			// and chat 19 the oldest, below every page row.
+			auto messages = DesktopScaleMessages(firstId, kLoaded);
+			for (auto i = 0; i != kLoaded; ++i) {
+				const auto date = (i == 0)			  ? 100
+								  : (i == 3)		  ? 30
+								  : (i < 9)			  ? (20 + i)
+								  : (i == 9)		  ? 5
+								  : (i < kLoaded - 1) ? (200 - i)
+													  : 1;
+				messages[i]
+					= DesktopScaleMessage(UserId(firstId.bare + i), 1, date);
+			}
+			data.processUsers(MTP_vector<MTPUser>(std::move(users)));
+			data.applyDialogs(nullptr, messages, dialogs, kLoaded);
+
+			const auto archive = data.folderLoaded(Data::Folder::kId);
+			if (!archive) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: the archive folder "
+							 "was not created from the dialogs.\n");
+				return false;
+			}
+			const auto newestArchiveUser = UserId(firstId.bare + 9);
+			const auto newestArchiveHistory
+				= data.historyLoaded(peerFromUser(newestArchiveUser));
+			const auto archivePreviewContains = [&](const auto &lastHistories) {
+				return newestArchiveHistory
+					   && ranges::contains(lastHistories, newestArchiveHistory,
+										   [](not_null<History *> history) {
+											   return history.get();
+										   });
+			};
+			if (!newestArchiveHistory
+				|| archivePreviewContains(archive->lastHistories())) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: archive preview fixture did "
+					"not "
+					"place its candidate below the first eight chats.\n");
+				return false;
+			}
+			const auto mainBefore
+				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto archiveBefore
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
+
+			const auto pageStart = UserId(firstId.bare + kLoaded);
+			auto pageUsers = QVector<MTPUser>();
+			pageUsers.reserve(kDesktopScalePageSize);
+			for (auto i = 0; i != kDesktopScalePageSize; ++i) {
+				pageUsers.push_back(DesktopScaleUser(
+					UserId(pageStart.bare + i),
+					u"Q Scale Peer %1"_q.arg(i, 5, 10, QChar('0')), false));
+			}
+			auto requestPageOrder = std::vector<PeerId>();
+			requestPageOrder.reserve(kDesktopScalePageSize);
+			for (auto i = 0; i != kDesktopScalePageSize; ++i) {
+				requestPageOrder.push_back(
+					peerFromUser(UserId(pageStart.bare + i)));
+			}
+			auto expectedPageOrder = requestPageOrder;
+			std::reverse(begin(expectedPageOrder), end(expectedPageOrder));
+			const auto pageDialogs
+				= DesktopScaleDialogs(pageStart, kDesktopScalePageSize);
+			const auto pageMessages
+				= DesktopScaleMessages(pageStart, kDesktopScalePageSize);
+			const auto mainIndexed = data.chatsList()->indexed();
+			const auto archiveIndexed = archive->chatsList()->indexed();
+			mainIndexed->freeze();
+			archiveIndexed->freeze();
+			data.processUsers(MTP_vector<MTPUser>(std::move(pageUsers)));
+			data.applyDialogs(nullptr, pageMessages, pageDialogs,
+							  kDesktopScalePageSize);
+
+			const auto mainPendingPageOrder = DesktopScalePageOrder(
+				data.chatsList()->indexed()->all(), requestPageOrder);
+			const auto mainPendingOrderPreserved
+				= (mainPendingPageOrder == requestPageOrder);
+			if (!mainPendingOrderPreserved) {
+				DesktopScalePrintPeerOrderMismatch("main-while-frozen",
+												   requestPageOrder,
+												   mainPendingPageOrder);
+			}
+			const auto letterList
+				= data.chatsList()->indexed()->filtered(QChar('q'));
+			const auto letterPendingPageOrder
+				= letterList
+					  ? DesktopScalePageOrder(*letterList, requestPageOrder)
+					  : std::vector<PeerId>();
+			const auto letterPendingOrderPreserved
+				= (letterPendingPageOrder == requestPageOrder);
+			if (!letterPendingOrderPreserved) {
+				DesktopScalePrintPeerOrderMismatch("letter-Q-while-frozen",
+												   requestPageOrder,
+												   letterPendingPageOrder);
+			}
+			mainIndexed->unfreeze();
+			archiveIndexed->unfreeze();
+			const auto actualPageOrder = DesktopScalePageOrder(
+				data.chatsList()->indexed()->all(), expectedPageOrder);
+			const auto pageOrderMatches
+				= (actualPageOrder == expectedPageOrder);
+			if (!pageOrderMatches) {
+				DesktopScalePrintPeerOrderMismatch(
+					"main-after-unfreeze", expectedPageOrder, actualPageOrder);
+			}
+			const auto letterListAfter
+				= data.chatsList()->indexed()->filtered(QChar('q'));
+			const auto letterPageOrder
+				= letterListAfter ? DesktopScalePageOrder(*letterListAfter,
+														  expectedPageOrder)
+								  : std::vector<PeerId>();
+			const auto letterOrderMatches
+				= (letterPageOrder == expectedPageOrder);
+			if (!letterOrderMatches) {
+				DesktopScalePrintPeerOrderMismatch("letter-Q-after-unfreeze",
+												   expectedPageOrder,
+												   letterPageOrder);
+			}
+			const auto loadedAfter
+				= DesktopScaleHistoryCount(*data.chatsList())
+				  + DesktopScaleHistoryCount(*archive->chatsList());
+			if (loadedAfter != kLoaded + kDesktopScalePageSize) {
+				std::fprintf(stderr,
+							 "Desktop scale state mismatch: property=order "
+							 "expected_dialogs=%d actual_dialogs=%d.\n",
+							 kLoaded + kDesktopScalePageSize, loadedAfter);
+			}
+			const auto statePreserved
+				= DesktopScaleChatListStatePreserved(
+					  mainBefore, *data.chatsList(), true, "main")
+				  && DesktopScaleChatListStatePreserved(
+					  archiveBefore, *archive->chatsList(), false, "archive");
+			if ((loadedAfter != kLoaded + kDesktopScalePageSize)
+				|| !pageOrderMatches || !mainPendingOrderPreserved
+				|| !letterPendingOrderPreserved || !letterOrderMatches
+				|| !statePreserved) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: dialogs page changed "
+					"order, pinned chats, folders, or unread counts.\n");
+				return false;
+			}
+
+			const auto mainBeforeRedate
+				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto archiveBeforeRedate
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
+			const auto movingDownUser = UserId(firstId.bare + 10);
+			const auto movingUpUser = UserId(firstId.bare + kLoaded - 1);
+			const auto movingDownHistory
+				= data.historyLoaded(peerFromUser(movingDownUser));
+			const auto movingUpHistory
+				= data.historyLoaded(peerFromUser(movingUpUser));
+			if (!movingDownHistory || !movingUpHistory) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: move history is missing.\n");
+				return false;
+			}
+			const auto movingDownRow
+				= mainIndexed->getRow(Dialogs::Key(movingDownHistory));
+			const auto movingUpRow
+				= mainIndexed->getRow(Dialogs::Key(movingUpHistory));
+			if (!movingDownRow || !movingUpRow) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: move rows are missing.\n");
+				return false;
+			}
+			const auto movingDownBeforeTop = movingDownRow->top();
+			const auto movingUpBeforeTop = movingUpRow->top();
+			auto movementChanges
+				= std::vector<std::pair<History *, Dialogs::PositionChange>>();
+			auto movementBatches = std::vector<
+				std::vector<std::pair<History *, Dialogs::PositionChange>>>();
+			auto movementLifetime = rpl::lifetime();
+			data.chatListEntryMoveBatches()
+				| rpl::on_next(
+					[&](const Data::Session::ChatListEntryMoveBatch &events) {
+						auto batch = std::vector<
+							std::pair<History *, Dialogs::PositionChange>>();
+						for (const auto &event : events) {
+							const auto history = event.key.history();
+							if ((event.filterId == FilterId())
+								&& ((history == movingDownHistory)
+									|| (history == movingUpHistory))) {
+								batch.emplace_back(history, event.moved);
+							}
+						}
+						if (!batch.empty()) {
+							movementBatches.push_back(std::move(batch));
+						}
+					},
+					movementLifetime);
+			data.chatListEntryRefreshes()
+				| rpl::on_next(
+					[&](const Data::Session::ChatListEntryRefresh &event) {
+						const auto history = event.key.history();
+						if ((event.filterId == FilterId())
+							&& ((history == movingDownHistory)
+								|| (history == movingUpHistory))) {
+							movementChanges.emplace_back(history, event.moved);
+						}
+					},
+					movementLifetime);
+			const auto redatedMessages = QVector<MTPMessage>{
+				DesktopScaleMessage(movingUpUser, 2, 40),
+				DesktopScaleMessage(movingDownUser, 2, 5),
+				DesktopScaleMessage(newestArchiveUser, 2, 150),
+			};
+			const auto redatedDialogs = QVector<MTPDialog>{
+				DesktopScaleDialog(movingUpUser, false, 0, 0, 2),
+				DesktopScaleDialog(movingDownUser, false, 0, 0, 2),
+				DesktopScaleDialog(newestArchiveUser, false, 0,
+								   Data::Folder::kId, 2),
+			};
+			data.applyDialogs(nullptr, redatedMessages, redatedDialogs, 3);
+
+			auto expectedRedatedOrder = mainBeforeRedate.order;
+			ranges::stable_sort(
+				begin(expectedRedatedOrder), end(expectedRedatedOrder),
+				[](const Dialogs::Key &a, const Dialogs::Key &b) {
+					return a.entry()->sortKeyInChatList(FilterId())
+						   > b.entry()->sortKeyInChatList(FilterId());
+				});
+			auto expectedArchiveOrder = archiveBeforeRedate.order;
+			ranges::stable_sort(
+				begin(expectedArchiveOrder), end(expectedArchiveOrder),
+				[](const Dialogs::Key &a, const Dialogs::Key &b) {
+					return a.entry()->sortKeyInChatList(FilterId())
+						   > b.entry()->sortKeyInChatList(FilterId());
+				});
+			const auto archiveAfterRedate
+				= DesktopScaleChatListSnapshot(*archive->chatsList());
+			const auto archiveOrderMatches
+				= (archiveAfterRedate.order == expectedArchiveOrder);
+			if (!archiveOrderMatches) {
+				DesktopScalePrintDialogOrderMismatch(
+					"archive-after-redate", "order", expectedArchiveOrder,
+					archiveAfterRedate.order);
+			}
+			const auto mainAfterRedate
+				= DesktopScaleChatListSnapshot(*data.chatsList());
+			const auto movingDownAfterTop = movingDownRow->top();
+			const auto movingUpAfterTop = movingUpRow->top();
+			const auto redatedOrderMatches
+				= (mainAfterRedate.order == expectedRedatedOrder);
+			if (!redatedOrderMatches) {
+				DesktopScalePrintDialogOrderMismatch(
+					"main-after-redate", "order", expectedRedatedOrder,
+					mainAfterRedate.order);
+			}
+			const auto movementChangeExists = [&](History *history, int from,
+												  int to) {
+				return ranges::any_of(movementChanges, [&](const auto &change) {
+					return (change.first == history)
+						   && (change.second.from == from)
+						   && (change.second.to == to);
+				});
+			};
+			const auto movingDownEventExists = movementChangeExists(
+				movingDownHistory, movingDownBeforeTop, movingDownAfterTop);
+			const auto movingUpEventExists = movementChangeExists(
+				movingUpHistory, movingUpBeforeTop, movingUpAfterTop);
+			const auto movementBatchMatches
+				= (movementBatches.size() == 1)
+				  && (movementBatches.front().size() == 2)
+				  && (movementBatches.front()[0].first
+					  != movementBatches.front()[1].first)
+				  && (movementBatches.front()[0].second.from
+					  < movementBatches.front()[1].second.from)
+				  && ranges::any_of(movementBatches.front(),
+									[&](const auto &move) {
+										return move.first == movingDownHistory;
+									})
+				  && ranges::any_of(movementBatches.front(),
+									[&](const auto &move) {
+										return move.first == movingUpHistory;
+									});
+			if (!movementBatchMatches) {
+				std::fprintf(stderr,
+							 "Desktop scale state mismatch: list=main "
+							 "property=movement-batch expected=one ordered "
+							 "two-row batch "
+							 "actual=%zu batches.\n",
+							 movementBatches.size());
+			}
+			const auto positionOf = [](const std::vector<Dialogs::Key> &order,
+									   uint64 dialogId) {
+				const auto i
+					= ranges::find_if(order, [&](const Dialogs::Key &key) {
+						  return DesktopScaleDialogId(key) == dialogId;
+					  });
+				return (i == end(order)) ? order.size()
+										 : size_t(i - begin(order));
+			};
+			const auto movingDownBefore
+				= positionOf(mainBeforeRedate.order, movingDownUser.bare);
+			const auto movingDownAfter
+				= positionOf(mainAfterRedate.order, movingDownUser.bare);
+			const auto movingUpBefore
+				= positionOf(mainBeforeRedate.order, movingUpUser.bare);
+			const auto movingUpAfter
+				= positionOf(mainAfterRedate.order, movingUpUser.bare);
+			const auto movedDownPastSeveral
+				= (movingDownAfter > movingDownBefore)
+				  && (movingDownAfter - movingDownBefore >= 5);
+			const auto movedUpPastSeveral
+				= (movingUpAfter < movingUpBefore)
+				  && (movingUpBefore - movingUpAfter >= 5);
+			if (!movedDownPastSeveral) {
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main property=order "
+					"dialog=%llu expected=move-down-by-5 "
+					"actual=%llu-to-%llu.\n",
+					static_cast<unsigned long long>(movingDownUser.bare),
+					static_cast<unsigned long long>(movingDownBefore),
+					static_cast<unsigned long long>(movingDownAfter));
+			}
+			if (!movedUpPastSeveral) {
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main property=order "
+					"dialog=%llu expected=move-up-by-5 actual=%llu-to-%llu.\n",
+					static_cast<unsigned long long>(movingUpUser.bare),
+					static_cast<unsigned long long>(movingUpBefore),
+					static_cast<unsigned long long>(movingUpAfter));
+			}
+			if (!movingDownEventExists
+				|| !(movingDownBeforeTop < movingDownAfterTop)) {
+				const auto actual
+					= ranges::find_if(movementChanges, [&](const auto &change) {
+						  return (change.first == movingDownHistory)
+								 && (change.second.from != change.second.to);
+					  });
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main "
+					"property=movement dialog=%llu expected=%d-to-%d "
+					"actual=%s%d-to-%d.\n",
+					static_cast<unsigned long long>(movingDownUser.bare),
+					movingDownBeforeTop, movingDownAfterTop,
+					(actual == end(movementChanges)) ? "missing/" : "",
+					(actual == end(movementChanges)) ? -1 : actual->second.from,
+					(actual == end(movementChanges)) ? -1 : actual->second.to);
+			}
+			if (!movingUpEventExists
+				|| !(movingUpBeforeTop > movingUpAfterTop)) {
+				const auto actual
+					= ranges::find_if(movementChanges, [&](const auto &change) {
+						  return (change.first == movingUpHistory)
+								 && (change.second.from != change.second.to);
+					  });
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=main "
+					"property=movement dialog=%llu expected=%d-to-%d "
+					"actual=%s%d-to-%d.\n",
+					static_cast<unsigned long long>(movingUpUser.bare),
+					movingUpBeforeTop, movingUpAfterTop,
+					(actual == end(movementChanges)) ? "missing/" : "",
+					(actual == end(movementChanges)) ? -1 : actual->second.from,
+					(actual == end(movementChanges)) ? -1 : actual->second.to);
+			}
+			const auto archivePreviewAfter = archive->lastHistories();
+			const auto newestArchivePreviewMatches
+				= !archivePreviewAfter.empty()
+				  && (archivePreviewAfter.front().get() == newestArchiveHistory)
+				  && archivePreviewContains(archivePreviewAfter);
+			if (!newestArchivePreviewMatches) {
+				std::fprintf(
+					stderr,
+					"Desktop scale state mismatch: list=archive "
+					"property=lastHistories dialog=%llu expected=first "
+					"actual=%s.\n",
+					static_cast<unsigned long long>(newestArchiveUser.bare),
+					archivePreviewAfter.empty() ? "empty"
+												: "different-dialog-first");
+			}
+			const auto loadedAfterRedate
+				= DesktopScaleHistoryCount(*data.chatsList())
+				  + DesktopScaleHistoryCount(*archive->chatsList());
+			const auto statePreservedAfterRedate
+				= DesktopScaleChatListStatePreserved(mainBeforeRedate,
+													 *data.chatsList(), true,
+													 "main-after-redate", false)
+				  && DesktopScaleChatListStatePreserved(
+					  archiveBefore, *archive->chatsList(), false,
+					  "archive-after-redate", false);
+			if ((loadedAfterRedate != loadedAfter) || !redatedOrderMatches
+				|| !movedDownPastSeveral || !movedUpPastSeveral
+				|| !movingDownEventExists || !movingUpEventExists
+				|| !movementBatchMatches || !newestArchivePreviewMatches
+				|| !archiveOrderMatches || !statePreservedAfterRedate) {
+				std::fprintf(
+					stderr,
+					"Desktop scale check failed: re-dating dialogs changed "
+					"sort order or list state.\n");
+				return false;
+			}
+			return true;
+		},
+		reuseAccount);
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: dialogs state regression.\n");
+	}
+	return passed;
 }
 
 struct DesktopScaleContactsSample final {
@@ -16565,6 +17305,7 @@ int RunDesktopScaleCheck() {
 	auto &domain = app.domain();
 	auto dialogsOne = DesktopScaleActionSample();
 	auto searchOne = DesktopScaleSearchUpdateSamples();
+	auto dialogsState = false;
 	const auto dialogsOneCreated
 		= WithDesktopScaleAccount(domain, UserId(999'999), [&](auto account) {
 			  const auto firstId = UserId(1'000'000);
@@ -16588,8 +17329,17 @@ int RunDesktopScaleCheck() {
 			  }
 			  searchOne = RunDesktopScaleSearchAndUpdates(
 				  domain, 50, UserId(999'999), firstId, account.get());
+			  auto existingKeys = std::vector<Dialogs::Key>();
+			  for (const auto &row : data.chatsList()->indexed()->all()) {
+				  existingKeys.push_back(row->key());
+			  }
+			  for (const auto &key : existingKeys) {
+				  data.removeChatListEntry(key);
+			  }
+			  dialogsState
+				  = RunDesktopScaleDialogStateRegression(domain, account.get());
 			  return searchOne.search.passed && searchOne.updateBurst.passed
-					 && dialogsOne.passed;
+					 && dialogsOne.passed && dialogsState;
 		  });
 	auto dialogsHundred = DesktopScaleActionSample();
 	auto searchHundred = DesktopScaleSearchUpdateSamples();
@@ -16732,7 +17482,9 @@ int RunDesktopScaleCheck() {
 	});
 	const auto passed
 		= dialogsOneCreated && dialogsOne.passed && dialogsHundredCreated
-		  && dialogsHundred.passed && contactsOne.loaded.passed
+		  && dialogsHundred.passed
+		  && DesktopScaleDialogsMeetBudget(dialogsOne, dialogsHundred)
+		  && dialogsState && contactsOne.loaded.passed
 		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed
 		  && contactsOne.removed.passed && contactsHundred.removed.passed
@@ -16845,14 +17597,11 @@ int RunDesktopScaleCheck() {
 	std::printf("; total=");
 	printStallCount(stalls);
 	std::printf(".\n");
-	std::printf("Report-only baseline: dialogs page 1x=");
-	printSampleTime(dialogsOne);
+	std::printf(
+		"Report-only baseline: contacts.getContacts full response 100x=");
+	printSampleTime(contactsHundred.loaded);
 	std::printf("/");
-	printStallCount(dialogsOne.mainThreadStepsOverBudget);
-	std::printf(" over-50-ms steps, 100x=");
-	printSampleTime(dialogsHundred);
-	std::printf("/");
-	printStallCount(dialogsHundred.mainThreadStepsOverBudget);
+	printStallCount(contactsHundred.loaded.mainThreadStepsOverBudget);
 	std::printf(" over-50-ms steps.\n");
 	std::printf("Report-only baseline: updates.getDifference 1x=");
 	printSampleTime(searchOne.updateBurst);
@@ -16867,9 +17616,9 @@ int RunDesktopScaleCheck() {
 	printStallCount(blockingStalls);
 	std::printf(".\n");
 	std::printf(
-		"Scenario checks: dialogs=%d/%d contacts=%d/%d contact change=%d/%d "
-		"cache=%d/%d.\n",
-		int(dialogsOne.passed), int(dialogsHundred.passed),
+		"Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
+		"contact change=%d/%d cache=%d/%d.\n",
+		int(dialogsOne.passed), int(dialogsHundred.passed), int(dialogsState),
 		int(contactsOne.loaded.passed), int(contactsHundred.loaded.passed),
 		int(contactsOne.changedAndFound.passed),
 		int(contactsHundred.changedAndFound.passed), int(cacheOne.passed),

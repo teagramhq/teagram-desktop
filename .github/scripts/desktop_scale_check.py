@@ -31,6 +31,7 @@ LEGACY_SCENARIOS = {
     "cache read x100": "thumbnail reads",
 }
 NO_BASELINE_EXEMPTION_SCENARIOS = {
+    "messages.getDialogs page (100 dialogs)",
     CONTACT_LOAD_SCENARIO,
     "contact change + name lookup",
 }
@@ -43,7 +44,6 @@ ADDITIONAL_SCENARIOS = {
 }
 SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
 STATIC_EXCEPTIONS = {
-    "messages.getDialogs page (100 dialogs)": "MAIN-3656 (chat list page)",
 }
 REPORT_ONLY_SCENARIOS = {
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": (
@@ -141,7 +141,7 @@ def parse_report(report):
     }
 
     checks = re.search(
-        r"^Scenario checks: dialogs=(\d)/(\d) contacts=(\d)/(\d) "
+        r"^Scenario checks: dialogs=(\d)/(\d) state=(\d) contacts=(\d)/(\d) "
         r"contact change=(\d)/(\d) cache=(\d)/(\d)\.$",
         report,
         re.MULTILINE,

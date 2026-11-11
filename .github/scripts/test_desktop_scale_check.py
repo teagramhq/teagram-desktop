@@ -27,7 +27,7 @@ REPORT = """DESKTOP_SCALE_REPORT_BEGIN
 | cache read x100 | 10.00 ms | 12.00 ms | 1.20x | 50 ms | calibrating |
 Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
 Main-thread steps over 50 ms: dialogs 1x=0, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; total=0.
-Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
 Outcome: PASS
 DESKTOP_SCALE_REPORT_END
 """
@@ -201,7 +201,7 @@ def make_runner_harness(root, history=None):
             | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
             Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; private history 1x=0, 100x=0; jump to date 1x=0, 100x=0; group media 1x=0, 100x=0; search 1x=0, 100x=0; update burst 1x=0, 100x=0; total={dialogs_stalls}.
-            Scenario checks: dialogs=1/1 contacts=1/1 contact change=1/1 cache=1/1.
+            Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
             Additional scenario checks: history=1/1 date=1/1 group=1/1 search=1/1 updates=1/1.
             Outcome: {outcome}
             DESKTOP_SCALE_REPORT_END\"\"\")
@@ -268,6 +268,32 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(row["one_stalls"], 0)
         self.assertEqual(sample["directory_enumerations"], {"one": 0, "hundred": 0})
         self.assertTrue(sample["valid"])
+
+    def test_failed_dialog_state_check_fails_the_scale_step(self):
+        self.require_implementation()
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.txt"
+            sample = Path(directory) / "sample.json"
+            report.write_text(REPORT.replace("state=1", "state=0"))
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("desktop_scale_check.py")),
+                    "parse",
+                    "--report",
+                    str(report),
+                    "--output",
+                    str(sample),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            parsed = json.loads(sample.read_text())
+
+        self.assertEqual(result.returncode, 3)
+        self.assertFalse(parsed["scenario_checks_passed"])
+        self.assertFalse(parsed["valid"])
 
     def test_summary_includes_additional_scenario_timings_and_bands(self):
         self.require_implementation()
@@ -1280,19 +1306,19 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 )
             )
 
-    def test_static_baseline_exception_for_dialogs_remains_report_only(self):
+    def test_dialogs_regression_stays_blocking_with_slow_dev_history(self):
         self.require_implementation()
-        records = [make_sample() for _ in range(20)]
-        base = [make_sample(), make_sample()]
-        head = [make_sample(), make_sample()]
         scenario = "messages.getDialogs page (100 dialogs)"
+        records = [make_sample() for _ in range(20)]
         for record in records:
             record["scenarios"][scenario]["one_stalls"] = 1
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
         for sample in head:
             sample["scenarios"][scenario].update(
                 {
-                    "one_ms": 30.0,
-                    "hundred_ms": 60.0,
+                    "one_ms": 20.0,
+                    "hundred_ms": 35.0,
                     "one_stalls": 1,
                     "hundred_stalls": 1,
                 }
@@ -1300,8 +1326,10 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         result = scale_check.evaluate(records, base, head)
 
-        self.assertIn("MAIN-3656", result["exceptions"][scenario])
-        self.assertFalse(any(scenario in failure for failure in result["failures"]))
+        self.assertNotIn(scenario, result["exceptions"])
+        failures = [item for item in result["failures"] if scenario in item]
+        self.assertTrue(any("50 ms" in item for item in failures))
+        self.assertTrue(any("1.5x" in item for item in failures))
 
     def test_known_baseline_exception_lifts_when_dev_timings_are_clear(self):
         self.require_implementation()

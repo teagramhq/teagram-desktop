@@ -41,6 +41,9 @@ class IndexedList {
 	void moveToTop(Key key);
 	void freeze();
 	void unfreeze();
+	[[nodiscard]] auto unfrozen() const -> rpl::producer<> {
+		return _unfrozen.events();
+	}
 	bool updateHeight(Key key, float64 narrowRatio);
 	bool updateHeights(float64 narrowRatio);
 
@@ -112,6 +115,7 @@ class IndexedList {
 	[[nodiscard]] iterator findByY(int y) { return all().findByY(y); }
 
   private:
+	void freezeNewIndexList(List &list);
 	void adjustByName(Key key);
 	void adjustNames(FilterId filterId, not_null<History *> history,
 					 const base::flat_set<QChar> &oldChars);
@@ -126,6 +130,7 @@ class IndexedList {
 
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
+	int _freezeDepth = 0;
 	bool _usePrefixSearch = false;
 	List _list, _empty;
 	base::flat_map<QChar, List> _index;
@@ -133,6 +138,7 @@ class IndexedList {
 	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
 	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
 	std::unordered_map<Row *, QVarLengthArray<QChar, 4>> _indexedLettersByRow;
+	rpl::event_stream<> _unfrozen;
 	rpl::event_stream<> _searchIndexReadyChanges;
 	bool _searchIndexWasReady = true;
 	int _indexCursor = 0;
