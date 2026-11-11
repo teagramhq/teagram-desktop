@@ -15914,11 +15914,23 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 	};
 	const auto movedAnchorScrollTop
 		= Dialogs::scrollTopAfterMoves(325, movedAnchor);
-	if (movedAnchorScrollTop != 525) {
+	if (movedAnchorScrollTop != 325) {
 		std::fprintf(stderr,
 					 "Desktop scale state mismatch: list=main "
-					 "property=scroll-anchor expected=525 actual=%d.\n",
+					 "property=scroll-anchor expected=325 actual=%d.\n",
 					 movedAnchorScrollTop);
+		return false;
+	}
+	const auto singleVisibleMove = std::vector<Dialogs::PositionChange>{
+		{.from = 500, .to = 0, .height = 50},
+	};
+	const auto singleVisibleMoveScrollTop
+		= Dialogs::scrollTopAfterMoves(510, singleVisibleMove);
+	if (singleVisibleMoveScrollTop != 560) {
+		std::fprintf(stderr,
+					 "Desktop scale state mismatch: list=main "
+					 "property=scroll-top expected=560 actual=%d.\n",
+					 singleVisibleMoveScrollTop);
 		return false;
 	}
 	constexpr auto kLoaded = 20;

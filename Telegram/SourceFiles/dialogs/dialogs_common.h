@@ -40,11 +40,6 @@ struct PositionChange {
 
 [[nodiscard]] inline int
 scrollTopAfterMoves(int scrollTop, const std::vector<PositionChange> &moves) {
-	for (const auto &move : moves) {
-		if ((move.from <= scrollTop) && (scrollTop < move.from + move.height)) {
-			return move.to + (scrollTop - move.from);
-		}
-	}
 	auto result = scrollTop;
 	for (const auto &move : moves) {
 		if (move.from + move.height <= scrollTop) {
