@@ -46,12 +46,10 @@ UiStallWatchdogProcessCpuTimeNanosecondsForTest() {
 		return std::nullopt;
 	}
 	const auto userNanoseconds
-		= (qint64(usage.ru_utime.tv_sec) * 1'000'000
-		   + usage.ru_utime.tv_usec)
+		= (qint64(usage.ru_utime.tv_sec) * 1'000'000 + usage.ru_utime.tv_usec)
 		  * 1'000;
 	const auto systemNanoseconds
-		= (qint64(usage.ru_stime.tv_sec) * 1'000'000
-		   + usage.ru_stime.tv_usec)
+		= (qint64(usage.ru_stime.tv_sec) * 1'000'000 + usage.ru_stime.tv_usec)
 		  * 1'000;
 	return userNanoseconds + systemNanoseconds;
 #else
@@ -75,14 +73,12 @@ UiStallWatchdogThreadCpuTimeNanosecondsForTest() {
 	if (infoResult != KERN_SUCCESS || releaseResult != KERN_SUCCESS) {
 		return std::nullopt;
 	}
-	const auto userNanoseconds
-		= (qint64(info.user_time.seconds) * 1'000'000
-		   + info.user_time.microseconds)
-		  * 1'000;
-	const auto systemNanoseconds
-		= (qint64(info.system_time.seconds) * 1'000'000
-		   + info.system_time.microseconds)
-		  * 1'000;
+	const auto userNanoseconds = (qint64(info.user_time.seconds) * 1'000'000
+								  + info.user_time.microseconds)
+								 * 1'000;
+	const auto systemNanoseconds = (qint64(info.system_time.seconds) * 1'000'000
+									+ info.system_time.microseconds)
+								   * 1'000;
 	return userNanoseconds + systemNanoseconds;
 #elif defined(Q_OS_LINUX)
 	auto usage = timespec();
@@ -318,7 +314,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto windowOtherThreadCpuNanoseconds = qint64(-1);
 	if (windowProcessCpuBefore && windowProcessCpuAfter && windowThreadCpuBefore
 		&& windowThreadCpuAfter) {
-		const auto processWork = *windowProcessCpuAfter - *windowProcessCpuBefore;
+		const auto processWork
+			= *windowProcessCpuAfter - *windowProcessCpuBefore;
 		const auto threadWork = *windowThreadCpuAfter - *windowThreadCpuBefore;
 		if (processWork >= threadWork) {
 			windowOtherThreadCpuNanoseconds = processWork - threadWork;
@@ -347,10 +344,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	CHECK(!acknowledgements.empty());
 	auto shortSchedulerCapturePingObserved = false;
 	auto pingIntervalNanoseconds = qint64(-1);
-	auto previousAcknowledgedAtNanoseconds
-		= lastAcknowledgedAtNanoseconds;
-	auto hasPreviousAcknowledgement
-		= (lastAcknowledgedAtNanoseconds > 0);
+	auto previousAcknowledgedAtNanoseconds = lastAcknowledgedAtNanoseconds;
+	auto hasPreviousAcknowledgement = (lastAcknowledgedAtNanoseconds > 0);
 	auto acknowledgementGapsNanoseconds = std::vector<qint64>();
 	for (const auto &acknowledgement : acknowledgements) {
 		const auto acknowledgedAtNanoseconds
@@ -360,7 +355,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		}
 		pingIntervalNanoseconds = acknowledgement.pingIntervalNanoseconds;
 		if (hasPreviousAcknowledgement
-			&& (acknowledgedAtNanoseconds > previousAcknowledgedAtNanoseconds)) {
+			&& (acknowledgedAtNanoseconds
+				> previousAcknowledgedAtNanoseconds)) {
 			const auto gapNanoseconds
 				= acknowledgedAtNanoseconds - previousAcknowledgedAtNanoseconds;
 			acknowledgementGapsNanoseconds.push_back(gapNanoseconds);
@@ -372,16 +368,17 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 		hasPreviousAcknowledgement = true;
 	}
 	if (!shortSchedulerCapturePingObserved) {
-		std::fprintf(stderr,
+		std::fprintf(
+			stderr,
 			"Scheduler ping cadence failure: ping_interval_ns=%lld "
 			"window_other_thread_cpu_ns=%lld acknowledgement_gaps_ns=[",
 			static_cast<long long>(pingIntervalNanoseconds),
 			static_cast<long long>(windowOtherThreadCpuNanoseconds));
-		for (auto i = std::size_t(0); i != acknowledgementGapsNanoseconds.size();
-			 ++i) {
-			std::fprintf(stderr, "%s%lld", i ? "," : "",
-						 static_cast<long long>(
-							 acknowledgementGapsNanoseconds[i]));
+		for (auto i = std::size_t(0);
+			 i != acknowledgementGapsNanoseconds.size(); ++i) {
+			std::fprintf(
+				stderr, "%s%lld", i ? "," : "",
+				static_cast<long long>(acknowledgementGapsNanoseconds[i]));
 		}
 		std::fprintf(stderr, "]\n");
 	}
