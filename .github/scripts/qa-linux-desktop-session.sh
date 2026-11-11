@@ -14,14 +14,17 @@ usage() {
 }
 RUNS_ROOT="${QA_SESSION_RUNS_ROOT:-/home/qa/runs}"
 RUNS_ROOT="${RUNS_ROOT%/}"
-REMOTE_HELPER="$0"
-SESSION_DIR="${REMOTE_HELPER%/*}"
-SESSION_ID="${SESSION_DIR##*/}"
-RUNS_ROOT_REAL="$(realpath -e -- "$RUNS_ROOT" 2>/dev/null)" || {
-	echo 'The QA run directory must be below /home/qa/runs.' >&2
+REMOTE_HELPER="$(realpath -e -- "$0")" || {
+	echo "Could not resolve QA session helper: $0" >&2
 	exit 64
 }
-SESSION_DIR_REAL="$(realpath -e -- "$SESSION_DIR" 2>/dev/null)" || {
+SESSION_DIR="${REMOTE_HELPER%/*}"
+SESSION_ID="${SESSION_DIR##*/}"
+RUNS_ROOT_REAL="$(realpath -e -- "$RUNS_ROOT")" || {
+	echo "Could not resolve QA run directory root: $RUNS_ROOT" >&2
+	exit 64
+}
+SESSION_DIR_REAL="$(realpath -e -- "$SESSION_DIR")" || {
 	echo 'The QA session directory must already exist.' >&2
 	exit 64
 }
@@ -29,10 +32,21 @@ SESSION_DIR_REAL="$(realpath -e -- "$SESSION_DIR" 2>/dev/null)" || {
 	"$SESSION_DIR" == "$RUNS_ROOT/$SESSION_ID" &&
 	"$RUNS_ROOT_REAL" == "$RUNS_ROOT" &&
 	"$SESSION_DIR_REAL" == "$SESSION_DIR" &&
-	-f "$REMOTE_HELPER" && ! -L "$REMOTE_HELPER" ]] || {
+	-f "$REMOTE_HELPER" && ! -L "$0" ]] || {
 	echo 'Upload this helper to /home/qa/runs/<run-id>/qa-linux-desktop-session.sh before running it.' >&2
 	exit 64
 }
+
+unexpected_entry="$(find "$SESSION_DIR" -mindepth 1 -maxdepth 1 \
+	! -name qa-linux-desktop-session.sh ! -name Telegram ! -name BUILD -print -quit)"
+[[ -z "$unexpected_entry" ]] || {
+	echo "QA run directory is already in use or contains session data: $SESSION_DIR" >&2
+	exit 64
+}
+if ! mkdir -- "$SESSION_DIR/.session-lock" 2>/dev/null; then
+	echo "QA run directory is already in use or contains session data: $SESSION_DIR" >&2
+	exit 64
+fi
 
 PROFILE="$SESSION_DIR/profile"
 RUNTIME_DIR="$SESSION_DIR/runtime"

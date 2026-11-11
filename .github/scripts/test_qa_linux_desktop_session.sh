@@ -3,10 +3,10 @@ set -euo pipefail
 
 scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 session_script="${scripts_dir}/qa-linux-desktop-session.sh"
-temp_dir="$(mktemp -d)"
-stub_bin="${temp_dir}/bin"
 run_id="${BASHPID}-${RANDOM}-${RANDOM}"
 test_runs_root="$(mktemp -d "${PWD}/.qa-session-runs.XXXXXXXX")"
+temp_dir="$(mktemp -d "$test_runs_root/harness.XXXXXXXX")"
+stub_bin="${temp_dir}/bin"
 remote_helper=
 remote_build=
 remote_run_dir=
@@ -250,25 +250,16 @@ prepare_run() {
 }
 
 tmp_entries() {
-	find /tmp -mindepth 1 -maxdepth 1 -print
-	if [[ -d /tmp/.X11-unix ]]; then
-		find /tmp/.X11-unix -mindepth 1 -maxdepth 1 -print
-	fi
+	find /tmp -mindepth 1 \
+		\( -path /tmp/.X11-unix -o -path '/tmp/.X[0-9]*-lock' \) -prune -o \
+		-printf '%P\n' | LC_ALL=C sort
 }
 
 assert_no_new_tmp_entries() {
-	local before="$1" path
-	while IFS= read -r path; do
-		[[ -n "$path" ]] || continue
-		grep -Fxq -- "$path" <<<"$before" && continue
-		case "$path" in
-			/tmp/.X11-unix|/tmp/.X11-unix/X[0-9]*|/tmp/.X[0-9]*-lock|/tmp/multica-task-*)
-				;;
-			*)
-				fail "The QA session created an unexpected path under /tmp: $path"
-				;;
-		esac
-	done < <(tmp_entries)
+	local before="$1" after new_entries
+	after="$(tmp_entries)"
+	new_entries="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+	[[ -z "$new_entries" ]] || fail "The QA session created unexpected paths under /tmp: $new_entries"
 }
 
 assert_session_tmpdir() {
@@ -282,9 +273,14 @@ assert_session_tmpdir() {
 
 run_helper() {
 	local mode="$1" output="$2" status
+	local fifo runs_root tmp_before
 	local -a failure_vars=()
-	local fifo tmp_before
 	prepare_run
+	tmp_before="$(tmp_entries)"
+	runs_root="$test_runs_root"
+	if [[ "$mode" == missing-root ]]; then
+		runs_root="$test_runs_root/missing-runs-root"
+	fi
 	case "$mode" in
 		dbus-fail) failure_vars=(QA_TEST_DBUS_FAIL=1) ;;
 		telegram-fail) failure_vars=(QA_TEST_TELEGRAM_FAIL=1) ;;
@@ -295,22 +291,24 @@ run_helper() {
 	esac
 	if [[ "$mode" == stop || "$mode" == eof ]]; then
 		fifo="${temp_dir}/input-${mode}-${BASHPID}.fifo"
-		tmp_before="$(tmp_entries | sort)"
 		mkfifo "$fifo"
-		env -i \
-			QA_SESSION_RUNS_ROOT="$test_runs_root" \
-			QA_SESSION_GROUP=seed \
-			QA_SESSION_PADDING="$padding" \
-			QA_SESSION_TEST_RUN_ID="$run_id" \
-			QA_SESSION_TELEGRAM_BIN="$remote_build" \
-			QA_TEST_DISPLAY_NUMBER=99 \
-			QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
-			QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
-			QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
-			"${failure_vars[@]}" \
-			PATH="$stub_bin:$system_path" \
-			HOME="$temp_dir" \
-			bash "$remote_helper" serve < "$fifo" > "$output" 2>&1 &
+		(
+			cd -- "$remote_run_dir"
+			exec env -i \
+				QA_SESSION_RUNS_ROOT="$runs_root" \
+				QA_SESSION_GROUP=seed \
+				QA_SESSION_PADDING="$padding" \
+				QA_SESSION_TEST_RUN_ID="$run_id" \
+				QA_SESSION_TELEGRAM_BIN="$remote_build" \
+				QA_TEST_DISPLAY_NUMBER=99 \
+				QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
+				QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
+				QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
+				"${failure_vars[@]}" \
+				PATH="$stub_bin:$system_path" \
+				HOME="$temp_dir" \
+				bash qa-linux-desktop-session.sh serve < "$fifo" > "$output" 2>&1
+		) &
 		current_helper_pid=$!
 		exec 6>"$fifo"
 		wait_for_ready "$current_helper_pid" "$output" || {
@@ -327,30 +325,37 @@ run_helper() {
 		exec 6>&-
 		if wait "$current_helper_pid"; then
 			current_helper_pid=
+			assert_no_new_tmp_entries "$tmp_before"
 			return 0
 		else
 			status=$?
 			current_helper_pid=
+			assert_no_new_tmp_entries "$tmp_before"
 			return "$status"
 		fi
 	fi
-	if env -i \
-		QA_SESSION_RUNS_ROOT="$test_runs_root" \
-		QA_SESSION_GROUP=seed \
-		QA_SESSION_PADDING="$padding" \
-		QA_SESSION_TEST_RUN_ID="$run_id" \
-		QA_SESSION_TELEGRAM_BIN="$remote_build" \
-		QA_TEST_DISPLAY_NUMBER=99 \
-		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
-		QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
-		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
-		"${failure_vars[@]}" \
-		PATH="$stub_bin:$system_path" \
-		HOME="$temp_dir" \
-		bash "$remote_helper" serve < /dev/null > "$output" 2>&1; then
+	if (
+		cd -- "$remote_run_dir"
+		exec env -i \
+			QA_SESSION_RUNS_ROOT="$runs_root" \
+			QA_SESSION_GROUP=seed \
+			QA_SESSION_PADDING="$padding" \
+			QA_SESSION_TEST_RUN_ID="$run_id" \
+			QA_SESSION_TELEGRAM_BIN="$remote_build" \
+			QA_TEST_DISPLAY_NUMBER=99 \
+			QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
+			QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
+			QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
+			"${failure_vars[@]}" \
+			PATH="$stub_bin:$system_path" \
+			HOME="$temp_dir" \
+			bash qa-linux-desktop-session.sh serve < /dev/null
+	) > "$output" 2>&1; then
+		assert_no_new_tmp_entries "$tmp_before"
 		return 0
 	else
 		status=$?
+		assert_no_new_tmp_entries "$tmp_before"
 		return "$status"
 	fi
 }
@@ -426,6 +431,17 @@ grep -Fq "CLEANUP_COMPLETE=${eof_dir##*/}" "$eof_output" || fail 'EOF cleanup sh
 [[ ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'The uploaded helper or build remains after EOF cleanup.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after EOF cleanup.'
 
+missing_root_output="${temp_dir}/missing-root.log"
+if run_helper missing-root "$missing_root_output"; then
+	cat "$missing_root_output" >&2
+	fail 'A session should reject a missing QA runs root.'
+fi
+missing_runs_root="$test_runs_root/missing-runs-root"
+grep -Fq "Could not resolve QA run directory root: $missing_runs_root" "$missing_root_output" || {
+	cat "$missing_root_output" >&2
+	fail 'A missing QA runs root should be named in the error.'
+}
+
 failure_output="${temp_dir}/dbus-failure.log"
 if run_helper dbus-fail "$failure_output"; then
 	cat "$failure_output" >&2
@@ -449,9 +465,9 @@ if run_helper telegram-fail "$telegram_failure_output"; then
 	fail 'A failing Telegram stub should make startup fail.'
 fi
 telegram_dir="$remote_run_dir"
-[[ -n "$telegram_dir" ]] || {
+grep -Fq "$telegram_dir" "$telegram_failure_output" || {
 	cat "$telegram_failure_output" >&2
-	fail 'A failed Telegram launch should identify its session diagnostics.'
+	fail 'A failed Telegram launch should name its per-run directory.'
 }
 grep -Fq -- '--- teagram.log ---' "$telegram_failure_output" || fail 'The failed Telegram log should be emitted before cleanup.'
 grep -Fq 'simulated Telegram launch failure' "$telegram_failure_output" || fail 'The Telegram startup error should be emitted before cleanup.'
@@ -516,7 +532,7 @@ first_output="${temp_dir}/first-session.log"
 second_output="${temp_dir}/second-session.log"
 first_fifo="${temp_dir}/first-session.in"
 second_fifo="${temp_dir}/second-session.in"
-tmp_before_concurrent="$(tmp_entries | sort)"
+tmp_before_concurrent="$(tmp_entries)"
 mkfifo "$first_fifo" "$second_fifo"
 env -i \
 	QA_SESSION_RUNS_ROOT="$test_runs_root" \
@@ -533,6 +549,35 @@ env -i \
 first_helper_pid=$!
 exec 7>"$first_fifo"
 wait_for_ready "$first_helper_pid" "$first_output" || fail 'The first concurrent session did not become ready.'
+same_dir_output="${temp_dir}/same-directory-session.log"
+same_dir_xauthority="$(<"$first_run_dir/Xauthority")"
+if (
+	cd -- "$first_run_dir"
+	exec env -i \
+		QA_SESSION_RUNS_ROOT="$test_runs_root" \
+		QA_SESSION_GROUP=seed \
+		QA_SESSION_PADDING="$padding" \
+		QA_SESSION_TEST_RUN_ID="$run_id" \
+		QA_SESSION_TELEGRAM_BIN="$first_build" \
+		QA_TEST_DISPLAY_NUMBER=103 \
+		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-same-directory.state" \
+		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/same-directory-session-bus" \
+		PATH="$stub_bin:$system_path" \
+		HOME="$temp_dir" \
+		bash qa-linux-desktop-session.sh serve < /dev/null
+) > "$same_dir_output" 2>&1; then
+	cat "$same_dir_output" >&2
+	fail 'A second session should not start in a run directory already owned by a live session.'
+fi
+grep -Fq "QA run directory is already in use or contains session data: $first_run_dir" "$same_dir_output" || {
+	cat "$same_dir_output" >&2
+	fail 'A second session should report that the live run directory is already in use.'
+}
+[[ -x "$first_helper" && -x "$first_build" && -d "$first_run_dir/profile" ]] || fail 'A rejected same-directory session should preserve the live session files.'
+[[ -f "$first_run_dir/Xauthority" && "$(<"$first_run_dir/Xauthority")" == "$same_dir_xauthority" ]] || fail 'A rejected same-directory session should preserve the live Xauthority file.'
+first_live_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$first_output" | head -n 1)"
+[[ -n "$first_live_telegram_pid" ]] || fail 'The first session should report its Telegram PID before a same-directory attempt.'
+is_running "$first_live_telegram_pid" || fail 'The first Telegram process should remain alive after a same-directory rejection.'
 env -i \
 	QA_SESSION_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
@@ -605,7 +650,7 @@ prepare_run
 hup_run_dir="$remote_run_dir"
 hup_helper="$remote_helper"
 hup_build="$remote_build"
-hup_tmp_before="$(tmp_entries | sort)"
+hup_tmp_before="$(tmp_entries)"
 mkfifo "$hup_fifo"
 env -i \
 	QA_SESSION_RUNS_ROOT="$test_runs_root" \
