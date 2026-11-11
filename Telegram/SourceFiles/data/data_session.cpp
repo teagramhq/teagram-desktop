@@ -5996,7 +5996,8 @@ void Session::notifyChatListEntryMoves(ChatListEntryMoveBatch moves) {
 	if (moves.empty()) {
 		return;
 	}
-	_chatListEntryMoveBatches.fire(moves);
+	auto batch = moves;
+	_chatListEntryMoveBatches.fire(std::move(batch));
 	for (auto &event : moves) {
 		_chatListEntryRefreshes.fire(std::move(event));
 	}
