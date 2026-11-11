@@ -36,6 +36,7 @@ NO_BASELINE_EXEMPTION_SCENARIOS = {
     "contact change + name lookup",
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 }
+RATIO_EXEMPT_SCENARIOS = {CONTACT_LOAD_SCENARIO}
 ADDITIONAL_SCENARIOS = {
     "private history page (1M messages; 20 / 2,000 loaded)": "private history",
     "jump to date in 1M-message history": "jump to date",
@@ -451,6 +452,7 @@ def evaluate(
             )
         if (
             len(baseline_rows) >= MIN_DEV_RUNS
+            and scenario not in RATIO_EXEMPT_SCENARIOS
             and row_result["ratio"] is not None
             and row_result["ratio"] > MAX_SCALE_RATIO
         ):

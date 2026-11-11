@@ -17286,6 +17286,32 @@ RunAddParticipantsSearchIndexRegression(Main::Account *account) {
 	} else if (delegate.rowsCount() != 2) {
 		return fail("appended duplicate rows after the query completed");
 	}
+
+	const auto restoredHistory = data.history(firstId);
+	restoredHistory->clearFolder();
+	data.refreshChatListEntry(restoredHistory);
+	if (contacts->filtered(QStringList{u"sea"_q}).size() != 2) {
+		return fail(
+			"kept a contact in the no-chats search after adding its chat");
+	}
+	data.removeChatListEntry(restoredHistory);
+	if (!WaitForRegressionCondition(
+			[&] {
+				if (!contacts->searchIndexReady()) {
+					return false;
+				}
+				const auto rows = contacts->filtered(QStringList{u"sea"_q});
+				return (rows.size() == 3)
+					   && ranges::any_of(rows, [&](const auto &row) {
+							  const auto history = row->history();
+							  return history
+									 && (history->peer->id
+										 == peerFromUser(firstId));
+						  });
+			},
+			5000, 1)) {
+		return fail("did not restore contact search after deleting its chat");
+	}
 	return true;
 }
 

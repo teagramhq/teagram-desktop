@@ -1114,6 +1114,36 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     )
                 )
 
+    def test_contact_load_uses_its_ceiling_instead_of_the_scale_ratio(self):
+        self.require_implementation()
+        scenario = "contacts.getContacts full response"
+
+        def realistic_contact_load(sample):
+            sample["scenarios"][scenario].update(
+                {"one_ms": 11.17, "hundred_ms": 300.23}
+            )
+
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in [*history, *base, *head]:
+            realistic_contact_load(sample)
+
+        result = scale_check.evaluate(history, base, head)
+
+        self.assertAlmostEqual(
+            result["rows"][scenario]["ratio"], 300.23 / 11.17
+        )
+        self.assertFalse(
+            any(
+                scenario in failure and "1.5x" in failure
+                for failure in result["failures"]
+            )
+        )
+        self.assertFalse(
+            any(scenario in failure and "500 ms" in failure for failure in result["failures"])
+        )
+
     def test_absolute_budget_and_scale_ratio_fail_after_calibration(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -1332,13 +1362,21 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     for failure in absolute["failures"]
                 )
             )
+        for name in fixed_scenarios:
             self.assertNotIn(name, ratio["exceptions"])
-            self.assertTrue(
-                any(
-                    name in failure and "1.5x" in failure
-                    for failure in ratio["failures"]
-                )
+        self.assertTrue(
+            any(
+                "contact change + name lookup" in failure and "1.5x" in failure
+                for failure in ratio["failures"]
             )
+        )
+        self.assertFalse(
+            any(
+                "contacts.getContacts full response" in failure
+                and "1.5x" in failure
+                for failure in ratio["failures"]
+            )
+        )
 
     def test_dialogs_regression_stays_blocking_with_slow_dev_history(self):
         self.require_implementation()

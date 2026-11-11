@@ -6081,6 +6081,7 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 	if (_contactsList.contains(key)) {
 		if (!_contactsNoChatsList.contains(key)) {
 			_contactsNoChatsList.addByName(key);
+			_contactsIndexTimer.callOnce(kContactsIndexDelay);
 		}
 	}
 	if (const auto topic = key.topic()) {
