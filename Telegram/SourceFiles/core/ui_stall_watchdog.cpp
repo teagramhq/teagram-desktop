@@ -51,8 +51,9 @@ constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
 constexpr auto kShortLogThreshold = 40ms;
-constexpr auto kSchedulerSampleInterval = 5ms;
-constexpr auto kMaxSchedulerSamples = 1024U;
+constexpr auto kSchedulerSampleInterval = 3ms;
+constexpr auto kMaxSchedulerSampleGap = 5ms;
+constexpr auto kMaxSchedulerSamples = 2048U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
 constexpr auto kMaxPingAcknowledgements = 16'384U;
@@ -461,13 +462,10 @@ UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
 	qint64 durationNanoseconds) {
-	const auto sampleIntervalNanoseconds
+	const auto maxSchedulerSampleGapNanoseconds
 		= std::chrono::duration_cast<std::chrono::nanoseconds>(
-			  kSchedulerSampleInterval)
+			  kMaxSchedulerSampleGap)
 			  .count();
-	const auto sampleCoverageToleranceNanoseconds
-		= sampleIntervalNanoseconds * 3 / 2;
-	const auto sampleEdgeToleranceNanoseconds = sampleIntervalNanoseconds;
 	if ((durationNanoseconds < 0)
 		|| (trace.size() != qsizetype(sampleOffsetsNanoseconds.size()))
 		|| trace.isEmpty() || (trace.count(u'R') != trace.size())) {
@@ -483,7 +481,7 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 			&& ((offset < previousOffset)
 				|| ((offset >= 0) && (previousOffset <= durationNanoseconds)
 					&& (offset - previousOffset
-						> sampleCoverageToleranceNanoseconds)))) {
+						> maxSchedulerSampleGapNanoseconds)))) {
 			return false;
 		}
 		if ((offset >= 0) && (offset <= durationNanoseconds)) {
@@ -497,9 +495,9 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		hasPreviousOffset = true;
 	}
 	return hasCoveredOffset
-		   && (firstCoveredOffset <= sampleEdgeToleranceNanoseconds)
+		   && (firstCoveredOffset <= maxSchedulerSampleGapNanoseconds)
 		   && (durationNanoseconds - lastCoveredOffset
-			   <= sampleEdgeToleranceNanoseconds);
+			   <= maxSchedulerSampleGapNanoseconds);
 }
 
 void UiStallWatchdog::enqueueReport(std::function<void()> report) {

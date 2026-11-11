@@ -283,11 +283,12 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 }
 
 TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
-	constexpr auto sampleIntervalNanoseconds = qint64(5'000'000);
+	constexpr auto sampleIntervalNanoseconds = qint64(3'000'000);
 	constexpr auto durationNanoseconds = qint64(95'000'000);
 	constexpr auto jitterNanoseconds = qint64(2'000'000);
 	auto offsets = std::vector<qint64>();
-	for (auto offset = qint64(0); offset <= 90'000'000; offset += 5'000'000) {
+	for (auto offset = qint64(0); offset <= 90'000'000;
+		 offset += sampleIntervalNanoseconds) {
 		offsets.push_back(offset);
 	}
 	const auto trace = QString(int(offsets.size()), QChar(u'R'));
@@ -295,13 +296,17 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 		trace, offsets, durationNanoseconds));
 
 	auto smallJitterOffsets = offsets;
-	smallJitterOffsets[10] += 1'000'000;
+	smallJitterOffsets[10] += jitterNanoseconds;
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, smallJitterOffsets, durationNanoseconds));
 
 	auto jitteredOffsets = offsets;
-	jitteredOffsets[5] += jitterNanoseconds;
-	jitteredOffsets[12] -= jitterNanoseconds;
+	for (auto i = std::size_t(0); i != jitteredOffsets.size(); ++i) {
+		const auto phase = i % 8;
+		const auto jitter
+			= qint64(phase <= 4 ? phase : 8 - phase) * (jitterNanoseconds / 2);
+		jitteredOffsets[i] += jitter;
+	}
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, jitteredOffsets, durationNanoseconds));
 
@@ -311,6 +316,14 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 	}
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, skippedSlotOffsets, durationNanoseconds));
+
+	auto blockedInJitteredGapOffsets = jitteredOffsets;
+	for (auto i = std::size_t(10); i != blockedInJitteredGapOffsets.size();
+		 ++i) {
+		blockedInJitteredGapOffsets[i] += 3'000'000;
+	}
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, blockedInJitteredGapOffsets, durationNanoseconds));
 
 	auto lateStartOffsets = offsets;
 	for (auto &offset : lateStartOffsets) {
