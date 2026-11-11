@@ -3522,8 +3522,7 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 		}
 		_attachMenuBuildCallbackMeasurementsForRegressionTest.push_back({
 			.startedAt = timing.startedAt,
-			.startedAtSteadyNanoseconds
-			= timing.startedAtSteadyNanoseconds,
+			.startedAtSteadyNanoseconds = timing.startedAtSteadyNanoseconds,
 			.wallNanoseconds = timing.wallNanoseconds,
 			.mainThreadCpuNanoseconds = timing.mainThreadCpuNanoseconds,
 			.processCpuNanoseconds = timing.processCpuNanoseconds,
@@ -3538,7 +3537,7 @@ void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
 	const auto buildStartedAtSteadyNanoseconds
 		= std::chrono::duration_cast<std::chrono::nanoseconds>(
 			  std::chrono::steady_clock::now().time_since_epoch())
-		  .count();
+			  .count();
 	const auto recordBuildCallback = gsl::finally([&] {
 		const auto buildWallNanoseconds = buildTimer.nsecsElapsed();
 		const auto buildThreadFinishedAt

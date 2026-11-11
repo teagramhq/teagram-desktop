@@ -175,7 +175,8 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	[[nodiscard]] std::chrono::steady_clock::time_point BlockStartedAt() const {
 		return _blockStartedAt;
 	}
-	[[nodiscard]] std::chrono::steady_clock::time_point BlockFinishedAt() const {
+	[[nodiscard]] std::chrono::steady_clock::time_point
+	BlockFinishedAt() const {
 		return _blockFinishedAt;
 	}
 
@@ -418,23 +419,22 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			const auto blockStartNanoseconds
 				= std::chrono::duration_cast<std::chrono::nanoseconds>(
 					  blockFilter.BlockStartedAt().time_since_epoch())
-				  .count();
+					  .count();
 			const auto blockStartOffsetNanoseconds
 				= blockStartNanoseconds
 				  - evidence.back().postedAtSteadyNanoseconds;
 			for (auto &offset : blockSampleOffsetsNanoseconds) {
 				offset -= blockStartOffsetNanoseconds;
 			}
-		const auto blockDurationNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  blockFilter.BlockFinishedAt()
-				  - blockFilter.BlockStartedAt())
-			  .count();
-			schedulerTraceProvesRunnable
-				= Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+			const auto blockDurationNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockFinishedAt()
+					  - blockFilter.BlockStartedAt())
+					  .count();
+			schedulerTraceProvesRunnable = Core::UiStallWatchdog::
+				SchedulerTraceProvesRunnableForDuration(
 					evidence.back().schedulerTrace,
-					blockSampleOffsetsNanoseconds,
-					blockDurationNanoseconds);
+					blockSampleOffsetsNanoseconds, blockDurationNanoseconds);
 		}
 		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
 #if defined(Q_OS_MAC)
@@ -444,12 +444,12 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			const auto blockStartNanoseconds
 				= std::chrono::duration_cast<std::chrono::nanoseconds>(
 					  blockFilter.BlockStartedAt().time_since_epoch())
-				  .count();
+					  .count();
 			const auto blockDurationNanoseconds
 				= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  blockFilter.BlockFinishedAt()
-				  - blockFilter.BlockStartedAt())
-				  .count();
+					  blockFilter.BlockFinishedAt()
+					  - blockFilter.BlockStartedAt())
+					  .count();
 			std::fprintf(
 				stderr,
 				"Scheduler runnable interval failure: posted_at_ns=%lld "
@@ -465,8 +465,7 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				std::fprintf(
 					stderr, "%s%lld", i ? "," : "",
 					static_cast<long long>(
-						evidence.back()
-							.schedulerSampleOffsetsNanoseconds[i]));
+						evidence.back().schedulerSampleOffsetsNanoseconds[i]));
 			}
 			std::fprintf(stderr, "]\n");
 		}
