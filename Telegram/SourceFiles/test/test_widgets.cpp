@@ -44,6 +44,11 @@ void Click(not_null<QWidget*> widget, std::optional<QPoint> point) {
 	const auto alive = base::make_weak(widget);
 	const auto local = QPointF(point.value_or(widget->rect().center()));
 	const auto global = QPointF(widget->mapToGlobal(local.toPoint()));
+	auto move = QMouseEvent(QEvent::MouseMove, local, global, Qt::NoButton,
+							Qt::NoButton, Qt::NoModifier);
+	if (!DeliverAndSettle(alive, move)) {
+		return;
+	}
 	auto press = QMouseEvent(
 		QEvent::MouseButtonPress,
 		local,
