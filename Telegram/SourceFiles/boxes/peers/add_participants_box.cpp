@@ -1757,6 +1757,7 @@ void AddSpecialBoxSearchController::subscribeToMigration() {
 
 void AddSpecialBoxSearchController::searchQuery(const QString &query) {
 	if (_query != query) {
+		_contactsIndexLifetime = rpl::lifetime();
 		_query = query;
 		_offset = 0;
 		_requestId = 0;
@@ -2034,7 +2035,7 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 	if (wordList.empty()) {
 		return;
 	}
-	const auto allWordsAreFound = [&](
+	const auto allWordsAreFound = [wordList](
 			const base::flat_set<QString> &nameWords) {
 		const auto hasNamePartStartingWith = [&](const QString &word) {
 			for (const auto &nameWord : nameWords) {
@@ -2044,7 +2045,6 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 			}
 			return false;
 		};
-
 		for (const auto &word : wordList) {
 			if (!hasNamePartStartingWith(word)) {
 				return false;
@@ -2052,12 +2052,12 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 		}
 		return true;
 	};
-	const auto getSmallestIndex = [&](not_null<Dialogs::IndexedList *> list)
+	const auto getSmallestIndex = [wordList](
+			not_null<Dialogs::IndexedList *> list)
 		-> const std::vector<not_null<Dialogs::Row *>> * {
 		if (list->empty()) {
 			return nullptr;
 		}
-
 		auto result = (const std::vector<not_null<Dialogs::Row *>> *)nullptr;
 		for (const auto &word : wordList) {
 			const auto found = list->filtered(word[0]);
@@ -2070,7 +2070,11 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 		}
 		return result;
 	};
-	const auto filterAndAppend = [&](not_null<Dialogs::IndexedList*> list) {
+	const auto searchDelegate = delegate();
+	const auto filterAndAppend = [
+			allWordsAreFound,
+			getSmallestIndex,
+			searchDelegate](not_null<Dialogs::IndexedList *> list) {
 		const auto index = getSmallestIndex(list);
 		if (!index) {
 			return;
@@ -2079,7 +2083,7 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 			if (const auto history = row->history()) {
 				if (const auto user = history->peer->asUser()) {
 					if (allWordsAreFound(user->nameWords())) {
-						delegate()->peerListSearchAddRow(user);
+						searchDelegate->peerListSearchAddRow(user);
 					}
 				}
 			}
@@ -2090,6 +2094,21 @@ void AddSpecialBoxSearchController::addChatsContacts() {
 	if (const auto folder = _peer->owner().folderLoaded(id)) {
 		filterAndAppend(folder->chatsList()->indexed());
 	}
-	filterAndAppend(_peer->owner().contactsNoChatsList());
+	const auto contacts = _peer->owner().contactsNoChatsList();
+	if (contacts->searchIndexReady()) {
+		filterAndAppend(contacts);
+	} else {
+		contacts->searchIndexReadyChanges()
+		| rpl::on_next([
+				this,
+				query = _query,
+				contacts,
+				filterAndAppend] {
+			if (_query == query) {
+				filterAndAppend(contacts);
+				searchDelegate->peerListSearchRefreshRows();
+			}
+		}, _contactsIndexLifetime);
+	}
 	delegate()->peerListSearchRefreshRows();
 }

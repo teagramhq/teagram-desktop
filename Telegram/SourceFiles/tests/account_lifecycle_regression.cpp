@@ -15772,8 +15772,66 @@ RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
 			}
 			++position;
 		}
-		// A search finishes the name index of its own list on demand, and
-		// the other list is indexed in the background after the load.
+		auto coldSearchList = Dialogs::IndexedList(
+			Dialogs::SortMode::Name,
+			0,
+			Dialogs::IndexedList::PrefixSearch::Enabled);
+		coldSearchList.reserve(count);
+		for (const auto &row : data.contactsList()->all()) {
+			coldSearchList.addByName(row->key());
+		}
+		auto indexReadyNotified = false;
+		auto indexReadyLifetime = rpl::lifetime();
+		coldSearchList.searchIndexReadyChanges()
+		| rpl::take(1)
+		| rpl::on_next([&] { indexReadyNotified = true; }, indexReadyLifetime);
+		const auto coldLookup = MeasureDesktopScaleAction([&] {
+			const auto found
+				= coldSearchList.filtered(QStringList{u"sca"_q});
+			return found.empty() && !coldSearchList.searchIndexReady();
+		});
+		if (!coldLookup.passed || !coldLookup.nanoseconds
+			|| (*coldLookup.nanoseconds >= 50'000'000)
+			|| !coldLookup.mainThreadStepsOverBudget
+			|| (*coldLookup.mainThreadStepsOverBudget != 0)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: cold contact search was "
+						 "not nonblocking.\n");
+			return false;
+		}
+		while (coldSearchList.indexSome(100)) {
+		}
+		if (!indexReadyNotified) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: completed contact search "
+						 "index did not notify waiters.\n");
+			return false;
+		}
+		const auto coldRows
+			= coldSearchList.filtered(QStringList{u"sca"_q});
+		if (int(coldRows.size()) != count) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the completed cold "
+						 "contact search returned %llu rows, expected %d.\n",
+						 static_cast<unsigned long long>(coldRows.size()), count);
+			return false;
+		}
+		for (auto i = 0; i != count; ++i) {
+			const auto history = coldRows[i]->history();
+			if (!history
+				|| history->peer->id
+					   != peerFromUser(UserId(firstId.bare + i))) {
+				return false;
+			}
+		}
+		if (!WaitForRegressionCondition(
+				[&] { return data.contactsNoChatsList()->searchIndexReady(); },
+				5000)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contacts without "
+						 "chats index was not built after the load.\n");
+			return false;
+		}
 		if (int(data.contactsNoChatsList()
 					->filtered(QStringList{u"sca"_q})
 					.size())

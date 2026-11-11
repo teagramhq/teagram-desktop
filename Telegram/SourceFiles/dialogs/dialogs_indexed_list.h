@@ -15,6 +15,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QVarLengthArray>
 
+#include <rpl/event_stream.h>
+
 class History;
 
 namespace Dialogs {
@@ -59,7 +61,6 @@ class IndexedList {
 	[[nodiscard]] const List &all() const { return _list; }
 	[[nodiscard]] const std::vector<not_null<Row *>> *filtered(QChar ch) const {
 		if (_sortMode == SortMode::Name) {
-			ensureNameIndex();
 			const auto i = _nameIndex.find(ch);
 			return (i != _nameIndex.end()) ? &i->second : nullptr;
 		}
@@ -71,9 +72,12 @@ class IndexedList {
 
 	// The name index of a SortMode::Name list is built after the rows are
 	// added, so that adding a long list does not wait for the names of every
-	// row. A search finishes the index first. A caller that wants the index
-	// ready earlier indexes a few rows at a time while the list is idle.
+	// row. Searches use the rows indexed so far and refresh when background
+	// indexing completes.
 	[[nodiscard]] bool searchIndexReady() const;
+	[[nodiscard]] rpl::producer<> searchIndexReadyChanges() const {
+		return _searchIndexReadyChanges.events();
+	}
 	// Returns true if some rows are still not indexed.
 	bool indexSome(int limit);
 
@@ -116,7 +120,7 @@ class IndexedList {
 	void addNameRows(Row *row);
 	// Returns false if the row was not indexed yet.
 	bool removeNameRows(Row *row);
-	void ensureNameIndex() const;
+	void updateSearchIndexReady();
 	void updatePrefixSearchIndex(Row *row);
 	void removePrefixSearchIndex(Row *row);
 
@@ -129,6 +133,8 @@ class IndexedList {
 	std::map<QString, std::unordered_set<Row *>> _prefixSearchIndex;
 	std::unordered_map<Row *, std::vector<QString>> _searchKeysByRow;
 	std::unordered_map<Row *, QVarLengthArray<QChar, 4>> _indexedLettersByRow;
+	rpl::event_stream<> _searchIndexReadyChanges;
+	bool _searchIndexWasReady = true;
 	int _indexCursor = 0;
 };
 

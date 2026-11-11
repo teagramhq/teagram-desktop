@@ -11,8 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "history/history.h"
 
-#include <limits>
-
 namespace Dialogs {
 namespace {
 
@@ -125,16 +123,16 @@ bool IndexedList::indexSome(int limit) {
 		// by the next pass.
 		_indexCursor = 0;
 	}
+	updateSearchIndexReady();
 	return !searchIndexReady();
 }
 
-void IndexedList::ensureNameIndex() const {
-	if (searchIndexReady()) {
-		return;
+void IndexedList::updateSearchIndexReady() {
+	const auto ready = searchIndexReady();
+	if (!_searchIndexWasReady && ready) {
+		_searchIndexReadyChanges.fire({});
 	}
-	const auto that = const_cast<IndexedList *>(this);
-	while (that->indexSome(std::numeric_limits<int>::max())) {
-	}
+	_searchIndexWasReady = ready;
 }
 
 void IndexedList::updatePrefixSearchIndex(Row *row) {
@@ -196,6 +194,7 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 			result.letters.emplace(ch, j->second.addToEnd(key));
 		}
 	}
+	updateSearchIndexReady();
 	return result;
 }
 
@@ -213,6 +212,7 @@ Row *IndexedList::addByName(Key key) {
 			j->second.addByName(key);
 		}
 	}
+	updateSearchIndexReady();
 	return row.get();
 }
 
@@ -379,6 +379,7 @@ void IndexedList::remove(Key key, Row *replacedBy) {
 			}
 		}
 	}
+	updateSearchIndexReady();
 }
 
 void IndexedList::clear() {
@@ -389,11 +390,11 @@ void IndexedList::clear() {
 	_searchKeysByRow.clear();
 	_indexedLettersByRow.clear();
 	_indexCursor = 0;
+	updateSearchIndexReady();
 }
 
 std::vector<not_null<Row*>> IndexedList::filtered(
 		const QStringList &words) const {
-	ensureNameIndex();
 	const auto byLetter = (const std::vector<not_null<Row *>> *)nullptr;
 	const auto byPrefix = (const std::unordered_set<Row *> *)nullptr;
 	auto minimalByLetter = byLetter;

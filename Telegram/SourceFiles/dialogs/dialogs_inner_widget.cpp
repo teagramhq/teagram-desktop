@@ -4262,12 +4262,22 @@ void InnerWidget::onHashtagFilterUpdate(QStringView newFilter) {
 }
 
 void InnerWidget::refreshFilterResults() {
+	_filterIndexLifetime = rpl::lifetime();
 	const auto mentionsSearch = (_filter == u"@"_q);
 	const auto words = mentionsSearch
 		? QStringList(_filter)
 		: TextUtilities::PrepareSearchWords(_filter);
 	_filterResults.clear();
 	const auto append = [&](not_null<IndexedList*> list) {
+		if (!list->searchIndexReady()) {
+			list->searchIndexReadyChanges()
+			| rpl::on_next([=] {
+				if (_state == WidgetState::Filtered && !_filter.isEmpty()) {
+					refreshFilterResults();
+					refresh(true);
+				}
+			}, _filterIndexLifetime);
+		}
 		const auto results = list->filtered(words);
 		auto top = filteredHeight();
 		auto i = _filterResults.insert(

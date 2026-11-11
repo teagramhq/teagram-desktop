@@ -711,6 +711,7 @@ private:
 
 	base::flat_set<not_null<History*>> _trackedHistories;
 	rpl::lifetime _trackedLifetime;
+	rpl::lifetime _filterIndexLifetime;
 
 	QString _peerSearchQuery;
 	base::flat_set<not_null<PeerData*>> _sponsoredRemoved;
