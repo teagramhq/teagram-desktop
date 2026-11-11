@@ -312,16 +312,11 @@ private:
 	void differenceFail(
 		mtpRequestId requestId,
 		const MTP::Error &error);
-	void beginDifference(
-		const MTPVector<MTPUser> &users,
-		const MTPVector<MTPChat> &chats,
-		const MTPVector<MTPMessage> &messages,
-		const MTPVector<MTPUpdate> &other,
-		int32 pts,
-		int32 date,
-		int32 qts,
-		int32 seq,
-		bool slice);
+	void beginDifference(const MTPVector<MTPUser> &users,
+						 const MTPVector<MTPChat> &chats,
+						 const MTPVector<MTPMessage> &messages,
+						 const MTPVector<MTPUpdate> &other, int32 pts,
+						 int32 date, int32 qts, int32 seq, bool slice);
 	void applyDifferenceBatch();
 	void finishDifference();
 	void drainDeferredUpdates();

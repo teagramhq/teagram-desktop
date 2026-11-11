@@ -3464,9 +3464,8 @@ void Session::processMessages(
 	}
 }
 
-void Session::processMessagesInBatch(
-		const QVector<MTPMessage> &data,
-		NewMessageType type) {
+void Session::processMessagesInBatch(const QVector<MTPMessage> &data,
+									 NewMessageType type) {
 	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
 	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
 		const auto indexed = list->indexed();

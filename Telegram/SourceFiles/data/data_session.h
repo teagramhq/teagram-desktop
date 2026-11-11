@@ -604,9 +604,8 @@ class Session final : public base::has_weak_ptr {
 	void processMessages(
 		const QVector<MTPMessage> &data,
 		NewMessageType type);
-	void processMessagesInBatch(
-		const QVector<MTPMessage> &data,
-		NewMessageType type);
+	void processMessagesInBatch(const QVector<MTPMessage> &data,
+								NewMessageType type);
 	void processMessages(
 		const MTPVector<MTPMessage> &data,
 		NewMessageType type);
