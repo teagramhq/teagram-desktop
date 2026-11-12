@@ -1569,9 +1569,41 @@ if ! grep -E -q \
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
 	exit 1
 fi
+local initial_history_selection
+initial_history_selection="$(grep -E \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ budget_ns=60000000 scheduler_preemption_proven=[01]\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$initial_history_selection" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection evidence missing." >&2
+	exit 1
+fi
+local initial_history_selection_wall_ns
+initial_history_selection_wall_ns="$(sed -E \
+	's/.*wall_ns=([0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+local initial_history_selection_work_ns
+initial_history_selection_work_ns="$(sed -E \
+	's/.*main_thread_work_ns=([0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+local initial_history_selection_scheduler_proven
+initial_history_selection_scheduler_proven="$(sed -E \
+	's/.*scheduler_preemption_proven=([01]).*/\1/' \
+	<<<"$initial_history_selection")"
+if (( initial_history_selection_work_ns >= 60000000 )); then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection main-thread work exceeded its 60 ms budget." >&2
+	exit 1
+fi
+if (( initial_history_selection_wall_ns >= 50000000 \
+	&& initial_history_selection_scheduler_proven != 1 )); then
+	cat "$AUTH_LOG" >&2
+	echo "slow initial history selection lacks runner-scheduling proof." >&2
+	exit 1
+fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ under_50ms=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1579,13 +1611,22 @@ if [[ -z "$chat_switch_evidence" ]]; then
 	exit 1
 fi
 printf '%s\n' "$chat_switch_evidence"
+local max_hydration_ns
+max_hydration_ns="$(sed -E \
+	's/.*max_hydration_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if (( max_hydration_ns >= 50000000 )); then
+	cat "$AUTH_LOG" >&2
+	echo "reaction hydration main-thread work exceeded 50 ms." >&2
+	exit 1
+fi
 local max_chat_switch_work_ns
 max_chat_switch_work_ns="$(sed -E \
-	's/.*max_switch_work_ns=([0-9]+).*/\1/' \
+	's/.*max_recurring_switch_work_ns=([0-9]+).*/\1/' \
 	<<<"$chat_switch_evidence")"
 if (( max_chat_switch_work_ns >= 50000000 )); then
 	cat "$AUTH_LOG" >&2
-	echo "seeded chat switch main-thread work exceeded 50 ms." >&2
+	echo "recurrent seeded chat switch main-thread work exceeded 50 ms." >&2
 	exit 1
 fi
 local switch_scheduler_preemption_proven
