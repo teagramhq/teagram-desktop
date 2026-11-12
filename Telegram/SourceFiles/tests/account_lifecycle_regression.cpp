@@ -11748,7 +11748,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			"wall_ns=%lld main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
 			"budget_ns=%lld trace=%s within_budget=%d.\n",
-			i,
+			static_cast<std::size_t>(i),
 			static_cast<long long>(
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
 			static_cast<long long>(chatSwitchWindows[i].durationNanoseconds),
