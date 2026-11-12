@@ -285,6 +285,10 @@ for metadata_field in HEAD_SHA BASE_SHA TESTED_SHA; do
 done
 require_step_script "$mac_workflow" build-macos 'Summarize on-demand validation.' \
   'head_sha' 'base_sha' 'tested_sha' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
+require_step_field "$mac_workflow" build-macos 'Summarize on-demand validation.' \
+  '.env.OBSERVER_OUTCOME' '${{ steps.observer-self-tests.outcome }}'
+require_step_script "$mac_workflow" build-macos 'Summarize on-demand validation.' \
+  'Observer self-tests:' '$OBSERVER_OUTCOME'
 require_step_script "$mac_workflow" build-macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'
 require_step_script "$mac_workflow" build-macos 'Launch app smoke test.' '$TESTED_SHA'
 require_step_script "$mac_workflow" build-macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
@@ -684,8 +688,12 @@ require_step_script "$mac_workflow" build-macos "$observer_self_tests_step" \
 cache_watchdog_step='Verify cache path watchdog regression.'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
+  "\${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
+  'rm -rf "$diagnostics"' \
   'state="$diagnostics/state"' \
+  'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
   'TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$diagnostics/authenticated-app.log"' \
   'tee "$evidence/cache-watchdog-regression.log" "$diagnostics/harness.log"'
 
@@ -703,6 +711,21 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
 
+if ! build_step_index="$(find_step_index 'Teagram build.')"; then
+  contract_fail "$mac_workflow is missing Teagram build."
+fi
+for step_index in "${!step_names[@]}"; do
+  ((step_index > build_step_index)) || continue
+  step_name="${step_names[$step_index]}"
+  [[ "$step_name" =~ (regression|watchdog|smoke|self-tests|integration) ]] || continue
+  if [[ "$step_name" == 'Report skipped '* || "$step_name" == 'Upload '* ]]; then
+    continue
+  fi
+  timeout="$(step_field "$mac_workflow" build-macos "$step_name" '.timeout-minutes')"
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] \
+    || contract_fail "$step_name must have a positive timeout-minutes value."
+done
+
 regression_diagnostics_step='Upload macOS regression diagnostics.'
 require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" '.uses' \
   'actions/upload-artifact@v7'
@@ -714,6 +737,7 @@ require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
   '.with["retention-days"]' '14'
 regression_artifact_condition="$(step_field "$mac_workflow" build-macos \
   "$regression_diagnostics_step" '.if')"
+regression_artifact_condition_compact="$(contract_compact "$regression_artifact_condition")"
 regression_artifact_paths="$(step_field "$mac_workflow" build-macos \
   "$regression_diagnostics_step" '.with.path')"
 for regression_step_id in \
@@ -723,8 +747,9 @@ for regression_step_id in \
   launch-smoke \
   profile-ipc \
   lifecycle-regression; do
-  grep -Fq "steps.$regression_step_id.outcome" <<< "$regression_artifact_condition" \
-    || contract_fail "$regression_diagnostics_step must cover $regression_step_id failures and timeouts."
+  condition_clause="steps.$regression_step_id.outcome!='success'&&steps.$regression_step_id.outcome!='skipped'"
+  grep -Fq "$condition_clause" <<< "$regression_artifact_condition_compact" \
+    || contract_fail "$regression_diagnostics_step must upload for $regression_step_id failures and timeouts."
 done
 for regression_artifact_path in \
   '${{ runner.temp }}/macos-regression-diagnostics/' \
