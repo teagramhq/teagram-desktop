@@ -455,7 +455,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			std::fprintf(stderr, "The reported scheduler trace differs from "
 								 "the final evidence snapshot.\n");
 		}
-#if defined(Q_OS_MAC)
 		if (!schedulerTraceProvesRunnable) {
 			const auto &offsets
 				= evidence.back().schedulerSampleOffsetsNanoseconds;
@@ -497,7 +496,6 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				static_cast<long long>(offsets.empty() ? -1 : offsets.back()),
 				static_cast<long long>(windowOtherThreadCpuNanoseconds));
 		}
-#endif
 	}
 }
 
