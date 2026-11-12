@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "config.h"
+#include "intro/intro_server_discovery.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -16,24 +17,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/mtproto_server_enrollment.h"
+#include "mtproto/mtproto_server_discovery.h"
 #include "mtproto/session.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
 #include "storage/storage_server_forget_startup.h"
+#include "tests/unit/server_endpoint_refresh_test_support.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDataStream>
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
+#include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QSemaphore>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTimer>
 #include <QtCore/QThread>
 #include <QtCore/Qt>
 #include <QtGui/QKeyEvent>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -124,6 +134,37 @@ MakeEnrollmentServerKey() {
 [[nodiscard]] MTP::AuthKeyPtr MakeEnrollmentStorageKey() {
 	return std::make_shared<MTP::AuthKey>(
 		MTP::AuthKey::Data{ { gsl::byte{} } });
+}
+
+[[nodiscard]] MTP::AuthKeyPtr MakeEndpointRefreshAuthKey(int value) {
+	auto data = MTP::AuthKey::Data();
+	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(value));
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile,
+										  MTP::DcId(2), data);
+}
+
+[[nodiscard]] QByteArray
+SerializeEndpointRefreshAuthKey(const MTP::AuthKeyPtr &key) {
+	auto result = QByteArray();
+	auto stream = QDataStream(&result, QIODevice::WriteOnly);
+	key->write(stream);
+	return result;
+}
+
+[[nodiscard]] MTP::AuthKeyPtr
+RestoreEndpointRefreshAuthKey(const QByteArray &serialized) {
+	if (serialized.size() != MTP::AuthKey::kSize) {
+		return nullptr;
+	}
+	auto data = MTP::AuthKey::Data();
+	auto stream = QDataStream(serialized);
+	if (stream.readRawData(reinterpret_cast<char *>(data.data()),
+						   int(data.size()))
+		!= int(data.size())) {
+		return nullptr;
+	}
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile,
+										  MTP::DcId(2), data);
 }
 
 [[nodiscard]] bool WriteEnrollmentAccountList(
@@ -244,6 +285,120 @@ MakeEnrollmentServerKey() {
 		const MTP::AuthKeyPtr &key) {
 	const auto restored = ReadEnrollmentConfig(basePath, key);
 	return restored != nullptr && restored->hasCustomServer();
+}
+
+void AppendBigEndian(QByteArray &target, quint32 value) {
+	target.append(char(value >> 24));
+	target.append(char(value >> 16));
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+void AppendBigEndian(QByteArray &target, quint16 value) {
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+[[nodiscard]] QByteArray LocalEndpointRefreshResponse(const QByteArray &nonce) {
+	const auto der = MakeEnrollmentServerKey()->getSubjectPublicKeyInfo();
+	auto result = QByteArray("telegramd-key-r1", 16) + nonce;
+	AppendBigEndian(result, quint32(6 + der.size()));
+	AppendBigEndian(result, quint32(2));
+	AppendBigEndian(result, quint16(der.size()));
+	result += QByteArray(reinterpret_cast<const char *>(der.data()),
+						 int(der.size()));
+	return result;
+}
+
+struct EndpointRefreshDiscoveryFixture {
+	MTP::ServerSelectionCheck selection;
+	QString origin;
+	MTP::ServerDiscoveryResult result;
+	bool oldEndpointUnreachable = false;
+};
+
+[[nodiscard]] std::optional<EndpointRefreshDiscoveryFixture>
+DiscoverMovedEndpoint() {
+	QTcpServer listener;
+	if (!listener.listen(QHostAddress::LocalHost)) {
+		return std::nullopt;
+	}
+	const auto selection = MTP::CheckServerSelection(
+		u"127.0.0.1:"_q + QString::number(listener.serverPort()));
+	if (!selection.valid()) {
+		return std::nullopt;
+	}
+	const auto origin = u"local:"_q + selection.normalizedSelection;
+	MTP::ServerEndpointRefreshDiscovery discovery;
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	timeout.setSingleShot(true);
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	auto completed = false;
+	auto failed = false;
+	auto result = std::optional<MTP::ServerDiscoveryResult>();
+	QObject::connect(&listener, &QTcpServer::newConnection, &listener, [&] {
+		while (listener.hasPendingConnections()) {
+			auto socket = listener.nextPendingConnection();
+			auto request = std::make_shared<QByteArray>();
+			auto responded = std::make_shared<bool>(false);
+			const auto respond = [=] {
+				*request += socket->readAll();
+				if (*responded || request->size() < 48) {
+					return;
+				}
+				*responded = true;
+				if (request->left(16) != QByteArray("telegramd-key-v1", 16)) {
+					socket->abort();
+					return;
+				}
+				socket->write(
+					LocalEndpointRefreshResponse(request->mid(16, 32)));
+				socket->disconnectFromHost();
+			};
+			QObject::connect(socket, &QTcpSocket::readyRead, socket, respond);
+			QObject::connect(socket, &QTcpSocket::disconnected, socket,
+							 &QObject::deleteLater);
+			if (socket->bytesAvailable()) {
+				respond();
+			}
+		}
+	});
+	const auto started
+		= discovery.start(selection, origin,
+						  {
+							  .finished =
+								  [&](MTP::ServerDiscoveryResult value) {
+									  result = std::move(value);
+									  completed = true;
+									  loop.quit();
+								  },
+							  .failed =
+								  [&](bool) {
+									  failed = true;
+									  loop.quit();
+								  },
+						  });
+	if (!started) {
+		return std::nullopt;
+	}
+	QTcpSocket oldEndpoint;
+	oldEndpoint.connectToHost(QHostAddress("127.0.0.2"), listener.serverPort());
+	const auto oldEndpointUnreachable = !oldEndpoint.waitForConnected(100);
+	if (!completed && !failed) {
+		timeout.start(5000);
+		loop.exec();
+	}
+	discovery.cancel();
+	if (!completed || failed || !result || !oldEndpointUnreachable) {
+		return std::nullopt;
+	}
+	return EndpointRefreshDiscoveryFixture{
+		.selection = selection,
+		.origin = origin,
+		.result = std::move(*result),
+		.oldEndpointUnreachable = oldEndpointUnreachable,
+	};
 }
 
 TEST_CASE(ServerForgetStartupLoadsPinnedStateWithoutForgetMarker) {
@@ -629,6 +784,166 @@ TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
 	CHECK(SameCustomServerEndpointRefreshIdentity(options.customServer(),
 												  original));
 	CHECK(!requestsPaused);
+}
+
+TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto discovery = DiscoverMovedEndpoint();
+	CHECK(discovery.has_value());
+	if (!discovery) {
+		return;
+	}
+	CHECK(discovery->oldEndpointUnreachable);
+
+	const auto basePath = directory.path() + QDir::separator();
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto storedAuthKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto differentAuthKey = MakeEndpointRefreshAuthKey(0x4B);
+	const auto serializedAuthKey
+		= SerializeEndpointRefreshAuthKey(storedAuthKey);
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	const auto original = MTP::CustomServer{
+		.dcId = 2,
+		.ip = "127.0.0.2",
+		.port = discovery->selection.operationalPort,
+		.key = MakeEnrollmentServerKey(),
+		.serverSelection
+		= discovery->selection.normalizedSelection.toStdString(),
+		.discoveryPolicy = discovery->selection.policy,
+		.discoveryOrigin = discovery->origin.toStdString(),
+	};
+	CHECK(config->dcOptions().setCustomServer(original));
+	CHECK(config->dcOptions().markAuthorized(original.dcId));
+	{
+		auto initial = Storage::Account(basePath, localKey, config, true,
+										[&] { return serializedAuthKey; });
+		CHECK(initial.writeMtpConfig(true));
+		CHECK(initial.writeMtpData(true));
+	}
+
+	auto restoredConfig = ReadEnrollmentConfig(basePath, localKey);
+	CHECK(restoredConfig != nullptr);
+	if (!restoredConfig) {
+		return;
+	}
+	const auto restoredPin = restoredConfig->dcOptions().customServer();
+	CHECK_EQ(restoredPin.ip, "127.0.0.2");
+	CHECK(restoredConfig->dcOptions().isAuthorized(restoredPin.dcId));
+	auto restoredConfigShared
+		= std::shared_ptr<MTP::Config>(restoredConfig.release());
+	auto restoredAuthData = QByteArray();
+	auto restored = Storage::Account(
+		basePath, localKey, restoredConfigShared, true,
+		[&] { return serializedAuthKey; },
+		[&](const QByteArray &value) { restoredAuthData = value; });
+	restored.readMtpDataForTest();
+	CHECK_EQ(restoredAuthData, serializedAuthKey);
+	const auto restoredAuthKey
+		= RestoreEndpointRefreshAuthKey(restoredAuthData);
+	CHECK(restoredAuthKey != nullptr);
+	if (!restoredAuthKey) {
+		return;
+	}
+	CHECK(restoredAuthKey->equals(storedAuthKey));
+
+	const auto selection = MTP::CheckServerSelection(
+		QString::fromStdString(restoredPin.serverSelection));
+	const auto validOrigin
+		= selection.valid() && selection.policy == restoredPin.discoveryPolicy
+		  && selection.normalizedSelection.toStdString()
+				 == restoredPin.serverSelection
+		  && restoredPin.discoveryOrigin
+				 == (u"local:"_q + selection.normalizedSelection).toStdString();
+	const auto eligibility = MTP::ServerEndpointRefreshEligibility{
+		.restoredSession
+		= Main::details::ShouldRestoreStoredSession(true, true),
+		.hasPinnedServer = bool(restoredPin.key),
+		.pinAuthorized
+		= restoredConfigShared->dcOptions().isAuthorized(restoredPin.dcId),
+		.canResume
+		= MTP::CanResumeServerEnrollment(restoredConfigShared->dcOptions()),
+		.validDiscoveryOrigin = validOrigin,
+		.hasStoredAuthKey
+		= restoredAuthKey->type() == MTP::AuthKey::Type::ReadFromFile
+		  && restoredAuthKey->dcId() == restoredPin.dcId,
+	};
+	CHECK(MTP::CanRefreshServerEndpoint(eligibility));
+
+	const auto candidate = MTP::BuildCustomServerFromDiscovery(
+		discovery->selection, discovery->result, discovery->origin);
+	CHECK(candidate.has_value());
+	if (!candidate) {
+		return;
+	}
+	CHECK_EQ(candidate->ip, "127.0.0.1");
+	CHECK(
+		MTP::SameCustomServerEndpointRefreshIdentity(restoredPin, *candidate));
+
+	auto gate = MTP::ServerEnrollmentGate();
+	CHECK(gate.start());
+	CHECK(gate.pause());
+	CHECK(!gate.networkAllowed());
+	auto pinChanged = false;
+	auto configPersisted = false;
+	auto requestsResumed = false;
+	const auto verifyAndCommit = [&](const MTP::AuthKeyPtr &responseKey) {
+		return MTP::UnitVerifyEndpointAndResumeRequestsForTest(
+			restoredAuthKey, responseKey,
+			[&](bool authenticatedProof,
+				const std::function<void()> &resumeQueuedRequests) {
+				return MTP::CommitServerEndpointRefresh(
+					restoredPin, *candidate, authenticatedProof,
+					[&] {
+						pinChanged = restoredConfigShared->dcOptions()
+										 .refreshCustomServerEndpoint(
+											 restoredPin, *candidate);
+						return pinChanged;
+					},
+					[&] {
+						configPersisted = restored.writeMtpConfig(true);
+						return configPersisted;
+					},
+					[&] {
+						CHECK(!gate.networkAllowed());
+						CHECK(configPersisted);
+						requestsResumed = gate.resume().resumed;
+						resumeQueuedRequests();
+					});
+			});
+	};
+	const auto rejected = verifyAndCommit(differentAuthKey);
+	CHECK(rejected.requestWasPausedBeforeProof);
+	CHECK(!rejected.proofAccepted);
+	CHECK(!rejected.requestResumed);
+	CHECK(!rejected.refreshCommitted);
+	CHECK(!pinChanged);
+	CHECK(!configPersisted);
+	CHECK(!requestsResumed);
+	CHECK(!gate.networkAllowed());
+	CHECK(MTP::SameCustomServerPin(
+		restoredConfigShared->dcOptions().customServer(), restoredPin));
+
+	const auto committed = verifyAndCommit(restoredAuthKey);
+	CHECK(committed.requestWasPausedBeforeProof);
+	CHECK(committed.proofAccepted);
+	CHECK(committed.requestResumed);
+	CHECK(committed.refreshCommitted);
+	CHECK(pinChanged);
+	CHECK(configPersisted);
+	CHECK(requestsResumed);
+	CHECK(gate.networkAllowed());
+	CHECK(restoredConfigShared->dcOptions().isAuthorized(restoredPin.dcId));
+
+	const auto persisted = ReadEnrollmentConfig(basePath, localKey);
+	CHECK(persisted != nullptr);
+	if (persisted) {
+		CHECK_EQ(persisted->dcOptions().customServer().ip, "127.0.0.1");
+		CHECK(persisted->dcOptions().isAuthorized(restoredPin.dcId));
+	}
 }
 
 TEST_CASE(EndpointWithoutAuthKeyProofKeepsOriginalPin) {

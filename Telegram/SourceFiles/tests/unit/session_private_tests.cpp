@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "base/unixtime.h"
+#include "tests/unit/server_endpoint_refresh_test_support.h"
 
 #include <openssl/sha.h>
 
@@ -57,13 +58,21 @@ extern DcOptions *UnitProxyCheckOptions;
 
 namespace MTP {
 
+namespace {
+
+const Instance *UnitBlockedServerEnrollmentInstance = nullptr;
+
+} // namespace
+
 bool Instance::isTestMode() const { return false; }
 
 QString Instance::deviceModel() const { return QString(); }
 
 QString Instance::systemVersion() const { return QString(); }
 
-bool Instance::isServerEnrollmentNetworkAllowed() const { return true; }
+bool Instance::isServerEnrollmentNetworkAllowed() const {
+	return this != UnitBlockedServerEnrollmentInstance;
+}
 
 uint64 Instance::serverEnrollmentStopToken() const { return 0; }
 
@@ -216,12 +225,16 @@ void SessionData::destroyTemporaryKey(uint64 keyId) {}
 class SessionPrivateTestAccess final {
   public:
 	static std::unique_ptr<SessionPrivate>
-	Create(std::shared_ptr<SessionData> data) {
+	Create(std::shared_ptr<SessionData> data,
+		   Instance *instance = reinterpret_cast<Instance *>(quintptr(1))) {
 		return std::unique_ptr<SessionPrivate>(new SessionPrivate(
-			SessionPrivate::TestTag(),
-			not_null<Instance *>(reinterpret_cast<Instance *>(quintptr(1))),
+			SessionPrivate::TestTag(), not_null<Instance *>(instance),
 			not_null<QThread *>(QThread::currentThread()), std::move(data),
 			ShiftedDcId(2)));
+	}
+
+	static void SetTestFixture(SessionPrivate &session, bool value) {
+		session._testFixture = value;
 	}
 
 	static void StartConnected(SessionPrivate &session,
@@ -599,6 +612,106 @@ void RunReconnectScenario(AuthKey::Type keyType) {
 }
 
 } // namespace
+
+namespace MTP {
+
+UnitEndpointRefreshProofResult UnitVerifyEndpointAndResumeRequestsForTest(
+	const AuthKeyPtr &sessionKey, const AuthKeyPtr &responseKey,
+	const UnitEndpointRefreshCommitForTest &commit) {
+	if (!sessionKey || !responseKey || !commit) {
+		return {};
+	}
+	constexpr auto kSessionId = uint64(0x1122334455667788ULL);
+	constexpr auto kSessionSalt = uint64(42);
+	constexpr auto kVerifierRequestId = mtpRequestId(170);
+	constexpr auto kQueuedRequestId = mtpRequestId(171);
+	const auto mainInstance = reinterpret_cast<Instance *>(quintptr(1));
+	const auto verifierInstance = reinterpret_cast<Instance *>(quintptr(2));
+	UnitBlockedServerEnrollmentInstance = mainInstance;
+	auto log = std::make_shared<::TransportLog>();
+	auto verifierLog = std::make_shared<::TransportLog>();
+	auto queuedSession = std::unique_ptr<details::SessionPrivate>();
+	auto verifier = std::unique_ptr<details::SessionPrivate>();
+	details::UnitConnectionInited = true;
+	details::UnitNeedToResumeAndSend = [&] {
+		if (queuedSession) {
+			queuedSession->tryToSend();
+		}
+	};
+	const auto resetHooks = gsl::finally([] {
+		details::UnitConnectionInited = false;
+		details::UnitNeedToResumeAndSend = nullptr;
+		UnitBlockedServerEnrollmentInstance = nullptr;
+	});
+	auto queuedData = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	queuedSession
+		= details::SessionPrivateTestAccess::Create(queuedData, mainInstance);
+	details::SessionPrivateTestAccess::SetTestFixture(*queuedSession, false);
+	auto queuedConnection = details::ConnectionPointer::New<::FakeTransport>(
+		QThread::currentThread(), ProxyData(), log);
+	details::SessionPrivateTestAccess::StartConnected(
+		*queuedSession, std::move(queuedConnection), sessionKey, kSessionId,
+		kSessionSalt);
+	{
+		QWriteLocker locker(queuedData->toSendMutex());
+		queuedData->toSendMap().emplace(
+			kQueuedRequestId, ::MakeUsernameCheckRequest(kQueuedRequestId));
+	}
+	queuedSession->tryToSend();
+	const auto requestWasPausedBeforeProof
+		= log->sent.empty()
+		  && !details::SessionPrivateTestAccess::SentMessageId(
+			  *queuedSession, kQueuedRequestId);
+
+	auto verifierData = std::make_shared<SessionData>(
+		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
+	verifier = details::SessionPrivateTestAccess::Create(verifierData,
+														 verifierInstance);
+	details::SessionPrivateTestAccess::SetTestFixture(*verifier, false);
+	auto verifierConnection = details::ConnectionPointer::New<::FakeTransport>(
+		QThread::currentThread(), ProxyData(), verifierLog);
+	details::SessionPrivateTestAccess::StartConnected(
+		*verifier, std::move(verifierConnection), sessionKey, kSessionId,
+		kSessionSalt);
+	{
+		QWriteLocker locker(verifierData->toSendMutex());
+		verifierData->toSendMap().emplace(
+			kVerifierRequestId, ::MakeUsernameCheckRequest(kVerifierRequestId));
+	}
+	verifier->tryToSend();
+	const auto requestMessageId
+		= details::SessionPrivateTestAccess::SentMessageId(*verifier,
+														   kVerifierRequestId);
+	if (!requestMessageId) {
+		return {.requestWasPausedBeforeProof = requestWasPausedBeforeProof};
+	}
+	const auto response = ::MakeAuthenticatedServerPacket(
+		responseKey, kSessionSalt, kSessionId, ::ServerMessageId(),
+		::MakeUsernameCheckReply(requestMessageId));
+	details::SessionPrivateTestAccess::Receive(*verifier, response);
+	const auto proofAccepted
+		= verifier->getState() == ConnectedState
+		  && details::SessionPrivateTestAccess::ReceivedCount(*verifierData)
+				 == 1;
+	auto requestResumed = false;
+	const auto refreshCommitted = commit(proofAccepted, [&] {
+		UnitBlockedServerEnrollmentInstance = nullptr;
+		queuedSession->tryToSend();
+		requestResumed = !log->sent.empty()
+						 && details::SessionPrivateTestAccess::SentMessageId(
+								*queuedSession, kQueuedRequestId)
+								!= 0;
+	});
+	return {
+		.requestWasPausedBeforeProof = requestWasPausedBeforeProof,
+		.proofAccepted = proofAccepted,
+		.requestResumed = requestResumed,
+		.refreshCommitted = refreshCommitted,
+	};
+}
+
+} // namespace MTP
 
 TEST_CASE(IdleReconnectResumesUsernameCheckWithStoredKey) {
 	RunReconnectScenario(AuthKey::Type::ReadFromFile);
