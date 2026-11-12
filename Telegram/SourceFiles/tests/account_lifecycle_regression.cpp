@@ -10920,119 +10920,73 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   highProcessCpuStall, true);
 }
 
-[[maybe_unused, nodiscard]] bool ChatSwitchSchedulerProofRegressionPasses() {
-	const auto lastAcknowledgedAt = QDateTime::fromString(
-		u"2026-11-09T00:00:00.000Z"_q, Qt::ISODateWithMs);
-	const auto callbackStartedAt = lastAcknowledgedAt.addMSecs(8);
-	const auto interval = MainThreadWorkInterval{callbackStartedAt, 92'000'000,
-												 25'000'000, 45'000'000};
-	const auto runnableEvidence
-		= std::optional<Core::UiStallWatchdog::StallEvidence>{{
-			.startedAt = callbackStartedAt.toString(Qt::ISODateWithMs),
-			.durationMilliseconds = 92,
-			.schedulerTrace = QString(92, QChar(u'R')),
-			.schedulerSampleOffsetsNanoseconds
-			= SchedulerSampleOffsetsForDuration(92'000'000),
-			.stack = u"runner scheduling regression"_q,
-		}};
-	const auto lateStartEvidence
-		= std::vector<Core::UiStallWatchdog::StallEvidence>{
-			{
-				.startedAt
-				= callbackStartedAt.addMSecs(6).toString(Qt::ISODateWithMs),
-				.durationMilliseconds = 92,
-				.schedulerTrace = QString(92, QChar(u'R')),
-				.schedulerSampleOffsetsNanoseconds
-				= SchedulerSampleOffsetsForDuration(92'000'000),
-				.stack = u"late scheduler evidence regression"_q,
-			},
-	};
-	const auto lateStartMatch = FindMatchingMainThreadWorkEvidence(
-		interval, lateStartEvidence, kMaxChatSwitchNanoseconds, 10);
-	const auto callbackAfterAcknowledgementEvidence
-		= std::vector<Core::UiStallWatchdog::StallEvidence>{
-			{
-				.startedAt
-				= callbackStartedAt.addMSecs(3).toString(Qt::ISODateWithMs),
-				.durationMilliseconds = 95,
-				.schedulerTrace = QString(95, QChar(u'R')),
-				.schedulerSampleOffsetsNanoseconds
-				= SchedulerSampleOffsetsForDuration(95'000'000),
-				.stack = u"callback after acknowledgement regression"_q,
-			},
-	};
-	const auto callbackAfterAcknowledgementMatch
-		= FindMatchingMainThreadWorkEvidence(
-			interval, callbackAfterAcknowledgementEvidence,
-			kMaxChatSwitchNanoseconds, 10);
-	const auto highProcessWork = MainThreadWorkInterval{
-		callbackStartedAt, 92'000'000, 25'000'000, 120'000'000};
-	const auto highOtherThreadWork = MainThreadWorkInterval{
-		callbackStartedAt, 92'000'000, 25'000'000, 85'000'000};
-	auto monotonicInterval = interval;
-	monotonicInterval.startedAtSteadyNanoseconds = 10'008'500'000;
-	auto monotonicEvidence = *runnableEvidence;
-	monotonicEvidence.startedAt
-		= callbackStartedAt.addMSecs(6).toString(Qt::ISODateWithMs);
-	monotonicEvidence.postedAtSteadyNanoseconds = 10'000'000'000;
-	monotonicEvidence.durationMilliseconds = 110;
-	monotonicEvidence.durationNanoseconds = 110'000'000;
-	monotonicEvidence.schedulerTrace = QString(110, QChar(u'R'));
-	monotonicEvidence.schedulerSampleOffsetsNanoseconds
-		= SchedulerSampleOffsetsForDuration(110'000'000);
-	const auto coldInitialSelection = MainThreadWorkInterval{
-		.startedAt = callbackStartedAt,
-		.durationNanoseconds = 92'000'000,
-		.mainThreadWorkNanoseconds = 52'000'000,
-		.processWorkNanoseconds = 58'000'000,
-		.label = u"cold initial history selection regression"_q,
-	};
-	auto boundedInitialSelection = coldInitialSelection;
-	boundedInitialSelection.mainThreadWorkNanoseconds = 40'000'000;
-	return MainThreadWorkIntervalHasSchedulerProof(
-			   interval, runnableEvidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   highProcessWork, runnableEvidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   highOtherThreadWork, runnableEvidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && lateStartMatch
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   interval, lateStartMatch, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && callbackAfterAcknowledgementMatch
-		   && MainThreadWorkIntervalHasSchedulerProof(
-			   interval, callbackAfterAcknowledgementMatch,
-			   kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && MainThreadWorkIntervalHasSchedulerProof(
-			   monotonicInterval, monotonicEvidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && MainThreadWorkIntervalHasSchedulerProof(
-			   boundedInitialSelection, runnableEvidence,
-			   kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   coldInitialSelection, runnableEvidence,
-			   kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
-}
-
 [[nodiscard]] bool MainThreadCpuWorkWithinBudget(qint64 workNanoseconds,
 												 qint64 budgetNanoseconds);
 
-[[nodiscard]] bool MainThreadCpuWorkBudgetRegressionPasses() {
-	return MainThreadCpuWorkWithinBudget(17'900'000, 100'000'000)
-		   && !MainThreadCpuWorkWithinBudget(100'000'000, 100'000'000)
-		   && MainThreadCpuWorkWithinBudget(45'500'000, 50'000'000)
-		   && !MainThreadCpuWorkWithinBudget(52'107'000, 50'000'000);
+struct MainThreadWorkEstimate final {
+	qint64 blockedNanoseconds = -1;
+	qint64 estimatedWorkNanoseconds = -1;
+};
+
+[[nodiscard]] MainThreadWorkEstimate
+EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
+					   const QString &schedulerTrace) {
+	if (wallNanoseconds < 0) {
+		return {};
+	} else if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
+		return {0, wallNanoseconds};
+	} else if (mainThreadCpuNanoseconds < 0) {
+		return {};
+	}
+	const auto samples = qint64(schedulerTrace.size());
+	const auto blockedSamples = samples - qint64(schedulerTrace.count(u'R'));
+	const auto wholeWallSampleNanoseconds = wallNanoseconds / samples;
+	const auto remainderWallNanoseconds = wallNanoseconds % samples;
+	const auto blockedNanoseconds
+		= wholeWallSampleNanoseconds * blockedSamples
+		  + remainderWallNanoseconds * blockedSamples / samples;
+	if (mainThreadCpuNanoseconds
+		> std::numeric_limits<qint64>::max() - blockedNanoseconds) {
+		return {};
+	}
+	return {blockedNanoseconds, mainThreadCpuNanoseconds + blockedNanoseconds};
+}
+
+[[nodiscard]] bool MainThreadWorkEstimateWithinBudget(
+	qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
+	const QString &schedulerTrace, qint64 budgetNanoseconds) {
+	const auto estimate = EstimateMainThreadWork(
+		mainThreadCpuNanoseconds, wallNanoseconds, schedulerTrace);
+	return (budgetNanoseconds > 0) && (estimate.estimatedWorkNanoseconds >= 0)
+		   && (estimate.estimatedWorkNanoseconds < budgetNanoseconds);
+}
+
+[[nodiscard]] bool MainThreadBlockedWorkBudgetRegressionPasses() {
+	const auto blocked
+		= EstimateMainThreadWork(0, 101'000'000, QString(101, QChar(u'W')));
+	const auto runnable = EstimateMainThreadWork(18'000'000, 225'000'000,
+												 QString(225, QChar(u'R')));
+	const auto mixed = EstimateMainThreadWork(17'990'000, 225'000'000,
+											  QString(15, QChar(u'R'))
+												  + QString(2, QChar(u'W'))
+												  + QString(2, QChar(u'U')));
+	const auto noSamples = EstimateMainThreadWork(0, 101'000'000, u"none"_q);
+	return (blocked.blockedNanoseconds == 101'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   0, 101'000'000, QString(101, QChar(u'W')), 100'000'000)
+		   && (runnable.blockedNanoseconds == 0)
+		   && (runnable.estimatedWorkNanoseconds == 18'000'000)
+		   && MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000, QString(225, QChar(u'R')), 100'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(52'107'000, 227'000'000,
+												  QString(227, QChar(u'R')),
+												  kMaxChatSwitchNanoseconds)
+		   && (mixed.blockedNanoseconds == 47'368'421)
+		   && (mixed.estimatedWorkNanoseconds == 65'358'421)
+		   && (noSamples.blockedNanoseconds == 0)
+		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q,
+												  100'000'000);
 }
 
 [[maybe_unused, nodiscard]] bool
@@ -11105,10 +11059,15 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 maxChatSwitchNanoseconds = -1;
 	qint64 maxChatSwitchMainThreadWorkNanoseconds = -1;
 	qint64 maxRecurringChatSwitchMainThreadWorkNanoseconds = -1;
+	qint64 maxChatSwitchEstimatedWorkNanoseconds = -1;
+	qint64 maxRecurringChatSwitchEstimatedWorkNanoseconds = -1;
 	int maxChatSwitchIndex = -1;
 	qint64 maxChatSwitchPeerId = -1;
 	qint64 initialHistorySelectionNanoseconds = -1;
 	qint64 initialHistorySelectionMainThreadWorkNanoseconds = -1;
+	qint64 initialHistorySelectionBlockedNanoseconds = -1;
+	qint64 initialHistorySelectionEstimatedWorkNanoseconds = -1;
+	QString initialHistorySelectionSchedulerTrace;
 	qint64 initialHistorySelectionPeerId = -1;
 	qint64 attachMenuFirstHoverNanoseconds = -1;
 	qint64 attachMenuHoverNanoseconds = -1;
@@ -11144,6 +11103,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuCacheBounded = false;
 	bool pendingRevealStartedAfterControlsGeometry = false;
 	bool attachMenuUncachedPeersReady = false;
+	bool chatSwitchWorkWithinBudget = false;
 	bool chatSwitchSchedulerPreemptionProven = false;
 	bool hydrationSchedulerPreemptionProven = false;
 	bool attachMenuSchedulerPreemptionProven = false;
@@ -11186,6 +11146,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
+	auto chatSwitchWindows = std::vector<MainThreadWorkInterval>();
 	auto slowChatSwitches = std::vector<MainThreadWorkInterval>();
 	auto chatSwitchCpuClockAvailable = true;
 	auto chatSwitchProcessCpuClockAvailable = true;
@@ -11237,22 +11198,23 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		result.maxChatSwitchNanoseconds = std::max(
 			result.maxChatSwitchNanoseconds, wallDurationNanoseconds);
+		const auto label
+			= (index == 0)
+				  ? u"initial history selection index=%1 peer_id=%2"_q
+						.arg(index)
+						.arg(peerId)
+				  : u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(peerId);
+		const auto interval = MainThreadWorkInterval{
+			startedAt,
+			wallDurationNanoseconds,
+			mainThreadWorkNanoseconds,
+			processWorkNanoseconds,
+			label,
+			startedAtSteadyNanoseconds,
+		};
+		chatSwitchWindows.push_back(interval);
 		if (wallDurationNanoseconds >= kMaxChatSwitchNanoseconds) {
-			const auto label
-				= (index == 0)
-					  ? u"initial history selection index=%1 peer_id=%2"_q
-							.arg(index)
-							.arg(peerId)
-					  : u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(
-							peerId);
-			slowChatSwitches.push_back({
-				startedAt,
-				wallDurationNanoseconds,
-				mainThreadWorkNanoseconds,
-				processWorkNanoseconds,
-				label,
-				startedAtSteadyNanoseconds,
-			});
+			slowChatSwitches.push_back(interval);
 		}
 		return wallDurationNanoseconds;
 	};
@@ -11744,6 +11706,61 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto slowChatSwitchEvidenceMatched
 		= slowChatSwitches.empty()
 		  || WaitForRegressionCondition(findSlowChatSwitchEvidence, 1000);
+	result.chatSwitchWorkWithinBudget
+		= chatSwitchCpuClockAvailable && !chatSwitchWindows.empty();
+	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
+		auto schedulerTrace = QString();
+		for (auto j = 0U; j != slowChatSwitches.size(); ++j) {
+			if (slowChatSwitches[j].label == chatSwitchWindows[i].label
+				&& slowChatSwitchEvidence[j]) {
+				schedulerTrace = slowChatSwitchEvidence[j]->schedulerTrace;
+				break;
+			}
+		}
+		const auto estimate = EstimateMainThreadWork(
+			chatSwitchWindows[i].mainThreadWorkNanoseconds,
+			chatSwitchWindows[i].durationNanoseconds, schedulerTrace);
+		result.maxChatSwitchEstimatedWorkNanoseconds
+			= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
+					   estimate.estimatedWorkNanoseconds);
+		if (i == 0) {
+			result.initialHistorySelectionBlockedNanoseconds
+				= estimate.blockedNanoseconds;
+			result.initialHistorySelectionEstimatedWorkNanoseconds
+				= estimate.estimatedWorkNanoseconds;
+			result.initialHistorySelectionSchedulerTrace = schedulerTrace;
+		} else {
+			result.maxRecurringChatSwitchEstimatedWorkNanoseconds = std::max(
+				result.maxRecurringChatSwitchEstimatedWorkNanoseconds,
+				estimate.estimatedWorkNanoseconds);
+		}
+		result.chatSwitchWorkWithinBudget
+			= result.chatSwitchWorkWithinBudget
+			  && (estimate.estimatedWorkNanoseconds >= 0)
+			  && (estimate.estimatedWorkNanoseconds
+				  < kMaxChatSwitchNanoseconds);
+		const auto traceLatin1 = schedulerTrace.isEmpty()
+									 ? QByteArray("none")
+									 : schedulerTrace.toLatin1();
+		std::fprintf(
+			stderr,
+			"Cache chat switch work window: index=%zu peer_id=%lld "
+			"wall_ns=%lld main_thread_cpu_ns=%lld "
+			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
+			"budget_ns=%lld trace=%s within_budget=%d.\n",
+			i,
+			static_cast<long long>(
+				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
+			static_cast<long long>(chatSwitchWindows[i].durationNanoseconds),
+			static_cast<long long>(
+				chatSwitchWindows[i].mainThreadWorkNanoseconds),
+			static_cast<long long>(estimate.blockedNanoseconds),
+			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			static_cast<long long>(kMaxChatSwitchNanoseconds),
+			traceLatin1.constData(),
+			(estimate.estimatedWorkNanoseconds >= 0
+			 && estimate.estimatedWorkNanoseconds < kMaxChatSwitchNanoseconds));
+	}
 	for (auto i = 0U; i != slowChatSwitches.size(); ++i) {
 		if (slowChatSwitches[i].label.startsWith(
 				u"initial history selection"_q)) {
@@ -11908,16 +11925,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
-		  && MainThreadCpuWorkWithinBudget(
-			  result.maxChatSwitchMainThreadWorkNanoseconds,
-			  kMaxChatSwitchNanoseconds)
-		  && MainThreadCpuWorkWithinBudget(
+		  && result.chatSwitchWorkWithinBudget
+		  && MainThreadWorkEstimateWithinBudget(
 			  result.initialHistorySelectionMainThreadWorkNanoseconds,
+			  result.initialHistorySelectionNanoseconds,
+			  result.initialHistorySelectionSchedulerTrace,
 			  kMaxChatSwitchNanoseconds)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
-		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds
+		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
+		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
-		  && MainThreadCpuWorkBudgetRegressionPasses();
+		  && MainThreadBlockedWorkBudgetRegressionPasses();
 	return result;
 }
 
@@ -12561,10 +12579,55 @@ void RunAuthenticatedCacheSymlinkCases(
 				= startupStallSchedulerSamples - startupStallSchedulerRunning
 				  - startupStallSchedulerWaiting
 				  - startupStallSchedulerUninterruptible;
+			auto maxStartupEstimatedWorkNanoseconds
+				= maxMainThreadWorkNanoseconds;
+			auto startupWorkWithinBound = true;
+			for (const auto &gap : startupHeartbeatGaps) {
+				const auto stall = std::find_if(
+					corroboratedStartupStalls.begin(),
+					corroboratedStartupStalls.end(),
+					[&](const auto &candidate) {
+						return candidate.heartbeatGapStartedAt == gap.startedAt;
+					});
+				const auto matched = (stall != corroboratedStartupStalls.end());
+				const auto trace
+					= matched ? stall->evidence.schedulerTrace : QString();
+				const auto estimate
+					= EstimateMainThreadWork(gap.mainThreadWorkNanoseconds,
+											 gap.durationNanoseconds, trace);
+				maxStartupEstimatedWorkNanoseconds
+					= std::max(maxStartupEstimatedWorkNanoseconds,
+							   estimate.estimatedWorkNanoseconds);
+				startupWorkWithinBound
+					= startupWorkWithinBound
+					  && (estimate.estimatedWorkNanoseconds >= 0)
+					  && (estimate.estimatedWorkNanoseconds < 100'000'000);
+				const auto gapStartedAtUtf8
+					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
+				const auto traceLatin1
+					= trace.isEmpty() ? QByteArray("none") : trace.toLatin1();
+				std::fprintf(
+					stderr,
+					"Cache startup work window: started_at=%s "
+					"wall_ns=%lld "
+					"main_thread_cpu_ns=%lld "
+					"blocked_estimate_ns=%lld "
+					"estimated_work_ns=%lld budget_ns=100000000 "
+					"trace=%s within_budget=%d.\n",
+					gapStartedAtUtf8.constData(),
+					static_cast<long long>(gap.durationNanoseconds),
+					static_cast<long long>(gap.mainThreadWorkNanoseconds),
+					static_cast<long long>(estimate.blockedNanoseconds),
+					static_cast<long long>(estimate.estimatedWorkNanoseconds),
+					traceLatin1.constData(),
+					(estimate.estimatedWorkNanoseconds >= 0
+					 && estimate.estimatedWorkNanoseconds < 100'000'000));
+			}
 			const auto startupWithinBound
 				= mainThreadCpuClockAvailable
 				  && MainThreadCpuWorkWithinBudget(maxMainThreadWorkNanoseconds,
-												   100'000'000);
+												   100'000'000)
+				  && startupWorkWithinBound;
 			for (const auto &stall : corroboratedStartupStalls) {
 				const auto startedAtUtf8 = stall.evidence.startedAt.toUtf8();
 				const auto heartbeatGapStartedAtUtf8
@@ -12625,11 +12688,18 @@ void RunAuthenticatedCacheSymlinkCases(
 				});
 				chatSwitch
 					= RunCacheChatSwitchLatencyRegression(guarded, window);
+				const auto initialHistorySelectionTraceLatin1
+					= chatSwitch.initialHistorySelectionSchedulerTrace.isEmpty()
+						  ? QByteArray("none")
+						  : chatSwitch.initialHistorySelectionSchedulerTrace
+								.toLatin1();
 				std::fprintf(
 					stderr,
 					"Initial history selection: peer_id=%lld "
-					"wall_ns=%lld "
-					"main_thread_work_ns=%lld budget_ns=%lld "
+					"wall_ns=%lld main_thread_work_ns=%lld "
+					"blocked_estimate_ns=%lld "
+					"estimated_work_ns=%lld "
+					"budget_ns=%lld trace=%s "
 					"scheduler_preemption_proven=%d.\n",
 					static_cast<long long>(
 						chatSwitch.initialHistorySelectionPeerId),
@@ -12638,7 +12708,13 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(
 						chatSwitch
 							.initialHistorySelectionMainThreadWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch.initialHistorySelectionBlockedNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.initialHistorySelectionEstimatedWorkNanoseconds),
 					static_cast<long long>(kMaxChatSwitchNanoseconds),
+					initialHistorySelectionTraceLatin1.constData(),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
 				std::fprintf(stderr,
@@ -12659,7 +12735,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"reactions=%d "
 					"hydrated_documents=%d chat_switches=%d "
 					"attach_menu_bot_count=%d "
-					"minimized_restore=%d minimized_switch_ns=%lld "
+					"minimized_restore=%d "
+					"minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld "
 					"max_hydration_work_ns=%lld "
@@ -12667,26 +12744,39 @@ void RunAuthenticatedCacheSymlinkCases(
 					"max_switch_ns=%lld "
 					"max_switch_work_ns=%lld "
 					"max_recurring_switch_work_ns=%lld "
-					"max_switch_index=%d max_switch_peer_id=%lld "
+					"max_switch_estimated_work_ns=%lld "
+					"max_recurring_switch_estimated_work_ns=%"
+					"lld "
+					"max_switch_index=%d "
+					"max_switch_peer_id=%lld "
 					"switch_scheduler_preemption_proven=%d "
 					"attach_menu_first_hover_ns=%lld "
 					"attach_menu_hover_ns=%lld "
 					"attach_menu_update_hover_ns=%lld "
 					"attach_menu_uncached_peer_ns=%lld "
-					"attach_menu_first_hover_callback_cpu_ns=%lld "
-					"attach_menu_update_hover_callback_cpu_ns=%lld "
-					"attach_menu_uncached_peer_callback_cpu_ns=%lld "
-					"attach_menu_first_hover_callback_wall_ns=%lld "
-					"attach_menu_update_hover_callback_wall_ns=%lld "
-					"attach_menu_uncached_peer_callback_wall_ns=%lld "
-					"attach_menu_scheduler_preemption_proven=%d "
+					"attach_menu_first_hover_callback_cpu_ns=%"
+					"lld "
+					"attach_menu_update_hover_callback_cpu_ns=%"
+					"lld "
+					"attach_menu_uncached_peer_callback_cpu_ns="
+					"%lld "
+					"attach_menu_first_hover_callback_wall_ns=%"
+					"lld "
+					"attach_menu_update_hover_callback_wall_ns="
+					"%lld "
+					"attach_menu_uncached_peer_callback_wall_"
+					"ns=%lld "
+					"attach_menu_scheduler_preemption_proven=%"
+					"d "
 					"attach_menu_cached=%d "
 					"attach_menu_invalidated=%d "
 					"attach_menu_build_deferred=%d "
 					"attach_menu_uncached_ready=%d "
 					"attach_menu_uncached_deferred_failures=%d "
-					"attach_menu_uncached_missing_bot_failures=%d "
-					"attach_menu_uncached_build_count_failures=%d "
+					"attach_menu_uncached_missing_bot_failures="
+					"%d "
+					"attach_menu_uncached_build_count_failures="
+					"%d "
 					"attach_menu_cache_bound=%d "
 					"pending_reveal_after_controls_geometry=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
@@ -12709,6 +12799,11 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(
 						chatSwitch
 							.maxRecurringChatSwitchMainThreadWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch.maxChatSwitchEstimatedWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.maxRecurringChatSwitchEstimatedWorkNanoseconds),
 					chatSwitch.maxChatSwitchIndex,
 					static_cast<long long>(chatSwitch.maxChatSwitchPeerId),
 					chatSwitch.chatSwitchSchedulerPreemptionProven,
@@ -12843,6 +12938,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				"queued_ops_before_ready=%d queued_ops_passed=%d "
 				"cache_usable_ns=%lld under_10s=%d "
 				"max_main_thread_work_ns=%lld "
+				"max_startup_estimated_work_ns=%lld "
 				"max_heartbeat_gap_ns=%lld "
 				"max_heartbeat_gap_work_ns=%lld "
 				"heartbeat_gap_process_work_ns=%lld "
@@ -12878,6 +12974,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				static_cast<long long>(cacheUsableNanoseconds),
 				cacheUsableWithinBound,
 				static_cast<long long>(maxMainThreadWorkNanoseconds),
+				static_cast<long long>(maxStartupEstimatedWorkNanoseconds),
 				static_cast<long long>(maxHeartbeatGapNanoseconds),
 				static_cast<long long>(maxHeartbeatGapWorkNanoseconds),
 				static_cast<long long>(maxHeartbeatGapProcessWorkNanoseconds),

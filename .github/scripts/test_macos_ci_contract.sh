@@ -787,32 +787,44 @@ awk '
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
 awk '
+  /^work_value_within_budget\(\) \{$/ { copy = 1 }
   /^main_thread_cpu_work_within_budget\(\) \{$/ { copy = 1 }
   copy { print }
+  copy && /^}$/ { copy = 0 }
+' "$profile_harness" > "$temp_dir/main-thread-budget-gates.sh"
+[[ -s "$temp_dir/main-thread-budget-gates.sh" ]] \
+  || contract_fail 'The profile work budget predicates were not found.'
+source "$temp_dir/main-thread-budget-gates.sh"
+awk '
+  /^main_thread_work_estimate_within_budget\(\) \{$/ { copy = 1 }
+  copy { print }
   copy && /^}$/ { exit }
-' "$profile_harness" > "$temp_dir/main-thread-cpu-gate.sh"
-[[ -s "$temp_dir/main-thread-cpu-gate.sh" ]] \
-  || contract_fail 'The main-thread CPU budget predicate was not found.'
-source "$temp_dir/main-thread-cpu-gate.sh"
-if ! main_thread_cpu_work_within_budget 17900000 100000000; then
-  contract_fail 'A 225 ms startup gap with 17.9 ms main-thread CPU must pass.'
+' "$profile_harness" > "$temp_dir/main-thread-work-gate.sh"
+[[ -s "$temp_dir/main-thread-work-gate.sh" ]] \
+  || contract_fail 'The blocked-time main-thread work budget predicate was not found.'
+source "$temp_dir/main-thread-work-gate.sh"
+if main_thread_work_estimate_within_budget \
+  0 101000000 "$(printf '%101s' '' | tr ' ' W)" 100000000; then
+  contract_fail 'A fully blocked 101 ms window must fail the startup budget.'
 fi
-if main_thread_cpu_work_within_budget 100000000 100000000; then
-  contract_fail 'Startup main-thread CPU at 100 ms must fail.'
+if ! main_thread_work_estimate_within_budget \
+  18000000 225000000 "$(printf '%225s' '' | tr ' ' R)" 100000000; then
+  contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
 fi
-if ! main_thread_cpu_work_within_budget 45500000 50000000; then
-  contract_fail 'A 227 ms chat switch with 45.5 ms main-thread CPU must pass.'
+if main_thread_work_estimate_within_budget 0 101000000 none 100000000; then
+  contract_fail 'A window without scheduler samples must fall back to wall time.'
 fi
-if main_thread_cpu_work_within_budget 52107000 50000000; then
-  contract_fail 'A 52 ms chat switch must fail regardless of scheduler evidence.'
+if ! main_thread_work_estimate_within_budget \
+  17990000 225000000 "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" 100000000; then
+  contract_fail 'A 225 ms window with 17.99 ms CPU and 4/19 blocked samples must pass.'
 fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17900000 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17900000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17900000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=4 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=4 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=WWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=65358421 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=19 startup_stall_scheduler_running=15 startup_stall_scheduler_waiting=4 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 budget_ns=50000000 scheduler_preemption_proven=0.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=135344750 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_index=0 max_switch_peer_id=281474977760707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
+Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=135344750 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=0 max_switch_peer_id=281474977760707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
@@ -824,19 +836,21 @@ fi
 cp "$temp_dir/cache-latency.log" "$temp_dir/cache-latency-responsive.log"
 sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
   -e 's/max_startup_stall_ns=225000000/max_startup_stall_ns=0/' \
-  -e 's/startup_stall_main_thread_work_ns=17900000/startup_stall_main_thread_work_ns=0/' \
+  -e 's/startup_stall_main_thread_work_ns=17990000/startup_stall_main_thread_work_ns=0/' \
   -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=0/' \
   -e 's/startup_stall_started_at=2026-11-06T00:47:53.000Z/startup_stall_started_at=none/' \
   -e 's/startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z/startup_stall_heartbeat_gap_started_at=none/' \
-  -e 's/startup_stall_scheduler_samples=4/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_samples=19/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=15/startup_stall_scheduler_running=0/' \
   -e 's/startup_stall_scheduler_waiting=4/startup_stall_scheduler_waiting=0/' \
-  -e 's/startup_stall_scheduler_trace=WWWW/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRWWWW/startup_stall_scheduler_trace=none/' \
   -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
   -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
+  -e 's/max_startup_estimated_work_ns=65358421/max_startup_estimated_work_ns=230059167/' \
   -e '/^Cache startup watchdog stall:/d' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
-if ! check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" >/dev/null 2>&1; then
-  contract_fail 'A long startup wall gap with bounded main-thread CPU must remain diagnostic without watchdog evidence.'
+if check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" >/dev/null 2>&1; then
+  contract_fail 'A long startup wall gap without trace samples must fall back to wall time and fail.'
 fi
 sed -e 's/heartbeat_gap_process_work_ns=117600000/heartbeat_gap_process_work_ns=200000000/' \
   -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=200000000/' \
@@ -844,29 +858,32 @@ sed -e 's/heartbeat_gap_process_work_ns=117600000/heartbeat_gap_process_work_ns=
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-high-process-work.log" >/dev/null 2>&1; then
   contract_fail 'Process CPU and scheduler diagnostics must not override bounded startup main-thread CPU.'
 fi
-sed 's/max_main_thread_work_ns=17900000/max_main_thread_work_ns=100000000/' \
+sed 's/max_startup_estimated_work_ns=65358421/max_startup_estimated_work_ns=100000000/' \
   "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-slow-startup.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-startup.log" >/dev/null 2>&1; then
   contract_fail 'The main-thread startup work budget must reject 100 ms or more.'
 fi
 sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
-  -e 's/max_recurring_switch_work_ns=40000000/max_recurring_switch_work_ns=50000000/' \
+  -e 's/max_recurring_switch_estimated_work_ns=40000000/max_recurring_switch_estimated_work_ns=50000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-switch.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-switch.log" >/dev/null 2>&1; then
   contract_fail 'The recurring chat-switch CPU budget must reject 50 ms or more.'
 fi
-sed 's/max_switch_work_ns=40000000/max_switch_work_ns=52107000/' \
+sed -e 's/max_switch_work_ns=40000000/max_switch_work_ns=52107000/' \
+  -e 's/max_switch_estimated_work_ns=40000000/max_switch_estimated_work_ns=52107000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-max-switch.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-max-switch.log" >/dev/null 2>&1; then
   contract_fail 'The maximum chat-switch CPU budget must reject 52 ms despite scheduler proof.'
 fi
 sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
   -e 's/max_recurring_switch_work_ns=40000000/max_recurring_switch_work_ns=45500000/' \
+  -e 's/max_switch_estimated_work_ns=40000000/max_switch_estimated_work_ns=45500000/' \
+  -e 's/max_recurring_switch_estimated_work_ns=40000000/max_recurring_switch_estimated_work_ns=45500000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-switch.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-switch.log" >/dev/null 2>&1; then
   contract_fail 'A 227 ms chat switch with 45.5 ms main-thread CPU must pass without scheduler proof.'
 fi
-sed '/^Initial history selection:/s/main_thread_work_ns=40000000/main_thread_work_ns=52107000/' \
+sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns=52107000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
   contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
@@ -1003,7 +1020,9 @@ grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$history_widget" \
   && grep -Fq 'ProcessCpuTimeNanosecondsForRegressionTest' "$attach_menu_builder" \
   || contract_fail 'Attach-menu construction callbacks must be measured with the main-thread CPU clock.'
 grep -Fq 'MainThreadCpuWorkWithinBudget' "$native_harness" \
-  && grep -Fq 'MainThreadCpuWorkBudgetRegressionPasses' "$native_harness" \
+  && grep -Fq 'MainThreadBlockedWorkBudgetRegressionPasses' "$native_harness" \
+  && grep -Fq 'EstimateMainThreadWork' "$native_harness" \
+  && ! grep -Fq 'ChatSwitchSchedulerProofRegressionPasses' "$native_harness" \
   && grep -Fq 'attachMenuFirstHoverCallbackWallNanoseconds' "$native_harness" \
   && grep -Fq 'attachMenuUncachedPeerCallbackWallNanoseconds' "$native_harness" \
   && grep -Fq 'slowAttachMenuCallbacks.push_back' "$native_harness" \
@@ -1017,18 +1036,21 @@ if grep -E -q 'attach_menu_callback_latency_is_allowed|cache_stall_is_runner_sch
   contract_fail 'The profile guard must not use wall time or scheduler proof as pass conditions.'
 fi
 for cpu_budget_field in \
+  max_startup_estimated_work_ns \
   initial_history_selection_work_ns \
   max_hydration_work_ns \
   max_switch_work_ns \
   max_recurring_switch_work_ns \
+  max_switch_estimated_work_ns \
+  max_recurring_switch_estimated_work_ns \
   attach_menu_first_hover_callback_cpu_ns \
   attach_menu_update_hover_callback_cpu_ns \
   attach_menu_uncached_peer_callback_cpu_ns; do
   grep -Fq "$cpu_budget_field" "$profile_harness" \
     || contract_fail "The profile guard must gate $cpu_budget_field."
 done
-if [[ $(grep -c 'main_thread_cpu_work_within_budget' "$profile_harness") -lt 7 ]]; then
-  contract_fail 'The profile guard must apply the CPU budget helper to each startup and chat callback gate.'
+if [[ $(grep -c 'work_value_within_budget' "$profile_harness") -lt 4 ]]; then
+  contract_fail 'The profile guard must apply the estimated-work budget to startup and chat-switch gates.'
 fi
 awk '
   /void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer\(/ { copy = 1 }

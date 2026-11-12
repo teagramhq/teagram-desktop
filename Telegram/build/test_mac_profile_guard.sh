@@ -74,10 +74,35 @@ report_result() {
 	fi
 }
 
-main_thread_cpu_work_within_budget() {
-	local main_thread_work_ns="$1"
+work_value_within_budget() {
+	local work_ns="$1"
 	local budget_ns="$2"
-	(( main_thread_work_ns >= 0 && main_thread_work_ns < budget_ns ))
+	(( work_ns >= 0 && work_ns < budget_ns ))
+}
+
+main_thread_cpu_work_within_budget() {
+	work_value_within_budget "$1" "$2"
+}
+
+main_thread_work_estimate_within_budget() {
+	local main_thread_cpu_ns="$1"
+	local wall_ns="$2"
+	local trace="$3"
+	local budget_ns="$4"
+	local estimate_ns
+	if [[ "$trace" == none || -z "$trace" ]]; then
+		estimate_ns="$wall_ns"
+	else
+		local sample_count="${#trace}"
+		local runnable_trace="${trace//[!R]/}"
+		local blocked_sample_count="$((sample_count - ${#runnable_trace}))"
+		local blocked_ns="$((
+			wall_ns / sample_count * blocked_sample_count
+			+ wall_ns % sample_count * blocked_sample_count / sample_count
+		))"
+		estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+	fi
+	(( estimate_ns >= 0 && estimate_ns < budget_ns ))
 }
 
 fixture_unchanged() {
@@ -1414,21 +1439,21 @@ fi
 for cache in cache media_cache; do
 	local cache_latency_evidence
 	cache_latency_evidence="$(grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG" || true)"
 	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
-	local max_main_thread_work_ns
-	max_main_thread_work_ns="$(sed -E \
-		's/.*max_main_thread_work_ns=([0-9]+).*/\1/' \
+	local max_startup_estimated_work_ns
+	max_startup_estimated_work_ns="$(sed -E \
+		's/.*max_startup_estimated_work_ns=([0-9]+).*/\1/' \
 		<<<"$cache_latency_evidence")"
-	if ! main_thread_cpu_work_within_budget \
-		"$max_main_thread_work_ns" 100000000; then
+	if ! work_value_within_budget \
+		"$max_startup_estimated_work_ns" 100000000; then
 		cat "$AUTH_LOG" >&2
-		printf 'seeded cache main-thread work exceeded 100 ms for %s.\n' "$cache" >&2
+		printf 'seeded cache estimated startup work exceeded 100 ms for %s.\n' "$cache" >&2
 		exit 1
 	fi
 	local under_100ms
@@ -1449,7 +1474,7 @@ if ! grep -E -q \
 fi
 local initial_history_selection
 initial_history_selection="$(grep -E \
-	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ budget_ns=50000000 scheduler_preemption_proven=[01]\.$' \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=[0-9]+ estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$initial_history_selection" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1458,17 +1483,17 @@ if [[ -z "$initial_history_selection" ]]; then
 fi
 local initial_history_selection_work_ns
 initial_history_selection_work_ns="$(sed -E \
-	's/.*main_thread_work_ns=([0-9]+).*/\1/' \
+	's/.*estimated_work_ns=([0-9]+).*/\1/' \
 	<<<"$initial_history_selection")"
-if ! main_thread_cpu_work_within_budget \
+if ! work_value_within_budget \
 	"$initial_history_selection_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2
-	echo "initial history selection main-thread work exceeded its 50 ms budget." >&2
+	echo "initial history selection estimated work exceeded its 50 ms budget." >&2
 	exit 1
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1486,24 +1511,24 @@ if ! main_thread_cpu_work_within_budget \
 	echo "reaction hydration main-thread CPU exceeded 50 ms." >&2
 	exit 1
 fi
-local max_chat_switch_cpu_work_ns
-max_chat_switch_cpu_work_ns="$(sed -E \
-	's/.*max_switch_work_ns=([0-9]+).*/\1/' \
+local max_chat_switch_estimated_work_ns
+max_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_switch_estimated_work_ns=([0-9]+).*/\1/' \
 	<<<"$chat_switch_evidence")"
-if ! main_thread_cpu_work_within_budget \
-	"$max_chat_switch_cpu_work_ns" 50000000; then
+if ! work_value_within_budget \
+	"$max_chat_switch_estimated_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2
-	echo "maximum seeded chat switch main-thread work exceeded 50 ms." >&2
+	echo "maximum seeded chat switch estimated work exceeded 50 ms." >&2
 	exit 1
 fi
-local max_chat_switch_work_ns
-max_chat_switch_work_ns="$(sed -E \
-	's/.*max_recurring_switch_work_ns=([0-9]+).*/\1/' \
+local max_recurring_chat_switch_estimated_work_ns
+max_recurring_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_recurring_switch_estimated_work_ns=([0-9]+).*/\1/' \
 	<<<"$chat_switch_evidence")"
-if ! main_thread_cpu_work_within_budget \
-	"$max_chat_switch_work_ns" 50000000; then
+if ! work_value_within_budget \
+	"$max_recurring_chat_switch_estimated_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2
-	echo "recurrent seeded chat switch main-thread work exceeded 50 ms." >&2
+	echo "recurrent seeded chat switch estimated work exceeded 50 ms." >&2
 	exit 1
 fi
 local attach_menu_first_hover_callback_cpu_ns
