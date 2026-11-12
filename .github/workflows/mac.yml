@@ -682,10 +682,15 @@ jobs:
           echo "Teagram launch smoke test passed on $TESTED_SHA." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run isolation observer self-tests (informational).
+        id: observer-self-tests
+        timeout-minutes: 2
         if: ${{ always() && env.UPLOAD_ARTIFACT == 'true' }}
         continue-on-error: true
         run: |
           set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/observer-self-tests"
+          mkdir -p "$diagnostics"
+          exec > >(tee "$diagnostics/harness.log") 2>&1
           evidence="$REPO_NAME/out/Debug/evidence"
           mkdir -p "$evidence"
           bash "$REPO_NAME/Telegram/build/test_mac_identity.sh" "$REPO_NAME" observer \
@@ -1193,6 +1198,7 @@ jobs:
         if: >-
           ${{ always() &&
             (steps.ui-stall-watchdog.outcome != 'success' && steps.ui-stall-watchdog.outcome != 'skipped' ||
+             steps.observer-self-tests.outcome != 'success' && steps.observer-self-tests.outcome != 'skipped' ||
              steps.cache-watchdog.outcome != 'success' && steps.cache-watchdog.outcome != 'skipped' ||
              steps.launch-smoke.outcome != 'success' && steps.launch-smoke.outcome != 'skipped' ||
              steps.profile-ipc.outcome != 'success' && steps.profile-ipc.outcome != 'skipped' ||

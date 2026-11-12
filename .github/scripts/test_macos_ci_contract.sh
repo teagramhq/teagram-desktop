@@ -674,6 +674,13 @@ require_step_script "$mac_workflow" build-macos "$ui_watchdog_step" \
   'macos-regression-diagnostics/ui-stall-watchdog' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
 
+observer_self_tests_step='Run isolation observer self-tests (informational).'
+require_step_field "$mac_workflow" build-macos "$observer_self_tests_step" '.id' 'observer-self-tests'
+require_step_field "$mac_workflow" build-macos "$observer_self_tests_step" '.timeout-minutes' '2'
+require_step_script "$mac_workflow" build-macos "$observer_self_tests_step" \
+  'macos-regression-diagnostics/observer-self-tests' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
 cache_watchdog_step='Verify cache path watchdog regression.'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
@@ -709,7 +716,13 @@ regression_artifact_condition="$(step_field "$mac_workflow" build-macos \
   "$regression_diagnostics_step" '.if')"
 regression_artifact_paths="$(step_field "$mac_workflow" build-macos \
   "$regression_diagnostics_step" '.with.path')"
-for regression_step_id in ui-stall-watchdog cache-watchdog launch-smoke profile-ipc lifecycle-regression; do
+for regression_step_id in \
+  ui-stall-watchdog \
+  observer-self-tests \
+  cache-watchdog \
+  launch-smoke \
+  profile-ipc \
+  lifecycle-regression; do
   grep -Fq "steps.$regression_step_id.outcome" <<< "$regression_artifact_condition" \
     || contract_fail "$regression_diagnostics_step must cover $regression_step_id failures and timeouts."
 done
