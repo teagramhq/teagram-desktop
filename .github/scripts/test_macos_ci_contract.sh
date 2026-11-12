@@ -769,6 +769,7 @@ for regression_artifact_path in \
   '${{ runner.temp }}/macos-regression-diagnostics/' \
   '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
   '${{ env.REPO_NAME }}/out/Debug/evidence/' \
+  '${{ steps.account-database-profile.outputs.profile_root }}/log_start*.txt' \
   '${{ steps.account-database-profile.outputs.profile_root }}/log.txt' \
   '${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/'; do
   grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
@@ -802,7 +803,7 @@ smoke_profile_suffix="$smoke_state_suffix/home/$profile_suffix"
 lifecycle_profile_suffix="$regression_root_suffix/$regression_home_suffix/$application_profile_suffix"
 runner_temp_path_expression='${{ runner.temp }}/'
 for profile_suffix_to_upload in "$smoke_profile_suffix" "$lifecycle_profile_suffix"; do
-  for profile_log_path in log.txt DebugLogs/; do
+  for profile_log_path in log_start\*.txt log.txt DebugLogs/; do
     regression_artifact_path="$runner_temp_path_expression$profile_suffix_to_upload/$profile_log_path"
     grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
       || contract_fail "$regression_diagnostics_step must upload workflow-derived profile path $regression_artifact_path."
@@ -835,9 +836,10 @@ app.write_text(
     "home = Path(os.environ.get('TDESKTOP_MAC_PROFILE_TEST_HOME', os.environ['ACCOUNT_DATABASE_HOME']))\n"
     "profile = home / 'Library/Application Support/Teagram'\n"
     "(profile / 'DebugLogs').mkdir(parents=True, exist_ok=True)\n"
+    "(profile / 'log_start0.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' startup log\\n')\n"
+    "if sys.argv[2] == 'failure': sys.exit(23)\n"
     "(profile / 'log.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' app log\\n')\n"
     "(profile / 'DebugLogs/log_20261112.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' debug log\\n')\n"
-    "if sys.argv[2] == 'failure': sys.exit(23)\n"
     "time.sleep(60)\n",
     encoding="utf-8",
 )
@@ -846,9 +848,13 @@ for source, home, use_override in profile_homes:
     for mode in ("failure", "timeout"):
         profile = home / "Library/Application Support/Teagram"
         expected = {
-            profile / "log.txt": f"{source} {mode} app log\n",
-            profile / "DebugLogs/log_20261112.txt": f"{source} {mode} debug log\n",
+            profile / "log_start0.txt": f"{source} {mode} startup log\n",
         }
+        if mode == "timeout":
+            expected.update({
+                profile / "log.txt": f"{source} {mode} app log\n",
+                profile / "DebugLogs/log_20261112.txt": f"{source} {mode} debug log\n",
+            })
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["ACCOUNT_DATABASE_HOME"] = str(home if not use_override else root / "account-database-home")
@@ -886,7 +892,7 @@ for source, home, use_override in profile_homes:
             if not path.is_file() or path.read_text(encoding="utf-8") != contents:
                 raise SystemExit(f"The {source} {mode} artifact log was not retained: {path}")
 
-print("macOS profile logs retained after app failure and timeout: PASS")
+print("macOS startup and profile logs retained after failure and timeout: PASS")
 PY
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.

@@ -1239,10 +1239,13 @@ jobs:
             ${{ runner.temp }}/macos-regression-diagnostics/
             ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/
             ${{ env.REPO_NAME }}/out/Debug/evidence/
+            ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/log_start*.txt
             ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/log.txt
             ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/DebugLogs/
+            ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log_start*.txt
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/
+            ${{ steps.account-database-profile.outputs.profile_root }}/log_start*.txt
             ${{ steps.account-database-profile.outputs.profile_root }}/log.txt
             ${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/
           if-no-files-found: error
