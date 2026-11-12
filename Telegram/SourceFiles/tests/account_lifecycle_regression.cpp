@@ -3269,11 +3269,12 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		= mediaCache ? fixtures.mediaCacheRoot : fixtures.cacheRoot;
 	const auto saved = active + ".failed-init-original";
 	if (active.isEmpty() || QFileInfo::exists(saved)) {
-		std::fprintf(stderr,
-					 "Failed cache initialization access setup: cache=%s "
-					 "stage=active-version active=%d saved_exists=%d path=%s.\n",
-					 mediaCache ? "media_cache" : "cache", !active.isEmpty(),
-					 QFileInfo::exists(saved), qPrintable(cachePath));
+		std::fprintf(
+			stderr,
+			"Failed cache initialization access setup: cache=%s "
+			"stage=active-version active=%d saved_exists=%d path=%s.\n",
+			mediaCache ? "media_cache" : "cache", !active.isEmpty(),
+			QFileInfo::exists(saved), qPrintable(cachePath));
 		return false;
 	}
 	const auto targetEntriesBefore
@@ -3299,9 +3300,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	linked = moved && QFile::link(protectedTarget, active);
 	const auto sessionCreated
 		= moved && linked
-		  && guarded->createSession(
-			  RegressionUser(selfId, true, QString()),
-			  std::make_unique<Main::SessionSettings>());
+		  && guarded->createSession(RegressionUser(selfId, true, QString()),
+									std::make_unique<Main::SessionSettings>());
 	if (!moved || !linked || !sessionCreated) {
 		std::fprintf(stderr,
 					 "Failed cache initialization access setup: cache=%s "
