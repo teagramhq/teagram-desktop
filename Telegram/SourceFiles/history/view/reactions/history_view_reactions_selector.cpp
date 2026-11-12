@@ -1126,8 +1126,6 @@ void Selector::createList() {
 			.mediaPreviewMargins = marginsForShadow(),
 			.mediaPreviewPanelStyle = (_mediaPreviewParent == nullptr),
 		}));
-	_list->setAllowWithoutPremium(
-		_show->session().mtp().dcOptions().hasCustomServer());
 	if (!_reactions.stickers.empty()) {
 		auto descriptors = ranges::views::all(
 			_reactions.stickers
@@ -1168,6 +1166,12 @@ void Selector::createList() {
 	) | rpl::on_next(_jumpedToPremium, _list->lifetime());
 
 	const auto inner = rect().marginsRemoved(marginsForShadow());
+	const auto geometry = inner.marginsRemoved(_st.margin);
+	lists->move(0, 0);
+	lists->resizeToWidth(geometry.width());
+	_list->setAllowWithoutPremium(
+		_show->session().mtp().dcOptions().hasCustomServer());
+
 	const auto footer = _reactions.customAllowed
 		? _list->createFooter().data()
 		: nullptr;
@@ -1194,9 +1198,6 @@ void Selector::createList() {
 		}, _shadow->lifetime());
 		_shadow->show();
 	}
-	const auto geometry = inner.marginsRemoved(_st.margin);
-	lists->move(0, 0);
-	lists->resizeToWidth(geometry.width());
 	_list->refreshEmoji();
 	lists->show();
 

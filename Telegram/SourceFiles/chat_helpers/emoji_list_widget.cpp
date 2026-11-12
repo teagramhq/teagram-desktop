@@ -1686,6 +1686,8 @@ object_ptr<TabbedSelector::InnerFooter> EmojiListWidget::createFooter() {
 		.forceFirstFrame = (_mode == Mode::BackgroundEmoji),
 	});
 	_footer = result;
+	_footer->refreshIcons(fillIcons(), currentSet(getVisibleTop()), nullptr,
+						  ValidateIconAnimations::None);
 
 	_footer->setChosen(
 	) | rpl::on_next([=](uint64 setId) {
@@ -3650,11 +3652,11 @@ void EmojiListWidget::refreshCustom() {
 		return true;
 	});
 
-	_footer->refreshIcons(
-		fillIcons(),
-		found ? wasActive : currentSet(wasTop),
-		nullptr,
-		ValidateIconAnimations::None);
+	if (_footer) {
+		_footer->refreshIcons(fillIcons(),
+							  found ? wasActive : currentSet(wasTop), nullptr,
+							  ValidateIconAnimations::None);
+	}
 	update();
 
 	if (found && newSectionTop != wasSectionTop) {
