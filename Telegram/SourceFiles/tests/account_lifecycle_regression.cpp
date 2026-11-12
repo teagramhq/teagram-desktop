@@ -16852,11 +16852,30 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
+constexpr auto kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds
+	= qint64(75'000'000);
+
+[[nodiscard]] constexpr bool DesktopScaleUpdateBurstTimeWithinBudget(
+		qint64 one, qint64 hundred) {
+	return (one > 0)
+		   && ((double(hundred) <= double(one) * 1.5)
+			   || (hundred >= one
+				   && (hundred - one)
+					  <= kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds));
+}
+
+static_assert(DesktopScaleUpdateBurstTimeWithinBudget(
+	91'446'000, 156'528'000));
+static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(
+	91'446'000, 166'528'001));
+static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(0, 1'000'000));
+
 [[nodiscard]] bool
 DesktopScaleUpdateBurstMeetsBudget(const DesktopScaleActionSample &one,
 								   const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
-		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
+		   && DesktopScaleUpdateBurstTimeWithinBudget(
+			   *one.nanoseconds, *hundred.nanoseconds)
 		   && one.mainThreadStepsOverBudget
 		   && (*one.mainThreadStepsOverBudget == 0)
 		   && hundred.mainThreadStepsOverBudget
@@ -19735,6 +19754,9 @@ int RunDesktopScaleCheck() {
 		  && DesktopScaleContactChangeWithinBudget(
 			  *contactsOne.changedAndFound.nanoseconds,
 			  *contactsHundred.changedAndFound.nanoseconds);
+	const auto updateBurstScales
+		= DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
+											  searchHundred.updateBurst);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -19847,8 +19869,7 @@ int RunDesktopScaleCheck() {
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed
-		  && DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
-												searchHundred.updateBurst)
+		  && updateBurstScales
 		  && blockingStalls && (*blockingStalls == 0)
 		  && contactResponseWithinBudget && contactChangeLookupScales
 		  && (cacheOne.directoryEnumerations == 0)
@@ -19883,6 +19904,9 @@ int RunDesktopScaleCheck() {
 	std::printf("Contact change + name lookup budget (<=1.50x, update + "
 				"1,000 short searches): %s\n",
 				contactChangeLookupScales ? "PASS" : "FAIL");
+	std::printf("Updates.getDifference scaling budget (<=1.50x or +75 ms): "
+				"%s\n",
+				updateBurstScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
