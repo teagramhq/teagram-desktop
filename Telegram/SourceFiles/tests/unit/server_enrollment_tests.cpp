@@ -329,7 +329,7 @@ DiscoverMovedEndpoint() {
 		return std::nullopt;
 	}
 	const auto origin = u"local:"_q + selection.normalizedSelection;
-	MTP::ServerEndpointRefreshDiscovery discovery;
+	Intro::details::ServerEndpointRefreshDiscovery discovery;
 	auto loop = QEventLoop();
 	auto timeout = QTimer();
 	timeout.setSingleShot(true);
