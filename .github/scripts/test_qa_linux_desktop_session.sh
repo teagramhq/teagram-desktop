@@ -3,17 +3,21 @@ set -euo pipefail
 
 scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 session_script="${scripts_dir}/qa-linux-desktop-session.sh"
-temp_dir="$(mktemp -d)"
-stub_bin="${temp_dir}/bin"
 run_id="${BASHPID}-${RANDOM}-${RANDOM}"
-remote_helper="/tmp/qa-linux-desktop-session-test-${run_id}.sh"
+test_runs_root="$(mktemp -d "${PWD}/.qa-session-runs.XXXXXXXX")"
+temp_dir="$(mktemp -d "$test_runs_root/harness.XXXXXXXX")"
+stub_bin="${temp_dir}/bin"
+remote_helper=
+remote_build=
+remote_run_dir=
+tmp_production_override_dir=
+tmp_unreadable_dir=
 padding="$(head -c 8192 /dev/zero | /usr/bin/tr '\0' x)"
 system_path="${PATH}"
-declare -a session_dirs=()
-declare -a remote_helpers=("$remote_helper")
 hup_pid=
 first_helper_pid=
 second_helper_pid=
+current_helper_pid=
 
 fail() {
 	printf '%s\n' "$*" >&2
@@ -21,8 +25,8 @@ fail() {
 }
 
 cleanup() {
-	local proc pgrp marker child_pid helper
-	for child_pid in "$hup_pid" "$first_helper_pid" "$second_helper_pid"; do
+	local proc pgrp marker child_pid
+	for child_pid in "$hup_pid" "$first_helper_pid" "$second_helper_pid" "$current_helper_pid"; do
 		if [[ -n "$child_pid" ]] && kill -0 "$child_pid" 2>/dev/null; then
 			kill -TERM "$child_pid" 2>/dev/null || true
 		fi
@@ -35,12 +39,14 @@ cleanup() {
 		pgrp="$(/usr/bin/awk '{ print $5 }' "$proc/stat" 2>/dev/null || true)"
 		[[ "$pgrp" =~ ^[0-9]+$ ]] && kill -TERM -- "-$pgrp" 2>/dev/null || true
 	done
-	for proc in "${session_dirs[@]}"; do
-		rm -rf -- "$proc"
-	done
-	for helper in "${remote_helpers[@]}"; do
-		rm -f -- "$helper"
-	done
+	if [[ -n "$tmp_unreadable_dir" && -d "$tmp_unreadable_dir" ]]; then
+		chmod 700 "$tmp_unreadable_dir" || true
+		rm -rf -- "$tmp_unreadable_dir"
+	fi
+	if [[ -n "$tmp_production_override_dir" && -d "$tmp_production_override_dir" ]]; then
+		rm -rf -- "$tmp_production_override_dir"
+	fi
+	rm -rf -- "$test_runs_root"
 	rm -rf -- "$temp_dir"
 }
 trap cleanup EXIT
@@ -247,11 +253,66 @@ for tool in id Xvfb openbox tint2 dunst Telegram dbus-daemon \
 	chmod +x "$stub_bin/$tool"
 done
 
-run_helper() {
-	local mode="$1" output="$2" status
-	local -a failure_vars=()
+new_run_dir() {
+	remote_run_dir="$(mktemp -d "$test_runs_root/teagram-qa-session.XXXXXXXX")"
+	chmod 700 "$remote_run_dir"
+}
+
+prepare_run() {
+	new_run_dir
+	remote_helper="$remote_run_dir/qa-linux-desktop-session.sh"
+	remote_build="$remote_run_dir/Telegram"
 	cp "$session_script" "$remote_helper"
 	chmod 700 "$remote_helper"
+	cp "$stub_bin/Telegram" "$remote_build"
+	chmod 700 "$remote_build"
+	printf 'test-build-%s\n' "${remote_run_dir##*.}" > "$remote_run_dir/BUILD"
+}
+
+tmp_entries() {
+	find /tmp -mindepth 1 \
+		\( -path /tmp/.X11-unix -o -path '/tmp/.X[0-9]*-lock' \) -prune -o \
+		-printf '%P\n' \( -type d \( ! -readable -o ! -executable \) -prune \) |
+		LC_ALL=C sort
+}
+
+tmp_unreadable_dir="$(mktemp -d /tmp/qa-session-unreadable.XXXXXXXX)"
+tmp_unreadable_name="${tmp_unreadable_dir#/tmp/}"
+touch "$tmp_unreadable_dir/nested"
+chmod 000 "$tmp_unreadable_dir"
+tmp_unreadable_entries="$(tmp_entries)"
+[[ "$tmp_unreadable_entries" == *"$tmp_unreadable_name"* ]] || fail 'The recursive /tmp listing should include unreadable directory entries.'
+[[ "$tmp_unreadable_entries" != *"$tmp_unreadable_name/nested"* ]] || fail 'The recursive /tmp listing should prune unreadable directory contents.'
+chmod 700 "$tmp_unreadable_dir"
+rm -rf -- "$tmp_unreadable_dir"
+tmp_unreadable_dir=
+
+assert_no_new_tmp_entries() {
+	local before="$1" after new_entries
+	after="$(tmp_entries)"
+	new_entries="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+	[[ -z "$new_entries" ]] || fail "The QA session created unexpected paths under /tmp: $new_entries"
+}
+
+assert_session_tmpdir() {
+	local pid
+	for pid in $(tagged_processes); do
+		[[ "$pid" == "$current_helper_pid" ]] && continue
+		grep -qzFx -- "TMPDIR=$remote_run_dir/tmp" "/proc/$pid/environ" ||
+			fail "Session process $pid did not receive TMPDIR inside $remote_run_dir."
+	done
+}
+
+run_helper() {
+	local mode="$1" output="$2" status
+	local fifo runs_root tmp_before
+	local -a failure_vars=()
+	prepare_run
+	tmp_before="$(tmp_entries)"
+	runs_root="$test_runs_root"
+	if [[ "$mode" == missing-root ]]; then
+		runs_root="$test_runs_root/missing-runs-root"
+	fi
 	case "$mode" in
 		dbus-fail) failure_vars=(QA_TEST_DBUS_FAIL=1) ;;
 		telegram-fail) failure_vars=(QA_TEST_TELEGRAM_FAIL=1) ;;
@@ -260,12 +321,59 @@ run_helper() {
 		import-fail) failure_vars=(QA_TEST_IMPORT_FAIL=1) ;;
 		orphan-openbox) failure_vars=(QA_TEST_ORPHAN_OPENBOX=1 QA_SESSION_LEADER_ATTEMPTS=0) ;;
 	esac
-	if [[ "$mode" == stop ]]; then
-		if printf 'stop\n' | env -i \
+	if [[ "$mode" == stop || "$mode" == eof ]]; then
+		fifo="${temp_dir}/input-${mode}-${BASHPID}.fifo"
+		mkfifo "$fifo"
+		(
+			cd -- "$remote_run_dir"
+			exec env -i \
+				QA_SESSION_TEST_RUNS_ROOT="$runs_root" \
+				QA_SESSION_GROUP=seed \
+				QA_SESSION_PADDING="$padding" \
+				QA_SESSION_TEST_RUN_ID="$run_id" \
+				QA_SESSION_TELEGRAM_BIN="$remote_build" \
+				QA_TEST_DISPLAY_NUMBER=99 \
+				QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
+				QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
+				QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
+				"${failure_vars[@]}" \
+				PATH="$stub_bin:$system_path" \
+				HOME="$temp_dir" \
+				bash qa-linux-desktop-session.sh serve < "$fifo" > "$output" 2>&1
+		) &
+		current_helper_pid=$!
+		exec 6>"$fifo"
+		wait_for_ready "$current_helper_pid" "$output" || {
+			cat "$output" >&2
+			return 1
+		}
+		assert_no_new_tmp_entries "$tmp_before"
+		assert_session_tmpdir
+		[[ "$(stat -c '%a' "$remote_run_dir")" == 700 ]] || fail 'The per-run directory should be private.'
+		[[ -x "$remote_build" && -f "$remote_run_dir/BUILD" ]] || fail 'The per-run build should remain available while the session runs.'
+		if [[ "$mode" == stop ]]; then
+			printf 'stop\n' >&6
+		fi
+		exec 6>&-
+		if wait "$current_helper_pid"; then
+			current_helper_pid=
+			assert_no_new_tmp_entries "$tmp_before"
+			return 0
+		else
+			status=$?
+			current_helper_pid=
+			assert_no_new_tmp_entries "$tmp_before"
+			return "$status"
+		fi
+	fi
+	if (
+		cd -- "$remote_run_dir"
+		exec env -i \
+			QA_SESSION_TEST_RUNS_ROOT="$runs_root" \
 			QA_SESSION_GROUP=seed \
 			QA_SESSION_PADDING="$padding" \
 			QA_SESSION_TEST_RUN_ID="$run_id" \
-			QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
+			QA_SESSION_TELEGRAM_BIN="$remote_build" \
 			QA_TEST_DISPLAY_NUMBER=99 \
 			QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
 			QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
@@ -273,29 +381,13 @@ run_helper() {
 			"${failure_vars[@]}" \
 			PATH="$stub_bin:$system_path" \
 			HOME="$temp_dir" \
-			bash "$remote_helper" serve > "$output" 2>&1; then
-			return 0
-		else
-			status=$?
-			return "$status"
-		fi
-	fi
-	if env -i \
-		QA_SESSION_GROUP=seed \
-		QA_SESSION_PADDING="$padding" \
-		QA_SESSION_TEST_RUN_ID="$run_id" \
-		QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
-		QA_TEST_DISPLAY_NUMBER=99 \
-		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-${mode}.state" \
-		QA_TEST_IMPORT_PARTIAL_PATH="${temp_dir}/import-partial-path" \
-		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
-		"${failure_vars[@]}" \
-		PATH="$stub_bin:$system_path" \
-		HOME="$temp_dir" \
-		bash "$remote_helper" serve < /dev/null > "$output" 2>&1; then
+			bash qa-linux-desktop-session.sh serve < /dev/null
+	) > "$output" 2>&1; then
+		assert_no_new_tmp_entries "$tmp_before"
 		return 0
 	else
 		status=$?
+		assert_no_new_tmp_entries "$tmp_before"
 		return "$status"
 	fi
 }
@@ -333,24 +425,60 @@ is_running() {
 	[[ -n "$state" && "$state" != Z && "$state" != X ]]
 }
 
+tmp_production_override_dir="/tmp/qa-session-root-override-${run_id}"
+mkdir -m 700 "$tmp_production_override_dir"
+tmp_production_override_helper="$tmp_production_override_dir/qa-linux-desktop-session.sh"
+tmp_production_override_build="$tmp_production_override_dir/Telegram"
+cp "$session_script" "$tmp_production_override_helper"
+chmod 700 "$tmp_production_override_helper"
+cp "$stub_bin/Telegram" "$tmp_production_override_build"
+chmod 700 "$tmp_production_override_build"
+printf 'test-build-%s\n' "$run_id" > "$tmp_production_override_dir/BUILD"
+production_override_output="${temp_dir}/production-root-override.log"
+if (
+	cd -- "$tmp_production_override_dir"
+	exec env -i \
+		QA_SESSION_RUNS_ROOT=/tmp \
+		QA_SESSION_GROUP=seed \
+		QA_SESSION_PADDING="$padding" \
+		QA_SESSION_TELEGRAM_BIN="$tmp_production_override_build" \
+		QA_TEST_DISPLAY_NUMBER=98 \
+		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-production-override.state" \
+		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/production-override-bus" \
+		PATH="$stub_bin:$system_path" \
+		HOME="$temp_dir" \
+		bash qa-linux-desktop-session.sh serve < /dev/null
+) > "$production_override_output" 2>&1; then
+	cat "$production_override_output" >&2
+	fail 'A production serve must not accept QA_SESSION_RUNS_ROOT=/tmp.'
+fi
+grep -Fq 'QA_SESSION_RUNS_ROOT is only supported by test runs.' "$production_override_output" || {
+	cat "$production_override_output" >&2
+	fail 'A production serve should reject an alternate run root explicitly.'
+}
+[[ -x "$tmp_production_override_helper" && -x "$tmp_production_override_build" && -f "$tmp_production_override_dir/BUILD" ]] || fail 'Rejecting a production run-root override should preserve its uploaded files.'
+rm -rf -- "$tmp_production_override_dir"
+tmp_production_override_dir=
+
 normal_output="${temp_dir}/normal.log"
 run_helper stop "$normal_output" || {
 	cat "$normal_output" >&2
 	fail 'A stubbed QA session should start and stop successfully with a large environment.'
 }
-normal_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$normal_output" | head -n 1 || true)"
-[[ -n "$normal_dir" ]] && session_dirs+=("$normal_dir")
+normal_dir="$remote_run_dir"
+normal_session="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$normal_output" | head -n 1)"
 telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$normal_output" | head -n 1)"
-[[ -n "$normal_dir" && -n "$telegram_pid" ]] || {
+[[ "$normal_session" == "${normal_dir##*/}" && -n "$telegram_pid" ]] || {
 	cat "$normal_output" >&2
-	fail 'The started session should report its directory and Telegram PID.'
+	fail 'The started session should report its run directory and Telegram PID.'
 }
+grep -Fq "PROFILE=$normal_dir/profile " "$normal_output" || fail 'The profile should live in the per-run directory.'
 grep -Fq "CLEANUP_COMPLETE=${normal_dir##*/}" "$normal_output" || {
 	cat "$normal_output" >&2
 	fail 'A stopped session should report successful cleanup.'
 }
 [[ ! -e "$normal_dir" ]] || fail "The stopped session directory remains: $normal_dir"
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after stop.'
+[[ ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'The uploaded helper or build remains after stop.'
 for _ in {1..20}; do
 	kill -0 "$telegram_pid" 2>/dev/null || break
 	sleep 0.05
@@ -358,21 +486,44 @@ done
 kill -0 "$telegram_pid" 2>/dev/null && fail "Telegram process $telegram_pid remains after stop."
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after normal cleanup.'
 
+eof_output="${temp_dir}/eof.log"
+run_helper eof "$eof_output" || {
+	cat "$eof_output" >&2
+	fail 'A stubbed QA session should stop successfully when its input reaches EOF.'
+}
+eof_dir="$remote_run_dir"
+eof_session="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$eof_output" | head -n 1)"
+grep -Fq "CLEANUP_COMPLETE=${eof_dir##*/}" "$eof_output" || fail 'EOF cleanup should report success.'
+[[ "$eof_session" == "${eof_dir##*/}" && ! -e "$eof_dir" ]] || fail 'EOF cleanup should remove the full per-run directory.'
+[[ ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'The uploaded helper or build remains after EOF cleanup.'
+[[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after EOF cleanup.'
+
+missing_root_output="${temp_dir}/missing-root.log"
+if run_helper missing-root "$missing_root_output"; then
+	cat "$missing_root_output" >&2
+	fail 'A session should reject a missing QA runs root.'
+fi
+missing_runs_root="$test_runs_root/missing-runs-root"
+grep -Fq "Could not resolve QA run directory root: $missing_runs_root" "$missing_root_output" || {
+	cat "$missing_root_output" >&2
+	fail 'A missing QA runs root should be named in the error.'
+}
+
 failure_output="${temp_dir}/dbus-failure.log"
 if run_helper dbus-fail "$failure_output"; then
 	cat "$failure_output" >&2
 	fail 'A failing dbus-launch stub should make startup fail.'
 fi
-failure_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$failure_output" | head -n 1 || true)"
+failure_dir="$remote_run_dir"
 
 [[ -n "$failure_dir" ]] || {
 	cat "$failure_output" >&2
 	fail 'A failed dbus-launch should identify its session diagnostics.'
 }
+grep -Fq "$failure_dir" "$failure_output" || fail 'A failed startup should identify its per-run directory.'
 grep -Fq -- '--- dbus-launch.log ---' "$failure_output" || fail 'The failed D-Bus log should be emitted before cleanup.'
 grep -Fq 'simulated dbus-launch failure' "$failure_output" || fail 'The D-Bus startup error should be emitted before cleanup.'
-[[ ! -e "$failure_dir" ]] || fail 'Per-run data should be removed after failed-start cleanup.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after failed startup.'
+[[ ! -e "$failure_dir" && ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'Failed startup should remove the full per-run directory.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after failed startup cleanup.'
 
 telegram_failure_output="${temp_dir}/telegram-failure.log"
@@ -380,10 +531,10 @@ if run_helper telegram-fail "$telegram_failure_output"; then
 	cat "$telegram_failure_output" >&2
 	fail 'A failing Telegram stub should make startup fail.'
 fi
-telegram_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$telegram_failure_output" | head -n 1 || true)"
-[[ -n "$telegram_dir" ]] || {
+telegram_dir="$remote_run_dir"
+grep -Fq "$telegram_dir" "$telegram_failure_output" || {
 	cat "$telegram_failure_output" >&2
-	fail 'A failed Telegram launch should identify its session diagnostics.'
+	fail 'A failed Telegram launch should name its per-run directory.'
 }
 grep -Fq -- '--- teagram.log ---' "$telegram_failure_output" || fail 'The failed Telegram log should be emitted before cleanup.'
 grep -Fq 'simulated Telegram launch failure' "$telegram_failure_output" || fail 'The Telegram startup error should be emitted before cleanup.'
@@ -391,8 +542,7 @@ grep -Fq -- '--- log.txt ---' "$telegram_failure_output" || fail 'The Telegram c
 grep -Fq 'simulated Telegram client log' "$telegram_failure_output" || fail 'The Telegram client log content should be emitted before cleanup.'
 grep -Fq -- '--- client.txt ---' "$telegram_failure_output" || fail 'The Telegram debug log should be emitted before cleanup.'
 grep -Fq 'simulated Telegram debug log' "$telegram_failure_output" || fail 'The Telegram debug log content should be emitted before cleanup.'
-[[ ! -e "$telegram_dir" ]] || fail 'Per-run data should be removed after failed Telegram cleanup.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after failed Telegram startup.'
+[[ ! -e "$telegram_dir" && ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'Failed Telegram startup should remove the full per-run directory.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after Telegram startup failure cleanup.'
 
 xdotool_failure_output="${temp_dir}/xdotool-failure.log"
@@ -405,7 +555,7 @@ grep -Fq 'simulated xdotool display failure' "$xdotool_failure_output" || {
 	fail 'The xdotool error should be emitted before cleanup.'
 }
 grep -Fq 'QA session exited with status 1.' "$xdotool_failure_output" || fail 'The failing session should report its exit status.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after xdotool startup failure.'
+[[ ! -e "$remote_run_dir" && ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'Failed xdotool startup should remove the full per-run directory.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after xdotool startup failure cleanup.'
 
 initial_screenshot_output="${temp_dir}/initial-screenshot-failure.log"
@@ -418,7 +568,7 @@ grep -Fq 'Could not capture the initial Teagram window.' "$initial_screenshot_ou
 	fail 'Initial screenshot failure should have a specific diagnostic.'
 }
 grep -Fq 'simulated initial geometry failure' "$initial_screenshot_output" || fail 'The xdotool geometry error should be emitted before cleanup.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after initial screenshot failure.'
+[[ ! -e "$remote_run_dir" && ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'Failed initial screenshot startup should remove the full per-run directory.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after initial screenshot failure cleanup.'
 
 import_failure_output="${temp_dir}/import-failure.log"
@@ -434,25 +584,29 @@ grep -Fq 'Could not capture the initial Teagram window.' "$import_failure_output
 partial_screenshot="$(<"${temp_dir}/import-partial-path")"
 [[ -n "$partial_screenshot" && ! -e "$partial_screenshot" ]] || fail 'The partial screenshot should not survive failed session cleanup.'
 grep -Fq 'Ready for steps:' "$import_failure_output" && fail 'A failed initial screenshot must not report the session as ready.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after import failure.'
+[[ ! -e "$remote_run_dir" && ! -e "$remote_helper" && ! -e "$remote_build" ]] || fail 'Failed screenshot import should remove the full per-run directory.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after initial import failure cleanup.'
 
-first_helper="/tmp/qa-linux-desktop-session-test-${run_id}-first.sh"
-second_helper="/tmp/qa-linux-desktop-session-test-${run_id}-second.sh"
+prepare_run
+first_run_dir="$remote_run_dir"
+first_helper="$remote_helper"
+first_build="$remote_build"
+prepare_run
+second_run_dir="$remote_run_dir"
+second_helper="$remote_helper"
+second_build="$remote_build"
 first_output="${temp_dir}/first-session.log"
 second_output="${temp_dir}/second-session.log"
 first_fifo="${temp_dir}/first-session.in"
 second_fifo="${temp_dir}/second-session.in"
-remote_helpers+=("$first_helper" "$second_helper")
+tmp_before_concurrent="$(tmp_entries)"
 mkfifo "$first_fifo" "$second_fifo"
-cp "$session_script" "$first_helper"
-cp "$session_script" "$second_helper"
-chmod 700 "$first_helper" "$second_helper"
 env -i \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
-	QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
+	QA_SESSION_TELEGRAM_BIN="$first_build" \
 	QA_TEST_DISPLAY_NUMBER=101 \
 	QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-first.state" \
 	QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/first-session-bus" \
@@ -462,11 +616,41 @@ env -i \
 first_helper_pid=$!
 exec 7>"$first_fifo"
 wait_for_ready "$first_helper_pid" "$first_output" || fail 'The first concurrent session did not become ready.'
+same_dir_output="${temp_dir}/same-directory-session.log"
+same_dir_xauthority="$(<"$first_run_dir/Xauthority")"
+if (
+	cd -- "$first_run_dir"
+	exec env -i \
+		QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
+		QA_SESSION_GROUP=seed \
+		QA_SESSION_PADDING="$padding" \
+		QA_SESSION_TEST_RUN_ID="$run_id" \
+		QA_SESSION_TELEGRAM_BIN="$first_build" \
+		QA_TEST_DISPLAY_NUMBER=103 \
+		QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-same-directory.state" \
+		QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/same-directory-session-bus" \
+		PATH="$stub_bin:$system_path" \
+		HOME="$temp_dir" \
+		bash qa-linux-desktop-session.sh serve < /dev/null
+) > "$same_dir_output" 2>&1; then
+	cat "$same_dir_output" >&2
+	fail 'A second session should not start in a run directory already owned by a live session.'
+fi
+grep -Fq "QA run directory is already in use or contains session data: $first_run_dir" "$same_dir_output" || {
+	cat "$same_dir_output" >&2
+	fail 'A second session should report that the live run directory is already in use.'
+}
+[[ -x "$first_helper" && -x "$first_build" && -d "$first_run_dir/profile" ]] || fail 'A rejected same-directory session should preserve the live session files.'
+[[ -f "$first_run_dir/Xauthority" && "$(<"$first_run_dir/Xauthority")" == "$same_dir_xauthority" ]] || fail 'A rejected same-directory session should preserve the live Xauthority file.'
+first_live_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$first_output" | head -n 1)"
+[[ -n "$first_live_telegram_pid" ]] || fail 'The first session should report its Telegram PID before a same-directory attempt.'
+is_running "$first_live_telegram_pid" || fail 'The first Telegram process should remain alive after a same-directory rejection.'
 env -i \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
-	QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
+	QA_SESSION_TELEGRAM_BIN="$second_build" \
 	QA_TEST_DISPLAY_NUMBER=102 \
 	QA_TEST_XDOTOOL_STATE="${temp_dir}/xdotool-second.state" \
 	QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/second-session-bus" \
@@ -476,6 +660,7 @@ env -i \
 second_helper_pid=$!
 exec 8>"$second_fifo"
 wait_for_ready "$second_helper_pid" "$second_output" || fail 'The second concurrent session did not become ready.'
+assert_no_new_tmp_entries "$tmp_before_concurrent"
 first_session="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$first_output" | head -n 1)"
 first_display="$(sed -n 's/^SESSION=[^ ]* DISPLAY=\([^ ]*\).*/\1/p' "$first_output" | head -n 1)"
 first_profile="$(sed -n 's/^SESSION=[^ ]* DISPLAY=[^ ]* PROFILE=\([^ ]*\).*/\1/p' "$first_output" | head -n 1)"
@@ -484,17 +669,21 @@ second_session="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$second_output" | head -
 second_display="$(sed -n 's/^SESSION=[^ ]* DISPLAY=\([^ ]*\).*/\1/p' "$second_output" | head -n 1)"
 second_profile="$(sed -n 's/^SESSION=[^ ]* DISPLAY=[^ ]* PROFILE=\([^ ]*\).*/\1/p' "$second_output" | head -n 1)"
 second_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$second_output" | head -n 1)"
-first_session_dir="/tmp/$first_session"
-second_session_dir="/tmp/$second_session"
-session_dirs+=("$first_session_dir" "$second_session_dir")
+first_session_dir="$first_run_dir"
+second_session_dir="$second_run_dir"
+[[ "$first_session" == "${first_run_dir##*/}" && "$second_session" == "${second_run_dir##*/}" ]] || fail 'Concurrent sessions should report their per-run directories.'
+[[ "$first_profile" == "$first_run_dir/profile" && "$second_profile" == "$second_run_dir/profile" ]] || fail 'Concurrent profiles should live in their own per-run directories.'
 first_xauthority="$first_session_dir/Xauthority"
 second_xauthority="$second_session_dir/Xauthority"
 [[ "$first_display" == :101 && "$second_display" == :102 && "$first_display" != "$second_display" ]] || fail 'Concurrent sessions should receive distinct displays.'
 [[ -n "$first_profile" && -n "$second_profile" && "$first_profile" != "$second_profile" ]] || fail 'Concurrent sessions should receive distinct profiles.'
 [[ -f "$first_xauthority" && -f "$second_xauthority" && "$first_xauthority" != "$second_xauthority" ]] || fail 'Concurrent sessions should receive distinct Xauthority files.'
 [[ "$(stat -c '%a' "$first_xauthority")" == 600 && "$(stat -c '%a' "$second_xauthority")" == 600 ]] || fail 'Concurrent session Xauthority files should be private.'
+[[ "$(<"$first_xauthority")" != "$(<"$second_xauthority")" ]] || fail 'Concurrent sessions should receive fresh Xauthority cookies.'
 [[ -n "$first_telegram_pid" && -n "$second_telegram_pid" ]] || fail 'Concurrent sessions should report their Telegram PIDs.'
 is_running "$first_telegram_pid" && is_running "$second_telegram_pid" || fail 'Both concurrent Telegram stubs should be running.'
+grep -qzFx -- "TMPDIR=$first_run_dir/tmp" "/proc/$first_telegram_pid/environ" || fail 'The first Telegram process should receive its private TMPDIR.'
+grep -qzFx -- "TMPDIR=$second_run_dir/tmp" "/proc/$second_telegram_pid/environ" || fail 'The second Telegram process should receive its private TMPDIR.'
 printf 'stop\n' >&7
 if wait "$first_helper_pid"; then
 	first_helper_pid=
@@ -505,6 +694,7 @@ fi
 exec 7>&-
 grep -Fq "CLEANUP_COMPLETE=$first_session" "$first_output" || fail 'The first session should report successful cleanup.'
 [[ ! -e "$first_session_dir" ]] || fail 'The first session tree should be removed after stop.'
+[[ ! -e "$first_helper" && ! -e "$first_build" ]] || fail 'The first run helper and build should be removed after stop.'
 is_running "$first_telegram_pid" && fail 'The first Telegram process should stop with its session.'
 is_running "$second_telegram_pid" || fail 'Stopping the first session should leave the second Telegram process alive.'
 printf 'stop\n' >&8
@@ -517,19 +707,24 @@ fi
 exec 8>&-
 grep -Fq "CLEANUP_COMPLETE=$second_session" "$second_output" || fail 'The second session should report successful cleanup.'
 [[ ! -e "$second_session_dir" ]] || fail 'The second session tree should be removed after stop.'
+[[ ! -e "$second_helper" && ! -e "$second_build" ]] || fail 'The second run helper and build should be removed after stop.'
 is_running "$second_telegram_pid" && fail 'The second Telegram process should stop with its session.'
 [[ -z "$(tagged_processes)" ]] || fail 'A stubbed QA process remains after concurrent session cleanup.'
 
 hup_output="${temp_dir}/hup.log"
 hup_fifo="${temp_dir}/hup.in"
+prepare_run
+hup_run_dir="$remote_run_dir"
+hup_helper="$remote_helper"
+hup_build="$remote_build"
+hup_tmp_before="$(tmp_entries)"
 mkfifo "$hup_fifo"
-cp "$session_script" "$remote_helper"
-chmod 700 "$remote_helper"
 env -i \
+	QA_SESSION_TEST_RUNS_ROOT="$test_runs_root" \
 	QA_SESSION_GROUP=seed \
 	QA_SESSION_PADDING="$padding" \
 	QA_SESSION_TEST_RUN_ID="$run_id" \
-	QA_SESSION_TELEGRAM_BIN="$stub_bin/Telegram" \
+	QA_SESSION_TELEGRAM_BIN="$hup_build" \
 	QA_TEST_SLOW_TELEGRAM_TERM=1 \
 	QA_TEST_DBUS_ADDRESS="unix:path=${temp_dir}/session-bus" \
 	PATH="$stub_bin:$system_path" \
@@ -538,14 +733,15 @@ env -i \
 hup_pid=$!
 exec 9>"$hup_fifo"
 wait_for_ready "$hup_pid" "$hup_output" || fail 'The session should remain ready before the HUP test.'
+assert_no_new_tmp_entries "$hup_tmp_before"
 hup_dir="$(sed -n 's/^SESSION=\([^ ]*\).*/\1/p' "$hup_output" | head -n 1)"
 hup_telegram_pid="$(sed -n 's/.* TELEGRAM_PID=\([0-9][0-9]*\) .*/\1/p' "$hup_output" | head -n 1)"
 [[ -n "$hup_dir" ]] || {
 	cat "$hup_output" >&2
 	fail 'The HUP test session should report its directory.'
 }
-hup_session_dir="/tmp/$hup_dir"
-session_dirs+=("$hup_session_dir")
+hup_session_dir="$hup_run_dir"
+[[ "$hup_dir" == "${hup_session_dir##*/}" ]] || fail 'The HUP session should report its per-run directory.'
 [[ -n "$hup_telegram_pid" ]] || {
 	cat "$hup_output" >&2
 	fail 'The HUP test session should report its Telegram PID.'
@@ -571,8 +767,7 @@ exec 9>&-
 	cat "$hup_output" >&2
 	fail "The HUP handler should preserve exit status 129, got $hup_status."
 }
-[[ ! -e "$hup_session_dir" ]] || fail 'Successful HUP teardown should remove the session tree.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after HUP cleanup.'
+[[ ! -e "$hup_session_dir" && ! -e "$hup_helper" && ! -e "$hup_build" ]] || fail 'HUP cleanup should remove the full per-run directory.'
 for _ in {1..20}; do
 	is_running "$hup_telegram_pid" || break
 	sleep 0.05
@@ -589,16 +784,15 @@ if run_helper orphan-openbox "$orphan_output"; then
 	cat "$orphan_output" >&2
 	fail 'A process group without a discovered leader should make cleanup fail.'
 fi
-orphan_session_dir="$(/usr/bin/grep -oE '/tmp/teagram-qa-session\.[[:alnum:]]{8}' "$orphan_output" | head -n 1 || true)"
+orphan_session_dir="$remote_run_dir"
 [[ -n "$orphan_session_dir" ]] || {
 	cat "$orphan_output" >&2
 	fail 'The failed untracked group should identify its retained session directory.'
 }
-session_dirs+=("$orphan_session_dir")
 grep -Fq 'Could not discover the openbox process group leader' "$orphan_output" || fail 'The orphan test should skip leader discovery deterministically.'
 grep -Fq 'Found an untracked openbox process' "$orphan_output" || fail 'Cleanup should report an undiscovered marked process.'
 [[ -d "$orphan_session_dir" ]] || fail 'Cleanup should retain session data when a marked process is untracked.'
 ! grep -Fq 'CLEANUP_COMPLETE=' "$orphan_output" || fail 'Cleanup must not report success with an untracked process.'
-[[ ! -e "$remote_helper" ]] || fail 'The uploaded helper remains after untracked-group failure.'
+[[ -f "$remote_helper" && -x "$remote_build" ]] || fail 'Cleanup should retain the helper and build when process cleanup fails.'
 
 printf 'QA desktop session lifecycle tests passed.\n'

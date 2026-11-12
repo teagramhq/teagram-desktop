@@ -36,6 +36,23 @@ namespace internal {
 
 }
 
+enum class PublicDiscoveryAddressRole {
+	Mtproto,
+	WebSocket,
+};
+
+enum class PublicDiscoveryAddressResolution {
+	Rejected,
+	NeedsWebSocket,
+	Resolved,
+};
+
+[[nodiscard]] PublicDiscoveryAddressResolution
+ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
+								MTP::ServerDiscoveryResult &result,
+								PublicDiscoveryAddressRole role,
+								const QList<QHostAddress> &addresses);
+
 class ServerDiscoveryFlow final {
 public:
 	struct Callbacks {

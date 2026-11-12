@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_row.h"
 
+#include <utility>
+
 class PeerData;
 namespace Dialogs {
 
@@ -24,8 +26,11 @@ public:
 	~List() = default;
 
 	void clear() {
+		_freezeDepth = 0;
 		_frozen = false;
 		_pendingAdjust.clear();
+		_addedWhileFrozen.clear();
+		_pendingMoveFrom.clear();
 		_rows.clear();
 		_rowByKey.clear();
 	}
@@ -51,11 +56,12 @@ public:
 
 	not_null<Row*> addToEnd(Key key);
 	Row *adjustByName(Key key);
-	not_null<Row*> addByName(Key key);
+	std::pair<not_null<Row *>, bool> addByName(Key key);
 	bool moveToTop(Key key);
 	void adjustByDate(not_null<Row*> row);
 	void freeze();
-	void unfreeze();
+	using MovedRow = std::pair<not_null<Row *>, PositionChange>;
+	std::vector<MovedRow> unfreeze();
 	bool updateHeight(Key key, float64 narrowRatio);
 	bool updateHeights(float64 narrowRatio);
 	bool remove(Key key, Row *replacedBy = nullptr);
@@ -67,6 +73,9 @@ public:
 	[[nodiscard]] const_iterator cend() const { return _rows.cend(); }
 	[[nodiscard]] const_iterator begin() const { return cbegin(); }
 	[[nodiscard]] const_iterator end() const { return cend(); }
+	[[nodiscard]] const std::vector<not_null<Row *>> &rows() const {
+		return _rows;
+	}
 	[[nodiscard]] iterator begin() { return cbegin(); }
 	[[nodiscard]] iterator end() { return cend(); }
 	[[nodiscard]] const_iterator cfind(Row *value) const;
@@ -79,7 +88,6 @@ public:
 private:
 	void adjustByName(not_null<Row*> row);
 	[[nodiscard]] bool sortedByDate() const;
-	void sortByDate();
 	void rotate(
 		std::vector<not_null<Row*>>::iterator first,
 		std::vector<not_null<Row*>>::iterator middle,
@@ -88,11 +96,13 @@ private:
 	SortMode _sortMode = SortMode();
 	FilterId _filterId = 0;
 	float64 _narrowRatio = 0.;
+	int _freezeDepth = 0;
 	bool _frozen = false;
 	std::vector<not_null<Row*>> _rows;
 	std::map<Key, std::unique_ptr<Row>> _rowByKey;
 	base::flat_set<not_null<Row*>> _pendingAdjust;
-
+	base::flat_set<not_null<Row *>> _addedWhileFrozen;
+	std::map<Row *, int> _pendingMoveFrom;
 };
 
 } // namespace Dialogs

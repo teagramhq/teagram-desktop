@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/file_utilities.h"
 
+#include "core/url_scheme_policy.h"
 #include "core/mac_protected_path_access.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/version.h"
@@ -19,12 +20,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/delayed_activation.h"
 #include "ui/chat/attach/attach_extensions.h"
 #include "main/main_session.h"
+#include "lang/lang_keys.h"
+#include "main/main_account.h"
+#include "main/main_app_config.h"
+#include "main/main_domain.h"
+#include "ui/toast/toast.h"
 #include "mainwindow.h"
+#include "logs.h"
 
 #include <QtWidgets/QFileDialog>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QStandardPaths>
 #include <QtGui/QDesktopServices>
+#include <QtWidgets/QApplication>
 
 bool filedialogGetSaveFile(
 		QPointer<QWidget> parent,
@@ -164,10 +172,32 @@ QString filedialogNextFilename(
 
 namespace File {
 
-void OpenUrl(const QString &url) {
+bool IsUrlSchemeAllowed(const QString &scheme, const Main::Session *origin) {
+	if (internal::IsDefaultUrlSchemeAllowed(scheme)) {
+		return true;
+	}
+	if (!origin || internal::IsUrlSchemeForbiddenForCustomAllowlist(scheme)) {
+		return false;
+	}
+	const auto protocols
+		= origin->account().appConfig().get<std::vector<QString>>(
+			"web_app_allowed_protocols", {});
+	return internal::IsCustomUrlSchemeAllowed(scheme, protocols);
+}
+
+void ShowUnsupportedUrl() {
+	const auto text = tr::lng_open_link_unsupported(tr::now);
+	if (const auto parent = QApplication::activeWindow()) {
+		Ui::Toast::Show(parent, text);
+	} else {
+		Ui::Toast::Show(text);
+	}
+}
+
+void OpenUrl(const QString &url, bool customSchemeApproved) {
 	crl::on_main([=] {
 		Ui::PreventDelayedActivation();
-		Platform::File::UnsafeOpenUrl(url);
+		Platform::File::UnsafeOpenUrl(url, customSchemeApproved);
 	});
 }
 
@@ -227,8 +257,15 @@ QString DefaultDownloadPath(not_null<Main::Session*> session) {
 
 namespace internal {
 
-void UnsafeOpenUrlDefault(const QString &url) {
-	QDesktopServices::openUrl(url);
+void UnsafeOpenUrlDefault(const QString &url, bool customSchemeApproved) {
+	const auto parsed = QUrl(url);
+	if (!parsed.isValid() || parsed.isLocalFile()
+		|| !IsUrlSchemeAllowedForOpen(parsed.scheme(), customSchemeApproved)) {
+		LOG(("URL Error: refused scheme %1.").arg(parsed.scheme()));
+		ShowUnsupportedUrl();
+		return;
+	}
+	QDesktopServices::openUrl(parsed);
 }
 
 void UnsafeOpenEmailLinkDefault(const QString &email) {

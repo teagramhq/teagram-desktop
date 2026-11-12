@@ -3261,7 +3261,53 @@ void InnerWidget::dialogRowReplaced(
 	}
 }
 
+void InnerWidget::handleChatListEntryMoveBatches() {
+	using Event = Data::Session::ChatListEntryRefresh;
+	const auto shouldMoveDialog = [=](const Event &event) {
+		const auto &key = event.key;
+		const auto entry = key.entry();
+		return (event.filterId == _filterId) && (_state == WidgetState::Default)
+			   && (key.topic()	   ? (key.topic()->forum() == _openedForum)
+				   : key.sublist() ? (key.sublist()->parent() == _savedSublists)
+				   : communityModeShown()
+					   ? (entry->asHistory()
+						  && entry->asHistory()->communityListInfo()
+								 == _openedCommunity)
+				   : _openedForum
+					   ? false
+					   : (entry->folder() == _openedFolder
+						  && !(entry->asHistory()
+							   && entry->asHistory()->communityListInfo()
+							   && entry->asHistory()
+									  ->communityListInfo()
+									  ->collapsedInDialogs())));
+	};
+	session().data().chatListEntryMoveBatches()
+		| rpl::on_next(
+			[=](const auto &events) {
+				if (_dragging) {
+					return;
+				}
+				auto moves = std::vector<PositionChange>();
+				const auto offset = dialogsOffset();
+				for (const auto &event : events) {
+					if ((event.moved.from != event.moved.to)
+						&& shouldMoveDialog(event)) {
+						auto moved = event.moved;
+						moved.from += offset;
+						moved.to += offset;
+						moves.push_back(moved);
+					}
+				}
+				if (!moves.empty()) {
+					_dialogMoved.fire(std::move(moves));
+				}
+			},
+			lifetime());
+}
+
 void InnerWidget::handleChatListEntryRefreshes() {
+	handleChatListEntryMoveBatches();
 	using Event = Data::Session::ChatListEntryRefresh;
 	session().data().chatListEntryRefreshes(
 	) | rpl::filter([=](const Event &event) {
@@ -3290,28 +3336,6 @@ void InnerWidget::handleChatListEntryRefreshes() {
 		const auto to = offset + event.moved.to;
 		const auto &key = event.key;
 		const auto entry = key.entry();
-
-		// Don't jump in chats list scroll position while dragging.
-		if (!_dragging
-			&& (from != to)
-			&& (_state == WidgetState::Default)
-			&& (key.topic()
-				? (key.topic()->forum() == _openedForum)
-				: key.sublist()
-				? (key.sublist()->parent() == _savedSublists)
-				: communityModeShown()
-				? (entry->asHistory()
-					&& entry->asHistory()->communityListInfo()
-						== _openedCommunity)
-				: _openedForum
-				? false
-				: (entry->folder() == _openedFolder
-					&& !(entry->asHistory()
-						&& entry->asHistory()->communityListInfo()
-						&& entry->asHistory()->communityListInfo()
-							->collapsedInDialogs())))) {
-			_dialogMoved.fire({ from, to });
-		}
 
 		if (event.existenceChanged) {
 			if (!entry->inChatList()) {
@@ -4262,12 +4286,25 @@ void InnerWidget::onHashtagFilterUpdate(QStringView newFilter) {
 }
 
 void InnerWidget::refreshFilterResults() {
+	_filterIndexLifetime = rpl::lifetime();
 	const auto mentionsSearch = (_filter == u"@"_q);
 	const auto words = mentionsSearch
 		? QStringList(_filter)
 		: TextUtilities::PrepareSearchWords(_filter);
 	_filterResults.clear();
-	const auto append = [&](not_null<IndexedList*> list) {
+	const auto append = [&](not_null<IndexedList *> list) {
+		if (!list->searchIndexReady()) {
+			list->searchIndexReadyChanges()
+				| rpl::on_next(
+					[=] {
+						if (_state == WidgetState::Filtered
+							&& !_filter.isEmpty()) {
+							refreshFilterResults();
+							refresh(true);
+						}
+					},
+					_filterIndexLifetime);
+		}
 		const auto results = list->filtered(words);
 		auto top = filteredHeight();
 		auto i = _filterResults.insert(
@@ -4529,7 +4566,7 @@ rpl::producer<Ui::ScrollToRequest> InnerWidget::mustScrollTo() const {
 	return _mustScrollTo.events();
 }
 
-rpl::producer<Ui::ScrollToRequest> InnerWidget::dialogMoved() const {
+rpl::producer<std::vector<PositionChange>> InnerWidget::dialogMoved() const {
 	return _dialogMoved.events();
 }
 

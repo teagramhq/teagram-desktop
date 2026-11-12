@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_document.h"
 
+#include "data/data_document_download_policy.h"
 #include "data/data_document_resolver.h"
 #include "data/data_session.h"
 #include "data/data_streaming.h"
@@ -41,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "lottie/lottie_animation.h"
 #include "boxes/abstract_box.h" // Ui::hideLayer().
+#include "logs.h"
 
 #include <QtCore/QBuffer>
 #include <QtCore/QMimeType>
@@ -1309,6 +1311,18 @@ void DocumentData::save(
 			_loader->permitLoadFromCloud();
 		}
 	} else {
+		switch (Data::details::DecideDocumentDownload(
+			size, !toFile.isEmpty(), Storage::kMaxFileInMemory)) {
+		case Data::details::DocumentDownloadDecision::Fail:
+			LOG(("API Error: Bad document size %1.").arg(size));
+			status = FileDownloadFailed;
+			_owner->documentLoadFail(this, false);
+			return;
+		case Data::details::DocumentDownloadDecision::Cache:
+			return;
+		case Data::details::DocumentDownloadDecision::Stream:
+			break;
+		}
 		status = FileReady;
 		auto reader = owner().streaming().sharedReader(this, origin, true);
 		if (reader) {

@@ -40,6 +40,7 @@ struct CustomServer {
 	ServerDiscoveryPolicy discoveryPolicy = ServerDiscoveryPolicy::Legacy;
 	std::string discoveryOrigin;
 	std::string webSocketEndpoint;
+	bool webSocketOnly = false;
 
 	[[nodiscard]] bool empty() const {
 		return !key;

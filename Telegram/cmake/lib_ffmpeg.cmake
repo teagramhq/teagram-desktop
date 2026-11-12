@@ -13,6 +13,8 @@ PRIVATE
     ffmpeg/ffmpeg_frame_generator.cpp
     ffmpeg/ffmpeg_frame_generator.h
     ffmpeg/ffmpeg_bytes_io_wrap.h
+    ffmpeg/ffmpeg_frame_storage.cpp
+    ffmpeg/ffmpeg_frame_storage.h
     ffmpeg/ffmpeg_utility.cpp
     ffmpeg/ffmpeg_utility.h
 )
@@ -28,6 +30,13 @@ PUBLIC
     desktop-app::lib_ui
     desktop-app::external_ffmpeg
 )
+
+if (APPLE AND NOT DESKTOP_APP_USE_PACKAGED)
+    target_link_libraries(lib_ffmpeg
+    PUBLIC
+        ${libs_loc}/local/lib/libdav1d.a
+    )
+endif()
 
 if (DESKTOP_APP_SPECIAL_TARGET)
     target_compile_definitions(lib_ffmpeg PRIVATE LIB_FFMPEG_USE_QT_PRIVATE_API)

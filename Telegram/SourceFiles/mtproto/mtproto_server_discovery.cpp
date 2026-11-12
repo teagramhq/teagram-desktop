@@ -902,6 +902,12 @@ bool IsPublicDiscoveryEndpoint(
 		&& endpoint.policy == ServerDiscoveryPolicy::PublicHttps;
 }
 
+bool IsPublicMtprotoDiscoveryEndpoint(const ServerSelectionCheck &endpoint,
+									  const ServerSelectionCheck &origin) {
+	return IsPublicDiscoveryEndpoint(endpoint, origin)
+		   && (IsMagicDnsSelection(origin) || !IsMagicDnsSelection(endpoint));
+}
+
 std::optional<QString>
 NormalizePublicWebSocketEndpoint(const QString &endpoint,
 								 const ServerSelectionCheck &origin) {
@@ -1007,14 +1013,6 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 
 	const auto endpoint = mtproto.value(u"endpoint"_q).toString();
 	const auto endpointCheck = CheckServerSelection(endpoint);
-	if (!IsPublicDiscoveryEndpoint(endpointCheck, selection)) {
-		return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
-	}
-	if (selection.explicitPort
-		&& endpointCheck.normalizedSelection
-			!= selection.normalizedSelection) {
-		return Invalid(ServerDiscoveryResponseStatus::EndpointMismatch);
-	}
 	auto webSocketEndpoint = QString();
 	auto browserOnly = false;
 	if (root.contains(u"websocket"_q)) {
@@ -1042,6 +1040,19 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 			browserOnly = browserOnlyValue.toBool();
 		}
 	}
+	const auto endpointAllowed
+		= IsPublicMtprotoDiscoveryEndpoint(endpointCheck, selection);
+	const auto webSocketOnly = !endpointAllowed;
+	if (webSocketOnly
+		&& (webSocketEndpoint.isEmpty() || !endpointCheck.valid()
+			|| !endpointCheck.explicitPort
+			|| endpointCheck.operationalPort == 80)) {
+		return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
+	}
+	if (selection.explicitPort
+		&& endpointCheck.normalizedSelection != selection.normalizedSelection) {
+		return Invalid(ServerDiscoveryResponseStatus::EndpointMismatch);
+	}
 
 	const auto encoded = mtproto.value(u"rsa_spki"_q).toString().toLatin1();
 	if (encoded.isEmpty()) {
@@ -1063,6 +1074,7 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		.status = ServerDiscoveryResponseStatus::Valid,
 		.endpoint = endpointCheck.normalizedSelection,
 		.webSocketEndpoint = webSocketEndpoint,
+		.webSocketOnly = webSocketOnly,
 		.dcId = int(dcIdValue),
 		.key = *key,
 		.policy = selection.policy,

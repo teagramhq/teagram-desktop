@@ -506,15 +506,16 @@ Widget::Widget(
 			_scroll->scrollToY(data.ymin, data.ymax);
 		}
 	}, lifetime());
-	_inner->dialogMoved(
-	) | rpl::on_next([=](const Ui::ScrollToRequest &data) {
-		const auto movedFrom = data.ymin;
-		const auto movedTo = data.ymax;
-		const auto st = _scroll->scrollTop();
-		if (st > movedTo && st < movedFrom) {
-			_scroll->scrollToY(st + _inner->st()->height);
-		}
-	}, lifetime());
+	_inner->dialogMoved()
+		| rpl::on_next(
+			[=](const std::vector<PositionChange> &moves) {
+				const auto st = _scroll->scrollTop();
+				const auto adjusted = scrollTopAfterMoves(st, moves);
+				if (adjusted != st) {
+					_scroll->scrollToY(adjusted);
+				}
+			},
+			lifetime());
 	_inner->searchRequests(
 	) | rpl::on_next([=](SearchRequestDelay delay) {
 		searchRequested(delay);

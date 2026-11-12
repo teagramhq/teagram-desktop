@@ -11,6 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDebug>
 #endif // _DEBUG
 
+#include <algorithm>
+#include <vector>
+
 namespace style {
 struct DialogRightButton;
 } // namespace style
@@ -34,6 +37,26 @@ struct PositionChange {
 	int to = -1;
 	int height = 0;
 };
+
+[[nodiscard]] inline int
+scrollTopAfterMoves(int scrollTop, const std::vector<PositionChange> &moves) {
+	auto result = scrollTop;
+	for (const auto &move : moves) {
+		if (move.from + move.height <= scrollTop) {
+			result -= move.height;
+		}
+	}
+	auto ordered = moves;
+	std::sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b) {
+		return (a.to != b.to) ? (a.to < b.to) : (a.from < b.from);
+	});
+	for (const auto &move : ordered) {
+		if (move.to <= result) {
+			result += move.height;
+		}
+	}
+	return result;
+}
 
 struct UnreadState {
 	int messages = 0;

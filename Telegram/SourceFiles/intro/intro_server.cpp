@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_intro.h"
 
 #include <QtCore/QTimer>
+#include <QtCore/QUrl>
 #include <QtGui/QAccessible>
 #include <QtGui/QColor>
 #include <QtNetwork/QNetworkAccessManager>
@@ -782,9 +783,13 @@ void ServerWidget::discoveryFinished(MTP::ServerDiscoveryResult result) {
 void ServerWidget::resolvePublicEndpoint(
 		MTP::ServerDiscoveryResult result) {
 	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
-	if (!MTP::IsPublicDiscoveryEndpoint(endpoint, _selection)) {
-		LOG(("Server discovery endpoint is not public."));
-		discoveryFailed(false);
+	if (!MTP::IsPublicMtprotoDiscoveryEndpoint(endpoint, _selection)) {
+		if (result.webSocketOnly) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			LOG(("Server discovery endpoint is not public."));
+			discoveryFailed(false);
+		}
 		return;
 	}
 	auto address = QHostAddress();
@@ -816,7 +821,11 @@ void ServerWidget::resolvePublicEndpoint(
 			publicEndpointResolved(result, info);
 		});
 	if (_hostLookupId < 0) {
-		discoveryFailed(true);
+		if (result.webSocketOnly) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			discoveryFailed(true);
+		}
 	}
 }
 
@@ -827,23 +836,98 @@ void ServerWidget::publicEndpointResolved(
 		return;
 	}
 	if (info.error() != QHostInfo::NoError) {
-		discoveryFailed(true);
+		if (Intro::details::ResolvePublicDiscoveryAddresses(
+				_selection, result,
+				Intro::details::PublicDiscoveryAddressRole::Mtproto, {})
+			== Intro::details::PublicDiscoveryAddressResolution::
+				NeedsWebSocket) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			discoveryFailed(true);
+		}
 		return;
 	}
-	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
-	if (!MTP::IsPublicDiscoveryEndpoint(endpoint, _selection)
-		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps) {
-		discoveryFailed(false);
-		return;
-	}
-	if (const auto address = MTP::FirstSafePublicDiscoveryAddress(
-			_selection,
-			info.addresses())) {
-		result.resolvedAddress = address->toString();
+	const auto resolution = Intro::details::ResolvePublicDiscoveryAddresses(
+		_selection, result, Intro::details::PublicDiscoveryAddressRole::Mtproto,
+		info.addresses());
+	if (resolution
+		== Intro::details::PublicDiscoveryAddressResolution::Resolved) {
 		commitBinding(std::move(result));
 		return;
 	}
+	if (resolution
+		== Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket) {
+		resolvePublicWebSocketEndpoint(std::move(result));
+		return;
+	}
 	LOG(("Server discovery found no public address for the endpoint."));
+	discoveryFailed(false);
+}
+
+void ServerWidget::resolvePublicWebSocketEndpoint(
+	MTP::ServerDiscoveryResult result) {
+	if (!_connecting) {
+		return;
+	}
+	const auto normalized = MTP::NormalizePublicWebSocketEndpoint(
+		result.webSocketEndpoint, _selection);
+	if (!result.webSocketOnly
+		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps
+		|| !normalized || *normalized != result.webSocketEndpoint) {
+		discoveryFailed(false);
+		return;
+	}
+	const auto url = QUrl(result.webSocketEndpoint, QUrl::StrictMode);
+	auto address = QHostAddress();
+	if (address.setAddress(url.host())) {
+		if (Intro::details::ResolvePublicDiscoveryAddresses(
+				_selection, result,
+				Intro::details::PublicDiscoveryAddressRole::WebSocket,
+				{address})
+			!= Intro::details::PublicDiscoveryAddressResolution::Resolved) {
+			discoveryFailed(false);
+			return;
+		}
+		_deadline->stop();
+		commitBinding(std::move(result));
+		return;
+	}
+
+	_deadline->start(kDiscoveryTimeout);
+	const auto attempt = _attempt;
+	_hostLookupId
+		= QHostInfo::lookupHost(url.host(), this, [=](const QHostInfo &info) {
+			  if (!_connecting || _attempt != attempt) {
+				  return;
+			  }
+			  _hostLookupId = -1;
+			  publicWebSocketEndpointResolved(result, info);
+		  });
+	if (_hostLookupId < 0) {
+		discoveryFailed(true);
+	}
+}
+
+void ServerWidget::publicWebSocketEndpointResolved(
+	MTP::ServerDiscoveryResult result, const QHostInfo &info) {
+	if (!_connecting) {
+		return;
+	}
+	if (info.error() != QHostInfo::NoError) {
+		discoveryFailed(true);
+		return;
+	}
+	if (Intro::details::ResolvePublicDiscoveryAddresses(
+			_selection, result,
+			Intro::details::PublicDiscoveryAddressRole::WebSocket,
+			info.addresses())
+		== Intro::details::PublicDiscoveryAddressResolution::Resolved) {
+		_deadline->stop();
+		commitBinding(std::move(result));
+		return;
+	}
+	LOG(("Server discovery found no public address for the WebSocket "
+		 "endpoint."));
 	discoveryFailed(false);
 }
 

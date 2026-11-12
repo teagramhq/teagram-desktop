@@ -629,6 +629,8 @@ PRIVATE
     core/external_control.h
     core/file_utilities.cpp
     core/file_utilities.h
+    core/url_scheme_policy.cpp
+    core/url_scheme_policy.h
     core/hash_sha.cpp
     core/hash_md5.cpp
     core/launcher.cpp
@@ -747,6 +749,7 @@ PRIVATE
     data/data_community.h
     data/data_document.cpp
     data/data_document.h
+    data/data_document_download_policy.h
     data/data_document_media.cpp
     data/data_document_media.h
     data/data_document_resolver.cpp

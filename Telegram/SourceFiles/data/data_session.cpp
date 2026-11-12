@@ -107,6 +107,11 @@ namespace {
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
 constexpr auto kMaxServiceNotificationMessageSize = 4096;
 
+// The contact name index is built when no contact was added for this long,
+// a few rows at a time.
+constexpr auto kContactsIndexDelay = crl::time(100);
+constexpr auto kContactsIndexChunk = 100;
+
 using ViewElement = HistoryView::Element;
 
 // s: box 100x100
@@ -250,8 +255,11 @@ Session::Session(not_null<Main::Session *> session)
 				return limits.groupTranscribeLevelMin();
 			})),
 	  _chatsList(session, FilterId(), maxPinnedChatsLimitValue(nullptr)),
-	  _contactsList(Dialogs::SortMode::Name),
-	  _contactsNoChatsList(Dialogs::SortMode::Name),
+	  _contactsList(Dialogs::SortMode::Name, 0,
+					Dialogs::IndexedList::PrefixSearch::Enabled),
+	  _contactsNoChatsList(Dialogs::SortMode::Name, 0,
+						   Dialogs::IndexedList::PrefixSearch::Enabled),
+	  _contactsIndexTimer([=] { indexContacts(); }),
 	  _ttlCheckTimer([=] { checkTTLs(); }),
 	  _formattedDateTimer([=] { checkFormattedDateUpdates(); }),
 	  _selfDestructTimer([=] { checkSelfDestructItems(); }),
@@ -652,6 +660,7 @@ void Session::clear() {
 	_sentMessagesData.clear();
 	cSetRecentStickers(RecentStickerPack());
 	HistoryView::Element::ClearGlobal();
+	_contactsIndexTimer.cancel();
 	_contactsNoChatsList.clear();
 	_contactsList.clear();
 	for (const auto &[id, folder] : _folders) {
@@ -2294,11 +2303,19 @@ void Session::setupUserIsContactViewer() {
 			if (!history->inChatList()) {
 				_contactsNoChatsList.addByName(history);
 			}
+			_contactsIndexTimer.callOnce(kContactsIndexDelay);
 		} else if (const auto history = historyLoaded(user)) {
 			_contactsNoChatsList.remove(history);
 			_contactsList.remove(history);
 		}
 	}, _lifetime);
+}
+
+void Session::indexContacts() {
+	const auto more = _contactsList.indexSome(kContactsIndexChunk);
+	if (_contactsNoChatsList.indexSome(kContactsIndexChunk) || more) {
+		_contactsIndexTimer.callOnce(1);
+	}
 }
 
 Session::~Session() = default;
@@ -3123,6 +3140,61 @@ void Session::applyDialogs(
 		const QVector<MTPMessage> &messages,
 		const QVector<MTPDialog> &dialogs,
 		std::optional<int> count) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
+		const auto indexed = list->indexed();
+		if (!ranges::contains(frozen, indexed)) {
+			indexed->freeze();
+			frozen.push_back(indexed);
+		}
+	};
+	if (dialogs.size() > 1) {
+		for (const auto &dialog : dialogs) {
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto folderId = data.vfolder_id();
+						folderId && folderId->v) {
+						freezeList(folder(folderId->v)->chatsList());
+					}
+				},
+				[&](const MTPDdialogFolder &data) {
+					processFolder(data.vfolder());
+				},
+				[](const MTPDdialogCommunity &) {});
+		}
+		freezeList(&_chatsList);
+		for (const auto &entry : _folders) {
+			freezeList(entry.second->chatsList());
+		}
+		if (requestFolder) {
+			freezeList(requestFolder->chatsList());
+		}
+		for (const auto &filter : chatsFilters().list()) {
+			freezeList(chatsFilters().chatsList(filter.id()));
+		}
+		for (const auto &dialog : dialogs) {
+			dialog.match(
+				[&](const MTPDdialog &data) {
+					if (const auto peerId = peerFromMTP(data.vpeer())) {
+						if (const auto history = historyLoaded(peerId)) {
+							freezeList(chatsListFor(history));
+						}
+					}
+				},
+				[&](const MTPDdialogCommunity &data) {
+					const auto channelId = ChannelId(data.vcommunity_id().v);
+					if (const auto channel = channelLoaded(channelId)) {
+						freezeList(chatsListFor(history(channel)));
+					}
+				},
+				[](const MTPDdialogFolder &) {});
+		}
+	}
+	const auto unfreeze = gsl::finally([&] {
+		for (const auto &list : frozen) {
+			list->unfreeze();
+		}
+	});
 	processMessages(messages, NewMessageType::Last);
 	for (const auto &dialog : dialogs) {
 		dialog.match([&](const auto &data) {
@@ -3407,6 +3479,38 @@ void Session::processMessages(
 			MessageFlags(),
 			type);
 	}
+}
+
+void Session::processMessagesInBatch(const QVector<MTPMessage> &data,
+									 NewMessageType type) {
+	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
+	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
+		const auto indexed = list->indexed();
+		if (!ranges::contains(frozen, indexed)) {
+			indexed->freeze();
+			frozen.push_back(indexed);
+		}
+	};
+	freezeList(&_chatsList);
+	for (const auto &entry : _folders) {
+		freezeList(entry.second->chatsList());
+	}
+	for (const auto &filter : chatsFilters().list()) {
+		freezeList(chatsFilters().chatsList(filter.id()));
+	}
+	for (const auto &message : data) {
+		if (const auto peerId = PeerFromMessage(message)) {
+			if (const auto history = historyLoaded(peerId)) {
+				freezeList(chatsListFor(history));
+			}
+		}
+	}
+	const auto unfreeze = gsl::finally([&] {
+		for (const auto &list : frozen) {
+			list->unfreeze();
+		}
+	});
+	processMessages(data, type);
 }
 
 void Session::processMessages(
@@ -4186,7 +4290,9 @@ void Session::photoApplyFields(
 		}
 		const auto area = [](const MTPVideoSize &size) {
 			return size.match([](const MTPDvideoSize &data) {
-				return data.vsize().v ? (data.vw().v * data.vh().v) : 0;
+				return (data.vsize().v > 0)
+					? (data.vw().v * data.vh().v)
+					: 0;
 			}, [](const MTPDvideoSizeEmojiMarkup &) {
 				return 0;
 			}, [](const MTPDvideoSizeStickerMarkup &) {
@@ -5866,7 +5972,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		event.moved = entry->adjustByPosInChatList(0, mainList);
 	}
 	if (event) {
-		_chatListEntryRefreshes.fire(std::move(event));
+		if (event.moved.from != event.moved.to) {
+			notifyChatListEntryMoves({std::move(event)});
+		} else {
+			_chatListEntryRefreshes.fire(std::move(event));
+		}
 	}
 	if (!history) {
 		return;
@@ -5890,7 +6000,11 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 			event.existenceChanged = true;
 		}
 		if (event) {
-			_chatListEntryRefreshes.fire(std::move(event));
+			if (event.moved.from != event.moved.to) {
+				notifyChatListEntryMoves({std::move(event)});
+			} else {
+				_chatListEntryRefreshes.fire(std::move(event));
+			}
 		}
 	}
 
@@ -5929,6 +6043,17 @@ void Session::refreshChatListUnreadOnTop() {
 	}
 }
 
+void Session::notifyChatListEntryMoves(ChatListEntryMoveBatch moves) {
+	if (moves.empty()) {
+		return;
+	}
+	auto batch = moves;
+	_chatListEntryMoveBatches.fire(std::move(batch));
+	for (auto &event : moves) {
+		_chatListEntryRefreshes.fire(std::move(event));
+	}
+}
+
 void Session::removeChatListEntry(Dialogs::Key key) {
 	using namespace Dialogs;
 
@@ -5958,6 +6083,7 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 	if (_contactsList.contains(key)) {
 		if (!_contactsNoChatsList.contains(key)) {
 			_contactsNoChatsList.addByName(key);
+			_contactsIndexTimer.callOnce(kContactsIndexDelay);
 		}
 	}
 	if (const auto topic = key.topic()) {
@@ -5970,6 +6096,11 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 auto Session::chatListEntryRefreshes() const
 -> rpl::producer<ChatListEntryRefresh> {
 	return _chatListEntryRefreshes.events();
+}
+
+auto Session::chatListEntryMoveBatches() const
+	-> rpl::producer<ChatListEntryMoveBatch> {
+	return _chatListEntryMoveBatches.events();
 }
 
 void Session::dialogsRowReplaced(DialogsRowReplacement replacement) {

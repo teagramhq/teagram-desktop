@@ -130,6 +130,8 @@ Folder::Folder(not_null<Session*> owner, FolderId id)
 	}, _lifetime);
 
 	_chatsList.setAllAreMuted(true);
+	_chatsList.indexed()->unfrozen()
+		| rpl::on_next([=] { reorderLastHistories(); }, _lifetime);
 
 	_chatsList.unreadStateChanges(
 	) | rpl::filter([=] {

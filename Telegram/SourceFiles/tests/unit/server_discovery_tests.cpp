@@ -1596,6 +1596,165 @@ TEST_CASE(DiscoveryJsonRejectsNonWssWebSocketEndpoint) {
 	CHECK(result.status == ServerDiscoveryResponseStatus::UnsafeEndpoint);
 }
 
+TEST_CASE(DiscoveryJsonAllowsPrivateMtprotoEndpointWithPublicWebSocket) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	const auto response = PublicResponseWithWebSocket(
+		u"100.64.1.10:2443"_q, u"wss://transport.example.com/apiws"_q);
+	const auto result = ParsePublicDiscoveryResponse(selection, response);
+	CHECK(result.valid());
+	CHECK_EQ(result.webSocketEndpoint, u"wss://transport.example.com/apiws"_q);
+	CHECK(result.key.valid());
+
+	const auto noWebSocket = ParsePublicDiscoveryResponse(
+		selection, PublicResponse(u"100.64.1.10:2443"_q));
+	CHECK(noWebSocket.status == ServerDiscoveryResponseStatus::UnsafeEndpoint);
+
+	const auto browserOnly = ParsePublicDiscoveryResponse(
+		selection, PublicResponseWithBrowserOnlyWebSocket(
+					   u"100.64.1.10:2443"_q,
+					   u"wss://transport.example.com/apiws"_q, true));
+	CHECK(browserOnly.status == ServerDiscoveryResponseStatus::BrowserOnly);
+
+	const auto unsafeWebSocket = ParsePublicDiscoveryResponse(
+		selection, PublicResponseWithWebSocket(u"100.64.1.10:2443"_q,
+											   u"wss://127.0.0.1/apiws"_q));
+	CHECK(unsafeWebSocket.status
+		  == ServerDiscoveryResponseStatus::UnsafeEndpoint);
+}
+
+TEST_CASE(PrivateMtprotoBindingUsesPublicWebSocketEndpoint) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	auto result = ParsePublicDiscoveryResponse(
+		selection,
+		PublicResponseWithWebSocket(u"100.64.1.10:2443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	if (!result.valid()) {
+		return;
+	}
+	result.resolvedAddress = u"8.8.4.4"_q;
+	const auto server = BuildCustomServerFromDiscovery(selection, result);
+	CHECK(server.has_value());
+	if (!server) {
+		return;
+	}
+	CHECK_EQ(server->hostname, "transport.example.com");
+	CHECK(server->ip.empty());
+	CHECK_EQ(server->port, 443);
+	CHECK(server->webSocketOnly);
+	CHECK_EQ(server->webSocketEndpoint, "wss://transport.example.com/apiws");
+	CHECK(server->key != nullptr);
+	if (server->key) {
+		CHECK_EQ(qint64(server->key->fingerprint()),
+				 qint64(result.key.fingerprint()));
+	}
+
+	auto privateWebSocket = result;
+	privateWebSocket.resolvedAddress = u"100.64.1.10"_q;
+	CHECK(!BuildCustomServerFromDiscovery(selection, privateWebSocket)
+			   .has_value());
+}
+
+TEST_CASE(PublicMtprotoNameStaysTcpFirstWithEmptyOrPrivateDnsAnswers) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	const auto result = ParsePublicDiscoveryResponse(
+		selection,
+		PublicResponseWithWebSocket(u"mtproto.example.com:2443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	if (!result.valid()) {
+		return;
+	}
+	CHECK(!result.webSocketOnly);
+
+	auto emptyAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, emptyAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto, {})
+		  == Intro::details::PublicDiscoveryAddressResolution::Rejected);
+	CHECK(!emptyAnswer.webSocketOnly);
+
+	auto privateAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, privateAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto,
+			  {QHostAddress(u"100.64.1.10"_q)})
+		  == Intro::details::PublicDiscoveryAddressResolution::Rejected);
+	CHECK(!privateAnswer.webSocketOnly);
+	CHECK(privateAnswer.resolvedAddress.isEmpty());
+
+	auto publicAnswer = result;
+	CHECK(Intro::details::ResolvePublicDiscoveryAddresses(
+			  selection, publicAnswer,
+			  Intro::details::PublicDiscoveryAddressRole::Mtproto,
+			  {QHostAddress(u"8.8.4.4"_q)})
+		  == Intro::details::PublicDiscoveryAddressResolution::Resolved);
+	CHECK(!publicAnswer.webSocketOnly);
+	CHECK_EQ(publicAnswer.resolvedAddress, u"8.8.4.4"_q);
+}
+
+TEST_CASE(PublicEnrollmentUsesWssOnlyForTailnetMtprotoName) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	auto result = ParsePublicDiscoveryResponse(
+		selection,
+		PublicResponseWithWebSocket(u"mtproto.tailaa4918.ts.net:2443"_q,
+									u"wss://transport.example.com/apiws"_q));
+	CHECK(result.valid());
+	if (!result.valid()) {
+		return;
+	}
+	CHECK(result.webSocketOnly);
+
+	const auto mtprotoResolution
+		= Intro::details::ResolvePublicDiscoveryAddresses(
+			selection, result,
+			Intro::details::PublicDiscoveryAddressRole::Mtproto, {});
+	CHECK(mtprotoResolution
+		  == Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket);
+	CHECK(result.webSocketOnly);
+	CHECK(result.resolvedAddress.isEmpty());
+	if (mtprotoResolution
+		!= Intro::details::PublicDiscoveryAddressResolution::NeedsWebSocket) {
+		return;
+	}
+
+	const auto webSocketResolution
+		= Intro::details::ResolvePublicDiscoveryAddresses(
+			selection, result,
+			Intro::details::PublicDiscoveryAddressRole::WebSocket,
+			{QHostAddress(u"8.8.4.4"_q)});
+	CHECK(webSocketResolution
+		  == Intro::details::PublicDiscoveryAddressResolution::Resolved);
+	CHECK_EQ(result.resolvedAddress, u"8.8.4.4"_q);
+	const auto server = BuildCustomServerFromDiscovery(selection, result);
+	CHECK(server.has_value());
+	if (!server) {
+		return;
+	}
+	CHECK(server->webSocketOnly);
+	CHECK_EQ(server->hostname, "transport.example.com");
+	CHECK(server->ip.empty());
+	CHECK_EQ(server->webSocketEndpoint, "wss://transport.example.com/apiws");
+	CHECK(server->key != nullptr);
+	if (server->key) {
+		CHECK_EQ(qint64(server->key->fingerprint()),
+				 qint64(result.key.fingerprint()));
+	}
+
+	auto options = DcOptions(Environment::Production);
+	CHECK(options.setCustomServer(*server));
+	const auto pin = options.customServer();
+	CHECK(pin.webSocketOnly);
+	CHECK_EQ(pin.hostname, "transport.example.com");
+	CHECK(pin.ip.empty());
+	CHECK_EQ(pin.webSocketEndpoint, "wss://transport.example.com/apiws");
+	CHECK(pin.key != nullptr);
+	if (pin.key) {
+		CHECK_EQ(qint64(pin.key->fingerprint()),
+				 qint64(result.key.fingerprint()));
+	}
+}
+
 TEST_CASE(DiscoveryJsonAcceptsWssWebSocketEndpoint) {
 	const auto result = ParsePublicDiscoveryResponse(
 		CheckServerSelection(u"server.example.com"_q),
@@ -1929,6 +2088,11 @@ TEST_CASE(DiscoveryJsonAcceptsTailnetIpForMagicDnsOrigin) {
 		selection,
 		PublicResponse(u"[::ffff:100.124.236.66]:2443"_q));
 	CHECK(mapped.valid());
+
+	const auto tailnetName = ParsePublicDiscoveryResponse(
+		selection, PublicResponse(u"mtproto.tailaa4918.ts.net:2443"_q));
+	CHECK(tailnetName.valid());
+	CHECK(!tailnetName.webSocketOnly);
 }
 
 TEST_CASE(DiscoveryJsonRejectsTailnetIpForOtherOrigins) {

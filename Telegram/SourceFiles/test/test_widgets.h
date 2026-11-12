@@ -79,9 +79,9 @@ template <typename T>
 // Use Test::Settle for programmatic mutations; SettlePostponedCalls
 // remains the bare drain.
 
-// Synthesizes a full mouse press + release on the widget, at its center by
-// default. Drives the same event path as a real click.
-void Click(not_null<QWidget*> widget, std::optional<QPoint> point = {});
+// Moves to the point and synthesizes a mouse press + release on the widget,
+// at its center by default. Drives the same event path as a real click.
+void Click(not_null<QWidget *> widget, std::optional<QPoint> point = {});
 
 // Synthesizes key press + release pairs carrying the text, one character at
 // a time, into the widget.

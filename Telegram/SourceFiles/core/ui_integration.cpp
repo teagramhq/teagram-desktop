@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_text_entities.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
+#include "core/url_scheme_policy.h"
 #include "core/application.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/bank_card_click_handler.h"
@@ -113,12 +114,46 @@ const auto kBadPrefix = u"http://"_q;
 	return true;
 }
 
+[[nodiscard]] bool SchemeRequiresConfirmation(const QString &url,
+											  const Main::Session *origin) {
+	if (UrlClickHandler::IsEmail(url)) {
+		return false;
+	}
+	const auto opened = UrlClickHandler::EncodeForOpening(url);
+	const auto scheme = opened.left(opened.indexOf(':')).toLower();
+	return File::internal::SchemeRequiresConfirmation(
+		scheme, File::IsUrlSchemeAllowed(scheme, origin));
+}
+
 [[nodiscard]] QString OpenGLCheckFilePath() {
 	return cWorkingDir() + "tdata/opengl_crash_check";
 }
 
 [[nodiscard]] QString ANGLEBackendFilePath() {
 	return cWorkingDir() + "tdata/angle_backend";
+}
+
+[[nodiscard]] bool IsBotCommand(const QString &text) {
+	if (text.size() < 2 || text.size() > 98 || text.front() != '/') {
+		return false;
+	}
+	const auto command = QStringView(text).mid(1);
+	const auto at = command.indexOf('@');
+	const auto name = (at < 0) ? command : command.left(at);
+	const auto bot = (at < 0) ? QStringView() : command.mid(at + 1);
+	if (name.isEmpty()
+		|| name.size() > 64
+		|| (at >= 0 && (bot.size() < 3 || bot.size() > 32))) {
+		return false;
+	}
+	const auto valid = [](QChar ch) {
+		const auto value = ch.unicode();
+		return (value >= 'A' && value <= 'Z')
+			|| (value >= 'a' && value <= 'z')
+			|| (value >= '0' && value <= '9')
+			|| (value == '_');
+	};
+	return ranges::all_of(name, valid) && ranges::all_of(bot, valid);
 }
 
 [[nodiscard]] Ui::Text::FormattedDateResult FormatDateRelative(TimeId date) {
@@ -343,17 +378,26 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 	switch (data.type) {
 	case EntityType::Url:
 		return (!data.data.isEmpty()
-			&& UrlClickHandler::IsSuspicious(data.data))
-			? std::make_shared<HiddenUrlClickHandler>(data.data)
-			: Integration::createLinkHandler(data, context);
+				&& (UrlClickHandler::IsSuspicious(data.data)
+					|| SchemeRequiresConfirmation(data.data,
+												  my ? my->session : nullptr)))
+				   ? std::make_shared<HiddenUrlClickHandler>(data.data)
+				   : Integration::createLinkHandler(data, context);
 
 	case EntityType::CustomUrl:
 		return !data.data.isEmpty()
 			? std::make_shared<HiddenUrlClickHandler>(data.data)
 			: Integration::createLinkHandler(data, context);
 
+	case EntityType::Email:
+		return UrlClickHandler::IsEmail(data.data)
+			? Integration::createLinkHandler(data, context)
+			: nullptr;
+
 	case EntityType::BotCommand:
-		return std::make_shared<BotCommandClickHandler>(data.data);
+		return IsBotCommand(data.data)
+			? std::make_shared<BotCommandClickHandler>(data.data)
+			: nullptr;
 
 	case EntityType::Hashtag:
 		using HashtagMentionType = TextContextDetails::HashtagMentionType;
@@ -460,10 +504,15 @@ bool UiIntegration::handleUrlClick(
 
 	auto parsed = UrlForAutoLogin(url);
 	const auto domain = DomainForAutoLogin(parsed);
-	const auto skip = context.value<ClickHandlerContext>().skipBotAutoLogin;
+	const auto my = context.value<ClickHandlerContext>();
+	const auto skip = my.skipBotAutoLogin;
 	if (skip || !BotAutoLogin(url, domain, context)) {
+		const auto controller = my.sessionWindow.get();
+		const auto origin = controller ? &controller->session() : nullptr;
+		const auto scheme = QUrl(url).scheme();
 		File::OpenUrl(
-			UrlWithAutoLoginToken(url, std::move(parsed), domain, context));
+			UrlWithAutoLoginToken(url, std::move(parsed), domain, context),
+			File::IsUrlSchemeAllowed(scheme, origin));
 	}
 	return true;
 }

@@ -96,6 +96,7 @@ target_precompile_headers(test_unit PRIVATE
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/teagram_icon_choice.cpp
+    core/url_scheme_policy.cpp
     core/teagram_update_verification.cpp
     core/teagram_update_state.cpp
     core/teagram_update_download.cpp
@@ -112,6 +113,7 @@ PRIVATE
     core/hash_md5.cpp
     core/mac_protected_path_policy.cpp
     core/file_location.cpp
+    media/clip/media_clip_check_streaming.cpp
     data/data_peer_id.cpp
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
@@ -133,11 +135,14 @@ PRIVATE
     tests/unit/data_chat_participants_tests.cpp
     tests/unit/data_custom_emoji_tests.cpp
     tests/unit/data_download_manager_tests.cpp
+    tests/unit/data_document_download_policy_tests.cpp
     tests/unit/data_message_reactions_tests.cpp
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
     tests/unit/export_output_string_tests.cpp
+    tests/unit/ffmpeg_frame_generator_tests.cpp
+    tests/unit/ffmpeg_frame_storage_tests.cpp
     tests/unit/intro_signup_error_tests.cpp
     tests/unit/intro_signup_invite_validation_tests.cpp
     tests/unit/intro_signup_terms_tests.cpp
@@ -145,7 +150,9 @@ PRIVATE
     tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/media_clip_check_streaming_tests.cpp
     tests/unit/sticker_import_tests.cpp
+    tests/unit/url_scheme_policy_tests.cpp
     tests/unit/mac_menu_text_tests.cpp
     tests/unit/mac_protected_path_policy_tests.cpp
     tests/unit/mtproto_custom_server_input_tests.cpp
@@ -213,6 +220,7 @@ target_link_libraries(test_unit
 PRIVATE
     ${CMAKE_DL_LIBS}
     test_unit_mtproto
+    desktop-app::lib_ffmpeg
     tdesktop::td_scheme
     desktop-app::lib_base
     desktop-app::lib_crl
