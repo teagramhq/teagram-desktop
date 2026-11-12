@@ -709,6 +709,13 @@ require_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
 reject_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
   'mktemp -d "$RUNNER_TEMP/teagram-launch-smoke.'
 
+account_database_profile_step='Resolve Teagram account-database profile.'
+require_step_field "$mac_workflow" build-macos "$account_database_profile_step" \
+  '.id' 'account-database-profile'
+require_step_script "$mac_workflow" build-macos "$account_database_profile_step" \
+  'pwd.getpwuid(os.getuid()).pw_dir' \
+  'profile_root=%s/Library/Application Support/Teagram'
+
 profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
 require_step_script "$mac_workflow" build-macos "$profile_step" \
@@ -762,10 +769,8 @@ for regression_artifact_path in \
   '${{ runner.temp }}/macos-regression-diagnostics/' \
   '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
   '${{ env.REPO_NAME }}/out/Debug/evidence/' \
-  '${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/log.txt' \
-  '${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/DebugLogs/' \
-  '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt' \
-  '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/'; do
+  '${{ steps.account-database-profile.outputs.profile_root }}/log.txt' \
+  '${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/'; do
   grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
     || contract_fail "$regression_diagnostics_step must upload $regression_artifact_path."
 done
@@ -778,9 +783,38 @@ require_step_script "$mac_workflow" build-macos \
   '"$application_profile/$relative_log"' \
   'cp "$application_profile/$relative_log" "$application_logs/$relative_log"'
 
-# Simulate app logs written to the isolated Teagram profile, then fail or time
-# out the app and verify both artifact targets still contain those logs.
-python3 - "$temp_dir/profile-log-retention" <<'PY'
+# Derive the profile roots from the workflow, then make sure every profile used
+# for smoke/lifecycle or account-database fallback is an artifact input.
+smoke_script="$(step_field "$mac_workflow" build-macos "$launch_smoke_step" '.run')"
+smoke_state_suffix="$(sed -n 's|^[[:space:]]*state="\$RUNNER_TEMP/\([^"]*\)"$|\1|p' <<< "$smoke_script")"
+lifecycle_script="$(step_field "$mac_workflow" build-macos \
+  'Full chat info session regression.' '.run')"
+regression_root_suffix="$(sed -n 's|^[[:space:]]*regression_root="\$RUNNER_TEMP/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+regression_home_suffix="$(sed -n 's|^[[:space:]]*regression_home="\$regression_root/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+application_profile_suffix="$(sed -n 's|^[[:space:]]*application_profile="\$regression_home/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+for extracted_value in "$smoke_state_suffix" "$regression_root_suffix" \
+    "$regression_home_suffix" "$application_profile_suffix"; do
+  [[ -n "$extracted_value" ]] \
+    || contract_fail 'The workflow profile mappings must remain extractable for retention coverage.'
+done
+profile_suffix='Library/Application Support/Teagram'
+smoke_profile_suffix="$smoke_state_suffix/home/$profile_suffix"
+lifecycle_profile_suffix="$regression_root_suffix/$regression_home_suffix/$application_profile_suffix"
+runner_temp_path_expression='${{ runner.temp }}/'
+for profile_suffix_to_upload in "$smoke_profile_suffix" "$lifecycle_profile_suffix"; do
+  for profile_log_path in log.txt DebugLogs/; do
+    regression_artifact_path="$runner_temp_path_expression$profile_suffix_to_upload/$profile_log_path"
+    grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
+      || contract_fail "$regression_diagnostics_step must upload workflow-derived profile path $regression_artifact_path."
+  done
+done
+
+# Fixture test using the workflow-derived profiles: simulate app failure and
+# timeout, and verify the corresponding artifact paths still contain the logs.
+python3 - "$temp_dir/profile-log-retention" \
+  "$temp_dir/$smoke_state_suffix/home" \
+  "$temp_dir/$regression_root_suffix/$regression_home_suffix" \
+  "$temp_dir/account-database-home" <<'PY'
 import os
 from pathlib import Path
 import subprocess
@@ -788,57 +822,69 @@ import sys
 import time
 
 root = Path(sys.argv[1])
+profile_homes = [
+    ("smoke", Path(sys.argv[2]), True),
+    ("lifecycle", Path(sys.argv[3]), True),
+    ("account-fallback", Path(sys.argv[4]), False),
+]
 app = root / "fake_teagram.py"
 app.parent.mkdir(parents=True, exist_ok=True)
 app.write_text(
     "import os, sys, time\n"
     "from pathlib import Path\n"
-    "profile = Path(os.environ['TDESKTOP_MAC_PROFILE_TEST_HOME']) / 'Library/Application Support/Teagram'\n"
+    "home = Path(os.environ.get('TDESKTOP_MAC_PROFILE_TEST_HOME', os.environ['ACCOUNT_DATABASE_HOME']))\n"
+    "profile = home / 'Library/Application Support/Teagram'\n"
     "(profile / 'DebugLogs').mkdir(parents=True, exist_ok=True)\n"
-    "(profile / 'log.txt').write_text(sys.argv[1] + ' app log\\n')\n"
-    "(profile / 'DebugLogs/log_20261112.txt').write_text(sys.argv[1] + ' debug log\\n')\n"
-    "if sys.argv[1] == 'failure': sys.exit(23)\n"
+    "(profile / 'log.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' app log\\n')\n"
+    "(profile / 'DebugLogs/log_20261112.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' debug log\\n')\n"
+    "if sys.argv[2] == 'failure': sys.exit(23)\n"
     "time.sleep(60)\n",
     encoding="utf-8",
 )
 
-for mode in ("failure", "timeout"):
-    home = root / mode / "home"
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["TDESKTOP_MAC_PROFILE_TEST_HOME"] = str(home)
-    profile = home / "Library/Application Support/Teagram"
-    expected = {
-        profile / "log.txt": f"{mode} app log\n",
-        profile / "DebugLogs/log_20261112.txt": f"{mode} debug log\n",
-    }
-    if mode == "failure":
-        result = subprocess.run(
-            [sys.executable, str(app), mode], env=env, check=False
-        )
-        if result.returncode != 23:
-            raise SystemExit("The simulated failing app did not return its expected status.")
-    else:
-        process = subprocess.Popen([sys.executable, str(app), mode], env=env)
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not all(path.is_file() for path in expected):
-            if process.poll() is not None:
-                raise SystemExit("The simulated hanging app exited before the timeout.")
-            time.sleep(0.01)
-        if not all(path.is_file() for path in expected):
-            process.kill()
-            process.wait()
-            raise SystemExit("The simulated hanging app did not write its logs.")
-        try:
-            process.communicate(timeout=0.25)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
+for source, home, use_override in profile_homes:
+    for mode in ("failure", "timeout"):
+        profile = home / "Library/Application Support/Teagram"
+        expected = {
+            profile / "log.txt": f"{source} {mode} app log\n",
+            profile / "DebugLogs/log_20261112.txt": f"{source} {mode} debug log\n",
+        }
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["ACCOUNT_DATABASE_HOME"] = str(home if not use_override else root / "account-database-home")
+        if use_override:
+            env["TDESKTOP_MAC_PROFILE_TEST_HOME"] = str(home)
         else:
-            raise SystemExit("The simulated hanging app did not time out.")
-    for path, contents in expected.items():
-        if not path.is_file() or path.read_text(encoding="utf-8") != contents:
-            raise SystemExit(f"The {mode} artifact log was not retained: {path}")
+            env.pop("TDESKTOP_MAC_PROFILE_TEST_HOME", None)
+        if mode == "failure":
+            result = subprocess.run(
+                [sys.executable, str(app), source, mode], env=env, check=False
+            )
+            if result.returncode != 23:
+                raise SystemExit(f"The simulated {source} failure returned the wrong status.")
+        else:
+            process = subprocess.Popen(
+                [sys.executable, str(app), source, mode], env=env
+            )
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not all(path.is_file() for path in expected):
+                if process.poll() is not None:
+                    raise SystemExit(f"The simulated {source} timeout exited early.")
+                time.sleep(0.01)
+            if not all(path.is_file() for path in expected):
+                process.kill()
+                process.wait()
+                raise SystemExit(f"The simulated {source} app did not write its logs.")
+            try:
+                process.communicate(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+            else:
+                raise SystemExit(f"The simulated {source} app did not time out.")
+        for path, contents in expected.items():
+            if not path.is_file() or path.read_text(encoding="utf-8") != contents:
+                raise SystemExit(f"The {source} {mode} artifact log was not retained: {path}")
 
 print("macOS profile logs retained after app failure and timeout: PASS")
 PY

@@ -320,6 +320,18 @@ jobs:
           printf 'head_sha=%s\nbase_sha=%s\ntested_sha=%s\nvariant=%s\n' \
             "$HEAD_SHA" "$BASE_SHA" "$TESTED_SHA" "$BUILD_VARIANT" > "$evidence/run.txt"
 
+      - name: Resolve Teagram account-database profile.
+        id: account-database-profile
+        run: |
+          set -Eeuo pipefail
+          account_home="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
+          case "$account_home" in
+            /*) ;;
+            *) echo "::error::Account-database home is not absolute: $account_home"; exit 1 ;;
+          esac
+          printf 'profile_root=%s/Library/Application Support/Teagram\n' \
+            "$account_home" >> "$GITHUB_OUTPUT"
+
       - name: Verify Teagram identity contract.
         run: bash "$REPO_NAME/Telegram/build/test_mac_identity.sh" "$REPO_NAME" identity
 
@@ -1231,6 +1243,8 @@ jobs:
             ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/DebugLogs/
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/
+            ${{ steps.account-database-profile.outputs.profile_root }}/log.txt
+            ${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/
           if-no-files-found: error
           retention-days: 14
 
