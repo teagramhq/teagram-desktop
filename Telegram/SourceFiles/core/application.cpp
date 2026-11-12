@@ -363,6 +363,12 @@ void Application::run() {
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
 	style::StartManager(cScale());
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontStartupRegression) {
+		LOG(("Font startup through first resolve regression: wall_ns=%1")
+				.arg(startFontsTimer.nsecsElapsed()));
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	Ui::Accessible::Init();
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();

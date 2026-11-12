@@ -44,10 +44,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFileInfo>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
+#ifdef Q_OS_MAC
+#include <QtGui/QFontDatabase>
+#endif // Q_OS_MAC
 #include <QtGui/qpa/qplatformscreen.h>
 
 #ifdef Q_OS_MAC
 #include <cstdio>
+#include <system_error>
 #include <sys/un.h>
 #endif // Q_OS_MAC
 
@@ -74,6 +78,20 @@ Sandbox::Sandbox(int &argc, char **argv)
 : QApplication(argc, argv)
 , _mainThreadId(QThread::currentThreadId()) {
 #ifdef Q_OS_MAC
+	// Warm CoreText's system font list on a worker while startup continues.
+	try {
+		_fontDatabaseWarmupThread = std::thread([] {
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+			const auto families = QFontDatabase().families();
+#else // Qt < 6.0.0
+			const auto families = QFontDatabase::families();
+#endif // Qt < 6.0.0
+			Q_UNUSED(families);
+		});
+	} catch (const std::system_error &error) {
+		LOG(("Font database warmup could not start: %1")
+				.arg(QString::fromLocal8Bit(error.what())));
+	}
 	Platform::CreateGlobalMenu();
 #endif // Q_OS_MAC
 }
@@ -416,6 +434,9 @@ void Sandbox::setupScreenScale() {
 
 Sandbox::~Sandbox() {
 #ifdef Q_OS_MAC
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
 	Platform::DestroyGlobalMenu();
 #endif // Q_OS_MAC
 }

@@ -14,6 +14,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QLocalSocket>
 #include <QtCore/QAbstractNativeEventFilter>
 
+#ifdef Q_OS_MAC
+#include <thread>
+#endif // Q_OS_MAC
+
 class QLockFile;
 
 namespace Core {
@@ -151,6 +155,10 @@ private:
 	std::unique_ptr<UiStallWatchdog> _uiStallWatchdog;
 
 	rpl::lifetime _lifetime;
+
+#ifdef Q_OS_MAC
+	std::thread _fontDatabaseWarmupThread;
+#endif // Q_OS_MAC
 
 };
 
