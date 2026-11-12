@@ -1065,6 +1065,7 @@ done
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
+  font-startup \
   profile-ipc \
   spoiler-cache-emoji \
   spoiler-cache-spoiler \
@@ -1078,6 +1079,27 @@ for case_name in \
   grep -Fq "$case_name" "$profile_harness" \
     || contract_fail "$profile_harness must include lifecycle case $case_name."
 done
+all_first_command="$(awk '
+  /^all\)$/ { in_all = 1; next }
+  in_all {
+    line = $0
+    sub(/^[[:space:]]+/, "", line)
+    if (line == "" || line ~ /^#/) next
+    print line
+    exit
+  }
+' "$profile_harness")"
+[[ "$all_first_command" == 'run_font_startup_regression' ]] \
+  || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
+if ! awk '
+  /^authenticated-cache\)$/ { in_case = 1; next }
+  /^authenticated-lifecycle\)$/ { in_case = 0 }
+  in_case && /run_font_startup_regression/ { font = NR }
+  in_case && /run_authenticated_cache_regression/ { cache = NR }
+  END { exit !(font && cache && font < cache) }
+' "$profile_harness"; then
+  contract_fail "$profile_harness authenticated-cache case must run font-startup before its app launch."
+fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'

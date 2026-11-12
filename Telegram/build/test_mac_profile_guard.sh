@@ -1308,7 +1308,6 @@ verify_protected_storage_fixtures() {
 }
 
 run_authenticated_cache_regression() {
-run_font_startup_regression
 local AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 local AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
@@ -1895,6 +1894,8 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
+	run_font_startup_regression
+	export TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1
 	lifecycle_cases=(
 		profile-ipc
 		spoiler-cache-emoji
@@ -1933,6 +1934,9 @@ font-startup)
 	run_font_startup_regression
 	;;
 authenticated-cache)
+	if [[ "${TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN:-0}" != 1 ]]; then
+		run_font_startup_regression
+	fi
 	run_authenticated_cache_regression
 	;;
 authenticated-lifecycle)

@@ -23,6 +23,18 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     fi
     exit 1
 fi
+if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
+    count_file="$HOME/font-startup-count"
+    if [[ -f "$count_file" ]]; then
+        wall_ns=50000000
+    else
+        wall_ns=25000000
+        printf 'started' > "$count_file"
+    fi
+    printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
+    printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
+    exit 0
+fi
 if [[ "${TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE:-}" == 1 ]]; then
     exit 1
 fi
