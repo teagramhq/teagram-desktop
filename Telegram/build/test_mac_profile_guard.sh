@@ -1527,7 +1527,7 @@ if ! grep -E -q \
 fi
 local initial_history_selection
 initial_history_selection="$(grep -E \
-	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=[0-9]+ estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$initial_history_selection" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1538,6 +1538,15 @@ local initial_history_selection_work_ns
 initial_history_selection_work_ns="$(sed -E \
 	's/.*estimated_work_ns=([0-9]+).*/\1/' \
 	<<<"$initial_history_selection")"
+local initial_history_selection_blocked_ns
+initial_history_selection_blocked_ns="$(sed -E \
+	's/.*blocked_estimate_ns=(-?[0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+if [[ "$initial_history_selection_blocked_ns" == -1 ]]; then
+	initial_history_selection_work_ns="$(sed -E \
+		's/.*wall_ns=([0-9]+).*/\1/' \
+		<<<"$initial_history_selection")"
+fi
 if ! work_value_within_budget \
 	"$initial_history_selection_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2

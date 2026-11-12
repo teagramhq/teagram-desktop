@@ -909,6 +909,16 @@ sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
   contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
 fi
+sed '/^Initial history selection:/s/wall_ns=135344750/wall_ns=45000000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=45000000/; s/trace=R/trace=none/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-unmeasured.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured.log" >/dev/null 2>&1; then
+  contract_fail 'An unmeasured initial selection with wall time below 50 ms must pass.'
+fi
+sed '/^Initial history selection:/s/wall_ns=45000000/wall_ns=50000000/' \
+  "$temp_dir/cache-latency-initial-selection-unmeasured.log" > "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log" >/dev/null 2>&1; then
+  contract_fail 'An unmeasured initial selection at the 50 ms wall budget must fail.'
+fi
 sed 's/max_hydration_ns=5210625/max_hydration_ns=92000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-hydration.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-hydration.log" >/dev/null 2>&1; then
