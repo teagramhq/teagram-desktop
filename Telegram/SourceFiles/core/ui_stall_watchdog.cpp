@@ -484,7 +484,7 @@ UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 	return PingAcknowledgementHistory;
 }
 
-bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+bool UiStallWatchdog::SchedulerTraceCoversDuration(
 	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
 	qint64 durationNanoseconds) {
 	const auto maxSchedulerSampleGapNanoseconds
@@ -498,26 +498,26 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 	}
 	auto previousOffset = qint64(0);
 	auto hasPreviousOffset = false;
+	auto previousCoveredOffset = qint64(0);
 	auto firstCoveredOffset = qint64(0);
 	auto lastCoveredOffset = qint64(0);
 	auto hasCoveredOffset = false;
 	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
 		const auto offset = sampleOffsetsNanoseconds[i];
-		if (hasPreviousOffset
-			&& ((offset < previousOffset)
-				|| ((offset >= 0) && (previousOffset <= durationNanoseconds)
-					&& (offset - previousOffset
-						> maxSchedulerSampleGapNanoseconds)))) {
+		if (hasPreviousOffset && (offset < previousOffset)) {
 			return false;
 		}
 		if ((offset >= 0) && (offset <= durationNanoseconds)) {
-			if (trace[qsizetype(i)] != u'R') {
+			if (hasCoveredOffset
+				&& (offset - previousCoveredOffset
+					> maxSchedulerSampleGapNanoseconds)) {
 				return false;
 			}
 			if (!hasCoveredOffset) {
 				firstCoveredOffset = offset;
 				hasCoveredOffset = true;
 			}
+			previousCoveredOffset = offset;
 			lastCoveredOffset = offset;
 		}
 		previousOffset = offset;
@@ -527,6 +527,23 @@ bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		   && (firstCoveredOffset <= maxSchedulerSampleGapNanoseconds)
 		   && (durationNanoseconds - lastCoveredOffset
 			   <= maxSchedulerSampleGapNanoseconds);
+}
+
+bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
+	qint64 durationNanoseconds) {
+	if (!SchedulerTraceCoversDuration(trace, sampleOffsetsNanoseconds,
+									  durationNanoseconds)) {
+		return false;
+	}
+	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = sampleOffsetsNanoseconds[i];
+		if ((offset >= 0) && (offset <= durationNanoseconds)
+			&& (trace[qsizetype(i)] != u'R')) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void UiStallWatchdog::enqueueReport(std::function<void()> report) {

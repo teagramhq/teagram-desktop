@@ -89,18 +89,71 @@ main_thread_work_estimate_within_budget() {
 	local wall_ns="$2"
 	local trace="$3"
 	local budget_ns="$4"
+	local offsets_csv="${5:-}"
 	local estimate_ns
 	if [[ "$trace" == none || -z "$trace" ]]; then
 		estimate_ns="$wall_ns"
 	else
 		local sample_count="${#trace}"
-		local runnable_trace="${trace//[!R]/}"
-		local blocked_sample_count="$((sample_count - ${#runnable_trace}))"
-		local blocked_ns="$((
-			wall_ns / sample_count * blocked_sample_count
-			+ wall_ns % sample_count * blocked_sample_count / sample_count
-		))"
-		estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+		local -a scheduler_offsets=()
+		IFS=, read -r -a scheduler_offsets <<< "$offsets_csv"
+		local covered=true
+		if (( ${#scheduler_offsets[@]} != sample_count )); then
+			covered=false
+		fi
+		local previous_offset=0
+		local first_offset=0
+		local last_offset=0
+		local has_previous=false
+		local has_covered=false
+		local in_window_samples=0
+		local blocked_sample_count=0
+		for ((i = 0; i < sample_count; ++i)); do
+			[[ "$covered" == true ]] || break
+			local offset="${scheduler_offsets[i]}"
+			if [[ ! "$offset" =~ ^-?[0-9]+$ ]]; then
+				covered=false
+				break
+			fi
+			if [[ "$has_previous" == true ]] \
+				&& (( offset < previous_offset )); then
+				covered=false
+				break
+			fi
+			if (( offset >= 0 && offset <= wall_ns )); then
+				if [[ "$has_covered" == true ]] \
+					&& (( offset - last_offset > 5000000 )); then
+					covered=false
+					break
+				fi
+				if [[ "$has_covered" == false ]]; then
+					first_offset="$offset"
+					has_covered=true
+				fi
+				last_offset="$offset"
+				((++in_window_samples))
+				if [[ "${trace:i:1}" != R ]]; then
+					((++blocked_sample_count))
+				fi
+			fi
+			previous_offset="$offset"
+			has_previous=true
+		done
+		if [[ "$has_covered" == false ]] \
+			|| (( first_offset > 5000000 )) \
+			|| (( wall_ns - last_offset > 5000000 )); then
+			covered=false
+		fi
+		if [[ "$covered" == true ]] && (( in_window_samples > 0 )); then
+			local blocked_ns="$((
+				wall_ns / in_window_samples * blocked_sample_count
+				+ wall_ns % in_window_samples * blocked_sample_count
+					/ in_window_samples
+			))"
+			estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+		else
+			estimate_ns="$wall_ns"
+		fi
 	fi
 	(( estimate_ns >= 0 && estimate_ns < budget_ns ))
 }

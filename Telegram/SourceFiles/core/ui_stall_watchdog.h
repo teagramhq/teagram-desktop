@@ -61,6 +61,10 @@ class UiStallWatchdog final : public QObject {
 	RecentStallEvidenceForTesting();
 	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
 	RecentPingAcknowledgementsForTesting();
+	[[nodiscard]] static bool SchedulerTraceCoversDuration(
+		const QString &trace,
+		const std::vector<qint64> &sampleOffsetsNanoseconds,
+		qint64 durationNanoseconds);
 	[[nodiscard]] static bool SchedulerTraceProvesRunnableForDuration(
 		const QString &trace,
 		const std::vector<qint64> &sampleOffsetsNanoseconds,

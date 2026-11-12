@@ -803,23 +803,44 @@ awk '
 [[ -s "$temp_dir/main-thread-work-gate.sh" ]] \
   || contract_fail 'The blocked-time main-thread work budget predicate was not found.'
 source "$temp_dir/main-thread-work-gate.sh"
+startup_offsets=""
+for ((offset = 0; offset <= 100000000; offset += 5000000)); do
+  startup_offsets="${startup_offsets:+$startup_offsets,}$offset"
+done
+chat_switch_offsets=""
+for ((offset = 0; offset <= 225000000; offset += 5000000)); do
+  chat_switch_offsets="${chat_switch_offsets:+$chat_switch_offsets,}$offset"
+done
 if main_thread_work_estimate_within_budget \
-  0 101000000 "$(printf '%101s' '' | tr ' ' W)" 100000000; then
+  0 101000000 "$(printf '%21s' '' | tr ' ' W)" 100000000 \
+  "$startup_offsets"; then
   contract_fail 'A fully blocked 101 ms window must fail the startup budget.'
 fi
 if ! main_thread_work_estimate_within_budget \
-  18000000 225000000 "$(printf '%225s' '' | tr ' ' R)" 100000000; then
+  18000000 225000000 "$(printf '%46s' '' | tr ' ' R)" 100000000 \
+  "$chat_switch_offsets"; then
   contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
 fi
-if main_thread_work_estimate_within_budget 0 101000000 none 100000000; then
+if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
   contract_fail 'A window without scheduler samples must fall back to wall time.'
 fi
+if main_thread_work_estimate_within_budget \
+  0 200000000 RRR 100000000 0,1000000,2000000; then
+  contract_fail 'A clustered trace without tail coverage must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 \
+  "$(printf '%26s' '' | tr ' ' R)$(printf '%20s' '' | tr ' ' W)" \
+  100000000 "$chat_switch_offsets"; then
+  contract_fail 'A covered trace with a blocked tail must exceed the startup budget.'
+fi
 if ! main_thread_work_estimate_within_budget \
-  17990000 225000000 "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" 100000000; then
-  contract_fail 'A 225 ms window with 17.99 ms CPU and 4/19 blocked samples must pass.'
+  17990000 225000000 "$(printf '%46s' '' | tr ' ' R)" 100000000 \
+  "$chat_switch_offsets"; then
+  contract_fail 'A covered runnable window with 17.99 ms CPU must pass.'
 fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=65358421 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=19 startup_stall_scheduler_running=15 startup_stall_scheduler_waiting=4 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=66903043 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=46 startup_stall_scheduler_running=36 startup_stall_scheduler_waiting=10 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
@@ -840,13 +861,13 @@ sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
   -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=0/' \
   -e 's/startup_stall_started_at=2026-11-06T00:47:53.000Z/startup_stall_started_at=none/' \
   -e 's/startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z/startup_stall_heartbeat_gap_started_at=none/' \
-  -e 's/startup_stall_scheduler_samples=19/startup_stall_scheduler_samples=0/' \
-  -e 's/startup_stall_scheduler_running=15/startup_stall_scheduler_running=0/' \
-  -e 's/startup_stall_scheduler_waiting=4/startup_stall_scheduler_waiting=0/' \
-  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRWWWW/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_scheduler_samples=46/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=36/startup_stall_scheduler_running=0/' \
+  -e 's/startup_stall_scheduler_waiting=10/startup_stall_scheduler_waiting=0/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW/startup_stall_scheduler_trace=none/' \
   -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
   -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
-  -e 's/max_startup_estimated_work_ns=65358421/max_startup_estimated_work_ns=230059167/' \
+  -e 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=230059167/' \
   -e '/^Cache startup watchdog stall:/d' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" >/dev/null 2>&1; then
@@ -858,7 +879,7 @@ sed -e 's/heartbeat_gap_process_work_ns=117600000/heartbeat_gap_process_work_ns=
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-high-process-work.log" >/dev/null 2>&1; then
   contract_fail 'Process CPU and scheduler diagnostics must not override bounded startup main-thread CPU.'
 fi
-sed 's/max_startup_estimated_work_ns=65358421/max_startup_estimated_work_ns=100000000/' \
+sed 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=100000000/' \
   "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-slow-startup.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-startup.log" >/dev/null 2>&1; then
   contract_fail 'The main-thread startup work budget must reject 100 ms or more.'

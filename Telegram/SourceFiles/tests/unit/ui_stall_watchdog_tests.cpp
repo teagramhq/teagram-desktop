@@ -509,8 +509,13 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 		offsets.push_back(offset);
 	}
 	const auto trace = QString(int(offsets.size()), QChar(u'R'));
+	CHECK(Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		trace, offsets, durationNanoseconds));
 	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		trace, offsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		u"RRR"_q, {0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds},
+		200'000'000));
 
 	auto paddedTrace = u"W"_q + trace + u"W"_q;
 	auto paddedOffsets = std::vector<qint64>{-1'000'000};
@@ -521,6 +526,8 @@ TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
 
 	auto blockedTrace = trace;
 	blockedTrace[45] = u'W';
+	CHECK(Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		blockedTrace, offsets, durationNanoseconds));
 	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
 		blockedTrace, offsets, durationNanoseconds));
 
