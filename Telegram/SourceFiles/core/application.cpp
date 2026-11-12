@@ -334,7 +334,7 @@ void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
 		LOG(("StartFonts startup regression: wall_ns=%1")
-			.arg(startFontsTimer.nsecsElapsed()));
+				.arg(startFontsTimer.nsecsElapsed()));
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 

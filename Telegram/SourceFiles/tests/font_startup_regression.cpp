@@ -43,11 +43,12 @@ int RunFontFallbackRegression() {
 	const auto arabic = FontFamilyForCharacter(u"ش"_q, 0x0634);
 	const auto wallNs = timer.nsecsElapsed();
 	const auto passed = (emoji == u"Apple Color Emoji"_q)
-		&& (arabic == u"Vazirmatn UI NL"_q)
-		&& (wallNs < 100'000'000);
-	LOG(("Font fallback regression: emoji=%1 arabic=%2 wall_ns=%3 result=%4")
-		.arg(emoji, arabic)
-		.arg(wallNs)
-		.arg(passed ? u"PASS"_q : u"FAIL"_q));
+						&& (arabic == u"Vazirmatn UI NL"_q)
+						&& (wallNs < 100'000'000);
+	LOG(("Font fallback regression: emoji=%1 arabic=%2 wall_ns=%3 "
+		 "result=%4")
+			.arg(emoji, arabic)
+			.arg(wallNs)
+			.arg(passed ? u"PASS"_q : u"FAIL"_q));
 	return passed ? 0 : 1;
 }
