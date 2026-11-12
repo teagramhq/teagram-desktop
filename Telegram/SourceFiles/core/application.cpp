@@ -105,8 +105,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/cached_webview_availability.h"
 #include "test/test_agent.h"
 #include "tests/signup_controls_regression.h"
+#include "tests/font_startup_regression.h"
 #include "tests/account_lifecycle_regression.h"
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -295,9 +297,12 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE");
 	const auto desktopScaleCheck
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
+	const auto fontStartupRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck;
+		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
+		  || fontStartupRegression;
 	const auto windowedApplication = !headlessRegression
 									 || authLifecycleRegression
 									 || customEmojiUiSmoke || desktopScaleCheck;
@@ -319,7 +324,19 @@ void Application::run() {
 	startLocalStorage();
 
 	style::SetCustomFont(settings().customFontFamily());
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	auto startFontsTimer = QElapsedTimer();
+	if (fontStartupRegression) {
+		startFontsTimer.start();
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	style::internal::StartFonts();
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontStartupRegression) {
+		LOG(("StartFonts startup regression: wall_ns=%1")
+			.arg(startFontsTimer.nsecsElapsed()));
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 	Test::ApplyStartupOverrides();
 
@@ -351,6 +368,13 @@ void Application::run() {
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
 	Ui::Emoji::Init();
+
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontStartupRegression) {
+		QCoreApplication::exit(RunFontFallbackRegression());
+		return;
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 	auto regressionResult = 0;
 

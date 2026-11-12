@@ -1308,6 +1308,7 @@ verify_protected_storage_fixtures() {
 }
 
 run_authenticated_cache_regression() {
+run_font_startup_regression
 local AUTH_HOME="$TEST_HOME/authenticated-cache-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 local AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
@@ -1461,6 +1462,74 @@ if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 		"$AUTH_EVIDENCE_LOG"
 fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
+}
+
+run_font_startup_regression() {
+	local font_home="$TEST_HOME/font-startup"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	local expected_fallback='Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=[0-9]+ result=PASS'
+	local cold_wall_ns=""
+	local warm_wall_ns=""
+	mkdir -p "$font_home"
+	for sample in cold warm; do
+		if [[ "$sample" == warm && -f "$font_profile_log" ]]; then
+			: > "$font_profile_log"
+		fi
+		local sample_log="$TEST_HOME/font-startup-$sample.log"
+		if ! env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+			TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+			TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+			TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+			"$APP" -noupdate -debug >"$sample_log" 2>&1; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font startup regression launch failed: $sample" >&2
+			return 1
+		fi
+		local stalls
+		stalls="$(grep -F 'UI stall ' "$sample_log" "$font_profile_log" 2>/dev/null || true)"
+		if [[ -n "$stalls" ]]; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'StartFonts %s launch produced a main-thread stall: %s\n' \
+				"$sample" "$stalls" >&2
+			return 1
+		fi
+		local timing
+		timing="$(grep -E 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
+		local wall_ns
+		wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$timing")"
+		if [[ ! "$wall_ns" =~ ^[0-9]+$ ]] || (( wall_ns >= 100000000 )); then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'StartFonts %s exceeded the 100ms budget or had no timing: %s\n' \
+				"$sample" "$timing" >&2
+			return 1
+		fi
+		if ! grep -E -q "$expected_fallback" "$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font fallback regression evidence missing or changed." >&2
+			return 1
+		fi
+		printf 'StartFonts %s=PASS wall_ns=%s under_100ms=1\n' "$sample" "$wall_ns"
+		if [[ "$sample" == cold ]]; then
+			cold_wall_ns="$wall_ns"
+		else
+			warm_wall_ns="$wall_ns"
+		fi
+	done
+	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS under_100ms=1\n' \
+		"$cold_wall_ns" "$warm_wall_ns"
 }
 
 run_authenticated_lifecycle_regression() {
@@ -1859,6 +1928,9 @@ spoiler-cache-text)
 	;;
 spoiler-cache-image)
 	run_spoiler_cache_symlink_case image-cache-leaf-symlink image
+	;;
+font-startup)
+	run_font_startup_regression
 	;;
 authenticated-cache)
 	run_authenticated_cache_regression
