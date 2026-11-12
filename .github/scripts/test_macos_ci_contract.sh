@@ -835,7 +835,7 @@ Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z du
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
 Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=52107000 budget_ns=60000000 scheduler_preemption_proven=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=135344750 max_switch_work_ns=52107000 max_recurring_switch_work_ns=40000000 max_switch_index=0 max_switch_peer_id=281474977760707 switch_scheduler_preemption_proven=1 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=12000000 attach_menu_update_hover_callback_wall_ns=11000000 attach_menu_uncached_peer_callback_wall_ns=20000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=52107000 within_budgets=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=135344750 max_switch_work_ns=52107000 max_recurring_switch_work_ns=40000000 max_switch_index=0 max_switch_peer_id=281474977760707 switch_scheduler_preemption_proven=1 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=15000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=12000000 attach_menu_update_hover_callback_wall_ns=11000000 attach_menu_uncached_peer_callback_wall_ns=20000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=52107000 within_budgets=1.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
@@ -940,10 +940,22 @@ sed 's/max_switch_ns=135344750/max_switch_ns=92000000/' \
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-runner-switch.log" >/dev/null 2>&1; then
 	contract_fail 'A slow wall-clock switch with bounded main-thread work and scheduler proof must pass.'
 fi
-sed 's/max_hydration_ns=5210625/max_hydration_ns=50000000/' \
+sed 's/max_hydration_work_ns=4000000/max_hydration_work_ns=50000000/' \
 	"$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-hydration.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-slow-hydration.log" >/dev/null 2>&1; then
-	contract_fail 'Reaction hydration main-thread work must reject 50 ms or more.'
+	contract_fail 'Reaction hydration main-thread CPU must reject 50 ms or more.'
+fi
+sed -e 's/max_hydration_ns=5210625/max_hydration_ns=92000000/' \
+	-e 's/max_hydration_work_ns=4000000/max_hydration_work_ns=12000000/' \
+	-e 's/hydration_scheduler_preemption_proven=0/hydration_scheduler_preemption_proven=1/' \
+	"$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-runner-hydration.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-runner-hydration.log" >/dev/null 2>&1; then
+	contract_fail 'A slow wall-clock hydration with bounded CPU and scheduler proof must pass.'
+fi
+sed 's/max_hydration_ns=5210625/max_hydration_ns=92000000/' \
+	"$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-unproven-hydration.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-unproven-hydration.log" >/dev/null 2>&1; then
+	contract_fail 'A slow wall-clock hydration without scheduler proof must fail.'
 fi
 sed '/^Initial history selection:/s/scheduler_preemption_proven=1/scheduler_preemption_proven=0/' \
 	"$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-unproven.log"
@@ -1051,7 +1063,7 @@ grep -Fq 'processWorkNanoseconds' "$native_harness" \
   && grep -Fq 'AllMainThreadWorkIntervalsHaveSchedulerProof' "$native_harness" \
   && grep -Fq 'StartupWatchdogStallEvidenceRegressionPasses' "$native_harness" \
   && grep -Fq 'ChatSwitchSchedulerProofRegressionPasses' "$native_harness" \
-  && grep -Fq 'AttachMenuCallbackSchedulerProofRegressionPasses' "$native_harness" \
+	  && grep -Fq 'MainThreadWorkSchedulerProofRegressionPasses' "$native_harness" \
   && grep -Fq 'Cache startup watchdog stall:' "$native_harness" \
   && grep -Fq 'startup_stall_scheduler_preemption_proven' "$native_harness" \
   || contract_fail 'The cache regression must attribute startup stalls to corroborated watchdog evidence.'
@@ -1084,10 +1096,14 @@ grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$history_widget" \
   && grep -Fq 'ProcessCpuTimeNanosecondsForRegressionTest' "$history_widget" \
   && grep -Fq 'ProcessCpuTimeNanosecondsForRegressionTest' "$attach_menu_builder" \
   || contract_fail 'Attach-menu construction callbacks must be measured with the main-thread CPU clock.'
-grep -Fq 'AttachMenuCallbackWithinBound' "$native_harness" \
+grep -Fq 'MainThreadWorkWithinBound' "$native_harness" \
   && grep -Fq 'slowAttachMenuCallbacks.push_back' "$native_harness" \
   && grep -Fq 'attachMenuSchedulerPreemptionProven' "$native_harness" \
   || contract_fail 'Every slow attach-menu callback must be bounded or carry scheduler proof.'
+grep -Fq 'slowHydrationCallbacks.push_back' "$native_harness" \
+  && grep -Fq 'hydrationSchedulerPreemptionProven' "$native_harness" \
+  && grep -Fq 'maxHydrationMainThreadWorkNanoseconds' "$native_harness" \
+  || contract_fail 'Reaction hydration must be CPU-bounded and require scheduler proof for wall overruns.'
 if [[ $(grep -c 'if ! attach_menu_callback_latency_is_allowed' "$profile_harness") != 3 ]]; then
   contract_fail 'The profile guard must wall-time gate first hover, invalidation, and uncached attach callbacks.'
 fi

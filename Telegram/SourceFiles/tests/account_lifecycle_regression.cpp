@@ -10988,12 +10988,11 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
 
-[[nodiscard]] bool
-AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
-							  qint64 mainThreadCpuNanoseconds,
-							  bool schedulerPreemptionProven);
+[[nodiscard]] bool MainThreadWorkWithinBound(qint64 wallNanoseconds,
+											 qint64 mainThreadCpuNanoseconds,
+											 bool schedulerPreemptionProven);
 
-[[nodiscard]] bool AttachMenuCallbackSchedulerProofRegressionPasses() {
+[[nodiscard]] bool MainThreadWorkSchedulerProofRegressionPasses() {
 	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
 												 Qt::ISODateWithMs);
 	const auto interval
@@ -11041,10 +11040,10 @@ AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
 		interval, blockedEvidence, kMaxChatSwitchNanoseconds, 10);
 	const auto lowSample = FindMatchingMainThreadWorkEvidence(
 		interval, lowSampleEvidence, kMaxChatSwitchNanoseconds, 10);
-	return !AttachMenuCallbackWithinBound(92'000'000, 12'000'000, false)
-		   && AttachMenuCallbackWithinBound(92'000'000, 12'000'000, true)
-		   && AttachMenuCallbackWithinBound(49'000'000, 12'000'000, false)
-		   && !AttachMenuCallbackWithinBound(92'000'000, 50'000'000, true)
+	return !MainThreadWorkWithinBound(92'000'000, 12'000'000, false)
+		   && MainThreadWorkWithinBound(92'000'000, 12'000'000, true)
+		   && MainThreadWorkWithinBound(49'000'000, 12'000'000, false)
+		   && !MainThreadWorkWithinBound(92'000'000, 50'000'000, true)
 		   && evidence
 		   && MainThreadWorkIntervalHasSchedulerProof(
 			   interval, evidence, kMaxChatSwitchNanoseconds,
@@ -11126,10 +11125,9 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 			   u"uncached peer callback"_q);
 }
 
-[[nodiscard]] bool
-AttachMenuCallbackWithinBound(qint64 wallNanoseconds,
-							  qint64 mainThreadCpuNanoseconds,
-							  bool schedulerPreemptionProven) {
+[[nodiscard]] bool MainThreadWorkWithinBound(qint64 wallNanoseconds,
+											 qint64 mainThreadCpuNanoseconds,
+											 bool schedulerPreemptionProven) {
 	return (wallNanoseconds >= 0) && (mainThreadCpuNanoseconds >= 0)
 		   && (mainThreadCpuNanoseconds < kMaxChatSwitchNanoseconds)
 		   && ((wallNanoseconds < kMaxChatSwitchNanoseconds)
@@ -11143,6 +11141,7 @@ struct CacheChatSwitchRegressionResult final {
 	int chatSwitches = 0;
 	int cachedDocuments = 0;
 	qint64 maxHydrationNanoseconds = -1;
+	qint64 maxHydrationMainThreadWorkNanoseconds = -1;
 	qint64 minimizedSwitchNanoseconds = -1;
 	qint64 maxChatSwitchNanoseconds = -1;
 	qint64 maxChatSwitchMainThreadWorkNanoseconds = -1;
@@ -11186,6 +11185,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuCacheBounded = false;
 	bool attachMenuUncachedPeersReady = false;
 	bool chatSwitchSchedulerPreemptionProven = false;
+	bool hydrationSchedulerPreemptionProven = false;
 	bool attachMenuSchedulerPreemptionProven = false;
 	bool passed = false;
 };
@@ -11594,6 +11594,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto loop = QEventLoop();
 	auto completed = false;
 	auto timedOut = false;
+	auto hydrationCpuClockAvailable = true;
+	auto hydrationProcessCpuClockAvailable = true;
+	auto slowHydrationCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto maybeFinish = [&] {
 		if (completed && (result.chatSwitches == kExpectedChatSwitches)) {
 			loop.quit();
@@ -11604,16 +11607,54 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::move(reactions),
 		[&](const MTPAvailableReaction &reaction)
 			-> std::optional<CacheReactionProbe> {
+			const auto startedAt = QDateTime::currentDateTime();
+			const auto startedAtSteadyNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  std::chrono::steady_clock::now().time_since_epoch())
+					  .count();
 			auto hydrationTimer = QElapsedTimer();
 			hydrationTimer.start();
+			const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
+			const auto processBefore = ProcessCpuTimeNanoseconds();
 			const auto documents
 				= Data::details::HydrateAvailableReactionDocuments(
 					reaction.data(), [&](const MTPDocument &document) {
 						++result.hydratedDocuments;
 						return data.processDocument(document);
 					});
+			const auto wallDurationNanoseconds = hydrationTimer.nsecsElapsed();
+			const auto mainThreadAfter = MainThreadCpuTimeNanoseconds();
+			const auto processAfter = ProcessCpuTimeNanoseconds();
+			const auto mainThreadWorkNanoseconds
+				= (mainThreadBefore && mainThreadAfter
+				   && (*mainThreadAfter >= *mainThreadBefore))
+					  ? (*mainThreadAfter - *mainThreadBefore)
+					  : qint64(-1);
+			const auto processWorkNanoseconds
+				= (processBefore && processAfter
+				   && (*processAfter >= *processBefore))
+					  ? (*processAfter - *processBefore)
+					  : qint64(-1);
+			hydrationCpuClockAvailable = hydrationCpuClockAvailable
+										 && (mainThreadWorkNanoseconds >= 0);
+			hydrationProcessCpuClockAvailable
+				= hydrationProcessCpuClockAvailable
+				  && (processWorkNanoseconds >= 0);
 			result.maxHydrationNanoseconds = std::max(
-				result.maxHydrationNanoseconds, hydrationTimer.nsecsElapsed());
+				result.maxHydrationNanoseconds, wallDurationNanoseconds);
+			result.maxHydrationMainThreadWorkNanoseconds
+				= std::max(result.maxHydrationMainThreadWorkNanoseconds,
+						   mainThreadWorkNanoseconds);
+			if (wallDurationNanoseconds >= kMaxChatSwitchNanoseconds) {
+				slowHydrationCallbacks.push_back({
+					startedAt,
+					wallDurationNanoseconds,
+					mainThreadWorkNanoseconds,
+					processWorkNanoseconds,
+					u"reaction hydration callback"_q,
+					startedAtSteadyNanoseconds,
+				});
+			}
 			if (!documents.centerIcon || !documents.aroundAnimation) {
 				return std::nullopt;
 			}
@@ -11760,6 +11801,35 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  chatSwitchProcessCpuClockAvailable, kMaxChatSwitchNanoseconds,
 			  kMaxChatSwitchNanoseconds,
 			  kMaxSchedulerProofOtherThreadWorkNanoseconds);
+	auto slowHydrationEvidence
+		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
+			slowHydrationCallbacks.size());
+	const auto findSlowHydrationEvidence = [&] {
+		const auto evidence
+			= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+		for (auto i = 0U; i != slowHydrationCallbacks.size(); ++i) {
+			if (!slowHydrationEvidence[i]) {
+				slowHydrationEvidence[i] = FindMatchingMainThreadWorkEvidence(
+					slowHydrationCallbacks[i], evidence,
+					kMaxChatSwitchNanoseconds, 10);
+			}
+		}
+		return std::all_of(
+			begin(slowHydrationEvidence), end(slowHydrationEvidence),
+			[](const auto &matching) { return matching.has_value(); });
+	};
+	const auto slowHydrationEvidenceMatched
+		= slowHydrationCallbacks.empty()
+		  || WaitForRegressionCondition(findSlowHydrationEvidence, 1000);
+	result.hydrationSchedulerPreemptionProven
+		= slowHydrationCallbacks.empty()
+		  || (hydrationCpuClockAvailable && hydrationProcessCpuClockAvailable
+			  && slowHydrationEvidenceMatched
+			  && AllMainThreadWorkIntervalsHaveSchedulerProof(
+				  slowHydrationCallbacks, slowHydrationEvidence,
+				  hydrationProcessCpuClockAvailable, kMaxChatSwitchNanoseconds,
+				  kMaxChatSwitchNanoseconds,
+				  kMaxSchedulerProofOtherThreadWorkNanoseconds));
 	auto slowAttachMenuCallbackEvidence
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
 			slowAttachMenuCallbacks.size());
@@ -11804,12 +11874,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			slowAttachMenuCallbackEvidence, kMaxChatSwitchNanoseconds,
 			kMaxChatSwitchNanoseconds,
 			kMaxSchedulerProofOtherThreadWorkNanoseconds);
+	const auto hydrationEvidenceDiagnostics = BuildSchedulerEvidenceDiagnostics(
+		schedulerEvidenceRecords, slowHydrationCallbacks, slowHydrationEvidence,
+		kMaxChatSwitchNanoseconds, kMaxChatSwitchNanoseconds,
+		kMaxSchedulerProofOtherThreadWorkNanoseconds);
 	result.schedulerEvidenceUnmatchedCallbacks
 		= chatSwitchEvidenceDiagnostics.unmatchedCallbacks
-		  + attachMenuEvidenceDiagnostics.unmatchedCallbacks;
+		  + attachMenuEvidenceDiagnostics.unmatchedCallbacks
+		  + hydrationEvidenceDiagnostics.unmatchedCallbacks;
 	result.schedulerEvidenceCallbacksWithoutProof
 		= chatSwitchEvidenceDiagnostics.callbacksWithoutProof
-		  + attachMenuEvidenceDiagnostics.callbacksWithoutProof;
+		  + attachMenuEvidenceDiagnostics.callbacksWithoutProof
+		  + hydrationEvidenceDiagnostics.callbacksWithoutProof;
 	result.schedulerEvidenceCallbackNamesWithoutProof
 		= chatSwitchEvidenceDiagnostics.callbackNamesWithoutProof;
 	if (!result.schedulerEvidenceCallbackNamesWithoutProof.isEmpty()
@@ -11818,6 +11894,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	result.schedulerEvidenceCallbackNamesWithoutProof
 		+= attachMenuEvidenceDiagnostics.callbackNamesWithoutProof;
+	if (!result.schedulerEvidenceCallbackNamesWithoutProof.isEmpty()
+		&& !hydrationEvidenceDiagnostics.callbackNamesWithoutProof.isEmpty()) {
+		result.schedulerEvidenceCallbackNamesWithoutProof += u", "_q;
+	}
+	result.schedulerEvidenceCallbackNamesWithoutProof
+		+= hydrationEvidenceDiagnostics.callbackNamesWithoutProof;
 	result.maxStallNanoseconds = std::max(
 		std::max(std::max(result.maxHydrationNanoseconds,
 						  result.maxChatSwitchMainThreadWorkNanoseconds),
@@ -11838,7 +11920,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.historyScaleInvalidationRebuilt
 		  && result.historyChatModeInvalidationRebuilt
 		  && (result.attachMenuFirstHoverNanoseconds >= 0)
-		  && AttachMenuCallbackWithinBound(
+		  && MainThreadWorkWithinBound(
 			  result.attachMenuFirstHoverCallbackWallNanoseconds,
 			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
 			  result.attachMenuSchedulerPreemptionProven)
@@ -11847,7 +11929,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.attachMenuHoverNanoseconds < 50'000'000)
 		  && result.attachMenuInvalidationRebuilt
 		  && (result.attachMenuInvalidationHoverNanoseconds >= 0)
-		  && AttachMenuCallbackWithinBound(
+		  && MainThreadWorkWithinBound(
 			  result.attachMenuInvalidationCallbackWallNanoseconds,
 			  result.attachMenuInvalidationCallbackCpuNanoseconds,
 			  result.attachMenuSchedulerPreemptionProven)
@@ -11855,14 +11937,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.attachMenuUncachedPeersReady
 		  && result.attachMenuSchedulerPreemptionProven
 		  && (result.attachMenuUncachedPeerNanoseconds >= 0)
-		  && AttachMenuCallbackWithinBound(
+		  && MainThreadWorkWithinBound(
 			  result.attachMenuUncachedPeerCallbackWallNanoseconds,
 			  result.attachMenuUncachedPeerCallbackCpuNanoseconds,
 			  result.attachMenuSchedulerPreemptionProven)
 		  && result.attachMenuCacheBounded && result.minimizedRestore
 		  && (result.minimizedSwitchNanoseconds >= 0)
-		  && (result.maxHydrationNanoseconds >= 0)
-		  && (result.maxHydrationNanoseconds < kMaxChatSwitchNanoseconds)
+		  && (result.maxHydrationNanoseconds >= 0) && hydrationCpuClockAvailable
+		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
+		  && MainThreadWorkWithinBound(
+			  result.maxHydrationNanoseconds,
+			  result.maxHydrationMainThreadWorkNanoseconds,
+			  result.hydrationSchedulerPreemptionProven)
 		  && chatSwitchCpuClockAvailable
 		  && (result.maxChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxChatSwitchIndex >= 0)
@@ -11879,7 +11965,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  < kMaxChatSwitchNanoseconds)
 		  && result.chatSwitchSchedulerPreemptionProven
 		  && ChatSwitchSchedulerProofRegressionPasses()
-		  && AttachMenuCallbackSchedulerProofRegressionPasses()
+		  && MainThreadWorkSchedulerProofRegressionPasses()
 		  && SchedulerEvidenceDiagnosticsRegressionPasses();
 	return result;
 }
@@ -12632,7 +12718,10 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_bot_count=%d "
 					"minimized_restore=%d minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
-					"max_hydration_ns=%lld max_switch_ns=%lld "
+					"max_hydration_ns=%lld "
+					"max_hydration_work_ns=%lld "
+					"hydration_scheduler_preemption_proven=%d "
+					"max_switch_ns=%lld "
 					"max_switch_work_ns=%lld "
 					"max_recurring_switch_work_ns=%lld "
 					"max_switch_index=%d max_switch_peer_id=%lld "
@@ -12667,6 +12756,9 @@ void RunAuthenticatedCacheSymlinkCases(
 						chatSwitch.minimizedSwitchNanoseconds),
 					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
 					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
+					static_cast<long long>(
+						chatSwitch.maxHydrationMainThreadWorkNanoseconds),
+					chatSwitch.hydrationSchedulerPreemptionProven,
 					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
 					static_cast<long long>(
 						chatSwitch.maxChatSwitchMainThreadWorkNanoseconds),
@@ -12715,6 +12807,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					chatSwitch.passed);
 				if (!chatSwitch.chatSwitchSchedulerPreemptionProven
+					|| !chatSwitch.hydrationSchedulerPreemptionProven
 					|| !chatSwitch.attachMenuSchedulerPreemptionProven) {
 					const auto callbackNames
 						= chatSwitch.schedulerEvidenceCallbackNamesWithoutProof;
