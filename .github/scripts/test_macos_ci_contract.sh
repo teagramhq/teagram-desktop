@@ -693,6 +693,7 @@ require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
 require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
   'rm -rf "$diagnostics"' \
   'state="$diagnostics/state"' \
+  'trap cleanup_cache_watchdog_state EXIT' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
   'TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$diagnostics/authenticated-app.log"' \
   'tee "$evidence/cache-watchdog-regression.log" "$diagnostics/harness.log"'
