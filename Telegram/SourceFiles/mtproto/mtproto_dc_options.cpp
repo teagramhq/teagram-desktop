@@ -267,34 +267,32 @@ bool SameCustomServerPin(
 		&& a.key->getE() == b.key->getE();
 }
 
-bool SameCustomServerEndpointRefreshIdentity(
-		const CustomServer &left,
-		const CustomServer &right) {
-	if (left.dcId != right.dcId
-		|| left.serverSelection != right.serverSelection
+bool SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
+											 const CustomServer &right) {
+	if (left.dcId != right.dcId || left.serverSelection != right.serverSelection
 		|| left.discoveryPolicy != right.discoveryPolicy
-		|| left.discoveryOrigin != right.discoveryOrigin
-		|| !left.key || !right.key) {
+		|| left.discoveryOrigin != right.discoveryOrigin || !left.key
+		|| !right.key) {
 		return false;
 	}
 	return left.key->getN() == right.key->getN()
-		&& left.key->getE() == right.key->getE();
+		   && left.key->getE() == right.key->getE();
 }
 
 std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		const ServerSelectionCheck &selection,
 		const ServerDiscoveryResult &result) {
-	const auto expectedOrigin = (result.policy
-		== ServerDiscoveryPolicy::PublicHttps)
-		? PublicDiscoveryUrl(selection)
-		: (u"local:"_q + selection.normalizedSelection);
+	const auto expectedOrigin
+		= (result.policy == ServerDiscoveryPolicy::PublicHttps)
+			  ? PublicDiscoveryUrl(selection)
+			  : (u"local:"_q + selection.normalizedSelection);
 	return BuildCustomServerFromDiscovery(selection, result, expectedOrigin);
 }
 
-std::optional<CustomServer> BuildCustomServerFromDiscovery(
-		const ServerSelectionCheck &selection,
-		const ServerDiscoveryResult &result,
-		const QString &expectedOrigin) {
+std::optional<CustomServer>
+BuildCustomServerFromDiscovery(const ServerSelectionCheck &selection,
+							   const ServerDiscoveryResult &result,
+							   const QString &expectedOrigin) {
 	if (!selection.valid()
 		|| !result
 		|| selection.policy != result.policy
@@ -302,14 +300,12 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 			&& result.policy != ServerDiscoveryPolicy::LocalDirect)) {
 		return std::nullopt;
 	}
-	const auto originAllowed = (result.policy
-		== ServerDiscoveryPolicy::PublicHttps)
-		? IsPublicDiscoveryOrigin(selection, expectedOrigin)
-		: (expectedOrigin
-			== (u"local:"_q + selection.normalizedSelection));
-	if (!originAllowed
-		|| result.origin != expectedOrigin
-		|| result.dcId <= 0) {
+	const auto originAllowed
+		= (result.policy == ServerDiscoveryPolicy::PublicHttps)
+			  ? IsPublicDiscoveryOrigin(selection, expectedOrigin)
+			  : (expectedOrigin
+				 == (u"local:"_q + selection.normalizedSelection));
+	if (!originAllowed || result.origin != expectedOrigin || result.dcId <= 0) {
 		return std::nullopt;
 	}
 	auto webSocketEndpoint = QString();
@@ -1476,12 +1472,11 @@ bool DcOptions::setCustomServer(
 	return true;
 }
 
-bool DcOptions::refreshCustomServerEndpoint(
-		const CustomServer &original,
-		const CustomServer &candidate) {
+bool DcOptions::refreshCustomServerEndpoint(const CustomServer &original,
+											const CustomServer &candidate) {
 	if (const auto problem = CustomServerProblem(candidate, true)) {
-		LOG(("MTP Error: endpoint refresh candidate is invalid (%1)."
-			).arg(QString::fromUtf8(problem)));
+		LOG(("MTP Error: endpoint refresh candidate is invalid (%1).")
+				.arg(QString::fromUtf8(problem)));
 		return false;
 	}
 	if (!SameCustomServerEndpointRefreshIdentity(original, candidate)) {
@@ -1489,12 +1484,10 @@ bool DcOptions::refreshCustomServerEndpoint(
 	}
 	{
 		WriteLocker lock(this);
-		if (_immutable || _blocked || _unenrolled
-			|| !hasCustomServerUnlocked()
+		if (_immutable || _blocked || _unenrolled || !hasCustomServerUnlocked()
 			|| !isAuthorizedUnlocked(original.dcId)
-			|| !SameCustomServerEndpointRefreshIdentity(
-				_customServer,
-				original)) {
+			|| !SameCustomServerEndpointRefreshIdentity(_customServer,
+														original)) {
 			return false;
 		}
 		applyCustomServerUnlocked(candidate, true);

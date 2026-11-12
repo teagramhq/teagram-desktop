@@ -163,7 +163,7 @@ private:
 // endpoint refresh. The caller still has to prove the discovered endpoint
 // with its existing encrypted MTProto session before persisting it.
 class ServerEndpointRefreshDiscovery final : public QObject {
-public:
+  public:
 	struct Callbacks {
 		std::function<void(MTP::ServerDiscoveryResult)> finished;
 		std::function<void(bool)> failed;
@@ -172,28 +172,22 @@ public:
 	explicit ServerEndpointRefreshDiscovery(QObject *parent = nullptr);
 	~ServerEndpointRefreshDiscovery() override;
 
-	[[nodiscard]] bool start(
-		const MTP::ServerSelectionCheck &selection,
-		const QString &origin,
-		Callbacks callbacks);
-	[[nodiscard]] bool running() const {
-		return _running;
-	}
+	[[nodiscard]] bool start(const MTP::ServerSelectionCheck &selection,
+							 const QString &origin, Callbacks callbacks);
+	[[nodiscard]] bool running() const { return _running; }
 	void cancel();
 
-private:
+  private:
 	void beginPublicDiscovery();
 	void beginLocalDiscovery();
 	void startLocalDiscovery(const QList<QHostAddress> &addresses);
 	void publicDiscoveryFinished();
 	void resolvePublicEndpoint(MTP::ServerDiscoveryResult result);
-	void publicEndpointResolved(
-		MTP::ServerDiscoveryResult result,
-		const QHostInfo &info);
+	void publicEndpointResolved(MTP::ServerDiscoveryResult result,
+								const QHostInfo &info);
 	void resolvePublicWebSocketEndpoint(MTP::ServerDiscoveryResult result);
-	void publicWebSocketEndpointResolved(
-		MTP::ServerDiscoveryResult result,
-		const QHostInfo &info);
+	void publicWebSocketEndpointResolved(MTP::ServerDiscoveryResult result,
+										 const QHostInfo &info);
 	void discoveryTimeout();
 	void fail(bool connectionFailure);
 	void finish(MTP::ServerDiscoveryResult result);

@@ -125,9 +125,9 @@ NormalizePublicWebSocketEndpoint(const QString &endpoint,
 	const ServerSelectionCheck &selection);
 // The only supported public discovery origins are the current endpoint and
 // the already-persisted legacy endpoint path for the same selected host.
-[[nodiscard]] bool IsPublicDiscoveryOrigin(
-	const ServerSelectionCheck &selection,
-	const QString &origin);
+[[nodiscard]] bool
+IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
+						const QString &origin);
 
 // Apply the network policy to every public discovery request, including
 // retries. Cookies are intentionally managed by the application, not Qt.
@@ -176,10 +176,9 @@ struct ServerDiscoveryResult {
 [[nodiscard]] ServerDiscoveryResult ParsePublicDiscoveryResponse(
 	const ServerSelectionCheck &selection,
 	const QByteArray &body);
-[[nodiscard]] ServerDiscoveryResult ParsePublicDiscoveryResponse(
-	const ServerSelectionCheck &selection,
-	const QString &origin,
-	const QByteArray &body);
+[[nodiscard]] ServerDiscoveryResult
+ParsePublicDiscoveryResponse(const ServerSelectionCheck &selection,
+							 const QString &origin, const QByteArray &body);
 
 // MAIN-736 local/direct preflight framing.
 [[nodiscard]] QByteArray BuildLocalDiscoveryRequest(const QByteArray &nonce);

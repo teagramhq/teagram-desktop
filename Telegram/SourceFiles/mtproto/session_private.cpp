@@ -251,12 +251,11 @@ void SessionPrivate::appendTestConnection(
 	const auto weak = _testConnections.back().data.get();
 	const auto context = ConnectionErrorInfo{
 		.generation = _instance->serverEnrollmentStopToken(),
-		.endpoint = ip.isEmpty() && pin.key
-			? QString::fromStdString(pin.ip)
-			: ip,
+		.endpoint
+		= ip.isEmpty() && pin.key ? QString::fromStdString(pin.ip) : ip,
 		.port = (protocol == DcOptions::Variants::Http)
-			? 80
-			: (port ? port : pin.port),
+					? 80
+					: (port ? port : pin.port),
 		.protocol = protocol,
 		.pin = pin,
 		.proxied = (_options->proxy.type != ProxyData::Type::None),
@@ -1413,9 +1412,8 @@ void SessionPrivate::waitConnectedFailed() {
 	DEBUG_LOG(("MTP Info: immediate restart!"));
 	const auto instance = _instance;
 	const auto shiftedDcId = _shiftedDcId;
-	InvokeQueued(instance, [=] {
-		instance->requestServerEndpointRefresh(shiftedDcId);
-	});
+	InvokeQueued(instance,
+				 [=] { instance->requestServerEndpointRefresh(shiftedDcId); });
 	InvokeQueued(this, [=] { connectToServer(); });
 }
 

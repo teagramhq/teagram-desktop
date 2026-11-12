@@ -389,14 +389,13 @@ bool CommitServerEnrollment(
 	return true;
 }
 
-bool CommitServerEndpointRefresh(
-		const CustomServer &original,
-		const CustomServer &candidate,
-		bool authenticatedProof,
-		const std::function<bool()> &setPin,
-		const std::function<bool()> &persistPin,
-		const std::function<void()> &resume,
-		const std::function<void()> &rollbackPin) {
+bool CommitServerEndpointRefresh(const CustomServer &original,
+								 const CustomServer &candidate,
+								 bool authenticatedProof,
+								 const std::function<bool()> &setPin,
+								 const std::function<bool()> &persistPin,
+								 const std::function<void()> &resume,
+								 const std::function<void()> &rollbackPin) {
 	if (!authenticatedProof
 		|| !SameCustomServerEndpointRefreshIdentity(original, candidate)) {
 		return false;
@@ -415,15 +414,12 @@ bool CommitServerEndpointRefresh(
 }
 
 bool CanRefreshServerEndpoint(
-		const ServerEndpointRefreshEligibility &eligibility) {
-	return eligibility.restoredSession
-		&& eligibility.hasPinnedServer
-		&& eligibility.pinAuthorized
-		&& eligibility.canResume
-		&& !eligibility.cacheBindingMismatch
-		&& eligibility.validDiscoveryOrigin
-		&& eligibility.hasStoredAuthKey
-		&& !eligibility.identityFailure;
+	const ServerEndpointRefreshEligibility &eligibility) {
+	return eligibility.restoredSession && eligibility.hasPinnedServer
+		   && eligibility.pinAuthorized && eligibility.canResume
+		   && !eligibility.cacheBindingMismatch
+		   && eligibility.validDiscoveryOrigin && eligibility.hasStoredAuthKey
+		   && !eligibility.identityFailure;
 }
 
 void ReinitializeMainDcAfterServerReplacement(

@@ -1551,28 +1551,23 @@ TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 TEST_CASE(PublicDiscoveryRefreshRetainsTheStoredOriginPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	const auto legacy = u"https://server.example.com/"
-		u".well-known/telegramd/client"_q;
+						u".well-known/telegramd/client"_q;
 	CHECK(IsPublicDiscoveryOrigin(selection, PublicDiscoveryUrl(selection)));
 	CHECK(IsPublicDiscoveryOrigin(selection, legacy));
 	CHECK(!IsPublicDiscoveryOrigin(
 		selection,
 		u"https://other.example.com/.well-known/telegramd/client"_q));
 	CHECK(!IsPublicDiscoveryOrigin(
-		selection,
-		u"https://server.example.com/.well-known/other"_q));
+		selection, u"https://server.example.com/.well-known/other"_q));
 
 	const auto result = ParsePublicDiscoveryResponse(
-		selection,
-		legacy,
-		PublicResponse(u"mtproto.example.com:443"_q));
+		selection, legacy, PublicResponse(u"mtproto.example.com:443"_q));
 	CHECK(result.valid());
 	CHECK_EQ(result.origin, legacy);
 	auto resolved = result;
 	resolved.resolvedAddress = u"8.8.8.8"_q;
-	const auto pin = BuildCustomServerFromDiscovery(
-		selection,
-		resolved,
-		legacy);
+	const auto pin
+		= BuildCustomServerFromDiscovery(selection, resolved, legacy);
 	CHECK(pin.has_value());
 	if (pin) {
 		CHECK_EQ(pin->discoveryOrigin, legacy.toStdString());

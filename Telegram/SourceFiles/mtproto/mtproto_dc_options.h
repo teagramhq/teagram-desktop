@@ -49,17 +49,17 @@ struct CustomServer {
 
 // Endpoint refresh may replace only route fields after the candidate proves
 // the existing server identity with the account's current auth key.
-[[nodiscard]] bool SameCustomServerEndpointRefreshIdentity(
-	const CustomServer &left,
-	const CustomServer &right);
+[[nodiscard]] bool
+SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
+										const CustomServer &right);
 
 [[nodiscard]] std::optional<CustomServer> BuildCustomServerFromDiscovery(
 	const ServerSelectionCheck &selection,
 	const ServerDiscoveryResult &result);
-[[nodiscard]] std::optional<CustomServer> BuildCustomServerFromDiscovery(
-	const ServerSelectionCheck &selection,
-	const ServerDiscoveryResult &result,
-	const QString &expectedOrigin);
+[[nodiscard]] std::optional<CustomServer>
+BuildCustomServerFromDiscovery(const ServerSelectionCheck &selection,
+							   const ServerDiscoveryResult &result,
+							   const QString &expectedOrigin);
 
 // Authorization state is scoped to the complete verified pin, not merely to
 // an address or a DC id. Callers use this before reusing deferred key state.
@@ -187,9 +187,9 @@ public:
 	// Replace only the endpoint on an already-authorized pin after a
 	// same-key authenticated refresh. This deliberately bypasses no part of
 	// setCustomServer's ordinary pin immutability check.
-	[[nodiscard]] bool refreshCustomServerEndpoint(
-		const CustomServer &original,
-		const CustomServer &candidate);
+	[[nodiscard]] bool
+	refreshCustomServerEndpoint(const CustomServer &original,
+								const CustomServer &candidate);
 	[[nodiscard]] bool markAuthorized(DcId dcId);
 	[[nodiscard]] bool isAuthorized(DcId dcId) const;
 	[[nodiscard]] bool clearAuthorized();

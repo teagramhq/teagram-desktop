@@ -331,7 +331,7 @@ public:
 	[[nodiscard]] rpl::producer<> writeKeysRequests() const;
 	[[nodiscard]] rpl::producer<> allKeysDestroyed() const;
 	[[nodiscard]] rpl::producer<ShiftedDcId>
-		serverEndpointRefreshRequested() const;
+	serverEndpointRefreshRequested() const;
 
 	// A pinned endpoint that failed on its face: a key the account was
 	// not given, or a server DC id that does not confirm the pin.

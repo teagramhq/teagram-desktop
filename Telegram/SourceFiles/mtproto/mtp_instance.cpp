@@ -91,7 +91,7 @@ public:
 	[[nodiscard]] rpl::producer<> resumed() const;
 	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
 	[[nodiscard]] rpl::producer<ShiftedDcId>
-		serverEndpointRefreshRequested() const;
+	serverEndpointRefreshRequested() const;
 
 	void dcPersistentKeyChanged(DcId dcId, const AuthKeyPtr &persistentKey);
 	void dcTemporaryKeyChanged(DcId dcId);
@@ -504,8 +504,7 @@ void Instance::Private::stopForServerEnrollment() {
 	}
 }
 
-void Instance::Private::requestServerEndpointRefresh(
-		ShiftedDcId shiftedDcId) {
+void Instance::Private::requestServerEndpointRefresh(ShiftedDcId shiftedDcId) {
 	if (!networkAllowed() || isEndpointVerifier() || !hasMainDcId()
 		|| BareDcId(shiftedDcId) != BareDcId(mainDcId())) {
 		return;
@@ -1166,17 +1165,16 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 					advertised.push_back(option.c_dcOption().vid().v);
 				}
 			}
-			failure = CheckPinnedServerConfig(
-				data.vthis_dc().v,
-				advertised,
-				_config->dcOptions().customServer());
+			failure
+				= CheckPinnedServerConfig(data.vthis_dc().v, advertised,
+										  _config->dcOptions().customServer());
 		}
 		if (failure) {
 			onPinnedServerFailure(mainDcId(), *failure);
 		}
 		stopForServerEnrollment();
-		_endpointVerificationResult.fire_copy(
-			matchingMode && !failure.has_value());
+		_endpointVerificationResult.fire_copy(matchingMode
+											  && !failure.has_value());
 		return;
 	}
 	_config->apply(data);
@@ -2347,8 +2345,7 @@ rpl::producer<> Instance::resumed() const {
 	return _private->resumed();
 }
 
-rpl::producer<ShiftedDcId>
-Instance::serverEndpointRefreshRequested() const {
+rpl::producer<ShiftedDcId> Instance::serverEndpointRefreshRequested() const {
 	return _private->serverEndpointRefreshRequested();
 }
 

@@ -468,11 +468,9 @@ TEST_CASE(EndpointRefreshNeedsProofAndPersistsBeforeReleasingRequests) {
 	auto staged = false;
 	auto persisted = false;
 	auto requestsReleased = false;
-	const auto attempt = [&] (bool authenticated) {
+	const auto attempt = [&](bool authenticated) {
 		return CommitServerEndpointRefresh(
-			original,
-			candidate,
-			authenticated,
+			original, candidate, authenticated,
 			[&] {
 				staged = true;
 				return true;
@@ -508,15 +506,12 @@ TEST_CASE(EndpointRefreshRollsBackWhenPersistenceFails) {
 	auto rolledBack = false;
 	auto requestsReleased = false;
 	const auto committed = CommitServerEndpointRefresh(
-		original,
-		candidate,
-		true,
+		original, candidate, true,
 		[&] {
 			staged = true;
 			return true;
 		},
-		[] { return false; },
-		[&] { requestsReleased = true; },
+		[] { return false; }, [&] { requestsReleased = true; },
 		[&] {
 			staged = false;
 			rolledBack = true;
@@ -534,16 +529,12 @@ TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
 	candidate.dcId = 3;
 	auto changed = false;
 	const auto committed = CommitServerEndpointRefresh(
-		original,
-		candidate,
-		true,
+		original, candidate, true,
 		[&] {
 			changed = true;
 			return true;
 		},
-		[] { return true; },
-		[] {},
-		[] {});
+		[] { return true; }, [] {}, [] {});
 
 	CHECK(!committed);
 	CHECK(!changed);
@@ -552,21 +543,17 @@ TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
 TEST_CASE(EndpointRefreshRejectsKeyMismatchBeforeStaging) {
 	const auto original = MakeEndpointRefreshPin("100.124.236.66");
 	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
-	candidate.key = std::make_shared<details::RSAPublicKey>(bytes::make_span(
-		kDifferentEnrollmentServerKey,
-		sizeof(kDifferentEnrollmentServerKey) - 1));
+	candidate.key = std::make_shared<details::RSAPublicKey>(
+		bytes::make_span(kDifferentEnrollmentServerKey,
+						 sizeof(kDifferentEnrollmentServerKey) - 1));
 	auto staged = false;
 	const auto committed = CommitServerEndpointRefresh(
-		original,
-		candidate,
-		true,
+		original, candidate, true,
 		[&] {
 			staged = true;
 			return true;
 		},
-		[] { return true; },
-		[] {},
-		[] {});
+		[] { return true; }, [] {}, [] {});
 
 	CHECK(!committed);
 	CHECK(!staged);
@@ -592,9 +579,9 @@ TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
 	candidate.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
 	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
 	candidate = MakeEndpointRefreshPin("100.112.103.90");
-	candidate.key = std::make_shared<details::RSAPublicKey>(bytes::make_span(
-		kDifferentEnrollmentServerKey,
-		sizeof(kDifferentEnrollmentServerKey) - 1));
+	candidate.key = std::make_shared<details::RSAPublicKey>(
+		bytes::make_span(kDifferentEnrollmentServerKey,
+						 sizeof(kDifferentEnrollmentServerKey) - 1));
 	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
 }
 
@@ -607,9 +594,8 @@ TEST_CASE(EndpointRefreshPreservesAuthorizationForSameServerIdentity) {
 	CHECK(!options.setCustomServer(candidate));
 
 	CHECK(options.refreshCustomServerEndpoint(original, candidate));
-	CHECK(SameCustomServerEndpointRefreshIdentity(
-		options.customServer(),
-		candidate));
+	CHECK(SameCustomServerEndpointRefreshIdentity(options.customServer(),
+												  candidate));
 	CHECK(options.isAuthorized(original.dcId));
 	CHECK(!SameCustomServerPin(options.customServer(), original));
 }
@@ -630,21 +616,17 @@ TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
 	}));
 	auto requestsPaused = true;
 	const auto committed = CommitServerEndpointRefresh(
-		original,
-		candidate,
-		true,
+		original, candidate, true,
 		[&] {
 			return options.refreshCustomServerEndpoint(original, candidate);
 		},
-		[] { return true; },
-		[&] { requestsPaused = false; });
+		[] { return true; }, [&] { requestsPaused = false; });
 
 	CHECK(committed);
 	CHECK_EQ(options.customServer().ip, std::string("100.112.103.90"));
 	CHECK(options.isAuthorized(original.dcId));
-	CHECK(SameCustomServerEndpointRefreshIdentity(
-		options.customServer(),
-		original));
+	CHECK(SameCustomServerEndpointRefreshIdentity(options.customServer(),
+												  original));
 	CHECK(!requestsPaused);
 }
 
@@ -657,9 +639,7 @@ TEST_CASE(EndpointWithoutAuthKeyProofKeepsOriginalPin) {
 	auto staged = false;
 	auto persisted = false;
 	const auto committed = CommitServerEndpointRefresh(
-		original,
-		candidate,
-		false,
+		original, candidate, false,
 		[&] {
 			staged = true;
 			return options.refreshCustomServerEndpoint(original, candidate);

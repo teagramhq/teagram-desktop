@@ -95,10 +95,8 @@ struct ServerEnrollmentCheck {
 	const std::function<void()> &rollbackPin = {});
 
 [[nodiscard]] bool CommitServerEndpointRefresh(
-	const CustomServer &original,
-	const CustomServer &candidate,
-	bool authenticatedProof,
-	const std::function<bool()> &setPin,
+	const CustomServer &original, const CustomServer &candidate,
+	bool authenticatedProof, const std::function<bool()> &setPin,
 	const std::function<bool()> &persistPin,
 	const std::function<void()> &resume,
 	const std::function<void()> &rollbackPin = {});
@@ -114,8 +112,8 @@ struct ServerEndpointRefreshEligibility {
 	bool identityFailure = false;
 };
 
-[[nodiscard]] bool CanRefreshServerEndpoint(
-	const ServerEndpointRefreshEligibility &eligibility);
+[[nodiscard]] bool
+CanRefreshServerEndpoint(const ServerEndpointRefreshEligibility &eligibility);
 
 struct ServerReplacementState {
 	bool browserOnlyServerRefused = false;

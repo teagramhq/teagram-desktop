@@ -192,8 +192,7 @@ private:
 	void resetAuthorizationKeys();
 	[[nodiscard]] bool canRefreshServerEndpoint() const;
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
-	void serverEndpointRefreshDiscovered(
-		MTP::ServerDiscoveryResult result);
+	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
 	void serverEndpointVerificationFinished(bool authenticated);
 	void scheduleServerEndpointRefreshRetry();
 	void cancelServerEndpointRefresh();
