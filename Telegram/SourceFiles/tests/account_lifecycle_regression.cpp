@@ -16750,30 +16750,14 @@ SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
 static_assert(!SumDesktopScaleStalls({std::nullopt,
 									  std::optional<quint64>(0)}));
 
-// A pure ratio is meaningless when the 1x time is a few milliseconds: a
-// 1.4 ms difference on a shared runner is already 1.5x. Growth passes when it
-// stays within the ratio or within a fixed added-time allowance.
-[[nodiscard]] constexpr bool
-DesktopScaleGrowthWithinBudget(qint64 one, qint64 hundred,
-							   qint64 allowanceNanoseconds) {
-	return (one > 0)
-		   && ((double(hundred) <= double(one) * 1.5)
-			   || (hundred >= one && (hundred - one) <= allowanceNanoseconds));
-}
-
-constexpr auto kDesktopScaleContactChangeIncrementalBudgetNanoseconds
-	= qint64(10'000'000);
-
 [[nodiscard]] constexpr bool
 DesktopScaleContactChangeWithinBudget(qint64 one, qint64 hundred) {
-	return DesktopScaleGrowthWithinBudget(
-		one, hundred, kDesktopScaleContactChangeIncrementalBudgetNanoseconds);
+	return (one > 0) && (double(hundred) <= 1.5 * double(one));
 }
 
 static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'000));
-static_assert(DesktopScaleContactChangeWithinBudget(2'673'686, 4'086'001));
-static_assert(DesktopScaleContactChangeWithinBudget(2'000'000, 12'000'000));
-static_assert(!DesktopScaleContactChangeWithinBudget(2'000'000, 12'000'001));
+static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'001));
+static_assert(!DesktopScaleContactChangeWithinBudget(2'673'686, 4'086'001));
 static_assert(!DesktopScaleContactChangeWithinBudget(0, 1'000'000));
 
 struct DesktopScaleActionSample {
@@ -16870,16 +16854,13 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
-constexpr auto kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds
-	= qint64(75'000'000);
-
 [[nodiscard]] constexpr bool
 DesktopScaleUpdateBurstTimeWithinBudget(qint64 one, qint64 hundred) {
-	return DesktopScaleGrowthWithinBudget(
-		one, hundred, kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds);
+	return (one > 0) && (double(hundred) <= double(one) * 1.5);
 }
 
-static_assert(DesktopScaleUpdateBurstTimeWithinBudget(91'446'000, 156'528'000));
+static_assert(DesktopScaleUpdateBurstTimeWithinBudget(100'000'000, 150'000'000));
+static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(91'446'000, 156'528'000));
 static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(91'446'000,
 													   166'528'001));
 static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(0, 1'000'000));
@@ -19913,11 +19894,10 @@ int RunDesktopScaleCheck() {
 			 searchOne.updateBurst, searchHundred.updateBurst);
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
-	std::printf("Contact change + name lookup budget (<=1.50x or +10 ms, "
+	std::printf("Contact change + name lookup budget (<=1.50x, "
 				"update + 1,000 short searches): %s\n",
 				contactChangeLookupScales ? "PASS" : "FAIL");
-	std::printf("Updates.getDifference scaling budget (<=1.50x or +75 ms): "
-				"%s\n",
+	std::printf("Updates.getDifference scaling budget (<=1.50x): %s\n",
 				updateBurstScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
