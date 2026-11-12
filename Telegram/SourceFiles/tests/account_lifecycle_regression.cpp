@@ -16855,27 +16855,26 @@ DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
 constexpr auto kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds
 	= qint64(75'000'000);
 
-[[nodiscard]] constexpr bool DesktopScaleUpdateBurstTimeWithinBudget(
-		qint64 one, qint64 hundred) {
+[[nodiscard]] constexpr bool
+DesktopScaleUpdateBurstTimeWithinBudget(qint64 one, qint64 hundred) {
 	return (one > 0)
 		   && ((double(hundred) <= double(one) * 1.5)
 			   || (hundred >= one
 				   && (hundred - one)
-					  <= kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds));
+						  <= kDesktopScaleUpdateBurstIncrementalBudgetNanoseconds));
 }
 
-static_assert(DesktopScaleUpdateBurstTimeWithinBudget(
-	91'446'000, 156'528'000));
-static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(
-	91'446'000, 166'528'001));
+static_assert(DesktopScaleUpdateBurstTimeWithinBudget(91'446'000, 156'528'000));
+static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(91'446'000,
+													   166'528'001));
 static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(0, 1'000'000));
 
 [[nodiscard]] bool
 DesktopScaleUpdateBurstMeetsBudget(const DesktopScaleActionSample &one,
 								   const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
-		   && DesktopScaleUpdateBurstTimeWithinBudget(
-			   *one.nanoseconds, *hundred.nanoseconds)
+		   && DesktopScaleUpdateBurstTimeWithinBudget(*one.nanoseconds,
+													  *hundred.nanoseconds)
 		   && one.mainThreadStepsOverBudget
 		   && (*one.mainThreadStepsOverBudget == 0)
 		   && hundred.mainThreadStepsOverBudget
@@ -19754,9 +19753,8 @@ int RunDesktopScaleCheck() {
 		  && DesktopScaleContactChangeWithinBudget(
 			  *contactsOne.changedAndFound.nanoseconds,
 			  *contactsHundred.changedAndFound.nanoseconds);
-	const auto updateBurstScales
-		= DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
-											  searchHundred.updateBurst);
+	const auto updateBurstScales = DesktopScaleUpdateBurstMeetsBudget(
+		searchOne.updateBurst, searchHundred.updateBurst);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -19868,8 +19866,7 @@ int RunDesktopScaleCheck() {
 		  && dateHundred.passed && historyCreated && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
-		  && searchHundred.updateBurst.passed
-		  && updateBurstScales
+		  && searchHundred.updateBurst.passed && updateBurstScales
 		  && blockingStalls && (*blockingStalls == 0)
 		  && contactResponseWithinBudget && contactChangeLookupScales
 		  && (cacheOne.directoryEnumerations == 0)
