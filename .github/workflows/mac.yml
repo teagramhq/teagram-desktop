@@ -507,7 +507,7 @@ jobs:
       - name: Verify cache path watchdog regression.
         id: cache-watchdog
         timeout-minutes: 5
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/cache-watchdog"

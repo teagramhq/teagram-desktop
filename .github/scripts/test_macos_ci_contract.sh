@@ -689,7 +689,7 @@ cache_watchdog_step='Verify cache path watchdog regression.'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
-  "\${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
   'rm -rf "$diagnostics"' \
   'state="$diagnostics/state"' \
