@@ -494,7 +494,7 @@ jobs:
       - name: Verify font startup regression.
         id: font-startup
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/font-startup"

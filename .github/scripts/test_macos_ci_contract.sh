@@ -520,6 +520,16 @@ fi
 if [[ "$dispatch_profile" != $'name=pr-compatible\nprotected_path_integration=ON' ]]; then
   contract_fail 'Protected-path dispatches must share the cache profile while keeping the ON integration define.'
 fi
+font_startup_profile_enabled() {
+  [[ "$1" == *'protected_path_integration=ON'* ]]
+}
+if ! font_startup_profile_enabled "$approved_pull_request_profile" \
+  || ! font_startup_profile_enabled "$dispatch_profile" \
+  || font_startup_profile_enabled "$pull_request_profile" \
+  || font_startup_profile_enabled "$push_profile" \
+  || font_startup_profile_enabled "$scheduled_profile"; then
+  contract_fail 'Font startup must run only when the build enables protected-path integration (approved PR and workflow_dispatch).'
+fi
 require_step_script "$mac_workflow" build-macos 'First set up.' \
   "TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=OFF"
 if awk '
@@ -689,7 +699,7 @@ font_startup_step='Verify font startup regression.'
 require_step_field "$mac_workflow" build-macos "$font_startup_step" '.id' 'font-startup'
 require_step_field "$mac_workflow" build-macos "$font_startup_step" '.timeout-minutes' '5'
 require_step_field "$mac_workflow" build-macos "$font_startup_step" '.if' \
-  "\${{ !cancelled() && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$font_startup_step" \
   'macos-regression-diagnostics/font-startup' \
   'bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh"' \
