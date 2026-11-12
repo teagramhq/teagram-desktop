@@ -222,6 +222,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <utility>
 #include <vector>
 
+#if defined(Q_OS_MAC)
+#include <time.h>
+#endif
 #if !defined(Q_OS_WIN)
 #include <execinfo.h>
 #endif
@@ -10440,9 +10443,20 @@ struct FirstDialogsHandlerRegressionResult final {
 	int processedDocuments = 0;
 	int cacheWalks = -1;
 	qint64 handlerNanoseconds = -1;
+	qint64 handlerThreadCpuNanoseconds = -1;
 	bool responseParsed = false;
 	bool passed = false;
 };
+
+#if defined(Q_OS_MAC)
+[[nodiscard]] qint64 ThreadCpuNanoseconds() {
+	auto value = timespec();
+	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) != 0) {
+		qFatal("Unable to read calling thread CPU time.");
+	}
+	return (qint64(value.tv_sec) * 1'000'000'000) + value.tv_nsec;
+}
+#endif
 
 [[nodiscard]] MTPMessage RegressionDialogsDocumentMessage(ChatId chatId,
 														  int messageId,
@@ -10548,7 +10562,14 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto timer = QElapsedTimer();
 	timer.start();
 	auto done = std::move(request->callbacks.done);
+#if defined(Q_OS_MAC)
+	const auto handlerThreadCpuStarted = ThreadCpuNanoseconds();
+#endif
 	result.responseParsed = done && done(response);
+#if defined(Q_OS_MAC)
+	result.handlerThreadCpuNanoseconds
+		= ThreadCpuNanoseconds() - handlerThreadCpuStarted;
+#endif
 	result.handlerNanoseconds = timer.nsecsElapsed();
 	if (const auto chat = data.chatLoaded(firstChatId)) {
 		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
@@ -10931,6 +10952,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"seeded_directories=125 seeded_files=169 requests=%d "
 					"parsed=%d chats=%d dialogs=%d messages=%d documents=%d "
 					"cache_walks=%d max_handler_ns=%lld "
+					"handler_thread_cpu_ns=%lld "
 					"under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
@@ -10939,6 +10961,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					dialogsHandler.processedDocuments,
 					dialogsHandler.cacheWalks,
 					static_cast<long long>(dialogsHandler.handlerNanoseconds),
+					static_cast<long long>(
+						dialogsHandler.handlerThreadCpuNanoseconds),
 					(dialogsHandler.handlerNanoseconds >= 0
 					 && dialogsHandler.handlerNanoseconds < 50'000'000));
 				auto &app = Core::App();

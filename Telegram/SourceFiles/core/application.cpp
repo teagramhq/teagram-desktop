@@ -107,14 +107,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/signup_controls_regression.h"
 #include "tests/account_lifecycle_regression.h"
 
-#include <QtCore/QStandardPaths>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeDatabase>
+#include <QtCore/QStandardPaths>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
 #include <QtGui/QScreen>
 
 #include <array>
+#include <cstdio>
 #include <utility>
 
 #include <ksandbox.h>
@@ -319,7 +321,16 @@ void Application::run() {
 	startLocalStorage();
 
 	style::SetCustomFont(settings().customFontFamily());
+	const auto startFontsPhase = qgetenv("TDESKTOP_START_FONTS_PHASE");
+	auto startFontsTimer = QElapsedTimer();
+	startFontsTimer.start();
 	style::internal::StartFonts();
+	if (!startFontsPhase.isEmpty()) {
+		std::fprintf(stderr,
+					 "StartFonts timing: phase=%s wall_ns=%lld.\n",
+					 startFontsPhase.constData(),
+					 static_cast<long long>(startFontsTimer.nsecsElapsed()));
+	}
 
 	Test::ApplyStartupOverrides();
 
