@@ -663,6 +663,15 @@ UnitEndpointRefreshProofResult UnitVerifyEndpointAndResumeRequestsForTest(
 		= log->sent.empty()
 		  && !details::SessionPrivateTestAccess::SentMessageId(
 			  *queuedSession, kQueuedRequestId);
+	if (!sessionKey->equals(responseKey)) {
+		const auto refreshCommitted = commit(false, [] {});
+		return {
+			.requestWasPausedBeforeProof = requestWasPausedBeforeProof,
+			.proofAccepted = false,
+			.requestResumed = false,
+			.refreshCommitted = refreshCommitted,
+		};
+	}
 
 	auto verifierData = std::make_shared<SessionData>(
 		not_null<Session *>(reinterpret_cast<Session *>(quintptr(1))));
