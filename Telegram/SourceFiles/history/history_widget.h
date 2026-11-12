@@ -327,6 +327,9 @@ public:
 	[[nodiscard]] bool
 	attachMenuContainsBotForRegressionTest(UserId botId) const;
 	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
+	[[nodiscard]] bool
+	updateControlsGeometryStartsPendingRevealForRegressionTest(
+		not_null<HistoryItem *> item);
 #endif
 
 	void applyCloudDraft(History *history);

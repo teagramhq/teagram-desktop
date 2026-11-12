@@ -6865,6 +6865,19 @@ int HistoryWidget::attachMenuCacheSizeForRegressionTest() const {
 	return int(_attachBotsMenuCache.size());
 }
 
+bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
+	not_null<HistoryItem *> item) {
+	updateControlsGeometry();
+	const auto scrollSize = _scroll->size();
+	if (_itemRevealAnimations.contains(item)) {
+		return false;
+	}
+	_itemRevealPending.emplace(item);
+	updateControlsGeometry();
+	return (_scroll->size() == scrollSize) && !_itemRevealPending.contains(item)
+		   && _itemRevealAnimations.contains(item);
+}
+
 QString HistoryWidget::draftTextForRegressionTest() const {
 	return _field->getTextWithTags().text;
 }
@@ -8672,7 +8685,7 @@ void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
 	}
 
 	if (listChanged || needResize || hasPendingResizedItems()
-		|| _updateHistoryGeometryRequired) {
+		|| !_itemRevealPending.empty() || _updateHistoryGeometryRequired) {
 		updateListSize();
 	}
 	_updateHistoryGeometryRequired = false;

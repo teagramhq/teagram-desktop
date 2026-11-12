@@ -11175,6 +11175,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
 	bool attachMenuCacheBounded = false;
+	bool pendingRevealStartedAfterControlsGeometry = false;
 	bool attachMenuUncachedPeersReady = false;
 	bool chatSwitchSchedulerPreemptionProven = false;
 	bool hydrationSchedulerPreemptionProven = false;
@@ -11304,6 +11305,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= controller->content()->historyWidgetForRegressionTest();
 	if (!historyWidget) {
 		return result;
+	}
+	showPeerHistoryMeasured(firstHistory);
+	QCoreApplication::processEvents();
+	if (const auto revealItem = firstHistory->lastMessage();
+		revealItem && revealItem->mainView()) {
+		result.pendingRevealStartedAfterControlsGeometry
+			= historyWidget
+				  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
+					  not_null<HistoryItem *>(revealItem));
 	}
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto collectSlowAttachMenuCallbacks = [&](const QString &label) {
@@ -11928,8 +11938,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.attachMenuUncachedPeerCallbackWallNanoseconds,
 			  result.attachMenuUncachedPeerCallbackCpuNanoseconds,
 			  result.attachMenuSchedulerPreemptionProven)
-		  && result.attachMenuCacheBounded && result.minimizedRestore
-		  && (result.minimizedSwitchNanoseconds >= 0)
+		  && result.attachMenuCacheBounded
+		  && result.pendingRevealStartedAfterControlsGeometry
+		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
 		  && (result.maxHydrationNanoseconds >= 0) && hydrationCpuClockAvailable
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
 		  && MainThreadWorkWithinBound(
@@ -12731,6 +12742,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_uncached_missing_bot_failures=%d "
 					"attach_menu_uncached_build_count_failures=%d "
 					"attach_menu_cache_bound=%d "
+					"pending_reveal_after_controls_geometry=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
@@ -12787,6 +12799,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuUncachedMissingBotFailures,
 					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
+					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
