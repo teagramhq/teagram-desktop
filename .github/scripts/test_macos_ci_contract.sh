@@ -665,6 +665,62 @@ require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact
 require_step_field "$mac_workflow" build-macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
+# Bound each post-build test or replay independently so one hang does not hold
+# a macOS runner until the job timeout.
+ui_watchdog_step='Verify UI stall watchdog stack capture.'
+require_step_field "$mac_workflow" build-macos "$ui_watchdog_step" '.id' 'ui-stall-watchdog'
+require_step_field "$mac_workflow" build-macos "$ui_watchdog_step" '.timeout-minutes' '1'
+require_step_script "$mac_workflow" build-macos "$ui_watchdog_step" \
+  'macos-regression-diagnostics/ui-stall-watchdog' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+cache_watchdog_step='Verify cache path watchdog regression.'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
+require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
+  'state="$diagnostics/state"' \
+  'TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$diagnostics/authenticated-app.log"' \
+  'tee "$evidence/cache-watchdog-regression.log" "$diagnostics/harness.log"'
+
+launch_smoke_step='Launch app smoke test.'
+require_step_field "$mac_workflow" build-macos "$launch_smoke_step" '.timeout-minutes' '2'
+require_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
+  'macos-regression-diagnostics/launch-smoke' \
+  'launch-smoke.stdout.log' 'launch-smoke.stderr.log' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+profile_step='Run protected profile and IPC integration tests.'
+require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
+require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'state="$diagnostics/state"' \
+  'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+regression_diagnostics_step='Upload macOS regression diagnostics.'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" '.uses' \
+  'actions/upload-artifact@v7'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with.name' 'macos-regression-diagnostics-${{ github.run_id }}'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with["if-no-files-found"]' 'error'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with["retention-days"]' '14'
+regression_artifact_condition="$(step_field "$mac_workflow" build-macos \
+  "$regression_diagnostics_step" '.if')"
+regression_artifact_paths="$(step_field "$mac_workflow" build-macos \
+  "$regression_diagnostics_step" '.with.path')"
+for regression_step_id in ui-stall-watchdog cache-watchdog launch-smoke profile-ipc lifecycle-regression; do
+  grep -Fq "steps.$regression_step_id.outcome" <<< "$regression_artifact_condition" \
+    || contract_fail "$regression_diagnostics_step must cover $regression_step_id failures and timeouts."
+done
+for regression_artifact_path in \
+  '${{ runner.temp }}/macos-regression-diagnostics/' \
+  '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
+  '${{ env.REPO_NAME }}/out/Debug/evidence/'; do
+  grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
+    || contract_fail "$regression_diagnostics_step must upload $regression_artifact_path."
+done
+
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
 dwarf_address_helper='.github/scripts/extract_dwarf_subprogram_address.py'
@@ -698,6 +754,7 @@ require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \

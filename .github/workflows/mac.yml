@@ -480,19 +480,26 @@ jobs:
           fi
 
       - name: Verify UI stall watchdog stack capture.
+        id: ui-stall-watchdog
+        timeout-minutes: 1
         if: env.ONLY_CACHE == 'false'
         run: |
           set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/ui-stall-watchdog"
+          mkdir -p "$diagnostics"
+          exec > >(tee "$diagnostics/harness.log") 2>&1
           test_unit="$REPO_NAME/out/Debug/test_unit"
           test -x "$test_unit"
           "$test_unit" --case UiStallWatchdogLogsMainThreadStack
 
       - name: Verify cache path watchdog regression.
+        id: cache-watchdog
+        timeout-minutes: 5
         if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
-          state="$(mktemp -d "$RUNNER_TEMP/teagram-cache-watchdog.XXXXXX")"
-          trap 'rm -rf "$state"' EXIT
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/cache-watchdog"
+          state="$diagnostics/state"
           mkdir -p "$state/home" "$state/tmp"
           printf 'TDESKTOP_MAC_CACHE_REGRESSION_ALREADY_RUN=1\n' >> "$GITHUB_ENV"
           evidence="$REPO_NAME/out/Debug/evidence"
@@ -500,9 +507,11 @@ jobs:
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           env HOME="$state/home" TMPDIR="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$diagnostics/authenticated-app.log" \
             bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
               "$executable" authenticated-cache \
-            2>&1 | tee "$evidence/cache-watchdog-regression.log"
+            2>&1 | tee "$evidence/cache-watchdog-regression.log" \
+              "$diagnostics/harness.log"
           {
             printf '### Cache path watchdog regression\n\n'
             grep -E '^cache_watchdog_(reverted|responsive)_path=PASS ' \
@@ -607,10 +616,14 @@ jobs:
 
       - name: Launch app smoke test.
         id: launch-smoke
+        timeout-minutes: 2
         if: env.ONLY_CACHE == 'false'
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/launch-smoke"
+          mkdir -p "$diagnostics"
+          exec > >(tee "$diagnostics/harness.log") 2>&1
           evidence="$REPO_NAME/out/Debug/evidence"
           state="$(mktemp -d "$RUNNER_TEMP/teagram-launch-smoke.XXXXXX")"
           mkdir -p "$evidence" "$state/home" "$state/work"
@@ -680,13 +693,23 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
+        timeout-minutes: 15
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc"
+          mkdir -p "$diagnostics"
+          exec > >(tee "$diagnostics/harness.log") 2>&1
           evidence="$REPO_NAME/out/Debug/evidence"
-          state="$(mktemp -d "$RUNNER_TEMP/teagram-profile-ipc-${BUILD_VARIANT}.XXXXXX")"
-          trap 'rm -rf "$state"' EXIT
+          state="$diagnostics/state"
           mkdir -p "$state/home" "$state/tmp"
+          preserve_profile_ipc_state() {
+            local status=$?
+            if [ "$status" -eq 0 ]; then
+              rm -rf "$state"
+            fi
+          }
+          trap preserve_profile_ipc_state EXIT
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
@@ -761,6 +784,7 @@ jobs:
           repo="$GITHUB_WORKSPACE/$REPO_NAME"
           executable="$repo/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           mkdir -p "$regression_home" "$regression_work" "$diagnostics" "$application_logs/DebugLogs" "$(dirname "$symbols")"
+          exec > >(tee "$diagnostics/harness.log") 2>&1
           test -x "$executable"
           progress() {
             printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$1"
@@ -1165,13 +1189,22 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload lifecycle regression diagnostics.
-        if: ${{ always() && steps.lifecycle-regression.outcome == 'failure' }}
+      - name: Upload macOS regression diagnostics.
+        if: >-
+          ${{ always() &&
+            (steps.ui-stall-watchdog.outcome != 'success' && steps.ui-stall-watchdog.outcome != 'skipped' ||
+             steps.cache-watchdog.outcome != 'success' && steps.cache-watchdog.outcome != 'skipped' ||
+             steps.launch-smoke.outcome != 'success' && steps.launch-smoke.outcome != 'skipped' ||
+             steps.profile-ipc.outcome != 'success' && steps.profile-ipc.outcome != 'skipped' ||
+             steps.lifecycle-regression.outcome != 'success' && steps.lifecycle-regression.outcome != 'skipped') }}
         uses: actions/upload-artifact@v7
         with:
-          name: lifecycle-diagnostics-${{ github.run_id }}
-          path: ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/
-          if-no-files-found: ignore
+          name: macos-regression-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/macos-regression-diagnostics/
+            ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/
+            ${{ env.REPO_NAME }}/out/Debug/evidence/
+          if-no-files-found: error
           retention-days: 14
 
       - name: Classify Teagram artifact publication.
