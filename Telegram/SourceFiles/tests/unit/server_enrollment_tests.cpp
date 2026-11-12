@@ -114,9 +114,10 @@ MakeEnrollmentServerKey() {
 		.ip = ip,
 		.port = 2443,
 		.key = MakeEnrollmentServerKey(),
-		.serverSelection = "teagram.tailaa4918.ts.net:2443",
-		.discoveryPolicy = ServerDiscoveryPolicy::LocalDirect,
-		.discoveryOrigin = "local:teagram.tailaa4918.ts.net:2443",
+		.serverSelection = "teagram.tailaa4918.ts.net",
+		.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps,
+		.discoveryOrigin = "https://teagram.tailaa4918.ts.net/"
+						   ".well-known/teagramd/client",
 	};
 }
 
@@ -576,7 +577,7 @@ TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
 	candidate.discoveryOrigin += "/different";
 	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
 	candidate = MakeEndpointRefreshPin("100.112.103.90");
-	candidate.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	candidate.discoveryPolicy = ServerDiscoveryPolicy::LocalDirect;
 	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
 	candidate = MakeEndpointRefreshPin("100.112.103.90");
 	candidate.key = std::make_shared<details::RSAPublicKey>(
