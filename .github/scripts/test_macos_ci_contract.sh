@@ -702,8 +702,8 @@ launch_smoke_step='Launch app smoke test.'
 require_step_field "$mac_workflow" build-macos "$launch_smoke_step" '.timeout-minutes' '2'
 require_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
   'macos-regression-diagnostics/launch-smoke' \
-  'state="$diagnostics/state"' 'rm -rf "$state"' \
-  'HOME="$state/home" arch -arm64 "$executable"' \
+  'state="$RUNNER_TEMP/teagram-launch-smoke"' 'rm -rf "$state"' \
+  'HOME="$state/home" TDESKTOP_MAC_PROFILE_TEST_HOME="$state/home" arch -arm64 "$executable"' \
   'launch-smoke.stdout.log' 'launch-smoke.stderr.log' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
 reject_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
@@ -762,6 +762,8 @@ for regression_artifact_path in \
   '${{ runner.temp }}/macos-regression-diagnostics/' \
   '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
   '${{ env.REPO_NAME }}/out/Debug/evidence/' \
+  '${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/log.txt' \
+  '${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/DebugLogs/' \
   '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt' \
   '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/'; do
   grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
@@ -772,8 +774,74 @@ require_step_script "$mac_workflow" build-macos \
   'Full chat info session regression.' \
   'application_profile="$regression_home/Library/Application Support/Teagram"' \
   'HOME="$regression_home"' \
+  'TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home"' \
   '"$application_profile/$relative_log"' \
   'cp "$application_profile/$relative_log" "$application_logs/$relative_log"'
+
+# Simulate app logs written to the isolated Teagram profile, then fail or time
+# out the app and verify both artifact targets still contain those logs.
+python3 - "$temp_dir/profile-log-retention" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+root = Path(sys.argv[1])
+app = root / "fake_teagram.py"
+app.parent.mkdir(parents=True, exist_ok=True)
+app.write_text(
+    "import os, sys, time\n"
+    "from pathlib import Path\n"
+    "profile = Path(os.environ['TDESKTOP_MAC_PROFILE_TEST_HOME']) / 'Library/Application Support/Teagram'\n"
+    "(profile / 'DebugLogs').mkdir(parents=True, exist_ok=True)\n"
+    "(profile / 'log.txt').write_text(sys.argv[1] + ' app log\\n')\n"
+    "(profile / 'DebugLogs/log_20261112.txt').write_text(sys.argv[1] + ' debug log\\n')\n"
+    "if sys.argv[1] == 'failure': sys.exit(23)\n"
+    "time.sleep(60)\n",
+    encoding="utf-8",
+)
+
+for mode in ("failure", "timeout"):
+    home = root / mode / "home"
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["TDESKTOP_MAC_PROFILE_TEST_HOME"] = str(home)
+    profile = home / "Library/Application Support/Teagram"
+    expected = {
+        profile / "log.txt": f"{mode} app log\n",
+        profile / "DebugLogs/log_20261112.txt": f"{mode} debug log\n",
+    }
+    if mode == "failure":
+        result = subprocess.run(
+            [sys.executable, str(app), mode], env=env, check=False
+        )
+        if result.returncode != 23:
+            raise SystemExit("The simulated failing app did not return its expected status.")
+    else:
+        process = subprocess.Popen([sys.executable, str(app), mode], env=env)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not all(path.is_file() for path in expected):
+            if process.poll() is not None:
+                raise SystemExit("The simulated hanging app exited before the timeout.")
+            time.sleep(0.01)
+        if not all(path.is_file() for path in expected):
+            process.kill()
+            process.wait()
+            raise SystemExit("The simulated hanging app did not write its logs.")
+        try:
+            process.communicate(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+        else:
+            raise SystemExit("The simulated hanging app did not time out.")
+    for path, contents in expected.items():
+        if not path.is_file() or path.read_text(encoding="utf-8") != contents:
+            raise SystemExit(f"The {mode} artifact log was not retained: {path}")
+
+print("macOS profile logs retained after app failure and timeout: PASS")
+PY
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'

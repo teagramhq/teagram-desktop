@@ -633,7 +633,7 @@ jobs:
           mkdir -p "$diagnostics"
           exec > >(tee "$diagnostics/harness.log") 2>&1
           evidence="$REPO_NAME/out/Debug/evidence"
-          state="$diagnostics/state"
+          state="$RUNNER_TEMP/teagram-launch-smoke"
           rm -rf "$state"
           mkdir -p "$evidence" "$state/home" "$state/work"
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
@@ -657,7 +657,9 @@ jobs:
             fi
           }
           trap cleanup_launch EXIT
-          HOME="$state/home" arch -arm64 "$executable" \
+          HOME="$state/home" \
+          TDESKTOP_MAC_PROFILE_TEST_HOME="$state/home" \
+            arch -arm64 "$executable" \
             -noupdate -debug -workdir "$state/work" \
             > "$evidence/launch-smoke.stdout.log" \
             2> "$evidence/launch-smoke.stderr.log" &
@@ -978,6 +980,7 @@ jobs:
           set +e
           env \
             HOME="$regression_home" \
+            TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
             python3 - "$executable" "$regression_work" \
@@ -1224,6 +1227,8 @@ jobs:
             ${{ runner.temp }}/macos-regression-diagnostics/
             ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/
             ${{ env.REPO_NAME }}/out/Debug/evidence/
+            ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/log.txt
+            ${{ runner.temp }}/teagram-launch-smoke/home/Library/Application Support/Teagram/DebugLogs/
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt
             ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/
           if-no-files-found: error
