@@ -702,15 +702,12 @@ launch_smoke_step='Launch app smoke test.'
 require_step_field "$mac_workflow" build-macos "$launch_smoke_step" '.timeout-minutes' '2'
 require_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
   'macos-regression-diagnostics/launch-smoke' \
+  'state="$diagnostics/state"' 'rm -rf "$state"' \
+  'HOME="$state/home" arch -arm64 "$executable"' \
   'launch-smoke.stdout.log' 'launch-smoke.stderr.log' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
-
-account_database_profile_step='Resolve Teagram account-database profile.'
-require_step_field "$mac_workflow" build-macos "$account_database_profile_step" \
-  '.id' 'account-database-profile'
-require_step_script "$mac_workflow" build-macos "$account_database_profile_step" \
-  'pwd.getpwuid(os.getuid()).pw_dir' \
-  'profile_root=%s/Library/Application Support/Teagram'
+reject_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
+  'mktemp -d "$RUNNER_TEMP/teagram-launch-smoke.'
 
 profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
@@ -765,19 +762,18 @@ for regression_artifact_path in \
   '${{ runner.temp }}/macos-regression-diagnostics/' \
   '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
   '${{ env.REPO_NAME }}/out/Debug/evidence/' \
-  '${{ steps.account-database-profile.outputs.profile_root }}/log.txt' \
-  '${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/'; do
+  '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt' \
+  '${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/'; do
   grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
     || contract_fail "$regression_diagnostics_step must upload $regression_artifact_path."
 done
 
-require_step_field "$mac_workflow" build-macos \
-  'Full chat info session regression.' '.env.TEAGRAM_ACCOUNT_DATABASE_PROFILE' \
-  '${{ steps.account-database-profile.outputs.profile_root }}'
 require_step_script "$mac_workflow" build-macos \
   'Full chat info session regression.' \
-  '"$TEAGRAM_ACCOUNT_DATABASE_PROFILE/$relative_log"' \
-  'cp "$TEAGRAM_ACCOUNT_DATABASE_PROFILE/$relative_log" "$application_logs/$relative_log"'
+  'application_profile="$regression_home/Library/Application Support/Teagram"' \
+  'HOME="$regression_home"' \
+  '"$application_profile/$relative_log"' \
+  'cp "$application_profile/$relative_log" "$application_logs/$relative_log"'
 
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'

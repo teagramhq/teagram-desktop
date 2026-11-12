@@ -320,18 +320,6 @@ jobs:
           printf 'head_sha=%s\nbase_sha=%s\ntested_sha=%s\nvariant=%s\n' \
             "$HEAD_SHA" "$BASE_SHA" "$TESTED_SHA" "$BUILD_VARIANT" > "$evidence/run.txt"
 
-      - name: Resolve Teagram account-database profile.
-        id: account-database-profile
-        run: |
-          set -Eeuo pipefail
-          account_home="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
-          case "$account_home" in
-            /*) ;;
-            *) echo "::error::Account-database home is not absolute: $account_home"; exit 1 ;;
-          esac
-          printf 'profile_root=%s/Library/Application Support/Teagram\n' \
-            "$account_home" >> "$GITHUB_OUTPUT"
-
       - name: Verify Teagram identity contract.
         run: bash "$REPO_NAME/Telegram/build/test_mac_identity.sh" "$REPO_NAME" identity
 
@@ -645,7 +633,8 @@ jobs:
           mkdir -p "$diagnostics"
           exec > >(tee "$diagnostics/harness.log") 2>&1
           evidence="$REPO_NAME/out/Debug/evidence"
-          state="$(mktemp -d "$RUNNER_TEMP/teagram-launch-smoke.XXXXXX")"
+          state="$diagnostics/state"
+          rm -rf "$state"
           mkdir -p "$evidence" "$state/home" "$state/work"
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           test -x "$executable"
@@ -788,8 +777,6 @@ jobs:
         id: lifecycle-regression
         timeout-minutes: 20
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}
-        env:
-          TEAGRAM_ACCOUNT_DATABASE_PROFILE: ${{ steps.account-database-profile.outputs.profile_root }}
         run: |
           set -Eeuo pipefail
           report_lifecycle_failure() {
@@ -804,6 +791,7 @@ jobs:
           trap report_lifecycle_failure EXIT
           regression_root="$RUNNER_TEMP/tdesktop-chat-participants"
           regression_home="$regression_root/home"
+          application_profile="$regression_home/Library/Application Support/Teagram"
           regression_work="$regression_root/work"
           diagnostics="$regression_root/diagnostics"
           application_logs="$diagnostics/application"
@@ -822,7 +810,7 @@ jobs:
             printf 'Environment: ALSOFT_DRIVERS=null TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1\n'
             printf 'HOME: %s\nWorkdir: %s\nTeagram profile: %s\n' \
               "$regression_home" "$regression_work" \
-              "$TEAGRAM_ACCOUNT_DATABASE_PROFILE"
+              "$application_profile"
             printf 'Runner: %s (%s)\n' "$RUNNER_NAME" "$RUNNER_OS"
             sw_vers
             uname -a
@@ -1120,8 +1108,8 @@ jobs:
           progress "LLDB replay exited with status $debugger_status; collecting application logs."
 
           for relative_log in log.txt DebugLogs/log.txt DebugLogs/mtp.txt DebugLogs/last_openal_log.txt; do
-            if [ -f "$TEAGRAM_ACCOUNT_DATABASE_PROFILE/$relative_log" ]; then
-              cp "$TEAGRAM_ACCOUNT_DATABASE_PROFILE/$relative_log" "$application_logs/$relative_log"
+            if [ -f "$application_profile/$relative_log" ]; then
+              cp "$application_profile/$relative_log" "$application_logs/$relative_log"
             else
               printf 'Not generated after replay: %s\n' "$relative_log" >> "$diagnostics/missing-application-logs.txt"
             fi
@@ -1236,8 +1224,8 @@ jobs:
             ${{ runner.temp }}/macos-regression-diagnostics/
             ${{ runner.temp }}/tdesktop-chat-participants/diagnostics/
             ${{ env.REPO_NAME }}/out/Debug/evidence/
-            ${{ steps.account-database-profile.outputs.profile_root }}/log.txt
-            ${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/
+            ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/log.txt
+            ${{ runner.temp }}/tdesktop-chat-participants/home/Library/Application Support/Teagram/DebugLogs/
           if-no-files-found: error
           retention-days: 14
 
