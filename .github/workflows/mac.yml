@@ -491,6 +491,28 @@ jobs:
             exit "$build_status"
           fi
 
+      - name: Verify font startup regression.
+        id: font-startup
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/font-startup"
+          state="$RUNNER_TEMP/teagram-font-startup"
+          evidence="$REPO_NAME/out/Debug/evidence"
+          rm -rf "$diagnostics" "$state"
+          mkdir -p "$diagnostics" "$state/home" "$state/tmp" "$evidence"
+          : > "$diagnostics/harness.log"
+          executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
+          test -x "$executable"
+          env HOME="$state/home" TMPDIR="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
+              "$executable" font-startup \
+            2>&1 | tee "$evidence/font-startup-regression.log" \
+              "$diagnostics/harness.log"
+          printf 'TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1\n' >> "$GITHUB_ENV"
+
       - name: Verify UI stall watchdog stack capture.
         id: ui-stall-watchdog
         timeout-minutes: 1
@@ -507,7 +529,7 @@ jobs:
       - name: Verify cache path watchdog regression.
         id: cache-watchdog
         timeout-minutes: 5
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.font-startup.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/cache-watchdog"
@@ -1228,6 +1250,7 @@ jobs:
           ${{ always() &&
             (steps.ui-stall-watchdog.outcome != 'success' && steps.ui-stall-watchdog.outcome != 'skipped' ||
              steps.observer-self-tests.outcome != 'success' && steps.observer-self-tests.outcome != 'skipped' ||
+             steps.font-startup.outcome != 'success' && steps.font-startup.outcome != 'skipped' ||
              steps.cache-watchdog.outcome != 'success' && steps.cache-watchdog.outcome != 'skipped' ||
              steps.launch-smoke.outcome != 'success' && steps.launch-smoke.outcome != 'skipped' ||
              steps.profile-ipc.outcome != 'success' && steps.profile-ipc.outcome != 'skipped' ||

@@ -685,11 +685,37 @@ require_step_script "$mac_workflow" build-macos "$observer_self_tests_step" \
   'macos-regression-diagnostics/observer-self-tests' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
 
+font_startup_step='Verify font startup regression.'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.id' 'font-startup'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.timeout-minutes' '5'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.if' \
+  "\${{ !cancelled() && steps.build.outcome == 'success' }}"
+require_step_script "$mac_workflow" build-macos "$font_startup_step" \
+  'macos-regression-diagnostics/font-startup' \
+  'bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh"' \
+  '"$executable" font-startup' \
+  'TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1' \
+  'tee "$evidence/font-startup-regression.log" "$diagnostics/harness.log"'
+
+font_startup_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "font-startup") | .key')"
+build_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "build") | .key')"
+cache_watchdog_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "cache-watchdog") | .key')"
+launch_smoke_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "launch-smoke") | .key')"
+if ((font_startup_step_index <= build_step_index \
+    || font_startup_step_index >= cache_watchdog_step_index \
+    || font_startup_step_index >= launch_smoke_step_index)); then
+  contract_fail "$font_startup_step must run after build and before the cache watchdog or first app launch."
+fi
+
 cache_watchdog_step='Verify cache path watchdog regression.'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
-  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.font-startup.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
   'rm -rf "$diagnostics"' \
   'state="$diagnostics/state"' \
@@ -757,6 +783,7 @@ grep -Fq 'always()' <<< "$regression_artifact_condition_compact" \
 for regression_step_id in \
   ui-stall-watchdog \
   observer-self-tests \
+  font-startup \
   cache-watchdog \
   launch-smoke \
   profile-ipc \
