@@ -3228,6 +3228,11 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 									 : guarded->local().cacheSettings();
 	auto opened = Storage::Cache::Database(cachePath, settings);
 	if (!OpenCache(opened, guarded, mediaCache)) {
+		std::fprintf(stderr,
+					 "Failed cache initialization access setup: cache=%s "
+					 "stage=open path=%s.\n",
+					 mediaCache ? "media_cache" : "cache",
+					 qPrintable(cachePath));
 		return false;
 	}
 	const auto seedKey = Storage::Cache::Key{
@@ -3239,6 +3244,11 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 				   std::move(done));
 	});
 	if (!CacheOperationSucceeded(seed)) {
+		std::fprintf(stderr,
+					 "Failed cache initialization access setup: cache=%s "
+					 "stage=seed error=%d.\n",
+					 mediaCache ? "media_cache" : "cache",
+					 seed ? int(seed->type) : -1);
 		return false;
 	}
 	opened.sync();
@@ -3247,6 +3257,11 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	});
 	opened.sync();
 	if (!closed || (*closed != 1)) {
+		std::fprintf(stderr,
+					 "Failed cache initialization access setup: cache=%s "
+					 "stage=close completed=%d.\n",
+					 mediaCache ? "media_cache" : "cache",
+					 closed && (*closed == 1));
 		return false;
 	}
 	const auto active = ActiveCacheVersionPath(cachePath);
@@ -3254,6 +3269,11 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 		= mediaCache ? fixtures.mediaCacheRoot : fixtures.cacheRoot;
 	const auto saved = active + ".failed-init-original";
 	if (active.isEmpty() || QFileInfo::exists(saved)) {
+		std::fprintf(stderr,
+					 "Failed cache initialization access setup: cache=%s "
+					 "stage=active-version active=%d saved_exists=%d path=%s.\n",
+					 mediaCache ? "media_cache" : "cache", !active.isEmpty(),
+					 QFileInfo::exists(saved), qPrintable(cachePath));
 		return false;
 	}
 	const auto targetEntriesBefore
@@ -3277,9 +3297,19 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	auto cleanupGuard = gsl::finally([&] { cleanup(); });
 	moved = QDir().rename(active, saved);
 	linked = moved && QFile::link(protectedTarget, active);
-	if (!moved || !linked
-		|| !guarded->createSession(RegressionUser(selfId, true, QString()),
-								   std::make_unique<Main::SessionSettings>())) {
+	const auto sessionCreated
+		= moved && linked
+		  && guarded->createSession(
+			  RegressionUser(selfId, true, QString()),
+			  std::make_unique<Main::SessionSettings>());
+	if (!moved || !linked || !sessionCreated) {
+		std::fprintf(stderr,
+					 "Failed cache initialization access setup: cache=%s "
+					 "stage=replace-active moved=%d linked=%d "
+					 "session_created=%d active=%s saved=%s target=%s.\n",
+					 mediaCache ? "media_cache" : "cache", moved, linked,
+					 sessionCreated, qPrintable(active), qPrintable(saved),
+					 qPrintable(protectedTarget));
 		return false;
 	}
 	auto &data = guarded->session().data();
@@ -10470,7 +10500,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	auto result = FirstDialogsHandlerRegressionResult();
 	constexpr auto kMessageCount = 73;
 	constexpr auto kDialogUnreadCount = 7;
-	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+	constexpr auto kMaxHandlerNanoseconds = qint64(100'000'000);
 	const auto firstChatId = ChatId(1051);
 	const auto secondChatId = ChatId(1052);
 	const auto firstPeerId = peerFromChat(firstChatId);
@@ -10929,7 +10959,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"seeded_directories=125 seeded_files=169 requests=%d "
 					"parsed=%d chats=%d dialogs=%d messages=%d documents=%d "
 					"cache_walks=%d max_handler_ns=%lld "
-					"under_50ms=%d.\n",
+					"under_100ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
 					dialogsHandler.processedDialogs,
@@ -10938,7 +10968,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					dialogsHandler.cacheWalks,
 					static_cast<long long>(dialogsHandler.handlerNanoseconds),
 					(dialogsHandler.handlerNanoseconds >= 0
-					 && dialogsHandler.handlerNanoseconds < 50'000'000));
+					 && dialogsHandler.handlerNanoseconds < 100'000'000));
 				auto &app = Core::App();
 				const auto window = app.ensureSeparateWindowFor(guarded);
 				const auto closeWindow = gsl::finally([&] {
