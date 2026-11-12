@@ -81,21 +81,37 @@ printf '%s\n' "$directory"
 print('macOS profile fixture isolation and refusal lock check: PASS')
 
 
-def run_font_startup_fixture(cold_ns, warm_ns, expected_status):
+def run_font_startup_fixture(
+        cold_ns,
+        warm_ns,
+        expected_status,
+        mode='pass',
+        fallback_wall_ns=1_000_000):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         executable = root / 'Teagram.app/Contents/MacOS/Teagram'
         executable.parent.mkdir(parents=True)
         executable.write_text('''#!/bin/bash
 count_file="$HOME/font-startup-count"
+mode="$FONT_TEST_MODE"
 if [[ -f "$count_file" ]]; then
     wall_ns="$FONT_WARM_NS"
 else
     wall_ns="$FONT_COLD_NS"
     printf 'started' > "$count_file"
 fi
-printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
-printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
+if [[ "$mode" == stall ]]; then
+    printf 'UI stall synthetic main-thread delay\\n'
+fi
+if [[ "$mode" != missing-timing ]]; then
+    printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
+fi
+arabic_family='Vazirmatn UI NL'
+if [[ "$mode" == fallback-mismatch ]]; then
+    arabic_family='Unexpected Family'
+fi
+printf 'Font fallback regression: emoji=Apple Color Emoji arabic=%s wall_ns=%s result=PASS\\n' \\
+    "$arabic_family" "$FONT_FALLBACK_WALL_NS"
 ''')
         executable.chmod(0o755)
         binaries = root / 'bin'
@@ -117,6 +133,8 @@ printf '%s\\n' "$directory"
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE=str(root),
             FONT_COLD_NS=str(cold_ns),
             FONT_WARM_NS=str(warm_ns),
+            FONT_TEST_MODE=mode,
+            FONT_FALLBACK_WALL_NS=str(fallback_wall_ns),
             PATH=str(binaries) + ':' + os.environ['PATH'],
         )
         result = subprocess.run(
@@ -128,9 +146,24 @@ printf '%s\\n' "$directory"
         return output
 
 
-font_startup_output = run_font_startup_fixture(50_000_000, 99_999_999, 0)
+font_startup_output = run_font_startup_fixture(
+    50_000_000, 99_999_999, 0, fallback_wall_ns=150_000_000)
 assert 'StartFonts cold=PASS wall_ns=50000000 under_100ms=1' in font_startup_output
 assert 'StartFonts warm=PASS wall_ns=99999999 under_100ms=1' in font_startup_output
+assert 'fallback=PASS under_100ms=1' in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
-print('macOS font startup timing guard: PASS')
+font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
+assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
+font_startup_stall = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='stall')
+assert 'StartFonts cold launch produced a main-thread stall' in font_startup_stall
+font_startup_missing_timing = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-timing')
+assert 'StartFonts cold exceeded the 100ms budget or had no timing' \
+    in font_startup_missing_timing
+font_startup_fallback_mismatch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='fallback-mismatch')
+assert 'font fallback regression evidence missing or changed.' \
+    in font_startup_fallback_mismatch
+print('macOS font startup timing and failure guards: PASS')
