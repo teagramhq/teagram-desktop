@@ -522,6 +522,8 @@ private:
 		const QVector<MTPDialog> &dialogs,
 		const QVector<MTPMessage> &messages);
 	void requestMoreDialogs(Data::Folder *folder);
+	void prepareContacts(const MTPcontacts_Contacts &result, int offset);
+	void applyContacts(const MTPcontacts_Contacts &result, int offset);
 	mtpRequestId sendPinnedDialogsRequest(
 		Data::Folder *folder,
 		Fn<void()> finish);
@@ -735,6 +737,9 @@ private:
 	base::flat_map<QString, StickersByEmoji> _stickersByEmoji;
 
 	mtpRequestId _contactsRequestId = 0;
+	bool _contactsApplying = false;
+	std::vector<QString> _contactsApplyKeys;
+	std::vector<int> _contactsApplyOrder;
 	mtpRequestId _contactsStatusesRequestId = 0;
 
 	struct SharedMediaRequest {

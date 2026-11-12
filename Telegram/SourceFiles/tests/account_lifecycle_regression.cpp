@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/add_contact_box.h"
 #include "boxes/edit_privacy_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
+#include "boxes/peers/add_participants_box.h"
 #include "boxes/peers/edit_admin_rights_save.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_peer_common.h"
@@ -1456,7 +1457,8 @@ RunOpenedLogDescriptorSymlinkRegression(const QString &protectedTarget,
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
-											  int timeoutMs = 5000);
+											  int timeoutMs = 5000,
+											  int pollIntervalMs = 10);
 
 [[nodiscard]] bool RunPeerPhotoRemovalLifecycleRegression(
 	not_null<Window::SessionController *> controller) {
@@ -3769,7 +3771,8 @@ SettingsSearchMatchesExpected(not_null<Main::Session *> session,
 
 template <typename Predicate>
 [[nodiscard]] bool WaitForRegressionCondition(Predicate condition,
-											  int timeoutMs) {
+											  int timeoutMs,
+											  int pollIntervalMs) {
 	if (condition()) {
 		return true;
 	}
@@ -3777,7 +3780,7 @@ template <typename Predicate>
 	auto timeout = QTimer();
 	auto poll = QTimer();
 	timeout.setSingleShot(true);
-	poll.setInterval(10);
+	poll.setInterval(pollIntervalMs);
 	QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
 		if (condition()) {
 			loop.quit();
@@ -14769,6 +14772,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 
 constexpr auto kDesktopScalePageSize = 100;
 constexpr auto kDesktopScaleThumbnailReads = 100;
+constexpr auto kDesktopScaleContactTrials = 3;
+constexpr auto kDesktopScaleContactLookupsPerSample = 1'000;
 constexpr auto kDesktopScaleUpdateCount = 1'000;
 constexpr auto kDesktopScaleUpdateMessageBase = 2'000'000;
 constexpr auto kDesktopScaleInterleavedMessageId = 3'000'000;
@@ -14787,6 +14792,14 @@ SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
 
 static_assert(!SumDesktopScaleStalls({std::nullopt,
 									  std::optional<quint64>(0)}));
+
+[[nodiscard]] constexpr bool
+DesktopScaleContactChangeWithinBudget(qint64 one, qint64 hundred) {
+	return (one > 0) && (double(hundred) <= 1.5 * double(one));
+}
+
+static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'000));
+static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'001));
 
 struct DesktopScaleActionSample {
 	std::optional<qint64> nanoseconds;
@@ -14894,20 +14907,27 @@ DesktopScaleUpdateBurstMeetsBudget(const DesktopScaleActionSample &one,
 }
 
 [[nodiscard]] MTPUser DesktopScaleUser(UserId id, QString firstName,
-									   bool contact, bool withPhone = false) {
+									   bool contact, bool withPhone = false,
+									   QString lastName = QString(),
+									   QString username = QString()) {
 	const auto flags
 		= MTPDuser::Flag::f_first_name
+		  | (!lastName.isEmpty() ? MTPDuser::Flag::f_last_name
+								 : MTPDuser::Flag())
+		  | (!username.isEmpty() ? MTPDuser::Flag::f_username
+								 : MTPDuser::Flag())
 		  | (withPhone ? MTPDuser::Flag::f_phone : MTPDuser::Flag())
 		  | (contact ? MTPDuser::Flag::f_contact : MTPDuser::Flag());
 	const auto phone
 		= withPhone ? MTP_string(QString::number(id.bare)) : MTPstring();
-	return MTP_user(MTP_flags(flags), MTP_long(id.bare), MTPlong(),
-					MTP_string(std::move(firstName)), MTPstring(), MTPstring(),
-					phone, MTPUserProfilePhoto(), MTPUserStatus(), MTPint(),
-					MTP_vector<MTPRestrictionReason>(0), MTPstring(),
-					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
-					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
-					MTPlong(), MTPlong(), MTPlong());
+	return MTP_user(
+		MTP_flags(flags), MTP_long(id.bare), MTPlong(),
+		MTP_string(std::move(firstName)), MTP_string(std::move(lastName)),
+		MTP_string(std::move(username)), phone, MTPUserProfilePhoto(),
+		MTPUserStatus(), MTPint(), MTP_vector<MTPRestrictionReason>(0),
+		MTPstring(), MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
+		MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(), MTPlong(),
+		MTPlong(), MTPlong());
 }
 
 [[nodiscard]] auto DesktopScaleNotifySettings() {
@@ -15308,9 +15328,9 @@ DesktopScaleUnreadStateDifference(const Dialogs::UnreadState &expected,
 	return result;
 }
 
+template <typename Rows>
 [[nodiscard]] std::vector<PeerId>
-DesktopScalePageOrder(const Dialogs::List &list,
-					  const std::vector<PeerId> &pagePeers) {
+DesktopScalePageOrder(const Rows &list, const std::vector<PeerId> &pagePeers) {
 	auto result = std::vector<PeerId>();
 	for (const auto &row : list) {
 		if (const auto history = row->history()) {
@@ -16720,25 +16740,30 @@ RunDesktopScaleDialogStateRegression(Main::Domain &domain,
 struct DesktopScaleContactsSample final {
 	DesktopScaleActionSample loaded;
 	DesktopScaleActionSample changedAndFound;
+	DesktopScaleActionSample removed;
 };
 
 [[nodiscard]] MTPcontacts_Contacts
 DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
-						  int pageSize, bool changeOne) {
+						  int pageSize, bool changeOne,
+						  bool shuffleArrival = false, bool isContact = true) {
 	auto contacts = QVector<MTPContact>();
 	auto users = QVector<MTPUser>();
 	const auto responseCount = changeOne ? 1 : pageSize;
 	contacts.reserve(responseCount);
 	users.reserve(responseCount);
 	for (auto i = 0; i != responseCount; ++i) {
-		const auto index = offset + i;
-		const auto userId = changeOne ? UserId(firstId.bare + totalCount - 1)
-									  : UserId(firstId.bare + index);
+		const auto arrivalIndex = shuffleArrival ? (i * 7919) % pageSize : i;
+		const auto index = offset + arrivalIndex;
+		const auto userId = UserId(firstId.bare + index);
 		const auto firstName
-			= changeOne ? u"ScaleUpdatedContact"_q
+			= changeOne ? u"UpdatedContact"_q
 						: u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0'));
 		contacts.push_back(MTP_contact(MTP_long(userId.bare), MTP_boolFalse()));
-		users.push_back(DesktopScaleUser(userId, firstName, true, true));
+		users.push_back(
+			DesktopScaleUser(userId, firstName, isContact, true,
+							 changeOne ? u"NameProbe"_q : QString(),
+							 changeOne ? u"ProbeUsername"_q : QString()));
 	}
 	return MTP_contacts_contacts(MTP_vector<MTPContact>(std::move(contacts)),
 								 MTP_int(totalCount),
@@ -16746,156 +16771,575 @@ DesktopScaleContactsReply(UserId firstId, int totalCount, int offset,
 }
 
 [[nodiscard]] DesktopScaleContactsSample
-RunDesktopScaleContacts(Main::Domain &domain, int count, UserId firstId,
-						Main::Account *reuseAccount = nullptr) {
+RunDesktopScaleContacts(not_null<Main::Account *> account, int count,
+						UserId firstId) {
 	auto result = DesktopScaleContactsSample();
-	const auto created = WithDesktopScaleAccount(
-		domain, UserId(firstId.bare - 1),
-		[&](auto account) {
-			auto &session = account->session();
-			auto &data = session.data();
-			auto unrelatedCapture = ChannelSaveRequestCapture{
-				.instance = &account->mtp(),
-			};
-			auto unrelatedCallbacks = MTP::ResponseHandler();
-			const auto contactsRequest
-				= MTP::details::SerializedRequest::Serialize(
-					MTPcontacts_GetContacts(MTP_long(0)));
-			{
-				const auto restoreCapture = gsl::finally(
-					[previous = std::exchange(gChannelSaveRequestCapture,
-											  &unrelatedCapture)] {
-						gChannelSaveRequestCapture = previous;
-					});
-				if (CaptureChannelSaveRequestForRegressionTest(
-						&account->mtp(), 1, contactsRequest,
-						unrelatedCallbacks)) {
-					std::fprintf(stderr,
-								 "Desktop scale check failed: "
-								 "unapproved contacts request "
-								 "was intercepted by a non-scale capture.\n");
-					return false;
-				}
-			}
-			if (!unrelatedCapture.requests.empty()) {
-				std::fprintf(stderr, "Desktop scale check failed: "
-									 "unrelated request capture "
-									 "captured contacts.getContacts "
-									 "without scale opt-in.\n");
+	const auto created = [&] {
+		auto &session = account->session();
+		auto &data = session.data();
+		if (!data.contactsList()->empty()) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: contacts list was not "
+						 "reset before the trial.\n");
+			return false;
+		}
+		auto unrelatedCapture = ChannelSaveRequestCapture{
+			.instance = &account->mtp(),
+		};
+		auto unrelatedCallbacks = MTP::ResponseHandler();
+		const auto contactsRequest = MTP::details::SerializedRequest::Serialize(
+			MTPcontacts_GetContacts(MTP_long(0)));
+		{
+			const auto restoreCapture = gsl::finally(
+				[previous = std::exchange(gChannelSaveRequestCapture,
+										  &unrelatedCapture)] {
+					gChannelSaveRequestCapture = previous;
+				});
+			if (CaptureChannelSaveRequestForRegressionTest(
+					&account->mtp(), 1, contactsRequest, unrelatedCallbacks)) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: "
+							 "unapproved contacts request "
+							 "was intercepted by a non-scale capture.\n");
 				return false;
 			}
-			auto peerPhotoCapture = ChannelSaveRequestCapture{
-				.instance = &account->mtp(),
-				.peerPhotoUploadOnly = true,
-			};
-			auto peerPhotoCallbacks = MTP::ResponseHandler();
-			{
-				const auto restoreCapture = gsl::finally(
-					[previous = std::exchange(gChannelSaveRequestCapture,
-											  &peerPhotoCapture)] {
-						gChannelSaveRequestCapture = previous;
-					});
-				if (!CaptureChannelSaveRequestForRegressionTest(
-						&account->mtp(), 2, contactsRequest,
-						peerPhotoCallbacks)) {
-					std::fprintf(
-						stderr,
-						"Desktop scale check failed: peer-photo capture "
-						"did not swallow contacts.getContacts.\n");
-					return false;
-				}
-			}
-			if (!peerPhotoCapture.requests.empty()) {
+		}
+		if (!unrelatedCapture.requests.empty()) {
+			std::fprintf(stderr, "Desktop scale check failed: "
+								 "unrelated request capture "
+								 "captured contacts.getContacts "
+								 "without scale opt-in.\n");
+			return false;
+		}
+		auto peerPhotoCapture = ChannelSaveRequestCapture{
+			.instance = &account->mtp(),
+			.peerPhotoUploadOnly = true,
+		};
+		auto peerPhotoCallbacks = MTP::ResponseHandler();
+		{
+			const auto restoreCapture = gsl::finally(
+				[previous = std::exchange(gChannelSaveRequestCapture,
+										  &peerPhotoCapture)] {
+					gChannelSaveRequestCapture = previous;
+				});
+			if (!CaptureChannelSaveRequestForRegressionTest(
+					&account->mtp(), 2, contactsRequest, peerPhotoCallbacks)) {
 				std::fprintf(stderr,
 							 "Desktop scale check failed: peer-photo capture "
-							 "retained contacts.getContacts.\n");
+							 "did not swallow contacts.getContacts.\n");
 				return false;
 			}
+		}
+		if (!peerPhotoCapture.requests.empty()) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: peer-photo capture "
+						 "retained contacts.getContacts.\n");
+			return false;
+		}
 
-			data.contactsLoaded() = false;
-			auto capture = ChannelSaveRequestCapture{
-				.instance = &account->mtp(),
-				.desktopScaleContactsOnly = true,
-			};
-			{
-				const auto restoreCapture
-					= gsl::finally([previous = std::exchange(
-										gChannelSaveRequestCapture, &capture)] {
-						  gChannelSaveRequestCapture = previous;
-					  });
-				session.api().requestContacts();
-				const auto reply = DesktopScaleContactsReply(firstId, count, 0,
-															 count, false);
-				result.loaded
-					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						capture, mtpc_contacts_getContacts, reply, [&] {
-							return WaitForRegressionCondition(
-								[&] {
-									return data.contactsList()->size() == count
-										   && data.contactsLoaded().current();
-								},
-								5000);
-						});
-			}
-			if (!result.loaded.passed) {
-				std::fprintf(
-					stderr,
-					"Desktop scale check failed: contacts.getContacts did "
-					"not load %d contacts.\n",
-					count);
-				return false;
-			}
-
-			data.contactsLoaded() = false;
-			auto updateCapture = ChannelSaveRequestCapture{
-				.instance = &account->mtp(),
-				.desktopScaleContactsOnly = true,
-			};
-			{
-				const auto restoreCapture = gsl::finally(
-					[previous = std::exchange(gChannelSaveRequestCapture,
-											  &updateCapture)] {
-						gChannelSaveRequestCapture = previous;
-					});
-				session.api().requestContacts();
-				const auto changedReply = DesktopScaleContactsReply(
-					firstId, count, count - 1, 1, true);
-				result.changedAndFound
-					= ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
-						updateCapture, mtpc_contacts_getContacts, changedReply,
+		data.contactsLoaded() = false;
+		auto capture = ChannelSaveRequestCapture{
+			.instance = &account->mtp(),
+			.desktopScaleContactsOnly = true,
+		};
+		{
+			const auto restoreCapture
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			session.api().requestContacts();
+			const auto reply = DesktopScaleContactsReply(firstId, count, 0,
+														 count, false, true);
+			result.loaded = ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
+				capture, mtpc_contacts_getContacts, reply, [&] {
+					return WaitForRegressionCondition(
 						[&] {
-							return WaitForRegressionCondition(
-								[&] {
-									const auto userId
-										= UserId(firstId.bare + count - 1);
-									const auto user = data.userLoaded(userId);
-									const auto found
-										= data.contactsList()->filtered(
-											QStringList{
-												u"scaleupdatedcontact"_q});
-									return user && user->isContact()
-										   && (user->firstName
-											   == u"ScaleUpdatedContact"_q)
-										   && (found.size() == 1);
-								},
-								5000);
-						});
-			}
-			if (!result.changedAndFound.passed) {
+							return data.contactsList()->size() == count
+								   && data.contactsLoaded().current();
+						},
+						5000);
+				});
+		}
+		if (!result.loaded.passed) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: contacts.getContacts did "
+						 "not load %d contacts.\n",
+						 count);
+			return false;
+		}
+		auto position = 0;
+		for (const auto &row : *data.contactsList()) {
+			const auto history = row->history();
+			if (!history
+				|| history->peer->id
+					   != peerFromUser(UserId(firstId.bare + position))) {
 				std::fprintf(
 					stderr,
-					"Desktop scale check failed: updated contact could not be "
-					"found by its new name among %d contacts.\n",
-					count);
+					"Desktop scale check failed: contacts were not kept "
+					"in name order at position %llu.\n",
+					static_cast<unsigned long long>(position));
+				return false;
 			}
-			return result.loaded.passed && result.changedAndFound.passed;
-		},
-		reuseAccount);
+			++position;
+		}
+		auto coldSearchList
+			= Dialogs::IndexedList(Dialogs::SortMode::Name, 0,
+								   Dialogs::IndexedList::PrefixSearch::Enabled);
+		coldSearchList.reserve(count);
+		for (const auto &row : data.contactsList()->all()) {
+			coldSearchList.addByName(row->key());
+		}
+		auto indexReadyNotified = false;
+		auto indexReadyLifetime = rpl::lifetime();
+		coldSearchList.searchIndexReadyChanges() | rpl::take(1)
+			| rpl::on_next([&] { indexReadyNotified = true; },
+						   indexReadyLifetime);
+		const auto coldLookup = MeasureDesktopScaleAction([&] {
+			const auto found = coldSearchList.filtered(QStringList{u"sca"_q});
+			return found.empty() && !coldSearchList.searchIndexReady();
+		});
+		if (!coldLookup.passed || !coldLookup.nanoseconds
+			|| (*coldLookup.nanoseconds >= 50'000'000)
+			|| !coldLookup.mainThreadStepsOverBudget
+			|| (*coldLookup.mainThreadStepsOverBudget != 0)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: cold contact search was "
+						 "not nonblocking.\n");
+			return false;
+		}
+		while (coldSearchList.indexSome(100)) {
+		}
+		if (!indexReadyNotified) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: completed contact search "
+						 "index did not notify waiters.\n");
+			return false;
+		}
+		const auto coldRows = coldSearchList.filtered(QStringList{u"sca"_q});
+		if (int(coldRows.size()) != count) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the completed cold "
+						 "contact search returned %llu rows, expected %d.\n",
+						 static_cast<unsigned long long>(coldRows.size()),
+						 count);
+			return false;
+		}
+		for (auto i = 0; i != count; ++i) {
+			const auto history = coldRows[i]->history();
+			if (!history
+				|| history->peer->id
+					   != peerFromUser(UserId(firstId.bare + i))) {
+				return false;
+			}
+		}
+		if (!WaitForRegressionCondition(
+				[&] { return data.contactsNoChatsList()->searchIndexReady(); },
+				5000)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contacts without "
+						 "chats index was not built after the load.\n");
+			return false;
+		}
+		if (int(data.contactsNoChatsList()
+					->filtered(QStringList{u"sca"_q})
+					.size())
+			!= count) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contacts without "
+						 "chats list did not find every contact.\n");
+			return false;
+		}
+		if (!WaitForRegressionCondition(
+				[&] { return data.contactsList()->searchIndexReady(); },
+				5000)) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: the contact name index "
+						 "was not built after the load.\n");
+			return false;
+		}
+		const auto shortPrefixRows
+			= data.contactsList()->filtered(QStringList{u"sca"_q});
+		if (int(shortPrefixRows.size()) != count) {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: the short contact prefix "
+				"returned %llu rows, expected %d.\n",
+				static_cast<unsigned long long>(shortPrefixRows.size()), count);
+			return false;
+		}
+		for (auto i = 0; i != count; ++i) {
+			const auto history = shortPrefixRows[i]->history();
+			if (!history
+				|| history->peer->id
+					   != peerFromUser(UserId(firstId.bare + i))) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: short-prefix "
+							 "contacts were not "
+							 "in name order at position %d.\n",
+							 i);
+				return false;
+			}
+		}
+
+		const auto changedIndex = count / 2;
+		data.contactsLoaded() = false;
+		auto updateCapture = ChannelSaveRequestCapture{
+			.instance = &account->mtp(),
+			.desktopScaleContactsOnly = true,
+		};
+		{
+			const auto restoreCapture = gsl::finally(
+				[previous
+				 = std::exchange(gChannelSaveRequestCapture, &updateCapture)] {
+					gChannelSaveRequestCapture = previous;
+				});
+			session.api().requestContacts();
+			const auto changedReply = DesktopScaleContactsReply(
+				firstId, count, changedIndex, 1, true);
+			auto changedAndFound = ApplyDesktopScaleResponse<
+				MTPcontacts_GetContacts>(
+				updateCapture, mtpc_contacts_getContacts, changedReply, [&] {
+					const auto updated = WaitForRegressionCondition(
+						[&] {
+							const auto userId
+								= UserId(firstId.bare + changedIndex);
+							const auto user = data.userLoaded(userId);
+							return user && user->isContact()
+								   && (user->firstName == u"UpdatedContact"_q);
+						},
+						5000, 1);
+					if (!updated) {
+						return false;
+					}
+					const auto userId = UserId(firstId.bare + changedIndex);
+					const auto foundBy = [&](const QString &word) {
+						const auto found
+							= data.contactsList()->filtered(QStringList{word});
+						return (found.size() == 1) && found.front()->history()
+							   && (found.front()->history()->peer->id
+								   == peerFromUser(userId));
+					};
+					if (!foundBy(u"updatedcontact"_q) || !foundBy(u"upd"_q)
+						|| !foundBy(u"nameprobe"_q)
+						|| !foundBy(u"probeusername"_q)
+						|| !data.contactsList()
+								->filtered(QStringList{u"updatedcx"_q})
+								.empty()) {
+						return false;
+					}
+					const auto movedToEnd
+						= data.contactsList()->all().rows().back()->history();
+					if (!movedToEnd
+						|| movedToEnd->peer->id != peerFromUser(userId)) {
+						std::fprintf(stderr, "Desktop scale check "
+											 "failed: renamed contact "
+											 "did not move to the end "
+											 "of the name list.\n");
+						return false;
+					}
+					const auto query = QStringList{u"upd"_q};
+					const auto expected = peerFromUser(userId);
+					for (auto i = 0; i != kDesktopScaleContactLookupsPerSample;
+						 ++i) {
+						const auto found = data.contactsList()->filtered(query);
+						if ((found.size() != 1) || !found.front()->history()
+							|| (found.front()->history()->peer->id
+								!= expected)) {
+							return false;
+						}
+					}
+					return true;
+				});
+			result.changedAndFound = std::move(changedAndFound);
+		}
+		if (!result.changedAndFound.passed) {
+			std::fprintf(
+				stderr,
+				"Desktop scale check failed: updated contact could not be "
+				"found by its new names among %d contacts.\n",
+				count);
+		}
+		const auto oldPrefixRows
+			= data.contactsList()->filtered(QStringList{u"sca"_q});
+		if (int(oldPrefixRows.size()) != count - 1) {
+			return false;
+		}
+		for (auto i = 0; i != count - 1; ++i) {
+			const auto originalIndex = i < changedIndex ? i : i + 1;
+			const auto history = oldPrefixRows[i]->history();
+			if (!history
+				|| history->peer->id
+					   != peerFromUser(UserId(firstId.bare + originalIndex))) {
+				std::fprintf(stderr,
+							 "Desktop scale check failed: old first-letter "
+							 "query "
+							 "returned the wrong row at position %d.\n",
+							 i);
+				return false;
+			}
+		}
+		data.contactsLoaded() = false;
+		auto removeCapture = ChannelSaveRequestCapture{
+			.instance = &account->mtp(),
+			.desktopScaleContactsOnly = true,
+		};
+		{
+			const auto restoreCapture = gsl::finally(
+				[previous
+				 = std::exchange(gChannelSaveRequestCapture, &removeCapture)] {
+					gChannelSaveRequestCapture = previous;
+				});
+			session.api().requestContacts();
+			const auto removedReply = DesktopScaleContactsReply(
+				firstId, count, changedIndex, 1, true, false, false);
+			result.removed = ApplyDesktopScaleResponse<MTPcontacts_GetContacts>(
+				removeCapture, mtpc_contacts_getContacts, removedReply, [&] {
+					const auto removed = WaitForRegressionCondition(
+						[&] {
+							const auto user = data.userLoaded(
+								UserId(firstId.bare + changedIndex));
+							return user && !user->isContact()
+								   && data.contactsList()->size() == count - 1;
+						},
+						5000);
+					if (!removed) {
+						return false;
+					}
+					return data.contactsList()
+							   ->filtered(QStringList{u"updatedcontact"_q})
+							   .empty()
+						   && data.contactsList()
+								  ->filtered(QStringList{u"upd"_q})
+								  .empty()
+						   && data.contactsList()
+								  ->filtered(QStringList{u"nameprobe"_q})
+								  .empty()
+						   && data.contactsList()
+								  ->filtered(QStringList{u"nam"_q})
+								  .empty()
+						   && data.contactsList()
+								  ->filtered(QStringList{u"probeusername"_q})
+								  .empty()
+						   && data.contactsList()
+								  ->filtered(QStringList{u"pro"_q})
+								  .empty();
+				});
+		}
+		if (!result.removed.passed) {
+			std::fprintf(stderr,
+						 "Desktop scale check failed: removed contact remained "
+						 "in name or prefix indexes.\n");
+		}
+		return result.loaded.passed && result.changedAndFound.passed
+			   && result.removed.passed;
+	}();
 	if (!created) {
 		result.loaded.passed = false;
 		result.changedAndFound.passed = false;
+		result.removed.passed = false;
 	}
 	return result;
+}
+
+[[nodiscard]] bool ResetDesktopScaleContacts(not_null<Main::Account *> account,
+											 UserId firstId, int count) {
+	auto &data = account->session().data();
+	auto users = QVector<MTPUser>();
+	users.reserve(count);
+	// Remove rows in reverse name order so each indexed-vector erase is at
+	// the end.
+	for (auto i = count; i != 0; --i) {
+		const auto index = i - 1;
+		users.push_back(DesktopScaleUser(
+			UserId(firstId.bare + index),
+			u"Scale Contact %1"_q.arg(index, 5, 10, QChar('0')), false, true));
+	}
+	data.processUsers(MTP_vector<MTPUser>(std::move(users)));
+	const auto empty = WaitForRegressionCondition(
+		[&] { return data.contactsList()->empty(); }, 5000);
+	if (!empty) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: could not reset contacts "
+					 "between trials.\n");
+		return false;
+	}
+	data.contactsLoaded() = false;
+	return true;
+}
+
+[[nodiscard]] DesktopScaleActionSample MedianDesktopScaleContactAction(
+	const std::vector<DesktopScaleContactsSample> &samples,
+	DesktopScaleActionSample DesktopScaleContactsSample::*action) {
+	auto result = DesktopScaleActionSample();
+	auto times = std::vector<qint64>();
+	auto stalls = std::vector<quint64>();
+	result.passed = !samples.empty();
+	for (const auto &sample : samples) {
+		const auto &value = sample.*action;
+		result.passed = result.passed && value.passed;
+		if (value.nanoseconds) {
+			times.push_back(*value.nanoseconds);
+		} else {
+			result.passed = false;
+		}
+		if (value.mainThreadStepsOverBudget) {
+			stalls.push_back(*value.mainThreadStepsOverBudget);
+		} else {
+			result.passed = false;
+		}
+	}
+	if (times.size() == samples.size()) {
+		ranges::sort(times);
+		result.nanoseconds = times[times.size() / 2];
+	}
+	if (stalls.size() == samples.size()) {
+		result.mainThreadStepsOverBudget
+			= *std::max_element(stalls.begin(), stalls.end());
+	}
+	return result;
+}
+
+[[nodiscard]] DesktopScaleContactsSample
+RunDesktopScaleContactTrials(Main::Domain &domain, int count, UserId firstId,
+							 Main::Account *reuseAccount = nullptr) {
+	auto samples = std::vector<DesktopScaleContactsSample>();
+	const auto created = WithDesktopScaleAccount(
+		domain, UserId(firstId.bare - 1),
+		[&](auto account) {
+			samples.reserve(kDesktopScaleContactTrials);
+			for (auto trial = 0; trial != kDesktopScaleContactTrials; ++trial) {
+				const auto trialFirstId
+					= UserId(firstId.bare + trial * (count + 1'000));
+				samples.push_back(
+					RunDesktopScaleContacts(account, count, trialFirstId));
+				if (!ResetDesktopScaleContacts(account, trialFirstId, count)) {
+					return false;
+				}
+			}
+			return true;
+		},
+		reuseAccount);
+	if (!created) {
+		for (auto &sample : samples) {
+			sample.loaded.passed = false;
+			sample.changedAndFound.passed = false;
+			sample.removed.passed = false;
+		}
+	}
+	return {
+		.loaded = MedianDesktopScaleContactAction(
+			samples, &DesktopScaleContactsSample::loaded),
+		.changedAndFound = MedianDesktopScaleContactAction(
+			samples, &DesktopScaleContactsSample::changedAndFound),
+		.removed = MedianDesktopScaleContactAction(
+			samples, &DesktopScaleContactsSample::removed),
+	};
+}
+
+class DesktopScaleSearchDelegate final : public PeerListSearchDelegate {
+  public:
+	void peerListSearchAddRow(not_null<PeerData *> peer) override {
+		_rows.push_back(peer->id);
+	}
+	void peerListSearchAddRow(PeerListRowId) override {}
+	void peerListSearchRefreshRows() override {}
+
+	[[nodiscard]] size_t rowsCount() const { return _rows.size(); }
+
+  private:
+	std::vector<PeerId> _rows;
+};
+
+[[nodiscard]] bool
+RunAddParticipantsSearchIndexRegression(Main::Account *account) {
+	const auto fail = [](const char *reason) {
+		std::fprintf(
+			stderr, "Desktop scale check failed: add-participants search %s.\n",
+			reason);
+		return false;
+	};
+	auto &data = account->session().data();
+	const auto firstId = UserId(9'001'000);
+	auto users = QVector<MTPUser>();
+	users.push_back(
+		DesktopScaleUser(firstId, u"SearchOnce Contact A"_q, true, true));
+	users.push_back(DesktopScaleUser(UserId(firstId.bare + 1),
+									 u"SearchOnce Contact B"_q, true, true));
+	users.push_back(DesktopScaleUser(UserId(firstId.bare + 2),
+									 u"Unrelated Member"_q, false));
+	data.processUsers(MTP_vector<MTPUser>(std::move(users)));
+	const auto contacts = data.contactsNoChatsList();
+	if (!WaitForRegressionCondition([&] { return contacts->size() == 2; }, 5000,
+									1)) {
+		return fail("new contacts were not added to the index");
+	}
+
+	const auto chat = data.chat(ChatId(9'001'000));
+	chat->participants.emplace(data.user(UserId(firstId.bare + 2)));
+	const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
+	auto additional
+		= ParticipantsAdditionalData(peer, ParticipantsRole::Members);
+	auto controller = AddSpecialBoxSearchController(peer, &additional);
+	auto delegate = DesktopScaleSearchDelegate();
+	controller.setDelegate(&delegate);
+	controller.searchQuery(u"searchonce"_q);
+	const auto indexReadyBeforeSearch = contacts->searchIndexReady();
+	if (!controller.loadMoreRows() || !controller.loadMoreRows()
+		|| (!indexReadyBeforeSearch && delegate.rowsCount() != 0)) {
+		return fail("did not wait for the contact index");
+	}
+	if (!WaitForRegressionCondition(
+			[&] {
+				return contacts->searchIndexReady()
+					   && delegate.rowsCount() == 2;
+			},
+			5000, 1)) {
+		return fail("did not append the initial matching contacts");
+	}
+
+	auto lateUser = QVector<MTPUser>();
+	lateUser.push_back(DesktopScaleUser(UserId(firstId.bare + 3),
+										u"SearchOnce Contact C"_q, true, true));
+	data.processUsers(MTP_vector<MTPUser>(std::move(lateUser)));
+	if (!WaitForRegressionCondition([&] { return contacts->size() == 3; }, 5000,
+									1)) {
+		return fail("new contact was not added to the index");
+	}
+	const auto reindexed = WaitForRegressionCondition(
+		[&] { return contacts->searchIndexReady(); }, 5000, 1);
+	if (!reindexed) {
+		return fail("did not rebuild after a contact was added");
+	} else if (delegate.rowsCount() != 2) {
+		return fail("appended duplicate rows after the query completed");
+	}
+
+	const auto restoredHistory = data.history(peerFromUser(firstId));
+	restoredHistory->clearFolder();
+	data.refreshChatListEntry(restoredHistory);
+	if (contacts->filtered(QStringList{u"sea"_q}).size() != 2) {
+		return fail(
+			"kept a contact in the no-chats search after adding its chat");
+	}
+	data.removeChatListEntry(restoredHistory);
+	if (!WaitForRegressionCondition(
+			[&] {
+				if (!contacts->searchIndexReady()) {
+					return false;
+				}
+				const auto rows = contacts->filtered(QStringList{u"sea"_q});
+				return (rows.size() == 3)
+					   && ranges::any_of(rows, [&](const auto &row) {
+							  const auto history = row->history();
+							  return history
+									 && (history->peer->id
+										 == peerFromUser(firstId));
+						  });
+			},
+			5000, 1)) {
+		return fail("did not restore contact search after deleting its chat");
+	}
+	return true;
 }
 
 [[nodiscard]] MTPDocument DesktopScaleVideoDocument(int64 id) {
@@ -17243,7 +17687,6 @@ int RunDesktopScaleCheck() {
 #if defined(Q_OS_LINUX)
 	auto &app = Core::App();
 	auto &domain = app.domain();
-
 	auto dialogsOne = DesktopScaleActionSample();
 	auto searchOne = DesktopScaleSearchUpdateSamples();
 	auto dialogsState = false;
@@ -17296,20 +17739,35 @@ int RunDesktopScaleCheck() {
 		  });
 	auto contactsOne = DesktopScaleContactsSample();
 	auto contactsHundred = DesktopScaleContactsSample();
+	auto addParticipantsIndexLifecycle = false;
 	const auto contactsCreated
 		= WithDesktopScaleAccount(domain, UserId(2'999'999), [&](auto account) {
-			  contactsOne = RunDesktopScaleContacts(
+			  contactsOne = RunDesktopScaleContactTrials(
 				  domain, 100, UserId(3'000'000), account.get());
-			  contactsHundred = RunDesktopScaleContacts(
-				  domain, 10'000, UserId(3'000'000), account.get());
+			  contactsHundred = RunDesktopScaleContactTrials(
+				  domain, 10'000, UserId(4'000'000), account.get());
+			  addParticipantsIndexLifecycle
+				  = RunAddParticipantsSearchIndexRegression(account.get());
 			  return contactsOne.loaded.passed
 					 && contactsOne.changedAndFound.passed
+					 && contactsOne.removed.passed
 					 && contactsHundred.loaded.passed
-					 && contactsHundred.changedAndFound.passed;
+					 && contactsHundred.changedAndFound.passed
+					 && contactsHundred.removed.passed
+					 && addParticipantsIndexLifecycle;
 		  });
 	const auto cacheSamples = RunDesktopScaleCache(domain, UserId(5'000'000));
 	const auto &cacheOne = cacheSamples.one;
 	const auto &cacheHundred = cacheSamples.hundred;
+	const auto contactResponseWithinBudget
+		= contactsHundred.loaded.nanoseconds
+		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
+	const auto contactChangeLookupScales
+		= contactsOne.changedAndFound.nanoseconds
+		  && contactsHundred.changedAndFound.nanoseconds
+		  && DesktopScaleContactChangeWithinBudget(
+			  *contactsOne.changedAndFound.nanoseconds,
+			  *contactsHundred.changedAndFound.nanoseconds);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -17351,7 +17809,7 @@ int RunDesktopScaleCheck() {
 		});
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
-			std::printf("%.2f ms", double(*sample.nanoseconds) / 1'000'000.);
+			std::printf("%.6f ms", double(*sample.nanoseconds) / 1'000'000.);
 		} else {
 			std::printf("n/a");
 		}
@@ -17379,6 +17837,8 @@ int RunDesktopScaleCheck() {
 		contactsHundred.loaded.mainThreadStepsOverBudget,
 		contactsOne.changedAndFound.mainThreadStepsOverBudget,
 		contactsHundred.changedAndFound.mainThreadStepsOverBudget,
+		contactsOne.removed.mainThreadStepsOverBudget,
+		contactsHundred.removed.mainThreadStepsOverBudget,
 		cacheOne.mainThreadStepsOverBudget,
 		cacheHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
@@ -17392,9 +17852,9 @@ int RunDesktopScaleCheck() {
 		searchOne.updateBurst.mainThreadStepsOverBudget,
 		searchHundred.updateBurst.mainThreadStepsOverBudget,
 	});
-	// The dialogs page and full 100x contacts response exceed the 50 ms budget
-	// on the dev baseline. Report their stalls without blocking on them.
+	// The dialogs page remains report-only. The 10k contact response is gated.
 	const auto blockingStalls = SumDesktopScaleStalls({
+		contactsHundred.loaded.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
@@ -17412,16 +17872,18 @@ int RunDesktopScaleCheck() {
 		  && DesktopScaleDialogsMeetBudget(dialogsOne, dialogsHundred)
 		  && dialogsState && contactsOne.loaded.passed
 		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
-		  && contactsHundred.changedAndFound.passed && contactsCreated
-		  && cacheOne.passed && cacheHundred.passed && historyOne.passed
-		  && historyHundred.passed && dateOne.passed && dateHundred.passed
-		  && historyCreated && groupOne.passed && groupHundred.passed
-		  && searchOne.search.passed && groupCreated
+		  && contactsHundred.changedAndFound.passed
+		  && contactsOne.removed.passed && contactsHundred.removed.passed
+		  && contactsCreated && cacheOne.passed && cacheHundred.passed
+		  && historyOne.passed && historyHundred.passed && dateOne.passed
+		  && dateHundred.passed && historyCreated && groupOne.passed
+		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed
 		  && DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
 												searchHundred.updateBurst)
 		  && blockingStalls && (*blockingStalls == 0)
+		  && contactResponseWithinBudget && contactChangeLookupScales
 		  && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
@@ -17437,6 +17899,8 @@ int RunDesktopScaleCheck() {
 			 contactsHundred.loaded);
 	printRow("contact change + name lookup", contactsOne.changedAndFound,
 			 contactsHundred.changedAndFound);
+	printRow("contact removal + search cleanup", contactsOne.removed,
+			 contactsHundred.removed);
 	printRow("cache read x100", cacheOne, cacheHundred);
 	printRow("private history page (1M messages; 20 / 2,000 loaded)",
 			 historyOne, historyHundred);
@@ -17447,6 +17911,13 @@ int RunDesktopScaleCheck() {
 			 searchOne.search, searchHundred.search);
 	printRow("updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 			 searchOne.updateBurst, searchHundred.updateBurst);
+	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
+				contactResponseWithinBudget ? "PASS" : "FAIL");
+	std::printf("Contact change + name lookup budget (<=1.50x, update + "
+				"1,000 short searches): %s\n",
+				contactChangeLookupScales ? "PASS" : "FAIL");
+	std::printf("Add-participants index ready subscription: %s\n",
+				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {
 		if (sample) {
 			std::printf("%llu/100", static_cast<unsigned long long>(*sample));
@@ -17484,6 +17955,10 @@ int RunDesktopScaleCheck() {
 	printStallCount(contactsOne.changedAndFound.mainThreadStepsOverBudget);
 	std::printf(", 100x=");
 	printStallCount(contactsHundred.changedAndFound.mainThreadStepsOverBudget);
+	std::printf("; contact removal and cleanup 1x=");
+	printStallCount(contactsOne.removed.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(contactsHundred.removed.mainThreadStepsOverBudget);
 	std::printf("; thumbnail reads 1x=");
 	printStallCount(cacheOne.mainThreadStepsOverBudget);
 	std::printf(", 100x=");
@@ -17521,14 +17996,16 @@ int RunDesktopScaleCheck() {
 	printStallCount(blockingStalls);
 	std::printf(".\n");
 	std::printf("Scenario checks: dialogs=%d/%d state=%d contacts=%d/%d "
-				"contact change=%d/%d "
-				"cache=%d/%d.\n",
+				"contact change=%d/%d cache=%d/%d.\n",
 				int(dialogsOne.passed), int(dialogsHundred.passed),
 				int(dialogsState), int(contactsOne.loaded.passed),
 				int(contactsHundred.loaded.passed),
 				int(contactsOne.changedAndFound.passed),
 				int(contactsHundred.changedAndFound.passed),
 				int(cacheOne.passed), int(cacheHundred.passed));
+	std::printf("Contact removal check: %d/%d.\n",
+				int(contactsOne.removed.passed),
+				int(contactsHundred.removed.passed));
 	std::printf(
 		"Additional scenario checks: history=%d/%d date=%d/%d group=%d/%d "
 		"search=%d/%d updates=%d/%d.\n",

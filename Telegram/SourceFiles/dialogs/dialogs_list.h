@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_row.h"
 
+#include <utility>
+
 class PeerData;
 namespace Dialogs {
 
@@ -54,7 +56,7 @@ public:
 
 	not_null<Row*> addToEnd(Key key);
 	Row *adjustByName(Key key);
-	not_null<Row*> addByName(Key key);
+	std::pair<not_null<Row *>, bool> addByName(Key key);
 	bool moveToTop(Key key);
 	void adjustByDate(not_null<Row*> row);
 	void freeze();
@@ -71,6 +73,9 @@ public:
 	[[nodiscard]] const_iterator cend() const { return _rows.cend(); }
 	[[nodiscard]] const_iterator begin() const { return cbegin(); }
 	[[nodiscard]] const_iterator end() const { return cend(); }
+	[[nodiscard]] const std::vector<not_null<Row *>> &rows() const {
+		return _rows;
+	}
 	[[nodiscard]] iterator begin() { return cbegin(); }
 	[[nodiscard]] iterator end() { return cend(); }
 	[[nodiscard]] const_iterator cfind(Row *value) const;

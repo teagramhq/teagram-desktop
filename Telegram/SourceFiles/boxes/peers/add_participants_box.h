@@ -215,6 +215,7 @@ private:
 	MTP::Sender _api;
 
 	base::Timer _timer;
+	rpl::lifetime _contactsIndexLifetime;
 	QString _query;
 	mtpRequestId _requestId = 0;
 	int _offset = 0;

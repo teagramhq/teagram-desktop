@@ -107,6 +107,11 @@ namespace {
 constexpr auto kNextForUpgradeGiftTimeout = 5 * crl::time(1000);
 constexpr auto kMaxServiceNotificationMessageSize = 4096;
 
+// The contact name index is built when no contact was added for this long,
+// a few rows at a time.
+constexpr auto kContactsIndexDelay = crl::time(100);
+constexpr auto kContactsIndexChunk = 100;
+
 using ViewElement = HistoryView::Element;
 
 // s: box 100x100
@@ -250,8 +255,11 @@ Session::Session(not_null<Main::Session *> session)
 				return limits.groupTranscribeLevelMin();
 			})),
 	  _chatsList(session, FilterId(), maxPinnedChatsLimitValue(nullptr)),
-	  _contactsList(Dialogs::SortMode::Name),
-	  _contactsNoChatsList(Dialogs::SortMode::Name),
+	  _contactsList(Dialogs::SortMode::Name, 0,
+					Dialogs::IndexedList::PrefixSearch::Enabled),
+	  _contactsNoChatsList(Dialogs::SortMode::Name, 0,
+						   Dialogs::IndexedList::PrefixSearch::Enabled),
+	  _contactsIndexTimer([=] { indexContacts(); }),
 	  _ttlCheckTimer([=] { checkTTLs(); }),
 	  _formattedDateTimer([=] { checkFormattedDateUpdates(); }),
 	  _selfDestructTimer([=] { checkSelfDestructItems(); }),
@@ -652,6 +660,7 @@ void Session::clear() {
 	_sentMessagesData.clear();
 	cSetRecentStickers(RecentStickerPack());
 	HistoryView::Element::ClearGlobal();
+	_contactsIndexTimer.cancel();
 	_contactsNoChatsList.clear();
 	_contactsList.clear();
 	for (const auto &[id, folder] : _folders) {
@@ -2294,11 +2303,19 @@ void Session::setupUserIsContactViewer() {
 			if (!history->inChatList()) {
 				_contactsNoChatsList.addByName(history);
 			}
+			_contactsIndexTimer.callOnce(kContactsIndexDelay);
 		} else if (const auto history = historyLoaded(user)) {
 			_contactsNoChatsList.remove(history);
 			_contactsList.remove(history);
 		}
 	}, _lifetime);
+}
+
+void Session::indexContacts() {
+	const auto more = _contactsList.indexSome(kContactsIndexChunk);
+	if (_contactsNoChatsList.indexSome(kContactsIndexChunk) || more) {
+		_contactsIndexTimer.callOnce(1);
+	}
 }
 
 Session::~Session() = default;
@@ -6066,6 +6083,7 @@ void Session::removeChatListEntry(Dialogs::Key key) {
 	if (_contactsList.contains(key)) {
 		if (!_contactsNoChatsList.contains(key)) {
 			_contactsNoChatsList.addByName(key);
+			_contactsIndexTimer.callOnce(kContactsIndexDelay);
 		}
 	}
 	if (const auto topic = key.topic()) {

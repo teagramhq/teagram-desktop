@@ -1084,6 +1084,66 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertFalse(result["failures"])
         self.assertIn("calibrating: 19/20", summary)
 
+    def test_contact_load_ceiling_applies_during_and_after_calibration(self):
+        self.require_implementation()
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in head:
+            sample["scenarios"]["contacts.getContacts full response"][
+                "hundred_ms"
+            ] = 1003.61
+
+        cases = ((19, False), (20, True), (20, False))
+        for history_count, report_only in cases:
+            with self.subTest(
+                history_count=history_count, report_only=report_only
+            ):
+                result = scale_check.evaluate(
+                    [make_sample() for _ in range(history_count)],
+                    base,
+                    head,
+                    report_only=report_only,
+                )
+
+                self.assertTrue(
+                    any(
+                        "contacts.getContacts full response" in failure
+                        and "1003.61 ms" in failure
+                        and "500 ms" in failure
+                        for failure in result["failures"]
+                    )
+                )
+
+    def test_contact_load_uses_its_ceiling_instead_of_the_scale_ratio(self):
+        self.require_implementation()
+        scenario = "contacts.getContacts full response"
+
+        def realistic_contact_load(sample):
+            sample["scenarios"][scenario].update(
+                {"one_ms": 11.17, "hundred_ms": 300.23}
+            )
+
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for sample in [*history, *base, *head]:
+            realistic_contact_load(sample)
+
+        result = scale_check.evaluate(history, base, head)
+
+        self.assertAlmostEqual(
+            result["rows"][scenario]["ratio"], 300.23 / 11.17
+        )
+        self.assertFalse(
+            any(
+                scenario in failure and "1.5x" in failure
+                for failure in result["failures"]
+            )
+        )
+        self.assertFalse(
+            any(scenario in failure and "500 ms" in failure for failure in result["failures"])
+        )
+
     def test_absolute_budget_and_scale_ratio_fail_after_calibration(self):
         self.require_implementation()
         records = [make_sample() for _ in range(20)]
@@ -1270,6 +1330,54 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn(scenario, results[10]["exceptions"])
         self.assertIn(scenario, results[11]["exceptions"])
 
+    def test_contact_scenarios_do_not_get_baseline_exceptions(self):
+        self.require_implementation()
+        records = [make_sample() for _ in range(20)]
+        base = [make_sample(), make_sample()]
+        fixed_scenarios = (
+            "contacts.getContacts full response",
+            "contact change + name lookup",
+        )
+        for record in records:
+            for name in fixed_scenarios:
+                record["scenarios"][name]["one_stalls"] = 1
+
+        absolute_head = [make_sample(), make_sample()]
+        for sample in absolute_head:
+            for name in fixed_scenarios:
+                sample["scenarios"][name]["one_stalls"] = 1
+        absolute = scale_check.evaluate(records, base, absolute_head)
+
+        ratio_head = [make_sample(), make_sample()]
+        for sample in ratio_head:
+            for name in fixed_scenarios:
+                sample["scenarios"][name]["hundred_ms"] = 16.0
+        ratio = scale_check.evaluate(records, base, ratio_head)
+
+        for name in fixed_scenarios:
+            self.assertNotIn(name, absolute["exceptions"])
+            self.assertTrue(
+                any(
+                    name in failure and "50 ms" in failure
+                    for failure in absolute["failures"]
+                )
+            )
+        for name in fixed_scenarios:
+            self.assertNotIn(name, ratio["exceptions"])
+        self.assertTrue(
+            any(
+                "contact change + name lookup" in failure and "1.5x" in failure
+                for failure in ratio["failures"]
+            )
+        )
+        self.assertFalse(
+            any(
+                "contacts.getContacts full response" in failure
+                and "1.5x" in failure
+                for failure in ratio["failures"]
+            )
+        )
+
     def test_dialogs_regression_stays_blocking_with_slow_dev_history(self):
         self.require_implementation()
         scenario = "messages.getDialogs page (100 dialogs)"
@@ -1294,30 +1402,6 @@ class DesktopScaleCheckTests(unittest.TestCase):
         failures = [item for item in result["failures"] if scenario in item]
         self.assertTrue(any("50 ms" in item for item in failures))
         self.assertTrue(any("1.5x" in item for item in failures))
-
-    def test_static_baseline_exceptions_are_report_only(self):
-        self.require_implementation()
-        records = [make_sample() for _ in range(20)]
-        base = [make_sample(), make_sample()]
-        head = [make_sample(), make_sample()]
-        baseline_exceptions = (
-            "contacts.getContacts full response",
-            "contact change + name lookup",
-        )
-        for record in records:
-            for name in baseline_exceptions:
-                record["scenarios"][name]["one_stalls"] = 1
-        for sample in head:
-            for name in baseline_exceptions:
-                sample["scenarios"][name].update(
-                    {"one_ms": 30.0, "hundred_ms": 60.0, "one_stalls": 1, "hundred_stalls": 1}
-                )
-
-        result = scale_check.evaluate(records, base, head)
-
-        self.assertIn("MAIN-3657", result["exceptions"]["contacts.getContacts full response"])
-        self.assertIn("MAIN-3657", result["exceptions"]["contact change + name lookup"])
-        self.assertFalse(result["failures"])
 
     def test_known_baseline_exception_lifts_when_dev_timings_are_clear(self):
         self.require_implementation()

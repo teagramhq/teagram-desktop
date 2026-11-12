@@ -389,10 +389,18 @@ public:
 	[[nodiscard]] const std::vector<QString> &usernames() const;
 	[[nodiscard]] bool isUsernameEditable(QString username) const;
 
+	// Names are filled on the first read after a name change, so that
+	// loading a long list of peers does not pay for names nobody searched.
 	[[nodiscard]] const base::flat_set<QString> &nameWords() const {
+		if (_namesStale) {
+			const_cast<PeerData *>(this)->fillNames();
+		}
 		return _nameWords;
 	}
 	[[nodiscard]] const base::flat_set<QChar> &nameFirstLetters() const {
+		if (_namesStale) {
+			const_cast<PeerData *>(this)->fillNames();
+		}
 		return _nameFirstLetters;
 	}
 
@@ -652,6 +660,7 @@ private:
 
 	QString _name;
 	uint32 _nameVersion : 16 = 1;
+	uint32 _namesStale : 1 = 0;
 	uint32 _sensitiveContent : 1 = 0;
 	uint32 _wallPaperOverriden : 1 = 0;
 	uint32 _checkedTrustedPayForMessage : 1 = 0;

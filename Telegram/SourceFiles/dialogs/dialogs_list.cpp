@@ -54,12 +54,18 @@ Row *List::adjustByName(Key key) {
 	return row;
 }
 
-not_null<Row*> List::addByName(Key key) {
+std::pair<not_null<Row *>, bool> List::addByName(Key key) {
 	Expects(_sortMode == SortMode::Name);
 
-	const auto row = addToEnd(key);
-	adjustByName(key);
-	return row;
+	const auto [i, inserted] = _rowByKey.try_emplace(
+		key, std::make_unique<Row>(key, _rows.size(), height()));
+	const auto row = i->second.get();
+	if (inserted) {
+		row->recountHeight(_narrowRatio, _filterId);
+		_rows.emplace_back(row);
+	}
+	adjustByName(row);
+	return {row, inserted};
 }
 
 void List::adjustByName(not_null<Row*> row) {
