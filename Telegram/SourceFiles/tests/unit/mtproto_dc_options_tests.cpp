@@ -432,7 +432,9 @@ struct ScriptedOutcome {
 	const QString &hostname = u"demo.example.com"_q, bool ipv6 = false,
 	bool bothAddressFamilies = false,
 	QList<QHostAddress> webSocketAnswers = {QHostAddress(u"8.8.4.4"_q)},
-	bool webSocketBrowserOnly = false) {
+	bool webSocketBrowserOnly = false,
+	QList<QHostAddress> mtprotoAnswers = {QHostAddress(u"8.8.8.88"_q)},
+	bool webSocketOnly = false) {
 	auto result = ScriptedOutcome();
 	result.log.tcpSucceeds = tcpSucceeds;
 	result.log.webSocketSucceeds = webSocketSucceeds;
@@ -441,7 +443,9 @@ struct ScriptedOutcome {
 	if (!QHostAddress(hostname).isNull()) {
 		resolver.add({.addresses = webSocketAnswers});
 	} else {
-		resolver.add({.addresses = {QHostAddress(u"8.8.8.88"_q)}});
+		if (!webSocketOnly) {
+			resolver.add({.addresses = mtprotoAnswers});
+		}
 		resolver.add({.addresses = webSocketAnswers});
 	}
 	const auto fakeInstance = reinterpret_cast<Instance *>(quintptr(1));
@@ -457,7 +461,7 @@ struct ScriptedOutcome {
 		not_null<Instance *>(fakeInstance), DcOptions::Variants::Tcp,
 		QThread::currentThread(), bytes::vector(), proxy, hostname, ipv6,
 		resolver.resolver(), webSocketEndpoint, u"demo.example.com"_q,
-		bothAddressFamilies);
+		bothAddressFamilies, webSocketOnly);
 	QEventLoop loop;
 	QTimer guard;
 	guard.setSingleShot(true);
@@ -611,6 +615,10 @@ TEST_CASE(AuthorizationStateCannotCrossServerPin) {
 	changed = original;
 	changed.webSocketEndpoint = "wss://transport.example.com/apiws";
 	CHECK(!SameCustomServerPin(original, changed));
+
+	changed = original;
+	changed.webSocketOnly = true;
+	CHECK(!SameCustomServerPin(original, changed));
 }
 
 TEST_CASE(CustomServerWebSocketEndpointSurvivesSerialization) {
@@ -626,6 +634,58 @@ TEST_CASE(CustomServerWebSocketEndpointSurvivesSerialization) {
 
 	auto restored = DcOptions(Environment::Production);
 	CHECK(restored.constructFromSerialized(options.serialize()));
+	CHECK_EQ(restored.customServer().webSocketEndpoint,
+			 server.webSocketEndpoint);
+	CHECK(!restored.customServer().webSocketOnly);
+}
+
+TEST_CASE(CustomServerWebSocketOnlyModeSurvivesSerialization) {
+	auto options = DcOptions(Environment::Production);
+	auto server = MakeCustomServer();
+	server.hostname = "transport.example.com";
+	server.ip.clear();
+	server.port = 443;
+	server.serverSelection = "server.example.com:2443";
+	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	server.discoveryOrigin
+		= "https://server.example.com/.well-known/teagramd/client";
+	server.webSocketEndpoint = "wss://transport.example.com/apiws";
+	server.webSocketOnly = true;
+	CHECK(options.setCustomServer(server));
+
+	auto restored = DcOptions(Environment::Production);
+	CHECK(restored.constructFromSerialized(options.serialize()));
+	CHECK(restored.customServer().webSocketOnly);
+	CHECK_EQ(restored.customServer().hostname, "transport.example.com");
+	CHECK(restored.customServer().ip.empty());
+	CHECK_EQ(restored.customServer().port, 443);
+	CHECK_EQ(restored.customServer().webSocketEndpoint,
+			 server.webSocketEndpoint);
+}
+
+TEST_CASE(VersionEightWebSocketBindingRestoresWithTcpFirstMode) {
+	auto options = DcOptions(Environment::Production);
+	auto server = MakeCustomServer();
+	server.ip = "8.8.4.4";
+	server.port = 443;
+	server.serverSelection = "server.example.com";
+	server.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	server.discoveryOrigin
+		= "https://server.example.com/.well-known/teagramd/client";
+	server.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(options.setCustomServer(server));
+
+	auto versionEight = options.serialize();
+	versionEight.chop(sizeof(qint32));
+	QDataStream stream(&versionEight, QIODevice::ReadWrite);
+	stream.setVersion(QDataStream::Qt_5_1);
+	CHECK(stream.device()->seek(0));
+	stream << qint32(-8);
+	CHECK(stream.status() == QDataStream::Ok);
+
+	auto restored = DcOptions(Environment::Production);
+	CHECK(restored.constructFromSerialized(versionEight));
+	CHECK(!restored.customServer().webSocketOnly);
 	CHECK_EQ(restored.customServer().webSocketEndpoint,
 			 server.webSocketEndpoint);
 }
@@ -657,6 +717,56 @@ TEST_CASE(ServerConnectionFallsBackToWebSocketAfterTcpFails) {
 	CHECK_EQ(result.log.addresses[0], u"8.8.8.88"_q);
 	CHECK_EQ(result.log.endpoints[1], endpoint);
 	CHECK_EQ(result.log.addresses[1], u"8.8.4.4"_q);
+}
+
+TEST_CASE(ServerConnectionSkipsPrivateMtprotoAddressesForWebSocket) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(
+		false, true, endpoint, ProxyData::Type::None,
+		u"mtproto.tailaa4918.ts.net"_q, false, false,
+		{QHostAddress(u"8.8.4.4"_q)}, false, {QHostAddress(u"100.64.1.10"_q)});
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK_EQ(result.log.endpoints.front(), endpoint);
+	CHECK_EQ(result.log.addresses.front(), u"8.8.4.4"_q);
+}
+
+TEST_CASE(ServerConnectionUsesAlternateFamilyBeforeWebSocketFallback) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(
+		true, false, endpoint, ProxyData::Type::None, u"demo.example.com"_q,
+		false, true, {QHostAddress(u"8.8.4.4"_q)}, false,
+		{QHostAddress(u"2001:4860:4860::8888"_q)});
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK(result.log.endpoints.front().isEmpty());
+	CHECK_EQ(result.log.addresses.front(), u"2001:4860:4860::8888"_q);
+}
+
+TEST_CASE(ServerConnectionStartsWithWebSocketForWebSocketOnlyBinding) {
+	const auto endpoint = u"wss://transport.example.com/apiws"_q;
+	const auto result = RunScriptedServerConnection(
+		false, true, endpoint, ProxyData::Type::None,
+		u"mtproto.tailaa4918.ts.net"_q, false, false,
+		{QHostAddress(u"8.8.4.4"_q)}, false, {QHostAddress(u"100.64.1.10"_q)},
+		true);
+	CHECK(result.connected);
+	CHECK(!result.failed);
+	CHECK_EQ(result.lookups, 1);
+	CHECK_EQ(int(result.log.endpoints.size()), 1);
+	if (result.log.endpoints.size() != 1) {
+		return;
+	}
+	CHECK_EQ(result.log.endpoints.front(), endpoint);
+	CHECK_EQ(result.log.addresses.front(), u"8.8.4.4"_q);
 }
 
 TEST_CASE(ServerConnectionFailsWhenTcpAndWebSocketFail) {

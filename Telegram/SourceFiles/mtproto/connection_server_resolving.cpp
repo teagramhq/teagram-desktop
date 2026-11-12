@@ -146,17 +146,19 @@ ConnectionPointer CreateServerConnection(
 	QThread *thread, const bytes::vector &secret, const ProxyData &proxy,
 	const QString &hostname, bool ipv6, ServerHostnameResolver resolver,
 	const QString &webSocketEndpoint, const QString &webSocketSelection,
-	bool bothAddressFamilies) {
+	bool bothAddressFamilies, bool webSocketOnly) {
 #ifdef TDESKTOP_UNIT_TESTS
 	if (TestConnectionFactory) {
 		return TestConnectionFactory(thread, proxy);
 	}
 #endif
-	const auto useWebSocketFallback = protocol == DcOptions::Variants::Tcp
-									  && proxy.type == ProxyData::Type::None
-									  && !webSocketEndpoint.isEmpty();
-	if (ShouldResolveServerHostname(hostname, proxy.type)
-		|| useWebSocketFallback) {
+	const auto forceWebSocketOnly
+		= protocol == DcOptions::Variants::Tcp && webSocketOnly;
+	const auto useWebSocket
+		= protocol == DcOptions::Variants::Tcp && !webSocketEndpoint.isEmpty()
+		  && (proxy.type == ProxyData::Type::None || forceWebSocketOnly);
+	if (ShouldResolveServerHostname(hostname, proxy.type) || useWebSocket
+		|| forceWebSocketOnly) {
 		if (!resolver.lookup) {
 			resolver = DefaultServerHostnameResolver();
 		} else if (!resolver.abort) {
@@ -164,10 +166,9 @@ ConnectionPointer CreateServerConnection(
 		}
 		return ConnectionPointer::New<ServerResolvingConnection>(
 			instance, thread, proxy, protocol, ipv6, hostname,
-			std::move(resolver),
-			useWebSocketFallback ? webSocketEndpoint : QString(),
-			useWebSocketFallback ? webSocketSelection : QString(),
-			useWebSocketFallback && bothAddressFamilies);
+			std::move(resolver), useWebSocket ? webSocketEndpoint : QString(),
+			useWebSocket ? webSocketSelection : QString(),
+			useWebSocket && bothAddressFamilies, forceWebSocketOnly);
 	}
 	return AbstractConnection::Create(
 		instance,
@@ -181,12 +182,13 @@ ServerResolvingConnection::ServerResolvingConnection(
 	not_null<Instance *> instance, QThread *thread, const ProxyData &proxy,
 	DcOptions::Variants::Protocol protocol, bool ipv6, const QString &hostname,
 	ServerHostnameResolver resolver, const QString &webSocketEndpoint,
-	const QString &webSocketSelection, bool bothAddressFamilies)
+	const QString &webSocketSelection, bool bothAddressFamilies,
+	bool webSocketOnly)
 	: AbstractConnection(thread, proxy), _instance(instance),
 	  _protocol(protocol), _ipv6(ipv6), _hostname(hostname),
 	  _resolver(std::move(resolver)), _webSocketEndpoint(webSocketEndpoint),
 	  _webSocketSelection(webSocketSelection),
-	  _bothAddressFamilies(bothAddressFamilies),
+	  _bothAddressFamilies(bothAddressFamilies), _webSocketOnly(webSocketOnly),
 	  _lookupTimeoutTimer([=] { lookupTimedOut(); }),
 	  _addressTimeoutTimer([=] { handleError(kErrorCodeOther); }) {}
 
@@ -251,15 +253,19 @@ void ServerResolvingConnection::lookupFinished(const QHostInfo &info) {
 		tryNextAddress();
 		return;
 	}
-	const auto preferred
+	auto pinnedAddresses
 		= FilterPinnedServerAddresses(_hostname, info.addresses(), _ipv6);
-	_addresses = _bothAddressFamilies
-					 ? InterleaveServerAddressFamilies(
-						   preferred,
-						   FilterPinnedServerAddresses(
-							   _hostname, info.addresses(), !_ipv6),
-						   MaxResolvedAddresses(_bothAddressFamilies))
-					 : preferred;
+	if (_bothAddressFamilies) {
+		pinnedAddresses = InterleaveServerAddressFamilies(
+			pinnedAddresses,
+			FilterPinnedServerAddresses(_hostname, info.addresses(), !_ipv6),
+			MaxResolvedAddresses(_bothAddressFamilies));
+	}
+	_addresses = !_webSocketEndpoint.isEmpty()
+					 ? PublicDiscoveryAddresses(
+						   CheckServerSelection(_webSocketSelection),
+						   pinnedAddresses, _ipv6, _bothAddressFamilies)
+					 : pinnedAddresses;
 	tryNextAddress();
 }
 
@@ -316,6 +322,10 @@ void ServerResolvingConnection::lookupTimedOut() {
 
 void ServerResolvingConnection::startWebSocketFallback() {
 	_webSocketFallbackStarted = true;
+	if (_proxy.type != ProxyData::Type::None || _webSocketEndpoint.isEmpty()) {
+		emitError(kErrorCodeOther);
+		return;
+	}
 	const auto url = QUrl(_webSocketEndpoint, QUrl::StrictMode);
 	const auto origin = CheckServerSelection(_webSocketSelection);
 	if (!url.isValid() || !origin.valid()
@@ -481,6 +491,10 @@ void ServerResolvingConnection::connectToServer(
 	_protocolSecret = protocolSecret;
 	_protocolDcId = protocolDcId;
 	_protocolForFiles = protocolForFiles;
+	if (_webSocketOnly) {
+		startWebSocketFallback();
+		return;
+	}
 	auto literal = QHostAddress();
 	if (!_webSocketEndpoint.isEmpty() && literal.setAddress(_hostname)) {
 		_addresses = PublicDiscoveryAddresses(
