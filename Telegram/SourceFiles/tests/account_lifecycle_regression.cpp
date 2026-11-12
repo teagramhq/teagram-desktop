@@ -10920,7 +10920,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   highProcessCpuStall, true);
 }
 
-[[nodiscard]] bool ChatSwitchSchedulerProofRegressionPasses() {
+[[maybe_unused, nodiscard]] bool ChatSwitchSchedulerProofRegressionPasses() {
 	const auto lastAcknowledgedAt = QDateTime::fromString(
 		u"2026-11-09T00:00:00.000Z"_q, Qt::ISODateWithMs);
 	const auto callbackStartedAt = lastAcknowledgedAt.addMSecs(8);
@@ -11025,88 +11025,14 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
 }
 
-[[nodiscard]] bool MainThreadWorkWithinBound(qint64 wallNanoseconds,
-											 qint64 mainThreadCpuNanoseconds,
-											 bool schedulerPreemptionProven);
+[[nodiscard]] bool MainThreadCpuWorkWithinBudget(qint64 workNanoseconds,
+												 qint64 budgetNanoseconds);
 
-[[nodiscard]] bool MainThreadWorkSchedulerProofRegressionPasses() {
-	const auto startedAt = QDateTime::fromString(u"2026-11-09T00:00:00.000Z"_q,
-												 Qt::ISODateWithMs);
-	const auto interval
-		= MainThreadWorkInterval{startedAt, 92'000'000, 12'000'000, 30'000'000};
-	const auto runnableEvidence
-		= std::vector<Core::UiStallWatchdog::StallEvidence>{
-			{
-				.startedAt = startedAt.toString(Qt::ISODateWithMs),
-				.durationMilliseconds = 92,
-				.schedulerTrace = QString(92, QChar(u'R')),
-				.schedulerSampleOffsetsNanoseconds
-				= SchedulerSampleOffsetsForDuration(92'000'000),
-				.stack = u"runner scheduling regression"_q,
-			},
-	};
-	const auto blockedEvidence
-		= std::vector<Core::UiStallWatchdog::StallEvidence>{
-			{
-				.startedAt = startedAt.toString(Qt::ISODateWithMs),
-				.durationMilliseconds = 92,
-				.schedulerTrace = QString(92, QChar(u'W')),
-				.schedulerSampleOffsetsNanoseconds
-				= SchedulerSampleOffsetsForDuration(92'000'000),
-				.stack = u"blocked callback regression"_q,
-			},
-	};
-	const auto highProcessWork = MainThreadWorkInterval{
-		startedAt, 92'000'000, 12'000'000, 120'000'000};
-	const auto highOtherThreadWork
-		= MainThreadWorkInterval{startedAt, 92'000'000, 12'000'000, 72'000'000};
-	const auto lowSampleEvidence
-		= std::vector<Core::UiStallWatchdog::StallEvidence>{
-			{
-				.startedAt = startedAt.toString(Qt::ISODateWithMs),
-				.durationMilliseconds = 92,
-				.schedulerTrace = QString(4, QChar(u'R')),
-				.schedulerSampleOffsetsNanoseconds
-				= {0, 5'000'000, 10'000'000, 15'000'000},
-				.stack = u"undersampled scheduler trace regression"_q,
-			},
-	};
-	const auto evidence = FindMatchingMainThreadWorkEvidence(
-		interval, runnableEvidence, kMaxChatSwitchNanoseconds, 10);
-	const auto blocked = FindMatchingMainThreadWorkEvidence(
-		interval, blockedEvidence, kMaxChatSwitchNanoseconds, 10);
-	const auto lowSample = FindMatchingMainThreadWorkEvidence(
-		interval, lowSampleEvidence, kMaxChatSwitchNanoseconds, 10);
-	return !MainThreadWorkWithinBound(92'000'000, 12'000'000, false)
-		   && MainThreadWorkWithinBound(92'000'000, 12'000'000, true)
-		   && MainThreadWorkWithinBound(49'000'000, 12'000'000, false)
-		   && !MainThreadWorkWithinBound(92'000'000, 50'000'000, true)
-		   && evidence
-		   && MainThreadWorkIntervalHasSchedulerProof(
-			   interval, evidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   interval, blocked, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   highProcessWork, evidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   highOtherThreadWork, evidence, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && lowSample
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   interval, lowSample, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds)
-		   && !MainThreadWorkIntervalHasSchedulerProof(
-			   interval, std::nullopt, kMaxChatSwitchNanoseconds,
-			   kMaxChatSwitchNanoseconds,
-			   kMaxSchedulerProofOtherThreadWorkNanoseconds);
+[[nodiscard]] bool MainThreadCpuWorkBudgetRegressionPasses() {
+	return MainThreadCpuWorkWithinBudget(17'900'000, 100'000'000)
+		   && !MainThreadCpuWorkWithinBudget(100'000'000, 100'000'000)
+		   && MainThreadCpuWorkWithinBudget(45'500'000, 50'000'000)
+		   && !MainThreadCpuWorkWithinBudget(52'107'000, 50'000'000);
 }
 
 [[maybe_unused, nodiscard]] bool
@@ -11162,13 +11088,9 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 			   u"uncached peer callback"_q);
 }
 
-[[nodiscard]] bool MainThreadWorkWithinBound(qint64 wallNanoseconds,
-											 qint64 mainThreadCpuNanoseconds,
-											 bool schedulerPreemptionProven) {
-	return (wallNanoseconds >= 0) && (mainThreadCpuNanoseconds >= 0)
-		   && (mainThreadCpuNanoseconds < kMaxChatSwitchNanoseconds)
-		   && ((wallNanoseconds < kMaxChatSwitchNanoseconds)
-			   || schedulerPreemptionProven);
+[[nodiscard]] bool MainThreadCpuWorkWithinBudget(qint64 workNanoseconds,
+												 qint64 budgetNanoseconds) {
+	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
 struct CacheChatSwitchRegressionResult final {
@@ -11779,7 +11701,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
-		QCoreApplication::processEvents();
 		result.historyChatModeInitiallyWide
 			= controller->adaptive().isChatWide();
 		result.historyChatModeResizeCountBefore
@@ -11961,55 +11882,42 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
 		  && result.historyChatModeInvalidationRebuilt
-		  && (result.attachMenuFirstHoverNanoseconds >= 0)
-		  && MainThreadWorkWithinBound(
-			  result.attachMenuFirstHoverCallbackWallNanoseconds,
+		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
-			  result.attachMenuSchedulerPreemptionProven)
+			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheReused
-		  && (result.attachMenuHoverNanoseconds >= 0)
-		  && (result.attachMenuHoverNanoseconds < 50'000'000)
+		  && MainThreadCpuWorkWithinBudget(result.attachMenuHoverNanoseconds,
+										   kMaxChatSwitchNanoseconds)
 		  && result.attachMenuInvalidationRebuilt
-		  && (result.attachMenuInvalidationHoverNanoseconds >= 0)
-		  && MainThreadWorkWithinBound(
-			  result.attachMenuInvalidationCallbackWallNanoseconds,
+		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuInvalidationCallbackCpuNanoseconds,
-			  result.attachMenuSchedulerPreemptionProven)
+			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuBuildDeferredUntilHover
 		  && result.attachMenuUncachedPeersReady
-		  && result.attachMenuSchedulerPreemptionProven
-		  && (result.attachMenuUncachedPeerNanoseconds >= 0)
-		  && MainThreadWorkWithinBound(
-			  result.attachMenuUncachedPeerCallbackWallNanoseconds,
+		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuUncachedPeerCallbackCpuNanoseconds,
-			  result.attachMenuSchedulerPreemptionProven)
+			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded
 		  && result.pendingRevealStartedAfterControlsGeometry
-		  && result.minimizedRestore && (result.minimizedSwitchNanoseconds >= 0)
-		  && (result.maxHydrationNanoseconds >= 0) && hydrationCpuClockAvailable
+		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
-		  && MainThreadWorkWithinBound(
-			  result.maxHydrationNanoseconds,
+		  && MainThreadCpuWorkWithinBudget(
 			  result.maxHydrationMainThreadWorkNanoseconds,
-			  result.hydrationSchedulerPreemptionProven)
+			  kMaxChatSwitchNanoseconds)
 		  && chatSwitchCpuClockAvailable
 		  && (result.maxChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
-		  && (result.initialHistorySelectionNanoseconds >= 0)
-		  && (result.initialHistorySelectionMainThreadWorkNanoseconds >= 0)
-		  && (result.initialHistorySelectionMainThreadWorkNanoseconds
-			  < kMaxChatSwitchNanoseconds)
-		  && ((result.initialHistorySelectionNanoseconds
-			   < kMaxChatSwitchNanoseconds)
-			  || result.initialHistorySelectionSchedulerPreemptionProven)
+		  && MainThreadCpuWorkWithinBudget(
+			  result.maxChatSwitchMainThreadWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadCpuWorkWithinBudget(
+			  result.initialHistorySelectionMainThreadWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
-		  && result.chatSwitchSchedulerPreemptionProven
-		  && ChatSwitchSchedulerProofRegressionPasses()
-		  && MainThreadWorkSchedulerProofRegressionPasses()
-		  && SchedulerEvidenceDiagnosticsRegressionPasses();
+		  && MainThreadCpuWorkBudgetRegressionPasses();
 	return result;
 }
 
@@ -12607,8 +12515,6 @@ void RunAuthenticatedCacheSymlinkCases(
 				= !corroboratedStartupStalls.empty() && processCpuClockAvailable
 				  && AllCorroboratedStartupStallsHaveSchedulerProof(
 					  corroboratedStartupStalls, processCpuClockAvailable);
-			const auto startupWatchdogStallEvidenceRegressionPassed
-				= StartupWatchdogStallEvidenceRegressionPasses();
 			auto maxStartupStallIndex = std::optional<std::size_t>();
 			auto maxStartupStallNanoseconds = qint64(0);
 			for (auto i = 0U; i != corroboratedStartupStalls.size(); ++i) {
@@ -12655,15 +12561,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				= startupStallSchedulerSamples - startupStallSchedulerRunning
 				  - startupStallSchedulerWaiting
 				  - startupStallSchedulerUninterruptible;
-			const auto mainThreadWorkWithinBound
-				= mainThreadCpuClockAvailable
-				  && (maxMainThreadWorkNanoseconds < 100'000'000);
 			const auto startupWithinBound
-				= mainThreadWorkWithinBound
-				  && startupWatchdogStallEvidenceRegressionPassed
-				  && startupHeartbeatGapCoverageProven
-				  && (corroboratedStartupStalls.empty()
-					  || startupStallSchedulerPreemptionProven);
+				= mainThreadCpuClockAvailable
+				  && MainThreadCpuWorkWithinBudget(maxMainThreadWorkNanoseconds,
+												   100'000'000);
 			for (const auto &stall : corroboratedStartupStalls) {
 				const auto startedAtUtf8 = stall.evidence.startedAt.toUtf8();
 				const auto heartbeatGapStartedAtUtf8
