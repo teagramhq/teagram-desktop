@@ -16859,10 +16859,8 @@ DesktopScaleUpdateBurstTimeWithinBudget(qint64 one, qint64 hundred) {
 	return (one > 0) && (double(hundred) <= double(one) * 1.5);
 }
 
-static_assert(
-	DesktopScaleUpdateBurstTimeWithinBudget(100'000'000, 150'000'000));
-static_assert(
-	!DesktopScaleUpdateBurstTimeWithinBudget(91'446'000, 156'528'000));
+static_assert(DesktopScaleUpdateBurstTimeWithinBudget(1'000, 1'500));
+static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(1'000, 1'501));
 static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(91'446'000,
 													   166'528'001));
 static_assert(!DesktopScaleUpdateBurstTimeWithinBudget(0, 1'000'000));
