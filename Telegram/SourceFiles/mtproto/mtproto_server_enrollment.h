@@ -20,6 +20,7 @@ class QKeyEvent;
 namespace MTP {
 
 enum class ServerKeyStatus;
+struct CustomServer;
 
 // Why a server enrollment artifact was refused. Every value is a distinct
 // input correction or a distinct key-processing outcome for the caller.
@@ -92,6 +93,29 @@ struct ServerEnrollmentCheck {
 	const std::function<bool()> &persistPin,
 	const std::function<void()> &resume,
 	const std::function<void()> &rollbackPin = {});
+
+[[nodiscard]] bool CommitServerEndpointRefresh(
+	const CustomServer &original,
+	const CustomServer &candidate,
+	bool authenticatedProof,
+	const std::function<bool()> &setPin,
+	const std::function<bool()> &persistPin,
+	const std::function<void()> &resume,
+	const std::function<void()> &rollbackPin = {});
+
+struct ServerEndpointRefreshEligibility {
+	bool restoredSession = false;
+	bool hasPinnedServer = false;
+	bool pinAuthorized = false;
+	bool canResume = false;
+	bool cacheBindingMismatch = false;
+	bool validDiscoveryOrigin = false;
+	bool hasStoredAuthKey = false;
+	bool identityFailure = false;
+};
+
+[[nodiscard]] bool CanRefreshServerEndpoint(
+	const ServerEndpointRefreshEligibility &eligibility);
 
 struct ServerReplacementState {
 	bool browserOnlyServerRefused = false;

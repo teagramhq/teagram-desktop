@@ -307,6 +307,7 @@ public:
 	enum class Mode {
 		Normal,
 		KeysDestroyer,
+		EndpointVerifier,
 	};
 
 	Instance(Mode mode, Fields &&fields);
@@ -329,6 +330,8 @@ public:
 
 	[[nodiscard]] rpl::producer<> writeKeysRequests() const;
 	[[nodiscard]] rpl::producer<> allKeysDestroyed() const;
+	[[nodiscard]] rpl::producer<ShiftedDcId>
+		serverEndpointRefreshRequested() const;
 
 	// A pinned endpoint that failed on its face: a key the account was
 	// not given, or a server DC id that does not confirm the pin.
@@ -343,6 +346,9 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailure() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
+	// Emits only after an encrypted config response verifies the endpoint
+	// using this verifier's existing persistent auth key.
+	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
 	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
@@ -379,6 +385,7 @@ public:
 	// A subsequent setCustomServer() followed by resume() lets the sessions
 	// try the newly confirmed endpoint again.
 	void stopForServerEnrollment();
+	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	void restart(ShiftedDcId shiftedDcId);
 	int32 dcstate(ShiftedDcId shiftedDcId = 0);
 	QString dctransport(ShiftedDcId shiftedDcId = 0);
@@ -415,6 +422,7 @@ public:
 
 	// Thread-safe.
 	bool isKeysDestroyer() const;
+	bool isEndpointVerifier() const;
 	void keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId);
 
 	// Main thread.

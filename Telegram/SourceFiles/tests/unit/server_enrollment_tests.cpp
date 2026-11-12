@@ -81,6 +81,15 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 5+bfo3Nhmcyvk5ftB0WkJ9z6bNZ7yxrP8wIDAQAB\n\
 -----END RSA PUBLIC KEY-----";
 
+const char kDifferentEnrollmentServerKey[] = R"(-----BEGIN RSA PUBLIC KEY-----
+MIIBCgKCAQEAyMEdY1aR+sCR3ZSJrtztKTKqigvO/vBfqACJLZtS7QMgCGXJ6XIR
+yy7mx66W0/sOFa7/1mAZtEoIokDP3ShoqF4fVNb6XeqgQfaUHd8wJpDWHcR2OFwv
+plUUI1PLTktZ9uW2WE23b+ixNwJjJGwBDJPQEQFBE+vfmH0JP503wr5INS1poWg/
+j25sIWeYPHYeOrFp/eXaqhISP6G+q2IeTaWTXpwZj4LzXq5YOpk4bYEQ6mvRq7D1
+aHWfYmlEGepfaYR8Q0YqvvhYtMte3ITnuSJs171+GDqpdKcSwHnd6FudwGO4pcCO
+j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
+-----END RSA PUBLIC KEY-----)";
+
 [[nodiscard]] std::shared_ptr<details::RSAPublicKey>
 MakeEnrollmentServerKey() {
 	return std::make_shared<details::RSAPublicKey>(bytes::make_span(
@@ -97,6 +106,18 @@ MakeEnrollmentServerKey() {
 		.key = MakeEnrollmentServerKey(),
 	}));
 	return result;
+}
+
+[[nodiscard]] CustomServer MakeEndpointRefreshPin(const char *ip) {
+	return CustomServer{
+		.dcId = 2,
+		.ip = ip,
+		.port = 2443,
+		.key = MakeEnrollmentServerKey(),
+		.serverSelection = "teagram.tailaa4918.ts.net:2443",
+		.discoveryPolicy = ServerDiscoveryPolicy::LocalDirect,
+		.discoveryOrigin = "local:teagram.tailaa4918.ts.net:2443",
+	};
 }
 
 [[nodiscard]] MTP::AuthKeyPtr MakeEnrollmentStorageKey() {
@@ -439,6 +460,255 @@ TEST_CASE(PinPersistencePrecedesTheFirstConnection) {
 	CHECK_EQ(events[0], 1);
 	CHECK_EQ(events[1], 2);
 	CHECK_EQ(events[2], 3);
+}
+
+TEST_CASE(EndpointRefreshNeedsProofAndPersistsBeforeReleasingRequests) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto staged = false;
+	auto persisted = false;
+	auto requestsReleased = false;
+	const auto attempt = [&] (bool authenticated) {
+		return CommitServerEndpointRefresh(
+			original,
+			candidate,
+			authenticated,
+			[&] {
+				staged = true;
+				return true;
+			},
+			[&] {
+				CHECK(staged);
+				CHECK(!requestsReleased);
+				persisted = true;
+				return true;
+			},
+			[&] {
+				CHECK(persisted);
+				requestsReleased = true;
+			},
+			[&] { staged = false; });
+	};
+
+	CHECK(!attempt(false));
+	CHECK(!staged);
+	CHECK(!persisted);
+	CHECK(!requestsReleased);
+
+	CHECK(attempt(true));
+	CHECK(staged);
+	CHECK(persisted);
+	CHECK(requestsReleased);
+}
+
+TEST_CASE(EndpointRefreshRollsBackWhenPersistenceFails) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto staged = false;
+	auto rolledBack = false;
+	auto requestsReleased = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original,
+		candidate,
+		true,
+		[&] {
+			staged = true;
+			return true;
+		},
+		[] { return false; },
+		[&] { requestsReleased = true; },
+		[&] {
+			staged = false;
+			rolledBack = true;
+		});
+
+	CHECK(!committed);
+	CHECK(rolledBack);
+	CHECK(!staged);
+	CHECK(!requestsReleased);
+}
+
+TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.dcId = 3;
+	auto changed = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original,
+		candidate,
+		true,
+		[&] {
+			changed = true;
+			return true;
+		},
+		[] { return true; },
+		[] {},
+		[] {});
+
+	CHECK(!committed);
+	CHECK(!changed);
+}
+
+TEST_CASE(EndpointRefreshRejectsKeyMismatchBeforeStaging) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.key = std::make_shared<details::RSAPublicKey>(bytes::make_span(
+		kDifferentEnrollmentServerKey,
+		sizeof(kDifferentEnrollmentServerKey) - 1));
+	auto staged = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original,
+		candidate,
+		true,
+		[&] {
+			staged = true;
+			return true;
+		},
+		[] { return true; },
+		[] {},
+		[] {});
+
+	CHECK(!committed);
+	CHECK(!staged);
+}
+
+TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(SameCustomServerEndpointRefreshIdentity(original, candidate));
+	CHECK(!SameCustomServerPin(original, candidate));
+	candidate.port += 1;
+	CHECK(SameCustomServerEndpointRefreshIdentity(original, candidate));
+
+	candidate.dcId = original.dcId + 1;
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.serverSelection += "/different";
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.discoveryOrigin += "/different";
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.key = std::make_shared<details::RSAPublicKey>(bytes::make_span(
+		kDifferentEnrollmentServerKey,
+		sizeof(kDifferentEnrollmentServerKey) - 1));
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+}
+
+TEST_CASE(EndpointRefreshPreservesAuthorizationForSameServerIdentity) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(!options.setCustomServer(candidate));
+
+	CHECK(options.refreshCustomServerEndpoint(original, candidate));
+	CHECK(SameCustomServerEndpointRefreshIdentity(
+		options.customServer(),
+		candidate));
+	CHECK(options.isAuthorized(original.dcId));
+	CHECK(!SameCustomServerPin(options.customServer(), original));
+}
+
+TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(CanRefreshServerEndpoint({
+		.restoredSession = true,
+		.hasPinnedServer = true,
+		.pinAuthorized = true,
+		.canResume = true,
+		.validDiscoveryOrigin = true,
+		.hasStoredAuthKey = true,
+	}));
+	auto requestsPaused = true;
+	const auto committed = CommitServerEndpointRefresh(
+		original,
+		candidate,
+		true,
+		[&] {
+			return options.refreshCustomServerEndpoint(original, candidate);
+		},
+		[] { return true; },
+		[&] { requestsPaused = false; });
+
+	CHECK(committed);
+	CHECK_EQ(options.customServer().ip, std::string("100.112.103.90"));
+	CHECK(options.isAuthorized(original.dcId));
+	CHECK(SameCustomServerEndpointRefreshIdentity(
+		options.customServer(),
+		original));
+	CHECK(!requestsPaused);
+}
+
+TEST_CASE(EndpointWithoutAuthKeyProofKeepsOriginalPin) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	auto staged = false;
+	auto persisted = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original,
+		candidate,
+		false,
+		[&] {
+			staged = true;
+			return options.refreshCustomServerEndpoint(original, candidate);
+		},
+		[&] {
+			persisted = true;
+			return true;
+		},
+		[] {});
+
+	CHECK(!committed);
+	CHECK(!staged);
+	CHECK(!persisted);
+	CHECK(SameCustomServerPin(options.customServer(), original));
+	CHECK(options.isAuthorized(original.dcId));
+}
+
+TEST_CASE(EndpointRefreshRequiresRestoredAuthorizedBoundSession) {
+	const auto ready = ServerEndpointRefreshEligibility{
+		.restoredSession = true,
+		.hasPinnedServer = true,
+		.pinAuthorized = true,
+		.canResume = true,
+		.validDiscoveryOrigin = true,
+		.hasStoredAuthKey = true,
+	};
+	CHECK(CanRefreshServerEndpoint(ready));
+
+	auto state = ready;
+	state.restoredSession = false;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.hasPinnedServer = false;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.pinAuthorized = false;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.canResume = false;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.cacheBindingMismatch = true;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.validDiscoveryOrigin = false;
+	CHECK(!CanRefreshServerEndpoint(state));
+	state = ready;
+	state.hasStoredAuthKey = false;
+	CHECK(!CanRefreshServerEndpoint(state));
 }
 
 TEST_CASE(RefusedServerReplacementPersistsAdvertisedDcBeforeResume) {

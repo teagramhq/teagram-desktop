@@ -89,6 +89,9 @@ public:
 
 	[[nodiscard]] rpl::producer<> writeKeysRequests() const;
 	[[nodiscard]] rpl::producer<> resumed() const;
+	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
+	[[nodiscard]] rpl::producer<ShiftedDcId>
+		serverEndpointRefreshRequested() const;
 
 	void dcPersistentKeyChanged(DcId dcId, const AuthKeyPtr &persistentKey);
 	void dcTemporaryKeyChanged(DcId dcId);
@@ -119,6 +122,7 @@ public:
 	void restart();
 	void restart(ShiftedDcId shiftedDcId);
 	void stopForServerEnrollment();
+	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	[[nodiscard]] uint64 serverEnrollmentStopToken() const;
 	[[nodiscard]] bool isServerEnrollmentStopTokenCurrent(
 		uint64 token) const;
@@ -180,6 +184,9 @@ public:
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefusedValue() const;
 	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
+	[[nodiscard]] bool isEndpointVerifier() const {
+		return (_mode == Instance::Mode::EndpointVerifier);
+	}
 
 	// return true if need to clean request data
 	bool rpcErrorOccured(
@@ -289,6 +296,7 @@ private:
 	base::flat_map<ShiftedDcId, std::unique_ptr<Session>> _sessions;
 	std::vector<std::unique_ptr<Session>> _sessionsToDestroy;
 	rpl::event_stream<ShiftedDcId> _restartsByTimeout;
+	rpl::event_stream<ShiftedDcId> _serverEndpointRefreshRequests;
 
 	std::unique_ptr<ConfigLoader> _configLoader;
 	std::unique_ptr<DomainResolver> _domainResolver;
@@ -334,6 +342,7 @@ private:
 	Fn<void(ShiftedDcId shiftedDcId)> _sessionResetHandler;
 
 	PinnedServerFailureChannel _pinnedServerFailure;
+	rpl::event_stream<bool> _endpointVerificationResult;
 	rpl::event_stream<> _browserOnlyServerRefused;
 
 	rpl::event_stream<mtpRequestId> _nonPremiumDelayedRequests;
@@ -493,6 +502,21 @@ void Instance::Private::stopForServerEnrollment() {
 	for (const auto &entry : _sessions) {
 		entry.second->stopUntilPinChange();
 	}
+}
+
+void Instance::Private::requestServerEndpointRefresh(
+		ShiftedDcId shiftedDcId) {
+	if (!networkAllowed() || isEndpointVerifier() || !hasMainDcId()
+		|| BareDcId(shiftedDcId) != BareDcId(mainDcId())) {
+		return;
+	}
+	const auto pin = dcOptions().customServer();
+	if (!pin.key || pin.dcId != BareDcId(shiftedDcId)
+		|| !CanResumeServerEnrollment(dcOptions())
+		|| !dcOptions().isAuthorized(pin.dcId)) {
+		return;
+	}
+	_serverEndpointRefreshRequests.fire_copy(shiftedDcId);
 }
 
 uint64 Instance::Private::serverEnrollmentStopToken() const {
@@ -1071,6 +1095,15 @@ rpl::producer<> Instance::Private::resumed() const {
 	return _serverEnrollmentGate.resumed();
 }
 
+rpl::producer<bool> Instance::Private::endpointVerificationResult() const {
+	return _endpointVerificationResult.events();
+}
+
+rpl::producer<ShiftedDcId>
+Instance::Private::serverEndpointRefreshRequested() const {
+	return _serverEndpointRefreshRequests.events();
+}
+
 Config &Instance::Private::config() const {
 	return *_config;
 }
@@ -1121,6 +1154,31 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 	_lastConfigLoadedTime = crl::now();
 
 	const auto &data = result.c_config();
+	if (isEndpointVerifier()) {
+		const auto matchingMode
+			= mtpIsTrue(data.vtest_mode()) == _config->dcOptions().isTestMode();
+		auto failure = std::optional<PinnedServerFailure>();
+		if (matchingMode && hasMainDcId()) {
+			auto advertised = std::vector<int>();
+			advertised.reserve(data.vdc_options().v.size());
+			for (const auto &option : data.vdc_options().v) {
+				if (option.type() == mtpc_dcOption) {
+					advertised.push_back(option.c_dcOption().vid().v);
+				}
+			}
+			failure = CheckPinnedServerConfig(
+				data.vthis_dc().v,
+				advertised,
+				_config->dcOptions().customServer());
+		}
+		if (failure) {
+			onPinnedServerFailure(mainDcId(), *failure);
+		}
+		stopForServerEnrollment();
+		_endpointVerificationResult.fire_copy(
+			matchingMode && !failure.has_value());
+		return;
+	}
 	_config->apply(data);
 
 	// The first config response is where a wrong pin becomes visible:
@@ -2289,6 +2347,15 @@ rpl::producer<> Instance::resumed() const {
 	return _private->resumed();
 }
 
+rpl::producer<ShiftedDcId>
+Instance::serverEndpointRefreshRequested() const {
+	return _private->serverEndpointRefreshRequested();
+}
+
+rpl::producer<bool> Instance::endpointVerificationResult() const {
+	return _private->endpointVerificationResult();
+}
+
 bool Instance::isServerEnrollmentNetworkAllowed() const {
 	return _private->networkAllowed();
 }
@@ -2303,6 +2370,10 @@ bool Instance::isServerEnrollmentStopTokenCurrent(uint64 token) const {
 
 void Instance::stopForServerEnrollment() {
 	_private->stopForServerEnrollment();
+}
+
+void Instance::requestServerEndpointRefresh(ShiftedDcId shiftedDcId) {
+	_private->requestServerEndpointRefresh(shiftedDcId);
 }
 
 void Instance::onPinnedServerFailure(
@@ -2478,6 +2549,10 @@ bool Instance::rpcErrorOccured(
 
 bool Instance::isKeysDestroyer() const {
 	return _private->isKeysDestroyer();
+}
+
+bool Instance::isEndpointVerifier() const {
+	return _private->isEndpointVerifier();
 }
 
 void Instance::keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId) {

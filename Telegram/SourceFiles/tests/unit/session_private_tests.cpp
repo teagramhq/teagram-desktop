@@ -71,6 +71,8 @@ bool Instance::hasCallback(mtpRequestId requestId) const { return true; }
 
 bool Instance::isKeysDestroyer() const { return false; }
 
+bool Instance::isEndpointVerifier() const { return false; }
+
 void Instance::keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId) {}
 
 void Instance::requestConfig() {}
@@ -84,6 +86,8 @@ void Instance::badConfigurationError() {}
 void Instance::syncHttpUnixtime() {}
 
 void Instance::restartedByTimeout(ShiftedDcId) {}
+
+void Instance::requestServerEndpointRefresh(ShiftedDcId) {}
 
 void Instance::keyDestroyedOnServer(ShiftedDcId, uint64) {}
 

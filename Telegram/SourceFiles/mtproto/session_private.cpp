@@ -263,6 +263,7 @@ void SessionPrivate::appendTestConnection(
 		.proxyEndpoint = _options->proxy.host,
 		.proxyPort = int(_options->proxy.port),
 		.pinnedHostname = QString::fromStdString(pin.hostname),
+		.unprovenEndpoint = _instance->isEndpointVerifier(),
 	};
 	connect(weak, &AbstractConnection::error, [=](int errorCode) {
 		auto errorContext = context;
@@ -1410,6 +1411,11 @@ void SessionPrivate::waitConnectedFailed() {
 	connectingTimedOut();
 
 	DEBUG_LOG(("MTP Info: immediate restart!"));
+	const auto instance = _instance;
+	const auto shiftedDcId = _shiftedDcId;
+	InvokeQueued(instance, [=] {
+		instance->requestServerEndpointRefresh(shiftedDcId);
+	});
 	InvokeQueued(this, [=] { connectToServer(); });
 }
 
@@ -2758,6 +2764,11 @@ bool SessionPrivate::destroyOldEnoughPersistentKey() {
 }
 
 DcType SessionPrivate::tryAcquireKeyCreation() {
+	if (_instance->isEndpointVerifier()) {
+		// Endpoint verification may use only the persistent key supplied in
+		// the verifier fields. It must never start DH or create a replacement.
+		return DcType::Regular;
+	}
 	if (_keyCreator) {
 		return _currentDcType;
 	} else if (_instance->isKeysDestroyer()) {

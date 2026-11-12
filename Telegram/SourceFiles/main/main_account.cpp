@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 
 #include "base/platform/base_platform_info.h"
+#include "intro/intro_server_discovery.h"
 #include "core/application.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
@@ -34,6 +35,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_domain.h"
 #include "main/main_session_settings.h"
+
+#include <algorithm>
+#include <QtCore/QTimer>
 
 namespace Main {
 namespace {
@@ -150,10 +154,27 @@ Account::Account(not_null<Domain*> domain, const QString &dataName, int index)
 : _domain(domain)
 , _local(std::make_unique<Storage::Account>(
 	this,
-	ComposeDataString(dataName, index))) {
+	ComposeDataString(dataName, index)))
+, _serverEndpointRefreshRetryTimer(std::make_unique<QTimer>())
+, _serverEndpointVerificationTimer(std::make_unique<QTimer>()) {
+	_serverEndpointRefreshRetryTimer->setSingleShot(true);
+	_serverEndpointVerificationTimer->setSingleShot(true);
+	QObject::connect(
+		_serverEndpointRefreshRetryTimer.get(),
+		&QTimer::timeout,
+		[=] {
+			requestServerEndpointRefresh(_serverEndpointRefreshDcId);
+		});
+	QObject::connect(
+		_serverEndpointVerificationTimer.get(),
+		&QTimer::timeout,
+		[=] {
+			serverEndpointVerificationFinished(false);
+		});
 }
 
 Account::~Account() {
+	cancelServerEndpointRefresh();
 	// Auth keys are normally persisted from a postponed write request. During
 	// shutdown the event loop can finish before that callback runs, so take a
 	// final durable authorization snapshot while the MTP instance still owns
@@ -816,6 +837,7 @@ bool Account::beginServerReenrollment(
 		if (!_local->writeServerReenrollmentTombstone()) {
 			return false;
 		}
+		cancelServerEndpointRefresh();
 		_mtp->stopForServerEnrollment();
 		return true;
 	});
@@ -883,6 +905,15 @@ bool Account::startMtp(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {
+			if (state == MTP::ConnectedState) {
+				_serverEndpointRefreshFailures = 0;
+				_serverEndpointRefreshIdentityFailure = false;
+				_serverEndpointRefreshRetryTimer->stop();
+				if (_serverEndpointRefreshDiscovery) {
+					_serverEndpointRefreshDiscovery->cancel();
+					_endpointRefreshOriginal.reset();
+				}
+			}
 			Core::App().settings().proxy().connectionTypeChangesNotify();
 			Core::App().checkProxyRotation(this, state);
 			if (mainDcConnection->update(state == MTP::ConnectedState)) {
@@ -892,6 +923,15 @@ bool Account::startMtp(
 			}
 		}
 	});
+	_mtp->serverEndpointRefreshRequested(
+	) | rpl::on_next([=](MTP::ShiftedDcId shiftedDcId) {
+		requestServerEndpointRefresh(shiftedDcId);
+	}, _mtp->lifetime());
+	_mtp->pinnedServerFailure(
+	) | rpl::on_next([=](
+			const std::optional<MTP::PinnedServerFailureReport> &report) {
+		_serverEndpointRefreshIdentityFailure = report.has_value();
+	}, _mtp->lifetime());
 	_mtp->setSessionResetHandler([=](MTP::ShiftedDcId shiftedDcId) {
 		if (const auto session = maybeSession()) {
 			if (shiftedDcId == _mtp->mainDcId()) {
@@ -927,6 +967,7 @@ bool Account::startMtp(
 		}
 		_sessionUserSerialized = {};
 		_sessionUserStreamVersion = 0;
+		_restoredSession = true;
 		_mtp->resume();
 	}
 	_storedSessionSettings = nullptr;
@@ -985,6 +1026,8 @@ void Account::forcedLogOut() {
 
 void Account::loggedOut() {
 	_loggingOut = false;
+	cancelServerEndpointRefresh();
+	_restoredSession = false;
 	if (!local().clearTelegramStickerBotToken()) {
 		LOG(("Failed to remove saved Telegram sticker bot token at logout."));
 	}
@@ -1125,8 +1168,280 @@ void Account::handleLoginCode(const QString &code) const {
 	}
 }
 
+bool Account::canRefreshServerEndpoint() const {
+	if (!sessionExists() || !_mtp) {
+		return false;
+	}
+	const auto &options = _mtp->dcOptions();
+	const auto pin = options.customServer();
+	const auto selection = MTP::CheckServerSelection(
+		QString::fromStdString(pin.serverSelection));
+	const auto validSelection = selection.valid()
+		&& selection.policy == pin.discoveryPolicy
+		&& selection.normalizedSelection.toStdString() == pin.serverSelection;
+	const auto storedOrigin = QString::fromStdString(pin.discoveryOrigin);
+	const auto validOrigin = validSelection
+		&& (selection.policy == MTP::ServerDiscoveryPolicy::PublicHttps
+			? MTP::IsPublicDiscoveryOrigin(selection, storedOrigin)
+			: storedOrigin
+				== (u"local:"_q + selection.normalizedSelection));
+	const auto keys = _mtp->getKeysForWrite();
+	const auto hasStoredAuthKey = ranges::any_of(
+		keys,
+		[&](const MTP::AuthKeyPtr &key) {
+			return key
+				&& key->dcId() == pin.dcId
+				&& key->type() == MTP::AuthKey::Type::ReadFromFile;
+		});
+	return MTP::CanRefreshServerEndpoint({
+		.restoredSession = _restoredSession,
+		.hasPinnedServer = bool(pin.key),
+		.pinAuthorized = pin.key && options.isAuthorized(pin.dcId),
+		.canResume = MTP::CanResumeServerEnrollment(options),
+		.cacheBindingMismatch = _serverCacheBindingMismatchPending,
+		.validDiscoveryOrigin = validOrigin,
+		.hasStoredAuthKey = hasStoredAuthKey,
+		.identityFailure = _serverEndpointRefreshIdentityFailure,
+	});
+}
+
+void Account::requestServerEndpointRefresh(
+		MTP::ShiftedDcId shiftedDcId) {
+	if (!canRefreshServerEndpoint()
+		|| MTP::BareDcId(shiftedDcId) != _mtp->dcOptions().customServer().dcId
+		|| _serverEndpointRefreshRetryTimer->isActive()
+		|| (_serverEndpointRefreshDiscovery
+			&& _serverEndpointRefreshDiscovery->running())
+		|| _mtpForEndpointVerification) {
+		return;
+	}
+	_serverEndpointRefreshDcId = shiftedDcId;
+	const auto pin = _mtp->dcOptions().customServer();
+	const auto selection = MTP::CheckServerSelection(
+		QString::fromStdString(pin.serverSelection));
+	_endpointRefreshOriginal = pin;
+	if (!_serverEndpointRefreshDiscovery) {
+		_serverEndpointRefreshDiscovery = std::make_unique<
+			Intro::details::ServerEndpointRefreshDiscovery>();
+	}
+	const auto started = _serverEndpointRefreshDiscovery->start(
+		selection,
+		QString::fromStdString(pin.discoveryOrigin),
+		{
+			.finished = [=](MTP::ServerDiscoveryResult result) {
+				serverEndpointRefreshDiscovered(std::move(result));
+			},
+			.failed = [=](bool) {
+				_endpointRefreshOriginal.reset();
+				++_serverEndpointRefreshFailures;
+				scheduleServerEndpointRefreshRetry();
+			},
+		});
+	if (!started && _endpointRefreshOriginal) {
+		_endpointRefreshOriginal.reset();
+	}
+}
+
+void Account::serverEndpointRefreshDiscovered(
+		MTP::ServerDiscoveryResult result) {
+	if (!canRefreshServerEndpoint() || !_endpointRefreshOriginal || !_mtp) {
+		if (_serverEndpointRefreshDiscovery) {
+			_serverEndpointRefreshDiscovery->cancel();
+		}
+		_endpointRefreshOriginal.reset();
+		return;
+	}
+	const auto original = *_endpointRefreshOriginal;
+	const auto current = _mtp->dcOptions().customServer();
+	if (!MTP::SameCustomServerPin(original, current)) {
+		_serverEndpointRefreshDiscovery->cancel();
+		_endpointRefreshOriginal.reset();
+		return;
+	}
+	const auto selection = MTP::CheckServerSelection(
+		QString::fromStdString(original.serverSelection));
+	const auto candidate = MTP::BuildCustomServerFromDiscovery(
+		selection,
+		result,
+		QString::fromStdString(original.discoveryOrigin));
+	if (!candidate) {
+		_serverEndpointRefreshDiscovery->cancel();
+		_endpointRefreshOriginal.reset();
+		++_serverEndpointRefreshFailures;
+		scheduleServerEndpointRefreshRetry();
+		return;
+	}
+	if (!MTP::SameCustomServerEndpointRefreshIdentity(original, *candidate)) {
+		if (candidate->dcId != original.dcId) {
+			_serverEndpointRefreshIdentityFailure = true;
+			_mtp->onPinnedServerFailure(
+				original.dcId,
+				MTP::PinnedServerFailure::DcIdMismatch);
+		} else if (!candidate->key || !original.key
+			|| candidate->key->getN() != original.key->getN()
+			|| candidate->key->getE() != original.key->getE()) {
+			_serverEndpointRefreshIdentityFailure = true;
+			_mtp->onPinnedServerFailure(
+				original.dcId,
+				MTP::PinnedServerFailure::KeyMismatch,
+				candidate->key ? candidate->key->fingerprint() : 0);
+		}
+		_serverEndpointRefreshDiscovery->cancel();
+		_endpointRefreshOriginal.reset();
+		if (!_serverEndpointRefreshIdentityFailure) {
+			++_serverEndpointRefreshFailures;
+			scheduleServerEndpointRefreshRetry();
+		}
+		return;
+	}
+	const auto key = [&] {
+		for (const auto &stored : _mtp->getKeysForWrite()) {
+			if (stored && stored->dcId() == original.dcId
+				&& stored->type() == MTP::AuthKey::Type::ReadFromFile) {
+				return stored;
+			}
+		}
+		return MTP::AuthKeyPtr();
+	}();
+	if (!key) {
+		_serverEndpointRefreshDiscovery->cancel();
+		_endpointRefreshOriginal.reset();
+		return;
+	}
+	_endpointRefreshCandidate = *candidate;
+	_mtp->stopForServerEnrollment();
+
+	auto fields = MTP::Instance::Fields();
+	fields.mainDcId = original.dcId;
+	fields.config = std::make_unique<MTP::Config>(_mtp->config());
+	if (!fields.config->dcOptions().refreshCustomServerEndpoint(
+			original,
+			*candidate)) {
+		_serverEndpointRefreshDiscovery->cancel();
+		_mtp->resume();
+		_endpointRefreshOriginal.reset();
+		_endpointRefreshCandidate.reset();
+		++_serverEndpointRefreshFailures;
+		scheduleServerEndpointRefreshRetry();
+		return;
+	}
+	fields.keys.push_back(key);
+	fields.deviceModel = Platform::DeviceModelPretty();
+	fields.systemVersion = Platform::SystemVersionPretty();
+	fields.startPaused = true;
+	_mtpForEndpointVerification = std::make_unique<MTP::Instance>(
+		MTP::Instance::Mode::EndpointVerifier,
+		std::move(fields));
+	const auto verifier = _mtpForEndpointVerification.get();
+	verifier->pinnedServerFailure(
+	) | rpl::on_next([=](
+			const std::optional<MTP::PinnedServerFailureReport> &report) {
+		if (report && _mtp) {
+			_serverEndpointRefreshIdentityFailure = true;
+			_mtp->onPinnedServerFailure(
+				report->shiftedDcId,
+				report->failure,
+				report->presentedFingerprint,
+				report->pinnedHostname,
+				report->dialledAddress);
+		}
+	}, verifier->lifetime());
+	verifier->endpointVerificationResult(
+	) | rpl::on_next([=](bool authenticated) {
+		crl::on_main(this, [=] {
+			if (_mtpForEndpointVerification.get() == verifier) {
+				serverEndpointVerificationFinished(authenticated);
+			}
+		});
+	}, verifier->lifetime());
+	_serverEndpointVerificationTimer->start(15 * 1000);
+	verifier->resume();
+}
+
+void Account::serverEndpointVerificationFinished(bool authenticated) {
+	_serverEndpointVerificationTimer->stop();
+	if (_serverEndpointRefreshDiscovery) {
+		_serverEndpointRefreshDiscovery->cancel();
+	}
+	if (!_endpointRefreshOriginal || !_endpointRefreshCandidate || !_mtp) {
+		_mtpForEndpointVerification = nullptr;
+		return;
+	}
+	auto verifier = std::move(_mtpForEndpointVerification);
+	Expects(verifier != nullptr);
+	const auto original = *_endpointRefreshOriginal;
+	const auto candidate = *_endpointRefreshCandidate;
+	const auto current = _mtp->dcOptions().customServer();
+	auto committed = false;
+	if (authenticated && MTP::SameCustomServerPin(original, current)) {
+		const auto committedRefresh = MTP::CommitServerEndpointRefresh(
+			original,
+			candidate,
+			authenticated,
+			[&] {
+				return _mtp->dcOptions().refreshCustomServerEndpoint(
+					original,
+					candidate);
+			},
+			[&] { return local().writeMtpConfig(true); },
+			[&] {
+				if (_mtpKeysToDestroyPin
+					&& MTP::SameCustomServerPin(
+						*_mtpKeysToDestroyPin,
+						original)) {
+					_mtpKeysToDestroyPin = candidate;
+				}
+				_mtp->resume();
+			},
+			[&] {
+				static_cast<void>(_mtp->dcOptions().refreshCustomServerEndpoint(
+					candidate,
+					original));
+			});
+		committed = committedRefresh;
+	}
+	_endpointRefreshOriginal.reset();
+	_endpointRefreshCandidate.reset();
+	if (committed) {
+		_serverEndpointRefreshFailures = 0;
+		_serverEndpointRefreshRetryTimer->stop();
+		return;
+	}
+	if (_mtp
+		&& MTP::SameCustomServerPin(
+			original,
+			_mtp->dcOptions().customServer())
+		&& MTP::CanResumeServerEnrollment(_mtp->dcOptions())) {
+		_mtp->resume();
+	}
+	++_serverEndpointRefreshFailures;
+	scheduleServerEndpointRefreshRetry();
+}
+
+void Account::scheduleServerEndpointRefreshRetry() {
+	if (!canRefreshServerEndpoint()
+		|| _serverEndpointRefreshRetryTimer->isActive()) {
+		return;
+	}
+	const auto exponent = std::min(_serverEndpointRefreshFailures, 8);
+	const auto delay = std::min(300000, 1000 * (1 << exponent));
+	_serverEndpointRefreshRetryTimer->start(delay);
+}
+
+void Account::cancelServerEndpointRefresh() {
+	if (_serverEndpointRefreshDiscovery) {
+		_serverEndpointRefreshDiscovery->cancel();
+	}
+	_serverEndpointRefreshRetryTimer->stop();
+	_serverEndpointVerificationTimer->stop();
+	_mtpForEndpointVerification = nullptr;
+	_endpointRefreshOriginal.reset();
+	_endpointRefreshCandidate.reset();
+}
+
 void Account::resetAuthorizationKeys() {
 	Expects(_mtp != nullptr);
+	cancelServerEndpointRefresh();
 
 	{
 		const auto old = base::take(_mtp);

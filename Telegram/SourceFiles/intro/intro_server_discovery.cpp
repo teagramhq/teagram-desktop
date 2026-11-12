@@ -7,10 +7,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_server_discovery.h"
 
+#include "base/random.h"
 #include "lang/lang_keys.h"
 
+#include <QtCore/QTimer>
+#include <QtCore/QUrl>
 #include <QtCore/QSocketNotifier>
+#include <QtNetwork/QHostInfo>
+#include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkInterface>
+#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QSslError>
 
 #include <cstring>
 
@@ -33,6 +42,8 @@ namespace details {
 namespace {
 
 constexpr auto kMaxDiscoveryBody = 16 * 1024;
+constexpr auto kMaxDiscoveryHeaders = 16 * 1024;
+constexpr auto kEndpointRefreshTimeout = 10 * 1000;
 constexpr auto kInvalidNativeSocket = qintptr(-1);
 #if defined Q_OS_WIN
 using NativeSocket = SOCKET;
@@ -776,6 +787,400 @@ void ServerWidgetDiscovery::finish(MTP::ServerDiscoveryResult result) {
 
 void ServerWidgetDiscovery::stopSocket() {
 	closeNativeSocket();
+}
+
+ServerEndpointRefreshDiscovery::ServerEndpointRefreshDiscovery(
+		QObject *parent)
+: QObject(parent)
+, _localDiscovery(new ServerWidgetDiscovery(this))
+, _deadline(new QTimer(this)) {
+	_deadline->setSingleShot(true);
+	connect(_deadline, &QTimer::timeout, this, [=] {
+		discoveryTimeout();
+	});
+}
+
+ServerEndpointRefreshDiscovery::~ServerEndpointRefreshDiscovery() {
+	cancel();
+}
+
+bool ServerEndpointRefreshDiscovery::start(
+		const MTP::ServerSelectionCheck &selection,
+		const QString &origin,
+		Callbacks callbacks) {
+	cancel();
+	_callbacks = std::move(callbacks);
+	_selection = selection;
+	_origin = origin;
+	_running = true;
+	if (!selection.valid()
+		|| (selection.policy != MTP::ServerDiscoveryPolicy::PublicHttps
+			&& selection.policy != MTP::ServerDiscoveryPolicy::LocalDirect)) {
+		fail(false);
+		return false;
+	}
+	const auto expectedLocalOrigin
+		= u"local:"_q + selection.normalizedSelection;
+	if ((selection.policy == MTP::ServerDiscoveryPolicy::PublicHttps
+			&& !MTP::IsPublicDiscoveryOrigin(selection, origin))
+		|| (selection.policy == MTP::ServerDiscoveryPolicy::LocalDirect
+			&& origin != expectedLocalOrigin)) {
+		fail(false);
+		return false;
+	}
+	_attemptToken = MTP::ServerDiscoveryAttempt::Acquire();
+	if (!_attemptToken) {
+		fail(true);
+		return false;
+	}
+	++_attempt;
+	_deadline->start(kEndpointRefreshTimeout);
+	if (selection.policy == MTP::ServerDiscoveryPolicy::PublicHttps) {
+		beginPublicDiscovery();
+	} else {
+		beginLocalDiscovery();
+	}
+	return _running;
+}
+
+void ServerEndpointRefreshDiscovery::cancel() {
+	++_attempt;
+	_running = false;
+	_callbacks = {};
+	stop();
+	_attemptToken.reset();
+}
+
+void ServerEndpointRefreshDiscovery::beginPublicDiscovery() {
+	if (!_network) {
+		_network = new QNetworkAccessManager(this);
+		_network->setProxy(QNetworkProxy::NoProxy);
+	}
+	_publicResponse.clear();
+	auto request = QNetworkRequest(QUrl(_origin, QUrl::StrictMode));
+	MTP::ConfigurePublicDiscoveryRequest(request);
+	_reply = _network->get(request);
+	const auto reply = _reply;
+	reply->setReadBufferSize(kMaxDiscoveryBody);
+	connect(reply, &QNetworkReply::readyRead, this, [=] {
+		if (!_running || _reply != reply) {
+			return;
+		}
+		auto headerSize = 0;
+		for (const auto &header : reply->rawHeaderPairs()) {
+			headerSize += header.first.size() + header.second.size() + 4;
+			if (headerSize > kMaxDiscoveryHeaders) {
+				fail(false);
+				return;
+			}
+		}
+		const auto contentLength = reply->header(
+			QNetworkRequest::ContentLengthHeader).toLongLong();
+		if (contentLength > kMaxDiscoveryBody) {
+			fail(false);
+			return;
+		}
+		_publicResponse += reply->readAll();
+		if (_publicResponse.size() > kMaxDiscoveryBody) {
+			fail(false);
+		}
+	});
+	connect(reply, &QNetworkReply::sslErrors, this, [=](const auto &) {
+		if (_running && _reply == reply) {
+			fail(false);
+		}
+	});
+	connect(reply, &QNetworkReply::redirected, this, [=](const QUrl &) {
+		if (_running && _reply == reply) {
+			fail(false);
+		}
+	});
+	connect(reply, &QNetworkReply::finished, this, [=] {
+		if (_running && _reply == reply) {
+			publicDiscoveryFinished();
+		}
+	});
+}
+
+void ServerEndpointRefreshDiscovery::beginLocalDiscovery() {
+	_localNonce.resize(32);
+	base::RandomFill(_localNonce.data(), _localNonce.size());
+	const auto address = QHostAddress(_selection.host);
+	if (!address.isNull()) {
+		startLocalDiscovery({ address });
+		return;
+	}
+	const auto attempt = _attempt;
+	_hostLookupId = QHostInfo::lookupHost(
+		_selection.host,
+		this,
+		[=](const QHostInfo &info) {
+			if (!_running || _attempt != attempt) {
+				return;
+			}
+			_hostLookupId = -1;
+			if (info.error() != QHostInfo::NoError
+				|| info.addresses().isEmpty()) {
+				fail(true);
+				return;
+			}
+			startLocalDiscovery(info.addresses());
+		});
+	if (_hostLookupId < 0) {
+		fail(true);
+	}
+}
+
+void ServerEndpointRefreshDiscovery::startLocalDiscovery(
+		const QList<QHostAddress> &addresses) {
+	_localDiscovery->start(
+		_selection,
+		_localNonce,
+		addresses,
+		{
+			.finished = [=](MTP::ServerDiscoveryResult result) {
+				if (_running) {
+					finish(std::move(result));
+				}
+			},
+			.failed = [=](bool connectionFailure) {
+				if (_running) {
+					fail(connectionFailure);
+				}
+			},
+		});
+}
+
+void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
+	const auto reply = std::exchange(_reply, nullptr);
+	if (reply->error() != QNetworkReply::NoError) {
+		reply->deleteLater();
+		fail(true);
+		return;
+	}
+	auto headerSize = 0;
+	for (const auto &header : reply->rawHeaderPairs()) {
+		headerSize += header.first.size() + header.second.size() + 4;
+		if (headerSize > kMaxDiscoveryHeaders) {
+			reply->deleteLater();
+			fail(false);
+			return;
+		}
+	}
+	const auto status = reply->attribute(
+		QNetworkRequest::HttpStatusCodeAttribute).toInt();
+	const auto contentType = reply->header(
+		QNetworkRequest::ContentTypeHeader).toString()
+		.section(QChar::fromLatin1(';'), 0, 0)
+		.trimmed();
+	_publicResponse += reply->readAll();
+	const auto contentEncoding = reply->rawHeader("Content-Encoding");
+	reply->deleteLater();
+	if (status != 200
+		|| contentType.compare(
+			u"application/json"_q,
+			Qt::CaseInsensitive) != 0
+		|| !contentEncoding.isEmpty()
+		|| _publicResponse.size() > kMaxDiscoveryBody) {
+		fail(false);
+		return;
+	}
+	const auto result = MTP::ParsePublicDiscoveryResponse(
+		_selection,
+		_origin,
+		_publicResponse);
+	if (!result) {
+		fail(false);
+		return;
+	}
+	resolvePublicEndpoint(result);
+}
+
+void ServerEndpointRefreshDiscovery::resolvePublicEndpoint(
+		MTP::ServerDiscoveryResult result) {
+	const auto endpoint = MTP::CheckServerSelection(result.endpoint);
+	if (!MTP::IsPublicMtprotoDiscoveryEndpoint(endpoint, _selection)) {
+		if (result.webSocketOnly) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			fail(false);
+		}
+		return;
+	}
+	auto address = QHostAddress();
+	if (address.setAddress(endpoint.host)) {
+		if (!MTP::IsPublicDiscoveryAddress(_selection, address)) {
+			fail(false);
+			return;
+		}
+		result.resolvedAddress = address.toString();
+		finish(std::move(result));
+		return;
+	}
+	const auto attempt = _attempt;
+	_hostLookupId = QHostInfo::lookupHost(
+		endpoint.host,
+		this,
+		[=](const QHostInfo &info) {
+			if (_running && _attempt == attempt) {
+				_hostLookupId = -1;
+				publicEndpointResolved(result, info);
+			}
+		});
+	if (_hostLookupId < 0) {
+		if (result.webSocketOnly) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			fail(true);
+		}
+	}
+}
+
+void ServerEndpointRefreshDiscovery::publicEndpointResolved(
+		MTP::ServerDiscoveryResult result,
+		const QHostInfo &info) {
+	if (info.error() != QHostInfo::NoError) {
+		if (Intro::details::ResolvePublicDiscoveryAddresses(
+				_selection,
+				result,
+				PublicDiscoveryAddressRole::Mtproto,
+				{}) == PublicDiscoveryAddressResolution::NeedsWebSocket) {
+			resolvePublicWebSocketEndpoint(std::move(result));
+		} else {
+			fail(true);
+		}
+		return;
+	}
+	const auto resolution = ResolvePublicDiscoveryAddresses(
+		_selection,
+		result,
+		PublicDiscoveryAddressRole::Mtproto,
+		info.addresses());
+	if (resolution == PublicDiscoveryAddressResolution::Resolved) {
+		finish(std::move(result));
+	} else if (resolution == PublicDiscoveryAddressResolution::NeedsWebSocket) {
+		resolvePublicWebSocketEndpoint(std::move(result));
+	} else {
+		fail(false);
+	}
+}
+
+void ServerEndpointRefreshDiscovery::resolvePublicWebSocketEndpoint(
+		MTP::ServerDiscoveryResult result) {
+	const auto normalized = MTP::NormalizePublicWebSocketEndpoint(
+		result.webSocketEndpoint,
+		_selection);
+	if (!result.webSocketOnly
+		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps
+		|| !normalized || *normalized != result.webSocketEndpoint) {
+		fail(false);
+		return;
+	}
+	const auto url = QUrl(result.webSocketEndpoint, QUrl::StrictMode);
+	auto address = QHostAddress();
+	if (address.setAddress(url.host())) {
+		if (ResolvePublicDiscoveryAddresses(
+				_selection,
+				result,
+				PublicDiscoveryAddressRole::WebSocket,
+				{ address }) != PublicDiscoveryAddressResolution::Resolved) {
+			fail(false);
+			return;
+		}
+		finish(std::move(result));
+		return;
+	}
+	const auto attempt = _attempt;
+	_hostLookupId = QHostInfo::lookupHost(
+		url.host(),
+		this,
+		[=](const QHostInfo &info) {
+			if (_running && _attempt == attempt) {
+				_hostLookupId = -1;
+				publicWebSocketEndpointResolved(result, info);
+			}
+		});
+	if (_hostLookupId < 0) {
+		fail(true);
+	}
+}
+
+void ServerEndpointRefreshDiscovery::publicWebSocketEndpointResolved(
+		MTP::ServerDiscoveryResult result,
+		const QHostInfo &info) {
+	if (info.error() != QHostInfo::NoError) {
+		fail(true);
+		return;
+	}
+	if (ResolvePublicDiscoveryAddresses(
+			_selection,
+			result,
+			PublicDiscoveryAddressRole::WebSocket,
+			info.addresses()) == PublicDiscoveryAddressResolution::Resolved) {
+		finish(std::move(result));
+	} else {
+		fail(false);
+	}
+}
+
+void ServerEndpointRefreshDiscovery::discoveryTimeout() {
+	if (!_running) {
+		return;
+	}
+	if (_selection.policy == MTP::ServerDiscoveryPolicy::LocalDirect
+		&& _localDiscovery->running()
+		&& _localDiscovery->timeout()) {
+		_deadline->start(kEndpointRefreshTimeout);
+		return;
+	}
+	fail(true);
+}
+
+void ServerEndpointRefreshDiscovery::fail(bool connectionFailure) {
+	if (!_running) {
+		return;
+	}
+	_running = false;
+	stop();
+	_attemptToken.reset();
+	auto callback = std::move(_callbacks.failed);
+	_callbacks = {};
+	if (callback) {
+		callback(connectionFailure);
+	}
+}
+
+void ServerEndpointRefreshDiscovery::finish(
+		MTP::ServerDiscoveryResult result) {
+	if (!_running) {
+		return;
+	}
+	if (!result) {
+		fail(false);
+		return;
+	}
+	_running = false;
+	stop();
+	auto callback = std::move(_callbacks.finished);
+	_callbacks = {};
+	if (callback) {
+		callback(std::move(result));
+	}
+}
+
+void ServerEndpointRefreshDiscovery::stop() {
+	_deadline->stop();
+	_localDiscovery->cancel();
+	if (_hostLookupId >= 0) {
+		QHostInfo::abortHostLookup(_hostLookupId);
+		_hostLookupId = -1;
+	}
+	if (_reply) {
+		const auto reply = std::exchange(_reply, nullptr);
+		disconnect(reply, nullptr, this, nullptr);
+		reply->abort();
+		reply->deleteLater();
+	}
 }
 
 } // namespace details

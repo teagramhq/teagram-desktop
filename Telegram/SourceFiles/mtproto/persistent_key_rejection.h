@@ -25,6 +25,9 @@ struct ConnectionErrorInfo {
 	int proxyPort = 0;
 	QString dialledAddress;
 	QString pinnedHostname;
+	// A temporary endpoint probe has not authenticated this route yet. Its
+	// -404 response must never turn a stored auth key into disposable state.
+	bool unprovenEndpoint = false;
 };
 
 enum class PersistentKeyErrorDecision {
@@ -39,7 +42,7 @@ enum class PersistentKeyErrorDecision {
 		uint64 currentGeneration,
 		uint64 encryptionKeyId,
 		uint64 persistentKeyId) {
-	if (connection.proxied) {
+	if (connection.proxied || connection.unprovenEndpoint) {
 		return PersistentKeyErrorDecision::KeepAndStop;
 	}
 	const auto samePin = connection.pin.key

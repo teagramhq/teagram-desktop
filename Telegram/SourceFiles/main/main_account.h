@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <optional>
 
+class QTimer;
+
 namespace Storage {
 class Account;
 class Domain;
@@ -24,6 +26,10 @@ namespace MTP {
 class AuthKey;
 class Config;
 } // namespace MTP
+
+namespace Intro::details {
+class ServerEndpointRefreshDiscovery;
+} // namespace Intro::details
 
 namespace Main {
 
@@ -184,6 +190,13 @@ private:
 	[[nodiscard]] bool authorizationStateMatchesCurrentPin(
 		const std::optional<MTP::CustomServer> &pin) const;
 	void resetAuthorizationKeys();
+	[[nodiscard]] bool canRefreshServerEndpoint() const;
+	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
+	void serverEndpointRefreshDiscovered(
+		MTP::ServerDiscoveryResult result);
+	void serverEndpointVerificationFinished(bool authenticated);
+	void scheduleServerEndpointRefreshRetry();
+	void cancelServerEndpointRefresh();
 
 	void loggedOut();
 	void destroySession(DestroyReason reason);
@@ -194,6 +207,11 @@ private:
 	std::unique_ptr<MTP::Instance> _mtp;
 	rpl::variable<MTP::Instance*> _mtpValue;
 	std::unique_ptr<MTP::Instance> _mtpForKeysDestroy;
+	std::unique_ptr<MTP::Instance> _mtpForEndpointVerification;
+	std::unique_ptr<Intro::details::ServerEndpointRefreshDiscovery>
+		_serverEndpointRefreshDiscovery;
+	std::unique_ptr<QTimer> _serverEndpointRefreshRetryTimer;
+	std::unique_ptr<QTimer> _serverEndpointVerificationTimer;
 	rpl::event_stream<MTPUpdates> _mtpUpdates;
 	rpl::event_stream<> _mtpNewSessionCreated;
 	rpl::event_stream<> _serverCacheBindingMismatch;
@@ -213,8 +231,14 @@ private:
 	MTP::AuthKeysList _mtpKeysToDestroy;
 	std::optional<MTP::CustomServer> _mtpKeysToDestroyPin;
 	std::optional<MTP::CustomServer> _mtpForKeysDestroyPin;
+	std::optional<MTP::CustomServer> _endpointRefreshOriginal;
+	std::optional<MTP::CustomServer> _endpointRefreshCandidate;
 	bool _loggingOut = false;
+	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;
+	bool _serverEndpointRefreshIdentityFailure = false;
+	int _serverEndpointRefreshFailures = 0;
+	MTP::ShiftedDcId _serverEndpointRefreshDcId = 0;
 
 #ifdef TDESKTOP_UNIT_TESTS
 	int _testIndex = 0;

@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/openssl_help.h"
 #include "mtproto/mtproto_custom_server_input.h"
+#include "mtproto/mtproto_dc_options.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/Qt>
@@ -386,6 +387,43 @@ bool CommitServerEnrollment(
 	}
 	resume();
 	return true;
+}
+
+bool CommitServerEndpointRefresh(
+		const CustomServer &original,
+		const CustomServer &candidate,
+		bool authenticatedProof,
+		const std::function<bool()> &setPin,
+		const std::function<bool()> &persistPin,
+		const std::function<void()> &resume,
+		const std::function<void()> &rollbackPin) {
+	if (!authenticatedProof
+		|| !SameCustomServerEndpointRefreshIdentity(original, candidate)) {
+		return false;
+	}
+	if (!setPin()) {
+		return false;
+	}
+	if (!persistPin()) {
+		if (rollbackPin) {
+			rollbackPin();
+		}
+		return false;
+	}
+	resume();
+	return true;
+}
+
+bool CanRefreshServerEndpoint(
+		const ServerEndpointRefreshEligibility &eligibility) {
+	return eligibility.restoredSession
+		&& eligibility.hasPinnedServer
+		&& eligibility.pinAuthorized
+		&& eligibility.canResume
+		&& !eligibility.cacheBindingMismatch
+		&& eligibility.validDiscoveryOrigin
+		&& eligibility.hasStoredAuthKey
+		&& !eligibility.identityFailure;
 }
 
 void ReinitializeMainDcAfterServerReplacement(
