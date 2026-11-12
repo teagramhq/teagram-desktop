@@ -8328,10 +8328,8 @@ void HistoryWidget::updateControlsGeometry() {
 		}
 	}
 
-	updateHistoryGeometry(
-		false,
-		false,
-		{ ScrollChangeAdd, base::take(_topDelta) });
+	updateHistoryGeometry(false, false,
+						  {ScrollChangeAdd, base::take(_topDelta)}, false);
 
 	updateFieldSize();
 
@@ -8553,10 +8551,9 @@ void HistoryWidget::updateSendRestriction() {
 	}
 }
 
-void HistoryWidget::updateHistoryGeometry(
-		bool initial,
-		bool loadedDown,
-		const ScrollChange &change) {
+void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
+										  const ScrollChange &change,
+										  bool listChanged) {
 	const auto guard = gsl::finally([&] {
 		_itemRevealPending.clear();
 	});
@@ -8674,7 +8671,10 @@ void HistoryWidget::updateHistoryGeometry(
 		return;
 	}
 
-	updateListSize();
+	if (listChanged || needResize || hasPendingResizedItems()
+		|| _updateHistoryGeometryRequired) {
+		updateListSize();
+	}
 	_updateHistoryGeometryRequired = false;
 
 	auto newScrollTop = 0;

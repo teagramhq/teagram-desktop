@@ -1571,7 +1571,7 @@ if ! grep -E -q \
 fi
 local initial_history_selection
 initial_history_selection="$(grep -E \
-	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ budget_ns=60000000 scheduler_preemption_proven=[01]\.$' \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ budget_ns=50000000 scheduler_preemption_proven=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$initial_history_selection" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1590,9 +1590,9 @@ local initial_history_selection_scheduler_proven
 initial_history_selection_scheduler_proven="$(sed -E \
 	's/.*scheduler_preemption_proven=([01]).*/\1/' \
 	<<<"$initial_history_selection")"
-if (( initial_history_selection_work_ns >= 60000000 )); then
+if (( initial_history_selection_work_ns >= 50000000 )); then
 	cat "$AUTH_LOG" >&2
-	echo "initial history selection main-thread work exceeded its 60 ms budget." >&2
+	echo "initial history selection main-thread work exceeded its 50 ms budget." >&2
 	exit 1
 fi
 if (( initial_history_selection_wall_ns >= 50000000 \

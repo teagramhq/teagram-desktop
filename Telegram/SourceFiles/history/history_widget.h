@@ -723,7 +723,10 @@ private:
 
 	void updateSendRestriction();
 	[[nodiscard]] Data::SendError computeSendRestriction() const;
-	void updateHistoryGeometry(bool initial = false, bool loadedDown = false, const ScrollChange &change = { ScrollChangeNone, 0 });
+	void updateHistoryGeometry(bool initial = false, bool loadedDown = false,
+							   const ScrollChange &change
+							   = {ScrollChangeNone, 0},
+							   bool listChanged = true);
 	void updateListSize();
 	void startItemRevealAnimations();
 	void revealItemsCallback();
