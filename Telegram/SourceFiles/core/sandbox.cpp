@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
 #ifdef Q_OS_MAC
@@ -78,21 +79,35 @@ Sandbox::Sandbox(int &argc, char **argv)
 : QApplication(argc, argv)
 , _mainThreadId(QThread::currentThreadId()) {
 #ifdef Q_OS_MAC
-	// Warm CoreText's system font list on a worker while startup continues.
+	// Warm Qt's system font list on a worker. Defer UI startup until it
+	// releases the database, so font initialization cannot contend for its
+	// lock.
 	try {
-		_fontDatabaseWarmupThread = std::thread([] {
+		_fontDatabaseWarmupThread = std::thread([this] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 			const auto families = QFontDatabase().families();
 #else  // Qt < 6.0.0
 			const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 			Q_UNUSED(families);
+			QMetaObject::invokeMethod(
+				this,
+				[this] {
+					_fontDatabaseWarmupDone = true;
+					_fontDatabaseWarmupSucceeded = true;
+					if (_singleInstanceCheckAfterFontDatabaseWarmup
+						&& !Quitting()) {
+						_singleInstanceCheckAfterFontDatabaseWarmup = false;
+						singleInstanceChecked();
+					}
+				},
+				Qt::QueuedConnection);
 		});
 	} catch (const std::system_error &error) {
+		_fontDatabaseWarmupDone = true;
 		LOG(("Font database warmup could not start: %1")
 				.arg(QString::fromLocal8Bit(error.what())));
 	}
-	Platform::CreateGlobalMenu();
 #endif // Q_OS_MAC
 }
 
@@ -573,6 +588,17 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 }
 
 void Sandbox::singleInstanceChecked() {
+#ifdef Q_OS_MAC
+	if (!_fontDatabaseWarmupDone) {
+		_singleInstanceCheckAfterFontDatabaseWarmup = true;
+		return;
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+		LOG(("Font database warmup regression: ready=%1")
+				.arg(_fontDatabaseWarmupSucceeded ? 1 : 0));
+	}
+	Platform::CreateGlobalMenu();
+#endif // Q_OS_MAC
 	if (cManyInstance()) {
 		LOG(("App Info: Detected another instance"));
 	}

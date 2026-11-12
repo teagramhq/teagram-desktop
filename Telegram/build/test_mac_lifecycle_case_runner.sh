@@ -115,7 +115,8 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
 		printf 'started' > "$count_file"
 	fi
 	printf 'StartFonts startup regression: wall_ns=%s\n' "$wall_ns"
-	printf 'Font startup through first resolve regression: wall_ns=%s\n' "$wall_ns"
+	printf 'Font database warmup regression: ready=1\n'
+	printf 'StartManager startup regression: wall_ns=20000000\n'
 	printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\n'
 	exit 0
 fi

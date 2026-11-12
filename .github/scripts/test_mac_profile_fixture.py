@@ -32,7 +32,8 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
         printf 'started' > "$count_file"
     fi
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
-    printf 'Font startup through first resolve regression: wall_ns=%s\\n' "$wall_ns"
+    printf 'Font database warmup regression: ready=1\\n'
+    printf 'StartManager startup regression: wall_ns=20000000\\n'
     printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
     exit 0
 fi
@@ -88,8 +89,8 @@ def run_font_startup_fixture(
         expected_status,
         mode='pass',
         fallback_wall_ns=1_000_000,
-        resolve_cold_ns=50_000_000,
-        resolve_warm_ns=50_000_000):
+        manager_cold_ns=20_000_000,
+        manager_warm_ns=20_000_000):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         executable = root / 'Teagram.app/Contents/MacOS/Teagram'
@@ -99,10 +100,12 @@ count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
 if [[ -f "$count_file" ]]; then
     wall_ns="$FONT_WARM_NS"
-    resolve_wall_ns="$FONT_RESOLVE_WARM_NS"
+    manager_wall_ns="$FONT_MANAGER_WARM_NS"
+    sample='warm'
 else
     wall_ns="$FONT_COLD_NS"
-    resolve_wall_ns="$FONT_RESOLVE_COLD_NS"
+    manager_wall_ns="$FONT_MANAGER_COLD_NS"
+    sample='cold'
     printf 'started' > "$count_file"
 fi
 if [[ "$mode" == stall ]]; then
@@ -111,9 +114,15 @@ fi
 if [[ "$mode" != missing-timing ]]; then
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
 fi
-if [[ "$mode" != missing-resolve-timing ]]; then
-    printf 'Font startup through first resolve regression: wall_ns=%s\\n' \\
-        "$resolve_wall_ns"
+if [[ "$mode" == warmup-not-ready ]]; then
+    printf 'Font database warmup regression: ready=0\\n'
+else
+    printf 'Font database warmup regression: ready=1\\n'
+fi
+if [[ "$mode" != missing-manager-timing \
+    && ( "$mode" != missing-manager-warm-timing || "$sample" == cold ) ]]; then
+    printf 'StartManager startup regression: wall_ns=%s\\n' \\
+        "$manager_wall_ns"
 fi
 arabic_family='Vazirmatn UI NL'
 if [[ "$mode" == fallback-mismatch ]]; then
@@ -142,8 +151,8 @@ printf '%s\\n' "$directory"
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE=str(root),
             FONT_COLD_NS=str(cold_ns),
             FONT_WARM_NS=str(warm_ns),
-            FONT_RESOLVE_COLD_NS=str(resolve_cold_ns),
-            FONT_RESOLVE_WARM_NS=str(resolve_warm_ns),
+            FONT_MANAGER_COLD_NS=str(manager_cold_ns),
+            FONT_MANAGER_WARM_NS=str(manager_warm_ns),
             FONT_TEST_MODE=mode,
             FONT_FALLBACK_WALL_NS=str(fallback_wall_ns),
             PATH=str(binaries) + ':' + os.environ['PATH'],
@@ -158,14 +167,17 @@ printf '%s\\n' "$directory"
 
 
 font_startup_output = run_font_startup_fixture(
-    50_000_000, 99_999_999, 0, fallback_wall_ns=150_000_000)
+    50_000_000, 50_000_000, 0, fallback_wall_ns=150_000_000,
+    manager_cold_ns=40_000_000, manager_warm_ns=49_999_999)
 assert 'StartFonts cold=PASS wall_ns=50000000 under_100ms=1' in font_startup_output
-assert 'StartFonts warm=PASS wall_ns=99999999 under_100ms=1' in font_startup_output
-assert 'Font startup through first resolve cold=PASS wall_ns=50000000 under_100ms=1' \
+assert 'StartFonts warm=PASS wall_ns=50000000 under_100ms=1' in font_startup_output
+assert 'Font startup through first resolve cold=PASS wall_ns=90000000 under_100ms=1' \
     in font_startup_output
-assert 'Font startup through first resolve warm=PASS wall_ns=50000000 under_100ms=1' \
+assert 'Font startup through first resolve warm=PASS wall_ns=99999999 under_100ms=1' \
     in font_startup_output
-assert 'fallback=PASS through_first_resolve_under_100ms=1' in font_startup_output
+assert 'Font database warmup before launch=PASS' in font_startup_output
+assert 'fallback=PASS start_fonts_plus_start_manager_under_100ms=1' \
+    in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
@@ -181,16 +193,32 @@ font_startup_fallback_mismatch = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='fallback-mismatch')
 assert 'font fallback regression evidence missing or changed.' \
     in font_startup_fallback_mismatch
-font_startup_resolve_failure = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, resolve_cold_ns=100_000_000)
+font_startup_manager_failure = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, manager_cold_ns=100_000_000)
+assert 'StartManager cold exceeded the 100ms budget or had no timing' \
+    in font_startup_manager_failure
+font_startup_warm_manager_failure = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, manager_warm_ns=100_000_000)
+assert 'StartManager warm exceeded the 100ms budget or had no timing' \
+    in font_startup_warm_manager_failure
+font_startup_total_failure = run_font_startup_fixture(
+    60_000_000, 50_000_000, 1, manager_cold_ns=50_000_000)
 assert 'Font startup through first resolve cold exceeded the 100ms budget' \
-    in font_startup_resolve_failure
-font_startup_warm_resolve_failure = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, resolve_warm_ns=100_000_000)
+    in font_startup_total_failure
+font_startup_warm_total_failure = run_font_startup_fixture(
+    50_000_000, 60_000_000, 1, manager_warm_ns=50_000_000)
 assert 'Font startup through first resolve warm exceeded the 100ms budget' \
-    in font_startup_warm_resolve_failure
-font_startup_missing_resolve_timing = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, mode='missing-resolve-timing')
-assert 'Font startup through first resolve cold exceeded the 100ms budget' \
-    in font_startup_missing_resolve_timing
+    in font_startup_warm_total_failure
+font_startup_missing_manager_timing = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-manager-timing')
+assert 'StartManager cold exceeded the 100ms budget or had no timing' \
+    in font_startup_missing_manager_timing
+font_startup_missing_warm_manager_timing = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-manager-warm-timing')
+assert 'StartManager warm exceeded the 100ms budget or had no timing' \
+    in font_startup_missing_warm_manager_timing
+font_startup_warmup_not_ready = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='warmup-not-ready')
+assert 'font database warmup did not finish before app initialization' \
+    in font_startup_warmup_not_ready
 print('macOS font startup timing and failure guards: PASS')

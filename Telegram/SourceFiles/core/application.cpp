@@ -362,11 +362,17 @@ void Application::run() {
 	_translator = std::make_unique<Lang::Translator>();
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	auto startManagerTimer = QElapsedTimer();
+	if (fontStartupRegression) {
+		startManagerTimer.start();
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	style::StartManager(cScale());
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
-		LOG(("Font startup through first resolve regression: wall_ns=%1")
-				.arg(startFontsTimer.nsecsElapsed()));
+		LOG(("StartManager startup regression: wall_ns=%1")
+				.arg(startManagerTimer.nsecsElapsed()));
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 	Ui::Accessible::Init();

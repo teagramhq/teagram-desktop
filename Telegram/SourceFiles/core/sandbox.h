@@ -157,6 +157,9 @@ private:
 	rpl::lifetime _lifetime;
 
 #ifdef Q_OS_MAC
+	bool _fontDatabaseWarmupDone = false;
+	bool _fontDatabaseWarmupSucceeded = false;
+	bool _singleInstanceCheckAfterFontDatabaseWarmup = false;
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC
 };
