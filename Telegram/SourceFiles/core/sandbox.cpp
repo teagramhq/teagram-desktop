@@ -83,7 +83,7 @@ Sandbox::Sandbox(int &argc, char **argv)
 		_fontDatabaseWarmupThread = std::thread([] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 			const auto families = QFontDatabase().families();
-#else // Qt < 6.0.0
+#else  // Qt < 6.0.0
 			const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 			Q_UNUSED(families);

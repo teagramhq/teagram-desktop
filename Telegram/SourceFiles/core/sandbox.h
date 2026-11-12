@@ -159,7 +159,6 @@ private:
 #ifdef Q_OS_MAC
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC
-
 };
 
 } // namespace Core
