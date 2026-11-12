@@ -1313,6 +1313,10 @@ local AUTH_LOG="$TEST_HOME/authenticated-cache-regression.log"
 local AUTH_EVIDENCE_LOG="${TDESKTOP_MAC_PROFILE_EVIDENCE_LOG:-}"
 local STORAGE_FIXTURE_ROOT="$AUTH_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
 local PROFILE_LOG="$AUTH_HOME/Library/Application Support/Teagram/log.txt"
+local WARM_HOME="$TEST_HOME/authenticated-cache-regression-warm"
+local WARM_LOG="$TEST_HOME/authenticated-cache-regression-warm.log"
+local WARM_STORAGE_FIXTURE_ROOT="$WARM_HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/SyntheticStorageFixtures"
+local WARM_PROFILE_LOG="$WARM_HOME/Library/Application Support/Teagram/log.txt"
 mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
@@ -1328,6 +1332,7 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
 	TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1 \
+	TDESKTOP_START_FONTS_PHASE=cold \
 	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
 	append_ui_stall_diagnostics
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
@@ -1337,6 +1342,31 @@ if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
 fi
 append_ui_stall_diagnostics
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
+mkdir -p "$WARM_HOME"
+prepare_authenticated_storage_fixtures "$WARM_STORAGE_FIXTURE_ROOT"
+verify_protected_storage_fixtures "$WARM_STORAGE_FIXTURE_ROOT"
+if ! env HOME="$WARM_HOME" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$WARM_HOME" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY=1 \
+	TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION=1 \
+	TDESKTOP_START_FONTS_PHASE=warm \
+	"$APP" -noupdate -debug >"$WARM_LOG" 2>&1; then
+	cat "$AUTH_LOG" "$WARM_LOG" >&2
+	echo "warm authenticated cache and cleanup regression failed." >&2
+	exit 1
+fi
+cat "$WARM_LOG" >> "$AUTH_LOG"
+if [[ -f "$WARM_PROFILE_LOG" ]]; then
+	grep -F 'UI stall ' "$WARM_PROFILE_LOG" >> "$AUTH_LOG" || true
+fi
+if ! grep -E -q '^StartFonts timing: phase=cold wall_ns=[0-9]+\.$' "$AUTH_LOG" \
+	|| ! grep -E -q '^StartFonts timing: phase=warm wall_ns=[0-9]+\.$' "$AUTH_LOG"; then
+	cat "$AUTH_LOG" >&2
+	echo "cold and warm StartFonts timing evidence missing." >&2
+	exit 1
+fi
 for native_evidence in \
 	'native_lifecycle_case=account-lifecycle-prerequisites result=PASS' \
 	'native_lifecycle_case=legacy-cleanup-symlink result=PASS' \
@@ -1415,7 +1445,7 @@ for cache in cache media_cache; do
 	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ handler_thread_cpu_ns=[0-9]+ under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
