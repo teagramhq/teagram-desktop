@@ -10984,7 +10984,7 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		.startedAt = callbackStartedAt,
 		.durationNanoseconds = 92'000'000,
 		.mainThreadWorkNanoseconds = 52'000'000,
-		.processWorkNanoseconds = 70'000'000,
+		.processWorkNanoseconds = 58'000'000,
 		.label = u"cold initial history selection regression"_q,
 	};
 	auto boundedInitialSelection = coldInitialSelection;
