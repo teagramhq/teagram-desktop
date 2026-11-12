@@ -285,6 +285,10 @@ for metadata_field in HEAD_SHA BASE_SHA TESTED_SHA; do
 done
 require_step_script "$mac_workflow" build-macos 'Summarize on-demand validation.' \
   'head_sha' 'base_sha' 'tested_sha' '$HEAD_SHA' '$BASE_SHA' '$TESTED_SHA'
+require_step_field "$mac_workflow" build-macos 'Summarize on-demand validation.' \
+  '.env.OBSERVER_OUTCOME' '${{ steps.observer-self-tests.outcome }}'
+require_step_script "$mac_workflow" build-macos 'Summarize on-demand validation.' \
+  'Observer self-tests:' '$OBSERVER_OUTCOME'
 require_step_script "$mac_workflow" build-macos 'Verify Mac App Store variant is unsupported.' '$TESTED_SHA'
 require_step_script "$mac_workflow" build-macos 'Launch app smoke test.' '$TESTED_SHA'
 require_step_script "$mac_workflow" build-macos 'Run protected profile and IPC integration tests.' '$TESTED_SHA'
@@ -665,6 +669,232 @@ require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact
 require_step_field "$mac_workflow" build-macos 'Libraries.' '.if' \
   "steps.cache-libs.outputs.cache-hit != 'true' && steps.legacy-cache-libs.outputs.cache-hit != 'true'"
 
+# Bound each post-build test or replay independently so one hang does not hold
+# a macOS runner until the job timeout.
+ui_watchdog_step='Verify UI stall watchdog stack capture.'
+require_step_field "$mac_workflow" build-macos "$ui_watchdog_step" '.id' 'ui-stall-watchdog'
+require_step_field "$mac_workflow" build-macos "$ui_watchdog_step" '.timeout-minutes' '1'
+require_step_script "$mac_workflow" build-macos "$ui_watchdog_step" \
+  'macos-regression-diagnostics/ui-stall-watchdog' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+observer_self_tests_step='Run isolation observer self-tests (informational).'
+require_step_field "$mac_workflow" build-macos "$observer_self_tests_step" '.id' 'observer-self-tests'
+require_step_field "$mac_workflow" build-macos "$observer_self_tests_step" '.timeout-minutes' '2'
+require_step_script "$mac_workflow" build-macos "$observer_self_tests_step" \
+  'macos-regression-diagnostics/observer-self-tests' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+cache_watchdog_step='Verify cache path watchdog regression.'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
+require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
+  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}"
+require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
+  'rm -rf "$diagnostics"' \
+  'state="$diagnostics/state"' \
+  'trap cleanup_cache_watchdog_state EXIT' \
+  'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
+  'TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$diagnostics/authenticated-app.log"' \
+  'tee "$evidence/cache-watchdog-regression.log" "$diagnostics/harness.log"'
+
+launch_smoke_step='Launch app smoke test.'
+require_step_field "$mac_workflow" build-macos "$launch_smoke_step" '.timeout-minutes' '2'
+require_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
+  'macos-regression-diagnostics/launch-smoke' \
+  'state="$RUNNER_TEMP/teagram-launch-smoke"' 'rm -rf "$state"' \
+  'HOME="$state/home" TDESKTOP_MAC_PROFILE_TEST_HOME="$state/home" arch -arm64 "$executable"' \
+  'launch-smoke.stdout.log' 'launch-smoke.stderr.log' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+reject_step_script "$mac_workflow" build-macos "$launch_smoke_step" \
+  'mktemp -d "$RUNNER_TEMP/teagram-launch-smoke.'
+
+account_database_profile_step='Resolve Teagram account-database profile.'
+require_step_field "$mac_workflow" build-macos "$account_database_profile_step" \
+  '.id' 'account-database-profile'
+require_step_script "$mac_workflow" build-macos "$account_database_profile_step" \
+  'pwd.getpwuid(os.getuid()).pw_dir' \
+  'profile_root=%s/Library/Application Support/Teagram'
+
+profile_step='Run protected profile and IPC integration tests.'
+require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
+require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'state="$diagnostics/state"' \
+  'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1'
+
+if ! build_step_index="$(find_step_index 'Teagram build.')"; then
+  contract_fail "$mac_workflow is missing Teagram build."
+fi
+for step_index in "${!step_names[@]}"; do
+  ((step_index > build_step_index)) || continue
+  step_name="${step_names[$step_index]}"
+  [[ "$step_name" =~ (regression|watchdog|smoke|self-tests|integration) ]] || continue
+  if [[ "$step_name" == 'Report skipped '* || "$step_name" == 'Upload '* ]]; then
+    continue
+  fi
+  timeout="$(step_field "$mac_workflow" build-macos "$step_name" '.timeout-minutes')"
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] \
+    || contract_fail "$step_name must have a positive timeout-minutes value."
+done
+
+regression_diagnostics_step='Upload macOS regression diagnostics.'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" '.uses' \
+  'actions/upload-artifact@v7'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with.name' 'macos-regression-diagnostics-${{ github.run_id }}'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with["if-no-files-found"]' 'error'
+require_step_field "$mac_workflow" build-macos "$regression_diagnostics_step" \
+  '.with["retention-days"]' '14'
+regression_artifact_condition="$(step_field "$mac_workflow" build-macos \
+  "$regression_diagnostics_step" '.if')"
+regression_artifact_condition_compact="$(contract_compact "$regression_artifact_condition")"
+regression_artifact_paths="$(step_field "$mac_workflow" build-macos \
+  "$regression_diagnostics_step" '.with.path')"
+grep -Fq 'always()' <<< "$regression_artifact_condition_compact" \
+  || contract_fail "$regression_diagnostics_step must run after a regression step fails or times out."
+for regression_step_id in \
+  ui-stall-watchdog \
+  observer-self-tests \
+  cache-watchdog \
+  launch-smoke \
+  profile-ipc \
+  lifecycle-regression; do
+  condition_clause="steps.$regression_step_id.outcome!='success'&&steps.$regression_step_id.outcome!='skipped'"
+  grep -Fq "$condition_clause" <<< "$regression_artifact_condition_compact" \
+    || contract_fail "$regression_diagnostics_step must upload for $regression_step_id failures and timeouts."
+done
+for regression_artifact_path in \
+  '${{ runner.temp }}/macos-regression-diagnostics/' \
+  '${{ runner.temp }}/tdesktop-chat-participants/diagnostics/' \
+  '${{ env.REPO_NAME }}/out/Debug/evidence/' \
+  '${{ steps.account-database-profile.outputs.profile_root }}/log_start*.txt' \
+  '${{ steps.account-database-profile.outputs.profile_root }}/log.txt' \
+  '${{ steps.account-database-profile.outputs.profile_root }}/DebugLogs/'; do
+  grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
+    || contract_fail "$regression_diagnostics_step must upload $regression_artifact_path."
+done
+
+require_step_script "$mac_workflow" build-macos \
+  'Full chat info session regression.' \
+  'application_profile="$regression_home/Library/Application Support/Teagram"' \
+  'HOME="$regression_home"' \
+  'TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home"' \
+  '"$application_profile/$relative_log"' \
+  'cp "$application_profile/$relative_log" "$application_logs/$relative_log"'
+
+# Derive the profile roots from the workflow, then make sure every profile used
+# for smoke/lifecycle or account-database fallback is an artifact input.
+smoke_script="$(step_field "$mac_workflow" build-macos "$launch_smoke_step" '.run')"
+smoke_state_suffix="$(sed -n 's|^[[:space:]]*state="\$RUNNER_TEMP/\([^"]*\)"$|\1|p' <<< "$smoke_script")"
+lifecycle_script="$(step_field "$mac_workflow" build-macos \
+  'Full chat info session regression.' '.run')"
+regression_root_suffix="$(sed -n 's|^[[:space:]]*regression_root="\$RUNNER_TEMP/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+regression_home_suffix="$(sed -n 's|^[[:space:]]*regression_home="\$regression_root/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+application_profile_suffix="$(sed -n 's|^[[:space:]]*application_profile="\$regression_home/\([^"]*\)"$|\1|p' <<< "$lifecycle_script")"
+for extracted_value in "$smoke_state_suffix" "$regression_root_suffix" \
+    "$regression_home_suffix" "$application_profile_suffix"; do
+  [[ -n "$extracted_value" ]] \
+    || contract_fail 'The workflow profile mappings must remain extractable for retention coverage.'
+done
+profile_suffix='Library/Application Support/Teagram'
+smoke_profile_suffix="$smoke_state_suffix/home/$profile_suffix"
+lifecycle_profile_suffix="$regression_root_suffix/$regression_home_suffix/$application_profile_suffix"
+runner_temp_path_expression='${{ runner.temp }}/'
+for profile_suffix_to_upload in "$smoke_profile_suffix" "$lifecycle_profile_suffix"; do
+  for profile_log_path in log_start\*.txt log.txt DebugLogs/; do
+    regression_artifact_path="$runner_temp_path_expression$profile_suffix_to_upload/$profile_log_path"
+    grep -Fq "$regression_artifact_path" <<< "$regression_artifact_paths" \
+      || contract_fail "$regression_diagnostics_step must upload workflow-derived profile path $regression_artifact_path."
+  done
+done
+
+# Fixture test using the workflow-derived profiles: simulate app failure and
+# timeout, and verify the corresponding artifact paths still contain the logs.
+python3 - "$temp_dir/profile-log-retention" \
+  "$temp_dir/$smoke_state_suffix/home" \
+  "$temp_dir/$regression_root_suffix/$regression_home_suffix" \
+  "$temp_dir/account-database-home" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+root = Path(sys.argv[1])
+profile_homes = [
+    ("smoke", Path(sys.argv[2]), True),
+    ("lifecycle", Path(sys.argv[3]), True),
+    ("account-fallback", Path(sys.argv[4]), False),
+]
+app = root / "fake_teagram.py"
+app.parent.mkdir(parents=True, exist_ok=True)
+app.write_text(
+    "import os, sys, time\n"
+    "from pathlib import Path\n"
+    "home = Path(os.environ.get('TDESKTOP_MAC_PROFILE_TEST_HOME', os.environ['ACCOUNT_DATABASE_HOME']))\n"
+    "profile = home / 'Library/Application Support/Teagram'\n"
+    "(profile / 'DebugLogs').mkdir(parents=True, exist_ok=True)\n"
+    "(profile / 'log_start0.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' startup log\\n')\n"
+    "if sys.argv[2] == 'failure': sys.exit(23)\n"
+    "(profile / 'log.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' app log\\n')\n"
+    "(profile / 'DebugLogs/log_20261112.txt').write_text(sys.argv[1] + ' ' + sys.argv[2] + ' debug log\\n')\n"
+    "time.sleep(60)\n",
+    encoding="utf-8",
+)
+
+for source, home, use_override in profile_homes:
+    for mode in ("failure", "timeout"):
+        profile = home / "Library/Application Support/Teagram"
+        expected = {
+            profile / "log_start0.txt": f"{source} {mode} startup log\n",
+        }
+        if mode == "timeout":
+            expected.update({
+                profile / "log.txt": f"{source} {mode} app log\n",
+                profile / "DebugLogs/log_20261112.txt": f"{source} {mode} debug log\n",
+            })
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["ACCOUNT_DATABASE_HOME"] = str(home if not use_override else root / "account-database-home")
+        if use_override:
+            env["TDESKTOP_MAC_PROFILE_TEST_HOME"] = str(home)
+        else:
+            env.pop("TDESKTOP_MAC_PROFILE_TEST_HOME", None)
+        if mode == "failure":
+            result = subprocess.run(
+                [sys.executable, str(app), source, mode], env=env, check=False
+            )
+            if result.returncode != 23:
+                raise SystemExit(f"The simulated {source} failure returned the wrong status.")
+        else:
+            process = subprocess.Popen(
+                [sys.executable, str(app), source, mode], env=env
+            )
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not all(path.is_file() for path in expected):
+                if process.poll() is not None:
+                    raise SystemExit(f"The simulated {source} timeout exited early.")
+                time.sleep(0.01)
+            if not all(path.is_file() for path in expected):
+                process.kill()
+                process.wait()
+                raise SystemExit(f"The simulated {source} app did not write its logs.")
+            try:
+                process.communicate(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+            else:
+                raise SystemExit(f"The simulated {source} app did not time out.")
+        for path, contents in expected.items():
+            if not path.is_file() or path.read_text(encoding="utf-8") != contents:
+                raise SystemExit(f"The {source} {mode} artifact log was not retained: {path}")
+
+print("macOS startup and profile logs retained after failure and timeout: PASS")
+PY
+
 # The full chat info regression reads the Ninja Multi-Config tree under out/.
 regression_step='Full chat info session regression.'
 dwarf_address_helper='.github/scripts/extract_dwarf_subprogram_address.py'
@@ -698,6 +928,7 @@ require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
