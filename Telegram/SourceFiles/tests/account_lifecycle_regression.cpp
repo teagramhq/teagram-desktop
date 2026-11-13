@@ -10587,7 +10587,7 @@ struct SchedulerTraceWindow final {
 		return {};
 	}
 	const auto start = interval.startedAtSteadyNanoseconds;
-	const auto end = start + interval.durationNanoseconds;
+	const auto windowEnd = start + interval.durationNanoseconds;
 	auto acknowledgementReachedWindowEnd = false;
 	auto hasUnusableCapture = false;
 	auto samples = std::vector<std::pair<qint64, QChar>>();
@@ -10595,11 +10595,11 @@ struct SchedulerTraceWindow final {
 		const auto postedAt = acknowledgement.postedAtSteadyNanoseconds;
 		const auto acknowledgedAt = acknowledgement.acknowledgedAtNanoseconds;
 		if ((postedAt <= 0) || (acknowledgedAt <= 0) || (acknowledgedAt < start)
-			|| (postedAt > end)) {
+			|| (postedAt > windowEnd)) {
 			continue;
 		}
 		acknowledgementReachedWindowEnd
-			= acknowledgementReachedWindowEnd || (acknowledgedAt >= end);
+			= acknowledgementReachedWindowEnd || (acknowledgedAt >= windowEnd);
 		if (!acknowledgement.schedulerTraceComplete
 			|| acknowledgement.schedulerTrace.isEmpty()
 			|| (acknowledgement.schedulerTrace == u"none"_q)
@@ -10622,7 +10622,7 @@ struct SchedulerTraceWindow final {
 				return {};
 			}
 			const auto sampleAt = postedAt + offset;
-			if ((sampleAt >= start) && (sampleAt <= end)) {
+			if ((sampleAt >= start) && (sampleAt <= windowEnd)) {
 				samples.emplace_back(
 					sampleAt - start,
 					acknowledgement.schedulerTrace[qsizetype(i)]);
@@ -11148,8 +11148,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		0, 1'000'000, 2'000'000, 3'000'000, 4'000'000, 5'000'000, 6'000'000,
 	};
 	const auto acknowledgementWindow = MainThreadWorkInterval{
-		.startedAtSteadyNanoseconds = 10'000'000,
 		.durationNanoseconds = 10'000'000,
+		.startedAtSteadyNanoseconds = 10'000'000,
 	};
 	const auto capturedWindow = SchedulerTraceForInterval(
 		acknowledgementWindow,
