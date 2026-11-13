@@ -11519,10 +11519,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	if (!historyWidget) {
 		return result;
 	}
+	showPeerHistoryMeasured(firstHistory);
+	QCoreApplication::processEvents();
 	const auto autocompleteBuildsBeforeSwitch
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto tabbedPanelBuildsBeforeSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
+	showPeerHistoryMeasured(secondHistory);
+	QCoreApplication::processEvents();
 	showPeerHistoryMeasured(firstHistory);
 	QCoreApplication::processEvents();
 	result.chatSwitchComposeUiReused
@@ -11532,12 +11536,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == firstHistory->peer.get())
 		  && (historyWidget->tabbedPanelBuildCountForRegressionTest()
 			  == tabbedPanelBuildsBeforeSwitch);
-	if (const auto revealItem = firstHistory->lastMessage();
-		revealItem && revealItem->mainView()) {
+	if (const auto unread = firstHistory->firstUnreadMessage();
+		unread && unread->data()->mainView()) {
 		result.pendingRevealStartedAfterControlsGeometry
 			= historyWidget
 				  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
-					  not_null<HistoryItem *>(revealItem));
+					  unread->data());
 	}
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	auto attachMenuCallbacks = std::vector<MainThreadWorkInterval>();
@@ -12002,6 +12006,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	const auto originalAdaptiveForWide
 		= Core::App().settings().adaptiveForWide();
+	const auto originalWindowSize = window->widget()->size();
 	auto originalChatLayout = Window::Adaptive::ChatLayout::Normal;
 	auto originalChatLayoutCaptured = false;
 	auto chatLayoutLifetime = rpl::lifetime();
@@ -12020,9 +12025,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		originalChatLayoutCaptured = true;
 	}
 	if (originalChatLayoutCaptured) {
+		const auto requiredWindowWidth
+			= st::adaptiveChatWideWidth + st::columnMaximalWidthLeft + 40;
+		window->widget()->resize(
+			std::max(originalWindowSize.width(), requiredWindowWidth),
+			originalWindowSize.height());
+		QCoreApplication::processEvents();
 		Core::App().settings().setAdaptiveForWide(true);
-		controller->adaptive().setChatLayout(
-			Window::Adaptive::ChatLayout::Wide);
 		QCoreApplication::processEvents();
 		result.historyChatModeInitiallyWide
 			= controller->adaptive().isChatWide();
@@ -12044,6 +12053,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  && (result.historyChatModeResizeCountAfter
 				  > result.historyChatModeResizeCountBefore);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
+		window->widget()->resize(originalWindowSize);
+		QCoreApplication::processEvents();
 		controller->adaptive().setChatLayout(originalChatLayout);
 		QCoreApplication::processEvents();
 	}
