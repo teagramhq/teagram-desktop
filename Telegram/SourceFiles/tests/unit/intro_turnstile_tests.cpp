@@ -224,18 +224,26 @@ TEST_CASE(RejectsOversizedAndMalformedBridgeMessages) {
 }
 
 TEST_CASE(AcceptsTurnstileErrorEventsWithoutDisplayingPageText) {
-	const auto error = ParseMessage(ErrorMessage(ErrorPayload(QJsonObject{
-		{u"code"_q, u"expired"_q},
-		{u"cloudflareErrorCode"_q, u"600010"_q},
-		{u"token"_q, u"must-not-be-logged"_q},
-		{u"sitekey"_q, u"must-not-be-logged"_q},
-	})));
+	const auto error = ParseMessage(ErrorMessage(
+		uR"({"code":"widget_error","cloudflare_code":"600010"})"_q));
 	CHECK(std::holds_alternative<TurnstileMessage>(error));
 	const auto &message = std::get<TurnstileMessage>(error);
 	CHECK(message.type == TurnstileMessageType::Error);
-	CHECK(message.token.isEmpty());
-	CHECK_EQ(message.errorCode, u"expired"_q);
+	CHECK_EQ(message.errorCode, u"widget_error"_q);
 	CHECK_EQ(message.cloudflareErrorCode, u"600010"_q);
+
+	const auto withSecrets = ParseMessage(ErrorMessage(ErrorPayload(QJsonObject{
+		{u"code"_q, u"expired"_q},
+		{u"cloudflare_code"_q, u"600010"_q},
+		{u"token"_q, u"must-not-be-logged"_q},
+		{u"sitekey"_q, u"must-not-be-logged"_q},
+	})));
+	CHECK(std::holds_alternative<TurnstileMessage>(withSecrets));
+	const auto &withSecretsMessage = std::get<TurnstileMessage>(withSecrets);
+	CHECK(withSecretsMessage.type == TurnstileMessageType::Error);
+	CHECK(withSecretsMessage.token.isEmpty());
+	CHECK_EQ(withSecretsMessage.errorCode, u"expired"_q);
+	CHECK_EQ(withSecretsMessage.cloudflareErrorCode, u"600010"_q);
 
 	const auto unknownCode = ParseMessage(ErrorMessage(ErrorPayload(QJsonObject{
 		{u"code"_q, u"raw-page-text"_q},
@@ -262,7 +270,7 @@ TEST_CASE(TurnstileErrorCodeLogValuesAreBoundedPrintableAscii) {
 	const auto longCode = QString(65, 'x');
 	const auto result = ParseMessage(ErrorMessage(ErrorPayload(QJsonObject{
 		{u"code"_q, longCode},
-		{u"cloudflareErrorCode"_q, u"600010\n"_q},
+		{u"cloudflare_code"_q, u"600010\n"_q},
 	})));
 	CHECK(std::holds_alternative<TurnstileMessage>(result));
 	const auto &message = std::get<TurnstileMessage>(result);
