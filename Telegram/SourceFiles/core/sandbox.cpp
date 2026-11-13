@@ -425,6 +425,8 @@ void Sandbox::launchApplication() {
 				UiStallWatchdog::Settings{
 					.captureShortStalls = qEnvironmentVariableIsSet(
 						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
+					.disableRateLimit = qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION"),
 				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC
