@@ -2562,9 +2562,10 @@ class LocalEndpointRefreshDiscoveryStub final {
 							  uint32(encryptedSize), &aesKey, &aesIv);
 		const auto requestId = EndpointRefreshConfigRequestId(plain);
 		if (!requestId) {
-			const auto first = (plain.size() >= 36)
-				? EndpointRefreshReadInt(plain.constData() + 32)
-				: uint32(0);
+			auto first = uint32(0);
+			if (plain.size() >= 36) {
+				first = EndpointRefreshReadInt(plain.constData() + 32);
+			}
 			connection->trace += 'n' + QByteArray::number(plain.size()) + ':'
 								 + QByteArray::number(first, 16) + ' ';
 			return;
