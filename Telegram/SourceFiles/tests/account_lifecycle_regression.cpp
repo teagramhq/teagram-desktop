@@ -2781,8 +2781,13 @@ class LocalEndpointRefreshDiscoveryStub final {
 					.sessionId = sessionId,
 					.requestId = request.messageId,
 				};
-				if (!_autoReply && _verifierConnection.expired()) {
-					_verifierConnection = connection;
+				if (!_autoReply) {
+					const auto current = _verifierConnection.lock();
+					if (!current || !current->socket
+						|| current->socket->state()
+							   != QAbstractSocket::ConnectedState) {
+						_verifierConnection = connection;
+					}
 				}
 				if (_autoReply) {
 					reply(connection, _authenticates);
