@@ -58,6 +58,10 @@ public:
 		return *_domain;
 	}
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	friend class ::Tests::AccountLifecycleRegressionAccess;
+#endif
+
 	[[nodiscard]] Storage::Domain &domainLocal() const;
 
 	[[nodiscard]] Storage::StartResult legacyStart(
@@ -158,10 +162,6 @@ public:
 	[[nodiscard]] rpl::lifetime &lifetime() {
 		return _lifetime;
 	}
-
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	friend class ::Tests::AccountLifecycleRegressionAccess;
-#endif
 
 private:
 	static constexpr auto kDefaultSaveDelay = crl::time(1000);
