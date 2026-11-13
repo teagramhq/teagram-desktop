@@ -137,7 +137,7 @@ def make_runner_harness(root, history=None):
                   exit 0
                   ;;
                 evaluate)
-                  printf 'evaluate\\n' >> "$EVALUATE_CALL_LOG"
+                  printf 'evaluate %s\\n' "$*" >> "$EVALUATE_CALL_LOG"
                   status="${MOCK_EVALUATE_STATUS:-0}"
                   if [[ "$status" != 0 ]]; then exit "$status"; fi
                   ;;
@@ -184,21 +184,29 @@ def make_runner_harness(root, history=None):
                 sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
+            ratio_counts = {}
+            for ratio_count in os.environ.get(
+                "MOCK_DOCKER_RATIO_COUNTS", ""
+            ).split(","):
+                if ratio_count:
+                    count_text, ratio_text = ratio_count.split("=", 1)
+                    ratio_counts[count_text] = ratio_text
             outcome = os.environ.get("MOCK_DOCKER_OUTCOME", "PASS")
             one = "13.00" if str(count) in slow_counts else "10.00"
+            hundred = ratio_counts.get(str(count), "12.00")
             dialogs_stalls = "1" if str(count) in stall_counts else "0"
             print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
             | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
             | --- | ---: | ---: | ---: | --- | --- |
-            | messages.getDialogs page (100 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | messages.getDialogs page (100 dialogs) | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             | contacts.getContacts full response | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-            | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | contact change + name lookup | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | private history page (1M messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | jump to date in 1M-message history | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | group media page (200K messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | messages.searchGlobal page (100 hits; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-            | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
             Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; private history 1x=0, 100x=0; jump to date 1x=0, 100x=0; group media 1x=0, 100x=0; search 1x=0, 100x=0; update burst 1x=0, 100x=0; total={dialogs_stalls}.
             Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
@@ -230,7 +238,7 @@ def make_runner_harness(root, history=None):
             "GH_TOKEN": "token",
             "PR_BASE_SHA": "base-sha",
             "IMAGE_TAG": "tdesktop:test",
-            "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "60",
+            "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "270",
             "MOCK_RECORD_COUNT": str(len(history or [])),
             "MOCK_HISTORY_FILE": str(history_file),
             "MOCK_FETCH_STATUS": "0",
@@ -320,7 +328,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
-                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    f"12.00 ms → 12.00 ms | "
+                    f"1.20x (n=2; range 1.20–1.20x) | {budget} | "
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )
@@ -355,7 +364,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertIn(
             "| private history page (1M messages; 20 / 2,000 loaded) | "
-            "n/a → 10.00 ms | n/a → 12.00 ms | 1.20x | "
+            "n/a → 10.00 ms | n/a → 12.00 ms | "
+            "1.20x (n=2; range 1.20–1.20x) | "
             "50 ms main-thread step | calibrating: 0/20 |",
             summary,
         )
@@ -1019,6 +1029,61 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertFalse(passes["failures"])
         self.assertTrue(any("cache read x100" in failure for failure in fails["failures"]))
 
+    def test_scale_ratio_uses_sample_median_and_reports_spread(self):
+        self.require_implementation()
+        scenario = "contact change + name lookup"
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample() for _ in range(3)]
+        head = [make_sample() for _ in range(3)]
+        for sample, one_ms, hundred_ms in zip(
+            head, (2.0, 4.0, 30.0), (2.8, 12.0, 12.0)
+        ):
+            sample["scenarios"][scenario].update(
+                {"one_ms": one_ms, "hundred_ms": hundred_ms}
+            )
+
+        result = scale_check.evaluate(history, base, head)
+        row = result["rows"][scenario]
+        summary = scale_check.format_summary(result, head[-1])
+
+        self.assertFalse(result["failures"])
+        self.assertEqual(row["ratio"], 1.4)
+        self.assertEqual(row["ratio_sample_count"], 3)
+        self.assertEqual(row["ratio_min"], 0.4)
+        self.assertEqual(row["ratio_max"], 3.0)
+        self.assertEqual(row["head_hundred_ms"] / row["head_one_ms"], 3.0)
+        self.assertIn(
+            "| contact change + name lookup | 10.00 ms → 4.00 ms | "
+            "12.00 ms → 12.00 ms | 1.40x (n=3; range 0.40–3.00x) |",
+            summary,
+        )
+
+    def test_scale_ratio_self_test_passes_no_change_and_fails_at_twofold(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample() for _ in range(3)]
+        unchanged = [make_sample() for _ in range(3)]
+        unchanged_result = scale_check.evaluate(history, base, unchanged)
+        self.assertFalse(unchanged_result["failures"])
+
+        for scenario in scale_check.SCENARIOS:
+            if scenario in scale_check.RATIO_EXEMPT_SCENARIOS:
+                continue
+            with self.subTest(scenario=scenario):
+                doubled = [make_sample() for _ in range(3)]
+                for sample in doubled:
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": 20.0}
+                    )
+                doubled_result = scale_check.evaluate(history, base, doubled)
+
+                self.assertTrue(
+                    any(
+                        scenario in failure and "1.5x" in failure
+                        for failure in doubled_result["failures"]
+                    )
+                )
+
     def test_three_sigma_noise_term_can_allow_a_two_point_five_ms_increase(self):
         self.require_implementation()
         records = []
@@ -1075,7 +1140,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.require_implementation()
         records = [make_sample() for _ in range(19)]
         base = [make_sample()]
-        head = [make_sample(one_ms=20.0, hundred_ms=40.0, stalls=1)]
+        head = [make_sample(one_ms=20.0, hundred_ms=24.0, stalls=1)]
 
         result = scale_check.evaluate(records, base, head)
         summary = scale_check.format_summary(result, head[-1])
@@ -1083,6 +1148,254 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(result["calibrating"], 19)
         self.assertFalse(result["failures"])
         self.assertIn("calibrating: 19/20", summary)
+
+    def test_calibrating_ratio_gate_covers_required_scenarios(self):
+        self.require_implementation()
+        scenarios = (
+            "messages.getDialogs page (100 dialogs)",
+            "contact change + name lookup",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                head = [make_sample(), make_sample()]
+                for sample, hundred_ms in zip(head, (14.0, 18.0)):
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": hundred_ms}
+                    )
+
+                result = scale_check.evaluate(
+                    history,
+                    [make_sample(), make_sample()],
+                    head,
+                    report_only=True,
+                    enforce_calibration_ratio=True,
+                )
+
+                self.assertTrue(result["report_only"])
+                self.assertEqual(result["calibrating"], 19)
+                self.assertTrue(
+                    any(
+                        scenario in failure and "1.60x" in failure
+                        for failure in result["failures"]
+                    )
+                )
+
+    def test_calibrating_pair_median_suppresses_one_ratio_outlier(self):
+        self.require_implementation()
+        scenarios = (
+            "messages.getDialogs page (100 dialogs)",
+            "contact change + name lookup",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                head = [make_sample(), make_sample()]
+                for sample, hundred_ms in zip(head, (15.1, 12.9)):
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": hundred_ms}
+                    )
+
+                result = scale_check.evaluate(
+                    history,
+                    [make_sample(), make_sample()],
+                    head,
+                    report_only=True,
+                    enforce_calibration_ratio=True,
+                )
+
+                self.assertAlmostEqual(result["rows"][scenario]["ratio"], 1.4)
+                self.assertFalse(
+                    any(scenario in failure for failure in result["failures"])
+                )
+
+    def test_calibrating_single_sample_is_not_ratio_gated_without_pr_flag(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        head = [make_sample()]
+        scenario = "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)"
+        head[0]["scenarios"][scenario].update(
+            {"one_ms": 10.0, "hundred_ms": 16.0}
+        )
+
+        result = scale_check.evaluate(
+            history, [make_sample()], head, report_only=True
+        )
+
+        self.assertFalse(
+            any(
+                scenario in failure and "1.5x" in failure
+                for failure in result["failures"]
+            )
+        )
+        with self.assertRaisesRegex(
+            scale_check.ScaleCheckError, "require two head samples"
+        ):
+            scale_check.evaluate(
+                history,
+                [make_sample()],
+                head,
+                report_only=True,
+                enforce_calibration_ratio=True,
+            )
+
+    def test_calibrating_summary_reports_the_ratios_used_by_the_gate(self):
+        self.require_implementation()
+        scenario = "messages.getDialogs page (100 dialogs)"
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        head = [make_sample() for _ in range(3)]
+        for sample, hundred_ms in zip(head, (16.0, 20.0, 14.0)):
+            sample["scenarios"][scenario].update(
+                {"one_ms": 10.0, "hundred_ms": hundred_ms}
+            )
+
+        result = scale_check.evaluate(
+            history,
+            [make_sample(), make_sample()],
+            head,
+            report_only=True,
+            enforce_calibration_ratio=True,
+        )
+        summary = scale_check.format_summary(result, head[-1])
+
+        self.assertIn(
+            "The 1.5x cap for dialogs, contact change and update burst "
+            "uses median PR head ratios.",
+            summary,
+        )
+        self.assertTrue(
+            any(
+                scenario in failure and "1.60x" in failure
+                for failure in result["failures"]
+            )
+        )
+        self.assertIn(
+            "| messages.getDialogs page (100 dialogs) | n/a → 10.00 ms | "
+            "n/a → 14.00 ms | 1.60x (n=3; range 1.40–2.00x) | "
+            "50 ms main-thread step | calibrating: 19/20 |",
+            summary,
+        )
+
+    def test_uncalibrated_pr_uses_two_head_samples_for_ratio_gate(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            evaluate_calls = (root / "evaluate-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            [line.split()[1] for line in calls],
+            [
+                "/usr/src/tdesktop/out/Debug/Teagram",
+                "/usr/src/tdesktop/out/Debug/Teagram",
+            ],
+        )
+        self.assertEqual(fetch_calls, ["fetch"])
+        self.assertIn("--enforce-calibration-ratio", evaluate_calls[0])
+        self.assertIn(
+            "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | "
+            "n/a → 10.00 ms | n/a → 12.00 ms | "
+            "1.20x (n=2; range 1.20–1.20x) |",
+            summary,
+        )
+
+    def test_uncalibrated_pr_retries_with_a_third_head_sample_only(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_RATIO_COUNTS"] = "1=16.00,2=16.00"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(
+            all(
+                line.split()[1] == "/usr/src/tdesktop/out/Debug/Teagram"
+                for line in calls
+            )
+        )
+        self.assertEqual(fetch_calls, ["fetch"])
+        self.assertIn("1.60x (n=3; range 1.20–1.60x)", summary)
+
+    def test_uncalibrated_pr_retry_can_rescue_two_sample_ratio_median(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_RATIO_COUNTS"] = "1=18.00,2=13.00,3=12.00"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(
+            all(
+                line.split()[1] == "/usr/src/tdesktop/out/Debug/Teagram"
+                for line in calls
+            )
+        )
+        self.assertEqual(fetch_calls, ["fetch"])
+        self.assertIn("1.30x (n=3; range 1.20–1.80x)", summary)
+
+    def test_linux_workflow_allows_the_calibrated_six_run_retry(self):
+        workflow = Path(__file__).parents[1] / "workflows/linux.yml"
+
+        self.assertIn(
+            'DESKTOP_SCALE_RUN_BUDGET_SECONDS: "270"',
+            workflow.read_text(),
+        )
 
     def test_contact_load_ceiling_applies_during_and_after_calibration(self):
         self.require_implementation()
@@ -1208,7 +1521,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn(scenario, result["exceptions"])
         self.assertTrue(any(scenario in failure for failure in result["failures"]))
         self.assertTrue(
-            any("100x takes" in failure for failure in result["failures"])
+            any("median 100x/1x ratio" in failure for failure in result["failures"])
         )
 
     def test_new_scenarios_defer_ratio_gate_until_their_baseline_calibrates(self):
@@ -1241,7 +1554,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertIn(
             "| private history page (1M messages; 20 / 2,000 loaded) | "
-            "n/a → 10.00 ms | n/a → 16.00 ms | 1.60x | "
+            "n/a → 10.00 ms | n/a → 16.00 ms | "
+            "1.60x (n=2; range 1.60–1.60x) | "
             "50 ms main-thread step | calibrating: 0/20 |",
             summary,
         )
@@ -1590,7 +1904,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
-                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    f"12.00 ms → 12.00 ms | "
+                    f"1.20x (n=2; range 1.20–1.20x) | {budget} | "
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )

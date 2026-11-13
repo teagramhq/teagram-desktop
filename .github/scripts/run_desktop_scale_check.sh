@@ -6,10 +6,11 @@ history_file="$RUNNER_TEMP/desktop-scale-history.json"
 summary_file="$RUNNER_TEMP/desktop-scale-summary.md"
 evaluation_file="$RUNNER_TEMP/desktop-scale-evaluation.json"
 app_mount="$RUNNER_TEMP/desktop-scale-dev"
-scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-180}"
+scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-270}"
+# Four calibrated runs took 162s; allow margin over the six-run 243s projection.
 # A hosted upload of the 236 MB Teagram artifact took 27 seconds.
 # Reserve 50 seconds for the base-run lookup, download, and extraction.
-# The history, binary fetch, and scale caps total 285 seconds.
+# The history, binary fetch, and scale caps total 375 seconds.
 binary_fetch_budget_seconds=50
 scale_history_args=()
 scale_baseline_count=0
@@ -50,6 +51,7 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 		if [[ "$scale_history_truncated" == 'true' ]]; then
 			scale_history_args+=(--history-truncated)
 		fi
+		# PR timing comparisons need the base binary after history calibrates.
 		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 			&& "$scale_baseline_count" -ge 20 ]]; then
 			binary_fetch_started=$SECONDS
@@ -67,12 +69,15 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 					printf '::error::PR base Teagram artifact fetch timed out after the '
 					printf '%s-second budget; re-run this job.\n' "$binary_fetch_budget_seconds"
 				else
-					echo "::error::PR base Teagram artifact fetch failed with status $binary_fetch_status after dev history was available."
+					printf '::error::PR base Teagram artifact fetch failed with status %s; ' \
+						"$binary_fetch_status"
+					printf 'the calibrated timing check requires the base binary.\n'
 				fi
 				cat >> "$GITHUB_STEP_SUMMARY" <<EOF
 ### Desktop data scale check
 
-No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status after $scale_baseline_count dev samples were available.
+No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status.
+The calibrated timing check requires the base binary.
 EOF
 				exit "$binary_fetch_status"
 			fi
@@ -309,6 +314,9 @@ evaluate_samples() {
 	if [[ "$report_only" == 'true' ]]; then
 		args+=(--report-only)
 	fi
+	if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+		args+=(--enforce-calibration-ratio)
+	fi
 	: > "$evaluation_file"
 	: > "$summary_file"
 	set +e
@@ -355,6 +363,53 @@ if [[ "$GITHUB_REF" == 'refs/heads/dev' ]]; then
 		exit "$run_status"
 	fi
 	exit "${evaluation_status:-2}"
+fi
+
+if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+	&& "$scale_baseline_count" -lt 20 ]]; then
+	base_sample_paths=()
+	head_sample_paths=()
+	for sample in 1 2; do
+		if run_and_require_success "head-$sample" head; then
+			:
+		else
+			status=$?
+			exit "$status"
+		fi
+	done
+	head_sample_paths=(
+		"$RUNNER_TEMP/desktop-scale-head-1.json"
+		"$RUNNER_TEMP/desktop-scale-head-2.json"
+	)
+	if evaluate_samples; then
+		evaluation_status=0
+	else
+		evaluation_status=$?
+	fi
+	evaluation_step='initial calibration ratio evaluation'
+	if (( evaluation_status == 1 )); then
+		echo 'Calibration ratio threshold crossed; adding one head sample before judging the result.'
+		if run_and_require_success head-3 head; then
+			:
+		else
+			status=$?
+			exit "$status"
+		fi
+		head_sample_paths+=("$RUNNER_TEMP/desktop-scale-head-3.json")
+		retry_note='The initial two-head-sample ratio median crossed a 1.5x cap. One additional head sample was added, and the result uses all three head ratios.'
+		if evaluate_samples "$retry_note"; then
+			evaluation_status=0
+		else
+			evaluation_status=$?
+		fi
+		evaluation_step='calibration ratio retry evaluation'
+	fi
+	if (( evaluation_status == 0 || evaluation_status == 1 )); then
+		append_summary
+	else
+		append_summary "$evaluation_step" "$evaluation_status"
+	fi
+	exit "$evaluation_status"
 fi
 
 if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
