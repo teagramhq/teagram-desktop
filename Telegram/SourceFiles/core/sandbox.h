@@ -15,10 +15,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QAbstractNativeEventFilter>
 
 #ifdef Q_OS_MAC
+#include <QtCore/QElapsedTimer>
 #include <thread>
 #endif // Q_OS_MAC
 
 class QLockFile;
+#ifdef Q_OS_MAC
+class QWindow;
+#endif // Q_OS_MAC
 
 namespace Core {
 
@@ -100,6 +104,9 @@ private:
 	void registerEnterFromEventLoop();
 	void incrementEventNestingLevel();
 	void decrementEventNestingLevel();
+#ifdef Q_OS_MAC
+	void startFontDatabaseWarmup();
+#endif // Q_OS_MAC
 	bool nativeEventFilter(
 		const QByteArray &eventType,
 		void *message,
@@ -157,9 +164,13 @@ private:
 	rpl::lifetime _lifetime;
 
 #ifdef Q_OS_MAC
+	QElapsedTimer _fontStartupTimer;
+	bool _fontStartupLaunchTimingLogged = false;
+	bool _fontDatabaseWarmupStarted = false;
 	bool _fontDatabaseWarmupDone = false;
 	bool _fontDatabaseWarmupSucceeded = false;
-	bool _singleInstanceCheckAfterFontDatabaseWarmup = false;
+	bool _launchAfterFontDatabaseWarmup = false;
+	std::unique_ptr<QWindow> _fontStartupWindow;
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC
 };

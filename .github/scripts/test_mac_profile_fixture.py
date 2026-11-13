@@ -32,6 +32,9 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
         printf 'started' > "$count_file"
     fi
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
+    printf 'Sandbox startup to launchApplication regression: wall_ns=20000000\\n'
+    printf 'Font startup window regression: visible=1 wall_ns=30000000\\n'
+    printf 'Font database warmup regression: started=1\\n'
     printf 'Font database warmup regression: ready=1\\n'
     printf 'StartManager startup regression: wall_ns=20000000\\n'
     printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
@@ -89,6 +92,10 @@ def run_font_startup_fixture(
         expected_status,
         mode='pass',
         fallback_wall_ns=1_000_000,
+        launch_cold_ns=20_000_000,
+        launch_warm_ns=20_000_000,
+        window_cold_ns=30_000_000,
+        window_warm_ns=30_000_000,
         manager_cold_ns=20_000_000,
         manager_warm_ns=20_000_000):
     with tempfile.TemporaryDirectory() as directory:
@@ -100,16 +107,39 @@ count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
 if [[ -f "$count_file" ]]; then
     wall_ns="$FONT_WARM_NS"
+    launch_wall_ns="$FONT_LAUNCH_WARM_NS"
+    window_wall_ns="$FONT_WINDOW_WARM_NS"
     manager_wall_ns="$FONT_MANAGER_WARM_NS"
     sample='warm'
 else
     wall_ns="$FONT_COLD_NS"
+    launch_wall_ns="$FONT_LAUNCH_COLD_NS"
+    window_wall_ns="$FONT_WINDOW_COLD_NS"
     manager_wall_ns="$FONT_MANAGER_COLD_NS"
     sample='cold'
     printf 'started' > "$count_file"
 fi
 if [[ "$mode" == stall ]]; then
     printf 'UI stall synthetic main-thread delay\\n'
+fi
+if [[ "$mode" != missing-launch-timing ]]; then
+    printf 'Sandbox startup to launchApplication regression: wall_ns=%s\\n' \\
+        "$launch_wall_ns"
+fi
+if [[ "$mode" == warmup-before-window ]]; then
+    printf 'Font database warmup regression: started=1\\n'
+fi
+if [[ "$mode" != missing-window ]]; then
+    if [[ "$mode" == window-not-shown ]]; then
+        printf 'Font startup window regression: visible=0 wall_ns=%s\\n' \\
+            "$window_wall_ns"
+    else
+        printf 'Font startup window regression: visible=1 wall_ns=%s\\n' \\
+            "$window_wall_ns"
+    fi
+fi
+if [[ "$mode" != warmup-before-window ]]; then
+    printf 'Font database warmup regression: started=1\\n'
 fi
 if [[ "$mode" != missing-timing ]]; then
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
@@ -151,6 +181,10 @@ printf '%s\\n' "$directory"
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE=str(root),
             FONT_COLD_NS=str(cold_ns),
             FONT_WARM_NS=str(warm_ns),
+            FONT_LAUNCH_COLD_NS=str(launch_cold_ns),
+            FONT_LAUNCH_WARM_NS=str(launch_warm_ns),
+            FONT_WINDOW_COLD_NS=str(window_cold_ns),
+            FONT_WINDOW_WARM_NS=str(window_warm_ns),
             FONT_MANAGER_COLD_NS=str(manager_cold_ns),
             FONT_MANAGER_WARM_NS=str(manager_warm_ns),
             FONT_TEST_MODE=mode,
@@ -171,11 +205,21 @@ font_startup_output = run_font_startup_fixture(
     manager_cold_ns=40_000_000, manager_warm_ns=49_999_999)
 assert 'StartFonts cold=PASS wall_ns=50000000 under_100ms=1' in font_startup_output
 assert 'StartFonts warm=PASS wall_ns=50000000 under_100ms=1' in font_startup_output
+assert 'Sandbox to launchApplication cold=PASS wall_ns=20000000 under_100ms=1' \
+    in font_startup_output
+assert 'Sandbox to launchApplication warm=PASS wall_ns=20000000 under_100ms=1' \
+    in font_startup_output
+assert 'Font startup window cold=PASS wall_ns=30000000 under_100ms=1' \
+    in font_startup_output
+assert 'Font startup window warm=PASS wall_ns=30000000 under_100ms=1' \
+    in font_startup_output
+assert 'Font database warmup order=PASS sample=cold' in font_startup_output
+assert 'Font database warmup order=PASS sample=warm' in font_startup_output
 assert 'Font startup through first resolve cold=PASS wall_ns=90000000 under_100ms=1' \
     in font_startup_output
 assert 'Font startup through first resolve warm=PASS wall_ns=99999999 under_100ms=1' \
     in font_startup_output
-assert 'Font database warmup before launch=PASS' in font_startup_output
+assert 'Font database warmup before app run=PASS' in font_startup_output
 assert 'fallback=PASS start_fonts_plus_start_manager_under_100ms=1' \
     in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
@@ -185,6 +229,38 @@ assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
 font_startup_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='stall')
 assert 'StartFonts cold launch produced a main-thread stall' in font_startup_stall
+font_startup_slow_launch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, launch_cold_ns=100_000_000)
+assert 'Sandbox to launchApplication cold exceeded the 100ms budget' \
+    in font_startup_slow_launch
+font_startup_slow_warm_launch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, launch_warm_ns=100_000_000)
+assert 'Sandbox to launchApplication warm exceeded the 100ms budget' \
+    in font_startup_slow_warm_launch
+font_startup_slow_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, window_cold_ns=100_000_000)
+assert 'Font startup window cold exceeded the 100ms budget' \
+    in font_startup_slow_window
+font_startup_slow_warm_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, window_warm_ns=100_000_000)
+assert 'Font startup window warm exceeded the 100ms budget' \
+    in font_startup_slow_warm_window
+font_startup_missing_launch_timing = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-launch-timing')
+assert 'Sandbox to launchApplication cold exceeded the 100ms budget or had no timing' \
+    in font_startup_missing_launch_timing
+font_startup_missing_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-window')
+assert 'Font startup window evidence missing or changed' \
+    in font_startup_missing_window
+font_startup_window_not_shown = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='window-not-shown')
+assert 'Font startup window evidence missing or changed' \
+    in font_startup_window_not_shown
+font_startup_warmup_before_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='warmup-before-window')
+assert 'font database warmup started before the startup window was shown' \
+    in font_startup_warmup_before_window
 font_startup_missing_timing = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-timing')
 assert 'StartFonts cold exceeded the 100ms budget or had no timing' \

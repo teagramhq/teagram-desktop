@@ -1487,6 +1487,54 @@ run_font_startup_regression() {
 			echo "font startup regression launch failed: $sample" >&2
 			return 1
 		fi
+		local launch_timing
+		launch_timing="$(grep -E 'Sandbox startup to launchApplication regression: wall_ns=[0-9]+' \
+			"$sample_log" 2>/dev/null | tail -n 1 || true)"
+		local launch_wall_ns
+		launch_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$launch_timing")"
+		if [[ ! "$launch_wall_ns" =~ ^[0-9]+$ ]] \
+			|| (( launch_wall_ns >= 100000000 )); then
+			cat "$sample_log" >&2
+			printf 'Sandbox to launchApplication %s exceeded the 100ms budget or had no timing: %s\n' \
+				"$sample" "$launch_timing" >&2
+			return 1
+		fi
+		printf 'Sandbox to launchApplication %s=PASS wall_ns=%s under_100ms=1\n' \
+			"$sample" "$launch_wall_ns"
+		local window_timing
+		window_timing="$(grep -E 'Font startup window regression: visible=1 wall_ns=[0-9]+' \
+			"$sample_log" 2>/dev/null | tail -n 1 || true)"
+		local window_wall_ns
+		window_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$window_timing")"
+		if [[ ! "$window_wall_ns" =~ ^[0-9]+$ ]]; then
+			cat "$sample_log" >&2
+			printf 'Font startup window evidence missing or changed: %s\n' \
+				"$sample" >&2
+			return 1
+		fi
+		if (( window_wall_ns >= 100000000 )); then
+			cat "$sample_log" >&2
+			printf 'Font startup window %s exceeded the 100ms budget: wall_ns=%s\n' \
+				"$sample" "$window_wall_ns" >&2
+			return 1
+		fi
+		printf 'Font startup window %s=PASS wall_ns=%s under_100ms=1\n' \
+			"$sample" "$window_wall_ns"
+		local window_position
+		window_position="$(grep -F -n -h 'Font startup window regression: visible=1' \
+			"$sample_log" | tail -n 1 | cut -d: -f1)"
+		local warmup_started_position
+		warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
+			"$sample_log" | tail -n 1 | cut -d: -f1)"
+		if [[ ! "$window_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
+			|| (( warmup_started_position <= window_position )); then
+			cat "$sample_log" >&2
+			printf 'font database warmup started before the startup window was shown: %s\n' \
+				"$sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup order=PASS sample=%s\n' "$sample"
 		local warmup
 		warmup="$(grep -F 'Font database warmup regression: ready=1' \
 			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
@@ -1498,7 +1546,7 @@ run_font_startup_regression() {
 			echo "font database warmup did not finish before app initialization: $sample" >&2
 			return 1
 		fi
-		printf 'Font database warmup before launch=PASS sample=%s\n' "$sample"
+		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
 		local stalls
 		stalls="$(grep -F 'UI stall ' "$sample_log" "$font_profile_log" 2>/dev/null || true)"
 		if [[ -n "$stalls" ]]; then
