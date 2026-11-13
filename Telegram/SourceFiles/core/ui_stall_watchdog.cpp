@@ -472,6 +472,11 @@ quint64 UiStallWatchdog::StallCountForTesting() const {
 	return _stallCount.load(std::memory_order_relaxed);
 }
 
+void UiStallWatchdog::StopAfterNextAcknowledgementForTesting() {
+	const auto lock = std::lock_guard(_mutex);
+	_stopAfterNextAcknowledgementForTesting = true;
+}
+
 std::vector<UiStallWatchdog::StallEvidence>
 UiStallWatchdog::RecentStallEvidenceForTesting() {
 	const auto lock = std::lock_guard(StallEvidenceMutex);
@@ -624,6 +629,10 @@ bool UiStallWatchdog::event(QEvent *event) {
 			}
 			_acknowledgedSequence = ping->sequence;
 			_acknowledgedAt = acknowledgedAt;
+			if (_stopAfterNextAcknowledgementForTesting) {
+				_stopAfterNextAcknowledgementForTesting = false;
+				_stopping = true;
+			}
 		}
 	}
 	_condition.notify_one();
@@ -843,16 +852,16 @@ void UiStallWatchdog::run() {
 					detectedAt = Clock::now();
 					writeLog = true;
 					replaceLog = detectedAt < rateLimitedUntil;
-				} else if (ShouldStopBeforeTraceAttachment(
-							   _stopping, _acknowledgedSequence, current)) {
-					return;
-				} else if (_acknowledgedAt >= rateLimitedUntil) {
-					detectedAt = _acknowledgedAt;
-					writeLog = true;
-				} else if (_acknowledgedAt - postedAt > lastLoggedDuration) {
-					detectedAt = _acknowledgedAt;
-					writeLog = true;
-					replaceLog = true;
+				} else if (_acknowledgedSequence >= current) {
+					if (_acknowledgedAt >= rateLimitedUntil) {
+						detectedAt = _acknowledgedAt;
+						writeLog = true;
+					} else if (_acknowledgedAt - postedAt
+							   > lastLoggedDuration) {
+						detectedAt = _acknowledgedAt;
+						writeLog = true;
+						replaceLog = true;
+					}
 				}
 			}
 			if (writeLog) {

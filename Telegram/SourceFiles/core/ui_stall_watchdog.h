@@ -62,6 +62,7 @@ class UiStallWatchdog final : public QObject {
 
 	[[nodiscard]] static quint64 StallCount();
 	[[nodiscard]] quint64 StallCountForTesting() const;
+	void StopAfterNextAcknowledgementForTesting();
 	[[nodiscard]] static std::vector<StallEvidence>
 	RecentStallEvidenceForTesting();
 	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
@@ -103,6 +104,7 @@ class UiStallWatchdog final : public QObject {
 	std::uint64_t _acknowledgedSequence = 0;
 	std::atomic<std::uint64_t> _schedulerSamplingStopSequence = 0;
 	std::chrono::steady_clock::time_point _acknowledgedAt;
+	bool _stopAfterNextAcknowledgementForTesting = false;
 	bool _started = false;
 	bool _stopping = false;
 	bool _reportStopping = false;

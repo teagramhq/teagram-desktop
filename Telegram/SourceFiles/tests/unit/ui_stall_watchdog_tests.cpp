@@ -51,6 +51,70 @@ TEST_CASE(UiStallWatchdogDoesNotSkipTraceAfterAcknowledgedShutdown) {
 		false, current - 1, current));
 }
 
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+TEST_CASE(UiStallWatchdogAttachesTraceWhenStoppedAfterAcknowledgement) {
+	for (const auto waitForCountThreshold : std::vector<bool>{false, true}) {
+		const auto before
+			= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+		const auto lastAcknowledgedAtNanoseconds
+			= before.empty() ? qint64(0)
+							 : before.back().acknowledgedAtNanoseconds;
+		auto acknowledged = false;
+		{
+			auto loop = QEventLoop();
+			auto timer = QTimer();
+			QObject::connect(&timer, &QTimer::timeout, &loop, [&] {
+				const auto acknowledgements = Core::UiStallWatchdog::
+					RecentPingAcknowledgementsForTesting();
+				acknowledged = std::any_of(
+					acknowledgements.begin(), acknowledgements.end(),
+					[lastAcknowledgedAtNanoseconds](const auto &item) {
+						return item.acknowledgedAtNanoseconds
+							   > lastAcknowledgedAtNanoseconds;
+					});
+				if (acknowledged) {
+					loop.quit();
+				}
+			});
+			timer.setInterval(1);
+			auto watchdog = Core::UiStallWatchdog(
+				[](const QString &, bool) {}, {.captureSchedulerTrace = true});
+			watchdog.StopAfterNextAcknowledgementForTesting();
+			if (waitForCountThreshold) {
+				const auto deadline = std::chrono::steady_clock::now()
+									  + std::chrono::seconds(2);
+				while (watchdog.StallCountForTesting() == 0
+					   && std::chrono::steady_clock::now() < deadline) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
+				CHECK(watchdog.StallCountForTesting() > 0);
+			}
+			timer.start();
+			QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+			loop.exec();
+			timer.stop();
+			CHECK(acknowledged);
+		}
+		const auto after
+			= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+		const auto attached
+			= std::find_if(after.begin(), after.end(),
+						   [lastAcknowledgedAtNanoseconds](const auto &item) {
+							   return item.acknowledgedAtNanoseconds
+									  > lastAcknowledgedAtNanoseconds;
+						   });
+		CHECK(attached != after.end());
+		if (attached != after.end()) {
+			CHECK(attached->schedulerTraceComplete);
+			CHECK(!attached->schedulerTrace.isEmpty());
+			CHECK_EQ(
+				attached->schedulerTrace.size(),
+				qsizetype(attached->schedulerSampleOffsetsNanoseconds.size()));
+		}
+	}
+}
+#endif // Q_OS_LINUX || Q_OS_MAC
+
 #if defined(Q_OS_MAC)
 class UiStallWatchdogTestMainThreadPriority final {
   public:
