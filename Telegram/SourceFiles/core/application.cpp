@@ -83,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_options.h"
+#include "ui/style/style_core_font.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/cached_round_corners.h"
 #include "ui/power_saving.h"
@@ -362,7 +363,13 @@ void Application::run() {
 	_translator = std::make_unique<Lang::Translator>();
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
+#if defined(Q_OS_MAC)
+	style::internal::SetShapedMetricsDeferred(true);
+#endif // Q_OS_MAC
 	style::StartManager(cScale());
+#if defined(Q_OS_MAC)
+	style::internal::ResolveDeferredShapedMetrics();
+#endif // Q_OS_MAC
 	Ui::Accessible::Init();
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();

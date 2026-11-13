@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QFontMetrics>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
+#include <QtGui/QRawFont>
 #include <QtWidgets/QApplication>
 
 #include <cmath>
@@ -116,6 +117,54 @@ TEST_CASE(UsernameFontCachedWidthsMatchShapedMetrics) {
 	const auto &metrics = font->metrics();
 	CHECK_EQ(font->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
 	CHECK_EQ(font->elidew, int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(RawFontFixedWidthRejectsMissingGlyphs) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = QFont(u"Open Sans"_q);
+	const auto raw = QRawFont::fromFont(font);
+	CHECK(raw.isValid());
+	CHECK(!raw.supportsCharacter(QChar(0xFFFF)));
+	const auto missing = QString(1, QChar(0xFFFF));
+	CHECK(!style::internal::KernedRawWidth(raw, missing).has_value());
+	const auto metrics = QFontMetricsF(font);
+	CHECK_EQ(style::internal::FixedMetricWidth(font, missing),
+			 int(std::ceil(metrics.horizontalAdvance(missing))));
+}
+
+TEST_CASE(CustomGposFontKeepsShapedFixedWidths) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = QFont(u"Vazirmatn UI NL"_q);
+	const auto raw = QRawFont::fromFont(font);
+	CHECK(raw.isValid());
+	CHECK(!raw.fontTable("GPOS").isEmpty());
+	CHECK(!style::internal::RawFixedMetricWidth(font, u"..."_q).has_value());
+
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	CHECK_EQ(owned->elidew, 0);
+	style::internal::ResolveDeferredShapedMetrics();
+	style::internal::SetShapedMetricsDeferred(false);
+
+	const auto &metrics = owned->metrics();
+	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(owned->elidew,
+			 int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
 }
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {
