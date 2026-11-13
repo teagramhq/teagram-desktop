@@ -584,8 +584,8 @@ bool UiStallWatchdog::event(QEvent *event) {
 		const auto lock = std::lock_guard(_mutex);
 		if (ping->sequence > _acknowledgedSequence) {
 			if (_captureSchedulerTrace) {
-				_schedulerSamplingStopSequence.store(
-					ping->sequence, std::memory_order_release);
+				_schedulerSamplingStopSequence.store(ping->sequence,
+													 std::memory_order_release);
 				const auto duration = acknowledgedAt - ping->postedAt;
 				const auto evidence = PingAcknowledgementEvidence{
 					.acknowledgedAt
@@ -595,7 +595,8 @@ bool UiStallWatchdog::event(QEvent *event) {
 						  acknowledgedAt.time_since_epoch())
 						  .count(),
 					.responseNanoseconds
-					= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  duration)
 						  .count(),
 					.pingIntervalNanoseconds
 					= std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -609,7 +610,8 @@ bool UiStallWatchdog::event(QEvent *event) {
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 				PingAcknowledgementHistory.push_back(evidence);
-				if (PingAcknowledgementHistory.size() > kMaxPingAcknowledgements) {
+				if (PingAcknowledgementHistory.size()
+					> kMaxPingAcknowledgements) {
 					PingAcknowledgementHistory.erase(
 						PingAcknowledgementHistory.begin());
 				}
