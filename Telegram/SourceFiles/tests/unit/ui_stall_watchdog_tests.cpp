@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -376,6 +377,18 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	const auto acknowledgements
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
+	CHECK(std::any_of(
+		acknowledgements.begin(), acknowledgements.end(),
+		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds
+					> lastAcknowledgedAtNanoseconds)
+				   && acknowledgement.schedulerTraceComplete
+				   && !acknowledgement.schedulerTrace.isEmpty()
+				   && (acknowledgement.schedulerTrace.size()
+					   == qsizetype(
+						   acknowledgement.schedulerSampleOffsetsNanoseconds
+							   .size()));
+		}));
 	auto shortSchedulerCapturePingObserved = false;
 	auto pingIntervalNanoseconds = qint64(-1);
 	auto previousAcknowledgedAtNanoseconds = lastAcknowledgedAtNanoseconds;

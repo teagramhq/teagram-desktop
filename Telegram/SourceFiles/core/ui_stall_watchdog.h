@@ -44,6 +44,11 @@ class UiStallWatchdog final : public QObject {
 		qint64 acknowledgedAtNanoseconds = 0;
 		qint64 responseNanoseconds = 0;
 		qint64 pingIntervalNanoseconds = 0;
+		std::uint64_t sequence = 0;
+		qint64 postedAtSteadyNanoseconds = 0;
+		QString schedulerTrace;
+		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
+		bool schedulerTraceComplete = false;
 	};
 
 	explicit UiStallWatchdog(

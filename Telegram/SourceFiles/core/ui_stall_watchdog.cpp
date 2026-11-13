@@ -609,6 +609,11 @@ bool UiStallWatchdog::event(QEvent *event) {
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(
 				  _pingInterval)
 				  .count(),
+			.sequence = ping->sequence,
+			.postedAtSteadyNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  ping->postedAt.time_since_epoch())
+				  .count(),
 		};
 		const auto lock = std::lock_guard(StallEvidenceMutex);
 		PingAcknowledgementHistory.push_back(evidence);
@@ -893,6 +898,24 @@ void UiStallWatchdog::run() {
 		if (schedulerSampler.joinable()) {
 			schedulerSampler.request_stop();
 			schedulerSampler.join();
+		}
+		if (_captureSchedulerTrace) {
+			const auto trace = schedulerTraceTextSnapshot();
+			const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+			for (auto i = PingAcknowledgementHistory.rbegin();
+				 i != PingAcknowledgementHistory.rend(); ++i) {
+				if ((i->sequence == current)
+					&& (i->postedAtSteadyNanoseconds
+						== std::chrono::duration_cast<std::chrono::nanoseconds>(
+							   postedAt.time_since_epoch())
+							   .count())) {
+					i->schedulerTrace = trace;
+					i->schedulerSampleOffsetsNanoseconds
+						= schedulerSampleOffsetsNanoseconds;
+					i->schedulerTraceComplete = true;
+					break;
+				}
+			}
 		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
