@@ -10,11 +10,21 @@ fi
 CASE_RUNNER="$1"
 EXECUTABLE="$2"
 LOG_DIRECTORY="$3"
-CASE_TIMEOUT_SECONDS="${TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-1200}"
+CASE_TIMEOUT_LIMIT_SECONDS=600
+CASE_TIMEOUT_SECONDS="${TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-$CASE_TIMEOUT_LIMIT_SECONDS}"
+CASE_CLEANUP_GRACE_SECONDS=5
+CASE_CLEANUP_HEADROOM_SECONDS=$((2 * CASE_CLEANUP_GRACE_SECONDS))
+STEP_DEADLINE_EPOCH="${TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH:-}"
+unset TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH
 shift 3
 
 if ! [[ "$CASE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
 	echo "case timeout must be a positive integer: $CASE_TIMEOUT_SECONDS" >&2
+	exit 2
+fi
+if [[ -n "$STEP_DEADLINE_EPOCH" ]] \
+	&& ! [[ "$STEP_DEADLINE_EPOCH" =~ ^[1-9][0-9]*$ ]]; then
+	echo "step deadline must be a positive epoch timestamp: $STEP_DEADLINE_EPOCH" >&2
 	exit 2
 fi
 
@@ -32,16 +42,44 @@ for ((case_index = 0; case_index < ${#CASES[@]}; ++case_index)); do
 	CASE_NAME="${CASES[$case_index]}"
 	CASE_LOG="$LOG_DIRECTORY/$CASE_NAME.log"
 	: > "$CASE_LOG"
-	printf 'lifecycle_case=%s result=START\n' "$CASE_NAME"
+	CASE_RUN_TIMEOUT_SECONDS="$CASE_TIMEOUT_SECONDS"
+	if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then
+		CASE_RUN_TIMEOUT_SECONDS="$CASE_TIMEOUT_LIMIT_SECONDS"
+	fi
+	if [[ -n "$STEP_DEADLINE_EPOCH" ]]; then
+		now_epoch="$(date +%s)"
+		remaining_case_seconds=$((STEP_DEADLINE_EPOCH - now_epoch - CASE_CLEANUP_HEADROOM_SECONDS))
+		if (( remaining_case_seconds <= 0 )); then
+			printf 'lifecycle_case_deadline_exhausted=%s deadline_epoch=%s remaining_seconds=%s cleanup_headroom_seconds=%s\n' \
+				"$CASE_NAME" "$STEP_DEADLINE_EPOCH" "$remaining_case_seconds" \
+				"$CASE_CLEANUP_HEADROOM_SECONDS" > "$CASE_LOG"
+			cat "$CASE_LOG" >&2
+			printf 'lifecycle_case=%s result=FAIL reason=step-deadline-exhausted\n' \
+				"$CASE_NAME"
+			FAILED_CASES+=("$CASE_NAME")
+			for ((skipped_index = case_index + 1; skipped_index < ${#CASES[@]}; ++skipped_index)); do
+				printf 'lifecycle_case=%s result=SKIPPED dependency=%s step_deadline_exhausted=1\n' \
+					"${CASES[$skipped_index]}" "$CASE_NAME" >&2
+			done
+			break
+		fi
+		if (( remaining_case_seconds < CASE_RUN_TIMEOUT_SECONDS )); then
+			CASE_RUN_TIMEOUT_SECONDS="$remaining_case_seconds"
+		fi
+	fi
+	printf 'lifecycle_case=%s result=START timeout_seconds=%s\n' \
+		"$CASE_NAME" "$CASE_RUN_TIMEOUT_SECONDS"
 	if python3 - "$CASE_RUNNER" "$EXECUTABLE" "$CASE_NAME" \
-		"$CASE_LOG" "$CASE_TIMEOUT_SECONDS" 2>>"$CASE_LOG" <<'PY'
+		"$CASE_LOG" "$CASE_RUN_TIMEOUT_SECONDS" "$CASE_CLEANUP_GRACE_SECONDS" \
+		2>>"$CASE_LOG" <<'PY'
 import os
 import signal
 import subprocess
 import sys
 
-runner, executable, case_name, log_path, timeout = sys.argv[1:]
+runner, executable, case_name, log_path, timeout, cleanup_grace_seconds = sys.argv[1:]
 timeout = int(timeout)
+cleanup_grace_seconds = int(cleanup_grace_seconds)
 with open(log_path, "wb") as log:
     process = subprocess.Popen(
         ["bash", runner, executable, case_name],
@@ -59,7 +97,7 @@ with open(log_path, "wb") as log:
         except OSError as error:
             log.write(f"case timeout TERM failed: {error}\n".encode())
         try:
-            process.wait(timeout=5)
+            process.wait(timeout=cleanup_grace_seconds)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -68,7 +106,7 @@ with open(log_path, "wb") as log:
             except OSError as error:
                 log.write(f"case timeout KILL failed: {error}\n".encode())
             try:
-                process.wait(timeout=5)
+                process.wait(timeout=cleanup_grace_seconds)
             except subprocess.TimeoutExpired:
                 log.write(
                     f"lifecycle_case_timeout={case_name} "
@@ -103,6 +141,15 @@ PY
 				"$CASE_NAME" >&2
 			for ((skipped_index = case_index + 1; skipped_index < ${#CASES[@]}; ++skipped_index)); do
 				printf 'lifecycle_case=%s result=SKIPPED dependency=%s process_group_stopped=0\n' \
+					"${CASES[$skipped_index]}" "$CASE_NAME" >&2
+			done
+			break
+		elif (( CASE_STATUS == 124 )) \
+			&& grep -F -q "lifecycle_case_timeout=$CASE_NAME " "$CASE_LOG"; then
+			printf 'Lifecycle runner stopped after timed-out case %s.\n' \
+				"$CASE_NAME" >&2
+			for ((skipped_index = case_index + 1; skipped_index < ${#CASES[@]}; ++skipped_index)); do
+				printf 'lifecycle_case=%s result=SKIPPED dependency=%s case_timeout=1\n' \
 					"${CASES[$skipped_index]}" "$CASE_NAME" >&2
 			done
 			break

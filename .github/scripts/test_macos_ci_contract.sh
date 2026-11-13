@@ -722,6 +722,87 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
   'state="$diagnostics/state"' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
+profile_step_script="$(step_field "$mac_workflow" build-macos "$profile_step" '.run')"
+for deadline_clause in \
+  'step_started_at="$(date +%s)"' \
+  'step_timeout_seconds=900' \
+  'step_finish_headroom_seconds=60' \
+  'step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"' \
+  'TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch"'; do
+  grep -Fq "$deadline_clause" <<< "$profile_step_script" \
+    || contract_fail "$profile_step must pass a bounded lifecycle deadline: $deadline_clause"
+done
+step_started_at_index="$(awk 'index($0, "step_started_at=\"$(date +%s)\"") { print NR; exit }' <<< "$profile_step_script")"
+diagnostics_setup_index="$(awk 'index($0, "diagnostics=\"$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc\"") { print NR; exit }' <<< "$profile_step_script")"
+[[ "$step_started_at_index" =~ ^[1-9][0-9]*$ \
+  && "$diagnostics_setup_index" =~ ^[1-9][0-9]*$ ]] \
+  && ((step_started_at_index < diagnostics_setup_index)) \
+  || contract_fail "$profile_step must start its deadline before diagnostics setup."
+if grep -Fq 'cp -R "$state"' <<< "$profile_step_script"; then
+  contract_fail "$profile_step must retain state in the uploaded diagnostics directory without copying it."
+fi
+require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'if [ "$tee_status" -ne 0 ]; then' \
+  'Could not retain profile/IPC integration logs for variant=$BUILD_VARIANT.'
+
+case_runner='Telegram/build/run_mac_lifecycle_cases.sh'
+case_timeout_limit_seconds="$(awk '
+  /^CASE_TIMEOUT_LIMIT_SECONDS=/ {
+    sub(/^[^=]*=/, "")
+    print
+  }
+' "$case_runner")"
+cleanup_grace_seconds="$(awk '
+  /^CASE_CLEANUP_GRACE_SECONDS=/ {
+    sub(/^[^=]*=/, "")
+    print
+  }
+' "$case_runner")"
+runner_cleanup_calls="$(awk '
+  /process\.wait\(timeout=cleanup_grace_seconds\)/ { count++ }
+  END { print count + 0 }
+' "$case_runner")"
+profile_step_timeout_minutes="$(step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes')"
+profile_step_timeout_seconds="$(awk -F= '/^step_timeout_seconds=/ { print $2; exit }' <<< "$profile_step_script")"
+profile_step_finish_headroom_seconds="$(awk -F= '/^step_finish_headroom_seconds=/ { print $2; exit }' <<< "$profile_step_script")"
+if ! grep -Fq \
+  'CASE_TIMEOUT_SECONDS="${TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-$CASE_TIMEOUT_LIMIT_SECONDS}"' \
+  "$case_runner"; then
+  contract_fail "$case_runner must default to the checked lifecycle case timeout limit."
+fi
+[[ "$case_timeout_limit_seconds" =~ ^[1-9][0-9]*$ \
+  && "$cleanup_grace_seconds" =~ ^[1-9][0-9]*$ \
+  && "$runner_cleanup_calls" == 2 \
+  && "$profile_step_timeout_minutes" =~ ^[1-9][0-9]*$ \
+  && "$profile_step_timeout_seconds" =~ ^[1-9][0-9]*$ \
+  && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
+  || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
+cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
+case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
+profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
+((case_timeout_limit_seconds == 600 \
+    && case_timeout_budget_seconds < profile_step_deadline_budget_seconds \
+    && profile_step_timeout_seconds == profile_step_timeout_minutes * 60 \
+    && profile_step_finish_headroom_seconds > cleanup_headroom_seconds)) \
+  || contract_fail "Lifecycle deadline and cleanup headroom must fit inside the profile/IPC step limit (${profile_step_timeout_minutes}m)."
+for runner_clause in \
+  'CASE_CLEANUP_HEADROOM_SECONDS=$((2 * CASE_CLEANUP_GRACE_SECONDS))' \
+  'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' \
+  'STEP_DEADLINE_EPOCH="${TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH:-}"' \
+  'remaining_case_seconds=$((STEP_DEADLINE_EPOCH - now_epoch - CASE_CLEANUP_HEADROOM_SECONDS))' \
+  'if (( remaining_case_seconds < CASE_RUN_TIMEOUT_SECONDS )); then' \
+  'CASE_RUN_TIMEOUT_SECONDS="$remaining_case_seconds"' \
+  'timeout_seconds=%s' \
+  '"$CASE_LOG" "$CASE_RUN_TIMEOUT_SECONDS" "$CASE_CLEANUP_GRACE_SECONDS"' \
+  'process.wait(timeout=cleanup_grace_seconds)'; do
+  grep -Fq "$runner_clause" "$case_runner" \
+    || contract_fail "$case_runner must bound each case against the step deadline: $runner_clause"
+done
+expect_equal "$mac_workflow lifecycle timeout override" \
+  "$(workflow_field "$mac_workflow" '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS')" 'null'
+require_job_field "$mac_workflow" build-macos '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS' 'null'
+require_step_field "$mac_workflow" build-macos "$profile_step" \
+  '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS' 'null'
 
 if ! build_step_index="$(find_step_index 'Teagram build.')"; then
   contract_fail "$mac_workflow is missing Teagram build."
