@@ -49,6 +49,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef Q_OS_MAC
 #include <QtCore/QPoint>
 #include <QtCore/QRect>
+#include <QtCore/QTimer>
 #include <QtGui/QBackingStore>
 #include <QtGui/QExposeEvent>
 #include <QtGui/QFontDatabase>
@@ -79,6 +80,9 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+#ifdef Q_OS_MAC
+constexpr auto kFontStartupSplashExposureTimeout = 1000;
+#endif // Q_OS_MAC
 
 #ifdef Q_OS_MAC
 class FontStartupSplash final : public QWindow {
@@ -101,6 +105,10 @@ class FontStartupSplash final : public QWindow {
 			return;
 		}
 		paint();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK")) {
+			return;
+		}
 		if (_onShown) {
 			auto onShown = std::move(_onShown);
 			_onShown = nullptr;
@@ -436,6 +444,20 @@ void Sandbox::launchApplication() {
 				startFontDatabaseWarmup();
 			});
 			_fontStartupWindow->show();
+			QTimer::singleShot(kFontStartupSplashExposureTimeout, this, [this] {
+				if (_fontDatabaseWarmupStarted || Quitting()) {
+					return;
+				}
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					fprintf(stderr,
+							"Font startup exposure timeout regression: "
+							"wall_ns=%lld\n",
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
 			return;
 		}
 		if (!_fontDatabaseWarmupDone) {

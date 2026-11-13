@@ -33,7 +33,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     fi
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
     printf 'Sandbox startup to launchApplication regression: wall_ns=20000000\\n'
-    printf 'Font startup window regression: visible=1 wall_ns=30000000\\n'
+    if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK:-}" == 1 ]]; then
+        printf 'Font startup exposure timeout regression: wall_ns=500000000\\n'
+    else
+        printf 'Font startup window regression: visible=1 wall_ns=30000000\\n'
+    fi
     printf 'Font database warmup regression: started=1\\n'
     printf 'Font database warmup regression: ready=1\\n'
     printf 'StartManager startup regression: wall_ns=20000000\\n'
@@ -96,6 +100,7 @@ def run_font_startup_fixture(
         launch_warm_ns=20_000_000,
         window_cold_ns=30_000_000,
         window_warm_ns=30_000_000,
+        exposure_timeout_ns=500_000_000,
         manager_cold_ns=20_000_000,
         manager_warm_ns=20_000_000):
     with tempfile.TemporaryDirectory() as directory:
@@ -129,7 +134,13 @@ fi
 if [[ "$mode" == warmup-before-window ]]; then
     printf 'Font database warmup regression: started=1\\n'
 fi
-if [[ "$mode" != missing-window ]]; then
+if [[ "$mode" == exposure-timeout \
+    || "${TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK:-}" == 1 ]]; then
+    printf 'Font startup exposure timeout regression: wall_ns=%s\\n' \\
+        "$FONT_EXPOSURE_TIMEOUT_NS"
+fi
+if [[ "$mode" != missing-window && "$mode" != exposure-timeout \
+    && "${TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK:-}" != 1 ]]; then
     if [[ "$mode" == window-not-shown ]]; then
         printf 'Font startup window regression: visible=0 wall_ns=%s\\n' \\
             "$window_wall_ns"
@@ -185,6 +196,7 @@ printf '%s\\n' "$directory"
             FONT_LAUNCH_WARM_NS=str(launch_warm_ns),
             FONT_WINDOW_COLD_NS=str(window_cold_ns),
             FONT_WINDOW_WARM_NS=str(window_warm_ns),
+            FONT_EXPOSURE_TIMEOUT_NS=str(exposure_timeout_ns),
             FONT_MANAGER_COLD_NS=str(manager_cold_ns),
             FONT_MANAGER_WARM_NS=str(manager_warm_ns),
             FONT_TEST_MODE=mode,
@@ -251,15 +263,19 @@ assert 'Sandbox to launchApplication cold exceeded the 100ms budget or had no ti
     in font_startup_missing_launch_timing
 font_startup_missing_window = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-window')
-assert 'Font startup window evidence missing or changed' \
+assert 'Font startup window evidence missing or exposure fallback exceeded 2s' \
     in font_startup_missing_window
 font_startup_window_not_shown = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='window-not-shown')
-assert 'Font startup window evidence missing or changed' \
+assert 'Font startup window evidence missing or exposure fallback exceeded 2s' \
     in font_startup_window_not_shown
+font_startup_exposure_timeout = run_font_startup_fixture(
+    50_000_000, 50_000_000, 0, mode='exposure-timeout')
+assert 'Font database warmup fallback=PASS sample=cold wall_ns=500000000' \
+    in font_startup_exposure_timeout
 font_startup_warmup_before_window = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='warmup-before-window')
-assert 'font database warmup started before the startup window was shown' \
+assert 'font database warmup started before startup window exposure or timeout' \
     in font_startup_warmup_before_window
 font_startup_missing_timing = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-timing')

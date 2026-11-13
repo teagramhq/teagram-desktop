@@ -116,7 +116,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
 	fi
 	printf 'StartFonts startup regression: wall_ns=%s\n' "$wall_ns"
 	printf 'Sandbox startup to launchApplication regression: wall_ns=20000000\n'
-	printf 'Font startup window regression: visible=1 wall_ns=30000000\n'
+	if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK:-}" == 1 ]]; then
+		printf 'Font startup exposure timeout regression: wall_ns=500000000\n'
+	else
+		printf 'Font startup window regression: visible=1 wall_ns=30000000\n'
+	fi
 	printf 'Font database warmup regression: started=1\n'
 	printf 'Font database warmup regression: ready=1\n'
 	printf 'StartManager startup regression: wall_ns=20000000\n'
