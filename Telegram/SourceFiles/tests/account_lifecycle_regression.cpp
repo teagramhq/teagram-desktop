@@ -2560,6 +2560,15 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 	}
 
+	void replyToPendingVerifierConfigWithWrongKey() {
+		_autoReply = false;
+		_authenticates = false;
+		if (const auto connection = _verifierConnection.lock()) {
+			reply(connection, false, RegressionAuthKey(0x33));
+			_verifierConnection.reset();
+		}
+	}
+
 	void reportConnectionState() const {
 		for (auto i = 0; i != int(_connections.size()); ++i) {
 			const auto &connection = _connections[i];
@@ -2800,9 +2809,12 @@ class LocalEndpointRefreshDiscoveryStub final {
 	}
 
 	void reply(const std::shared_ptr<Connection> &connection,
-			   bool authenticates) {
+			   bool authenticates, MTP::AuthKeyPtr encryptionKey = nullptr) {
 		if (!connection->pending || !connection->socket || !_verifierAuthKey) {
 			return;
+		}
+		if (!encryptionKey) {
+			encryptionKey = _verifierAuthKey;
 		}
 		const auto pending = *connection->pending;
 		connection->pending.reset();
@@ -2811,7 +2823,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		AppendEndpointRefreshLong(body, pending.requestId);
 		body += EndpointRefreshVerifierConfig(authenticates);
 		sendEncryptedResponse(connection, pending.serverSalt, pending.sessionId,
-							  body);
+							  body, encryptionKey, _verifierAuthKey->keyId());
 	}
 
 	void replyToPing(const std::shared_ptr<Connection> &connection,
@@ -2827,7 +2839,19 @@ class LocalEndpointRefreshDiscoveryStub final {
 	void sendEncryptedResponse(const std::shared_ptr<Connection> &connection,
 							   uint64 serverSalt, uint64 sessionId,
 							   const QByteArray &body) {
-		if (!connection->socket || !_verifierAuthKey) {
+		if (!_verifierAuthKey) {
+			return;
+		}
+		sendEncryptedResponse(connection, serverSalt, sessionId, body,
+							  _verifierAuthKey, _verifierAuthKey->keyId());
+	}
+
+	void sendEncryptedResponse(const std::shared_ptr<Connection> &connection,
+							   uint64 serverSalt, uint64 sessionId,
+							   const QByteArray &body,
+							   const MTP::AuthKeyPtr &encryptionKey,
+							   uint64 advertisedKeyId) {
+		if (!connection->socket || !encryptionKey) {
 			return;
 		}
 		auto plain = QByteArray();
@@ -2843,7 +2867,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 		plain += QByteArray(padding, char(0));
 		auto hashInput = QByteArray(32 + plain.size(), Qt::Uninitialized);
-		memcpy(hashInput.data(), _verifierAuthKey->partForMsgKey(false), 32);
+		memcpy(hashInput.data(), encryptionKey->partForMsgKey(false), 32);
 		memcpy(hashInput.data() + 32, plain.constData(), plain.size());
 		const auto hash = openssl::Sha256(
 			bytes::make_span(static_cast<const QByteArray &>(hashInput)));
@@ -2851,12 +2875,12 @@ class LocalEndpointRefreshDiscoveryStub final {
 		memcpy(&messageKey, hash.data() + 8, sizeof(messageKey));
 		auto aesKey = MTPint256();
 		auto aesIv = MTPint256();
-		_verifierAuthKey->prepareAES(messageKey, aesKey, aesIv, false);
+		encryptionKey->prepareAES(messageKey, aesKey, aesIv, false);
 		auto encrypted = QByteArray(plain.size(), Qt::Uninitialized);
 		MTP::aesIgeEncryptRaw(plain.constData(), encrypted.data(),
 							  uint32(plain.size()), &aesKey, &aesIv);
 		auto packet = QByteArray();
-		AppendEndpointRefreshLong(packet, _verifierAuthKey->keyId());
+		AppendEndpointRefreshLong(packet, advertisedKeyId);
 		packet += QByteArray(reinterpret_cast<const char *>(&messageKey),
 							 sizeof(messageKey));
 		packet += encrypted;
@@ -2974,6 +2998,16 @@ class LocalEndpointRefreshDiscoveryStub final {
 		QCoreApplication::processEvents();
 		return queued && !sender.pending(requestId) && failures == 1;
 	};
+	const auto storedKeyIsRetained = [&] {
+		const auto keys = mtp.getKeysForWrite();
+		return ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
+			return key && key->dcId() == storedAuthKey->dcId()
+				   && key->type() == MTP::AuthKey::Type::ReadFromFile
+				   && key->equals(storedAuthKey);
+		});
+	};
+	auto verificationTimeout = QElapsedTimer();
+	verificationTimeout.start();
 	if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed()
 		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
 		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
@@ -2983,16 +3017,19 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail(
 			"initial verifier did not pause requests and retain the pin");
 	}
-	discovery.replyToPendingVerifierConfig(false);
-	if (!WaitForRegressionCondition([&] {
-			return !AccountLifecycleRegressionAccess::
-				endpointVerificationPending(*account);
-		})
+	discovery.replyToPendingVerifierConfigWithWrongKey();
+	if (!WaitForRegressionCondition(
+			[&] {
+				return !AccountLifecycleRegressionAccess::
+					endpointVerificationPending(*account);
+			},
+			20'000, 10)
+		|| verificationTimeout.elapsed() < 14'000
 		|| mtp.isServerEnrollmentNetworkAllowed()
 		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
 		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
-		|| !pausedRequestIsRefused()) {
-		return fail("a failed proof changed the pin or resumed requests");
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail("an undecryptable proof changed the pin, key, or requests");
 	}
 	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
 	mtp.resume();
