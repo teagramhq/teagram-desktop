@@ -56,13 +56,11 @@ constexpr auto kInitialUrl = QStringView(
 }
 
 [[nodiscard]] std::string ErrorMessage(QString payload) {
-	return QJsonDocument(
-			   QJsonArray{
-				   u"turnstile_error"_q,
-				   payload,
-			   })
-		.toJson(QJsonDocument::Compact)
-		.toStdString();
+	const auto envelope = QJsonArray{
+		u"turnstile_error"_q,
+		payload,
+	};
+	return QJsonDocument(envelope).toJson(QJsonDocument::Compact).toStdString();
 }
 
 [[nodiscard]] QString ErrorPayload(const QJsonObject &payload) {
