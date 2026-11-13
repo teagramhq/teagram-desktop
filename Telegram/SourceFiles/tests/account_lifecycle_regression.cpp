@@ -2186,36 +2186,225 @@ uint64 EndpointRefreshReadLong(const char *data) {
 		   | (uint64(EndpointRefreshReadInt(data + 4)) << 32);
 }
 
-bool EndpointRefreshContainsGetConfig(const char *data, int size) {
-	constexpr auto kHelpGetConfig = uint32(0xc4f9186b);
-	for (auto offset = 0; offset + 4 <= size; offset += 4) {
-		if (EndpointRefreshReadInt(data + offset) == kHelpGetConfig) {
-			return true;
-		}
+std::optional<int> EndpointRefreshSkipTlString(const char *data, int size,
+											   int offset) {
+	if (offset < 0 || offset >= size) {
+		return std::nullopt;
 	}
-	return false;
+	const auto first = uchar(data[offset]);
+	auto header = 1;
+	auto length = uint32(first);
+	if (first == 254) {
+		if (size - offset < 4) {
+			return std::nullopt;
+		}
+		header = 4;
+		length = uint32(uchar(data[offset + 1]))
+				 | (uint32(uchar(data[offset + 2])) << 8)
+				 | (uint32(uchar(data[offset + 3])) << 16);
+	} else if (first == 255) {
+		return std::nullopt;
+	}
+	const auto total = (header + length + 3U) & ~3U;
+	if (total > uint32(size - offset)) {
+		return std::nullopt;
+	}
+	return offset + int(total);
 }
 
-std::optional<mtpMsgId>
-EndpointRefreshConfigRequestId(const QByteArray &plain) {
-	if (plain.size() < 36) {
+std::optional<int> EndpointRefreshSkipJsonValue(const char *data, int size,
+												int offset, int depth) {
+	if (depth > 8 || offset < 0 || size - offset < 4) {
 		return std::nullopt;
+	}
+	constexpr auto kVector = uint32(0x1cb5c415);
+	constexpr auto kJsonNull = uint32(0x3f6d7b68);
+	constexpr auto kJsonBool = uint32(0xc7345e6a);
+	constexpr auto kJsonNumber = uint32(0x2be0dfa4);
+	constexpr auto kJsonString = uint32(0xb71e767a);
+	constexpr auto kJsonArray = uint32(0xf7444763);
+	constexpr auto kJsonObject = uint32(0x99c1d49d);
+	constexpr auto kJsonObjectValue = uint32(0xc0de1bd9);
+	switch (EndpointRefreshReadInt(data + offset)) {
+	case kJsonNull:
+		return offset + 4;
+	case kJsonBool:
+		return (size - offset >= 8) ? std::optional<int>(offset + 8)
+									: std::nullopt;
+	case kJsonNumber:
+		return (size - offset >= 12) ? std::optional<int>(offset + 12)
+									 : std::nullopt;
+	case kJsonString:
+		return EndpointRefreshSkipTlString(data, size, offset + 4);
+	case kJsonArray:
+	case kJsonObject: {
+		const auto isObject
+			= EndpointRefreshReadInt(data + offset) == kJsonObject;
+		if (size - offset < 12
+			|| EndpointRefreshReadInt(data + offset + 4) != kVector) {
+			return std::nullopt;
+		}
+		auto position = offset + 12;
+		const auto count = EndpointRefreshReadInt(data + offset + 8);
+		if (count > uint32(size - position) / 4U) {
+			return std::nullopt;
+		}
+		for (auto i = 0U; i != count; ++i) {
+			if (isObject) {
+				if (size - position < 4
+					|| EndpointRefreshReadInt(data + position)
+						   != kJsonObjectValue) {
+					return std::nullopt;
+				}
+				const auto keyEnd
+					= EndpointRefreshSkipTlString(data, size, position + 4);
+				if (!keyEnd) {
+					return std::nullopt;
+				}
+				position = *keyEnd;
+			}
+			const auto valueEnd
+				= EndpointRefreshSkipJsonValue(data, size, position, depth + 1);
+			if (!valueEnd) {
+				return std::nullopt;
+			}
+			position = *valueEnd;
+		}
+		return position;
+	}
+	default:
+		return std::nullopt;
+	}
+}
+
+enum class EndpointRefreshRequestKind {
+	Ping,
+	Config,
+};
+
+struct EndpointRefreshRequest {
+	EndpointRefreshRequestKind kind = EndpointRefreshRequestKind::Config;
+	mtpMsgId messageId = 0;
+	uint64 pingId = 0;
+};
+
+void EndpointRefreshDecodeRequestBody(
+	const char *data, int size, mtpMsgId messageId,
+	std::vector<EndpointRefreshRequest> &requests, int depth = 0) {
+	if (depth > 8 || size < 4) {
+		return;
+	}
+	constexpr auto kHelpGetConfig = uint32(0xc4f9186b);
+	constexpr auto kPing = uint32(0x7abe77ec);
+	constexpr auto kPingDelayDisconnect = uint32(0xf3427b8c);
+	constexpr auto kInvokeAfterMsg = uint32(0xcb9f372d);
+	constexpr auto kInvokeAfterMsgs = uint32(0x3dc4b4f0);
+	constexpr auto kInitConnection = uint32(0xc1cd5ea9);
+	constexpr auto kInputClientProxy = uint32(0x75588b3f);
+	constexpr auto kInvokeWithLayer = uint32(0xda9b0d0d);
+	constexpr auto kInvokeWithoutUpdates = uint32(0xbf9459b7);
+	constexpr auto kInvokeWithTakeout = uint32(0xaca9fd2e);
+	constexpr auto kVector = uint32(0x1cb5c415);
+	const auto constructor = EndpointRefreshReadInt(data);
+	if (constructor == kPing || constructor == kPingDelayDisconnect) {
+		if (size >= ((constructor == kPing) ? 12 : 16)) {
+			requests.push_back({
+				.kind = EndpointRefreshRequestKind::Ping,
+				.messageId = messageId,
+				.pingId = EndpointRefreshReadLong(data + 4),
+			});
+		}
+	} else if (constructor == kHelpGetConfig) {
+		requests.push_back({
+			.kind = EndpointRefreshRequestKind::Config,
+			.messageId = messageId,
+		});
+	} else if (constructor == kInvokeWithLayer) {
+		if (size >= 8) {
+			EndpointRefreshDecodeRequestBody(data + 8, size - 8, messageId,
+											 requests, depth + 1);
+		}
+	} else if (constructor == kInvokeAfterMsg) {
+		if (size >= 12) {
+			EndpointRefreshDecodeRequestBody(data + 12, size - 12, messageId,
+											 requests, depth + 1);
+		}
+	} else if (constructor == kInvokeAfterMsgs) {
+		if (size < 12 || EndpointRefreshReadInt(data + 4) != kVector) {
+			return;
+		}
+		const auto count = EndpointRefreshReadInt(data + 8);
+		const auto vectorSize = uint64(count) * 8;
+		if (vectorSize <= uint64(size - 12)) {
+			const auto offset = 12 + int(vectorSize);
+			EndpointRefreshDecodeRequestBody(data + offset, size - offset,
+											 messageId, requests, depth + 1);
+		}
+	} else if (constructor == kInitConnection) {
+		if (size < 12) {
+			return;
+		}
+		const auto flags = EndpointRefreshReadInt(data + 4);
+		auto offset = 12;
+		for (auto i = 0; i != 6; ++i) {
+			const auto end = EndpointRefreshSkipTlString(data, size, offset);
+			if (!end) {
+				return;
+			}
+			offset = *end;
+		}
+		if (flags & 1) {
+			if (size - offset < 4
+				|| EndpointRefreshReadInt(data + offset) != kInputClientProxy) {
+				return;
+			}
+			const auto addressEnd
+				= EndpointRefreshSkipTlString(data, size, offset + 4);
+			if (!addressEnd || size - *addressEnd < 4) {
+				return;
+			}
+			offset = *addressEnd + 4;
+		}
+		if (flags & 2) {
+			const auto paramsEnd
+				= EndpointRefreshSkipJsonValue(data, size, offset, depth + 1);
+			if (!paramsEnd) {
+				return;
+			}
+			offset = *paramsEnd;
+		}
+		EndpointRefreshDecodeRequestBody(data + offset, size - offset,
+										 messageId, requests, depth + 1);
+	} else if (constructor == kInvokeWithoutUpdates) {
+		EndpointRefreshDecodeRequestBody(data + 4, size - 4, messageId,
+										 requests, depth + 1);
+	} else if (constructor == kInvokeWithTakeout && size >= 12) {
+		EndpointRefreshDecodeRequestBody(data + 12, size - 12, messageId,
+										 requests, depth + 1);
+	}
+}
+
+std::vector<EndpointRefreshRequest>
+EndpointRefreshDecodeRequests(const QByteArray &plain) {
+	auto result = std::vector<EndpointRefreshRequest>();
+	if (plain.size() < 36) {
+		return result;
 	}
 	const auto messageLength
 		= int(EndpointRefreshReadInt(plain.constData() + 28));
 	if (messageLength < 4 || messageLength > plain.size() - 32) {
-		return std::nullopt;
+		return result;
 	}
 	const auto body = plain.constData() + 32;
 	constexpr auto kMessageContainer = uint32(0x73f1f8dc);
 	if (EndpointRefreshReadInt(body) != kMessageContainer) {
-		if (EndpointRefreshContainsGetConfig(body, messageLength)) {
-			return EndpointRefreshReadLong(plain.constData() + 16);
-		}
-		return std::nullopt;
+		EndpointRefreshDecodeRequestBody(
+			body, messageLength,
+			EndpointRefreshReadLong(plain.constData() + 16), result);
+		return result;
 	}
 	if (messageLength < 8) {
-		return std::nullopt;
+		return result;
 	}
 	auto offset = 8;
 	const auto count = EndpointRefreshReadInt(body + 4);
@@ -2225,14 +2414,13 @@ EndpointRefreshConfigRequestId(const QByteArray &plain) {
 			= int(EndpointRefreshReadInt(body + offset + 12));
 		offset += 16;
 		if (nestedLength < 4 || nestedLength > messageLength - offset) {
-			return std::nullopt;
+			return {};
 		}
-		if (EndpointRefreshContainsGetConfig(body + offset, nestedLength)) {
-			return id;
-		}
+		EndpointRefreshDecodeRequestBody(body + offset, nestedLength, id,
+										 result);
 		offset += nestedLength;
 	}
-	return std::nullopt;
+	return result;
 }
 
 QByteArray EndpointRefreshTcpFrame(const QByteArray &packet) {
@@ -2560,8 +2748,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 		auto plain = QByteArray(encryptedSize, Qt::Uninitialized);
 		MTP::aesIgeDecryptRaw(packet.constData() + 24, plain.data(),
 							  uint32(encryptedSize), &aesKey, &aesIv);
-		const auto requestId = EndpointRefreshConfigRequestId(plain);
-		if (!requestId) {
+		const auto requests = EndpointRefreshDecodeRequests(plain);
+		if (requests.empty()) {
 			auto first = uint32(0);
 			if (plain.size() >= 36) {
 				first = EndpointRefreshReadInt(plain.constData() + 32);
@@ -2570,17 +2758,27 @@ class LocalEndpointRefreshDiscoveryStub final {
 								 + QByteArray::number(first, 16) + ' ';
 			return;
 		}
-		connection->trace += 'g';
-		connection->pending = PendingConfig{
-			.serverSalt = EndpointRefreshReadLong(plain.constData()),
-			.sessionId = EndpointRefreshReadLong(plain.constData() + 8),
-			.requestId = *requestId,
-		};
-		if (!_autoReply && _verifierConnection.expired()) {
-			_verifierConnection = connection;
-		}
-		if (_autoReply) {
-			reply(connection, _authenticates);
+		const auto serverSalt = EndpointRefreshReadLong(plain.constData());
+		const auto sessionId = EndpointRefreshReadLong(plain.constData() + 8);
+		for (const auto &request : requests) {
+			if (request.kind == EndpointRefreshRequestKind::Ping) {
+				connection->trace += 'p';
+				replyToPing(connection, serverSalt, sessionId,
+							request.messageId, request.pingId);
+			} else {
+				connection->trace += 'g';
+				connection->pending = PendingConfig{
+					.serverSalt = serverSalt,
+					.sessionId = sessionId,
+					.requestId = request.messageId,
+				};
+				if (!_autoReply && _verifierConnection.expired()) {
+					_verifierConnection = connection;
+				}
+				if (_autoReply) {
+					reply(connection, _authenticates);
+				}
+			}
 		}
 	}
 
@@ -2612,9 +2810,29 @@ class LocalEndpointRefreshDiscoveryStub final {
 		AppendEndpointRefreshInt(body, 0xf35c6d01);
 		AppendEndpointRefreshLong(body, pending.requestId);
 		body += EndpointRefreshVerifierConfig(authenticates);
+		sendEncryptedResponse(connection, pending.serverSalt, pending.sessionId,
+							  body);
+	}
+
+	void replyToPing(const std::shared_ptr<Connection> &connection,
+					 uint64 serverSalt, uint64 sessionId, mtpMsgId requestId,
+					 uint64 pingId) {
+		auto body = QByteArray();
+		AppendEndpointRefreshInt(body, 0x347773c5);
+		AppendEndpointRefreshLong(body, requestId);
+		AppendEndpointRefreshLong(body, pingId);
+		sendEncryptedResponse(connection, serverSalt, sessionId, body);
+	}
+
+	void sendEncryptedResponse(const std::shared_ptr<Connection> &connection,
+							   uint64 serverSalt, uint64 sessionId,
+							   const QByteArray &body) {
+		if (!connection->socket || !_verifierAuthKey) {
+			return;
+		}
 		auto plain = QByteArray();
-		AppendEndpointRefreshLong(plain, pending.serverSalt);
-		AppendEndpointRefreshLong(plain, pending.sessionId);
+		AppendEndpointRefreshLong(plain, serverSalt);
+		AppendEndpointRefreshLong(plain, sessionId);
 		AppendEndpointRefreshLong(plain, base::unixtime::mtproto_msg_id() | 1);
 		AppendEndpointRefreshInt(plain, 1);
 		AppendEndpointRefreshInt(plain, uint32(body.size()));
