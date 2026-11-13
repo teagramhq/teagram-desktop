@@ -60,20 +60,6 @@ int GetNextRequestId() {
 
 } // namespace details
 
-EndpointVerificationConfigResult CheckEndpointVerificationConfig(
-	bool responseTestMode, bool expectedTestMode, bool hasMainDcId, DcId thisDc,
-	const std::vector<DcId> &advertisedDcIds, const CustomServer &pin) {
-	const auto matchingMode = responseTestMode == expectedTestMode;
-	auto failure = std::optional<PinnedServerFailure>();
-	if (matchingMode && hasMainDcId) {
-		failure = CheckPinnedServerConfig(thisDc, advertisedDcIds, pin);
-	}
-	return {
-		.authenticated = matchingMode && !failure.has_value(),
-		.failure = failure,
-	};
-}
-
 class Instance::Private : private Sender {
 public:
 	Private(

@@ -78,17 +78,26 @@ struct EndpointVerificationConfigResult {
 	std::optional<PinnedServerFailure> failure;
 };
 
-[[nodiscard]] EndpointVerificationConfigResult CheckEndpointVerificationConfig(
-	bool responseTestMode, bool expectedTestMode, bool hasMainDcId, DcId thisDc,
-	const std::vector<DcId> &advertisedDcIds, const CustomServer &pin);
+[[nodiscard]] inline EndpointVerificationConfigResult
+CheckEndpointVerificationConfig(bool responseTestMode, bool expectedTestMode,
+								bool hasMainDcId, DcId thisDc,
+								const std::vector<DcId> &advertisedDcIds,
+								const CustomServer &pin) {
+	const auto matchingMode = responseTestMode == expectedTestMode;
+	auto failure = std::optional<PinnedServerFailure>();
+	if (matchingMode && hasMainDcId) {
+		failure = CheckPinnedServerConfig(thisDc, advertisedDcIds, pin);
+	}
+	return {
+		.authenticated = matchingMode && !failure.has_value(),
+		.failure = failure,
+	};
+}
 
 [[nodiscard]] inline PinnedServerFailureReport MakePinnedServerFailureReport(
-		ShiftedDcId shiftedDcId,
-		PinnedServerFailure failure,
-		uint64 presentedFingerprint,
-		const CustomServer &customServer,
-		const QString &pinnedHostname,
-		const QString &dialledAddress) {
+	ShiftedDcId shiftedDcId, PinnedServerFailure failure,
+	uint64 presentedFingerprint, const CustomServer &customServer,
+	const QString &pinnedHostname, const QString &dialledAddress) {
 	const auto hostname = pinnedHostname.isEmpty()
 		? QString::fromStdString(customServer.hostname)
 		: pinnedHostname;
