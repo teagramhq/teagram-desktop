@@ -887,9 +887,6 @@ void UiStallWatchdog::run() {
 		while (!_stopping && (_acknowledgedSequence < current)) {
 			_condition.wait(lock, acknowledged);
 		}
-		if (_stopping) {
-			return;
-		}
 		if (_acknowledgedSequence < current) {
 			return;
 		}
@@ -914,6 +911,9 @@ void UiStallWatchdog::run() {
 					break;
 				}
 			}
+		}
+		if (_stopping) {
+			return;
 		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
