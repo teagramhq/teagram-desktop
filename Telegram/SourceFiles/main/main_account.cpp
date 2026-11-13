@@ -1244,7 +1244,7 @@ void Account::requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId) {
 					scheduleServerEndpointRefreshRetry();
 				},
 		});
-	if (!started && _endpointRefresh) {
+	if (!started && _endpointRefresh.hasOriginal()) {
 		_endpointRefresh.reset();
 	}
 }
