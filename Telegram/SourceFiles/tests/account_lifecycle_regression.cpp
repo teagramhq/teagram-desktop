@@ -2377,10 +2377,11 @@ class LocalEndpointRefreshDiscoveryStub final {
 			const auto &connection = _connections[i];
 			std::fprintf(
 				stderr,
-				"Endpoint refresh fixture connection %d: kind=%d prefix=%d "
-				"incoming=%d available=%lld pending=%d state=%d\n",
-				i, int(connection->kind), connection->startPrefix.size(),
-				connection->incoming.size(),
+				"Endpoint refresh fixture connection %d: kind=%d prefix=%lld "
+				"incoming=%lld available=%lld pending=%d state=%d\n",
+				i, int(connection->kind),
+				static_cast<long long>(connection->startPrefix.size()),
+				static_cast<long long>(connection->incoming.size()),
 				static_cast<long long>(
 					connection->socket ? connection->socket->bytesAvailable()
 									   : -1),
