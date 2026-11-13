@@ -580,46 +580,42 @@ bool UiStallWatchdog::event(QEvent *event) {
 	}
 	const auto ping = static_cast<PingEvent *>(event);
 	const auto acknowledgedAt = Clock::now();
-	auto acknowledged = false;
 	{
 		const auto lock = std::lock_guard(_mutex);
 		if (ping->sequence > _acknowledgedSequence) {
+			if (_captureSchedulerTrace) {
+				_schedulerSamplingStopSequence.store(
+					ping->sequence, std::memory_order_release);
+				const auto duration = acknowledgedAt - ping->postedAt;
+				const auto evidence = PingAcknowledgementEvidence{
+					.acknowledgedAt
+					= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
+					.acknowledgedAtNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  acknowledgedAt.time_since_epoch())
+						  .count(),
+					.responseNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
+						  .count(),
+					.pingIntervalNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  _pingInterval)
+						  .count(),
+					.sequence = ping->sequence,
+					.postedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  ping->postedAt.time_since_epoch())
+						  .count(),
+				};
+				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+				PingAcknowledgementHistory.push_back(evidence);
+				if (PingAcknowledgementHistory.size() > kMaxPingAcknowledgements) {
+					PingAcknowledgementHistory.erase(
+						PingAcknowledgementHistory.begin());
+				}
+			}
 			_acknowledgedSequence = ping->sequence;
 			_acknowledgedAt = acknowledgedAt;
-			if (_captureSchedulerTrace) {
-				_schedulerSamplingStopSequence.store(ping->sequence,
-													 std::memory_order_release);
-			}
-			acknowledged = true;
-		}
-	}
-	if (acknowledged && _captureSchedulerTrace) {
-		const auto duration = acknowledgedAt - ping->postedAt;
-		const auto evidence = PingAcknowledgementEvidence{
-			.acknowledgedAt
-			= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
-			.acknowledgedAtNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  acknowledgedAt.time_since_epoch())
-				  .count(),
-			.responseNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(duration)
-				  .count(),
-			.pingIntervalNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  _pingInterval)
-				  .count(),
-			.sequence = ping->sequence,
-			.postedAtSteadyNanoseconds
-			= std::chrono::duration_cast<std::chrono::nanoseconds>(
-				  ping->postedAt.time_since_epoch())
-				  .count(),
-		};
-		const auto lock = std::lock_guard(StallEvidenceMutex);
-		PingAcknowledgementHistory.push_back(evidence);
-		if (PingAcknowledgementHistory.size() > kMaxPingAcknowledgements) {
-			PingAcknowledgementHistory.erase(
-				PingAcknowledgementHistory.begin());
 		}
 	}
 	_condition.notify_one();

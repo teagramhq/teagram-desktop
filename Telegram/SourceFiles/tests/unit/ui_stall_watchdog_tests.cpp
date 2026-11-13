@@ -377,6 +377,13 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	const auto acknowledgements
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
+	CHECK(std::all_of(
+		acknowledgements.begin(), acknowledgements.end(),
+		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds
+					<= lastAcknowledgedAtNanoseconds)
+				   || acknowledgement.schedulerTraceComplete;
+		}));
 	CHECK(std::any_of(
 		acknowledgements.begin(), acknowledgements.end(),
 		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {
