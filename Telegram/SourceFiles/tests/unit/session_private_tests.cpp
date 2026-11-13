@@ -628,9 +628,6 @@ UnitEndpointRefreshProofResult UnitVerifyEndpointAndResumeRequestsForTest(
 	const auto mainInstance = reinterpret_cast<Instance *>(quintptr(1));
 	const auto verifierInstance = reinterpret_cast<Instance *>(quintptr(2));
 	UnitBlockedServerEnrollmentInstance = mainInstance;
-	// Sessions with the test fixture flag cleared ask the instance for its
-	// DcOptions when deciding on a permanent auth key; the stand-in
-	// instances have none, so hand them an unpinned set for this call.
 	auto unpinnedOptions = DcOptions(Environment::Production);
 	const auto previousOptions = details::UnitProxyCheckOptions;
 	details::UnitProxyCheckOptions = &unpinnedOptions;

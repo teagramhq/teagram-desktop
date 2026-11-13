@@ -47,8 +47,6 @@ struct CustomServer {
 	}
 };
 
-// Endpoint refresh may replace only route fields after the candidate proves
-// the existing server identity with the account's current auth key.
 [[nodiscard]] bool
 SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
 										const CustomServer &right);
@@ -184,9 +182,6 @@ public:
 	// same address. Re-applying the identical pin succeeds in both
 	// states, so startup and config rewrites go through.
 	[[nodiscard]] bool setCustomServer(const CustomServer &server);
-	// Replace only the endpoint on an already-authorized pin after a
-	// same-key authenticated refresh. This deliberately bypasses no part of
-	// setCustomServer's ordinary pin immutability check.
 	[[nodiscard]] bool
 	refreshCustomServerEndpoint(const CustomServer &original,
 								const CustomServer &candidate);

@@ -159,9 +159,6 @@ private:
 	bool _running = false;
 };
 
-// Reuses the same bounded discovery policy for an authenticated account's
-// endpoint refresh. The caller still has to prove the discovered endpoint
-// with its existing encrypted MTProto session before persisting it.
 class ServerEndpointRefreshDiscovery final : public QObject {
   public:
 	struct Callbacks {

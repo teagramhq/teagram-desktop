@@ -2763,8 +2763,6 @@ bool SessionPrivate::destroyOldEnoughPersistentKey() {
 
 DcType SessionPrivate::tryAcquireKeyCreation() {
 	if (_instance->isEndpointVerifier()) {
-		// Endpoint verification may use only the persistent key supplied in
-		// the verifier fields. It must never start DH or create a replacement.
 		return DcType::Regular;
 	}
 	if (_keyCreator) {

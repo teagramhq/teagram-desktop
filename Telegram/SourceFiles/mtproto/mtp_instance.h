@@ -346,8 +346,6 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailure() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
-	// Emits only after an encrypted config response verifies the endpoint
-	// using this verifier's existing persistent auth key.
 	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
