@@ -1059,6 +1059,18 @@ fi
 if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
   contract_fail 'A window without scheduler samples must fall back to wall time.'
 fi
+callback_runnable_trace="$(printf '%41s' '' | tr ' ' R)"
+callback_unknown_trace="${callback_runnable_trace:0:20}?${callback_runnable_trace:21}"
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 "$callback_unknown_trace" 50000000 "$callback_offsets"; then
+  contract_fail 'An unknown scheduler state must fall back to wall time.'
+fi
+callback_negative_offsets="-1${callback_offsets#0}"
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 "$callback_runnable_trace" 50000000 \
+  "$callback_negative_offsets"; then
+  contract_fail 'A negative scheduler offset must fall back to wall time.'
+fi
 if main_thread_work_estimate_within_budget \
 	0 200000000 RRR 100000000 0,1000000,2000000; then
 	contract_fail 'A clustered runnable trace must fall back to wall time.'

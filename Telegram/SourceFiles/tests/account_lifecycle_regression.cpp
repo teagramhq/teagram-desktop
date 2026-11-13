@@ -11133,6 +11133,16 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto unknownState = EstimateMainThreadWork(
 		18'000'000, 225'000'000,
 		QString(int(switchOffsets.size()), QChar(u'?')), switchOffsets);
+	auto partiallyUnknownTrace
+		= QString(int(switchOffsets.size()), QChar(u'R'));
+	partiallyUnknownTrace[partiallyUnknownTrace.size() / 2] = QChar(u'?');
+	const auto partiallyUnknownState = EstimateMainThreadWork(
+		18'000'000, 225'000'000, partiallyUnknownTrace, switchOffsets);
+	auto negativeOffsetSamples = switchOffsets;
+	negativeOffsetSamples.front() = -1;
+	const auto negativeOffset = EstimateMainThreadWork(
+		18'000'000, 225'000'000,
+		QString(int(switchOffsets.size()), QChar(u'R')), negativeOffsetSamples);
 	const auto initialSelectionOverBudget = EstimateMainThreadWork(
 		52'107'000, 227'000'000,
 		QString(int(slowSwitchOffsets.size()), QChar(u'R')), slowSwitchOffsets);
@@ -11267,6 +11277,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   kMaxChatSwitchNanoseconds)
 		   && (unknownState.blockedNanoseconds == -1)
 		   && (unknownState.estimatedWorkNanoseconds == 225'000'000)
+		   && (partiallyUnknownState.blockedNanoseconds == -1)
+		   && (partiallyUnknownState.estimatedWorkNanoseconds == 225'000'000)
+		   && (negativeOffset.blockedNanoseconds == -1)
+		   && (negativeOffset.estimatedWorkNanoseconds == 225'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(18'000'000, 225'000'000,
 												  blockedTailTrace,
 												  switchOffsets, 100'000'000)
