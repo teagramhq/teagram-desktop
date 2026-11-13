@@ -2372,6 +2372,25 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 	}
 
+	void reportConnectionState() const {
+		for (auto i = 0; i != int(_connections.size()); ++i) {
+			const auto &connection = _connections[i];
+			std::fprintf(
+				stderr,
+				"Endpoint refresh fixture connection %d: kind=%d prefix=%d "
+				"incoming=%d available=%lld pending=%d state=%d\n",
+				i,
+				int(connection->kind),
+				connection->startPrefix.size(),
+				connection->incoming.size(),
+				static_cast<long long>(connection->socket
+					? connection->socket->bytesAvailable()
+					: -1),
+				connection->pending.has_value() ? 1 : 0,
+				connection->socket ? int(connection->socket->state()) : -1);
+		}
+	}
+
 	[[nodiscard]] bool originalEndpointUnreachable() const {
 		auto socket = QTcpSocket();
 		socket.connectToHost(QHostAddress::LocalHostIPv6, port());
@@ -2632,6 +2651,10 @@ class LocalEndpointRefreshDiscoveryStub final {
 	not_null<Main::Account *> account,
 	LocalEndpointRefreshDiscoveryStub &discovery,
 	const MTP::AuthKeyPtr &storedAuthKey) {
+	const auto fail = [](const char *reason) {
+		std::fprintf(stderr, "Endpoint refresh regression failed: %s\n", reason);
+		return false;
+	};
 	auto &mtp = account->mtp();
 	const auto original = mtp.dcOptions().customServer();
 	discovery.setVerifierAuthKey(storedAuthKey);
@@ -2639,14 +2662,14 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !account->sessionExists()
 		|| !AccountLifecycleRegressionAccess::restoredSession(*account)
 		|| !storedAuthKey) {
-		return false;
+		return fail("fixture, restored session, or stored key was unavailable");
 	}
 	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
 	if (!mtp.isServerEnrollmentNetworkAllowed()) {
 		mtp.resume();
 	}
 	if (!mtp.isServerEnrollmentNetworkAllowed()) {
-		return false;
+		return fail("the original account instance did not resume");
 	}
 	const auto restore = gsl::finally([&] {
 		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
@@ -2677,15 +2700,27 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 	});
 	if (!mtp.hasCallback(acceptedRequestId)) {
-		return false;
+		return fail("the original request was not accepted");
 	}
 	const auto requestRefresh = [&] {
 		mtp.requestServerEndpointRefresh(original.dcId);
-		return WaitForRegressionCondition([&] {
+		const auto reached = WaitForRegressionCondition([&] {
 			return AccountLifecycleRegressionAccess::
 					   endpointVerificationPending(*account)
 				   && discovery.hasPendingVerifierConfig();
 		});
+		if (!reached) {
+			std::fprintf(
+				stderr,
+				"Endpoint refresh verifier state: account=%d network=%d "
+				"candidate=%d\n",
+				AccountLifecycleRegressionAccess::
+					endpointVerificationPending(*account),
+				mtp.isServerEnrollmentNetworkAllowed(),
+				mtp.dcOptions().customServer().ip == "127.0.0.1");
+			discovery.reportConnectionState();
+		}
+		return reached;
 	};
 	const auto pausedRequestIsRefused = [&] {
 		auto failures = 0;
@@ -2708,7 +2743,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
 			*account, storedAuthKey)
 		|| !pausedRequestIsRefused()) {
-		return false;
+		return fail("initial verifier did not pause requests and retain the pin");
 	}
 	discovery.replyToPendingVerifierConfig(false);
 	if (!WaitForRegressionCondition([&] {
@@ -2719,7 +2754,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
 		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
 		|| !pausedRequestIsRefused()) {
-		return false;
+		return fail("a failed proof changed the pin or resumed requests");
 	}
 	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
 	mtp.resume();
@@ -2729,7 +2764,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
 			*account, storedAuthKey)
 		|| !pausedRequestIsRefused()) {
-		return false;
+		return fail("the retry did not wait for a second proof");
 	}
 	discovery.replyToPendingVerifierConfig(true);
 	if (!WaitForRegressionCondition([&] {
@@ -2740,14 +2775,14 @@ class LocalEndpointRefreshDiscoveryStub final {
 				   && moved.ip == "127.0.0.1" && !moved.ipv6
 				   && moved.port == int(discovery.port());
 		})) {
-		return false;
+		return fail("a successful proof did not commit and resume the account");
 	}
 	const auto moved = mtp.dcOptions().customServer();
 	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
 		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
 		|| moved.ipv6 || moved.port != int(discovery.port())
 		|| !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
-		return false;
+		return fail("the committed endpoint changed the pin identity");
 	}
 	auto failures = 0;
 	auto sender = MTP::Sender(&mtp);
@@ -2760,9 +2795,11 @@ class LocalEndpointRefreshDiscoveryStub final {
 	if (remainsPending) {
 		mtp.cancel(requestId);
 	}
-	return resumed && remainsPending && !failures
-		   && WaitForRegressionCondition([&] { return callbackCount == 1; })
-		   && !failureCount && !mtp.hasCallback(acceptedRequestId);
+	const auto completed
+		= resumed && remainsPending && !failures
+		  && WaitForRegressionCondition([&] { return callbackCount == 1; })
+		  && !failureCount && !mtp.hasCallback(acceptedRequestId);
+	return completed || fail("the accepted request callback did not complete");
 }
 
 [[nodiscard]] bool
