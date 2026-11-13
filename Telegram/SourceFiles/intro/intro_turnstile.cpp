@@ -238,8 +238,7 @@ TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 			.errorCode = TurnstileErrorCodeForLog(
 				object ? object->value(u"code"_q) : QJsonValue()),
 			.cloudflareErrorCode = TurnstileErrorCodeForLog(
-				object ? object->value(u"cloudflare_code"_q)
-					   : QJsonValue()),
+				object ? object->value(u"cloudflare_code"_q) : QJsonValue()),
 		};
 	} else if (eventName != u"turnstile_token"_q) {
 		return reject(TurnstileMessageRejection::UnknownEvent);
