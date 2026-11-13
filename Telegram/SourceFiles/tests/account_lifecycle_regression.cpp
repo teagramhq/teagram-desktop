@@ -11051,7 +11051,7 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 	} else if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
 		return {-1, wallNanoseconds};
 	} else if (schedulerTrace.size()
-		   != qsizetype(sampleOffsetsNanoseconds.size())) {
+			   != qsizetype(sampleOffsetsNanoseconds.size())) {
 		return {-1, wallNanoseconds};
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
@@ -11144,10 +11144,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto clustered = EstimateMainThreadWork(0, 200'000'000, u"RRR"_q,
 												  {0, 1'000'000, 2'000'000});
 	const auto sparseStartupOffsets = std::vector<qint64>{
-		0, 12'000'000, 24'000'000, 36'000'000, 48'000'000, 60'000'000,
-		72'000'000, 84'000'000, 96'000'000, 108'000'000, 120'000'000,
-		132'000'000, 144'000'000, 156'000'000, 168'000'000, 180'000'000,
-		192'000'000, 204'000'000, 216'000'000,
+		0,			 12'000'000,  24'000'000,  36'000'000,	48'000'000,
+		60'000'000,	 72'000'000,  84'000'000,  96'000'000,	108'000'000,
+		120'000'000, 132'000'000, 144'000'000, 156'000'000, 168'000'000,
+		180'000'000, 192'000'000, 204'000'000, 216'000'000,
 	};
 	const auto sparseStartupTrace
 		= QString(15, QChar(u'R')) + QString(4, QChar(u'W'));
@@ -11155,9 +11155,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		18'000'000, 225'000'000, sparseStartupTrace, sparseStartupOffsets);
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
-	const auto noInWindowSamples = EstimateMainThreadWork(
-		18'000'000, 225'000'000, u"RRR"_q,
-		{226'000'000, 227'000'000, 228'000'000});
+	const auto noInWindowSamples
+		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
+								 {226'000'000, 227'000'000, 228'000'000});
 	const auto callbackOffsets = SchedulerSampleOffsetsForDuration(200'000'000);
 	const auto blockedAttachMenuCallback = EstimateMainThreadWork(
 		12'000'000, 200'000'000,
@@ -11202,9 +11202,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>();
 	sparseStartupAcknowledgements.reserve(sparseStartupOffsets.size());
 	for (auto i = std::size_t(0); i != sparseStartupOffsets.size(); ++i) {
-		const auto postedAt
-			= sparseStartupWindow.startedAtSteadyNanoseconds
-			  + sparseStartupOffsets[i];
+		const auto postedAt = sparseStartupWindow.startedAtSteadyNanoseconds
+							  + sparseStartupOffsets[i];
 		const auto acknowledgedAt
 			= (i + 1 == sparseStartupOffsets.size())
 				  ? (sparseStartupWindow.startedAtSteadyNanoseconds
@@ -11270,16 +11269,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 												  switchOffsets, 100'000'000)
 		   && (blockedTail.blockedNanoseconds == 100'000'000)
 		   && (blockedTail.estimatedWorkNanoseconds == 118'000'000)
-			&& (clustered.blockedNanoseconds == 0)
-			&& (clustered.estimatedWorkNanoseconds == 0)
-			&& MainThreadWorkEstimateWithinBudget(
-				0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000},
-				100'000'000)
-			&& (sparseStartup.blockedNanoseconds == 47'368'421)
-			&& (sparseStartup.estimatedWorkNanoseconds == 65'368'421)
-			&& MainThreadWorkEstimateWithinBudget(
-				18'000'000, 225'000'000, sparseStartupTrace,
-				sparseStartupOffsets, 100'000'000)
+		   && (clustered.blockedNanoseconds == 0)
+		   && (clustered.estimatedWorkNanoseconds == 0)
+		   && MainThreadWorkEstimateWithinBudget(
+			   0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000}, 100'000'000)
+		   && (sparseStartup.blockedNanoseconds == 47'368'421)
+		   && (sparseStartup.estimatedWorkNanoseconds == 65'368'421)
+		   && MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000, sparseStartupTrace,
+			   sparseStartupOffsets, 100'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   52'107'000, 227'000'000,
 			   QString(int(slowSwitchOffsets.size()), QChar(u'R')),
@@ -11299,11 +11297,11 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   capturedWindow.trace, capturedWindow.sampleOffsetsNanoseconds,
 			   acknowledgementWindow.durationNanoseconds)
 		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
-			&& !sparseStartupCapture.capturePending
-			&& (sparseStartupCapture.trace == sparseStartupTrace)
-			&& (sparseStartupCaptureEstimate.blockedNanoseconds == 47'368'421)
-			&& (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
-				== 65'368'421)
+		   && !sparseStartupCapture.capturePending
+		   && (sparseStartupCapture.trace == sparseStartupTrace)
+		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 47'368'421)
+		   && (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
+			   == 65'368'421)
 		   && uncapturedWindow.capturePending
 		   && incompleteWindow.trace.isEmpty()
 		   && incompleteWindow.capturePending
@@ -11313,11 +11311,11 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
 												  100'000'000)
-			&& (noInWindowSamples.blockedNanoseconds == -1)
-			&& (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
-			&& !MainThreadWorkEstimateWithinBudget(
-				18'000'000, 225'000'000, u"RRR"_q,
-				{226'000'000, 227'000'000, 228'000'000}, 100'000'000)
+		   && (noInWindowSamples.blockedNanoseconds == -1)
+		   && (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000, u"RRR"_q,
+			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)
 		   && (blockedAttachMenuCallback.estimatedWorkNanoseconds > 50'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   12'000'000, 200'000'000,
@@ -11614,8 +11612,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto tabbedPanelBuildsAfterSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	result.chatSwitchComposeUiReused
-		= autocompleteDeferredUntilFocus
-		  && (autocompleteBuildsAfterFocus == 1)
+		= autocompleteDeferredUntilFocus && (autocompleteBuildsAfterFocus == 1)
 		  && autocompletePeerMatchesAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
 		  && autocompletePeerMatches
@@ -12607,19 +12604,20 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	};
 	const auto handlerCaptureSettled = [&] {
 		return !SchedulerTraceForInterval(
-			handlerInterval,
-			Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting())
-				.capturePending;
+					handlerInterval, Core::UiStallWatchdog::
+										 RecentPingAcknowledgementsForTesting())
+					.capturePending;
 	};
 	const auto handlerCaptureComplete
 		= (result.handlerNanoseconds < kMaxHandlerNanoseconds)
 		  || handlerCaptureSettled()
 		  || WaitForRegressionCondition(handlerCaptureSettled, 1000);
-	const auto handlerSchedulerSamples = handlerCaptureComplete
-		? SchedulerTraceForInterval(
-			handlerInterval,
-			Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting())
-		: SchedulerTraceWindow{.capturePending = true};
+	const auto handlerSchedulerSamples
+		= handlerCaptureComplete
+			  ? SchedulerTraceForInterval(
+					handlerInterval, Core::UiStallWatchdog::
+										 RecentPingAcknowledgementsForTesting())
+			  : SchedulerTraceWindow{.capturePending = true};
 	if (!handlerSchedulerSamples.capturePending) {
 		result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
 		result.handlerSchedulerSampleOffsetsNanoseconds
@@ -12629,7 +12627,8 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		result.handlerMainThreadCpuNanoseconds, result.handlerNanoseconds,
 		result.handlerSchedulerTrace,
 		result.handlerSchedulerSampleOffsetsNanoseconds);
-	result.handlerBlockedEstimateNanoseconds = handlerEstimate.blockedNanoseconds;
+	result.handlerBlockedEstimateNanoseconds
+		= handlerEstimate.blockedNanoseconds;
 	result.handlerEstimatedWorkNanoseconds
 		= handlerEstimate.estimatedWorkNanoseconds;
 	if (const auto chat = data.chatLoaded(firstChatId)) {
@@ -12664,14 +12663,14 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 	result.cacheWalks = Core::MacProtectedPath::CachePathWalkCountForTesting();
 #endif
-	result.passed = (result.requests == 1) && result.responseParsed
-					&& (result.processedChats == 2) && result.processedDialogs
-					&& (result.processedMessages == kMessageCount)
-					&& (result.processedDocuments == kMessageCount)
-					&& (result.cacheWalks == 2)
-					&& MainThreadEstimatedWorkWithinBudget(
-						result.handlerEstimatedWorkNanoseconds,
-						kMaxHandlerNanoseconds);
+	result.passed
+		= (result.requests == 1) && result.responseParsed
+		  && (result.processedChats == 2) && result.processedDialogs
+		  && (result.processedMessages == kMessageCount)
+		  && (result.processedDocuments == kMessageCount)
+		  && (result.cacheWalks == 2)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.handlerEstimatedWorkNanoseconds, kMaxHandlerNanoseconds);
 	return result;
 }
 
@@ -13114,17 +13113,18 @@ void RunAuthenticatedCacheSymlinkCases(
 					[&](const auto &gap) {
 						return (gap.durationNanoseconds
 								< kStartupHeartbeatGapThresholdNanoseconds)
-							|| !SchedulerTraceForInterval(gap, acknowledgements)
-									.capturePending;
+							   || !SchedulerTraceForInterval(gap,
+															 acknowledgements)
+									   .capturePending;
 					});
 			};
 			const auto startupSchedulerTraceCaptured
-				= startupHeartbeatGaps.empty()
-				  || startupSchedulerTraceSettled()
+				= startupHeartbeatGaps.empty() || startupSchedulerTraceSettled()
 				  || WaitForRegressionCondition(startupSchedulerTraceSettled,
-											1000);
+												1000);
 			if (!startupSchedulerTraceCaptured) {
-				std::fprintf(stderr,
+				std::fprintf(
+					stderr,
 					"Startup scheduler trace capture did not complete "
 					"within 1000 ms; over-budget windows use wall time.\n");
 			}
@@ -13195,8 +13195,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto schedulerSamples = SchedulerTraceForInterval(
 					gap, startupPingAcknowledgements);
 				const auto trace = schedulerSamples.capturePending
-								   ? QString()
-								   : schedulerSamples.trace;
+									   ? QString()
+									   : schedulerSamples.trace;
 				const auto sampleOffsets
 					= schedulerSamples.capturePending
 						  ? std::vector<qint64>()
@@ -13299,8 +13299,7 @@ void RunAuthenticatedCacheSymlinkCases(
 						dialogsHandler.handlerEstimatedWorkNanoseconds),
 					(dialogsHandler.handlerSchedulerTrace.isEmpty()
 						 ? "none"
-						 : dialogsHandler.handlerSchedulerTrace
-							   .toLatin1()
+						 : dialogsHandler.handlerSchedulerTrace.toLatin1()
 							   .constData()),
 					MainThreadEstimatedWorkWithinBudget(
 						dialogsHandler.handlerEstimatedWorkNanoseconds,

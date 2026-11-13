@@ -3825,12 +3825,11 @@ void History::resizeToWidth(int newWidth, bool chatWide) {
 }
 
 bool History::needsResizeFor(int newWidth, bool chatWide) const {
-	return (_width != newWidth)
-		|| (_layoutScale != style::Scale())
-		|| (_layoutDevicePixelRatio != style::DevicePixelRatio())
-		|| (_layoutPaletteVersion != style::PaletteVersion())
-		|| (_layoutChatWide != chatWide)
-		|| (_flags & Flag::PendingAllItemsResize);
+	return (_width != newWidth) || (_layoutScale != style::Scale())
+		   || (_layoutDevicePixelRatio != style::DevicePixelRatio())
+		   || (_layoutPaletteVersion != style::PaletteVersion())
+		   || (_layoutChatWide != chatWide)
+		   || (_flags & Flag::PendingAllItemsResize);
 }
 
 void History::forceFullResize() {

@@ -3416,8 +3416,8 @@ void HistoryWidget::setHistory(History *history) {
 		}
 	}
 	if (history) {
-		if (history->needsResizeFor(
-				_scroll->width(), controller()->adaptive().isChatWide())) {
+		if (history->needsResizeFor(_scroll->width(),
+									controller()->adaptive().isChatWide())) {
 			history->forceFullResize();
 		}
 		_history = history;
@@ -6894,9 +6894,7 @@ int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
 	return _tabbedPanelBuildCountForRegressionTest;
 }
 
-void HistoryWidget::clearFieldFocusForRegressionTest() {
-	_field->clearFocus();
-}
+void HistoryWidget::clearFieldFocusForRegressionTest() { _field->clearFocus(); }
 
 void HistoryWidget::focusFieldForRegressionTest() {
 	_field->setFocus(Qt::OtherFocusReason);
