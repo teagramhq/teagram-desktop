@@ -269,14 +269,27 @@ bool SameCustomServerPin(
 
 bool SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
 											 const CustomServer &right) {
-	if (left.dcId != right.dcId || left.serverSelection != right.serverSelection
-		|| left.discoveryPolicy != right.discoveryPolicy
-		|| left.discoveryOrigin != right.discoveryOrigin || !left.key
-		|| !right.key) {
-		return false;
+	return ClassifyCustomServerEndpointRefreshIdentityFailure(left, right)
+		   == CustomServerEndpointRefreshIdentityFailure::None;
+}
+
+CustomServerEndpointRefreshIdentityFailure
+ClassifyCustomServerEndpointRefreshIdentityFailure(
+	const CustomServer &original, const CustomServer &candidate) {
+	if (original.dcId != candidate.dcId) {
+		return CustomServerEndpointRefreshIdentityFailure::DcIdMismatch;
 	}
-	return left.key->getN() == right.key->getN()
-		   && left.key->getE() == right.key->getE();
+	if (original.serverSelection != candidate.serverSelection
+		|| original.discoveryPolicy != candidate.discoveryPolicy
+		|| original.discoveryOrigin != candidate.discoveryOrigin) {
+		return CustomServerEndpointRefreshIdentityFailure::SelectionMismatch;
+	}
+	if (!original.key || !candidate.key
+		|| original.key->getN() != candidate.key->getN()
+		|| original.key->getE() != candidate.key->getE()) {
+		return CustomServerEndpointRefreshIdentityFailure::KeyMismatch;
+	}
+	return CustomServerEndpointRefreshIdentityFailure::None;
 }
 
 std::optional<CustomServer> BuildCustomServerFromDiscovery(
@@ -1490,9 +1503,16 @@ bool DcOptions::refreshCustomServerEndpoint(const CustomServer &original,
 														original)) {
 			return false;
 		}
-		applyCustomServerUnlocked(candidate, true);
+		auto refreshed = _customServer;
+		refreshed.hostname = candidate.hostname;
+		refreshed.ip = candidate.ip;
+		refreshed.port = candidate.port;
+		refreshed.ipv6 = candidate.ipv6;
+		refreshed.webSocketEndpoint = candidate.webSocketEndpoint;
+		refreshed.webSocketOnly = candidate.webSocketOnly;
+		applyCustomServerUnlocked(refreshed, true);
 	}
-	_changed.fire_copy(candidate.dcId);
+	_changed.fire_copy(original.dcId);
 	return true;
 }
 

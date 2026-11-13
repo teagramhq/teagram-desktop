@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/openssl_help.h"
 #include "mtproto/mtproto_custom_server_input.h"
 #include "mtproto/mtproto_dc_options.h"
+#include "mtproto/mtproto_server_discovery.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/Qt>
@@ -17,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeyEvent>
 #include <QtNetwork/QHostAddress>
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -414,13 +416,85 @@ bool CommitServerEndpointRefresh(const CustomServer &original,
 }
 
 bool CanRefreshServerEndpoint(
-	const ServerEndpointRefreshEligibility &eligibility) {
-	return eligibility.restoredSession && eligibility.hasPinnedServer
+	const ServerEndpointRefreshEligibility &eligibility,
+	const CustomServer &pin) {
+	const auto selection
+		= CheckServerSelection(QString::fromStdString(pin.serverSelection));
+	const auto origin = QString::fromStdString(pin.discoveryOrigin);
+	const auto validOrigin
+		= selection.valid() && selection.policy == pin.discoveryPolicy
+		  && selection.normalizedSelection.toStdString() == pin.serverSelection
+		  && ((selection.policy == ServerDiscoveryPolicy::PublicHttps
+			   && IsPublicDiscoveryOrigin(selection, origin))
+			  || (selection.policy == ServerDiscoveryPolicy::LocalDirect
+				  && origin == (u"local:"_q + selection.normalizedSelection)));
+	return eligibility.restoredSession && bool(pin.key)
 		   && eligibility.pinAuthorized && eligibility.canResume
-		   && !eligibility.cacheBindingMismatch
-		   && eligibility.validDiscoveryOrigin && eligibility.hasStoredAuthKey
-		   && !eligibility.identityFailure;
+		   && !eligibility.cacheBindingMismatch && validOrigin
+		   && eligibility.hasStoredAuthKey && !eligibility.identityFailure;
 }
+
+int ServerEndpointRefreshRetryDelayMs(int failures) {
+	const auto exponent = std::clamp(failures, 0, 8);
+	return std::min(300000, 1000 * (1 << exponent));
+}
+
+bool ShouldScheduleServerEndpointRefreshRetry(bool eligible, bool timerActive) {
+	return eligible && !timerActive;
+}
+
+bool ServerEndpointRefreshTransaction::begin(
+	const ServerEndpointRefreshEligibility &eligibility,
+	const CustomServer &original) {
+	reset();
+	if (!CanRefreshServerEndpoint(eligibility, original)) {
+		return false;
+	}
+	_state.emplace(State{.original = original});
+	return true;
+}
+
+CustomServerEndpointRefreshIdentityFailure
+ServerEndpointRefreshTransaction::setCandidate(const CustomServer &candidate) {
+	Expects(_state.has_value());
+	const auto failure = ClassifyCustomServerEndpointRefreshIdentityFailure(
+		_state->original, candidate);
+	if (failure == CustomServerEndpointRefreshIdentityFailure::None) {
+		_state->candidate = candidate;
+	}
+	return failure;
+}
+
+bool ServerEndpointRefreshTransaction::hasOriginal() const {
+	return _state.has_value();
+}
+
+bool ServerEndpointRefreshTransaction::hasCandidate() const {
+	return _state && _state->candidate.has_value();
+}
+
+const CustomServer &ServerEndpointRefreshTransaction::original() const {
+	Expects(hasOriginal());
+	return _state->original;
+}
+
+const CustomServer &ServerEndpointRefreshTransaction::candidate() const {
+	Expects(hasCandidate());
+	return *_state->candidate;
+}
+
+bool ServerEndpointRefreshTransaction::commit(
+	bool authenticatedProof, const std::function<bool()> &setPin,
+	const std::function<bool()> &persistPin,
+	const std::function<void()> &resume,
+	const std::function<void()> &rollbackPin) const {
+	return hasCandidate()
+		   && CommitServerEndpointRefresh(original(), candidate(),
+										  authenticatedProof, setPin,
+										  persistPin, resume, rollbackPin);
+}
+
+void ServerEndpointRefreshTransaction::reset() { _state.reset(); }
 
 void ReinitializeMainDcAfterServerReplacement(
 	const ServerReplacementState &state,

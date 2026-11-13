@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_dc_options.h"
+#include "mtproto/mtproto_server_enrollment.h"
 #include "mtproto/mtp_instance.h"
 #include "base/weak_ptr.h"
 
@@ -190,6 +191,8 @@ private:
 	[[nodiscard]] bool authorizationStateMatchesCurrentPin(
 		const std::optional<MTP::CustomServer> &pin) const;
 	void resetAuthorizationKeys();
+	[[nodiscard]] MTP::ServerEndpointRefreshEligibility
+	serverEndpointRefreshEligibility(const MTP::CustomServer &pin) const;
 	[[nodiscard]] bool canRefreshServerEndpoint() const;
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
 	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
@@ -230,8 +233,7 @@ private:
 	MTP::AuthKeysList _mtpKeysToDestroy;
 	std::optional<MTP::CustomServer> _mtpKeysToDestroyPin;
 	std::optional<MTP::CustomServer> _mtpForKeysDestroyPin;
-	std::optional<MTP::CustomServer> _endpointRefreshOriginal;
-	std::optional<MTP::CustomServer> _endpointRefreshCandidate;
+	MTP::ServerEndpointRefreshTransaction _endpointRefresh;
 	bool _loggingOut = false;
 	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;

@@ -709,18 +709,30 @@ UnitEndpointRefreshProofResult UnitVerifyEndpointAndResumeRequestsForTest(
 		  && details::SessionPrivateTestAccess::ReceivedCount(*verifierData)
 				 == 1;
 	auto requestResumed = false;
+	auto requestCompleted = false;
 	const auto refreshCommitted = commit(proofAccepted, [&] {
 		UnitBlockedServerEnrollmentInstance = nullptr;
 		queuedSession->tryToSend();
-		requestResumed = !log->sent.empty()
-						 && details::SessionPrivateTestAccess::SentMessageId(
-								*queuedSession, kQueuedRequestId)
-								!= 0;
+		const auto queuedMessageId
+			= details::SessionPrivateTestAccess::SentMessageId(
+				*queuedSession, kQueuedRequestId);
+		requestResumed = queuedMessageId != 0;
+		if (requestResumed) {
+			details::SessionPrivateTestAccess::Receive(
+				*queuedSession,
+				::MakeAuthenticatedServerPacket(
+					sessionKey, kSessionSalt, kSessionId, ::ServerMessageId(),
+					::MakeUsernameCheckReply(queuedMessageId)));
+			requestCompleted
+				= details::SessionPrivateTestAccess::ReceivedCount(*queuedData)
+				  == 1;
+		}
 	});
 	return {
 		.requestWasPausedBeforeProof = requestWasPausedBeforeProof,
 		.proofAccepted = proofAccepted,
 		.requestResumed = requestResumed,
+		.requestCompleted = requestCompleted,
 		.refreshCommitted = refreshCommitted,
 	};
 }

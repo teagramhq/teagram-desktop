@@ -323,6 +323,12 @@ DiscoverMovedEndpoint() {
 	if (!listener.listen(QHostAddress::LocalHost)) {
 		return std::nullopt;
 	}
+	QTcpServer staleEndpoint;
+	if (!staleEndpoint.listen(QHostAddress::LocalHost)) {
+		return std::nullopt;
+	}
+	const auto stalePort = staleEndpoint.serverPort();
+	staleEndpoint.close();
 	const auto selection = MTP::CheckServerSelection(
 		u"127.0.0.1:"_q + QString::number(listener.serverPort()));
 	if (!selection.valid()) {
@@ -364,26 +370,26 @@ DiscoverMovedEndpoint() {
 			}
 		}
 	});
-	const auto started
-		= discovery.start(selection, origin,
-						  {
-							  .finished =
-								  [&](MTP::ServerDiscoveryResult value) {
-									  result = std::move(value);
-									  completed = true;
-									  loop.quit();
-								  },
-							  .failed =
-								  [&](bool) {
-									  failed = true;
-									  loop.quit();
-								  },
-						  });
+	const auto started = discovery.start(
+		selection, origin,
+		{
+			.finished =
+				[&](MTP::ServerDiscoveryResult value) {
+					result = std::move(value);
+					completed = true;
+					loop.quit();
+				},
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure) {
+					failed = true;
+					loop.quit();
+				},
+		});
 	if (!started) {
 		return std::nullopt;
 	}
 	QTcpSocket oldEndpoint;
-	oldEndpoint.connectToHost(QHostAddress("127.0.0.2"), listener.serverPort());
+	oldEndpoint.connectToHost(QHostAddress::LocalHost, stalePort);
 	const auto oldEndpointUnreachable = !oldEndpoint.waitForConnected(100);
 	if (!completed && !failed) {
 		timeout.start(5000);
@@ -425,6 +431,31 @@ TEST_CASE(ServerForgetStartupLoadsPinnedStateWithoutForgetMarker) {
 	CHECK_EQ(events[1], 2);
 	CHECK_EQ(events[2], 4);
 	CHECK_EQ(events[3], 5);
+}
+
+TEST_CASE(EndpointRefreshDiscoveryReportsNamedRefusal) {
+	Intro::details::ServerEndpointRefreshDiscovery discovery;
+	auto failure
+		= std::optional<Intro::details::ServerEndpointRefreshFailure>();
+	const auto started = discovery.start(
+		MTP::CheckServerSelection(QString()), QString(),
+		{
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure value) {
+					failure = value;
+				},
+		});
+	CHECK(!started);
+	CHECK(failure.has_value());
+	if (failure) {
+		CHECK(failure->status
+			  == Intro::details::ServerEndpointRefreshFailureStatus::
+				  InvalidSelection);
+		CHECK_EQ(QString::fromLatin1(
+					 Intro::details::ServerEndpointRefreshFailureName(
+						 failure->status)),
+				 u"invalid selection"_q);
+	}
 }
 
 TEST_CASE(ServerForgetStartupCompletesTombstoneBeforeLoadingConfig) {
@@ -683,6 +714,12 @@ TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
 	const auto original = MakeEndpointRefreshPin("100.124.236.66");
 	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
 	candidate.dcId = 3;
+	auto options = DcOptions(Environment::Production);
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(
+		ClassifyCustomServerEndpointRefreshIdentityFailure(original, candidate)
+		== CustomServerEndpointRefreshIdentityFailure::DcIdMismatch);
 	auto changed = false;
 	const auto committed = CommitServerEndpointRefresh(
 		original, candidate, true,
@@ -694,6 +731,22 @@ TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
 
 	CHECK(!committed);
 	CHECK(!changed);
+	CHECK(SameCustomServerPin(options.customServer(), original));
+	auto eligibility = ServerEndpointRefreshEligibility{
+		.restoredSession = true,
+		.pinAuthorized = true,
+		.canResume = true,
+		.hasStoredAuthKey = true,
+	};
+	auto transaction = ServerEndpointRefreshTransaction();
+	CHECK(transaction.begin(eligibility, original));
+	CHECK(transaction.setCandidate(candidate)
+		  == CustomServerEndpointRefreshIdentityFailure::DcIdMismatch);
+	CHECK(!transaction.hasCandidate());
+	eligibility.identityFailure = true;
+	CHECK(!CanRefreshServerEndpoint(eligibility, original));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(
+		CanRefreshServerEndpoint(eligibility, original), false));
 }
 
 TEST_CASE(EndpointRefreshRejectsKeyMismatchBeforeStaging) {
@@ -713,6 +766,9 @@ TEST_CASE(EndpointRefreshRejectsKeyMismatchBeforeStaging) {
 
 	CHECK(!committed);
 	CHECK(!staged);
+	CHECK(
+		ClassifyCustomServerEndpointRefreshIdentityFailure(original, candidate)
+		== CustomServerEndpointRefreshIdentityFailure::KeyMismatch);
 }
 
 TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
@@ -754,6 +810,9 @@ TEST_CASE(EndpointRefreshPreservesAuthorizationForSameServerIdentity) {
 												  candidate));
 	CHECK(options.isAuthorized(original.dcId));
 	CHECK(!SameCustomServerPin(options.customServer(), original));
+	CHECK_EQ(options.customServer().serverSelection, original.serverSelection);
+	CHECK_EQ(options.customServer().discoveryOrigin, original.discoveryOrigin);
+	CHECK(options.customServer().discoveryPolicy == original.discoveryPolicy);
 }
 
 TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
@@ -762,14 +821,14 @@ TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
 	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
 	CHECK(options.setCustomServer(original));
 	CHECK(options.markAuthorized(original.dcId));
-	CHECK(CanRefreshServerEndpoint({
-		.restoredSession = true,
-		.hasPinnedServer = true,
-		.pinAuthorized = true,
-		.canResume = true,
-		.validDiscoveryOrigin = true,
-		.hasStoredAuthKey = true,
-	}));
+	CHECK(CanRefreshServerEndpoint(
+		{
+			.restoredSession = true,
+			.pinAuthorized = true,
+			.canResume = true,
+			.hasStoredAuthKey = true,
+		},
+		original));
 	auto requestsPaused = true;
 	const auto committed = CommitServerEndpointRefresh(
 		original, candidate, true,
@@ -852,26 +911,19 @@ TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
 
 	const auto selection = MTP::CheckServerSelection(
 		QString::fromStdString(restoredPin.serverSelection));
-	const auto validOrigin
-		= selection.valid() && selection.policy == restoredPin.discoveryPolicy
-		  && selection.normalizedSelection.toStdString()
-				 == restoredPin.serverSelection
-		  && restoredPin.discoveryOrigin
-				 == (u"local:"_q + selection.normalizedSelection).toStdString();
 	const auto eligibility = MTP::ServerEndpointRefreshEligibility{
 		.restoredSession
 		= Main::details::ShouldRestoreStoredSession(true, true),
-		.hasPinnedServer = bool(restoredPin.key),
 		.pinAuthorized
 		= restoredConfigShared->dcOptions().isAuthorized(restoredPin.dcId),
 		.canResume
 		= MTP::CanResumeServerEnrollment(restoredConfigShared->dcOptions()),
-		.validDiscoveryOrigin = validOrigin,
 		.hasStoredAuthKey
 		= restoredAuthKey->type() == MTP::AuthKey::Type::ReadFromFile
 		  && restoredAuthKey->dcId() == restoredPin.dcId,
 	};
-	CHECK(MTP::CanRefreshServerEndpoint(eligibility));
+	auto transaction = MTP::ServerEndpointRefreshTransaction();
+	CHECK(transaction.begin(eligibility, restoredPin));
 
 	const auto candidate = MTP::BuildCustomServerFromDiscovery(
 		discovery->selection, discovery->result, discovery->origin);
@@ -879,6 +931,8 @@ TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
 	if (!candidate) {
 		return;
 	}
+	CHECK(transaction.setCandidate(*candidate)
+		  == MTP::CustomServerEndpointRefreshIdentityFailure::None);
 	CHECK_EQ(candidate->ip, "127.0.0.1");
 	CHECK(
 		MTP::SameCustomServerEndpointRefreshIdentity(restoredPin, *candidate));
@@ -895,12 +949,13 @@ TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
 			restoredAuthKey, responseKey,
 			[&](bool authenticatedProof,
 				const std::function<void()> &resumeQueuedRequests) {
-				return MTP::CommitServerEndpointRefresh(
-					restoredPin, *candidate, authenticatedProof,
+				return transaction.commit(
+					authenticatedProof,
 					[&] {
 						pinChanged = restoredConfigShared->dcOptions()
 										 .refreshCustomServerEndpoint(
-											 restoredPin, *candidate);
+											 transaction.original(),
+											 transaction.candidate());
 						return pinChanged;
 					},
 					[&] {
@@ -912,6 +967,12 @@ TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
 						CHECK(configPersisted);
 						requestsResumed = gate.resume().resumed;
 						resumeQueuedRequests();
+					},
+					[&] {
+						static_cast<void>(restoredConfigShared->dcOptions()
+											  .refreshCustomServerEndpoint(
+												  transaction.candidate(),
+												  transaction.original()));
 					});
 			});
 	};
@@ -931,6 +992,7 @@ TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
 	CHECK(committed.requestWasPausedBeforeProof);
 	CHECK(committed.proofAccepted);
 	CHECK(committed.requestResumed);
+	CHECK(committed.requestCompleted);
 	CHECK(committed.refreshCommitted);
 	CHECK(pinChanged);
 	CHECK(configPersisted);
@@ -976,35 +1038,67 @@ TEST_CASE(EndpointWithoutAuthKeyProofKeepsOriginalPin) {
 TEST_CASE(EndpointRefreshRequiresRestoredAuthorizedBoundSession) {
 	const auto ready = ServerEndpointRefreshEligibility{
 		.restoredSession = true,
-		.hasPinnedServer = true,
 		.pinAuthorized = true,
 		.canResume = true,
-		.validDiscoveryOrigin = true,
 		.hasStoredAuthKey = true,
 	};
-	CHECK(CanRefreshServerEndpoint(ready));
+	auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(CanRefreshServerEndpoint(ready, pin));
 
 	auto state = ready;
 	state.restoredSession = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	CHECK(!CanRefreshServerEndpoint(state, pin));
 	state = ready;
-	state.hasPinnedServer = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	const auto unpinned = CustomServer{};
+	CHECK(!CanRefreshServerEndpoint(state, unpinned));
 	state = ready;
 	state.pinAuthorized = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	CHECK(!CanRefreshServerEndpoint(state, pin));
 	state = ready;
 	state.canResume = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	CHECK(!CanRefreshServerEndpoint(state, pin));
 	state = ready;
 	state.cacheBindingMismatch = true;
-	CHECK(!CanRefreshServerEndpoint(state));
+	CHECK(!CanRefreshServerEndpoint(state, pin));
 	state = ready;
-	state.validDiscoveryOrigin = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	auto badOrigin = pin;
+	badOrigin.discoveryOrigin
+		= "https://attacker.example/.well-known/teagramd/client";
+	CHECK(!CanRefreshServerEndpoint(state, badOrigin));
 	state = ready;
 	state.hasStoredAuthKey = false;
-	CHECK(!CanRefreshServerEndpoint(state));
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+}
+
+TEST_CASE(EndpointRefreshRetryUsesBoundedBackoff) {
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(0), 1000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(1), 2000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(2), 4000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(8), 256000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(12), 256000);
+	CHECK(ShouldScheduleServerEndpointRefreshRetry(true, false));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(true, true));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(false, false));
+}
+
+TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {
+	auto options = DcOptions(Environment::Production);
+	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(options.setCustomServer(pin));
+	const auto changedDc = CheckEndpointVerificationConfig(
+		false, false, true, pin.dcId + 1, {pin.dcId + 1}, pin);
+	CHECK(!changedDc.authenticated);
+	CHECK(changedDc.failure
+		  && *changedDc.failure == PinnedServerFailure::DcIdMismatch);
+	CHECK(SameCustomServerPin(options.customServer(), pin));
+
+	const auto missingAdvertisement = CheckEndpointVerificationConfig(
+		false, false, true, pin.dcId, {pin.dcId + 1}, pin);
+	CHECK(!missingAdvertisement.authenticated);
+	CHECK(missingAdvertisement.failure
+		  && *missingAdvertisement.failure
+				 == PinnedServerFailure::DcIdMismatch);
+	CHECK(SameCustomServerPin(options.customServer(), pin));
 }
 
 TEST_CASE(RefusedServerReplacementPersistsAdvertisedDcBeforeResume) {

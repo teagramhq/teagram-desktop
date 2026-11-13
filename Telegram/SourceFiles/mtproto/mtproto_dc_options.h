@@ -47,6 +47,17 @@ struct CustomServer {
 	}
 };
 
+enum class CustomServerEndpointRefreshIdentityFailure {
+	None,
+	DcIdMismatch,
+	SelectionMismatch,
+	KeyMismatch,
+};
+
+[[nodiscard]] CustomServerEndpointRefreshIdentityFailure
+ClassifyCustomServerEndpointRefreshIdentityFailure(
+	const CustomServer &original, const CustomServer &candidate);
+
 [[nodiscard]] bool
 SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
 										const CustomServer &right);

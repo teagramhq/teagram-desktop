@@ -789,6 +789,37 @@ void ServerWidgetDiscovery::stopSocket() {
 	closeNativeSocket();
 }
 
+const char *
+ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status) {
+	switch (status) {
+	case ServerEndpointRefreshFailureStatus::InvalidSelection:
+		return "invalid selection";
+	case ServerEndpointRefreshFailureStatus::InvalidOrigin:
+		return "invalid discovery origin";
+	case ServerEndpointRefreshFailureStatus::DiscoveryBusy:
+		return "discovery concurrency limit";
+	case ServerEndpointRefreshFailureStatus::ResponseTooLarge:
+		return "response too large";
+	case ServerEndpointRefreshFailureStatus::TlsFailure:
+		return "TLS failure";
+	case ServerEndpointRefreshFailureStatus::Redirect:
+		return "redirect refused";
+	case ServerEndpointRefreshFailureStatus::NetworkFailure:
+		return "network failure";
+	case ServerEndpointRefreshFailureStatus::HttpFailure:
+		return "HTTP status or content type refused";
+	case ServerEndpointRefreshFailureStatus::InvalidResponse:
+		return "discovery response invalid";
+	case ServerEndpointRefreshFailureStatus::UnsafeEndpoint:
+		return "discovery endpoint refused";
+	case ServerEndpointRefreshFailureStatus::DnsFailure:
+		return "DNS resolution failed";
+	case ServerEndpointRefreshFailureStatus::Timeout:
+		return "discovery timed out";
+	}
+	Unexpected("ServerEndpointRefreshFailureStatus value.");
+}
+
 ServerEndpointRefreshDiscovery::ServerEndpointRefreshDiscovery(QObject *parent)
 	: QObject(parent), _localDiscovery(new ServerWidgetDiscovery(this)),
 	  _deadline(new QTimer(this)) {
@@ -809,7 +840,7 @@ bool ServerEndpointRefreshDiscovery::start(
 	if (!selection.valid()
 		|| (selection.policy != MTP::ServerDiscoveryPolicy::PublicHttps
 			&& selection.policy != MTP::ServerDiscoveryPolicy::LocalDirect)) {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::InvalidSelection);
 		return false;
 	}
 	const auto expectedLocalOrigin
@@ -818,12 +849,12 @@ bool ServerEndpointRefreshDiscovery::start(
 		 && !MTP::IsPublicDiscoveryOrigin(selection, origin))
 		|| (selection.policy == MTP::ServerDiscoveryPolicy::LocalDirect
 			&& origin != expectedLocalOrigin)) {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::InvalidOrigin);
 		return false;
 	}
 	_attemptToken = MTP::ServerDiscoveryAttempt::Acquire();
 	if (!_attemptToken) {
-		fail(true);
+		fail(ServerEndpointRefreshFailureStatus::DiscoveryBusy);
 		return false;
 	}
 	++_attempt;
@@ -863,29 +894,31 @@ void ServerEndpointRefreshDiscovery::beginPublicDiscovery() {
 		for (const auto &header : reply->rawHeaderPairs()) {
 			headerSize += header.first.size() + header.second.size() + 4;
 			if (headerSize > kMaxDiscoveryHeaders) {
-				fail(false);
+				fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
 				return;
 			}
 		}
 		const auto contentLength
 			= reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
 		if (contentLength > kMaxDiscoveryBody) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
 			return;
 		}
 		_publicResponse += reply->readAll();
 		if (_publicResponse.size() > kMaxDiscoveryBody) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
 		}
 	});
 	connect(reply, &QNetworkReply::sslErrors, this, [=](const auto &) {
 		if (_running && _reply == reply) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::TlsFailure);
 		}
 	});
 	connect(reply, &QNetworkReply::redirected, this, [=](const QUrl &) {
 		if (_running && _reply == reply) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::Redirect,
+				 reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+					 .toInt());
 		}
 	});
 	connect(reply, &QNetworkReply::finished, this, [=] {
@@ -912,13 +945,13 @@ void ServerEndpointRefreshDiscovery::beginLocalDiscovery() {
 			_hostLookupId = -1;
 			if (info.error() != QHostInfo::NoError
 				|| info.addresses().isEmpty()) {
-				fail(true);
+				fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 				return;
 			}
 			startLocalDiscovery(info.addresses());
 		});
 	if (_hostLookupId < 0) {
-		fail(true);
+		fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 	}
 }
 
@@ -935,7 +968,12 @@ void ServerEndpointRefreshDiscovery::startLocalDiscovery(
 							   .failed =
 								   [=](bool connectionFailure) {
 									   if (_running) {
-										   fail(connectionFailure);
+										   fail(
+											   connectionFailure
+												   ? ServerEndpointRefreshFailureStatus::
+														 NetworkFailure
+												   : ServerEndpointRefreshFailureStatus::
+														 InvalidResponse);
 									   }
 								   },
 						   });
@@ -944,8 +982,13 @@ void ServerEndpointRefreshDiscovery::startLocalDiscovery(
 void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 	const auto reply = std::exchange(_reply, nullptr);
 	if (reply->error() != QNetworkReply::NoError) {
+		const auto status
+			= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+				  .toInt();
 		reply->deleteLater();
-		fail(true);
+		fail(status ? ServerEndpointRefreshFailureStatus::HttpFailure
+					: ServerEndpointRefreshFailureStatus::NetworkFailure,
+			 status);
 		return;
 	}
 	auto headerSize = 0;
@@ -953,7 +996,7 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 		headerSize += header.first.size() + header.second.size() + 4;
 		if (headerSize > kMaxDiscoveryHeaders) {
 			reply->deleteLater();
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
 			return;
 		}
 	}
@@ -966,17 +1009,20 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 	_publicResponse += reply->readAll();
 	const auto contentEncoding = reply->rawHeader("Content-Encoding");
 	reply->deleteLater();
+	if (_publicResponse.size() > kMaxDiscoveryBody) {
+		fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge, status);
+		return;
+	}
 	if (status != 200
 		|| contentType.compare(u"application/json"_q, Qt::CaseInsensitive) != 0
-		|| !contentEncoding.isEmpty()
-		|| _publicResponse.size() > kMaxDiscoveryBody) {
-		fail(false);
+		|| !contentEncoding.isEmpty()) {
+		fail(ServerEndpointRefreshFailureStatus::HttpFailure, status);
 		return;
 	}
 	const auto result = MTP::ParsePublicDiscoveryResponse(_selection, _origin,
 														  _publicResponse);
 	if (!result) {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::InvalidResponse);
 		return;
 	}
 	resolvePublicEndpoint(result);
@@ -989,14 +1035,14 @@ void ServerEndpointRefreshDiscovery::resolvePublicEndpoint(
 		if (result.webSocketOnly) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 		}
 		return;
 	}
 	auto address = QHostAddress();
 	if (address.setAddress(endpoint.host)) {
 		if (!MTP::IsPublicDiscoveryAddress(_selection, address)) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 			return;
 		}
 		result.resolvedAddress = address.toString();
@@ -1015,7 +1061,7 @@ void ServerEndpointRefreshDiscovery::resolvePublicEndpoint(
 		if (result.webSocketOnly) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
-			fail(true);
+			fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 		}
 	}
 }
@@ -1028,7 +1074,7 @@ void ServerEndpointRefreshDiscovery::publicEndpointResolved(
 			== PublicDiscoveryAddressResolution::NeedsWebSocket) {
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
-			fail(true);
+			fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 		}
 		return;
 	}
@@ -1040,7 +1086,7 @@ void ServerEndpointRefreshDiscovery::publicEndpointResolved(
 	} else if (resolution == PublicDiscoveryAddressResolution::NeedsWebSocket) {
 		resolvePublicWebSocketEndpoint(std::move(result));
 	} else {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 	}
 }
 
@@ -1051,7 +1097,7 @@ void ServerEndpointRefreshDiscovery::resolvePublicWebSocketEndpoint(
 	if (!result.webSocketOnly
 		|| result.policy != MTP::ServerDiscoveryPolicy::PublicHttps
 		|| !normalized || *normalized != result.webSocketEndpoint) {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 		return;
 	}
 	const auto url = QUrl(result.webSocketEndpoint, QUrl::StrictMode);
@@ -1061,7 +1107,7 @@ void ServerEndpointRefreshDiscovery::resolvePublicWebSocketEndpoint(
 				_selection, result, PublicDiscoveryAddressRole::WebSocket,
 				{address})
 			!= PublicDiscoveryAddressResolution::Resolved) {
-			fail(false);
+			fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 			return;
 		}
 		finish(std::move(result));
@@ -1076,14 +1122,14 @@ void ServerEndpointRefreshDiscovery::resolvePublicWebSocketEndpoint(
 			  }
 		  });
 	if (_hostLookupId < 0) {
-		fail(true);
+		fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 	}
 }
 
 void ServerEndpointRefreshDiscovery::publicWebSocketEndpointResolved(
 	MTP::ServerDiscoveryResult result, const QHostInfo &info) {
 	if (info.error() != QHostInfo::NoError) {
-		fail(true);
+		fail(ServerEndpointRefreshFailureStatus::DnsFailure);
 		return;
 	}
 	if (ResolvePublicDiscoveryAddresses(_selection, result,
@@ -1092,7 +1138,7 @@ void ServerEndpointRefreshDiscovery::publicWebSocketEndpointResolved(
 		== PublicDiscoveryAddressResolution::Resolved) {
 		finish(std::move(result));
 	} else {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::UnsafeEndpoint);
 	}
 }
 
@@ -1105,20 +1151,26 @@ void ServerEndpointRefreshDiscovery::discoveryTimeout() {
 		_deadline->start(kEndpointRefreshTimeout);
 		return;
 	}
-	fail(true);
+	fail(ServerEndpointRefreshFailureStatus::Timeout);
 }
 
-void ServerEndpointRefreshDiscovery::fail(bool connectionFailure) {
+void ServerEndpointRefreshDiscovery::fail(
+	ServerEndpointRefreshFailureStatus status, int httpStatusCode) {
 	if (!_running) {
 		return;
 	}
 	_running = false;
 	stop();
 	_attemptToken.reset();
+	LOG(("MTP Error: server endpoint discovery at %1 failed: %2%3.")
+			.arg(_origin)
+			.arg(ServerEndpointRefreshFailureName(status))
+			.arg(httpStatusCode ? (u" (HTTP %1)"_q.arg(httpStatusCode))
+								: QString()));
 	auto callback = std::move(_callbacks.failed);
 	_callbacks = {};
 	if (callback) {
-		callback(connectionFailure);
+		callback({.status = status, .httpStatusCode = httpStatusCode});
 	}
 }
 
@@ -1127,7 +1179,7 @@ void ServerEndpointRefreshDiscovery::finish(MTP::ServerDiscoveryResult result) {
 		return;
 	}
 	if (!result) {
-		fail(false);
+		fail(ServerEndpointRefreshFailureStatus::InvalidResponse);
 		return;
 	}
 	_running = false;

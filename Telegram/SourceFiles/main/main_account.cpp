@@ -160,8 +160,12 @@ Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
 	QObject::connect(
 		_serverEndpointRefreshRetryTimer.get(), &QTimer::timeout,
 		[=] { requestServerEndpointRefresh(_serverEndpointRefreshDcId); });
-	QObject::connect(_serverEndpointVerificationTimer.get(), &QTimer::timeout,
-					 [=] { serverEndpointVerificationFinished(false); });
+	QObject::connect(
+		_serverEndpointVerificationTimer.get(), &QTimer::timeout, [=] {
+			LOG(("MTP Error: endpoint verification timed out for dc %1.")
+					.arg(_serverEndpointRefreshDcId));
+			serverEndpointVerificationFinished(false);
+		});
 }
 
 Account::~Account() {
@@ -899,10 +903,11 @@ bool Account::startMtp(
 			if (state == MTP::ConnectedState) {
 				_serverEndpointRefreshFailures = 0;
 				_serverEndpointRefreshIdentityFailure = false;
-				_serverEndpointRefreshRetryTimer->stop();
-				if (_serverEndpointRefreshDiscovery) {
-					_serverEndpointRefreshDiscovery->cancel();
-					_endpointRefreshOriginal.reset();
+				const auto resumePausedRequests
+					= _endpointRefresh.hasCandidate();
+				cancelServerEndpointRefresh();
+				if (resumePausedRequests) {
+					_mtp->resume();
 				}
 			}
 			Core::App().settings().proxy().connectionTypeChangesNotify();
@@ -1162,56 +1167,53 @@ void Account::handleLoginCode(const QString &code) const {
 	}
 }
 
-bool Account::canRefreshServerEndpoint() const {
+MTP::ServerEndpointRefreshEligibility
+Account::serverEndpointRefreshEligibility(const MTP::CustomServer &pin) const {
 	if (!sessionExists() || !_mtp) {
-		return false;
+		return {};
 	}
 	const auto &options = _mtp->dcOptions();
-	const auto pin = options.customServer();
-	const auto selection = MTP::CheckServerSelection(
-		QString::fromStdString(pin.serverSelection));
-	const auto validSelection
-		= selection.valid() && selection.policy == pin.discoveryPolicy
-		  && selection.normalizedSelection.toStdString() == pin.serverSelection;
-	const auto storedOrigin = QString::fromStdString(pin.discoveryOrigin);
-	const auto validOrigin
-		= validSelection
-		  && (selection.policy == MTP::ServerDiscoveryPolicy::PublicHttps
-				  ? MTP::IsPublicDiscoveryOrigin(selection, storedOrigin)
-				  : storedOrigin
-						== (u"local:"_q + selection.normalizedSelection));
 	const auto keys = _mtp->getKeysForWrite();
 	const auto hasStoredAuthKey
 		= ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
 			  return key && key->dcId() == pin.dcId
 					 && key->type() == MTP::AuthKey::Type::ReadFromFile;
 		  });
-	return MTP::CanRefreshServerEndpoint({
+	return {
 		.restoredSession = _restoredSession,
-		.hasPinnedServer = bool(pin.key),
 		.pinAuthorized = pin.key && options.isAuthorized(pin.dcId),
 		.canResume = MTP::CanResumeServerEnrollment(options),
 		.cacheBindingMismatch = _serverCacheBindingMismatchPending,
-		.validDiscoveryOrigin = validOrigin,
 		.hasStoredAuthKey = hasStoredAuthKey,
 		.identityFailure = _serverEndpointRefreshIdentityFailure,
-	});
+	};
+}
+
+bool Account::canRefreshServerEndpoint() const {
+	if (!sessionExists() || !_mtp) {
+		return false;
+	}
+	const auto pin = _mtp->dcOptions().customServer();
+	return MTP::CanRefreshServerEndpoint(serverEndpointRefreshEligibility(pin),
+										 pin);
 }
 
 void Account::requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId) {
-	if (!canRefreshServerEndpoint()
+	if (!_mtp
 		|| MTP::BareDcId(shiftedDcId) != _mtp->dcOptions().customServer().dcId
 		|| _serverEndpointRefreshRetryTimer->isActive()
 		|| (_serverEndpointRefreshDiscovery
 			&& _serverEndpointRefreshDiscovery->running())
-		|| _mtpForEndpointVerification) {
+		|| _endpointRefresh.hasOriginal() || _mtpForEndpointVerification) {
 		return;
 	}
 	_serverEndpointRefreshDcId = shiftedDcId;
 	const auto pin = _mtp->dcOptions().customServer();
+	if (!_endpointRefresh.begin(serverEndpointRefreshEligibility(pin), pin)) {
+		return;
+	}
 	const auto selection = MTP::CheckServerSelection(
 		QString::fromStdString(pin.serverSelection));
-	_endpointRefreshOriginal = pin;
 	if (!_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery = std::make_unique<
 			Intro::details::ServerEndpointRefreshDiscovery>();
@@ -1224,31 +1226,44 @@ void Account::requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId) {
 					serverEndpointRefreshDiscovered(std::move(result));
 				},
 			.failed =
-				[=](bool) {
-					_endpointRefreshOriginal.reset();
+				[=](Intro::details::ServerEndpointRefreshFailure failure) {
+					const auto statusCode
+						= failure.httpStatusCode
+							  ? QString::number(failure.httpStatusCode)
+							  : u"n/a"_q;
+					LOG(("MTP Error: server endpoint discovery at %1 for dc %2 "
+						 "failed: %3, HTTP status %4.")
+							.arg(QString::fromStdString(pin.discoveryOrigin))
+							.arg(pin.dcId)
+							.arg(Intro::details::
+									 ServerEndpointRefreshFailureName(
+										 failure.status))
+							.arg(statusCode));
+					_endpointRefresh.reset();
 					++_serverEndpointRefreshFailures;
 					scheduleServerEndpointRefreshRetry();
 				},
 		});
-	if (!started && _endpointRefreshOriginal) {
-		_endpointRefreshOriginal.reset();
+	if (!started && _endpointRefresh) {
+		_endpointRefresh.reset();
 	}
 }
 
 void Account::serverEndpointRefreshDiscovered(
 	MTP::ServerDiscoveryResult result) {
-	if (!canRefreshServerEndpoint() || !_endpointRefreshOriginal || !_mtp) {
+	if (!canRefreshServerEndpoint() || !_endpointRefresh.hasOriginal()
+		|| !_mtp) {
 		if (_serverEndpointRefreshDiscovery) {
 			_serverEndpointRefreshDiscovery->cancel();
 		}
-		_endpointRefreshOriginal.reset();
+		_endpointRefresh.reset();
 		return;
 	}
-	const auto original = *_endpointRefreshOriginal;
+	const auto original = _endpointRefresh.original();
 	const auto current = _mtp->dcOptions().customServer();
 	if (!MTP::SameCustomServerPin(original, current)) {
 		_serverEndpointRefreshDiscovery->cancel();
-		_endpointRefreshOriginal.reset();
+		_endpointRefresh.reset();
 		return;
 	}
 	const auto selection = MTP::CheckServerSelection(
@@ -1256,27 +1271,40 @@ void Account::serverEndpointRefreshDiscovered(
 	const auto candidate = MTP::BuildCustomServerFromDiscovery(
 		selection, result, QString::fromStdString(original.discoveryOrigin));
 	if (!candidate) {
+		LOG(("MTP Error: server endpoint discovery returned an unusable "
+			 "endpoint for dc %1.")
+				.arg(original.dcId));
 		_serverEndpointRefreshDiscovery->cancel();
-		_endpointRefreshOriginal.reset();
+		_endpointRefresh.reset();
 		++_serverEndpointRefreshFailures;
 		scheduleServerEndpointRefreshRetry();
 		return;
 	}
-	if (!MTP::SameCustomServerEndpointRefreshIdentity(original, *candidate)) {
-		if (candidate->dcId != original.dcId) {
+	const auto identityFailure = _endpointRefresh.setCandidate(*candidate);
+	if (identityFailure
+		!= MTP::CustomServerEndpointRefreshIdentityFailure::None) {
+		if (identityFailure
+			== MTP::CustomServerEndpointRefreshIdentityFailure::DcIdMismatch) {
+			LOG(("MTP Error: endpoint refresh discovery changed dc id %1 to "
+				 "%2.")
+					.arg(original.dcId)
+					.arg(candidate->dcId));
 			_serverEndpointRefreshIdentityFailure = true;
 			_mtp->onPinnedServerFailure(original.dcId,
 										MTP::PinnedServerFailure::DcIdMismatch);
-		} else if (!candidate->key || !original.key
-				   || candidate->key->getN() != original.key->getN()
-				   || candidate->key->getE() != original.key->getE()) {
+		} else if (identityFailure
+				   == MTP::CustomServerEndpointRefreshIdentityFailure::
+					   KeyMismatch) {
+			LOG(("MTP Error: endpoint refresh discovery returned a different "
+				 "key for dc %1.")
+					.arg(original.dcId));
 			_serverEndpointRefreshIdentityFailure = true;
 			_mtp->onPinnedServerFailure(
 				original.dcId, MTP::PinnedServerFailure::KeyMismatch,
 				candidate->key ? candidate->key->fingerprint() : 0);
 		}
 		_serverEndpointRefreshDiscovery->cancel();
-		_endpointRefreshOriginal.reset();
+		_endpointRefresh.reset();
 		if (!_serverEndpointRefreshIdentityFailure) {
 			++_serverEndpointRefreshFailures;
 			scheduleServerEndpointRefreshRetry();
@@ -1293,22 +1321,24 @@ void Account::serverEndpointRefreshDiscovered(
 		return MTP::AuthKeyPtr();
 	}();
 	if (!key) {
+		LOG(("MTP Error: endpoint refresh has no stored auth key for dc %1.")
+				.arg(original.dcId));
 		_serverEndpointRefreshDiscovery->cancel();
-		_endpointRefreshOriginal.reset();
+		_endpointRefresh.reset();
 		return;
 	}
-	_endpointRefreshCandidate = *candidate;
-	_mtp->stopForServerEnrollment();
+	_mtp->pauseForServerEndpointRefresh();
 
 	auto fields = MTP::Instance::Fields();
 	fields.mainDcId = original.dcId;
 	fields.config = std::make_unique<MTP::Config>(_mtp->config());
 	if (!fields.config->dcOptions().refreshCustomServerEndpoint(original,
 																*candidate)) {
+		LOG(("MTP Error: could not stage the refreshed endpoint for dc %1.")
+				.arg(original.dcId));
 		_serverEndpointRefreshDiscovery->cancel();
 		_mtp->resume();
-		_endpointRefreshOriginal.reset();
-		_endpointRefreshCandidate.reset();
+		_endpointRefresh.reset();
 		++_serverEndpointRefreshFailures;
 		scheduleServerEndpointRefreshRetry();
 		return;
@@ -1351,24 +1381,39 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	if (_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery->cancel();
 	}
-	if (!_endpointRefreshOriginal || !_endpointRefreshCandidate || !_mtp) {
+	if (!_endpointRefresh.hasCandidate() || !_mtp) {
 		_mtpForEndpointVerification = nullptr;
 		return;
 	}
 	auto verifier = std::move(_mtpForEndpointVerification);
 	Expects(verifier != nullptr);
-	const auto original = *_endpointRefreshOriginal;
-	const auto candidate = *_endpointRefreshCandidate;
+	const auto original = _endpointRefresh.original();
+	const auto candidate = _endpointRefresh.candidate();
 	const auto current = _mtp->dcOptions().customServer();
 	auto committed = false;
 	if (authenticated && MTP::SameCustomServerPin(original, current)) {
-		const auto committedRefresh = MTP::CommitServerEndpointRefresh(
-			original, candidate, authenticated,
+		const auto committedRefresh = _endpointRefresh.commit(
+			authenticated,
 			[&] {
-				return _mtp->dcOptions().refreshCustomServerEndpoint(original,
-																	 candidate);
+				const auto refreshed
+					= _mtp->dcOptions().refreshCustomServerEndpoint(original,
+																	candidate);
+				if (!refreshed) {
+					LOG(("MTP Error: could not update the active endpoint for "
+						 "dc %1.")
+							.arg(original.dcId));
+				}
+				return refreshed;
 			},
-			[&] { return local().writeMtpConfig(true); },
+			[&] {
+				const auto persisted = local().writeMtpConfig(true);
+				if (!persisted) {
+					LOG(("MTP Error: could not persist the refreshed endpoint "
+						 "for dc %1.")
+							.arg(original.dcId));
+				}
+				return persisted;
+			},
 			[&] {
 				if (_mtpKeysToDestroyPin
 					&& MTP::SameCustomServerPin(*_mtpKeysToDestroyPin,
@@ -1378,13 +1423,23 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 				_mtp->resume();
 			},
 			[&] {
-				static_cast<void>(_mtp->dcOptions().refreshCustomServerEndpoint(
-					candidate, original));
+				if (!_mtp->dcOptions().refreshCustomServerEndpoint(candidate,
+																   original)) {
+					LOG(("MTP Error: could not roll back the unpersisted "
+						 "endpoint for dc %1.")
+							.arg(original.dcId));
+				}
 			});
 		committed = committedRefresh;
+	} else if (!authenticated) {
+		LOG(("MTP Error: refreshed endpoint failed auth-key proof for dc %1.")
+				.arg(_endpointRefresh.original().dcId));
+	} else {
+		LOG(("MTP Error: pin changed before endpoint verification committed "
+			 "for dc %1.")
+				.arg(original.dcId));
 	}
-	_endpointRefreshOriginal.reset();
-	_endpointRefreshCandidate.reset();
+	_endpointRefresh.reset();
 	if (committed) {
 		_serverEndpointRefreshFailures = 0;
 		_serverEndpointRefreshRetryTimer->stop();
@@ -1400,13 +1455,13 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 }
 
 void Account::scheduleServerEndpointRefreshRetry() {
-	if (!canRefreshServerEndpoint()
-		|| _serverEndpointRefreshRetryTimer->isActive()) {
+	if (!MTP::ShouldScheduleServerEndpointRefreshRetry(
+			canRefreshServerEndpoint(),
+			_serverEndpointRefreshRetryTimer->isActive())) {
 		return;
 	}
-	const auto exponent = std::min(_serverEndpointRefreshFailures, 8);
-	const auto delay = std::min(300000, 1000 * (1 << exponent));
-	_serverEndpointRefreshRetryTimer->start(delay);
+	_serverEndpointRefreshRetryTimer->start(
+		MTP::ServerEndpointRefreshRetryDelayMs(_serverEndpointRefreshFailures));
 }
 
 void Account::cancelServerEndpointRefresh() {
@@ -1416,8 +1471,7 @@ void Account::cancelServerEndpointRefresh() {
 	_serverEndpointRefreshRetryTimer->stop();
 	_serverEndpointVerificationTimer->stop();
 	_mtpForEndpointVerification = nullptr;
-	_endpointRefreshOriginal.reset();
-	_endpointRefreshCandidate.reset();
+	_endpointRefresh.reset();
 }
 
 void Account::resetAuthorizationKeys() {

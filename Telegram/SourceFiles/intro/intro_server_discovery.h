@@ -51,6 +51,29 @@ enum class PublicDiscoveryAddressResolution {
 	Resolved,
 };
 
+enum class ServerEndpointRefreshFailureStatus {
+	InvalidSelection,
+	InvalidOrigin,
+	DiscoveryBusy,
+	ResponseTooLarge,
+	TlsFailure,
+	Redirect,
+	NetworkFailure,
+	HttpFailure,
+	InvalidResponse,
+	UnsafeEndpoint,
+	DnsFailure,
+	Timeout,
+};
+
+struct ServerEndpointRefreshFailure {
+	ServerEndpointRefreshFailureStatus status;
+	int httpStatusCode = 0;
+};
+
+[[nodiscard]] const char *
+ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status);
+
 [[nodiscard]] PublicDiscoveryAddressResolution
 ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
 								MTP::ServerDiscoveryResult &result,
@@ -163,7 +186,7 @@ class ServerEndpointRefreshDiscovery final : public QObject {
   public:
 	struct Callbacks {
 		std::function<void(MTP::ServerDiscoveryResult)> finished;
-		std::function<void(bool)> failed;
+		std::function<void(ServerEndpointRefreshFailure)> failed;
 	};
 
 	explicit ServerEndpointRefreshDiscovery(QObject *parent = nullptr);
@@ -186,7 +209,8 @@ class ServerEndpointRefreshDiscovery final : public QObject {
 	void publicWebSocketEndpointResolved(MTP::ServerDiscoveryResult result,
 										 const QHostInfo &info);
 	void discoveryTimeout();
-	void fail(bool connectionFailure);
+	void fail(ServerEndpointRefreshFailureStatus status,
+			  int httpStatusCode = 0);
 	void finish(MTP::ServerDiscoveryResult result);
 	void stop();
 

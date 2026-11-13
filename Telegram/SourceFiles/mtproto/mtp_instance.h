@@ -14,7 +14,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <atomic>
 #include <map>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include <QtCore/QMutex>
 #include <QtCore/QObject>
@@ -70,6 +72,15 @@ struct PinnedServerFailureReport {
 			&& (a.dialledAddress == b.dialledAddress);
 	}
 };
+
+struct EndpointVerificationConfigResult {
+	bool authenticated = false;
+	std::optional<PinnedServerFailure> failure;
+};
+
+[[nodiscard]] EndpointVerificationConfigResult CheckEndpointVerificationConfig(
+	bool responseTestMode, bool expectedTestMode, bool hasMainDcId, DcId thisDc,
+	const std::vector<DcId> &advertisedDcIds, const CustomServer &pin);
 
 [[nodiscard]] inline PinnedServerFailureReport MakePinnedServerFailureReport(
 		ShiftedDcId shiftedDcId,
@@ -383,6 +394,7 @@ public:
 	// A subsequent setCustomServer() followed by resume() lets the sessions
 	// try the newly confirmed endpoint again.
 	void stopForServerEnrollment();
+	void pauseForServerEndpointRefresh();
 	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	void restart(ShiftedDcId shiftedDcId);
 	int32 dcstate(ShiftedDcId shiftedDcId = 0);

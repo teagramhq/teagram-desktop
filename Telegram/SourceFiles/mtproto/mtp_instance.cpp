@@ -60,6 +60,20 @@ int GetNextRequestId() {
 
 } // namespace details
 
+EndpointVerificationConfigResult CheckEndpointVerificationConfig(
+	bool responseTestMode, bool expectedTestMode, bool hasMainDcId, DcId thisDc,
+	const std::vector<DcId> &advertisedDcIds, const CustomServer &pin) {
+	const auto matchingMode = responseTestMode == expectedTestMode;
+	auto failure = std::optional<PinnedServerFailure>();
+	if (matchingMode && hasMainDcId) {
+		failure = CheckPinnedServerConfig(thisDc, advertisedDcIds, pin);
+	}
+	return {
+		.authenticated = matchingMode && !failure.has_value(),
+		.failure = failure,
+	};
+}
+
 class Instance::Private : private Sender {
 public:
 	Private(
@@ -122,6 +136,8 @@ public:
 	void restart();
 	void restart(ShiftedDcId shiftedDcId);
 	void stopForServerEnrollment();
+	void pauseForServerEndpointRefresh();
+	void pauseForServerEnrollment(bool preserveAcceptedRequests);
 	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	[[nodiscard]] uint64 serverEnrollmentStopToken() const;
 	[[nodiscard]] bool isServerEnrollmentStopTokenCurrent(
@@ -458,11 +474,21 @@ void Instance::Private::resume() {
 			for (const auto &[shiftedDcId, session] : _sessions) {
 				session->resumeAfterServerEnrollment();
 			}
+			checkDelayedRequests();
 			requestConfig();
 		});
 }
 
 void Instance::Private::stopForServerEnrollment() {
+	pauseForServerEnrollment(false);
+}
+
+void Instance::Private::pauseForServerEndpointRefresh() {
+	pauseForServerEnrollment(true);
+}
+
+void Instance::Private::pauseForServerEnrollment(
+	bool preserveAcceptedRequests) {
 	if (!_serverEnrollmentGate.pause()) {
 		return;
 	}
@@ -473,32 +499,30 @@ void Instance::Private::stopForServerEnrollment() {
 	_configLoader.reset();
 	_domainResolver.reset();
 	_httpUnixtimeLoader.reset();
-
-	// The credential steps own their Sender instances, but cancel any
-	// account-level requests as well. Otherwise a request that was waiting
-	// for a connection could be replayed when the corrected pin resumes.
-	auto requestIds = std::vector<mtpRequestId>();
-	{
-		QMutexLocker lock(&_requestByDcLock);
-		requestIds.reserve(_requestsByDc.size());
-		for (const auto &request : _requestsByDc) {
-			requestIds.push_back(request.first);
+	if (!preserveAcceptedRequests) {
+		auto requestIds = std::vector<mtpRequestId>();
+		{
+			QMutexLocker lock(&_requestByDcLock);
+			requestIds.reserve(_requestsByDc.size());
+			for (const auto &request : _requestsByDc) {
+				requestIds.push_back(request.first);
+			}
 		}
+		for (const auto requestId : requestIds) {
+			request(requestId).cancel();
+			cancel(requestId);
+		}
+		_delayedRequests.clear();
+		{
+			QMutexLocker lock(&_dependentRequestsLock);
+			_dependentRequests.clear();
+		}
+		_requestsDelays.clear();
+		_badGuestDcRequests.clear();
+		_authWaiters.clear();
+		_authExportRequests.clear();
+		_logoutGuestRequestIds.clear();
 	}
-	for (const auto requestId : requestIds) {
-		request(requestId).cancel();
-		cancel(requestId);
-	}
-	_delayedRequests.clear();
-	{
-		QMutexLocker lock(&_dependentRequestsLock);
-		_dependentRequests.clear();
-	}
-	_requestsDelays.clear();
-	_badGuestDcRequests.clear();
-	_authWaiters.clear();
-	_authExportRequests.clear();
-	_logoutGuestRequestIds.clear();
 	for (const auto &entry : _sessions) {
 		entry.second->stopUntilPinChange();
 	}
@@ -1154,27 +1178,23 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 
 	const auto &data = result.c_config();
 	if (isEndpointVerifier()) {
-		const auto matchingMode
-			= mtpIsTrue(data.vtest_mode()) == _config->dcOptions().isTestMode();
-		auto failure = std::optional<PinnedServerFailure>();
-		if (matchingMode && hasMainDcId()) {
-			auto advertised = std::vector<int>();
-			advertised.reserve(data.vdc_options().v.size());
-			for (const auto &option : data.vdc_options().v) {
-				if (option.type() == mtpc_dcOption) {
-					advertised.push_back(option.c_dcOption().vid().v);
-				}
+		const auto hasMain = hasMainDcId();
+		auto advertised = std::vector<DcId>();
+		advertised.reserve(data.vdc_options().v.size());
+		for (const auto &option : data.vdc_options().v) {
+			if (option.type() == mtpc_dcOption) {
+				advertised.push_back(option.c_dcOption().vid().v);
 			}
-			failure
-				= CheckPinnedServerConfig(data.vthis_dc().v, advertised,
-										  _config->dcOptions().customServer());
 		}
-		if (failure) {
-			onPinnedServerFailure(mainDcId(), *failure);
+		const auto verification = CheckEndpointVerificationConfig(
+			mtpIsTrue(data.vtest_mode()), _config->dcOptions().isTestMode(),
+			hasMain, hasMain ? mainDcId() : DcId(0), advertised,
+			_config->dcOptions().customServer());
+		if (verification.failure) {
+			onPinnedServerFailure(mainDcId(), *verification.failure);
 		}
 		stopForServerEnrollment();
-		_endpointVerificationResult.fire_copy(matchingMode
-											  && !failure.has_value());
+		_endpointVerificationResult.fire_copy(verification.authenticated);
 		return;
 	}
 	_config->apply(data);
@@ -2367,6 +2387,10 @@ bool Instance::isServerEnrollmentStopTokenCurrent(uint64 token) const {
 
 void Instance::stopForServerEnrollment() {
 	_private->stopForServerEnrollment();
+}
+
+void Instance::pauseForServerEndpointRefresh() {
+	_private->pauseForServerEndpointRefresh();
 }
 
 void Instance::requestServerEndpointRefresh(ShiftedDcId shiftedDcId) {

@@ -17,6 +17,7 @@ struct UnitEndpointRefreshProofResult {
 	bool requestWasPausedBeforeProof = false;
 	bool proofAccepted = false;
 	bool requestResumed = false;
+	bool requestCompleted = false;
 	bool refreshCommitted = false;
 };
 
