@@ -20,10 +20,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QResource>
 #include <QtGui/QAccessible>
 #include <QtGui/QClipboard>
+#include <QtGui/QFontMetrics>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
 
+#include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -95,6 +97,26 @@ class UsernameInputFixture final {
 };
 
 } // namespace
+
+TEST_CASE(UsernameFontCachedWidthsMatchShapedMetrics) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = st::defaultInputField.style.font;
+	CHECK(bool(font));
+	if (!font) {
+		return;
+	}
+
+	const auto &metrics = font->metrics();
+	CHECK_EQ(font->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(font->elidew, int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {
 	const auto application
