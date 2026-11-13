@@ -184,21 +184,23 @@ def make_runner_harness(root, history=None):
                 sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
+            ratio_counts = set(os.environ.get("MOCK_DOCKER_RATIO_COUNTS", "").split(","))
             outcome = os.environ.get("MOCK_DOCKER_OUTCOME", "PASS")
             one = "13.00" if str(count) in slow_counts else "10.00"
+            hundred = "16.00" if str(count) in ratio_counts else "12.00"
             dialogs_stalls = "1" if str(count) in stall_counts else "0"
             print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
             | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
             | --- | ---: | ---: | ---: | --- | --- |
-            | messages.getDialogs page (100 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | messages.getDialogs page (100 dialogs) | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             | contacts.getContacts full response | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-            | contact change + name lookup | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | contact change + name lookup | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             | cache read x100 | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | private history page (1M messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | jump to date in 1M-message history | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | group media page (200K messages; 20 / 2,000 loaded) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
             | messages.searchGlobal page (100 hits; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
-            | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | 12.00 ms | 1.20x | 50 ms | calibrating |
+            | updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | {one} ms | {hundred} ms | 1.20x | 50 ms | calibrating |
             Directory enumerations per thumbnail cache access: 1x=0/100, 100x=0/100.
             Main-thread steps over 50 ms: dialogs 1x={dialogs_stalls}, 100x=0; contacts.getContacts 1x=0, 100x=0; contact change and lookup 1x=0, 100x=0; thumbnail reads 1x=0, 100x=0; private history 1x=0, 100x=0; jump to date 1x=0, 100x=0; group media 1x=0, 100x=0; search 1x=0, 100x=0; update burst 1x=0, 100x=0; total={dialogs_stalls}.
             Scenario checks: dialogs=1/1 state=1 contacts=1/1 contact change=1/1 cache=1/1.
@@ -1175,6 +1177,36 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     )
                 )
 
+    def test_calibrating_pair_median_suppresses_one_ratio_outlier(self):
+        self.require_implementation()
+        scenarios = (
+            "messages.getDialogs page (100 dialogs)",
+            "contact change + name lookup",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                head = [make_sample(), make_sample()]
+                for sample, hundred_ms in zip(head, (15.1, 12.9)):
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": hundred_ms}
+                    )
+
+                result = scale_check.evaluate(
+                    history,
+                    [make_sample(), make_sample()],
+                    head,
+                    report_only=True,
+                    enforce_calibration_ratio=True,
+                )
+
+                self.assertAlmostEqual(result["rows"][scenario]["ratio"], 1.4)
+                self.assertFalse(
+                    any(scenario in failure for failure in result["failures"])
+                )
+
     def test_calibrating_single_sample_is_not_ratio_gated_without_pr_flag(self):
         self.require_implementation()
         history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
@@ -1242,7 +1274,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             summary,
         )
 
-    def test_uncalibrated_pr_uses_two_interleaved_pairs_for_ratio_gate(self):
+    def test_uncalibrated_pr_uses_two_head_samples_for_ratio_gate(self):
         self.require_implementation()
         runner = (
             Path(__file__).parents[2]
@@ -1266,17 +1298,15 @@ class DesktopScaleCheckTests(unittest.TestCase):
             summary = (root / "step-summary.md").read_text()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(
             [line.split()[1] for line in calls],
             [
-                "/desktop-scale/Teagram",
                 "/usr/src/tdesktop/out/Debug/Teagram",
-                "/desktop-scale/Teagram",
                 "/usr/src/tdesktop/out/Debug/Teagram",
             ],
         )
-        self.assertEqual(fetch_calls, ["fetch", "fetch-binary"])
+        self.assertEqual(fetch_calls, ["fetch"])
         self.assertIn("--enforce-calibration-ratio", evaluate_calls[0])
         self.assertIn(
             "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | "
@@ -1284,6 +1314,40 @@ class DesktopScaleCheckTests(unittest.TestCase):
             "1.20x (n=2; range 1.20–1.20x) |",
             summary,
         )
+
+    def test_uncalibrated_pr_retries_with_a_third_head_sample_only(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_RATIO_COUNTS"] = "1,2"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(
+            all(
+                line.split()[1] == "/usr/src/tdesktop/out/Debug/Teagram"
+                for line in calls
+            )
+        )
+        self.assertEqual(fetch_calls, ["fetch"])
+        self.assertIn("1.60x (n=3; range 1.20–1.60x)", summary)
 
     def test_contact_load_ceiling_applies_during_and_after_calibration(self):
         self.require_implementation()
@@ -1818,7 +1882,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertFalse(sample_path.exists())
-        self.assertIn("base-1 failed with status 2", summary)
+        self.assertIn("head-1 failed with status 2", summary)
 
     def test_binary_fetch_timeout_names_budget_and_rerun_action(self):
         self.require_implementation()
@@ -1954,7 +2018,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
-        self.assertIn("Desktop scale run base-1 exited with status 1", result.stdout)
+        self.assertIn("Desktop scale run head-1 exited with status 1", result.stdout)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
         self.assertNotIn("Could not parse the report", result.stdout)
 
@@ -2049,7 +2113,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             summary = (root / "step-summary.md").read_text()
 
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
-        self.assertIn("base-1 failed with status 42", summary)
+        self.assertIn("head-1 failed with status 42", summary)
         self.assertNotIn("unknown", summary)
         self.assertNotIn("did not emit its report", result.stdout)
 
@@ -2072,7 +2136,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
         self.assertIn("budget was exhausted", result.stdout)
-        self.assertIn("base-1 failed with status 124", summary)
+        self.assertIn("head-1 failed with status 124", summary)
         self.assertFalse((root / "docker-calls.txt").exists())
 
         with tempfile.TemporaryDirectory() as directory:
@@ -2092,7 +2156,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
         self.assertIn("exit 124", result.stdout)
-        self.assertIn("base-1 failed with status 124", summary)
+        self.assertIn("head-1 failed with status 124", summary)
         self.assertFalse((root / "evaluate-calls.txt").exists())
 
     def test_unexpected_cli_error_prints_a_traceback(self):

@@ -50,8 +50,9 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 		if [[ "$scale_history_truncated" == 'true' ]]; then
 			scale_history_args+=(--history-truncated)
 		fi
-		# PR ratio checks use two pairs before the dev timing baseline calibrates.
-		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+		# PR timing comparisons need the base binary after history calibrates.
+		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+			&& "$scale_baseline_count" -ge 20 ]]; then
 			binary_fetch_started=$SECONDS
 			set +e
 			timeout "${binary_fetch_budget_seconds}s" python3 "$scale_script" fetch-binary \
@@ -69,13 +70,13 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 				else
 					printf '::error::PR base Teagram artifact fetch failed with status %s; ' \
 						"$binary_fetch_status"
-					printf 'the two-pair ratio check requires the base binary.\n'
+					printf 'the calibrated timing check requires the base binary.\n'
 				fi
 				cat >> "$GITHUB_STEP_SUMMARY" <<EOF
 ### Desktop data scale check
 
 No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status.
-The two-pair ratio check requires the base binary.
+The calibrated timing check requires the base binary.
 EOF
 				exit "$binary_fetch_status"
 			fi
@@ -363,7 +364,55 @@ if [[ "$GITHUB_REF" == 'refs/heads/dev' ]]; then
 	exit "${evaluation_status:-2}"
 fi
 
-if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+	&& "$scale_baseline_count" -lt 20 ]]; then
+	base_sample_paths=()
+	head_sample_paths=()
+	for sample in 1 2; do
+		if run_and_require_success "head-$sample" head; then
+			:
+		else
+			status=$?
+			exit "$status"
+		fi
+	done
+	head_sample_paths=(
+		"$RUNNER_TEMP/desktop-scale-head-1.json"
+		"$RUNNER_TEMP/desktop-scale-head-2.json"
+	)
+	if evaluate_samples; then
+		evaluation_status=0
+	else
+		evaluation_status=$?
+	fi
+	evaluation_step='initial calibration ratio evaluation'
+	if (( evaluation_status == 1 )); then
+		echo 'Calibration ratio threshold crossed; adding one head sample before judging the result.'
+		if run_and_require_success head-3 head; then
+			:
+		else
+			status=$?
+			exit "$status"
+		fi
+		head_sample_paths+=("$RUNNER_TEMP/desktop-scale-head-3.json")
+		retry_note='The initial two-head-sample ratio median crossed a 1.5x cap. One additional head sample was added, and the result uses all three head ratios.'
+		if evaluate_samples "$retry_note"; then
+			evaluation_status=0
+		else
+			evaluation_status=$?
+		fi
+		evaluation_step='calibration ratio retry evaluation'
+	fi
+	if (( evaluation_status == 0 || evaluation_status == 1 )); then
+		append_summary
+	else
+		append_summary "$evaluation_step" "$evaluation_status"
+	fi
+	exit "$evaluation_status"
+fi
+
+if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
+	&& "$scale_baseline_count" -ge 20 ]]; then
 	for pair in 1 2; do
 		if run_interleaved_pair "$pair"; then
 			:
