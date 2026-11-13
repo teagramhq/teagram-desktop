@@ -329,6 +329,8 @@ public:
 	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
 	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
 	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
+	[[nodiscard]] bool
+	fieldAutocompleteSuggestionsReadyForRegressionTest() const;
 	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;
 	void clearFieldFocusForRegressionTest();
 	void focusFieldForRegressionTest();

@@ -1920,6 +1920,7 @@ void HistoryWidget::initFieldAutocomplete() {
 				context);
 		},
 	});
+	_autocomplete->setBoundings(_scroll->geometry());
 	const auto allow = [=](const auto &) { return _peer && _peer->isSelf(); };
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		this,
@@ -6888,6 +6889,12 @@ int HistoryWidget::fieldAutocompleteBuildCountForRegressionTest() const {
 
 PeerData *HistoryWidget::fieldAutocompletePeerForRegressionTest() const {
 	return _autocomplete ? _autocomplete->currentPeer() : nullptr;
+}
+
+bool HistoryWidget::fieldAutocompleteSuggestionsReadyForRegressionTest() const {
+	return _autocomplete && !_autocomplete->isHidden()
+		   && (_autocomplete->width() == _scroll->width())
+		   && (_autocomplete->width() > 0) && (_autocomplete->height() > 0);
 }
 
 int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {

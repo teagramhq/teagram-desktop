@@ -11475,6 +11475,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuBuildDeferredUntilHover = false;
 	bool attachMenuCacheBounded = false;
 	bool pendingRevealStartedAfterControlsGeometry = false;
+	bool fieldAutocompleteSuggestionsReady = false;
 	bool attachMenuUncachedPeersReady = false;
 	bool chatSwitchWorkWithinBudget = false;
 	bool chatSwitchSchedulerPreemptionProven = false;
@@ -11621,6 +11622,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto autocompletePeerMatchesAfterFocus
 		= (historyWidget->fieldAutocompletePeerForRegressionTest()
 		   == firstHistory->peer.get());
+	historyWidget->setDraftTextForRegressionTest(u"@"_q);
+	QCoreApplication::processEvents();
+	result.fieldAutocompleteSuggestionsReady
+		= historyWidget->fieldAutocompleteSuggestionsReadyForRegressionTest();
 	const auto tabbedPanelBuildsBeforeSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	showPeerHistoryMeasured(secondHistory);
@@ -12454,6 +12459,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
+		  && result.fieldAutocompleteSuggestionsReady
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
@@ -13428,6 +13434,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_cache_bound=%d "
 					"pending_reveal_after_controls_geometry=%d "
 					"chat_switch_compose_ui_reused=%d "
+					"field_autocomplete_suggestions_ready=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
@@ -13491,6 +13498,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuCacheBounded,
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.chatSwitchComposeUiReused,
+					chatSwitch.fieldAutocompleteSuggestionsReady,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
