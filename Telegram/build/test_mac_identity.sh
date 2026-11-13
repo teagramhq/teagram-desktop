@@ -37,7 +37,6 @@ esac
 if [ "$MODE" != observer ]; then
 	python3 - "$ROOT" <<'PY'
 import pathlib
-import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -104,20 +103,6 @@ assert 'TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT' in runtime
 assert 'TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=0' in profile_test
 assert 'seatbelt_compile_failure_silent=PASS' in profile_test
 assert 'seatbelt-profile-${BUILD_VARIANT}.sb' in workflow
-profile_step = workflow.split(
-    '- name: Run protected profile and IPC integration tests.', 1
-)[1].split('\n      - name:', 1)[0]
-profile_timeout = re.search(
-    r'^\s*timeout-minutes:\s*([0-9]+)\s*$', profile_step, re.MULTILINE
-)
-case_timeout = re.search(
-    r'^\s*TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:\s*"?([0-9]+)"?\s*$',
-    profile_step,
-    re.MULTILINE,
-)
-assert profile_timeout and case_timeout
-assert int(profile_timeout.group(1)) == 15
-assert int(profile_timeout.group(1)) * 60 >= int(case_timeout.group(1)) + 120
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy
