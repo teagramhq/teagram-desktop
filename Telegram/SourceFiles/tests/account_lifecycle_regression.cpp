@@ -14795,14 +14795,6 @@ SumDesktopScaleStalls(std::initializer_list<std::optional<quint64>> counts) {
 static_assert(!SumDesktopScaleStalls({std::nullopt,
 									  std::optional<quint64>(0)}));
 
-[[nodiscard]] constexpr bool
-DesktopScaleContactChangeWithinBudget(qint64 one, qint64 hundred) {
-	return (one > 0) && (double(hundred) <= 1.5 * double(one));
-}
-
-static_assert(DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'000));
-static_assert(!DesktopScaleContactChangeWithinBudget(1'000'000, 1'500'001));
-
 struct DesktopScaleActionSample {
 	std::optional<qint64> nanoseconds;
 	std::optional<quint64> mainThreadStepsOverBudget;
@@ -14888,20 +14880,20 @@ template <typename Request, typename Action>
 }
 
 [[nodiscard]] bool
-DesktopScaleDialogsMeetBudget(const DesktopScaleActionSample &one,
-							  const DesktopScaleActionSample &hundred) {
+DesktopScaleDialogsWithinAbsoluteBudget(const DesktopScaleActionSample &one,
+										   const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
 		   && (*hundred.nanoseconds <= 50'000'000)
-		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
 		   && hundred.mainThreadStepsOverBudget
 		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
 [[nodiscard]] bool
-DesktopScaleUpdateBurstMeetsBudget(const DesktopScaleActionSample &one,
-								   const DesktopScaleActionSample &hundred) {
+DesktopScaleUpdateBurstMeasurementsValid(
+	const DesktopScaleActionSample &one,
+	const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
-		   && (double(*hundred.nanoseconds) <= double(*one.nanoseconds) * 1.5)
+		   && (*hundred.nanoseconds > 0)
 		   && one.mainThreadStepsOverBudget
 		   && (*one.mainThreadStepsOverBudget == 0)
 		   && hundred.mainThreadStepsOverBudget
@@ -17764,12 +17756,6 @@ int RunDesktopScaleCheck() {
 	const auto contactResponseWithinBudget
 		= contactsHundred.loaded.nanoseconds
 		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
-	const auto contactChangeLookupScales
-		= contactsOne.changedAndFound.nanoseconds
-		  && contactsHundred.changedAndFound.nanoseconds
-		  && DesktopScaleContactChangeWithinBudget(
-			  *contactsOne.changedAndFound.nanoseconds,
-			  *contactsHundred.changedAndFound.nanoseconds);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
@@ -17871,7 +17857,8 @@ int RunDesktopScaleCheck() {
 	const auto passed
 		= dialogsOneCreated && dialogsOne.passed && dialogsHundredCreated
 		  && dialogsHundred.passed
-		  && DesktopScaleDialogsMeetBudget(dialogsOne, dialogsHundred)
+		  && DesktopScaleDialogsWithinAbsoluteBudget(
+			dialogsOne, dialogsHundred)
 		  && dialogsState && contactsOne.loaded.passed
 		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed
@@ -17882,10 +17869,10 @@ int RunDesktopScaleCheck() {
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed
-		  && DesktopScaleUpdateBurstMeetsBudget(searchOne.updateBurst,
-												searchHundred.updateBurst)
+		  && DesktopScaleUpdateBurstMeasurementsValid(
+			searchOne.updateBurst, searchHundred.updateBurst)
 		  && blockingStalls && (*blockingStalls == 0)
-		  && contactResponseWithinBudget && contactChangeLookupScales
+		  && contactResponseWithinBudget
 		  && (cacheOne.directoryEnumerations == 0)
 		  && (cacheHundred.directoryEnumerations == 0)
 		  && (groupOne.directoryEnumerations == 0)
@@ -17915,9 +17902,6 @@ int RunDesktopScaleCheck() {
 			 searchOne.updateBurst, searchHundred.updateBurst);
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
-	std::printf("Contact change + name lookup budget (<=1.50x, update + "
-				"1,000 short searches): %s\n",
-				contactChangeLookupScales ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
 				addParticipantsIndexLifecycle ? "PASS" : "FAIL");
 	const auto printEnumerations = [](const std::optional<quint64> &sample) {

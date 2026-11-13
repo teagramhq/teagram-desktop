@@ -320,7 +320,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
-                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    f"12.00 ms → 12.00 ms | "
+                    f"1.20x (n=2; range 1.20–1.20x) | {budget} | "
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )
@@ -355,7 +356,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertIn(
             "| private history page (1M messages; 20 / 2,000 loaded) | "
-            "n/a → 10.00 ms | n/a → 12.00 ms | 1.20x | "
+            "n/a → 10.00 ms | n/a → 12.00 ms | "
+            "1.20x (n=2; range 1.20–1.20x) | "
             "50 ms main-thread step | calibrating: 0/20 |",
             summary,
         )
@@ -1019,6 +1021,57 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertFalse(passes["failures"])
         self.assertTrue(any("cache read x100" in failure for failure in fails["failures"]))
 
+    def test_scale_ratio_uses_sample_median_and_reports_spread(self):
+        self.require_implementation()
+        scenario = "contact change + name lookup"
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample() for _ in range(3)]
+        head = [make_sample() for _ in range(3)]
+        head[0]["scenarios"][scenario].update(
+            {"one_ms": 2.11, "hundred_ms": 3.19}
+        )
+
+        result = scale_check.evaluate(history, base, head)
+        row = result["rows"][scenario]
+        summary = scale_check.format_summary(result, head[-1])
+
+        self.assertFalse(result["failures"])
+        self.assertEqual(row["ratio"], 1.2)
+        self.assertEqual(row["ratio_sample_count"], 3)
+        self.assertEqual(row["ratio_min"], 1.2)
+        self.assertAlmostEqual(row["ratio_max"], 3.19 / 2.11)
+        self.assertIn(
+            "| contact change + name lookup | 10.00 ms → 10.00 ms | "
+            "12.00 ms → 12.00 ms | 1.20x (n=3; range 1.20–1.51x) |",
+            summary,
+        )
+
+    def test_scale_ratio_self_test_passes_no_change_and_fails_at_twofold(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        base = [make_sample() for _ in range(3)]
+        unchanged = [make_sample() for _ in range(3)]
+        unchanged_result = scale_check.evaluate(history, base, unchanged)
+        self.assertFalse(unchanged_result["failures"])
+
+        for scenario in scale_check.SCENARIOS:
+            if scenario in scale_check.RATIO_EXEMPT_SCENARIOS:
+                continue
+            with self.subTest(scenario=scenario):
+                doubled = [make_sample() for _ in range(3)]
+                for sample in doubled:
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": 20.0}
+                    )
+                doubled_result = scale_check.evaluate(history, base, doubled)
+
+                self.assertTrue(
+                    any(
+                        scenario in failure and "1.5x" in failure
+                        for failure in doubled_result["failures"]
+                    )
+                )
+
     def test_three_sigma_noise_term_can_allow_a_two_point_five_ms_increase(self):
         self.require_implementation()
         records = []
@@ -1208,7 +1261,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertNotIn(scenario, result["exceptions"])
         self.assertTrue(any(scenario in failure for failure in result["failures"]))
         self.assertTrue(
-            any("100x takes" in failure for failure in result["failures"])
+            any("median 100x/1x ratio" in failure for failure in result["failures"])
         )
 
     def test_new_scenarios_defer_ratio_gate_until_their_baseline_calibrates(self):
@@ -1241,7 +1294,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertIn(
             "| private history page (1M messages; 20 / 2,000 loaded) | "
-            "n/a → 10.00 ms | n/a → 16.00 ms | 1.60x | "
+            "n/a → 10.00 ms | n/a → 16.00 ms | "
+            "1.60x (n=2; range 1.60–1.60x) | "
             "50 ms main-thread step | calibrating: 0/20 |",
             summary,
         )
@@ -1590,7 +1644,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 budget = "50 ms main-thread step"
                 self.assertIn(
                     f"| {scenario} | 10.00 ms → 10.00 ms | "
-                    f"12.00 ms → 12.00 ms | 1.20x | {budget} | "
+                    f"12.00 ms → 12.00 ms | "
+                    f"1.20x (n=2; range 1.20–1.20x) | {budget} | "
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )

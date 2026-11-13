@@ -395,6 +395,11 @@ def evaluate(
         ]
         noise_one = _noise(baseline, scenario, "one_ms")
         noise_hundred = _noise(baseline, scenario, "hundred_ms")
+        ratios = [
+            sample["scenarios"][scenario]["hundred_ms"]
+            / sample["scenarios"][scenario]["one_ms"]
+            for sample in head_scenario_runs
+        ]
         row_result = {
             "exception": exceptions.get(scenario),
             "baseline_count": len(baseline_rows),
@@ -404,7 +409,10 @@ def evaluate(
             "head_one_ms": None,
             "base_hundred_ms": None,
             "head_hundred_ms": None,
-            "ratio": None,
+            "ratio": statistics.median(ratios) if ratios else None,
+            "ratio_sample_count": len(ratios),
+            "ratio_min": min(ratios) if ratios else None,
+            "ratio_max": max(ratios) if ratios else None,
             "failures": [],
         }
         if head_scenario_runs:
@@ -416,10 +424,6 @@ def evaluate(
                 sample["scenarios"][scenario]["hundred_ms"]
                 for sample in head_scenario_runs
             )
-            if row_result["head_one_ms"] > 0:
-                row_result["ratio"] = (
-                    row_result["head_hundred_ms"] / row_result["head_one_ms"]
-                )
         if base_scenario_runs:
             row_result["base_one_ms"] = statistics.median(
                 sample["scenarios"][scenario]["one_ms"]
@@ -457,8 +461,8 @@ def evaluate(
             and row_result["ratio"] > MAX_SCALE_RATIO
         ):
             row_result["failures"].append(
-                f"{scenario}: 100x takes {row_result['ratio']:.2f}x as long as 1x "
-                "(limit 1.5x)"
+                f"{scenario}: median 100x/1x ratio is "
+                f"{row_result['ratio']:.2f}x (limit {MAX_SCALE_RATIO:.1f}x)"
             )
         if len(baseline_rows) >= MIN_DEV_RUNS and base_scenario_runs:
             for scale, base_field, head_field, noise in (
@@ -505,7 +509,8 @@ def format_summary(result, current_sample=None, retry_note=None):
     else:
         lines.append(
             f"Noise uses the latest {MIN_DEV_RUNS} valid `dev` runs; "
-            "PR timing comparisons use two interleaved `dev`/head pairs, "
+            "PR timing comparisons use two interleaved `dev`/head pairs; "
+            "head scale ratios are medians of per-run 100x/1x ratios, "
             "with one extra pair after an initial timing failure."
         )
     if result.get("history_unavailable"):
@@ -542,7 +547,8 @@ def format_summary(result, current_sample=None, retry_note=None):
     lines.extend(
         [
             "",
-            "| Scenario | 1x base → head | 100x base → head | Head ratio | "
+            "| Scenario | 1x base → head | 100x base → head | "
+            "Head ratio (median; n; range) | "
             "Absolute budget | Noise band |",
             "| --- | ---: | ---: | ---: | --- | --- |",
         ]
@@ -562,9 +568,11 @@ def format_summary(result, current_sample=None, retry_note=None):
             one_ms = current.get("one_ms")
             hundred_ms = current.get("hundred_ms")
             ratio = (
-                f"{hundred_ms / one_ms:.2f}x"
+                f"{hundred_ms / one_ms:.2f}x "
+                f"(n=1; range {hundred_ms / one_ms:.2f}–"
+                f"{hundred_ms / one_ms:.2f}x)"
                 if one_ms and hundred_ms is not None
-                else "n/a"
+                else "n/a (n=0; range n/a)"
             )
             baseline_count = result.get("scenario_counts", {}).get(scenario, 0)
             noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
@@ -577,7 +585,14 @@ def format_summary(result, current_sample=None, retry_note=None):
                 f"{_format_ms(row.get('base_hundred_ms'))} → "
                 f"{_format_ms(row.get('head_hundred_ms'))}"
             )
-            ratio = "n/a" if row.get("ratio") is None else f"{row['ratio']:.2f}x"
+            if row.get("ratio") is None:
+                ratio = "n/a (n=0; range n/a)"
+            else:
+                ratio = (
+                    f"{row['ratio']:.2f}x "
+                    f"(n={row['ratio_sample_count']}; range "
+                    f"{row['ratio_min']:.2f}–{row['ratio_max']:.2f}x)"
+                )
             baseline_count = row.get("baseline_count", 0)
             if baseline_count < MIN_DEV_RUNS:
                 noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
