@@ -425,7 +425,8 @@ void Sandbox::launchApplication() {
 					const auto visible = _fontStartupWindow->isVisible()
 										 && _fontStartupWindow->isExposed();
 					fprintf(stderr,
-						"Font startup splash regression: visible=%d "
+							"Font startup splash "
+							"regression: visible=%d "
 							"wall_ns=%lld\n",
 							visible ? 1 : 0,
 							static_cast<long long>(
@@ -514,8 +515,7 @@ void Sandbox::startFontDatabaseWarmup() {
 	try {
 		_fontDatabaseWarmupThread = std::thread([this] {
 			const auto worker = QThread::currentThreadId() != _mainThreadId;
-			const auto openSansLoaded
-				= style::internal::PreloadCustomFonts();
+			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
@@ -524,8 +524,7 @@ void Sandbox::startFontDatabaseWarmup() {
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
 			}
-			if (qEnvironmentVariableIsSet(
-					"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 				fprintf(stderr,
 						"Font database warmup thread regression: worker=%d\n",
 						worker ? 1 : 0);
