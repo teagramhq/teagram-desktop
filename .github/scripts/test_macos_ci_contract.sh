@@ -722,6 +722,40 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
   'state="$diagnostics/state"' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
+require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'if [ "$test_status" -ne 0 ]; then' \
+  'cp -R "$state" "$evidence/profile-ipc-${BUILD_VARIANT}-state"'
+
+case_runner='Telegram/build/run_mac_lifecycle_cases.sh'
+case_timeout_seconds="$(awk '
+  /^CASE_TIMEOUT_SECONDS=/ && match($0, /:-[0-9]+/) {
+    print substr($0, RSTART + 2, RLENGTH - 2)
+  }
+' "$case_runner")"
+cleanup_budget="$(awk '
+  /process\.wait\(timeout=[0-9]+\)/ {
+    if (match($0, /timeout=[0-9]+/)) {
+      seconds += substr($0, RSTART + 8, RLENGTH - 8)
+      waits++
+    }
+  }
+  END { printf "%d %d\n", seconds, waits }
+' "$case_runner")"
+read -r cleanup_headroom_seconds cleanup_wait_count <<< "$cleanup_budget"
+profile_step_timeout_minutes="$(step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes')"
+[[ "$case_timeout_seconds" =~ ^[1-9][0-9]*$ \
+  && "$cleanup_headroom_seconds" =~ ^[0-9]+$ \
+  && "$cleanup_wait_count" == 2 \
+  && "$profile_step_timeout_minutes" =~ ^[1-9][0-9]*$ ]] \
+  || contract_fail 'The protected profile case and cleanup timeout budget must be explicit and positive.'
+case_timeout_budget_seconds="$((case_timeout_seconds + cleanup_headroom_seconds))"
+((case_timeout_budget_seconds < profile_step_timeout_minutes * 60)) \
+  || contract_fail "Lifecycle case timeout plus cleanup headroom (${case_timeout_budget_seconds}s) must fit inside the profile/IPC step limit (${profile_step_timeout_minutes}m)."
+expect_equal "$mac_workflow lifecycle timeout override" \
+  "$(workflow_field "$mac_workflow" '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS')" 'null'
+require_job_field "$mac_workflow" build-macos '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS' 'null'
+require_step_field "$mac_workflow" build-macos "$profile_step" \
+  '.env.TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS' 'null'
 
 if ! build_step_index="$(find_step_index 'Teagram build.')"; then
   contract_fail "$mac_workflow is missing Teagram build."

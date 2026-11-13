@@ -10,7 +10,7 @@ fi
 CASE_RUNNER="$1"
 EXECUTABLE="$2"
 LOG_DIRECTORY="$3"
-CASE_TIMEOUT_SECONDS="${TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-1200}"
+CASE_TIMEOUT_SECONDS="${TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-600}"
 shift 3
 
 if ! [[ "$CASE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
@@ -103,6 +103,15 @@ PY
 				"$CASE_NAME" >&2
 			for ((skipped_index = case_index + 1; skipped_index < ${#CASES[@]}; ++skipped_index)); do
 				printf 'lifecycle_case=%s result=SKIPPED dependency=%s process_group_stopped=0\n' \
+					"${CASES[$skipped_index]}" "$CASE_NAME" >&2
+			done
+			break
+		elif (( CASE_STATUS == 124 )) \
+			&& grep -F -q "lifecycle_case_timeout=$CASE_NAME " "$CASE_LOG"; then
+			printf 'Lifecycle runner stopped after timed-out case %s.\n' \
+				"$CASE_NAME" >&2
+			for ((skipped_index = case_index + 1; skipped_index < ${#CASES[@]}; ++skipped_index)); do
+				printf 'lifecycle_case=%s result=SKIPPED dependency=%s case_timeout=1\n' \
 					"${CASES[$skipped_index]}" "$CASE_NAME" >&2
 			done
 			break

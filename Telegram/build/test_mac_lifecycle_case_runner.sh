@@ -20,6 +20,7 @@ fail)
 	exit 7
 	;;
 hang)
+	printf 'case entered hang\n'
 	sleep 5
 	;;
 after-failure)
@@ -62,12 +63,25 @@ for evidence in \
 	'lifecycle_case=hang result=START' \
 	'lifecycle_case_timeout=hang timeout_seconds=1' \
 	'lifecycle_case=hang result=FAIL exit_status=124' \
-	'later case ran' \
-	'lifecycle_case=after-failure result=PASS' \
+	'lifecycle_case=after-failure result=SKIPPED dependency=hang case_timeout=1' \
 	'Lifecycle cases failed: hang'; do
 	if ! grep -F -q "$evidence" "$TEMP_ROOT/timeout-output.txt"; then
 		cat "$TEMP_ROOT/timeout-output.txt" >&2
 		printf 'timed-out case output missed: %s\n' "$evidence" >&2
+		exit 1
+	fi
+done
+if grep -F -q 'later case ran' "$TEMP_ROOT/timeout-output.txt"; then
+	cat "$TEMP_ROOT/timeout-output.txt" >&2
+	echo "case runner should stop after a timed-out lifecycle case." >&2
+	exit 1
+fi
+for evidence in \
+	'case entered hang' \
+	'lifecycle_case_timeout=hang timeout_seconds=1 process_group_stopped=1'; do
+	if ! grep -F -q "$evidence" "$TEMP_ROOT/timeout-logs/hang.log"; then
+		cat "$TEMP_ROOT/timeout-logs/hang.log" >&2
+		printf 'timed-out case diagnostics missed: %s\n' "$evidence" >&2
 		exit 1
 	fi
 done
