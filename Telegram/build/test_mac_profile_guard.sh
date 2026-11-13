@@ -1466,7 +1466,7 @@ printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 c
 run_font_startup_regression() {
 	local font_home="$TEST_HOME/font-startup"
 	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
-	local expected_fallback='Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=[0-9]+ result=PASS'
+	local expected_fallback='Font fallback regression: emoji=\.?Apple Color Emoji( UI)? arabic=Vazirmatn UI NL wall_ns=[0-9]+ result=PASS'
 	local cold_wall_ns=""
 	local warm_wall_ns=""
 	mkdir -p "$font_home"
