@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/options.h"
+#include "base/openssl_help.h"
 #include "base/platform/base_platform_info.h"
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
@@ -257,10 +258,6 @@ class AccountLifecycleRegressionAccess {
 				   && key->type() == MTP::AuthKey::Type::ReadFromFile
 				   && key->equals(expected);
 		});
-	}
-	static void finishEndpointVerification(Main::Account &account,
-										   bool authenticated) {
-		account.serverEndpointVerificationFinished(authenticated);
 	}
 	static void cancelEndpointRefresh(Main::Account &account) {
 		account.cancelServerEndpointRefresh();
@@ -2124,6 +2121,166 @@ void AppendEndpointRefreshLength(QByteArray &target, quint16 value) {
 	target.append(char(value));
 }
 
+void AppendEndpointRefreshInt(QByteArray &target, uint32 value) {
+  for (auto shift = 0; shift != 32; shift += 8) {
+    target.append(char(value >> shift));
+  }
+}
+
+void AppendEndpointRefreshLong(QByteArray &target, uint64 value) {
+  for (auto shift = 0; shift != 64; shift += 8) {
+    target.append(char(value >> shift));
+  }
+}
+
+void AppendEndpointRefreshTlString(QByteArray &target,
+                                   const QByteArray &value) {
+  Expects(value.size() < 254);
+  const auto start = target.size();
+  target.append(char(value.size()));
+  target += value;
+  while ((target.size() - start) % 4) {
+    target.append(char(0));
+  }
+}
+
+QByteArray EndpointRefreshVerifierConfig(bool authenticates) {
+  constexpr auto kBoolFalse = uint32(0xbc799737);
+  constexpr auto kBoolTrue = uint32(0x997275b5);
+  auto result = QByteArray();
+  AppendEndpointRefreshInt(result, 0xcc1a241e);
+  AppendEndpointRefreshInt(result, 0);
+  AppendEndpointRefreshInt(result, uint32(base::unixtime::now()));
+  AppendEndpointRefreshInt(result, uint32(base::unixtime::now() + 3600));
+  AppendEndpointRefreshInt(result, authenticates ? kBoolFalse : kBoolTrue);
+  AppendEndpointRefreshInt(result, 2);
+  AppendEndpointRefreshInt(result, 0x1cb5c415);
+  AppendEndpointRefreshInt(result, 1);
+  AppendEndpointRefreshInt(result, 0x18b7a10d);
+  AppendEndpointRefreshInt(result, 0);
+  AppendEndpointRefreshInt(result, 2);
+  AppendEndpointRefreshTlString(result, QByteArray("127.0.0.1"));
+  AppendEndpointRefreshInt(result, 443);
+  AppendEndpointRefreshTlString(result, QByteArray());
+  for (const auto value : {
+           200,     10000, 100,    120000, 5000,   30000,  300000,
+           30000,   1500,  60000,  10,     172800, 172800, 172800,
+           2419200, 30,    604800, 20000,  90000,  30000,  10000,
+       }) {
+    AppendEndpointRefreshInt(result, uint32(value));
+  }
+  AppendEndpointRefreshTlString(result, QByteArray());
+  AppendEndpointRefreshInt(result, 1024);
+  AppendEndpointRefreshInt(result, 4096);
+  AppendEndpointRefreshInt(result, 4);
+  return result;
+}
+
+uint32 EndpointRefreshReadInt(const char *data) {
+  return uint32(uchar(data[0])) | (uint32(uchar(data[1])) << 8) |
+         (uint32(uchar(data[2])) << 16) | (uint32(uchar(data[3])) << 24);
+}
+
+uint64 EndpointRefreshReadLong(const char *data) {
+  return uint64(EndpointRefreshReadInt(data)) |
+         (uint64(EndpointRefreshReadInt(data + 4)) << 32);
+}
+
+bool EndpointRefreshContainsGetConfig(const char *data, int size) {
+  constexpr auto kHelpGetConfig = uint32(0xc4f9186b);
+  for (auto offset = 0; offset + 4 <= size; offset += 4) {
+    if (EndpointRefreshReadInt(data + offset) == kHelpGetConfig) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<mtpMsgId>
+EndpointRefreshConfigRequestId(const QByteArray &plain) {
+  if (plain.size() < 36) {
+    return std::nullopt;
+  }
+  const auto messageLength =
+      int(EndpointRefreshReadInt(plain.constData() + 28));
+  if (messageLength < 4 || messageLength > plain.size() - 32) {
+    return std::nullopt;
+  }
+  const auto body = plain.constData() + 32;
+  constexpr auto kMessageContainer = uint32(0x73f1f8dc);
+  if (EndpointRefreshReadInt(body) != kMessageContainer) {
+    if (EndpointRefreshContainsGetConfig(body, messageLength)) {
+      return EndpointRefreshReadLong(plain.constData() + 16);
+    }
+    return std::nullopt;
+  }
+  if (messageLength < 8) {
+    return std::nullopt;
+  }
+  auto offset = 8;
+  const auto count = EndpointRefreshReadInt(body + 4);
+  for (auto i = 0U; i != count && offset + 16 <= messageLength; ++i) {
+    const auto id = EndpointRefreshReadLong(body + offset);
+    const auto nestedLength = int(EndpointRefreshReadInt(body + offset + 12));
+    offset += 16;
+    if (nestedLength < 4 || nestedLength > messageLength - offset) {
+      return std::nullopt;
+    }
+    if (EndpointRefreshContainsGetConfig(body + offset, nestedLength)) {
+      return id;
+    }
+    offset += nestedLength;
+  }
+  return std::nullopt;
+}
+
+QByteArray EndpointRefreshTcpFrame(const QByteArray &packet) {
+  Expects(!(packet.size() % 4));
+  const auto words = uint32(packet.size() / 4);
+  auto result = QByteArray();
+  if (words < 0x7f) {
+    result.append(char(words));
+  } else {
+    result.append(char(0x7f));
+    result.append(char(words));
+    result.append(char(words >> 8));
+    result.append(char(words >> 16));
+  }
+  result += packet;
+  return result;
+}
+
+bool TakeEndpointRefreshTcpFrame(QByteArray &buffer, QByteArray &packet) {
+  if (buffer.isEmpty()) {
+    return false;
+  }
+  const auto first = uchar(buffer[0]);
+  const auto header = (first == 0x7f) ? 4 : 1;
+  if (buffer.size() < header) {
+    return false;
+  }
+  const auto words = (first == 0x7f) ? uint32(uchar(buffer[1])) |
+                                           (uint32(uchar(buffer[2])) << 8) |
+                                           (uint32(uchar(buffer[3])) << 16)
+                                     : uint32(first);
+  const auto size = header + int(words * 4);
+  if (!words || buffer.size() < size) {
+    return false;
+  }
+  packet = buffer.mid(header, size - header);
+  buffer.remove(0, size);
+  return true;
+}
+
+QByteArray EndpointRefreshUnencryptedResponse(const QByteArray &body) {
+  auto packet = QByteArray(8, char(0));
+  AppendEndpointRefreshLong(packet, base::unixtime::mtproto_msg_id() | 1);
+  AppendEndpointRefreshInt(packet, uint32(body.size()));
+  packet += body;
+  packet += QByteArray(16, char(0));
+  return packet;
+}
+
 [[nodiscard]] QByteArray
 EndpointRefreshDiscoveryResponse(const QByteArray &nonce) {
 	const auto der = RegressionServerKey()->getSubjectPublicKeyInfo();
@@ -2137,179 +2294,437 @@ EndpointRefreshDiscoveryResponse(const QByteArray &nonce) {
 }
 
 class LocalEndpointRefreshDiscoveryStub final {
-  public:
-	LocalEndpointRefreshDiscoveryStub() {
-		if (!_server.listen(QHostAddress(u"127.0.0.1"_q))) {
-			return;
-		}
-		QObject::connect(
-			&_server, &QTcpServer::newConnection, &_server, [this] {
-				while (_server.hasPendingConnections()) {
-					auto socket = _server.nextPendingConnection();
-					auto request = std::make_shared<QByteArray>();
-					auto responded = std::make_shared<bool>(false);
-					const auto respond = [=] {
-						*request += socket->readAll();
-						if (*responded || request->size() < 48
-							|| request->left(16)
-								   != QByteArray("telegramd-key-v1", 16)) {
-							return;
-						}
-						*responded = true;
-						socket->write(EndpointRefreshDiscoveryResponse(
-							request->mid(16, 32)));
-						socket->disconnectFromHost();
-					};
-					QObject::connect(socket, &QTcpSocket::readyRead, socket,
-									 respond);
-					QObject::connect(socket, &QTcpSocket::disconnected, socket,
-									 &QObject::deleteLater);
-					if (socket->bytesAvailable()) {
-						respond();
-					}
-				}
-			});
-	}
+public:
+  LocalEndpointRefreshDiscoveryStub() {
+    if (!_server.listen(QHostAddress(u"127.0.0.1"_q))) {
+      return;
+    }
+    QObject::connect(&_server, &QTcpServer::newConnection, &_server, [this] {
+      while (_server.hasPendingConnections()) {
+        auto connection = std::make_shared<Connection>();
+        connection->socket = _server.nextPendingConnection();
+        _connections.push_back(connection);
+        const auto socket = connection->socket;
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [this, connection] { read(connection); });
+        QObject::connect(socket, &QTcpSocket::disconnected, socket,
+                         &QObject::deleteLater);
+      }
+    });
+  }
 
-	[[nodiscard]] bool listening() const { return _server.isListening(); }
+  [[nodiscard]] bool listening() const { return _server.isListening(); }
 
-	[[nodiscard]] quint16 port() const { return _server.serverPort(); }
+  [[nodiscard]] quint16 port() const { return _server.serverPort(); }
 
-	[[nodiscard]] bool originalEndpointUnreachable() const {
-		auto socket = QTcpSocket();
-		socket.connectToHost(QHostAddress::LocalHostIPv6, port());
-		return !socket.waitForConnected(100);
-	}
+  void setVerifierAuthKey(const MTP::AuthKeyPtr &key) {
+    _verifierAuthKey = key;
+  }
 
-	[[nodiscard]] bool configureOriginalPin(
-		not_null<Main::Account *> account,
-		const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
-		const auto selection = MTP::CheckServerSelection(
-			u"127.0.0.1:"_q + QString::number(port()));
-		if (!selection.valid()) {
-			return false;
-		}
-		const auto configured
-			= account->mtp().dcOptions().setCustomServer(MTP::CustomServer{
-				.dcId = 2,
-				.ip = "::1",
-				.port = int(port()),
-				.ipv6 = true,
-				.key = key,
-				.serverSelection = selection.normalizedSelection.toStdString(),
-				.discoveryPolicy = selection.policy,
-				.discoveryOrigin
-				= (u"local:"_q + selection.normalizedSelection).toStdString(),
-			});
-		return configured && account->local().writeMtpConfig(true);
-	}
+  [[nodiscard]] bool hasPendingVerifierConfig() const {
+    const auto connection = _verifierConnection.lock();
+    return connection && connection->pending.has_value() && connection->socket;
+  }
 
-	void close() {
-		_server.close();
-		for (const auto socket : _server.findChildren<QTcpSocket *>()) {
-			socket->abort();
-		}
-	}
+  void replyToPendingVerifierConfig(bool authenticates) {
+    _autoReply = authenticates;
+    _authenticates = authenticates;
+    if (const auto connection = _verifierConnection.lock()) {
+      reply(connection, authenticates);
+      _verifierConnection.reset();
+    }
+  }
 
-  private:
-	QTcpServer _server;
+  [[nodiscard]] bool originalEndpointUnreachable() const {
+    auto socket = QTcpSocket();
+    socket.connectToHost(QHostAddress::LocalHostIPv6, port());
+    return !socket.waitForConnected(100);
+  }
+
+  [[nodiscard]] bool configureOriginalPin(
+      not_null<Main::Account *> account,
+      const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
+    const auto selection =
+        MTP::CheckServerSelection(u"127.0.0.1:"_q + QString::number(port()));
+    if (!selection.valid()) {
+      return false;
+    }
+    const auto configured =
+        account->mtp().dcOptions().setCustomServer(MTP::CustomServer{
+            .dcId = 2,
+            .ip = "::1",
+            .port = int(port()),
+            .ipv6 = true,
+            .key = key,
+            .serverSelection = selection.normalizedSelection.toStdString(),
+            .discoveryPolicy = selection.policy,
+            .discoveryOrigin =
+                (u"local:"_q + selection.normalizedSelection).toStdString(),
+        });
+    return configured && account->local().writeMtpConfig(true);
+  }
+
+  void close() {
+    _server.close();
+    for (const auto &connection : _connections) {
+      if (connection->socket) {
+        connection->socket->abort();
+      }
+    }
+  }
+
+private:
+  enum class ConnectionKind {
+    Unknown,
+    Discovery,
+    Mtproto,
+  };
+
+  struct PendingConfig {
+    uint64 serverSalt = 0;
+    uint64 sessionId = 0;
+    mtpMsgId requestId = 0;
+  };
+
+  struct Connection {
+    QPointer<QTcpSocket> socket;
+    ConnectionKind kind = ConnectionKind::Unknown;
+    QByteArray startPrefix;
+    QByteArray incoming;
+    std::array<uchar, 32> clientToServerKey = {};
+    std::array<uchar, 32> serverToClientKey = {};
+    MTP::CTRState clientToServerState;
+    MTP::CTRState serverToClientState;
+    std::optional<PendingConfig> pending;
+  };
+
+  void read(const std::shared_ptr<Connection> &connection) {
+    if (!connection->socket) {
+      return;
+    }
+    if (connection->kind == ConnectionKind::Unknown) {
+      if (connection->socket->bytesAvailable() < 16) {
+        return;
+      }
+      connection->kind = connection->socket->peek(16).left(16) ==
+                                 QByteArray("telegramd-key-v1", 16)
+                             ? ConnectionKind::Discovery
+                             : ConnectionKind::Mtproto;
+    }
+    if (connection->kind == ConnectionKind::Discovery) {
+      const auto request = connection->socket->readAll();
+      if (request.size() >= 48) {
+        connection->socket->write(
+            EndpointRefreshDiscoveryResponse(request.mid(16, 32)));
+        connection->socket->disconnectFromHost();
+      }
+      return;
+    }
+    readMtproto(connection, connection->socket->readAll());
+  }
+
+  void readMtproto(const std::shared_ptr<Connection> &connection,
+                   QByteArray data) {
+    if (connection->startPrefix.size() < 64) {
+      connection->startPrefix += data;
+      if (connection->startPrefix.size() < 64) {
+        return;
+      }
+      const auto prefix = connection->startPrefix.left(64);
+      data = connection->startPrefix.mid(64);
+      connection->startPrefix.clear();
+      memcpy(connection->clientToServerKey.data(), prefix.constData() + 8,
+             connection->clientToServerKey.size());
+      memcpy(connection->clientToServerState.ivec, prefix.constData() + 40,
+             sizeof(connection->clientToServerState.ivec));
+      auto reversed = std::array<uchar, 48>();
+      memcpy(reversed.data(), prefix.constData() + 8, reversed.size());
+      std::reverse(reversed.begin(), reversed.end());
+      memcpy(connection->serverToClientKey.data(), reversed.data(),
+             connection->serverToClientKey.size());
+      memcpy(connection->serverToClientState.ivec,
+             reversed.data() + connection->serverToClientKey.size(),
+             sizeof(connection->serverToClientState.ivec));
+      auto skipped = QByteArray(64, char(0));
+      MTP::aesCtrEncrypt(bytes::make_detached_span(skipped),
+                         connection->clientToServerKey.data(),
+                         &connection->clientToServerState);
+    }
+    if (data.isEmpty()) {
+      return;
+    }
+    MTP::aesCtrEncrypt(bytes::make_detached_span(data),
+                       connection->clientToServerKey.data(),
+                       &connection->clientToServerState);
+    connection->incoming += data;
+    while (true) {
+      auto packet = QByteArray();
+      if (!TakeEndpointRefreshTcpFrame(connection->incoming, packet)) {
+        return;
+      }
+      processPacket(connection, packet);
+    }
+  }
+
+  void processPacket(const std::shared_ptr<Connection> &connection,
+                     const QByteArray &packet) {
+    if (packet.size() < 20 || (packet.size() % 4)) {
+      return;
+    }
+    if (!EndpointRefreshReadLong(packet.constData())) {
+      respondToFakePq(connection, packet);
+      return;
+    }
+    if (!_verifierAuthKey || packet.size() < 40 ||
+        EndpointRefreshReadLong(packet.constData()) !=
+            _verifierAuthKey->keyId()) {
+      return;
+    }
+    const auto encryptedSize = packet.size() - 24;
+    if (encryptedSize <= 0 || (encryptedSize % 16)) {
+      return;
+    }
+    auto messageKey = MTPint128();
+    memcpy(&messageKey, packet.constData() + 8, sizeof(messageKey));
+    auto aesKey = MTPint256();
+    auto aesIv = MTPint256();
+    _verifierAuthKey->prepareAES(messageKey, aesKey, aesIv, true);
+    auto plain = QByteArray(encryptedSize, Qt::Uninitialized);
+    MTP::aesIgeDecryptRaw(packet.constData() + 24, plain.data(),
+                          uint32(encryptedSize), &aesKey, &aesIv);
+    const auto requestId = EndpointRefreshConfigRequestId(plain);
+    if (!requestId) {
+      return;
+    }
+    connection->pending = PendingConfig{
+        .serverSalt = EndpointRefreshReadLong(plain.constData()),
+        .sessionId = EndpointRefreshReadLong(plain.constData() + 8),
+        .requestId = *requestId,
+    };
+    if (!_autoReply && _verifierConnection.expired()) {
+      _verifierConnection = connection;
+    }
+    if (_autoReply) {
+      reply(connection, _authenticates);
+    }
+  }
+
+  void respondToFakePq(const std::shared_ptr<Connection> &connection,
+                       const QByteArray &request) {
+    if (request.size() < 40 ||
+        EndpointRefreshReadInt(request.constData() + 20) != 0x60469778) {
+      return;
+    }
+    auto body = QByteArray();
+    AppendEndpointRefreshInt(body, 0x05162463);
+    body += request.mid(24, 16);
+    body += QByteArray(16, char(0x22));
+    AppendEndpointRefreshTlString(body, QByteArray(1, char(1)));
+    AppendEndpointRefreshInt(body, 0x1cb5c415);
+    AppendEndpointRefreshInt(body, 1);
+    AppendEndpointRefreshLong(body, 0);
+    sendPacket(connection, EndpointRefreshUnencryptedResponse(body));
+  }
+
+  void reply(const std::shared_ptr<Connection> &connection,
+             bool authenticates) {
+    if (!connection->pending || !connection->socket || !_verifierAuthKey) {
+      return;
+    }
+    const auto pending = *connection->pending;
+    connection->pending.reset();
+    auto body = QByteArray();
+    AppendEndpointRefreshInt(body, 0xf35c6d01);
+    AppendEndpointRefreshLong(body, pending.requestId);
+    body += EndpointRefreshVerifierConfig(authenticates);
+    auto plain = QByteArray();
+    AppendEndpointRefreshLong(plain, pending.serverSalt);
+    AppendEndpointRefreshLong(plain, pending.sessionId);
+    AppendEndpointRefreshLong(plain, base::unixtime::mtproto_msg_id() | 1);
+    AppendEndpointRefreshInt(plain, 1);
+    AppendEndpointRefreshInt(plain, uint32(body.size()));
+    plain += body;
+    auto padding = (16 - (plain.size() % 16)) % 16;
+    if (padding < 12) {
+      padding += 16;
+    }
+    plain += QByteArray(padding, char(0));
+    auto hashInput = QByteArray(32 + plain.size(), Qt::Uninitialized);
+    memcpy(hashInput.data(), _verifierAuthKey->partForMsgKey(false), 32);
+    memcpy(hashInput.data() + 32, plain.constData(), plain.size());
+    const auto hash = openssl::Sha256(
+        bytes::make_span(static_cast<const QByteArray &>(hashInput)));
+    auto messageKey = MTPint128();
+    memcpy(&messageKey, hash.data() + 8, sizeof(messageKey));
+    auto aesKey = MTPint256();
+    auto aesIv = MTPint256();
+    _verifierAuthKey->prepareAES(messageKey, aesKey, aesIv, false);
+    auto encrypted = QByteArray(plain.size(), Qt::Uninitialized);
+    MTP::aesIgeEncryptRaw(plain.constData(), encrypted.data(),
+                          uint32(plain.size()), &aesKey, &aesIv);
+    auto packet = QByteArray();
+    AppendEndpointRefreshLong(packet, _verifierAuthKey->keyId());
+    packet += QByteArray(reinterpret_cast<const char *>(&messageKey),
+                         sizeof(messageKey));
+    packet += encrypted;
+    sendPacket(connection, packet);
+  }
+
+  void sendPacket(const std::shared_ptr<Connection> &connection,
+                  const QByteArray &packet) {
+    if (!connection->socket) {
+      return;
+    }
+    auto wire = EndpointRefreshTcpFrame(packet);
+    MTP::aesCtrEncrypt(bytes::make_detached_span(wire),
+                       connection->serverToClientKey.data(),
+                       &connection->serverToClientState);
+    connection->socket->write(wire);
+  }
+
+  QTcpServer _server;
+  std::vector<std::shared_ptr<Connection>> _connections;
+  std::weak_ptr<Connection> _verifierConnection;
+  MTP::AuthKeyPtr _verifierAuthKey;
+  bool _autoReply = false;
+  bool _authenticates = false;
 };
 
 [[nodiscard]] bool AccountEndpointRefreshWaitsForStoredProof(
-	not_null<Main::Account *> account,
-	const LocalEndpointRefreshDiscoveryStub &discovery,
-	const MTP::AuthKeyPtr &storedAuthKey) {
-	auto &mtp = account->mtp();
-	const auto original = mtp.dcOptions().customServer();
-	const auto verificationAlreadyPending
-		= AccountLifecycleRegressionAccess::endpointVerificationPending(
-			*account);
-	if (!discovery.listening() || !discovery.originalEndpointUnreachable()
-		|| !account->sessionExists()
-		|| !AccountLifecycleRegressionAccess::restoredSession(*account)
-		|| !storedAuthKey
-		|| (!mtp.isServerEnrollmentNetworkAllowed()
-			&& !verificationAlreadyPending)) {
-		return false;
-	}
-	const auto restore = gsl::finally([&] {
-		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
-		const auto current = mtp.dcOptions().customServer();
-		if (!MTP::SameCustomServerPin(original, current)
-			&& mtp.dcOptions().refreshCustomServerEndpoint(current, original)) {
-			static_cast<void>(account->local().writeMtpConfig(true));
-		}
-		if (!mtp.isServerEnrollmentNetworkAllowed()) {
-			mtp.resume();
-		}
-	});
-	const auto requestRefresh = [&] {
-		mtp.requestServerEndpointRefresh(original.dcId);
-		return WaitForRegressionCondition([&] {
-			return AccountLifecycleRegressionAccess::
-				endpointVerificationPending(*account);
-		});
-	};
-	const auto pausedRequestIsRefused = [&] {
-		auto failures = 0;
-		auto sender = MTP::Sender(&mtp);
-		const auto requestId
-			= sender.request(MTPupdates_GetState())
-				  .fail([&](const MTP::Error &error) {
-					  if (MTP::IsServerEnrollmentPausedError(error)) {
-						  ++failures;
-					  }
-				  })
-				  .send();
-		const auto queued = sender.pending(requestId);
-		QCoreApplication::processEvents();
-		return queued && !sender.pending(requestId) && failures == 1;
-	};
-	if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed()
-		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
-		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
-			*account, storedAuthKey)
-		|| !pausedRequestIsRefused()) {
-		return false;
-	}
-	AccountLifecycleRegressionAccess::finishEndpointVerification(*account,
-																 false);
-	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
-		|| mtp.isServerEnrollmentNetworkAllowed()
-		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
-		|| !pausedRequestIsRefused()) {
-		return false;
-	}
-	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
-	mtp.resume();
-	if (!mtp.isServerEnrollmentNetworkAllowed() || !requestRefresh()
-		|| mtp.isServerEnrollmentNetworkAllowed()
-		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
-			*account, storedAuthKey)
-		|| !pausedRequestIsRefused()) {
-		return false;
-	}
-	AccountLifecycleRegressionAccess::finishEndpointVerification(*account,
-																 true);
-	const auto moved = mtp.dcOptions().customServer();
-	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
-		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
-		|| moved.ipv6 || moved.port != int(discovery.port())
-		|| !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
-		return false;
-	}
-	auto failures = 0;
-	auto sender = MTP::Sender(&mtp);
-	const auto requestId = sender.request(MTPupdates_GetState())
-							   .fail([&](const MTP::Error &) { ++failures; })
-							   .send();
-	const auto resumed = sender.pending(requestId);
-	QCoreApplication::processEvents();
-	const auto remainsPending = sender.pending(requestId);
-	if (remainsPending) {
-		mtp.cancel(requestId);
-	}
-	return resumed && remainsPending && !failures;
+    not_null<Main::Account *> account,
+    LocalEndpointRefreshDiscoveryStub &discovery,
+    const MTP::AuthKeyPtr &storedAuthKey) {
+  auto &mtp = account->mtp();
+  const auto original = mtp.dcOptions().customServer();
+  discovery.setVerifierAuthKey(storedAuthKey);
+  if (!discovery.listening() || !discovery.originalEndpointUnreachable() ||
+      !account->sessionExists() ||
+      !AccountLifecycleRegressionAccess::restoredSession(*account) ||
+      !storedAuthKey) {
+    return false;
+  }
+  AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+  if (!mtp.isServerEnrollmentNetworkAllowed()) {
+    mtp.resume();
+  }
+  if (!mtp.isServerEnrollmentNetworkAllowed()) {
+    return false;
+  }
+  const auto restore = gsl::finally([&] {
+    AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+    const auto current = mtp.dcOptions().customServer();
+    if (!MTP::SameCustomServerPin(original, current) &&
+        mtp.dcOptions().refreshCustomServerEndpoint(current, original)) {
+      static_cast<void>(account->local().writeMtpConfig(true));
+    }
+    if (!mtp.isServerEnrollmentNetworkAllowed()) {
+      mtp.resume();
+    }
+  });
+  auto callbackCount = 0;
+  auto failureCount = 0;
+  const auto acceptedRequestId = mtp.send(
+      MTPhelp_GetConfig(),
+      [&](const MTP::Response &) {
+        ++callbackCount;
+        return true;
+      },
+      [&](const MTP::Error &, const MTP::Response &) {
+        ++failureCount;
+        return true;
+      });
+  const auto cancelAcceptedRequest = gsl::finally([&] {
+    if (mtp.hasCallback(acceptedRequestId)) {
+      mtp.cancel(acceptedRequestId);
+    }
+  });
+  if (!mtp.hasCallback(acceptedRequestId)) {
+    return false;
+  }
+  const auto requestRefresh = [&] {
+    mtp.requestServerEndpointRefresh(original.dcId);
+    return WaitForRegressionCondition([&] {
+      return AccountLifecycleRegressionAccess::endpointVerificationPending(
+                 *account) &&
+             discovery.hasPendingVerifierConfig();
+    });
+  };
+  const auto pausedRequestIsRefused = [&] {
+    auto failures = 0;
+    auto sender = MTP::Sender(&mtp);
+    const auto requestId =
+        sender.request(MTPupdates_GetState())
+            .fail([&](const MTP::Error &error) {
+              if (MTP::IsServerEnrollmentPausedError(error)) {
+                ++failures;
+              }
+            })
+            .send();
+    const auto queued = sender.pending(requestId);
+    QCoreApplication::processEvents();
+    return queued && !sender.pending(requestId) && failures == 1;
+  };
+  if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed() ||
+      !mtp.hasCallback(acceptedRequestId) || callbackCount != 0 ||
+      !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer()) ||
+      !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+          *account, storedAuthKey) ||
+      !pausedRequestIsRefused()) {
+    return false;
+  }
+  discovery.replyToPendingVerifierConfig(false);
+  if (!WaitForRegressionCondition([&] {
+        return !AccountLifecycleRegressionAccess::endpointVerificationPending(
+            *account);
+      }) ||
+      mtp.isServerEnrollmentNetworkAllowed() ||
+      !mtp.hasCallback(acceptedRequestId) || callbackCount != 0 ||
+      !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer()) ||
+      !pausedRequestIsRefused()) {
+    return false;
+  }
+  AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+  mtp.resume();
+  if (!mtp.isServerEnrollmentNetworkAllowed() || !requestRefresh() ||
+      mtp.isServerEnrollmentNetworkAllowed() ||
+      !mtp.hasCallback(acceptedRequestId) || callbackCount != 0 ||
+      !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+          *account, storedAuthKey) ||
+      !pausedRequestIsRefused()) {
+    return false;
+  }
+  discovery.replyToPendingVerifierConfig(true);
+  if (!WaitForRegressionCondition([&] {
+        const auto moved = mtp.dcOptions().customServer();
+        return !AccountLifecycleRegressionAccess::endpointVerificationPending(
+                   *account) &&
+               mtp.isServerEnrollmentNetworkAllowed() &&
+               moved.ip == "127.0.0.1" && !moved.ipv6 &&
+               moved.port == int(discovery.port());
+      })) {
+    return false;
+  }
+  const auto moved = mtp.dcOptions().customServer();
+  if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account) ||
+      !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1" ||
+      moved.ipv6 || moved.port != int(discovery.port()) ||
+      !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
+    return false;
+  }
+  auto failures = 0;
+  auto sender = MTP::Sender(&mtp);
+  const auto requestId = sender.request(MTPupdates_GetState())
+                             .fail([&](const MTP::Error &) { ++failures; })
+                             .send();
+  const auto resumed = sender.pending(requestId);
+  QCoreApplication::processEvents();
+  const auto remainsPending = sender.pending(requestId);
+  if (remainsPending) {
+    mtp.cancel(requestId);
+  }
+  return resumed && remainsPending && !failures &&
+         WaitForRegressionCondition([&] { return callbackCount == 1; }) &&
+         !failureCount && !mtp.hasCallback(acceptedRequestId);
 }
 
 [[nodiscard]] bool
