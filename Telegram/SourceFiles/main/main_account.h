@@ -161,14 +161,14 @@ public:
 
 private:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
-	friend class ::Tests::AccountLifecycleRegressionAccess;
+  friend class ::Tests::AccountLifecycleRegressionAccess;
 #endif
 
-	static constexpr auto kDefaultSaveDelay = crl::time(1000);
-	enum class DestroyReason {
-		Quitting,
-		LoggedOut,
-	};
+  static constexpr auto kDefaultSaveDelay = crl::time(1000);
+  enum class DestroyReason {
+	  Quitting,
+	  LoggedOut,
+  };
 
 #ifdef TDESKTOP_UNIT_TESTS
 	template <typename Type>

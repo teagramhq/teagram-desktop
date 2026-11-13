@@ -236,33 +236,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 class AccountLifecycleRegressionAccess {
-public:
-	[[nodiscard]] static bool restoredSession(
-			const Main::Account &account) {
+  public:
+	[[nodiscard]] static bool restoredSession(const Main::Account &account) {
 		return account._restoredSession;
 	}
-	[[nodiscard]] static bool endpointVerificationPending(
-			const Main::Account &account) {
+	[[nodiscard]] static bool
+	endpointVerificationPending(const Main::Account &account) {
 		return account._mtpForEndpointVerification != nullptr;
 	}
-	[[nodiscard]] static bool verifierUsesStoredFileKey(
-			const Main::Account &account,
-			const MTP::AuthKeyPtr &expected) {
+	[[nodiscard]] static bool
+	verifierUsesStoredFileKey(const Main::Account &account,
+							  const MTP::AuthKeyPtr &expected) {
 		if (!account._mtpForEndpointVerification || !expected) {
 			return false;
 		}
 		const auto keys
 			= account._mtpForEndpointVerification->getKeysForWrite();
 		return ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
-			return key
-				&& key->dcId() == expected->dcId()
-				&& key->type() == MTP::AuthKey::Type::ReadFromFile
-				&& key->equals(expected);
+			return key && key->dcId() == expected->dcId()
+				   && key->type() == MTP::AuthKey::Type::ReadFromFile
+				   && key->equals(expected);
 		});
 	}
-	static void finishEndpointVerification(
-			Main::Account &account,
-			bool authenticated) {
+	static void finishEndpointVerification(Main::Account &account,
+										   bool authenticated) {
 		account.serverEndpointVerificationFinished(authenticated);
 	}
 	static void cancelEndpointRefresh(Main::Account &account) {
@@ -2127,29 +2124,26 @@ void AppendEndpointRefreshLength(QByteArray &target, quint16 value) {
 	target.append(char(value));
 }
 
-[[nodiscard]] QByteArray EndpointRefreshDiscoveryResponse(
-	const QByteArray &nonce) {
+[[nodiscard]] QByteArray
+EndpointRefreshDiscoveryResponse(const QByteArray &nonce) {
 	const auto der = RegressionServerKey()->getSubjectPublicKeyInfo();
 	auto result = QByteArray("telegramd-key-r1", 16) + nonce;
 	AppendEndpointRefreshLength(result, quint32(6 + der.size()));
 	AppendEndpointRefreshLength(result, quint32(2));
 	AppendEndpointRefreshLength(result, quint16(der.size()));
-	result += QByteArray(reinterpret_cast<const char*>(der.data()),
+	result += QByteArray(reinterpret_cast<const char *>(der.data()),
 						 int(der.size()));
 	return result;
 }
 
 class LocalEndpointRefreshDiscoveryStub final {
-public:
+  public:
 	LocalEndpointRefreshDiscoveryStub() {
 		if (!_server.listen(QHostAddress(u"127.0.0.1"_q))) {
 			return;
 		}
 		QObject::connect(
-			&_server,
-			&QTcpServer::newConnection,
-			&_server,
-			[this] {
+			&_server, &QTcpServer::newConnection, &_server, [this] {
 				while (_server.hasPendingConnections()) {
 					auto socket = _server.nextPendingConnection();
 					auto request = std::make_shared<QByteArray>();
@@ -2158,7 +2152,7 @@ public:
 						*request += socket->readAll();
 						if (*responded || request->size() < 48
 							|| request->left(16)
-								!= QByteArray("telegramd-key-v1", 16)) {
+								   != QByteArray("telegramd-key-v1", 16)) {
 							return;
 						}
 						*responded = true;
@@ -2168,8 +2162,8 @@ public:
 					};
 					QObject::connect(socket, &QTcpSocket::readyRead, socket,
 									 respond);
-					QObject::connect(socket, &QTcpSocket::disconnected,
-									 socket, &QObject::deleteLater);
+					QObject::connect(socket, &QTcpSocket::disconnected, socket,
+									 &QObject::deleteLater);
 					if (socket->bytesAvailable()) {
 						respond();
 					}
@@ -2177,13 +2171,9 @@ public:
 			});
 	}
 
-	[[nodiscard]] bool listening() const {
-		return _server.isListening();
-	}
+	[[nodiscard]] bool listening() const { return _server.isListening(); }
 
-	[[nodiscard]] quint16 port() const {
-		return _server.serverPort();
-	}
+	[[nodiscard]] quint16 port() const { return _server.serverPort(); }
 
 	[[nodiscard]] bool originalEndpointUnreachable() const {
 		auto socket = QTcpSocket();
@@ -2192,25 +2182,24 @@ public:
 	}
 
 	[[nodiscard]] bool configureOriginalPin(
-			not_null<Main::Account *> account,
-			const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
+		not_null<Main::Account *> account,
+		const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
 		const auto selection = MTP::CheckServerSelection(
 			u"127.0.0.1:"_q + QString::number(port()));
 		if (!selection.valid()) {
 			return false;
 		}
-		const auto configured = account->mtp().dcOptions().setCustomServer(
-			MTP::CustomServer{
+		const auto configured
+			= account->mtp().dcOptions().setCustomServer(MTP::CustomServer{
 				.dcId = 2,
 				.ip = "::1",
 				.port = int(port()),
 				.ipv6 = true,
 				.key = key,
-				.serverSelection
-				= selection.normalizedSelection.toStdString(),
+				.serverSelection = selection.normalizedSelection.toStdString(),
 				.discoveryPolicy = selection.policy,
-				.discoveryOrigin = (u"local:"_q
-					+ selection.normalizedSelection).toStdString(),
+				.discoveryOrigin
+				= (u"local:"_q + selection.normalizedSelection).toStdString(),
 			});
 		return configured && account->local().writeMtpConfig(true);
 	}
@@ -2222,14 +2211,14 @@ public:
 		}
 	}
 
-private:
+  private:
 	QTcpServer _server;
 };
 
 [[nodiscard]] bool AccountEndpointRefreshWaitsForStoredProof(
 	not_null<Main::Account *> account,
-		const LocalEndpointRefreshDiscoveryStub &discovery,
-		const MTP::AuthKeyPtr &storedAuthKey) {
+	const LocalEndpointRefreshDiscoveryStub &discovery,
+	const MTP::AuthKeyPtr &storedAuthKey) {
 	auto &mtp = account->mtp();
 	const auto original = mtp.dcOptions().customServer();
 	const auto verificationAlreadyPending
@@ -2283,7 +2272,8 @@ private:
 		|| !pausedRequestIsRefused()) {
 		return false;
 	}
-	AccountLifecycleRegressionAccess::finishEndpointVerification(*account, false);
+	AccountLifecycleRegressionAccess::finishEndpointVerification(*account,
+																 false);
 	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
 		|| mtp.isServerEnrollmentNetworkAllowed()
 		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
@@ -2299,7 +2289,8 @@ private:
 		|| !pausedRequestIsRefused()) {
 		return false;
 	}
-	AccountLifecycleRegressionAccess::finishEndpointVerification(*account, true);
+	AccountLifecycleRegressionAccess::finishEndpointVerification(*account,
+																 true);
 	const auto moved = mtp.dcOptions().customServer();
 	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
 		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
@@ -2309,10 +2300,9 @@ private:
 	}
 	auto failures = 0;
 	auto sender = MTP::Sender(&mtp);
-	const auto requestId
-		= sender.request(MTPupdates_GetState())
-			  .fail([&](const MTP::Error &) { ++failures; })
-			  .send();
+	const auto requestId = sender.request(MTPupdates_GetState())
+							   .fail([&](const MTP::Error &) { ++failures; })
+							   .send();
 	const auto resumed = sender.pending(requestId);
 	QCoreApplication::processEvents();
 	const auto remainsPending = sender.pending(requestId);
@@ -14820,9 +14810,9 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	if (!endpointRefreshDiscovery.listening()
 		|| !endpointRefreshDiscovery.originalEndpointUnreachable()
 		|| !endpointRefreshDiscovery.configureOriginalPin(forgotten,
-												 originalKey)) {
-		return failAccountLifecycle(
-			"could not prepare the local endpoint refresh fixture after Forget");
+														  originalKey)) {
+		return failAccountLifecycle("could not prepare the local endpoint "
+									"refresh fixture after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
 	const auto sessionCreated = forgotten->createSession(
@@ -14866,8 +14856,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	}
 	if (!AccountEndpointRefreshWaitsForStoredProof(
 			active, endpointRefreshDiscovery, finalKey)) {
-		return failAccountLifecycle(
-			"restored Account did not keep requests paused until endpoint proof");
+		return failAccountLifecycle("restored Account did not keep requests "
+									"paused until endpoint proof");
 	}
 	endpointRefreshDiscovery.close();
 
