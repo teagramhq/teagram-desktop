@@ -11055,6 +11055,9 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		return {-1, wallNanoseconds};
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
+	} else if (!Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+				   schedulerTrace, sampleOffsetsNanoseconds, wallNanoseconds)) {
+		return {-1, wallNanoseconds};
 	}
 	auto samples = qint64(0);
 	auto blockedSamples = qint64(0);
@@ -11269,13 +11272,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 												  switchOffsets, 100'000'000)
 		   && (blockedTail.blockedNanoseconds == 100'000'000)
 		   && (blockedTail.estimatedWorkNanoseconds == 118'000'000)
-		   && (clustered.blockedNanoseconds == 0)
-		   && (clustered.estimatedWorkNanoseconds == 0)
-		   && MainThreadWorkEstimateWithinBudget(
+		   && (clustered.blockedNanoseconds == -1)
+		   && (clustered.estimatedWorkNanoseconds == 200'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
 			   0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000}, 100'000'000)
-		   && (sparseStartup.blockedNanoseconds == 47'368'421)
-		   && (sparseStartup.estimatedWorkNanoseconds == 65'368'421)
-		   && MainThreadWorkEstimateWithinBudget(
+		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
+		   && (sparseStartup.blockedNanoseconds == -1)
+		   && (sparseStartup.estimatedWorkNanoseconds == 225'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, sparseStartupTrace,
 			   sparseStartupOffsets, 100'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
@@ -11299,9 +11304,13 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
 		   && !sparseStartupCapture.capturePending
 		   && (sparseStartupCapture.trace == sparseStartupTrace)
-		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 47'368'421)
+		   && (sparseStartupCaptureEstimate.blockedNanoseconds == -1)
 		   && (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
-			   == 65'368'421)
+			   == sparseStartupWindow.durationNanoseconds)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, sparseStartupWindow.durationNanoseconds,
+			   sparseStartupCapture.trace,
+			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
 		   && uncapturedWindow.capturePending
 		   && incompleteWindow.trace.isEmpty()
 		   && incompleteWindow.capturePending

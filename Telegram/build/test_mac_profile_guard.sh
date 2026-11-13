@@ -105,6 +105,10 @@ main_thread_work_estimate_within_budget() {
 		local has_previous=false
 		local in_window_samples=0
 		local blocked_sample_count=0
+		local first_in_window_offset=0
+		local last_in_window_offset=0
+		local previous_in_window_offset=0
+		local has_in_window_offset=false
 		for ((i = 0; i < sample_count; ++i)); do
 			[[ "$samples_valid" == true ]] || break
 			local offset="${scheduler_offsets[i]}"
@@ -122,6 +126,17 @@ main_thread_work_estimate_within_budget() {
 				break
 			fi
 			if (( offset >= 0 && offset <= wall_ns )); then
+				if [[ "$has_in_window_offset" == true ]] \
+					&& (( offset - previous_in_window_offset > 5000000 )); then
+					samples_valid=false
+					break
+				fi
+				if [[ "$has_in_window_offset" != true ]]; then
+					first_in_window_offset="$offset"
+				fi
+				previous_in_window_offset="$offset"
+				last_in_window_offset="$offset"
+				has_in_window_offset=true
 				((++in_window_samples))
 				local state="${trace:i:1}"
 				if [[ "$state" == W || "$state" == U ]]; then
@@ -134,7 +149,10 @@ main_thread_work_estimate_within_budget() {
 			previous_offset="$offset"
 			has_previous=true
 		done
-		if [[ "$samples_valid" == true ]] && (( in_window_samples > 0 )); then
+		if [[ "$samples_valid" == true ]] \
+			&& (( in_window_samples > 0 )) \
+			&& (( first_in_window_offset <= 5000000 )) \
+			&& (( wall_ns - last_in_window_offset <= 5000000 )); then
 			local blocked_ns="$((
 				wall_ns / in_window_samples * blocked_sample_count
 				+ wall_ns % in_window_samples * blocked_sample_count

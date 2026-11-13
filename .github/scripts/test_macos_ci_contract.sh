@@ -1059,9 +1059,9 @@ fi
 if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
   contract_fail 'A window without scheduler samples must fall back to wall time.'
 fi
-if ! main_thread_work_estimate_within_budget \
+if main_thread_work_estimate_within_budget \
 	0 200000000 RRR 100000000 0,1000000,2000000; then
-	contract_fail 'Runnable trace samples must estimate zero blocked time even when sparse.'
+	contract_fail 'A clustered runnable trace must fall back to wall time.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 \
