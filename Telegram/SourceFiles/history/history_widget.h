@@ -307,6 +307,7 @@ public:
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
+	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
 										 Data::ReactionId id);

@@ -11626,6 +11626,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	result.fieldAutocompleteSuggestionsReady
 		= historyWidget->fieldAutocompleteSuggestionsReadyForRegressionTest();
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
 	const auto tabbedPanelBuildsBeforeSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	showPeerHistoryMeasured(secondHistory);

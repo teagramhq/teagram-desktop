@@ -6950,6 +6950,12 @@ TextWithTags HistoryWidget::draftWithTagsForRegressionTest() const {
 	return _field->getTextWithTags();
 }
 
+void HistoryWidget::hideFieldAutocompleteForRegressionTest() {
+	if (_autocomplete) {
+		_autocomplete->hideFast();
+	}
+}
+
 void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
 	send(options);
 }
