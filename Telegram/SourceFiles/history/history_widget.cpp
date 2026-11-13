@@ -6897,7 +6897,7 @@ int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
 void HistoryWidget::clearFieldFocusForRegressionTest() { _field->clearFocus(); }
 
 void HistoryWidget::focusFieldForRegressionTest() {
-	_field->setFocus(Qt::OtherFocusReason);
+	_field->setFocus();
 }
 
 bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
